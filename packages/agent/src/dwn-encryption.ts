@@ -33,6 +33,7 @@ import {
   Encryption,
   EncryptionProtocol,
   getGrantKeyDeliveryScopes,
+  getRoleAudienceContextId,
   grantKeyScopeCoversDeliveredScope,
   HdKey,
   isGrantKeyEligibleRecordsScope,
@@ -797,7 +798,7 @@ async function resolveRoleAudienceDecrypter(params: {
   } => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME);
 
   for (const entry of roleAudienceEntries) {
-    const contextId = getRoleAudienceContextId(params.recordsWrite, entry.role);
+    const contextId = getRoleAudienceContextId(entry.role, params.recordsWrite.contextId);
     if (contextId === undefined) {
       continue;
     }
@@ -1342,27 +1343,6 @@ function getAudienceDecryptionKeyCacheKey(input: {
   ]))}`;
 }
 
-function getRoleAudienceContextId(
-  recordsWrite: RecordsWriteMessage,
-  rolePath: string,
-): string | undefined {
-  const parentDepth = rolePath.split('/').length - 1;
-  if (parentDepth === 0) {
-    return '';
-  }
-
-  const contextId = recordsWrite.contextId;
-  if (typeof contextId !== 'string') {
-    return undefined;
-  }
-
-  const contextSegments = contextId.split('/');
-  if (contextSegments.length < parentDepth) {
-    return undefined;
-  }
-
-  return contextSegments.slice(0, parentDepth).join('/');
-}
 
 function isGrantKeyEligibleGrant(grant: PermissionGrant): grant is PermissionGrant & {
   scope: GrantKeyEligibleRecordsScope;

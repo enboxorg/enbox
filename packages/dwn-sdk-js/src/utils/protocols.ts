@@ -53,6 +53,29 @@ export function getTypeName(protocolPath: string): string {
 }
 
 /**
+ * Computes the role-audience context id for a role path relative to a source record context id.
+ * Root-level role audiences use the empty string; nested role audiences use the ancestor
+ * context prefix at the same depth as the role parent.
+ */
+export function getRoleAudienceContextId(rolePath: string, contextId?: string): string | undefined {
+  const roleParentDepth = rolePath.split('/').length - 1;
+  if (roleParentDepth === 0) {
+    return '';
+  }
+
+  if (contextId === undefined) {
+    return undefined;
+  }
+
+  const contextSegments = contextId.split('/');
+  if (contextSegments.length < roleParentDepth) {
+    return undefined;
+  }
+
+  return contextSegments.slice(0, roleParentDepth).join('/');
+}
+
+/**
  * Gets the rule set at a given protocol path within a protocol definition's structure tree.
  * Returns `undefined` if the path does not exist.
  */

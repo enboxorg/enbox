@@ -46,12 +46,20 @@ export type ProtocolPathKeyEncryption = X25519KeyEncryptionBase & {
   derivationScheme: KeyDerivationScheme.ProtocolPath;
 };
 
-export type RoleAudienceKeyEncryption = X25519KeyEncryptionBase & {
+export type SourceRoleAudienceKeyEncryption = X25519KeyEncryptionBase & {
+  derivationScheme: typeof ROLE_AUDIENCE_DERIVATION_SCHEME;
+  protocol: string;
+  rolePath: string;
+};
+
+export type LegacyRoleAudienceKeyEncryption = X25519KeyEncryptionBase & {
   derivationScheme: typeof ROLE_AUDIENCE_DERIVATION_SCHEME;
   protocol: string;
   role: string;
   epoch: number;
 };
+
+export type RoleAudienceKeyEncryption = SourceRoleAudienceKeyEncryption | LegacyRoleAudienceKeyEncryption;
 
 export type X25519KeyEncryption = ProtocolPathKeyEncryption | RoleAudienceKeyEncryption;
 
@@ -71,12 +79,20 @@ export type ProtocolPathKeyEncryptionInput = X25519KeyEncryptionInputBase & {
   derivationScheme: KeyDerivationScheme.ProtocolPath;
 };
 
-export type RoleAudienceKeyEncryptionInput = X25519KeyEncryptionInputBase & {
+export type SourceRoleAudienceKeyEncryptionInput = X25519KeyEncryptionInputBase & {
+  derivationScheme: typeof ROLE_AUDIENCE_DERIVATION_SCHEME;
+  protocol: string;
+  rolePath: string;
+};
+
+export type LegacyRoleAudienceKeyEncryptionInput = X25519KeyEncryptionInputBase & {
   derivationScheme: typeof ROLE_AUDIENCE_DERIVATION_SCHEME;
   protocol: string;
   role: string;
   epoch: number;
 };
+
+export type RoleAudienceKeyEncryptionInput = SourceRoleAudienceKeyEncryptionInput | LegacyRoleAudienceKeyEncryptionInput;
 
 export type X25519KeyEncryptionInput = ProtocolPathKeyEncryptionInput | RoleAudienceKeyEncryptionInput;
 
@@ -265,13 +281,20 @@ export class Encryption {
       };
     }
 
-    return {
-      ...common,
-      derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
-      epoch            : keyInput.epoch,
-      protocol         : keyInput.protocol,
-      role             : keyInput.role,
-    };
+    return 'rolePath' in keyInput
+      ? {
+        ...common,
+        derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+        protocol         : keyInput.protocol,
+        rolePath         : keyInput.rolePath,
+      }
+      : {
+        ...common,
+        derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+        epoch            : keyInput.epoch,
+        protocol         : keyInput.protocol,
+        role             : keyInput.role,
+      };
   }
 
   private static validateKeyEncryptionEntry(entry: X25519KeyEncryption): void {
@@ -312,6 +335,16 @@ export class Encryption {
 
   private static getKekInfo(keyEncryption: X25519KeyEncryptionInput | X25519KeyEncryption): string {
     if (keyEncryption.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME) {
+      if ('rolePath' in keyEncryption) {
+        return JSON.stringify([
+          KEK_INFO_PREFIX,
+          ROLE_AUDIENCE_DERIVATION_SCHEME,
+          keyEncryption.protocol,
+          keyEncryption.rolePath,
+          keyEncryption.keyId,
+        ]);
+      }
+
       return JSON.stringify([
         KEK_INFO_PREFIX,
         ROLE_AUDIENCE_DERIVATION_SCHEME,

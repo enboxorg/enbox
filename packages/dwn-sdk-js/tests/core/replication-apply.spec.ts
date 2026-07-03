@@ -3,7 +3,7 @@ import type { ProtocolDefinition } from '../../src/index.js';
 import { describe, expect, it } from 'bun:test';
 
 import { TestDataGenerator } from '../utils/test-data-generator.js';
-import { DwnErrorCode, EncryptionProtocol, replicationApplyResultFromReply, ROLE_AUDIENCE_DERIVATION_SCHEME } from '../../src/index.js';
+import { DwnErrorCode, ENCRYPTION_CONTROL_AUDIENCE_PATH, EncryptionProtocol, replicationApplyResultFromReply, ROLE_AUDIENCE_DERIVATION_SCHEME } from '../../src/index.js';
 
 describe('replicationApplyResultFromReply', () => {
   it('classifies successful and idempotent replies', async () => {
@@ -379,9 +379,9 @@ describe('replicationApplyResultFromReply', () => {
     });
   });
 
-  it('classifies roleAudience audienceEpoch dependencies from encrypted application records', async () => {
+  it('classifies roleAudience audience dependencies from encrypted application records', async () => {
     const protocol = 'https://example.com/encrypted-chat';
-    const role = 'thread/member';
+    const rolePath = 'thread/member';
     const { message } = await TestDataGenerator.generateRecordsWrite({
       protocol,
       protocolPath: 'thread/chat',
@@ -390,20 +390,40 @@ describe('replicationApplyResultFromReply', () => {
     message.encryption = {
       algorithm            : 'A256CTR',
       initializationVector : 'iv',
-      keyEncryption        : [{
-        algorithm          : 'X25519-HKDF-SHA256+A256KW',
-        derivationScheme   : ROLE_AUDIENCE_DERIVATION_SCHEME,
-        encryptedKey       : 'encrypted-key',
-        ephemeralPublicKey : { kty: 'OKP', crv: 'X25519', x: 'x' },
-        epoch              : 3,
-        keyId              : 'abc',
-        protocol,
-        role,
-      }],
+      keyEncryption        : [
+        {
+          algorithm          : 'X25519-HKDF-SHA256+A256KW',
+          derivationScheme   : ROLE_AUDIENCE_DERIVATION_SCHEME,
+          encryptedKey       : 'encrypted-key-1',
+          ephemeralPublicKey : { kty: 'OKP', crv: 'X25519', x: 'x' },
+          keyId              : 'abc',
+          protocol,
+          rolePath,
+        },
+        {
+          algorithm          : 'X25519-HKDF-SHA256+A256KW',
+          derivationScheme   : ROLE_AUDIENCE_DERIVATION_SCHEME,
+          encryptedKey       : 'encrypted-key-2',
+          ephemeralPublicKey : { kty: 'OKP', crv: 'X25519', x: 'x' },
+          keyId              : 'def',
+          protocol,
+          rolePath,
+        },
+        {
+          algorithm          : 'X25519-HKDF-SHA256+A256KW',
+          derivationScheme   : ROLE_AUDIENCE_DERIVATION_SCHEME,
+          encryptedKey       : 'legacy-encrypted-key',
+          ephemeralPublicKey : { kty: 'OKP', crv: 'X25519', x: 'x' },
+          epoch              : 3,
+          keyId              : 'legacy',
+          protocol,
+          role               : rolePath,
+        },
+      ],
     } as any;
 
     const detail = `${DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceEpochMissing}: ` +
-      `encrypted record references a missing audienceEpoch for role '${role}'`;
+      `encrypted record references a missing audience for role '${rolePath}'`;
 
     expect(replicationApplyResultFromReply(message, {
       status: {
@@ -412,17 +432,41 @@ describe('replicationApplyResultFromReply', () => {
       },
     })).toEqual({
       kind    : 'Incomplete',
-      missing : [{
-        type         : 'EncryptionProtocol',
-        protocolPath : EncryptionProtocol.audienceEpochPath,
-        tags         : {
+      missing : [
+        {
+          type         : 'EncryptionControl',
           protocol,
-          contextId : 'thread-record',
-          role,
-          epoch     : 3,
-          keyId     : 'abc',
+          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          tags         : {
+            protocol,
+            contextId : 'thread-record',
+            rolePath,
+            keyId     : 'abc',
+          },
         },
-      }],
+        {
+          type         : 'EncryptionControl',
+          protocol,
+          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          tags         : {
+            protocol,
+            contextId : 'thread-record',
+            rolePath,
+            keyId     : 'def',
+          },
+        },
+        {
+          type         : 'EncryptionProtocol',
+          protocolPath : EncryptionProtocol.audienceEpochPath,
+          tags         : {
+            protocol,
+            contextId : 'thread-record',
+            role      : rolePath,
+            epoch     : 3,
+            keyId     : 'legacy',
+          },
+        },
+      ],
     });
   });
 

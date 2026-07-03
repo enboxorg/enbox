@@ -92,12 +92,42 @@ export function matchesEncryptionProtocolDependency(
   message: GenericMessage | undefined,
   ref: Extract<DependencyRef, { type: 'EncryptionProtocol' }>,
 ): boolean {
+  return matchesRecordsDependency(message, {
+    protocol     : EncryptionProtocol.uri,
+    protocolPath : ref.protocolPath,
+    recipient    : ref.recipient,
+    tags         : ref.tags,
+  });
+}
+
+/** Predicate matching the exact source-protocol encryption control record named by a dependency ref. */
+export function matchesEncryptionControlDependency(
+  message: GenericMessage | undefined,
+  ref: Extract<DependencyRef, { type: 'EncryptionControl' }>,
+): boolean {
+  return matchesRecordsDependency(message, {
+    protocol     : ref.protocol,
+    protocolPath : ref.protocolPath,
+    recipient    : ref.recipient,
+    tags         : ref.tags,
+  });
+}
+
+function matchesRecordsDependency(
+  message: GenericMessage | undefined,
+  ref: {
+    protocol: string;
+    protocolPath: string;
+    recipient?: string;
+    tags?: Record<string, string | number>;
+  },
+): boolean {
   if (message === undefined || message.descriptor.interface !== DwnInterfaceName.Records) {
     return false;
   }
 
   const descriptor = message.descriptor as Record<string, unknown>;
-  if (descriptor.protocol !== EncryptionProtocol.uri || descriptor.protocolPath !== ref.protocolPath) {
+  if (descriptor.protocol !== ref.protocol || descriptor.protocolPath !== ref.protocolPath) {
     return false;
   }
 

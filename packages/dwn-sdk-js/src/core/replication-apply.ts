@@ -1,3 +1,4 @@
+import type { EncryptionControlPath } from './constants.js';
 import type { GenericMessage } from '../types/message-types.js';
 import type { ProgressToken } from '../types/subscriptions.js';
 import type { ProtocolDefinition } from '../types/protocols-types.js';
@@ -5,11 +6,12 @@ import type { ValidationStateReader } from '../types/validation-state-reader.js'
 
 import { DwnErrorCode } from './dwn-error.js';
 import { Encoder } from '../utils/encoder.js';
+import { ENCRYPTION_CONTROL_AUDIENCE_PATH } from './constants.js';
 import { EncryptionProtocol } from '../protocols/encryption.js';
 import { Message } from './message.js';
 import { ROLE_AUDIENCE_DERIVATION_SCHEME } from '../utils/encryption.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
-import { isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
+import { getRoleAudienceContextId, isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
 
 export type ReplicationApplyOptions = {
   dataStream?: ReadableStream<Uint8Array>;
@@ -60,6 +62,15 @@ export type DependencyRef =
   | {
       type: 'EncryptionProtocol';
       protocolPath: 'audienceEpoch' | 'audienceKey' | 'grantKey';
+      tags?: Record<string, string | number>;
+      recipient?: string;
+      messageCid?: string;
+      terminal?: boolean;
+    }
+  | {
+      type: 'EncryptionControl';
+      protocol: string;
+      protocolPath: EncryptionControlPath;
       tags?: Record<string, string | number>;
       recipient?: string;
       messageCid?: string;
@@ -202,7 +213,7 @@ function dependencyRefsFromStatus(
   case DwnErrorCode.EncryptionProtocolValidateAudienceEpochMissing:
     return toRefList(encryptionProtocolDependencyFromMessage(message, EncryptionProtocol.audienceEpochPath));
   case DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceEpochMissing:
-    return toRefList(encryptionProtocolDependencyFromRoleAudienceEntry(message, detail));
+    return encryptionAudienceDependenciesFromRoleAudienceEntries(message, detail);
   case DwnErrorCode.EncryptionProtocolValidateAudienceKeyRoleRecordMissing:
     return toRefList(roleDependencyFromEncryptionAudienceRecipient(message));
   case DwnErrorCode.RecordsWriteMissingDataInPrevious:
@@ -429,10 +440,10 @@ function encryptionProtocolDependencyFromMessage(
     : { type: 'EncryptionProtocol', protocolPath, tags };
 }
 
-function encryptionProtocolDependencyFromRoleAudienceEntry(
+function encryptionAudienceDependenciesFromRoleAudienceEntries(
   message: GenericMessage,
   detail: string,
-): DependencyRef | undefined {
+): Extract<DependencyRef, { type: 'EncryptionControl' | 'EncryptionProtocol' }>[] {
   const descriptor = message.descriptor as Record<string, unknown>;
   const messageContextId = (message as { contextId?: unknown }).contextId;
   const contextId = typeof messageContextId === 'string' ? messageContextId : descriptor.contextId;
@@ -442,11 +453,39 @@ function encryptionProtocolDependencyFromRoleAudienceEntry(
     };
   }).encryption?.keyEncryption;
   if (typeof contextId !== 'string' || !Array.isArray(keyEncryption)) {
-    return undefined;
+    return [];
   }
 
   const missingRole = /role '([^']+)'/.exec(detail)?.[1];
-  const entry = keyEncryption.find((candidate): boolean =>
+  const refs: Extract<DependencyRef, { type: 'EncryptionControl' | 'EncryptionProtocol' }>[] = [];
+  const sourceEntries = keyEncryption.filter((candidate): boolean =>
+    candidate.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
+    typeof candidate.protocol === 'string' &&
+    typeof candidate.rolePath === 'string' &&
+    (missingRole === undefined || candidate.rolePath === missingRole) &&
+    typeof candidate.keyId === 'string'
+  );
+  for (const sourceEntry of sourceEntries) {
+    const rolePath = sourceEntry.rolePath as string;
+    const audienceContextId = getRoleAudienceContextId(rolePath, contextId);
+    if (audienceContextId === undefined) {
+      continue;
+    }
+
+    refs.push({
+      type         : 'EncryptionControl',
+      protocol     : sourceEntry.protocol as string,
+      protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+      tags         : {
+        protocol  : sourceEntry.protocol as string,
+        rolePath,
+        contextId : audienceContextId,
+        keyId     : sourceEntry.keyId as string,
+      },
+    });
+  }
+
+  const legacyEntries = keyEncryption.filter((candidate): boolean =>
     candidate.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
     typeof candidate.protocol === 'string' &&
     typeof candidate.role === 'string' &&
@@ -454,27 +493,27 @@ function encryptionProtocolDependencyFromRoleAudienceEntry(
     typeof candidate.epoch === 'number' &&
     typeof candidate.keyId === 'string'
   );
-  if (entry === undefined) {
-    return undefined;
+  for (const entry of legacyEntries) {
+    const role = entry.role as string;
+    const audienceContextId = getRoleAudienceContextId(role, contextId);
+    if (audienceContextId === undefined) {
+      continue;
+    }
+
+    refs.push({
+      type         : 'EncryptionProtocol',
+      protocolPath : EncryptionProtocol.audienceEpochPath,
+      tags         : {
+        protocol  : entry.protocol as string,
+        contextId : audienceContextId,
+        role,
+        epoch     : entry.epoch as number,
+        keyId     : entry.keyId as string,
+      },
+    });
   }
 
-  const role = entry.role as string;
-  const audienceContextId = roleAudienceContextId(role, contextId);
-  if (audienceContextId === undefined) {
-    return undefined;
-  }
-
-  return {
-    type         : 'EncryptionProtocol',
-    protocolPath : EncryptionProtocol.audienceEpochPath,
-    tags         : {
-      protocol  : entry.protocol as string,
-      contextId : audienceContextId,
-      role,
-      epoch     : entry.epoch as number,
-      keyId     : entry.keyId as string,
-    },
-  };
+  return refs;
 }
 
 function roleDependencyFromEncryptionAudienceRecipient(message: GenericMessage): DependencyRef | undefined {
@@ -577,20 +616,6 @@ function roleContextPrefix(rolePath: string, contextId: string): string | undefi
   }
 
   return contextId.split('/').slice(0, roleSegments).join('/');
-}
-
-function roleAudienceContextId(rolePath: string, contextId: string): string | undefined {
-  const roleSegments = rolePath.split('/').length - 1;
-  if (roleSegments === 0) {
-    return '';
-  }
-
-  const contextSegments = contextId.split('/');
-  if (contextSegments.length < roleSegments) {
-    return undefined;
-  }
-
-  return contextSegments.slice(0, roleSegments).join('/');
 }
 
 function isRecordObject(value: unknown): value is Record<string, unknown> {

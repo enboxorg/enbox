@@ -27,6 +27,7 @@ import {
   Encryption,
   EncryptionProtocol,
   EventEmitterWakePublisher,
+  getRoleAudienceContextId,
   getRuleSetAtPath,
   KeyAgreementAlgorithm,
   KeyDerivationScheme,
@@ -787,7 +788,7 @@ export class AgentDwnApi {
       return;
     }
 
-    const contextId = this.getRoleAudienceContextIdForRecord(recordsWrite, descriptor.protocolPath);
+    const contextId = getRoleAudienceContextId(descriptor.protocolPath, recordsWrite.contextId);
     if (contextId === undefined) {
       throw new Error(`AgentDwnApi: Unable to determine role audience context for '${descriptor.protocolPath}'.`);
     }
@@ -878,51 +879,8 @@ export class AgentDwnApi {
       return undefined;
     }
 
-    const contextId = this.getRoleAudienceContextIdForWrite(role, parentContextId);
+    const contextId = getRoleAudienceContextId(role, parentContextId);
     return contextId === undefined ? undefined : { protocol, role, contextId };
-  }
-
-  private getRoleAudienceContextIdForRecord(
-    recordsWrite: RecordsWriteMessage,
-    rolePath: string,
-  ): string | undefined {
-    const parentDepth = rolePath.split('/').length - 1;
-    if (parentDepth === 0) {
-      return '';
-    }
-
-    const contextId = recordsWrite.contextId;
-    if (typeof contextId !== 'string') {
-      return undefined;
-    }
-
-    const contextSegments = contextId.split('/');
-    if (contextSegments.length < parentDepth) {
-      return undefined;
-    }
-
-    return contextSegments.slice(0, parentDepth).join('/');
-  }
-
-  private getRoleAudienceContextIdForWrite(
-    rolePath: string,
-    parentContextId: string | undefined,
-  ): string | undefined {
-    const parentDepth = rolePath.split('/').length - 1;
-    if (parentDepth === 0) {
-      return '';
-    }
-
-    if (parentContextId === undefined) {
-      return undefined;
-    }
-
-    const contextSegments = parentContextId.split('/');
-    if (contextSegments.length < parentDepth) {
-      return undefined;
-    }
-
-    return contextSegments.slice(0, parentDepth).join('/');
   }
 
   private async getOrCreateAudienceKey(params: {

@@ -4,7 +4,7 @@ import sinon from 'sinon';
 
 import { afterEach, describe, expect, it } from 'bun:test';
 import { DwnRpcError, JsonRpcErrorCodes } from '@enbox/dwn-clients';
-import { EncryptionProtocol, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { ENCRYPTION_CONTROL_AUDIENCE_PATH, EncryptionProtocol, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from '../src/types/dwn.js';
 import {
@@ -879,6 +879,62 @@ describe('sync-messages', () => {
       })).calledOnce).toBe(true);
       expect(await Promise.all(applyStub.getCalls().map(async (call): Promise<string> =>
         Message.getCid(call.args[0].message)))).toEqual([rootCid, audienceEpochCid, rootCid]);
+    });
+
+    it('should fetch an encryption control dependency from the source protocol feed', async () => {
+      const protocol = 'https://example.com/encrypted-control-push';
+      const root = await TestDataGenerator.generateRecordsWrite({ protocol });
+      const tags = {
+        protocol,
+        contextId : 'thread-record',
+        rolePath  : 'thread/member',
+        keyId     : 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      };
+      const audience = await TestDataGenerator.generateRecordsWrite({
+        author       : root.author,
+        protocol,
+        protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+        tags,
+      });
+      const rootCid = await Message.getCid(root.message);
+      const audienceCid = await Message.getCid(audience.message);
+      const { agent, applyStub, processRequestStub } = createLocalAgentFixture({
+        messagesByCid      : new Map([[rootCid, { message: root.message }]]),
+        messageFeedEntries : [{
+          isLatestBaseState : true,
+          message           : audience.message,
+          messageCid        : audienceCid,
+          protocol,
+        }],
+        applyResults: [
+          {
+            kind    : 'Incomplete',
+            missing : [{
+              type         : 'EncryptionControl',
+              protocol,
+              protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+              tags,
+            }],
+          },
+          { kind: 'Applied' },
+          { kind: 'Applied' },
+        ],
+      });
+
+      const result = await pushMessages({
+        did         : root.author.did,
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : [rootCid],
+        agent,
+      });
+
+      expect(result).toEqual({ succeeded: [rootCid], failed: [] });
+      expect(processRequestStub.withArgs(sinon.match({
+        messageParams : sinon.match({ filters: [{ protocol, protocolPathPrefix: ENCRYPTION_CONTROL_AUDIENCE_PATH }] }),
+        messageType   : DwnInterface.MessagesQuery,
+      })).calledOnce).toBe(true);
+      expect(await Promise.all(applyStub.getCalls().map(async (call): Promise<string> =>
+        Message.getCid(call.args[0].message)))).toEqual([rootCid, audienceCid, rootCid]);
     });
 
     it('should query a missing role dependency with contextPrefix', async () => {
