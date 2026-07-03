@@ -42,7 +42,6 @@ import { CoreProtocolRegistry } from './core/core-protocol.js';
 import { DataStream } from './utils/data-stream.js';
 import { DwnConstant } from './core/dwn-constant.js';
 import { EncryptionProtocol } from './protocols/encryption.js';
-import { findMissingRoleAudienceEncryptionContext } from './core/protocol-authorization-validation.js';
 import { Message } from './core/message.js';
 import { messageReplyFromError } from './core/message-reply.js';
 import { MessagesQueryHandler } from './handlers/messages-query.js';
@@ -312,8 +311,7 @@ export class Dwn {
 
     const protocolDefinition = await this.getReplicationApplyProtocolDefinition(tenant, rawMessage, reply);
     const missingAncestorRecordIds = await this.getReplicationApplyMissingAncestors(tenant, rawMessage, reply);
-    const missingRoleAudienceRolePath = await this.getReplicationApplyMissingRoleAudienceRolePath(tenant, rawMessage, reply);
-    return replicationApplyResultFromReply(rawMessage, reply, { protocolDefinition, missingAncestorRecordIds, missingRoleAudienceRolePath });
+    return replicationApplyResultFromReply(rawMessage, reply, { protocolDefinition, missingAncestorRecordIds });
   }
 
   /**
@@ -329,26 +327,6 @@ export class Dwn {
   ): Promise<string[] | undefined> {
     try {
       return await missingAncestorRecordIdsFromReply(tenant, message, reply, this.validationStateReader);
-    } catch {
-      return undefined;
-    }
-  }
-
-  private async getReplicationApplyMissingRoleAudienceRolePath(
-    tenant: string,
-    message: GenericMessage,
-    reply: { status: { detail?: string } },
-  ): Promise<string | undefined> {
-    const detail = reply.status.detail ?? '';
-    if (
-      !detail.startsWith(`${DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceEpochMissing}:`) ||
-      !Dwn.isRecordsWriteMessage(message)
-    ) {
-      return undefined;
-    }
-
-    try {
-      return (await findMissingRoleAudienceEncryptionContext(tenant, message, this.validationStateReader))?.rolePath;
     } catch {
       return undefined;
     }

@@ -470,7 +470,7 @@ describe('replicationApplyResultFromReply', () => {
     });
   });
 
-  it('filters roleAudience audience dependencies with structured missing-role context', async () => {
+  it('ignores role text in missing roleAudience error details', async () => {
     const protocol = 'https://example.com/encrypted-chat';
     const missingRolePath = 'thread/member';
     const otherRolePath = 'thread/admin';
@@ -522,7 +522,7 @@ describe('replicationApplyResultFromReply', () => {
         code   : 400,
         detail : misleadingDetail,
       },
-    }, { missingRoleAudienceRolePath: missingRolePath })).toEqual({
+    })).toEqual({
       kind    : 'Incomplete',
       missing : [
         {
@@ -534,6 +534,17 @@ describe('replicationApplyResultFromReply', () => {
             contextId : 'thread-record',
             rolePath  : missingRolePath,
             keyId     : 'missing-source',
+          },
+        },
+        {
+          type         : 'EncryptionControl',
+          protocol,
+          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          tags         : {
+            protocol,
+            contextId : 'thread-record',
+            rolePath  : otherRolePath,
+            keyId     : 'other-source',
           },
         },
         {

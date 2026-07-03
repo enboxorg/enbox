@@ -18,10 +18,6 @@ type ResolvedRoleAudience = {
   rolePath: string;
 };
 
-export type MissingRoleAudienceEncryptionContext = {
-  rolePath: string;
-};
-
 type RoleAudienceEntryValidationResult = {
   hasAudience: boolean;
   hasEntry: boolean;
@@ -280,59 +276,6 @@ export function verifyType(
   }
 
   return protocolType;
-}
-
-/**
- * Finds the role-audience entry that failed because its encrypted write carried a roleAudience
- * keyEncryption entry, but the referenced audience record is not locally accepted.
- */
-export async function findMissingRoleAudienceEncryptionContext(
-  tenant: string,
-  inboundMessage: RecordsWriteMessage,
-  validationStateReader: ValidationStateReader,
-): Promise<MissingRoleAudienceEncryptionContext | undefined> {
-  if (!Array.isArray(inboundMessage.encryption?.keyEncryption)) {
-    return undefined;
-  }
-
-  const protocolDefinition = await validationStateReader.fetchProtocolDefinition(
-    tenant,
-    inboundMessage.descriptor.protocol,
-    inboundMessage.descriptor.messageTimestamp,
-  );
-  const ruleSet = getRuleSetAtPath(inboundMessage.descriptor.protocolPath, protocolDefinition.structure);
-  if (ruleSet === undefined) {
-    return undefined;
-  }
-
-  const readRoleRules = (ruleSet.$actions ?? []).filter((actionRule): boolean =>
-    actionRule.role !== undefined && actionRule.can.includes(ProtocolAction.Read)
-  );
-
-  for (const actionRule of readRoleRules) {
-    const roleAudience = resolveRoleAudience(actionRule, inboundMessage, protocolDefinition);
-    if (roleAudience === undefined) {
-      continue;
-    }
-
-    try {
-      await verifyResolvedRoleAudienceEncryption(tenant, inboundMessage, roleAudience, validationStateReader);
-      continue;
-    } catch (error) {
-      const errorCode = error instanceof DwnError ? error.code : undefined;
-      if (errorCode === DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceEpochMissing) {
-        return { rolePath: roleAudience.rolePath };
-      }
-
-      if (errorCode === DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceEntryMissing) {
-        continue;
-      }
-
-      throw error;
-    }
-  }
-
-  return undefined;
 }
 
 async function verifyProtocolPathEncryptionIfNeeded(
