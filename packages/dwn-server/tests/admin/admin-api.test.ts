@@ -3126,7 +3126,15 @@ describe('Passkey routes — unit coverage', () => {
     lastUsedAt : '2025-02-01T12:00:00.000Z',
   };
 
-  async function createApiWithPasskeys(): Promise<{
+  function createMissingWebAuthnServerLoader(): () => Promise<never> {
+    return async (): Promise<never> => {
+      throw Object.assign(new Error('Cannot find package @simplewebauthn/server'), { code: 'ERR_MODULE_NOT_FOUND' });
+    };
+  }
+
+  async function createApiWithPasskeys(options: {
+    webAuthnServerLoader?: () => Promise<never>;
+  } = {}): Promise<{
     api: InstanceType<typeof AdminApi>;
     store: InstanceType<typeof AdminPasskeyStore>;
     sessionManager: InstanceType<typeof AdminSessionManager>;
@@ -3142,6 +3150,7 @@ describe('Passkey routes — unit coverage', () => {
       dwn          : {} as any,
       passkeyStore : store,
       sessionManager,
+      ...options,
     });
 
     return { api, store, sessionManager };
@@ -3201,6 +3210,23 @@ describe('Passkey routes — unit coverage', () => {
     expect(body.excludeCredentials).toBeDefined();
     expect(body.excludeCredentials.length).toBe(1);
     expect(body.excludeCredentials[0].id).toBe('cred-test-1');
+
+    await store.close();
+    sessionManager.destroy();
+  });
+
+  it('should return 501 for register options when the WebAuthn dependency is unavailable', async () => {
+    const { api, store, sessionManager } = await createApiWithPasskeys({
+      webAuthnServerLoader: createMissingWebAuthnServerLoader(),
+    });
+
+    const res = await routeReq(api, '/passkeys/register/options', 'POST', {
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({ name: 'Another Key' }),
+    });
+    expect(res.status).toBe(501);
+    const body = await res.json();
+    expect(body.error).toContain('@simplewebauthn/server');
 
     await store.close();
     sessionManager.destroy();
@@ -3328,6 +3354,23 @@ describe('Passkey routes — unit coverage', () => {
     expect(body.allowCredentials).toBeDefined();
     expect(body.allowCredentials.length).toBe(1);
     expect(body.allowCredentials[0].id).toBe('cred-test-1');
+
+    await store.close();
+    sessionManager.destroy();
+  });
+
+  it('should return 501 for login options when the WebAuthn dependency is unavailable', async () => {
+    const { api, store, sessionManager } = await createApiWithPasskeys({
+      webAuthnServerLoader: createMissingWebAuthnServerLoader(),
+    });
+
+    const req = new Request('http://localhost/admin/api/passkeys/login/options', {
+      method: 'POST',
+    });
+    const res = await api.route(req, new URL(req.url), '/admin/api/passkeys/login/options', 'POST');
+    expect(res.status).toBe(501);
+    const body = await res.json();
+    expect(body.error).toContain('@simplewebauthn/server');
 
     await store.close();
     sessionManager.destroy();
