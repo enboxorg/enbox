@@ -1,9 +1,12 @@
-import type { Answer } from '@dnsquery/dns-packet';
 import type { DidDocument } from '../../src/index.js';
 import type { PortableDid } from '../../src/types/portable-did.js';
+import type { Signer } from '@enbox/crypto';
+import type { Answer, Packet } from '@dnsquery/dns-packet';
 
 import { Convert } from '@enbox/common';
 import { DidErrorCode } from '../../src/did-error.js';
+import { Ed25519 } from '@enbox/crypto';
+import { encodeBep44SigningPayload } from '../../src/methods/did-dht-pkarr.js';
 import officialTestVector1 from '../fixtures/test-vectors/did-dht/vector-1.json' with { type: 'json' };
 import officialTestVector2 from '../fixtures/test-vectors/did-dht/vector-2.json' with { type: 'json' };
 import officialTestVector3 from '../fixtures/test-vectors/did-dht/vector-3.json' with { type: 'json' };
@@ -65,6 +68,21 @@ const fetchOkResponse = (response?: any): {
   ok          : true,
   arrayBuffer : async (): Promise<any> => Promise.resolve(response)
 });
+
+const testTextEncoder = new TextEncoder();
+
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+  const length = parts.reduce((total, part) => total + part.length, 0);
+  const result = new Uint8Array(length);
+  let offset = 0;
+
+  for (const part of parts) {
+    result.set(part, offset);
+    offset += part.length;
+  }
+
+  return result;
+}
 
 describe('DidDht', () => {
   pinPublicGatewayDefault();
@@ -1520,6 +1538,91 @@ describe('DidDhtUtils', () => {
     const newDid = (await DidDht.create()).document.id;
 
     await expect(DidDhtUtils.validatePreviousDidProof({ newDid, previousDidProof })).rejects.toThrow(DidErrorCode.InvalidPreviousDidProof);
+  });
+
+  describe('BEP44 signing payloads', () => {
+    it('encodes sequence and value vectors without dictionary delimiters', () => {
+      const vectors = [
+        {
+          sequenceNumber : 0,
+          value          : new Uint8Array(),
+          expected       : testTextEncoder.encode('3:seqi0e1:v0:'),
+        },
+        {
+          sequenceNumber : 42,
+          value          : new Uint8Array([0, 97, 255]),
+          expected       : concatBytes(testTextEncoder.encode('3:seqi42e1:v3:'), new Uint8Array([0, 97, 255])),
+        },
+        {
+          sequenceNumber : 1_700_000_000,
+          value          : testTextEncoder.encode('hello'),
+          expected       : testTextEncoder.encode('3:seqi1700000000e1:v5:hello'),
+        }
+      ];
+
+      for (const vector of vectors) {
+        const payload = encodeBep44SigningPayload({
+          sequenceNumber : vector.sequenceNumber,
+          value          : vector.value,
+        });
+
+        expect(Array.from(payload)).toEqual(Array.from(vector.expected));
+      }
+    });
+
+    it('signs and verifies DNS packets using the BEP44 signing payload', async () => {
+      const privateKey = await Ed25519.generateKey();
+      const publicKey = await Ed25519.getPublicKey({ key: privateKey });
+      const publicKeyBytes = await Ed25519.publicKeyToBytes({ publicKey });
+      let signedPayload: Uint8Array | undefined;
+
+      const signer: Signer = {
+        async sign({ data }): Promise<Uint8Array> {
+          signedPayload = data;
+          return Ed25519.sign({ key: privateKey, data });
+        },
+        async verify({ data, signature }): Promise<boolean> {
+          return Ed25519.verify({ key: publicKey, data, signature });
+        }
+      };
+
+      const dnsPacket: Packet = {
+        id      : 0,
+        type    : 'response',
+        flags   : 1024,
+        answers : [
+          {
+            type : 'TXT',
+            name : '_did.example.',
+            ttl  : 7200,
+            data : 'id=0',
+          }
+        ]
+      };
+
+      const bep44Message = await DidDhtUtils.createBep44PutMessage({
+        dnsPacket,
+        publicKeyBytes,
+        signer,
+      });
+      const expectedPayload = encodeBep44SigningPayload({
+        sequenceNumber : bep44Message.seq,
+        value          : bep44Message.v,
+      });
+
+      expect(Array.from(signedPayload!)).toEqual(Array.from(expectedPayload));
+
+      const parsedPacket = await DidDhtUtils.parseBep44GetMessage({ bep44Message });
+      expect(parsedPacket.answers).toHaveLength(1);
+
+      const tamperedMessage = {
+        ...bep44Message,
+        v: new Uint8Array(bep44Message.v),
+      };
+      tamperedMessage.v[0] ^= 0xff;
+
+      await expect(DidDhtUtils.parseBep44GetMessage({ bep44Message: tamperedMessage })).rejects.toThrow(DidErrorCode.InvalidSignature);
+    });
   });
 });
 
