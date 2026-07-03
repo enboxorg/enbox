@@ -315,18 +315,20 @@ export async function findMissingRoleAudienceEncryptionContext(
       continue;
     }
 
-    const sourceEntryValidation = await validateSourceRoleAudienceEntry(tenant, roleAudience, inboundMessage, validationStateReader);
-    if (sourceEntryValidation.hasAudience) {
+    try {
+      await verifyResolvedRoleAudienceEncryption(tenant, inboundMessage, roleAudience, validationStateReader);
       continue;
-    }
+    } catch (error) {
+      const errorCode = error instanceof DwnError ? error.code : undefined;
+      if (errorCode === DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceEpochMissing) {
+        return { rolePath: roleAudience.rolePath };
+      }
 
-    const legacyEntryValidation = await validateLegacyRoleAudienceEntry(tenant, roleAudience, inboundMessage, validationStateReader);
-    if (legacyEntryValidation.hasAudience) {
-      continue;
-    }
+      if (errorCode === DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceEntryMissing) {
+        continue;
+      }
 
-    if (sourceEntryValidation.hasEntry || legacyEntryValidation.hasEntry) {
-      return { rolePath: roleAudience.rolePath };
+      throw error;
     }
   }
 
