@@ -11,7 +11,7 @@ import { EncryptionProtocol } from '../protocols/encryption.js';
 import { Message } from './message.js';
 import { ROLE_AUDIENCE_DERIVATION_SCHEME } from '../utils/encryption.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
-import { getRoleAudienceContextId, isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
+import { getRoleAudienceContextId, getRoleContextPrefix, isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
 
 export type ReplicationApplyOptions = {
   dataStream?: ReadableStream<Uint8Array>;
@@ -213,7 +213,7 @@ function dependencyRefsFromStatus(
   case DwnErrorCode.EncryptionProtocolValidateAudienceEpochMissing:
     return toRefList(encryptionProtocolDependencyFromMessage(message, EncryptionProtocol.audienceEpochPath));
   case DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceEpochMissing:
-    return encryptionAudienceDependenciesFromRoleAudienceEntries(message, detail);
+    return encryptionAudienceDependenciesFromRoleAudienceEntries(message);
   case DwnErrorCode.EncryptionProtocolValidateAudienceKeyRoleRecordMissing:
     return toRefList(roleDependencyFromEncryptionAudienceRecipient(message));
   case DwnErrorCode.RecordsWriteMissingDataInPrevious:
@@ -416,10 +416,7 @@ function roleDependencyFromMessage(message: GenericMessage, context: Replication
   } else if (typeof filter?.contextId === 'string') {
     contextId = filter.contextId;
   }
-  const roleSegments = roleProtocolPath.split('/').length - 1;
-  const contextPrefix = roleSegments > 0 && contextId !== undefined
-    ? contextId.split('/').slice(0, roleSegments).join('/')
-    : undefined;
+  const contextPrefix = getRoleContextPrefix(roleProtocolPath, contextId);
 
   return {
     type         : 'Role',
@@ -442,7 +439,6 @@ function encryptionProtocolDependencyFromMessage(
 
 function encryptionAudienceDependenciesFromRoleAudienceEntries(
   message: GenericMessage,
-  detail: string,
 ): Extract<DependencyRef, { type: 'EncryptionControl' | 'EncryptionProtocol' }>[] {
   const descriptor = message.descriptor as Record<string, unknown>;
   const messageContextId = (message as { contextId?: unknown }).contextId;
@@ -456,13 +452,11 @@ function encryptionAudienceDependenciesFromRoleAudienceEntries(
     return [];
   }
 
-  const missingRole = /role '([^']+)'/.exec(detail)?.[1];
   const refs: Extract<DependencyRef, { type: 'EncryptionControl' | 'EncryptionProtocol' }>[] = [];
   const sourceEntries = keyEncryption.filter((candidate): boolean =>
     candidate.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
     typeof candidate.protocol === 'string' &&
     typeof candidate.rolePath === 'string' &&
-    (missingRole === undefined || candidate.rolePath === missingRole) &&
     typeof candidate.keyId === 'string'
   );
   for (const sourceEntry of sourceEntries) {
@@ -489,7 +483,6 @@ function encryptionAudienceDependenciesFromRoleAudienceEntries(
     candidate.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
     typeof candidate.protocol === 'string' &&
     typeof candidate.role === 'string' &&
-    (missingRole === undefined || candidate.role === missingRole) &&
     typeof candidate.epoch === 'number' &&
     typeof candidate.keyId === 'string'
   );
@@ -556,7 +549,7 @@ function roleDependencyFromEncryptionAudienceWriter(
     roleProtocolPath = parsed.protocolPath;
   }
 
-  const contextPrefix = roleContextPrefix(roleProtocolPath, tags.contextId);
+  const contextPrefix = getRoleContextPrefix(roleProtocolPath, tags.contextId);
   return {
     type         : 'Role',
     protocol     : roleProtocol,
@@ -607,15 +600,6 @@ function isEncryptionProtocolMessage(message: GenericMessage): boolean {
   const descriptor = message.descriptor as Record<string, unknown>;
   return descriptor.interface === DwnInterfaceName.Records &&
     descriptor.protocol === EncryptionProtocol.uri;
-}
-
-function roleContextPrefix(rolePath: string, contextId: string): string | undefined {
-  const roleSegments = rolePath.split('/').length - 1;
-  if (roleSegments === 0 || contextId === '') {
-    return undefined;
-  }
-
-  return contextId.split('/').slice(0, roleSegments).join('/');
 }
 
 function isRecordObject(value: unknown): value is Record<string, unknown> {

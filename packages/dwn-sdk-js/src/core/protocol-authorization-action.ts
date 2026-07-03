@@ -10,7 +10,7 @@ import type { ProtocolActionRule, ProtocolDefinition, ProtocolRuleSet } from '..
 import { DwnMethodName } from '../enums/dwn-interface-method.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
-import { getRuleSetAtPath, isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
+import { getRoleContextPrefix, getRuleSetAtPath, isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
 import { ProtocolAction, ProtocolActor } from '../types/protocols-types.js';
 
 /**
@@ -80,22 +80,12 @@ export async function verifyInvokedRole(
     }
   }
 
-  const ancestorSegmentCountOfRolePath = roleProtocolPath.split('/').length - 1;
-  if (contextId === undefined && ancestorSegmentCountOfRolePath > 0) {
+  const contextIdPrefix = getRoleContextPrefix(roleProtocolPath, contextId);
+  if (contextIdPrefix === undefined && roleProtocolPath.includes('/')) {
     throw new DwnError(
       DwnErrorCode.ProtocolAuthorizationMissingContextId,
       'Could not verify role because contextId is missing.'
     );
-  }
-
-  // Compute `contextId` prefix for fetching the invoked role record if the role path is not at the root level.
-  // e.g. if invoked role path is `Thread/Participant`, and the `contextId` of the message is `threadX/messageY/attachmentZ`,
-  // then we need to use the prefix `threadX` for the `contextId`
-  // because the `contextId` of the Participant record would be in the form of be `threadX/participantA`
-  let contextIdPrefix: string | undefined;
-  if (ancestorSegmentCountOfRolePath > 0) {
-    const contextIdSegments = contextId!.split('/'); // NOTE: currently contextId segment count is never shorter than the role path count.
-    contextIdPrefix = contextIdSegments.slice(0, ancestorSegmentCountOfRolePath).join('/');
   }
 
   // fetch the invoked role record

@@ -20,7 +20,7 @@ import { validateJsonSchema } from '../schema-validator.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import { ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH, isEncryptionControlPath } from './constants.js';
-import { getRuleSetAtPath, isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
+import { getRoleContextPrefix, getRuleSetAtPath, isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
 import { ProtocolAction, ProtocolActor } from '../types/protocols-types.js';
 
 type RoleAudienceDefinition = {
@@ -867,13 +867,9 @@ export class EncryptionControl {
     contextId: string,
     validationStateReader: ValidationStateReader,
   ): Promise<boolean> {
-    const ancestorDepth = rolePath.split('/').length - 1;
-    let contextIdPrefix: string | undefined;
-    if (ancestorDepth > 0) {
-      contextIdPrefix = contextId.split('/').slice(0, ancestorDepth).join('/');
-      if (contextIdPrefix === '') {
-        return false;
-      }
+    const contextIdPrefix = getRoleContextPrefix(rolePath, contextId);
+    if (contextIdPrefix === undefined && rolePath.includes('/')) {
+      return false;
     }
 
     return validationStateReader.hasMatchingRoleRecord({

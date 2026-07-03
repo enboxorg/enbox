@@ -85,7 +85,14 @@ export { PermissionScopeMatcher } from './utils/permission-scope.js';
 export type { ProtocolScope } from './utils/permission-scope.js';
 export { PrivateKeySigner } from './utils/private-key-signer.js';
 export type { PrivateKeySignerOptions } from './utils/private-key-signer.js';
-export { Protocols, parseCrossProtocolRef, isCrossProtocolRef, getRoleAudienceContextId, getRuleSetAtPath } from './utils/protocols.js';
+export {
+  Protocols,
+  getRoleAudienceContextId,
+  getRoleContextPrefix,
+  getRuleSetAtPath,
+  isCrossProtocolRef,
+  parseCrossProtocolRef,
+} from './utils/protocols.js';
 export type { CrossProtocolRef } from './utils/protocols.js';
 export { ProtocolsConfigure } from './interfaces/protocols-configure.js';
 export type { ProtocolsConfigureOptions } from './interfaces/protocols-configure.js';

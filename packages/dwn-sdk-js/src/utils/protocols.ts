@@ -76,6 +76,15 @@ export function getRoleAudienceContextId(rolePath: string, contextId?: string): 
 }
 
 /**
+ * Computes the context prefix used when querying for role records. Root-level
+ * role records are queried without a context prefix.
+ */
+export function getRoleContextPrefix(rolePath: string, contextId?: string): string | undefined {
+  const roleAudienceContextId = getRoleAudienceContextId(rolePath, contextId);
+  return roleAudienceContextId === '' ? undefined : roleAudienceContextId;
+}
+
+/**
  * Gets the rule set at a given protocol path within a protocol definition's structure tree.
  * Returns `undefined` if the path does not exist.
  */
