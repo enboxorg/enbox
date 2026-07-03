@@ -180,7 +180,7 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
   public purgeStale(): boolean {
     let purged = false;
 
-    for (const [key, entry] of [...this._data.entries()]) {
+    for (const [key, entry] of this._data.entries()) {
       if (this._isExpired(entry)) {
         this._delete(key, 'stale');
         purged = true;
@@ -265,9 +265,10 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
   }
 
   /**
-   * Provided for compatibility with the previous TTL cache package.
+   * Provided for compatibility with the previous TTL cache package. No background timer exists, so this trims expired entries.
    */
   public cancelTimer(): void {
+    this.purgeStale();
   }
 
   public [Symbol.iterator](): Iterator<[K, V]> {

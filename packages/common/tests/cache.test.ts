@@ -134,6 +134,17 @@ describe('TtlCache', () => {
     expect(cache.getRemainingTTL('key')).toBe(Infinity);
   });
 
+  it('should keep cancelTimer compatibility and purge stale entries', async () => {
+    const cache = new TtlCache({ ttl: 10 });
+    cache.set('key', 'value');
+
+    await sleep(25);
+
+    cache.cancelTimer();
+
+    expect(cache.size).toBe(0);
+  });
+
   it('should call dispose with the reason entries are removed', async () => {
     const disposed: string[] = [];
     const cache = new TtlCache<string, string>({
