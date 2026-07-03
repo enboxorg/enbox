@@ -1,6 +1,4 @@
-
-import ms from 'ms';
-import { TtlCache } from '@enbox/common';
+import { parseDurationInMilliseconds, TtlCache } from '@enbox/common';
 
 import type { DwnServerInfoCache, ServerInfo } from './server-info-types.js';
 
@@ -23,7 +21,7 @@ export class DwnServerInfoCacheMemory implements DwnServerInfoCache {
   private readonly cache: TtlCache<string, ServerInfo>;
 
   constructor({ ttl = '15m' }: DwnServerInfoCacheMemoryParams= {}) {
-    this.cache = new TtlCache({ ttl: ms(ttl) });
+    this.cache = new TtlCache({ ttl: parseDurationInMilliseconds(ttl) });
   }
 
   /**

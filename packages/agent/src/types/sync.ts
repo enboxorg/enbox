@@ -354,7 +354,7 @@ export type StartSyncParams = {
 
   /**
    * The interval at which the sync operation should be performed.
-   * Accepts any value recognised by `ms()`, e.g. `'30s'`, `'2m'`, `'10m'`.
+   * Accepts duration strings such as `'30s'`, `'2m'`, `'10m'`, or `'1 hour'`.
    *
    * In `'live'` mode this controls the frequency of the durable feed settle check.
    * In `'poll'` mode this controls the polling frequency.
