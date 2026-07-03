@@ -42,6 +42,13 @@ export type ReplicationApplyResultContext = {
    * single fetch pass instead of one ancestry level per retry.
    */
   missingAncestorRecordIds?: string[];
+
+  /**
+   * Role path for a missing role-audience encryption dependency, recomputed from the same
+   * validation predicates that produced the failure. When absent, dependency extraction
+   * conservatively emits every roleAudience entry carried by the message.
+   */
+  missingRoleAudienceRolePath?: string;
 };
 
 type AudienceDependencyTags = {
@@ -213,7 +220,7 @@ function dependencyRefsFromStatus(
   case DwnErrorCode.EncryptionProtocolValidateAudienceEpochMissing:
     return toRefList(encryptionProtocolDependencyFromMessage(message, EncryptionProtocol.audienceEpochPath));
   case DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceEpochMissing:
-    return encryptionAudienceDependenciesFromRoleAudienceEntries(message, detail);
+    return encryptionAudienceDependenciesFromRoleAudienceEntries(message, context.missingRoleAudienceRolePath);
   case DwnErrorCode.EncryptionProtocolValidateAudienceKeyRoleRecordMissing:
     return toRefList(roleDependencyFromEncryptionAudienceRecipient(message));
   case DwnErrorCode.RecordsWriteMissingDataInPrevious:
@@ -442,7 +449,7 @@ function encryptionProtocolDependencyFromMessage(
 
 function encryptionAudienceDependenciesFromRoleAudienceEntries(
   message: GenericMessage,
-  detail: string,
+  missingRolePath: string | undefined,
 ): Extract<DependencyRef, { type: 'EncryptionControl' | 'EncryptionProtocol' }>[] {
   const descriptor = message.descriptor as Record<string, unknown>;
   const messageContextId = (message as { contextId?: unknown }).contextId;
@@ -456,13 +463,12 @@ function encryptionAudienceDependenciesFromRoleAudienceEntries(
     return [];
   }
 
-  const missingRole = /role '([^']+)'/.exec(detail)?.[1];
   const refs: Extract<DependencyRef, { type: 'EncryptionControl' | 'EncryptionProtocol' }>[] = [];
   const sourceEntries = keyEncryption.filter((candidate): boolean =>
     candidate.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
     typeof candidate.protocol === 'string' &&
     typeof candidate.rolePath === 'string' &&
-    (missingRole === undefined || candidate.rolePath === missingRole) &&
+    (missingRolePath === undefined || candidate.rolePath === missingRolePath) &&
     typeof candidate.keyId === 'string'
   );
   for (const sourceEntry of sourceEntries) {
@@ -489,7 +495,7 @@ function encryptionAudienceDependenciesFromRoleAudienceEntries(
     candidate.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
     typeof candidate.protocol === 'string' &&
     typeof candidate.role === 'string' &&
-    (missingRole === undefined || candidate.role === missingRole) &&
+    (missingRolePath === undefined || candidate.role === missingRolePath) &&
     typeof candidate.epoch === 'number' &&
     typeof candidate.keyId === 'string'
   );

@@ -470,6 +470,87 @@ describe('replicationApplyResultFromReply', () => {
     });
   });
 
+  it('filters roleAudience audience dependencies with structured missing-role context', async () => {
+    const protocol = 'https://example.com/encrypted-chat';
+    const missingRolePath = 'thread/member';
+    const otherRolePath = 'thread/admin';
+    const { message } = await TestDataGenerator.generateRecordsWrite({
+      protocol,
+      protocolPath: 'thread/chat',
+    });
+    message.contextId = 'thread-record/chat-record';
+    message.encryption = {
+      algorithm            : 'A256CTR',
+      initializationVector : 'iv',
+      keyEncryption        : [
+        {
+          algorithm          : 'X25519-HKDF-SHA256+A256KW',
+          derivationScheme   : ROLE_AUDIENCE_DERIVATION_SCHEME,
+          encryptedKey       : 'missing-source-key',
+          ephemeralPublicKey : { kty: 'OKP', crv: 'X25519', x: 'x' },
+          keyId              : 'missing-source',
+          protocol,
+          rolePath           : missingRolePath,
+        },
+        {
+          algorithm          : 'X25519-HKDF-SHA256+A256KW',
+          derivationScheme   : ROLE_AUDIENCE_DERIVATION_SCHEME,
+          encryptedKey       : 'other-source-key',
+          ephemeralPublicKey : { kty: 'OKP', crv: 'X25519', x: 'x' },
+          keyId              : 'other-source',
+          protocol,
+          rolePath           : otherRolePath,
+        },
+        {
+          algorithm          : 'X25519-HKDF-SHA256+A256KW',
+          derivationScheme   : ROLE_AUDIENCE_DERIVATION_SCHEME,
+          encryptedKey       : 'missing-legacy-key',
+          ephemeralPublicKey : { kty: 'OKP', crv: 'X25519', x: 'x' },
+          epoch              : 7,
+          keyId              : 'missing-legacy',
+          protocol,
+          role               : missingRolePath,
+        },
+      ],
+    } as any;
+
+    const misleadingDetail = `${DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceEpochMissing}: ` +
+      `encrypted record references a missing audience for role '${otherRolePath}'`;
+
+    expect(replicationApplyResultFromReply(message, {
+      status: {
+        code   : 400,
+        detail : misleadingDetail,
+      },
+    }, { missingRoleAudienceRolePath: missingRolePath })).toEqual({
+      kind    : 'Incomplete',
+      missing : [
+        {
+          type         : 'EncryptionControl',
+          protocol,
+          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          tags         : {
+            protocol,
+            contextId : 'thread-record',
+            rolePath  : missingRolePath,
+            keyId     : 'missing-source',
+          },
+        },
+        {
+          type         : 'EncryptionProtocol',
+          protocolPath : EncryptionProtocol.audienceEpochPath,
+          tags         : {
+            protocol,
+            contextId : 'thread-record',
+            role      : missingRolePath,
+            epoch     : 7,
+            keyId     : 'missing-legacy',
+          },
+        },
+      ],
+    });
+  });
+
   it('classifies resolver and storage failures as deferred', async () => {
     const { message } = await TestDataGenerator.generateRecordsWrite();
 
