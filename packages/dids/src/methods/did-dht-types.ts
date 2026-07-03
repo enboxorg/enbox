@@ -27,7 +27,7 @@ export interface Bep44Message {
 
   /**
    * The signature of the message, ensuring the authenticity and integrity of the data. It's
-   * computed over the bencoded sequence number and value.
+   * computed over the BEP44 encoded sequence number and value.
    */
   sig: Uint8Array;
 

@@ -3,11 +3,31 @@ import type { Signer } from '@enbox/crypto';
 
 import type { Bep44Message } from './did-dht-types.js';
 
-import bencode from 'bencode';
 import { Ed25519 } from '@enbox/crypto';
 import { Convert, fetchPublicUrl, PublicUrlValidationError } from '@enbox/common';
 import { DidError, DidErrorCode } from '../did-error.js';
 import { decode as dnsPacketDecode, encode as dnsPacketEncode } from '@dnsquery/dns-packet';
+
+const textEncoder = new TextEncoder();
+
+/**
+ * Encodes the BEP44 signing payload for a mutable item.
+ *
+ * BEP44 signs the dictionary body for `{ seq, v }`, without the surrounding `d` and `e` dictionary
+ * delimiters. For DID DHT records that body is always:
+ * `3:seqi<sequenceNumber>e1:v<valueLength>:<valueBytes>`.
+ */
+export function encodeBep44SigningPayload({ sequenceNumber, value }: {
+  sequenceNumber: number;
+  value: Uint8Array;
+}): Uint8Array {
+  const prefix = textEncoder.encode(`3:seqi${sequenceNumber}e1:v${value.length}:`);
+  const encodedPayload = new Uint8Array(prefix.length + value.length);
+  encodedPayload.set(prefix);
+  encodedPayload.set(value, prefix.length);
+
+  return encodedPayload;
+}
 
 /**
  * Constructs a Pkarr URL from public key bytes and a gateway URI.
@@ -181,15 +201,15 @@ export async function createBep44PutMessage({ dnsPacket, publicKeyBytes, signer 
   // Encode the DNS packet into a byte array containing a UDP payload.
   const encodedDnsPacket = dnsPacketEncode(dnsPacket);
 
-  // Encode the sequence and DNS byte array to bencode format.
-  const bencodedData = bencode.encode({ seq: sequenceNumber, v: encodedDnsPacket }).subarray(1, -1);
+  // Encode the sequence and DNS byte array to the BEP44 signing payload.
+  const signingPayload = encodeBep44SigningPayload({ sequenceNumber, value: encodedDnsPacket });
 
-  if (bencodedData.length > 1000) {
-    throw new DidError(DidErrorCode.InvalidDidDocumentLength, `DNS packet exceeds the 1000 byte maximum size: ${bencodedData.length} bytes`);
+  if (signingPayload.length > 1000) {
+    throw new DidError(DidErrorCode.InvalidDidDocumentLength, `DNS packet exceeds the 1000 byte maximum size: ${signingPayload.length} bytes`);
   }
 
-  // Sign the BEP44 message. Wrap in Uint8Array since bencode returns Buffer.
-  const signature = await signer.sign({ data: new Uint8Array(bencodedData) });
+  // Sign the BEP44 message.
+  const signature = await signer.sign({ data: signingPayload });
 
   return { k: publicKeyBytes, seq: sequenceNumber, sig: signature, v: encodedDnsPacket };
 }
@@ -207,14 +227,14 @@ export async function parseBep44GetMessage({ bep44Message }: {
   // Convert the public key byte array to JWK format.
   const publicKey = await Ed25519.bytesToPublicKey({ publicKeyBytes: bep44Message.k });
 
-  // Encode the sequence and DNS byte array to bencode format.
-  const bencodedData = bencode.encode({ seq: bep44Message.seq, v: bep44Message.v }).subarray(1, -1);
+  // Encode the sequence and DNS byte array to the BEP44 signing payload.
+  const signingPayload = encodeBep44SigningPayload({ sequenceNumber: bep44Message.seq, value: bep44Message.v });
 
   // Verify the signature of the BEP44 message.
   const isValid = await Ed25519.verify({
     key       : publicKey,
     signature : bep44Message.sig,
-    data      : new Uint8Array(bencodedData)
+    data      : signingPayload
   });
 
   if (!isValid) {
