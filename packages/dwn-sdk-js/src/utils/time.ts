@@ -68,7 +68,7 @@ export class Time {
    * @param offset Negative number means offset into the past.
    */
   public static createOffsetTimestamp(offset: { seconds: number }, timestamp?: string): string {
-    const parsedTimestamp = timestamp !== undefined ? Time.parseTimestamp(timestamp) : { epochMilliseconds: Date.now(), microsecond: 0 };
+    const parsedTimestamp = timestamp === undefined ? { epochMilliseconds: Date.now(), microsecond: 0 } : Time.parseTimestamp(timestamp);
     if (parsedTimestamp === undefined) {
       throw new DwnError(DwnErrorCode.TimestampInvalid, `Invalid timestamp: ${timestamp}`);
     }
