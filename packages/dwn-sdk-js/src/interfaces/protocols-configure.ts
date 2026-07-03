@@ -1,3 +1,4 @@
+import type { CrossProtocolRef } from '../utils/protocols.js';
 import type { DataEncodedRecordsWriteMessage } from '../types/records-types.js';
 import type { MessageSigner } from '../types/signer.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
@@ -32,6 +33,7 @@ export type ProtocolsConfigureOptions = {
 
 export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessage> {
   public static async parse(message: ProtocolsConfigureMessage): Promise<ProtocolsConfigure> {
+    ProtocolsConfigure.validateReservedEncryptionControlPath(message.descriptor?.definition);
     Message.validateJsonSchema(message);
     ProtocolsConfigure.validateProtocolDefinition(message.descriptor.definition);
     await Message.validateSignatureStructure(message.authorization.signature, message.descriptor);
@@ -52,6 +54,8 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
       definition       : ProtocolsConfigure.normalizeDefinition(options.definition),
       ...permissionGrantInvocation,
     };
+
+    ProtocolsConfigure.validateReservedEncryptionControlPath(descriptor.definition);
 
     const authorization = await Message.createAuthorization({
       descriptor,
@@ -107,6 +111,50 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
 
     // validate `structure`
     ProtocolsConfigure.validateStructure(definition);
+  }
+
+  /**
+   * Validates the reserved encryption-control namespace before JSON Schema validation.
+   */
+  private static validateReservedEncryptionControlPath(definition: unknown): void {
+    if (!ProtocolsConfigure.isRecord(definition)) {
+      return;
+    }
+
+    if (ProtocolsConfigure.isRecord(definition.types) && Object.hasOwn(definition.types, '$encryption')) {
+      throw new DwnError(
+        DwnErrorCode.ProtocolsConfigureReservedEncryptionControlPath,
+        `protocol type '$encryption' is reserved for DWN encryption control records.`
+      );
+    }
+
+    ProtocolsConfigure.validateReservedEncryptionControlStructure(definition.structure, '');
+  }
+
+  private static validateReservedEncryptionControlStructure(ruleSet: unknown, protocolPath: string): void {
+    if (!ProtocolsConfigure.isRecord(ruleSet)) {
+      return;
+    }
+
+    for (const recordType in ruleSet) {
+      const childPath = protocolPath === '' ? recordType : `${protocolPath}/${recordType}`;
+      if (recordType === '$encryption') {
+        throw new DwnError(
+          DwnErrorCode.ProtocolsConfigureReservedEncryptionControlPath,
+          `protocol structure path '${childPath}' is reserved for DWN encryption control records.`
+        );
+      }
+
+      if (recordType.startsWith('$')) {
+        continue;
+      }
+
+      ProtocolsConfigure.validateReservedEncryptionControlStructure(ruleSet[recordType], childPath);
+    }
+  }
+
+  private static isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
   }
 
   /**
@@ -300,7 +348,8 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
       if (actionRule.role !== undefined) {
         if (isCrossProtocolRef(actionRule.role)) {
           // Cross-protocol role reference: validate alias exists in `uses`
-          ProtocolsConfigure.validateCrossProtocolAlias(actionRule.role, uses, ruleSetProtocolPath, 'role');
+          const parsedRole = ProtocolsConfigure.validateCrossProtocolAlias(actionRule.role, uses, ruleSetProtocolPath, 'role');
+          ProtocolsConfigure.validateRoleParentContextDepth(parsedRole.protocolPath, ruleSetProtocolPath, actionRule);
         } else {
           // Local role: make sure the role contains a valid protocol path to a role record
           if (!roles.includes(actionRule.role)) {
@@ -309,6 +358,8 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
               `Role in action ${JSON.stringify(actionRule)} for rule set ${ruleSetProtocolPath} does not exist.`
             );
           }
+
+          ProtocolsConfigure.validateRoleParentContextDepth(actionRule.role, ruleSetProtocolPath, actionRule);
         }
       }
 
@@ -559,6 +610,23 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
   }
 
   /**
+   * Validates that a role rule only references a role whose parent context can be found
+   * from records at the rule set's protocol path.
+   */
+  private static validateRoleParentContextDepth(rolePath: string, ruleSetProtocolPath: string, actionRule: ProtocolActionRule): void {
+    const roleParentDepth = rolePath.split('/').length - 1;
+    const ruleSetContextDepth = ruleSetProtocolPath === '' ? 0 : ruleSetProtocolPath.split('/').length;
+
+    if (roleParentDepth > ruleSetContextDepth) {
+      throw new DwnError(
+        DwnErrorCode.ProtocolsConfigureRoleParentContextDepthExceeded,
+        `Role '${rolePath}' in action ${JSON.stringify(actionRule)} at protocol path '${ruleSetProtocolPath}' ` +
+        `requires context depth ${roleParentDepth}, but the rule path context depth is ${ruleSetContextDepth}.`
+      );
+    }
+  }
+
+  /**
    * Validates that a cross-protocol reference (in `alias:path` format) has a valid alias
    * that exists in the `uses` map.
    * @param ref - The cross-protocol reference string (e.g., "threads:thread/participant")
@@ -568,7 +636,7 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
    */
   private static validateCrossProtocolAlias(
     ref: string, uses: ProtocolUses | undefined, ruleSetProtocolPath: string, fieldName: string
-  ): void {
+  ): CrossProtocolRef {
     const parsed = parseCrossProtocolRef(ref);
 
     if (parsed === undefined) {
@@ -595,6 +663,8 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
         `does not exist in the 'uses' map.`
       );
     }
+
+    return parsed;
   }
 
   private static normalizeDefinition(definition: ProtocolDefinition): ProtocolDefinition {

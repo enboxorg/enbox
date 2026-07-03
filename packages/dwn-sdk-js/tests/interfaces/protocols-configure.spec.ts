@@ -48,6 +48,37 @@ describe('ProtocolsConfigure', () => {
       const parsePromise = ProtocolsConfigure.parse(message);
       await expect(parsePromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureRecordNestingDepthExceeded);
     });
+
+    it('should throw the reserved encryption control error before JSON Schema validation', async () => {
+      const definition = {
+        published : true,
+        protocol  : 'http://example.com',
+        types     : {
+          $encryption : {},
+          message     : {},
+        },
+        structure: {
+          message: {},
+        },
+      };
+
+      const descriptor: ProtocolsConfigureDescriptor = {
+        interface        : DwnInterfaceName.Protocols,
+        method           : DwnMethodName.Configure,
+        messageTimestamp : Time.getCurrentTimestamp(),
+        definition
+      };
+
+      const alice = await TestDataGenerator.generatePersona();
+      const authorization = await Message.createAuthorization({
+        descriptor,
+        signer: Jws.createSigner(alice)
+      });
+      const message = { descriptor, authorization };
+
+      const parsePromise = ProtocolsConfigure.parse(message);
+      await expect(parsePromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureReservedEncryptionControlPath);
+    });
   });
 
   describe('create()', () => {
@@ -145,6 +176,78 @@ describe('ProtocolsConfigure', () => {
     });
 
     describe('protocol definition validations', () => {
+      it('should reject protocol definitions with a reserved `$encryption` type', async () => {
+        const definition = {
+          published : true,
+          protocol  : 'http://example.com',
+          types     : {
+            $encryption : {},
+            message     : {},
+          },
+          structure: {
+            message: { }
+          }
+        };
+
+        const alice = await TestDataGenerator.generatePersona();
+
+        const createPromise = ProtocolsConfigure.create({
+          signer: Jws.createSigner(alice),
+          definition
+        });
+
+        await expect(createPromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureReservedEncryptionControlPath);
+      });
+
+      it('should reject protocol definitions with a reserved root `$encryption` structure path', async () => {
+        const definition = {
+          published : true,
+          protocol  : 'http://example.com',
+          types     : {
+            message: {},
+          },
+          structure: {
+            $encryption : { },
+            message     : { }
+          }
+        };
+
+        const alice = await TestDataGenerator.generatePersona();
+
+        const createPromise = ProtocolsConfigure.create({
+          signer: Jws.createSigner(alice),
+          definition
+        });
+
+        await expect(createPromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureReservedEncryptionControlPath);
+      });
+
+      it('should reject protocol definitions with a reserved nested `$encryption` structure path', async () => {
+        const definition = {
+          published : true,
+          protocol  : 'http://example.com',
+          types     : {
+            thread  : {},
+            message : {},
+          },
+          structure: {
+            thread: {
+              $encryption : { },
+              message     : { },
+            },
+          }
+        };
+
+        const alice = await TestDataGenerator.generatePersona();
+
+        const createPromise = ProtocolsConfigure.create({
+          signer: Jws.createSigner(alice),
+          definition
+        });
+
+        await expect(createPromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureReservedEncryptionControlPath);
+      });
+
       it('should not allow a record in protocol structure to reference a non-existent record type', async () => {
         const definition = {
           published : true,
@@ -269,6 +372,72 @@ describe('ProtocolsConfigure', () => {
 
         await expect(createProtocolsConfigurePromise)
           .rejects.toThrow(DwnErrorCode.ProtocolsConfigureRoleDoesNotExistAtGivenPath);
+      });
+
+      it('should reject role rules whose role parent is deeper than the rule path context', async () => {
+        const definition = {
+          published : true,
+          protocol  : 'http://example.com',
+          types     : {
+            thread      : {},
+            message     : {},
+            participant : {},
+          },
+          structure: {
+            thread: {
+              message: {
+                participant: {
+                  $role: true,
+                },
+              },
+              $actions: [{
+                role : 'thread/message/participant',
+                can  : ['read']
+              }]
+            }
+          }
+        };
+
+        const alice = await TestDataGenerator.generatePersona();
+
+        const createProtocolsConfigurePromise = ProtocolsConfigure.create({
+          signer: Jws.createSigner(alice),
+          definition
+        });
+
+        await expect(createProtocolsConfigurePromise)
+          .rejects.toThrow(DwnErrorCode.ProtocolsConfigureRoleParentContextDepthExceeded);
+      });
+
+      it('should reject cross-protocol role rules whose role parent is deeper than the rule path context', async () => {
+        const definition = {
+          published : true,
+          protocol  : 'http://example.com',
+          uses      : {
+            roles: 'http://example.com/roles',
+          },
+          types: {
+            message: {},
+          },
+          structure: {
+            message: {
+              $actions: [{
+                role : 'roles:thread/message/participant',
+                can  : ['read']
+              }]
+            }
+          }
+        };
+
+        const alice = await TestDataGenerator.generatePersona();
+
+        const createProtocolsConfigurePromise = ProtocolsConfigure.create({
+          signer: Jws.createSigner(alice),
+          definition
+        });
+
+        await expect(createProtocolsConfigurePromise)
+          .rejects.toThrow(DwnErrorCode.ProtocolsConfigureRoleParentContextDepthExceeded);
       });
 
       it('rejects protocol definitions with actions that contain `of` and  `who` is `anyone`', async () => {
