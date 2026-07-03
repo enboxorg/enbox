@@ -4,6 +4,12 @@ type TtlCacheEntry<V> = {
   value: V;
 };
 
+type TtlCacheTimer = ReturnType<typeof setTimeout>;
+
+function now(): number {
+  return performance.now();
+}
+
 function isPositiveIntegerOrInfinity(value: number): boolean {
   return value === Infinity || (Number.isInteger(value) && value > 0 && Number.isFinite(value));
 }
@@ -20,6 +26,13 @@ function assertTtl(ttl: number | undefined): asserts ttl is number {
   }
 }
 
+function unrefTimer(timer: TtlCacheTimer): void {
+  if (typeof timer === 'object' && timer !== null && 'unref' in timer) {
+    const { unref } = timer as { unref?: () => void };
+    unref?.();
+  }
+}
+
 const entryCompare = <K, V>([, left]: [K, TtlCacheEntry<V>], [, right]: [K, TtlCacheEntry<V>]): number => {
   if (left.expiresAt !== right.expiresAt) {
     return left.expiresAt - right.expiresAt;
@@ -30,9 +43,11 @@ const entryCompare = <K, V>([, left]: [K, TtlCacheEntry<V>], [, right]: [K, TtlC
 
 /**
  * Small in-memory TTL cache tailored to the cache API used by Enbox.
+ *
+ * Expired entries are purged by an unref'd background timer and are also checked on access. `cancelTimer()` only stops
+ * the background timer; `get()` and `has()` still remove stale entries.
  */
 export class TtlCache<K, V> implements Iterable<[K, V]> {
-  public checkAgeOnGet: boolean;
   public max: number;
   public noDisposeOnSet: boolean;
   public noUpdateTTL: boolean;
@@ -42,10 +57,11 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
   private readonly _data = new Map<K, TtlCacheEntry<V>>();
   private readonly _dispose?: TtlCache.Disposer<K, V>;
   private _sequence = 0;
+  private _timer?: TtlCacheTimer;
+  private _timerExpiresAt = Infinity;
 
   public constructor(options: TtlCache.Options<K, V> = {}) {
     const {
-      checkAgeOnGet = false,
       dispose,
       max = Infinity,
       noDisposeOnSet = false,
@@ -64,7 +80,6 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
       throw new TypeError('dispose must be function if set');
     }
 
-    this.checkAgeOnGet = checkAgeOnGet;
     this.max = max;
     this.noDisposeOnSet = noDisposeOnSet;
     this.noUpdateTTL = noUpdateTTL;
@@ -74,10 +89,9 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
   }
 
   /**
-   * Total live entries currently stored in the cache.
+   * Total entries currently held in the cache.
    */
   public get size(): number {
-    this.purgeStale();
     return this._data.size;
   }
 
@@ -99,12 +113,15 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
     const current = this._data.get(key);
     const expiresAt = current !== undefined && noUpdateTTL ? current.expiresAt : this._expirationFromTtl(ttl);
     const sequence = current !== undefined && noUpdateTTL ? current.sequence : ++this._sequence;
+    const shouldDispose = current !== undefined && current.value !== value && !noDisposeOnSet;
 
-    if (current !== undefined && current.value !== value && !noDisposeOnSet) {
+    this._data.set(key, { expiresAt, sequence, value });
+    this._scheduleTimer(expiresAt);
+
+    if (shouldDispose) {
       this._dispose?.(current.value, key, 'set');
     }
 
-    this._data.set(key, { expiresAt, sequence, value });
     this._purgeToCapacity();
 
     return this;
@@ -132,6 +149,7 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
       assertTtl(ttl);
       entry.expiresAt = this._expirationFromTtl(ttl);
       entry.sequence = ++this._sequence;
+      this._scheduleTimer(entry.expiresAt);
     }
 
     return entry.value as unknown as T;
@@ -168,6 +186,7 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
   public clear(): void {
     const entries = [...this._data.entries()];
     this._data.clear();
+    this.cancelTimer();
 
     for (const [key, entry] of entries) {
       this._dispose?.(entry.value, key, 'delete');
@@ -178,16 +197,7 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
    * Remove expired entries.
    */
   public purgeStale(): boolean {
-    let purged = false;
-
-    for (const [key, entry] of this._data.entries()) {
-      if (this._isExpired(entry)) {
-        this._delete(key, 'stale');
-        purged = true;
-      }
-    }
-
-    return purged;
+    return this._purgeStale(this._timer !== undefined);
   }
 
   /**
@@ -204,7 +214,7 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
       return Infinity;
     }
 
-    const remainingTtl = Math.ceil(entry.expiresAt - Date.now());
+    const remainingTtl = Math.ceil(entry.expiresAt - now());
 
     if (remainingTtl <= 0) {
       this._delete(key, 'stale');
@@ -233,6 +243,7 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
 
     entry.expiresAt = this._expirationFromTtl(ttl);
     entry.sequence = ++this._sequence;
+    this._scheduleTimer(entry.expiresAt);
   }
 
   /**
@@ -265,10 +276,14 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
   }
 
   /**
-   * Provided for compatibility with the previous TTL cache package. No background timer exists, so this trims expired entries.
+   * Cancel the background purge timer. Lazy expiry checks still run on access.
    */
   public cancelTimer(): void {
-    this.purgeStale();
+    if (this._timer !== undefined) {
+      clearTimeout(this._timer);
+      this._timer = undefined;
+      this._timerExpiresAt = Infinity;
+    }
   }
 
   public [Symbol.iterator](): Iterator<[K, V]> {
@@ -276,20 +291,50 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
   }
 
   private _expirationFromTtl(ttl: number): number {
-    return ttl === Infinity ? Infinity : Date.now() + ttl;
+    return ttl === Infinity ? Infinity : now() + ttl;
   }
 
   private _isExpired(entry: TtlCacheEntry<V>): boolean {
-    return entry.expiresAt !== Infinity && Date.now() >= entry.expiresAt;
+    return entry.expiresAt !== Infinity && now() >= entry.expiresAt;
   }
 
   private _purgeToCapacity(): void {
+    if (this.max === Infinity || this._data.size <= this.max) {
+      return;
+    }
+
     this.purgeStale();
 
-    while (this._data.size > this.max) {
-      const [key] = this._sortedEntries()[0];
+    if (this._data.size <= this.max) {
+      return;
+    }
+
+    const entries = this._sortedEntries();
+
+    for (const [key] of entries) {
+      if (this._data.size <= this.max) {
+        return;
+      }
+
       this._delete(key, 'evict');
     }
+  }
+
+  private _purgeStale(scheduleNextTimer: boolean): boolean {
+    let purged = false;
+
+    for (const [key, entry] of this._data.entries()) {
+      if (this._isExpired(entry)) {
+        this._delete(key, 'stale');
+        purged = true;
+      }
+    }
+
+    if (purged && scheduleNextTimer) {
+      this._rescheduleTimer();
+    }
+
+    return purged;
   }
 
   private _sortedEntries(): [K, TtlCacheEntry<V>][] {
@@ -304,9 +349,55 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
     }
 
     this._data.delete(key);
+
+    if (this._data.size === 0) {
+      this.cancelTimer();
+    }
+
     this._dispose?.(entry.value, key, reason);
 
     return true;
+  }
+
+  private _scheduleTimer(expiresAt: number): void {
+    if (expiresAt === Infinity || expiresAt >= this._timerExpiresAt) {
+      return;
+    }
+
+    this.cancelTimer();
+
+    const delay = Math.max(0, Math.ceil(expiresAt - now()));
+    const timer = setTimeout((): void => {
+      this._timer = undefined;
+      this._timerExpiresAt = Infinity;
+      const purged = this._purgeStale(true);
+
+      if (!purged) {
+        this._scheduleNextTimer();
+      }
+    }, delay);
+
+    unrefTimer(timer);
+
+    this._timer = timer;
+    this._timerExpiresAt = expiresAt;
+  }
+
+  private _scheduleNextTimer(): void {
+    let nextExpiration = Infinity;
+
+    for (const entry of this._data.values()) {
+      if (entry.expiresAt < nextExpiration) {
+        nextExpiration = entry.expiresAt;
+      }
+    }
+
+    this._scheduleTimer(nextExpiration);
+  }
+
+  private _rescheduleTimer(): void {
+    this.cancelTimer();
+    this._scheduleNextTimer();
   }
 }
 
@@ -321,7 +412,6 @@ export namespace TtlCache {
   };
 
   export type Options<K, V> = TTLOptions & {
-    checkAgeOnGet?: boolean;
     dispose?: Disposer<K, V>;
     max?: number;
     noDisposeOnSet?: boolean;
@@ -335,7 +425,6 @@ export namespace TtlCache {
   };
 
   export type GetOptions = {
-    checkAgeOnGet?: boolean;
     ttl?: number;
     updateAgeOnGet?: boolean;
   };

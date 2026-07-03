@@ -39,16 +39,19 @@ describe('TtlCache', () => {
   });
 
   it('should renew ttl when updateAgeOnGet is enabled per read', async () => {
-    const cache = new TtlCache({ ttl: 40 });
+    const cache = new TtlCache({ ttl: 250 });
     cache.set('key', 'value');
 
-    await sleep(25);
-    expect(cache.get('key', { updateAgeOnGet: true })).toBe('value');
+    await sleep(75);
+    const remainingBeforeGet = cache.getRemainingTTL('key');
 
-    await sleep(25);
+    expect(cache.get('key', { updateAgeOnGet: true })).toBe('value');
+    expect(cache.getRemainingTTL('key')).toBeGreaterThan(remainingBeforeGet);
+
+    await sleep(125);
     expect(cache.get('key')).toBe('value');
 
-    await sleep(30);
+    await sleep(175);
     expect(cache.get('key')).toBeUndefined();
   });
 
@@ -134,15 +137,39 @@ describe('TtlCache', () => {
     expect(cache.getRemainingTTL('key')).toBe(Infinity);
   });
 
-  it('should keep cancelTimer compatibility and purge stale entries', async () => {
-    const cache = new TtlCache({ ttl: 10 });
+  it('should proactively purge stale entries on their ttl', async () => {
+    const disposed: string[] = [];
+    const cache = new TtlCache<string, string>({
+      dispose : (value, key, reason): void => { disposed.push(`${key}:${value}:${reason}`); },
+      ttl     : 25,
+    });
+
     cache.set('key', 'value');
 
-    await sleep(25);
+    await sleep(125);
+
+    expect(cache.size).toBe(0);
+    expect(disposed).toEqual(['key:value:stale']);
+  });
+
+  it('should cancel the background timer without synchronously purging stale entries', async () => {
+    const disposed: string[] = [];
+    const cache = new TtlCache<string, string>({
+      dispose : (value, key, reason): void => { disposed.push(`${key}:${value}:${reason}`); },
+      ttl     : 25,
+    });
+
+    cache.set('key', 'value');
 
     cache.cancelTimer();
 
+    await sleep(125);
+
+    expect(cache.size).toBe(1);
+    expect(disposed).toEqual([]);
+    expect(cache.get('key')).toBeUndefined();
     expect(cache.size).toBe(0);
+    expect(disposed).toEqual(['key:value:stale']);
   });
 
   it('should call dispose with the reason entries are removed', async () => {
@@ -188,14 +215,49 @@ describe('TtlCache', () => {
     expect(disposed).toEqual(['key:second:set']);
   });
 
+  it('should store an overwritten value before calling dispose', () => {
+    let observedValue: string | undefined;
+    const cache = new TtlCache<string, string>({
+      dispose: (_value, key, reason): void => {
+        if (reason === 'set') {
+          observedValue = cache.get(key);
+        }
+      },
+      ttl: 1000,
+    });
+
+    cache.set('key', 'old');
+    cache.set('key', 'new');
+
+    expect(observedValue).toBe('new');
+    expect(cache.get('key')).toBe('new');
+  });
+
+  it('should keep an overwritten value when dispose throws', () => {
+    const cache = new TtlCache<string, string>({
+      dispose : (): void => { throw new Error('dispose failed'); },
+      ttl     : Infinity,
+    });
+
+    cache.set('key', 'old');
+
+    expect(() => cache.set('key', 'new')).toThrow('dispose failed');
+    expect(cache.get('key')).toBe('new');
+  });
+
   it('should preserve an existing ttl when noUpdateTTL is used', async () => {
-    const cache = new TtlCache<string, string>({ ttl: 30 });
+    const cache = new TtlCache<string, string>({ ttl: 250 });
     cache.set('key', 'first');
 
-    await sleep(15);
+    await sleep(75);
+    const remainingBeforeSet = cache.getRemainingTTL('key');
     cache.set('key', 'second', { noUpdateTTL: true });
-    await sleep(25);
+    const remainingAfterSet = cache.getRemainingTTL('key');
 
+    expect(remainingAfterSet).toBeLessThanOrEqual(remainingBeforeSet);
+    expect(cache.get('key')).toBe('second');
+
+    await sleep(remainingAfterSet + 75);
     expect(cache.get('key')).toBeUndefined();
   });
 
