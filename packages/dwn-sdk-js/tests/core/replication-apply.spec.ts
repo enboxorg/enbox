@@ -390,15 +390,36 @@ describe('replicationApplyResultFromReply', () => {
     message.encryption = {
       algorithm            : 'A256CTR',
       initializationVector : 'iv',
-      keyEncryption        : [{
-        algorithm          : 'X25519-HKDF-SHA256+A256KW',
-        derivationScheme   : ROLE_AUDIENCE_DERIVATION_SCHEME,
-        encryptedKey       : 'encrypted-key',
-        ephemeralPublicKey : { kty: 'OKP', crv: 'X25519', x: 'x' },
-        keyId              : 'abc',
-        protocol,
-        rolePath,
-      }],
+      keyEncryption        : [
+        {
+          algorithm          : 'X25519-HKDF-SHA256+A256KW',
+          derivationScheme   : ROLE_AUDIENCE_DERIVATION_SCHEME,
+          encryptedKey       : 'encrypted-key-1',
+          ephemeralPublicKey : { kty: 'OKP', crv: 'X25519', x: 'x' },
+          keyId              : 'abc',
+          protocol,
+          rolePath,
+        },
+        {
+          algorithm          : 'X25519-HKDF-SHA256+A256KW',
+          derivationScheme   : ROLE_AUDIENCE_DERIVATION_SCHEME,
+          encryptedKey       : 'encrypted-key-2',
+          ephemeralPublicKey : { kty: 'OKP', crv: 'X25519', x: 'x' },
+          keyId              : 'def',
+          protocol,
+          rolePath,
+        },
+        {
+          algorithm          : 'X25519-HKDF-SHA256+A256KW',
+          derivationScheme   : ROLE_AUDIENCE_DERIVATION_SCHEME,
+          encryptedKey       : 'legacy-encrypted-key',
+          ephemeralPublicKey : { kty: 'OKP', crv: 'X25519', x: 'x' },
+          epoch              : 3,
+          keyId              : 'legacy',
+          protocol,
+          role               : rolePath,
+        },
+      ],
     } as any;
 
     const detail = `${DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceEpochMissing}: ` +
@@ -411,17 +432,41 @@ describe('replicationApplyResultFromReply', () => {
       },
     })).toEqual({
       kind    : 'Incomplete',
-      missing : [{
-        type         : 'EncryptionControl',
-        protocol,
-        protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-        tags         : {
+      missing : [
+        {
+          type         : 'EncryptionControl',
           protocol,
-          contextId : 'thread-record',
-          rolePath,
-          keyId     : 'abc',
+          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          tags         : {
+            protocol,
+            contextId : 'thread-record',
+            rolePath,
+            keyId     : 'abc',
+          },
         },
-      }],
+        {
+          type         : 'EncryptionControl',
+          protocol,
+          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          tags         : {
+            protocol,
+            contextId : 'thread-record',
+            rolePath,
+            keyId     : 'def',
+          },
+        },
+        {
+          type         : 'EncryptionProtocol',
+          protocolPath : EncryptionProtocol.audienceEpochPath,
+          tags         : {
+            protocol,
+            contextId : 'thread-record',
+            role      : rolePath,
+            epoch     : 3,
+            keyId     : 'legacy',
+          },
+        },
+      ],
     });
   });
 

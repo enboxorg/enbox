@@ -1,7 +1,18 @@
 import type { GenericMessage, GenericSignaturePayload, ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 import { getInvokedPermissionGrantIds } from './sync-permission-grants.js';
-import { DwnInterfaceName, DwnMethodName, EncryptionProtocol, isCrossProtocolRef, Jws, Message, parseCrossProtocolRef, PermissionsProtocol } from '@enbox/dwn-sdk-js';
+import {
+  DwnInterfaceName,
+  DwnMethodName,
+  ENCRYPTION_CONTROL_AUDIENCE_PATH,
+  EncryptionProtocol,
+  isCrossProtocolRef,
+  Jws,
+  Message,
+  parseCrossProtocolRef,
+  PermissionsProtocol,
+  ROLE_AUDIENCE_DERIVATION_SCHEME,
+} from '@enbox/dwn-sdk-js';
 
 type DescriptorWithRecordId = GenericMessage['descriptor'] & {
   recordId?: string;
@@ -28,6 +39,13 @@ type AudienceTags = {
   keyId: string;
 };
 
+type SourceAudienceTags = {
+  protocol: string;
+  contextId: string;
+  rolePath: string;
+  keyId: string;
+};
+
 type MessageDependencyGraph<T> = {
   sorted: T[];
   dependencies: Map<T, T[]>;
@@ -41,6 +59,7 @@ type DependencyIndexes<T> = {
   grantIndex: Map<string, number>;
   roleIndex: Map<string, number>;
   audienceEpochIndex: Map<string, number>;
+  sourceAudienceIndex: Map<string, number>;
 };
 
 type DependencyEdges = {
@@ -143,6 +162,15 @@ function getAudienceEpochKey(message: GenericMessage): string | undefined {
     : `${tags.protocol}|${tags.contextId}|${tags.role}|${tags.epoch}|${tags.keyId}`;
 }
 
+function getSourceAudienceKeyFromTags(tags: SourceAudienceTags): string {
+  return `${tags.protocol}|${tags.rolePath}|${tags.contextId}|${tags.keyId}`;
+}
+
+function getSourceAudienceKey(message: GenericMessage): string | undefined {
+  const tags = getSourceAudienceTags(message);
+  return tags === undefined ? undefined : getSourceAudienceKeyFromTags(tags);
+}
+
 function getAudienceRoleKey(message: GenericMessage): string | undefined {
   const tags = getAudienceTags(message);
   const recipient = (message.descriptor as RecordsDescriptor).recipient;
@@ -176,6 +204,30 @@ function getAudienceTags(message: GenericMessage): AudienceTags | undefined {
   }
 
   return { protocol, contextId, role, epoch, keyId };
+}
+
+function getSourceAudienceTags(message: GenericMessage): SourceAudienceTags | undefined {
+  const { descriptor } = message;
+  if (!isRecordsWriteDescriptor(descriptor) || descriptor.protocolPath !== ENCRYPTION_CONTROL_AUDIENCE_PATH) {
+    return undefined;
+  }
+
+  const tags = descriptor.tags;
+  if (!isRecordObject(tags)) {
+    return undefined;
+  }
+
+  const { protocol, contextId, rolePath, keyId } = tags;
+  if (
+    typeof protocol !== 'string' ||
+    typeof contextId !== 'string' ||
+    typeof rolePath !== 'string' ||
+    typeof keyId !== 'string'
+  ) {
+    return undefined;
+  }
+
+  return { protocol, contextId, rolePath, keyId };
 }
 
 function getStringTag(message: GenericMessage, tag: string): string | undefined {
@@ -240,6 +292,61 @@ function getInvokedRoleKey(
   return getRoleKey(roleProtocol, roleProtocolPath, recipient, getRoleContextPrefix(roleProtocolPath, contextId));
 }
 
+function getRoleAudienceContextId(rolePath: string, contextId?: string): string | undefined {
+  const roleSegments = rolePath.split('/').length - 1;
+  if (roleSegments === 0) {
+    return '';
+  }
+
+  if (contextId === undefined) {
+    return undefined;
+  }
+
+  const contextSegments = contextId.split('/');
+  if (contextSegments.length < roleSegments) {
+    return undefined;
+  }
+
+  return contextSegments.slice(0, roleSegments).join('/');
+}
+
+function getSourceAudienceKeysFromEncryption(message: GenericMessage): string[] {
+  const keyEncryption = (message as {
+    encryption?: {
+      keyEncryption?: Record<string, unknown>[];
+    };
+  }).encryption?.keyEncryption;
+  if (!Array.isArray(keyEncryption)) {
+    return [];
+  }
+
+  const keys: string[] = [];
+  for (const entry of keyEncryption) {
+    if (
+      entry.derivationScheme !== ROLE_AUDIENCE_DERIVATION_SCHEME ||
+      typeof entry.protocol !== 'string' ||
+      typeof entry.rolePath !== 'string' ||
+      typeof entry.keyId !== 'string'
+    ) {
+      continue;
+    }
+
+    const contextId = getRoleAudienceContextId(entry.rolePath, getContextId(message));
+    if (contextId === undefined) {
+      continue;
+    }
+
+    keys.push(getSourceAudienceKeyFromTags({
+      protocol : entry.protocol,
+      rolePath : entry.rolePath,
+      contextId,
+      keyId    : entry.keyId,
+    }));
+  }
+
+  return keys;
+}
+
 /**
  * Builds a dependency graph from the fetched messages and returns them in
  * dependency order so that dependencies are processed before dependents.
@@ -286,6 +393,7 @@ function buildDependencyIndexes<T extends { message: GenericMessage }>(messages:
     grantIndex                    : new Map(),
     roleIndex                     : new Map(),
     audienceEpochIndex            : new Map(),
+    sourceAudienceIndex           : new Map(),
   };
 
   for (let i = 0; i < messages.length; i++) {
@@ -332,6 +440,11 @@ function indexRecordsWrite<T>(message: GenericMessage, index: number, indexes: D
   const audienceEpochKey = getAudienceEpochKey(message);
   if (desc.protocol === EncryptionProtocol.uri && desc.protocolPath === EncryptionProtocol.audienceEpochPath && audienceEpochKey !== undefined) {
     indexes.audienceEpochIndex.set(audienceEpochKey, index);
+  }
+
+  const sourceAudienceKey = getSourceAudienceKey(message);
+  if (sourceAudienceKey !== undefined) {
+    indexes.sourceAudienceIndex.set(sourceAudienceKey, index);
   }
 
   const roleKey = getRoleRecordKey(message);
@@ -402,6 +515,7 @@ function addDependencyEdgesForMessage<T>(
   addDeleteEdge(index, desc, indexes, addEdge);
   addPermissionGrantEdges(index, message, indexes, addEdge);
   addEncryptionProtocolEdges(index, message, indexes, addEdge);
+  addSourceAudienceEdges(index, message, indexes, addEdge);
   addRoleEdge(index, message, indexes, addEdge);
 }
 
@@ -551,6 +665,20 @@ function addRoleEdge<T>(
   const roleIndex = roleKey === undefined ? undefined : indexes.roleIndex.get(roleKey);
   if (roleIndex !== undefined) {
     addEdge(roleIndex, index);
+  }
+}
+
+function addSourceAudienceEdges<T>(
+  index: number,
+  message: GenericMessage,
+  indexes: DependencyIndexes<T>,
+  addEdge: AddDependencyEdge,
+): void {
+  for (const audienceKey of getSourceAudienceKeysFromEncryption(message)) {
+    const audienceIndex = indexes.sourceAudienceIndex.get(audienceKey);
+    if (audienceIndex !== undefined) {
+      addEdge(audienceIndex, index);
+    }
   }
 }
 

@@ -369,26 +369,32 @@ async function validateSourceRoleAudienceEntry(
   inboundMessage: RecordsWriteMessage,
   validationStateReader: ValidationStateReader,
 ): Promise<RoleAudienceEntryValidationResult> {
-  const matchingEntry = inboundMessage.encryption!.keyEncryption.find((entry): entry is SourceRoleAudienceKeyEncryption =>
+  const matchingEntries = inboundMessage.encryption!.keyEncryption.filter((entry): entry is SourceRoleAudienceKeyEncryption =>
     entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
     entry.protocol === roleAudience.protocol &&
     'rolePath' in entry &&
     entry.rolePath === roleAudience.rolePath
   );
 
-  if (matchingEntry === undefined) {
+  if (matchingEntries.length === 0) {
     return { hasAudience: false, hasEntry: false };
   }
 
-  const matchingAudienceRecords = await validationStateReader.queryAudienceRecords({
-    tenant,
-    protocol  : roleAudience.protocol,
-    contextId : roleAudience.contextId,
-    rolePath  : roleAudience.rolePath,
-    keyId     : matchingEntry.keyId,
-  });
+  for (const matchingEntry of matchingEntries) {
+    const matchingAudienceRecords = await validationStateReader.queryAudienceRecords({
+      tenant,
+      protocol  : roleAudience.protocol,
+      contextId : roleAudience.contextId,
+      rolePath  : roleAudience.rolePath,
+      keyId     : matchingEntry.keyId,
+    });
 
-  return { hasAudience: matchingAudienceRecords.length > 0, hasEntry: true };
+    if (matchingAudienceRecords.length > 0) {
+      return { hasAudience: true, hasEntry: true };
+    }
+  }
+
+  return { hasAudience: false, hasEntry: true };
 }
 
 async function validateLegacyRoleAudienceEntry(
@@ -397,7 +403,7 @@ async function validateLegacyRoleAudienceEntry(
   inboundMessage: RecordsWriteMessage,
   validationStateReader: ValidationStateReader,
 ): Promise<RoleAudienceEntryValidationResult> {
-  const matchingLegacyEntry = inboundMessage.encryption!.keyEncryption.find((entry): entry is LegacyRoleAudienceKeyEncryption =>
+  const matchingLegacyEntries = inboundMessage.encryption!.keyEncryption.filter((entry): entry is LegacyRoleAudienceKeyEncryption =>
     entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
     entry.protocol === roleAudience.protocol &&
     'role' in entry &&
@@ -405,20 +411,26 @@ async function validateLegacyRoleAudienceEntry(
     'epoch' in entry
   );
 
-  if (matchingLegacyEntry === undefined) {
+  if (matchingLegacyEntries.length === 0) {
     return { hasAudience: false, hasEntry: false };
   }
 
-  const matchingEpochs = await validationStateReader.queryAudienceEpochs({
-    tenant,
-    protocol  : roleAudience.protocol,
-    contextId : roleAudience.contextId,
-    role      : roleAudience.rolePath,
-    epoch     : matchingLegacyEntry.epoch,
-    keyId     : matchingLegacyEntry.keyId,
-  });
+  for (const matchingLegacyEntry of matchingLegacyEntries) {
+    const matchingEpochs = await validationStateReader.queryAudienceEpochs({
+      tenant,
+      protocol  : roleAudience.protocol,
+      contextId : roleAudience.contextId,
+      role      : roleAudience.rolePath,
+      epoch     : matchingLegacyEntry.epoch,
+      keyId     : matchingLegacyEntry.keyId,
+    });
 
-  return { hasAudience: matchingEpochs.length > 0, hasEntry: true };
+    if (matchingEpochs.length > 0) {
+      return { hasAudience: true, hasEntry: true };
+    }
+  }
+
+  return { hasAudience: false, hasEntry: true };
 }
 
 function resolveRoleAudience(

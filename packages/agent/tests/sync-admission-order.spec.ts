@@ -1,7 +1,14 @@
 import type { GenericMessage } from '@enbox/dwn-sdk-js';
 
 import { describe, expect, it } from 'bun:test';
-import { DwnInterfaceName, DwnMethodName, EncryptionProtocol, PermissionsProtocol } from '@enbox/dwn-sdk-js';
+import {
+  DwnInterfaceName,
+  DwnMethodName,
+  ENCRYPTION_CONTROL_AUDIENCE_PATH,
+  EncryptionProtocol,
+  PermissionsProtocol,
+  ROLE_AUDIENCE_DERIVATION_SCHEME,
+} from '@enbox/dwn-sdk-js';
 
 import { orderMessagesForAdmission } from '../src/sync-admission-order.js';
 
@@ -371,6 +378,51 @@ describe('orderMessagesForAdmission', () => {
 
     expect(result.indexOf(audienceEpoch)).toBeLessThan(result.indexOf(audienceKey));
     expect(result.indexOf(role)).toBeLessThan(result.indexOf(audienceKey));
+  });
+
+  it('should place source-protocol audience records before encrypted records that reference them', () => {
+    const protocol = 'https://example.com/source-audience-ordering';
+    const audience: SortEntry = {
+      message: {
+        ...makeMessage({
+          protocol,
+          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          tags         : {
+            protocol,
+            contextId : 'thread-1',
+            rolePath  : 'thread/member',
+            keyId     : 'key-1',
+          },
+        }),
+        recordId  : 'audience-record',
+        contextId : 'audience-record',
+      } as unknown as GenericMessage,
+    };
+    const encryptedRecord: SortEntry = {
+      message: {
+        ...makeMessage({
+          protocol,
+          protocolPath     : 'thread/message',
+          parentId         : 'thread-1',
+          dateCreated      : '2024-01-01T00:00:00.000000Z',
+          messageTimestamp : '2024-01-01T00:00:00.000000Z',
+        }),
+        contextId  : 'thread-1/message-1',
+        encryption : {
+          keyEncryption: [{
+            derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+            protocol,
+            rolePath         : 'thread/member',
+            keyId            : 'key-1',
+          }],
+        },
+        recordId: 'message-1',
+      } as unknown as GenericMessage,
+    };
+
+    const result = orderMessagesForAdmission([encryptedRecord, audience]);
+
+    expect(result.indexOf(audience)).toBeLessThan(result.indexOf(encryptedRecord));
   });
 
   it('should place permission grants before grantKey records', () => {

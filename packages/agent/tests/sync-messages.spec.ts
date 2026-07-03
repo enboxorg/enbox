@@ -930,7 +930,7 @@ describe('sync-messages', () => {
 
       expect(result).toEqual({ succeeded: [rootCid], failed: [] });
       expect(processRequestStub.withArgs(sinon.match({
-        messageParams : sinon.match({ filters: [{ protocol }] }),
+        messageParams : sinon.match({ filters: [{ protocol, protocolPathPrefix: ENCRYPTION_CONTROL_AUDIENCE_PATH }] }),
         messageType   : DwnInterface.MessagesQuery,
       })).calledOnce).toBe(true);
       expect(await Promise.all(applyStub.getCalls().map(async (call): Promise<string> =>

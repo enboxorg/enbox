@@ -872,27 +872,36 @@ class RemoteApplyPushContext {
   }
 
   private async fetchEncryptionControlRecord(ref: Extract<DependencyRef, { type: 'EncryptionControl' }>): Promise<FetchDependencyResult> {
-    const reply = await queryLocalMessageFeed({
-      did                : this.deps.did,
-      delegateDid        : this.deps.delegateDid,
-      permissionGrantIds : this.deps.permissionGrantIds,
-      filters            : [{ protocol: ref.protocol }],
-      agent              : this.deps.agent,
-    });
-    if (reply.status.code !== 200 || reply.entries === undefined) {
-      return {
-        kind   : 'failed',
-        detail : `local encryption control feed query failed for ${ref.protocol}: ${reply.status.code} ${reply.status.detail ?? ''}`,
-      };
-    }
-
     const entries: SyncMessageEntry[] = [];
-    for (const entry of reply.entries) {
-      if (!matchesEncryptionControlDependency(entry.message, ref)) {
-        continue;
+    let cursor: ProgressToken | undefined;
+    for (;;) {
+      const reply = await queryLocalMessageFeed({
+        did                : this.deps.did,
+        delegateDid        : this.deps.delegateDid,
+        permissionGrantIds : this.deps.permissionGrantIds,
+        filters            : [{ protocol: ref.protocol, protocolPathPrefix: ref.protocolPath }],
+        cursor,
+        agent              : this.deps.agent,
+      });
+      if (reply.status.code !== 200 || reply.entries === undefined) {
+        return {
+          kind   : 'failed',
+          detail : `local encryption control feed query failed for ${ref.protocol}: ${reply.status.code} ${reply.status.detail ?? ''}`,
+        };
       }
 
-      entries.push(await this.entryForMessageFeedEntry(entry));
+      for (const entry of reply.entries) {
+        if (!matchesEncryptionControlDependency(entry.message, ref)) {
+          continue;
+        }
+
+        entries.push(await this.entryForMessageFeedEntry(entry));
+      }
+
+      if (entries.length > 0 || reply.drained === true || reply.cursor === undefined) {
+        break;
+      }
+      cursor = reply.cursor;
     }
 
     await this.rememberEntries(entries);

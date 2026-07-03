@@ -493,18 +493,31 @@ describe('admitClosure', () => {
     const rootCid = await Message.getCid(root.message);
     const audienceCid = await Message.getCid(audience.message);
     const agent = createMockAgent();
+    const cursor = {
+      streamId : 'control-feed',
+      epoch    : 'epoch-1',
+      position : '1',
+    };
 
-    agent.rpc.sendDwnRequest.resolves({
-      status  : { code: 200 },
-      entries : [{
-        seq               : '1',
-        messageCid        : audienceCid,
-        isLatestBaseState : true,
-        protocol,
-        message           : audience.message,
-        encodedData       : Encoder.bytesToBase64Url(audience.dataBytes!),
-      }],
-    });
+    agent.rpc.sendDwnRequest
+      .onFirstCall().resolves({
+        status  : { code: 200 },
+        entries : [],
+        cursor,
+        drained : false,
+      })
+      .onSecondCall().resolves({
+        status  : { code: 200 },
+        entries : [{
+          seq               : '1',
+          messageCid        : audienceCid,
+          isLatestBaseState : true,
+          protocol,
+          message           : audience.message,
+          encodedData       : Encoder.bytesToBase64Url(audience.dataBytes!),
+        }],
+        drained: true,
+      });
     agent.dwn.applyReplicatedMessage
       .onFirstCall().resolves({
         kind    : 'Incomplete',
@@ -533,9 +546,12 @@ describe('admitClosure', () => {
       granteeDid    : 'did:example:delegate',
       messageType   : DwnInterface.MessagesQuery,
       messageParams : {
-        filters            : [{ protocol }],
+        filters            : [{ protocol, protocolPathPrefix: ENCRYPTION_CONTROL_AUDIENCE_PATH }],
         permissionGrantIds : ['messages-query-grant'],
       },
+    });
+    expect(agent.processDwnRequest.secondCall.args[0]).toMatchObject({
+      messageParams: { cursor },
     });
     expect(agent.dwn.applyReplicatedMessage.secondCall.args[1]).toEqual(audience.message);
   });
