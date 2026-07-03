@@ -34,7 +34,7 @@
     "interface-blockstore": "7.0.1",
     "ipfs-unixfs-exporter": "16.0.2",
     "ipfs-unixfs-importer": "17.0.1",
-    "kysely": "0.28.14",
+    "kysely": "0.28.17",
     "multiformats": "14.0.3"
   },
   "peerDependencies": {
