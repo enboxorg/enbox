@@ -16,6 +16,7 @@ import { Encoder } from '../../src/utils/encoder.js';
 import { EncryptionControlDeliveryRecipientAuthority } from '../../src/types/encryption-types.js';
 import { Jws } from '../../src/utils/jws.js';
 import { Message } from '../../src/core/message.js';
+import { MessageStoreLevel } from '../../src/store/level.js';
 import { PermissionsProtocol } from '../../src/protocols/permissions.js';
 import { Poller } from '../utils/poller.js';
 import { RecordsSubscribe } from '../../src/interfaces/records-subscribe.js';
@@ -26,7 +27,7 @@ import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
-import { DurableEventLog, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, MessageStoreLevel, Time } from '../../src/index.js';
+import { DurableEventLog, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Time } from '../../src/index.js';
 import { ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH } from '../../src/core/constants.js';
 
 import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';

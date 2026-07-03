@@ -1,8 +1,9 @@
-import type { DidResolutionResult, DidResolverCache, DidResolverCacheLevelParams } from '@enbox/dids';
+import type { DidResolverCacheLevelParams } from '@enbox/dids/resolver-cache-level';
+import type { DidResolutionResult, DidResolverCache } from '@enbox/dids';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
 
-import { DidResolverCacheLevel } from '@enbox/dids';
+import { DidResolverCacheLevel } from '@enbox/dids/resolver-cache-level';
 import { logger } from '@enbox/common';
 
 

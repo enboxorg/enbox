@@ -80,6 +80,9 @@
     "@noble/curves": "2.2.0",
     "@noble/hashes": "2.2.0",
     "abstract-level": "1.0.4",
+    "interface-blockstore": "7.0.1",
+    "interface-store": "8.0.0",
+    "ipfs-unixfs-exporter": "16.0.2",
     "level": "8.0.1"
   },
   "devDependencies": {

@@ -15,10 +15,10 @@ import type {
 import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
 import type { KeyIdentifier, PrivateKeyJwk, PublicKeyJwk } from '@enbox/crypto';
 
+import { DidResolverCacheLevel } from '@enbox/dids/resolver-cache-level';
 import {
   Cid,
   ContentEncryptionAlgorithm,
-  DataStoreLevel,
   DataStream,
   DurableEventLog,
   Dwn,
@@ -32,15 +32,14 @@ import {
   KeyAgreementAlgorithm,
   KeyDerivationScheme,
   Message,
-  MessageStoreLevel,
   parseCrossProtocolRef,
   Protocols,
-  ResumableTaskStoreLevel,
   ROLE_AUDIENCE_DERIVATION_SCHEME,
 } from '@enbox/dwn-sdk-js';
 import { Convert, logger, TtlCache } from '@enbox/common';
 import { CryptoUtils, X25519 } from '@enbox/crypto';
-import { DidDht, DidJwk, DidResolverCacheLevel, UniversalResolver } from '@enbox/dids';
+import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '@enbox/dwn-sdk-js/stores/level';
+import { DidDht, DidJwk, UniversalResolver } from '@enbox/dids';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { LocalDwnStrategy } from './local-dwn.js';

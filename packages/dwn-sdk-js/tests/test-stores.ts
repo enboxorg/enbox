@@ -1,5 +1,7 @@
 import type { DataStore, MessageStore, ResumableTaskStore, WakePublisher } from '../src/index.js';
-import { DataStoreLevel, EventEmitterWakePublisher, MessageStoreLevel, ResumableTaskStoreLevel } from '../src/index.js';
+
+import { EventEmitterWakePublisher } from '../src/index.js';
+import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '../src/store/level.js';
 
 type WakePublisherAwareStore = {
   setWakePublisher(wakePublisher: WakePublisher | undefined): void;

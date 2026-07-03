@@ -1,7 +1,7 @@
 import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { getActionsSeekingARuleMatch } from '../../src/core/protocol-authorization-action.js';
-import { MessageStoreLevel } from '../../src/index.js';
+import { MessageStoreLevel } from '../../src/store/level.js';
 import { ProtocolAuthorization } from '../../src/core/protocol-authorization.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { beforeEach, describe, expect, it } from 'bun:test';

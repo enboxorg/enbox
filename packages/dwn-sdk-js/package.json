@@ -57,6 +57,14 @@
       "import": "./dist/esm/src/index.js",
       "types": "./dist/types/src/index.d.ts"
     },
+    "./stores/blockstore": {
+      "import": "./dist/esm/src/store/blockstore.js",
+      "types": "./dist/types/src/store/blockstore.d.ts"
+    },
+    "./stores/level": {
+      "import": "./dist/esm/src/store/level.js",
+      "types": "./dist/types/src/store/level.d.ts"
+    },
     "./tests": {
       "import": "./dist/esm/tests/test-suite.js",
       "types": "./dist/types/tests/test-suite.d.ts"
@@ -70,12 +78,32 @@
     "@ipld/dag-cbor": "10.0.1",
     "@noble/curves": "2.2.0",
     "ajv": "8.18.0",
+    "ipfs-unixfs-importer": "17.0.1",
+    "multiformats": "14.0.3"
+  },
+  "peerDependencies": {
+    "abstract-level": "1.0.4",
     "interface-blockstore": "7.0.1",
     "interface-store": "8.0.0",
     "ipfs-unixfs-exporter": "16.0.2",
-    "ipfs-unixfs-importer": "17.0.1",
-    "level": "8.0.1",
-    "multiformats": "14.0.3"
+    "level": "8.0.1"
+  },
+  "peerDependenciesMeta": {
+    "abstract-level": {
+      "optional": true
+    },
+    "interface-blockstore": {
+      "optional": true
+    },
+    "interface-store": {
+      "optional": true
+    },
+    "ipfs-unixfs-exporter": {
+      "optional": true
+    },
+    "level": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@stylistic/eslint-plugin": "2.13.0",
@@ -93,7 +121,11 @@
     "eslint": "9.7.0",
     "eslint-plugin-todo-plz": "1.3.0",
     "fast-check": "4.5.3",
+    "interface-blockstore": "7.0.1",
+    "interface-store": "8.0.0",
+    "ipfs-unixfs-exporter": "16.0.2",
     "license-report": "6.3.0",
+    "level": "8.0.1",
     "mkdirp": "1.0.4",
     "sinon": "18.0.0",
     "typescript": "5.9.3",

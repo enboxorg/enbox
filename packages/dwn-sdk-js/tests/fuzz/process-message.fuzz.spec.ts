@@ -6,7 +6,7 @@ import type { Dwn } from '../../src/dwn.js';
 
 import { Dwn as DwnClass } from '../../src/dwn.js';
 import { arbitraryJsonObject, arbitraryMessage, semiValidMessage } from './arbitraries/dwn-message.arbitrary.js';
-import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '../../src/index.js';
+import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '../../src/store/level.js';
 
 const numRuns = Number(process.env.FAST_CHECK_NUM_RUNS) || 200;
 

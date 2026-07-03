@@ -10,15 +10,13 @@ import {
   expect,
   it,
 } from 'bun:test';
+import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '@enbox/dwn-sdk-js/stores/level';
 import {
-  DataStoreLevel,
   DataStream,
   DurableEventLog,
   EventEmitterWakePublisher,
-  MessageStoreLevel,
   RecordsDelete,
   RecordsWrite,
-  ResumableTaskStoreLevel,
 } from '@enbox/dwn-sdk-js';
 
 import { AgentDwnApi } from '../src/dwn-api.js';

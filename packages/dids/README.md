@@ -30,6 +30,8 @@ const resolution = await DidDht.resolve(did.uri);
 console.log(resolution.didDocument);
 ```
 
+Level-backed resolver caching is exported from `@enbox/dids/resolver-cache-level` so DID consumers that only need creation and resolution APIs do not load LevelDB dependencies by default.
+
 ## Project Resources
 
 | Resource                                                                            | Description                                                                   |

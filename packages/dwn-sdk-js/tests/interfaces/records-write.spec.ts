@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it } from 'bun:test';
 import { DataStream } from '../../src/utils/data-stream.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { Encryption } from '../../src/utils/encryption.js';
+import { MessageStoreLevel } from '../../src/store/level.js';
 import { Records } from '../../src/utils/records.js';
 import { RecordsWrite } from '../../src/interfaces/records-write.js';
 import { RecordsWriteHandler } from '../../src/handlers/records-write.js';
@@ -23,7 +24,6 @@ import {
   KeyAgreementAlgorithm,
   KeyDerivationScheme,
   Message,
-  MessageStoreLevel,
   PermissionsProtocol,
   ROLE_AUDIENCE_DERIVATION_SCHEME,
 } from '../../src/index.js';

@@ -24,7 +24,7 @@ import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { UniversalResolver } from '@enbox/dids';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '../../src/index.js';
+import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '../../src/store/level.js';
 
 export function testRecordsRecordLimit(): void {
   describe('Records $recordLimit', () => {

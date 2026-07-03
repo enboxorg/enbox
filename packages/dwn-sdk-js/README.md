@@ -20,7 +20,7 @@ bun add @enbox/dwn-sdk-js
 
 ```ts
 import { Dwn, DataStream, Jws, RecordsWrite } from '@enbox/dwn-sdk-js';
-import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '@enbox/dwn-sdk-js';
+import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '@enbox/dwn-sdk-js/stores/level';
 
 const messageStore = new MessageStoreLevel();
 const dataStore = new DataStoreLevel();
@@ -43,6 +43,8 @@ console.log(result.status); // { code: 202, detail: 'Accepted' }
 
 await dwn.close();
 ```
+
+Level-backed store implementations are exported from `@enbox/dwn-sdk-js/stores/level` so applications that only need message and protocol APIs do not load the Level store module graph by default. Shared blockstore helpers used by alternative store implementations are available from `@enbox/dwn-sdk-js/stores/blockstore`.
 
 ### Custom Tenant Gating
 
