@@ -84,6 +84,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
     const { cursor: eventLogCursor } = recordsSubscribe.message.descriptor;
     const projectedSubscriptionHandler = RecordsSubscribeHandler.createRecordLimitOccupancyGuard({
       deps: this.deps,
+      eventFilters,
       recordsSubscribe,
       subscriptionHandler,
       tenant,
@@ -195,11 +196,12 @@ export class RecordsSubscribeHandler implements MethodHandler {
 
   private static createRecordLimitOccupancyGuard(input: {
     deps: HandlerDependencies;
+    eventFilters: Filter[];
     recordsSubscribe: RecordsSubscribe;
     subscriptionHandler: SubscriptionListener;
     tenant: string;
   }): ProjectedRecordsSubscriptionHandler {
-    const { deps, recordsSubscribe, subscriptionHandler, tenant } = input;
+    const { deps, eventFilters, recordsSubscribe, subscriptionHandler, tenant } = input;
     const requester = Message.getRequester(recordsSubscribe.message);
     let subscription: EventSubscription | undefined;
     let closeRequested = false;
@@ -240,6 +242,16 @@ export class RecordsSubscribeHandler implements MethodHandler {
           validationStateReader : deps.validationStateReader,
         });
         if (visibleMessages.length === 0) {
+          return;
+        }
+
+        const projectedMessages = await EncryptionControl.projectCurrentAudienceRecords({
+          messageStore         : deps.messageStore,
+          tenant,
+          recordsWriteMessages : [message],
+          bypassFilters        : eventFilters,
+        });
+        if (projectedMessages.length === 0) {
           return;
         }
 
@@ -540,6 +552,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
     pagination: { cursor?: PaginationCursor; limit?: number } | undefined,
   ): Promise<{ messages: RecordsQueryReplyEntry[], cursor?: PaginationCursor }> {
     const controlFilters = Records.buildControlRecordsFilters(filters);
+    const currentAudienceRecordIdCache = new Map<string, string | undefined>();
     if (controlFilters.length === 0) {
       const result = await queryRecordsWithRecordLimitOccupancy({
         messageStore          : this.deps.messageStore,
@@ -550,7 +563,13 @@ export class RecordsSubscribeHandler implements MethodHandler {
         pagination,
         messageTimestamp      : recordsSubscribe.message.descriptor.messageTimestamp,
       });
-      return { messages: result.messages, cursor: result.cursor };
+      return EncryptionControl.projectCurrentAudienceRecordPage({
+        messageStore: this.deps.messageStore,
+        tenant,
+        filters,
+        currentAudienceRecordIdCache,
+        result,
+      });
     }
 
     if (pagination?.limit === undefined || pagination.limit <= 0) {
@@ -563,9 +582,16 @@ export class RecordsSubscribeHandler implements MethodHandler {
         pagination,
         messageTimestamp      : recordsSubscribe.message.descriptor.messageTimestamp,
       });
+      const projectedResult = await EncryptionControl.projectCurrentAudienceRecordPage({
+        messageStore: this.deps.messageStore,
+        tenant,
+        filters,
+        currentAudienceRecordIdCache,
+        result,
+      });
       return {
-        messages : await this.filterControlRecordsForNonOwner(tenant, recordsSubscribe, requester, result.messages),
-        cursor   : result.cursor,
+        messages : await this.filterControlRecordsForNonOwner(tenant, recordsSubscribe, requester, projectedResult.messages),
+        cursor   : projectedResult.cursor,
       };
     }
 
@@ -584,17 +610,25 @@ export class RecordsSubscribeHandler implements MethodHandler {
         pagination            : { ...pagination, cursor, limit: remainingLimit },
         messageTimestamp      : recordsSubscribe.message.descriptor.messageTimestamp,
       });
+      const projectedResult = await EncryptionControl.projectCurrentAudienceRecordPage({
+        messageStore: this.deps.messageStore,
+        tenant,
+        filters,
+        currentAudienceRecordIdCache,
+        result,
+      });
       const filteredMessages = await this.filterControlRecordsForNonOwner(
         tenant,
         recordsSubscribe,
         requester,
-        result.messages,
+        projectedResult.messages,
       );
       visibleMessages.push(...filteredMessages);
-      nextCursor = result.cursor;
-      cursor = result.cursor;
+      nextCursor = projectedResult.cursor;
+      cursor = projectedResult.cursor;
     } while (visibleMessages.length < pagination.limit && cursor !== undefined);
 
     return { messages: visibleMessages, cursor: nextCursor };
   }
+
 }

@@ -101,6 +101,47 @@ export function testRecordsCountHandler(): void {
         expect(reply.count).toBe(3);
       });
 
+      it('should keep broad protocol counts on the indexed count path when no audience records exist', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const protocolDefinition: ProtocolDefinition = {
+          protocol  : 'http://encryption-control-count-indexed-broad.xyz',
+          published : false,
+          types     : {
+            message: { schema: 'http://message-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            message: {
+              $actions: [{ who: 'anyone', can: ['create', 'read'] }],
+            },
+          },
+        };
+        const protocolConfigure = await TestDataGenerator.generateProtocolsConfigure({
+          author: alice,
+          protocolDefinition,
+        });
+        expect((await dwn.processMessage(alice.did, protocolConfigure.message)).status.code).toBe(202);
+
+        const write = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          dataFormat   : 'application/json',
+          protocol     : protocolDefinition.protocol,
+          protocolPath : 'message',
+          schema       : 'http://message-schema',
+        });
+        expect((await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream })).status.code).toBe(202);
+
+        const querySpy = sinon.spy(messageStore, 'query');
+        const count = await RecordsCount.create({
+          filter : { protocol: protocolDefinition.protocol },
+          signer : Jws.createSigner(alice),
+        });
+        const reply = await dwn.processMessage(alice.did, count.message);
+
+        expect(reply.status.code).toBe(200);
+        expect(reply.count).toBe(1);
+        expect(querySpy.called).toBe(false);
+      });
+
       it('should allow anonymous count of published records', async () => {
         const alice = await TestDataGenerator.generatePersona();
         TestStubGenerator.stubDidResolver(didResolver, [alice]);
@@ -245,6 +286,179 @@ export function testRecordsCountHandler(): void {
         const broadReply = await dwn.processMessage(alice.did, broadCount.message);
         expect(broadReply.status.code).toBe(200);
         expect(broadReply.count).toBe(0);
+      });
+
+      it('should count only the current audience record during tuple enumeration', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+        const carol = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocolDefinition: ProtocolDefinition = {
+          protocol  : 'http://encryption-control-count-current-audience.xyz',
+          published : false,
+          types     : {
+            member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            member: {
+              $role    : true,
+              $actions : [{ who: 'anyone', can: ['create'] }],
+            },
+          },
+        };
+        const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
+        const roleRuleSet = encryptedDefinition.structure.member as ProtocolRuleSet;
+        const nonTenantAudience = await createAudienceControlWrite({
+          author      : bob,
+          dateCreated : Time.createOffsetTimestamp({ seconds: 1 }),
+          protocol    : protocolDefinition.protocol,
+          rolePath    : 'member',
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, nonTenantAudience);
+
+        const otherNonTenantAudience = await createAudienceControlWrite({
+          author      : carol,
+          dateCreated : Time.createOffsetTimestamp({ seconds: 2 }),
+          protocol    : protocolDefinition.protocol,
+          rolePath    : 'member',
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, otherNonTenantAudience);
+
+        const tenantAudience = await createAudienceControlWrite({
+          author      : alice,
+          dateCreated : Time.createOffsetTimestamp({ seconds: 3 }),
+          protocol    : protocolDefinition.protocol,
+          rolePath    : 'member',
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, tenantAudience);
+
+        const tupleCount = await RecordsCount.create({
+          filter: {
+            protocol     : protocolDefinition.protocol,
+            protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+            tags         : {
+              protocol  : protocolDefinition.protocol,
+              rolePath  : 'member',
+              contextId : '',
+            },
+          },
+          signer: Jws.createSigner(alice),
+        });
+        const tupleReply = await dwn.processMessage(alice.did, tupleCount.message);
+        expect(tupleReply.status.code).toBe(200);
+        expect(tupleReply.count).toBe(1);
+
+        const exactLoserCount = await RecordsCount.create({
+          filter: {
+            protocol     : protocolDefinition.protocol,
+            protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+            tags         : {
+              protocol  : protocolDefinition.protocol,
+              rolePath  : 'member',
+              contextId : '',
+              keyId     : nonTenantAudience.keyId,
+            },
+          },
+          signer: Jws.createSigner(bob),
+        });
+        const exactLoserReply = await dwn.processMessage(alice.did, exactLoserCount.message);
+        expect(exactLoserReply.status.code).toBe(200);
+        expect(exactLoserReply.count).toBe(1);
+
+        const protocolReadGrant = await TestDataGenerator.generateGrantCreate({
+          author    : alice,
+          grantedTo : bob,
+          delegated : true,
+          scope     : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Read,
+            protocol  : protocolDefinition.protocol,
+          },
+        });
+        expect((await dwn.processMessage(alice.did, protocolReadGrant.message, { dataStream: protocolReadGrant.dataStream })).status.code).toBe(202);
+
+        const delegatedProtocolCount = await RecordsCount.create({
+          delegatedGrant : protocolReadGrant.dataEncodedMessage,
+          filter         : { protocol: protocolDefinition.protocol },
+          signer         : Jws.createSigner(bob),
+        });
+        const delegatedProtocolReply = await dwn.processMessage(alice.did, delegatedProtocolCount.message);
+        expect(delegatedProtocolReply.status.code).toBe(200);
+        expect(delegatedProtocolReply.count).toBe(1);
+      });
+
+      it('should not count a current audience record that does not match an enumeration filter', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocolDefinition: ProtocolDefinition = {
+          protocol  : 'http://encryption-control-count-current-range-filter.xyz',
+          published : false,
+          types     : {
+            member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            member: {
+              $role    : true,
+              $actions : [{ who: 'anyone', can: ['create'] }],
+            },
+          },
+        };
+        const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
+        const roleRuleSet = encryptedDefinition.structure.member as ProtocolRuleSet;
+        const loserDateCreated = Time.createOffsetTimestamp({ seconds: 2 });
+        const currentAudience = await createAudienceControlWrite({
+          author      : alice,
+          dateCreated : Time.createOffsetTimestamp({ seconds: 1 }),
+          protocol    : protocolDefinition.protocol,
+          rolePath    : 'member',
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, currentAudience);
+
+        const loserAudience = await createAudienceControlWrite({
+          author      : bob,
+          dateCreated : loserDateCreated,
+          protocol    : protocolDefinition.protocol,
+          rolePath    : 'member',
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, loserAudience);
+
+        const rangeFilter = {
+          protocol     : protocolDefinition.protocol,
+          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          dateCreated  : { from: loserDateCreated },
+          tags         : {
+            protocol  : protocolDefinition.protocol,
+            rolePath  : 'member',
+            contextId : '',
+          },
+        };
+        const rangeCount = await RecordsCount.create({
+          filter : rangeFilter,
+          signer : Jws.createSigner(alice),
+        });
+        const rangeReply = await dwn.processMessage(alice.did, rangeCount.message);
+        expect(rangeReply.status.code).toBe(200);
+        expect(rangeReply.count).toBe(0);
+
+        const exactLoserCount = await RecordsCount.create({
+          filter: {
+            ...rangeFilter,
+            tags: {
+              ...rangeFilter.tags,
+              keyId: loserAudience.keyId,
+            },
+          },
+          signer: Jws.createSigner(alice),
+        });
+        const exactLoserReply = await dwn.processMessage(alice.did, exactLoserCount.message);
+        expect(exactLoserReply.status.code).toBe(200);
+        expect(exactLoserReply.count).toBe(1);
       });
 
       it('should hide stale audience control records from delegated broad counts', async () => {

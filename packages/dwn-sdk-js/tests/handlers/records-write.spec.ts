@@ -1,10 +1,10 @@
 import type { DidResolver } from '@enbox/dids';
 import type { EncryptionInput } from '../../src/interfaces/records-write.js';
 import type { EventLog } from '../../src/types/subscriptions.js';
-import type { GenerateFromRecordsWriteOut } from '../utils/test-data-generator.js';
 import type { Persona } from '../utils/test-data-generator.js';
 import type { DataEncodedRecordsWriteMessage, RecordsQueryReplyEntry } from '../../src/types/records-types.js';
 import type { DataStore, MessageStore, ResumableTaskStore } from '../../src/index.js';
+import type { GenerateFromRecordsWriteOut, GenerateRecordsWriteOutput } from '../utils/test-data-generator.js';
 import type { ProtocolDefinition, ProtocolRuleSet } from '../../src/types/protocols-types.js';
 
 import anyoneCollaborateProtocolDefinition from '../vectors/protocol-definitions/anyone-collaborate.json' with { type: 'json' };
@@ -118,6 +118,7 @@ export function testRecordsWriteHandler(): void {
       async function createAudienceControlWrite(input: {
         author: Persona;
         contextId?: string;
+        dateCreated?: string;
         delegatedGrant?: DataEncodedRecordsWriteMessage;
         payloadOverrides?: Record<string, unknown>;
         permissionGrantId?: string;
@@ -152,6 +153,8 @@ export function testRecordsWriteHandler(): void {
         const recordsWrite = await RecordsWrite.create({
           data              : dataBytes,
           dataFormat        : 'application/json',
+          dateCreated       : input.dateCreated,
+          messageTimestamp  : input.dateCreated,
           delegatedGrant    : input.delegatedGrant,
           permissionGrantId : input.permissionGrantId,
           protocol          : input.protocol,
@@ -4303,6 +4306,132 @@ export function testRecordsWriteHandler(): void {
 
           const writeReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream: recordsWrite.dataStream });
           expect(writeReply.status.code).toBe(202);
+        });
+
+        it('should admit role-audience records and deliveries that reference a stored non-current audience key', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+
+          const protocolDefinition: ProtocolDefinition = {
+            protocol  : 'http://role-audience-loser-key-admission.xyz',
+            published : false,
+            types     : {
+              member  : { schema: 'http://member-schema', dataFormats: ['application/json'] },
+              message : { schema: 'http://message-schema', dataFormats: ['text/plain'], encryptionRequired: true },
+            },
+            structure: {
+              member: {
+                $role    : true,
+                $actions : [{ who: 'anyone', can: ['create'] }],
+              },
+              message: {
+                $actions: [
+                  { role: 'member', can: ['read'] },
+                ],
+              },
+            },
+          };
+
+          const encryptedProtocolDefinition = await installEncryptedProtocol(alice, protocolDefinition);
+          const memberRuleSet = encryptedProtocolDefinition.structure.member as ProtocolRuleSet;
+          const messageRuleSet = encryptedProtocolDefinition.structure.message as ProtocolRuleSet;
+          const rolePath = 'member';
+
+          const loserAudience = await createAudienceControlWrite({
+            author      : bob,
+            dateCreated : '2025-01-01T00:00:00.000000Z',
+            protocol    : protocolDefinition.protocol,
+            rolePath,
+            roleRuleSet : memberRuleSet,
+          });
+          expect((await dwn.processMessage(
+            alice.did,
+            loserAudience.recordsWrite.message,
+            { dataStream: DataStream.fromBytes(loserAudience.dataBytes) }
+          )).status.code).toBe(202);
+
+          const currentAudience = await createAudienceControlWrite({
+            author      : alice,
+            dateCreated : '2025-01-02T00:00:00.000000Z',
+            protocol    : protocolDefinition.protocol,
+            rolePath,
+            roleRuleSet : memberRuleSet,
+          });
+          expect((await dwn.processMessage(
+            alice.did,
+            currentAudience.recordsWrite.message,
+            { dataStream: DataStream.fromBytes(currentAudience.dataBytes) }
+          )).status.code).toBe(202);
+
+          const buildEncryptedMessage = async (plaintext: string): Promise<GenerateRecordsWriteOutput> => {
+            const dataEncryptionKey = TestDataGenerator.randomBytes(32);
+            const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(16);
+            const encryptedData = await Encryption.encrypt(
+              ContentEncryptionAlgorithm.A256CTR,
+              dataEncryptionKey,
+              dataEncryptionInitializationVector,
+              Encoder.stringToBytes(plaintext),
+            );
+            const protocolPathPublicKey = messageRuleSet.$keyAgreement!.publicKeyJwk;
+            const encryptionInput: EncryptionInput = {
+              initializationVector : dataEncryptionInitializationVector,
+              key                  : dataEncryptionKey,
+              keyEncryptionInputs  : [
+                {
+                  algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+                  keyId            : await Encryption.getKeyId(protocolPathPublicKey),
+                  publicKey        : protocolPathPublicKey,
+                  derivationScheme : KeyDerivationScheme.ProtocolPath,
+                },
+                {
+                  algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+                  keyId            : loserAudience.keyId,
+                  publicKey        : bob.encryptionKeyPair.publicJwk,
+                  derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+                  protocol         : protocolDefinition.protocol,
+                  rolePath,
+                },
+              ],
+            };
+
+            return TestDataGenerator.generateRecordsWrite({
+              author       : alice,
+              protocol     : protocolDefinition.protocol,
+              protocolPath : 'message',
+              schema       : 'http://message-schema',
+              dataFormat   : 'text/plain',
+              data         : encryptedData,
+              encryptionInput,
+            });
+          };
+
+          const directWrite = await buildEncryptedMessage('direct write to loser key');
+          const directReply = await dwn.processMessage(alice.did, directWrite.message, { dataStream: directWrite.dataStream });
+          expect(directReply.status.code).toBe(202);
+
+          const replicatedWrite = await buildEncryptedMessage('replicated write to loser key');
+          const replicatedResult = await dwn.applyReplicatedMessage(
+            alice.did,
+            replicatedWrite.message,
+            { dataStream: replicatedWrite.dataStream },
+          );
+          expect(replicatedResult).toEqual(expect.objectContaining({ kind: 'Applied' }));
+
+          const delivery = await createDeliveryControlWrite({
+            author             : alice,
+            keyId              : loserAudience.keyId,
+            protocol           : protocolDefinition.protocol,
+            recipient          : bob.did,
+            recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleCreatorAnyone,
+            rolePath,
+            roleRuleSet        : memberRuleSet,
+          });
+          const deliveryReply = await dwn.processMessage(
+            alice.did,
+            delivery.recordsWrite.message,
+            { dataStream: DataStream.fromBytes(delivery.dataBytes) },
+          );
+          expect(deliveryReply.status.code).toBe(202);
         });
 
         it('should reject an encrypted role-readable RecordsWrite when the roleAudience keyId does not match the audience record', async () => {

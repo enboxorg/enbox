@@ -39,12 +39,15 @@ export async function installEncryptedProtocol(
 export async function createAudienceControlWrite(input: {
   author: Persona;
   contextId?: string;
+  dateCreated?: string;
   delegatedGrant?: DataEncodedRecordsWriteMessage;
+  messageTimestamp?: string;
   payloadOverrides?: Record<string, unknown>;
   permissionGrantId?: string;
   protocol: string;
   protocolRole?: string;
   published?: boolean;
+  recordId?: string;
   rolePath: string;
   roleRuleSet: ProtocolRuleSet;
   sealKeyId?: string;
@@ -69,30 +72,34 @@ export async function createAudienceControlWrite(input: {
     },
     ...input.payloadOverrides,
   };
+  const payloadKeyId = typeof payload.keyId === 'string' ? payload.keyId : audienceKeyId;
   const dataBytes = Encoder.objectToBytes(payload);
   const recordsWrite = await RecordsWrite.create({
     data              : dataBytes,
     dataFormat        : 'application/json',
+    dateCreated       : input.dateCreated,
     delegatedGrant    : input.delegatedGrant,
+    messageTimestamp  : input.messageTimestamp ?? input.dateCreated,
     permissionGrantId : input.permissionGrantId,
     protocol          : input.protocol,
     protocolPath      : ENCRYPTION_CONTROL_AUDIENCE_PATH,
     protocolRole      : input.protocolRole,
     published         : input.published,
+    recordId          : input.recordId,
     schema            : 'https://identity.foundation/dwn/json-schemas/encryption/audience.json',
     signer            : Jws.createSigner(input.signer ?? input.author),
     tags              : {
       protocol  : input.protocol,
       rolePath  : input.rolePath,
       contextId : input.contextId ?? '',
-      keyId     : audienceKeyId,
+      keyId     : payloadKeyId,
       ...input.tags,
     },
   });
 
   return {
     dataBytes,
-    keyId: audienceKeyId,
+    keyId: payloadKeyId,
     payload,
     recordsWrite,
   };

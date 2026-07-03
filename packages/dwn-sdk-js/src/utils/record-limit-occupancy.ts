@@ -37,6 +37,13 @@ type RecordLimitFilterResolution = {
   projectedFilters: Filter[];
 };
 
+type OccupancyProjectionInput<T extends RecordsWriteMessage> = {
+  records: T[];
+  max: number;
+  getScopeKey(record: T): string;
+  compareRecords(left: T, right: T): number;
+};
+
 /**
  * Queries records with bounded `$recordLimit` occupancy projection when every limited filter targets one concrete scope.
  *
@@ -285,11 +292,12 @@ async function findOccupantRecordIds(input: {
     ...boundaryCandidates,
   ];
 
-  return new Set(
-    rankedCandidates
-      .slice(0, input.recordLimit.max)
-      .map((message): string => message.recordId)
-  );
+  return selectOccupantRecordIds({
+    records        : rankedCandidates,
+    max            : input.recordLimit.max,
+    getScopeKey    : (): string => '',
+    compareRecords : compareRecordLimitCandidates,
+  });
 }
 
 function buildRecordLimitScopeFilter(scope: RecordLimitScope): Filter {
@@ -374,4 +382,25 @@ function compareRecordLimitCandidates(left: RecordsWriteMessage, right: RecordsW
   }
 
   return lexicographicalCompare(left.recordId, right.recordId);
+}
+
+export function selectOccupantRecordIds<T extends RecordsWriteMessage>(input: OccupancyProjectionInput<T>): Set<string> {
+  const occupants = new Set<string>();
+  const groups = new Map<string, T[]>();
+
+  for (const record of input.records) {
+    const scopeKey = input.getScopeKey(record);
+    const group = groups.get(scopeKey) ?? [];
+    group.push(record);
+    groups.set(scopeKey, group);
+  }
+
+  for (const group of groups.values()) {
+    group.sort(input.compareRecords);
+    for (const record of group.slice(0, input.max)) {
+      occupants.add(record.recordId);
+    }
+  }
+
+  return occupants;
 }

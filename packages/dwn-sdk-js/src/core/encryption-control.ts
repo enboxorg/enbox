@@ -1,7 +1,9 @@
+import type { MessageStore } from '../types/message-store.js';
 import type { RecordsPermissionScope } from '../types/permission-types.js';
 import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { EncryptionControlAudiencePayload, EncryptionControlDeliveryTags, RoleAudienceKeyId } from '../types/encryption-types.js';
+import type { Filter, PaginationCursor } from '../types/query-types.js';
 import type { ProtocolActionRule, ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
 import type { RecordsCountMessage, RecordsFilter, RecordsQueryMessage, RecordsReadMessage, RecordsSubscribeMessage, RecordsWriteMessage, RecordsWriteTags } from '../types/records-types.js';
 
@@ -12,10 +14,14 @@ import { Encryption } from '../utils/encryption.js';
 import { EncryptionControlDeliveryRecipientAuthority } from '../types/encryption-types.js';
 import { GrantAuthorization } from './grant-authorization.js';
 import { Jws } from '../utils/jws.js';
+import { lexicographicalCompare } from '../utils/string.js';
 import { Message } from './message.js';
 import { PermissionConditionPublication } from '../types/permission-types.js';
 import { PermissionGrant } from '../protocols/permission-grant.js';
 import { PermissionScopeMatcher } from '../utils/permission-scope.js';
+import { Records } from '../utils/records.js';
+import { selectOccupantRecordIds } from '../utils/record-limit-occupancy.js';
+import { SortDirection } from '../types/query-types.js';
 import { validateJsonSchema } from '../schema-validator.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
@@ -36,6 +42,8 @@ type EffectiveControlActor = {
 type ExactAudienceFilterTuple = Omit<RoleAudienceKeyId, 'keyId'> & {
   keyId?: string;
 };
+
+type AudienceTuple = Omit<RoleAudienceKeyId, 'keyId'>;
 
 type ControlReadMessage =
   | RecordsCountMessage
@@ -65,8 +73,117 @@ export class EncryptionControl {
     return isEncryptionControlPath(message.descriptor.protocolPath);
   }
 
+  public static isAudienceControlMessage(message: RecordsWriteMessage): boolean {
+    return message.descriptor.protocolPath === ENCRYPTION_CONTROL_AUDIENCE_PATH;
+  }
+
   public static isExactAudienceFilter(filter: RecordsFilter): boolean {
     return EncryptionControl.getExactAudienceFilterTuple(filter) !== undefined;
+  }
+
+  public static buildAudienceRecordFilters(filters: Filter[]): Filter[] {
+    const audienceFilters: Filter[] = [];
+    for (const filter of filters) {
+      const protocolPath = filter.protocolPath;
+      if (protocolPath === undefined) {
+        audienceFilters.push({ ...filter, protocolPath: ENCRYPTION_CONTROL_AUDIENCE_PATH });
+        continue;
+      }
+
+      if (typeof protocolPath === 'string') {
+        if (protocolPath === ENCRYPTION_CONTROL_AUDIENCE_PATH) {
+          audienceFilters.push(filter);
+        }
+        continue;
+      }
+
+      if (Array.isArray(protocolPath) && protocolPath.includes(ENCRYPTION_CONTROL_AUDIENCE_PATH)) {
+        audienceFilters.push({ ...filter, protocolPath: ENCRYPTION_CONTROL_AUDIENCE_PATH });
+      }
+    }
+
+    return audienceFilters;
+  }
+
+  /**
+   * Resolves the current audience record for a role-audience tuple.
+   *
+   * Current-key projection orders stored audience records by:
+   * tenant-authored actual signer first, then oldest `dateCreated`, then `recordId` ascending.
+   */
+  public static async resolveCurrentAudienceRecord(input: {
+    messageStore: MessageStore;
+    tenant: string;
+    protocol: string;
+    rolePath: string;
+    contextId: string;
+  }): Promise<RecordsWriteMessage | undefined> {
+    const records = await EncryptionControl.queryStoredAudienceRecordsForTuple(input);
+    const currentRecordIds = selectOccupantRecordIds({
+      records,
+      max            : 1,
+      getScopeKey    : (record): string => EncryptionControl.getAudienceTupleKey(EncryptionControl.getRoleAudienceKeyId(record, 'audience')),
+      compareRecords : (left, right): number => EncryptionControl.compareAudienceProjectionCandidates(input.tenant, left, right),
+    });
+    const currentRecordId = currentRecordIds.values().next().value as string | undefined;
+    return records.find((record): boolean => record.recordId === currentRecordId);
+  }
+
+  public static async projectCurrentAudienceRecords<T extends RecordsWriteMessage>(input: {
+    messageStore: MessageStore;
+    tenant: string;
+    recordsWriteMessages: T[];
+    bypassFilters?: Filter[];
+    currentAudienceRecordIdCache?: Map<string, string | undefined>;
+  }): Promise<T[]> {
+    const currentRecordIds = new Set<string>();
+    const tupleKeys = new Set<string>();
+
+    for (const record of input.recordsWriteMessages) {
+      if (!EncryptionControl.shouldProjectAudienceRecord(record, input.bypassFilters ?? [])) {
+        continue;
+      }
+
+      const tags = EncryptionControl.getRoleAudienceKeyId(record, 'audience');
+      tupleKeys.add(EncryptionControl.getAudienceTupleKey(tags));
+    }
+
+    for (const tupleKey of tupleKeys) {
+      const tuple = EncryptionControl.parseAudienceTupleKey(tupleKey);
+      const currentRecordId = await EncryptionControl.resolveCurrentAudienceRecordId({
+        ...tuple,
+        currentAudienceRecordIdCache : input.currentAudienceRecordIdCache,
+        messageStore                 : input.messageStore,
+        tenant                       : input.tenant,
+      });
+      if (currentRecordId !== undefined) {
+        currentRecordIds.add(currentRecordId);
+      }
+    }
+
+    return input.recordsWriteMessages.filter((record): boolean =>
+      !EncryptionControl.shouldProjectAudienceRecord(record, input.bypassFilters ?? []) ||
+      currentRecordIds.has(record.recordId)
+    );
+  }
+
+  public static async projectCurrentAudienceRecordPage<T extends RecordsWriteMessage>(input: {
+    messageStore: MessageStore;
+    tenant: string;
+    filters: Filter[];
+    result: { messages: T[], cursor?: PaginationCursor };
+    currentAudienceRecordIdCache?: Map<string, string | undefined>;
+  }): Promise<{ messages: T[], cursor?: PaginationCursor }> {
+    return {
+      messages: await EncryptionControl.projectCurrentAudienceRecords({
+        currentAudienceRecordIdCache : input.currentAudienceRecordIdCache,
+        messageStore                 : input.messageStore,
+        tenant                       : input.tenant,
+        recordsWriteMessages         : input.result.messages,
+        bypassFilters                : input.filters,
+      }),
+      cursor: input.result.cursor,
+    };
   }
 
   public static async filterVisibleControlRecords<T extends RecordsWriteMessage>(input: ControlFilterInput<T>): Promise<T[]> {
@@ -999,6 +1116,93 @@ export class EncryptionControl {
   private static getExactFilterTag(filter: RecordsFilter, tag: string): string | undefined {
     const value = filter.tags?.[tag];
     return typeof value === 'string' ? value : undefined;
+  }
+
+  private static async queryStoredAudienceRecordsForTuple(input: {
+    messageStore: MessageStore;
+    tenant: string;
+    protocol: string;
+    rolePath: string;
+    contextId: string;
+  }): Promise<RecordsWriteMessage[]> {
+    const filter: Filter = {
+      interface         : DwnInterfaceName.Records,
+      method            : DwnMethodName.Write,
+      isLatestBaseState : true,
+      protocol          : input.protocol,
+      protocolPath      : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+      'tag.protocol'    : input.protocol,
+      'tag.rolePath'    : input.rolePath,
+      'tag.contextId'   : input.contextId,
+    };
+    const { messages } = await input.messageStore.query(input.tenant, [filter], { dateCreated: SortDirection.Ascending });
+    return messages.filter(Records.isRecordsWrite);
+  }
+
+  private static async resolveCurrentAudienceRecordId(input: {
+    messageStore: MessageStore;
+    tenant: string;
+    protocol: string;
+    rolePath: string;
+    contextId: string;
+    currentAudienceRecordIdCache?: Map<string, string | undefined>;
+  }): Promise<string | undefined> {
+    const tupleKey = EncryptionControl.getAudienceTupleKey(input);
+    if (input.currentAudienceRecordIdCache?.has(tupleKey) === true) {
+      return input.currentAudienceRecordIdCache.get(tupleKey);
+    }
+
+    const current = await EncryptionControl.resolveCurrentAudienceRecord(input);
+    const currentRecordId = current?.recordId;
+    input.currentAudienceRecordIdCache?.set(tupleKey, currentRecordId);
+    return currentRecordId;
+  }
+
+  private static shouldProjectAudienceRecord(message: RecordsWriteMessage, bypassFilters: Filter[]): boolean {
+    return EncryptionControl.isAudienceControlMessage(message) &&
+      !bypassFilters.some((filter): boolean => EncryptionControl.audienceProjectionBypassFilterMatchesRecord(filter, message));
+  }
+
+  private static audienceProjectionBypassFilterMatchesRecord(filter: Filter, message: RecordsWriteMessage): boolean {
+    if (filter.recordId === message.recordId) {
+      return true;
+    }
+
+    const tags = EncryptionControl.getRoleAudienceKeyId(message, 'audience');
+    return filter.protocol === tags.protocol &&
+      filter.protocolPath === ENCRYPTION_CONTROL_AUDIENCE_PATH &&
+      filter['tag.protocol'] === tags.protocol &&
+      filter['tag.rolePath'] === tags.rolePath &&
+      filter['tag.contextId'] === tags.contextId &&
+      filter['tag.keyId'] === tags.keyId;
+  }
+
+  private static getAudienceTupleKey(input: AudienceTuple): string {
+    return JSON.stringify([input.protocol, input.rolePath, input.contextId]);
+  }
+
+  private static parseAudienceTupleKey(key: string): AudienceTuple {
+    const [protocol, rolePath, contextId] = JSON.parse(key) as string[];
+    return { protocol, rolePath, contextId };
+  }
+
+  private static compareAudienceProjectionCandidates(
+    tenant: string,
+    left: RecordsWriteMessage,
+    right: RecordsWriteMessage,
+  ): number {
+    const leftIsTenantSigned = Message.getSigner(left) === tenant;
+    const rightIsTenantSigned = Message.getSigner(right) === tenant;
+    if (leftIsTenantSigned !== rightIsTenantSigned) {
+      return leftIsTenantSigned ? -1 : 1;
+    }
+
+    const dateComparison = lexicographicalCompare(left.descriptor.dateCreated, right.descriptor.dateCreated);
+    if (dateComparison !== 0) {
+      return dateComparison;
+    }
+
+    return lexicographicalCompare(left.recordId, right.recordId);
   }
 
   private static getRequiredStringTag(message: RecordsWriteMessage, tag: string, recordType: 'audience' | 'delivery'): string {

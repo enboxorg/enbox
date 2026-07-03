@@ -1,4 +1,4 @@
-import type { RecordsReadMessage, RecordsWriteMessage, ValidationStateReader } from '../../src/index.js';
+import type { MessageStore, RecordsReadMessage, RecordsWriteMessage, ValidationStateReader } from '../../src/index.js';
 
 import { describe, expect, it } from 'bun:test';
 
@@ -34,6 +34,46 @@ describe('EncryptionControl', () => {
       expect(result).toBe(true);
     });
   });
+
+  describe('projectCurrentAudienceRecords()', () => {
+    it('should reuse current audience resolution results from a caller-provided cache', async () => {
+      const current = makeAudienceRecordsWriteMessage({
+        dateCreated : '2026-01-01T00:00:00.000000Z',
+        keyId       : 'current',
+        recordId    : 'current-record',
+      });
+      const loser = makeAudienceRecordsWriteMessage({
+        dateCreated : '2026-01-01T00:00:01.000000Z',
+        keyId       : 'loser',
+        recordId    : 'loser-record',
+      });
+      let queryCount = 0;
+      const messageStore = {
+        query: async (): Promise<{ messages: RecordsWriteMessage[] }> => {
+          queryCount++;
+          return { messages: [current, loser] };
+        },
+      } as unknown as MessageStore;
+      const currentAudienceRecordIdCache = new Map<string, string | undefined>();
+
+      const loserProjection = await EncryptionControl.projectCurrentAudienceRecords({
+        currentAudienceRecordIdCache,
+        messageStore,
+        tenant,
+        recordsWriteMessages: [loser],
+      });
+      expect(loserProjection).toEqual([]);
+
+      const currentProjection = await EncryptionControl.projectCurrentAudienceRecords({
+        currentAudienceRecordIdCache,
+        messageStore,
+        tenant,
+        recordsWriteMessages: [current],
+      });
+      expect(currentProjection.map(record => record.recordId)).toEqual(['current-record']);
+      expect(queryCount).toBe(1);
+    });
+  });
 });
 
 function makeIncomingMessage(): RecordsReadMessage {
@@ -51,4 +91,27 @@ function makeRecordsWriteMessage(options: { protocolPath: string }): RecordsWrit
       protocolPath: options.protocolPath,
     },
   } as RecordsWriteMessage;
+}
+
+function makeAudienceRecordsWriteMessage(options: {
+  dateCreated: string;
+  keyId: string;
+  recordId: string;
+}): RecordsWriteMessage {
+  return {
+    descriptor: {
+      interface    : DwnInterfaceName.Records,
+      method       : DwnMethodName.Write,
+      protocol     : 'http://example.com/protocol',
+      protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+      dateCreated  : options.dateCreated,
+      tags         : {
+        contextId : '',
+        keyId     : options.keyId,
+        protocol  : 'http://example.com/protocol',
+        rolePath  : 'member',
+      },
+    },
+    recordId: options.recordId,
+  } as unknown as RecordsWriteMessage;
 }
