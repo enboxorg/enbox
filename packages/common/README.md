@@ -26,16 +26,24 @@ const hex = Convert.uint8Array(bytes).toHex();
 const b64 = Convert.hex(hex).toBase64Url();
 ```
 
-### `LevelStore` / `MemoryStore`
+### `MemoryStore`
 
-Implementations of the `KeyValueStore<K, V>` interface — LevelDB-backed (persistent) and Map-backed (in-memory).
+Map-backed implementation of the `KeyValueStore<K, V>` interface.
 
 ```typescript
-import { LevelStore, MemoryStore } from '@enbox/common';
+import { MemoryStore } from '@enbox/common';
+
+const ephemeral = new MemoryStore();
+```
+
+### `LevelStore`
+
+LevelDB-backed implementation of the `KeyValueStore<K, V>` interface. It lives behind a dedicated subpath so default `@enbox/common` imports do not require LevelDB.
+
+```typescript
+import { LevelStore } from '@enbox/common/level-store';
 
 const persistent = new LevelStore({ location: './data' });
-const ephemeral = new MemoryStore();
-
 await persistent.set('key', 'value');
 const value = await persistent.get('key');
 ```

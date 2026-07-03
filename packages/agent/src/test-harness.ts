@@ -6,9 +6,10 @@ import type { KeyValueStore } from '@enbox/common';
 import type { Dwn, EventLog } from '@enbox/dwn-sdk-js';
 
 import { Level } from 'level';
+import { LevelStore } from '@enbox/common/level-store';
+import { MemoryStore } from '@enbox/common';
 import { DataStoreLevel, DurableEventLog, EventEmitterWakePublisher, MessageStoreLevel, ResumableTaskStoreLevel } from '@enbox/dwn-sdk-js';
 import { DidDht, DidJwk, DidResolverCacheMemory } from '@enbox/dids';
-import { LevelStore, MemoryStore } from '@enbox/common';
 
 import { AgentCryptoApi } from './crypto-api.js';
 import { AgentDidApi } from './did-api.js';
