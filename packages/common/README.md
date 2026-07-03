@@ -50,7 +50,7 @@ const value = await persistent.get('key');
 
 ### `TtlCache`
 
-Time-to-live in-memory cache (re-export of `@isaacs/ttlcache`).
+Time-to-live in-memory cache with bounded size support.
 
 ### `Stream`
 

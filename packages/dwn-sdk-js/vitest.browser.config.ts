@@ -64,10 +64,6 @@ export default defineConfig({
       'ipfs-unixfs-importer',
       'ipfs-unixfs-exporter',
 
-      // @isaacs/ttlcache — CJS; via @enbox/crypto -> @enbox/common.
-      // Use Vite's nested-dep `>` syntax to resolve through workspace symlinks.
-      '@enbox/crypto > @enbox/common > @isaacs/ttlcache',
-
       // --- Dual-format packages (CJS default, ESM via exports) ---
       // Pre-bundling these avoids edge cases where Vite picks the CJS entry.
       '@noble/ciphers/aes.js',
