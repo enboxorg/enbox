@@ -128,27 +128,7 @@ export { Time } from './utils/time.js';
 export * from './types/permission-types.js';
 export * from './types/records-types.js';
 
-// concrete implementations of stores and event log
-export { BlockstoreLevel } from './store/blockstore-level.js';
-export type { BlockstoreLevelConfig } from './store/blockstore-level.js';
-export {
-  collectBlockstoreBytes,
-  deleteManyBlockstoreItems,
-  getManyBlockstoreItems,
-  putManyBlockstoreItems,
-  yieldBlockstoreBytes,
-} from './store/blockstore-utils.js';
-export type { BlockstoreAbortOptions, BlockstoreInput, BlockstoreSource } from './store/blockstore-utils.js';
-export { DataStoreLevel } from './store/data-store-level.js';
-export type { DataStoreLevelConfig } from './store/data-store-level.js';
-export { IndexLevel } from './store/index-level.js';
-export type { CompoundIndexDefinition, IndexLevelConfig, IndexedItem, IndexLevelOptions } from './store/index-level.js';
-export { createLevelDatabase, LevelWrapper } from './store/level-wrapper.js';
-export type { CreateLevelDatabaseOptions, LevelDatabase, LevelWrapperConfig, LevelWrapperBatchOperation, LevelWrapperOptions, LevelWrapperIteratorOptions } from './store/level-wrapper.js';
-export { MessageStoreLevel } from './store/message-store-level.js';
-export type { MessageStoreLevelConfig } from './store/message-store-level.js';
-export { ResumableTaskStoreLevel } from './store/resumable-task-store-level.js';
-export type { ResumableTaskStoreLevelConfig } from './store/resumable-task-store-level.js';
+// concrete event log implementations
 export { EventEmitterWakePublisher } from './event-stream/event-emitter-wake-publisher.js';
 export { DurableEventLog } from './event-stream/durable-event-log.js';
 export type { DurableEventLogConfig, DurableEventLogStore } from './event-stream/durable-event-log.js';

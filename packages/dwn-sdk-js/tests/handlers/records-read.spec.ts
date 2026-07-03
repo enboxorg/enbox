@@ -27,9 +27,10 @@ import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { ContentEncryptionAlgorithm, Encryption, KeyAgreementAlgorithm } from '../../src/utils/encryption.js';
 import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
-import { DataStoreLevel, DwnConstant, MessageStoreLevel, PermissionsProtocol, Time } from '../../src/index.js';
+import { DataStoreLevel, MessageStoreLevel } from '../../src/store/level.js';
 import { DataStream, DateSort, Dwn, Jws, Protocols, ProtocolsConfigure, ProtocolsQuery, Records, RecordsDelete, RecordsRead , RecordsWrite } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
+import { DwnConstant, PermissionsProtocol, Time } from '../../src/index.js';
 import { DwnInterfaceName, DwnMethodName } from '../../src/index.js';
 
 import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';

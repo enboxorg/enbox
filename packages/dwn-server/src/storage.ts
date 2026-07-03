@@ -26,11 +26,9 @@ import { PluginLoader } from './plugin-loader.js';
 import { runServerMigrations } from './server-migration-runner.js';
 
 import {
-  DataStoreLevel,
   DurableEventLog,
-  MessageStoreLevel,
-  ResumableTaskStoreLevel,
 } from '@enbox/dwn-sdk-js';
+import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '@enbox/dwn-sdk-js/stores/level';
 import {
   DataStoreSql,
   MessageStoreSql,

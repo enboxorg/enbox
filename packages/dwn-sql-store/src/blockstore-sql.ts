@@ -1,7 +1,7 @@
 import type { DwnDatabaseType } from './types.js';
 import type { Kysely } from 'kysely';
 import type { Blockstore, InputPair, Pair } from 'interface-blockstore';
-import type { BlockstoreAbortOptions, BlockstoreInput, BlockstoreSource } from '@enbox/dwn-sdk-js';
+import type { BlockstoreAbortOptions, BlockstoreInput, BlockstoreSource } from '@enbox/dwn-sdk-js/stores/blockstore';
 
 import { CID } from 'multiformats';
 import { isDuplicateKeyError } from './utils/duplicate-key-error.js';
@@ -11,7 +11,7 @@ import {
   getManyBlockstoreItems,
   putManyBlockstoreItems,
   yieldBlockstoreBytes,
-} from '@enbox/dwn-sdk-js';
+} from '@enbox/dwn-sdk-js/stores/blockstore';
 
 /**
  * SQL-backed implementation of the `Blockstore` interface, scoped to a

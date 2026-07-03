@@ -48,6 +48,8 @@
   },
   "include": [
     "./src/index.ts",
+    "./src/store/blockstore.ts",
+    "./src/store/level.ts",
     "tests"
   ],
   "exclude": [

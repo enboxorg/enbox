@@ -9,8 +9,8 @@ import { rm } from 'node:fs/promises';
 
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { afterAll, describe, expect, it } from 'bun:test';
+import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '../../src/store/level.js';
 import {
-  DataStoreLevel,
   DataStream,
   Dwn,
   DwnInterfaceName,
@@ -18,11 +18,9 @@ import {
   Encoder,
   Jws,
   Message,
-  MessageStoreLevel,
   Records,
   RecordsDelete,
   Replication,
-  ResumableTaskStoreLevel,
   Time,
 } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';

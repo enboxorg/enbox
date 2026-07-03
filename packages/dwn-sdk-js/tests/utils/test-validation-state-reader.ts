@@ -3,7 +3,7 @@ import type { DataStore } from '../../src/types/data-store.js';
 import type { MessageStore } from '../../src/types/message-store.js';
 import type { ValidationStateReader } from '../../src/types/validation-state-reader.js';
 
-import { DataStoreLevel } from '../../src/index.js';
+import { DataStoreLevel } from '../../src/store/level.js';
 import sinon from 'sinon';
 import { StoreValidationStateReader } from '../../src/core/validation-state-reader.js';
 

@@ -13,18 +13,16 @@ import { Dwn } from '../src/dwn.js';
 import { TestEventLog } from './test-event-stream.js';
 import { TestStores } from './test-stores.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '../src/store/level.js';
 import {
-  DataStoreLevel,
   DataStream,
   DwnErrorCode,
   DwnMethodName,
   Jws,
   Message,
-  MessageStoreLevel,
   RecordsDelete,
   RecordsRead,
   RecordsWrite,
-  ResumableTaskStoreLevel,
   Time
 } from '../src/index.js';
 import { defaultTestProtocolDefinition, TestDataGenerator } from './utils/test-data-generator.js';
