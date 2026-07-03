@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 
 import fc from 'fast-check';
 
-import { getTypeName, isCrossProtocolRef, parseCrossProtocolRef } from '../../src/utils/protocols.js';
+import { getRoleAudienceContextId, getTypeName, isCrossProtocolRef, parseCrossProtocolRef } from '../../src/utils/protocols.js';
 
 const numRuns = Number(process.env.FAST_CHECK_NUM_RUNS) || 100;
 
@@ -71,6 +71,23 @@ describe('Protocol utility functions — fuzz', () => {
         ),
         { numRuns }
       );
+    });
+  });
+
+  describe('getRoleAudienceContextId', () => {
+    it('should return an empty context id for a root role path', () => {
+      expect(getRoleAudienceContextId('member')).toBe('');
+      expect(getRoleAudienceContextId('member', 'thread/message')).toBe('');
+    });
+
+    it('should return the ancestor context prefix at the role parent depth', () => {
+      expect(getRoleAudienceContextId('thread/member', 'thread-record/message-record')).toBe('thread-record');
+      expect(getRoleAudienceContextId('thread/message/member', 'thread-record/message-record/reply-record')).toBe('thread-record/message-record');
+    });
+
+    it('should return undefined when a nested role path has no covering context id', () => {
+      expect(getRoleAudienceContextId('thread/member')).toBeUndefined();
+      expect(getRoleAudienceContextId('thread/message/member', 'thread-record')).toBeUndefined();
     });
   });
 });

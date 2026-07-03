@@ -11,7 +11,7 @@ import { EncryptionProtocol } from '../protocols/encryption.js';
 import { Message } from './message.js';
 import { ROLE_AUDIENCE_DERIVATION_SCHEME } from '../utils/encryption.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
-import { isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
+import { getRoleAudienceContextId, isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
 
 export type ReplicationApplyOptions = {
   dataStream?: ReadableStream<Uint8Array>;
@@ -467,7 +467,7 @@ function encryptionAudienceDependenciesFromRoleAudienceEntries(
   );
   for (const sourceEntry of sourceEntries) {
     const rolePath = sourceEntry.rolePath as string;
-    const audienceContextId = roleAudienceContextId(rolePath, contextId);
+    const audienceContextId = getRoleAudienceContextId(rolePath, contextId);
     if (audienceContextId === undefined) {
       continue;
     }
@@ -495,7 +495,7 @@ function encryptionAudienceDependenciesFromRoleAudienceEntries(
   );
   for (const entry of legacyEntries) {
     const role = entry.role as string;
-    const audienceContextId = roleAudienceContextId(role, contextId);
+    const audienceContextId = getRoleAudienceContextId(role, contextId);
     if (audienceContextId === undefined) {
       continue;
     }
@@ -616,20 +616,6 @@ function roleContextPrefix(rolePath: string, contextId: string): string | undefi
   }
 
   return contextId.split('/').slice(0, roleSegments).join('/');
-}
-
-function roleAudienceContextId(rolePath: string, contextId: string): string | undefined {
-  const roleSegments = rolePath.split('/').length - 1;
-  if (roleSegments === 0) {
-    return '';
-  }
-
-  const contextSegments = contextId.split('/');
-  if (contextSegments.length < roleSegments) {
-    return undefined;
-  }
-
-  return contextSegments.slice(0, roleSegments).join('/');
 }
 
 function isRecordObject(value: unknown): value is Record<string, unknown> {

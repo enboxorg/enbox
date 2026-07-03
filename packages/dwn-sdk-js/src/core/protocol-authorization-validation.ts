@@ -9,7 +9,7 @@ import { Records } from '../utils/records.js';
 import { validateProtocolTags } from '../utils/protocol-tags.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 import { Encryption, ROLE_AUDIENCE_DERIVATION_SCHEME } from '../utils/encryption.js';
-import { getRuleSetAtPath, getTypeName, parseCrossProtocolRef } from '../utils/protocols.js';
+import { getRoleAudienceContextId, getRuleSetAtPath, getTypeName, parseCrossProtocolRef } from '../utils/protocols.js';
 import { ProtocolAction, ProtocolRecordLimitStrategy } from '../types/protocols-types.js';
 
 type ResolvedRoleAudience = {
@@ -452,30 +452,8 @@ function resolveRoleAudience(
     return undefined;
   }
 
-  const contextId = getRoleAudienceContextId(inboundMessage, rolePath);
+  const contextId = getRoleAudienceContextId(rolePath, inboundMessage.contextId);
   return contextId === undefined ? undefined : { protocol, rolePath, contextId };
-}
-
-function getRoleAudienceContextId(
-  inboundMessage: RecordsWriteMessage,
-  rolePath: string,
-): string | undefined {
-  const parentDepth = rolePath.split('/').length - 1;
-  if (parentDepth === 0) {
-    return '';
-  }
-
-  const contextId = inboundMessage.contextId;
-  if (typeof contextId !== 'string') {
-    return undefined;
-  }
-
-  const contextSegments = contextId.split('/');
-  if (contextSegments.length < parentDepth) {
-    return undefined;
-  }
-
-  return contextSegments.slice(0, parentDepth).join('/');
 }
 
 /**

@@ -6,6 +6,7 @@ import {
   DwnMethodName,
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
   EncryptionProtocol,
+  getRoleAudienceContextId,
   isCrossProtocolRef,
   Jws,
   Message,
@@ -290,24 +291,6 @@ function getInvokedRoleKey(
   }
 
   return getRoleKey(roleProtocol, roleProtocolPath, recipient, getRoleContextPrefix(roleProtocolPath, contextId));
-}
-
-function getRoleAudienceContextId(rolePath: string, contextId?: string): string | undefined {
-  const roleSegments = rolePath.split('/').length - 1;
-  if (roleSegments === 0) {
-    return '';
-  }
-
-  if (contextId === undefined) {
-    return undefined;
-  }
-
-  const contextSegments = contextId.split('/');
-  if (contextSegments.length < roleSegments) {
-    return undefined;
-  }
-
-  return contextSegments.slice(0, roleSegments).join('/');
 }
 
 function getSourceAudienceKeysFromEncryption(message: GenericMessage): string[] {
