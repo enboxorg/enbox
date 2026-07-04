@@ -49,6 +49,41 @@ describe('ProtocolsConfigure', () => {
       await expect(parsePromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureRecordNestingDepthExceeded);
     });
 
+    it('should throw the nesting-depth error before walking over-deep reserved encryption control paths', async () => {
+      const definition = {
+        published : true,
+        protocol  : 'http://example.com',
+        types     : {
+          foo: {},
+        },
+        structure: { }
+      };
+
+      let currentLevel: any = definition.structure;
+      for (let i = 0; i < 11; i++) {
+        currentLevel.foo = { };
+        currentLevel = currentLevel.foo;
+      }
+      currentLevel.$encryption = { };
+
+      const descriptor: ProtocolsConfigureDescriptor = {
+        interface        : DwnInterfaceName.Protocols,
+        method           : DwnMethodName.Configure,
+        messageTimestamp : Time.getCurrentTimestamp(),
+        definition
+      };
+
+      const alice = await TestDataGenerator.generatePersona();
+      const authorization = await Message.createAuthorization({
+        descriptor,
+        signer: Jws.createSigner(alice)
+      });
+      const message = { descriptor, authorization };
+
+      const parsePromise = ProtocolsConfigure.parse(message);
+      await expect(parsePromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureRecordNestingDepthExceeded);
+    });
+
     it('should throw the reserved encryption control error before JSON Schema validation', async () => {
       const definition = {
         published : true,
@@ -328,6 +363,40 @@ describe('ProtocolsConfigure', () => {
                   can  : [ProtocolAction.Create]
                 }]
               }
+            }
+          }
+        };
+
+        const alice = await TestDataGenerator.generatePersona();
+
+        const protocolsConfigure = await ProtocolsConfigure.create({
+          signer: Jws.createSigner(alice),
+          definition
+        });
+
+        expect(protocolsConfigure.message.descriptor.definition).toBeDefined();
+      });
+
+      it('should allow role rules whose role parent depth matches the rule path context depth', async () => {
+        const definition = {
+          published : true,
+          protocol  : 'http://example.com',
+          types     : {
+            thread      : {},
+            message     : {},
+            participant : {},
+          },
+          structure: {
+            thread: {
+              message: {
+                participant: {
+                  $role: true,
+                },
+                $actions: [{
+                  role : 'thread/message/participant',
+                  can  : ['read']
+                }]
+              },
             }
           }
         };

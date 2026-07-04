@@ -16,7 +16,7 @@ import { Time } from '../utils/time.js';
 import { validateProtocolTagSchemaDefinition } from '../utils/protocol-tags.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
-import { getRuleSetAtPath, isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
+import { getRoleAudienceContextId, getRuleSetAtPath, isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
 import { normalizeProtocolUrl, normalizeSchemaUrl, validateProtocolUrlNormalized, validateSchemaUrlNormalized } from '../utils/url.js';
 import { ProtocolAction, ProtocolActor, ProtocolRecordLimitStrategy } from '../types/protocols-types.js';
 
@@ -32,6 +32,8 @@ export type ProtocolsConfigureOptions = {
 };
 
 export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessage> {
+  private static readonly maxRecordNestingDepth = 10;
+
   public static async parse(message: ProtocolsConfigureMessage): Promise<ProtocolsConfigure> {
     ProtocolsConfigure.validateReservedEncryptionControlPath(message.descriptor?.definition);
     Message.validateJsonSchema(message);
@@ -149,6 +151,10 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
         continue;
       }
 
+      if (childPath.split('/').length > ProtocolsConfigure.maxRecordNestingDepth) {
+        throw new DwnError(DwnErrorCode.ProtocolsConfigureRecordNestingDepthExceeded, 'record nesting depth exceeded 10 levels.');
+      }
+
       ProtocolsConfigure.validateReservedEncryptionControlStructure(ruleSet[recordType], childPath);
     }
   }
@@ -228,8 +234,8 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
   private static fetchAllRolePathsRecursively(ruleSetProtocolPath: string, ruleSet: ProtocolRuleSet, roles: string[]): string[] {
     // Limit the depth of the record hierarchy to 10 levels
     // There is opportunity to optimize here to avoid repeated string splitting
-    if (ruleSetProtocolPath.split('/').length > 10) {
-      throw new DwnError(DwnErrorCode.ProtocolsConfigureRecordNestingDepthExceeded, 'Record nesting depth exceeded 10 levels.');
+    if (ruleSetProtocolPath.split('/').length > ProtocolsConfigure.maxRecordNestingDepth) {
+      throw new DwnError(DwnErrorCode.ProtocolsConfigureRecordNestingDepthExceeded, 'record nesting depth exceeded 10 levels.');
     }
 
     for (const recordType in ruleSet) {
@@ -614,16 +620,26 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
    * from records at the rule set's protocol path.
    */
   private static validateRoleParentContextDepth(rolePath: string, ruleSetProtocolPath: string, actionRule: ProtocolActionRule): void {
-    const roleParentDepth = rolePath.split('/').length - 1;
-    const ruleSetContextDepth = ruleSetProtocolPath === '' ? 0 : ruleSetProtocolPath.split('/').length;
+    const syntheticContextId = ProtocolsConfigure.getSyntheticContextIdForProtocolPath(ruleSetProtocolPath);
 
-    if (roleParentDepth > ruleSetContextDepth) {
+    if (getRoleAudienceContextId(rolePath, syntheticContextId) === undefined) {
       throw new DwnError(
         DwnErrorCode.ProtocolsConfigureRoleParentContextDepthExceeded,
-        `Role '${rolePath}' in action ${JSON.stringify(actionRule)} at protocol path '${ruleSetProtocolPath}' ` +
-        `requires context depth ${roleParentDepth}, but the rule path context depth is ${ruleSetContextDepth}.`
+        `role '${rolePath}' in action ${JSON.stringify(actionRule)} at protocol path '${ruleSetProtocolPath}' ` +
+        `requires a context that records at the rule path cannot provide.`
       );
     }
+  }
+
+  private static getSyntheticContextIdForProtocolPath(protocolPath: string): string | undefined {
+    if (protocolPath === '') {
+      return undefined;
+    }
+
+    return protocolPath
+      .split('/')
+      .map((_segment, index): string => `context-${index}`)
+      .join('/');
   }
 
   /**
