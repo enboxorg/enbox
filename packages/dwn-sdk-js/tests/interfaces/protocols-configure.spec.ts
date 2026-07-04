@@ -1,4 +1,4 @@
-import type { ProtocolsConfigureDescriptor, ProtocolsConfigureMessage } from '../../src/index.js';
+import type { ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureDescriptor, ProtocolsConfigureMessage } from '../../src/index.js';
 
 import dexProtocolDefinition from '../vectors/protocol-definitions/dex.json' with { type: 'json' };
 import { Jws } from '../../src/utils/jws.js';
@@ -12,7 +12,7 @@ import { DwnErrorCode, DwnInterfaceName, DwnMethodName, Message, Protocols } fro
 
 describe('ProtocolsConfigure', () => {
   describe('parse()', () => {
-    it('should throw if protocol definitions has record nesting more than 10 level deep', async () => {
+    it('should throw the record nesting-depth error when the pre-schema walk sees over-deep structure', async () => {
       const definition = {
         published : true,
         protocol  : 'http://example.com',
@@ -47,6 +47,106 @@ describe('ProtocolsConfigure', () => {
 
       const parsePromise = ProtocolsConfigure.parse(message);
       await expect(parsePromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureRecordNestingDepthExceeded);
+    });
+
+    it('should count empty record type names when enforcing the pre-schema nesting-depth guard', async () => {
+      const definition = {
+        published : true,
+        protocol  : 'http://example.com',
+        types     : {
+          foo: {},
+        },
+        structure: { }
+      };
+
+      let currentLevel: any = definition.structure;
+      for (let i = 0; i < 11; i++) {
+        currentLevel[''] = { };
+        currentLevel = currentLevel[''];
+      }
+
+      const descriptor: ProtocolsConfigureDescriptor = {
+        interface        : DwnInterfaceName.Protocols,
+        method           : DwnMethodName.Configure,
+        messageTimestamp : Time.getCurrentTimestamp(),
+        definition
+      };
+
+      const alice = await TestDataGenerator.generatePersona();
+      const authorization = await Message.createAuthorization({
+        descriptor,
+        signer: Jws.createSigner(alice)
+      });
+      const message = { descriptor, authorization };
+
+      const parsePromise = ProtocolsConfigure.parse(message);
+      await expect(parsePromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureRecordNestingDepthExceeded);
+    });
+
+    it('should throw the record nesting-depth error before walking over-deep encryption control paths', async () => {
+      const definition = {
+        published : true,
+        protocol  : 'http://example.com',
+        types     : {
+          foo: {},
+        },
+        structure: { }
+      };
+
+      let currentLevel: any = definition.structure;
+      for (let i = 0; i < 11; i++) {
+        currentLevel.foo = { };
+        currentLevel = currentLevel.foo;
+      }
+      currentLevel.$encryption = { };
+
+      const descriptor: ProtocolsConfigureDescriptor = {
+        interface        : DwnInterfaceName.Protocols,
+        method           : DwnMethodName.Configure,
+        messageTimestamp : Time.getCurrentTimestamp(),
+        definition
+      };
+
+      const alice = await TestDataGenerator.generatePersona();
+      const authorization = await Message.createAuthorization({
+        descriptor,
+        signer: Jws.createSigner(alice)
+      });
+      const message = { descriptor, authorization };
+
+      const parsePromise = ProtocolsConfigure.parse(message);
+      await expect(parsePromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureRecordNestingDepthExceeded);
+    });
+
+    it('should throw the reserved encryption control error before JSON Schema validation', async () => {
+      const definition = {
+        published : true,
+        protocol  : 'http://example.com',
+        types     : {
+          $encryption : {},
+          message     : {},
+        },
+        structure: {
+          message: {},
+        },
+      };
+
+      const descriptor: ProtocolsConfigureDescriptor = {
+        interface        : DwnInterfaceName.Protocols,
+        method           : DwnMethodName.Configure,
+        messageTimestamp : Time.getCurrentTimestamp(),
+        definition
+      };
+
+      const alice = await TestDataGenerator.generatePersona();
+      const authorization = await Message.createAuthorization({
+        descriptor,
+        signer: Jws.createSigner(alice)
+      });
+      const message = { descriptor, authorization };
+
+      const parsePromise = ProtocolsConfigure.parse(message);
+      await expect(parsePromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureReservedEncryptionControlPath);
     });
   });
 
@@ -145,6 +245,106 @@ describe('ProtocolsConfigure', () => {
     });
 
     describe('protocol definition validations', () => {
+      it('should allow ten nested records with a role marker on the deepest record', async () => {
+        const definition: ProtocolDefinition = {
+          published : true,
+          protocol  : 'http://example.com',
+          types     : {},
+          structure : { },
+        };
+
+        let currentLevel: ProtocolRuleSet = definition.structure;
+        for (let i = 1; i <= 10; i++) {
+          const recordType = `level${i}`;
+          definition.types[recordType] = { };
+          currentLevel[recordType] = { };
+          currentLevel = currentLevel[recordType] as ProtocolRuleSet;
+        }
+        currentLevel.$role = true;
+
+        const alice = await TestDataGenerator.generatePersona();
+
+        const protocolsConfigure = await ProtocolsConfigure.create({
+          signer: Jws.createSigner(alice),
+          definition
+        });
+
+        expect(protocolsConfigure.message.descriptor.definition.protocol).toBe('http://example.com');
+        expect(currentLevel.$role).toBe(true);
+      });
+
+      it('should reject protocol definitions with a reserved `$encryption` type', async () => {
+        const definition = {
+          published : true,
+          protocol  : 'http://example.com',
+          types     : {
+            $encryption : {},
+            message     : {},
+          },
+          structure: {
+            message: { }
+          }
+        };
+
+        const alice = await TestDataGenerator.generatePersona();
+
+        const createPromise = ProtocolsConfigure.create({
+          signer: Jws.createSigner(alice),
+          definition
+        });
+
+        await expect(createPromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureReservedEncryptionControlPath);
+      });
+
+      it('should reject protocol definitions with a reserved root `$encryption` structure path', async () => {
+        const definition = {
+          published : true,
+          protocol  : 'http://example.com',
+          types     : {
+            message: {},
+          },
+          structure: {
+            $encryption : { },
+            message     : { }
+          }
+        };
+
+        const alice = await TestDataGenerator.generatePersona();
+
+        const createPromise = ProtocolsConfigure.create({
+          signer: Jws.createSigner(alice),
+          definition
+        });
+
+        await expect(createPromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureReservedEncryptionControlPath);
+      });
+
+      it('should reject protocol definitions with a reserved nested `$encryption` structure path', async () => {
+        const definition = {
+          published : true,
+          protocol  : 'http://example.com',
+          types     : {
+            thread  : {},
+            message : {},
+          },
+          structure: {
+            thread: {
+              $encryption : { },
+              message     : { },
+            },
+          }
+        };
+
+        const alice = await TestDataGenerator.generatePersona();
+
+        const createPromise = ProtocolsConfigure.create({
+          signer: Jws.createSigner(alice),
+          definition
+        });
+
+        await expect(createPromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureReservedEncryptionControlPath);
+      });
+
       it('should not allow a record in protocol structure to reference a non-existent record type', async () => {
         const definition = {
           published : true,
@@ -239,6 +439,40 @@ describe('ProtocolsConfigure', () => {
         expect(protocolsConfigure.message.descriptor.definition).toBeDefined();
       });
 
+      it('should allow role rules whose role parent depth matches the rule path context depth', async () => {
+        const definition = {
+          published : true,
+          protocol  : 'http://example.com',
+          types     : {
+            thread      : {},
+            message     : {},
+            participant : {},
+          },
+          structure: {
+            thread: {
+              message: {
+                participant: {
+                  $role: true,
+                },
+                $actions: [{
+                  role : 'thread/message/participant',
+                  can  : ['read']
+                }]
+              },
+            }
+          }
+        };
+
+        const alice = await TestDataGenerator.generatePersona();
+
+        const protocolsConfigure = await ProtocolsConfigure.create({
+          signer: Jws.createSigner(alice),
+          definition
+        });
+
+        expect(protocolsConfigure.message.descriptor.definition).toBeDefined();
+      });
+
       it('rejects protocol definitions with `role` actions that contain invalid roles', async () => {
         const definition = {
           published : true,
@@ -269,6 +503,72 @@ describe('ProtocolsConfigure', () => {
 
         await expect(createProtocolsConfigurePromise)
           .rejects.toThrow(DwnErrorCode.ProtocolsConfigureRoleDoesNotExistAtGivenPath);
+      });
+
+      it('should reject role rules whose role parent is deeper than the rule path context', async () => {
+        const definition = {
+          published : true,
+          protocol  : 'http://example.com',
+          types     : {
+            thread      : {},
+            message     : {},
+            participant : {},
+          },
+          structure: {
+            thread: {
+              message: {
+                participant: {
+                  $role: true,
+                },
+              },
+              $actions: [{
+                role : 'thread/message/participant',
+                can  : ['read']
+              }]
+            }
+          }
+        };
+
+        const alice = await TestDataGenerator.generatePersona();
+
+        const createProtocolsConfigurePromise = ProtocolsConfigure.create({
+          signer: Jws.createSigner(alice),
+          definition
+        });
+
+        await expect(createProtocolsConfigurePromise)
+          .rejects.toThrow(DwnErrorCode.ProtocolsConfigureRoleParentContextDepthExceeded);
+      });
+
+      it('should reject cross-protocol role rules whose role parent is deeper than the rule path context', async () => {
+        const definition = {
+          published : true,
+          protocol  : 'http://example.com',
+          uses      : {
+            roles: 'http://example.com/roles',
+          },
+          types: {
+            message: {},
+          },
+          structure: {
+            message: {
+              $actions: [{
+                role : 'roles:thread/message/participant',
+                can  : ['read']
+              }]
+            }
+          }
+        };
+
+        const alice = await TestDataGenerator.generatePersona();
+
+        const createProtocolsConfigurePromise = ProtocolsConfigure.create({
+          signer: Jws.createSigner(alice),
+          definition
+        });
+
+        await expect(createProtocolsConfigurePromise)
+          .rejects.toThrow(DwnErrorCode.ProtocolsConfigureRoleParentContextDepthExceeded);
       });
 
       it('rejects protocol definitions with actions that contain `of` and  `who` is `anyone`', async () => {

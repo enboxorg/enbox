@@ -126,8 +126,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
     // re-index previously-latest messages as no longer the latest base state.
     for (const existingMessage of existingMessages) {
       if (existingMessage !== newestMessage) {
-        const existingProtocolsConfigure = await ProtocolsConfigure.parse(existingMessage as ProtocolsConfigureMessage);
-        const updatedIndexes = ProtocolsConfigureHandler.constructIndexes(existingProtocolsConfigure, false);
+        const updatedIndexes = ProtocolsConfigureHandler.constructIndexesFromMessage(existingMessage as ProtocolsConfigureMessage, false);
         const existingCid = await Message.getCid(existingMessage);
 
         await this.deps.messageStore.updateIndexes(tenant, existingCid, updatedIndexes);
@@ -140,9 +139,13 @@ export class ProtocolsConfigureHandler implements MethodHandler {
   };
 
   static constructIndexes(protocolsConfigure: ProtocolsConfigure, isLatestBaseState: boolean): { [key: string]: string | boolean } {
+    return ProtocolsConfigureHandler.constructIndexesFromMessage(protocolsConfigure.message, isLatestBaseState);
+  }
+
+  private static constructIndexesFromMessage(message: ProtocolsConfigureMessage, isLatestBaseState: boolean): { [key: string]: string | boolean } {
     // strip out `definition` as it is not indexable
-    const { definition, ...propertiesToIndex } = protocolsConfigure.message.descriptor;
-    const { author } = protocolsConfigure;
+    const { definition, ...propertiesToIndex } = message.descriptor;
+    const author = Message.getAuthor(message);
 
     const indexes: { [key: string]: string | boolean } = {
       ...propertiesToIndex,

@@ -1,3 +1,4 @@
+import type { CrossProtocolRef } from '../utils/protocols.js';
 import type { DataEncodedRecordsWriteMessage } from '../types/records-types.js';
 import type { MessageSigner } from '../types/signer.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
@@ -15,7 +16,7 @@ import { Time } from '../utils/time.js';
 import { validateProtocolTagSchemaDefinition } from '../utils/protocol-tags.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
-import { getRuleSetAtPath, isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
+import { getRoleAudienceContextId, getRuleSetAtPath, isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
 import { normalizeProtocolUrl, normalizeSchemaUrl, validateProtocolUrlNormalized, validateSchemaUrlNormalized } from '../utils/url.js';
 import { ProtocolAction, ProtocolActor, ProtocolRecordLimitStrategy } from '../types/protocols-types.js';
 
@@ -31,7 +32,10 @@ export type ProtocolsConfigureOptions = {
 };
 
 export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessage> {
+  private static readonly maxRecordNestingDepth = 10;
+
   public static async parse(message: ProtocolsConfigureMessage): Promise<ProtocolsConfigure> {
+    ProtocolsConfigure.validateReservedEncryptionControlPath(message.descriptor?.definition);
     Message.validateJsonSchema(message);
     ProtocolsConfigure.validateProtocolDefinition(message.descriptor.definition);
     await Message.validateSignatureStructure(message.authorization.signature, message.descriptor);
@@ -52,6 +56,8 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
       definition       : ProtocolsConfigure.normalizeDefinition(options.definition),
       ...permissionGrantInvocation,
     };
+
+    ProtocolsConfigure.validateReservedEncryptionControlPath(descriptor.definition);
 
     const authorization = await Message.createAuthorization({
       descriptor,
@@ -107,6 +113,59 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
 
     // validate `structure`
     ProtocolsConfigure.validateStructure(definition);
+  }
+
+  /**
+   * Validates the reserved encryption-control namespace before JSON Schema validation.
+   */
+  private static validateReservedEncryptionControlPath(definition: unknown): void {
+    if (!ProtocolsConfigure.isRecord(definition)) {
+      return;
+    }
+
+    if (ProtocolsConfigure.isRecord(definition.types) && Object.hasOwn(definition.types, '$encryption')) {
+      throw new DwnError(
+        DwnErrorCode.ProtocolsConfigureReservedEncryptionControlPath,
+        `protocol type '$encryption' is reserved for DWN encryption control records.`
+      );
+    }
+
+    ProtocolsConfigure.validateReservedEncryptionControlStructure(definition.structure, '', 0);
+  }
+
+  private static validateReservedEncryptionControlStructure(ruleSet: unknown, protocolPath: string, depth: number): void {
+    if (!ProtocolsConfigure.isRecord(ruleSet)) {
+      return;
+    }
+
+    for (const recordType in ruleSet) {
+      const childDepth = depth + 1;
+      const childPath = protocolPath === '' ? recordType : `${protocolPath}/${recordType}`;
+
+      if (recordType === '$encryption') {
+        throw new DwnError(
+          DwnErrorCode.ProtocolsConfigureReservedEncryptionControlPath,
+          `protocol structure path '${childPath}' is reserved for DWN encryption control records.`
+        );
+      }
+
+      if (recordType.startsWith('$')) {
+        continue;
+      }
+
+      if (childDepth > ProtocolsConfigure.maxRecordNestingDepth) {
+        throw new DwnError(
+          DwnErrorCode.ProtocolsConfigureRecordNestingDepthExceeded,
+          `record nesting depth exceeded ${ProtocolsConfigure.maxRecordNestingDepth} levels.`
+        );
+      }
+
+      ProtocolsConfigure.validateReservedEncryptionControlStructure(ruleSet[recordType], childPath, childDepth);
+    }
+  }
+
+  private static isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
   }
 
   /**
@@ -175,15 +234,8 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
 
   /**
    * Parses the given rule set hierarchy to get all the role protocol paths.
-   * @throws DwnError if the hierarchy depth goes beyond 10 levels.
    */
   private static fetchAllRolePathsRecursively(ruleSetProtocolPath: string, ruleSet: ProtocolRuleSet, roles: string[]): string[] {
-    // Limit the depth of the record hierarchy to 10 levels
-    // There is opportunity to optimize here to avoid repeated string splitting
-    if (ruleSetProtocolPath.split('/').length > 10) {
-      throw new DwnError(DwnErrorCode.ProtocolsConfigureRecordNestingDepthExceeded, 'Record nesting depth exceeded 10 levels.');
-    }
-
     for (const recordType in ruleSet) {
       // ignore non-nested-record properties
       if (recordType.startsWith('$')) {
@@ -300,7 +352,8 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
       if (actionRule.role !== undefined) {
         if (isCrossProtocolRef(actionRule.role)) {
           // Cross-protocol role reference: validate alias exists in `uses`
-          ProtocolsConfigure.validateCrossProtocolAlias(actionRule.role, uses, ruleSetProtocolPath, 'role');
+          const parsedRole = ProtocolsConfigure.validateCrossProtocolAlias(actionRule.role, uses, ruleSetProtocolPath, 'role');
+          ProtocolsConfigure.validateRoleParentContextDepth(parsedRole.protocolPath, ruleSetProtocolPath, actionRule);
         } else {
           // Local role: make sure the role contains a valid protocol path to a role record
           if (!roles.includes(actionRule.role)) {
@@ -309,6 +362,8 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
               `Role in action ${JSON.stringify(actionRule)} for rule set ${ruleSetProtocolPath} does not exist.`
             );
           }
+
+          ProtocolsConfigure.validateRoleParentContextDepth(actionRule.role, ruleSetProtocolPath, actionRule);
         }
       }
 
@@ -559,6 +614,33 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
   }
 
   /**
+   * Validates that a role rule only references a role whose parent context can be found
+   * from records at the rule set's protocol path.
+   */
+  private static validateRoleParentContextDepth(rolePath: string, ruleSetProtocolPath: string, actionRule: ProtocolActionRule): void {
+    const syntheticContextId = ProtocolsConfigure.getSyntheticContextIdForProtocolPath(ruleSetProtocolPath);
+
+    if (getRoleAudienceContextId(rolePath, syntheticContextId) === undefined) {
+      throw new DwnError(
+        DwnErrorCode.ProtocolsConfigureRoleParentContextDepthExceeded,
+        `role '${rolePath}' in action ${JSON.stringify(actionRule)} at protocol path '${ruleSetProtocolPath}' ` +
+        `requires a context that records at the rule path cannot provide.`
+      );
+    }
+  }
+
+  private static getSyntheticContextIdForProtocolPath(protocolPath: string): string | undefined {
+    if (protocolPath === '') {
+      return undefined;
+    }
+
+    return protocolPath
+      .split('/')
+      .map((_segment, index): string => `context-${index}`)
+      .join('/');
+  }
+
+  /**
    * Validates that a cross-protocol reference (in `alias:path` format) has a valid alias
    * that exists in the `uses` map.
    * @param ref - The cross-protocol reference string (e.g., "threads:thread/participant")
@@ -568,7 +650,7 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
    */
   private static validateCrossProtocolAlias(
     ref: string, uses: ProtocolUses | undefined, ruleSetProtocolPath: string, fieldName: string
-  ): void {
+  ): CrossProtocolRef {
     const parsed = parseCrossProtocolRef(ref);
 
     if (parsed === undefined) {
@@ -595,6 +677,8 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
         `does not exist in the 'uses' map.`
       );
     }
+
+    return parsed;
   }
 
   private static normalizeDefinition(definition: ProtocolDefinition): ProtocolDefinition {
