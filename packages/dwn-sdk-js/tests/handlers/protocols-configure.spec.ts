@@ -17,6 +17,7 @@ import { GeneralJwsBuilder } from '../../src/jose/jws/general/builder.js';
 import { lexicographicalCompare } from '../../src/utils/string.js';
 import { Message } from '../../src/core/message.js';
 import { ProtocolAction } from '../../src/types/protocols-types.js';
+import { ProtocolsConfigureHandler } from '../../src/handlers/protocols-configure.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
@@ -222,6 +223,78 @@ export function testProtocolsConfigureHandler(): void {
 
         expect(queryReply.status.code).toBe(200);
         expect(queryReply.entries?.length).toBe(1);
+      });
+
+      it('should demote stored protocol versions without re-validating historical definitions', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const protocol = 'http://config-validity.example/historical-reindex';
+
+        const validHistoricalDefinition: ProtocolDefinition = {
+          protocol,
+          published : true,
+          types     : {
+            thread      : { dataFormats: ['application/json'] },
+            message     : { dataFormats: ['application/json'] },
+            participant : { dataFormats: ['application/json'] }
+          },
+          structure: {
+            thread: {
+              message: {
+                participant: { $role: true }
+              }
+            }
+          }
+        };
+
+        const invalidHistoricalDefinition: ProtocolDefinition = {
+          ...validHistoricalDefinition,
+          structure: {
+            thread: {
+              $actions: [
+                { role: 'thread/message/participant', can: [ProtocolAction.Create] }
+              ],
+              message: {
+                participant: { $role: true }
+              }
+            }
+          }
+        };
+
+        const historicalConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : validHistoricalDefinition,
+          messageTimestamp   : '2025-05-01T00:00:00.000000Z'
+        });
+        const historicalIndexes = ProtocolsConfigureHandler.constructIndexes(historicalConfig.protocolsConfigure, true);
+        historicalConfig.message.descriptor.definition = invalidHistoricalDefinition;
+        await messageStore.put(alice.did, historicalConfig.message, historicalIndexes);
+
+        const newConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : validHistoricalDefinition,
+          messageTimestamp   : '2025-05-02T00:00:00.000000Z'
+        });
+        const reply = await dwn.processMessage(alice.did, newConfig.message);
+        expect(reply.status.code).toBe(202);
+
+        const newConfigCid = await Message.getCid(newConfig.message);
+        const latestConfigs = await messageStore.query(alice.did, [{
+          interface         : DwnInterfaceName.Protocols,
+          method            : DwnMethodName.Configure,
+          protocol,
+          isLatestBaseState : true
+        }]);
+        expect(latestConfigs.messages.length).toBe(1);
+        expect(await Message.getCid(latestConfigs.messages[0])).toBe(newConfigCid);
+
+        const historicalConfigs = await messageStore.query(alice.did, [{
+          interface         : DwnInterfaceName.Protocols,
+          method            : DwnMethodName.Configure,
+          protocol,
+          isLatestBaseState : false
+        }]);
+        expect(historicalConfigs.messages.length).toBe(1);
+        expect(await Message.getCid(historicalConfigs.messages[0])).toBe(await Message.getCid(historicalConfig.message));
       });
 
       it('should purge records invalidated by a newly learned protocol config', async () => {

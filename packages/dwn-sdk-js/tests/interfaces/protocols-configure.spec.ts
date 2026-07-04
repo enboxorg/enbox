@@ -12,7 +12,7 @@ import { DwnErrorCode, DwnInterfaceName, DwnMethodName, Message, Protocols } fro
 
 describe('ProtocolsConfigure', () => {
   describe('parse()', () => {
-    it('should throw the reserved-structure nesting-depth error when the pre-schema walk sees over-deep structure', async () => {
+    it('should throw the record nesting-depth error when the pre-schema walk sees over-deep structure', async () => {
       const definition = {
         published : true,
         protocol  : 'http://example.com',
@@ -46,10 +46,44 @@ describe('ProtocolsConfigure', () => {
       const message = { descriptor, authorization };
 
       const parsePromise = ProtocolsConfigure.parse(message);
-      await expect(parsePromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureReservedEncryptionControlStructureNestingDepthExceeded);
+      await expect(parsePromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureRecordNestingDepthExceeded);
     });
 
-    it('should throw the reserved-structure nesting-depth error before walking over-deep encryption control paths', async () => {
+    it('should count empty record type names when enforcing the pre-schema nesting-depth guard', async () => {
+      const definition = {
+        published : true,
+        protocol  : 'http://example.com',
+        types     : {
+          foo: {},
+        },
+        structure: { }
+      };
+
+      let currentLevel: any = definition.structure;
+      for (let i = 0; i < 11; i++) {
+        currentLevel[''] = { };
+        currentLevel = currentLevel[''];
+      }
+
+      const descriptor: ProtocolsConfigureDescriptor = {
+        interface        : DwnInterfaceName.Protocols,
+        method           : DwnMethodName.Configure,
+        messageTimestamp : Time.getCurrentTimestamp(),
+        definition
+      };
+
+      const alice = await TestDataGenerator.generatePersona();
+      const authorization = await Message.createAuthorization({
+        descriptor,
+        signer: Jws.createSigner(alice)
+      });
+      const message = { descriptor, authorization };
+
+      const parsePromise = ProtocolsConfigure.parse(message);
+      await expect(parsePromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureRecordNestingDepthExceeded);
+    });
+
+    it('should throw the record nesting-depth error before walking over-deep encryption control paths', async () => {
       const definition = {
         published : true,
         protocol  : 'http://example.com',
@@ -81,7 +115,7 @@ describe('ProtocolsConfigure', () => {
       const message = { descriptor, authorization };
 
       const parsePromise = ProtocolsConfigure.parse(message);
-      await expect(parsePromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureReservedEncryptionControlStructureNestingDepthExceeded);
+      await expect(parsePromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureRecordNestingDepthExceeded);
     });
 
     it('should throw the reserved encryption control error before JSON Schema validation', async () => {

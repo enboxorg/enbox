@@ -130,16 +130,24 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
       );
     }
 
-    ProtocolsConfigure.validateReservedEncryptionControlStructure(definition.structure, '');
+    ProtocolsConfigure.validateReservedEncryptionControlStructure(definition.structure, '', 0);
   }
 
-  private static validateReservedEncryptionControlStructure(ruleSet: unknown, protocolPath: string): void {
+  private static validateReservedEncryptionControlStructure(ruleSet: unknown, protocolPath: string, depth: number): void {
     if (!ProtocolsConfigure.isRecord(ruleSet)) {
       return;
     }
 
     for (const recordType in ruleSet) {
+      const childDepth = depth + 1;
       const childPath = protocolPath === '' ? recordType : `${protocolPath}/${recordType}`;
+      if (childDepth > ProtocolsConfigure.maxRecordNestingDepth) {
+        throw new DwnError(
+          DwnErrorCode.ProtocolsConfigureRecordNestingDepthExceeded,
+          `record nesting depth exceeded ${ProtocolsConfigure.maxRecordNestingDepth} levels.`
+        );
+      }
+
       if (recordType === '$encryption') {
         throw new DwnError(
           DwnErrorCode.ProtocolsConfigureReservedEncryptionControlPath,
@@ -151,14 +159,7 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
         continue;
       }
 
-      if (childPath.split('/').length > ProtocolsConfigure.maxRecordNestingDepth) {
-        throw new DwnError(
-          DwnErrorCode.ProtocolsConfigureReservedEncryptionControlStructureNestingDepthExceeded,
-          `reserved encryption control structure nesting depth exceeded ${ProtocolsConfigure.maxRecordNestingDepth} levels.`
-        );
-      }
-
-      ProtocolsConfigure.validateReservedEncryptionControlStructure(ruleSet[recordType], childPath);
+      ProtocolsConfigure.validateReservedEncryptionControlStructure(ruleSet[recordType], childPath, childDepth);
     }
   }
 
@@ -232,18 +233,8 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
 
   /**
    * Parses the given rule set hierarchy to get all the role protocol paths.
-   * @throws DwnError if the hierarchy depth goes beyond the maximum supported depth.
    */
   private static fetchAllRolePathsRecursively(ruleSetProtocolPath: string, ruleSet: ProtocolRuleSet, roles: string[]): string[] {
-    // Limit the depth of the record hierarchy.
-    // There is opportunity to optimize here to avoid repeated string splitting
-    if (ruleSetProtocolPath.split('/').length > ProtocolsConfigure.maxRecordNestingDepth) {
-      throw new DwnError(
-        DwnErrorCode.ProtocolsConfigureRecordNestingDepthExceeded,
-        `record nesting depth exceeded ${ProtocolsConfigure.maxRecordNestingDepth} levels.`
-      );
-    }
-
     for (const recordType in ruleSet) {
       // ignore non-nested-record properties
       if (recordType.startsWith('$')) {
