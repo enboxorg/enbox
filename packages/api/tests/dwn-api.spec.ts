@@ -7,14 +7,14 @@ import type { LiveQueryError, RecordChange } from '../src/live-query.js';
 import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
-import { processConnectedGrants } from '@enbox/auth';
+import { PlatformAgentTestHarness } from '@enbox/agent/test';
+
 import {
   AgentPermissionsApi, DwnDateSort, DwnInterface, EnboxConnectProtocol,
-  EnboxUserAgent, getRecordAuthor, PlatformAgentTestHarness,
+  EnboxUserAgent, getRecordAuthor,
 } from '@enbox/agent';
 import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, PermissionsProtocol, Poller, Time } from '@enbox/dwn-sdk-js';
-
-import { WalletConnect } from '@enbox/auth';
+import { processConnectedGrants, WalletConnect } from '@enbox/auth';
 
 import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' with { type: 'json' };
 import notesProtocolDefinition from './fixtures/protocol-definitions/notes.json' with { type: 'json' };

@@ -15,6 +15,14 @@ root entries. Browser-aware bundlers resolve those bare specifiers to
 Node global shims for `process`, `process.env`, `process.browser`,
 `process.emitWarning`, `global`, or the Node `events` builtin.
 
+Apps that need auth directly in a browser should use the browser subpath:
+
+```ts
+import { AuthManager, PasswordProvider } from '@enbox/auth/browser';
+```
+
+The Node-only password helpers remain on the Node root entry.
+
 ## Service workers
 
 Secondary build passes, such as VitePWA service-worker builds, should use the

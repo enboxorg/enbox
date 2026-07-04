@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 
 import agentPackageJson from '../../agent/package.json' with { type: 'json' };
 import apiPackageJson from '../../api/package.json' with { type: 'json' };
+import authPackageJson from '../../auth/package.json' with { type: 'json' };
 import browserPackageJson from '../package.json' with { type: 'json' };
 
 type BrowserExportPackageJson = {
@@ -106,7 +107,7 @@ describe('@enbox/browser exports', () => {
   });
 
   it('declares browser-conditioned root entrypoints for browser-facing packages', () => {
-    for (const packageJson of [agentPackageJson, apiPackageJson, browserPackageJson]) {
+    for (const packageJson of [agentPackageJson, apiPackageJson, authPackageJson, browserPackageJson]) {
       expect(packageJson.browser).toBe('./dist/browser.mjs');
       expect(rootExport(packageJson).browser).toBe('./dist/browser.mjs');
     }

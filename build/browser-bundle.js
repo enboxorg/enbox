@@ -6,9 +6,11 @@
  *   bun ../../build/browser-bundle.js [--node-shims] [--extra-entry src/utils.ts:dist/utils.js] [--metafile]
  *
  * Options:
- *   --node-shims     Enable process.env stub, events->eventemitter3 alias, level externalization
+ *   --node-shims     Enable browser-safe aliases for known Node builtin imports
+ *   --entry          Override the primary entry point (default: src/index.ts)
  *   --extra-entry    Additional entry:output pairs (can be repeated)
  *   --alias          Additional esbuild alias: --alias specifier:replacement (can be repeated)
+ *   --external       Exact module specifier to leave external (can be repeated)
  *   --metafile       Write bundle-metadata.json with esbuild metafile output
  */
 import fs from 'node:fs';
@@ -18,12 +20,17 @@ import { browserConfig } from './esbuild-browser-config.cjs';
 const args = process.argv.slice(2);
 const nodeShims = args.includes('--node-shims');
 const metafile = args.includes('--metafile');
+let entryPoint = './src/index.ts';
 
 // Parse --extra-entry flags: --extra-entry src/utils.ts:dist/utils.js
 const extraEntries = [];
 const aliases = {};
+const externals = [];
 for (let i = 0; i < args.length; i++) {
-  if (args[i] === '--extra-entry' && args[i + 1]) {
+  if (args[i] === '--entry' && args[i + 1]) {
+    entryPoint = args[i + 1];
+    i++;
+  } else if (args[i] === '--extra-entry' && args[i + 1]) {
     const [entry, output] = args[i + 1].split(':');
     extraEntries.push({ entry, output });
     i++;
@@ -36,10 +43,13 @@ for (let i = 0; i < args.length; i++) {
     const replacement = args[i + 1].slice(separatorIndex + 1);
     aliases[specifier] = replacement;
     i++;
+  } else if (args[i] === '--external' && args[i + 1]) {
+    externals.push(args[i + 1]);
+    i++;
   }
 }
 
-const config = browserConfig({ nodeShims, aliases });
+const config = browserConfig({ nodeShims, entryPoint, aliases, externals });
 
 // Primary ESM bundle
 const primaryBuild = esbuild.build({

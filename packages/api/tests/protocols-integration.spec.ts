@@ -26,7 +26,8 @@ import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
-import { EnboxUserAgent, PlatformAgentTestHarness } from '@enbox/agent';
+import { EnboxUserAgent } from '@enbox/agent';
+import { PlatformAgentTestHarness } from '@enbox/agent/test';
 
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';

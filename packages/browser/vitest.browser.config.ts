@@ -31,6 +31,7 @@ export default defineConfig({
   },
   test: {
     include     : ['tests/**/*.spec.ts'],
+    exclude     : ['tests/browser-artifacts.spec.ts'],
     testTimeout : 15_000,
     coverage: {
       provider         : 'istanbul',

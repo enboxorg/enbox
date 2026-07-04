@@ -1,7 +1,7 @@
 ---
-"@enbox/agent": patch
+"@enbox/agent": minor
 "@enbox/api": patch
-"@enbox/auth": patch
+"@enbox/auth": minor
 "@enbox/browser": patch
 "@enbox/dids": patch
 ---

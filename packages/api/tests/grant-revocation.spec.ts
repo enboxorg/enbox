@@ -3,8 +3,9 @@ import type { BearerDid } from '@enbox/dids';
 import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
+import { EnboxUserAgent } from '@enbox/agent';
+import { PlatformAgentTestHarness } from '@enbox/agent/test';
 import { DwnInterfaceName, DwnMethodName, Time } from '@enbox/dwn-sdk-js';
-import { EnboxUserAgent, PlatformAgentTestHarness } from '@enbox/agent';
 
 import { DwnApi } from '../src/dwn-api.js';
 import { PermissionGrantRevocation } from '../src/grant-revocation.js';

@@ -5,16 +5,16 @@ import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { utils as didUtils } from '@enbox/dids';
-import { processConnectedGrants } from '@enbox/auth';
+import { PlatformAgentTestHarness } from '@enbox/agent/test';
 import { Stream } from '@enbox/common';
+
 import {
   DwnConstant, DwnContentEncryptionAlgorithm, DwnDateSort, DwnInterface, DwnKeyAgreementAlgorithm, DwnKeyDerivationScheme,
   dwnMessageConstructors, EnboxConnectProtocol, EnboxUserAgent, getRecordAuthor,
-  getRecordProtocolRole, PlatformAgentTestHarness,
+  getRecordProtocolRole,
 } from '@enbox/agent';
 import { DwnErrorCode, Jws, Message, Poller, Time } from '@enbox/dwn-sdk-js';
-
-import { WalletConnect } from '@enbox/auth';
+import { processConnectedGrants, WalletConnect } from '@enbox/auth';
 
 import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' with { type: 'json' };
 import notesProtocolDefinition from './fixtures/protocol-definitions/notes.json' with { type: 'json' };

@@ -71,11 +71,11 @@ await agent.sync.sync();
 | `AgentDidApi` | DID creation (`did:dht`, `did:jwk`), resolution, import/export |
 | `AgentIdentityApi` | Identity CRUD (DID + metadata) |
 | `AgentPermissionsApi` | Permission grant/request/revocation management |
-| `SyncEngineLevel` | LevelDB-backed bidirectional sync engine |
+| `SyncEngineLevel` | LevelDB-backed bidirectional sync engine from `@enbox/agent/level` |
 | `DwnKeyStore` | Encrypted private key storage in DWN |
 | `DwnDidStore` | DID storage in DWN |
 | `DwnIdentityStore` | Identity metadata storage in DWN |
-| `PlatformAgentTestHarness` | Test infrastructure (exported for downstream consumers) |
+| `PlatformAgentTestHarness` | Test infrastructure from `@enbox/agent/test` |
 
 ## Browser Runtime
 
@@ -92,6 +92,11 @@ concurrently, with the browser coordinating transactions.
 Use injected agent components only when you are deliberately replacing part of
 the runtime. Avoid in-memory stores for production browser apps, because they
 lose persistence and cross-context write coordination.
+
+Direct access to Level-backed implementation classes lives under
+`@enbox/agent/level`; test utilities live under `@enbox/agent/test`. Keeping
+those modules off the root export prevents bare browser imports from resolving
+the Level stack before an agent is actually created.
 
 ## Development
 

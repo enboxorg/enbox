@@ -32,7 +32,8 @@ import { AuthManager, BrowserConnectHandler } from '@enbox/browser';
 ```
 
 `@enbox/auth/browser` is a browser-safe subpath for packages that need auth
-exports without the Node-only password provider helpers.
+directly. It exports the browser auth surface plus `PasswordProvider.fromCallback()`
+and `PasswordProvider.chain()`.
 
 ## Storage
 
@@ -48,9 +49,10 @@ production browser sessions.
 ## Password Providers
 
 `PasswordProvider.fromEnv()`, `PasswordProvider.fromTty()`, and
-`PasswordProvider.fromDevTty()` are Node/CLI helpers. Browser apps should pass a
-password directly, use `PasswordProvider.fromCallback()`, or collect credentials
-through their own UI.
+`PasswordProvider.fromDevTty()` are Node/CLI helpers exported by the Node root
+entry. Browser apps should pass a password directly, import
+`PasswordProvider.fromCallback()` from `@enbox/auth/browser`, or collect
+credentials through their own UI.
 
 ## License
 

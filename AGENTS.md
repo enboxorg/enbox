@@ -167,9 +167,10 @@ bun run --filter @enbox/agent build
 
 Most packages expose a `build:browser` script, but it means different things:
 
-- **`@enbox/agent`**, **`@enbox/api`**, and **`@enbox/browser`** emit a bundled `dist/browser.mjs` via `build/browser-bundle.js` (esbuild) with the browser condition exposed from the root export. Run their full `build` after changing browser-facing exports.
-- **`@enbox/common`**, **`@enbox/crypto`**, **`@enbox/dids`**, and **`@enbox/dwn-sdk-js`** expose `build:browser` for their browser bundle artifacts or pass-through browser builds, depending on the package.
-- **`@enbox/auth`**, **`@enbox/dwn-clients`**, **`@enbox/dwn-server`**, **`@enbox/dwn-sql-store`**, **`@enbox/protocols`**, and **`@enbox/protocol-codegen`** do not define `build:browser`.
+- **`@enbox/agent`**, **`@enbox/api`**, **`@enbox/auth`**, and **`@enbox/browser`** emit bundled `dist/browser.mjs` artifacts via `build/browser-bundle.js` (esbuild). `agent`, `api`, and `browser` expose those artifacts from their browser-conditioned root exports; `auth` exposes its browser-safe surface from `@enbox/auth/browser` and from the root browser condition.
+- **`@enbox/common`**, **`@enbox/crypto`**, and **`@enbox/dids`** expose `build:browser` for their browser bundle artifacts.
+- **`@enbox/dwn-sdk-js`** emits `dist/browser.mjs` via its `bundle` script, not a `build:browser` script.
+- **`@enbox/dwn-clients`**, **`@enbox/dwn-server`**, **`@enbox/dwn-sql-store`**, **`@enbox/protocols`**, and **`@enbox/protocol-codegen`** do not define `build:browser`.
 
 Browser storage rule: do not replace the browser Level stack with SQLite or in-memory stores. In browsers, `level` resolves to `browser-level` over IndexedDB, which is required for concurrent writes from tabs, workers, and service workers on the same origin.
 

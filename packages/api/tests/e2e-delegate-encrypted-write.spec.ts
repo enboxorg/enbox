@@ -42,8 +42,9 @@ import {
   AuthManager, MemoryStorage, processConnectedGrants, WalletConnect,
 } from '@enbox/auth';
 
+import { PlatformAgentTestHarness } from '@enbox/agent/test';
 import {
-  EnboxConnectProtocol, EnboxUserAgent, PlatformAgentTestHarness,
+  EnboxConnectProtocol, EnboxUserAgent,
 } from '@enbox/agent';
 
 import { defineProtocol } from '../src/define-protocol.js';

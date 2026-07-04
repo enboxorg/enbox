@@ -1,8 +1,8 @@
 /**
  * Browser-safe auth surface used by `@enbox/browser`.
  *
- * This intentionally omits `PasswordProvider`, whose env and TTY helpers are
- * Node-only. Import those helpers from `@enbox/auth` in CLI/server code.
+ * This intentionally exposes only the browser-safe PasswordProvider helpers.
+ * Import the Node root `@enbox/auth` for env and TTY password providers.
  *
  * @module
  */
@@ -11,6 +11,8 @@ export { AuthManager } from './auth-manager.js';
 export { AuthSession } from './identity-session.js';
 export { AuthEventEmitter } from './events.js';
 export { RecoveryPhraseMismatchError, isRecoveryPhraseMismatchError } from './errors.js';
+export { PasswordProvider } from './password-provider-browser.js';
+export type { PasswordContext } from './password-provider-browser.js';
 
 export { processConnectedGrants } from './connect/wallet.js';
 export { normalizeProtocolRequests } from './permissions.js';
@@ -29,7 +31,7 @@ export {
   restoreLocalDwnEndpoint,
 } from './discovery.js';
 
-export { BrowserStorage, MemoryStorage, createDefaultStorage } from './storage/storage.js';
+export { BrowserStorage, LevelStorage, MemoryStorage, createDefaultStorage } from './storage/storage.js';
 
 export { retryOrphanedRevocations } from './connect/restore.js';
 export { STORAGE_KEYS } from './types.js';
@@ -48,6 +50,7 @@ export type {
   ConnectResult,
   DisconnectOptions,
   HandlerConnectOptions,
+  HeadlessConnectOptions,
   IdentityInfo,
   IdentityVaultBackup,
   ImportFromPortableOptions,
