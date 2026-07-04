@@ -247,7 +247,16 @@ export type ProtocolRuleSet = {
    * Key agreement setting for records at this protocol path.
    */
   $keyAgreement?: ProtocolKeyAgreement;
-  $actions?: ProtocolActionRule[];
+
+  /**
+   * Action rules governing which actors may access records at this protocol path.
+   *
+   * Typed as a non-empty tuple: when present, `$actions` must contain at least one
+   * rule. The DWN schema validation rejects an empty array at runtime
+   * ("must NOT have fewer than 1 items"), so `$actions: []` is a compile-time error.
+   * To express "no rules", omit `$actions` entirely.
+   */
+  $actions?: [ProtocolActionRule, ...ProtocolActionRule[]];
 
   /**
    * If true, this marks a record as a `role` that may used within a context.
