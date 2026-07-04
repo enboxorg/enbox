@@ -8,8 +8,8 @@ import sinon from 'sinon';
 import { sleep } from '@enbox/common';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
-import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
-import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
+import friendRoleProtocolDefinitionJson from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
+import threadRoleProtocolDefinitionJson from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
 
 import { DataStream } from '../../src/utils/data-stream.js';
 import { Encoder } from '../../src/utils/encoder.js';
@@ -31,6 +31,10 @@ import { DurableEventLog, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Ti
 import { ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH } from '../../src/core/constants.js';
 
 import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
+import { asProtocolDefinition } from '../utils/protocol-definition.js';
+
+const friendRoleProtocolDefinition = asProtocolDefinition(friendRoleProtocolDefinitionJson);
+const threadRoleProtocolDefinition = asProtocolDefinition(threadRoleProtocolDefinitionJson);
 
 export function testRecordsSubscribeHandler(): void {
   describe('RecordsSubscribeHandler.handle()', () => {

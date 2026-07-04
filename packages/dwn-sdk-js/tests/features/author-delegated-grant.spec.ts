@@ -3,10 +3,10 @@ import type { RecordsWriteMessage } from '../../src/types/records-types.js';
 import type { DataStore, MessageStore, PermissionScope, ResumableTaskStore } from '../../src/index.js';
 import type { EventLog, SubscriptionMessage } from '../../src/types/subscriptions.js';
 
-import emailProtocolDefinition from '../vectors/protocol-definitions/email.json' with { type: 'json' };
-import messageProtocolDefinition from '../vectors/protocol-definitions/message.json' with { type: 'json' };
+import emailProtocolDefinitionJson from '../vectors/protocol-definitions/email.json' with { type: 'json' };
+import messageProtocolDefinitionJson from '../vectors/protocol-definitions/message.json' with { type: 'json' };
 import sinon from 'sinon';
-import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
+import threadRoleProtocolDefinitionJson from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
 
 import { base64url } from 'multiformats/bases/base64';
 import { DataStream } from '../../src/utils/data-stream.js';
@@ -23,6 +23,12 @@ import { Time } from '../../src/utils/time.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName, Encoder, Message, PermissionsProtocol, RecordsDelete, RecordsQuery, RecordsRead, RecordsSubscribe } from '../../src/index.js';
+import type { ProtocolDefinition } from '../../src/types/protocols-types.js';
+import { asProtocolDefinition } from '../utils/protocol-definition.js';
+
+const emailProtocolDefinition = asProtocolDefinition(emailProtocolDefinitionJson);
+const messageProtocolDefinition = asProtocolDefinition(messageProtocolDefinitionJson);
+const threadRoleProtocolDefinition = asProtocolDefinition(threadRoleProtocolDefinitionJson);
 
 
 export function testAuthorDelegatedGrant(): void {
@@ -165,7 +171,7 @@ export function testAuthorDelegatedGrant(): void {
         expect(signer).toBe(bob.did);
 
         // verify that bob cannot configure a different protocol
-        const otherProtocolDefinition = {
+        const otherProtocolDefinition: ProtocolDefinition = {
           ...emailProtocolDefinition,
           protocol: 'https://example.com/protocol/otherProtocol'
         };

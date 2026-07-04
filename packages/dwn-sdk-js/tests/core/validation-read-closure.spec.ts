@@ -5,8 +5,8 @@ import type { RecordingValidationStateReader } from '../../src/core/recording-va
 import type { DataStore, MessageStore, ResumableTaskStore } from '../../src/index.js';
 import type { ProtocolDefinition, ProtocolRuleSet } from '../../src/types/protocols-types.js';
 
-import freeForAllProtocolDefinition from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
-import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
+import freeForAllProtocolDefinitionJson from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
+import friendRoleProtocolDefinitionJson from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
 import nestedProtocolDefinition from '../vectors/protocol-definitions/nested.json' with { type: 'json' };
 
 import { DataStream } from '../../src/utils/data-stream.js';
@@ -29,6 +29,10 @@ import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName } from '../../src/enums/dwn-interface-method.js';
 import { EncryptionProtocol, KeyDerivationScheme, Protocols } from '../../src/index.js';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { asProtocolDefinition } from '../utils/protocol-definition.js';
+
+const freeForAllProtocolDefinition = asProtocolDefinition(freeForAllProtocolDefinitionJson);
+const friendRoleProtocolDefinition = asProtocolDefinition(friendRoleProtocolDefinitionJson);
 
 const VALIDATION_READER_METHODS = new Set<string>([
   'fetchInitialRecordsWrite',

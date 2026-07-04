@@ -7,10 +7,10 @@ import sinon from 'sinon';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
-import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
-import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
+import freeForAllJson from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
+import friendRoleProtocolDefinitionJson from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
 import nestedProtocol from '../vectors/protocol-definitions/nested.json' with { type: 'json' };
-import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
+import threadRoleProtocolDefinitionJson from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
 
 import { ArrayUtility } from '../../src/utils/array.js';
 import { DataStream } from '../../src/utils/data-stream.js';
@@ -39,6 +39,11 @@ import { DwnInterfaceName, DwnMethodName } from '../../src/enums/dwn-interface-m
 import { ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH } from '../../src/core/constants.js';
 
 import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
+import { asProtocolDefinition } from '../utils/protocol-definition.js';
+
+const freeForAll = asProtocolDefinition(freeForAllJson);
+const friendRoleProtocolDefinition = asProtocolDefinition(friendRoleProtocolDefinitionJson);
+const threadRoleProtocolDefinition = asProtocolDefinition(threadRoleProtocolDefinitionJson);
 
 export function testRecordsQueryHandler(): void {
   describe('RecordsQueryHandler.handle()', () => {

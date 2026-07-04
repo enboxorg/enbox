@@ -10,7 +10,7 @@ import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
-import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
+import threadRoleProtocolDefinitionJson from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import {
@@ -28,6 +28,9 @@ import {
   ROLE_AUDIENCE_DERIVATION_SCHEME
 } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
+import { asProtocolDefinition } from '../utils/protocol-definition.js';
+
+const threadRoleProtocolDefinition = asProtocolDefinition(threadRoleProtocolDefinitionJson);
 
 export function testEndToEndScenarios(): void {
   describe('End-to-end Scenarios Spanning Features', () => {

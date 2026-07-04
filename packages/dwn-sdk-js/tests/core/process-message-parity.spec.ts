@@ -4,7 +4,7 @@ import type { GenericMessageReply } from '../../src/types/message-types.js';
 import type { DataStore, MessageStore, ResumableTaskStore } from '../../src/index.js';
 import type { RecordsQueryReply, RecordsReadReply } from '../../src/types/records-types.js';
 
-import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
+import friendRoleProtocolDefinitionJson from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
 import nestedProtocolDefinition from '../vectors/protocol-definitions/nested.json' with { type: 'json' };
 
 import { DataStream } from '../../src/utils/data-stream.js';
@@ -18,6 +18,9 @@ import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
+import { asProtocolDefinition } from '../utils/protocol-definition.js';
+
+const friendRoleProtocolDefinition = asProtocolDefinition(friendRoleProtocolDefinitionJson);
 
 function expectReplyWithPosition(reply: GenericMessageReply, status: GenericMessageReply['status']): void {
   expect(reply).toEqual({

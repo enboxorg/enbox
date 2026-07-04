@@ -3,7 +3,7 @@ import type { EventLog } from '../../src/types/subscriptions.js';
 import type { DataStore, MessageStore, ResumableTaskStore } from '../../src/index.js';
 
 import sinon from 'sinon';
-import slackProtocolDefinition from '../vectors/protocol-definitions/slack.json' with { type: 'json' };
+import slackProtocolDefinitionJson from '../vectors/protocol-definitions/slack.json' with { type: 'json' };
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { Dwn } from '../../src/dwn.js';
@@ -14,6 +14,9 @@ import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { RecordsQuery, RecordsRead } from '../../src/index.js';
+import { asProtocolDefinition } from '../utils/protocol-definition.js';
+
+const slackProtocolDefinition = asProtocolDefinition(slackProtocolDefinitionJson);
 
 export function testNestedRoleScenarios(): void {
   describe('Nested role scenarios', () => {

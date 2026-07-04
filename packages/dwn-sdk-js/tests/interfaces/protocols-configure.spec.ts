@@ -1,6 +1,6 @@
 import type { ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureDescriptor, ProtocolsConfigureMessage } from '../../src/index.js';
 
-import dexProtocolDefinition from '../vectors/protocol-definitions/dex.json' with { type: 'json' };
+import dexProtocolDefinitionJson from '../vectors/protocol-definitions/dex.json' with { type: 'json' };
 import { Jws } from '../../src/utils/jws.js';
 import { ProtocolAction } from '../../src/types/protocols-types.js';
 import { ProtocolsConfigure } from '../../src/interfaces/protocols-configure.js';
@@ -9,6 +9,9 @@ import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { Time } from '../../src/utils/time.js';
 import { afterEach, describe, expect, it } from 'bun:test';
 import { DwnErrorCode, DwnInterfaceName, DwnMethodName, Message, Protocols } from '../../src/index.js';
+import { asProtocolDefinition } from '../utils/protocol-definition.js';
+
+const dexProtocolDefinition = asProtocolDefinition(dexProtocolDefinitionJson);
 
 describe('ProtocolsConfigure', () => {
   describe('parse()', () => {
@@ -368,7 +371,7 @@ describe('ProtocolsConfigure', () => {
       });
 
       it('should allow `role` property in an `action` to have protocol path to a role record.', async () => {
-        const definition = {
+        const definition: ProtocolDefinition = {
           published : true,
           protocol  : 'http://example.com',
           types     : {
@@ -406,7 +409,7 @@ describe('ProtocolsConfigure', () => {
       });
 
       it('should allow `role` property in an `action` that have protocol path to a role record.', async () => {
-        const definition = {
+        const definition: ProtocolDefinition = {
           published : true,
           protocol  : 'http://example.com',
           types     : {
@@ -440,7 +443,7 @@ describe('ProtocolsConfigure', () => {
       });
 
       it('should allow role rules whose role parent depth matches the rule path context depth', async () => {
-        const definition = {
+        const definition: ProtocolDefinition = {
           published : true,
           protocol  : 'http://example.com',
           types     : {
@@ -474,7 +477,7 @@ describe('ProtocolsConfigure', () => {
       });
 
       it('rejects protocol definitions with `role` actions that contain invalid roles', async () => {
-        const definition = {
+        const definition: ProtocolDefinition = {
           published : true,
           protocol  : 'http://example.com',
           types     : {
@@ -506,7 +509,7 @@ describe('ProtocolsConfigure', () => {
       });
 
       it('should reject role rules whose role parent is deeper than the rule path context', async () => {
-        const definition = {
+        const definition: ProtocolDefinition = {
           published : true,
           protocol  : 'http://example.com',
           types     : {
@@ -541,7 +544,7 @@ describe('ProtocolsConfigure', () => {
       });
 
       it('should reject cross-protocol role rules whose role parent is deeper than the rule path context', async () => {
-        const definition = {
+        const definition: ProtocolDefinition = {
           published : true,
           protocol  : 'http://example.com',
           uses      : {
@@ -572,7 +575,7 @@ describe('ProtocolsConfigure', () => {
       });
 
       it('rejects protocol definitions with actions that contain `of` and  `who` is `anyone`', async () => {
-        const definition = {
+        const definition: ProtocolDefinition = {
           published : true,
           protocol  : 'http://example.com',
           types     : {
@@ -601,7 +604,7 @@ describe('ProtocolsConfigure', () => {
       });
 
       it('rejects protocol definitions with actions that have direct-recipient-can rules with actions other than delete or update', async () => {
-        const definition = {
+        const definition: ProtocolDefinition = {
           published : true,
           protocol  : 'http://example.com',
           types     : {
@@ -629,7 +632,7 @@ describe('ProtocolsConfigure', () => {
       });
 
       it('rejects protocol definitions with actions that don\'t contain `of` and  `who` is `author`', async () => {
-        const definition = {
+        const definition: ProtocolDefinition = {
           published : true,
           protocol  : 'http://example.com',
           types     : {
@@ -658,7 +661,7 @@ describe('ProtocolsConfigure', () => {
       });
 
       it('allows `who`-based rules with `of` that have read action', async () => {
-        const definition = {
+        const definition: ProtocolDefinition = {
           published : true,
           protocol  : 'http://example.com',
           types     : {
@@ -686,7 +689,7 @@ describe('ProtocolsConfigure', () => {
       });
 
       it('allows `who`-based rules with `of` that have read action alongside other actions', async () => {
-        const definition = {
+        const definition: ProtocolDefinition = {
           published : true,
           protocol  : 'http://example.com',
           types     : {
@@ -806,7 +809,7 @@ describe('ProtocolsConfigure', () => {
           originalWarn = console.warn;
           console.warn = (...args: unknown[]): void => { capturedWarnings.push(String(args[0])); };
 
-          const definition = {
+          const definition: ProtocolDefinition = {
             published : true,
             protocol  : 'http://example.com/encryption-warning',
             types     : {
@@ -840,7 +843,7 @@ describe('ProtocolsConfigure', () => {
           originalWarn = console.warn;
           console.warn = (...args: unknown[]): void => { capturedWarnings.push(String(args[0])); };
 
-          const definition = {
+          const definition: ProtocolDefinition = {
             published : true,
             protocol  : 'http://example.com/nested-warning',
             types     : {
@@ -876,7 +879,7 @@ describe('ProtocolsConfigure', () => {
           originalWarn = console.warn;
           console.warn = (...args: unknown[]): void => { capturedWarnings.push(String(args[0])); };
 
-          const definition = {
+          const definition: ProtocolDefinition = {
             published : true,
             protocol  : 'http://example.com/no-encryption',
             types     : {
@@ -906,7 +909,7 @@ describe('ProtocolsConfigure', () => {
           originalWarn = console.warn;
           console.warn = (...args: unknown[]): void => { capturedWarnings.push(String(args[0])); };
 
-          const definition = {
+          const definition: ProtocolDefinition = {
             published : true,
             protocol  : 'http://example.com/encryption-no-anyone',
             types     : {

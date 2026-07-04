@@ -9,7 +9,7 @@ import type {
   ResumableTaskStore,
 } from '../../src/index.js';
 
-import dexProtocolDefinition from '../vectors/protocol-definitions/dex.json' with { type: 'json' };
+import dexProtocolDefinitionJson from '../vectors/protocol-definitions/dex.json' with { type: 'json' };
 import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' with { type: 'json' };
 import sinon from 'sinon';
 
@@ -26,6 +26,9 @@ import { Time } from '../../src/utils/time.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DataStream, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Jws, PermissionGrant, PermissionsProtocol, RecordsDelete, RecordsRead, RecordsWrite } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
+import { asProtocolDefinition } from '../utils/protocol-definition.js';
+
+const dexProtocolDefinition = asProtocolDefinition(dexProtocolDefinitionJson);
 
 export function testProtocolsConfigureHandler(): void {
   describe('ProtocolsConfigureHandler.handle()', () => {

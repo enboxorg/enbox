@@ -9,7 +9,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { DataStream } from '../../src/utils/data-stream.js';
 import { Encoder } from '../../src/utils/encoder.js';
 import { EncryptionControlDeliveryRecipientAuthority } from '../../src/types/encryption-types.js';
-import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
+import freeForAllJson from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
 import { Jws } from '../../src/utils/jws.js';
 import { PermissionsProtocol } from '../../src/protocols/permissions.js';
 import { RecordsCount } from '../../src/interfaces/records-count.js';
@@ -17,11 +17,15 @@ import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
-import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
+import threadRoleProtocolDefinitionJson from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
 import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Time } from '../../src/index.js';
 import { ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH } from '../../src/core/constants.js';
+import { asProtocolDefinition } from '../utils/protocol-definition.js';
+
+const freeForAll = asProtocolDefinition(freeForAllJson);
+const threadRoleProtocolDefinition = asProtocolDefinition(threadRoleProtocolDefinitionJson);
 
 export function testRecordsCountHandler(): void {
   describe('RecordsCountHandler.handle()', () => {

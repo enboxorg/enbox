@@ -1,7 +1,7 @@
 import type { DidResolver } from '@enbox/dids';
 import type { DataStore, MessageStore, ProtocolDefinition, ProtocolRuleSet, ReplicationFeedReader, ResumableTaskStore } from '../../src/index.js';
 
-import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
+import freeForAllJson from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
@@ -12,6 +12,9 @@ import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestStores } from '../test-stores.js';
 import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
 import { Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, EncryptionProtocol, PermissionsProtocol, Replication } from '../../src/index.js';
+import { asProtocolDefinition } from '../utils/protocol-definition.js';
+
+const freeForAll = asProtocolDefinition(freeForAllJson);
 
 function getFeedReader(messageStore: MessageStore): ReplicationFeedReader | undefined {
   const candidate = messageStore as Partial<ReplicationFeedReader>;

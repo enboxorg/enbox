@@ -7,8 +7,8 @@ import type {
   ResumableTaskStore,
 } from '../../src/index.js';
 
-import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
-import threadProtocol from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
+import freeForAllJson from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
+import threadProtocolJson from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
@@ -18,6 +18,10 @@ import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { DataStream, Dwn, DwnInterfaceName, DwnMethodName, Jws, Message, PermissionGrant, PermissionsProtocol, Time } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
+import { asProtocolDefinition } from '../utils/protocol-definition.js';
+
+const freeForAll = asProtocolDefinition(freeForAllJson);
+const threadProtocol = asProtocolDefinition(threadProtocolJson);
 
 // NOTE: We use `Poller.pollUntilSuccessOrTimeout` to poll for the expected results.
 // In some cases, the EventLog is a coordinated pub/sub system and the message events are emitted over the network

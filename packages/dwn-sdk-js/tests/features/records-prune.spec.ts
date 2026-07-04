@@ -6,7 +6,7 @@ import type {
   ResumableTaskStore,
 } from '../../src/index.js';
 
-import messageProtocolDefinition from '../vectors/protocol-definitions/message.json' with { type: 'json' };
+import messageProtocolDefinitionJson from '../vectors/protocol-definitions/message.json' with { type: 'json' };
 import nestedProtocolDefinition from '../vectors/protocol-definitions/nested.json' with { type: 'json' };
 import sinon from 'sinon';
 
@@ -17,6 +17,10 @@ import { TestStores } from '../test-stores.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DataStream, Dwn, DwnConstant, DwnErrorCode, Jws, ProtocolsConfigure, RecordsDelete, RecordsQuery, RecordsWrite, SortDirection, Time } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
+import type { ProtocolDefinition } from '../../src/types/protocols-types.js';
+import { asProtocolDefinition } from '../utils/protocol-definition.js';
+
+const messageProtocolDefinition = asProtocolDefinition(messageProtocolDefinitionJson);
 
 
 export function testRecordsPrune(): void {
@@ -434,7 +438,7 @@ export function testRecordsPrune(): void {
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
         // 1. Alice installs a protocol allowing others to add and prune records.
-        const protocolDefinition = {
+        const protocolDefinition: ProtocolDefinition = {
           protocol  : 'http://post-protocol.xyz',
           published : true,
           types     : {
@@ -615,7 +619,7 @@ export function testRecordsPrune(): void {
         const carol = await TestDataGenerator.generateDidKeyPersona();
 
         // 1. Alice installs a protocol allowing others to add and prune records.
-        const protocolDefinition = {
+        const protocolDefinition: ProtocolDefinition = {
           protocol  : 'http://post-protocol.xyz',
           published : true,
           types     : {
@@ -725,7 +729,7 @@ export function testRecordsPrune(): void {
         const carol = await TestDataGenerator.generateDidKeyPersona();
 
         // 1. Alice installs a protocol allowing others to add records AND only author to prune.
-        const protocolDefinition = {
+        const protocolDefinition: ProtocolDefinition = {
           protocol  : 'http://post-protocol.xyz',
           published : true,
           types     : {
@@ -826,7 +830,7 @@ export function testRecordsPrune(): void {
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
         // 1. Alice installs a protocol allowing others to add and delete (not prune) records.
-        const protocolDefinition = {
+        const protocolDefinition: ProtocolDefinition = {
           protocol  : 'http://post-protocol.xyz',
           published : true,
           types     : {
@@ -909,7 +913,7 @@ export function testRecordsPrune(): void {
       it('should not allow creation of a protocol definition with action rule containing `prune` without `create`', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition = {
+        const protocolDefinition: ProtocolDefinition = {
           protocol  : 'http://prune-without-create.xyz',
           published : true,
           types     : {

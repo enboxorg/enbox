@@ -7,7 +7,7 @@ import type { RecordsWriteMessage } from '../../src/types/records-types.js';
 import type { ValidationStateReader } from '../../src/types/validation-state-reader.js';
 import type { DataStore, MessageStore, ResumableTaskStore } from '../../src/index.js';
 
-import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
+import friendRoleProtocolDefinitionJson from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
 import nestedProtocolDefinition from '../vectors/protocol-definitions/nested.json' with { type: 'json' };
 
 import { DataStream } from '../../src/utils/data-stream.js';
@@ -26,6 +26,9 @@ import { Time } from '../../src/utils/time.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName } from '../../src/enums/dwn-interface-method.js';
+import { asProtocolDefinition } from '../utils/protocol-definition.js';
+
+const friendRoleProtocolDefinition = asProtocolDefinition(friendRoleProtocolDefinitionJson);
 
 /**
  * Validation-state reader parity: replicated apply returns structured repair outcomes, but it

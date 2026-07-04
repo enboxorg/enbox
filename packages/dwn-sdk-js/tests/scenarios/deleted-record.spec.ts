@@ -2,9 +2,9 @@ import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../../src/types/subscriptions.js';
 import type { DataStore, MessageStore, RecordsReadReply, ResumableTaskStore } from '../../src/index.js';
 
-import freeForAllProtocolDefinition from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
+import freeForAllProtocolDefinitionJson from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
 import sinon from 'sinon';
-import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
+import threadRoleProtocolDefinitionJson from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { TestDataGenerator } from '../utils/test-data-generator.js';
@@ -15,6 +15,11 @@ import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { DataStream, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Jws, PermissionsProtocol, ProtocolsConfigure, RecordsRead, Time } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { Encoder, RecordsDelete, RecordsWrite } from '../../src/index.js';
+import type { ProtocolDefinition } from '../../src/types/protocols-types.js';
+import { asProtocolDefinition } from '../utils/protocol-definition.js';
+
+const freeForAllProtocolDefinition = asProtocolDefinition(freeForAllProtocolDefinitionJson);
+const threadRoleProtocolDefinition = asProtocolDefinition(threadRoleProtocolDefinitionJson);
 
 export function testDeletedRecordScenarios(): void {
   describe('End-to-end Scenarios Spanning Features', () => {
@@ -164,7 +169,7 @@ export function testDeletedRecordScenarios(): void {
         TestStubGenerator.stubDidResolver(didResolver, [alice, bob]);
 
         // Install a protocol where recipient can read (requires `of` property)
-        const protocolDefinition = {
+        const protocolDefinition: ProtocolDefinition = {
           protocol  : 'http://recipient-read.xyz',
           published : true,
           types     : {
@@ -387,7 +392,7 @@ export function testDeletedRecordScenarios(): void {
         TestStubGenerator.stubDidResolver(didResolver, [alice, bob, carol]);
 
         // Install a protocol where only author and recipient can read (no 'anyone' can 'read')
-        const protocolDefinition = {
+        const protocolDefinition: ProtocolDefinition = {
           protocol  : 'http://restricted-read.xyz',
           published : true,
           types     : {

@@ -5,7 +5,7 @@ import type { GenerateGrantCreateOutput, GenerateRecordsWriteOutput, Persona } f
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
-import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
+import freeForAllJson from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
 import sinon from 'sinon';
 
 import { Dwn } from '../../src/dwn.js';
@@ -26,6 +26,9 @@ import { DataStream, DwnInterfaceName, DwnMethodName, PermissionGrant, Permissio
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
 import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
+import { asProtocolDefinition } from '../utils/protocol-definition.js';
+
+const freeForAll = asProtocolDefinition(freeForAllJson);
 
 export function testMessagesSubscribeHandler(): void {
   describe('MessagesSubscribe.handle()', () => {

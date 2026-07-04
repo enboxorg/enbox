@@ -16,11 +16,11 @@ import sinon from 'sinon';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
-import anyoneCollaborateProtocolDefinition from '../vectors/protocol-definitions/anyone-collaborate.json' with { type: 'json' };
-import authorCanProtocolDefinition from '../vectors/protocol-definitions/author-can.json' with { type: 'json' };
-import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
-import recipientCanProtocolDefinition from '../vectors/protocol-definitions/recipient-can.json' with { type: 'json' };
-import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
+import anyoneCollaborateProtocolDefinitionJson from '../vectors/protocol-definitions/anyone-collaborate.json' with { type: 'json' };
+import authorCanProtocolDefinitionJson from '../vectors/protocol-definitions/author-can.json' with { type: 'json' };
+import friendRoleProtocolDefinitionJson from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
+import recipientCanProtocolDefinitionJson from '../vectors/protocol-definitions/recipient-can.json' with { type: 'json' };
+import threadRoleProtocolDefinitionJson from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
 
 import { ArrayUtility } from '../../src/utils/array.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
@@ -41,6 +41,13 @@ import { DwnInterfaceName, DwnMethodName } from '../../src/enums/dwn-interface-m
 import { Encryption, KeyAgreementAlgorithm } from '../../src/utils/encryption.js';
 
 import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
+import { asProtocolDefinition } from '../utils/protocol-definition.js';
+
+const anyoneCollaborateProtocolDefinition = asProtocolDefinition(anyoneCollaborateProtocolDefinitionJson);
+const authorCanProtocolDefinition = asProtocolDefinition(authorCanProtocolDefinitionJson);
+const friendRoleProtocolDefinition = asProtocolDefinition(friendRoleProtocolDefinitionJson);
+const recipientCanProtocolDefinition = asProtocolDefinition(recipientCanProtocolDefinitionJson);
+const threadRoleProtocolDefinition = asProtocolDefinition(threadRoleProtocolDefinitionJson);
 
 export function testRecordsDeleteHandler(): void {
   describe('RecordsDeleteHandler.handle()', () => {

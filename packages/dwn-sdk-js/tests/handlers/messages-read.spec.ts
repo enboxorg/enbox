@@ -11,7 +11,7 @@ import type {
 
 import { Encoder } from '../../src/utils/encoder.js';
 import { EncryptionControlDeliveryRecipientAuthority } from '../../src/types/encryption-types.js';
-import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
+import freeForAllJson from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
 import { GeneralJwsVerifier } from '../../src/jose/jws/general/verifier.js';
 import { Message } from '../../src/core/message.js';
 import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' with { type: 'json' };
@@ -23,6 +23,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
 import { DataStream, Dwn, DwnConstant, DwnErrorCode, DwnInterfaceName, DwnMethodName, Jws, PermissionGrant, PermissionsProtocol, Time } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
+import { asProtocolDefinition } from '../utils/protocol-definition.js';
+
+const freeForAll = asProtocolDefinition(freeForAllJson);
 
 export function testMessagesReadHandler(): void {
   describe('MessagesReadHandler.handle()', () => {

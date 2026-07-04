@@ -7,20 +7,20 @@ import type { DataStore, MessageStore, ResumableTaskStore } from '../../src/inde
 import type { GenerateFromRecordsWriteOut, GenerateRecordsWriteOutput } from '../utils/test-data-generator.js';
 import type { ProtocolDefinition, ProtocolRuleSet } from '../../src/types/protocols-types.js';
 
-import anyoneCollaborateProtocolDefinition from '../vectors/protocol-definitions/anyone-collaborate.json' with { type: 'json' };
-import authorCanProtocolDefinition from '../vectors/protocol-definitions/author-can.json' with { type: 'json' };
-import credentialIssuanceProtocolDefinition from '../vectors/protocol-definitions/credential-issuance.json' with { type: 'json' };
-import dexProtocolDefinition from '../vectors/protocol-definitions/dex.json' with { type: 'json' };
-import emailProtocolDefinition from '../vectors/protocol-definitions/email.json' with { type: 'json' };
-import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
-import messageProtocolDefinition from '../vectors/protocol-definitions/message.json' with { type: 'json' };
+import anyoneCollaborateProtocolDefinitionJson from '../vectors/protocol-definitions/anyone-collaborate.json' with { type: 'json' };
+import authorCanProtocolDefinitionJson from '../vectors/protocol-definitions/author-can.json' with { type: 'json' };
+import credentialIssuanceProtocolDefinitionJson from '../vectors/protocol-definitions/credential-issuance.json' with { type: 'json' };
+import dexProtocolDefinitionJson from '../vectors/protocol-definitions/dex.json' with { type: 'json' };
+import emailProtocolDefinitionJson from '../vectors/protocol-definitions/email.json' with { type: 'json' };
+import friendRoleProtocolDefinitionJson from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
+import messageProtocolDefinitionJson from '../vectors/protocol-definitions/message.json' with { type: 'json' };
 import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' with { type: 'json' };
 import nestedProtocol from '../vectors/protocol-definitions/nested.json' with { type: 'json' };
 import privateProtocol from '../vectors/protocol-definitions/private-protocol.json' with { type: 'json' };
-import recipientCanProtocol from '../vectors/protocol-definitions/recipient-can.json' with { type: 'json' };
+import recipientCanProtocolJson from '../vectors/protocol-definitions/recipient-can.json' with { type: 'json' };
 import sinon from 'sinon';
-import socialMediaProtocolDefinition from '../vectors/protocol-definitions/social-media.json' with { type: 'json' };
-import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
+import socialMediaProtocolDefinitionJson from '../vectors/protocol-definitions/social-media.json' with { type: 'json' };
+import threadRoleProtocolDefinitionJson from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
@@ -53,6 +53,18 @@ import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnError, DwnErrorCode } from '../../src/core/dwn-error.js';
 
 import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
+import { asProtocolDefinition } from '../utils/protocol-definition.js';
+
+const anyoneCollaborateProtocolDefinition = asProtocolDefinition(anyoneCollaborateProtocolDefinitionJson);
+const authorCanProtocolDefinition = asProtocolDefinition(authorCanProtocolDefinitionJson);
+const credentialIssuanceProtocolDefinition = asProtocolDefinition(credentialIssuanceProtocolDefinitionJson);
+const dexProtocolDefinition = asProtocolDefinition(dexProtocolDefinitionJson);
+const emailProtocolDefinition = asProtocolDefinition(emailProtocolDefinitionJson);
+const friendRoleProtocolDefinition = asProtocolDefinition(friendRoleProtocolDefinitionJson);
+const messageProtocolDefinition = asProtocolDefinition(messageProtocolDefinitionJson);
+const recipientCanProtocol = asProtocolDefinition(recipientCanProtocolJson);
+const socialMediaProtocolDefinition = asProtocolDefinition(socialMediaProtocolDefinitionJson);
+const threadRoleProtocolDefinition = asProtocolDefinition(threadRoleProtocolDefinitionJson);
 
 type AudienceControlWrite = {
   dataBytes: Uint8Array;

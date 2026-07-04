@@ -4,13 +4,13 @@ import type { EncryptionInput } from '../../src/interfaces/records-write.js';
 import type { EventLog } from '../../src/types/subscriptions.js';
 import type { DataStore, MessageStore, ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureMessage, ResumableTaskStore } from '../../src/index.js';
 
-import emailProtocolDefinition from '../vectors/protocol-definitions/email.json' with { type: 'json' };
-import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
+import emailProtocolDefinitionJson from '../vectors/protocol-definitions/email.json' with { type: 'json' };
+import friendRoleProtocolDefinitionJson from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
 import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' with { type: 'json' };
 import nestedProtocol from '../vectors/protocol-definitions/nested.json' with { type: 'json' };
 import sinon from 'sinon';
-import socialMediaProtocolDefinition from '../vectors/protocol-definitions/social-media.json' with { type: 'json' };
-import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
+import socialMediaProtocolDefinitionJson from '../vectors/protocol-definitions/social-media.json' with { type: 'json' };
+import threadRoleProtocolDefinitionJson from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
 
 import { ArrayUtility } from '../../src/utils/array.js';
 import { authenticate } from '../../src/core/auth.js';
@@ -34,6 +34,12 @@ import { DwnConstant, PermissionsProtocol, Time } from '../../src/index.js';
 import { DwnInterfaceName, DwnMethodName } from '../../src/index.js';
 
 import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
+import { asProtocolDefinition } from '../utils/protocol-definition.js';
+
+const emailProtocolDefinition = asProtocolDefinition(emailProtocolDefinitionJson);
+const friendRoleProtocolDefinition = asProtocolDefinition(friendRoleProtocolDefinitionJson);
+const socialMediaProtocolDefinition = asProtocolDefinition(socialMediaProtocolDefinitionJson);
+const threadRoleProtocolDefinition = asProtocolDefinition(threadRoleProtocolDefinitionJson);
 
 export function testRecordsReadHandler(): void {
   describe('RecordsReadHandler.handle()', () => {
