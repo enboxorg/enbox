@@ -16,7 +16,6 @@ export {
 export { ReplicationLedger } from './sync-replication-ledger.js';
 export type * from './types/vc.js';
 
-export * from './agent-did-resolver-cache.js';
 export * from './agent-session.js';
 export * from './anonymous-dwn-api.js';
 export * from './bearer-identity.js';
@@ -38,8 +37,6 @@ export * from './store-data.js';
 export * from './store-did.js';
 export * from './store-identity.js';
 export * from './store-key.js';
-export * from './sync-engine-level.js';
-export * from './test-harness.js';
 export * from './utils.js';
 export * from './enbox-connect-protocol.js';
 export * from './enbox-user-agent.js';

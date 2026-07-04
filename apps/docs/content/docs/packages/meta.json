@@ -2,6 +2,7 @@
   "title": "Packages",
   "pages": [
     "api",
+    "browser",
     "dwn-server",
     "replication-sync",
     "agent",

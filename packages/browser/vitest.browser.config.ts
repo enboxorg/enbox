@@ -23,9 +23,6 @@ const coverageDir = singleBrowser
   : './coverage-browser';
 
 export default defineConfig({
-  define: {
-    'process.env.DID_DHT_GATEWAY_URI': JSON.stringify(''),
-  },
   resolve: {
     alias: {
       'bun:test' : resolve(__dirname, '../../testing/bun-test-shim.ts'),
@@ -34,6 +31,7 @@ export default defineConfig({
   },
   test: {
     include     : ['tests/**/*.spec.ts'],
+    exclude     : ['tests/browser-artifacts.spec.ts'],
     testTimeout : 15_000,
     coverage: {
       provider         : 'istanbul',

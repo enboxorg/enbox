@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 
-import { EnboxUserAgent, PlatformAgentTestHarness } from '@enbox/agent';
+import { EnboxUserAgent } from '@enbox/agent';
+import { PlatformAgentTestHarness } from '@enbox/agent/test';
 
 import { VcApi } from '../src/vc-api.js';
 

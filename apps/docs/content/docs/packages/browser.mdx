@@ -1,0 +1,47 @@
+---
+title: "@enbox/browser"
+description: Browser-first Enbox entrypoint for app APIs, auth, wallet connect, and DWeb helpers.
+---
+
+`@enbox/browser` is the browser-first package for Enbox apps. It re-exports the
+main app API from `@enbox/api`, auth/session helpers from `@enbox/auth`, and
+browser-only connect and DWeb utilities.
+
+## Installation
+
+```bash
+bun add @enbox/browser
+```
+
+## Usage
+
+```ts
+import { BrowserConnectHandler, Enbox, defineProtocol } from '@enbox/browser';
+
+const { enbox } = await Enbox.connect({
+  connectHandler : BrowserConnectHandler({ appName: 'Notes' }),
+  createIdentity : true,
+  protocols      : [NotesProtocol],
+});
+```
+
+## Browser entrypoint
+
+The package root has a browser condition that resolves to `dist/browser.mjs`.
+Apps and service-worker builds can use the bare `@enbox/browser` import without
+adding Enbox-specific Node global shims.
+
+See [Browser & bundlers](/docs/guides/browser-bundlers) for bundler and storage
+details.
+
+## Key exports
+
+| Export | Description |
+|---|---|
+| `Enbox` | High-level app API from `@enbox/api` |
+| `defineProtocol()` | Type-safe protocol definition helper |
+| `AuthManager` | Auth/session lifecycle from `@enbox/auth` |
+| `BrowserConnectHandler` | Browser wallet/connect handler |
+| `DWebConnect` | Browser DWeb connect client helpers |
+| `activatePolyfills()` | DRL and DWeb browser feature activation |
+| `showWalletSelector()` | Built-in wallet selector UI |

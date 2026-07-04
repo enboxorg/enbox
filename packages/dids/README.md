@@ -32,6 +32,17 @@ console.log(resolution.didDocument);
 
 Level-backed resolver caching is exported from `@enbox/dids/resolver-cache-level` so DID consumers that only need creation and resolution APIs do not load LevelDB dependencies by default.
 
+## DID DHT Gateway Configuration
+
+In Node/Bun, `DidDht.create()` and `DidDht.resolve()` read
+`DID_DHT_GATEWAY_URI` as the default Pkarr gateway when no `gatewayUri` option is
+provided. `DID_DHT_ALLOW_PRIVATE_GATEWAY=1` is a separate dev/CI opt-in that
+allows private gateway URLs such as local relays.
+
+These environment variables are Node-only defaults. Browser callers should pass
+`gatewayUri` and, when intentionally using a private development relay,
+`allowPrivateGatewayUri: true` explicitly.
+
 ## Project Resources
 
 | Resource                                                                            | Description                                                                   |

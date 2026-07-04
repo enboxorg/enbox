@@ -39,3 +39,13 @@ Most applications interact with DIDs through `@enbox/api` and `@enbox/auth`, whi
 | `DidResolverCacheMemory` | In-memory resolver cache |
 | `DidMethodResolver` | Interface for custom DID method resolvers |
 | `DidDocument` | The W3C DID Document type |
+
+## DID DHT gateway defaults
+
+In Node/Bun, `DidDht.create()` and `DidDht.resolve()` read
+`DID_DHT_GATEWAY_URI` when no `gatewayUri` option is supplied.
+`DID_DHT_ALLOW_PRIVATE_GATEWAY=1` is a separate development and CI opt-in for
+private local relays.
+
+Browser callers should pass `gatewayUri` explicitly. If you intentionally use a
+private development relay in a browser, also pass `allowPrivateGatewayUri: true`.

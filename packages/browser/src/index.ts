@@ -51,7 +51,7 @@ export {
   AuthSession,
   normalizeProtocolRequests,
   WalletConnect,
-} from '@enbox/auth';
+} from '@enbox/auth/browser';
 
 export type {
   AuthEvent,
@@ -72,7 +72,7 @@ export type {
   StorageAdapter,
   SyncOption,
   WalletConnectOptions,
-} from '@enbox/auth';
+} from '@enbox/auth/browser';
 
 // ─── Browser-specific exports ───────────────────────────────────
 //

@@ -92,6 +92,16 @@ import {
 /** The default DID DHT Gateway / Pkarr Relay used when no `gatewayUri` is supplied. */
 const FALLBACK_GATEWAY_URI = 'https://enbox-did-dht.fly.dev';
 
+type GlobalProcessEnv = {
+  process?: {
+    env?: Record<string, string | undefined>;
+  };
+};
+
+function getProcessEnv(): Record<string, string | undefined> | undefined {
+  return (globalThis as GlobalProcessEnv).process?.env;
+}
+
 /**
  * Returns the default gateway URI, deferring the `DID_DHT_GATEWAY_URI` env lookup until call
  * time so the env var reflects late mutations (e.g. test setup) rather than the value captured
@@ -103,7 +113,7 @@ const FALLBACK_GATEWAY_URI = 'https://enbox-did-dht.fly.dev';
  * `allowPrivateGatewayUri: true` per call.
  */
 function getDefaultGatewayUri(): string {
-  return process.env.DID_DHT_GATEWAY_URI || FALLBACK_GATEWAY_URI;
+  return getProcessEnv()?.DID_DHT_GATEWAY_URI || FALLBACK_GATEWAY_URI;
 }
 
 /**
@@ -116,7 +126,7 @@ function getDefaultGatewayUri(): string {
  * at a different (possibly private) relay does not silently disable SSRF protection.
  */
 function getDefaultAllowPrivateGatewayUri(): boolean {
-  return process.env.DID_DHT_ALLOW_PRIVATE_GATEWAY === '1';
+  return getProcessEnv()?.DID_DHT_ALLOW_PRIVATE_GATEWAY === '1';
 }
 
 /**

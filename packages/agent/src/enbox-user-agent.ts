@@ -11,7 +11,6 @@ import type { ProcessVcRequest, SendVcRequest, VcResponse } from './types/vc.js'
 
 import { AgentCryptoApi } from './crypto-api.js';
 import { AgentDidApi } from './did-api.js';
-import { AgentDidResolverCache } from './agent-did-resolver-cache.js';
 import { AgentDwnApi } from './dwn-api.js';
 import { AgentIdentityApi } from './identity-api.js';
 import { AgentPermissionsApi } from './permissions-api.js';
@@ -20,9 +19,7 @@ import { DwnIdentityStore } from './store-identity.js';
 import { DwnKeyStore } from './store-key.js';
 import { EnboxRpcClient } from '@enbox/dwn-clients';
 import { HdIdentityVault } from './hd-identity-vault.js';
-import { LevelStore } from '@enbox/common/level-store';
 import { LocalKeyManager } from './local-key-manager.js';
-import { SyncEngineLevel } from './sync-engine-level.js';
 import { DidDht, DidJwk } from '@enbox/dids';
 import { InMemorySecretStore, VaultBackedSecretStore } from './secret-store.js';
 
@@ -167,23 +164,31 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
   }: CreateUserAgentParams = {}
   ): Promise<EnboxUserAgent> {
 
-    agentVault ??= new HdIdentityVault({
-      keyDerivationWorkFactor : 210_000,
-      store                   : new LevelStore<string, string>({ location: `${dataPath}/VAULT_STORE` })
-    });
+    if (agentVault === undefined || secretsApi === undefined) {
+      const { LevelStore } = await import('@enbox/common/level-store');
 
-    secretsApi ??= new VaultBackedSecretStore({
-      vault : agentVault,
-      store : new LevelStore<string, string>({ location: `${dataPath}/SECRET_STORE` }),
-    });
+      agentVault ??= new HdIdentityVault({
+        keyDerivationWorkFactor : 210_000,
+        store                   : new LevelStore<string, string>({ location: `${dataPath}/VAULT_STORE` })
+      });
+
+      secretsApi ??= new VaultBackedSecretStore({
+        vault : agentVault,
+        store : new LevelStore<string, string>({ location: `${dataPath}/SECRET_STORE` }),
+      });
+    }
 
     cryptoApi ??= new AgentCryptoApi();
 
-    didApi ??= new AgentDidApi({
-      didMethods    : [DidDht, DidJwk],
-      resolverCache : new AgentDidResolverCache({ location: `${dataPath}/DID_RESOLVERCACHE` }),
-      store         : new DwnDidStore()
-    });
+    if (didApi === undefined) {
+      const { AgentDidResolverCache } = await import('./agent-did-resolver-cache.js');
+
+      didApi = new AgentDidApi({
+        didMethods    : [DidDht, DidJwk],
+        resolverCache : new AgentDidResolverCache({ location: `${dataPath}/DID_RESOLVERCACHE` }),
+        store         : new DwnDidStore()
+      });
+    }
 
     if (!dwnApi) {
       if (localDwnEndpoint) {
@@ -213,7 +218,10 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
 
     rpcClient ??= new EnboxRpcClient();
 
-    syncApi ??= new SyncEngineLevel({ dataPath });
+    if (syncApi === undefined) {
+      const { SyncEngineLevel } = await import('./sync-engine-level.js');
+      syncApi = new SyncEngineLevel({ dataPath });
+    }
 
     // Instantiate the Agent using the provided or default components.
     return new EnboxUserAgent({

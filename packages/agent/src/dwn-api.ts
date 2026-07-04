@@ -15,7 +15,6 @@ import type {
 import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
 import type { KeyIdentifier, PrivateKeyJwk, PublicKeyJwk } from '@enbox/crypto';
 
-import { DidResolverCacheLevel } from '@enbox/dids/resolver-cache-level';
 import {
   Cid,
   ContentEncryptionAlgorithm,
@@ -38,7 +37,6 @@ import {
 } from '@enbox/dwn-sdk-js';
 import { Convert, logger, TtlCache } from '@enbox/common';
 import { CryptoUtils, X25519 } from '@enbox/crypto';
-import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '@enbox/dwn-sdk-js/stores/level';
 import { DidDht, DidJwk, UniversalResolver } from '@enbox/dids';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
@@ -433,21 +431,31 @@ export class AgentDwnApi {
   public static async createDwn({
     dataPath, dataStore, didResolver, messageLog, tenantGate, resumableTaskStore
   }: DwnApiCreateDwnParams): Promise<Dwn> {
-    dataStore ??= new DataStoreLevel({ blockstoreLocation: `${dataPath}/DWN_DATASTORE` });
+    if (dataStore === undefined) {
+      const { DataStoreLevel } = await import('@enbox/dwn-sdk-js/stores/level');
+      dataStore = new DataStoreLevel({ blockstoreLocation: `${dataPath}/DWN_DATASTORE` });
+    }
 
-    didResolver ??= new UniversalResolver({
-      didResolvers : [DidDht, DidJwk],
-      cache        : new DidResolverCacheLevel({ location: `${dataPath}/DID_RESOLVERCACHE` }),
-    });
+    if (didResolver === undefined) {
+      const { DidResolverCacheLevel } = await import('@enbox/dids/resolver-cache-level');
+      didResolver = new UniversalResolver({
+        didResolvers : [DidDht, DidJwk],
+        cache        : new DidResolverCacheLevel({ location: `${dataPath}/DID_RESOLVERCACHE` }),
+      });
+    }
 
-    resumableTaskStore ??= new ResumableTaskStoreLevel({ location: `${dataPath}/DWN_RESUMABLETASKSTORE` });
+    if (resumableTaskStore === undefined) {
+      const { ResumableTaskStoreLevel } = await import('@enbox/dwn-sdk-js/stores/level');
+      resumableTaskStore = new ResumableTaskStoreLevel({ location: `${dataPath}/DWN_RESUMABLETASKSTORE` });
+    }
 
-    const { eventLog, messageStore } = messageLog ?? AgentDwnApi.createDefaultMessageLog(dataPath);
+    const { eventLog, messageStore } = messageLog ?? await AgentDwnApi.createDefaultMessageLog(dataPath);
 
     return await Dwn.create({ dataStore, didResolver, eventLog, messageStore, tenantGate, resumableTaskStore });
   }
 
-  private static createDefaultMessageLog(dataPath?: string): MessageLog {
+  private static async createDefaultMessageLog(dataPath?: string): Promise<MessageLog> {
+    const { MessageStoreLevel } = await import('@enbox/dwn-sdk-js/stores/level');
     const wakePublisher = new EventEmitterWakePublisher();
     const messageStore = new MessageStoreLevel({
       location: `${dataPath}/DWN_MESSAGESTORE`,

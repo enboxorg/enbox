@@ -4,10 +4,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 import { AuthManager } from '@enbox/auth/auth-manager';
+import { PlatformAgentTestHarness } from '@enbox/agent/test';
 import {
   DwnInterface,
   EnboxUserAgent,
-  PlatformAgentTestHarness,
 } from '@enbox/agent';
 
 import { defineProtocol } from '../src/define-protocol.js';

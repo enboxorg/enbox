@@ -2,6 +2,7 @@
   "title": "Guides",
   "pages": [
     "auth",
+    "browser-bundlers",
     "hosting",
     "testing"
   ]

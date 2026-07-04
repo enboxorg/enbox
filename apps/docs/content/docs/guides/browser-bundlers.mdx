@@ -1,0 +1,61 @@
+---
+title: Browser & bundlers
+description: How to consume Enbox in browser apps, service workers, and secondary bundler passes.
+---
+
+Browser apps should import from `@enbox/browser`:
+
+```ts
+import { BrowserConnectHandler, Enbox, defineProtocol } from '@enbox/browser';
+```
+
+`@enbox/browser`, `@enbox/api`, and `@enbox/agent` publish browser-conditioned
+root entries. Browser-aware bundlers resolve those bare specifiers to
+`dist/browser.mjs`, so app and service-worker builds do not need Enbox-specific
+Node global shims for `process`, `process.env`, `process.browser`,
+`process.emitWarning`, `global`, or the Node `events` builtin.
+
+Apps that need auth directly in a browser should use the browser subpath:
+
+```ts
+import { AuthManager, PasswordProvider } from '@enbox/auth/browser';
+```
+
+The Node-only password helpers remain on the Node root entry.
+
+## Service workers
+
+Secondary build passes, such as VitePWA service-worker builds, should use the
+same bare package imports as the main app:
+
+```ts
+import { Enbox } from '@enbox/browser';
+```
+
+Do not add a separate `process` shim or IIFE wrapper just for Enbox. If your
+application has other dependencies that need Node compatibility shims, keep that
+configuration scoped to those dependencies.
+
+## Storage model
+
+The browser agent stores data through `level`, which resolves to
+`browser-level` over IndexedDB in browser builds. This is intentional. IndexedDB
+supports concurrent access from multiple same-origin contexts, so two tabs and a
+service worker can write the same Enbox stores while the browser arbitrates the
+transactions.
+
+SQLite over OPFS is not a replacement for this path in browser apps. It does not
+provide the same cross-tab and service-worker write model, and `@enbox/dwn-sql-store`
+is for server-side DWN deployments.
+
+## DWeb polyfills
+
+`activatePolyfills()` from `@enbox/browser` enables browser DWeb behavior such
+as DRL service-worker handling. It is not a Node-global shim and is not required
+to make the SDK package graph importable.
+
+```ts
+import { activatePolyfills } from '@enbox/browser';
+
+activatePolyfills();
+```

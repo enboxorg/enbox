@@ -40,6 +40,12 @@ type StoreSetupResult = {
   vaultStore: KeyValueStore<string, string>;
 };
 
+type GlobalProcessEnv = {
+  process?: {
+    env?: Record<string, string | undefined>;
+  };
+};
+
 type PlatformAgentTestHarnessParams = {
   agent: EnboxPlatformAgent<LocalKeyManager>
 
@@ -191,13 +197,15 @@ export class PlatformAgentTestHarness {
   }
 
   public async createAgentDid(): Promise<void> {
+    const processEnv = (globalThis as GlobalProcessEnv).process?.env;
+
     // Create a DID for the Agent with Ed25519 (signing) and X25519 (keyAgreement).
     // X25519 is required by DwnKeyStore for JWE record-level encryption.
     // Must be published so the DWN can resolve it for JWS signature verification.
     this.agent.agentDid = await DidDht.create({
       options: {
         publish             : true,
-        gatewayUri          : process.env.DID_DHT_GATEWAY_URI ?? 'http://localhost:7527',
+        gatewayUri          : processEnv?.DID_DHT_GATEWAY_URI ?? 'http://localhost:7527',
         verificationMethods : [
           {
             algorithm : 'Ed25519',

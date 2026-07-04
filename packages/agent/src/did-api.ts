@@ -12,13 +12,12 @@ import type {
   PortableDid,
 } from '@enbox/dids';
 
-import { BearerDid, Did, DidDht, UniversalResolver } from '@enbox/dids';
+import { BearerDid, Did, DidDht, DidResolverCacheMemory, UniversalResolver } from '@enbox/dids';
 
 import type { AgentDataStore } from './store-data.js';
 import type { AgentKeyManager } from './types/key-manager.js';
 import type { EnboxPlatformAgent, ResponseStatus } from './types/agent.js';
 
-import { AgentDidResolverCache } from './agent-did-resolver-cache.js';
 import { canonicalize } from '@enbox/crypto';
 import { InMemoryDidStore } from './store-did.js';
 
@@ -90,9 +89,7 @@ export interface DidApiParams {
    * An optional `DidResolverCache` instance used for caching resolved DID documents.
    *
    * Providing a cache implementation can significantly enhance resolution performance by avoiding
-   * redundant resolutions for previously resolved DIDs. If omitted, the default is an instance of `AgentDidResolverCache`.
-   *
-   * `AgentDidResolverCache` keeps a stale copy of the Agent's managed Identity DIDs and only refreshes upon a successful resolution.
+   * redundant resolutions for previously resolved DIDs. If omitted, the default is an in-memory cache.
    * This allows for quick and offline access to the internal DIDs used by the agent.
    */
   resolverCache?: DidResolverCache;
@@ -131,10 +128,10 @@ export class AgentDidApi<TKeyManager extends AgentKeyManager = AgentKeyManager> 
     }
 
     // Initialize the DID resolver with the given DID methods and resolver cache, or use a default
-    // AgentDidResolverCache if none is provided.
+    // in-memory cache if none is provided.
     super({
       didResolvers : didMethods,
-      cache        : resolverCache ?? new AgentDidResolverCache({ agent, location: 'DATA/AGENT/DID_CACHE' })
+      cache        : resolverCache ?? new DidResolverCacheMemory()
     });
 
     this._agent = agent;
@@ -164,7 +161,7 @@ export class AgentDidApi<TKeyManager extends AgentKeyManager = AgentKeyManager> 
   set agent(agent: EnboxPlatformAgent) {
     this._agent = agent;
 
-    // AgentDidResolverCache should set the agent if it is the type of cache being used
+    // Agent-aware resolver caches should receive the agent context when available.
     if ('agent' in this.cache) {
       this.cache.agent = agent;
     }

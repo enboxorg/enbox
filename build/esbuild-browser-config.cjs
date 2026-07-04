@@ -3,16 +3,27 @@
  *
  * Usage (from a package's build script):
  *   const { browserConfig } = require('../../build/esbuild-browser-config.cjs');
- *   const config = browserConfig({ nodeShims: true });
+ *   const config = browserConfig();
  *
  * @param {object} [options]
- * @param {boolean} [options.nodeShims]  Add process.env stub, events alias, and
- *                                       level externalization (agent, api, dwn-sdk-js).
  * @param {string}  [options.entryPoint] Override the default './src/index.ts' entry.
+ * @param {Record<string, string>} [options.aliases] Additional esbuild aliases.
+ * @param {string[]} [options.externals] Exact module specifiers to leave external.
  * @returns {import('esbuild').BuildOptions}
  */
 function browserConfig(options = {}) {
-  const { nodeShims = false, entryPoint = './src/index.ts' } = options;
+  const { entryPoint = './src/index.ts', aliases = {}, externals = [] } = options;
+  const aliasEntries = Object.entries(aliases);
+  const externalEntries = [...externals];
+  const plugins = [];
+
+  if (aliasEntries.length > 0) {
+    plugins.push(exactAliasPlugin(aliasEntries));
+  }
+
+  if (externalEntries.length > 0) {
+    plugins.push(exactExternalPlugin(externalEntries));
+  }
 
   /** @type {import('esbuild').BuildOptions} */
   const config = {
@@ -31,14 +42,43 @@ function browserConfig(options = {}) {
     alias: {
       'events': 'eventemitter3',
     },
+    plugins: plugins.length > 0 ? plugins : undefined,
   };
 
-  if (nodeShims) {
-    config.define['process.env'] = '{}';
-    config.external = ['level'];
-  }
-
   return config;
+}
+
+function exactAliasPlugin(aliasEntries) {
+  const path = require('node:path');
+
+  return {
+    name: 'exact-alias',
+    setup(build) {
+      for (const [specifier, replacement] of aliasEntries) {
+        build.onResolve({ filter: new RegExp(`^${escapeRegExp(specifier)}$`) }, () => ({
+          path: replacement.startsWith('.') ? path.resolve(process.cwd(), replacement) : replacement,
+        }));
+      }
+    },
+  };
+}
+
+function exactExternalPlugin(specifiers) {
+  return {
+    name: 'exact-external',
+    setup(build) {
+      for (const specifier of specifiers) {
+        build.onResolve({ filter: new RegExp(`^${escapeRegExp(specifier)}$`) }, () => ({
+          path     : specifier,
+          external : true,
+        }));
+      }
+    },
+  };
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 module.exports = { browserConfig };

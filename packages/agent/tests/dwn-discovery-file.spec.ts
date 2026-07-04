@@ -1,6 +1,11 @@
+import * as BrowserDiscoveryFileFs from '../src/dwn-discovery-file-fs.browser.js';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'bun:test';
+import { mkdtemp, rm } from 'node:fs/promises';
 
 import {
+  createNodeDiscoveryFileFs,
   DISCOVERY_DIR,
   DISCOVERY_FILENAME,
   type DiscoveryFileFs,
@@ -76,6 +81,37 @@ describe('DwnDiscoveryFile', () => {
       // In Bun test environment this succeeds, so we test the error
       // case via a custom factory wrapper instead.
       expect(() => new DwnDiscoveryFile(noFs, testFilePath)).not.toThrow();
+    });
+  });
+
+  describe('default filesystem adapters', () => {
+    it('should read, write, and remove files with the Node filesystem adapter', async () => {
+      const fs = createNodeDiscoveryFileFs();
+      if (fs === undefined) {
+        throw new Error('expected Node filesystem adapter to be available');
+      }
+
+      const tempDir = await mkdtemp(path.join(os.tmpdir(), 'enbox-discovery-file-'));
+      const filePath = path.join(tempDir, DISCOVERY_FILENAME);
+
+      try {
+        await fs.writeFile(filePath, 'hello');
+        expect(await fs.readFile(filePath)).toBe('hello');
+
+        await fs.removeFile(filePath);
+        expect(await fs.readFile(filePath)).toBeNull();
+
+        await fs.removeFile(filePath);
+        expect(fs.isProcessAlive(process.pid)).toBe(true);
+        expect(fs.isProcessAlive(Number.MAX_SAFE_INTEGER)).toBe(false);
+        expect(fs.homedir().length).toBeGreaterThan(0);
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it('should not provide a default filesystem adapter in browser builds', () => {
+      expect(BrowserDiscoveryFileFs.createNodeDiscoveryFileFs()).toBeUndefined();
     });
   });
 

@@ -2,7 +2,8 @@ import type { BearerDid } from '@enbox/dids';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
-import { EnboxUserAgent, PlatformAgentTestHarness } from '@enbox/agent';
+import { EnboxUserAgent } from '@enbox/agent';
+import { PlatformAgentTestHarness } from '@enbox/agent/test';
 
 import { DwnApi } from '../src/dwn-api.js';
 import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' with { type: 'json' };

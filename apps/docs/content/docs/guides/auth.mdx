@@ -23,7 +23,7 @@ npm install @enbox/browser # for browser wallet-connect handlers
 ## Basic usage
 
 ```ts
-import { AuthManager } from '@enbox/auth';
+import { AuthManager } from '@enbox/auth/browser';
 
 const auth = await AuthManager.create({ password: userPassword });
 
@@ -53,7 +53,7 @@ permission-scope UX (e.g. via a browser overlay) and returns a delegate
 session bound to the connecting wallet.
 
 ```ts
-import { AuthManager } from '@enbox/auth';
+import { AuthManager } from '@enbox/auth/browser';
 import { BrowserConnectHandler } from '@enbox/browser';
 
 const walletAuth = await AuthManager.create({

@@ -4,11 +4,13 @@
   "type": "module",
   "main": "./dist/esm/index.js",
   "module": "./dist/esm/index.js",
+  "browser": "./dist/browser.mjs",
+  "sideEffects": false,
   "types": "./dist/types/index.d.ts",
   "scripts": {
     "clean": "rm -rf dist",
     "build:esm": "rm -rf dist/esm dist/types && bun tsc -p tsconfig.json",
-    "build:browser": "rm -rf dist/browser.mjs && bun ../../build/browser-bundle.js --node-shims",
+    "build:browser": "rm -rf dist/browser.mjs && bun ../../build/browser-bundle.js --alias ./dwn-discovery-file-fs.js:./src/dwn-discovery-file-fs.browser.ts --external @enbox/common --external @enbox/crypto --external @enbox/dids --external @enbox/dwn-clients --external @enbox/dwn-sdk-js",
     "build": "bun run clean && bun run build:esm && bun run build:browser",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
@@ -51,7 +53,16 @@
   "exports": {
     ".": {
       "types": "./dist/types/index.d.ts",
+      "browser": "./dist/browser.mjs",
       "import": "./dist/esm/index.js"
+    },
+    "./level": {
+      "types": "./dist/types/level.d.ts",
+      "import": "./dist/esm/level.js"
+    },
+    "./test": {
+      "types": "./dist/types/test.d.ts",
+      "import": "./dist/esm/test.js"
     }
   },
   "react-native": "./dist/esm/index.js",
