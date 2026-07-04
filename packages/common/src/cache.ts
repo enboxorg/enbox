@@ -6,7 +6,9 @@ type TtlCacheEntry<V> = {
 
 type TtlCacheEvictionCandidate<K, V> = {
   entry: TtlCacheEntry<V>;
+  expiresAt: number;
   key: K;
+  sequence: number;
 };
 
 type TtlCachePurgeState = {
@@ -336,7 +338,13 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
           return;
         }
 
-        if (this._data.get(evictCandidate.key) !== evictCandidate.entry) {
+        const currentEntry = this._data.get(evictCandidate.key);
+
+        if (
+          currentEntry !== evictCandidate.entry ||
+          currentEntry.expiresAt !== evictCandidate.expiresAt ||
+          currentEntry.sequence !== evictCandidate.sequence
+        ) {
           continue;
         }
 
@@ -354,6 +362,8 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
     const currentTime = now();
     let evictKey: K | undefined;
     let evictEntry: TtlCacheEntry<V> | undefined;
+    let evictExpiresAt: number | undefined;
+    let evictSequence: number | undefined;
 
     for (const [key, entry] of this._data.entries()) {
       if (this._isExpired(entry, currentTime)) {
@@ -362,36 +372,39 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
         continue;
       }
 
-      if (this._isEarlierEntry(entry, evictEntry)) {
+      if (this._isEarlierEntry(entry, evictExpiresAt, evictSequence)) {
         evictKey = key;
         evictEntry = entry;
+        evictExpiresAt = entry.expiresAt;
+        evictSequence = entry.sequence;
       }
     }
 
-    if (evictKey === undefined || evictEntry === undefined) {
+    if (evictKey === undefined || evictEntry === undefined || evictExpiresAt === undefined || evictSequence === undefined) {
       return undefined;
     }
 
-    return { entry: evictEntry, key: evictKey };
+    return { entry: evictEntry, expiresAt: evictExpiresAt, key: evictKey, sequence: evictSequence };
   }
 
-  private _isEarlierEntry(entry: TtlCacheEntry<V>, selectedEntry: TtlCacheEntry<V> | undefined): boolean {
-    if (selectedEntry === undefined) {
+  private _isEarlierEntry(entry: TtlCacheEntry<V>, selectedExpiresAt: number | undefined, selectedSequence: number | undefined): boolean {
+    if (selectedExpiresAt === undefined || selectedSequence === undefined) {
       return true;
     }
 
-    if (entry.expiresAt !== selectedEntry.expiresAt) {
-      return entry.expiresAt < selectedEntry.expiresAt;
+    if (entry.expiresAt !== selectedExpiresAt) {
+      return entry.expiresAt < selectedExpiresAt;
     }
 
-    return entry.sequence < selectedEntry.sequence;
+    return entry.sequence < selectedSequence;
   }
 
   private _purgeStale(): boolean {
+    const currentTime = now();
     let purged = false;
 
     for (const [key, entry] of this._data.entries()) {
-      if (this._isExpired(entry)) {
+      if (this._isExpired(entry, currentTime)) {
         this._delete(key, 'stale');
         purged = true;
       }

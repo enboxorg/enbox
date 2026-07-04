@@ -393,6 +393,38 @@ describe('TtlCache', () => {
     ]);
   });
 
+  it('should not evict an entry re-aged in place by a stale dispose callback during capacity pruning', () => {
+    const disposed: string[] = [];
+    const cache = new TtlCache<string, string>({
+      dispose: (value, key, reason): void => {
+        disposed.push(`${key}:${value}:${reason}`);
+
+        if (key === 'stale' && reason === 'stale') {
+          cache.setTTL('candidate', 1000);
+        }
+      },
+      max : Infinity,
+      ttl : 1000,
+    });
+
+    cache.set('candidate', 'old', { ttl: 100 });
+    cache.set('survivor', 'live', { ttl: 200 });
+    cache.set('stale', 'expired', { ttl: 1 });
+    busyWait(5);
+
+    cache.max = 2;
+    cache.set('trigger', 'new', { ttl: 300 });
+
+    expect(cache.get('candidate')).toBe('old');
+    expect(cache.get('trigger')).toBe('new');
+    expect(cache.get('survivor')).toBeUndefined();
+    expect(cache.size).toBe(2);
+    expect(disposed).toEqual([
+      'stale:expired:stale',
+      'survivor:live:evict',
+    ]);
+  });
+
   it('should store an overwritten value before calling dispose', () => {
     let observedValue: string | undefined;
     const cache = new TtlCache<string, string>({
