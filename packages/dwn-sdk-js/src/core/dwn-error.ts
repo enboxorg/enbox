@@ -198,6 +198,7 @@ export enum DwnErrorCode {
   ProtocolsConfigureInvalidUsesSelfReference = 'ProtocolsConfigureInvalidUsesSelfReference',
   ProtocolsConfigureRecordNestingDepthExceeded = 'ProtocolsConfigureRecordNestingDepthExceeded',
   ProtocolsConfigureReservedEncryptionControlPath = 'ProtocolsConfigureReservedEncryptionControlPath',
+  ProtocolsConfigureReservedEncryptionControlStructureNestingDepthExceeded = 'ProtocolsConfigureReservedEncryptionControlStructureNestingDepthExceeded',
   ProtocolsConfigureRoleDoesNotExistAtGivenPath = 'ProtocolsConfigureRoleDoesNotExistAtGivenPath',
   ProtocolsConfigureRoleParentContextDepthExceeded = 'ProtocolsConfigureRoleParentContextDepthExceeded',
   ProtocolsGrantAuthorizationQueryProtocolScopeMismatch = 'ProtocolsGrantAuthorizationQueryProtocolScopeMismatch',

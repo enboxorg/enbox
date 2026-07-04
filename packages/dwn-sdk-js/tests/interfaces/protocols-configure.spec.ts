@@ -12,7 +12,7 @@ import { DwnErrorCode, DwnInterfaceName, DwnMethodName, Message, Protocols } fro
 
 describe('ProtocolsConfigure', () => {
   describe('parse()', () => {
-    it('should throw if protocol definitions has record nesting more than 10 level deep', async () => {
+    it('should throw the reserved-structure nesting-depth error when the pre-schema walk sees over-deep structure', async () => {
       const definition = {
         published : true,
         protocol  : 'http://example.com',
@@ -46,10 +46,10 @@ describe('ProtocolsConfigure', () => {
       const message = { descriptor, authorization };
 
       const parsePromise = ProtocolsConfigure.parse(message);
-      await expect(parsePromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureRecordNestingDepthExceeded);
+      await expect(parsePromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureReservedEncryptionControlStructureNestingDepthExceeded);
     });
 
-    it('should throw the nesting-depth error before walking over-deep reserved encryption control paths', async () => {
+    it('should throw the reserved-structure nesting-depth error before walking over-deep encryption control paths', async () => {
       const definition = {
         published : true,
         protocol  : 'http://example.com',
@@ -81,7 +81,7 @@ describe('ProtocolsConfigure', () => {
       const message = { descriptor, authorization };
 
       const parsePromise = ProtocolsConfigure.parse(message);
-      await expect(parsePromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureRecordNestingDepthExceeded);
+      await expect(parsePromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureReservedEncryptionControlStructureNestingDepthExceeded);
     });
 
     it('should throw the reserved encryption control error before JSON Schema validation', async () => {

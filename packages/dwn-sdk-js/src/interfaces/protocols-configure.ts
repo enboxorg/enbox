@@ -152,7 +152,10 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
       }
 
       if (childPath.split('/').length > ProtocolsConfigure.maxRecordNestingDepth) {
-        throw new DwnError(DwnErrorCode.ProtocolsConfigureRecordNestingDepthExceeded, 'record nesting depth exceeded 10 levels.');
+        throw new DwnError(
+          DwnErrorCode.ProtocolsConfigureReservedEncryptionControlStructureNestingDepthExceeded,
+          `reserved encryption control structure nesting depth exceeded ${ProtocolsConfigure.maxRecordNestingDepth} levels.`
+        );
       }
 
       ProtocolsConfigure.validateReservedEncryptionControlStructure(ruleSet[recordType], childPath);
@@ -229,13 +232,16 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
 
   /**
    * Parses the given rule set hierarchy to get all the role protocol paths.
-   * @throws DwnError if the hierarchy depth goes beyond 10 levels.
+   * @throws DwnError if the hierarchy depth goes beyond the maximum supported depth.
    */
   private static fetchAllRolePathsRecursively(ruleSetProtocolPath: string, ruleSet: ProtocolRuleSet, roles: string[]): string[] {
-    // Limit the depth of the record hierarchy to 10 levels
+    // Limit the depth of the record hierarchy.
     // There is opportunity to optimize here to avoid repeated string splitting
     if (ruleSetProtocolPath.split('/').length > ProtocolsConfigure.maxRecordNestingDepth) {
-      throw new DwnError(DwnErrorCode.ProtocolsConfigureRecordNestingDepthExceeded, 'record nesting depth exceeded 10 levels.');
+      throw new DwnError(
+        DwnErrorCode.ProtocolsConfigureRecordNestingDepthExceeded,
+        `record nesting depth exceeded ${ProtocolsConfigure.maxRecordNestingDepth} levels.`
+      );
     }
 
     for (const recordType in ruleSet) {
