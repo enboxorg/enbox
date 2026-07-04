@@ -284,7 +284,7 @@ export function testProtocolsConfigureHandler(): void {
           protocol,
           isLatestBaseState : true
         }]);
-        expect(latestConfigs.messages.length).toBe(1);
+        expect(latestConfigs.messages).toHaveLength(1);
         expect(await Message.getCid(latestConfigs.messages[0])).toBe(newConfigCid);
 
         const historicalConfigs = await messageStore.query(alice.did, [{
@@ -293,7 +293,7 @@ export function testProtocolsConfigureHandler(): void {
           protocol,
           isLatestBaseState : false
         }]);
-        expect(historicalConfigs.messages.length).toBe(1);
+        expect(historicalConfigs.messages).toHaveLength(1);
         expect(await Message.getCid(historicalConfigs.messages[0])).toBe(await Message.getCid(historicalConfig.message));
       });
 

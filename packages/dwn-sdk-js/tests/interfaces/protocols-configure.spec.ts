@@ -1,4 +1,4 @@
-import type { ProtocolsConfigureDescriptor, ProtocolsConfigureMessage } from '../../src/index.js';
+import type { ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureDescriptor, ProtocolsConfigureMessage } from '../../src/index.js';
 
 import dexProtocolDefinition from '../vectors/protocol-definitions/dex.json' with { type: 'json' };
 import { Jws } from '../../src/utils/jws.js';
@@ -245,6 +245,34 @@ describe('ProtocolsConfigure', () => {
     });
 
     describe('protocol definition validations', () => {
+      it('should allow ten nested records with a role marker on the deepest record', async () => {
+        const definition: ProtocolDefinition = {
+          published : true,
+          protocol  : 'http://example.com',
+          types     : {},
+          structure : { },
+        };
+
+        let currentLevel: ProtocolRuleSet = definition.structure;
+        for (let i = 1; i <= 10; i++) {
+          const recordType = `level${i}`;
+          definition.types[recordType] = { };
+          currentLevel[recordType] = { };
+          currentLevel = currentLevel[recordType] as ProtocolRuleSet;
+        }
+        currentLevel.$role = true;
+
+        const alice = await TestDataGenerator.generatePersona();
+
+        const protocolsConfigure = await ProtocolsConfigure.create({
+          signer: Jws.createSigner(alice),
+          definition
+        });
+
+        expect(protocolsConfigure.message.descriptor.definition.protocol).toBe('http://example.com');
+        expect(currentLevel.$role).toBe(true);
+      });
+
       it('should reject protocol definitions with a reserved `$encryption` type', async () => {
         const definition = {
           published : true,

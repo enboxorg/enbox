@@ -141,12 +141,6 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
     for (const recordType in ruleSet) {
       const childDepth = depth + 1;
       const childPath = protocolPath === '' ? recordType : `${protocolPath}/${recordType}`;
-      if (childDepth > ProtocolsConfigure.maxRecordNestingDepth) {
-        throw new DwnError(
-          DwnErrorCode.ProtocolsConfigureRecordNestingDepthExceeded,
-          `record nesting depth exceeded ${ProtocolsConfigure.maxRecordNestingDepth} levels.`
-        );
-      }
 
       if (recordType === '$encryption') {
         throw new DwnError(
@@ -157,6 +151,13 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
 
       if (recordType.startsWith('$')) {
         continue;
+      }
+
+      if (childDepth > ProtocolsConfigure.maxRecordNestingDepth) {
+        throw new DwnError(
+          DwnErrorCode.ProtocolsConfigureRecordNestingDepthExceeded,
+          `record nesting depth exceeded ${ProtocolsConfigure.maxRecordNestingDepth} levels.`
+        );
       }
 
       ProtocolsConfigure.validateReservedEncryptionControlStructure(ruleSet[recordType], childPath, childDepth);
