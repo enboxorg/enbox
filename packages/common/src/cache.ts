@@ -4,6 +4,10 @@ type TtlCacheEntry<V> = {
   value: V;
 };
 
+type TtlCachePurgeState = {
+  purgedStale: boolean;
+};
+
 type TtlCacheTimer = ReturnType<typeof setTimeout>;
 
 const MAX_TIMER_DELAY = 2_147_483_647;
@@ -317,45 +321,56 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
     }
 
     const hadTimer = this._timer !== undefined;
-    let purgedStale = false;
+    const purgeState = { purgedStale: false };
 
     try {
       while (this._data.size > this.max) {
-        let evictKey: K | undefined;
-        let evictEntry: TtlCacheEntry<V> | undefined;
+        const evictKey = this._purgeStaleAndSelectEviction(purgeState);
 
-        for (const [key, entry] of this._data.entries()) {
-          if (this._isExpired(entry)) {
-            purgedStale = true;
-            this._delete(key, 'stale');
-
-            if (this._data.size <= this.max) {
-              return;
-            }
-
-            continue;
-          }
-
-          if (evictEntry === undefined || entry.expiresAt < evictEntry.expiresAt || (
-            entry.expiresAt === evictEntry.expiresAt && entry.sequence < evictEntry.sequence
-          )) {
-            evictKey = key;
-            evictEntry = entry;
-          }
-        }
-
-        if (evictKey === undefined) {
+        if (this._data.size <= this.max || evictKey === undefined) {
           return;
         }
 
         this._delete(evictKey, 'evict');
       }
     } finally {
-      if (purgedStale && hadTimer) {
+      if (purgeState.purgedStale && hadTimer) {
         this.cancelTimer();
         this._scheduleNextTimer();
       }
     }
+  }
+
+  private _purgeStaleAndSelectEviction(purgeState: TtlCachePurgeState): K | undefined {
+    let evictKey: K | undefined;
+    let evictEntry: TtlCacheEntry<V> | undefined;
+
+    for (const [key, entry] of this._data.entries()) {
+      if (this._isExpired(entry)) {
+        purgeState.purgedStale = true;
+        this._delete(key, 'stale');
+        continue;
+      }
+
+      if (this._isEarlierEntry(entry, evictEntry)) {
+        evictKey = key;
+        evictEntry = entry;
+      }
+    }
+
+    return evictKey;
+  }
+
+  private _isEarlierEntry(entry: TtlCacheEntry<V>, selectedEntry: TtlCacheEntry<V> | undefined): boolean {
+    if (selectedEntry === undefined) {
+      return true;
+    }
+
+    if (entry.expiresAt !== selectedEntry.expiresAt) {
+      return entry.expiresAt < selectedEntry.expiresAt;
+    }
+
+    return entry.sequence < selectedEntry.sequence;
   }
 
   private _purgeStale(): boolean {

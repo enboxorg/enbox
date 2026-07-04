@@ -268,7 +268,7 @@ describe('TtlCache', () => {
         }
       }).toThrow('dispose failed');
       expect(cache.get('second')).toBe('b');
-      expect(delays.length).toBe(2);
+      expect(delays).toHaveLength(2);
     } finally {
       globalThis.setTimeout = originalSetTimeout;
       globalThis.clearTimeout = originalClearTimeout;
