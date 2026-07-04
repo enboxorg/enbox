@@ -715,6 +715,7 @@ describe('dwn-encryption', () => {
       includeEncodedData = true,
       grantRevoked = false,
       protocolDefinition,
+      grantKeyRemoteOnly = false,
       mutatePayload,
       mutateRecordTags,
     }: {
@@ -725,6 +726,7 @@ describe('dwn-encryption', () => {
       includeEncodedData?: boolean;
       grantRevoked?: boolean;
       protocolDefinition?: ProtocolDefinition;
+      grantKeyRemoteOnly?: boolean;
       mutatePayload?: (payload: any) => void;
       mutateRecordTags?: (tags: Record<string, string>) => void;
     } = {}): Promise<{
@@ -800,12 +802,18 @@ describe('dwn-encryption', () => {
       sinon.stub(Records, 'decrypt').resolves(DataStream.fromBytes(Encoder.objectToBytes(payload)));
 
       const processDwnRequest = sinon.stub();
-      processDwnRequest.onFirstCall().resolves({
+      const grantKeyQueryReply = {
         reply: {
           status  : { code: 200, detail: 'OK' },
           entries : [grantKeyMessage],
         },
-      });
+      };
+      processDwnRequest.onFirstCall().resolves(grantKeyRemoteOnly ? {
+        reply: {
+          status  : { code: 200, detail: 'OK' },
+          entries : [],
+        },
+      } : grantKeyQueryReply);
       let nextCallIndex = 1;
       if (!includeEncodedData) {
         processDwnRequest.onCall(nextCallIndex).resolves({
@@ -862,6 +870,7 @@ describe('dwn-encryption', () => {
           isGrantRevoked: sinon.stub().resolves(grantRevoked),
         },
         processDwnRequest,
+        sendDwnRequest: sinon.stub().resolves(grantKeyQueryReply),
       };
 
       return {
@@ -1180,6 +1189,28 @@ describe('dwn-encryption', () => {
         messageType   : DwnInterface.RecordsRead,
         messageParams : { filter: { recordId: grantKeyRecordId } },
       });
+    });
+
+    it('should hydrate durable grantKeys from remote fallback when the local replica has not synced', async () => {
+      const { mockAgent, delegateCache, recordsWrite } = await makeGrantKeyResolverFixture({
+        grantKeyRemoteOnly: true,
+      });
+
+      const result = await resolveKeyDecrypter(
+        mockAgent, 'did:example:delegate', recordsWrite, 'did:example:alice',
+        delegateCache,
+        'did:example:delegate',
+      );
+
+      expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+      expect(mockAgent.sendDwnRequest.calledOnce).toBe(true);
+      expect(mockAgent.sendDwnRequest.firstCall.args[0].messageParams.filter).toEqual({
+        recipient    : 'did:example:delegate',
+        protocol     : EncryptionProtocol.uri,
+        protocolPath : EncryptionProtocol.grantKeyPath,
+        tags         : { protocol: 'https://proto.example.com' },
+      });
+      expect(delegateCache.set.calledOnce).toBe(true);
     });
 
     it('should reject a durable grantKey whose scope does not cover the encrypted record', async () => {

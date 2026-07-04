@@ -2,8 +2,11 @@ import type { ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js'
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import {
+  DwnInterfaceName,
+  DwnMethodName,
   Encoder,
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
+  ENCRYPTION_CONTROL_DELIVERY_PATH,
   EncryptionControlDeliveryRecipientAuthority,
   EncryptionProtocol,
   getRuleSetAtPath,
@@ -47,6 +50,42 @@ function nestedRootDefinition(): ProtocolDefinition {
         $actions : [{ role: 'chat/member', can: ['read'] }],
         member   : { $role: true, $actions: [{ who: 'anyone', can: ['create', 'read'] }] },
       },
+    },
+  };
+}
+
+function selfAnchoredNestedDefinition(): ProtocolDefinition {
+  return {
+    published : true,
+    protocol  : 'https://example.org/protocols/sealed-audience-self-anchor-test',
+    types     : {
+      chat   : { dataFormats: ['text/plain'] },
+      mod    : { dataFormats: ['application/json'] },
+      thread : { dataFormats: ['text/plain'], encryptionRequired: true },
+    },
+    structure: {
+      chat: {
+        $actions : [{ who: 'anyone', can: ['create', 'read'] }],
+        thread   : {
+          $actions : [{ role: 'chat/thread/mod', can: ['read'] }],
+          mod      : { $role: true, $actions: [{ who: 'anyone', can: ['create', 'read'] }] },
+        },
+      },
+    },
+  };
+}
+
+function delegatedFallbackDefinition(): ProtocolDefinition {
+  return {
+    published : true,
+    protocol  : 'https://example.org/protocols/sealed-audience-delegate-fallback-test',
+    types     : {
+      admin : { dataFormats: ['application/json'] },
+      note  : { dataFormats: ['text/plain'], encryptionRequired: true },
+    },
+    structure: {
+      admin : { $role: true, $actions: [{ who: 'anyone', can: ['create', 'read'] }] },
+      note  : { $actions: [{ role: 'admin', can: ['read'] }] },
     },
   };
 }
@@ -100,6 +139,58 @@ describe('AgentDwnApi sealed audience keys', () => {
 
     await writeEncryptedNote('seed sealed note');
     return (await queryAudienceRecords())[0];
+  }
+
+  async function createRoleCreatorAnyoneDelivery(): Promise<{
+    audiencePayload: any;
+    deliveryRecord: RecordsWriteMessage;
+    recipientDid: string;
+  }> {
+    const audienceRecord = await ensureRootAudienceRecord();
+    const audiencePayload = Encoder.base64UrlToObject(audienceRecord.encodedData!) as any;
+    const resolvedOwnerKey = await resolveAudienceDecryptionKey({
+      agent        : testHarness.agent,
+      sourceDid    : ownerDid,
+      recipientDid : ownerDid,
+      protocol     : PROTOCOL_URI,
+      contextId    : '',
+      rolePath     : 'admin',
+      keyId        : audiencePayload.keyId,
+    });
+    expect(resolvedOwnerKey).toBeDefined();
+
+    const recipient = await testHarness.createIdentity({ name: 'Role Creator Recipient', testDwnUrls });
+    await installProtocol(recipient.did.uri, definition());
+    const { reply: recipientProtocolReply } = await testHarness.agent.dwn.processRequest({
+      author        : recipient.did.uri,
+      target        : recipient.did.uri,
+      messageType   : DwnInterface.ProtocolsQuery,
+      messageParams : { filter: { protocol: PROTOCOL_URI } },
+    });
+    const recipientDefinition = recipientProtocolReply.entries![0].descriptor.definition;
+    const recipientRolePublicKey = getRuleSetAtPath('admin', recipientDefinition.structure)!.$keyAgreement!.publicKeyJwk;
+
+    const deliveryRecord = await createAudienceDeliveryRecord({
+      agent       : testHarness.agent,
+      audienceKey : {
+        contextId   : '',
+        keyId       : audiencePayload.keyId,
+        keyMaterial : resolvedOwnerKey!.keyMaterial,
+        protocol    : PROTOCOL_URI,
+        rolePath    : 'admin',
+      },
+      authorDid              : ownerDid,
+      recipientAuthority     : EncryptionControlDeliveryRecipientAuthority.RoleCreatorAnyone,
+      recipientDid           : recipient.did.uri,
+      recipientRolePublicKey : recipientRolePublicKey as any,
+      sourceDid              : ownerDid,
+    });
+
+    return {
+      audiencePayload,
+      deliveryRecord : deliveryRecord as RecordsWriteMessage,
+      recipientDid   : recipient.did.uri,
+    };
   }
 
   async function countLegacyAudienceEpochs(): Promise<number> {
@@ -214,6 +305,7 @@ describe('AgentDwnApi sealed audience keys', () => {
         protocolPath : 'chat',
         dataFormat   : 'text/plain',
         data         : new TextEncoder().encode('root chat'),
+        published    : true,
       },
       encryption: true,
     });
@@ -239,57 +331,201 @@ describe('AgentDwnApi sealed audience keys', () => {
     });
   });
 
-  it('hydrates a roleCreatorAnyone delivery without requiring a role-holder record', async () => {
-    const audienceRecord = await ensureRootAudienceRecord();
-    const audiencePayload = Encoder.base64UrlToObject(audienceRecord.encodedData!) as any;
-    const resolvedOwnerKey = await resolveAudienceDecryptionKey({
-      agent        : testHarness.agent,
-      sourceDid    : ownerDid,
-      recipientDid : ownerDid,
-      protocol     : PROTOCOL_URI,
-      contextId    : '',
-      rolePath     : 'admin',
-      keyId        : audiencePayload.keyId,
-    });
-    expect(resolvedOwnerKey).toBeDefined();
+  it('mints a pending audience for a nested self-anchoring role context', async () => {
+    const protocolDefinition = selfAnchoredNestedDefinition();
+    await installProtocol(ownerDid, protocolDefinition);
 
-    const recipient = await testHarness.createIdentity({ name: 'Role Creator Recipient', testDwnUrls });
-    await installProtocol(recipient.did.uri, definition());
-    const { reply: recipientProtocolReply } = await testHarness.agent.dwn.processRequest({
-      author        : recipient.did.uri,
-      target        : recipient.did.uri,
-      messageType   : DwnInterface.ProtocolsQuery,
-      messageParams : { filter: { protocol: PROTOCOL_URI } },
-    });
-    const recipientDefinition = recipientProtocolReply.entries![0].descriptor.definition;
-    const recipientRolePublicKey = getRuleSetAtPath('admin', recipientDefinition.structure)!.$keyAgreement!.publicKeyJwk;
-
-    await createAudienceDeliveryRecord({
-      agent       : testHarness.agent,
-      audienceKey : {
-        contextId   : '',
-        keyId       : audiencePayload.keyId,
-        keyMaterial : resolvedOwnerKey!.keyMaterial,
-        protocol    : PROTOCOL_URI,
-        rolePath    : 'admin',
+    const { reply: chatReply, message: chatMessage } = await testHarness.agent.dwn.processRequest({
+      author        : ownerDid,
+      target        : ownerDid,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol     : protocolDefinition.protocol,
+        protocolPath : 'chat',
+        dataFormat   : 'text/plain',
+        data         : new TextEncoder().encode('chat root'),
       },
-      authorDid              : ownerDid,
-      recipientAuthority     : EncryptionControlDeliveryRecipientAuthority.RoleCreatorAnyone,
-      recipientDid           : recipient.did.uri,
-      recipientRolePublicKey : recipientRolePublicKey as any,
-      sourceDid              : ownerDid,
     });
+    expect([202, 204]).toContain(chatReply.status.code);
+
+    const chatWrite = chatMessage as RecordsWriteMessage;
+    const { reply: threadReply, message: threadMessage } = await testHarness.agent.dwn.processRequest({
+      author        : ownerDid,
+      target        : ownerDid,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol        : protocolDefinition.protocol,
+        protocolPath    : 'chat/thread',
+        parentContextId : chatWrite.recordId,
+        dataFormat      : 'text/plain',
+        data            : new TextEncoder().encode('thread body'),
+      },
+      encryption: true,
+    });
+
+    expect(threadReply.status.code).toBe(202);
+    const threadWrite = threadMessage as RecordsWriteMessage;
+    const contextId = `${chatWrite.recordId}/${threadWrite.recordId}`;
+    const audienceRecords = await queryAudienceRecords({
+      contextId,
+      protocol : protocolDefinition.protocol,
+      rolePath : 'chat/thread/mod',
+    });
+    expect(audienceRecords).toHaveLength(1);
+
+    const audiencePayload = Encoder.base64UrlToObject(audienceRecords[0].encodedData!) as any;
+    const roleAudienceEntry = threadWrite.encryption?.keyEncryption.find(
+      (entry: any): boolean => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME,
+    ) as any;
+    expect(audiencePayload.contextId).toBe(contextId);
+    expect(roleAudienceEntry).toMatchObject({
+      keyId    : audiencePayload.keyId,
+      protocol : protocolDefinition.protocol,
+      rolePath : 'chat/thread/mod',
+    });
+  });
+
+  it('hydrates a roleCreatorAnyone delivery without requiring a role-holder record', async () => {
+    const { audiencePayload, recipientDid } = await createRoleCreatorAnyoneDelivery();
 
     const resolvedRecipientKey = await resolveAudienceDecryptionKey({
       agent        : testHarness.agent,
       contextId    : '',
       keyId        : audiencePayload.keyId,
       protocol     : PROTOCOL_URI,
-      recipientDid : recipient.did.uri,
+      recipientDid : recipientDid,
       rolePath     : 'admin',
       sourceDid    : ownerDid,
     });
 
     expect(resolvedRecipientKey?.keyMaterial.keyId).toBe(audiencePayload.keyId);
+  });
+
+  it('writes a roleCreatorGrant self-delivery for delegated audience minters', async () => {
+    const protocolDefinition = delegatedFallbackDefinition();
+    await installProtocol(ownerDid, protocolDefinition);
+    const delegate = await testHarness.createIdentity({ name: 'Audience Delegate', testDwnUrls });
+    const writeGrant = await testHarness.agent.permissions.createGrant({
+      author      : ownerDid,
+      dateExpires : '2099-01-01T00:00:00.000000Z',
+      delegated   : true,
+      grantedTo   : delegate.did.uri,
+      scope       : {
+        interface : DwnInterfaceName.Records,
+        method    : DwnMethodName.Write,
+        protocol  : protocolDefinition.protocol,
+      },
+      store: true,
+    });
+
+    const { reply: writeReply } = await testHarness.agent.dwn.processRequest({
+      author        : ownerDid,
+      granteeDid    : delegate.did.uri,
+      target        : ownerDid,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        delegatedGrant : writeGrant.message,
+        protocol       : protocolDefinition.protocol,
+        protocolPath   : 'note',
+        dataFormat     : 'text/plain',
+        data           : new TextEncoder().encode('delegate sealed note'),
+      },
+      encryption: true,
+    });
+    expect(writeReply.status.code).toBe(202);
+
+    const audienceRecords = await queryAudienceRecords({
+      contextId : '',
+      protocol  : protocolDefinition.protocol,
+      rolePath  : 'admin',
+    });
+    expect(audienceRecords).toHaveLength(1);
+    const audiencePayload = Encoder.base64UrlToObject(audienceRecords[0].encodedData!) as any;
+
+    const { reply: deliveryReply } = await testHarness.agent.dwn.processRequest({
+      author        : ownerDid,
+      target        : ownerDid,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : {
+        filter: {
+          recipient    : delegate.did.uri,
+          protocol     : protocolDefinition.protocol,
+          protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+          tags         : {
+            protocol  : protocolDefinition.protocol,
+            rolePath  : 'admin',
+            contextId : '',
+            keyId     : audiencePayload.keyId,
+          },
+        },
+      },
+    });
+    expect(deliveryReply.status.code).toBe(200);
+    expect(deliveryReply.entries).toHaveLength(1);
+    expect(deliveryReply.entries![0].descriptor.tags).toMatchObject({
+      grantId            : writeGrant.message.recordId,
+      recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleCreatorGrant,
+    });
+
+    const { reply: delegateDeliveryReply } = await testHarness.agent.dwn.processRequest({
+      author        : delegate.did.uri,
+      target        : ownerDid,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : {
+        filter: {
+          recipient    : delegate.did.uri,
+          protocol     : protocolDefinition.protocol,
+          protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+          tags         : {
+            protocol  : protocolDefinition.protocol,
+            rolePath  : 'admin',
+            contextId : '',
+            keyId     : audiencePayload.keyId,
+          },
+        },
+      },
+    });
+    expect(delegateDeliveryReply.status.code).toBe(200);
+    expect(delegateDeliveryReply.entries).toHaveLength(1);
+    expect(typeof delegateDeliveryReply.entries![0].encodedData).toBe('string');
+
+    const { reply: delegateGrantReply } = await testHarness.agent.dwn.processRequest({
+      author        : delegate.did.uri,
+      target        : ownerDid,
+      messageType   : DwnInterface.RecordsRead,
+      messageParams : { filter: { recordId: writeGrant.message.recordId } },
+    });
+    expect(delegateGrantReply.status.code).toBe(200);
+    expect(delegateGrantReply.entry?.recordsWrite.recordId).toBe(writeGrant.message.recordId);
+
+    const resolvedDelegateKey = await resolveAudienceDecryptionKey({
+      agent        : testHarness.agent,
+      contextId    : '',
+      granteeDid   : delegate.did.uri,
+      keyId        : audiencePayload.keyId,
+      protocol     : protocolDefinition.protocol,
+      recipientDid : ownerDid,
+      rolePath     : 'admin',
+      sourceDid    : ownerDid,
+    });
+    expect(resolvedDelegateKey?.keyMaterial.keyId).toBe(audiencePayload.keyId);
+  });
+
+  it('does not auto-decrypt source-protocol delivery records in broad encrypted queries', async () => {
+    const { deliveryRecord } = await createRoleCreatorAnyoneDelivery();
+    await writeEncryptedNote('query with source-protocol delivery');
+
+    const { reply } = await testHarness.agent.dwn.processRequest({
+      author        : ownerDid,
+      target        : ownerDid,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : { filter: { protocol: PROTOCOL_URI } },
+      encryption    : true,
+    });
+
+    expect(reply.status.code).toBe(200);
+    const deliveryEntry = reply.entries?.find((entry): boolean => entry.recordId === deliveryRecord.recordId);
+    expect(deliveryEntry?.descriptor.protocolPath).toBe(ENCRYPTION_CONTROL_DELIVERY_PATH);
+    expect(deliveryEntry?.encodedData).toBe(deliveryRecord.encodedData);
   });
 });

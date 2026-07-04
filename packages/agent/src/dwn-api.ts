@@ -17,6 +17,7 @@ import type {
 import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
 import type { KeyIdentifier, PublicKeyJwk } from '@enbox/crypto';
 
+import { CryptoUtils } from '@enbox/crypto';
 import {
   Cid,
   ContentEncryptionAlgorithm,
@@ -24,9 +25,11 @@ import {
   DurableEventLog,
   Dwn,
   DwnMethodName,
+  PermissionGrant as DwnPermissionGrant,
   Encoder,
   Encryption,
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
+  ENCRYPTION_CONTROL_DELIVERY_PATH,
   EncryptionControl,
   EncryptionControlDeliveryRecipientAuthority,
   EventEmitterWakePublisher,
@@ -42,10 +45,7 @@ import {
   Time,
 } from '@enbox/dwn-sdk-js';
 import { Convert, logger, TtlCache } from '@enbox/common';
-import { CryptoUtils, X25519 } from '@enbox/crypto';
-import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '@enbox/dwn-sdk-js/stores/level';
 import { DidDht, DidJwk, UniversalResolver } from '@enbox/dids';
-import { DidResolverCacheLevel } from '@enbox/dids/resolver-cache-level';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { LocalDwnStrategy } from './local-dwn.js';
@@ -808,8 +808,7 @@ export class AgentDwnApi {
     for (const rule of readRules) {
       const roleAudience = this.resolveRoleAudienceRule(rule.role!, params.protocolDefinition, params.parentContextId);
       const pendingRoleAudience = roleAudience === undefined &&
-        params.parentContextId === undefined &&
-        !params.sourceProtocolPath.includes('/')
+        this.canPreparePendingAudienceRecord(rule.role!, params.protocolDefinition, params.parentContextId)
         ? await this.preparePendingAudienceRecord(rule.role!, params.protocolDefinition, params.sourceDid, params.granteeDid)
         : undefined;
       if (roleAudience === undefined && pendingRoleAudience === undefined) {
@@ -850,6 +849,24 @@ export class AgentDwnApi {
     }
 
     return { inputs, pendingAudienceRecords };
+  }
+
+  private canPreparePendingAudienceRecord(
+    roleRef: string,
+    protocolDefinition: ProtocolDefinition,
+    parentContextId: string | undefined,
+  ): boolean {
+    const parsed = parseCrossProtocolRef(roleRef);
+    const protocol = parsed === undefined
+      ? protocolDefinition.protocol
+      : protocolDefinition.uses?.[parsed.alias];
+    if (protocol === undefined) {
+      return false;
+    }
+
+    const rolePath = parsed === undefined ? roleRef : parsed.protocolPath;
+    const pendingContextId = parentContextId === undefined ? 'pending-record' : `${parentContextId}/pending-record`;
+    return getRoleAudienceContextId(rolePath, pendingContextId) !== undefined;
   }
 
   private async preparePendingAudienceRecord(
@@ -1203,11 +1220,13 @@ export class AgentDwnApi {
     protocolRole?: string;
   }): Promise<void> {
     const recipientDid = params.granteeDid ?? params.authorDid;
-    const recipientRolePublicKey = await this.getRecipientRolePublicKey({
-      protocol : params.audienceKey.protocol,
-      recipientDid,
-      rolePath : params.audienceKey.rolePath,
-    });
+    const recipientRolePublicKey = params.granteeDid === undefined
+      ? await this.getRecipientRolePublicKey({
+        protocol : params.audienceKey.protocol,
+        recipientDid,
+        rolePath : params.audienceKey.rolePath,
+      })
+      : await this.getDelegateDeliveryPublicKey(recipientDid, params.audienceKey.protocol);
     const authority = this.getRoleCreatorDeliveryAuthority(params);
 
     await createAudienceDeliveryRecordFn({
@@ -1231,6 +1250,7 @@ export class AgentDwnApi {
     granteeDid?: string;
     permissionGrantId?: string;
     protocolRole?: string;
+    delegatedGrant?: DataEncodedRecordsWriteMessage;
   }): {
     grantId?: string;
     recipientAuthority: EncryptionControlDeliveryRecipientAuthority;
@@ -1239,6 +1259,13 @@ export class AgentDwnApi {
     if (params.granteeDid !== undefined && params.permissionGrantId !== undefined) {
       return {
         grantId            : params.permissionGrantId,
+        recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleCreatorGrant,
+      };
+    }
+
+    if (params.granteeDid !== undefined && params.delegatedGrant !== undefined) {
+      return {
+        grantId            : DwnPermissionGrant.parse(params.delegatedGrant).id,
         recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleCreatorGrant,
       };
     }
@@ -1257,6 +1284,18 @@ export class AgentDwnApi {
     return {
       recipientAuthority: EncryptionControlDeliveryRecipientAuthority.RoleCreatorAnyone,
     };
+  }
+
+  private async getDelegateDeliveryPublicKey(delegateDid: string, protocol: string): Promise<PublicKeyJwk> {
+    const { keyUri } = await getEncryptionKeyInfoFn(this.agent, delegateDid);
+    return this.agent.keyManager.derivePublicKey({
+      keyUri,
+      derivationPath: [
+        KeyDerivationScheme.ProtocolPath,
+        protocol,
+        ...ENCRYPTION_CONTROL_DELIVERY_PATH.split('/'),
+      ],
+    });
   }
 
   private getAudienceCacheKey(input: {
@@ -1471,6 +1510,9 @@ export class AgentDwnApi {
         if (roleAudienceInputs.pendingAudienceRecords.length > 0) {
           messageParams.dateCreated ??= Time.getCurrentTimestamp();
           messageParams.messageTimestamp ??= messageParams.dateCreated;
+          if (messageParams.published === true) {
+            messageParams.datePublished ??= messageParams.dateCreated;
+          }
           if (request.granteeDid && messageParams.permissionGrantId && !messageParams.delegatedGrant) {
             await this.populateDelegatedGrantForWrite(request.author, request.granteeDid, messageParams);
           }
@@ -1485,7 +1527,10 @@ export class AgentDwnApi {
           })).message.recordId;
 
           for (const pending of roleAudienceInputs.pendingAudienceRecords) {
-            const contextId = getRoleAudienceContextId(pending.rolePath, messageParams.recordId);
+            const sourceContextId = messageParams.parentContextId === undefined
+              ? messageParams.recordId
+              : `${messageParams.parentContextId}/${messageParams.recordId}`;
+            const contextId = getRoleAudienceContextId(pending.rolePath, sourceContextId);
             if (contextId === undefined) {
               throw new Error(`AgentDwnApi: Unable to determine role audience context for '${pending.rolePath}'.`);
             }
@@ -1530,6 +1575,21 @@ export class AgentDwnApi {
                 sourceDid         : request.target,
               });
             }
+            this._audienceDecryptionKeyCache.set(this.getAudienceCacheKey({
+              contextId,
+              keyId        : audienceKey.keyId,
+              protocol     : audienceKey.protocol,
+              recipientDid : request.granteeDid ?? request.author,
+              rolePath     : audienceKey.rolePath,
+              sourceDid    : request.target,
+            }), {
+              contextId,
+              keyMaterial  : audienceKey.keyMaterial,
+              protocol     : audienceKey.protocol,
+              recipientDid : request.granteeDid ?? request.author,
+              rolePath     : audienceKey.rolePath,
+              sourceDid    : request.target,
+            });
           }
         }
         messageParams.dataCid = dataCid;

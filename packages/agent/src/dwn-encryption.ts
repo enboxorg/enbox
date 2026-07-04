@@ -49,6 +49,7 @@ import {
   getRuleSetAtPath,
   grantKeyScopeCoversDeliveredScope,
   HdKey,
+  isEncryptionControlPath,
   isGrantKeyEligibleRecordsScope,
   KeyAgreementAlgorithm,
   KeyDerivationScheme,
@@ -958,7 +959,7 @@ export async function maybeDecryptReply<T extends DwnInterface>(
     const queryReply = reply as RecordsQueryReply;
     if (queryReply.status.code === 200 && queryReply.entries) {
       for (const entry of queryReply.entries) {
-        if (entry.encryption && entry.encodedData) {
+        if (entry.encryption && entry.encodedData && !isEncryptionControlPath(entry.descriptor.protocolPath)) {
           const keyDecrypter = await resolveKeyDecrypter(
             agent, encryptedRequest.author, entry as RecordsWriteMessage, encryptedRequest.target,
             delegateDecryptionKeyCache, granteeDid, audienceDecryptionKeyCache,
@@ -1002,6 +1003,7 @@ async function resolveRoleAudienceDecrypter(params: {
     protocol: string;
     rolePath: string;
   } => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME && 'rolePath' in entry);
+  const recipientDid = params.granteeDid ?? params.recipientDid;
 
   for (const entry of roleAudienceEntries) {
     const contextId = getRoleAudienceContextId(entry.rolePath, params.recordsWrite.contextId);
@@ -1012,7 +1014,7 @@ async function resolveRoleAudienceDecrypter(params: {
     const cachedKey = getAudienceKeyFromMemoryCache({
       audienceDecryptionKeyCache : params.audienceDecryptionKeyCache,
       sourceDid                  : params.sourceDid,
-      recipientDid               : params.recipientDid,
+      recipientDid,
       protocol                   : entry.protocol,
       contextId,
       rolePath                   : entry.rolePath,
@@ -1025,7 +1027,7 @@ async function resolveRoleAudienceDecrypter(params: {
     const hydratedKey = await hydrateAudienceKey({
       agent                      : params.agent,
       sourceDid                  : params.sourceDid,
-      recipientDid               : params.recipientDid,
+      recipientDid,
       granteeDid                 : params.granteeDid,
       delegateDecryptionKeyCache : params.delegateDecryptionKeyCache,
       protocol                   : entry.protocol,
@@ -1066,12 +1068,16 @@ export async function resolveAudienceDecryptionKey(params: {
   delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
   audienceDecryptionKeyCache?: AudienceDecryptionKeyCache;
 }): Promise<AudienceDecryptionKeyEntry | undefined> {
-  const cached = getAudienceKeyFromMemoryCache(params);
+  const effectiveParams = {
+    ...params,
+    recipientDid: params.granteeDid ?? params.recipientDid,
+  };
+  const cached = getAudienceKeyFromMemoryCache(effectiveParams);
   if (cached !== undefined) {
     return cached;
   }
 
-  const hydrated = await hydrateAudienceKey(params);
+  const hydrated = await hydrateAudienceKey(effectiveParams);
   if (hydrated !== undefined) {
     putAudienceKeyInMemoryCache({
       audienceDecryptionKeyCache : params.audienceDecryptionKeyCache,
@@ -1144,7 +1150,7 @@ async function hydrateAudienceKey(params: {
     return undefined;
   }
 
-  const rolePathDecrypter = await buildRecipientRolePathDecrypter({
+  const deliveryDecrypters = await buildAudienceDeliveryDecrypters({
     agent                      : params.agent,
     recipientDid               : params.recipientDid,
     granteeDid                 : params.granteeDid,
@@ -1152,7 +1158,7 @@ async function hydrateAudienceKey(params: {
     protocol                   : params.protocol,
     rolePath                   : params.rolePath,
   });
-  if (rolePathDecrypter === undefined) {
+  if (deliveryDecrypters.length === 0) {
     return undefined;
   }
 
@@ -1165,56 +1171,79 @@ async function hydrateAudienceKey(params: {
       continue;
     }
 
-    try {
-      const decryptedStream = await Records.decrypt(
-        deliveryMessage,
-        rolePathDecrypter,
-        DataStream.fromBytes(encryptedData),
-      );
-      const payload = Encoder.bytesToObject(await DataStream.toBytes(decryptedStream)) as EncryptionControlDeliveryPayload;
-      await verifyAudienceKeyPayload({
-        agent           : params.agent,
-        audiencePayload : audienceRecord.payload,
-        deliveryMessage,
-        payload,
-        sourceDid       : params.sourceDid,
-        recipientDid    : params.recipientDid,
-        protocol        : params.protocol,
-        contextId       : params.contextId,
-        rolePath        : params.rolePath,
-        keyId           : params.keyId,
-      });
+    for (const decrypter of deliveryDecrypters) {
+      try {
+        const decryptedStream = await Records.decrypt(
+          deliveryMessage,
+          decrypter,
+          DataStream.fromBytes(encryptedData),
+        );
+        const payload = Encoder.bytesToObject(await DataStream.toBytes(decryptedStream)) as EncryptionControlDeliveryPayload;
+        await verifyAudienceKeyPayload({
+          agent           : params.agent,
+          audiencePayload : audienceRecord.payload,
+          deliveryMessage,
+          payload,
+          sourceDid       : params.sourceDid,
+          recipientDid    : params.recipientDid,
+          protocol        : params.protocol,
+          contextId       : params.contextId,
+          rolePath        : params.rolePath,
+          keyId           : params.keyId,
+        });
 
-      return {
-        contextId    : payload.contextId,
-        keyMaterial  : payload.keyMaterial,
-        protocol     : payload.protocol,
-        recipientDid : params.recipientDid,
-        rolePath     : payload.rolePath,
-        sourceDid    : params.sourceDid,
-      };
-    } catch (error) {
-      logger.log(
-        `AgentDwnApi: skipped audience delivery '${deliveryMessage.recordId}' while resolving role-audience key: ` +
-        `${error instanceof Error ? error.message : String(error)}`
-      );
-      continue;
+        return {
+          contextId    : payload.contextId,
+          keyMaterial  : payload.keyMaterial,
+          protocol     : payload.protocol,
+          recipientDid : params.recipientDid,
+          rolePath     : payload.rolePath,
+          sourceDid    : params.sourceDid,
+        };
+      } catch (error) {
+        logger.log(
+          `AgentDwnApi: skipped audience delivery '${deliveryMessage.recordId}' while resolving role-audience key: ` +
+          `${error instanceof Error ? error.message : String(error)}`
+        );
+      }
     }
   }
 
   return undefined;
 }
 
-async function buildRecipientRolePathDecrypter(params: {
+async function buildAudienceDeliveryDecrypters(params: {
   agent: EnboxPlatformAgent;
   recipientDid: string;
   protocol: string;
   rolePath: string;
   granteeDid?: string;
   delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
+}): Promise<KeyDecrypter[]> {
+  const decrypters: KeyDecrypter[] = [];
+  for (const protocolPath of [params.rolePath, ENCRYPTION_CONTROL_DELIVERY_PATH]) {
+    const decrypter = await buildRecipientProtocolPathDecrypter({
+      ...params,
+      protocolPath,
+    });
+    if (decrypter !== undefined) {
+      decrypters.push(decrypter);
+    }
+  }
+
+  return decrypters;
+}
+
+async function buildRecipientProtocolPathDecrypter(params: {
+  agent: EnboxPlatformAgent;
+  recipientDid: string;
+  protocol: string;
+  protocolPath: string;
+  granteeDid?: string;
+  delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
 }): Promise<KeyDecrypter | undefined> {
-  const derivationPath = getScopeDerivationPath(params.protocol, params.rolePath);
-  const privateKeyJwk = await getRecipientRolePathPrivateKey({
+  const derivationPath = getScopeDerivationPath(params.protocol, params.protocolPath);
+  const privateKeyJwk = await getRecipientProtocolPathPrivateKey({
     ...params,
     derivationPath,
   });
@@ -1231,16 +1260,16 @@ async function buildRecipientRolePathDecrypter(params: {
   });
 }
 
-async function getRecipientRolePathPrivateKey(params: {
+async function getRecipientProtocolPathPrivateKey(params: {
   agent: EnboxPlatformAgent;
   recipientDid: string;
   protocol: string;
-  rolePath: string;
+  protocolPath: string;
   derivationPath: string[];
   granteeDid?: string;
   delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
 }): Promise<PrivateKeyJwk | undefined> {
-  if (params.granteeDid === undefined) {
+  if (params.granteeDid === undefined || params.recipientDid === params.granteeDid) {
     const { keyUri } = await getEncryptionKeyInfo(params.agent, params.recipientDid);
     const privateKeyBytes = await params.agent.keyManager.derivePrivateKeyBytes({
       keyUri,
@@ -1251,7 +1280,7 @@ async function getRecipientRolePathPrivateKey(params: {
 
   const cacheKey = `ddk~${params.granteeDid}`;
   let delegateKeys = params.delegateDecryptionKeyCache?.get(cacheKey) ?? [];
-  let coveringKey = findCoveringDelegateKey(delegateKeys, params.protocol, params.rolePath);
+  let coveringKey = findCoveringDelegateKey(delegateKeys, params.protocol, params.protocolPath);
 
   if (coveringKey === undefined && params.delegateDecryptionKeyCache?.set !== undefined) {
     const hydratedKeys = await resolveGrantKeyRecords({
@@ -1259,11 +1288,11 @@ async function getRecipientRolePathPrivateKey(params: {
       grantorDid   : params.recipientDid,
       granteeDid   : params.granteeDid,
       protocol     : params.protocol,
-      protocolPath : params.rolePath,
+      protocolPath : params.protocolPath,
     });
     delegateKeys = mergeDelegateDecryptionKeys(delegateKeys, hydratedKeys);
     params.delegateDecryptionKeyCache.set(cacheKey, delegateKeys);
-    coveringKey = findCoveringDelegateKey(delegateKeys, params.protocol, params.rolePath);
+    coveringKey = findCoveringDelegateKey(delegateKeys, params.protocol, params.protocolPath);
   }
 
   if (coveringKey === undefined) {
@@ -1290,14 +1319,14 @@ async function tryUnsealAudienceKey(params: {
     return undefined;
   }
 
-  const sealingPrivateKey = await getRecipientRolePathPrivateKey({
+  const sealingPrivateKey = await getRecipientProtocolPathPrivateKey({
     agent                      : params.agent,
     delegateDecryptionKeyCache : params.delegateDecryptionKeyCache,
     derivationPath             : getScopeDerivationPath(params.protocol, params.rolePath),
     granteeDid                 : params.granteeDid,
     protocol                   : params.protocol,
+    protocolPath               : params.rolePath,
     recipientDid               : params.sourceDid,
-    rolePath                   : params.rolePath,
   });
   if (sealingPrivateKey === undefined) {
     return undefined;
@@ -1996,7 +2025,7 @@ async function resolveGrantKeyRecords(params: {
   protocol: string;
   protocolPath?: string;
 }): Promise<DelegateDecryptionKeyEntry[]> {
-  const { reply } = await params.agent.processDwnRequest({
+  const { reply } = await processDwnRequestWithRemoteFallback(params.agent, {
     author        : params.granteeDid,
     target        : params.grantorDid,
     messageType   : DwnInterface.RecordsQuery,
@@ -2008,7 +2037,7 @@ async function resolveGrantKeyRecords(params: {
         tags         : { protocol: params.protocol },
       },
     },
-  });
+  }, hasRecordsQueryEntries);
 
   if (reply.status.code !== 200 || reply.entries === undefined || reply.entries.length === 0) {
     return [];
@@ -2084,12 +2113,12 @@ async function getGrantKeyEncryptedData(
     return Encoder.base64UrlToBytes(grantKeyMessage.encodedData);
   }
 
-  const { reply } = await agent.processDwnRequest({
+  const { reply } = await processDwnRequestWithRemoteFallback(agent, {
     author        : granteeDid,
     target        : grantorDid,
     messageType   : DwnInterface.RecordsRead,
     messageParams : { filter: { recordId: grantKeyMessage.recordId } },
-  });
+  }, hasRecordsReadData);
 
   if (reply.status.code !== 200 || reply.entry?.data === undefined) {
     return undefined;

@@ -3,7 +3,7 @@ import type { ProtocolDefinition } from '../../src/index.js';
 import { describe, expect, it } from 'bun:test';
 
 import { TestDataGenerator } from '../utils/test-data-generator.js';
-import { DwnErrorCode, ENCRYPTION_CONTROL_AUDIENCE_PATH, EncryptionProtocol, replicationApplyResultFromReply, ROLE_AUDIENCE_DERIVATION_SCHEME } from '../../src/index.js';
+import { DwnErrorCode, ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH, EncryptionProtocol, replicationApplyResultFromReply, ROLE_AUDIENCE_DERIVATION_SCHEME } from '../../src/index.js';
 
 describe('replicationApplyResultFromReply', () => {
   it('classifies successful and idempotent replies', async () => {
@@ -467,6 +467,43 @@ describe('replicationApplyResultFromReply', () => {
           },
         },
       ],
+    });
+  });
+
+  it('classifies delivery audience dependencies from source-protocol delivery records', async () => {
+    const protocol = 'https://example.com/encrypted-chat';
+    const rolePath = 'thread/member';
+    const contextId = 'thread-record';
+    const keyId = 'audience-key';
+    const { message } = await TestDataGenerator.generateRecordsWrite({
+      protocol,
+      protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+      tags         : {
+        protocol,
+        rolePath,
+        contextId,
+        keyId,
+      },
+    });
+
+    expect(replicationApplyResultFromReply(message, {
+      status: {
+        code   : 400,
+        detail : `${DwnErrorCode.EncryptionControlValidateDeliveryAudienceMissing}: delivery control record references a missing audience.`,
+      },
+    })).toEqual({
+      kind    : 'Incomplete',
+      missing : [{
+        type         : 'EncryptionControl',
+        protocol,
+        protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+        tags         : {
+          protocol,
+          rolePath,
+          contextId,
+          keyId,
+        },
+      }],
     });
   });
 

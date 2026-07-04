@@ -5,6 +5,7 @@ import {
   DwnInterfaceName,
   DwnMethodName,
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
+  ENCRYPTION_CONTROL_DELIVERY_PATH,
   EncryptionProtocol,
   PermissionsProtocol,
   ROLE_AUDIENCE_DERIVATION_SCHEME,
@@ -423,6 +424,45 @@ describe('orderMessagesForAdmission', () => {
     const result = orderMessagesForAdmission([encryptedRecord, audience]);
 
     expect(result.indexOf(audience)).toBeLessThan(result.indexOf(encryptedRecord));
+  });
+
+  it('should place source-protocol audience records before delivery records that reference them', () => {
+    const protocol = 'https://example.com/source-delivery-ordering';
+    const audience: SortEntry = {
+      message: {
+        ...makeMessage({
+          protocol,
+          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          tags         : {
+            protocol,
+            contextId : 'thread-1',
+            rolePath  : 'thread/member',
+            keyId     : 'key-1',
+          },
+        }),
+        recordId: 'audience-record',
+      } as unknown as GenericMessage,
+    };
+    const delivery: SortEntry = {
+      message: {
+        ...makeMessage({
+          protocol,
+          protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+          recipient    : 'did:example:bob',
+          tags         : {
+            protocol,
+            contextId : 'thread-1',
+            rolePath  : 'thread/member',
+            keyId     : 'key-1',
+          },
+        }),
+        recordId: 'delivery-record',
+      } as unknown as GenericMessage,
+    };
+
+    const result = orderMessagesForAdmission([delivery, audience]);
+
+    expect(result.indexOf(audience)).toBeLessThan(result.indexOf(delivery));
   });
 
   it('should place permission grants before grantKey records', () => {
