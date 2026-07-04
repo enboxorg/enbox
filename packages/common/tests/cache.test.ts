@@ -5,6 +5,15 @@ import { TtlCache } from '../src/cache.js';
 
 const MAX_TIMER_DELAY = 2_147_483_647;
 
+function busyWait(duration: number): void {
+  const deadline = performance.now() + duration;
+  let currentTime = performance.now();
+
+  while (currentTime < deadline) {
+    currentTime = performance.now();
+  }
+}
+
 describe('TtlCache', () => {
   it('should store and retrieve string values', () => {
     const cache = new TtlCache({ max: 10000, ttl: 1000 });
@@ -41,25 +50,28 @@ describe('TtlCache', () => {
   });
 
   it('should renew ttl when updateAgeOnGet is enabled per read', async () => {
-    const cache = new TtlCache({ ttl: 600 });
+    const cache = new TtlCache({ ttl: 1200 });
     cache.set('key', 'value');
 
-    await sleep(150);
+    await sleep(300);
     const remainingBeforeGet = cache.getRemainingTTL('key');
 
     expect(cache.get('key', { updateAgeOnGet: true })).toBe('value');
     expect(cache.getRemainingTTL('key')).toBeGreaterThan(remainingBeforeGet);
 
-    await sleep(500);
+    await sleep(1000);
     expect(cache.get('key')).toBe('value');
 
-    await sleep(225);
+    await sleep(350);
     expect(cache.get('key')).toBeUndefined();
   });
 
-  it('should leave the existing expiry unchanged when updateAgeOnGet has no ttl to apply', () => {
+  it('should leave the existing expiry unchanged when updateAgeOnGet has no ttl to apply', async () => {
     const cache = new TtlCache<string, string>({ updateAgeOnGet: true });
     cache.set('key', 'value', { ttl: 1000 });
+
+    await sleep(150);
+
     const remainingBeforeGet = cache.getRemainingTTL('key');
 
     expect(cache.get('key')).toBe('value');
@@ -173,7 +185,12 @@ describe('TtlCache', () => {
     cache.set('first', 'a', { ttl: 25 });
     cache.set('second', 'b', { ttl: 75 });
 
-    await sleep(200);
+    await sleep(50);
+
+    expect(cache.size).toBe(1);
+    expect(disposed).toEqual(['first:a:stale']);
+
+    await sleep(150);
 
     expect(cache.size).toBe(0);
     expect(disposed).toEqual([
@@ -254,12 +271,12 @@ describe('TtlCache', () => {
         ttl: 1000,
       });
 
-      cache.set('first', 'a');
+      cache.set('first', 'a', { ttl: 1 });
       cache.set('second', 'b');
 
-      const cacheInternals = cache as unknown as { _data: Map<string, { expiresAt: number }> };
-      cacheInternals._data.get('first')!.expiresAt = performance.now() - 1;
+      busyWait(5);
 
+      const delayCountBeforeHandler = delays.length;
       expect(() => {
         const handler = handlers[0];
 
@@ -268,7 +285,7 @@ describe('TtlCache', () => {
         }
       }).toThrow('dispose failed');
       expect(cache.get('second')).toBe('b');
-      expect(delays).toHaveLength(2);
+      expect(delays).toHaveLength(delayCountBeforeHandler + 1);
     } finally {
       globalThis.setTimeout = originalSetTimeout;
       globalThis.clearTimeout = originalClearTimeout;
@@ -338,6 +355,42 @@ describe('TtlCache', () => {
     cache.set('key', 'third', { noDisposeOnSet: false });
 
     expect(disposed).toEqual(['key:second:set']);
+  });
+
+  it('should not evict an entry refreshed by a stale dispose callback during capacity pruning', () => {
+    const disposed: string[] = [];
+    const cache = new TtlCache<string, string>({
+      dispose: (value, key, reason): void => {
+        disposed.push(`${key}:${value}:${reason}`);
+
+        if (key === 'stale' && reason === 'stale') {
+          const previousMax = cache.max;
+          cache.max = Infinity;
+          cache.set('candidate', 'refreshed', { ttl: 1000 });
+          cache.max = previousMax;
+        }
+      },
+      max : Infinity,
+      ttl : 1000,
+    });
+
+    cache.set('candidate', 'old', { ttl: 100 });
+    cache.set('survivor', 'live', { ttl: 200 });
+    cache.set('stale', 'expired', { ttl: 1 });
+    busyWait(5);
+
+    cache.max = 2;
+    cache.set('trigger', 'new', { ttl: 300 });
+
+    expect(cache.get('candidate')).toBe('refreshed');
+    expect(cache.get('trigger')).toBe('new');
+    expect(cache.get('survivor')).toBeUndefined();
+    expect(cache.size).toBe(2);
+    expect(disposed).toEqual([
+      'stale:expired:stale',
+      'candidate:old:set',
+      'survivor:live:evict',
+    ]);
   });
 
   it('should store an overwritten value before calling dispose', () => {

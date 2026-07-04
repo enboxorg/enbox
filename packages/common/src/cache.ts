@@ -4,6 +4,11 @@ type TtlCacheEntry<V> = {
   value: V;
 };
 
+type TtlCacheEvictionCandidate<K, V> = {
+  entry: TtlCacheEntry<V>;
+  key: K;
+};
+
 type TtlCachePurgeState = {
   purgedStale: boolean;
 };
@@ -311,8 +316,8 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
     return ttl === Infinity ? Infinity : now() + ttl;
   }
 
-  private _isExpired(entry: TtlCacheEntry<V>): boolean {
-    return entry.expiresAt !== Infinity && now() >= entry.expiresAt;
+  private _isExpired(entry: TtlCacheEntry<V>, currentTime: number = now()): boolean {
+    return entry.expiresAt !== Infinity && currentTime >= entry.expiresAt;
   }
 
   private _purgeToCapacity(): void {
@@ -325,13 +330,17 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
 
     try {
       while (this._data.size > this.max) {
-        const evictKey = this._purgeStaleAndSelectEviction(purgeState);
+        const evictCandidate = this._purgeStaleAndSelectEviction(purgeState);
 
-        if (this._data.size <= this.max || evictKey === undefined) {
+        if (this._data.size <= this.max || evictCandidate === undefined) {
           return;
         }
 
-        this._delete(evictKey, 'evict');
+        if (this._data.get(evictCandidate.key) !== evictCandidate.entry) {
+          continue;
+        }
+
+        this._delete(evictCandidate.key, 'evict');
       }
     } finally {
       if (purgeState.purgedStale && hadTimer) {
@@ -341,12 +350,13 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
     }
   }
 
-  private _purgeStaleAndSelectEviction(purgeState: TtlCachePurgeState): K | undefined {
+  private _purgeStaleAndSelectEviction(purgeState: TtlCachePurgeState): TtlCacheEvictionCandidate<K, V> | undefined {
+    const currentTime = now();
     let evictKey: K | undefined;
     let evictEntry: TtlCacheEntry<V> | undefined;
 
     for (const [key, entry] of this._data.entries()) {
-      if (this._isExpired(entry)) {
+      if (this._isExpired(entry, currentTime)) {
         purgeState.purgedStale = true;
         this._delete(key, 'stale');
         continue;
@@ -358,7 +368,11 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
       }
     }
 
-    return evictKey;
+    if (evictKey === undefined || evictEntry === undefined) {
+      return undefined;
+    }
+
+    return { entry: evictEntry, key: evictKey };
   }
 
   private _isEarlierEntry(entry: TtlCacheEntry<V>, selectedEntry: TtlCacheEntry<V> | undefined): boolean {
