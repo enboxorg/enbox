@@ -1,5 +1,4 @@
 import type { BearerIdentity } from '../src/bearer-identity.js';
-import type { PublicKeyJwk } from '@enbox/crypto';
 import type { GenericMessage, ProtocolDefinition, RecordsWriteMessage, RoleAudienceKeyEncryption } from '@enbox/dwn-sdk-js';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -7,8 +6,8 @@ import {
   ContentEncryptionAlgorithm,
   DataStream,
   Encoder,
-  EncryptionProtocol,
-  KeyAgreementAlgorithm,
+  ENCRYPTION_CONTROL_AUDIENCE_PATH,
+  ENCRYPTION_CONTROL_DELIVERY_PATH,
   KeyDerivationScheme,
   ROLE_AUDIENCE_DERIVATION_SCHEME,
 } from '@enbox/dwn-sdk-js';
@@ -22,7 +21,6 @@ import { retryFreshDidResolution } from './utils/remote-dwn-retry.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
-import { createAudienceKeyRecord, getCachedAudienceDecryptionKey } from '../src/dwn-encryption.js';
 
 const testDwnUrls: string[] = [testDwnUrl];
 const syncConvergenceRetryDelaysMs = [500, 1_000, 2_000, 4_000, 8_000, 16_000];
@@ -509,6 +507,15 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       encryption    : true,
     });
     expect(reply.status.code).toBe(202);
+
+    const { reply: remoteReply } = await retryFreshDidResolution(() => harness.agent.dwn.sendRequest({
+      author        : did,
+      target        : did,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: chatProtocol },
+      encryption    : true,
+    }));
+    expect([202, 409]).toContain(remoteReply.status.code);
   }
 
   async function copyProtocolToHarness(
@@ -571,9 +578,10 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
     expect([202, 409]).toContain(applyReply.status.code);
   }
 
-  async function queryOneEncryptionRecord(params: {
+  async function queryOneControlRecord(params: {
     protocolPath: string;
-    tags: Record<string, string | number>;
+    recipient?: string;
+    tags: Record<string, string>;
   }): Promise<RecordsWriteMessage & { encodedData: string }> {
     const { reply } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -581,7 +589,8 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
         filter: {
-          protocol     : EncryptionProtocol.uri,
+          ...(params.recipient === undefined ? {} : { recipient: params.recipient }),
+          protocol     : chatProtocol.protocol,
           protocolPath : params.protocolPath,
         },
       },
@@ -590,28 +599,16 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
     const matchingEntries = (reply.entries ?? []).filter((entry): boolean =>
       Object.entries(params.tags).every(([tag, value]): boolean => String(entry.descriptor.tags?.[tag]) === String(value))
     );
+    if (matchingEntries.length !== 1) {
+      throw new Error(JSON.stringify((reply.entries ?? []).map((entry): unknown => ({
+        protocolPath : entry.descriptor.protocolPath,
+        recipient    : entry.descriptor.recipient,
+        tags         : entry.descriptor.tags,
+      }))));
+    }
     expect(matchingEntries).toHaveLength(1);
     expect(matchingEntries[0].encodedData).toBeDefined();
     return matchingEntries[0] as RecordsWriteMessage & { encodedData: string };
-  }
-
-  async function getRolePublicKeyFromInstalledProtocol(
-    harness: PlatformAgentTestHarness,
-    did: string,
-  ): Promise<PublicKeyJwk> {
-    const { reply } = await harness.agent.dwn.processRequest({
-      author        : did,
-      target        : did,
-      messageType   : DwnInterface.ProtocolsQuery,
-      messageParams : { filter: { protocol: chatProtocol.protocol } },
-    });
-    expect(reply.status.code).toBe(200);
-    expect(reply.entries).toHaveLength(1);
-
-    const definition = reply.entries![0].descriptor.definition;
-    const publicKeyJwk = definition.structure.thread.participant?.$keyAgreement?.publicKeyJwk;
-    expect(publicKeyJwk).toBeDefined();
-    return publicKeyJwk!;
   }
 
   it('should install the chat protocol with encryption for Alice', async () => {
@@ -639,9 +636,8 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
     expect(threadMsg).toBeDefined();
     const threadContextId = (threadMsg as RecordsWriteMessage).contextId!;
 
-    // Without a role audience epoch, the agent cannot produce a complete encrypted write.
     const chatText = 'Hello Bob, this is encrypted!';
-    await expect(testHarness.agent.dwn.processRequest({
+    const { reply: preRoleChatReply } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
@@ -654,7 +650,8 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       },
       dataStream : new Blob([new TextEncoder().encode(chatText)]),
       encryption : true,
-    })).rejects.toThrow('Missing audienceEpoch');
+    });
+    expect(preRoleChatReply.status.code).toBe(202);
 
     const { reply: roleReply } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -672,20 +669,20 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
     });
     expect(roleReply.status.code).toBe(202);
 
-    const { reply: audienceKeyReply } = await testHarness.agent.dwn.processRequest({
+    const { reply: deliveryReply } = await testHarness.agent.dwn.processRequest({
       author        : bob.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
         filter: {
           recipient    : bob.did.uri,
-          protocol     : EncryptionProtocol.uri,
-          protocolPath : EncryptionProtocol.audienceKeyPath,
+          protocol     : chatProtocol.protocol,
+          protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
         },
       },
     });
-    expect(audienceKeyReply.status.code).toBe(200);
-    expect(audienceKeyReply.entries).toHaveLength(1);
+    expect(deliveryReply.status.code).toBe(200);
+    expect(deliveryReply.entries).toHaveLength(1);
 
     const { reply: chatReply, message: chatMessage } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -708,19 +705,8 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
     );
     expect(roleAudienceEntry).toBeDefined();
     expect(roleAudienceEntry!.protocol).toBe(chatProtocol.protocol);
-    expect(roleAudienceEntry!.role).toBe('thread/participant');
-
-    const cachedBeforeRead = await getCachedAudienceDecryptionKey({
-      agent        : testHarness.agent,
-      sourceDid    : alice.did.uri,
-      recipientDid : bob.did.uri,
-      protocol     : chatProtocol.protocol,
-      contextId    : threadContextId,
-      role         : 'thread/participant',
-      epoch        : roleAudienceEntry!.epoch,
-      keyId        : roleAudienceEntry!.keyId,
-    });
-    expect(cachedBeforeRead).toBeUndefined();
+    expect(roleAudienceEntry!.rolePath).toBe('thread/participant');
+    expect(roleAudienceEntry!.keyId).toBe(deliveryReply.entries![0].descriptor.tags!.keyId);
 
     const { reply: bobReadReply } = await testHarness.agent.dwn.processRequest({
       author        : bob.did.uri,
@@ -735,18 +721,6 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
     expect(bobReadReply.status.code).toBe(200);
     const decryptedBytes = await DataStream.toBytes(bobReadReply.entry!.data!);
     expect(new TextDecoder().decode(decryptedBytes)).toBe(chatText);
-
-    const cachedAfterRead = await getCachedAudienceDecryptionKey({
-      agent        : testHarness.agent,
-      sourceDid    : alice.did.uri,
-      recipientDid : bob.did.uri,
-      protocol     : chatProtocol.protocol,
-      contextId    : threadContextId,
-      role         : 'thread/participant',
-      epoch        : roleAudienceEntry!.epoch,
-      keyId        : roleAudienceEntry!.keyId,
-    });
-    expect(cachedAfterRead?.keyMaterial.privateKeyJwk.d).toBeDefined();
 
     const { reply: carolReadReply } = await testHarness.agent.dwn.processRequest({
       author        : carol.did.uri,
@@ -798,56 +772,6 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
     });
     expect(roleReply.status.code).toBe(202);
 
-    const audienceEpoch = await queryOneEncryptionRecord({
-      protocolPath : EncryptionProtocol.audienceEpochPath,
-      tags         : {
-        protocol  : chatProtocol.protocol,
-        contextId : threadContextId,
-        role      : 'thread/participant',
-        epoch     : 1,
-      },
-    });
-    const epochPayload = Encoder.base64UrlToObject(audienceEpoch.encodedData) as {
-      protocol: string;
-      contextId: string;
-      role: string;
-      epoch: number;
-      keyId: string;
-      publicKeyJwk: PublicKeyJwk;
-    };
-    const audienceKey = await getCachedAudienceDecryptionKey({
-      agent        : testHarness.agent,
-      sourceDid    : alice.did.uri,
-      recipientDid : alice.did.uri,
-      protocol     : epochPayload.protocol,
-      contextId    : epochPayload.contextId,
-      role         : epochPayload.role,
-      epoch        : epochPayload.epoch,
-      keyId        : epochPayload.keyId,
-    });
-    expect(audienceKey).toBeDefined();
-    const bobRolePublicKey = await getRolePublicKeyFromInstalledProtocol(bobHarness, separateBob.did.uri);
-    const audienceKeyRecord = await createAudienceKeyRecord({
-      agent                  : testHarness.agent,
-      sourceDid              : alice.did.uri,
-      authorDid              : alice.did.uri,
-      recipientDid           : separateBob.did.uri,
-      recipientRolePublicKey : bobRolePublicKey,
-      audienceKey            : {
-        protocol    : epochPayload.protocol,
-        contextId   : epochPayload.contextId,
-        role        : epochPayload.role,
-        epoch       : epochPayload.epoch,
-        keyMaterial : {
-          algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-          derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
-          keyId            : epochPayload.keyId,
-          privateKeyJwk    : audienceKey!.keyMaterial.privateKeyJwk,
-          publicKeyJwk     : epochPayload.publicKeyJwk,
-        },
-      },
-    });
-
     const chatText = 'Bob decrypts this without Alice keys';
     const { reply: chatReply, message: chatMessage } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -869,30 +793,36 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       (entry): entry is RoleAudienceKeyEncryption => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME
     );
     expect(roleAudienceEntry).toBeDefined();
+    expect(roleAudienceEntry!.rolePath).toBe('thread/participant');
+
+    const audienceRecord = await queryOneControlRecord({
+      protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+      tags         : {
+        protocol  : chatProtocol.protocol,
+        contextId : threadContextId,
+        rolePath  : 'thread/participant',
+        keyId     : roleAudienceEntry!.keyId,
+      },
+    });
+    const deliveryRecord = await queryOneControlRecord({
+      recipient    : separateBob.did.uri,
+      protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+      tags         : {
+        protocol  : chatProtocol.protocol,
+        contextId : threadContextId,
+        rolePath  : 'thread/participant',
+        keyId     : roleAudienceEntry!.keyId,
+      },
+    });
 
     await copyRecordToHarness(testHarness, bobHarness, alice.did.uri, (threadMessage as RecordsWriteMessage).recordId);
     await copyRecordToHarness(testHarness, bobHarness, alice.did.uri, (roleMessage as RecordsWriteMessage).recordId);
-    await copyDataEncodedRecordToHarness(bobHarness, alice.did.uri, audienceEpoch);
-    await copyDataEncodedRecordToHarness(
-      bobHarness,
-      alice.did.uri,
-      audienceKeyRecord as RecordsWriteMessage & { encodedData: string },
-    );
+    await copyDataEncodedRecordToHarness(bobHarness, alice.did.uri, audienceRecord);
+    await copyDataEncodedRecordToHarness(bobHarness, alice.did.uri, deliveryRecord);
     await copyRecordToHarness(testHarness, bobHarness, alice.did.uri, (chatMessage as RecordsWriteMessage).recordId);
 
     bobHarness.agent.dwn.clearDelegateDecryptionKeys(separateBob.did.uri);
     expect(await bobHarness.agent.did.get({ didUri: alice.did.uri })).toBeUndefined();
-    const cachedBeforeRead = await getCachedAudienceDecryptionKey({
-      agent        : bobHarness.agent,
-      sourceDid    : alice.did.uri,
-      recipientDid : separateBob.did.uri,
-      protocol     : chatProtocol.protocol,
-      contextId    : threadContextId,
-      role         : 'thread/participant',
-      epoch        : roleAudienceEntry!.epoch,
-      keyId        : roleAudienceEntry!.keyId,
-    });
-    expect(cachedBeforeRead).toBeUndefined();
 
     const { reply: bobReadReply } = await bobHarness.agent.dwn.processRequest({
       author        : separateBob.did.uri,
@@ -907,18 +837,6 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
     expect(bobReadReply.status.code).toBe(200);
     const decryptedBytes = await DataStream.toBytes(bobReadReply.entry!.data!);
     expect(new TextDecoder().decode(decryptedBytes)).toBe(chatText);
-
-    const cachedAfterRead = await getCachedAudienceDecryptionKey({
-      agent        : bobHarness.agent,
-      sourceDid    : alice.did.uri,
-      recipientDid : separateBob.did.uri,
-      protocol     : chatProtocol.protocol,
-      contextId    : threadContextId,
-      role         : 'thread/participant',
-      epoch        : roleAudienceEntry!.epoch,
-      keyId        : roleAudienceEntry!.keyId,
-    });
-    expect(cachedAfterRead?.keyMaterial.privateKeyJwk.d).toBeDefined();
   }, 30_000);
 
 });

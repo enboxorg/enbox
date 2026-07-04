@@ -429,46 +429,6 @@ describe('processConnectedGrants', () => {
 });
 
 describe('importDelegateAndSetupSync', () => {
-  describe('importDelegateDecryptionKeys branch', () => {
-    test('imports delegate decryption keys when provided', async () => {
-      const importedDecryptionKeys: any[] = [];
-
-      const identity = createMockIdentity({
-        did      : { uri: 'did:jwk:delegate1' },
-        metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected1' },
-      });
-
-      const agent = createMockAgent({
-        identityImport                  : async () => identity,
-        dwnImportDelegateDecryptionKeys : (did: string, keys: any[]) => {
-          importedDecryptionKeys.push({ did, keys });
-        },
-        dwnProcessRawMessage: async () => ({ status: { code: 202, detail: 'Accepted' } }),
-      });
-
-      const grants = [buildGrantMessage('https://proto.a', 'grant-a')];
-
-      const decryptionKeys = [{ algorithm: 'A256GCM', derivationScheme: 'protocolPath', key: {} }];
-
-      const result = await importDelegateAndSetupSync({
-        userAgent              : agent,
-        delegatePortableDid    : { uri: 'did:jwk:delegate1', document: {} as any, metadata: {} },
-        connectedDid           : 'did:dht:connected1',
-        delegateGrants         : grants,
-        delegateDecryptionKeys : decryptionKeys as any,
-        flowName               : 'test',
-      });
-
-      expect(result).toBeDefined();
-
-      // Decryption keys should have been imported (line 452).
-      expect(importedDecryptionKeys).toHaveLength(1);
-      expect(importedDecryptionKeys[0].did).toBe('did:jwk:delegate1');
-      expect(importedDecryptionKeys[0].keys).toEqual(decryptionKeys);
-
-    });
-  });
-
   describe('sync registration with zero granted protocols', () => {
     test('unregisters sync when no protocols are granted', async () => {
       const syncCalls: any[] = [];
@@ -1004,39 +964,6 @@ describe('registerSyncScopeForIdentity', () => {
 
 describe('finalizeDelegateSession', () => {
   describe('stale state cleanup on reconnect', () => {
-    test('clears old decryption keys when reconnect has no decryption keys', async () => {
-      const emitter = new AuthEventEmitter();
-      const storage = new MemoryStorage();
-      const agent = createMockAgent();
-
-      // Simulate a prior session that stored decryption keys.
-      await agent.secrets.put(
-        STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS,
-        new TextEncoder().encode(JSON.stringify([{ keyId: 'old-key' }])),
-      );
-
-      // Reconnect with a write-only delegate — no decryption keys.
-      const identity = createMockIdentity({
-        did      : { uri: 'did:jwk:delegate2' },
-        metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected1' },
-      });
-      // No _delegateDecryptionKeys set on identity.
-
-      await finalizeDelegateSession({
-        userAgent    : agent,
-        emitter,
-        storage,
-        identity     : identity as any,
-        connectedDid : 'did:dht:connected1',
-        delegateDid  : 'did:jwk:delegate2',
-        sync         : '15s',
-      });
-
-      // Old decryption keys must be cleared from SecretStore.
-      const stored = await agent.secrets.get(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS);
-      expect(stored).toBeUndefined();
-    });
-
     test('clears old context keys and multi-party protocols when absent on reconnect', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();

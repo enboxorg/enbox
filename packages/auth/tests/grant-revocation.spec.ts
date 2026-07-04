@@ -287,13 +287,12 @@ describe('grant revocation on disconnect', () => {
     expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBeNull();
   });
 
-  // 5. Revocation failure clears crypto keys and all session markers, persists retry context
-  test('revocation failure clears crypto keys but persists retry context', async () => {
+  // 5. Revocation failure clears session markers, persists retry context
+  test('revocation failure clears session markers but persists retry context', async () => {
     const storage = new MemoryStorage();
     await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
     await storage.set(STORAGE_KEYS.DELEGATE_DID, 'did:jwk:delegate');
     await storage.set(STORAGE_KEYS.CONNECTED_DID, 'did:dht:owner');
-    await storage.set(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS, JSON.stringify([{ test: true }]));
     await storage.set(STORAGE_KEYS.SESSION_REVOCATIONS, JSON.stringify([
       { grantId: 'grant-1', revocationGrantId: 'rev-grant-1' },
     ]));
@@ -307,8 +306,7 @@ describe('grant revocation on disconnect', () => {
     await manager.connect({ password: 'test' });
     await manager.disconnect();
 
-    // All session markers cleared unconditionally (including crypto keys)
-    expect(await storage.get(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS)).toBeNull();
+    // All session markers cleared unconditionally.
     expect(await storage.get(STORAGE_KEYS.DELEGATE_DID)).toBeNull();
     expect(await storage.get(STORAGE_KEYS.CONNECTED_DID)).toBeNull();
     expect(await storage.get(STORAGE_KEYS.SESSION_REVOCATIONS)).toBeNull();

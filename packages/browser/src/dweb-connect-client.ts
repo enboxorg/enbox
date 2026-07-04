@@ -218,11 +218,10 @@ async function initClient(options: DWebConnectClientOptions): Promise<ConnectRes
             return;
           }
           resolve({
-            delegatePortableDid    : p.delegateDid as PortableDid,
-            delegateGrants         : p.grants as DwnDataEncodedRecordsWriteMessage[],
-            connectedDid           : p.connectedDid ?? did ?? (p.delegateDid as PortableDid).uri,
-            delegateDecryptionKeys : p.delegateDecryptionKeys ?? undefined,
-            sessionRevocations     : p.sessionRevocations ?? undefined,
+            delegatePortableDid : p.delegateDid as PortableDid,
+            delegateGrants      : p.grants as DwnDataEncodedRecordsWriteMessage[],
+            connectedDid        : p.connectedDid ?? did ?? (p.delegateDid as PortableDid).uri,
+            sessionRevocations  : p.sessionRevocations ?? undefined,
           });
         }).catch(() => {
           // Decryption failed — treat as denied.

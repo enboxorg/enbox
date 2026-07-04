@@ -1,6 +1,10 @@
 import type {
   DataEncodedRecordsWriteMessage,
   DerivedPrivateJwk,
+  EncryptionControlAudiencePayload,
+  EncryptionControlDeliveryPayload,
+  EncryptionControlDeliveryRecipientAuthority,
+  EncryptionControlSeal,
   EncryptionInput,
   EncryptionKeyDeriver,
   GrantKeyEligibleRecordsScope,
@@ -12,8 +16,9 @@ import type {
   RecordsQueryReply,
   RecordsReadReply,
   RecordsWriteMessage,
+  RoleAudienceKeyMaterial,
 } from '@enbox/dwn-sdk-js';
-import type { KeyIdentifier, PrivateKeyJwk, PublicKeyJwk } from '@enbox/crypto';
+import type { Jwk, KeyIdentifier, PrivateKeyJwk, PublicKeyJwk } from '@enbox/crypto';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type {
@@ -23,6 +28,7 @@ import type {
 } from './types/dwn.js';
 
 import { logger } from '@enbox/common';
+import { AesKw, Ed25519, Hkdf, X25519 } from '@enbox/crypto';
 import {
   Cid,
   ContentEncryptionAlgorithm,
@@ -31,6 +37,8 @@ import {
   PermissionGrant as DwnPermissionGrant,
   Encoder,
   Encryption,
+  ENCRYPTION_CONTROL_AUDIENCE_PATH,
+  ENCRYPTION_CONTROL_DELIVERY_PATH,
   EncryptionProtocol,
   getGrantKeyDeliveryScopes,
   getRoleAudienceContextId,
@@ -44,7 +52,6 @@ import {
   ROLE_AUDIENCE_DERIVATION_SCHEME,
   Time,
 } from '@enbox/dwn-sdk-js';
-import { Ed25519, X25519 } from '@enbox/crypto';
 
 import { DwnInterface } from './types/dwn.js';
 import { isDwnRequest } from './dwn-type-guards.js';
@@ -54,6 +61,10 @@ const GRANT_KEY_DERIVATION_PATH = [
   EncryptionProtocol.uri,
   EncryptionProtocol.grantKeyPath,
 ];
+
+const AUDIENCE_SCHEMA_URI = 'https://identity.foundation/dwn/json-schemas/encryption/audience.json';
+const DELIVERY_SCHEMA_URI = 'https://identity.foundation/dwn/json-schemas/encryption/delivery.json';
+const SEAL_DERIVATION_SCHEME = 'seal';
 
 type DelegateDecryptionKeyCache = {
   get(key: string): DelegateDecryptionKeyEntry[] | undefined;
@@ -78,36 +89,21 @@ type X25519ProtocolPathKeyMaterial = X25519KeyMaterialBase & {
   derivationPath: string[];
 };
 
-type X25519RoleAudienceKeyMaterial = X25519KeyMaterialBase & {
-  derivationScheme: typeof ROLE_AUDIENCE_DERIVATION_SCHEME;
-};
-
 type GrantKeyPayload = {
   grantId: string;
   scope: GrantKeyProtocolPathScope;
   keyMaterial: X25519ProtocolPathKeyMaterial;
 };
 
-export type AudienceEpochPayload = {
-  protocol: string;
-  contextId: string;
-  role: string;
-  epoch: number;
-  keyId: string;
-  publicKeyJwk: PublicKeyJwk;
-};
+export type AudienceKeyPayload = EncryptionControlDeliveryPayload;
 
-export type AudienceKeyPayload = {
-  protocol: string;
-  contextId: string;
-  role: string;
-  epoch: number;
-  keyMaterial: X25519RoleAudienceKeyMaterial;
-};
-
-export type AudienceDecryptionKeyEntry = AudienceKeyPayload & {
+export type AudienceDecryptionKeyEntry = {
   sourceDid: string;
   recipientDid: string;
+  protocol: string;
+  contextId: string;
+  rolePath: string;
+  keyMaterial: RoleAudienceKeyMaterial;
 };
 
 /**
@@ -464,20 +460,43 @@ export async function createGrantKeyRecordsForGrants(params: {
   return grantKeyRecords;
 }
 
-export async function createAudienceEpochRecord(params: {
+export async function createAudienceRecord(params: {
   agent: EnboxPlatformAgent;
   sourceDid: string;
   authorDid: string;
-  audienceKey: AudienceKeyPayload;
+  protocol: string;
+  rolePath: string;
+  contextId: string;
+  sealingPublicKey: PublicKeyJwk;
+  audienceKey?: AudienceKeyPayload;
   protocolRole?: string;
-}): Promise<DataEncodedRecordsWriteMessage> {
-  const payload: AudienceEpochPayload = {
-    protocol     : params.audienceKey.protocol,
-    contextId    : params.audienceKey.contextId,
-    role         : params.audienceKey.role,
-    epoch        : params.audienceKey.epoch,
-    keyId        : params.audienceKey.keyMaterial.keyId,
-    publicKeyJwk : params.audienceKey.keyMaterial.publicKeyJwk,
+}): Promise<{
+  audienceKey: AudienceKeyPayload;
+  message: DataEncodedRecordsWriteMessage;
+  payload: EncryptionControlAudiencePayload;
+}> {
+  const audienceKey = params.audienceKey ?? await generateAudienceKey({
+    contextId : params.contextId,
+    protocol  : params.protocol,
+    rolePath  : params.rolePath,
+  });
+  const { keyMaterial } = audienceKey;
+  const { keyId, privateKeyJwk, publicKeyJwk } = keyMaterial;
+  const sealedPrivateKey = await sealAudiencePrivateKey({
+    audienceKeyId    : keyId,
+    contextId        : params.contextId,
+    privateKeyJwk,
+    protocol         : params.protocol,
+    rolePath         : params.rolePath,
+    sealingPublicKey : params.sealingPublicKey,
+  });
+  const payload: EncryptionControlAudiencePayload = {
+    protocol  : params.protocol,
+    rolePath  : params.rolePath,
+    contextId : params.contextId,
+    keyId,
+    publicKeyJwk,
+    sealedPrivateKey,
   };
   const payloadBytes = Encoder.objectToBytes(payload);
 
@@ -486,44 +505,81 @@ export async function createAudienceEpochRecord(params: {
     target        : params.sourceDid,
     messageType   : DwnInterface.RecordsWrite,
     messageParams : {
-      published    : true,
-      protocol     : EncryptionProtocol.uri,
-      protocolPath : EncryptionProtocol.audienceEpochPath,
+      protocol     : params.protocol,
+      protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
       protocolRole : params.protocolRole,
-      schema       : EncryptionProtocol.definition.types.audienceEpoch.schema,
+      schema       : AUDIENCE_SCHEMA_URI,
       dataFormat   : 'application/json',
       dataSize     : payloadBytes.length,
       tags         : {
-        protocol  : params.audienceKey.protocol,
-        contextId : params.audienceKey.contextId,
-        role      : params.audienceKey.role,
-        epoch     : params.audienceKey.epoch,
-        keyId     : params.audienceKey.keyMaterial.keyId,
+        protocol  : params.protocol,
+        rolePath  : params.rolePath,
+        contextId : params.contextId,
+        keyId,
       },
     },
     dataStream: DataStream.fromBytes(payloadBytes),
   });
 
   if (reply.status.code !== 202 && reply.status.code !== 409) {
-    throw new Error(`AgentDwnApi: Failed to create audienceEpoch record: ${reply.status.detail}`);
+    throw new Error(`AgentDwnApi: Failed to create audience record: ${reply.status.detail}`);
   }
 
   return {
-    ...message!,
-    encodedData: Encoder.bytesToBase64Url(payloadBytes),
-  } as DataEncodedRecordsWriteMessage;
+    audienceKey,
+    message: {
+      ...message!,
+      encodedData: Encoder.bytesToBase64Url(payloadBytes),
+    } as DataEncodedRecordsWriteMessage,
+    payload,
+  };
 }
 
-export async function createAudienceKeyRecord(params: {
+export async function generateAudienceKey(params: {
+  protocol: string;
+  rolePath: string;
+  contextId: string;
+}): Promise<AudienceKeyPayload> {
+  const privateKeyJwk = await X25519.generateKey() as PrivateKeyJwk;
+  const publicKeyJwk = await X25519.getPublicKey({ key: privateKeyJwk }) as PublicKeyJwk;
+  const keyId = await Encryption.getKeyId(publicKeyJwk);
+  const keyMaterial: RoleAudienceKeyMaterial = {
+    algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+    derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+    keyId,
+    privateKeyJwk,
+    publicKeyJwk,
+  };
+
+  return {
+    protocol  : params.protocol,
+    rolePath  : params.rolePath,
+    contextId : params.contextId,
+    keyId,
+    keyMaterial,
+  };
+}
+
+export async function createAudienceDeliveryRecord(params: {
   agent: EnboxPlatformAgent;
   sourceDid: string;
   authorDid: string;
   recipientDid: string;
   recipientRolePublicKey: PublicKeyJwk;
   audienceKey: AudienceKeyPayload;
+  recipientAuthority: EncryptionControlDeliveryRecipientAuthority;
+  grantId?: string;
+  roleRef?: string;
   protocolRole?: string;
 }): Promise<DataEncodedRecordsWriteMessage> {
-  const payloadBytes = Encoder.objectToBytes(params.audienceKey);
+  const payload: EncryptionControlDeliveryPayload = {
+    protocol    : params.audienceKey.protocol,
+    rolePath    : params.audienceKey.rolePath,
+    contextId   : params.audienceKey.contextId,
+    keyId       : params.audienceKey.keyId,
+    keyMaterial : params.audienceKey.keyMaterial,
+  };
+  const payloadBytes = Encoder.objectToBytes(payload);
   const contentEncryptionAlgorithm = ContentEncryptionAlgorithm.A256CTR;
   const dataEncryptionKey = crypto.getRandomValues(new Uint8Array(32));
   const dataEncryptionIV = crypto.getRandomValues(new Uint8Array(ivLength(contentEncryptionAlgorithm)));
@@ -548,27 +604,29 @@ export async function createAudienceKeyRecord(params: {
     messageType   : DwnInterface.RecordsWrite,
     messageParams : {
       recipient    : params.recipientDid,
-      protocol     : EncryptionProtocol.uri,
-      protocolPath : EncryptionProtocol.audienceKeyPath,
+      protocol     : params.audienceKey.protocol,
+      protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
       protocolRole : params.protocolRole,
-      schema       : EncryptionProtocol.definition.types.audienceKey.schema,
+      schema       : DELIVERY_SCHEMA_URI,
       dataFormat   : 'application/json',
       dataCid,
       dataSize,
       encryptionInput,
       tags         : {
-        protocol  : params.audienceKey.protocol,
-        contextId : params.audienceKey.contextId,
-        role      : params.audienceKey.role,
-        epoch     : params.audienceKey.epoch,
-        keyId     : params.audienceKey.keyMaterial.keyId,
+        protocol           : params.audienceKey.protocol,
+        rolePath           : params.audienceKey.rolePath,
+        contextId          : params.audienceKey.contextId,
+        keyId              : params.audienceKey.keyId,
+        recipientAuthority : params.recipientAuthority,
+        ...(params.grantId === undefined ? {} : { grantId: params.grantId }),
+        ...(params.roleRef === undefined ? {} : { roleRef: params.roleRef }),
       },
     },
     dataStream: DataStream.fromBytes(encryptedBytes),
   });
 
   if (reply.status.code !== 202 && reply.status.code !== 409) {
-    throw new Error(`AgentDwnApi: Failed to create audienceKey record: ${reply.status.detail}`);
+    throw new Error(`AgentDwnApi: Failed to create audience delivery record: ${reply.status.detail}`);
   }
 
   return {
@@ -577,26 +635,156 @@ export async function createAudienceKeyRecord(params: {
   } as DataEncodedRecordsWriteMessage;
 }
 
-export async function cacheAudienceDecryptionKey(params: {
-  agent: EnboxPlatformAgent;
-  audienceDecryptionKeyCache?: AudienceDecryptionKeyCache;
-  entry: AudienceDecryptionKeyEntry;
-}): Promise<void> {
-  await putCachedAudienceKey(params);
+export async function unsealAudienceKey(params: {
+  payload: EncryptionControlAudiencePayload;
+  sealingPrivateKey: PrivateKeyJwk;
+}): Promise<RoleAudienceKeyMaterial> {
+  const privateKeyBytes = await unwrapAudienceSeal({
+    audienceKeyId     : params.payload.keyId,
+    contextId         : params.payload.contextId,
+    protocol          : params.payload.protocol,
+    rolePath          : params.payload.rolePath,
+    seal              : params.payload.sealedPrivateKey,
+    sealingPrivateKey : params.sealingPrivateKey,
+  });
+  const privateKeyJwk = await X25519.bytesToPrivateKey({ privateKeyBytes }) as PrivateKeyJwk;
+  const keyMaterial: RoleAudienceKeyMaterial = {
+    algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+    derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+    keyId            : params.payload.keyId,
+    privateKeyJwk,
+    publicKeyJwk     : params.payload.publicKeyJwk,
+  };
+
+  await verifyAudienceKeyMaterial({
+    keyMaterial,
+    payload: {
+      contextId : params.payload.contextId,
+      keyId     : params.payload.keyId,
+      protocol  : params.payload.protocol,
+      rolePath  : params.payload.rolePath,
+    },
+    publicKeyJwk: params.payload.publicKeyJwk,
+  });
+
+  return keyMaterial;
 }
 
-export async function getCachedAudienceDecryptionKey(params: {
-  agent: EnboxPlatformAgent;
-  audienceDecryptionKeyCache?: AudienceDecryptionKeyCache;
-  sourceDid: string;
-  recipientDid: string;
-  protocol: string;
+export async function verifyAudienceKeyMaterial(params: {
+  keyMaterial: RoleAudienceKeyMaterial;
+  payload: {
+    protocol: string;
+    rolePath: string;
+    contextId: string;
+    keyId: string;
+  };
+  publicKeyJwk: PublicKeyJwk;
+}): Promise<void> {
+  const publicKeyId = await Encryption.getKeyId(params.keyMaterial.publicKeyJwk);
+  const publicKeyFromPrivate = await X25519.getPublicKey({ key: params.keyMaterial.privateKeyJwk }) as PublicKeyJwk;
+  const privateKeyId = await Encryption.getKeyId(publicKeyFromPrivate);
+
+  if (params.keyMaterial.algorithm !== KeyAgreementAlgorithm.X25519HkdfSha256A256Kw ||
+      params.keyMaterial.derivationScheme !== ROLE_AUDIENCE_DERIVATION_SCHEME ||
+      params.keyMaterial.keyId !== params.payload.keyId ||
+      params.keyMaterial.keyId !== publicKeyId ||
+      params.keyMaterial.keyId !== privateKeyId ||
+      !isPublicKeyJwkEqual(params.keyMaterial.publicKeyJwk, params.publicKeyJwk) ||
+      !isPublicKeyJwkEqual(publicKeyFromPrivate, params.publicKeyJwk)) {
+    throw new Error('audience key material does not match the audience record.');
+  }
+}
+
+async function sealAudiencePrivateKey(params: {
+  audienceKeyId: string;
   contextId: string;
-  role: string;
-  epoch: number;
-  keyId: string;
-}): Promise<AudienceDecryptionKeyEntry | undefined> {
-  return getCachedAudienceKey(params);
+  privateKeyJwk: PrivateKeyJwk;
+  protocol: string;
+  rolePath: string;
+  sealingPublicKey: PublicKeyJwk;
+}): Promise<EncryptionControlSeal> {
+  const ephemeralPrivateKey = await X25519.generateKey() as PrivateKeyJwk;
+  const ephemeralPublicKey = await X25519.getPublicKey({ key: ephemeralPrivateKey }) as PublicKeyJwk;
+  const sharedSecret = await X25519.sharedSecret({
+    privateKeyA : ephemeralPrivateKey,
+    publicKeyB  : params.sealingPublicKey as Jwk,
+  });
+  const kek = await deriveSealKek({
+    audienceKeyId : params.audienceKeyId,
+    contextId     : params.contextId,
+    protocol      : params.protocol,
+    rolePath      : params.rolePath,
+    sharedSecret,
+  });
+  const privateKeyBytes = await X25519.privateKeyToBytes({ privateKey: params.privateKeyJwk });
+  const unwrappedKey = await AesKw.bytesToPrivateKey({ privateKeyBytes });
+  const encryptedKey = await AesKw.wrapKey({
+    encryptionKey: { alg: 'A256KW', k: Encoder.bytesToBase64Url(kek), kty: 'oct' },
+    unwrappedKey,
+  });
+
+  return {
+    algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+    derivationScheme : SEAL_DERIVATION_SCHEME,
+    encryptedKey     : Encoder.bytesToBase64Url(encryptedKey),
+    ephemeralPublicKey,
+    keyId            : await Encryption.getKeyId(params.sealingPublicKey),
+  };
+}
+
+async function unwrapAudienceSeal(params: {
+  audienceKeyId: string;
+  contextId: string;
+  protocol: string;
+  rolePath: string;
+  seal: EncryptionControlSeal;
+  sealingPrivateKey: PrivateKeyJwk;
+}): Promise<Uint8Array> {
+  const sharedSecret = await X25519.sharedSecret({
+    privateKeyA : params.sealingPrivateKey,
+    publicKeyB  : params.seal.ephemeralPublicKey as Jwk,
+  });
+  const kek = await deriveSealKek({
+    audienceKeyId : params.audienceKeyId,
+    contextId     : params.contextId,
+    protocol      : params.protocol,
+    rolePath      : params.rolePath,
+    sharedSecret,
+  });
+  const unwrappedKey = await AesKw.unwrapKey({
+    decryptionKey       : { alg: 'A256KW', k: Encoder.bytesToBase64Url(kek), kty: 'oct' },
+    wrappedKeyAlgorithm : 'A256KW',
+    wrappedKeyBytes     : Encoder.base64UrlToBytes(params.seal.encryptedKey),
+  });
+
+  return AesKw.privateKeyToBytes({ privateKey: unwrappedKey });
+}
+
+async function deriveSealKek(params: {
+  audienceKeyId: string;
+  contextId: string;
+  protocol: string;
+  rolePath: string;
+  sharedSecret: Uint8Array;
+}): Promise<Uint8Array> {
+  if (params.sharedSecret.every((byte): boolean => byte === 0)) {
+    throw new Error('X25519 shared secret MUST NOT be all zeros.');
+  }
+
+  return Hkdf.deriveKeyBytes({
+    baseKeyBytes : params.sharedSecret,
+    hash         : 'SHA-256',
+    info         : JSON.stringify([
+      KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+      SEAL_DERIVATION_SCHEME,
+      params.protocol,
+      params.rolePath,
+      params.contextId,
+      params.audienceKeyId,
+    ]),
+    length : 256,
+    salt   : new Uint8Array(),
+  });
 }
 
 /**
@@ -793,25 +981,22 @@ async function resolveRoleAudienceDecrypter(params: {
   const roleAudienceEntries = params.recordsWrite.encryption.keyEncryption.filter((entry): entry is typeof entry & {
     derivationScheme: typeof ROLE_AUDIENCE_DERIVATION_SCHEME;
     protocol: string;
-    role: string;
-    epoch: number;
-  } => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME);
+    rolePath: string;
+  } => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME && 'rolePath' in entry);
 
   for (const entry of roleAudienceEntries) {
-    const contextId = getRoleAudienceContextId(entry.role, params.recordsWrite.contextId);
+    const contextId = getRoleAudienceContextId(entry.rolePath, params.recordsWrite.contextId);
     if (contextId === undefined) {
       continue;
     }
 
-    const cachedKey = await getCachedAudienceKey({
-      agent                      : params.agent,
+    const cachedKey = getAudienceKeyFromMemoryCache({
       audienceDecryptionKeyCache : params.audienceDecryptionKeyCache,
       sourceDid                  : params.sourceDid,
       recipientDid               : params.recipientDid,
       protocol                   : entry.protocol,
       contextId,
-      role                       : entry.role,
-      epoch                      : entry.epoch,
+      rolePath                   : entry.rolePath,
       keyId                      : entry.keyId,
     });
     if (cachedKey !== undefined) {
@@ -826,13 +1011,11 @@ async function resolveRoleAudienceDecrypter(params: {
       delegateDecryptionKeyCache : params.delegateDecryptionKeyCache,
       protocol                   : entry.protocol,
       contextId,
-      role                       : entry.role,
-      epoch                      : entry.epoch,
+      rolePath                   : entry.rolePath,
       keyId                      : entry.keyId,
     });
     if (hydratedKey !== undefined) {
-      await putCachedAudienceKey({
-        agent                      : params.agent,
+      putAudienceKeyInMemoryCache({
         audienceDecryptionKeyCache : params.audienceDecryptionKeyCache,
         entry                      : hydratedKey,
       });
@@ -852,18 +1035,66 @@ function buildAudienceContentDecrypter(entry: AudienceDecryptionKeyEntry): KeyDe
   });
 }
 
+export async function resolveAudienceDecryptionKey(params: {
+  agent: EnboxPlatformAgent;
+  sourceDid: string;
+  recipientDid: string;
+  protocol: string;
+  contextId: string;
+  rolePath: string;
+  keyId: string;
+  granteeDid?: string;
+  delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
+  audienceDecryptionKeyCache?: AudienceDecryptionKeyCache;
+}): Promise<AudienceDecryptionKeyEntry | undefined> {
+  const cached = getAudienceKeyFromMemoryCache(params);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const hydrated = await hydrateAudienceKey(params);
+  if (hydrated !== undefined) {
+    putAudienceKeyInMemoryCache({
+      audienceDecryptionKeyCache : params.audienceDecryptionKeyCache,
+      entry                      : hydrated,
+    });
+  }
+
+  return hydrated;
+}
+
 async function hydrateAudienceKey(params: {
   agent: EnboxPlatformAgent;
   sourceDid: string;
   recipientDid: string;
   protocol: string;
   contextId: string;
-  role: string;
-  epoch: number;
+  rolePath: string;
   keyId: string;
   granteeDid?: string;
   delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
 }): Promise<AudienceDecryptionKeyEntry | undefined> {
+  const audienceRecord = await fetchAudienceRecord({
+    agent     : params.agent,
+    authorDid : params.granteeDid ?? params.recipientDid,
+    contextId : params.contextId,
+    keyId     : params.keyId,
+    protocol  : params.protocol,
+    rolePath  : params.rolePath,
+    sourceDid : params.sourceDid,
+  });
+  if (audienceRecord === undefined) {
+    return undefined;
+  }
+
+  const sealedKey = await tryUnsealAudienceKey({
+    ...params,
+    audiencePayload: audienceRecord.payload,
+  });
+  if (sealedKey !== undefined) {
+    return sealedKey;
+  }
+
   const { reply } = await params.agent.processDwnRequest({
     author        : params.granteeDid ?? params.recipientDid,
     target        : params.sourceDid,
@@ -871,13 +1102,12 @@ async function hydrateAudienceKey(params: {
     messageParams : {
       filter: {
         recipient    : params.recipientDid,
-        protocol     : EncryptionProtocol.uri,
-        protocolPath : EncryptionProtocol.audienceKeyPath,
+        protocol     : params.protocol,
+        protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
         tags         : {
           protocol  : params.protocol,
+          rolePath  : params.rolePath,
           contextId : params.contextId,
-          role      : params.role,
-          epoch     : params.epoch,
           keyId     : params.keyId,
         },
       },
@@ -894,16 +1124,16 @@ async function hydrateAudienceKey(params: {
     granteeDid                 : params.granteeDid,
     delegateDecryptionKeyCache : params.delegateDecryptionKeyCache,
     protocol                   : params.protocol,
-    role                       : params.role,
+    rolePath                   : params.rolePath,
   });
   if (rolePathDecrypter === undefined) {
     return undefined;
   }
 
   for (const entry of reply.entries) {
-    const audienceKeyMessage = entry as RecordsWriteMessage & { encodedData?: string };
-    const encryptedData = await getAudienceKeyEncryptedData(
-      params.agent, params.granteeDid ?? params.recipientDid, params.sourceDid, audienceKeyMessage,
+    const deliveryMessage = entry as RecordsWriteMessage & { encodedData?: string };
+    const encryptedData = await getAudienceDeliveryEncryptedData(
+      params.agent, params.granteeDid ?? params.recipientDid, params.sourceDid, deliveryMessage,
     );
     if (encryptedData === undefined) {
       continue;
@@ -911,32 +1141,35 @@ async function hydrateAudienceKey(params: {
 
     try {
       const decryptedStream = await Records.decrypt(
-        audienceKeyMessage,
+        deliveryMessage,
         rolePathDecrypter,
         DataStream.fromBytes(encryptedData),
       );
-      const payload = Encoder.bytesToObject(await DataStream.toBytes(decryptedStream)) as AudienceKeyPayload;
+      const payload = Encoder.bytesToObject(await DataStream.toBytes(decryptedStream)) as EncryptionControlDeliveryPayload;
       await verifyAudienceKeyPayload({
-        agent        : params.agent,
+        agent           : params.agent,
+        audiencePayload : audienceRecord.payload,
+        deliveryMessage,
         payload,
-        audienceKeyMessage,
-        sourceDid    : params.sourceDid,
-        recipientDid : params.recipientDid,
-        protocol     : params.protocol,
-        contextId    : params.contextId,
-        role         : params.role,
-        epoch        : params.epoch,
-        keyId        : params.keyId,
+        sourceDid       : params.sourceDid,
+        recipientDid    : params.recipientDid,
+        protocol        : params.protocol,
+        contextId       : params.contextId,
+        rolePath        : params.rolePath,
+        keyId           : params.keyId,
       });
 
       return {
-        ...payload,
-        sourceDid    : params.sourceDid,
+        contextId    : payload.contextId,
+        keyMaterial  : payload.keyMaterial,
+        protocol     : payload.protocol,
         recipientDid : params.recipientDid,
+        rolePath     : payload.rolePath,
+        sourceDid    : params.sourceDid,
       };
     } catch (error) {
       logger.log(
-        `AgentDwnApi: skipped audienceKey '${audienceKeyMessage.recordId}' while resolving role-audience key: ` +
+        `AgentDwnApi: skipped audience delivery '${deliveryMessage.recordId}' while resolving role-audience key: ` +
         `${error instanceof Error ? error.message : String(error)}`
       );
       continue;
@@ -950,11 +1183,11 @@ async function buildRecipientRolePathDecrypter(params: {
   agent: EnboxPlatformAgent;
   recipientDid: string;
   protocol: string;
-  role: string;
+  rolePath: string;
   granteeDid?: string;
   delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
 }): Promise<KeyDecrypter | undefined> {
-  const derivationPath = getScopeDerivationPath(params.protocol, params.role);
+  const derivationPath = getScopeDerivationPath(params.protocol, params.rolePath);
   const privateKeyJwk = await getRecipientRolePathPrivateKey({
     ...params,
     derivationPath,
@@ -976,7 +1209,7 @@ async function getRecipientRolePathPrivateKey(params: {
   agent: EnboxPlatformAgent;
   recipientDid: string;
   protocol: string;
-  role: string;
+  rolePath: string;
   derivationPath: string[];
   granteeDid?: string;
   delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
@@ -992,7 +1225,7 @@ async function getRecipientRolePathPrivateKey(params: {
 
   const cacheKey = `ddk~${params.granteeDid}`;
   let delegateKeys = params.delegateDecryptionKeyCache?.get(cacheKey) ?? [];
-  let coveringKey = findCoveringDelegateKey(delegateKeys, params.protocol, params.role);
+  let coveringKey = findCoveringDelegateKey(delegateKeys, params.protocol, params.rolePath);
 
   if (coveringKey === undefined && params.delegateDecryptionKeyCache?.set !== undefined) {
     const hydratedKeys = await resolveGrantKeyRecords({
@@ -1000,11 +1233,11 @@ async function getRecipientRolePathPrivateKey(params: {
       grantorDid   : params.recipientDid,
       granteeDid   : params.granteeDid,
       protocol     : params.protocol,
-      protocolPath : params.role,
+      protocolPath : params.rolePath,
     });
     delegateKeys = mergeDelegateDecryptionKeys(delegateKeys, hydratedKeys);
     params.delegateDecryptionKeyCache.set(cacheKey, delegateKeys);
-    coveringKey = findCoveringDelegateKey(delegateKeys, params.protocol, params.role);
+    coveringKey = findCoveringDelegateKey(delegateKeys, params.protocol, params.rolePath);
   }
 
   if (coveringKey === undefined) {
@@ -1015,21 +1248,163 @@ async function getRecipientRolePathPrivateKey(params: {
   return X25519.bytesToPrivateKey({ privateKeyBytes }) as Promise<PrivateKeyJwk>;
 }
 
-async function getAudienceKeyEncryptedData(
+async function tryUnsealAudienceKey(params: {
+  agent: EnboxPlatformAgent;
+  sourceDid: string;
+  recipientDid: string;
+  protocol: string;
+  rolePath: string;
+  contextId: string;
+  keyId: string;
+  audiencePayload: EncryptionControlAudiencePayload;
+  granteeDid?: string;
+  delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
+}): Promise<AudienceDecryptionKeyEntry | undefined> {
+  if (params.recipientDid !== params.sourceDid && params.granteeDid === undefined) {
+    return undefined;
+  }
+
+  const sealingPrivateKey = await getRecipientRolePathPrivateKey({
+    agent                      : params.agent,
+    delegateDecryptionKeyCache : params.delegateDecryptionKeyCache,
+    derivationPath             : getScopeDerivationPath(params.protocol, params.rolePath),
+    granteeDid                 : params.granteeDid,
+    protocol                   : params.protocol,
+    recipientDid               : params.sourceDid,
+    rolePath                   : params.rolePath,
+  });
+  if (sealingPrivateKey === undefined) {
+    return undefined;
+  }
+
+  const keyMaterial = await unsealAudienceKey({
+    payload: params.audiencePayload,
+    sealingPrivateKey,
+  });
+
+  return {
+    contextId    : params.contextId,
+    keyMaterial,
+    protocol     : params.protocol,
+    recipientDid : params.recipientDid,
+    rolePath     : params.rolePath,
+    sourceDid    : params.sourceDid,
+  };
+}
+
+async function fetchAudienceRecord(params: {
+  agent: EnboxPlatformAgent;
+  authorDid: string;
+  sourceDid: string;
+  protocol: string;
+  rolePath: string;
+  contextId: string;
+  keyId: string;
+}): Promise<{
+  message: RecordsWriteMessage & { encodedData?: string };
+  payload: EncryptionControlAudiencePayload;
+} | undefined> {
+  const { reply } = await params.agent.processDwnRequest({
+    author        : params.authorDid,
+    target        : params.sourceDid,
+    messageType   : DwnInterface.RecordsQuery,
+    messageParams : {
+      filter: {
+        protocol     : params.protocol,
+        protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+        tags         : {
+          protocol  : params.protocol,
+          rolePath  : params.rolePath,
+          contextId : params.contextId,
+          keyId     : params.keyId,
+        },
+      },
+    },
+  });
+
+  if (reply.status.code !== 200 || reply.entries === undefined || reply.entries.length === 0) {
+    return undefined;
+  }
+
+  for (const entry of reply.entries) {
+    const audienceMessage = entry as RecordsWriteMessage & { encodedData?: string };
+    const dataBytes = await getAudienceRecordData(
+      params.agent,
+      params.authorDid,
+      params.sourceDid,
+      audienceMessage,
+    );
+    if (dataBytes === undefined) {
+      continue;
+    }
+
+    const payload = Encoder.bytesToObject(dataBytes) as EncryptionControlAudiencePayload;
+    if (audiencePayloadMatches(payload, audienceMessage, params)) {
+      return { message: audienceMessage, payload };
+    }
+  }
+
+  return undefined;
+}
+
+async function getAudienceRecordData(
   agent: EnboxPlatformAgent,
   authorDid: string,
   sourceDid: string,
-  audienceKeyMessage: RecordsWriteMessage & { encodedData?: string },
+  audienceMessage: RecordsWriteMessage & { encodedData?: string },
 ): Promise<Uint8Array | undefined> {
-  if (audienceKeyMessage.encodedData !== undefined) {
-    return Encoder.base64UrlToBytes(audienceKeyMessage.encodedData);
+  if (audienceMessage.encodedData !== undefined) {
+    return Encoder.base64UrlToBytes(audienceMessage.encodedData);
   }
 
   const { reply } = await agent.processDwnRequest({
     author        : authorDid,
     target        : sourceDid,
     messageType   : DwnInterface.RecordsRead,
-    messageParams : { filter: { recordId: audienceKeyMessage.recordId } },
+    messageParams : { filter: { recordId: audienceMessage.recordId } },
+  });
+
+  if (reply.status.code !== 200 || reply.entry?.data === undefined) {
+    return undefined;
+  }
+
+  return DataStream.toBytes(reply.entry.data);
+}
+
+function audiencePayloadMatches(payload: EncryptionControlAudiencePayload, audienceMessage: RecordsWriteMessage, expected: {
+  protocol: string;
+  rolePath: string;
+  contextId: string;
+  keyId: string;
+}): boolean {
+  const tags = audienceMessage.descriptor.tags ?? {};
+  return payload.protocol === expected.protocol &&
+    payload.rolePath === expected.rolePath &&
+    payload.contextId === expected.contextId &&
+    payload.keyId === expected.keyId &&
+    payload.protocol === tags.protocol &&
+    payload.rolePath === tags.rolePath &&
+    payload.contextId === tags.contextId &&
+    payload.keyId === tags.keyId &&
+    isObject(payload.publicKeyJwk) &&
+    isObject(payload.sealedPrivateKey);
+}
+
+async function getAudienceDeliveryEncryptedData(
+  agent: EnboxPlatformAgent,
+  authorDid: string,
+  sourceDid: string,
+  deliveryMessage: RecordsWriteMessage & { encodedData?: string },
+): Promise<Uint8Array | undefined> {
+  if (deliveryMessage.encodedData !== undefined) {
+    return Encoder.base64UrlToBytes(deliveryMessage.encodedData);
+  }
+
+  const { reply } = await agent.processDwnRequest({
+    author        : authorDid,
+    target        : sourceDid,
+    messageType   : DwnInterface.RecordsRead,
+    messageParams : { filter: { recordId: deliveryMessage.recordId } },
   });
 
   if (reply.status.code !== 200 || reply.entry?.data === undefined) {
@@ -1041,55 +1416,55 @@ async function getAudienceKeyEncryptedData(
 
 async function verifyAudienceKeyPayload(params: {
   agent: EnboxPlatformAgent;
-  payload: AudienceKeyPayload;
-  audienceKeyMessage: RecordsWriteMessage;
+  payload: EncryptionControlDeliveryPayload;
+  audiencePayload: EncryptionControlAudiencePayload;
+  deliveryMessage: RecordsWriteMessage;
   sourceDid: string;
   recipientDid: string;
   protocol: string;
   contextId: string;
-  role: string;
-  epoch: number;
+  rolePath: string;
   keyId: string;
 }): Promise<void> {
-  const { payload, audienceKeyMessage } = params;
-  const tags = audienceKeyMessage.descriptor.tags ?? {};
+  const { payload, deliveryMessage } = params;
+  const tags = deliveryMessage.descriptor.tags ?? {};
 
   assertAudienceKeyPayload(payload);
   const keyMaterial = payload.keyMaterial;
 
-  if (audienceKeyMessage.descriptor.recipient !== params.recipientDid ||
+  if (deliveryMessage.descriptor.recipient !== params.recipientDid ||
       payload.protocol !== tags.protocol ||
+      payload.rolePath !== tags.rolePath ||
       payload.contextId !== tags.contextId ||
-      payload.role !== tags.role ||
-      payload.epoch !== tags.epoch ||
       keyMaterial.keyId !== tags.keyId ||
       payload.protocol !== params.protocol ||
       payload.contextId !== params.contextId ||
-      payload.role !== params.role ||
-      payload.epoch !== params.epoch ||
+      payload.rolePath !== params.rolePath ||
       keyMaterial.keyId !== params.keyId) {
-    throw new Error('audienceKey payload does not match record tags.');
+    throw new Error('audience delivery payload does not match record tags.');
   }
 
-  const publicKeyId = await Encryption.getKeyId(keyMaterial.publicKeyJwk);
-  const publicKeyFromPrivate = await X25519.getPublicKey({ key: keyMaterial.privateKeyJwk }) as PublicKeyJwk;
-  const privateKeyId = await Encryption.getKeyId(publicKeyFromPrivate);
-  if (keyMaterial.keyId !== publicKeyId || keyMaterial.keyId !== privateKeyId) {
-    throw new Error('audienceKey keyId does not match delivered key material.');
-  }
-
-  await verifyAudienceKeyEpoch(params);
+  await verifyAudienceKeyMaterial({
+    keyMaterial,
+    payload: {
+      contextId : params.contextId,
+      keyId     : params.keyId,
+      protocol  : params.protocol,
+      rolePath  : params.rolePath,
+    },
+    publicKeyJwk: params.audiencePayload.publicKeyJwk,
+  });
   await verifyAudienceKeyRoleAssignment(params);
 }
 
-function assertAudienceKeyPayload(payload: unknown): asserts payload is AudienceKeyPayload {
+function assertAudienceKeyPayload(payload: unknown): asserts payload is EncryptionControlDeliveryPayload {
   if (!isObject(payload) ||
       typeof payload.protocol !== 'string' ||
       typeof payload.contextId !== 'string' ||
-      typeof payload.role !== 'string' ||
-      !Number.isInteger(payload.epoch) ||
+      typeof payload.rolePath !== 'string' ||
+      typeof payload.keyId !== 'string' ||
       !isRoleAudienceKeyMaterial(payload.keyMaterial)) {
-    throw new Error('audienceKey payload is malformed.');
+    throw new Error('audience delivery payload is malformed.');
   }
 }
 
@@ -1114,7 +1489,7 @@ function isProtocolPathKeyMaterial(value: unknown): value is X25519ProtocolPathK
     value.derivationPath.every((segment): boolean => typeof segment === 'string');
 }
 
-function isRoleAudienceKeyMaterial(value: unknown): value is X25519RoleAudienceKeyMaterial {
+function isRoleAudienceKeyMaterial(value: unknown): value is RoleAudienceKeyMaterial {
   return isX25519KeyMaterial(value) &&
     value.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME;
 }
@@ -1128,108 +1503,13 @@ function isX25519KeyMaterial(value: unknown): value is Record<string, unknown> &
     isObject(value.privateKeyJwk);
 }
 
-async function verifyAudienceKeyEpoch(params: {
-  agent: EnboxPlatformAgent;
-  payload: AudienceKeyPayload;
-  sourceDid: string;
-  recipientDid: string;
-  protocol: string;
-  contextId: string;
-  role: string;
-  epoch: number;
-  keyId: string;
-}): Promise<void> {
-  const { reply } = await params.agent.processDwnRequest({
-    author        : params.recipientDid,
-    target        : params.sourceDid,
-    messageType   : DwnInterface.RecordsQuery,
-    messageParams : {
-      filter: {
-        protocol     : EncryptionProtocol.uri,
-        protocolPath : EncryptionProtocol.audienceEpochPath,
-        tags         : {
-          protocol  : params.protocol,
-          contextId : params.contextId,
-          role      : params.role,
-          epoch     : params.epoch,
-          keyId     : params.keyId,
-        },
-      },
-    },
-  });
-
-  const entries = reply.status.code === 200 ? reply.entries ?? [] : [];
-  for (const entry of entries.filter((entry): boolean => audienceTagsMatch(entry as RecordsWriteMessage, params))) {
-    const dataBytes = await getAudienceEpochData(
-      params.agent,
-      params.recipientDid,
-      params.sourceDid,
-      entry as RecordsWriteMessage & { encodedData?: string },
-    );
-    if (dataBytes === undefined) {
-      continue;
-    }
-
-    const epochPayload = Encoder.bytesToObject(dataBytes) as Partial<AudienceEpochPayload>;
-    if (epochPayload.protocol === params.payload.protocol &&
-        epochPayload.contextId === params.payload.contextId &&
-        epochPayload.role === params.payload.role &&
-        epochPayload.epoch === params.payload.epoch &&
-        epochPayload.keyId === params.payload.keyMaterial.keyId &&
-        isPublicKeyJwkEqual(epochPayload.publicKeyJwk, params.payload.keyMaterial.publicKeyJwk)) {
-      return;
-    }
-  }
-
-  throw new Error('audienceKey does not match an accepted audienceEpoch.');
-}
-
-function audienceTagsMatch(entry: RecordsWriteMessage, expected: {
-  protocol: string;
-  contextId: string;
-  role: string;
-  epoch: number;
-  keyId: string;
-}): boolean {
-  const tags = entry.descriptor.tags ?? {};
-  return String(tags.protocol) === expected.protocol &&
-    String(tags.contextId) === expected.contextId &&
-    String(tags.role) === expected.role &&
-    String(tags.epoch) === String(expected.epoch) &&
-    String(tags.keyId) === expected.keyId;
-}
-
-async function getAudienceEpochData(
-  agent: EnboxPlatformAgent,
-  authorDid: string,
-  sourceDid: string,
-  audienceEpochMessage: RecordsWriteMessage & { encodedData?: string },
-): Promise<Uint8Array | undefined> {
-  if (audienceEpochMessage.encodedData !== undefined) {
-    return Encoder.base64UrlToBytes(audienceEpochMessage.encodedData);
-  }
-
-  const { reply } = await agent.processDwnRequest({
-    author        : authorDid,
-    target        : sourceDid,
-    messageType   : DwnInterface.RecordsRead,
-    messageParams : { filter: { recordId: audienceEpochMessage.recordId } },
-  });
-
-  if (reply.status.code !== 200 || reply.entry?.data === undefined) {
-    return undefined;
-  }
-
-  return DataStream.toBytes(reply.entry.data);
-}
-
 async function verifyAudienceKeyRoleAssignment(params: {
   agent: EnboxPlatformAgent;
   sourceDid: string;
   recipientDid: string;
   protocol: string;
   contextId: string;
-  role: string;
+  rolePath: string;
 }): Promise<void> {
   const contextIdPrefix = params.contextId === '' ? undefined : params.contextId;
   const { reply } = await params.agent.processDwnRequest({
@@ -1241,7 +1521,7 @@ async function verifyAudienceKeyRoleAssignment(params: {
         ...(contextIdPrefix === undefined ? {} : { contextId: contextIdPrefix }),
         recipient    : params.recipientDid,
         protocol     : params.protocol,
-        protocolPath : params.role,
+        protocolPath : params.rolePath,
       },
     },
   });
@@ -1251,12 +1531,12 @@ async function verifyAudienceKeyRoleAssignment(params: {
     const roleRecord = entry as RecordsWriteMessage;
     return roleRecord.descriptor.recipient === params.recipientDid &&
       roleRecord.descriptor.protocol === params.protocol &&
-      roleRecord.descriptor.protocolPath === params.role &&
+      roleRecord.descriptor.protocolPath === params.rolePath &&
       matchesContextIdPrefix(roleRecord.contextId, contextIdPrefix);
   });
 
   if (!hasRoleRecord) {
-    throw new Error('audienceKey recipient is not an active holder of the referenced role.');
+    throw new Error('audience delivery recipient is not an active holder of the referenced role.');
   }
 }
 
@@ -1283,44 +1563,28 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-async function getCachedAudienceKey(params: {
-  agent: EnboxPlatformAgent;
+function getAudienceKeyFromMemoryCache(params: {
   audienceDecryptionKeyCache?: AudienceDecryptionKeyCache;
   sourceDid: string;
   recipientDid: string;
   protocol: string;
   contextId: string;
-  role: string;
-  epoch: number;
+  rolePath: string;
   keyId: string;
-}): Promise<AudienceDecryptionKeyEntry | undefined> {
+}): AudienceDecryptionKeyEntry | undefined {
   const cacheKey = getAudienceDecryptionKeyCacheKey(params);
-  const cached = params.audienceDecryptionKeyCache?.get(cacheKey);
-  if (cached !== undefined) {
-    return cached;
-  }
-
-  const secretBytes = await params.agent.secrets.get(cacheKey);
-  if (secretBytes === undefined) {
-    return undefined;
-  }
-
-  const entry = Encoder.bytesToObject(secretBytes) as AudienceDecryptionKeyEntry;
-  params.audienceDecryptionKeyCache?.set?.(cacheKey, entry);
-  return entry;
+  return params.audienceDecryptionKeyCache?.get(cacheKey);
 }
 
-async function putCachedAudienceKey(params: {
-  agent: EnboxPlatformAgent;
+function putAudienceKeyInMemoryCache(params: {
   audienceDecryptionKeyCache?: AudienceDecryptionKeyCache;
   entry: AudienceDecryptionKeyEntry;
-}): Promise<void> {
+}): void {
   const cacheKey = getAudienceDecryptionKeyCacheKey({
     ...params.entry,
     keyId: params.entry.keyMaterial.keyId,
   });
   params.audienceDecryptionKeyCache?.set?.(cacheKey, params.entry);
-  await params.agent.secrets.put(cacheKey, Encoder.objectToBytes(params.entry));
 }
 
 function getAudienceDecryptionKeyCacheKey(input: {
@@ -1328,8 +1592,7 @@ function getAudienceDecryptionKeyCacheKey(input: {
   recipientDid: string;
   protocol: string;
   contextId: string;
-  role: string;
-  epoch: number;
+  rolePath: string;
   keyId: string;
 }): string {
   return `audience-key~${Encoder.stringToBase64Url(JSON.stringify([
@@ -1337,8 +1600,7 @@ function getAudienceDecryptionKeyCacheKey(input: {
     input.recipientDid,
     input.protocol,
     input.contextId,
-    input.role,
-    input.epoch,
+    input.rolePath,
     input.keyId,
   ]))}`;
 }

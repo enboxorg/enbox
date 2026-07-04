@@ -572,70 +572,6 @@ describe('AuthManager', () => {
       expect(manager.state).toBe('connected');
     });
 
-    test('restores delegate decryption keys from storage on session restore', async () => {
-      const keysPayload = [{ protocol: 'https://test.xyz', derivedPrivateKey: { rootKeyId: 'k1' } }];
-      const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
-      await storage.set(STORAGE_KEYS.DELEGATE_DID, 'did:jwk:delegate');
-      await storage.set(STORAGE_KEYS.CONNECTED_DID, 'did:dht:owner');
-      await storage.set(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS, JSON.stringify(keysPayload));
-
-      let importedKeys: any[] | undefined;
-      let importedDid: string | undefined;
-      const delegateIdentity = createMockIdentity({
-        did      : { uri: 'did:jwk:delegate' },
-        metadata : { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner' },
-      });
-      const agent = createMockAgent({
-        firstLaunch                     : async () => false,
-        identityList                    : async () => [delegateIdentity],
-        dwnImportDelegateDecryptionKeys : (did: string, keys: any[]): void => {
-          importedDid = did;
-          importedKeys = keys;
-        },
-      });
-      const manager = createTestManager(agent, { storage });
-
-      const session = await manager.restoreSession();
-      expect(session).toBeDefined();
-      expect(importedDid).toBe('did:jwk:delegate');
-      expect(importedKeys).toEqual(keysPayload);
-    });
-
-    test('migrates legacy delegate decryption keys from StorageAdapter to SecretStore on restore', async () => {
-      const { Convert } = await import('@enbox/common');
-      const keysPayload = [{ protocol: 'https://test.xyz', derivedPrivateKey: { rootKeyId: 'k-migrate' } }];
-      const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
-      await storage.set(STORAGE_KEYS.DELEGATE_DID, 'did:jwk:delegate');
-      await storage.set(STORAGE_KEYS.CONNECTED_DID, 'did:dht:owner');
-      // Place keys in legacy StorageAdapter (plaintext JSON — pre-encryption era).
-      await storage.set(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS, JSON.stringify(keysPayload));
-
-      let importedKeys: any[] | undefined;
-      const delegateIdentity = createMockIdentity({
-        did      : { uri: 'did:jwk:delegate' },
-        metadata : { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner' },
-      });
-      const agent = createMockAgent({
-        firstLaunch                     : async () => false,
-        identityList                    : async () => [delegateIdentity],
-        dwnImportDelegateDecryptionKeys : (_did: string, keys: any[]): void => { importedKeys = keys; },
-      });
-      const manager = createTestManager(agent, { storage });
-
-      await manager.restoreSession();
-      expect(importedKeys).toEqual(keysPayload);
-
-      // Legacy copy should have been removed.
-      expect(await storage.get(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS)).toBeNull();
-
-      // Keys should now be in SecretStore.
-      const migratedBytes = await agent.secrets.get(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS);
-      expect(migratedBytes).toBeDefined();
-      expect(JSON.parse(Convert.uint8Array(migratedBytes!).toString())).toEqual(keysPayload);
-    });
-
   });
 
   describe('disconnect()', () => {
@@ -661,10 +597,9 @@ describe('AuthManager', () => {
       expect(await storage.get(STORAGE_KEYS.ACTIVE_IDENTITY)).toBeNull();
     });
 
-    test('clean disconnect clears delegate decryption keys from storage and memory', async () => {
+    test('clean disconnect clears the runtime delegate decryption key cache', async () => {
       const storage = new MemoryStorage();
       await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
-      await storage.set(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS, JSON.stringify([{ protocol: 'test' }]));
 
       let clearCalled = false;
       const agent = createMockAgent({
@@ -677,7 +612,6 @@ describe('AuthManager', () => {
 
       await manager.disconnect();
 
-      expect(await storage.get(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS)).toBeNull();
       expect(clearCalled).toBe(true);
     });
 
@@ -700,7 +634,7 @@ describe('AuthManager', () => {
       expect(await storage.get(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS)).toBeNull();
     });
 
-    test('clean disconnect clears delegate keys from SecretStore', async () => {
+    test('clean disconnect clears delegate context keys from SecretStore', async () => {
       const { Convert } = await import('@enbox/common');
       const storage = new MemoryStorage();
       await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
@@ -710,15 +644,12 @@ describe('AuthManager', () => {
         identityList : async () => [createMockIdentity()],
       });
 
-      // Pre-populate SecretStore with delegate keys.
-      await agent.secrets.put(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS, Convert.string('[]').toUint8Array());
       await agent.secrets.put(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, Convert.string('[]').toUint8Array());
 
       const manager = createTestManager(agent, { storage });
       await manager.connect({ password: 'test' });
       await manager.disconnect();
 
-      expect(await agent.secrets.get(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS)).toBeUndefined();
       expect(await agent.secrets.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS)).toBeUndefined();
     });
 
@@ -746,8 +677,7 @@ describe('AuthManager', () => {
         identityList : async () => [createMockIdentity()],
       });
 
-      // Pre-populate SecretStore with all secret types.
-      await agent.secrets.put(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS, Convert.string('[]').toUint8Array());
+      // Pre-populate SecretStore with secret types.
       await agent.secrets.put(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, Convert.string('[]').toUint8Array());
       await agent.secrets.put(STORAGE_KEYS.REGISTRATION_TOKENS, Convert.string('{}').toUint8Array());
 
@@ -760,7 +690,6 @@ describe('AuthManager', () => {
       expect(manager.session).toBeUndefined();
 
       // All secrets must be wiped.
-      expect(await agent.secrets.get(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS)).toBeUndefined();
       expect(await agent.secrets.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS)).toBeUndefined();
       expect(await agent.secrets.get(STORAGE_KEYS.REGISTRATION_TOKENS)).toBeUndefined();
     });

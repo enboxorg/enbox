@@ -16,7 +16,7 @@
 
 import type { GenericMessage } from '@enbox/dwn-sdk-js';
 import type { PortableDid } from '@enbox/dids';
-import type { AgentSessionIdentity, BearerIdentity, DelegateDecryptionKey, DwnDataEncodedRecordsWriteMessage, EnboxUserAgent, PermissionGrantEntry } from '@enbox/agent';
+import type { AgentSessionIdentity, BearerIdentity, DwnDataEncodedRecordsWriteMessage, EnboxUserAgent, PermissionGrantEntry } from '@enbox/agent';
 
 import type { AuthEventEmitter } from '../events.js';
 import type { PasswordProvider } from '../password-provider.js';
@@ -583,13 +583,10 @@ export async function importDelegateAndSetupSync(params: {
   delegatePortableDid: PortableDid;
   connectedDid: string;
   delegateGrants: DwnDataEncodedRecordsWriteMessage[];
-  delegateDecryptionKeys?: DelegateDecryptionKey[];
   flowName: string;
 }): Promise<BearerIdentity> {
   const {
-    userAgent, delegatePortableDid, connectedDid, delegateGrants,
-    delegateDecryptionKeys,
-    flowName,
+    userAgent, delegatePortableDid, connectedDid, delegateGrants, flowName,
   } = params;
 
   let identity: BearerIdentity | undefined;
@@ -612,13 +609,6 @@ export async function importDelegateAndSetupSync(params: {
       delegateDid : delegatePortableDid.uri,
       grants      : delegateGrants,
     });
-
-    // Import delegate protocol path decryption keys if the wallet provided
-    // them. These enable the delegate to decrypt ProtocolPath-encrypted
-    // records without possessing the owner's root X25519 private key.
-    if (delegateDecryptionKeys && delegateDecryptionKeys.length > 0) {
-      userAgent.dwn.importDelegateDecryptionKeys(delegatePortableDid.uri, delegateDecryptionKeys);
-    }
 
     // Register (or update) the identity for protocol-scoped sync.
     // If the identity is already registered from a prior session, update
@@ -692,7 +682,6 @@ export async function importDelegateAndSetupSync(params: {
  * @internal
  */
 export type DelegateSessionState = {
-  delegateDecryptionKeys?: DelegateDecryptionKey[];
   sessionRevocations?: { grantId: string; revocationGrantId: string }[];
 };
 
@@ -841,30 +830,15 @@ async function persistOrClearDelegateSecrets(
   delegateState: DelegateSessionState,
 ): Promise<void> {
   const {
-    delegateDecryptionKeys,
     sessionRevocations,
   } = delegateState;
 
-  // Persist or clear keys in the SecretStore + legacy StorageAdapter.
+  // Clear legacy key caches that are no longer populated by connect.
   const secretWrites: Promise<void>[] = [];
-  const putOrDelete = (key: string, data: unknown[] | undefined): void => {
-    if (data?.length) {
-      secretWrites.push(userAgent.secrets.put(key, Convert.string(JSON.stringify(data)).toUint8Array()));
-    } else {
-      secretWrites.push(userAgent.secrets.delete(key).then(() => {}).catch(() => {}));
-      secretWrites.push(storage.remove(key).catch(() => {}));
-    }
-  };
-  putOrDelete(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS, delegateDecryptionKeys);
   secretWrites.push(userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).then(() => {}).catch(() => {}));
   secretWrites.push(storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).catch(() => {}));
   secretWrites.push(storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS).catch(() => {}));
   await Promise.all(secretWrites);
-
-  // Best-effort cleanup of legacy plaintext copies when new keys were written.
-  if (delegateDecryptionKeys?.length) {
-    try { await storage.remove(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS); } catch { /* best-effort */ }
-  }
 
   if (sessionRevocations?.length) {
     extraStorageKeys[STORAGE_KEYS.SESSION_REVOCATIONS] = JSON.stringify(sessionRevocations);

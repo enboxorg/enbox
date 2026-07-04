@@ -31,58 +31,6 @@ import { ensureVaultReady, finalizeSession, registerSyncScopeForIdentity, resolv
  * at-rest fix). This function tries JWE decryption first, then falls back
  * to treating the value as raw JSON for backward compatibility.
  */
-async function decryptStoredKeys(
-  userAgent: EnboxUserAgent,
-  stored: string,
-): Promise<string> {
-  // JWE compact serialization has exactly 4 dots (5 segments).
-  if (stored.split('.').length === 5) {
-    const plaintext = await userAgent.vault.decryptData({ jwe: stored });
-    return Convert.uint8Array(plaintext).toString();
-  }
-  // Not a JWE — assume plaintext JSON (backward compat).
-  return stored;
-}
-
-/**
- * Load delegate keys from SecretStore, falling back to legacy StorageAdapter.
- *
- * On a successful legacy read the keys are migrated into the SecretStore and
- * the plaintext/JWE copy is removed (best-effort). Returns the JSON string
- * representation of the keys, or `undefined` if nothing is stored.
- */
-async function loadDelegateKeysWithFallback(
-  userAgent: EnboxUserAgent,
-  storage: StorageAdapter,
-  key: string,
-): Promise<string | undefined> {
-  // 1. Try SecretStore (preferred path).
-  try {
-    const bytes = await userAgent.secrets.get(key);
-    if (bytes) {
-      return Convert.uint8Array(bytes).toString();
-    }
-  } catch { /* vault may be locked — fall through to legacy path */ }
-
-  // 2. Fall back to legacy StorageAdapter (JWE or plaintext JSON).
-  const legacy = await storage.get(key);
-  if (!legacy) { return undefined; }
-
-  try {
-    const json = await decryptStoredKeys(userAgent, legacy);
-
-    // Migrate into SecretStore and remove legacy copy (best-effort).
-    try {
-      await userAgent.secrets.put(key, Convert.string(json).toUint8Array());
-      await storage.remove(key);
-    } catch { /* best-effort migration */ }
-
-    return json;
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * Attempt to restore a previous session.
  *
@@ -191,16 +139,13 @@ export async function restoreSession(
 
     if (!isAgentOnlySession) {
       // Truly stale session data — clean up and bail.
-      // Remove delegate keys from both SecretStore and legacy StorageAdapter.
       await storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
       await storage.remove(STORAGE_KEYS.ACTIVE_IDENTITY);
       await storage.remove(STORAGE_KEYS.DELEGATE_DID);
       await storage.remove(STORAGE_KEYS.CONNECTED_DID);
-      await storage.remove(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS);
       await storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
       await storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS);
       await storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS);
-      try { await userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS); } catch { /* best-effort */ }
       try { await userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS); } catch { /* best-effort */ }
       // Do NOT remove REVOCATION_RETRY_CONTEXT here — it has its own
       // lifecycle managed by the retry maintenance path. Stale session
@@ -249,26 +194,7 @@ export async function restoreSession(
     try { await userAgent.sync.unregisterIdentity(connectedDid); } catch { /* already gone or store error */ }
   }
 
-  // Restore delegate decryption keys BEFORE starting sync so that the first
-  // sync cycle can decrypt encrypted records.
-  //
-  // Keys are loaded from the vault-backed SecretStore (preferred). When
-  // the SecretStore is empty, we fall back to the legacy StorageAdapter
-  // which may hold either a compact JWE (encrypted with the vault CEK)
-  // or raw JSON (from sessions created before the encryption-at-rest fix).
-  // On successful fallback, the legacy copy is removed (best-effort) so
-  // all future reads come from the SecretStore.
   if (delegateDid && connectedDid) {
-    const decryptionKeysJson = await loadDelegateKeysWithFallback(userAgent, storage, STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS);
-    if (decryptionKeysJson) {
-      try {
-        const keys = JSON.parse(decryptionKeysJson);
-        if (Array.isArray(keys) && keys.length > 0) {
-          userAgent.dwn.importDelegateDecryptionKeys(delegateDid, keys);
-        }
-      } catch { /* best effort — keys will be refreshed on next connect */ }
-    }
-
     await storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS).catch(() => {});
     await userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).catch(() => {});
     await storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).catch(() => {});

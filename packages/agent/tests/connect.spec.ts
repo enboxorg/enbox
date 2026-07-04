@@ -1359,57 +1359,7 @@ describe('enbox connect', () => {
       expect((configureCall!.args[0] as any).encryption).toBe(true);
     });
 
-    it('should abort the connect flow when encrypted protocol has contextId-scoped read', async () => {
-      const encryptedProtocol: DwnProtocolDefinition = {
-        protocol  : 'http://encrypted-abort-ctx.xyz',
-        published : true,
-        types     : {
-          secret: {
-            schema             : 'http://encrypted-abort-ctx.xyz/schema/secret',
-            dataFormats        : ['application/json'],
-            encryptionRequired : true,
-          },
-        },
-        structure: { secret: {} },
-      };
-
-      const contextScopedScopes: RecordsPermissionScope[] = [{
-        interface : 'Records' as any,
-        method    : 'Read' as any,
-        protocol  : 'http://encrypted-abort-ctx.xyz',
-        contextId : 'some-context-id',
-      }];
-
-      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
-      sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
-      sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
-
-      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-        baseURL  : 'http://localhost:3000',
-        endpoint : 'callback',
-      });
-      connectRequest = await EnboxConnectProtocol.createConnectRequest({
-        appName            : 'Sample App',
-        clientDid          : clientEphemeralPortableDid.uri,
-        permissionRequests : [{ protocolDefinition: encryptedProtocol, permissionScopes: contextScopedScopes }],
-        callbackUrl        : callbackUrl,
-      });
-
-      sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
-        messageCid : '',
-        reply      : { status: { code: 202, detail: 'OK' } }
-      });
-      sinon.stub(testHarness.agent, 'processDwnRequest')
-        .resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' }, entries: [{}] as any } });
-
-      await expect(
-        EnboxConnectProtocol.submitConnectResponse(
-          providerIdentity.did.uri, connectRequest, randomPin, testHarness.agent,
-        )
-      ).rejects.toThrow('contextId is not supported');
-    });
-
-    it('should include protocol-wide decryption keys for mixed encrypted protocols', async () => {
+    it('should use durable grantKey records instead of connect-response decryption keys for mixed encrypted protocols', async () => {
       const mixedProtocol: DwnProtocolDefinition = {
         protocol  : 'http://mixed-encrypted.xyz',
         published : true,
@@ -1493,13 +1443,8 @@ describe('enbox connect', () => {
         jwt: responseJwt,
       })) as EnboxConnectResponse;
 
-      expect(response.delegateDecryptionKeys).toHaveLength(1);
-      expect(response.delegateDecryptionKeys![0].scope.kind).toBe('protocol');
       expect(grantKeyStub.calledOnce).toBe(true);
-      expect(response.delegateDecryptionKeys![0].derivedPrivateKey.derivationPath).toEqual([
-        'protocolPath',
-        mixedProtocol.protocol,
-      ]);
+      expect('delegateDecryptionKeys' in response).toBe(false);
     });
 
     it('should fan out durable grantKey records with their encrypted data during connect', async () => {

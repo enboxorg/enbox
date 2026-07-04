@@ -1,5 +1,6 @@
 import type {
   DwnConfig,
+  EncryptionControlAudiencePayload,
   EncryptionKeyDeriver,
   EventLog,
   GenericMessage,
@@ -13,7 +14,7 @@ import type {
   RoleAudienceKeyEncryptionInput,
 } from '@enbox/dwn-sdk-js';
 import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
-import type { KeyIdentifier, PrivateKeyJwk, PublicKeyJwk } from '@enbox/crypto';
+import type { KeyIdentifier, PublicKeyJwk } from '@enbox/crypto';
 
 import {
   Cid,
@@ -24,7 +25,9 @@ import {
   DwnMethodName,
   Encoder,
   Encryption,
-  EncryptionProtocol,
+  ENCRYPTION_CONTROL_AUDIENCE_PATH,
+  EncryptionControl,
+  EncryptionControlDeliveryRecipientAuthority,
   EventEmitterWakePublisher,
   getRoleAudienceContextId,
   getRuleSetAtPath,
@@ -33,15 +36,19 @@ import {
   Message,
   parseCrossProtocolRef,
   Protocols,
+  RecordsWrite,
   ROLE_AUDIENCE_DERIVATION_SCHEME,
+  Time,
 } from '@enbox/dwn-sdk-js';
 import { Convert, logger, TtlCache } from '@enbox/common';
 import { CryptoUtils, X25519 } from '@enbox/crypto';
+import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '@enbox/dwn-sdk-js/stores/level';
 import { DidDht, DidJwk, UniversalResolver } from '@enbox/dids';
+import { DidResolverCacheLevel } from '@enbox/dids/resolver-cache-level';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { LocalDwnStrategy } from './local-dwn.js';
-import type { AudienceDecryptionKeyEntry, AudienceEpochPayload, AudienceKeyPayload, DelegateDecryptionKeyEntry } from './dwn-encryption.js';
+import type { AudienceDecryptionKeyEntry, AudienceKeyPayload, DelegateDecryptionKeyEntry } from './dwn-encryption.js';
 import type {
   DwnMessage,
   DwnMessageInstance,
@@ -70,16 +77,16 @@ import { isDwnRequest } from './dwn-type-guards.js';
 // Import extracted encryption functions
 import {
   buildEncryptionInput as buildEncryptionInputFn,
-  cacheAudienceDecryptionKey as cacheAudienceDecryptionKeyFn,
-  createAudienceEpochRecord as createAudienceEpochRecordFn,
-  createAudienceKeyRecord as createAudienceKeyRecordFn,
+  createAudienceDeliveryRecord as createAudienceDeliveryRecordFn,
+  createAudienceRecord as createAudienceRecordFn,
   encryptAndComputeCid as encryptAndComputeCidFn,
-  getCachedAudienceDecryptionKey as getCachedAudienceDecryptionKeyFn,
+  generateAudienceKey as generateAudienceKeyFn,
   getEncryptionKeyDeriver as getEncryptionKeyDeriverFn,
   getEncryptionKeyInfo as getEncryptionKeyInfoFn,
   getKeyDecrypter as getKeyDecrypterFn,
   ivLength as ivLengthFn,
   maybeDecryptReply as maybeDecryptReplyFn,
+  resolveAudienceDecryptionKey as resolveAudienceDecryptionKeyFn,
 } from './dwn-encryption.js';
 
 // Import extracted protocol utilities
@@ -98,6 +105,12 @@ type DwnRpcData = Blob | ReadableStream<Uint8Array>;
 type DwnMessageWithRpcData<T extends DwnInterface> = {
   message: DwnMessage[T];
   data?: DwnRpcData;
+};
+
+type PendingAudienceRecord = {
+  audienceKey: AudienceKeyPayload;
+  rolePath: string;
+  sealingPublicKey: PublicKeyJwk;
 };
 
 type DwnApiParams = {
@@ -170,9 +183,8 @@ export class AgentDwnApi {
   });
 
   /**
-   * Role-audience private keys hydrated from durable audienceKey records.
-   * The vault-backed secret store is the durable cache; this TTL cache avoids
-   * re-reading and re-decrypting the same key during a session.
+   * Role-audience private keys hydrated from durable audience seals or delivery records.
+   * This is a memory-only session cache; the records remain the durable source of truth.
    */
   private readonly _audienceDecryptionKeyCache = new TtlCache<string, AudienceDecryptionKeyEntry>({
     ttl: 24 * 60 * 60 * 1000
@@ -512,7 +524,7 @@ export class AgentDwnApi {
         );
       } catch (error) {
         logger.log(
-          `AgentDwnApi: audienceKey provisioning failed after accepting role record '${(message as RecordsWriteMessage).recordId}': ` +
+          `AgentDwnApi: audience delivery provisioning failed after accepting role record '${(message as RecordsWriteMessage).recordId}': ` +
           `${error instanceof Error ? error.message : String(error)}`
         );
       }
@@ -712,71 +724,12 @@ export class AgentDwnApi {
     throw new Error(`Failed to send DWN RPC request: ${JSON.stringify(errorMessages)}`);
   }
 
-  /**
-   * Eagerly provision a role-audience epoch for `(protocol, contextId, role)`
-   * without adding a member, so records written for the role can carry a
-   * `roleAudience` key-encryption entry before any member of that role exists.
-   *
-   * Mints the audience keypair, persists the private key to the agent's secret
-   * store, and writes the public `audienceEpoch` record. Idempotent: when an
-   * epoch already exists for the tuple it is reused and no new record is
-   * written. Per-member `audienceKey` delivery records are still created when
-   * members are added.
-   *
-   * @throws when the protocol is not installed for `ownerDid`, or `role` is not
-   *   an encrypted audience (a `$role` type carrying `$keyAgreement`).
-   */
-  public async provisionRoleAudienceEpoch(params: {
-    ownerDid : string;
-    protocol : string;
-    role : string;
-    contextId : string;
-  }): Promise<{ epoch: number; keyId: string; created: boolean }> {
-    const { ownerDid, protocol, role, contextId } = params;
-
-    const protocolDefinition = await this.getProtocolDefinition(ownerDid, protocol);
-    if (protocolDefinition === undefined) {
-      throw new Error(`AgentDwnApi: protocol '${protocol}' is not installed for '${ownerDid}'.`);
-    }
-
-    const ruleSet = getRuleSetAtPath(role, protocolDefinition.structure);
-    if (ruleSet?.$role !== true || ruleSet.$keyAgreement?.publicKeyJwk === undefined) {
-      throw new Error(
-        `AgentDwnApi: role '${role}' is not an encrypted audience ` +
-        `(requires $role with $keyAgreement) in protocol '${protocol}'.`,
-      );
-    }
-
-    const existing = await this.queryLatestAudienceEpoch({
-      authorDid : ownerDid,
-      contextId,
-      protocol,
-      role,
-      sourceDid : ownerDid,
-    });
-
-    const audienceKey = await this.getOrCreateAudienceKey({
-      authorDid : ownerDid,
-      contextId,
-      protocol,
-      role,
-      sourceDid : ownerDid,
-    });
-
-    return {
-      created : existing === undefined,
-      epoch   : audienceKey.epoch,
-      keyId   : audienceKey.keyMaterial.keyId,
-    };
-  }
-
   private async provisionAudienceKeyForAcceptedRoleRecord(
     request: ProcessDwnRequest<DwnInterface.RecordsWrite>,
     recordsWrite: RecordsWriteMessage,
   ): Promise<void> {
     const descriptor = recordsWrite.descriptor;
-    if (descriptor.protocol === EncryptionProtocol.uri ||
-        descriptor.protocol === undefined ||
+    if (descriptor.protocol === undefined ||
         descriptor.protocolPath === undefined ||
         descriptor.recipient === undefined) {
       return;
@@ -801,93 +754,197 @@ export class AgentDwnApi {
     }
 
     const audienceKey = await this.getOrCreateAudienceKey({
-      authorDid    : request.author,
+      authorDid         : request.author,
       contextId,
-      protocol     : descriptor.protocol,
-      protocolRole : request.messageParams?.protocolRole,
-      role         : descriptor.protocolPath,
-      sourceDid    : request.target,
+      granteeDid        : request.granteeDid,
+      permissionGrantId : request.messageParams?.permissionGrantId,
+      protocol          : descriptor.protocol,
+      protocolRole      : request.messageParams?.protocolRole,
+      rolePath          : descriptor.protocolPath,
+      sourceDid         : request.target,
     });
     const recipientRolePublicKey = await this.getRecipientRolePublicKey({
       protocol     : descriptor.protocol,
       recipientDid : descriptor.recipient,
-      role         : descriptor.protocolPath,
+      rolePath     : descriptor.protocolPath,
     });
 
-    await createAudienceKeyRecordFn({
-      agent        : this.agent,
+    await createAudienceDeliveryRecordFn({
+      agent              : this.agent,
       audienceKey,
-      authorDid    : request.author,
-      protocolRole : request.messageParams?.protocolRole,
-      recipientDid : descriptor.recipient,
+      authorDid          : request.author,
+      protocolRole       : request.messageParams?.protocolRole,
+      recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
+      recipientDid       : descriptor.recipient,
       recipientRolePublicKey,
-      sourceDid    : request.target,
+      sourceDid          : request.target,
     });
   }
 
   private async getRoleAudienceKeyEncryptionInputs(params: {
     authorDid: string;
+    granteeDid?: string;
+    permissionGrantId?: string;
     sourceDid: string;
     protocol: string;
     parentContextId?: string;
+    protocolRole?: string;
     protocolDefinition: ProtocolDefinition;
     sourceRuleSet: ProtocolRuleSet;
-  }): Promise<RoleAudienceKeyEncryptionInput[]> {
+  }): Promise<{ inputs: RoleAudienceKeyEncryptionInput[]; pendingAudienceRecords: PendingAudienceRecord[] }> {
     const inputs: RoleAudienceKeyEncryptionInput[] = [];
+    const pendingAudienceRecords: PendingAudienceRecord[] = [];
     const readRules = params.sourceRuleSet.$actions?.filter((rule): boolean =>
       rule.role !== undefined && rule.can?.includes('read')
     ) ?? [];
 
     for (const rule of readRules) {
       const roleAudience = this.resolveRoleAudienceRule(rule.role!, params.protocolDefinition, params.parentContextId);
-      if (roleAudience === undefined) {
+      const pendingRoleAudience = roleAudience === undefined && params.parentContextId === undefined
+        ? await this.preparePendingAudienceRecord(rule.role!, params.protocolDefinition, params.sourceDid, params.granteeDid)
+        : undefined;
+      if (roleAudience === undefined && pendingRoleAudience === undefined) {
         continue;
       }
 
-      const audienceEpoch = await this.queryLatestAudienceEpoch({
-        authorDid : params.authorDid,
-        contextId : roleAudience.contextId,
-        protocol  : roleAudience.protocol,
-        role      : roleAudience.role,
-        sourceDid : params.sourceDid,
-      });
-      if (audienceEpoch === undefined) {
-        throw new Error(
-          `AgentDwnApi: Missing audienceEpoch for encrypted role audience ` +
-          `'${roleAudience.protocol}/${roleAudience.role}' at context '${roleAudience.contextId}'.`
-        );
+      const audienceKey = roleAudience === undefined
+        ? pendingRoleAudience!.audienceKey
+        : await this.getOrCreateAudiencePublicKey({
+          authorDid         : params.authorDid,
+          contextId         : roleAudience.contextId,
+          granteeDid        : params.granteeDid,
+          permissionGrantId : params.permissionGrantId,
+          protocol          : roleAudience.protocol,
+          protocolRole      : params.protocolRole,
+          rolePath          : roleAudience.rolePath,
+          sourceDid         : params.sourceDid,
+        });
+      if (pendingRoleAudience !== undefined) {
+        pendingAudienceRecords.push(pendingRoleAudience);
       }
+      const audiencePublicKey = 'publicKeyJwk' in audienceKey
+        ? audienceKey.publicKeyJwk
+        : audienceKey.keyMaterial.publicKeyJwk;
 
       inputs.push({
         algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
         derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
-        epoch            : audienceEpoch.epoch,
-        keyId            : audienceEpoch.keyId,
-        protocol         : audienceEpoch.protocol,
-        publicKey        : audienceEpoch.publicKeyJwk,
-        role             : audienceEpoch.role,
+        keyId            : audienceKey.keyId,
+        protocol         : audienceKey.protocol,
+        publicKey        : audiencePublicKey,
+        rolePath         : audienceKey.rolePath,
       });
     }
 
-    return inputs;
+    return { inputs, pendingAudienceRecords };
+  }
+
+  private async preparePendingAudienceRecord(
+    roleRef: string,
+    protocolDefinition: ProtocolDefinition,
+    sourceDid: string,
+    granteeDid?: string,
+  ): Promise<PendingAudienceRecord | undefined> {
+    const roleAudience = await this.resolveRoleAudienceReference(roleRef, protocolDefinition);
+    if (roleAudience === undefined) {
+      return undefined;
+    }
+
+    const definition = roleAudience.protocol === protocolDefinition.protocol
+      ? protocolDefinition
+      : await this.getProtocolDefinition(sourceDid, roleAudience.protocol, granteeDid);
+    if (definition === undefined) {
+      return undefined;
+    }
+
+    const ruleSet = getRuleSetAtPath(roleAudience.rolePath, definition.structure);
+    const sealingPublicKey = ruleSet?.$keyAgreement?.publicKeyJwk as PublicKeyJwk | undefined;
+    if (ruleSet?.$role !== true || sealingPublicKey === undefined) {
+      return undefined;
+    }
+
+    return {
+      audienceKey: await generateAudienceKeyFn({
+        contextId : '',
+        protocol  : roleAudience.protocol,
+        rolePath  : roleAudience.rolePath,
+      }),
+      rolePath: roleAudience.rolePath,
+      sealingPublicKey,
+    };
   }
 
   private resolveRoleAudienceRule(
     roleRef: string,
     protocolDefinition: ProtocolDefinition,
     parentContextId: string | undefined,
-  ): { protocol: string; role: string; contextId: string } | undefined {
+  ): { protocol: string; rolePath: string; contextId: string } | undefined {
     const parsed = parseCrossProtocolRef(roleRef);
     const protocol = parsed === undefined
       ? protocolDefinition.protocol
       : protocolDefinition.uses?.[parsed.alias];
-    const role = parsed === undefined ? roleRef : parsed.protocolPath;
+    const rolePath = parsed === undefined ? roleRef : parsed.protocolPath;
     if (protocol === undefined) {
       return undefined;
     }
 
-    const contextId = getRoleAudienceContextId(role, parentContextId);
-    return contextId === undefined ? undefined : { protocol, role, contextId };
+    const contextId = getRoleAudienceContextId(rolePath, parentContextId);
+    return contextId === undefined ? undefined : { protocol, rolePath, contextId };
+  }
+
+  private async resolveRoleAudienceReference(
+    roleRef: string,
+    protocolDefinition: ProtocolDefinition,
+  ): Promise<{ protocol: string; rolePath: string } | undefined> {
+    const parsed = parseCrossProtocolRef(roleRef);
+    const protocol = parsed === undefined
+      ? protocolDefinition.protocol
+      : protocolDefinition.uses?.[parsed.alias];
+    const rolePath = parsed === undefined ? roleRef : parsed.protocolPath;
+    return protocol === undefined ? undefined : { protocol, rolePath };
+  }
+
+  private async getOrCreateAudiencePublicKey(params: {
+    authorDid: string;
+    sourceDid: string;
+    protocol: string;
+    contextId: string;
+    rolePath: string;
+    granteeDid?: string;
+    permissionGrantId?: string;
+    protocolRole?: string;
+  }): Promise<{
+    protocol: string;
+    rolePath: string;
+    contextId: string;
+    keyId: string;
+    publicKeyJwk: PublicKeyJwk;
+  }> {
+    const existingAudience = await this.resolveCurrentAudienceRecord({
+      authorDid : params.granteeDid ?? params.authorDid,
+      contextId : params.contextId,
+      protocol  : params.protocol,
+      rolePath  : params.rolePath,
+      sourceDid : params.sourceDid,
+    });
+    if (existingAudience !== undefined) {
+      return {
+        contextId    : existingAudience.payload.contextId,
+        keyId        : existingAudience.payload.keyId,
+        protocol     : existingAudience.payload.protocol,
+        publicKeyJwk : existingAudience.payload.publicKeyJwk,
+        rolePath     : existingAudience.payload.rolePath,
+      };
+    }
+
+    const audienceKey = await this.getOrCreateAudienceKey(params);
+    return {
+      contextId    : audienceKey.contextId,
+      keyId        : audienceKey.keyId,
+      protocol     : audienceKey.protocol,
+      publicKeyJwk : audienceKey.keyMaterial.publicKeyJwk,
+      rolePath     : audienceKey.rolePath,
+    };
   }
 
   private async getOrCreateAudienceKey(params: {
@@ -895,85 +952,142 @@ export class AgentDwnApi {
     sourceDid: string;
     protocol: string;
     contextId: string;
-    role: string;
+    rolePath: string;
+    granteeDid?: string;
+    permissionGrantId?: string;
     protocolRole?: string;
   }): Promise<AudienceKeyPayload> {
-    const existingEpoch = await this.queryLatestAudienceEpoch(params);
-    if (existingEpoch !== undefined) {
-      const cached = await getCachedAudienceDecryptionKeyFn({
+    const existingAudience = await this.resolveCurrentAudienceRecord({
+      authorDid : params.granteeDid ?? params.authorDid,
+      contextId : params.contextId,
+      protocol  : params.protocol,
+      rolePath  : params.rolePath,
+      sourceDid : params.sourceDid,
+    });
+    if (existingAudience !== undefined) {
+      const resolved = await resolveAudienceDecryptionKeyFn({
         agent                      : this.agent,
         audienceDecryptionKeyCache : this._audienceDecryptionKeyCache,
-        sourceDid                  : params.sourceDid,
+        delegateDecryptionKeyCache : this._delegateDecryptionKeyCache,
+        contextId                  : existingAudience.payload.contextId,
+        granteeDid                 : params.granteeDid,
+        keyId                      : existingAudience.payload.keyId,
+        protocol                   : existingAudience.payload.protocol,
         recipientDid               : params.authorDid,
-        protocol                   : existingEpoch.protocol,
-        contextId                  : existingEpoch.contextId,
-        role                       : existingEpoch.role,
-        epoch                      : existingEpoch.epoch,
-        keyId                      : existingEpoch.keyId,
+        rolePath                   : existingAudience.payload.rolePath,
+        sourceDid                  : params.sourceDid,
       });
-      if (cached === undefined) {
+      if (resolved === undefined) {
         throw new Error(
-          `AgentDwnApi: Audience epoch '${existingEpoch.keyId}' exists, but no local private key is available to deliver it.`
+          `AgentDwnApi: Audience key '${existingAudience.payload.keyId}' exists, but no seal or delivery can open it.`
         );
       }
-      return cached;
+      return {
+        contextId   : existingAudience.payload.contextId,
+        keyId       : existingAudience.payload.keyId,
+        keyMaterial : resolved.keyMaterial,
+        protocol    : existingAudience.payload.protocol,
+        rolePath    : existingAudience.payload.rolePath,
+      };
     }
 
-    const privateKeyJwk = await X25519.generateKey() as PrivateKeyJwk;
-    const publicKeyJwk = await X25519.getPublicKey({ key: privateKeyJwk }) as PublicKeyJwk;
-    const audienceKey: AudienceKeyPayload = {
-      protocol    : params.protocol,
-      contextId   : params.contextId,
-      role        : params.role,
-      epoch       : 1,
-      keyMaterial : {
-        algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-        derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
-        keyId            : await Encryption.getKeyId(publicKeyJwk),
-        privateKeyJwk,
-        publicKeyJwk,
-      },
-    };
+    const protocolDefinition = await this.getProtocolDefinition(params.sourceDid, params.protocol, params.granteeDid);
+    if (protocolDefinition === undefined) {
+      throw new Error(`AgentDwnApi: protocol '${params.protocol}' is not installed for '${params.sourceDid}'.`);
+    }
 
-    await createAudienceEpochRecordFn({
+    const ruleSet = getRuleSetAtPath(params.rolePath, protocolDefinition.structure);
+    const sealingPublicKey = ruleSet?.$keyAgreement?.publicKeyJwk as PublicKeyJwk | undefined;
+    if (ruleSet?.$role !== true || sealingPublicKey === undefined) {
+      throw new Error(
+        `AgentDwnApi: role '${params.rolePath}' is not an encrypted audience ` +
+        `(requires $role with $keyAgreement) in protocol '${params.protocol}'.`,
+      );
+    }
+
+    const created = await createAudienceRecordFn({
       agent        : this.agent,
-      audienceKey,
       authorDid    : params.authorDid,
+      contextId    : params.contextId,
+      protocol     : params.protocol,
       protocolRole : params.protocolRole,
+      rolePath     : params.rolePath,
+      sealingPublicKey,
       sourceDid    : params.sourceDid,
     });
-    await cacheAudienceDecryptionKeyFn({
+    const canOpenSeal = await resolveAudienceDecryptionKeyFn({
       agent                      : this.agent,
-      audienceDecryptionKeyCache : this._audienceDecryptionKeyCache,
-      entry                      : {
-        ...audienceKey,
-        recipientDid : params.authorDid,
-        sourceDid    : params.sourceDid,
-      },
+      delegateDecryptionKeyCache : this._delegateDecryptionKeyCache,
+      contextId                  : params.contextId,
+      granteeDid                 : params.granteeDid,
+      keyId                      : created.audienceKey.keyId,
+      protocol                   : params.protocol,
+      recipientDid               : params.authorDid,
+      rolePath                   : params.rolePath,
+      sourceDid                  : params.sourceDid,
+    });
+    if (canOpenSeal === undefined) {
+      await this.createRoleCreatorDelivery({
+        audienceKey       : created.audienceKey,
+        authorDid         : params.authorDid,
+        granteeDid        : params.granteeDid,
+        permissionGrantId : params.permissionGrantId,
+        protocolRole      : params.protocolRole,
+        sourceDid         : params.sourceDid,
+      });
+    }
+    this._audienceDecryptionKeyCache.set(this.getAudienceCacheKey({
+      contextId    : params.contextId,
+      keyId        : created.audienceKey.keyId,
+      protocol     : params.protocol,
+      recipientDid : params.authorDid,
+      rolePath     : params.rolePath,
+      sourceDid    : params.sourceDid,
+    }), {
+      contextId    : params.contextId,
+      keyMaterial  : created.audienceKey.keyMaterial,
+      protocol     : params.protocol,
+      recipientDid : params.authorDid,
+      rolePath     : params.rolePath,
+      sourceDid    : params.sourceDid,
     });
 
-    return audienceKey;
+    return created.audienceKey;
   }
 
-  private async queryLatestAudienceEpoch(params: {
+  private async resolveCurrentAudienceRecord(params: {
     authorDid: string;
     sourceDid: string;
     protocol: string;
     contextId: string;
-    role: string;
-  }): Promise<AudienceEpochPayload | undefined> {
+    rolePath: string;
+  }): Promise<{ message: RecordsWriteMessage; payload: EncryptionControlAudiencePayload } | undefined> {
+    if (this._dwn !== undefined) {
+      const record = await EncryptionControl.resolveCurrentAudienceRecord({
+        contextId    : params.contextId,
+        messageStore : this._dwn.storage.messageStore,
+        protocol     : params.protocol,
+        rolePath     : params.rolePath,
+        tenant       : params.sourceDid,
+      });
+      if (record !== undefined) {
+        const payload = await this.readAudiencePayload(params.authorDid, params.sourceDid, record);
+        return payload === undefined ? undefined : { message: record, payload };
+      }
+    }
+
     const { reply } = await this.processRequest({
       author        : params.authorDid,
       target        : params.sourceDid,
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
         filter: {
-          protocol     : EncryptionProtocol.uri,
-          protocolPath : EncryptionProtocol.audienceEpochPath,
+          protocol     : params.protocol,
+          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
           tags         : {
             protocol  : params.protocol,
+            rolePath  : params.rolePath,
             contextId : params.contextId,
-            role      : params.role,
           },
         },
       },
@@ -983,23 +1097,135 @@ export class AgentDwnApi {
       return undefined;
     }
 
-    const epochs = reply.entries
-      .map((entry): AudienceEpochPayload | undefined => {
-        if (entry.encodedData === undefined) {
-          return undefined;
-        }
-        return Encoder.base64UrlToObject(entry.encodedData) as AudienceEpochPayload;
-      })
-      .filter((entry): entry is AudienceEpochPayload => entry !== undefined)
-      .sort((a, b): number => b.epoch - a.epoch);
+    const records = reply.entries as RecordsWriteMessage[];
+    records.sort((left, right): number => this.compareAudienceRecords(params.sourceDid, left, right));
+    for (const record of records) {
+      const payload = await this.readAudiencePayload(params.authorDid, params.sourceDid, record);
+      if (payload !== undefined) {
+        return { message: record, payload };
+      }
+    }
 
-    return epochs[0];
+    return undefined;
+  }
+
+  private async readAudiencePayload(
+    authorDid: string,
+    sourceDid: string,
+    record: RecordsWriteMessage,
+  ): Promise<EncryptionControlAudiencePayload | undefined> {
+    if ('encodedData' in record && typeof record.encodedData === 'string') {
+      return Encoder.base64UrlToObject(record.encodedData) as EncryptionControlAudiencePayload;
+    }
+
+    const { reply } = await this.processRequest({
+      author        : authorDid,
+      target        : sourceDid,
+      messageType   : DwnInterface.RecordsRead,
+      messageParams : { filter: { recordId: record.recordId } },
+    });
+    if (reply.status.code !== 200 || reply.entry?.data === undefined) {
+      return undefined;
+    }
+
+    return Encoder.bytesToObject(await DataStream.toBytes(reply.entry.data)) as EncryptionControlAudiencePayload;
+  }
+
+  private compareAudienceRecords(tenant: string, left: RecordsWriteMessage, right: RecordsWriteMessage): number {
+    const leftTenantSigned = Message.getSigner(left) === tenant;
+    const rightTenantSigned = Message.getSigner(right) === tenant;
+    if (leftTenantSigned !== rightTenantSigned) {
+      return leftTenantSigned ? -1 : 1;
+    }
+
+    const dateCompare = left.descriptor.dateCreated.localeCompare(right.descriptor.dateCreated);
+    return dateCompare === 0 ? left.recordId.localeCompare(right.recordId) : dateCompare;
+  }
+
+  private async createRoleCreatorDelivery(params: {
+    audienceKey: AudienceKeyPayload;
+    authorDid: string;
+    sourceDid: string;
+    granteeDid?: string;
+    permissionGrantId?: string;
+    protocolRole?: string;
+  }): Promise<void> {
+    const recipientDid = params.granteeDid ?? params.authorDid;
+    const recipientRolePublicKey = await this.getRecipientRolePublicKey({
+      protocol : params.audienceKey.protocol,
+      recipientDid,
+      rolePath : params.audienceKey.rolePath,
+    });
+    const authority = this.getRoleCreatorDeliveryAuthority(params);
+
+    await createAudienceDeliveryRecordFn({
+      agent              : this.agent,
+      audienceKey        : params.audienceKey,
+      authorDid          : params.authorDid,
+      grantId            : authority.grantId,
+      protocolRole       : params.protocolRole,
+      recipientAuthority : authority.recipientAuthority,
+      recipientDid,
+      recipientRolePublicKey,
+      roleRef            : authority.roleRef,
+      sourceDid          : params.sourceDid,
+    });
+  }
+
+  private getRoleCreatorDeliveryAuthority(params: {
+    granteeDid?: string;
+    permissionGrantId?: string;
+    protocolRole?: string;
+  }): {
+    grantId?: string;
+    recipientAuthority: EncryptionControlDeliveryRecipientAuthority;
+    roleRef?: string;
+  } {
+    if (params.granteeDid !== undefined && params.permissionGrantId !== undefined) {
+      return {
+        grantId            : params.permissionGrantId,
+        recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleCreatorGrant,
+      };
+    }
+
+    if (params.protocolRole !== undefined) {
+      return {
+        recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleCreatorRole,
+        roleRef            : params.protocolRole,
+      };
+    }
+
+    if (params.granteeDid !== undefined) {
+      throw new Error('AgentDwnApi: role-creator delivery for a delegated writer requires a permission grant or invoked role.');
+    }
+
+    return {
+      recipientAuthority: EncryptionControlDeliveryRecipientAuthority.RoleCreatorAnyone,
+    };
+  }
+
+  private getAudienceCacheKey(input: {
+    sourceDid: string;
+    recipientDid: string;
+    protocol: string;
+    contextId: string;
+    rolePath: string;
+    keyId: string;
+  }): string {
+    return `audience-key~${Encoder.stringToBase64Url(JSON.stringify([
+      input.sourceDid,
+      input.recipientDid,
+      input.protocol,
+      input.contextId,
+      input.rolePath,
+      input.keyId,
+    ]))}`;
   }
 
   private async getRecipientRolePublicKey(params: {
     recipientDid: string;
     protocol: string;
-    role: string;
+    rolePath: string;
   }): Promise<PublicKeyJwk> {
     let protocolDefinition: ProtocolDefinition | undefined;
     try {
@@ -1010,12 +1236,12 @@ export class AgentDwnApi {
 
     protocolDefinition ??= await this.fetchRemoteProtocolDefinition(params.recipientDid, params.protocol);
 
-    const roleRuleSet = getRuleSetAtPath(params.role, protocolDefinition.structure);
+    const roleRuleSet = getRuleSetAtPath(params.rolePath, protocolDefinition.structure);
     const publicKeyJwk = roleRuleSet?.$keyAgreement?.publicKeyJwk;
     if (publicKeyJwk === undefined) {
       throw new Error(
         `AgentDwnApi: Recipient '${params.recipientDid}' has no encryption key for role path ` +
-        `'${params.protocol}/${params.role}'.`
+        `'${params.protocol}/${params.rolePath}'.`
       );
     }
 
@@ -1163,14 +1389,18 @@ export class AgentDwnApi {
           await Encryption.getKeyId(protocolPathPublicKey), protocolPathPublicKey,
           KeyDerivationScheme.ProtocolPath,
         );
-        encryptionInput.keyEncryptionInputs.push(...await this.getRoleAudienceKeyEncryptionInputs({
-          authorDid       : request.author,
-          parentContextId : messageParams.parentContextId,
-          protocol        : messageParams.protocol,
+        const roleAudienceInputs = await this.getRoleAudienceKeyEncryptionInputs({
+          authorDid         : request.author,
+          granteeDid        : request.granteeDid,
+          parentContextId   : messageParams.parentContextId ?? messageParams.recordId,
+          permissionGrantId : messageParams.permissionGrantId,
+          protocol          : messageParams.protocol,
+          protocolRole      : messageParams.protocolRole,
           protocolDefinition,
-          sourceDid       : request.target,
-          sourceRuleSet   : ruleSet,
-        }));
+          sourceDid         : request.target,
+          sourceRuleSet     : ruleSet,
+        });
+        encryptionInput.keyEncryptionInputs.push(...roleAudienceInputs.inputs);
 
         // 6. Encrypt data and compute CID.
         const { encryptedBytes, dataCid, dataSize } =
@@ -1179,6 +1409,63 @@ export class AgentDwnApi {
         // 7. Replace plaintext with encrypted data.
         messageParams.dataCid = dataCid;
         messageParams.dataSize = dataSize;
+        if (roleAudienceInputs.pendingAudienceRecords.length > 0) {
+          messageParams.dateCreated ??= Time.getCurrentTimestamp();
+          messageParams.messageTimestamp ??= messageParams.dateCreated;
+          if (request.granteeDid && messageParams.permissionGrantId && !messageParams.delegatedGrant) {
+            await this.populateDelegatedGrantForWrite(request.author, request.granteeDid, messageParams);
+          }
+          messageParams.recordId ??= (await RecordsWrite.create({
+            ...messageParams,
+            data   : encryptedBytes,
+            encryptionInput,
+            signer : request.granteeDid ? await this.getSigner(request.granteeDid) : await this.getSigner(request.author),
+          })).message.recordId;
+
+          for (const pending of roleAudienceInputs.pendingAudienceRecords) {
+            const contextId = getRoleAudienceContextId(pending.rolePath, messageParams.recordId);
+            if (contextId === undefined) {
+              throw new Error(`AgentDwnApi: Unable to determine role audience context for '${pending.rolePath}'.`);
+            }
+
+            const audienceKey: AudienceKeyPayload = {
+              ...pending.audienceKey,
+              contextId,
+            };
+            await createAudienceRecordFn({
+              agent            : this.agent,
+              audienceKey,
+              authorDid        : request.author,
+              contextId,
+              protocol         : audienceKey.protocol,
+              protocolRole     : messageParams.protocolRole,
+              rolePath         : audienceKey.rolePath,
+              sealingPublicKey : pending.sealingPublicKey,
+              sourceDid        : request.target,
+            });
+            const canOpenSeal = await resolveAudienceDecryptionKeyFn({
+              agent                      : this.agent,
+              delegateDecryptionKeyCache : this._delegateDecryptionKeyCache,
+              contextId,
+              granteeDid                 : request.granteeDid,
+              keyId                      : audienceKey.keyId,
+              protocol                   : audienceKey.protocol,
+              recipientDid               : request.author,
+              rolePath                   : audienceKey.rolePath,
+              sourceDid                  : request.target,
+            });
+            if (canOpenSeal === undefined) {
+              await this.createRoleCreatorDelivery({
+                audienceKey,
+                authorDid         : request.author,
+                granteeDid        : request.granteeDid,
+                permissionGrantId : messageParams.permissionGrantId,
+                protocolRole      : messageParams.protocolRole,
+                sourceDid         : request.target,
+              });
+            }
+          }
+        }
         delete messageParams.data;
         readableStream = DataStream.fromBytes(encryptedBytes);
         request.dataStream = undefined;
@@ -1220,25 +1507,8 @@ export class AgentDwnApi {
       // sets `authorization.authorDelegatedGrant` and resolves the logical
       // author to the grantor (owner) rather than the signer (delegate).
       const params = { ...request.messageParams } as any;
-      if (request.granteeDid && params.permissionGrantId && !params.delegatedGrant
-        && isDwnRequest(request, DwnInterface.RecordsWrite)) {
-        // Read as the grantee (delegate), not the owner. The delegate is
-        // the grant's recipient so the permissions protocol authorizes the
-        // read. The owner's signing key may not be available on the
-        // delegate agent in real wallet-connect flows.
-        const { reply: grantReply } = await this.processRequest({
-          author        : request.granteeDid,
-          target        : request.author,
-          messageType   : DwnInterface.RecordsRead,
-          messageParams : { filter: { recordId: params.permissionGrantId } },
-        });
-        if (grantReply.status.code === 200 && grantReply.entry?.recordsWrite && grantReply.entry?.data) {
-          const grantDataBytes = await DataStream.toBytes(grantReply.entry.data);
-          params.delegatedGrant = {
-            ...grantReply.entry.recordsWrite,
-            encodedData: Convert.uint8Array(grantDataBytes).toBase64Url(),
-          };
-        }
+      if (request.granteeDid && params.permissionGrantId && !params.delegatedGrant && isDwnRequest(request, DwnInterface.RecordsWrite)) {
+        await this.populateDelegatedGrantForWrite(request.author, request.granteeDid, params);
       }
 
       dwnMessage = await dwnMessageConstructor.create({
@@ -1252,6 +1522,30 @@ export class AgentDwnApi {
       message    : dwnMessage.message as DwnMessage[T],
       dataStream : readableStream,
     };
+  }
+
+  private async populateDelegatedGrantForWrite(
+    authorDid: string,
+    granteeDid: string,
+    messageParams: DwnMessageParams[DwnInterface.RecordsWrite],
+  ): Promise<void> {
+    if (messageParams.permissionGrantId === undefined || messageParams.delegatedGrant !== undefined) {
+      return;
+    }
+
+    const { reply: grantReply } = await this.processRequest({
+      author        : granteeDid,
+      target        : authorDid,
+      messageType   : DwnInterface.RecordsRead,
+      messageParams : { filter: { recordId: messageParams.permissionGrantId } },
+    });
+    if (grantReply.status.code === 200 && grantReply.entry?.recordsWrite && grantReply.entry?.data) {
+      const grantDataBytes = await DataStream.toBytes(grantReply.entry.data);
+      messageParams.delegatedGrant = {
+        ...grantReply.entry.recordsWrite,
+        encodedData: Convert.uint8Array(grantDataBytes).toBase64Url(),
+      };
+    }
   }
 
   private hasGrantParams<T extends DwnInterface>(params?: DwnMessageParams[T]): boolean {
