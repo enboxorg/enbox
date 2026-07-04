@@ -3,10 +3,9 @@
  *
  * Produces a single ESM bundle at dist/browser.mjs.
  * Invoke from a package directory:
- *   bun ../../build/browser-bundle.js [--node-shims] [--extra-entry src/utils.ts:dist/utils.js] [--metafile]
+ *   bun ../../build/browser-bundle.js [--extra-entry src/utils.ts:dist/utils.js] [--metafile]
  *
  * Options:
- *   --node-shims     Enable browser-safe aliases for known Node builtin imports
  *   --entry          Override the primary entry point (default: src/index.ts)
  *   --extra-entry    Additional entry:output pairs (can be repeated)
  *   --alias          Additional esbuild alias: --alias specifier:replacement (can be repeated)
@@ -18,7 +17,6 @@ import esbuild from 'esbuild';
 import { browserConfig } from './esbuild-browser-config.cjs';
 
 const args = process.argv.slice(2);
-const nodeShims = args.includes('--node-shims');
 const metafile = args.includes('--metafile');
 let entryPoint = './src/index.ts';
 
@@ -49,7 +47,7 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 
-const config = browserConfig({ nodeShims, entryPoint, aliases, externals });
+const config = browserConfig({ entryPoint, aliases, externals });
 
 // Primary ESM bundle
 const primaryBuild = esbuild.build({

@@ -138,7 +138,7 @@
   "scripts": {
     "build:esm": "tsc",
     "build": "bun run clean && bun run compile-validators && bun run build:esm && bun run bundle",
-    "bundle": "rm -rf dist/browser.mjs && bun ../../build/browser-bundle.js --node-shims --metafile",
+    "bundle": "rm -rf dist/browser.mjs && bun ../../build/browser-bundle.js --metafile",
     "clean": "rm -rf dist && rm -rf generated/*",
     "compile-validators": "bun ./build/compile-validators.js",
     "lint": "eslint . --max-warnings 0",

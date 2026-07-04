@@ -3,17 +3,16 @@
  *
  * Usage (from a package's build script):
  *   const { browserConfig } = require('../../build/esbuild-browser-config.cjs');
- *   const config = browserConfig({ nodeShims: true });
+ *   const config = browserConfig();
  *
  * @param {object} [options]
- * @param {boolean} [options.nodeShims]  Add browser-safe aliases for known Node builtin imports.
  * @param {string}  [options.entryPoint] Override the default './src/index.ts' entry.
  * @param {Record<string, string>} [options.aliases] Additional esbuild aliases.
  * @param {string[]} [options.externals] Exact module specifiers to leave external.
  * @returns {import('esbuild').BuildOptions}
  */
 function browserConfig(options = {}) {
-  const { nodeShims = false, entryPoint = './src/index.ts', aliases = {}, externals = [] } = options;
+  const { entryPoint = './src/index.ts', aliases = {}, externals = [] } = options;
   const aliasEntries = Object.entries(aliases);
   const externalEntries = [...externals];
   const plugins = [];
@@ -45,11 +44,6 @@ function browserConfig(options = {}) {
     },
     plugins: plugins.length > 0 ? plugins : undefined,
   };
-
-  if (nodeShims) {
-    config.alias ??= {};
-    config.alias.events = 'eventemitter3';
-  }
 
   return config;
 }
