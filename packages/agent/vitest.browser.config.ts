@@ -44,9 +44,6 @@ export default defineConfig({
       'abstract-level',
       'level',
       'ms',
-      // @isaacs/ttlcache — CJS; transitive dep via @enbox/crypto -> @enbox/common.
-      // Use Vite's nested-dep `>` syntax to resolve through workspace symlinks.
-      '@enbox/crypto > @enbox/common > @isaacs/ttlcache',
     ],
     holdUntilCrawlEnd: true,
   },

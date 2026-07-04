@@ -87,9 +87,7 @@ describe('DwnServerInfoCache', () => {
     });
 
     it('returns undefined after ttl', async function () {
-      // NOTE: tried very hard to use sinon.useFakeTimers() but couldn't get it to work with `TtlCache` implementation in `DwnServerInfoCacheMemory`.
-      // I sanity added a setInterval here, and it obeys the fake time ticks and its callback
-      // is fired, but the `TtlCache` just ignores the fake timer ticks.
+      // TtlCache uses a monotonic clock for TTL arithmetic, so keep this as a real-time sleep.
       cache = new DwnServerInfoCacheMemory({ ttl: '100ms' });
 
       const key = 'some-key1';

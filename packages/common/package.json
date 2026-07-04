@@ -76,7 +76,6 @@
     "bun": ">=1.0.0"
   },
   "dependencies": {
-    "@isaacs/ttlcache": "1.4.1",
     "multiformats": "14.0.3"
   },
   "peerDependencies": {
