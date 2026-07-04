@@ -3,6 +3,8 @@ import { describe, expect, it } from 'bun:test';
 import { sleep } from '../src/time.js';
 import { TtlCache } from '../src/cache.js';
 
+const MAX_TIMER_DELAY = 2_147_483_647;
+
 describe('TtlCache', () => {
   it('should store and retrieve string values', () => {
     const cache = new TtlCache({ max: 10000, ttl: 1000 });
@@ -39,20 +41,29 @@ describe('TtlCache', () => {
   });
 
   it('should renew ttl when updateAgeOnGet is enabled per read', async () => {
-    const cache = new TtlCache({ ttl: 250 });
+    const cache = new TtlCache({ ttl: 600 });
     cache.set('key', 'value');
 
-    await sleep(75);
+    await sleep(150);
     const remainingBeforeGet = cache.getRemainingTTL('key');
 
     expect(cache.get('key', { updateAgeOnGet: true })).toBe('value');
     expect(cache.getRemainingTTL('key')).toBeGreaterThan(remainingBeforeGet);
 
-    await sleep(125);
+    await sleep(500);
     expect(cache.get('key')).toBe('value');
 
-    await sleep(175);
+    await sleep(225);
     expect(cache.get('key')).toBeUndefined();
+  });
+
+  it('should leave the existing expiry unchanged when updateAgeOnGet has no ttl to apply', () => {
+    const cache = new TtlCache<string, string>({ updateAgeOnGet: true });
+    cache.set('key', 'value', { ttl: 1000 });
+    const remainingBeforeGet = cache.getRemainingTTL('key');
+
+    expect(cache.get('key')).toBe('value');
+    expect(cache.getRemainingTTL('key')).toBeLessThanOrEqual(remainingBeforeGet);
   });
 
   it('should evict the soonest expiring entry when max is exceeded', () => {
@@ -100,15 +111,15 @@ describe('TtlCache', () => {
   });
 
   it('should update ttl for an existing entry', async () => {
-    const cache = new TtlCache({ ttl: 20 });
+    const cache = new TtlCache({ ttl: 100 });
     cache.set('key', 'value');
-    cache.setTTL('key', 80);
+    cache.setTTL('key', 400);
 
-    await sleep(35);
+    await sleep(125);
     expect(cache.get('key')).toBe('value');
 
-    cache.setTTL('key', 10);
-    await sleep(20);
+    cache.setTTL('key', 50);
+    await sleep(125);
 
     expect(cache.get('key')).toBeUndefined();
   });
@@ -152,6 +163,25 @@ describe('TtlCache', () => {
     expect(disposed).toEqual(['key:value:stale']);
   });
 
+  it('should re-arm the background timer for the next stale entry', async () => {
+    const disposed: string[] = [];
+    const cache = new TtlCache<string, string>({
+      dispose : (value, key, reason): void => { disposed.push(`${key}:${value}:${reason}`); },
+      ttl     : 1000,
+    });
+
+    cache.set('first', 'a', { ttl: 25 });
+    cache.set('second', 'b', { ttl: 75 });
+
+    await sleep(200);
+
+    expect(cache.size).toBe(0);
+    expect(disposed).toEqual([
+      'first:a:stale',
+      'second:b:stale',
+    ]);
+  });
+
   it('should call timer unref with the timer as receiver', () => {
     const originalSetTimeout = globalThis.setTimeout;
     const originalClearTimeout = globalThis.clearTimeout;
@@ -178,6 +208,73 @@ describe('TtlCache', () => {
     }
   });
 
+  it('should clamp background timer delays to the runtime timeout ceiling', () => {
+    const originalSetTimeout = globalThis.setTimeout;
+    const originalClearTimeout = globalThis.clearTimeout;
+    const delays: number[] = [];
+
+    globalThis.setTimeout = ((_handler: TimerHandler, timeout?: number): ReturnType<typeof setTimeout> => {
+      delays.push(timeout ?? 0);
+      return { unref(): void {} } as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout;
+    globalThis.clearTimeout = ((_timer?: ReturnType<typeof setTimeout>): void => undefined) as typeof clearTimeout;
+
+    try {
+      const thirtyDays = 30 * 24 * 60 * 60 * 1000;
+      const cache = new TtlCache({ ttl: thirtyDays });
+      cache.set('key', 'value');
+
+      expect(delays).toEqual([MAX_TIMER_DELAY]);
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.clearTimeout = originalClearTimeout;
+    }
+  });
+
+  it('should re-arm the background timer before an async dispose error escapes', () => {
+    const originalSetTimeout = globalThis.setTimeout;
+    const originalClearTimeout = globalThis.clearTimeout;
+    const handlers: TimerHandler[] = [];
+    const delays: number[] = [];
+
+    globalThis.setTimeout = ((handler: TimerHandler, timeout?: number): ReturnType<typeof setTimeout> => {
+      handlers.push(handler);
+      delays.push(timeout ?? 0);
+      return { unref(): void {} } as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout;
+    globalThis.clearTimeout = ((_timer?: ReturnType<typeof setTimeout>): void => undefined) as typeof clearTimeout;
+
+    try {
+      const cache = new TtlCache<string, string>({
+        dispose: (_value, key): void => {
+          if (key === 'first') {
+            throw new Error('dispose failed');
+          }
+        },
+        ttl: 1000,
+      });
+
+      cache.set('first', 'a');
+      cache.set('second', 'b');
+
+      const cacheInternals = cache as unknown as { _data: Map<string, { expiresAt: number }> };
+      cacheInternals._data.get('first')!.expiresAt = performance.now() - 1;
+
+      expect(() => {
+        const handler = handlers[0];
+
+        if (typeof handler === 'function') {
+          handler();
+        }
+      }).toThrow('dispose failed');
+      expect(cache.get('second')).toBe('b');
+      expect(delays.length).toBe(2);
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.clearTimeout = originalClearTimeout;
+    }
+  });
+
   it('should cancel the background timer without synchronously purging stale entries', async () => {
     const disposed: string[] = [];
     const cache = new TtlCache<string, string>({
@@ -190,6 +287,8 @@ describe('TtlCache', () => {
     cache.cancelTimer();
 
     await sleep(125);
+
+    cache.cancelTimer();
 
     expect(cache.size).toBe(1);
     expect(disposed).toEqual([]);
@@ -272,18 +371,19 @@ describe('TtlCache', () => {
   });
 
   it('should preserve an existing ttl when noUpdateTTL is used', async () => {
-    const cache = new TtlCache<string, string>({ ttl: 250 });
+    const cache = new TtlCache<string, string>({ ttl: 1000 });
     cache.set('key', 'first');
 
-    await sleep(75);
+    await sleep(150);
     const remainingBeforeSet = cache.getRemainingTTL('key');
     cache.set('key', 'second', { noUpdateTTL: true });
     const remainingAfterSet = cache.getRemainingTTL('key');
 
+    expect(remainingBeforeSet).toBeGreaterThan(0);
     expect(remainingAfterSet).toBeLessThanOrEqual(remainingBeforeSet);
     expect(cache.get('key')).toBe('second');
 
-    await sleep(remainingAfterSet + 75);
+    await sleep(remainingAfterSet + 150);
     expect(cache.get('key')).toBeUndefined();
   });
 

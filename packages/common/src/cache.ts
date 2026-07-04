@@ -6,6 +6,8 @@ type TtlCacheEntry<V> = {
 
 type TtlCacheTimer = ReturnType<typeof setTimeout>;
 
+const MAX_TIMER_DELAY = 2_147_483_647;
+
 function now(): number {
   return performance.now();
 }
@@ -146,10 +148,13 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
 
     if (updateAgeOnGet) {
       const ttl = options.ttl ?? this.ttl;
-      assertTtl(ttl);
-      entry.expiresAt = this._expirationFromTtl(ttl);
-      entry.sequence = ++this._sequence;
-      this._scheduleTimer(entry.expiresAt);
+
+      if (ttl !== undefined) {
+        assertTtl(ttl);
+        entry.expiresAt = this._expirationFromTtl(ttl);
+        entry.sequence = ++this._sequence;
+        this._scheduleTimer(entry.expiresAt);
+      }
     }
 
     return entry.value as unknown as T;
@@ -197,7 +202,15 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
    * Remove expired entries.
    */
   public purgeStale(): boolean {
-    return this._purgeStale(this._timer !== undefined);
+    const hadTimer = this._timer !== undefined;
+    const purged = this._purgeStale();
+
+    if (purged && hadTimer) {
+      this.cancelTimer();
+      this._scheduleNextTimer();
+    }
+
+    return purged;
   }
 
   /**
@@ -303,24 +316,49 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
       return;
     }
 
-    this.purgeStale();
+    const hadTimer = this._timer !== undefined;
+    let purgedStale = false;
 
-    if (this._data.size <= this.max) {
-      return;
-    }
+    try {
+      while (this._data.size > this.max) {
+        let evictKey: K | undefined;
+        let evictEntry: TtlCacheEntry<V> | undefined;
 
-    const entries = this._sortedEntries();
+        for (const [key, entry] of this._data.entries()) {
+          if (this._isExpired(entry)) {
+            purgedStale = true;
+            this._delete(key, 'stale');
 
-    for (const [key] of entries) {
-      if (this._data.size <= this.max) {
-        return;
+            if (this._data.size <= this.max) {
+              return;
+            }
+
+            continue;
+          }
+
+          if (evictEntry === undefined || entry.expiresAt < evictEntry.expiresAt || (
+            entry.expiresAt === evictEntry.expiresAt && entry.sequence < evictEntry.sequence
+          )) {
+            evictKey = key;
+            evictEntry = entry;
+          }
+        }
+
+        if (evictKey === undefined) {
+          return;
+        }
+
+        this._delete(evictKey, 'evict');
       }
-
-      this._delete(key, 'evict');
+    } finally {
+      if (purgedStale && hadTimer) {
+        this.cancelTimer();
+        this._scheduleNextTimer();
+      }
     }
   }
 
-  private _purgeStale(scheduleNextTimer: boolean): boolean {
+  private _purgeStale(): boolean {
     let purged = false;
 
     for (const [key, entry] of this._data.entries()) {
@@ -328,10 +366,6 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
         this._delete(key, 'stale');
         purged = true;
       }
-    }
-
-    if (purged && scheduleNextTimer) {
-      this._rescheduleTimer();
     }
 
     return purged;
@@ -366,13 +400,14 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
 
     this.cancelTimer();
 
-    const delay = Math.max(0, Math.ceil(expiresAt - now()));
+    const delay = Math.min(MAX_TIMER_DELAY, Math.max(0, Math.ceil(expiresAt - now())));
     const timer = setTimeout((): void => {
       this._timer = undefined;
       this._timerExpiresAt = Infinity;
-      const purged = this._purgeStale(true);
 
-      if (!purged) {
+      try {
+        this._purgeStale();
+      } finally {
         this._scheduleNextTimer();
       }
     }, delay);
@@ -393,11 +428,6 @@ export class TtlCache<K, V> implements Iterable<[K, V]> {
     }
 
     this._scheduleTimer(nextExpiration);
-  }
-
-  private _rescheduleTimer(): void {
-    this.cancelTimer();
-    this._scheduleNextTimer();
   }
 }
 

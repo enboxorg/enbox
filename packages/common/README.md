@@ -52,7 +52,8 @@ const value = await persistent.get('key');
 
 Time-to-live in-memory cache with bounded size support. Expired entries are removed by an unref'd background timer and
 are also checked on `get()` / `has()`, so stale values are not returned if the timer has not fired yet. `cancelTimer()`
-only stops the background timer; lazy expiry checks still run on access.
+only stops the background timer; lazy expiry checks still run on access. Disposal callbacks are provided with the
+constructor's `dispose` option.
 
 ### `Stream`
 
