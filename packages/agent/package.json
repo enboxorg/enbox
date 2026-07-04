@@ -4,11 +4,12 @@
   "type": "module",
   "main": "./dist/esm/index.js",
   "module": "./dist/esm/index.js",
+  "browser": "./dist/browser.mjs",
   "types": "./dist/types/index.d.ts",
   "scripts": {
     "clean": "rm -rf dist",
     "build:esm": "rm -rf dist/esm dist/types && bun tsc -p tsconfig.json",
-    "build:browser": "rm -rf dist/browser.mjs && bun ../../build/browser-bundle.js --node-shims",
+    "build:browser": "rm -rf dist/browser.mjs && bun ../../build/browser-bundle.js --node-shims --alias ./dwn-discovery-file-fs.js:./src/dwn-discovery-file-fs.browser.ts",
     "build": "bun run clean && bun run build:esm && bun run build:browser",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
@@ -51,6 +52,7 @@
   "exports": {
     ".": {
       "types": "./dist/types/index.d.ts",
+      "browser": "./dist/browser.mjs",
       "import": "./dist/esm/index.js"
     }
   },

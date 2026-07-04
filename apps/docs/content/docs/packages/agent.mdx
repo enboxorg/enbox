@@ -14,6 +14,18 @@ description: Low-level agent runtime for DID and DWN operations — identity man
 - **Permissions** — Manages permission grants and requests between DIDs, including delegated access patterns.
 - **Anonymous access** — Provides an `AnonymousDwnApi` for unsigned read-only queries against remote DWNs.
 
+## Browser runtime
+
+`@enbox/agent` has a browser-conditioned root export for browser-aware bundlers.
+In browser builds, the default durable stores remain Level-backed through
+`level` resolving to `browser-level` over IndexedDB. That storage path is used
+because tabs, workers, and service workers can concurrently access the same
+origin database with browser-managed transactions.
+
+Do not replace the browser agent stores with SQLite or in-memory stores for
+production apps. See [Browser & bundlers](/docs/guides/browser-bundlers) for the
+full browser storage model.
+
 ## When to use it
 
 Most applications should use `@enbox/api` (which wraps the agent internally) rather than interacting with the agent directly. Use `@enbox/agent` when you need:

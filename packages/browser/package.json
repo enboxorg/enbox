@@ -5,12 +5,13 @@
   "type": "module",
   "main": "./dist/esm/index.js",
   "module": "./dist/esm/index.js",
+  "browser": "./dist/browser.mjs",
   "types": "./dist/types/index.d.ts",
   "scripts": {
     "clean": "rm -rf dist",
     "build:esm": "rm -rf dist/esm dist/types && bun tsc -p tsconfig.json",
-    "build:browser": "bun run build:esm",
-    "build": "bun run clean && bun run build:esm",
+    "build:browser": "rm -rf dist/browser.mjs && bun ../../build/browser-bundle.js --node-shims --metafile",
+    "build": "bun run clean && bun run build:esm && bun run build:browser",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
     "test:node": "bun test tests/drl-url-parser.spec.ts",
@@ -40,6 +41,13 @@
     "dist",
     "src"
   ],
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "browser": "./dist/browser.mjs",
+      "import": "./dist/esm/index.js"
+    }
+  },
   "keywords": [
     "decentralized",
     "decentralized-applications",

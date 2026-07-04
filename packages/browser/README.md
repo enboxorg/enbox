@@ -15,6 +15,10 @@
 ---
 
 - [Enbox Browser](#enbox-browser)
+  - [Install](#install)
+  - [Usage](#usage)
+  - [Bundlers and Service Workers](#bundlers-and-service-workers)
+  - [Storage Model](#storage-model)
   - [Activate Polyfills](#activate-polyfills)
   - [Project Resources](#project-resources)
 
@@ -23,6 +27,48 @@
 <a id="introduction"></a>
 
 This package contains browser-specific helpers for building DWAs (Decentralized Web Apps) with the Enbox toolkit.
+
+## Install
+
+```bash
+bun add @enbox/browser
+```
+
+## Usage
+
+Use the bare package entrypoint in browser apps. It re-exports the high-level
+API from `@enbox/api`, auth/session helpers from `@enbox/auth`, and
+browser-specific connect utilities.
+
+```ts
+import { BrowserConnectHandler, Enbox, defineProtocol } from '@enbox/browser';
+
+const { enbox } = await Enbox.connect({
+  connectHandler : BrowserConnectHandler({ appName: 'Notes' }),
+  createIdentity : true,
+  protocols      : [NotesProtocol],
+});
+```
+
+## Bundlers and Service Workers
+
+`@enbox/browser` declares a browser-conditioned root export that resolves to the
+prebuilt `dist/browser.mjs` bundle. Browser-aware bundlers, including secondary
+Vite passes used for service workers, can import `@enbox/browser` without
+adding Node global shims for `process`, `process.env`, `process.browser`,
+`process.emitWarning`, `global`, or the Node `events` builtin.
+
+`activatePolyfills()` is unrelated to Node-global shims. It installs browser
+DWeb/DRL behavior such as service-worker handling for `dweb` URLs; it is not a
+compatibility shim for the SDK package graph.
+
+## Storage Model
+
+The default browser agent storage remains Level-backed. The `level` package
+resolves to `browser-level`, which stores data in IndexedDB so tabs, workers,
+and service workers on the same origin can safely write concurrently. SQLite
+over OPFS is not a drop-in browser replacement for this usage because it does
+not provide the same cross-context write behavior.
 
 ### Activate Polyfills
 

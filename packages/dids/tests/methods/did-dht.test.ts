@@ -958,6 +958,32 @@ describe('DidDht', () => {
       expect(blocked.didResolutionMetadata.error).toBe(DidErrorCode.InvalidGatewayUri);
     });
 
+    it('uses the public gateway fallback when the process global is absent', async () => {
+      fetchStub.mockResolvedValue(fetchNotFoundResponse());
+
+      const originalProcessDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'process');
+      Object.defineProperty(globalThis, 'process', {
+        configurable : true,
+        value        : undefined,
+        writable     : true,
+      });
+
+      try {
+        const did = 'did:dht:5634graogy41ow91cc78up6i45a9mcscccruwer9o4ah5wcc1xmy';
+        const didResolutionResult = await DidDht.resolve(did);
+
+        expect(fetchStub).toHaveBeenCalledTimes(1);
+        expect(String(fetchStub.mock.calls[0][0]).startsWith('https://enbox-did-dht.fly.dev/')).toBe(true);
+        expect(didResolutionResult.didResolutionMetadata.error).toBe(DidErrorCode.NotFound);
+      } finally {
+        if (originalProcessDescriptor === undefined) {
+          delete (globalThis as { process?: unknown }).process;
+        } else {
+          Object.defineProperty(globalThis, 'process', originalProcessDescriptor);
+        }
+      }
+    });
+
     it('blocks Pkarr gateway redirects to private hosts (SSRF via redirect)', async () => {
       // A "public" gateway returns a 302 pointing at the AWS instance metadata service. The initial
       // URL passes validation, but every redirect target must be re-validated.

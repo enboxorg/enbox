@@ -192,9 +192,22 @@ const dwn = new DwnApi({
 ## Browser Builds
 
 Browser apps typically use `@enbox/browser`, which re-exports the main app APIs
-and adds browser-specific connect helpers. Service workers and custom bundler
-targets may need Node global shims for `global`, `process.env`,
-`process.browser`, and `process.emitWarning`.
+and adds browser-specific connect helpers:
+
+```ts
+import { Enbox, BrowserConnectHandler, defineProtocol } from '@enbox/browser';
+```
+
+The root `@enbox/api` entry also declares a browser condition that resolves to
+the prebuilt `dist/browser.mjs` bundle in browser-aware bundlers. Apps and
+service-worker builds should not need Node global shims for `process`,
+`process.env`, `process.browser`, `process.emitWarning`, `global`, or the Node
+`events` builtin.
+
+The agent's browser storage remains Level-backed through `level` resolving to
+`browser-level` over IndexedDB. Do not replace it with an in-memory store for
+multi-tab or service-worker use; IndexedDB is the storage layer that safely
+coordinates writes across browser contexts.
 
 ## Exports
 

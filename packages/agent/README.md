@@ -77,6 +77,22 @@ await agent.sync.sync();
 | `DwnIdentityStore` | Identity metadata storage in DWN |
 | `PlatformAgentTestHarness` | Test infrastructure (exported for downstream consumers) |
 
+## Browser Runtime
+
+`@enbox/agent` is isomorphic. Its root export declares a browser condition that
+points browser-aware bundlers at `dist/browser.mjs`, so apps and service workers
+do not need Node global shims for the package entrypoint.
+
+The default persistent stores are still Level-backed. In Node, `level` uses
+`classic-level` on the filesystem. In browsers, it resolves to `browser-level`
+over IndexedDB. That IndexedDB-backed Level stack is intentional: multiple app
+tabs, workers, and service workers can open and write the same origin database
+concurrently, with the browser coordinating transactions.
+
+Use injected agent components only when you are deliberately replacing part of
+the runtime. Avoid in-memory stores for production browser apps, because they
+lose persistence and cross-context write coordination.
+
 ## Development
 
 ```bash

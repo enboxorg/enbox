@@ -38,6 +38,10 @@
       "types": "./dist/types/index.d.ts",
       "import": "./dist/esm/index.js"
     },
+    "./browser": {
+      "types": "./dist/types/browser.d.ts",
+      "import": "./dist/esm/browser.js"
+    },
     "./auth-manager": {
       "types": "./dist/types/auth-manager.d.ts",
       "import": "./dist/esm/auth-manager.js"

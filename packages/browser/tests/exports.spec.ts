@@ -1,5 +1,29 @@
 import { describe, expect, it } from 'bun:test';
 
+import agentPackageJson from '../../agent/package.json' with { type: 'json' };
+import apiPackageJson from '../../api/package.json' with { type: 'json' };
+import browserPackageJson from '../package.json' with { type: 'json' };
+
+type BrowserExportPackageJson = {
+  browser?: string;
+  exports?: {
+    '.'?: {
+      browser?: string;
+      import?: string;
+      types?: string;
+    };
+  };
+  scripts?: Record<string, string>;
+};
+
+function rootExport(packageJson: BrowserExportPackageJson): NonNullable<NonNullable<BrowserExportPackageJson['exports']>['.']> {
+  const exportMap = packageJson.exports?.['.'];
+  if (exportMap === undefined) {
+    throw new Error('missing package root export');
+  }
+  return exportMap;
+}
+
 /**
  * Verify that @enbox/browser re-exports the expected symbols from
  * @enbox/api, @enbox/auth, and its own browser-specific modules.
@@ -79,5 +103,16 @@ describe('@enbox/browser exports', () => {
   it('exports WalletConnect from @enbox/auth', async () => {
     const mod = await getBrowserExports();
     expect(mod.WalletConnect).toBeDefined();
+  });
+
+  it('declares browser-conditioned root entrypoints for browser-facing packages', () => {
+    for (const packageJson of [agentPackageJson, apiPackageJson, browserPackageJson]) {
+      expect(packageJson.browser).toBe('./dist/browser.mjs');
+      expect(rootExport(packageJson).browser).toBe('./dist/browser.mjs');
+    }
+  });
+
+  it('builds @enbox/browser as a browser bundle', () => {
+    expect(browserPackageJson.scripts?.['build:browser']).toContain('browser-bundle.js');
   });
 });

@@ -43,6 +43,19 @@ The `Enbox` instance exposes:
 
 There is **no public `dwn` property** on the `Enbox` instance. All DWN access goes through `enbox.using(protocol)`.
 
+## Browser imports
+
+Browser apps can import `@enbox/api` directly, but most apps should use
+`@enbox/browser` because it re-exports the API and adds browser connect helpers:
+
+```ts
+import { BrowserConnectHandler, Enbox, defineProtocol } from '@enbox/browser';
+```
+
+The `@enbox/api` root export also has a browser condition for bundlers that
+consume it directly. See [Browser & bundlers](/docs/guides/browser-bundlers) for
+service-worker and storage details.
+
 ### defineProtocol
 
 `defineProtocol()` creates a typed protocol definition that carries compile-time type metadata:

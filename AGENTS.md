@@ -167,9 +167,11 @@ bun run --filter @enbox/agent build
 
 Most packages expose a `build:browser` script, but it means different things:
 
-- **`@enbox/agent`** and **`@enbox/api`** emit a bundled `dist/browser.mjs` via `build/browser-bundle.js` (esbuild) with node-stdlib shims (`--node-shims`). Run their full `build` after changing browser-facing exports.
-- **`@enbox/common`**, **`@enbox/crypto`**, **`@enbox/dids`**, **`@enbox/dwn-sdk-js`**, and **`@enbox/browser`** expose `build:browser` as a pass-through (often aliased to `build:esm`); there is no separate browser bundle artifact.
+- **`@enbox/agent`**, **`@enbox/api`**, and **`@enbox/browser`** emit a bundled `dist/browser.mjs` via `build/browser-bundle.js` (esbuild) with the browser condition exposed from the root export. Run their full `build` after changing browser-facing exports.
+- **`@enbox/common`**, **`@enbox/crypto`**, **`@enbox/dids`**, and **`@enbox/dwn-sdk-js`** expose `build:browser` for their browser bundle artifacts or pass-through browser builds, depending on the package.
 - **`@enbox/auth`**, **`@enbox/dwn-clients`**, **`@enbox/dwn-server`**, **`@enbox/dwn-sql-store`**, **`@enbox/protocols`**, and **`@enbox/protocol-codegen`** do not define `build:browser`.
+
+Browser storage rule: do not replace the browser Level stack with SQLite or in-memory stores. In browsers, `level` resolves to `browser-level` over IndexedDB, which is required for concurrent writes from tabs, workers, and service workers on the same origin.
 
 ### Key directories
 
@@ -204,7 +206,7 @@ Most packages expose a `build:browser` script, but it means different things:
 
 Downstream repos typically consume **npm releases** of scoped `@enbox/*` packages (not the monorepo path directly).
 
-- **web-wallet** (package `@enbox/dweb-wallet`): Full stack — `agent`, `api`, `auth`, `browser`, `dwn-clients`, `protocols`, plus crypto/dids/common. Typical pattern: Vite + React, PWA, node stdlib browser shims, Vitest/Playwright.
+- **web-wallet** (package `@enbox/dweb-wallet`): Full stack — `agent`, `api`, `auth`, `browser`, `dwn-clients`, `protocols`, plus crypto/dids/common. Typical pattern: Vite + React, PWA, browser-conditioned Enbox entrypoints, Vitest/Playwright.
 - **nutsd** (package `@enbox/nutsd`): Narrower surface — e.g. **`@enbox/browser`** (and Cashu) for wallet/DID UX without pulling the full DWN server stack into the app bundle.
 
 When changing public APIs, assume **multiple external apps** pin different semver ranges; follow the changeset workflow below for releases. `.changeset/config.json` sets `updateInternalDependencies: "patch"`, so bumping one package (e.g. `dwn-sdk-js` as `minor`) auto-patches every direct consumer in the graph — keep that in mind when drafting changeset files.

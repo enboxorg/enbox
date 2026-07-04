@@ -14,7 +14,10 @@
  * @module
  */
 
+import { createNodeDiscoveryFileFs } from './dwn-discovery-file-fs.js';
 import { normalizeBaseUrl } from './local-dwn.js';
+
+export { createNodeDiscoveryFileFs } from './dwn-discovery-file-fs.js';
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -52,74 +55,6 @@ export interface DiscoveryFileFs {
   isProcessAlive(pid: number): boolean;
   /** Return the user's home directory (e.g. `/home/alice`). */
   homedir(): string;
-}
-
-// ─── Default Node/Bun filesystem implementation ──────────────────
-
-/**
- * Creates a {@link DiscoveryFileFs} backed by Node.js / Bun built-in
- * modules. Returns `undefined` in environments where `node:fs/promises`
- * or `node:os` are not available (e.g. browsers).
- */
-export function createNodeDiscoveryFileFs(): DiscoveryFileFs | undefined {
-  try {
-    // Dynamic require avoids hard dependency on Node built-ins so bundlers
-    // can tree-shake this path away in browser builds.
-    const nodeRequire = require;
-    const fs = nodeRequire('node:fs/promises') as {
-      readFile(path: string, encoding: string): Promise<string>;
-      writeFile(path: string, data: string, options: { encoding: string; mode?: number }): Promise<void>;
-      mkdir(path: string, options: { recursive: boolean }): Promise<string | undefined>;
-      unlink(path: string): Promise<void>;
-    };
-    const path = nodeRequire('node:path') as {
-      join(...segments: string[]): string;
-      dirname(path: string): string;
-    };
-    const os = nodeRequire('node:os') as {
-      homedir(): string;
-    };
-
-    return {
-      async readFile(filePath: string): Promise<string | null> {
-        try {
-          return await fs.readFile(filePath, 'utf-8');
-        } catch {
-          return null;
-        }
-      },
-
-      async writeFile(filePath: string, contents: string): Promise<void> {
-        await fs.mkdir(path.dirname(filePath), { recursive: true });
-        // mode 0o600: owner read/write only — the file contains the PID
-        // and endpoint of a local DWN server.
-        await fs.writeFile(filePath, contents, { encoding: 'utf-8', mode: 0o600 });
-      },
-
-      async removeFile(filePath: string): Promise<void> {
-        try {
-          await fs.unlink(filePath);
-        } catch {
-          // Ignore ENOENT — the file was already gone.
-        }
-      },
-
-      isProcessAlive(pid: number): boolean {
-        try {
-          process.kill(pid, 0);
-          return true;
-        } catch {
-          return false;
-        }
-      },
-
-      homedir(): string {
-        return os.homedir();
-      },
-    };
-  } catch {
-    return undefined;
-  }
 }
 
 // ─── Constants ────────────────────────────────────────────────────
@@ -182,10 +117,7 @@ export class DwnDiscoveryFile {
     if (filePath) {
       this._filePath = filePath;
     } else {
-      // Dynamic require so we can resolve the path at construction time.
-      const nodeRequire = require;
-      const path = nodeRequire('node:path') as { join(...segments: string[]): string };
-      this._filePath = path.join(resolvedFs.homedir(), DISCOVERY_DIR, DISCOVERY_FILENAME);
+      this._filePath = `${resolvedFs.homedir()}/${DISCOVERY_DIR}/${DISCOVERY_FILENAME}`;
     }
   }
 
@@ -301,5 +233,4 @@ function isValidRecord(value: unknown): value is DwnDiscoveryRecord {
 
   return true;
 }
-
 
