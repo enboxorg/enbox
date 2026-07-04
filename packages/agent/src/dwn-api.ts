@@ -1,4 +1,5 @@
 import type {
+  DataEncodedRecordsWriteMessage,
   DwnConfig,
   EncryptionControlAudiencePayload,
   EncryptionKeyDeriver,
@@ -756,6 +757,7 @@ export class AgentDwnApi {
     const audienceKey = await this.getOrCreateAudienceKey({
       authorDid         : request.author,
       contextId,
+      delegatedGrant    : request.messageParams?.delegatedGrant,
       granteeDid        : request.granteeDid,
       permissionGrantId : request.messageParams?.permissionGrantId,
       protocol          : descriptor.protocol,
@@ -773,6 +775,9 @@ export class AgentDwnApi {
       agent              : this.agent,
       audienceKey,
       authorDid          : request.author,
+      delegatedGrant     : request.messageParams?.delegatedGrant,
+      granteeDid         : request.granteeDid,
+      permissionGrantId  : request.messageParams?.permissionGrantId,
       protocolRole       : request.messageParams?.protocolRole,
       recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
       recipientDid       : descriptor.recipient,
@@ -785,8 +790,10 @@ export class AgentDwnApi {
     authorDid: string;
     granteeDid?: string;
     permissionGrantId?: string;
+    delegatedGrant?: DataEncodedRecordsWriteMessage;
     sourceDid: string;
     protocol: string;
+    sourceProtocolPath: string;
     parentContextId?: string;
     protocolRole?: string;
     protocolDefinition: ProtocolDefinition;
@@ -800,11 +807,16 @@ export class AgentDwnApi {
 
     for (const rule of readRules) {
       const roleAudience = this.resolveRoleAudienceRule(rule.role!, params.protocolDefinition, params.parentContextId);
-      const pendingRoleAudience = roleAudience === undefined && params.parentContextId === undefined
+      const pendingRoleAudience = roleAudience === undefined &&
+        params.parentContextId === undefined &&
+        !params.sourceProtocolPath.includes('/')
         ? await this.preparePendingAudienceRecord(rule.role!, params.protocolDefinition, params.sourceDid, params.granteeDid)
         : undefined;
       if (roleAudience === undefined && pendingRoleAudience === undefined) {
-        continue;
+        throw new Error(
+          `AgentDwnApi: Unable to resolve encrypted role audience '${rule.role}' ` +
+          `for '${params.protocol}/${params.sourceProtocolPath}'.`
+        );
       }
 
       const audienceKey = roleAudience === undefined
@@ -812,6 +824,7 @@ export class AgentDwnApi {
         : await this.getOrCreateAudiencePublicKey({
           authorDid         : params.authorDid,
           contextId         : roleAudience.contextId,
+          delegatedGrant    : params.delegatedGrant,
           granteeDid        : params.granteeDid,
           permissionGrantId : params.permissionGrantId,
           protocol          : roleAudience.protocol,
@@ -892,6 +905,18 @@ export class AgentDwnApi {
     return contextId === undefined ? undefined : { protocol, rolePath, contextId };
   }
 
+  private getRoleAudienceSourceContextId(params: {
+    protocolPath: string;
+    parentContextId?: string;
+    recordId?: string;
+  }): string | undefined {
+    if (params.parentContextId !== undefined) {
+      return params.parentContextId;
+    }
+
+    return params.protocolPath.includes('/') ? undefined : params.recordId;
+  }
+
   private async resolveRoleAudienceReference(
     roleRef: string,
     protocolDefinition: ProtocolDefinition,
@@ -912,6 +937,7 @@ export class AgentDwnApi {
     rolePath: string;
     granteeDid?: string;
     permissionGrantId?: string;
+    delegatedGrant?: DataEncodedRecordsWriteMessage;
     protocolRole?: string;
   }): Promise<{
     protocol: string;
@@ -955,6 +981,7 @@ export class AgentDwnApi {
     rolePath: string;
     granteeDid?: string;
     permissionGrantId?: string;
+    delegatedGrant?: DataEncodedRecordsWriteMessage;
     protocolRole?: string;
   }): Promise<AudienceKeyPayload> {
     const existingAudience = await this.resolveCurrentAudienceRecord({
@@ -1006,14 +1033,17 @@ export class AgentDwnApi {
     }
 
     const created = await createAudienceRecordFn({
-      agent        : this.agent,
-      authorDid    : params.authorDid,
-      contextId    : params.contextId,
-      protocol     : params.protocol,
-      protocolRole : params.protocolRole,
-      rolePath     : params.rolePath,
+      agent             : this.agent,
+      authorDid         : params.authorDid,
+      contextId         : params.contextId,
+      delegatedGrant    : params.delegatedGrant,
+      granteeDid        : params.granteeDid,
+      permissionGrantId : params.permissionGrantId,
+      protocol          : params.protocol,
+      protocolRole      : params.protocolRole,
+      rolePath          : params.rolePath,
       sealingPublicKey,
-      sourceDid    : params.sourceDid,
+      sourceDid         : params.sourceDid,
     });
     const canOpenSeal = await resolveAudienceDecryptionKeyFn({
       agent                      : this.agent,
@@ -1030,6 +1060,7 @@ export class AgentDwnApi {
       await this.createRoleCreatorDelivery({
         audienceKey       : created.audienceKey,
         authorDid         : params.authorDid,
+        delegatedGrant    : params.delegatedGrant,
         granteeDid        : params.granteeDid,
         permissionGrantId : params.permissionGrantId,
         protocolRole      : params.protocolRole,
@@ -1076,7 +1107,7 @@ export class AgentDwnApi {
       }
     }
 
-    const { reply } = await this.processRequest({
+    const { reply } = await this.processRequestWithRemoteFallback({
       author        : params.authorDid,
       target        : params.sourceDid,
       messageType   : DwnInterface.RecordsQuery,
@@ -1091,7 +1122,7 @@ export class AgentDwnApi {
           },
         },
       },
-    });
+    }, (reply): boolean => reply.status.code === 200 && reply.entries !== undefined && reply.entries.length > 0);
 
     if (reply.status.code !== 200 || reply.entries === undefined || reply.entries.length === 0) {
       return undefined;
@@ -1118,17 +1149,37 @@ export class AgentDwnApi {
       return Encoder.base64UrlToObject(record.encodedData) as EncryptionControlAudiencePayload;
     }
 
-    const { reply } = await this.processRequest({
+    const { reply } = await this.processRequestWithRemoteFallback({
       author        : authorDid,
       target        : sourceDid,
       messageType   : DwnInterface.RecordsRead,
       messageParams : { filter: { recordId: record.recordId } },
-    });
+    }, (reply): boolean => reply.status.code === 200 && reply.entry?.data !== undefined);
     if (reply.status.code !== 200 || reply.entry?.data === undefined) {
       return undefined;
     }
 
     return Encoder.bytesToObject(await DataStream.toBytes(reply.entry.data)) as EncryptionControlAudiencePayload;
+  }
+
+  private async processRequestWithRemoteFallback<T extends DwnInterface>(
+    request: ProcessDwnRequest<T>,
+    hasUsableReply: (reply: DwnMessageReply[T]) => boolean,
+  ): Promise<DwnResponse<T>> {
+    const localResponse = await this.processRequest(request);
+    if (hasUsableReply(localResponse.reply)) {
+      return localResponse;
+    }
+
+    try {
+      return await this.sendRequest(request);
+    } catch (error) {
+      logger.log(
+        `AgentDwnApi: remote fallback for ${request.messageType} to '${request.target}' failed: ` +
+        `${error instanceof Error ? error.message : String(error)}`
+      );
+      return localResponse;
+    }
   }
 
   private compareAudienceRecords(tenant: string, left: RecordsWriteMessage, right: RecordsWriteMessage): number {
@@ -1148,6 +1199,7 @@ export class AgentDwnApi {
     sourceDid: string;
     granteeDid?: string;
     permissionGrantId?: string;
+    delegatedGrant?: DataEncodedRecordsWriteMessage;
     protocolRole?: string;
   }): Promise<void> {
     const recipientDid = params.granteeDid ?? params.authorDid;
@@ -1162,6 +1214,9 @@ export class AgentDwnApi {
       agent              : this.agent,
       audienceKey        : params.audienceKey,
       authorDid          : params.authorDid,
+      delegatedGrant     : params.delegatedGrant,
+      granteeDid         : params.granteeDid,
+      permissionGrantId  : params.permissionGrantId,
       grantId            : authority.grantId,
       protocolRole       : params.protocolRole,
       recipientAuthority : authority.recipientAuthority,
@@ -1390,15 +1445,21 @@ export class AgentDwnApi {
           KeyDerivationScheme.ProtocolPath,
         );
         const roleAudienceInputs = await this.getRoleAudienceKeyEncryptionInputs({
-          authorDid         : request.author,
-          granteeDid        : request.granteeDid,
-          parentContextId   : messageParams.parentContextId ?? messageParams.recordId,
-          permissionGrantId : messageParams.permissionGrantId,
-          protocol          : messageParams.protocol,
-          protocolRole      : messageParams.protocolRole,
+          authorDid       : request.author,
+          delegatedGrant  : messageParams.delegatedGrant,
+          granteeDid      : request.granteeDid,
+          parentContextId : this.getRoleAudienceSourceContextId({
+            parentContextId : messageParams.parentContextId,
+            protocolPath    : messageParams.protocolPath,
+            recordId        : messageParams.recordId,
+          }),
+          permissionGrantId  : messageParams.permissionGrantId,
+          protocol           : messageParams.protocol,
+          protocolRole       : messageParams.protocolRole,
           protocolDefinition,
-          sourceDid         : request.target,
-          sourceRuleSet     : ruleSet,
+          sourceDid          : request.target,
+          sourceProtocolPath : messageParams.protocolPath,
+          sourceRuleSet      : ruleSet,
         });
         encryptionInput.keyEncryptionInputs.push(...roleAudienceInputs.inputs);
 
@@ -1407,16 +1468,17 @@ export class AgentDwnApi {
           await encryptAndComputeCidFn(plaintextBytes, dataEncryptionKey, dataEncryptionIV, contentEncryptionAlgorithm);
 
         // 7. Replace plaintext with encrypted data.
-        messageParams.dataCid = dataCid;
-        messageParams.dataSize = dataSize;
         if (roleAudienceInputs.pendingAudienceRecords.length > 0) {
           messageParams.dateCreated ??= Time.getCurrentTimestamp();
           messageParams.messageTimestamp ??= messageParams.dateCreated;
           if (request.granteeDid && messageParams.permissionGrantId && !messageParams.delegatedGrant) {
             await this.populateDelegatedGrantForWrite(request.author, request.granteeDid, messageParams);
           }
+          const recordIdMessageParams = { ...messageParams };
+          delete recordIdMessageParams.dataCid;
+          delete recordIdMessageParams.dataSize;
           messageParams.recordId ??= (await RecordsWrite.create({
-            ...messageParams,
+            ...recordIdMessageParams,
             data   : encryptedBytes,
             encryptionInput,
             signer : request.granteeDid ? await this.getSigner(request.granteeDid) : await this.getSigner(request.author),
@@ -1433,15 +1495,18 @@ export class AgentDwnApi {
               contextId,
             };
             await createAudienceRecordFn({
-              agent            : this.agent,
+              agent             : this.agent,
               audienceKey,
-              authorDid        : request.author,
+              authorDid         : request.author,
               contextId,
-              protocol         : audienceKey.protocol,
-              protocolRole     : messageParams.protocolRole,
-              rolePath         : audienceKey.rolePath,
-              sealingPublicKey : pending.sealingPublicKey,
-              sourceDid        : request.target,
+              delegatedGrant    : messageParams.delegatedGrant,
+              granteeDid        : request.granteeDid,
+              permissionGrantId : messageParams.permissionGrantId,
+              protocol          : audienceKey.protocol,
+              protocolRole      : messageParams.protocolRole,
+              rolePath          : audienceKey.rolePath,
+              sealingPublicKey  : pending.sealingPublicKey,
+              sourceDid         : request.target,
             });
             const canOpenSeal = await resolveAudienceDecryptionKeyFn({
               agent                      : this.agent,
@@ -1458,6 +1523,7 @@ export class AgentDwnApi {
               await this.createRoleCreatorDelivery({
                 audienceKey,
                 authorDid         : request.author,
+                delegatedGrant    : messageParams.delegatedGrant,
                 granteeDid        : request.granteeDid,
                 permissionGrantId : messageParams.permissionGrantId,
                 protocolRole      : messageParams.protocolRole,
@@ -1466,6 +1532,8 @@ export class AgentDwnApi {
             }
           }
         }
+        messageParams.dataCid = dataCid;
+        messageParams.dataSize = dataSize;
         delete messageParams.data;
         readableStream = DataStream.fromBytes(encryptedBytes);
         request.dataStream = undefined;
@@ -1802,29 +1870,6 @@ export class AgentDwnApi {
     }
 
     return dwnMessageWithData;
-  }
-
-  /**
-   * Imports scope-aware decryption keys for delegate sessions.
-   *
-   * Called during the connect flow when the wallet delivers decryption keys
-   * for encrypted protocols. Keys are derived only for `Records.Read`
-   * scopes — write-only delegates receive no keys.
-   *
-   * The keys are cached and used by `resolveKeyDecrypter()` to decrypt
-   * records when the delegate does not possess the owner's root X25519
-   * private key.
-   *
-   * @param delegateDid - The delegate DID for this session (unique per connect)
-   * @param keys - Array of scope-aware decryption key entries
-   */
-
-  public importDelegateDecryptionKeys(
-    delegateDid: string,
-    keys: DelegateDecryptionKeyEntry[],
-  ): void {
-    const cacheKey = `ddk~${delegateDid}`;
-    this._delegateDecryptionKeyCache.set(cacheKey, keys);
   }
 
   /**

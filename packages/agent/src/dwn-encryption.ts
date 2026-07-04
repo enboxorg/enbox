@@ -3,7 +3,6 @@ import type {
   DerivedPrivateJwk,
   EncryptionControlAudiencePayload,
   EncryptionControlDeliveryPayload,
-  EncryptionControlDeliveryRecipientAuthority,
   EncryptionControlSeal,
   EncryptionInput,
   EncryptionKeyDeriver,
@@ -13,6 +12,7 @@ import type {
   KeyDecrypterDerivationScheme,
   PermissionGrant,
   ProtocolDefinition,
+  ProtocolRuleSet,
   RecordsQueryReply,
   RecordsReadReply,
   RecordsWriteMessage,
@@ -23,6 +23,7 @@ import type { Jwk, KeyIdentifier, PrivateKeyJwk, PublicKeyJwk } from '@enbox/cry
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type {
   DwnMessageReply,
+  DwnResponse,
   ProcessDwnRequest,
   SendDwnRequest,
 } from './types/dwn.js';
@@ -33,21 +34,27 @@ import {
   Cid,
   ContentEncryptionAlgorithm,
   DataStream,
+  DwnInterfaceName,
   DwnMethodName,
   PermissionGrant as DwnPermissionGrant,
   Encoder,
   Encryption,
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
   ENCRYPTION_CONTROL_DELIVERY_PATH,
+  EncryptionControlDeliveryRecipientAuthority,
   EncryptionProtocol,
   getGrantKeyDeliveryScopes,
   getRoleAudienceContextId,
+  getRoleContextPrefix,
+  getRuleSetAtPath,
   grantKeyScopeCoversDeliveredScope,
   HdKey,
   isGrantKeyEligibleRecordsScope,
   KeyAgreementAlgorithm,
   KeyDerivationScheme,
   Message,
+  parseCrossProtocolRef,
+  PermissionScopeMatcher,
   Records,
   ROLE_AUDIENCE_DERIVATION_SCHEME,
   Time,
@@ -469,6 +476,9 @@ export async function createAudienceRecord(params: {
   contextId: string;
   sealingPublicKey: PublicKeyJwk;
   audienceKey?: AudienceKeyPayload;
+  granteeDid?: string;
+  permissionGrantId?: string;
+  delegatedGrant?: DataEncodedRecordsWriteMessage;
   protocolRole?: string;
 }): Promise<{
   audienceKey: AudienceKeyPayload;
@@ -502,16 +512,19 @@ export async function createAudienceRecord(params: {
 
   const { reply, message } = await params.agent.processDwnRequest({
     author        : params.authorDid,
+    granteeDid    : params.granteeDid,
     target        : params.sourceDid,
     messageType   : DwnInterface.RecordsWrite,
     messageParams : {
-      protocol     : params.protocol,
-      protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-      protocolRole : params.protocolRole,
-      schema       : AUDIENCE_SCHEMA_URI,
-      dataFormat   : 'application/json',
-      dataSize     : payloadBytes.length,
-      tags         : {
+      delegatedGrant    : params.delegatedGrant,
+      permissionGrantId : params.permissionGrantId,
+      protocol          : params.protocol,
+      protocolPath      : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+      protocolRole      : params.protocolRole,
+      schema            : AUDIENCE_SCHEMA_URI,
+      dataFormat        : 'application/json',
+      dataSize          : payloadBytes.length,
+      tags              : {
         protocol  : params.protocol,
         rolePath  : params.rolePath,
         contextId : params.contextId,
@@ -570,6 +583,9 @@ export async function createAudienceDeliveryRecord(params: {
   recipientAuthority: EncryptionControlDeliveryRecipientAuthority;
   grantId?: string;
   roleRef?: string;
+  granteeDid?: string;
+  permissionGrantId?: string;
+  delegatedGrant?: DataEncodedRecordsWriteMessage;
   protocolRole?: string;
 }): Promise<DataEncodedRecordsWriteMessage> {
   const payload: EncryptionControlDeliveryPayload = {
@@ -600,19 +616,22 @@ export async function createAudienceDeliveryRecord(params: {
 
   const { reply, message } = await params.agent.processDwnRequest({
     author        : params.authorDid,
+    granteeDid    : params.granteeDid,
     target        : params.sourceDid,
     messageType   : DwnInterface.RecordsWrite,
     messageParams : {
-      recipient    : params.recipientDid,
-      protocol     : params.audienceKey.protocol,
-      protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
-      protocolRole : params.protocolRole,
-      schema       : DELIVERY_SCHEMA_URI,
-      dataFormat   : 'application/json',
+      delegatedGrant    : params.delegatedGrant,
+      permissionGrantId : params.permissionGrantId,
+      recipient         : params.recipientDid,
+      protocol          : params.audienceKey.protocol,
+      protocolPath      : ENCRYPTION_CONTROL_DELIVERY_PATH,
+      protocolRole      : params.protocolRole,
+      schema            : DELIVERY_SCHEMA_URI,
+      dataFormat        : 'application/json',
       dataCid,
       dataSize,
       encryptionInput,
-      tags         : {
+      tags              : {
         protocol           : params.audienceKey.protocol,
         rolePath           : params.audienceKey.rolePath,
         contextId          : params.audienceKey.contextId,
@@ -1087,15 +1106,22 @@ async function hydrateAudienceKey(params: {
     return undefined;
   }
 
-  const sealedKey = await tryUnsealAudienceKey({
-    ...params,
-    audiencePayload: audienceRecord.payload,
-  });
-  if (sealedKey !== undefined) {
-    return sealedKey;
+  try {
+    const sealedKey = await tryUnsealAudienceKey({
+      ...params,
+      audiencePayload: audienceRecord.payload,
+    });
+    if (sealedKey !== undefined) {
+      return sealedKey;
+    }
+  } catch (error) {
+    logger.log(
+      `AgentDwnApi: skipped audience seal '${audienceRecord.message.recordId}' while resolving role-audience key: ` +
+      `${error instanceof Error ? error.message : String(error)}`
+    );
   }
 
-  const { reply } = await params.agent.processDwnRequest({
+  const { reply } = await processDwnRequestWithRemoteFallback(params.agent, {
     author        : params.granteeDid ?? params.recipientDid,
     target        : params.sourceDid,
     messageType   : DwnInterface.RecordsQuery,
@@ -1112,7 +1138,7 @@ async function hydrateAudienceKey(params: {
         },
       },
     },
-  });
+  }, hasRecordsQueryEntries);
 
   if (reply.status.code !== 200 || reply.entries === undefined || reply.entries.length === 0) {
     return undefined;
@@ -1304,7 +1330,7 @@ async function fetchAudienceRecord(params: {
   message: RecordsWriteMessage & { encodedData?: string };
   payload: EncryptionControlAudiencePayload;
 } | undefined> {
-  const { reply } = await params.agent.processDwnRequest({
+  const { reply } = await processDwnRequestWithRemoteFallback(params.agent, {
     author        : params.authorDid,
     target        : params.sourceDid,
     messageType   : DwnInterface.RecordsQuery,
@@ -1320,7 +1346,7 @@ async function fetchAudienceRecord(params: {
         },
       },
     },
-  });
+  }, hasRecordsQueryEntries);
 
   if (reply.status.code !== 200 || reply.entries === undefined || reply.entries.length === 0) {
     return undefined;
@@ -1357,12 +1383,12 @@ async function getAudienceRecordData(
     return Encoder.base64UrlToBytes(audienceMessage.encodedData);
   }
 
-  const { reply } = await agent.processDwnRequest({
+  const { reply } = await processDwnRequestWithRemoteFallback(agent, {
     author        : authorDid,
     target        : sourceDid,
     messageType   : DwnInterface.RecordsRead,
     messageParams : { filter: { recordId: audienceMessage.recordId } },
-  });
+  }, hasRecordsReadData);
 
   if (reply.status.code !== 200 || reply.entry?.data === undefined) {
     return undefined;
@@ -1400,12 +1426,12 @@ async function getAudienceDeliveryEncryptedData(
     return Encoder.base64UrlToBytes(deliveryMessage.encodedData);
   }
 
-  const { reply } = await agent.processDwnRequest({
+  const { reply } = await processDwnRequestWithRemoteFallback(agent, {
     author        : authorDid,
     target        : sourceDid,
     messageType   : DwnInterface.RecordsRead,
     messageParams : { filter: { recordId: deliveryMessage.recordId } },
-  });
+  }, hasRecordsReadData);
 
   if (reply.status.code !== 200 || reply.entry?.data === undefined) {
     return undefined;
@@ -1454,7 +1480,7 @@ async function verifyAudienceKeyPayload(params: {
     },
     publicKeyJwk: params.audiencePayload.publicKeyJwk,
   });
-  await verifyAudienceKeyRoleAssignment(params);
+  await verifyAudienceKeyRecipientAuthority(params);
 }
 
 function assertAudienceKeyPayload(payload: unknown): asserts payload is EncryptionControlDeliveryPayload {
@@ -1511,8 +1537,12 @@ async function verifyAudienceKeyRoleAssignment(params: {
   contextId: string;
   rolePath: string;
 }): Promise<void> {
-  const contextIdPrefix = params.contextId === '' ? undefined : params.contextId;
-  const { reply } = await params.agent.processDwnRequest({
+  const contextIdPrefix = getRoleContextPrefix(params.rolePath, params.contextId);
+  if (contextIdPrefix === undefined && params.rolePath.includes('/')) {
+    throw new Error('audience delivery recipient is not an active holder of the referenced role.');
+  }
+
+  const { reply } = await processDwnRequestWithRemoteFallback(params.agent, {
     author        : params.recipientDid,
     target        : params.sourceDid,
     messageType   : DwnInterface.RecordsQuery,
@@ -1524,7 +1554,7 @@ async function verifyAudienceKeyRoleAssignment(params: {
         protocolPath : params.rolePath,
       },
     },
-  });
+  }, hasRecordsQueryEntries);
 
   const entries = reply.status.code === 200 ? reply.entries ?? [] : [];
   const hasRoleRecord = entries.some((entry): boolean => {
@@ -1538,6 +1568,186 @@ async function verifyAudienceKeyRoleAssignment(params: {
   if (!hasRoleRecord) {
     throw new Error('audience delivery recipient is not an active holder of the referenced role.');
   }
+}
+
+async function verifyAudienceKeyRecipientAuthority(params: {
+  agent: EnboxPlatformAgent;
+  audiencePayload: EncryptionControlAudiencePayload;
+  deliveryMessage: RecordsWriteMessage;
+  sourceDid: string;
+  recipientDid: string;
+  protocol: string;
+  contextId: string;
+  rolePath: string;
+}): Promise<void> {
+  const tags = params.deliveryMessage.descriptor.tags ?? {};
+  const recipientAuthority = tags.recipientAuthority;
+
+  switch (recipientAuthority) {
+    case EncryptionControlDeliveryRecipientAuthority.RoleHolder:
+      await verifyAudienceKeyRoleAssignment(params);
+      return;
+    case EncryptionControlDeliveryRecipientAuthority.RoleCreatorGrant:
+      await verifyAudienceKeyRoleCreatorGrant(params);
+      return;
+    case EncryptionControlDeliveryRecipientAuthority.RoleCreatorRole:
+      await verifyAudienceKeyRoleCreatorRole(params);
+      return;
+    case EncryptionControlDeliveryRecipientAuthority.RoleCreatorAnyone:
+      await verifyAudienceKeyRoleCreatorAnyone(params);
+      return;
+    default:
+      throw new Error('audience delivery recipient authority is invalid.');
+  }
+}
+
+async function verifyAudienceKeyRoleCreatorGrant(params: {
+  agent: EnboxPlatformAgent;
+  sourceDid: string;
+  recipientDid: string;
+  protocol: string;
+  rolePath: string;
+  deliveryMessage: RecordsWriteMessage;
+}): Promise<void> {
+  const grantId = getRequiredStringTag(params.deliveryMessage, 'grantId');
+  const grant = await readPermissionGrant(params.agent, params.recipientDid, params.sourceDid, grantId);
+  await verifyPermissionGrantActive(params.agent, params.recipientDid, params.sourceDid, grant, 'audience delivery');
+
+  if (grant.id !== grantId ||
+      grant.grantor !== params.sourceDid ||
+      grant.grantee !== params.recipientDid ||
+      !grantCoversRoleCreate(grant, params.protocol, params.rolePath)) {
+    throw new Error('audience delivery roleCreatorGrant does not authorize creating the referenced role.');
+  }
+}
+
+async function verifyAudienceKeyRoleCreatorRole(params: {
+  agent: EnboxPlatformAgent;
+  sourceDid: string;
+  recipientDid: string;
+  protocol: string;
+  contextId: string;
+  rolePath: string;
+  deliveryMessage: RecordsWriteMessage;
+}): Promise<void> {
+  const roleRef = getRequiredStringTag(params.deliveryMessage, 'roleRef');
+  const protocolDefinition = await readProtocolDefinition(
+    params.agent, params.recipientDid, params.sourceDid, params.protocol, new Map(), 'audience delivery',
+  );
+  const ruleSet = getRuleSetAtPath(params.rolePath, protocolDefinition.structure);
+  if (!roleRuleAllowsCreate(ruleSet, roleRef)) {
+    throw new Error('audience delivery roleCreatorRole is not authorized by the referenced role path.');
+  }
+
+  const resolvedRole = resolveRoleReference(roleRef, params.protocol, protocolDefinition);
+  if (resolvedRole === undefined) {
+    throw new Error('audience delivery roleCreatorRole references an unknown role.');
+  }
+
+  await verifyAudienceKeyRoleAssignment({
+    agent        : params.agent,
+    contextId    : params.contextId,
+    protocol     : resolvedRole.protocol,
+    recipientDid : params.recipientDid,
+    rolePath     : resolvedRole.protocolPath,
+    sourceDid    : params.sourceDid,
+  });
+}
+
+async function verifyAudienceKeyRoleCreatorAnyone(params: {
+  agent: EnboxPlatformAgent;
+  sourceDid: string;
+  recipientDid: string;
+  protocol: string;
+  rolePath: string;
+}): Promise<void> {
+  const protocolDefinition = await readProtocolDefinition(
+    params.agent, params.recipientDid, params.sourceDid, params.protocol, new Map(), 'audience delivery',
+  );
+  const ruleSet = getRuleSetAtPath(params.rolePath, protocolDefinition.structure);
+  if (!anyoneCanCreateRole(ruleSet)) {
+    throw new Error('audience delivery roleCreatorAnyone is not authorized by the referenced role path.');
+  }
+}
+
+function grantCoversRoleCreate(grant: PermissionGrant, protocol: string, rolePath: string): boolean {
+  const scope = grant.scope;
+  if (scope.interface !== DwnInterfaceName.Records || scope.method !== DwnMethodName.Write) {
+    return false;
+  }
+
+  return PermissionScopeMatcher.matches(scope, {
+    protocol,
+    protocolPath: rolePath,
+  });
+}
+
+function roleRuleAllowsCreate(ruleSet: ProtocolRuleSet | undefined, roleRef: string): boolean {
+  return (ruleSet?.$actions ?? []).some((actionRule): boolean =>
+    actionRule.role === roleRef && actionRule.can.includes('create')
+  );
+}
+
+function anyoneCanCreateRole(ruleSet: ProtocolRuleSet | undefined): boolean {
+  return (ruleSet?.$actions ?? []).some((actionRule): boolean =>
+    actionRule.who === 'anyone' && actionRule.can.includes('create')
+  );
+}
+
+function resolveRoleReference(
+  roleRef: string,
+  currentProtocol: string,
+  protocolDefinition: ProtocolDefinition,
+): { protocol: string; protocolPath: string } | undefined {
+  const parsed = parseCrossProtocolRef(roleRef);
+  if (parsed === undefined) {
+    return { protocol: currentProtocol, protocolPath: roleRef };
+  }
+
+  const protocol = protocolDefinition.uses?.[parsed.alias];
+  return protocol === undefined ? undefined : { protocol, protocolPath: parsed.protocolPath };
+}
+
+function getRequiredStringTag(message: RecordsWriteMessage, tagName: string): string {
+  const value = message.descriptor.tags?.[tagName];
+  if (typeof value !== 'string') {
+    throw new Error(`audience delivery is missing required tag '${tagName}'.`);
+  }
+
+  return value;
+}
+
+async function processDwnRequestWithRemoteFallback<T extends DwnInterface>(
+  agent: EnboxPlatformAgent,
+  request: ProcessDwnRequest<T>,
+  hasUsableReply: (reply: DwnMessageReply[T]) => boolean,
+): Promise<DwnResponse<T>> {
+  const localResponse = await agent.processDwnRequest(request);
+  if (hasUsableReply(localResponse.reply)) {
+    return localResponse;
+  }
+
+  try {
+    return await agent.sendDwnRequest(request as SendDwnRequest<T>);
+  } catch (error) {
+    logger.log(
+      `AgentDwnApi: remote fallback for ${request.messageType} to '${request.target}' failed: ` +
+      `${error instanceof Error ? error.message : String(error)}`
+    );
+    return localResponse;
+  }
+}
+
+function hasRecordsQueryEntries(reply: DwnMessageReply[DwnInterface.RecordsQuery]): boolean {
+  return reply.status.code === 200 && reply.entries !== undefined && reply.entries.length > 0;
+}
+
+function hasRecordsReadData(reply: DwnMessageReply[DwnInterface.RecordsRead]): boolean {
+  return reply.status.code === 200 && reply.entry?.data !== undefined;
+}
+
+function hasProtocolsQueryDefinition(reply: DwnMessageReply[DwnInterface.ProtocolsQuery]): boolean {
+  return reply.status.code === 200 && reply.entries?.[0]?.descriptor.definition !== undefined;
 }
 
 function matchesContextIdPrefix(contextId: string | undefined, contextIdPrefix: string | undefined): boolean {
@@ -1625,10 +1835,10 @@ async function buildGrantKeyPayloads(
   if (grantScope.method === DwnMethodName.Read) {
     const protocolDefinition = grantScope.protocolPath === undefined
       ? undefined
-      : await getGrantKeyProtocolDefinition(agent, ownerDid, ownerDid, grantScope.protocol, protocolDefinitions);
+      : await readProtocolDefinition(agent, ownerDid, ownerDid, grantScope.protocol, protocolDefinitions, 'grantKey coverage');
     scopes = getGrantKeyDeliveryScopes(grantScope, protocolDefinition);
   } else {
-    const protocolDefinition = await getGrantKeyProtocolDefinition(agent, ownerDid, ownerDid, grantScope.protocol, protocolDefinitions);
+    const protocolDefinition = await readProtocolDefinition(agent, ownerDid, ownerDid, grantScope.protocol, protocolDefinitions, 'grantKey coverage');
     scopes = getGrantKeyDeliveryScopes(grantScope, protocolDefinition);
   }
 
@@ -1678,27 +1888,28 @@ async function buildGrantKeyPayload(
   };
 }
 
-async function getGrantKeyProtocolDefinition(
+async function readProtocolDefinition(
   agent: EnboxPlatformAgent,
   authorDid: string,
   targetDid: string,
   protocol: string,
   protocolDefinitions: Map<string, ProtocolDefinition>,
+  purpose: string,
 ): Promise<ProtocolDefinition> {
   const cachedDefinition = protocolDefinitions.get(protocol);
   if (cachedDefinition !== undefined) {
     return cachedDefinition;
   }
 
-  const { reply } = await agent.processDwnRequest({
+  const { reply } = await processDwnRequestWithRemoteFallback(agent, {
     author        : authorDid,
     target        : targetDid,
     messageType   : DwnInterface.ProtocolsQuery,
     messageParams : { filter: { protocol } },
-  });
+  }, hasProtocolsQueryDefinition);
   const definition = reply.entries?.[0]?.descriptor.definition;
   if (reply.status.code !== 200 || definition === undefined) {
-    throw new Error(`AgentDwnApi: unable to resolve protocol definition '${protocol}' for grantKey coverage.`);
+    throw new Error(`AgentDwnApi: unable to resolve protocol definition '${protocol}' for ${purpose}.`);
   }
 
   protocolDefinitions.set(protocol, definition);
@@ -1893,12 +2104,12 @@ async function readPermissionGrant(
   grantorDid: string,
   grantId: string,
 ): Promise<PermissionGrant> {
-  const { reply } = await agent.processDwnRequest({
+  const { reply } = await processDwnRequestWithRemoteFallback(agent, {
     author        : granteeDid,
     target        : grantorDid,
     messageType   : DwnInterface.RecordsRead,
     messageParams : { filter: { recordId: grantId } },
-  });
+  }, hasRecordsReadData);
 
   if (reply.status.code !== 200 || reply.entry?.recordsWrite === undefined || reply.entry.data === undefined) {
     throw new Error(`AgentDwnApi: unable to read permission grant '${grantId}'.`);
@@ -1916,10 +2127,11 @@ async function verifyPermissionGrantActive(
   granteeDid: string,
   grantorDid: string,
   grant: PermissionGrant,
+  label = 'grantKey',
 ): Promise<void> {
   const now = Time.getCurrentTimestamp();
   if (now < grant.dateGranted || now >= grant.dateExpires) {
-    throw new Error('grantKey references an inactive permission grant.');
+    throw new Error(`${label} references an inactive permission grant.`);
   }
 
   const revoked = await agent.permissions.isGrantRevoked({
@@ -1928,7 +2140,7 @@ async function verifyPermissionGrantActive(
     grantRecordId : grant.id,
   });
   if (revoked) {
-    throw new Error('grantKey references a revoked permission grant.');
+    throw new Error(`${label} references a revoked permission grant.`);
   }
 }
 
@@ -2002,7 +2214,7 @@ async function grantScopeCoversPayload(
     return false;
   }
 
-  const protocolDefinition = await getGrantKeyProtocolDefinition(agent, requesterDid, ownerDid, grant.scope.protocol, new Map());
+  const protocolDefinition = await readProtocolDefinition(agent, requesterDid, ownerDid, grant.scope.protocol, new Map(), 'grantKey coverage');
   return grantKeyScopeCoversDeliveredScope({
     grantScope     : grant.scope,
     deliveredScope : payload.scope,
