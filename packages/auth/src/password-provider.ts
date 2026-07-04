@@ -20,19 +20,13 @@
  * @module
  */
 
+import type { PasswordContext, PasswordProvider as PasswordProviderBase } from './password-provider-core.js';
+
+import { PasswordProvider as BrowserSafePasswordProvider } from './password-provider-core.js';
+
 // ─── Types ───────────────────────────────────────────────────────
 
-/** Context passed to a password provider explaining why a password is needed. */
-export interface PasswordContext {
-  /**
-   * Why the password is being requested.
-   *
-   * - `'create'` — first launch, creating a new vault (prompt may ask
-   *   for confirmation).
-   * - `'unlock'` — unlocking an existing vault.
-   */
-  reason: 'create' | 'unlock';
-}
+export type { PasswordContext } from './password-provider-core.js';
 
 /**
  * A strategy for obtaining a vault password.
@@ -41,18 +35,7 @@ export interface PasswordContext {
  * (environment variables, cached values). Use {@link PasswordProvider.chain}
  * to compose multiple strategies with automatic fallback.
  */
-export interface PasswordProvider {
-  /**
-   * Obtain a password.
-   *
-   * @param context - Why the password is needed.
-   * @returns The password string.
-   * @throws If the provider cannot obtain a password (e.g. env var
-   *   not set, no TTY available). The error is caught by `chain()`
-   *   which falls through to the next provider.
-   */
-  getPassword(context: PasswordContext): Promise<string>;
-}
+export interface PasswordProvider extends PasswordProviderBase {}
 
 // ─── Internal I/O interfaces (for testing) ───────────────────────
 
@@ -286,7 +269,7 @@ export namespace PasswordProvider {
   export function fromCallback(
     callback: (context: PasswordContext) => Promise<string>,
   ): PasswordProvider {
-    return { getPassword: callback };
+    return BrowserSafePasswordProvider.fromCallback(callback);
   }
 
   /**
@@ -376,24 +359,6 @@ export namespace PasswordProvider {
    * ```
    */
   export function chain(providers: PasswordProvider[]): PasswordProvider {
-    if (providers.length === 0) {
-      throw new Error('[@enbox/auth] PasswordProvider.chain: at least one provider is required.');
-    }
-
-    return {
-      async getPassword(context: PasswordContext): Promise<string> {
-        let lastError: Error | undefined;
-
-        for (const provider of providers) {
-          try {
-            return await provider.getPassword(context);
-          } catch (err) {
-            lastError = err instanceof Error ? err : new Error(String(err));
-          }
-        }
-
-        throw lastError ?? new Error('[@enbox/auth] PasswordProvider.chain: all providers failed.');
-      },
-    };
+    return BrowserSafePasswordProvider.chain(providers);
   }
 }
