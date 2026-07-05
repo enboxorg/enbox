@@ -663,15 +663,20 @@ export function testRecordsQueryHandler(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
         const carol = await TestDataGenerator.generateDidKeyPersona();
+        const bobDelegate = await TestDataGenerator.generateDidKeyPersona();
 
         const protocolDefinition: ProtocolDefinition = {
           protocol  : 'http://encryption-control-query-delivery.xyz',
           published : false,
           types     : {
-            member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
+            member  : { schema: 'http://member-schema', dataFormats: ['application/json'] },
+            message : { schema: 'http://message-schema', dataFormats: ['application/json'] },
           },
           structure: {
-            member: { $role: true },
+            member  : { $role: true },
+            message : {
+              $actions: [{ role: 'member', can: ['read'] }],
+            },
           },
         };
         const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
@@ -742,6 +747,36 @@ export function testRecordsQueryHandler(): void {
         const delegatedCarolReply = await dwn.processMessage(alice.did, delegatedCarolQuery.message);
         expect(delegatedCarolReply.status.code).toBe(200);
         expect(delegatedCarolReply.entries?.map(entry => entry.recordId)).not.toContain(delivery.recordsWrite.message.recordId);
+
+        const bobDelegateGrant = await TestDataGenerator.generateGrantCreate({
+          author    : bob,
+          grantedTo : bobDelegate,
+          delegated : true,
+          scope     : {
+            interface    : DwnInterfaceName.Records,
+            method       : DwnMethodName.Read,
+            protocol     : protocolDefinition.protocol,
+            protocolPath : 'message',
+          },
+        });
+        const delegatedBobQuery = await RecordsQuery.create({
+          delegatedGrant : bobDelegateGrant.dataEncodedMessage,
+          filter         : {
+            recipient    : bob.did,
+            protocol     : protocolDefinition.protocol,
+            protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+            tags         : {
+              protocol  : protocolDefinition.protocol,
+              rolePath  : 'member',
+              contextId : '',
+              keyId     : audience.keyId,
+            },
+          },
+          signer: Jws.createSigner(bobDelegate),
+        });
+        const delegatedBobReply = await dwn.processMessage(alice.did, delegatedBobQuery.message);
+        expect(delegatedBobReply.status.code).toBe(200);
+        expect(delegatedBobReply.entries?.map(entry => entry.recordId)).toContain(delivery.recordsWrite.message.recordId);
 
         const carolRoleRecord = await TestDataGenerator.generateRecordsWrite({
           author       : alice,

@@ -843,6 +843,7 @@ export async function resolveKeyDecrypter(
   delegateDecryptionKeyCache?: DelegateDecryptionKeyCache,
   granteeDid?: string,
   audienceDecryptionKeyCache?: AudienceDecryptionKeyCache,
+  delegatedGrant?: DataEncodedRecordsWriteMessage,
 ): Promise<KeyDecrypter> {
   if (granteeDid !== undefined) {
     const protocol = recordsWrite.descriptor.protocol;
@@ -883,6 +884,7 @@ export async function resolveKeyDecrypter(
       sourceDid    : targetDid,
       recipientDid : authorDid,
       granteeDid,
+      delegatedGrant,
       recordsWrite,
       delegateDecryptionKeyCache,
       audienceDecryptionKeyCache,
@@ -902,6 +904,7 @@ export async function resolveKeyDecrypter(
       agent,
       sourceDid    : targetDid,
       recipientDid : authorDid,
+      delegatedGrant,
       recordsWrite,
       audienceDecryptionKeyCache,
     });
@@ -941,6 +944,7 @@ export async function maybeDecryptReply<T extends DwnInterface>(
   // needs to repeat the cast.
   const encryptedRequest = request as ProcessDwnRequest<T>;
   const granteeDid = encryptedRequest.granteeDid;
+  const delegatedGrant = getDelegatedGrantFromRequest(encryptedRequest);
 
   // Auto-decrypt RecordsRead replies
   if (isDwnRequest(encryptedRequest as ProcessDwnRequest<DwnInterface>, DwnInterface.RecordsRead)) {
@@ -951,7 +955,7 @@ export async function maybeDecryptReply<T extends DwnInterface>(
         && !isEncryptionControlPath(readReply.entry.recordsWrite.descriptor.protocolPath)) {
       const keyDecrypter = await resolveKeyDecrypter(
         agent, encryptedRequest.author, readReply.entry.recordsWrite, encryptedRequest.target,
-        delegateDecryptionKeyCache, granteeDid, audienceDecryptionKeyCache,
+        delegateDecryptionKeyCache, granteeDid, audienceDecryptionKeyCache, delegatedGrant,
       );
 
       try {
@@ -978,7 +982,7 @@ export async function maybeDecryptReply<T extends DwnInterface>(
         if (entry.encryption && entry.encodedData && !isEncryptionControlPath(entry.descriptor.protocolPath)) {
           const keyDecrypter = await resolveKeyDecrypter(
             agent, encryptedRequest.author, entry as RecordsWriteMessage, encryptedRequest.target,
-            delegateDecryptionKeyCache, granteeDid, audienceDecryptionKeyCache,
+            delegateDecryptionKeyCache, granteeDid, audienceDecryptionKeyCache, delegatedGrant,
           );
 
           try {
@@ -1001,12 +1005,20 @@ export async function maybeDecryptReply<T extends DwnInterface>(
   }
 }
 
+function getDelegatedGrantFromRequest<T extends DwnInterface>(
+  request: ProcessDwnRequest<T>,
+): DataEncodedRecordsWriteMessage | undefined {
+  const messageParams = request.messageParams as { delegatedGrant?: DataEncodedRecordsWriteMessage } | undefined;
+  return messageParams?.delegatedGrant;
+}
+
 async function resolveRoleAudienceDecrypter(params: {
   agent: EnboxPlatformAgent;
   sourceDid: string | undefined;
   recipientDid: string;
   recordsWrite: RecordsWriteMessage;
   granteeDid?: string;
+  delegatedGrant?: DataEncodedRecordsWriteMessage;
   delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
   audienceDecryptionKeyCache?: AudienceDecryptionKeyCache;
 }): Promise<KeyDecrypter | undefined> {
@@ -1046,6 +1058,7 @@ async function resolveRoleAudienceDecrypter(params: {
         sourceDid                  : params.sourceDid,
         recipientDid,
         granteeDid                 : params.granteeDid,
+        delegatedGrant             : params.delegatedGrant,
         delegateDecryptionKeyCache : params.delegateDecryptionKeyCache,
         protocol                   : entry.protocol,
         contextId,
@@ -1083,6 +1096,7 @@ export async function resolveAudienceDecryptionKey(params: {
   rolePath: string;
   keyId: string;
   granteeDid?: string;
+  delegatedGrant?: DataEncodedRecordsWriteMessage;
   delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
   audienceDecryptionKeyCache?: AudienceDecryptionKeyCache;
 }): Promise<AudienceDecryptionKeyEntry | undefined> {
@@ -1124,6 +1138,7 @@ async function hydrateAudienceKey(params: {
   rolePath: string;
   keyId: string;
   granteeDid?: string;
+  delegatedGrant?: DataEncodedRecordsWriteMessage;
   delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
 }): Promise<AudienceDecryptionKeyEntry | undefined> {
   const audienceRecord = await fetchAudienceRecord({
@@ -1154,12 +1169,15 @@ async function hydrateAudienceKey(params: {
     );
   }
 
+  const deliveryReadActor = getAudienceDeliveryReadActor(params);
   const { reply } = await processDwnRequestWithRemoteFallback(params.agent, {
-    author        : params.granteeDid ?? params.recipientDid,
+    author        : deliveryReadActor.authorDid,
+    granteeDid    : deliveryReadActor.granteeDid,
     target        : params.sourceDid,
     messageType   : DwnInterface.RecordsQuery,
     messageParams : {
-      filter: {
+      delegatedGrant : deliveryReadActor.delegatedGrant,
+      filter         : {
         recipient    : params.recipientDid,
         protocol     : params.protocol,
         protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
@@ -1192,7 +1210,7 @@ async function hydrateAudienceKey(params: {
   for (const entry of reply.entries) {
     const deliveryMessage = entry as RecordsWriteMessage & { encodedData?: string };
     const encryptedData = await getAudienceDeliveryEncryptedData(
-      params.agent, params.granteeDid ?? params.recipientDid, params.sourceDid, deliveryMessage,
+      params.agent, deliveryReadActor, params.sourceDid, deliveryMessage,
     );
     if (encryptedData === undefined) {
       continue;
@@ -1237,6 +1255,28 @@ async function hydrateAudienceKey(params: {
   }
 
   return undefined;
+}
+
+function getAudienceDeliveryReadActor(params: {
+  recipientDid: string;
+  granteeDid?: string;
+  delegatedGrant?: DataEncodedRecordsWriteMessage;
+}): {
+    authorDid: string;
+    delegatedGrant?: DataEncodedRecordsWriteMessage;
+    granteeDid?: string;
+  } {
+  if (params.granteeDid !== undefined &&
+      params.granteeDid !== params.recipientDid &&
+      params.delegatedGrant !== undefined) {
+    return {
+      authorDid      : params.recipientDid,
+      delegatedGrant : params.delegatedGrant,
+      granteeDid     : params.granteeDid,
+    };
+  }
+
+  return { authorDid: params.granteeDid ?? params.recipientDid };
 }
 
 async function buildAudienceDeliveryDecrypters(params: {
@@ -1474,7 +1514,11 @@ function audiencePayloadMatches(payload: EncryptionControlAudiencePayload, audie
 
 async function getAudienceDeliveryEncryptedData(
   agent: EnboxPlatformAgent,
-  authorDid: string,
+  actor: {
+    authorDid: string;
+    delegatedGrant?: DataEncodedRecordsWriteMessage;
+    granteeDid?: string;
+  },
   sourceDid: string,
   deliveryMessage: RecordsWriteMessage & { encodedData?: string },
 ): Promise<Uint8Array | undefined> {
@@ -1483,10 +1527,14 @@ async function getAudienceDeliveryEncryptedData(
   }
 
   const { reply } = await processDwnRequestWithRemoteFallback(agent, {
-    author        : authorDid,
+    author        : actor.authorDid,
+    granteeDid    : actor.granteeDid,
     target        : sourceDid,
     messageType   : DwnInterface.RecordsRead,
-    messageParams : { filter: { recordId: deliveryMessage.recordId } },
+    messageParams : {
+      delegatedGrant : actor.delegatedGrant,
+      filter         : { recordId: deliveryMessage.recordId },
+    },
   }, hasRecordsReadData);
 
   if (reply.status.code !== 200 || reply.entry?.data === undefined) {

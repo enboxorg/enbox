@@ -1,4 +1,4 @@
-import type { DerivedPrivateJwk, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { DataEncodedRecordsWriteMessage, DerivedPrivateJwk, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
@@ -390,6 +390,7 @@ describe('dwn-encryption', () => {
       const sourceDid = 'did:example:alice';
       const recipientDid = 'did:example:bob';
       const granteeDid = 'did:example:bob-delegate';
+      const delegatedGrant = { recordId: 'bob-delegate-grant' } as unknown as DataEncodedRecordsWriteMessage;
       const audiencePrivateKeyJwk = await X25519.generateKey();
       const audiencePublicKeyJwk = await X25519.getPublicKey({ key: audiencePrivateKeyJwk });
       const audienceKeyId = await Encryption.getKeyId(audiencePublicKeyJwk);
@@ -547,6 +548,7 @@ describe('dwn-encryption', () => {
         sourceDid,
         recipientDid,
         granteeDid,
+        delegatedGrant,
         delegateDecryptionKeyCache,
         protocol,
         contextId,
@@ -554,13 +556,15 @@ describe('dwn-encryption', () => {
         keyId : audienceKeyId,
       });
       const deliveryRecipients = processDwnRequest.getCalls()
-        .map((call) => call.args[0].messageParams?.filter)
-        .filter((filter) => filter?.protocolPath === ENCRYPTION_CONTROL_DELIVERY_PATH)
-        .map((filter) => filter.recipient);
+        .map((call) => call.args[0])
+        .filter((request) => request.messageParams?.filter?.protocolPath === ENCRYPTION_CONTROL_DELIVERY_PATH);
 
       expect(result?.recipientDid).toBe(recipientDid);
       expect(result?.keyMaterial.keyId).toBe(audienceKeyId);
-      expect(deliveryRecipients).toEqual([granteeDid, recipientDid]);
+      expect(deliveryRecipients.map((request) => request.messageParams.filter.recipient)).toEqual([granteeDid, recipientDid]);
+      expect(deliveryRecipients.map((request) => request.author)).toEqual([granteeDid, recipientDid]);
+      expect(deliveryRecipients.map((request) => request.granteeDid)).toEqual([undefined, granteeDid]);
+      expect(deliveryRecipients[1].messageParams.delegatedGrant).toBe(delegatedGrant);
     });
   });
 

@@ -167,15 +167,20 @@ export function testRecordsReadHandler(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
         const carol = await TestDataGenerator.generateDidKeyPersona();
+        const bobDelegate = await TestDataGenerator.generateDidKeyPersona();
 
         const protocolDefinition: ProtocolDefinition = {
           protocol  : 'http://encryption-control-read-delivery.xyz',
           published : false,
           types     : {
-            member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
+            member  : { schema: 'http://member-schema', dataFormats: ['application/json'] },
+            message : { schema: 'http://message-schema', dataFormats: ['application/json'] },
           },
           structure: {
-            member: { $role: true },
+            member  : { $role: true },
+            message : {
+              $actions: [{ role: 'member', can: ['read'] }],
+            },
           },
         };
         const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
@@ -244,6 +249,26 @@ export function testRecordsReadHandler(): void {
         });
         const delegatedCarolReply = await dwn.processMessage(alice.did, delegatedCarolRead.message);
         expect(delegatedCarolReply.status.code).toBe(401);
+
+        const bobDelegateGrant = await TestDataGenerator.generateGrantCreate({
+          author    : bob,
+          grantedTo : bobDelegate,
+          delegated : true,
+          scope     : {
+            interface    : DwnInterfaceName.Records,
+            method       : DwnMethodName.Read,
+            protocol     : protocolDefinition.protocol,
+            protocolPath : 'message',
+          },
+        });
+        const delegatedBobRead = await RecordsRead.create({
+          delegatedGrant : bobDelegateGrant.dataEncodedMessage,
+          filter         : { recordId: delivery.recordsWrite.message.recordId },
+          signer         : Jws.createSigner(bobDelegate),
+        });
+        const delegatedBobReply = await dwn.processMessage(alice.did, delegatedBobRead.message);
+        expect(delegatedBobReply.status.code).toBe(200);
+        expect(delegatedBobReply.entry?.recordsWrite?.recordId).toBe(delivery.recordsWrite.message.recordId);
       });
 
       it('should allow reading of data that is published without `authorization`', async () => {

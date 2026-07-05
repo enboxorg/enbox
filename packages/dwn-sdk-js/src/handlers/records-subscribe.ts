@@ -503,8 +503,16 @@ export class RecordsSubscribeHandler implements MethodHandler {
     deps: HandlerDependencies,
   ): Promise<void> {
 
-    if (Message.isSignedByAuthorDelegate(recordsSubscribe.message)) {
+    if (Message.isSignedByAuthorDelegate(recordsSubscribe.message) &&
+        !EncryptionControl.filterTargetsOnlyControlRecords(recordsSubscribe.message.descriptor.filter)) {
       await recordsSubscribe.authorizeDelegate(deps.validationStateReader);
+    } else if (EncryptionControl.filterTargetsOnlyControlRecords(recordsSubscribe.message.descriptor.filter)) {
+      await EncryptionControl.authorizeControlReadRequest({
+        tenant,
+        incomingMessage       : recordsSubscribe.message,
+        requester             : Message.getRequester(recordsSubscribe.message),
+        validationStateReader : deps.validationStateReader,
+      });
     }
 
     const permissionGrantId = Message.getPermissionGrantId(recordsSubscribe.signaturePayload!);
