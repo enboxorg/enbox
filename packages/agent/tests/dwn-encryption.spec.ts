@@ -1123,9 +1123,12 @@ describe('dwn-encryption', () => {
         },
       } as unknown as RecordsWriteMessage;
 
-      const result = await resolveKeyDecrypter(
-        mockAgent, 'did:example:alice', recordsWrite, undefined,
-      );
+      const result = await resolveKeyDecrypter({
+        agent     : mockAgent,
+        authorDid : 'did:example:alice',
+        recordsWrite,
+        targetDid : undefined,
+      });
 
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
     });
@@ -1145,9 +1148,12 @@ describe('dwn-encryption', () => {
         },
       } as unknown as RecordsWriteMessage;
 
-      const result = await resolveKeyDecrypter(
-        mockAgent, 'did:example:alice', recordsWrite, undefined,
-      );
+      const result = await resolveKeyDecrypter({
+        agent     : mockAgent,
+        authorDid : 'did:example:alice',
+        recordsWrite,
+        targetDid : undefined,
+      });
 
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
       expect(result.rootKeyId).toBe('did:example:alice#enc');
@@ -1176,11 +1182,14 @@ describe('dwn-encryption', () => {
         descriptor : { protocol: 'https://proto.example.com', protocolPath: 'message' },
       } as unknown as RecordsWriteMessage;
 
-      const result = await resolveKeyDecrypter(
-        mockAgent, 'did:example:alice', recordsWrite, undefined,
-        delegateCache,
-        'did:example:delegate',
-      );
+      const result = await resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:alice',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : undefined,
+      });
 
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
       expect(delegateCache.get.calledOnce).toBe(true);
@@ -1209,11 +1218,14 @@ describe('dwn-encryption', () => {
         descriptor : { protocol: 'https://proto.example.com', protocolPath: 'message/reply' },
       } as unknown as RecordsWriteMessage;
 
-      const result = await resolveKeyDecrypter(
-        mockAgent, 'did:example:alice', recordsWrite, undefined,
-        delegateCache,
-        'did:example:delegate',
-      );
+      const result = await resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:alice',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : undefined,
+      });
 
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
       expect(result.rootKeyId).toBe('cached-root');
@@ -1242,11 +1254,14 @@ describe('dwn-encryption', () => {
         descriptor : { protocol: 'https://proto.example.com', protocolPath: 'message' },
       } as unknown as RecordsWriteMessage;
 
-      const result = await resolveKeyDecrypter(
-        mockAgent, 'did:example:alice', recordsWrite, undefined,
-        delegateCache,
-        'did:example:delegate',
-      );
+      const result = await resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:alice',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : undefined,
+      });
 
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
     });
@@ -1272,11 +1287,14 @@ describe('dwn-encryption', () => {
         descriptor : { protocol: 'https://proto.example.com', protocolPath: 'message' },
       } as unknown as RecordsWriteMessage;
 
-      await expect(resolveKeyDecrypter(
-        mockAgent, 'did:example:alice', recordsWrite, undefined,
-        delegateCache,
-        'did:example:delegate',
-      )).rejects.toThrow('no delivered decryption key covers encrypted record');
+      await expect(resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:alice',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : undefined,
+      })).rejects.toThrow('no delivered decryption key covers encrypted record');
 
       expect(mockAgent.keyManager.getKeyUri.called).toBe(false);
     });
@@ -1289,11 +1307,13 @@ describe('dwn-encryption', () => {
         descriptor : { protocol: 'https://proto.example.com', protocolPath: 'message' },
       } as unknown as RecordsWriteMessage;
 
-      await expect(resolveKeyDecrypter(
-        mockAgent, 'did:example:alice', recordsWrite, undefined,
-        undefined,
-        'did:example:delegate',
-      )).rejects.toThrow('no delivered decryption key covers encrypted record');
+      await expect(resolveKeyDecrypter({
+        agent      : mockAgent,
+        authorDid  : 'did:example:alice',
+        granteeDid : 'did:example:delegate',
+        recordsWrite,
+        targetDid  : undefined,
+      })).rejects.toThrow('no delivered decryption key covers encrypted record');
 
       expect(mockAgent.keyManager.getKeyUri.called).toBe(false);
     });
@@ -1319,11 +1339,14 @@ describe('dwn-encryption', () => {
         descriptor : { protocol: 'https://proto.example.com', protocolPath: 'message' },
       } as unknown as RecordsWriteMessage;
 
-      await expect(resolveKeyDecrypter(
-        mockAgent, 'did:example:alice', recordsWrite, 'did:example:alice',
-        delegateCache,
-        'did:example:delegate',
-      )).rejects.toThrow('no delivered decryption key covers encrypted record');
+      await expect(resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:alice',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : 'did:example:alice',
+      })).rejects.toThrow('no delivered decryption key covers encrypted record');
 
       expect(mockAgent.processDwnRequest.calledOnce).toBe(true);
       expect(mockAgent.processDwnRequest.firstCall.args[0].messageParams.filter).toEqual({
@@ -1343,11 +1366,14 @@ describe('dwn-encryption', () => {
         recordProtocolPath       : 'message/reply',
       });
 
-      const result = await resolveKeyDecrypter(
-        mockAgent, 'did:example:delegate', recordsWrite, 'did:example:alice',
-        delegateCache,
-        'did:example:delegate',
-      );
+      const result = await resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:delegate',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : 'did:example:alice',
+      });
 
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
       expect(delegateCache.set.calledOnce).toBe(true);
@@ -1373,11 +1399,14 @@ describe('dwn-encryption', () => {
         recordProtocolPath       : 'chat/member',
       });
 
-      const result = await resolveKeyDecrypter(
-        mockAgent, 'did:example:delegate', recordsWrite, 'did:example:alice',
-        delegateCache,
-        'did:example:delegate',
-      );
+      const result = await resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:delegate',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : 'did:example:alice',
+      });
 
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
       expect(delegateCache.set.calledOnce).toBe(true);
@@ -1395,11 +1424,14 @@ describe('dwn-encryption', () => {
         includeEncodedData: false,
       });
 
-      const result = await resolveKeyDecrypter(
-        mockAgent, 'did:example:delegate', recordsWrite, 'did:example:alice',
-        delegateCache,
-        'did:example:delegate',
-      );
+      const result = await resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:delegate',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : 'did:example:alice',
+      });
 
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
       expect(delegateCache.set.calledOnce).toBe(true);
@@ -1417,11 +1449,14 @@ describe('dwn-encryption', () => {
         grantKeyRemoteOnly: true,
       });
 
-      const result = await resolveKeyDecrypter(
-        mockAgent, 'did:example:delegate', recordsWrite, 'did:example:alice',
-        delegateCache,
-        'did:example:delegate',
-      );
+      const result = await resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:delegate',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : 'did:example:alice',
+      });
 
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
       expect(mockAgent.sendDwnRequest.calledOnce).toBe(true);
@@ -1441,11 +1476,14 @@ describe('dwn-encryption', () => {
         recordProtocolPath       : 'message',
       });
 
-      await expect(resolveKeyDecrypter(
-        mockAgent, 'did:example:delegate', recordsWrite, 'did:example:alice',
-        delegateCache,
-        'did:example:delegate',
-      )).rejects.toThrow('no delivered decryption key covers encrypted record');
+      await expect(resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:delegate',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : 'did:example:alice',
+      })).rejects.toThrow('no delivered decryption key covers encrypted record');
 
       expect(delegateCache.set.called).toBe(false);
     });
@@ -1455,11 +1493,14 @@ describe('dwn-encryption', () => {
         grantDateExpires: Time.createOffsetTimestamp({ seconds: -60 }),
       });
 
-      await expect(resolveKeyDecrypter(
-        mockAgent, 'did:example:delegate', recordsWrite, 'did:example:alice',
-        delegateCache,
-        'did:example:delegate',
-      )).rejects.toThrow('no delivered decryption key covers encrypted record');
+      await expect(resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:delegate',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : 'did:example:alice',
+      })).rejects.toThrow('no delivered decryption key covers encrypted record');
 
       expect(delegateCache.set.called).toBe(false);
       expect(mockAgent.permissions.isGrantRevoked.called).toBe(false);
@@ -1470,11 +1511,14 @@ describe('dwn-encryption', () => {
         grantRevoked: true,
       });
 
-      await expect(resolveKeyDecrypter(
-        mockAgent, 'did:example:delegate', recordsWrite, 'did:example:alice',
-        delegateCache,
-        'did:example:delegate',
-      )).rejects.toThrow('no delivered decryption key covers encrypted record');
+      await expect(resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:delegate',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : 'did:example:alice',
+      })).rejects.toThrow('no delivered decryption key covers encrypted record');
 
       expect(delegateCache.set.called).toBe(false);
       expect(mockAgent.permissions.isGrantRevoked.calledOnce).toBe(true);
@@ -1487,11 +1531,14 @@ describe('dwn-encryption', () => {
         },
       });
 
-      await expect(resolveKeyDecrypter(
-        mockAgent, 'did:example:delegate', recordsWrite, 'did:example:alice',
-        delegateCache,
-        'did:example:delegate',
-      )).rejects.toThrow('no delivered decryption key covers encrypted record');
+      await expect(resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:delegate',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : 'did:example:alice',
+      })).rejects.toThrow('no delivered decryption key covers encrypted record');
 
       expect(delegateCache.set.called).toBe(false);
     });
@@ -1503,11 +1550,14 @@ describe('dwn-encryption', () => {
         },
       });
 
-      await expect(resolveKeyDecrypter(
-        mockAgent, 'did:example:delegate', recordsWrite, 'did:example:alice',
-        delegateCache,
-        'did:example:delegate',
-      )).rejects.toThrow('no delivered decryption key covers encrypted record');
+      await expect(resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:delegate',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : 'did:example:alice',
+      })).rejects.toThrow('no delivered decryption key covers encrypted record');
 
       expect(delegateCache.set.called).toBe(false);
     });
@@ -1519,11 +1569,14 @@ describe('dwn-encryption', () => {
         },
       });
 
-      await expect(resolveKeyDecrypter(
-        mockAgent, 'did:example:delegate', recordsWrite, 'did:example:alice',
-        delegateCache,
-        'did:example:delegate',
-      )).rejects.toThrow('no delivered decryption key covers encrypted record');
+      await expect(resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:delegate',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : 'did:example:alice',
+      })).rejects.toThrow('no delivered decryption key covers encrypted record');
 
       expect(delegateCache.set.called).toBe(false);
     });

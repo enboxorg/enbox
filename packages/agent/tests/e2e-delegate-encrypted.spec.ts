@@ -356,14 +356,14 @@ describe('e2e: delegate + encrypted protocol', () => {
       get : sinon.stub().returns(undefined),
       set : sinon.stub(),
     };
-    await expect(resolveKeyDecrypter(
-      delegateHarness.agent,
-      delegateDid,
-      noteWrite as RecordsWriteMessage,
-      walletIdentity.did.uri,
+    await expect(resolveKeyDecrypter({
+      agent        : delegateHarness.agent,
+      authorDid    : delegateDid,
       delegateDecryptionKeyCache,
-      delegateDid,
-    )).rejects.toThrow('no delivered decryption key covers encrypted record');
+      granteeDid   : delegateDid,
+      recordsWrite : noteWrite as RecordsWriteMessage,
+      targetDid    : walletIdentity.did.uri,
+    })).rejects.toThrow('no delivered decryption key covers encrypted record');
     expect(delegateDecryptionKeyCache.set.called).toBe(false);
   });
 
