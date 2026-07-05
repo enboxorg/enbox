@@ -1506,7 +1506,7 @@ export class AgentDwnApi {
         const { encryptedBytes, dataCid, dataSize } =
           await encryptAndComputeCidFn(plaintextBytes, dataEncryptionKey, dataEncryptionIV, contentEncryptionAlgorithm);
 
-        // 7. Replace plaintext with encrypted data.
+        // 7. Write pending role-audience records before finalizing the encrypted source record.
         if (roleAudienceInputs.pendingAudienceRecords.length > 0) {
           messageParams.dateCreated ??= Time.getCurrentTimestamp();
           messageParams.messageTimestamp ??= messageParams.dateCreated;

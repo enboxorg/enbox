@@ -24,14 +24,6 @@ import { STORAGE_KEYS } from '../types.js';
 import { ensureVaultReady, finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './lifecycle.js';
 
 /**
- * Decrypt a stored key blob.
- *
- * The stored value is either a compact JWE (encrypted with the vault CEK)
- * or a plaintext JSON string (from sessions created before the encryption-
- * at-rest fix). This function tries JWE decryption first, then falls back
- * to treating the value as raw JSON for backward compatibility.
- */
-/**
  * Attempt to restore a previous session.
  *
  * Returns `undefined` if no previous session exists.

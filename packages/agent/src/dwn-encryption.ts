@@ -468,6 +468,9 @@ export async function createGrantKeyRecordsForGrants(params: {
   return grantKeyRecords;
 }
 
+/**
+ * Writes a durable audience record whose plaintext payload seals the audience private key to the tenant role-path key.
+ */
 export async function createAudienceRecord(params: {
   agent: EnboxPlatformAgent;
   sourceDid: string;
@@ -549,6 +552,9 @@ export async function createAudienceRecord(params: {
   };
 }
 
+/**
+ * Generates fresh random role-audience key material for one source-protocol audience tuple.
+ */
 export async function generateAudienceKey(params: {
   protocol: string;
   rolePath: string;
@@ -574,6 +580,9 @@ export async function generateAudienceKey(params: {
   };
 }
 
+/**
+ * Writes a durable encrypted delivery record that wraps audience private key material to one recipient.
+ */
 export async function createAudienceDeliveryRecord(params: {
   agent: EnboxPlatformAgent;
   sourceDid: string;
@@ -655,6 +664,9 @@ export async function createAudienceDeliveryRecord(params: {
   } as DataEncodedRecordsWriteMessage;
 }
 
+/**
+ * Opens an audience seal and verifies the recovered private key against the audience record payload.
+ */
 export async function unsealAudienceKey(params: {
   payload: EncryptionControlAudiencePayload;
   sealingPrivateKey: PrivateKeyJwk;
@@ -690,6 +702,9 @@ export async function unsealAudienceKey(params: {
   return keyMaterial;
 }
 
+/**
+ * Verifies that delivered or unsealed audience key material matches the accepted audience record.
+ */
 export async function verifyAudienceKeyMaterial(params: {
   keyMaterial: RoleAudienceKeyMaterial;
   payload: {
