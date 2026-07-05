@@ -539,7 +539,6 @@ class InProcessWalletHandler implements ConnectHandler {
     delegatePortableDid.privateKeys!.push(delegateX25519PrivateKey);
 
     const allGrants: any[] = [];
-    const allDecryptionKeys: any[] = [];
 
     for (const permissionRequest of params.permissionRequests) {
       const { protocolDefinition, permissionScopes } = permissionRequest;
@@ -559,18 +558,6 @@ class InProcessWalletHandler implements ConnectHandler {
       // Send to the wallet's remote DWN (same as a real wallet does).
       await walletProtocol!.send(this.ownerDid);
 
-      // Derive scoped decryption keys for single-party encrypted protocols.
-      const hasEncryptedTypes = Object.values(protocolDefinition.types ?? {})
-        .some((type: any) => type?.encryptionRequired === true);
-
-      if (hasEncryptedTypes) {
-        const keys = await EnboxConnectProtocol.deriveScopedDecryptionKeys(
-          this.walletAgent, this.ownerDid,
-          protocolDefinition.protocol, permissionScopes, protocolDefinition,
-        );
-        allDecryptionKeys.push(...keys);
-      }
-
       // Create permission grants.
       const grants = await EnboxConnectProtocol.createPermissionGrants(
         this.ownerDid, delegateBearerDid, this.walletAgent, permissionScopes,
@@ -580,9 +567,8 @@ class InProcessWalletHandler implements ConnectHandler {
 
     return {
       delegatePortableDid,
-      delegateGrants         : allGrants,
-      connectedDid           : this.ownerDid,
-      delegateDecryptionKeys : allDecryptionKeys.length > 0 ? allDecryptionKeys : undefined,
+      delegateGrants : allGrants,
+      connectedDid   : this.ownerDid,
     };
   }
 }

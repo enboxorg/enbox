@@ -13,7 +13,6 @@
  * and ECDH (Ed25519 → X25519 + HKDF) for key agreement.
  */
 
-import type { DerivedPrivateJwk } from '@enbox/dwn-sdk-js';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { RequireOnly } from '@enbox/common';
 import type { BearerDid, DidDocument, PortableDid } from '@enbox/dids';
@@ -73,45 +72,6 @@ export type ConnectPermissionGrantOptions = {
   connectSession?: ConnectSessionMetadata;
 };
 
-/**
- * A scope-aware decryption key delivered to delegates during the connect flow.
- *
- * Two scope kinds:
- *
- * - **`protocol`** — protocol-wide key at depth `[ProtocolPath, protocolUri]`.
- *   Can derive leaf keys for any type path within the protocol.
- *   Issued when the grant covers the entire protocol (no `protocolPath`).
- *
- * - **`protocolPath`** — path-subtree key at depth
- *   `[ProtocolPath, protocolUri, ...pathSegments]`.
- *   Can decrypt records at that path and descendant paths.
- *   Issued when the grant is narrowed to a specific `protocolPath`.
- *
- * Common conditions (both kinds):
- * 1. The protocol has `encryptionRequired: true` types
- * 2. The delegate has at least one `Records.Read` scope
- *
- * Out of scope (fail closed):
- * - `contextId`-scoped encrypted delegate reads
- */
-export type DelegateDecryptionKey =
-  | {
-    /** The protocol URI this key is scoped to. */
-    protocol: string;
-    /** Protocol-wide decryption scope. */
-    scope: { kind: 'protocol' };
-    /** The derived private key material for ProtocolPath decryption. */
-    derivedPrivateKey: DerivedPrivateJwk;
-  }
-  | {
-    /** The protocol URI this key is scoped to. */
-    protocol: string;
-    /** Protocol-path subtree decryption scope. */
-    scope: { kind: 'protocolPath'; protocolPath: string };
-    /** The derived private key material for ProtocolPath decryption. */
-    derivedPrivateKey: DerivedPrivateJwk;
-  };
-
 import { DidJwk } from '@enbox/dids';
 import { concatenateUrl, Convert, logger, nowMs, timed } from '@enbox/common';
 import {
@@ -122,12 +82,12 @@ import {
   X25519,
   XChaCha20Poly1305,
 } from '@enbox/crypto';
-import { DwnInterfaceName, DwnMethodName, KeyDerivationScheme, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
+import { createGrantKeyRecordsForGrants as createGrantKeyRecordsForGrantsFn } from './dwn-encryption.js';
 import { DwnInterface } from './types/dwn.js';
 import { isRecordPermissionScope } from './dwn-api.js';
-import { createGrantKeyRecordsForGrants as createGrantKeyRecordsForGrantsFn, getEncryptionKeyInfo } from './dwn-encryption.js';
 import { mapConcurrent, mapConcurrentSettled } from './utils.js';
 
 // ---------------------------------------------------------------------------
@@ -280,15 +240,6 @@ export type EnboxConnectResponse = {
 
   /** The delegate DID's full portable form, including private keys. */
   delegatePortableDid: PortableDid;
-
-  /**
-   * Scope-aware decryption keys for encrypted protocols.
-   *
-   * Derived only for `Records.Read` permission scopes on
-   * protocols with `encryptionRequired: true` types. Write-only delegates
-   * receive no decryption keys.
-   */
-  delegateDecryptionKeys?: DelegateDecryptionKey[];
 
   /** Per-grant revocation mappings for session-bound self-revocation on disconnect. */
   sessionRevocations?: { grantId: string; revocationGrantId: string }[];
@@ -554,7 +505,6 @@ function assertConnectResponse(payload: Record<string, unknown>): asserts payloa
   requireOptionalString(payload, 'nonce', ctx);
   requireArray(payload, 'delegateGrants', ctx);
   requireObject(payload, 'delegatePortableDid', ctx);
-  requireOptionalArray(payload, 'delegateDecryptionKeys', ctx);
   requireOptionalArray(payload, 'sessionRevocations', ctx);
 }
 
@@ -1180,108 +1130,6 @@ async function prepareProtocol(
   );
 }
 
-/**
- * Derives the minimal set of decryption keys implied by read-like permission
- * scopes for a single-party encrypted protocol.
- *
- * Rules:
- *   - Only Records.Read scopes contribute.
- *   - Write / Delete / Count scopes produce no decryption keys.
- *   - If any unrestricted (no `protocolPath`) read scope exists, one
- *     protocol-wide key is emitted and narrower keys are dropped.
- *   - Otherwise one subtree key is emitted per unique `protocolPath`.
- *   - Scopes with `contextId` cause a fail-closed error.
- *
- * @param agent - The platform agent (must hold the owner's KMS keys)
- * @param ownerDid - The DID of the protocol owner
- * @param protocolUri - The protocol URI
- * @param scopes - The permission scopes for this protocol
- * @param protocolDefinition - The protocol definition (for multi-party detection)
- * @returns An array of `DelegateDecryptionKey` (may be empty)
- */
-async function deriveScopedDecryptionKeys(
-  agent: EnboxPlatformAgent,
-  ownerDid: string,
-  protocolUri: string,
-  scopes: DwnPermissionScope[],
-  _protocolDefinition: DwnProtocolDefinition,
-): Promise<DelegateDecryptionKey[]> {
-  // Collect read-like scopes only. `isRecordPermissionScope` narrows to
-  // `DwnRecordsPermissionScope`, which declares `protocolPath?: string`
-  // and `contextId?: string` — no `as any` needed for those reads below.
-  const readScopes = scopes.filter(isConnectReadScope);
-
-  if (readScopes.length === 0) {
-    return []; // write/delete only → no decryption keys
-  }
-
-  // Fail closed: reject contextId-scoped encrypted reads.
-  for (const scope of readScopes) {
-    if (scope.contextId) {
-      throw new Error(
-        `Encrypted delegate access scoped by contextId is not supported ` +
-        `yet; use protocol-wide permissions for protocol '${protocolUri}'.`,
-      );
-    }
-  }
-
-  // Check if any scope is protocol-wide (no protocolPath).
-  const hasProtocolWideRead = readScopes.some((s) => !s.protocolPath);
-
-  const { keyId, keyUri } = await getEncryptionKeyInfo(agent, ownerDid);
-
-  // If any unrestricted read scope exists, emit one protocol-wide key
-  // and skip narrower keys (the protocol-wide key subsumes them).
-  if (hasProtocolWideRead) {
-    const derivationPath = [KeyDerivationScheme.ProtocolPath, protocolUri];
-    const derivedBytes = await agent.keyManager.derivePrivateKeyBytes({
-      keyUri, derivationPath,
-    });
-    const derivedJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: derivedBytes });
-
-    return [{
-      protocol          : protocolUri,
-      scope             : { kind: 'protocol' },
-      derivedPrivateKey : {
-        rootKeyId         : keyId,
-        derivationScheme  : KeyDerivationScheme.ProtocolPath,
-        derivationPath,
-        derivedPrivateKey : derivedJwk as PrivateKeyJwk,
-      },
-    }];
-  }
-
-  // All read scopes are protocolPath-scoped.
-  // Emit one subtree key per unique protocolPath.
-  const uniquePaths = new Set<string>();
-  for (const scope of readScopes) {
-    if (scope.protocolPath) { uniquePaths.add(scope.protocolPath); }
-  }
-
-  const keys: DelegateDecryptionKey[] = [];
-  for (const protocolPath of uniquePaths) {
-    const pathSegments = protocolPath.split('/');
-    const derivationPath = [KeyDerivationScheme.ProtocolPath, protocolUri, ...pathSegments];
-    const derivedBytes = await agent.keyManager.derivePrivateKeyBytes({
-      keyUri, derivationPath,
-    });
-    const derivedJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: derivedBytes });
-
-    keys.push({
-      protocol          : protocolUri,
-      scope             : { kind: 'protocolPath', protocolPath },
-      derivedPrivateKey : {
-        rootKeyId         : keyId,
-        derivationScheme  : KeyDerivationScheme.ProtocolPath,
-        derivationPath,
-        derivedPrivateKey : derivedJwk as PrivateKeyJwk,
-      },
-    });
-  }
-
-  return keys;
-}
-
 // ---------------------------------------------------------------------------
 // Full wallet-side flow (provider submits response)
 // ---------------------------------------------------------------------------
@@ -1343,10 +1191,6 @@ async function submitConnectResponse(
     });
     delegatePortableDid.privateKeys!.push(delegateX25519PrivateKey);
 
-    // Derive scope-aware decryption keys for encrypted protocols.
-    // ProtocolPath keys are either protocol-wide or path-subtree.
-    // Write-only delegates receive no decryption capability.
-    const delegateDecryptionKeys: DelegateDecryptionKey[] = [];
     const durableGrantKeyRecords: DwnDataEncodedRecordsWriteMessage[] = [];
 
     const delegateGrants = await timed(
@@ -1368,14 +1212,6 @@ async function submitConnectResponse(
             const hasEncryptedTypes = Object.values(protocolDefinition.types ?? {})
               .some((type: any) => type?.encryptionRequired === true);
             const hasEncryptedReadScopes = hasEncryptedTypes && permissionScopes.some(isConnectReadScope);
-
-            if (hasEncryptedReadScopes) {
-              const keys = await deriveScopedDecryptionKeys(
-                agent, selectedDid, protocolDefinition.protocol,
-                permissionScopes, protocolDefinition,
-              );
-              delegateDecryptionKeys.push(...keys);
-            }
 
             const grants = await EnboxConnectProtocol.createPermissionGrants(
               selectedDid,
@@ -1495,14 +1331,13 @@ async function submitConnectResponse(
     const responseObject = await timed(
       `${CONNECT_PERF_LOG_PREFIX} response.build`,
       () => EnboxConnectProtocol.createConnectResponse({
-        providerDid            : selectedDid,
-        delegateDid            : delegateBearerDid.uri,
-        aud                    : connectRequest.clientDid,
-        nonce                  : connectRequest.nonce,
+        providerDid        : selectedDid,
+        delegateDid        : delegateBearerDid.uri,
+        aud                : connectRequest.clientDid,
+        nonce              : connectRequest.nonce,
         delegateGrants,
         delegatePortableDid,
-        delegateDecryptionKeys : delegateDecryptionKeys.length > 0 ? delegateDecryptionKeys : undefined,
-        sessionRevocations     : sessionRevocations.length > 0 ? sessionRevocations : undefined,
+        sessionRevocations : sessionRevocations.length > 0 ? sessionRevocations : undefined,
       }),
     );
 
@@ -1598,5 +1433,4 @@ export const EnboxConnectProtocol = {
   createPermissionGrants,
   createGrantKeyRecordsForGrants: createGrantKeyRecordsForGrantsFn,
   submitConnectResponse,
-  deriveScopedDecryptionKeys,
 };

@@ -6,11 +6,11 @@ import type { ValidationStateReader } from '../types/validation-state-reader.js'
 
 import { DwnErrorCode } from './dwn-error.js';
 import { Encoder } from '../utils/encoder.js';
-import { ENCRYPTION_CONTROL_AUDIENCE_PATH } from './constants.js';
 import { EncryptionProtocol } from '../protocols/encryption.js';
 import { Message } from './message.js';
 import { ROLE_AUDIENCE_DERIVATION_SCHEME } from '../utils/encryption.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
+import { ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH } from './constants.js';
 import { getRoleAudienceContextId, getRoleContextPrefix, isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
 
 export type ReplicationApplyOptions = {
@@ -214,6 +214,10 @@ function dependencyRefsFromStatus(
     return toRefList(encryptionProtocolDependencyFromMessage(message, EncryptionProtocol.audienceEpochPath));
   case DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceEpochMissing:
     return encryptionAudienceDependenciesFromRoleAudienceEntries(message);
+  case DwnErrorCode.EncryptionControlValidateDeliveryAudienceMissing:
+    return toRefList(encryptionAudienceDependencyFromDelivery(message));
+  case DwnErrorCode.EncryptionControlValidateDeliveryRecipientRoleRecordMissing:
+    return toRefList(roleDependencyFromEncryptionControlDeliveryRecipient(message));
   case DwnErrorCode.EncryptionProtocolValidateAudienceKeyRoleRecordMissing:
     return toRefList(roleDependencyFromEncryptionAudienceRecipient(message));
   case DwnErrorCode.RecordsWriteMissingDataInPrevious:
@@ -507,6 +511,66 @@ function encryptionAudienceDependenciesFromRoleAudienceEntries(
   }
 
   return refs;
+}
+
+function encryptionAudienceDependencyFromDelivery(
+  message: GenericMessage,
+): Extract<DependencyRef, { type: 'EncryptionControl' }> | undefined {
+  const descriptor = message.descriptor as Record<string, unknown>;
+  if (descriptor.protocolPath !== ENCRYPTION_CONTROL_DELIVERY_PATH) {
+    return undefined;
+  }
+
+  const tags = descriptor.tags;
+  if (!isRecordObject(tags)) {
+    return undefined;
+  }
+
+  const { protocol, rolePath, contextId, keyId } = tags;
+  if (
+    typeof protocol !== 'string' ||
+    typeof rolePath !== 'string' ||
+    typeof contextId !== 'string' ||
+    typeof keyId !== 'string'
+  ) {
+    return undefined;
+  }
+
+  return {
+    type         : 'EncryptionControl',
+    protocol,
+    protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+    tags         : { protocol, rolePath, contextId, keyId },
+  };
+}
+
+function roleDependencyFromEncryptionControlDeliveryRecipient(message: GenericMessage): DependencyRef | undefined {
+  const descriptor = message.descriptor as Record<string, unknown>;
+  if (descriptor.protocolPath !== ENCRYPTION_CONTROL_DELIVERY_PATH || typeof descriptor.recipient !== 'string') {
+    return undefined;
+  }
+
+  const tags = descriptor.tags;
+  if (!isRecordObject(tags)) {
+    return undefined;
+  }
+
+  const { protocol, rolePath, contextId } = tags;
+  if (
+    typeof protocol !== 'string' ||
+    typeof rolePath !== 'string' ||
+    typeof contextId !== 'string'
+  ) {
+    return undefined;
+  }
+
+  return {
+    type         : 'Role',
+    protocol,
+    protocolPath : rolePath,
+    recipient    : descriptor.recipient,
+    ...(contextId === '' ? {} : { contextPrefix: contextId }),
+  };
 }
 
 function roleDependencyFromEncryptionAudienceRecipient(message: GenericMessage): DependencyRef | undefined {

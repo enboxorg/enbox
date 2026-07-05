@@ -56,12 +56,10 @@ export async function walletConnect(
 
   // Import delegate DID, process grants, and set up sync.
   const {
-    delegatePortableDid, connectedDid, delegateGrants, delegateDecryptionKeys,
-    sessionRevocations,
+    delegatePortableDid, connectedDid, delegateGrants, sessionRevocations,
   } = result;
   const identity = await importDelegateAndSetupSync({
     userAgent, delegatePortableDid, connectedDid, delegateGrants,
-    delegateDecryptionKeys,
     flowName: 'Wallet connect',
   });
 
@@ -89,7 +87,6 @@ export async function walletConnect(
     userAgent, emitter, storage, identity,
     connectedDid, delegateDid   : delegatePortableDid.uri, sync,
     delegateState : {
-      delegateDecryptionKeys,
       sessionRevocations,
     },
   });

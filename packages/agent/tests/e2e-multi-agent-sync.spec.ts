@@ -18,7 +18,7 @@ import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { DataStream, DwnInterfaceName, DwnMethodName, EncryptionProtocol, Time } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnInterfaceName, DwnMethodName, ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH, EncryptionProtocol, Time } from '@enbox/dwn-sdk-js';
 
 const testDwnUrls: string[] = [testDwnUrl];
 
@@ -757,7 +757,7 @@ describe('E2E Multi-Agent Sync', () => {
       }) as EnboxConnectResponse;
       expect(connectResponse.providerDid).toBe(alice.did.uri);
       expect(connectResponse.delegatePortableDid.uri).toBe(connectResponse.delegateDid);
-      expect(connectResponse.delegateDecryptionKeys?.length).toBeGreaterThan(0);
+      expect('delegateDecryptionKeys' in connectResponse).toBe(false);
 
       const recordsReadGrant = connectResponse.delegateGrants.find((grant) => {
         const parsedGrant = DwnPermissionGrant.parse(grant);
@@ -975,14 +975,15 @@ describe('E2E Multi-Agent Sync', () => {
       });
       expect(threadWrite.reply.status.code).toBe(202);
       const threadContextId = (threadWrite.message as RecordsWriteMessage).contextId!;
-      const isThreadAudienceKeyFeedEntry = (entry: MessagesQueryReplyEntry): boolean => {
+      const isThreadDeliveryFeedEntry = (entry: MessagesQueryReplyEntry): boolean => {
         const descriptor = entry.message?.descriptor as RecordsWriteMessage['descriptor'] | undefined;
         const tags = descriptor?.tags;
-        return descriptor?.protocol === EncryptionProtocol.uri &&
-          descriptor.protocolPath === EncryptionProtocol.audienceKeyPath &&
+        return descriptor?.protocol === chatProtocol.protocol &&
+          descriptor.protocolPath === ENCRYPTION_CONTROL_DELIVERY_PATH &&
+          descriptor.recipient === bobParticipant.did.uri &&
           tags?.contextId === threadContextId &&
           tags.protocol === chatProtocol.protocol &&
-          tags.role === 'thread/participant';
+          tags.rolePath === 'thread/participant';
       };
 
       const roleWrite = await primaryHarness.agent.dwn.processRequest({
@@ -1001,24 +1002,25 @@ describe('E2E Multi-Agent Sync', () => {
       });
       expect(roleWrite.reply.status.code).toBe(202);
 
-      const sourceAudienceEpochQuery = await primaryHarness.agent.dwn.processRequest({
+      const sourceAudienceRecordQuery = await primaryHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           filter: {
-            protocol     : EncryptionProtocol.uri,
-            protocolPath : EncryptionProtocol.audienceEpochPath,
+            protocol     : chatProtocol.protocol,
+            protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
             tags         : {
               contextId : threadContextId,
               protocol  : chatProtocol.protocol,
-              role      : 'thread/participant',
+              rolePath  : 'thread/participant',
             },
           },
         },
       });
-      expect(sourceAudienceEpochQuery.reply.status.code).toBe(200);
-      expect(sourceAudienceEpochQuery.reply.entries?.length).toBe(1);
+      expect(sourceAudienceRecordQuery.reply.status.code).toBe(200);
+      expect(sourceAudienceRecordQuery.reply.entries?.length).toBe(1);
+      const audienceKeyId = (sourceAudienceRecordQuery.reply.entries![0] as RecordsWriteMessage).descriptor.tags!.keyId;
 
       const chatText = 'role-audience encrypted message from sync';
       const chatWrite = await primaryHarness.agent.dwn.processRequest({
@@ -1040,25 +1042,25 @@ describe('E2E Multi-Agent Sync', () => {
       await primaryHarness.agent.sync.registerIdentity({ did: alice.did.uri, options: { protocols: 'all' } });
       await primaryHarness.agent.sync.sync('push');
 
-      const remoteAudienceKeyQuery = await deviceHarness.agent.dwn.sendRequest({
+      const remoteDeliveryQuery = await deviceHarness.agent.dwn.sendRequest({
         author        : bobParticipant.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           filter: {
             recipient    : bobParticipant.did.uri,
-            protocol     : EncryptionProtocol.uri,
-            protocolPath : EncryptionProtocol.audienceKeyPath,
+            protocol     : chatProtocol.protocol,
+            protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
             tags         : {
               contextId : threadContextId,
               protocol  : chatProtocol.protocol,
-              role      : 'thread/participant',
+              rolePath  : 'thread/participant',
             },
           },
         },
       });
-      expect(remoteAudienceKeyQuery.reply.status.code).toBe(200);
-      expect(remoteAudienceKeyQuery.reply.entries?.length).toBe(1);
+      expect(remoteDeliveryQuery.reply.status.code).toBe(200);
+      expect(remoteDeliveryQuery.reply.entries?.length).toBe(1);
 
       const remoteFeedQuery = await deviceHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
@@ -1071,7 +1073,7 @@ describe('E2E Multi-Agent Sync', () => {
         },
       });
       expect(remoteFeedQuery.reply.status.code).toBe(200);
-      expect(remoteFeedQuery.reply.entries?.some(isThreadAudienceKeyFeedEntry)).toBe(true);
+      expect(remoteFeedQuery.reply.entries?.some(isThreadDeliveryFeedEntry)).toBe(true);
 
       await deviceHarness.agent.sync.registerIdentity({
         did     : alice.did.uri,
@@ -1094,48 +1096,50 @@ describe('E2E Multi-Agent Sync', () => {
         },
       });
       expect(localFeedQuery.reply.status.code).toBe(200);
-      expect(localFeedQuery.reply.entries?.some(isThreadAudienceKeyFeedEntry)).toBe(true);
+      expect(localFeedQuery.reply.entries?.some(isThreadDeliveryFeedEntry)).toBe(true);
 
-      const localAudienceEpochQuery = await deviceHarness.agent.dwn.processRequest({
+      const localAudienceRecordQuery = await deviceHarness.agent.dwn.processRequest({
         author        : bobParticipant.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           filter: {
-            protocol     : EncryptionProtocol.uri,
-            protocolPath : EncryptionProtocol.audienceEpochPath,
+            protocol     : chatProtocol.protocol,
+            protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
             tags         : {
               contextId : threadContextId,
+              keyId     : audienceKeyId,
               protocol  : chatProtocol.protocol,
-              role      : 'thread/participant',
+              rolePath  : 'thread/participant',
             },
           },
         },
       });
-      expect(localAudienceEpochQuery.reply.status.code).toBe(200);
-      expect(localAudienceEpochQuery.reply.entries?.map(entry => entry.recordId)).toContain(
-        sourceAudienceEpochQuery.reply.entries![0].recordId,
+      expect(localAudienceRecordQuery.reply.status.code).toBe(200);
+      expect(localAudienceRecordQuery.reply.entries?.map(entry => entry.recordId)).toContain(
+        sourceAudienceRecordQuery.reply.entries![0].recordId,
       );
 
-      const audienceKeyQuery = await deviceHarness.agent.dwn.processRequest({
+      const deliveryQuery = await deviceHarness.agent.dwn.processRequest({
         author        : bobParticipant.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           filter: {
             recipient    : bobParticipant.did.uri,
-            protocol     : EncryptionProtocol.uri,
-            protocolPath : EncryptionProtocol.audienceKeyPath,
+            protocol     : chatProtocol.protocol,
+            protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
             tags         : {
               contextId : threadContextId,
+              keyId     : audienceKeyId,
               protocol  : chatProtocol.protocol,
-              role      : 'thread/participant',
+              rolePath  : 'thread/participant',
             },
           },
         },
       });
-      expect(audienceKeyQuery.reply.status.code).toBe(200);
-      expect(audienceKeyQuery.reply.entries?.length).toBe(1);
+      expect(deliveryQuery.reply.status.code).toBe(200);
+      expect(deliveryQuery.reply.entries?.length).toBe(1);
       expect(await deviceHarness.agent.did.get({ didUri: alice.did.uri })).toBeUndefined();
 
       const readResult = await deviceHarness.agent.dwn.processRequest({
@@ -1154,25 +1158,25 @@ describe('E2E Multi-Agent Sync', () => {
       const decryptedBytes = await DataStream.toBytes(readResult.reply.entry!.data!);
       expect(new TextDecoder().decode(decryptedBytes)).toBe(chatText);
 
-      const nonParticipantAudienceKeyQuery = await deviceHarness.agent.dwn.processRequest({
+      const nonParticipantDeliveryQuery = await deviceHarness.agent.dwn.processRequest({
         author        : nonParticipant.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           filter: {
             recipient    : nonParticipant.did.uri,
-            protocol     : EncryptionProtocol.uri,
-            protocolPath : EncryptionProtocol.audienceKeyPath,
+            protocol     : chatProtocol.protocol,
+            protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
             tags         : {
               contextId : threadContextId,
               protocol  : chatProtocol.protocol,
-              role      : 'thread/participant',
+              rolePath  : 'thread/participant',
             },
           },
         },
       });
-      expect(nonParticipantAudienceKeyQuery.reply.status.code).toBe(200);
-      expect(nonParticipantAudienceKeyQuery.reply.entries ?? []).toHaveLength(0);
+      expect(nonParticipantDeliveryQuery.reply.status.code).toBe(200);
+      expect(nonParticipantDeliveryQuery.reply.entries ?? []).toHaveLength(0);
 
       const nonParticipantRead = await deviceHarness.agent.dwn.processRequest({
         author        : nonParticipant.did.uri,

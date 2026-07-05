@@ -1,5 +1,4 @@
-import type { AudienceEpochPayload } from '../src/dwn-encryption.js';
-import type { DerivedPrivateJwk, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { DataEncodedRecordsWriteMessage, DerivedPrivateJwk, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
@@ -12,6 +11,9 @@ import {
   DwnMethodName,
   Encoder,
   Encryption,
+  ENCRYPTION_CONTROL_AUDIENCE_PATH,
+  ENCRYPTION_CONTROL_DELIVERY_PATH,
+  EncryptionControlDeliveryRecipientAuthority,
   EncryptionProtocol,
   HdKey,
   KeyAgreementAlgorithm,
@@ -34,6 +36,7 @@ import {
   getKeyDecrypter,
   ivLength,
   maybeDecryptReply,
+  resolveAudienceDecryptionKey,
   resolveKeyDecrypter,
 } from '../src/dwn-encryption.js';
 
@@ -217,6 +220,36 @@ describe('dwn-encryption', () => {
       ).rejects.toThrow('AgentDwnApi: Failed to decrypt record \'rec-fail-read\'');
     });
 
+    it('should skip decryption for encryption-control RecordsRead replies', async () => {
+      const decryptStub = sinon.stub(Records, 'decrypt').rejects(new Error('control records are not app data'));
+      const request = {
+        author      : 'did:example:alice',
+        target      : 'did:example:alice',
+        encryption  : true,
+        messageType : DwnInterface.RecordsRead,
+      } as any;
+      const reply = {
+        status : { code: 200 },
+        entry  : {
+          recordsWrite: {
+            recordId   : 'delivery-record',
+            descriptor : {
+              protocol     : 'https://example.com/proto',
+              protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+            },
+            encryption: {
+              keyEncryption: [],
+            },
+          },
+          data: DataStream.fromBytes(new Uint8Array([1, 2, 3])),
+        },
+      } as any;
+
+      await maybeDecryptReply(request, reply, {} as any);
+
+      expect(decryptStub.called).toBe(false);
+    });
+
     it('should throw wrapped error when RecordsQuery entry decryption fails', async () => {
       const dwnSdk = await import('@enbox/dwn-sdk-js');
       sinon.stub(dwnSdk.Records, 'decrypt').rejects(new Error('bad cipher'));
@@ -346,6 +379,192 @@ describe('dwn-encryption', () => {
       expect(mockAgent.keyManager.getKeyUri.called).toBe(false);
       expect(mockAgent.keyManager.unwrapContentKey.called).toBe(false);
       expect(Encoder.bytesToString(await DataStream.toBytes(reply.entry.data))).toBe('delivered key plaintext');
+    });
+  });
+
+  describe('resolveAudienceDecryptionKey', () => {
+    it('should try delegate self-deliveries and then participant deliveries for member delegates', async () => {
+      const protocol = 'https://example.com/member-delegate-delivery';
+      const rolePath = 'chat/member';
+      const contextId = 'chat-root';
+      const sourceDid = 'did:example:alice';
+      const recipientDid = 'did:example:bob';
+      const granteeDid = 'did:example:bob-delegate';
+      const delegatedGrant = { recordId: 'bob-delegate-grant' } as unknown as DataEncodedRecordsWriteMessage;
+      const audiencePrivateKeyJwk = await X25519.generateKey();
+      const audiencePublicKeyJwk = await X25519.getPublicKey({ key: audiencePrivateKeyJwk });
+      const audienceKeyId = await Encryption.getKeyId(audiencePublicKeyJwk);
+      const delegateRootPrivateKey = await X25519.generateKey();
+      const delegateRootPublicKey = await X25519.getPublicKey({ key: delegateRootPrivateKey });
+      const delegateRootPrivateKeyBytes = await X25519.privateKeyToBytes({ privateKey: delegateRootPrivateKey });
+      const audiencePayload = {
+        protocol,
+        rolePath,
+        contextId,
+        keyId            : audienceKeyId,
+        publicKeyJwk     : audiencePublicKeyJwk,
+        sealedPrivateKey : {
+          algorithm          : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+          derivationScheme   : 'seal',
+          encryptedKey       : Encoder.bytesToBase64Url(new Uint8Array([1, 2, 3])),
+          ephemeralPublicKey : audiencePublicKeyJwk,
+          keyId              : 'seal-key-id',
+        },
+      };
+      const audienceMessage = {
+        recordId    : 'audience-record',
+        encodedData : Encoder.bytesToBase64Url(Encoder.objectToBytes(audiencePayload)),
+        descriptor  : {
+          protocol,
+          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          tags         : {
+            protocol,
+            rolePath,
+            contextId,
+            keyId: audienceKeyId,
+          },
+        },
+      } as unknown as RecordsWriteMessage & { encodedData: string };
+      const deliveryPayload = {
+        protocol,
+        rolePath,
+        contextId,
+        keyId       : audienceKeyId,
+        keyMaterial : {
+          algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+          derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+          keyId            : audienceKeyId,
+          privateKeyJwk    : audiencePrivateKeyJwk,
+          publicKeyJwk     : audiencePublicKeyJwk,
+        },
+      };
+      const deliveryMessage = {
+        recordId    : 'delivery-record',
+        encodedData : Encoder.bytesToBase64Url(new Uint8Array([9, 9, 9])),
+        descriptor  : {
+          recipient    : recipientDid,
+          protocol,
+          protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+          tags         : {
+            protocol,
+            rolePath,
+            contextId,
+            keyId              : audienceKeyId,
+            recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
+          },
+        },
+      } as unknown as RecordsWriteMessage & { encodedData: string };
+      const roleMessage = {
+        recordId   : 'role-record',
+        contextId  : `${contextId}/role-record`,
+        descriptor : {
+          recipient    : recipientDid,
+          protocol,
+          protocolPath : rolePath,
+        },
+      } as unknown as RecordsWriteMessage;
+      const processDwnRequest = sinon.stub().callsFake(async (request: any): Promise<any> => {
+        const filter = request.messageParams.filter;
+        if (request.messageType === DwnInterface.RecordsQuery && filter.protocolPath === ENCRYPTION_CONTROL_AUDIENCE_PATH) {
+          return {
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [audienceMessage],
+            },
+          };
+        }
+
+        if (request.messageType === DwnInterface.RecordsQuery && filter.protocolPath === ENCRYPTION_CONTROL_DELIVERY_PATH) {
+          return {
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : filter.recipient === recipientDid ? [deliveryMessage] : [],
+            },
+          };
+        }
+
+        if (request.messageType === DwnInterface.RecordsQuery && filter.protocolPath === rolePath) {
+          return {
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [roleMessage],
+            },
+          };
+        }
+
+        return {
+          reply: {
+            status  : { code: 200, detail: 'OK' },
+            entries : [],
+          },
+        };
+      });
+      const mockAgent = {
+        did: {
+          resolve: sinon.stub().resolves({
+            didDocument: {
+              id                 : granteeDid,
+              keyAgreement       : ['#enc'],
+              verificationMethod : [{
+                controller   : granteeDid,
+                id           : `${granteeDid}#enc`,
+                publicKeyJwk : delegateRootPublicKey,
+                type         : 'JsonWebKey2020',
+              }],
+            },
+            didResolutionMetadata: {},
+          }),
+        },
+        keyManager: {
+          derivePrivateKeyBytes: sinon.stub().callsFake(async ({ derivationPath }: { derivationPath: string[] }): Promise<Uint8Array> => {
+            return HdKey.derivePrivateKeyBytes(delegateRootPrivateKeyBytes, derivationPath);
+          }),
+          getKeyUri: sinon.stub().resolves('delegate-key-uri'),
+        },
+        processDwnRequest,
+        sendDwnRequest: sinon.stub().resolves({
+          reply: {
+            status  : { code: 200, detail: 'OK' },
+            entries : [],
+          },
+        }),
+      };
+      const delegateDecryptionKeyCache = {
+        get: sinon.stub().withArgs(`ddk~${granteeDid}`).returns([{
+          derivedPrivateKey: {
+            rootKeyId         : 'bob-grant-key',
+            derivationScheme  : KeyDerivationScheme.ProtocolPath,
+            derivedPrivateKey : delegateRootPrivateKey,
+          },
+          protocol,
+          scope: { kind: 'protocol' },
+        }]),
+        set: sinon.stub(),
+      };
+      sinon.stub(Records, 'decrypt').resolves(DataStream.fromBytes(Encoder.objectToBytes(deliveryPayload)));
+
+      const result = await resolveAudienceDecryptionKey({
+        agent : mockAgent as any,
+        sourceDid,
+        recipientDid,
+        granteeDid,
+        delegatedGrant,
+        delegateDecryptionKeyCache,
+        protocol,
+        contextId,
+        rolePath,
+        keyId : audienceKeyId,
+      });
+      const deliveryRecipients = processDwnRequest.getCalls()
+        .map((call) => call.args[0])
+        .filter((request) => request.messageParams?.filter?.protocolPath === ENCRYPTION_CONTROL_DELIVERY_PATH);
+
+      expect(result?.recipientDid).toBe(recipientDid);
+      expect(result?.keyMaterial.keyId).toBe(audienceKeyId);
+      expect(deliveryRecipients.map((request) => request.messageParams.filter.recipient)).toEqual([granteeDid, recipientDid]);
+      expect(deliveryRecipients.map((request) => request.author)).toEqual([granteeDid, recipientDid]);
+      expect(deliveryRecipients.map((request) => request.granteeDid)).toEqual([undefined, granteeDid]);
+      expect(deliveryRecipients[1].messageParams.delegatedGrant).toBe(delegatedGrant);
     });
   });
 
@@ -717,6 +936,7 @@ describe('dwn-encryption', () => {
       includeEncodedData = true,
       grantRevoked = false,
       protocolDefinition,
+      grantKeyRemoteOnly = false,
       mutatePayload,
       mutateRecordTags,
     }: {
@@ -727,6 +947,7 @@ describe('dwn-encryption', () => {
       includeEncodedData?: boolean;
       grantRevoked?: boolean;
       protocolDefinition?: ProtocolDefinition;
+      grantKeyRemoteOnly?: boolean;
       mutatePayload?: (payload: any) => void;
       mutateRecordTags?: (tags: Record<string, string>) => void;
     } = {}): Promise<{
@@ -802,12 +1023,18 @@ describe('dwn-encryption', () => {
       sinon.stub(Records, 'decrypt').resolves(DataStream.fromBytes(Encoder.objectToBytes(payload)));
 
       const processDwnRequest = sinon.stub();
-      processDwnRequest.onFirstCall().resolves({
+      const grantKeyQueryReply = {
         reply: {
           status  : { code: 200, detail: 'OK' },
           entries : [grantKeyMessage],
         },
-      });
+      };
+      processDwnRequest.onFirstCall().resolves(grantKeyRemoteOnly ? {
+        reply: {
+          status  : { code: 200, detail: 'OK' },
+          entries : [],
+        },
+      } : grantKeyQueryReply);
       let nextCallIndex = 1;
       if (!includeEncodedData) {
         processDwnRequest.onCall(nextCallIndex).resolves({
@@ -864,6 +1091,7 @@ describe('dwn-encryption', () => {
           isGrantRevoked: sinon.stub().resolves(grantRevoked),
         },
         processDwnRequest,
+        sendDwnRequest: sinon.stub().resolves(grantKeyQueryReply),
       };
 
       return {
@@ -882,178 +1110,6 @@ describe('dwn-encryption', () => {
       };
     };
 
-    const makeRoleAudienceResolverFixture = async ({
-      includeAudienceEpoch = true,
-      includeRoleRecord = true,
-      mutateAudienceEpochPayload,
-    }: {
-      includeAudienceEpoch?: boolean;
-      includeRoleRecord?: boolean;
-      mutateAudienceEpochPayload?: (payload: AudienceEpochPayload) => void;
-    } = {}): Promise<{
-      audienceCache: { get: sinon.SinonStub; set: sinon.SinonStub };
-      audienceKeyId: string;
-      mockAgent: any;
-      recordsWrite: RecordsWriteMessage;
-    }> => {
-      const protocol = 'https://proto.example.com/chat';
-      const contextId = 'thread-1';
-      const role = 'thread/participant';
-      const epoch = 1;
-      const sourceDid = 'did:example:alice';
-      const recipientDid = 'did:example:bob';
-
-      const sourcePersona = await TestDataGenerator.generatePersona({ did: sourceDid });
-      const recipientPersona = await TestDataGenerator.generatePersona({ did: recipientDid });
-      const rolePathPrivateKey = await X25519.generateKey();
-      const rolePathPrivateKeyBytes = await X25519.privateKeyToBytes({ privateKey: rolePathPrivateKey });
-      const audiencePrivateKey = await X25519.generateKey();
-      const audiencePublicKey = await X25519.getPublicKey({ key: audiencePrivateKey });
-      const keyId = await Encryption.getKeyId(audiencePublicKey);
-      const audienceKeyPayload = {
-        protocol    : protocol,
-        contextId   : contextId,
-        role        : role,
-        epoch       : epoch,
-        keyMaterial : {
-          algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-          derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
-          keyId,
-          privateKeyJwk    : audiencePrivateKey,
-          publicKeyJwk     : audiencePublicKey,
-        },
-      };
-      const audienceTags = {
-        protocol,
-        contextId,
-        role,
-        epoch,
-        keyId,
-      };
-
-      const audienceKeyWrite = await TestDataGenerator.generateRecordsWrite({
-        author       : sourcePersona,
-        recipient    : recipientDid,
-        protocol     : EncryptionProtocol.uri,
-        protocolPath : EncryptionProtocol.audienceKeyPath,
-        schema       : EncryptionProtocol.definition.types.audienceKey.schema,
-        dataFormat   : 'application/json',
-        data         : new Uint8Array([1, 2, 3]),
-        tags         : audienceTags,
-      });
-      const audienceKeyMessage = {
-        ...audienceKeyWrite.message,
-        encodedData: Encoder.bytesToBase64Url(audienceKeyWrite.dataBytes!),
-      } as RecordsWriteMessage & { encodedData: string };
-
-      const audienceEpochPayload = {
-        protocol,
-        contextId,
-        role,
-        epoch,
-        keyId,
-        publicKeyJwk: audiencePublicKey,
-      };
-      mutateAudienceEpochPayload?.(audienceEpochPayload);
-      const audienceEpochWrite = await TestDataGenerator.generateRecordsWrite({
-        author       : sourcePersona,
-        published    : true,
-        protocol     : EncryptionProtocol.uri,
-        protocolPath : EncryptionProtocol.audienceEpochPath,
-        schema       : EncryptionProtocol.definition.types.audienceEpoch.schema,
-        dataFormat   : 'application/json',
-        data         : Encoder.objectToBytes(audienceEpochPayload),
-        tags         : audienceTags,
-      });
-      const audienceEpochMessage = {
-        ...audienceEpochWrite.message,
-        encodedData: Encoder.bytesToBase64Url(audienceEpochWrite.dataBytes!),
-      } as RecordsWriteMessage & { encodedData: string };
-
-      const roleRecord = {
-        contextId  : `${contextId}/participant-1`,
-        descriptor : {
-          recipient    : recipientDid,
-          protocol,
-          protocolPath : role,
-        },
-      } as RecordsWriteMessage;
-
-      sinon.stub(Records, 'decrypt').resolves(DataStream.fromBytes(Encoder.objectToBytes(audienceKeyPayload)));
-
-      const processDwnRequest = sinon.stub();
-      processDwnRequest.onFirstCall().resolves({
-        reply: {
-          status  : { code: 200, detail: 'OK' },
-          entries : [audienceKeyMessage],
-        },
-      });
-      processDwnRequest.onSecondCall().resolves({
-        reply: {
-          status  : { code: 200, detail: 'OK' },
-          entries : includeAudienceEpoch ? [audienceEpochMessage] : [],
-        },
-      });
-      processDwnRequest.onThirdCall().resolves({
-        reply: {
-          status  : { code: 200, detail: 'OK' },
-          entries : includeRoleRecord ? [roleRecord] : [],
-        },
-      });
-
-      const mockAgent = {
-        did: {
-          resolve: sinon.stub().resolves({
-            didDocument: {
-              id                 : recipientDid,
-              keyAgreement       : ['#enc'],
-              verificationMethod : [{
-                id           : `${recipientDid}#enc`,
-                type         : 'JsonWebKey2020',
-                controller   : recipientDid,
-                publicKeyJwk : recipientPersona.encryptionKeyPair.publicJwk,
-              }],
-            },
-            didResolutionMetadata: {},
-          }),
-        },
-        keyManager: {
-          derivePrivateKeyBytes : sinon.stub().resolves(rolePathPrivateKeyBytes),
-          derivePublicKey       : sinon.stub(),
-          getKeyUri             : sinon.stub().resolves('recipient-key-uri'),
-          unwrapContentKey      : sinon.stub(),
-        },
-        processDwnRequest,
-        secrets: {
-          get : sinon.stub().resolves(undefined),
-          put : sinon.stub().resolves(),
-        },
-      };
-
-      return {
-        audienceKeyId : keyId,
-        mockAgent,
-        audienceCache : {
-          get : sinon.stub().returns(undefined),
-          set : sinon.stub(),
-        },
-        recordsWrite: {
-          recordId   : 'rec-role-audience',
-          contextId  : `${contextId}/chat-1`,
-          descriptor : { protocol, protocolPath: 'thread/chat' },
-          encryption : {
-            keyEncryption: [{
-              derivationScheme: ROLE_AUDIENCE_DERIVATION_SCHEME,
-              protocol,
-              role,
-              epoch,
-              keyId,
-            }],
-          },
-        } as unknown as RecordsWriteMessage,
-      };
-    };
-
     it('should return a ProtocolPath key decrypter when record has no context encryption', async () => {
       const mockAgent = makeAliceAgent();
 
@@ -1067,9 +1123,12 @@ describe('dwn-encryption', () => {
         },
       } as unknown as RecordsWriteMessage;
 
-      const result = await resolveKeyDecrypter(
-        mockAgent, 'did:example:alice', recordsWrite, undefined,
-      );
+      const result = await resolveKeyDecrypter({
+        agent     : mockAgent,
+        authorDid : 'did:example:alice',
+        recordsWrite,
+        targetDid : undefined,
+      });
 
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
     });
@@ -1089,9 +1148,12 @@ describe('dwn-encryption', () => {
         },
       } as unknown as RecordsWriteMessage;
 
-      const result = await resolveKeyDecrypter(
-        mockAgent, 'did:example:alice', recordsWrite, undefined,
-      );
+      const result = await resolveKeyDecrypter({
+        agent     : mockAgent,
+        authorDid : 'did:example:alice',
+        recordsWrite,
+        targetDid : undefined,
+      });
 
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
       expect(result.rootKeyId).toBe('did:example:alice#enc');
@@ -1120,11 +1182,14 @@ describe('dwn-encryption', () => {
         descriptor : { protocol: 'https://proto.example.com', protocolPath: 'message' },
       } as unknown as RecordsWriteMessage;
 
-      const result = await resolveKeyDecrypter(
-        mockAgent, 'did:example:alice', recordsWrite, undefined,
-        delegateCache,
-        'did:example:delegate',
-      );
+      const result = await resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:alice',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : undefined,
+      });
 
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
       expect(delegateCache.get.calledOnce).toBe(true);
@@ -1153,11 +1218,14 @@ describe('dwn-encryption', () => {
         descriptor : { protocol: 'https://proto.example.com', protocolPath: 'message/reply' },
       } as unknown as RecordsWriteMessage;
 
-      const result = await resolveKeyDecrypter(
-        mockAgent, 'did:example:alice', recordsWrite, undefined,
-        delegateCache,
-        'did:example:delegate',
-      );
+      const result = await resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:alice',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : undefined,
+      });
 
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
       expect(result.rootKeyId).toBe('cached-root');
@@ -1186,11 +1254,14 @@ describe('dwn-encryption', () => {
         descriptor : { protocol: 'https://proto.example.com', protocolPath: 'message' },
       } as unknown as RecordsWriteMessage;
 
-      const result = await resolveKeyDecrypter(
-        mockAgent, 'did:example:alice', recordsWrite, undefined,
-        delegateCache,
-        'did:example:delegate',
-      );
+      const result = await resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:alice',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : undefined,
+      });
 
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
     });
@@ -1216,11 +1287,14 @@ describe('dwn-encryption', () => {
         descriptor : { protocol: 'https://proto.example.com', protocolPath: 'message' },
       } as unknown as RecordsWriteMessage;
 
-      await expect(resolveKeyDecrypter(
-        mockAgent, 'did:example:alice', recordsWrite, undefined,
-        delegateCache,
-        'did:example:delegate',
-      )).rejects.toThrow('no delivered decryption key covers encrypted record');
+      await expect(resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:alice',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : undefined,
+      })).rejects.toThrow('no delivered decryption key covers encrypted record');
 
       expect(mockAgent.keyManager.getKeyUri.called).toBe(false);
     });
@@ -1233,11 +1307,13 @@ describe('dwn-encryption', () => {
         descriptor : { protocol: 'https://proto.example.com', protocolPath: 'message' },
       } as unknown as RecordsWriteMessage;
 
-      await expect(resolveKeyDecrypter(
-        mockAgent, 'did:example:alice', recordsWrite, undefined,
-        undefined,
-        'did:example:delegate',
-      )).rejects.toThrow('no delivered decryption key covers encrypted record');
+      await expect(resolveKeyDecrypter({
+        agent      : mockAgent,
+        authorDid  : 'did:example:alice',
+        granteeDid : 'did:example:delegate',
+        recordsWrite,
+        targetDid  : undefined,
+      })).rejects.toThrow('no delivered decryption key covers encrypted record');
 
       expect(mockAgent.keyManager.getKeyUri.called).toBe(false);
     });
@@ -1263,11 +1339,14 @@ describe('dwn-encryption', () => {
         descriptor : { protocol: 'https://proto.example.com', protocolPath: 'message' },
       } as unknown as RecordsWriteMessage;
 
-      await expect(resolveKeyDecrypter(
-        mockAgent, 'did:example:alice', recordsWrite, 'did:example:alice',
-        delegateCache,
-        'did:example:delegate',
-      )).rejects.toThrow('no delivered decryption key covers encrypted record');
+      await expect(resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:alice',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : 'did:example:alice',
+      })).rejects.toThrow('no delivered decryption key covers encrypted record');
 
       expect(mockAgent.processDwnRequest.calledOnce).toBe(true);
       expect(mockAgent.processDwnRequest.firstCall.args[0].messageParams.filter).toEqual({
@@ -1287,11 +1366,14 @@ describe('dwn-encryption', () => {
         recordProtocolPath       : 'message/reply',
       });
 
-      const result = await resolveKeyDecrypter(
-        mockAgent, 'did:example:delegate', recordsWrite, 'did:example:alice',
-        delegateCache,
-        'did:example:delegate',
-      );
+      const result = await resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:delegate',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : 'did:example:alice',
+      });
 
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
       expect(delegateCache.set.calledOnce).toBe(true);
@@ -1317,11 +1399,14 @@ describe('dwn-encryption', () => {
         recordProtocolPath       : 'chat/member',
       });
 
-      const result = await resolveKeyDecrypter(
-        mockAgent, 'did:example:delegate', recordsWrite, 'did:example:alice',
-        delegateCache,
-        'did:example:delegate',
-      );
+      const result = await resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:delegate',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : 'did:example:alice',
+      });
 
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
       expect(delegateCache.set.calledOnce).toBe(true);
@@ -1339,11 +1424,14 @@ describe('dwn-encryption', () => {
         includeEncodedData: false,
       });
 
-      const result = await resolveKeyDecrypter(
-        mockAgent, 'did:example:delegate', recordsWrite, 'did:example:alice',
-        delegateCache,
-        'did:example:delegate',
-      );
+      const result = await resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:delegate',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : 'did:example:alice',
+      });
 
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
       expect(delegateCache.set.calledOnce).toBe(true);
@@ -1356,6 +1444,31 @@ describe('dwn-encryption', () => {
       });
     });
 
+    it('should hydrate durable grantKeys from remote fallback when the local replica has not synced', async () => {
+      const { mockAgent, delegateCache, recordsWrite } = await makeGrantKeyResolverFixture({
+        grantKeyRemoteOnly: true,
+      });
+
+      const result = await resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:delegate',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : 'did:example:alice',
+      });
+
+      expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+      expect(mockAgent.sendDwnRequest.calledOnce).toBe(true);
+      expect(mockAgent.sendDwnRequest.firstCall.args[0].messageParams.filter).toEqual({
+        recipient    : 'did:example:delegate',
+        protocol     : EncryptionProtocol.uri,
+        protocolPath : EncryptionProtocol.grantKeyPath,
+        tags         : { protocol: 'https://proto.example.com' },
+      });
+      expect(delegateCache.set.calledOnce).toBe(true);
+    });
+
     it('should reject a durable grantKey whose scope does not cover the encrypted record', async () => {
       const { mockAgent, delegateCache, recordsWrite } = await makeGrantKeyResolverFixture({
         grantScopeProtocolPath   : 'message/reply',
@@ -1363,11 +1476,14 @@ describe('dwn-encryption', () => {
         recordProtocolPath       : 'message',
       });
 
-      await expect(resolveKeyDecrypter(
-        mockAgent, 'did:example:delegate', recordsWrite, 'did:example:alice',
-        delegateCache,
-        'did:example:delegate',
-      )).rejects.toThrow('no delivered decryption key covers encrypted record');
+      await expect(resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:delegate',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : 'did:example:alice',
+      })).rejects.toThrow('no delivered decryption key covers encrypted record');
 
       expect(delegateCache.set.called).toBe(false);
     });
@@ -1377,11 +1493,14 @@ describe('dwn-encryption', () => {
         grantDateExpires: Time.createOffsetTimestamp({ seconds: -60 }),
       });
 
-      await expect(resolveKeyDecrypter(
-        mockAgent, 'did:example:delegate', recordsWrite, 'did:example:alice',
-        delegateCache,
-        'did:example:delegate',
-      )).rejects.toThrow('no delivered decryption key covers encrypted record');
+      await expect(resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:delegate',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : 'did:example:alice',
+      })).rejects.toThrow('no delivered decryption key covers encrypted record');
 
       expect(delegateCache.set.called).toBe(false);
       expect(mockAgent.permissions.isGrantRevoked.called).toBe(false);
@@ -1392,11 +1511,14 @@ describe('dwn-encryption', () => {
         grantRevoked: true,
       });
 
-      await expect(resolveKeyDecrypter(
-        mockAgent, 'did:example:delegate', recordsWrite, 'did:example:alice',
-        delegateCache,
-        'did:example:delegate',
-      )).rejects.toThrow('no delivered decryption key covers encrypted record');
+      await expect(resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:delegate',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : 'did:example:alice',
+      })).rejects.toThrow('no delivered decryption key covers encrypted record');
 
       expect(delegateCache.set.called).toBe(false);
       expect(mockAgent.permissions.isGrantRevoked.calledOnce).toBe(true);
@@ -1409,11 +1531,14 @@ describe('dwn-encryption', () => {
         },
       });
 
-      await expect(resolveKeyDecrypter(
-        mockAgent, 'did:example:delegate', recordsWrite, 'did:example:alice',
-        delegateCache,
-        'did:example:delegate',
-      )).rejects.toThrow('no delivered decryption key covers encrypted record');
+      await expect(resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:delegate',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : 'did:example:alice',
+      })).rejects.toThrow('no delivered decryption key covers encrypted record');
 
       expect(delegateCache.set.called).toBe(false);
     });
@@ -1425,11 +1550,14 @@ describe('dwn-encryption', () => {
         },
       });
 
-      await expect(resolveKeyDecrypter(
-        mockAgent, 'did:example:delegate', recordsWrite, 'did:example:alice',
-        delegateCache,
-        'did:example:delegate',
-      )).rejects.toThrow('no delivered decryption key covers encrypted record');
+      await expect(resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:delegate',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : 'did:example:alice',
+      })).rejects.toThrow('no delivered decryption key covers encrypted record');
 
       expect(delegateCache.set.called).toBe(false);
     });
@@ -1441,99 +1569,18 @@ describe('dwn-encryption', () => {
         },
       });
 
-      await expect(resolveKeyDecrypter(
-        mockAgent, 'did:example:delegate', recordsWrite, 'did:example:alice',
-        delegateCache,
-        'did:example:delegate',
-      )).rejects.toThrow('no delivered decryption key covers encrypted record');
+      await expect(resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:delegate',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : 'did:example:alice',
+      })).rejects.toThrow('no delivered decryption key covers encrypted record');
 
       expect(delegateCache.set.called).toBe(false);
     });
 
-    it('should hydrate a role-audience key only after verifying the audienceEpoch and role assignment', async () => {
-      const { mockAgent, audienceCache, audienceKeyId, recordsWrite } = await makeRoleAudienceResolverFixture();
-
-      const result = await resolveKeyDecrypter(
-        mockAgent, 'did:example:bob', recordsWrite, 'did:example:alice',
-        undefined,
-        undefined,
-        audienceCache,
-      );
-
-      expect(result.derivationScheme).toBe(ROLE_AUDIENCE_DERIVATION_SCHEME);
-      expect(audienceCache.set.calledOnce).toBe(true);
-      expect(mockAgent.processDwnRequest.callCount).toBe(3);
-      expect(mockAgent.processDwnRequest.secondCall.args[0].messageParams.filter).toEqual({
-        protocol     : EncryptionProtocol.uri,
-        protocolPath : EncryptionProtocol.audienceEpochPath,
-        tags         : {
-          protocol  : 'https://proto.example.com/chat',
-          contextId : 'thread-1',
-          role      : 'thread/participant',
-          epoch     : 1,
-          keyId     : audienceKeyId,
-        },
-      });
-      expect(mockAgent.processDwnRequest.thirdCall.args[0].messageParams.filter).toEqual({
-        contextId    : 'thread-1',
-        recipient    : 'did:example:bob',
-        protocol     : 'https://proto.example.com/chat',
-        protocolPath : 'thread/participant',
-      });
-    });
-
-    it('should skip an audienceKey that does not match an accepted audienceEpoch', async () => {
-      const { mockAgent, audienceCache, recordsWrite } = await makeRoleAudienceResolverFixture({
-        includeAudienceEpoch: false,
-      });
-
-      const result = await resolveKeyDecrypter(
-        mockAgent, 'did:example:bob', recordsWrite, 'did:example:alice',
-        undefined,
-        undefined,
-        audienceCache,
-      );
-
-      expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
-      expect(audienceCache.set.called).toBe(false);
-      expect(mockAgent.processDwnRequest.callCount).toBe(2);
-    });
-
-    it('should skip an audienceKey whose key material differs from the accepted audienceEpoch', async () => {
-      const { mockAgent, audienceCache, recordsWrite } = await makeRoleAudienceResolverFixture({
-        mutateAudienceEpochPayload: (payload): void => {
-          payload.publicKeyJwk = { kty: 'OKP', crv: 'X25519', x: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB' };
-        },
-      });
-
-      const result = await resolveKeyDecrypter(
-        mockAgent, 'did:example:bob', recordsWrite, 'did:example:alice',
-        undefined,
-        undefined,
-        audienceCache,
-      );
-
-      expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
-      expect(audienceCache.set.called).toBe(false);
-      expect(mockAgent.processDwnRequest.callCount).toBe(2);
-    });
-
-    it('should skip an audienceKey when the recipient has no active role assignment', async () => {
-      const { mockAgent, audienceCache, recordsWrite } = await makeRoleAudienceResolverFixture({
-        includeRoleRecord: false,
-      });
-
-      const result = await resolveKeyDecrypter(
-        mockAgent, 'did:example:bob', recordsWrite, 'did:example:alice',
-        undefined,
-        undefined,
-        audienceCache,
-      );
-
-      expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
-      expect(audienceCache.set.called).toBe(false);
-      expect(mockAgent.processDwnRequest.callCount).toBe(3);
-    });
   });
 });
 

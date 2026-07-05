@@ -643,7 +643,6 @@ export class AuthManager {
 
       // Wipe all secrets from the vault-backed SecretStore.
       await Promise.all([
-        this._userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS).catch(() => {}),
         this._userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).catch(() => {}),
         this._userAgent.secrets.delete(STORAGE_KEYS.REGISTRATION_TOKENS).catch(() => {}),
       ]);
@@ -667,17 +666,14 @@ export class AuthManager {
     } else {
       // Clean disconnect: ALWAYS clear all session markers regardless
       // of revocation outcome. Retry context is independent (step below).
-      // Delegate keys are removed from both SecretStore and legacy StorageAdapter.
       await Promise.all([
         this._storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED),
         this._storage.remove(STORAGE_KEYS.ACTIVE_IDENTITY),
         this._storage.remove(STORAGE_KEYS.DELEGATE_DID),
         this._storage.remove(STORAGE_KEYS.CONNECTED_DID),
-        this._storage.remove(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS),
         this._storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS),
         this._storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS),
         this._storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS),
-        this._userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS).catch(() => {}),
         this._userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).catch(() => {}),
       ]);
     }
@@ -1068,12 +1064,10 @@ export class AuthManager {
 
     // 5. Import delegate DID, process grants, set up sync.
     const {
-      delegatePortableDid, connectedDid, delegateGrants, delegateDecryptionKeys,
-      sessionRevocations,
+      delegatePortableDid, connectedDid, delegateGrants, sessionRevocations,
     } = result;
     const identity = await importDelegateAndSetupSync({
       userAgent, delegatePortableDid, connectedDid, delegateGrants,
-      delegateDecryptionKeys,
       flowName: 'Connect',
     });
 
@@ -1085,7 +1079,6 @@ export class AuthManager {
       userAgent, emitter, storage, identity,
       connectedDid, delegateDid   : delegatePortableDid.uri, sync,
       delegateState : {
-        delegateDecryptionKeys,
         sessionRevocations,
       },
     });

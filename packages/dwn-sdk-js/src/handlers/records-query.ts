@@ -426,8 +426,16 @@ export class RecordsQueryHandler implements MethodHandler {
     deps: HandlerDependencies,
   ): Promise<void> {
 
-    if (Message.isSignedByAuthorDelegate(recordsQuery.message)) {
+    if (Message.isSignedByAuthorDelegate(recordsQuery.message) &&
+        !EncryptionControl.filterTargetsOnlyControlRecords(recordsQuery.message.descriptor.filter)) {
       await recordsQuery.authorizeDelegate(deps.validationStateReader);
+    } else if (EncryptionControl.filterTargetsOnlyControlRecords(recordsQuery.message.descriptor.filter)) {
+      await EncryptionControl.authorizeControlReadRequest({
+        tenant,
+        incomingMessage       : recordsQuery.message,
+        requester             : Message.getRequester(recordsQuery.message),
+        validationStateReader : deps.validationStateReader,
+      });
     }
 
     const permissionGrantId = Message.getPermissionGrantId(recordsQuery.signaturePayload!);

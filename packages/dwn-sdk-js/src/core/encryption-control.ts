@@ -27,6 +27,7 @@ import { DwnError, DwnErrorCode } from './dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import { ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH, isEncryptionControlPath } from './constants.js';
 import { getRoleContextPrefix, getRuleSetAtPath, isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
+import { grantKeyScopeCoversDeliveredScope, isGrantKeyEligibleRecordsScope } from '../utils/grant-key-coverage.js';
 import { ProtocolAction, ProtocolActor } from '../types/protocols-types.js';
 
 type RoleAudienceDefinition = {
@@ -79,6 +80,28 @@ export class EncryptionControl {
 
   public static isExactAudienceFilter(filter: RecordsFilter): boolean {
     return EncryptionControl.getExactAudienceFilterTuple(filter) !== undefined;
+  }
+
+  public static filterTargetsOnlyControlRecords(filter: RecordsFilter): boolean {
+    return typeof filter.protocolPath === 'string' && isEncryptionControlPath(filter.protocolPath);
+  }
+
+  public static async authorizeControlReadRequest(input: {
+    tenant: string;
+    incomingMessage: ControlReadMessage;
+    requester: string | undefined;
+    validationStateReader: ValidationStateReader;
+  }): Promise<void> {
+    if (input.requester === undefined || input.requester === input.tenant) {
+      return;
+    }
+
+    await EncryptionControl.getInvokedReadGrants({
+      actorDid              : input.requester,
+      incomingMessage       : input.incomingMessage,
+      tenant                : input.tenant,
+      validationStateReader : input.validationStateReader,
+    });
   }
 
   public static buildAudienceRecordFilters(filters: Filter[]): Filter[] {
@@ -244,8 +267,19 @@ export class EncryptionControl {
 
     const recordType = EncryptionControl.getRecordType(recordsWriteMessage);
     if (recordType === 'delivery') {
-      return requester === recordsWriteMessage.descriptor.recipient ||
-        requester === Message.getAuthor(recordsWriteMessage);
+      if (requester === recordsWriteMessage.descriptor.recipient ||
+          requester === Message.getAuthor(recordsWriteMessage)) {
+        return true;
+      }
+
+      return EncryptionControl.canReadDeliveryByDelegatedGrant({
+        tenant,
+        incomingMessage       : input.incomingMessage,
+        requester,
+        recordsWriteMessage,
+        tags                  : EncryptionControl.getDeliveryTags(recordsWriteMessage),
+        validationStateReader : input.validationStateReader,
+      });
     }
 
     const tags = EncryptionControl.getRoleAudienceKeyId(recordsWriteMessage, 'audience');
@@ -695,7 +729,10 @@ export class EncryptionControl {
       if (await EncryptionControl.deliveryRecipientIsRoleHolder(input)) {
         return;
       }
-      break;
+      throw new DwnError(
+        DwnErrorCode.EncryptionControlValidateDeliveryRecipientRoleRecordMissing,
+        'delivery recipient role record is missing.'
+      );
     case EncryptionControlDeliveryRecipientAuthority.RoleCreatorGrant:
       if (await EncryptionControl.deliveryRecipientHasRoleCreateGrant(input)) {
         return;
@@ -853,6 +890,62 @@ export class EncryptionControl {
     });
   }
 
+  private static async canReadDeliveryByDelegatedGrant(input: {
+    tenant: string;
+    incomingMessage: ControlReadMessage;
+    requester: string;
+    recordsWriteMessage: RecordsWriteMessage;
+    tags: EncryptionControlDeliveryTags;
+    validationStateReader: ValidationStateReader;
+  }): Promise<boolean> {
+    const { tenant, incomingMessage, requester, recordsWriteMessage, tags, validationStateReader } = input;
+    const grants = await EncryptionControl.getInvokedReadGrants({
+      tenant,
+      actorDid: requester,
+      incomingMessage,
+      validationStateReader,
+    });
+    const recipient = recordsWriteMessage.descriptor.recipient;
+    let protocolDefinition: ProtocolDefinition | undefined;
+
+    for (const grant of grants) {
+      if (recipient !== grant.grantor && recipient !== grant.grantee) {
+        continue;
+      }
+
+      if (!isGrantKeyEligibleRecordsScope(grant.scope) || grant.scope.method !== DwnMethodName.Read) {
+        continue;
+      }
+
+      const deliveredScope = {
+        protocol     : tags.protocol,
+        protocolPath : tags.rolePath,
+      };
+
+      if (grantKeyScopeCoversDeliveredScope({
+        grantScope: grant.scope,
+        deliveredScope,
+      })) {
+        return true;
+      }
+
+      protocolDefinition ??= await validationStateReader.fetchProtocolDefinition(
+        tenant,
+        tags.protocol,
+        incomingMessage.descriptor.messageTimestamp,
+      );
+      if (grantKeyScopeCoversDeliveredScope({
+        grantScope: grant.scope,
+        deliveredScope,
+        protocolDefinition,
+      })) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   private static async getInvokedReadGrants(input: {
     tenant: string;
     actorDid: string;
@@ -860,7 +953,15 @@ export class EncryptionControl {
     validationStateReader: ValidationStateReader;
   }): Promise<PermissionGrant[]> {
     if (Message.isSignedByAuthorDelegate(input.incomingMessage)) {
-      return [PermissionGrant.parse(input.incomingMessage.authorization!.authorDelegatedGrant!)];
+      const grant = PermissionGrant.parse(input.incomingMessage.authorization!.authorDelegatedGrant!);
+      await GrantAuthorization.performBaseValidation({
+        incomingMessage       : input.incomingMessage,
+        expectedGrantor       : grant.grantor,
+        expectedGrantee       : input.actorDid,
+        permissionGrant       : grant,
+        validationStateReader : input.validationStateReader,
+      });
+      return [grant];
     }
 
     const { descriptor } = input.incomingMessage;

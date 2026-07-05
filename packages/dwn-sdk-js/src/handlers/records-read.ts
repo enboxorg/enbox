@@ -179,13 +179,15 @@ export class RecordsReadHandler implements MethodHandler {
     matchedRecordsWrite: RecordsWrite,
     deps: HandlerDependencies,
   ): Promise<void> {
-    if (Message.isSignedByAuthorDelegate(recordsRead.message)) {
-      await recordsRead.authorizeDelegate(matchedRecordsWrite.message, deps.validationStateReader);
-    }
-
     const { descriptor } = matchedRecordsWrite.message;
 
     if (EncryptionControl.isControlMessage(matchedRecordsWrite.message)) {
+      await EncryptionControl.authorizeControlReadRequest({
+        tenant,
+        incomingMessage       : recordsRead.message,
+        requester             : Message.getRequester(recordsRead.message),
+        validationStateReader : deps.validationStateReader,
+      });
       await EncryptionControl.authorizeRead({
         tenant,
         incomingMessage       : recordsRead.message,
@@ -193,6 +195,8 @@ export class RecordsReadHandler implements MethodHandler {
         recordsWriteMessage   : matchedRecordsWrite.message,
         validationStateReader : deps.validationStateReader,
       });
+    } else if (Message.isSignedByAuthorDelegate(recordsRead.message)) {
+      await recordsRead.authorizeDelegate(matchedRecordsWrite.message, deps.validationStateReader);
     } else if (recordsRead.author === tenant) {
       // if author is the same as the target tenant, we can directly grant access
       return;

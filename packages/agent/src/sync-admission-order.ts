@@ -5,6 +5,7 @@ import {
   DwnInterfaceName,
   DwnMethodName,
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
+  ENCRYPTION_CONTROL_DELIVERY_PATH,
   EncryptionProtocol,
   getRoleAudienceContextId,
   getRoleContextPrefix,
@@ -164,6 +165,21 @@ function getSourceAudienceKey(message: GenericMessage): string | undefined {
   return tags === undefined ? undefined : getSourceAudienceKeyFromTags(tags);
 }
 
+function getSourceAudienceKeyFromDelivery(message: GenericMessage): string | undefined {
+  const tags = getSourceDeliveryTags(message);
+  return tags === undefined ? undefined : getSourceAudienceKeyFromTags(tags);
+}
+
+function getSourceDeliveryRoleKey(message: GenericMessage): string | undefined {
+  const tags = getSourceDeliveryTags(message);
+  const recipient = (message.descriptor as RecordsDescriptor).recipient;
+  if (tags === undefined || recipient === undefined) {
+    return undefined;
+  }
+
+  return getRoleKey(tags.protocol, tags.rolePath, recipient, tags.contextId === '' ? undefined : tags.contextId);
+}
+
 function getAudienceRoleKey(message: GenericMessage): string | undefined {
   const tags = getAudienceTags(message);
   const recipient = (message.descriptor as RecordsDescriptor).recipient;
@@ -202,6 +218,30 @@ function getAudienceTags(message: GenericMessage): AudienceTags | undefined {
 function getSourceAudienceTags(message: GenericMessage): SourceAudienceTags | undefined {
   const { descriptor } = message;
   if (!isRecordsWriteDescriptor(descriptor) || descriptor.protocolPath !== ENCRYPTION_CONTROL_AUDIENCE_PATH) {
+    return undefined;
+  }
+
+  const tags = descriptor.tags;
+  if (!isRecordObject(tags)) {
+    return undefined;
+  }
+
+  const { protocol, contextId, rolePath, keyId } = tags;
+  if (
+    typeof protocol !== 'string' ||
+    typeof contextId !== 'string' ||
+    typeof rolePath !== 'string' ||
+    typeof keyId !== 'string'
+  ) {
+    return undefined;
+  }
+
+  return { protocol, contextId, rolePath, keyId };
+}
+
+function getSourceDeliveryTags(message: GenericMessage): SourceAudienceTags | undefined {
+  const { descriptor } = message;
+  if (!isRecordsWriteDescriptor(descriptor) || descriptor.protocolPath !== ENCRYPTION_CONTROL_DELIVERY_PATH) {
     return undefined;
   }
 
@@ -654,6 +694,18 @@ function addSourceAudienceEdges<T>(
     if (audienceIndex !== undefined) {
       addEdge(audienceIndex, index);
     }
+  }
+
+  const deliveryAudienceKey = getSourceAudienceKeyFromDelivery(message);
+  const deliveryAudienceIndex = deliveryAudienceKey === undefined ? undefined : indexes.sourceAudienceIndex.get(deliveryAudienceKey);
+  if (deliveryAudienceIndex !== undefined) {
+    addEdge(deliveryAudienceIndex, index);
+  }
+
+  const deliveryRoleKey = getSourceDeliveryRoleKey(message);
+  const deliveryRoleIndex = deliveryRoleKey === undefined ? undefined : indexes.roleIndex.get(deliveryRoleKey);
+  if (deliveryRoleIndex !== undefined) {
+    addEdge(deliveryRoleIndex, index);
   }
 }
 

@@ -290,8 +290,16 @@ export class RecordsCountHandler implements MethodHandler {
     deps: HandlerDependencies,
   ): Promise<void> {
 
-    if (Message.isSignedByAuthorDelegate(recordsCount.message)) {
+    if (Message.isSignedByAuthorDelegate(recordsCount.message) &&
+        !EncryptionControl.filterTargetsOnlyControlRecords(recordsCount.message.descriptor.filter)) {
       await recordsCount.authorizeDelegate(deps.validationStateReader);
+    } else if (EncryptionControl.filterTargetsOnlyControlRecords(recordsCount.message.descriptor.filter)) {
+      await EncryptionControl.authorizeControlReadRequest({
+        tenant,
+        incomingMessage       : recordsCount.message,
+        requester             : Message.getRequester(recordsCount.message),
+        validationStateReader : deps.validationStateReader,
+      });
     }
 
     const permissionGrantId = Message.getPermissionGrantId(recordsCount.signaturePayload!);
