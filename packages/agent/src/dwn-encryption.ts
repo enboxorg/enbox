@@ -12,7 +12,6 @@ import type {
   KeyDecrypterDerivationScheme,
   PermissionGrant,
   ProtocolDefinition,
-  ProtocolRuleSet,
   RecordsQueryReply,
   RecordsReadReply,
   RecordsWriteMessage,
@@ -34,7 +33,6 @@ import {
   Cid,
   ContentEncryptionAlgorithm,
   DataStream,
-  DwnInterfaceName,
   DwnMethodName,
   PermissionGrant as DwnPermissionGrant,
   Encoder,
@@ -46,7 +44,6 @@ import {
   getGrantKeyDeliveryScopes,
   getRoleAudienceContextId,
   getRoleContextPrefix,
-  getRuleSetAtPath,
   grantKeyScopeCoversDeliveredScope,
   HdKey,
   isEncryptionControlPath,
@@ -54,8 +51,6 @@ import {
   KeyAgreementAlgorithm,
   KeyDerivationScheme,
   Message,
-  parseCrossProtocolRef,
-  PermissionScopeMatcher,
   Records,
   ROLE_AUDIENCE_DERIVATION_SCHEME,
   Time,
@@ -630,8 +625,6 @@ export async function createAudienceDeliveryRecord(params: {
   recipientRolePublicKey: PublicKeyJwk;
   audienceKey: AudienceKeyPayload;
   recipientAuthority: EncryptionControlDeliveryRecipientAuthority;
-  grantId?: string;
-  roleRef?: string;
   granteeDid?: string;
   permissionGrantId?: string;
   delegatedGrant?: DataEncodedRecordsWriteMessage;
@@ -686,8 +679,6 @@ export async function createAudienceDeliveryRecord(params: {
         contextId          : params.audienceKey.contextId,
         keyId              : params.audienceKey.keyId,
         recipientAuthority : params.recipientAuthority,
-        ...(params.grantId === undefined ? {} : { grantId: params.grantId }),
-        ...(params.roleRef === undefined ? {} : { roleRef: params.roleRef }),
       },
     },
     dataStream: DataStream.fromBytes(encryptedBytes),
@@ -1079,7 +1070,6 @@ async function resolveRoleAudienceDecrypter(params: {
     protocol: string;
     rolePath: string;
   } => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME && 'rolePath' in entry);
-  const recipientDids = getAudienceDeliveryRecipientCandidates(params.recipientDid, params.granteeDid);
 
   for (const entry of roleAudienceEntries) {
     const contextId = getRoleAudienceContextId(entry.rolePath, params.recordsWrite.contextId);
@@ -1087,39 +1077,37 @@ async function resolveRoleAudienceDecrypter(params: {
       continue;
     }
 
-    for (const recipientDid of recipientDids) {
-      const cachedKey = getAudienceKeyFromMemoryCache({
-        audienceDecryptionKeyCache : params.audienceDecryptionKeyCache,
-        sourceDid                  : params.sourceDid,
-        recipientDid,
-        protocol                   : entry.protocol,
-        contextId,
-        rolePath                   : entry.rolePath,
-        keyId                      : entry.keyId,
-      });
-      if (cachedKey !== undefined) {
-        return buildAudienceContentDecrypter(cachedKey);
-      }
+    const cachedKey = getAudienceKeyFromMemoryCache({
+      audienceDecryptionKeyCache : params.audienceDecryptionKeyCache,
+      sourceDid                  : params.sourceDid,
+      recipientDid               : params.recipientDid,
+      protocol                   : entry.protocol,
+      contextId,
+      rolePath                   : entry.rolePath,
+      keyId                      : entry.keyId,
+    });
+    if (cachedKey !== undefined) {
+      return buildAudienceContentDecrypter(cachedKey);
+    }
 
-      const hydratedKey = await hydrateAudienceKey({
-        agent                      : params.agent,
-        sourceDid                  : params.sourceDid,
-        recipientDid,
-        granteeDid                 : params.granteeDid,
-        delegatedGrant             : params.delegatedGrant,
-        delegateDecryptionKeyCache : params.delegateDecryptionKeyCache,
-        protocol                   : entry.protocol,
-        contextId,
-        rolePath                   : entry.rolePath,
-        keyId                      : entry.keyId,
+    const hydratedKey = await hydrateAudienceKey({
+      agent                      : params.agent,
+      sourceDid                  : params.sourceDid,
+      recipientDid               : params.recipientDid,
+      granteeDid                 : params.granteeDid,
+      delegatedGrant             : params.delegatedGrant,
+      delegateDecryptionKeyCache : params.delegateDecryptionKeyCache,
+      protocol                   : entry.protocol,
+      contextId,
+      rolePath                   : entry.rolePath,
+      keyId                      : entry.keyId,
+    });
+    if (hydratedKey !== undefined) {
+      putAudienceKeyInMemoryCache({
+        audienceDecryptionKeyCache : params.audienceDecryptionKeyCache,
+        entry                      : hydratedKey,
       });
-      if (hydratedKey !== undefined) {
-        putAudienceKeyInMemoryCache({
-          audienceDecryptionKeyCache : params.audienceDecryptionKeyCache,
-          entry                      : hydratedKey,
-        });
-        return buildAudienceContentDecrypter(hydratedKey);
-      }
+      return buildAudienceContentDecrypter(hydratedKey);
     }
   }
 
@@ -1148,33 +1136,21 @@ export async function resolveAudienceDecryptionKey(params: {
   delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
   audienceDecryptionKeyCache?: AudienceDecryptionKeyCache;
 }): Promise<AudienceDecryptionKeyEntry | undefined> {
-  for (const recipientDid of getAudienceDeliveryRecipientCandidates(params.recipientDid, params.granteeDid)) {
-    const effectiveParams = {
-      ...params,
-      recipientDid,
-    };
-    const cached = getAudienceKeyFromMemoryCache(effectiveParams);
-    if (cached !== undefined) {
-      return cached;
-    }
+  const cached = getAudienceKeyFromMemoryCache(params);
+  if (cached !== undefined) {
+    return cached;
+  }
 
-    const hydrated = await hydrateAudienceKey(effectiveParams);
-    if (hydrated !== undefined) {
-      putAudienceKeyInMemoryCache({
-        audienceDecryptionKeyCache : params.audienceDecryptionKeyCache,
-        entry                      : hydrated,
-      });
-      return hydrated;
-    }
+  const hydrated = await hydrateAudienceKey(params);
+  if (hydrated !== undefined) {
+    putAudienceKeyInMemoryCache({
+      audienceDecryptionKeyCache : params.audienceDecryptionKeyCache,
+      entry                      : hydrated,
+    });
+    return hydrated;
   }
 
   return undefined;
-}
-
-function getAudienceDeliveryRecipientCandidates(recipientDid: string, granteeDid: string | undefined): string[] {
-  return granteeDid === undefined || granteeDid === recipientDid
-    ? [recipientDid]
-    : [granteeDid, recipientDid];
 }
 
 async function hydrateAudienceKey(params: HydrateAudienceKeyParams): Promise<AudienceDecryptionKeyEntry | undefined> {
@@ -1424,17 +1400,42 @@ async function buildAudienceDeliveryDecrypters(params: {
   delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
 }): Promise<KeyDecrypter[]> {
   const decrypters: KeyDecrypter[] = [];
-  for (const protocolPath of [params.rolePath, ENCRYPTION_CONTROL_DELIVERY_PATH]) {
-    const decrypter = await buildRecipientProtocolPathDecrypter({
-      ...params,
-      protocolPath,
-    });
-    if (decrypter !== undefined) {
-      decrypters.push(decrypter);
-    }
+  const decrypter = await buildRecipientProtocolPathDecrypter({
+    ...params,
+    protocolPath: params.rolePath,
+  });
+  if (decrypter !== undefined) {
+    decrypters.push(decrypter);
   }
 
   return decrypters;
+}
+
+/**
+ * Returns whether the actor can derive the tenant role-path private key that opens audience seals.
+ */
+export async function hasAudienceSealCoverage(params: {
+  agent: EnboxPlatformAgent;
+  sourceDid: string;
+  protocol: string;
+  rolePath: string;
+  granteeDid?: string;
+  delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
+}): Promise<boolean> {
+  try {
+    const sealingPrivateKey = await getRecipientProtocolPathPrivateKey({
+      agent                      : params.agent,
+      delegateDecryptionKeyCache : params.delegateDecryptionKeyCache,
+      derivationPath             : getScopeDerivationPath(params.protocol, params.rolePath),
+      granteeDid                 : params.granteeDid,
+      protocol                   : params.protocol,
+      protocolPath               : params.rolePath,
+      recipientDid               : params.sourceDid,
+    });
+    return sealingPrivateKey !== undefined;
+  } catch {
+    return false;
+  }
 }
 
 async function buildRecipientProtocolPathDecrypter(params: {
@@ -1791,138 +1792,11 @@ async function verifyAudienceKeyRecipientAuthority(params: {
   const tags = params.deliveryMessage.descriptor.tags ?? {};
   const recipientAuthority = tags.recipientAuthority;
 
-  switch (recipientAuthority) {
-    case EncryptionControlDeliveryRecipientAuthority.RoleHolder:
-      await verifyAudienceKeyRoleAssignment(params);
-      return;
-    case EncryptionControlDeliveryRecipientAuthority.RoleCreatorGrant:
-      await verifyAudienceKeyRoleCreatorGrant(params);
-      return;
-    case EncryptionControlDeliveryRecipientAuthority.RoleCreatorRole:
-      await verifyAudienceKeyRoleCreatorRole(params);
-      return;
-    case EncryptionControlDeliveryRecipientAuthority.RoleCreatorAnyone:
-      await verifyAudienceKeyRoleCreatorAnyone(params);
-      return;
-    default:
-      throw new Error('audience delivery recipient authority is invalid.');
-  }
-}
-
-async function verifyAudienceKeyRoleCreatorGrant(params: {
-  agent: EnboxPlatformAgent;
-  sourceDid: string;
-  recipientDid: string;
-  protocol: string;
-  rolePath: string;
-  deliveryMessage: RecordsWriteMessage;
-}): Promise<void> {
-  const grantId = getRequiredStringTag(params.deliveryMessage, 'grantId');
-  const grant = await readPermissionGrant(params.agent, params.recipientDid, params.sourceDid, grantId);
-  await verifyPermissionGrantActive(params.agent, params.recipientDid, params.sourceDid, grant, 'audience delivery');
-
-  if (grant.id !== grantId ||
-      grant.grantor !== params.sourceDid ||
-      grant.grantee !== params.recipientDid ||
-      !grantCoversRoleCreate(grant, params.protocol, params.rolePath)) {
-    throw new Error('audience delivery roleCreatorGrant does not authorize creating the referenced role.');
-  }
-}
-
-async function verifyAudienceKeyRoleCreatorRole(params: {
-  agent: EnboxPlatformAgent;
-  sourceDid: string;
-  recipientDid: string;
-  protocol: string;
-  contextId: string;
-  rolePath: string;
-  deliveryMessage: RecordsWriteMessage;
-}): Promise<void> {
-  const roleRef = getRequiredStringTag(params.deliveryMessage, 'roleRef');
-  const protocolDefinition = await readProtocolDefinition(
-    params.agent, params.recipientDid, params.sourceDid, params.protocol, new Map(), 'audience delivery',
-  );
-  const ruleSet = getRuleSetAtPath(params.rolePath, protocolDefinition.structure);
-  if (!roleRuleAllowsCreate(ruleSet, roleRef)) {
-    throw new Error('audience delivery roleCreatorRole is not authorized by the referenced role path.');
+  if (recipientAuthority !== EncryptionControlDeliveryRecipientAuthority.RoleHolder) {
+    throw new Error('audience delivery recipient authority is invalid.');
   }
 
-  const resolvedRole = resolveRoleReference(roleRef, params.protocol, protocolDefinition);
-  if (resolvedRole === undefined) {
-    throw new Error('audience delivery roleCreatorRole references an unknown role.');
-  }
-
-  await verifyAudienceKeyRoleAssignment({
-    agent        : params.agent,
-    contextId    : params.contextId,
-    protocol     : resolvedRole.protocol,
-    recipientDid : params.recipientDid,
-    rolePath     : resolvedRole.protocolPath,
-    sourceDid    : params.sourceDid,
-  });
-}
-
-async function verifyAudienceKeyRoleCreatorAnyone(params: {
-  agent: EnboxPlatformAgent;
-  sourceDid: string;
-  recipientDid: string;
-  protocol: string;
-  rolePath: string;
-}): Promise<void> {
-  const protocolDefinition = await readProtocolDefinition(
-    params.agent, params.recipientDid, params.sourceDid, params.protocol, new Map(), 'audience delivery',
-  );
-  const ruleSet = getRuleSetAtPath(params.rolePath, protocolDefinition.structure);
-  if (!anyoneCanCreateRole(ruleSet)) {
-    throw new Error('audience delivery roleCreatorAnyone is not authorized by the referenced role path.');
-  }
-}
-
-function grantCoversRoleCreate(grant: PermissionGrant, protocol: string, rolePath: string): boolean {
-  const scope = grant.scope;
-  if (scope.interface !== DwnInterfaceName.Records || scope.method !== DwnMethodName.Write) {
-    return false;
-  }
-
-  return PermissionScopeMatcher.matches(scope, {
-    protocol,
-    protocolPath: rolePath,
-  });
-}
-
-function roleRuleAllowsCreate(ruleSet: ProtocolRuleSet | undefined, roleRef: string): boolean {
-  return (ruleSet?.$actions ?? []).some((actionRule): boolean =>
-    actionRule.role === roleRef && actionRule.can.includes('create')
-  );
-}
-
-function anyoneCanCreateRole(ruleSet: ProtocolRuleSet | undefined): boolean {
-  return (ruleSet?.$actions ?? []).some((actionRule): boolean =>
-    actionRule.who === 'anyone' && actionRule.can.includes('create')
-  );
-}
-
-function resolveRoleReference(
-  roleRef: string,
-  currentProtocol: string,
-  protocolDefinition: ProtocolDefinition,
-): { protocol: string; protocolPath: string } | undefined {
-  const parsed = parseCrossProtocolRef(roleRef);
-  if (parsed === undefined) {
-    return { protocol: currentProtocol, protocolPath: roleRef };
-  }
-
-  const protocol = protocolDefinition.uses?.[parsed.alias];
-  return protocol === undefined ? undefined : { protocol, protocolPath: parsed.protocolPath };
-}
-
-function getRequiredStringTag(message: RecordsWriteMessage, tagName: string): string {
-  const value = message.descriptor.tags?.[tagName];
-  if (typeof value !== 'string') {
-    throw new TypeError(`audience delivery is missing required tag '${tagName}'.`);
-  }
-
-  return value;
+  await verifyAudienceKeyRoleAssignment(params);
 }
 
 async function processDwnRequestWithRemoteFallback<T extends DwnInterface>(

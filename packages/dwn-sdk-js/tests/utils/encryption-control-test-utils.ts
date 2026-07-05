@@ -108,13 +108,11 @@ export async function createAudienceControlWrite(input: {
 export async function createDeliveryControlWrite(input: {
   author: Persona;
   contextId?: string;
-  grantId?: string;
   keyId: string;
   protocol: string;
   recipient: string;
   recipientAuthority: string;
   rolePath: string;
-  roleRef?: string;
   roleRuleSet: ProtocolRuleSet;
 }): Promise<{ dataBytes: Uint8Array; recordsWrite: RecordsWrite }> {
   const tags: Record<string, string> = {
@@ -124,12 +122,6 @@ export async function createDeliveryControlWrite(input: {
     keyId              : input.keyId,
     recipientAuthority : input.recipientAuthority,
   };
-  if (input.grantId !== undefined) {
-    tags.grantId = input.grantId;
-  }
-  if (input.roleRef !== undefined) {
-    tags.roleRef = input.roleRef;
-  }
 
   const dataBytes = Encoder.objectToBytes({
     protocol  : input.protocol,

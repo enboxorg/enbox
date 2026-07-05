@@ -833,7 +833,7 @@ describe('ProtocolsConfigure', () => {
             signer     : Jws.createSigner(alice),
             definition : encryptedDefinition,
           })).rejects.toThrow(DwnErrorCode.ProtocolsConfigureInvalidEncryptedAnyoneRead);
-          expect(capturedWarnings.length).toBe(0);
+          expect(capturedWarnings).toHaveLength(0);
         });
 
         it('should reject nested types with encryptionRequired + anyone-can-read', async () => {
@@ -943,6 +943,43 @@ describe('ProtocolsConfigure', () => {
           });
 
           expect(result).toBeDefined();
+          expect(capturedWarnings.length).toBe(0);
+        });
+
+        it('should reject encryptionRequired: true when read roles resolve through uses', async () => {
+          originalWarn = console.warn;
+          console.warn = (...args: unknown[]): void => { capturedWarnings.push(String(args[0])); };
+
+          const definition = {
+            published : true,
+            protocol  : 'http://example.com/encrypted-cross-protocol-read',
+            uses      : {
+              roles: 'http://example.com/roles',
+            },
+            types: {
+              secret: {
+                dataFormats        : ['application/json'],
+                encryptionRequired : true,
+              },
+            },
+            structure: {
+              secret: {
+                $actions: [
+                  { role: 'roles:member', can: ['read'] },
+                ],
+              },
+            },
+          };
+
+          const alice = await TestDataGenerator.generatePersona();
+          const encryptedDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
+            definition, alice.keyId, alice.encryptionKeyPair.privateJwk
+          );
+
+          await expect(ProtocolsConfigure.create({
+            signer     : Jws.createSigner(alice),
+            definition : encryptedDefinition,
+          })).rejects.toThrow(DwnErrorCode.ProtocolsConfigureInvalidEncryptedCrossProtocolRole);
           expect(capturedWarnings.length).toBe(0);
         });
       });

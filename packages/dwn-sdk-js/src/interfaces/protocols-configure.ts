@@ -498,8 +498,15 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
         }
 
         for (const actionRule of actionRules) {
-          if (actionRule.role === undefined || !actionRule.can.includes(ProtocolAction.Read) || isCrossProtocolRef(actionRule.role)) {
+          if (actionRule.role === undefined || !actionRule.can.includes(ProtocolAction.Read)) {
             continue;
+          }
+
+          if (isCrossProtocolRef(actionRule.role)) {
+            throw new DwnError(
+              DwnErrorCode.ProtocolsConfigureInvalidEncryptedCrossProtocolRole,
+              `Encrypted protocol path '${ruleSetProtocolPath}' references cross-protocol read role '${actionRule.role}'.`
+            );
           }
 
           const roleRuleSet = getRuleSetAtPath(actionRule.role, rootStructure);
