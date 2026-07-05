@@ -1363,6 +1363,12 @@ describe('dwn-encryption', () => {
             entries : [],
           },
         }),
+        sendDwnRequest: sinon.stub().resolves({
+          reply: {
+            status  : { code: 200, detail: 'OK' },
+            entries : [],
+          },
+        }),
       };
       const delegateCache = {
         get : sinon.stub().returns(undefined),
@@ -1391,6 +1397,7 @@ describe('dwn-encryption', () => {
         protocolPath : EncryptionProtocol.grantKeyPath,
         tags         : { protocol: 'https://proto.example.com' },
       });
+      expect(mockAgent.sendDwnRequest.calledOnce).toBe(true);
       expect(delegateCache.set.called).toBe(false);
       expect(mockAgent.keyManager.getKeyUri.called).toBe(false);
     });

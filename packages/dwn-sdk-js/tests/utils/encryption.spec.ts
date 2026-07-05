@@ -12,7 +12,7 @@ import { KeyDerivationScheme } from '../../src/utils/hd-key.js';
 import { Records } from '../../src/utils/records.js';
 import { TestDataGenerator } from './test-data-generator.js';
 import { X25519 } from '@enbox/crypto';
-import { ContentEncryptionAlgorithm, Encryption, KeyAgreementAlgorithm, ROLE_AUDIENCE_DERIVATION_SCHEME } from '../../src/utils/encryption.js';
+import { ContentEncryptionAlgorithm, Encryption, KeyAgreementAlgorithm, ROLE_AUDIENCE_DERIVATION_SCHEME, SEAL_DERIVATION_SCHEME } from '../../src/utils/encryption.js';
 import { describe, expect, it } from 'bun:test';
 
 const boundarySizes = [0, 1, 15, 16, 17, 32, 256];
@@ -230,6 +230,78 @@ describe('Encryption', () => {
       expect(ArrayUtility.byteArraysEqual(unwrapped2, cek)).toBe(true);
     });
 
+    it('should produce and open the sealed-audience-key fixture byte-for-byte', async () => {
+      const protocol = 'https://example.org/protocols/seal-fixture';
+      const rolePath = 'chat/member';
+      const contextId = 'root/thread';
+      const audienceKeyId = 'wGUj0R5Q0vED7B2EW4GFOCqJB1XXTPm6pIjixu2psL4';
+      const sealingKeyId = 'qKpn4plbkMfU3yWDjgvuQc0qGzvQJn031umInc0PnAE';
+      const sealingPrivateKey = {
+        crv : 'X25519',
+        d   : 'yFNS7zIsSPFOsaR5iTELRuAGRB7X0V_XaNE_XYU7yUY',
+        kty : 'OKP',
+        x   : '0Zf6pn0EvFNFTIoiZ8Krr36DkI3_dBrF5pBt2mC3CkM',
+      } as PrivateKeyJwk;
+      const sealingPublicKey = {
+        crv : 'X25519',
+        kty : 'OKP',
+        x   : '0Zf6pn0EvFNFTIoiZ8Krr36DkI3_dBrF5pBt2mC3CkM',
+      } as PublicKeyJwk;
+      const audiencePrivateKey = {
+        crv : 'X25519',
+        d   : '6MxyxL2s6wN4BygLw9kQqGV_nbzJnK8nPdkH2aOKiVw',
+        kty : 'OKP',
+        x   : '7OUu7CaMaUI0bEoF4m2yDnltlSF0FYbKNrY1odGnOHg',
+      } as PrivateKeyJwk;
+      const ephemeralPrivateKey = {
+        crv : 'X25519',
+        d   : 'cD9R8nGxWVe0P55JXcNm7skbIcsUztLsDcyxkMhyaF0',
+        kty : 'OKP',
+        x   : '-6WJjols0E4zpawS9S2povLwkpYNUcwGEXD2YSvD7Bc',
+      } as PrivateKeyJwk;
+      const ephemeralPublicKey = {
+        crv : 'X25519',
+        kid : '9tOb183nLY8lW1KtH-g7ou7lWYt6HC2yU5BnI8NRofs',
+        kty : 'OKP',
+        x   : '-6WJjols0E4zpawS9S2povLwkpYNUcwGEXD2YSvD7Bc',
+      } as PublicKeyJwk;
+      const audiencePrivateKeyBytes = await X25519.privateKeyToBytes({ privateKey: audiencePrivateKey });
+
+      const seal = await Encryption.wrapSeal({
+        ephemeralPrivateKey,
+        privateKeyBytes : audiencePrivateKeyBytes,
+        keyInput        : {
+          algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+          audienceKeyId,
+          contextId,
+          derivationScheme : SEAL_DERIVATION_SCHEME,
+          keyId            : sealingKeyId,
+          protocol,
+          publicKey        : sealingPublicKey,
+          rolePath,
+        },
+      });
+
+      expect(seal).toEqual({
+        algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+        derivationScheme : SEAL_DERIVATION_SCHEME,
+        encryptedKey     : 'BNdM94UG2spUEF_dANHbBbfMHDqkq2-liqIion2nEGeKr87fQMnYLg',
+        ephemeralPublicKey,
+        keyId            : sealingKeyId,
+      });
+
+      const unwrappedPrivateKeyBytes = await Encryption.unwrapSeal({
+        audienceKeyId,
+        contextId,
+        protocol,
+        recipientPrivateKey: sealingPrivateKey,
+        rolePath,
+        seal,
+      });
+
+      expect(ArrayUtility.byteArraysEqual(unwrappedPrivateKeyBytes, audiencePrivateKeyBytes)).toBe(true);
+    });
+
     it('should reject unsupported key agreement algorithms', async () => {
       const recipientPrivateKey = await X25519.generateKey();
       const recipientPublicKey = await X25519.getPublicKey({ key: recipientPrivateKey }) as PublicKeyJwk;
@@ -264,6 +336,33 @@ describe('Encryption', () => {
       } as unknown as Parameters<typeof Encryption.unwrapKey>[1];
 
       await expect(Encryption.unwrapKey(recipientPrivateKey, unsupportedKeyEncryption)).rejects.toThrow(unsupportedMessage);
+      const unsupportedSealInput = {
+        algorithm        : unsupportedAlgorithm,
+        audienceKeyId    : keyId,
+        contextId        : 'context',
+        derivationScheme : SEAL_DERIVATION_SCHEME,
+        keyId,
+        protocol         : 'https://example.com/protocol',
+        publicKey        : recipientPublicKey,
+        rolePath         : 'member',
+      } as unknown as Parameters<typeof Encryption.wrapSeal>[0]['keyInput'];
+      await expect(Encryption.wrapSeal({ privateKeyBytes: cek, keyInput: unsupportedSealInput })).rejects.toThrow(unsupportedMessage);
+
+      const unsupportedSeal = {
+        algorithm          : unsupportedAlgorithm,
+        derivationScheme   : SEAL_DERIVATION_SCHEME,
+        encryptedKey       : Encoder.bytesToBase64Url(wrappedKey.encryptedKey),
+        ephemeralPublicKey : wrappedKey.ephemeralPublicKey,
+        keyId,
+      } as unknown as Parameters<typeof Encryption.unwrapSeal>[0]['seal'];
+      await expect(Encryption.unwrapSeal({
+        audienceKeyId       : keyId,
+        contextId           : 'context',
+        protocol            : 'https://example.com/protocol',
+        recipientPrivateKey : recipientPrivateKey,
+        rolePath            : 'member',
+        seal                : unsupportedSeal,
+      })).rejects.toThrow(unsupportedMessage);
       expect(() => Encryption.validateEncryptionProperty({
         algorithm            : ContentEncryptionAlgorithm.A256CTR,
         initializationVector : Encoder.bytesToBase64Url(TestDataGenerator.randomBytes(16)),

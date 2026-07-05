@@ -16,6 +16,7 @@ export enum KeyAgreementAlgorithm {
 }
 
 export const ROLE_AUDIENCE_DERIVATION_SCHEME = 'roleAudience';
+export const SEAL_DERIVATION_SCHEME = 'seal';
 
 const AES_256_KEY_LENGTH_BYTES = 32;
 const AES_CTR_COUNTER_LENGTH_BYTES = 16;
@@ -63,6 +64,10 @@ export type RoleAudienceKeyEncryption = SourceRoleAudienceKeyEncryption | Legacy
 
 export type X25519KeyEncryption = ProtocolPathKeyEncryption | RoleAudienceKeyEncryption;
 
+export type SealKeyWrap = X25519KeyEncryptionBase & {
+  derivationScheme: typeof SEAL_DERIVATION_SCHEME;
+};
+
 export type DwnEncryption = {
   algorithm: ContentEncryptionAlgorithm.A256CTR;
   initializationVector: string;
@@ -96,6 +101,14 @@ export type RoleAudienceKeyEncryptionInput = SourceRoleAudienceKeyEncryptionInpu
 
 export type X25519KeyEncryptionInput = ProtocolPathKeyEncryptionInput | RoleAudienceKeyEncryptionInput;
 
+export type SealKeyWrapInput = X25519KeyEncryptionInputBase & {
+  derivationScheme: typeof SEAL_DERIVATION_SCHEME;
+  protocol: string;
+  rolePath: string;
+  contextId: string;
+  audienceKeyId: string;
+};
+
 export type EncryptionInput = {
   algorithm?: ContentEncryptionAlgorithm;
   key: Uint8Array;
@@ -114,6 +127,34 @@ export type X25519KeyWrapInput = {
   keyInput: X25519KeyEncryptionInput;
   ephemeralPrivateKey?: Jwk;
 };
+
+export type SealWrapInput = {
+  privateKeyBytes: Uint8Array;
+  keyInput: SealKeyWrapInput;
+  ephemeralPrivateKey?: Jwk;
+};
+
+export type SealUnwrapInput = {
+  seal: SealKeyWrap;
+  recipientPrivateKey: Jwk;
+  protocol: string;
+  rolePath: string;
+  contextId: string;
+  audienceKeyId: string;
+};
+
+type SealKeyUnwrapInfo = SealKeyWrap & {
+  protocol: string;
+  rolePath: string;
+  contextId: string;
+  audienceKeyId: string;
+};
+
+type X25519KekDerivationInput =
+  | X25519KeyEncryptionInput
+  | X25519KeyEncryption
+  | SealKeyWrapInput
+  | SealKeyUnwrapInfo;
 
 export class Encryption {
   public static async encrypt(
@@ -176,6 +217,35 @@ export class Encryption {
     throw new Error(Encryption.unsupportedKeyAgreementAlgorithmMessage(input.keyInput.algorithm));
   }
 
+  public static async wrapSeal(input: SealWrapInput): Promise<SealKeyWrap> {
+    if (!Encryption.isX25519KeyAgreementAlgorithm(input.keyInput.algorithm)) {
+      throw new Error(Encryption.unsupportedKeyAgreementAlgorithmMessage(input.keyInput.algorithm));
+    }
+
+    Encryption.validateContentEncryptionKey(input.privateKeyBytes);
+
+    const privateKey = input.ephemeralPrivateKey ?? await X25519.generateKey();
+    const publicKey = await X25519.getPublicKey({ key: privateKey }) as PublicKeyJwk;
+    const sharedSecret = await X25519.sharedSecret({
+      privateKeyA : privateKey,
+      publicKeyB  : input.keyInput.publicKey as Jwk,
+    });
+    const kek = await Encryption.deriveKek(sharedSecret, input.keyInput);
+    const unwrappedKey = await AesKw.bytesToPrivateKey({ privateKeyBytes: input.privateKeyBytes });
+    const encryptedKey = await AesKw.wrapKey({
+      encryptionKey: Encryption.toA256KwJwk(kek),
+      unwrappedKey,
+    });
+
+    return {
+      algorithm          : input.keyInput.algorithm,
+      derivationScheme   : SEAL_DERIVATION_SCHEME,
+      encryptedKey       : Encoder.bytesToBase64Url(encryptedKey),
+      ephemeralPublicKey : publicKey,
+      keyId              : input.keyInput.keyId,
+    };
+  }
+
   private static async wrapX25519Key(input: X25519KeyWrapInput): Promise<{ encryptedKey: Uint8Array; ephemeralPublicKey: PublicKeyJwk }> {
     Encryption.validateContentEncryptionKey(input.cek);
 
@@ -202,6 +272,32 @@ export class Encryption {
     }
 
     throw new Error(Encryption.unsupportedKeyAgreementAlgorithmMessage(keyEncryption.algorithm));
+  }
+
+  public static async unwrapSeal(input: SealUnwrapInput): Promise<Uint8Array> {
+    if (!Encryption.isX25519KeyAgreementAlgorithm(input.seal.algorithm)) {
+      throw new Error(Encryption.unsupportedKeyAgreementAlgorithmMessage(input.seal.algorithm));
+    }
+
+    const keyEncryption: SealKeyUnwrapInfo = {
+      ...input.seal,
+      audienceKeyId : input.audienceKeyId,
+      contextId     : input.contextId,
+      protocol      : input.protocol,
+      rolePath      : input.rolePath,
+    };
+    const sharedSecret = await X25519.sharedSecret({
+      privateKeyA : input.recipientPrivateKey,
+      publicKeyB  : input.seal.ephemeralPublicKey as Jwk,
+    });
+    const kek = await Encryption.deriveKek(sharedSecret, keyEncryption);
+    const unwrappedKey = await AesKw.unwrapKey({
+      decryptionKey       : Encryption.toA256KwJwk(kek),
+      wrappedKeyAlgorithm : 'A256KW',
+      wrappedKeyBytes     : Encoder.base64UrlToBytes(input.seal.encryptedKey),
+    });
+
+    return AesKw.privateKeyToBytes({ privateKey: unwrappedKey });
   }
 
   private static async unwrapX25519Key(
@@ -320,7 +416,7 @@ export class Encryption {
 
   private static async deriveKek(
     sharedSecret: Uint8Array,
-    keyEncryption: X25519KeyEncryptionInput | X25519KeyEncryption,
+    keyEncryption: X25519KekDerivationInput,
   ): Promise<Uint8Array> {
     Encryption.validateSharedSecret(sharedSecret);
     const info = Encryption.getKekInfo(keyEncryption);
@@ -333,7 +429,18 @@ export class Encryption {
     });
   }
 
-  private static getKekInfo(keyEncryption: X25519KeyEncryptionInput | X25519KeyEncryption): string {
+  private static getKekInfo(keyEncryption: X25519KekDerivationInput): string {
+    if (keyEncryption.derivationScheme === SEAL_DERIVATION_SCHEME) {
+      return JSON.stringify([
+        KEK_INFO_PREFIX,
+        SEAL_DERIVATION_SCHEME,
+        keyEncryption.protocol,
+        keyEncryption.rolePath,
+        keyEncryption.contextId,
+        keyEncryption.audienceKeyId,
+      ]);
+    }
+
     if (keyEncryption.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME) {
       if ('rolePath' in keyEncryption) {
         return JSON.stringify([
@@ -396,6 +503,10 @@ export class Encryption {
 
   private static toA256CtrJwk(keyBytes: Uint8Array): Jwk {
     return { alg: ContentEncryptionAlgorithm.A256CTR, k: Encoder.bytesToBase64Url(keyBytes), kty: 'oct' };
+  }
+
+  private static toA256KwJwk(keyBytes: Uint8Array): Jwk {
+    return { alg: 'A256KW', k: Encoder.bytesToBase64Url(keyBytes), kty: 'oct' };
   }
 
   private static async readStream(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {

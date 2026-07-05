@@ -37,6 +37,16 @@ export const ENCRYPTION_CONTROL_AUDIENCE_PATH = `${ENCRYPTION_CONTROL_ROOT_PATH}
 export const ENCRYPTION_CONTROL_DELIVERY_PATH = `${ENCRYPTION_CONTROL_ROOT_PATH}/delivery`;
 
 /**
+ * Fixed JSON schema URI for source-protocol audience control records.
+ */
+export const ENCRYPTION_CONTROL_AUDIENCE_SCHEMA_URI = 'https://identity.foundation/dwn/json-schemas/encryption/audience.json';
+
+/**
+ * Fixed JSON schema URI for source-protocol delivery control records.
+ */
+export const ENCRYPTION_CONTROL_DELIVERY_SCHEMA_URI = 'https://identity.foundation/dwn/json-schemas/encryption/delivery.json';
+
+/**
  * Reserved encryption control protocol paths.
  */
 export const ENCRYPTION_CONTROL_PATHS = [

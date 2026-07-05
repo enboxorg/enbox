@@ -11,6 +11,7 @@ import type {
   ProtocolActionRule,
   ProtocolDefinition,
   ProtocolRuleSet,
+  RecordsWriteDescriptor,
   RecordsWriteMessage,
   ReplicationApplyResult,
   RoleAudienceKeyEncryptionInput,
@@ -73,6 +74,7 @@ export { isDwnMessage, isDwnRequest, isMessagesPermissionScope, isRecordPermissi
 
 // Import type guards for internal use
 import { isDwnRequest } from './dwn-type-guards.js';
+import { processDwnRequestWithRemoteFallback as processDwnReadThrough } from './dwn-read-through.js';
 
 // Import extracted encryption functions
 import {
@@ -81,6 +83,7 @@ import {
   createAudienceRecord as createAudienceRecordFn,
   encryptAndComputeCid as encryptAndComputeCidFn,
   generateAudienceKey as generateAudienceKeyFn,
+  getAudienceDecryptionKeyCacheKey,
   getEncryptionKeyDeriver as getEncryptionKeyDeriverFn,
   getEncryptionKeyInfo as getEncryptionKeyInfoFn,
   getKeyDecrypter as getKeyDecrypterFn,
@@ -1037,7 +1040,7 @@ export class AgentDwnApi {
       sealingPublicKey,
       sourceDid         : params.sourceDid,
     });
-    this._audienceDecryptionKeyCache.set(this.getAudienceCacheKey({
+    this._audienceDecryptionKeyCache.set(getAudienceDecryptionKeyCacheKey({
       contextId    : params.contextId,
       keyId        : created.audienceKey.keyId,
       protocol     : params.protocol,
@@ -1122,7 +1125,7 @@ export class AgentDwnApi {
     }
 
     const records = reply.entries as RecordsWriteMessage[];
-    records.sort((left, right): number => this.compareAudienceRecords(params.sourceDid, left, right));
+    records.sort((left, right): number => EncryptionControl.compareAudienceProjectionCandidates(params.sourceDid, left, right));
     for (const record of records) {
       const payload = await this.readAudiencePayload(params.authorDid, params.sourceDid, record);
       if (payload !== undefined) {
@@ -1159,49 +1162,10 @@ export class AgentDwnApi {
     request: ProcessDwnRequest<T>,
     hasUsableReply: (reply: DwnMessageReply[T]) => boolean,
   ): Promise<DwnResponse<T>> {
-    const localResponse = await this.processRequest(request);
-    if (hasUsableReply(localResponse.reply)) {
-      return localResponse;
-    }
-
-    try {
-      return await this.sendRequest(request);
-    } catch (error) {
-      logger.log(
-        `AgentDwnApi: remote fallback for ${request.messageType} to '${request.target}' failed: ` +
-        `${error instanceof Error ? error.message : String(error)}`
-      );
-      return localResponse;
-    }
-  }
-
-  private compareAudienceRecords(tenant: string, left: RecordsWriteMessage, right: RecordsWriteMessage): number {
-    const leftTenantSigned = Message.getSigner(left) === tenant;
-    const rightTenantSigned = Message.getSigner(right) === tenant;
-    if (leftTenantSigned !== rightTenantSigned) {
-      return leftTenantSigned ? -1 : 1;
-    }
-
-    const dateCompare = left.descriptor.dateCreated.localeCompare(right.descriptor.dateCreated);
-    return dateCompare === 0 ? left.recordId.localeCompare(right.recordId) : dateCompare;
-  }
-
-  private getAudienceCacheKey(input: {
-    sourceDid: string;
-    recipientDid: string;
-    protocol: string;
-    contextId: string;
-    rolePath: string;
-    keyId: string;
-  }): string {
-    return `audience-key~${Encoder.stringToBase64Url(JSON.stringify([
-      input.sourceDid,
-      input.recipientDid,
-      input.protocol,
-      input.contextId,
-      input.rolePath,
-      input.keyId,
-    ]))}`;
+    return processDwnReadThrough({
+      process : this.processRequest.bind(this),
+      send    : this.sendRequest.bind(this),
+    }, request, hasUsableReply);
   }
 
   private async getRecipientRolePublicKey(params: {
@@ -1228,6 +1192,21 @@ export class AgentDwnApi {
     }
 
     return publicKeyJwk;
+  }
+
+  private async buildPendingAudienceRecordDescriptor(params: {
+    messageParams: DwnMessageParams[DwnInterface.RecordsWrite];
+    dataCid: string;
+    dataSize: number;
+  }): Promise<RecordsWriteDescriptor> {
+    const descriptorOptions = {
+      ...params.messageParams,
+      dataCid  : params.dataCid,
+      dataSize : params.dataSize,
+    };
+    delete descriptorOptions.data;
+
+    return RecordsWrite.createDescriptor(descriptorOptions);
   }
 
   private async constructDwnMessage<T extends DwnInterface>({ request }: {
@@ -1404,15 +1383,11 @@ export class AgentDwnApi {
           if (request.granteeDid && messageParams.permissionGrantId && !messageParams.delegatedGrant) {
             await this.populateDelegatedGrantForWrite(request.author, request.granteeDid, messageParams);
           }
-          const recordIdMessageParams = { ...messageParams };
-          delete recordIdMessageParams.dataCid;
-          delete recordIdMessageParams.dataSize;
-          messageParams.recordId ??= (await RecordsWrite.create({
-            ...recordIdMessageParams,
-            data   : encryptedBytes,
-            encryptionInput,
-            signer : request.granteeDid ? await this.getSigner(request.granteeDid) : await this.getSigner(request.author),
-          })).message.recordId;
+          messageParams.recordId ??= await RecordsWrite.getEntryId(request.author, await this.buildPendingAudienceRecordDescriptor({
+            dataCid,
+            dataSize,
+            messageParams,
+          }));
 
           for (const pending of roleAudienceInputs.pendingAudienceRecords) {
             const sourceContextId = messageParams.parentContextId === undefined
@@ -1449,7 +1424,7 @@ export class AgentDwnApi {
               sealingPublicKey  : pending.sealingPublicKey,
               sourceDid         : request.target,
             });
-            this._audienceDecryptionKeyCache.set(this.getAudienceCacheKey({
+            this._audienceDecryptionKeyCache.set(getAudienceDecryptionKeyCacheKey({
               contextId,
               keyId        : audienceKey.keyId,
               protocol     : audienceKey.protocol,

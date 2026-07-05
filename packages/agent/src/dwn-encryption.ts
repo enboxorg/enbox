@@ -17,7 +17,7 @@ import type {
   RecordsWriteMessage,
   RoleAudienceKeyMaterial,
 } from '@enbox/dwn-sdk-js';
-import type { Jwk, KeyIdentifier, PrivateKeyJwk, PublicKeyJwk } from '@enbox/crypto';
+import type { KeyIdentifier, PrivateKeyJwk, PublicKeyJwk } from '@enbox/crypto';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type {
@@ -28,7 +28,6 @@ import type {
 } from './types/dwn.js';
 
 import { logger } from '@enbox/common';
-import { AesKw, Ed25519, Hkdf, X25519 } from '@enbox/crypto';
 import {
   Cid,
   ContentEncryptionAlgorithm,
@@ -38,7 +37,9 @@ import {
   Encoder,
   Encryption,
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
+  ENCRYPTION_CONTROL_AUDIENCE_SCHEMA_URI,
   ENCRYPTION_CONTROL_DELIVERY_PATH,
+  ENCRYPTION_CONTROL_DELIVERY_SCHEMA_URI,
   EncryptionControlDeliveryRecipientAuthority,
   EncryptionProtocol,
   getGrantKeyDeliveryScopes,
@@ -53,21 +54,20 @@ import {
   Message,
   Records,
   ROLE_AUDIENCE_DERIVATION_SCHEME,
+  SEAL_DERIVATION_SCHEME,
   Time,
 } from '@enbox/dwn-sdk-js';
+import { Ed25519, X25519 } from '@enbox/crypto';
 
 import { DwnInterface } from './types/dwn.js';
 import { isDwnRequest } from './dwn-type-guards.js';
+import { processDwnRequestWithRemoteFallback as processDwnReadThrough } from './dwn-read-through.js';
 
 const GRANT_KEY_DERIVATION_PATH = [
   KeyDerivationScheme.ProtocolPath,
   EncryptionProtocol.uri,
   EncryptionProtocol.grantKeyPath,
 ];
-
-const AUDIENCE_SCHEMA_URI = 'https://identity.foundation/dwn/json-schemas/encryption/audience.json';
-const DELIVERY_SCHEMA_URI = 'https://identity.foundation/dwn/json-schemas/encryption/delivery.json';
-const SEAL_DERIVATION_SCHEME = 'seal';
 
 type DelegateDecryptionKeyCache = {
   get(key: string): DelegateDecryptionKeyEntry[] | undefined;
@@ -559,7 +559,7 @@ export async function createAudienceRecord(params: {
       protocol          : params.protocol,
       protocolPath      : ENCRYPTION_CONTROL_AUDIENCE_PATH,
       protocolRole      : params.protocolRole,
-      schema            : AUDIENCE_SCHEMA_URI,
+      schema            : ENCRYPTION_CONTROL_AUDIENCE_SCHEMA_URI,
       dataFormat        : 'application/json',
       dataSize          : payloadBytes.length,
       tags              : {
@@ -668,7 +668,7 @@ export async function createAudienceDeliveryRecord(params: {
       protocol          : params.audienceKey.protocol,
       protocolPath      : ENCRYPTION_CONTROL_DELIVERY_PATH,
       protocolRole      : params.protocolRole,
-      schema            : DELIVERY_SCHEMA_URI,
+      schema            : ENCRYPTION_CONTROL_DELIVERY_SCHEMA_URI,
       dataFormat        : 'application/json',
       dataCid,
       dataSize,
@@ -768,33 +768,19 @@ async function sealAudiencePrivateKey(params: {
   rolePath: string;
   sealingPublicKey: PublicKeyJwk;
 }): Promise<EncryptionControlSeal> {
-  const ephemeralPrivateKey = await X25519.generateKey() as PrivateKeyJwk;
-  const ephemeralPublicKey = await X25519.getPublicKey({ key: ephemeralPrivateKey }) as PublicKeyJwk;
-  const sharedSecret = await X25519.sharedSecret({
-    privateKeyA : ephemeralPrivateKey,
-    publicKeyB  : params.sealingPublicKey as Jwk,
+  return Encryption.wrapSeal({
+    privateKeyBytes : await X25519.privateKeyToBytes({ privateKey: params.privateKeyJwk }),
+    keyInput        : {
+      algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+      audienceKeyId    : params.audienceKeyId,
+      contextId        : params.contextId,
+      derivationScheme : SEAL_DERIVATION_SCHEME,
+      keyId            : await Encryption.getKeyId(params.sealingPublicKey),
+      protocol         : params.protocol,
+      publicKey        : params.sealingPublicKey,
+      rolePath         : params.rolePath,
+    },
   });
-  const kek = await deriveSealKek({
-    audienceKeyId : params.audienceKeyId,
-    contextId     : params.contextId,
-    protocol      : params.protocol,
-    rolePath      : params.rolePath,
-    sharedSecret,
-  });
-  const privateKeyBytes = await X25519.privateKeyToBytes({ privateKey: params.privateKeyJwk });
-  const unwrappedKey = await AesKw.bytesToPrivateKey({ privateKeyBytes });
-  const encryptedKey = await AesKw.wrapKey({
-    encryptionKey: { alg: 'A256KW', k: Encoder.bytesToBase64Url(kek), kty: 'oct' },
-    unwrappedKey,
-  });
-
-  return {
-    algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-    derivationScheme : SEAL_DERIVATION_SCHEME,
-    encryptedKey     : Encoder.bytesToBase64Url(encryptedKey),
-    ephemeralPublicKey,
-    keyId            : await Encryption.getKeyId(params.sealingPublicKey),
-  };
 }
 
 async function unwrapAudienceSeal(params: {
@@ -805,50 +791,13 @@ async function unwrapAudienceSeal(params: {
   seal: EncryptionControlSeal;
   sealingPrivateKey: PrivateKeyJwk;
 }): Promise<Uint8Array> {
-  const sharedSecret = await X25519.sharedSecret({
-    privateKeyA : params.sealingPrivateKey,
-    publicKeyB  : params.seal.ephemeralPublicKey as Jwk,
-  });
-  const kek = await deriveSealKek({
-    audienceKeyId : params.audienceKeyId,
-    contextId     : params.contextId,
-    protocol      : params.protocol,
-    rolePath      : params.rolePath,
-    sharedSecret,
-  });
-  const unwrappedKey = await AesKw.unwrapKey({
-    decryptionKey       : { alg: 'A256KW', k: Encoder.bytesToBase64Url(kek), kty: 'oct' },
-    wrappedKeyAlgorithm : 'A256KW',
-    wrappedKeyBytes     : Encoder.base64UrlToBytes(params.seal.encryptedKey),
-  });
-
-  return AesKw.privateKeyToBytes({ privateKey: unwrappedKey });
-}
-
-async function deriveSealKek(params: {
-  audienceKeyId: string;
-  contextId: string;
-  protocol: string;
-  rolePath: string;
-  sharedSecret: Uint8Array;
-}): Promise<Uint8Array> {
-  if (params.sharedSecret.every((byte): boolean => byte === 0)) {
-    throw new Error('X25519 shared secret MUST NOT be all zeros.');
-  }
-
-  return Hkdf.deriveKeyBytes({
-    baseKeyBytes : params.sharedSecret,
-    hash         : 'SHA-256',
-    info         : JSON.stringify([
-      KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-      SEAL_DERIVATION_SCHEME,
-      params.protocol,
-      params.rolePath,
-      params.contextId,
-      params.audienceKeyId,
-    ]),
-    length : 256,
-    salt   : new Uint8Array(),
+  return Encryption.unwrapSeal({
+    audienceKeyId       : params.audienceKeyId,
+    contextId           : params.contextId,
+    protocol            : params.protocol,
+    recipientPrivateKey : params.sealingPrivateKey,
+    rolePath            : params.rolePath,
+    seal                : params.seal,
   });
 }
 
@@ -1369,26 +1318,15 @@ async function getAudienceDeliveryEncryptedData(
   sourceDid: string,
   deliveryMessage: AudienceDeliveryMessage,
 ): Promise<Uint8Array | undefined> {
-  if (deliveryMessage.encodedData !== undefined) {
-    return Encoder.base64UrlToBytes(deliveryMessage.encodedData);
-  }
-
-  const { reply } = await processDwnRequestWithRemoteFallback(agent, {
-    author        : actor.authorDid,
-    granteeDid    : actor.granteeDid,
-    target        : sourceDid,
-    messageType   : DwnInterface.RecordsRead,
-    messageParams : {
-      delegatedGrant : actor.delegatedGrant,
-      filter         : { recordId: deliveryMessage.recordId },
-    },
-  }, hasRecordsReadData);
-
-  if (reply.status.code !== 200 || reply.entry?.data === undefined) {
-    return undefined;
-  }
-
-  return DataStream.toBytes(reply.entry.data);
+  return readRecordDataWithRemoteFallback({
+    agent,
+    authorDid      : actor.authorDid,
+    delegatedGrant : actor.delegatedGrant,
+    encodedData    : deliveryMessage.encodedData,
+    granteeDid     : actor.granteeDid,
+    recordId       : deliveryMessage.recordId,
+    targetDid      : sourceDid,
+  });
 }
 
 async function buildAudienceDeliveryDecrypters(params: {
@@ -1612,22 +1550,13 @@ async function getAudienceRecordData(
   sourceDid: string,
   audienceMessage: RecordsWriteMessage & { encodedData?: string },
 ): Promise<Uint8Array | undefined> {
-  if (audienceMessage.encodedData !== undefined) {
-    return Encoder.base64UrlToBytes(audienceMessage.encodedData);
-  }
-
-  const { reply } = await processDwnRequestWithRemoteFallback(agent, {
-    author        : authorDid,
-    target        : sourceDid,
-    messageType   : DwnInterface.RecordsRead,
-    messageParams : { filter: { recordId: audienceMessage.recordId } },
-  }, hasRecordsReadData);
-
-  if (reply.status.code !== 200 || reply.entry?.data === undefined) {
-    return undefined;
-  }
-
-  return DataStream.toBytes(reply.entry.data);
+  return readRecordDataWithRemoteFallback({
+    agent,
+    authorDid,
+    encodedData : audienceMessage.encodedData,
+    recordId    : audienceMessage.recordId,
+    targetDid   : sourceDid,
+  });
 }
 
 function audiencePayloadMatches(payload: EncryptionControlAudiencePayload, audienceMessage: RecordsWriteMessage, expected: {
@@ -1804,20 +1733,10 @@ async function processDwnRequestWithRemoteFallback<T extends DwnInterface>(
   request: ProcessDwnRequest<T>,
   hasUsableReply: (reply: DwnMessageReply[T]) => boolean,
 ): Promise<DwnResponse<T>> {
-  const localResponse = await agent.processDwnRequest(request);
-  if (hasUsableReply(localResponse.reply)) {
-    return localResponse;
-  }
-
-  try {
-    return await agent.sendDwnRequest(request as SendDwnRequest<T>);
-  } catch (error) {
-    logger.log(
-      `AgentDwnApi: remote fallback for ${request.messageType} to '${request.target}' failed: ` +
-      `${error instanceof Error ? error.message : String(error)}`
-    );
-    return localResponse;
-  }
+  return processDwnReadThrough({
+    process : agent.processDwnRequest.bind(agent),
+    send    : agent.sendDwnRequest.bind(agent),
+  }, request, hasUsableReply);
 }
 
 function hasRecordsQueryEntries(reply: DwnMessageReply[DwnInterface.RecordsQuery]): boolean {
@@ -1826,6 +1745,37 @@ function hasRecordsQueryEntries(reply: DwnMessageReply[DwnInterface.RecordsQuery
 
 function hasRecordsReadData(reply: DwnMessageReply[DwnInterface.RecordsRead]): boolean {
   return reply.status.code === 200 && reply.entry?.data !== undefined;
+}
+
+async function readRecordDataWithRemoteFallback(params: {
+  agent: EnboxPlatformAgent;
+  authorDid: string;
+  targetDid: string;
+  recordId: string;
+  encodedData?: string;
+  granteeDid?: string;
+  delegatedGrant?: DataEncodedRecordsWriteMessage;
+}): Promise<Uint8Array | undefined> {
+  if (params.encodedData !== undefined) {
+    return Encoder.base64UrlToBytes(params.encodedData);
+  }
+
+  const { reply } = await processDwnRequestWithRemoteFallback(params.agent, {
+    author        : params.authorDid,
+    granteeDid    : params.granteeDid,
+    target        : params.targetDid,
+    messageType   : DwnInterface.RecordsRead,
+    messageParams : {
+      delegatedGrant : params.delegatedGrant,
+      filter         : { recordId: params.recordId },
+    },
+  }, hasRecordsReadData);
+
+  if (reply.status.code !== 200 || reply.entry?.data === undefined) {
+    return undefined;
+  }
+
+  return DataStream.toBytes(reply.entry.data);
 }
 
 function hasProtocolsQueryDefinition(reply: DwnMessageReply[DwnInterface.ProtocolsQuery]): boolean {
@@ -1879,7 +1829,7 @@ function putAudienceKeyInMemoryCache(params: {
   params.audienceDecryptionKeyCache?.set?.(cacheKey, params.entry);
 }
 
-function getAudienceDecryptionKeyCacheKey(input: {
+export function getAudienceDecryptionKeyCacheKey(input: {
   sourceDid: string;
   recipientDid: string;
   protocol: string;
@@ -2162,22 +2112,13 @@ async function getGrantKeyEncryptedData(
   grantorDid: string,
   grantKeyMessage: RecordsWriteMessage & { encodedData?: string },
 ): Promise<Uint8Array | undefined> {
-  if (grantKeyMessage.encodedData !== undefined) {
-    return Encoder.base64UrlToBytes(grantKeyMessage.encodedData);
-  }
-
-  const { reply } = await processDwnRequestWithRemoteFallback(agent, {
-    author        : granteeDid,
-    target        : grantorDid,
-    messageType   : DwnInterface.RecordsRead,
-    messageParams : { filter: { recordId: grantKeyMessage.recordId } },
-  }, hasRecordsReadData);
-
-  if (reply.status.code !== 200 || reply.entry?.data === undefined) {
-    return undefined;
-  }
-
-  return DataStream.toBytes(reply.entry.data);
+  return readRecordDataWithRemoteFallback({
+    agent,
+    authorDid   : granteeDid,
+    encodedData : grantKeyMessage.encodedData,
+    recordId    : grantKeyMessage.recordId,
+    targetDid   : grantorDid,
+  });
 }
 
 async function readPermissionGrant(
