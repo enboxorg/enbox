@@ -216,6 +216,8 @@ function dependencyRefsFromStatus(
     return encryptionAudienceDependenciesFromRoleAudienceEntries(message);
   case DwnErrorCode.EncryptionControlValidateDeliveryAudienceMissing:
     return toRefList(encryptionAudienceDependencyFromDelivery(message));
+  case DwnErrorCode.EncryptionControlValidateDeliveryRecipientRoleRecordMissing:
+    return toRefList(roleDependencyFromEncryptionControlDeliveryRecipient(message));
   case DwnErrorCode.EncryptionProtocolValidateAudienceKeyRoleRecordMissing:
     return toRefList(roleDependencyFromEncryptionAudienceRecipient(message));
   case DwnErrorCode.RecordsWriteMissingDataInPrevious:
@@ -539,6 +541,35 @@ function encryptionAudienceDependencyFromDelivery(
     protocol,
     protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
     tags         : { protocol, rolePath, contextId, keyId },
+  };
+}
+
+function roleDependencyFromEncryptionControlDeliveryRecipient(message: GenericMessage): DependencyRef | undefined {
+  const descriptor = message.descriptor as Record<string, unknown>;
+  if (descriptor.protocolPath !== ENCRYPTION_CONTROL_DELIVERY_PATH || typeof descriptor.recipient !== 'string') {
+    return undefined;
+  }
+
+  const tags = descriptor.tags;
+  if (!isRecordObject(tags)) {
+    return undefined;
+  }
+
+  const { protocol, rolePath, contextId } = tags;
+  if (
+    typeof protocol !== 'string' ||
+    typeof rolePath !== 'string' ||
+    typeof contextId !== 'string'
+  ) {
+    return undefined;
+  }
+
+  return {
+    type         : 'Role',
+    protocol,
+    protocolPath : rolePath,
+    recipient    : descriptor.recipient,
+    ...(contextId === '' ? {} : { contextPrefix: contextId }),
   };
 }
 

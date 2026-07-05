@@ -947,7 +947,8 @@ export async function maybeDecryptReply<T extends DwnInterface>(
     const readReply = reply as RecordsReadReply;
     if (readReply.status.code === 200
         && readReply.entry?.recordsWrite?.encryption
-        && readReply.entry?.data) {
+        && readReply.entry?.data
+        && !isEncryptionControlPath(readReply.entry.recordsWrite.descriptor.protocolPath)) {
       const keyDecrypter = await resolveKeyDecrypter(
         agent, encryptedRequest.author, readReply.entry.recordsWrite, encryptedRequest.target,
         delegateDecryptionKeyCache, granteeDid, audienceDecryptionKeyCache,
@@ -1018,7 +1019,7 @@ async function resolveRoleAudienceDecrypter(params: {
     protocol: string;
     rolePath: string;
   } => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME && 'rolePath' in entry);
-  const recipientDid = params.granteeDid ?? params.recipientDid;
+  const recipientDids = getAudienceDeliveryRecipientCandidates(params.recipientDid, params.granteeDid);
 
   for (const entry of roleAudienceEntries) {
     const contextId = getRoleAudienceContextId(entry.rolePath, params.recordsWrite.contextId);
@@ -1026,36 +1027,38 @@ async function resolveRoleAudienceDecrypter(params: {
       continue;
     }
 
-    const cachedKey = getAudienceKeyFromMemoryCache({
-      audienceDecryptionKeyCache : params.audienceDecryptionKeyCache,
-      sourceDid                  : params.sourceDid,
-      recipientDid,
-      protocol                   : entry.protocol,
-      contextId,
-      rolePath                   : entry.rolePath,
-      keyId                      : entry.keyId,
-    });
-    if (cachedKey !== undefined) {
-      return buildAudienceContentDecrypter(cachedKey);
-    }
-
-    const hydratedKey = await hydrateAudienceKey({
-      agent                      : params.agent,
-      sourceDid                  : params.sourceDid,
-      recipientDid,
-      granteeDid                 : params.granteeDid,
-      delegateDecryptionKeyCache : params.delegateDecryptionKeyCache,
-      protocol                   : entry.protocol,
-      contextId,
-      rolePath                   : entry.rolePath,
-      keyId                      : entry.keyId,
-    });
-    if (hydratedKey !== undefined) {
-      putAudienceKeyInMemoryCache({
+    for (const recipientDid of recipientDids) {
+      const cachedKey = getAudienceKeyFromMemoryCache({
         audienceDecryptionKeyCache : params.audienceDecryptionKeyCache,
-        entry                      : hydratedKey,
+        sourceDid                  : params.sourceDid,
+        recipientDid,
+        protocol                   : entry.protocol,
+        contextId,
+        rolePath                   : entry.rolePath,
+        keyId                      : entry.keyId,
       });
-      return buildAudienceContentDecrypter(hydratedKey);
+      if (cachedKey !== undefined) {
+        return buildAudienceContentDecrypter(cachedKey);
+      }
+
+      const hydratedKey = await hydrateAudienceKey({
+        agent                      : params.agent,
+        sourceDid                  : params.sourceDid,
+        recipientDid,
+        granteeDid                 : params.granteeDid,
+        delegateDecryptionKeyCache : params.delegateDecryptionKeyCache,
+        protocol                   : entry.protocol,
+        contextId,
+        rolePath                   : entry.rolePath,
+        keyId                      : entry.keyId,
+      });
+      if (hydratedKey !== undefined) {
+        putAudienceKeyInMemoryCache({
+          audienceDecryptionKeyCache : params.audienceDecryptionKeyCache,
+          entry                      : hydratedKey,
+        });
+        return buildAudienceContentDecrypter(hydratedKey);
+      }
     }
   }
 
@@ -1083,24 +1086,33 @@ export async function resolveAudienceDecryptionKey(params: {
   delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
   audienceDecryptionKeyCache?: AudienceDecryptionKeyCache;
 }): Promise<AudienceDecryptionKeyEntry | undefined> {
-  const effectiveParams = {
-    ...params,
-    recipientDid: params.granteeDid ?? params.recipientDid,
-  };
-  const cached = getAudienceKeyFromMemoryCache(effectiveParams);
-  if (cached !== undefined) {
-    return cached;
+  for (const recipientDid of getAudienceDeliveryRecipientCandidates(params.recipientDid, params.granteeDid)) {
+    const effectiveParams = {
+      ...params,
+      recipientDid,
+    };
+    const cached = getAudienceKeyFromMemoryCache(effectiveParams);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    const hydrated = await hydrateAudienceKey(effectiveParams);
+    if (hydrated !== undefined) {
+      putAudienceKeyInMemoryCache({
+        audienceDecryptionKeyCache : params.audienceDecryptionKeyCache,
+        entry                      : hydrated,
+      });
+      return hydrated;
+    }
   }
 
-  const hydrated = await hydrateAudienceKey(effectiveParams);
-  if (hydrated !== undefined) {
-    putAudienceKeyInMemoryCache({
-      audienceDecryptionKeyCache : params.audienceDecryptionKeyCache,
-      entry                      : hydrated,
-    });
-  }
+  return undefined;
+}
 
-  return hydrated;
+function getAudienceDeliveryRecipientCandidates(recipientDid: string, granteeDid: string | undefined): string[] {
+  return granteeDid === undefined || granteeDid === recipientDid
+    ? [recipientDid]
+    : [granteeDid, recipientDid];
 }
 
 async function hydrateAudienceKey(params: {

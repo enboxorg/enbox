@@ -695,7 +695,10 @@ export class EncryptionControl {
       if (await EncryptionControl.deliveryRecipientIsRoleHolder(input)) {
         return;
       }
-      break;
+      throw new DwnError(
+        DwnErrorCode.EncryptionControlValidateDeliveryRecipientRoleRecordMissing,
+        'delivery recipient role record is missing.'
+      );
     case EncryptionControlDeliveryRecipientAuthority.RoleCreatorGrant:
       if (await EncryptionControl.deliveryRecipientHasRoleCreateGrant(input)) {
         return;

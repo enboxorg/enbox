@@ -465,6 +465,42 @@ describe('orderMessagesForAdmission', () => {
     expect(result.indexOf(audience)).toBeLessThan(result.indexOf(delivery));
   });
 
+  it('should place role records before role-holder delivery records that reference them', () => {
+    const protocol = 'https://example.com/source-delivery-role-ordering';
+    const recipient = 'did:example:bob';
+    const role: SortEntry = {
+      message: {
+        ...makeMessage({
+          protocol,
+          protocolPath: 'thread/member',
+          recipient,
+        }),
+        recordId  : 'member-role-record',
+        contextId : 'thread-1/member-role-record',
+      } as unknown as GenericMessage,
+    };
+    const delivery: SortEntry = {
+      message: {
+        ...makeMessage({
+          protocol,
+          protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+          recipient,
+          tags         : {
+            protocol,
+            contextId : 'thread-1',
+            rolePath  : 'thread/member',
+            keyId     : 'key-1',
+          },
+        }),
+        recordId: 'delivery-record',
+      } as unknown as GenericMessage,
+    };
+
+    const result = orderMessagesForAdmission([delivery, role]);
+
+    expect(result.indexOf(role)).toBeLessThan(result.indexOf(delivery));
+  });
+
   it('should place permission grants before grantKey records', () => {
     const grant: SortEntry = {
       message: {

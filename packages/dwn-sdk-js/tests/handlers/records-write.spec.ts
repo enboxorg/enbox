@@ -1285,7 +1285,7 @@ export function testRecordsWriteHandler(): void {
           { dataStream: DataStream.fromBytes(unauthorizedRoleHolderDelivery.dataBytes) }
         );
         expect(unauthorizedRoleHolderReply.status.code).toBe(400);
-        expect(unauthorizedRoleHolderReply.status.detail).toContain(DwnErrorCode.EncryptionControlValidateDeliveryRecipientUnauthorized);
+        expect(unauthorizedRoleHolderReply.status.detail).toContain(DwnErrorCode.EncryptionControlValidateDeliveryRecipientRoleRecordMissing);
 
         const missingGrantDelivery = await createDeliveryControlWrite({
           author             : alice,

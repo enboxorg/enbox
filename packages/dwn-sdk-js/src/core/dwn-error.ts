@@ -32,6 +32,7 @@ export enum DwnErrorCode {
   EncryptionControlValidateDeliveryMissingRequiredTag = 'EncryptionControlValidateDeliveryMissingRequiredTag',
   EncryptionControlValidateDeliveryRecipientAuthorityInvalid = 'EncryptionControlValidateDeliveryRecipientAuthorityInvalid',
   EncryptionControlValidateDeliveryRecipientMissing = 'EncryptionControlValidateDeliveryRecipientMissing',
+  EncryptionControlValidateDeliveryRecipientRoleRecordMissing = 'EncryptionControlValidateDeliveryRecipientRoleRecordMissing',
   EncryptionControlValidateDeliveryRecipientUnauthorized = 'EncryptionControlValidateDeliveryRecipientUnauthorized',
   EncryptionControlValidateDeliveryTagsMismatch = 'EncryptionControlValidateDeliveryTagsMismatch',
   EncryptionControlValidateUnexpectedRecord = 'EncryptionControlValidateUnexpectedRecord',

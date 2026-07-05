@@ -507,6 +507,40 @@ describe('replicationApplyResultFromReply', () => {
     });
   });
 
+  it('classifies delivery recipient role dependencies from source-protocol delivery records', async () => {
+    const protocol = 'https://example.com/encrypted-chat';
+    const rolePath = 'thread/member';
+    const contextId = 'thread-record';
+    const recipient = 'did:example:bob';
+    const { message } = await TestDataGenerator.generateRecordsWrite({
+      protocol,
+      protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+      recipient,
+      tags         : {
+        protocol,
+        rolePath,
+        contextId,
+        keyId: 'audience-key',
+      },
+    });
+
+    expect(replicationApplyResultFromReply(message, {
+      status: {
+        code   : 400,
+        detail : `${DwnErrorCode.EncryptionControlValidateDeliveryRecipientRoleRecordMissing}: delivery recipient role record is missing.`,
+      },
+    })).toEqual({
+      kind    : 'Incomplete',
+      missing : [{
+        type          : 'Role',
+        protocol,
+        protocolPath  : rolePath,
+        recipient,
+        contextPrefix : contextId,
+      }],
+    });
+  });
+
   it('ignores role text in missing roleAudience error details', async () => {
     const protocol = 'https://example.com/encrypted-chat';
     const missingRolePath = 'thread/member';

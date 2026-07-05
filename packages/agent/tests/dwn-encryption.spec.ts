@@ -11,11 +11,15 @@ import {
   DwnMethodName,
   Encoder,
   Encryption,
+  ENCRYPTION_CONTROL_AUDIENCE_PATH,
+  ENCRYPTION_CONTROL_DELIVERY_PATH,
+  EncryptionControlDeliveryRecipientAuthority,
   EncryptionProtocol,
   HdKey,
   KeyAgreementAlgorithm,
   KeyDerivationScheme,
   Records,
+  ROLE_AUDIENCE_DERIVATION_SCHEME,
   TestDataGenerator,
   Time,
 } from '@enbox/dwn-sdk-js';
@@ -32,6 +36,7 @@ import {
   getKeyDecrypter,
   ivLength,
   maybeDecryptReply,
+  resolveAudienceDecryptionKey,
   resolveKeyDecrypter,
 } from '../src/dwn-encryption.js';
 
@@ -215,6 +220,36 @@ describe('dwn-encryption', () => {
       ).rejects.toThrow('AgentDwnApi: Failed to decrypt record \'rec-fail-read\'');
     });
 
+    it('should skip decryption for encryption-control RecordsRead replies', async () => {
+      const decryptStub = sinon.stub(Records, 'decrypt').rejects(new Error('control records are not app data'));
+      const request = {
+        author      : 'did:example:alice',
+        target      : 'did:example:alice',
+        encryption  : true,
+        messageType : DwnInterface.RecordsRead,
+      } as any;
+      const reply = {
+        status : { code: 200 },
+        entry  : {
+          recordsWrite: {
+            recordId   : 'delivery-record',
+            descriptor : {
+              protocol     : 'https://example.com/proto',
+              protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+            },
+            encryption: {
+              keyEncryption: [],
+            },
+          },
+          data: DataStream.fromBytes(new Uint8Array([1, 2, 3])),
+        },
+      } as any;
+
+      await maybeDecryptReply(request, reply, {} as any);
+
+      expect(decryptStub.called).toBe(false);
+    });
+
     it('should throw wrapped error when RecordsQuery entry decryption fails', async () => {
       const dwnSdk = await import('@enbox/dwn-sdk-js');
       sinon.stub(dwnSdk.Records, 'decrypt').rejects(new Error('bad cipher'));
@@ -344,6 +379,188 @@ describe('dwn-encryption', () => {
       expect(mockAgent.keyManager.getKeyUri.called).toBe(false);
       expect(mockAgent.keyManager.unwrapContentKey.called).toBe(false);
       expect(Encoder.bytesToString(await DataStream.toBytes(reply.entry.data))).toBe('delivered key plaintext');
+    });
+  });
+
+  describe('resolveAudienceDecryptionKey', () => {
+    it('should try delegate self-deliveries and then participant deliveries for member delegates', async () => {
+      const protocol = 'https://example.com/member-delegate-delivery';
+      const rolePath = 'chat/member';
+      const contextId = 'chat-root';
+      const sourceDid = 'did:example:alice';
+      const recipientDid = 'did:example:bob';
+      const granteeDid = 'did:example:bob-delegate';
+      const audiencePrivateKeyJwk = await X25519.generateKey();
+      const audiencePublicKeyJwk = await X25519.getPublicKey({ key: audiencePrivateKeyJwk });
+      const audienceKeyId = await Encryption.getKeyId(audiencePublicKeyJwk);
+      const delegateRootPrivateKey = await X25519.generateKey();
+      const delegateRootPublicKey = await X25519.getPublicKey({ key: delegateRootPrivateKey });
+      const delegateRootPrivateKeyBytes = await X25519.privateKeyToBytes({ privateKey: delegateRootPrivateKey });
+      const audiencePayload = {
+        protocol,
+        rolePath,
+        contextId,
+        keyId            : audienceKeyId,
+        publicKeyJwk     : audiencePublicKeyJwk,
+        sealedPrivateKey : {
+          algorithm          : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+          derivationScheme   : 'seal',
+          encryptedKey       : Encoder.bytesToBase64Url(new Uint8Array([1, 2, 3])),
+          ephemeralPublicKey : audiencePublicKeyJwk,
+          keyId              : 'seal-key-id',
+        },
+      };
+      const audienceMessage = {
+        recordId    : 'audience-record',
+        encodedData : Encoder.bytesToBase64Url(Encoder.objectToBytes(audiencePayload)),
+        descriptor  : {
+          protocol,
+          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          tags         : {
+            protocol,
+            rolePath,
+            contextId,
+            keyId: audienceKeyId,
+          },
+        },
+      } as unknown as RecordsWriteMessage & { encodedData: string };
+      const deliveryPayload = {
+        protocol,
+        rolePath,
+        contextId,
+        keyId       : audienceKeyId,
+        keyMaterial : {
+          algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+          derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+          keyId            : audienceKeyId,
+          privateKeyJwk    : audiencePrivateKeyJwk,
+          publicKeyJwk     : audiencePublicKeyJwk,
+        },
+      };
+      const deliveryMessage = {
+        recordId    : 'delivery-record',
+        encodedData : Encoder.bytesToBase64Url(new Uint8Array([9, 9, 9])),
+        descriptor  : {
+          recipient    : recipientDid,
+          protocol,
+          protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+          tags         : {
+            protocol,
+            rolePath,
+            contextId,
+            keyId              : audienceKeyId,
+            recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
+          },
+        },
+      } as unknown as RecordsWriteMessage & { encodedData: string };
+      const roleMessage = {
+        recordId   : 'role-record',
+        contextId  : `${contextId}/role-record`,
+        descriptor : {
+          recipient    : recipientDid,
+          protocol,
+          protocolPath : rolePath,
+        },
+      } as unknown as RecordsWriteMessage;
+      const processDwnRequest = sinon.stub().callsFake(async (request: any): Promise<any> => {
+        const filter = request.messageParams.filter;
+        if (request.messageType === DwnInterface.RecordsQuery && filter.protocolPath === ENCRYPTION_CONTROL_AUDIENCE_PATH) {
+          return {
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [audienceMessage],
+            },
+          };
+        }
+
+        if (request.messageType === DwnInterface.RecordsQuery && filter.protocolPath === ENCRYPTION_CONTROL_DELIVERY_PATH) {
+          return {
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : filter.recipient === recipientDid ? [deliveryMessage] : [],
+            },
+          };
+        }
+
+        if (request.messageType === DwnInterface.RecordsQuery && filter.protocolPath === rolePath) {
+          return {
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [roleMessage],
+            },
+          };
+        }
+
+        return {
+          reply: {
+            status  : { code: 200, detail: 'OK' },
+            entries : [],
+          },
+        };
+      });
+      const mockAgent = {
+        did: {
+          resolve: sinon.stub().resolves({
+            didDocument: {
+              id                 : granteeDid,
+              keyAgreement       : ['#enc'],
+              verificationMethod : [{
+                controller   : granteeDid,
+                id           : `${granteeDid}#enc`,
+                publicKeyJwk : delegateRootPublicKey,
+                type         : 'JsonWebKey2020',
+              }],
+            },
+            didResolutionMetadata: {},
+          }),
+        },
+        keyManager: {
+          derivePrivateKeyBytes: sinon.stub().callsFake(async ({ derivationPath }: { derivationPath: string[] }): Promise<Uint8Array> => {
+            return HdKey.derivePrivateKeyBytes(delegateRootPrivateKeyBytes, derivationPath);
+          }),
+          getKeyUri: sinon.stub().resolves('delegate-key-uri'),
+        },
+        processDwnRequest,
+        sendDwnRequest: sinon.stub().resolves({
+          reply: {
+            status  : { code: 200, detail: 'OK' },
+            entries : [],
+          },
+        }),
+      };
+      const delegateDecryptionKeyCache = {
+        get: sinon.stub().withArgs(`ddk~${granteeDid}`).returns([{
+          derivedPrivateKey: {
+            rootKeyId         : 'bob-grant-key',
+            derivationScheme  : KeyDerivationScheme.ProtocolPath,
+            derivedPrivateKey : delegateRootPrivateKey,
+          },
+          protocol,
+          scope: { kind: 'protocol' },
+        }]),
+        set: sinon.stub(),
+      };
+      sinon.stub(Records, 'decrypt').resolves(DataStream.fromBytes(Encoder.objectToBytes(deliveryPayload)));
+
+      const result = await resolveAudienceDecryptionKey({
+        agent : mockAgent as any,
+        sourceDid,
+        recipientDid,
+        granteeDid,
+        delegateDecryptionKeyCache,
+        protocol,
+        contextId,
+        rolePath,
+        keyId : audienceKeyId,
+      });
+      const deliveryRecipients = processDwnRequest.getCalls()
+        .map((call) => call.args[0].messageParams?.filter)
+        .filter((filter) => filter?.protocolPath === ENCRYPTION_CONTROL_DELIVERY_PATH)
+        .map((filter) => filter.recipient);
+
+      expect(result?.recipientDid).toBe(recipientDid);
+      expect(result?.keyMaterial.keyId).toBe(audienceKeyId);
+      expect(deliveryRecipients).toEqual([granteeDid, recipientDid]);
     });
   });
 

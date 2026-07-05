@@ -170,6 +170,16 @@ function getSourceAudienceKeyFromDelivery(message: GenericMessage): string | und
   return tags === undefined ? undefined : getSourceAudienceKeyFromTags(tags);
 }
 
+function getSourceDeliveryRoleKey(message: GenericMessage): string | undefined {
+  const tags = getSourceDeliveryTags(message);
+  const recipient = (message.descriptor as RecordsDescriptor).recipient;
+  if (tags === undefined || recipient === undefined) {
+    return undefined;
+  }
+
+  return getRoleKey(tags.protocol, tags.rolePath, recipient, tags.contextId === '' ? undefined : tags.contextId);
+}
+
 function getAudienceRoleKey(message: GenericMessage): string | undefined {
   const tags = getAudienceTags(message);
   const recipient = (message.descriptor as RecordsDescriptor).recipient;
@@ -690,6 +700,12 @@ function addSourceAudienceEdges<T>(
   const deliveryAudienceIndex = deliveryAudienceKey === undefined ? undefined : indexes.sourceAudienceIndex.get(deliveryAudienceKey);
   if (deliveryAudienceIndex !== undefined) {
     addEdge(deliveryAudienceIndex, index);
+  }
+
+  const deliveryRoleKey = getSourceDeliveryRoleKey(message);
+  const deliveryRoleIndex = deliveryRoleKey === undefined ? undefined : indexes.roleIndex.get(deliveryRoleKey);
+  if (deliveryRoleIndex !== undefined) {
+    addEdge(deliveryRoleIndex, index);
   }
 }
 
