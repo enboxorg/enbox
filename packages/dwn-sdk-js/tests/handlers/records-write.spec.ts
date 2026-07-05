@@ -189,8 +189,6 @@ export function testRecordsWriteHandler(): void {
         recipientAuthority: string;
         rolePath: string;
         roleRuleSet: ProtocolRuleSet;
-        grantId?: string;
-        roleRef?: string;
       }): Promise<{ dataBytes: Uint8Array; recordsWrite: RecordsWrite }> {
         const tags: Record<string, string> = {
           protocol           : input.protocol,
@@ -199,12 +197,6 @@ export function testRecordsWriteHandler(): void {
           keyId              : input.keyId,
           recipientAuthority : input.recipientAuthority,
         };
-        if (input.grantId !== undefined) {
-          tags.grantId = input.grantId;
-        }
-        if (input.roleRef !== undefined) {
-          tags.roleRef = input.roleRef;
-        }
 
         const dataBytes = Encoder.objectToBytes({
           protocol  : input.protocol,
@@ -490,156 +482,6 @@ export function testRecordsWriteHandler(): void {
 
         expect(reply.status.code).toBe(400);
         expect(reply.status.detail).toContain(DwnErrorCode.EncryptionControlValidateDeliveryAudienceMissing);
-      });
-
-      it('should accept delivery control records for recipients authorized to create the role through a role', async () => {
-        const alice = await TestDataGenerator.generateDidKeyPersona();
-        const bob = await TestDataGenerator.generateDidKeyPersona();
-
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://encryption-control-delivery-role-creator.xyz',
-          published : false,
-          types     : {
-            admin  : { schema: 'http://admin-schema', dataFormats: ['application/json'] },
-            member : { schema: 'http://member-schema', dataFormats: ['application/json'] },
-          },
-          structure: {
-            admin  : { $role: true },
-            member : {
-              $role    : true,
-              $actions : [{ role: 'admin', can: ['create'] }],
-            },
-          },
-        };
-        const encryptedProtocolDefinition = await installEncryptedProtocol(alice, protocolDefinition);
-        const memberRuleSet = encryptedProtocolDefinition.structure.member as ProtocolRuleSet;
-        const audience = await createAudienceControlWrite({
-          author      : alice,
-          protocol    : protocolDefinition.protocol,
-          rolePath    : 'member',
-          roleRuleSet : memberRuleSet,
-        });
-        expect(
-          (await dwn.processMessage(alice.did, audience.recordsWrite.message, { dataStream: DataStream.fromBytes(audience.dataBytes) })).status.code
-        ).toBe(202);
-
-        const adminRole = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          data         : Encoder.stringToBytes('bob is an admin'),
-          dataFormat   : 'application/json',
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'admin',
-          recipient    : bob.did,
-          schema       : 'http://admin-schema',
-        });
-        expect((await dwn.processMessage(alice.did, adminRole.message, { dataStream: adminRole.dataStream })).status.code).toBe(202);
-
-        const deliveryData = Encoder.objectToBytes({ encrypted: true });
-        const delivery = await RecordsWrite.create({
-          data            : deliveryData,
-          dataFormat      : 'application/json',
-          encryptionInput : {
-            initializationVector : TestDataGenerator.randomBytes(16),
-            key                  : TestDataGenerator.randomBytes(32),
-            keyEncryptionInputs  : [{
-              algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-              keyId            : await Encryption.getKeyId(memberRuleSet.$keyAgreement!.publicKeyJwk),
-              publicKey        : memberRuleSet.$keyAgreement!.publicKeyJwk,
-              derivationScheme : KeyDerivationScheme.ProtocolPath,
-            }],
-          },
-          protocol     : protocolDefinition.protocol,
-          protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
-          recipient    : bob.did,
-          schema       : 'https://identity.foundation/dwn/json-schemas/encryption/delivery.json',
-          signer       : Jws.createSigner(alice),
-          tags         : {
-            protocol           : protocolDefinition.protocol,
-            rolePath           : 'member',
-            contextId          : '',
-            keyId              : audience.keyId,
-            recipientAuthority : 'roleCreatorRole',
-            roleRef            : 'admin',
-          },
-        });
-
-        const reply = await dwn.processMessage(alice.did, delivery.message, { dataStream: DataStream.fromBytes(deliveryData) });
-
-        expect(reply.status.code).toBe(202);
-      });
-
-      it('should reject role-creator delivery control records when the role cannot create the audience role', async () => {
-        const alice = await TestDataGenerator.generateDidKeyPersona();
-        const bob = await TestDataGenerator.generateDidKeyPersona();
-
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://encryption-control-delivery-role-creator-rejected.xyz',
-          published : false,
-          types     : {
-            admin  : { schema: 'http://admin-schema', dataFormats: ['application/json'] },
-            member : { schema: 'http://member-schema', dataFormats: ['application/json'] },
-          },
-          structure: {
-            admin  : { $role: true },
-            member : { $role: true },
-          },
-        };
-        const encryptedProtocolDefinition = await installEncryptedProtocol(alice, protocolDefinition);
-        const memberRuleSet = encryptedProtocolDefinition.structure.member as ProtocolRuleSet;
-        const audience = await createAudienceControlWrite({
-          author      : alice,
-          protocol    : protocolDefinition.protocol,
-          rolePath    : 'member',
-          roleRuleSet : memberRuleSet,
-        });
-        expect(
-          (await dwn.processMessage(alice.did, audience.recordsWrite.message, { dataStream: DataStream.fromBytes(audience.dataBytes) })).status.code
-        ).toBe(202);
-
-        const adminRole = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          data         : Encoder.stringToBytes('bob is an admin'),
-          dataFormat   : 'application/json',
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'admin',
-          recipient    : bob.did,
-          schema       : 'http://admin-schema',
-        });
-        expect((await dwn.processMessage(alice.did, adminRole.message, { dataStream: adminRole.dataStream })).status.code).toBe(202);
-
-        const deliveryData = Encoder.objectToBytes({ encrypted: true });
-        const delivery = await RecordsWrite.create({
-          data            : deliveryData,
-          dataFormat      : 'application/json',
-          encryptionInput : {
-            initializationVector : TestDataGenerator.randomBytes(16),
-            key                  : TestDataGenerator.randomBytes(32),
-            keyEncryptionInputs  : [{
-              algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-              keyId            : await Encryption.getKeyId(memberRuleSet.$keyAgreement!.publicKeyJwk),
-              publicKey        : memberRuleSet.$keyAgreement!.publicKeyJwk,
-              derivationScheme : KeyDerivationScheme.ProtocolPath,
-            }],
-          },
-          protocol     : protocolDefinition.protocol,
-          protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
-          recipient    : bob.did,
-          schema       : 'https://identity.foundation/dwn/json-schemas/encryption/delivery.json',
-          signer       : Jws.createSigner(alice),
-          tags         : {
-            protocol           : protocolDefinition.protocol,
-            rolePath           : 'member',
-            contextId          : '',
-            keyId              : audience.keyId,
-            recipientAuthority : 'roleCreatorRole',
-            roleRef            : 'admin',
-          },
-        });
-
-        const reply = await dwn.processMessage(alice.did, delivery.message, { dataStream: DataStream.fromBytes(deliveryData) });
-
-        expect(reply.status.code).toBe(400);
-        expect(reply.status.detail).toContain(DwnErrorCode.EncryptionControlValidateDeliveryRecipientUnauthorized);
       });
 
       it('should reject author-delegated audience control writes when the grant does not cover the role path', async () => {
@@ -1068,10 +910,9 @@ export function testRecordsWriteHandler(): void {
         expect(reply.status.detail).toContain(DwnErrorCode.EncryptionControlValidateUnexpectedRecord);
       });
 
-      it('should accept delivery control records for each supported recipient authority', async () => {
+      it('should accept delivery control records for role holders', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
-        const carol = await TestDataGenerator.generateDidKeyPersona();
 
         const protocolDefinition: ProtocolDefinition = {
           protocol  : 'http://encryption-control-delivery-authorities.xyz',
@@ -1121,49 +962,6 @@ export function testRecordsWriteHandler(): void {
         expect(
           (await dwn.processMessage(alice.did, roleHolderDelivery.recordsWrite.message, {
             dataStream: DataStream.fromBytes(roleHolderDelivery.dataBytes),
-          })).status.code
-        ).toBe(202);
-
-        const grant = await TestDataGenerator.generateGrantCreate({
-          author    : alice,
-          grantedTo : carol,
-          scope     : {
-            interface    : DwnInterfaceName.Records,
-            method       : DwnMethodName.Write,
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'member',
-          },
-        });
-        expect((await dwn.processMessage(alice.did, grant.message, { dataStream: grant.dataStream })).status.code).toBe(202);
-
-        const grantDelivery = await createDeliveryControlWrite({
-          author             : alice,
-          grantId            : grant.message.recordId,
-          keyId              : audience.keyId,
-          protocol           : protocolDefinition.protocol,
-          recipient          : carol.did,
-          recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleCreatorGrant,
-          rolePath           : 'member',
-          roleRuleSet        : memberRuleSet,
-        });
-        expect(
-          (await dwn.processMessage(alice.did, grantDelivery.recordsWrite.message, {
-            dataStream: DataStream.fromBytes(grantDelivery.dataBytes),
-          })).status.code
-        ).toBe(202);
-
-        const anyoneDelivery = await createDeliveryControlWrite({
-          author             : alice,
-          keyId              : audience.keyId,
-          protocol           : protocolDefinition.protocol,
-          recipient          : carol.did,
-          recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleCreatorAnyone,
-          rolePath           : 'member',
-          roleRuleSet        : memberRuleSet,
-        });
-        expect(
-          (await dwn.processMessage(alice.did, anyoneDelivery.recordsWrite.message, {
-            dataStream: DataStream.fromBytes(anyoneDelivery.dataBytes),
           })).status.code
         ).toBe(202);
       });
@@ -1287,39 +1085,6 @@ export function testRecordsWriteHandler(): void {
         expect(unauthorizedRoleHolderReply.status.code).toBe(400);
         expect(unauthorizedRoleHolderReply.status.detail).toContain(DwnErrorCode.EncryptionControlValidateDeliveryRecipientRoleRecordMissing);
 
-        const missingGrantDelivery = await createDeliveryControlWrite({
-          author             : alice,
-          keyId              : audience.keyId,
-          protocol           : protocolDefinition.protocol,
-          recipient          : bob.did,
-          recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleCreatorGrant,
-          rolePath           : 'member',
-          roleRuleSet        : memberRuleSet,
-        });
-        const missingGrantReply = await dwn.processMessage(
-          alice.did,
-          missingGrantDelivery.recordsWrite.message,
-          { dataStream: DataStream.fromBytes(missingGrantDelivery.dataBytes) }
-        );
-        expect(missingGrantReply.status.code).toBe(400);
-        expect(missingGrantReply.status.detail).toContain(DwnErrorCode.EncryptionControlValidateDeliveryRecipientUnauthorized);
-
-        const missingRoleRefDelivery = await createDeliveryControlWrite({
-          author             : alice,
-          keyId              : audience.keyId,
-          protocol           : protocolDefinition.protocol,
-          recipient          : bob.did,
-          recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleCreatorRole,
-          rolePath           : 'member',
-          roleRuleSet        : memberRuleSet,
-        });
-        const missingRoleRefReply = await dwn.processMessage(
-          alice.did,
-          missingRoleRefDelivery.recordsWrite.message,
-          { dataStream: DataStream.fromBytes(missingRoleRefDelivery.dataBytes) }
-        );
-        expect(missingRoleRefReply.status.code).toBe(400);
-        expect(missingRoleRefReply.status.detail).toContain(DwnErrorCode.EncryptionControlValidateDeliveryRecipientUnauthorized);
       });
 
       it('should not treat lookalike encryption control paths as reserved paths', async () => {
@@ -4363,6 +4128,21 @@ export function testRecordsWriteHandler(): void {
             { dataStream: DataStream.fromBytes(currentAudience.dataBytes) }
           )).status.code).toBe(202);
 
+          const bobMemberRole = await TestDataGenerator.generateRecordsWrite({
+            author       : bob,
+            data         : Encoder.stringToBytes('bob is a member'),
+            dataFormat   : 'application/json',
+            protocol     : protocolDefinition.protocol,
+            protocolPath : rolePath,
+            recipient    : bob.did,
+            schema       : 'http://member-schema',
+          });
+          expect((await dwn.processMessage(
+            alice.did,
+            bobMemberRole.message,
+            { dataStream: bobMemberRole.dataStream }
+          )).status.code).toBe(202);
+
           const buildEncryptedMessage = async (plaintext: string): Promise<GenerateRecordsWriteOutput> => {
             const dataEncryptionKey = TestDataGenerator.randomBytes(32);
             const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(16);
@@ -4422,7 +4202,7 @@ export function testRecordsWriteHandler(): void {
             keyId              : loserAudience.keyId,
             protocol           : protocolDefinition.protocol,
             recipient          : bob.did,
-            recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleCreatorAnyone,
+            recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
             rolePath,
             roleRuleSet        : memberRuleSet,
           });

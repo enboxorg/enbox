@@ -441,9 +441,7 @@ export class EncryptionControl {
     }
 
     const tags = EncryptionControl.getDeliveryTags(message);
-    const { protocolDefinition, ruleSet } = await EncryptionControl.verifyRoleAudienceDefinition(
-      tenant, tags, message, validationStateReader, 'delivery'
-    );
+    await EncryptionControl.verifyRoleAudienceDefinition(tenant, tags, message, validationStateReader, 'delivery');
     const audiences = await validationStateReader.queryAudienceRecords({
       tenant,
       protocol  : tags.protocol,
@@ -462,8 +460,6 @@ export class EncryptionControl {
       tenant,
       message,
       tags,
-      protocolDefinition,
-      ruleSet,
       validationStateReader,
     });
   }
@@ -718,47 +714,23 @@ export class EncryptionControl {
     tenant: string;
     message: RecordsWriteMessage;
     tags: EncryptionControlDeliveryTags;
-    protocolDefinition: ProtocolDefinition;
-    ruleSet: ProtocolRuleSet;
     validationStateReader: ValidationStateReader;
   }): Promise<void> {
     const { tags } = input;
 
-    switch (tags.recipientAuthority) {
-    case EncryptionControlDeliveryRecipientAuthority.RoleHolder:
-      if (await EncryptionControl.deliveryRecipientIsRoleHolder(input)) {
-        return;
-      }
-      throw new DwnError(
-        DwnErrorCode.EncryptionControlValidateDeliveryRecipientRoleRecordMissing,
-        'delivery recipient role record is missing.'
-      );
-    case EncryptionControlDeliveryRecipientAuthority.RoleCreatorGrant:
-      if (await EncryptionControl.deliveryRecipientHasRoleCreateGrant(input)) {
-        return;
-      }
-      break;
-    case EncryptionControlDeliveryRecipientAuthority.RoleCreatorRole:
-      if (await EncryptionControl.deliveryRecipientHasRoleCreateRole(input)) {
-        return;
-      }
-      break;
-    case EncryptionControlDeliveryRecipientAuthority.RoleCreatorAnyone:
-      if (EncryptionControl.anyoneCanCreateRole(input.ruleSet)) {
-        return;
-      }
-      break;
-    default:
+    if (tags.recipientAuthority !== EncryptionControlDeliveryRecipientAuthority.RoleHolder) {
       throw new DwnError(
         DwnErrorCode.EncryptionControlValidateDeliveryRecipientAuthorityInvalid,
         `unsupported delivery recipient authority '${tags.recipientAuthority}'.`
       );
     }
 
-    throw new DwnError(
-      DwnErrorCode.EncryptionControlValidateDeliveryRecipientUnauthorized,
-      'delivery recipient is not authorized for the referenced audience.'
-    );
+    if (!await EncryptionControl.deliveryRecipientIsRoleHolder(input)) {
+      throw new DwnError(
+        DwnErrorCode.EncryptionControlValidateDeliveryRecipientRoleRecordMissing,
+        'delivery recipient role record is missing.'
+      );
+    }
   }
 
   private static async deliveryRecipientIsRoleHolder(input: {
@@ -774,66 +746,6 @@ export class EncryptionControl {
       input.tags.rolePath,
       input.tags.contextId,
       input.validationStateReader,
-    );
-  }
-
-  private static async deliveryRecipientHasRoleCreateGrant(input: {
-    tenant: string;
-    message: RecordsWriteMessage;
-    tags: EncryptionControlDeliveryTags;
-    validationStateReader: ValidationStateReader;
-  }): Promise<boolean> {
-    if (input.tags.grantId === undefined) {
-      return false;
-    }
-
-    const grant = await input.validationStateReader.fetchGrant(input.tenant, input.tags.grantId);
-    await GrantAuthorization.performBaseValidation({
-      incomingMessage       : input.message,
-      expectedGrantor       : input.tenant,
-      expectedGrantee       : input.message.descriptor.recipient!,
-      permissionGrant       : grant,
-      validationStateReader : input.validationStateReader,
-    });
-    return EncryptionControl.grantCoversRoleCreate(grant, input.tags);
-  }
-
-  private static async deliveryRecipientHasRoleCreateRole(input: {
-    tenant: string;
-    message: RecordsWriteMessage;
-    tags: EncryptionControlDeliveryTags;
-    protocolDefinition: ProtocolDefinition;
-    ruleSet: ProtocolRuleSet;
-    validationStateReader: ValidationStateReader;
-  }): Promise<boolean> {
-    if (input.tags.roleRef === undefined) {
-      return false;
-    }
-
-    for (const actionRule of input.ruleSet.$actions ?? []) {
-      if (!actionRule.can.includes(ProtocolAction.Create) || actionRule.role !== input.tags.roleRef) {
-        continue;
-      }
-
-      if (await EncryptionControl.roleRuleAllowsActor(
-        input.tenant,
-        input.message.descriptor.recipient!,
-        actionRule,
-        input.tags,
-        input.protocolDefinition,
-        input.validationStateReader,
-        input.tags.roleRef,
-      )) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  private static anyoneCanCreateRole(ruleSet: ProtocolRuleSet): boolean {
-    return (ruleSet.$actions ?? []).some((actionRule: ProtocolActionRule): boolean =>
-      actionRule.who === ProtocolActor.Anyone && actionRule.can.includes(ProtocolAction.Create)
     );
   }
 
@@ -1134,9 +1046,7 @@ export class EncryptionControl {
     const tags = EncryptionControl.getRoleAudienceKeyId(message, 'delivery');
     return {
       ...tags,
-      recipientAuthority : EncryptionControl.getRequiredStringTag(message, 'recipientAuthority', 'delivery') as EncryptionControlDeliveryTags['recipientAuthority'],
-      grantId            : EncryptionControl.getOptionalStringTag(message.descriptor.tags, 'grantId'),
-      roleRef            : EncryptionControl.getOptionalStringTag(message.descriptor.tags, 'roleRef'),
+      recipientAuthority: EncryptionControl.getRequiredStringTag(message, 'recipientAuthority', 'delivery') as EncryptionControlDeliveryTags['recipientAuthority'],
     };
   }
 

@@ -34,6 +34,7 @@ import {
   getEncryptionKeyDeriver,
   getEncryptionKeyInfo,
   getKeyDecrypter,
+  hasAudienceSealCoverage,
   ivLength,
   maybeDecryptReply,
   resolveAudienceDecryptionKey,
@@ -383,7 +384,7 @@ describe('dwn-encryption', () => {
   });
 
   describe('resolveAudienceDecryptionKey', () => {
-    it('should try delegate self-deliveries and then participant deliveries for member delegates', async () => {
+    it('should query participant deliveries through the delegated read actor for member delegates', async () => {
       const protocol = 'https://example.com/member-delegate-delivery';
       const rolePath = 'chat/member';
       const contextId = 'chat-root';
@@ -561,10 +562,10 @@ describe('dwn-encryption', () => {
 
       expect(result?.recipientDid).toBe(recipientDid);
       expect(result?.keyMaterial.keyId).toBe(audienceKeyId);
-      expect(deliveryRecipients.map((request) => request.messageParams.filter.recipient)).toEqual([granteeDid, recipientDid]);
-      expect(deliveryRecipients.map((request) => request.author)).toEqual([granteeDid, recipientDid]);
-      expect(deliveryRecipients.map((request) => request.granteeDid)).toEqual([undefined, granteeDid]);
-      expect(deliveryRecipients[1].messageParams.delegatedGrant).toBe(delegatedGrant);
+      expect(deliveryRecipients.map((request) => request.messageParams.filter.recipient)).toEqual([recipientDid]);
+      expect(deliveryRecipients.map((request) => request.author)).toEqual([recipientDid]);
+      expect(deliveryRecipients.map((request) => request.granteeDid)).toEqual([granteeDid]);
+      expect(deliveryRecipients[0].messageParams.delegatedGrant).toBe(delegatedGrant);
     });
   });
 
@@ -701,6 +702,41 @@ describe('dwn-encryption', () => {
 
       const result = await getEncryptionKeyInfo(mockAgent, 'did:example:alice');
       expect(result.keyId).toBe('did:example:alice#enc');
+    });
+  });
+
+  describe('hasAudienceSealCoverage', () => {
+    it('should return false when the source tenant key is not available locally', async () => {
+      const mockAgent = {
+        did: {
+          resolve: sinon.stub().resolves({
+            didDocument: {
+              id                 : 'did:example:alice',
+              keyAgreement       : ['#enc'],
+              verificationMethod : [{
+                id           : 'did:example:alice#enc',
+                type         : 'JsonWebKey2020',
+                controller   : 'did:example:alice',
+                publicKeyJwk : { kty: 'OKP', crv: 'X25519', x: 'AAAA' },
+              }],
+            },
+            didResolutionMetadata: {},
+          }),
+        },
+        keyManager: {
+          derivePrivateKeyBytes : sinon.stub().rejects(new Error('Key not found: urn:jwk:alice')),
+          getKeyUri             : sinon.stub().resolves('urn:jwk:alice'),
+        },
+      } as any;
+
+      const result = await hasAudienceSealCoverage({
+        agent     : mockAgent,
+        protocol  : 'https://example.org/protocols/seal-coverage',
+        rolePath  : 'member',
+        sourceDid : 'did:example:alice',
+      });
+
+      expect(result).toBe(false);
     });
   });
 

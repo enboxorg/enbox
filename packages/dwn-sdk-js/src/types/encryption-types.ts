@@ -13,16 +13,11 @@ export type RoleAudienceKeyId = RoleAudienceTuple & {
 };
 
 export enum EncryptionControlDeliveryRecipientAuthority {
-  RoleCreatorAnyone = 'roleCreatorAnyone',
-  RoleCreatorGrant = 'roleCreatorGrant',
-  RoleCreatorRole = 'roleCreatorRole',
   RoleHolder = 'roleHolder',
 }
 
 export type EncryptionControlDeliveryTags = RoleAudienceKeyId & {
   recipientAuthority: EncryptionControlDeliveryRecipientAuthority | `${EncryptionControlDeliveryRecipientAuthority}`;
-  grantId?: string;
-  roleRef?: string;
 };
 
 export type X25519KeyWrap = {

@@ -8,6 +8,7 @@ import type {
   KeyDecrypter,
   MessageStore,
   ProgressToken,
+  ProtocolActionRule,
   ProtocolDefinition,
   ProtocolRuleSet,
   RecordsWriteMessage,
@@ -25,20 +26,18 @@ import {
   DurableEventLog,
   Dwn,
   DwnMethodName,
-  PermissionGrant as DwnPermissionGrant,
   Encoder,
   Encryption,
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
-  ENCRYPTION_CONTROL_DELIVERY_PATH,
   EncryptionControl,
   EncryptionControlDeliveryRecipientAuthority,
   EventEmitterWakePublisher,
   getRoleAudienceContextId,
   getRuleSetAtPath,
+  isCrossProtocolRef,
   KeyAgreementAlgorithm,
   KeyDerivationScheme,
   Message,
-  parseCrossProtocolRef,
   Protocols,
   RecordsWrite,
   ROLE_AUDIENCE_DERIVATION_SCHEME,
@@ -85,6 +84,7 @@ import {
   getEncryptionKeyDeriver as getEncryptionKeyDeriverFn,
   getEncryptionKeyInfo as getEncryptionKeyInfoFn,
   getKeyDecrypter as getKeyDecrypterFn,
+  hasAudienceSealCoverage as hasAudienceSealCoverageFn,
   ivLength as ivLengthFn,
   maybeDecryptReply as maybeDecryptReplyFn,
   resolveAudienceDecryptionKey as resolveAudienceDecryptionKeyFn,
@@ -801,15 +801,15 @@ export class AgentDwnApi {
   }): Promise<{ inputs: RoleAudienceKeyEncryptionInput[]; pendingAudienceRecords: PendingAudienceRecord[] }> {
     const inputs: RoleAudienceKeyEncryptionInput[] = [];
     const pendingAudienceRecords: PendingAudienceRecord[] = [];
-    const readRules = params.sourceRuleSet.$actions?.filter((rule): boolean =>
+    const readRules = params.sourceRuleSet.$actions?.filter((rule: ProtocolActionRule): boolean =>
       rule.role !== undefined && rule.can?.includes('read')
     ) ?? [];
 
     for (const rule of readRules) {
       const roleAudience = this.resolveRoleAudienceRule(rule.role!, params.protocolDefinition, params.parentContextId);
       const pendingRoleAudience = roleAudience === undefined &&
-        this.canPreparePendingAudienceRecord(rule.role!, params.protocolDefinition, params.parentContextId)
-        ? await this.preparePendingAudienceRecord(rule.role!, params.protocolDefinition, params.sourceDid, params.granteeDid)
+        this.canPreparePendingAudienceRecord(rule.role!, params.parentContextId)
+        ? await this.preparePendingAudienceRecord(rule.role!, params.protocolDefinition)
         : undefined;
       if (roleAudience === undefined && pendingRoleAudience === undefined) {
         throw new Error(
@@ -853,41 +853,25 @@ export class AgentDwnApi {
 
   private canPreparePendingAudienceRecord(
     roleRef: string,
-    protocolDefinition: ProtocolDefinition,
     parentContextId: string | undefined,
   ): boolean {
-    const parsed = parseCrossProtocolRef(roleRef);
-    const protocol = parsed === undefined
-      ? protocolDefinition.protocol
-      : protocolDefinition.uses?.[parsed.alias];
-    if (protocol === undefined) {
+    if (isCrossProtocolRef(roleRef)) {
       return false;
     }
 
-    const rolePath = parsed === undefined ? roleRef : parsed.protocolPath;
     const pendingContextId = parentContextId === undefined ? 'pending-record' : `${parentContextId}/pending-record`;
-    return getRoleAudienceContextId(rolePath, pendingContextId) !== undefined;
+    return getRoleAudienceContextId(roleRef, pendingContextId) !== undefined;
   }
 
   private async preparePendingAudienceRecord(
     roleRef: string,
     protocolDefinition: ProtocolDefinition,
-    sourceDid: string,
-    granteeDid?: string,
   ): Promise<PendingAudienceRecord | undefined> {
-    const roleAudience = await this.resolveRoleAudienceReference(roleRef, protocolDefinition);
-    if (roleAudience === undefined) {
+    if (isCrossProtocolRef(roleRef)) {
       return undefined;
     }
 
-    const definition = roleAudience.protocol === protocolDefinition.protocol
-      ? protocolDefinition
-      : await this.getProtocolDefinition(sourceDid, roleAudience.protocol, granteeDid);
-    if (definition === undefined) {
-      return undefined;
-    }
-
-    const ruleSet = getRuleSetAtPath(roleAudience.rolePath, definition.structure);
+    const ruleSet = getRuleSetAtPath(roleRef, protocolDefinition.structure);
     const sealingPublicKey = ruleSet?.$keyAgreement?.publicKeyJwk as PublicKeyJwk | undefined;
     if (ruleSet?.$role !== true || sealingPublicKey === undefined) {
       return undefined;
@@ -896,10 +880,10 @@ export class AgentDwnApi {
     return {
       audienceKey: await generateAudienceKeyFn({
         contextId : '',
-        protocol  : roleAudience.protocol,
-        rolePath  : roleAudience.rolePath,
+        protocol  : protocolDefinition.protocol,
+        rolePath  : roleRef,
       }),
-      rolePath: roleAudience.rolePath,
+      rolePath: roleRef,
       sealingPublicKey,
     };
   }
@@ -909,17 +893,12 @@ export class AgentDwnApi {
     protocolDefinition: ProtocolDefinition,
     parentContextId: string | undefined,
   ): { protocol: string; rolePath: string; contextId: string } | undefined {
-    const parsed = parseCrossProtocolRef(roleRef);
-    const protocol = parsed === undefined
-      ? protocolDefinition.protocol
-      : protocolDefinition.uses?.[parsed.alias];
-    const rolePath = parsed === undefined ? roleRef : parsed.protocolPath;
-    if (protocol === undefined) {
+    if (isCrossProtocolRef(roleRef)) {
       return undefined;
     }
 
-    const contextId = getRoleAudienceContextId(rolePath, parentContextId);
-    return contextId === undefined ? undefined : { protocol, rolePath, contextId };
+    const contextId = getRoleAudienceContextId(roleRef, parentContextId);
+    return contextId === undefined ? undefined : { protocol: protocolDefinition.protocol, rolePath: roleRef, contextId };
   }
 
   private getRoleAudienceSourceContextId(params: {
@@ -932,18 +911,6 @@ export class AgentDwnApi {
     }
 
     return params.protocolPath.includes('/') ? undefined : params.recordId;
-  }
-
-  private async resolveRoleAudienceReference(
-    roleRef: string,
-    protocolDefinition: ProtocolDefinition,
-  ): Promise<{ protocol: string; rolePath: string } | undefined> {
-    const parsed = parseCrossProtocolRef(roleRef);
-    const protocol = parsed === undefined
-      ? protocolDefinition.protocol
-      : protocolDefinition.uses?.[parsed.alias];
-    const rolePath = parsed === undefined ? roleRef : parsed.protocolPath;
-    return protocol === undefined ? undefined : { protocol, rolePath };
   }
 
   private async getOrCreateAudiencePublicKey(params: {
@@ -1049,6 +1016,14 @@ export class AgentDwnApi {
       );
     }
 
+    await this.assertAudienceSealCoverage({
+      contextId  : params.contextId,
+      granteeDid : params.granteeDid,
+      protocol   : params.protocol,
+      rolePath   : params.rolePath,
+      sourceDid  : params.sourceDid,
+    });
+
     const created = await createAudienceRecordFn({
       agent             : this.agent,
       authorDid         : params.authorDid,
@@ -1062,28 +1037,6 @@ export class AgentDwnApi {
       sealingPublicKey,
       sourceDid         : params.sourceDid,
     });
-    const canOpenSeal = await resolveAudienceDecryptionKeyFn({
-      agent                      : this.agent,
-      delegateDecryptionKeyCache : this._delegateDecryptionKeyCache,
-      contextId                  : params.contextId,
-      granteeDid                 : params.granteeDid,
-      keyId                      : created.audienceKey.keyId,
-      protocol                   : params.protocol,
-      recipientDid               : params.authorDid,
-      rolePath                   : params.rolePath,
-      sourceDid                  : params.sourceDid,
-    });
-    if (canOpenSeal === undefined) {
-      await this.createRoleCreatorDelivery({
-        audienceKey       : created.audienceKey,
-        authorDid         : params.authorDid,
-        delegatedGrant    : params.delegatedGrant,
-        granteeDid        : params.granteeDid,
-        permissionGrantId : params.permissionGrantId,
-        protocolRole      : params.protocolRole,
-        sourceDid         : params.sourceDid,
-      });
-    }
     this._audienceDecryptionKeyCache.set(this.getAudienceCacheKey({
       contextId    : params.contextId,
       keyId        : created.audienceKey.keyId,
@@ -1101,6 +1054,29 @@ export class AgentDwnApi {
     });
 
     return created.audienceKey;
+  }
+
+  private async assertAudienceSealCoverage(params: {
+    sourceDid: string;
+    protocol: string;
+    rolePath: string;
+    contextId: string;
+    granteeDid?: string;
+  }): Promise<void> {
+    const hasCoverage = await hasAudienceSealCoverageFn({
+      agent                      : this.agent,
+      delegateDecryptionKeyCache : this._delegateDecryptionKeyCache,
+      granteeDid                 : params.granteeDid,
+      protocol                   : params.protocol,
+      rolePath                   : params.rolePath,
+      sourceDid                  : params.sourceDid,
+    });
+    if (!hasCoverage) {
+      throw new Error(
+        `AgentDwnApi: Cannot mint role audience (${params.protocol}, ${params.rolePath}, ${params.contextId}) without seal coverage. ` +
+        'Use the owner identity or a delegate with grantKey material covering the role path, or provision the audience with a seal-covered actor first.'
+      );
+    }
   }
 
   private async resolveCurrentAudienceRecord(params: {
@@ -1208,94 +1184,6 @@ export class AgentDwnApi {
 
     const dateCompare = left.descriptor.dateCreated.localeCompare(right.descriptor.dateCreated);
     return dateCompare === 0 ? left.recordId.localeCompare(right.recordId) : dateCompare;
-  }
-
-  private async createRoleCreatorDelivery(params: {
-    audienceKey: AudienceKeyPayload;
-    authorDid: string;
-    sourceDid: string;
-    granteeDid?: string;
-    permissionGrantId?: string;
-    delegatedGrant?: DataEncodedRecordsWriteMessage;
-    protocolRole?: string;
-  }): Promise<void> {
-    const recipientDid = params.granteeDid ?? params.authorDid;
-    const recipientRolePublicKey = params.granteeDid === undefined
-      ? await this.getRecipientRolePublicKey({
-        protocol : params.audienceKey.protocol,
-        recipientDid,
-        rolePath : params.audienceKey.rolePath,
-      })
-      : await this.getDelegateDeliveryPublicKey(recipientDid, params.audienceKey.protocol);
-    const authority = this.getRoleCreatorDeliveryAuthority(params);
-
-    await createAudienceDeliveryRecordFn({
-      agent              : this.agent,
-      audienceKey        : params.audienceKey,
-      authorDid          : params.authorDid,
-      delegatedGrant     : params.delegatedGrant,
-      granteeDid         : params.granteeDid,
-      permissionGrantId  : params.permissionGrantId,
-      grantId            : authority.grantId,
-      protocolRole       : params.protocolRole,
-      recipientAuthority : authority.recipientAuthority,
-      recipientDid,
-      recipientRolePublicKey,
-      roleRef            : authority.roleRef,
-      sourceDid          : params.sourceDid,
-    });
-  }
-
-  private getRoleCreatorDeliveryAuthority(params: {
-    granteeDid?: string;
-    permissionGrantId?: string;
-    protocolRole?: string;
-    delegatedGrant?: DataEncodedRecordsWriteMessage;
-  }): {
-    grantId?: string;
-    recipientAuthority: EncryptionControlDeliveryRecipientAuthority;
-    roleRef?: string;
-  } {
-    if (params.granteeDid !== undefined && params.permissionGrantId !== undefined) {
-      return {
-        grantId            : params.permissionGrantId,
-        recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleCreatorGrant,
-      };
-    }
-
-    if (params.granteeDid !== undefined && params.delegatedGrant !== undefined) {
-      return {
-        grantId            : DwnPermissionGrant.parse(params.delegatedGrant).id,
-        recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleCreatorGrant,
-      };
-    }
-
-    if (params.protocolRole !== undefined) {
-      return {
-        recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleCreatorRole,
-        roleRef            : params.protocolRole,
-      };
-    }
-
-    if (params.granteeDid !== undefined) {
-      throw new Error('AgentDwnApi: role-creator delivery for a delegated writer requires a permission grant or invoked role.');
-    }
-
-    return {
-      recipientAuthority: EncryptionControlDeliveryRecipientAuthority.RoleCreatorAnyone,
-    };
-  }
-
-  private async getDelegateDeliveryPublicKey(delegateDid: string, protocol: string): Promise<PublicKeyJwk> {
-    const { keyUri } = await getEncryptionKeyInfoFn(this.agent, delegateDid);
-    return this.agent.keyManager.derivePublicKey({
-      keyUri,
-      derivationPath: [
-        KeyDerivationScheme.ProtocolPath,
-        protocol,
-        ...ENCRYPTION_CONTROL_DELIVERY_PATH.split('/'),
-      ],
-    });
   }
 
   private getAudienceCacheKey(input: {
@@ -1535,6 +1423,14 @@ export class AgentDwnApi {
               throw new Error(`AgentDwnApi: Unable to determine role audience context for '${pending.rolePath}'.`);
             }
 
+            await this.assertAudienceSealCoverage({
+              contextId,
+              granteeDid : request.granteeDid,
+              protocol   : pending.audienceKey.protocol,
+              rolePath   : pending.audienceKey.rolePath,
+              sourceDid  : request.target,
+            });
+
             const audienceKey: AudienceKeyPayload = {
               ...pending.audienceKey,
               contextId,
@@ -1553,40 +1449,18 @@ export class AgentDwnApi {
               sealingPublicKey  : pending.sealingPublicKey,
               sourceDid         : request.target,
             });
-            const canOpenSeal = await resolveAudienceDecryptionKeyFn({
-              agent                      : this.agent,
-              delegateDecryptionKeyCache : this._delegateDecryptionKeyCache,
-              contextId,
-              granteeDid                 : request.granteeDid,
-              keyId                      : audienceKey.keyId,
-              protocol                   : audienceKey.protocol,
-              recipientDid               : request.author,
-              rolePath                   : audienceKey.rolePath,
-              sourceDid                  : request.target,
-            });
-            if (canOpenSeal === undefined) {
-              await this.createRoleCreatorDelivery({
-                audienceKey,
-                authorDid         : request.author,
-                delegatedGrant    : messageParams.delegatedGrant,
-                granteeDid        : request.granteeDid,
-                permissionGrantId : messageParams.permissionGrantId,
-                protocolRole      : messageParams.protocolRole,
-                sourceDid         : request.target,
-              });
-            }
             this._audienceDecryptionKeyCache.set(this.getAudienceCacheKey({
               contextId,
               keyId        : audienceKey.keyId,
               protocol     : audienceKey.protocol,
-              recipientDid : request.granteeDid ?? request.author,
+              recipientDid : request.author,
               rolePath     : audienceKey.rolePath,
               sourceDid    : request.target,
             }), {
               contextId,
               keyMaterial  : audienceKey.keyMaterial,
               protocol     : audienceKey.protocol,
-              recipientDid : request.granteeDid ?? request.author,
+              recipientDid : request.author,
               rolePath     : audienceKey.rolePath,
               sourceDid    : request.target,
             });
