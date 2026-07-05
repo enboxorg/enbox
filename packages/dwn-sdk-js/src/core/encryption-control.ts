@@ -1197,7 +1197,7 @@ export class EncryptionControl {
     return { protocol, rolePath, contextId };
   }
 
-  private static compareAudienceProjectionCandidates(
+  public static compareAudienceProjectionCandidates(
     tenant: string,
     left: RecordsWriteMessage,
     right: RecordsWriteMessage,

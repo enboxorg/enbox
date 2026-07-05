@@ -19,7 +19,9 @@ export { CoreProtocolRegistry } from './core/core-protocol.js';
 export { EncryptionControl } from './core/encryption-control.js';
 export {
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
+  ENCRYPTION_CONTROL_AUDIENCE_SCHEMA_URI,
   ENCRYPTION_CONTROL_DELIVERY_PATH,
+  ENCRYPTION_CONTROL_DELIVERY_SCHEMA_URI,
   ENCRYPTION_CONTROL_PATHS,
   ENCRYPTION_CONTROL_ROOT_PATH,
   ENCRYPTION_PROTOCOL_URI,
@@ -51,7 +53,7 @@ export { DwnInterfaceName, DwnMethodName } from './enums/dwn-interface-method.js
 export { Encoder } from './utils/encoder.js';
 export { MessagesSubscribe } from './interfaces/messages-subscribe.js';
 export type { MessagesSubscribeOptions } from './interfaces/messages-subscribe.js';
-export { Encryption, ContentEncryptionAlgorithm, KeyAgreementAlgorithm, ROLE_AUDIENCE_DERIVATION_SCHEME } from './utils/encryption.js';
+export { Encryption, ContentEncryptionAlgorithm, KeyAgreementAlgorithm, ROLE_AUDIENCE_DERIVATION_SCHEME, SEAL_DERIVATION_SCHEME } from './utils/encryption.js';
 export type {
   DwnEncryption,
   KeyUnwrapPayload,
@@ -59,6 +61,10 @@ export type {
   ProtocolPathKeyEncryptionInput,
   RoleAudienceKeyEncryption,
   RoleAudienceKeyEncryptionInput,
+  SealKeyWrap,
+  SealKeyWrapInput,
+  SealUnwrapInput,
+  SealWrapInput,
   X25519KeyEncryption,
   X25519KeyEncryptionInput,
   X25519KeyWrapInput,
@@ -122,7 +128,6 @@ export type {
   RoleAudienceKeyId,
   RoleAudienceKeyMaterial,
   RoleAudienceTuple,
-  X25519KeyWrap,
 } from './types/encryption-types.js';
 export { EncryptionControlDeliveryRecipientAuthority } from './types/encryption-types.js';
 export { Time } from './utils/time.js';

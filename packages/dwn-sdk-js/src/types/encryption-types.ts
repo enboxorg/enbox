@@ -1,5 +1,5 @@
 import type { KeyDerivationScheme } from '../utils/hd-key.js';
-import type { KeyUnwrapPayload } from '../utils/encryption.js';
+import type { KeyUnwrapPayload, SealKeyWrap } from '../utils/encryption.js';
 import type { PrivateKeyJwk, PublicKeyJwk } from './jose-types.js';
 
 export type RoleAudienceTuple = {
@@ -20,16 +20,7 @@ export type EncryptionControlDeliveryTags = RoleAudienceKeyId & {
   recipientAuthority: EncryptionControlDeliveryRecipientAuthority | `${EncryptionControlDeliveryRecipientAuthority}`;
 };
 
-export type X25519KeyWrap = {
-  algorithm: 'X25519-HKDF-SHA256+A256KW';
-  keyId: string;
-  ephemeralPublicKey: PublicKeyJwk;
-  encryptedKey: string;
-};
-
-export type EncryptionControlSeal = X25519KeyWrap & {
-  derivationScheme: 'seal';
-};
+export type EncryptionControlSeal = SealKeyWrap;
 
 export type EncryptionControlAudiencePayload = RoleAudienceKeyId & {
   publicKeyJwk: PublicKeyJwk;

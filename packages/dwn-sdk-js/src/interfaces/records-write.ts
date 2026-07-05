@@ -301,45 +301,8 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
    *                                If not given, it means this write is for a root protocol record.
    */
   public static async create(options: RecordsWriteOptions): Promise<RecordsWrite> {
-    RecordsWrite.validateCreateOptions(options);
-
-    const dataCid = options.dataCid ?? await Cid.computeDagPbCidFromBytes(options.data!);
-    const dataSize = options.dataSize ?? options.data!.length;
-
-    const currentTime = Time.getCurrentTimestamp();
-    const permissionGrantInvocation = Message.normalizePermissionGrantInvocation({
-      permissionGrantId: options.permissionGrantId,
-    });
-
-    const descriptor: RecordsWriteDescriptor = {
-      interface        : DwnInterfaceName.Records,
-      method           : DwnMethodName.Write,
-      protocol         : normalizeProtocolUrl(options.protocol),
-      protocolPath     : options.protocolPath,
-      recipient        : options.recipient,
-      schema           : options.schema === undefined ? undefined : normalizeSchemaUrl(options.schema),
-      tags             : options.tags,
-      parentId         : RecordsWrite.getRecordIdFromContextId(options.parentContextId),
-      dataCid,
-      dataSize,
-      dateCreated      : options.dateCreated ?? currentTime,
-      messageTimestamp : options.messageTimestamp ?? currentTime,
-      published        : options.published,
-      datePublished    : options.datePublished,
-      dataFormat       : options.dataFormat,
-      squash           : options.squash,
-      ...permissionGrantInvocation,
-    };
-
-    // generate `datePublished` if the message is to be published but `datePublished` is not given
-    if (options.published === true &&
-      options.datePublished === undefined) {
-      descriptor.datePublished = currentTime;
-    }
-
-    // delete all descriptor properties that are `undefined` else the code will encounter the following IPLD issue when attempting to generate CID:
-    // Error: `undefined` is not supported by the IPLD Data Model and cannot be encoded
-    removeUndefinedProperties(descriptor);
+    RecordsWrite.validateCreateOptions(options, { requireSignerForDelegatedGrant: true });
+    const descriptor = await RecordsWrite.createDescriptor(options);
 
     // `recordId` computation
     const recordId = options.recordId;
@@ -350,6 +313,9 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
 
     // `encryption` generation
     const encryption = options.encryption ?? await createEncryptionProperty(options.encryptionInput);
+    const permissionGrantInvocation = Message.normalizePermissionGrantInvocation({
+      permissionGrantId: options.permissionGrantId,
+    });
 
     const message: InternalRecordsWriteMessage = {
       recordId,
@@ -374,7 +340,47 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     return recordsWrite;
   }
 
-  private static validateCreateOptions(options: RecordsWriteOptions): void {
+  /**
+   * Creates the descriptor that determines a RecordsWrite entry id without signing the message.
+   */
+  public static async createDescriptor(options: RecordsWriteOptions): Promise<RecordsWriteDescriptor> {
+    RecordsWrite.validateCreateOptions(options, { requireSignerForDelegatedGrant: false });
+
+    const dataCid = options.dataCid ?? await Cid.computeDagPbCidFromBytes(options.data!);
+    const dataSize = options.dataSize ?? options.data!.length;
+    const currentTime = Time.getCurrentTimestamp();
+    const permissionGrantInvocation = Message.normalizePermissionGrantInvocation({
+      permissionGrantId: options.permissionGrantId,
+    });
+    const descriptor: RecordsWriteDescriptor = {
+      interface        : DwnInterfaceName.Records,
+      method           : DwnMethodName.Write,
+      protocol         : normalizeProtocolUrl(options.protocol),
+      protocolPath     : options.protocolPath,
+      recipient        : options.recipient,
+      schema           : options.schema === undefined ? undefined : normalizeSchemaUrl(options.schema),
+      tags             : options.tags,
+      parentId         : RecordsWrite.getRecordIdFromContextId(options.parentContextId),
+      dataCid,
+      dataSize,
+      dateCreated      : options.dateCreated ?? currentTime,
+      messageTimestamp : options.messageTimestamp ?? currentTime,
+      published        : options.published,
+      datePublished    : options.datePublished,
+      dataFormat       : options.dataFormat,
+      squash           : options.squash,
+      ...permissionGrantInvocation,
+    };
+
+    if (options.published === true && options.datePublished === undefined) {
+      descriptor.datePublished = currentTime;
+    }
+
+    removeUndefinedProperties(descriptor);
+    return descriptor;
+  }
+
+  private static validateCreateOptions(options: RecordsWriteOptions, optionsOverrides: { requireSignerForDelegatedGrant: boolean }): void {
     if (options.protocol === undefined || options.protocolPath === undefined) {
       throw new DwnError(DwnErrorCode.RecordsWriteCreateMissingProtocol, '`protocol` and `protocolPath` are required');
     }
@@ -389,7 +395,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
       throw new DwnError(DwnErrorCode.RecordsWriteCreateDataCidAndDataSizeMutuallyInclusive, '`dataCid` and `dataSize` must both be defined or undefined at the same time');
     }
 
-    if (options.signer === undefined && options.delegatedGrant !== undefined) {
+    if (optionsOverrides.requireSignerForDelegatedGrant && options.signer === undefined && options.delegatedGrant !== undefined) {
       throw new DwnError(DwnErrorCode.RecordsWriteCreateMissingSigner, '`signer` must be given when `delegatedGrant` is given');
     }
 

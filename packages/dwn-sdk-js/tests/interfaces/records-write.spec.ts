@@ -640,6 +640,43 @@ describe('RecordsWrite', () => {
       const author = undefined;
       await expect(RecordsWrite.getEntryId(author, message.descriptor)).rejects.toThrow(DwnErrorCode.RecordsWriteGetEntryIdUndefinedAuthor);
     });
+
+    it('should compute the signed record id from an unsigned descriptor', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const bob = await TestDataGenerator.generatePersona();
+      const scope: PermissionScope = {
+        interface : DwnInterfaceName.Records,
+        method    : DwnMethodName.Write,
+        protocol  : 'chat'
+      };
+      const grantToBob = await PermissionsProtocol.createGrant({
+        signer      : Jws.createSigner(alice),
+        delegated   : true,
+        dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
+        description : 'Allow Bob to write as me in chat protocol',
+        grantedTo   : bob.did,
+        scope
+      });
+      const options: RecordsWriteOptions = {
+        delegatedGrant   : grantToBob.dataEncodedMessage,
+        data             : TestDataGenerator.randomBytes(10),
+        dataFormat       : 'application/octet-stream',
+        dateCreated      : '2024-03-01T00:00:00.000000Z',
+        messageTimestamp : '2024-03-01T00:00:00.000000Z',
+        protocol         : 'http://test-protocol.xyz',
+        protocolPath     : 'testRecord',
+        signer           : Jws.createSigner(bob),
+      };
+
+      const descriptor = await RecordsWrite.createDescriptor({
+        ...options,
+        signer: undefined,
+      });
+      const signedWrite = await RecordsWrite.create(options);
+      const descriptorEntryId = await RecordsWrite.getEntryId(alice.did, descriptor);
+
+      expect(descriptorEntryId).toBe(signedWrite.message.recordId);
+    });
   });
 
   describe('signAsOwner()', () => {
