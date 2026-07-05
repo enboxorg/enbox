@@ -14,7 +14,6 @@ import { DataStream } from '../../src/utils/data-stream.js';
 import { Dwn } from '../../src/dwn.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { ENCRYPTION_CONTROL_AUDIENCE_PATH } from '../../src/core/constants.js';
-import { EncryptionProtocol } from '../../src/protocols/encryption.js';
 import { Jws } from '../../src/utils/jws.js';
 import { RecordingValidationStateReader } from '../../src/core/recording-validation-state-reader.js';
 import { RecordsWrite } from '../../src/interfaces/records-write.js';
@@ -835,72 +834,6 @@ describe('validation-state reader admission parity', () => {
 });
 
 describe('StoreValidationStateReader', () => {
-  describe('queryAudienceEpochs()', () => {
-    it('should query accepted audienceEpoch records by audience coordinates', async () => {
-      const message = { recordId: 'epoch1' } as RecordsWriteMessage;
-      let capturedTenant: string | undefined;
-      let capturedFilters: Filter[] | undefined;
-      const messageStore = {
-        query: async (tenant: string, filters: Filter[]): Promise<{ messages: GenericMessage[] }> => {
-          capturedTenant = tenant;
-          capturedFilters = filters;
-          return { messages: [message] };
-        },
-      } as unknown as MessageStore;
-      const reader = new StoreValidationStateReader({
-        dataStore: {} as DataStore,
-        messageStore,
-      });
-
-      const messages = await reader.queryAudienceEpochs({
-        tenant    : 'did:example:alice',
-        protocol  : 'https://example.com/protocol/chat',
-        contextId : 'chat1',
-        role      : 'chat/member',
-        epoch     : 2,
-        keyId     : 'abc',
-      });
-
-      expect(messages).toEqual([message]);
-      expect(capturedTenant).toBe('did:example:alice');
-      expect(capturedFilters).toEqual([{
-        interface         : DwnInterfaceName.Records,
-        method            : DwnMethodName.Write,
-        isLatestBaseState : true,
-        protocol          : EncryptionProtocol.uri,
-        protocolPath      : EncryptionProtocol.audienceEpochPath,
-        'tag.protocol'    : 'https://example.com/protocol/chat',
-        'tag.contextId'   : 'chat1',
-        'tag.role'        : 'chat/member',
-        'tag.epoch'       : 2,
-        'tag.keyId'       : 'abc',
-      }]);
-    });
-
-    it('should omit keyId from the query filter when not supplied', async () => {
-      let capturedFilters: Filter[] | undefined;
-      const messageStore = {
-        query: async (_tenant: string, filters: Filter[]): Promise<{ messages: GenericMessage[] }> => {
-          capturedFilters = filters;
-          return { messages: [] };
-        },
-      } as unknown as MessageStore;
-      const reader = new StoreValidationStateReader({
-        dataStore: {} as DataStore,
-        messageStore,
-      });
-
-      await reader.queryAudienceEpochs({
-        tenant    : 'did:example:alice',
-        protocol  : 'https://example.com/protocol/chat',
-        contextId : '',
-        role      : 'member',
-        epoch     : 1,
-      });
-
-      expect(capturedFilters?.[0]['tag.keyId']).toBeUndefined();
-    });
-  });
 
   describe('queryAudienceRecords()', () => {
     it('should query accepted source-protocol audience records by audience coordinates', async () => {
@@ -968,30 +901,6 @@ describe('StoreValidationStateReader', () => {
 });
 
 describe('RecordingValidationStateReader', () => {
-  describe('queryAudienceEpochs()', () => {
-    it('should record audienceEpoch reads before delegating', async () => {
-      const message = { recordId: 'epoch1' } as RecordsWriteMessage;
-      const inner = {
-        queryAudienceEpochs: async (): Promise<RecordsWriteMessage[]> => [message],
-      } as unknown as ValidationStateReader;
-      const reader = new RecordingValidationStateReader(inner);
-
-      const messages = await reader.queryAudienceEpochs({
-        tenant    : 'did:example:alice',
-        protocol  : 'https://example.com/protocol/chat',
-        contextId : 'chat1',
-        role      : 'chat/member',
-        epoch     : 2,
-      });
-
-      expect(messages).toEqual([message]);
-      expect(reader.reads).toEqual([{ method: 'queryAudienceEpochs' }]);
-
-      reader.clearRecordedReads();
-      expect(reader.reads).toEqual([]);
-    });
-  });
-
   describe('queryAudienceRecords()', () => {
     it('should record source-protocol audience reads before delegating', async () => {
       const message = { recordId: 'audience1' } as RecordsWriteMessage;

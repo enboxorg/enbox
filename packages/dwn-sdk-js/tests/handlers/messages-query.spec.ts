@@ -177,13 +177,11 @@ export function testMessagesQueryHandler(): void {
       const encryptionRecord = await TestDataGenerator.generateRecordsWrite({
         author       : alice,
         protocol     : EncryptionProtocol.uri,
-        protocolPath : EncryptionProtocol.audienceEpochPath,
+        protocolPath : EncryptionProtocol.grantKeyPath,
         tags         : {
-          contextId : '',
-          epoch     : 1,
-          keyId     : 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          grantId : 'grant1',
+          keyId   : 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
           protocol,
-          role      : 'friend',
         },
       });
       await messageStore.put(alice.did, encryptionRecord.message, await encryptionRecord.recordsWrite.constructIndexes(true));
@@ -310,19 +308,17 @@ export function testMessagesQueryHandler(): void {
       const writeReply = await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream });
       expect(writeReply.status.code).toBe(202);
 
-      const audienceEpoch = await TestDataGenerator.generateRecordsWrite({
+      const encryptionRecord = await TestDataGenerator.generateRecordsWrite({
         author       : alice,
         protocol     : EncryptionProtocol.uri,
-        protocolPath : EncryptionProtocol.audienceEpochPath,
+        protocolPath : EncryptionProtocol.grantKeyPath,
         tags         : {
-          contextId : '',
-          epoch     : 1,
-          keyId     : 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-          protocol  : protocolDefinition.protocol,
-          role      : 'friend',
+          grantId  : 'grant1',
+          keyId    : 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          protocol : protocolDefinition.protocol,
         },
       });
-      await messageStore.put(alice.did, audienceEpoch.message, await audienceEpoch.recordsWrite.constructIndexes(true));
+      await messageStore.put(alice.did, encryptionRecord.message, await encryptionRecord.recordsWrite.constructIndexes(true));
 
       const { message: query } = await TestDataGenerator.generateMessagesQuery({
         author             : bob,
@@ -335,7 +331,7 @@ export function testMessagesQueryHandler(): void {
       expect(reply.status.code).toBe(200);
       expect(reply.entries!.map(entry => entry.messageCid).sort()).toEqual([
         await Message.getCid(protocolConfigure),
-        await Message.getCid(audienceEpoch.message),
+        await Message.getCid(encryptionRecord.message),
         await Message.getCid(grant.message),
         await Message.getCid(record.message),
       ].sort());

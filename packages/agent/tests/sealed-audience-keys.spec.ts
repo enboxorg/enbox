@@ -1,15 +1,19 @@
 import type { ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
+import { X25519 } from '@enbox/crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import {
+  DataStream,
   DwnInterfaceName,
   DwnMethodName,
   Encoder,
+  Encryption,
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
   ENCRYPTION_CONTROL_DELIVERY_PATH,
   EncryptionControlDeliveryRecipientAuthority,
-  EncryptionProtocol,
   getRuleSetAtPath,
+  KeyDerivationScheme,
+  Records,
   ROLE_AUDIENCE_DERIVATION_SCHEME,
 } from '@enbox/dwn-sdk-js';
 
@@ -17,7 +21,7 @@ import { DwnInterface } from '../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
-import { createAudienceDeliveryRecord, resolveAudienceDecryptionKey } from '../src/dwn-encryption.js';
+import { buildFixedPrivateKeyDecrypter, createAudienceDeliveryRecord, resolveAudienceDecryptionKey } from '../src/dwn-encryption.js';
 
 const testDwnUrls = [testDwnUrl];
 const PROTOCOL_URI = 'https://example.org/protocols/sealed-audience-test';
@@ -191,18 +195,6 @@ describe('AgentDwnApi sealed audience keys', () => {
     };
   }
 
-  async function countLegacyAudienceEpochs(): Promise<number> {
-    const { reply } = await testHarness.agent.dwn.processRequest({
-      author        : ownerDid,
-      target        : ownerDid,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : {
-        filter: { protocol: EncryptionProtocol.uri, protocolPath: EncryptionProtocol.audienceEpochPath },
-      },
-    });
-    return reply.entries?.length ?? 0;
-  }
-
   async function writeEncryptedNote(data: string): Promise<RecordsWriteMessage> {
     const { reply, message } = await testHarness.agent.dwn.processRequest({
       author        : ownerDid,
@@ -272,7 +264,6 @@ describe('AgentDwnApi sealed audience keys', () => {
     });
     expect(roleAudienceEntry.epoch).toBeUndefined();
     expect(roleAudienceEntry.role).toBeUndefined();
-    expect(await countLegacyAudienceEpochs()).toBe(0);
   });
 
   it('is mint-if-absent and reuses the current audience key for later writes', async () => {
@@ -287,7 +278,6 @@ describe('AgentDwnApi sealed audience keys', () => {
 
     expect(audienceRecords).toHaveLength(1);
     expect(secondRoleAudienceEntry.keyId).toBe(firstPayload.keyId);
-    expect(await countLegacyAudienceEpochs()).toBe(0);
   });
 
   it('mints a pending audience before writing an encrypted root context for a nested read role', async () => {
@@ -397,6 +387,82 @@ describe('AgentDwnApi sealed audience keys', () => {
     });
 
     expect(resolvedRecipientKey?.keyMaterial.keyId).toBe(audiencePayload.keyId);
+  });
+
+  it('decrypts a roleHolder delivery wrapped to a supplied recipient key', async () => {
+    const audienceRecord = await ensureRootAudienceRecord();
+    const audiencePayload = Encoder.base64UrlToObject(audienceRecord.encodedData!) as any;
+    const resolvedOwnerKey = await resolveAudienceDecryptionKey({
+      agent        : testHarness.agent,
+      sourceDid    : ownerDid,
+      recipientDid : ownerDid,
+      protocol     : PROTOCOL_URI,
+      contextId    : '',
+      rolePath     : 'admin',
+      keyId        : audiencePayload.keyId,
+    });
+    expect(resolvedOwnerKey).toBeDefined();
+
+    const recipient = await testHarness.createIdentity({ name: 'Supplied Key Recipient', testDwnUrls });
+    const { reply: roleReply } = await testHarness.agent.dwn.processRequest({
+      author        : ownerDid,
+      target        : ownerDid,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol     : PROTOCOL_URI,
+        protocolPath : 'admin',
+        recipient    : recipient.did.uri,
+        dataFormat   : 'application/json',
+      },
+      dataStream: new Blob(['{}']),
+    });
+    expect(roleReply.status.code).toBe(202);
+
+    const suppliedPrivateKey = await X25519.generateKey();
+    const suppliedPublicKey = await X25519.getPublicKey({ key: suppliedPrivateKey });
+    const suppliedKeyId = await Encryption.getKeyId(suppliedPublicKey);
+    const deliveryRecord = await createAudienceDeliveryRecord({
+      agent       : testHarness.agent,
+      audienceKey : {
+        contextId   : '',
+        keyId       : audiencePayload.keyId,
+        keyMaterial : resolvedOwnerKey!.keyMaterial,
+        protocol    : PROTOCOL_URI,
+        rolePath    : 'admin',
+      },
+      authorDid              : ownerDid,
+      recipientAuthority     : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
+      recipientDid           : recipient.did.uri,
+      recipientRolePublicKey : suppliedPublicKey as any,
+      sourceDid              : ownerDid,
+    }) as RecordsWriteMessage & { encodedData: string };
+
+    const decryptedStream = await Records.decrypt(
+      deliveryRecord,
+      buildFixedPrivateKeyDecrypter({
+        derivationScheme : KeyDerivationScheme.ProtocolPath,
+        keyId            : suppliedKeyId,
+        privateKeyJwk    : suppliedPrivateKey as any,
+        publicKeyJwk     : suppliedPublicKey as any,
+      }),
+      DataStream.fromBytes(Encoder.base64UrlToBytes(deliveryRecord.encodedData)),
+    );
+    const deliveryPayload = Encoder.bytesToObject(await DataStream.toBytes(decryptedStream)) as any;
+
+    expect(deliveryRecord.descriptor.tags).toMatchObject({
+      protocol           : PROTOCOL_URI,
+      rolePath           : 'admin',
+      contextId          : '',
+      keyId              : audiencePayload.keyId,
+      recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
+    });
+    expect(deliveryPayload).toMatchObject({
+      protocol  : PROTOCOL_URI,
+      rolePath  : 'admin',
+      contextId : '',
+      keyId     : audiencePayload.keyId,
+    });
+    expect(deliveryPayload.keyMaterial.privateKeyJwk.d).toBe(resolvedOwnerKey!.keyMaterial.privateKeyJwk.d);
   });
 
   it('fails closed when a delegated writer without seal coverage needs to mint an audience', async () => {

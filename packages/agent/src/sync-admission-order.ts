@@ -34,14 +34,6 @@ type ProtocolsConfigureDescriptor = GenericMessage['descriptor'] & {
   definition?: Partial<ProtocolDefinition>;
 };
 
-type AudienceTags = {
-  protocol: string;
-  contextId: string;
-  role: string;
-  epoch: number;
-  keyId: string;
-};
-
 type SourceAudienceTags = {
   protocol: string;
   contextId: string;
@@ -61,7 +53,6 @@ type DependencyIndexes<T> = {
   initialWriteIndex: Map<string, number>;
   grantIndex: Map<string, number>;
   roleIndex: Map<string, number>;
-  audienceEpochIndex: Map<string, number>;
   sourceAudienceIndex: Map<string, number>;
 };
 
@@ -149,13 +140,6 @@ function getRoleRecordKey(message: GenericMessage): string | undefined {
   return getRoleKey(protocol, protocolPath, recipient, getRoleContextPrefix(protocolPath, getContextId(message)));
 }
 
-function getAudienceEpochKey(message: GenericMessage): string | undefined {
-  const tags = getAudienceTags(message);
-  return tags === undefined
-    ? undefined
-    : `${tags.protocol}|${tags.contextId}|${tags.role}|${tags.epoch}|${tags.keyId}`;
-}
-
 function getSourceAudienceKeyFromTags(tags: SourceAudienceTags): string {
   return `${tags.protocol}|${tags.rolePath}|${tags.contextId}|${tags.keyId}`;
 }
@@ -178,41 +162,6 @@ function getSourceDeliveryRoleKey(message: GenericMessage): string | undefined {
   }
 
   return getRoleKey(tags.protocol, tags.rolePath, recipient, tags.contextId === '' ? undefined : tags.contextId);
-}
-
-function getAudienceRoleKey(message: GenericMessage): string | undefined {
-  const tags = getAudienceTags(message);
-  const recipient = (message.descriptor as RecordsDescriptor).recipient;
-  if (tags === undefined || recipient === undefined) {
-    return undefined;
-  }
-
-  return getRoleKey(tags.protocol, tags.role, recipient, tags.contextId === '' ? undefined : tags.contextId);
-}
-
-function getAudienceTags(message: GenericMessage): AudienceTags | undefined {
-  const { descriptor } = message;
-  if (!isRecordsWriteDescriptor(descriptor) || descriptor.protocol !== EncryptionProtocol.uri) {
-    return undefined;
-  }
-
-  const tags = descriptor.tags;
-  if (!isRecordObject(tags)) {
-    return undefined;
-  }
-
-  const { protocol, contextId, role, epoch, keyId } = tags;
-  if (
-    typeof protocol !== 'string' ||
-    typeof contextId !== 'string' ||
-    typeof role !== 'string' ||
-    typeof epoch !== 'number' ||
-    typeof keyId !== 'string'
-  ) {
-    return undefined;
-  }
-
-  return { protocol, contextId, role, epoch, keyId };
 }
 
 function getSourceAudienceTags(message: GenericMessage): SourceAudienceTags | undefined {
@@ -298,9 +247,8 @@ function getInvokedRoleKey(
     return undefined;
   }
 
-  const audienceTags = getAudienceTags(message);
-  const baseProtocol = audienceTags?.protocol ?? descriptor.protocol;
-  const contextId = audienceTags?.contextId ?? getContextId(message);
+  const baseProtocol = descriptor.protocol;
+  const contextId = getContextId(message);
   const protocolRole = getSignaturePayload(message)?.protocolRole;
   const recipient = Message.getAuthor(message);
   if (typeof protocolRole !== 'string' || recipient === undefined) {
@@ -407,7 +355,6 @@ function buildDependencyIndexes<T extends { message: GenericMessage }>(messages:
     initialWriteIndex             : new Map(),
     grantIndex                    : new Map(),
     roleIndex                     : new Map(),
-    audienceEpochIndex            : new Map(),
     sourceAudienceIndex           : new Map(),
   };
 
@@ -450,11 +397,6 @@ function indexRecordsWrite<T>(message: GenericMessage, index: number, indexes: D
   }
   if (desc.protocol === PermissionsProtocol.uri && desc.protocolPath === PermissionsProtocol.grantPath) {
     indexes.grantIndex.set(recordId, index);
-  }
-
-  const audienceEpochKey = getAudienceEpochKey(message);
-  if (desc.protocol === EncryptionProtocol.uri && desc.protocolPath === EncryptionProtocol.audienceEpochPath && audienceEpochKey !== undefined) {
-    indexes.audienceEpochIndex.set(audienceEpochKey, index);
   }
 
   const sourceAudienceKey = getSourceAudienceKey(message);
@@ -650,23 +592,6 @@ function addEncryptionProtocolEdges<T>(
     if (grantIndex !== undefined) {
       addEdge(grantIndex, index);
     }
-    return;
-  }
-
-  if (desc.protocolPath !== EncryptionProtocol.audienceKeyPath) {
-    return;
-  }
-
-  const epochKey = getAudienceEpochKey(message);
-  const epochIndex = epochKey === undefined ? undefined : indexes.audienceEpochIndex.get(epochKey);
-  if (epochIndex !== undefined) {
-    addEdge(epochIndex, index);
-  }
-
-  const roleKey = getAudienceRoleKey(message);
-  const roleIndex = roleKey === undefined ? undefined : indexes.roleIndex.get(roleKey);
-  if (roleIndex !== undefined) {
-    addEdge(roleIndex, index);
   }
 }
 

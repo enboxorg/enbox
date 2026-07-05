@@ -7,6 +7,7 @@ import type { ValidationStateReader } from '../types/validation-state-reader.js'
 import type { DataEncodedRecordsWriteMessage, RecordsWriteMessage } from '../types/records-types.js';
 import type { ProtocolDefinition, ProtocolsConfigureMessage } from '../types/protocols-types.js';
 
+import { ENCRYPTION_CONTROL_AUDIENCE_PATH } from './constants.js';
 import { FilterUtility } from '../utils/filter.js';
 import { PermissionGrant } from '../protocols/permission-grant.js';
 import { PermissionsProtocol } from '../protocols/permissions.js';
@@ -14,7 +15,6 @@ import { RecordsWrite } from '../interfaces/records-write.js';
 import { SortDirection } from '../types/query-types.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
-import { ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_PROTOCOL_URI } from './constants.js';
 import { fetchInitialRecordsWrite, fetchInitialRecordsWriteMessage, getInitialWrite } from '../interfaces/records-write-query.js';
 
 /**
@@ -164,35 +164,6 @@ export class StoreValidationStateReader implements ValidationStateReader {
     const filter = StoreValidationStateReader.constructRoleRecordFilter({ ...input, latestStateOnly: true });
     const { messages: matchingMessages } = await this.messageStore.query(input.tenant, [filter]);
     return matchingMessages as RecordsWriteMessage[];
-  }
-
-  /** @inheritdoc */
-  public async queryAudienceEpochs(input: {
-    tenant: string;
-    protocol: string;
-    contextId: string;
-    role: string;
-    epoch: number;
-    keyId?: string;
-  }): Promise<RecordsWriteMessage[]> {
-    const filter: Filter = {
-      interface         : DwnInterfaceName.Records,
-      method            : DwnMethodName.Write,
-      isLatestBaseState : true,
-      protocol          : ENCRYPTION_PROTOCOL_URI,
-      protocolPath      : 'audienceEpoch',
-      'tag.protocol'    : input.protocol,
-      'tag.contextId'   : input.contextId,
-      'tag.role'        : input.role,
-      'tag.epoch'       : input.epoch,
-    };
-
-    if (input.keyId !== undefined) {
-      filter['tag.keyId'] = input.keyId;
-    }
-
-    const { messages } = await this.messageStore.query(input.tenant, [filter]);
-    return messages as RecordsWriteMessage[];
   }
 
   /** @inheritdoc */

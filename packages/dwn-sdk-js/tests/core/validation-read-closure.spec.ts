@@ -9,6 +9,7 @@ import freeForAllProtocolDefinition from '../vectors/protocol-definitions/free-f
 import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
 import nestedProtocolDefinition from '../vectors/protocol-definitions/nested.json' with { type: 'json' };
 
+import { createAudienceControlWrite } from '../utils/encryption-control-test-utils.js';
 import { DataStream } from '../../src/utils/data-stream.js';
 import { Dwn } from '../../src/dwn.js';
 import { DwnConstant } from '../../src/core/dwn-constant.js';
@@ -27,7 +28,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { ContentEncryptionAlgorithm, Encryption, KeyAgreementAlgorithm, ROLE_AUDIENCE_DERIVATION_SCHEME } from '../../src/utils/encryption.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName } from '../../src/enums/dwn-interface-method.js';
-import { EncryptionProtocol, KeyDerivationScheme, Protocols } from '../../src/index.js';
+import { KeyDerivationScheme, Protocols } from '../../src/index.js';
 import { readFileSync, writeFileSync } from 'node:fs';
 
 const VALIDATION_READER_METHODS = new Set<string>([
@@ -37,7 +38,7 @@ const VALIDATION_READER_METHODS = new Set<string>([
   'fetchParentRecord',
   'hasMatchingRoleRecord',
   'queryLatestRoleRecords',
-  'queryAudienceEpochs',
+  'queryAudienceRecords',
   'fetchGrant',
   'fetchOldestGrantRevocation',
   'fetchNewestRecordsWrite',
@@ -215,36 +216,20 @@ describe('validation read closure', () => {
       const role = 'thread/participant';
       const threadRuleSet = encryptedProtocolDefinition.structure.thread;
       const participantRuleSet = threadRuleSet.participant as ProtocolRuleSet;
-      const rolePublicKey = participantRuleSet.$keyAgreement!.publicKeyJwk;
-      const roleKeyId = await Encryption.getKeyId(rolePublicKey);
-      const audienceEpochData = Encoder.objectToBytes({
-        protocol     : protocolDefinition.protocol,
-        contextId    : thread.message.contextId,
-        role,
-        epoch        : 1,
-        keyId        : roleKeyId,
-        publicKeyJwk : rolePublicKey,
-      });
-      const audienceEpoch = await RecordsWrite.create({
-        data         : audienceEpochData,
-        dataFormat   : 'application/json',
-        protocol     : EncryptionProtocol.uri,
-        protocolPath : EncryptionProtocol.audienceEpochPath,
-        schema       : EncryptionProtocol.definition.types.audienceEpoch.schema,
-        signer       : Jws.createSigner(alice),
-        tags         : {
-          protocol  : protocolDefinition.protocol,
-          contextId : thread.message.contextId!,
-          role,
-          epoch     : 1,
-          keyId     : roleKeyId,
-        },
+      const audience = await createAudienceControlWrite({
+        author      : alice,
+        protocol    : protocolDefinition.protocol,
+        rolePath    : role,
+        contextId   : thread.message.contextId!,
+        roleRuleSet : participantRuleSet,
       });
       expect((await dwn.processMessage(
         alice.did,
-        audienceEpoch.message,
-        { dataStream: DataStream.fromBytes(audienceEpochData) }
+        audience.recordsWrite.message,
+        { dataStream: DataStream.fromBytes(audience.dataBytes) }
       )).status.code).toBe(202);
+      const roleKeyId = audience.keyId;
+      const rolePublicKey = alice.encryptionKeyPair.publicJwk;
 
       const dataEncryptionKey = TestDataGenerator.randomBytes(32);
       const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(16);
@@ -272,8 +257,7 @@ describe('validation read closure', () => {
             publicKey        : rolePublicKey,
             derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
             protocol         : protocolDefinition.protocol,
-            role,
-            epoch            : 1,
+            rolePath         : role,
           },
         ],
       };

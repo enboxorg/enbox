@@ -88,19 +88,6 @@ export class RecordingValidationStateReader implements ValidationStateReader {
   }
 
   /** @inheritdoc */
-  public async queryAudienceEpochs(input: {
-    tenant: string;
-    protocol: string;
-    contextId: string;
-    role: string;
-    epoch: number;
-    keyId?: string;
-  }): Promise<RecordsWriteMessage[]> {
-    this.recordedReads.push({ method: 'queryAudienceEpochs' });
-    return this.inner.queryAudienceEpochs(input);
-  }
-
-  /** @inheritdoc */
   public async queryAudienceRecords(input: {
     tenant: string;
     protocol: string;

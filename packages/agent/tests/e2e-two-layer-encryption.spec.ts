@@ -1,13 +1,21 @@
 import type { Jwk } from '@enbox/crypto';
+import type { ProtocolDefinition, RecordsWriteMessage, RoleAudienceKeyEncryption } from '@enbox/dwn-sdk-js';
 
 import { Convert } from '@enbox/common';
 import { afterAll, describe, expect, it } from 'bun:test';
-import { ContentEncryptionAlgorithm, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
+import {
+  ContentEncryptionAlgorithm,
+  Encoder,
+  ENCRYPTION_CONTROL_AUDIENCE_PATH,
+  KeyDerivationScheme,
+  ROLE_AUDIENCE_DERIVATION_SCHEME,
+} from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from '../src/types/dwn.js';
 import { EnboxUserAgent } from '../src/enbox-user-agent.js';
 import { JwkProtocolDefinition } from '../src/store-data-protocols.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
+import { resolveAudienceDecryptionKey } from '../src/dwn-encryption.js';
 
 /**
  * End-to-end test for two-layer encryption and recovery from seed phrase.
@@ -33,6 +41,19 @@ describe('e2e: two-layer encryption recovery', () => {
   let originalAgentDidUri: string;
   let originalKeyUris: string[];
   let originalKeys: Jwk[];
+  let audienceRecoveryKeyId: string;
+  const audienceRecoveryProtocol: ProtocolDefinition = {
+    published : true,
+    protocol  : 'https://protocol.xyz/two-layer-audience-recovery',
+    types     : {
+      admin : { dataFormats: ['application/json'] },
+      note  : { dataFormats: ['text/plain'], encryptionRequired: true },
+    },
+    structure: {
+      admin : { $role: true, $actions: [{ who: 'anyone', can: ['create', 'read'] }] },
+      note  : { $actions: [{ role: 'admin', can: ['read'] }] },
+    },
+  };
 
   afterAll(async () => {
     // Final cleanup: remove all test data by setting up and tearing down a harness.
@@ -199,6 +220,59 @@ describe('e2e: two-layer encryption recovery', () => {
       }
     });
 
+    it('should write a sealed audience key for seed-recovery verification', async () => {
+      const protocolConfigure = await harness.agent.dwn.processRequest({
+        author        : originalAgentDidUri,
+        target        : originalAgentDidUri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: audienceRecoveryProtocol },
+        encryption    : true,
+      });
+      expect(protocolConfigure.reply.status.code).toBe(202);
+
+      const { reply, message } = await harness.agent.dwn.processRequest({
+        author        : originalAgentDidUri,
+        target        : originalAgentDidUri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : audienceRecoveryProtocol.protocol,
+          protocolPath : 'note',
+          dataFormat   : 'text/plain',
+          data         : new TextEncoder().encode('sealed audience recovery note'),
+        },
+        encryption: true,
+      });
+      expect(reply.status.code).toBe(202);
+
+      const roleAudienceEntry = (message as RecordsWriteMessage).encryption?.keyEncryption.find(
+        (entry): entry is RoleAudienceKeyEncryption => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME
+      );
+      expect(roleAudienceEntry).toBeDefined();
+      audienceRecoveryKeyId = roleAudienceEntry!.keyId;
+
+      const audienceQuery = await harness.agent.dwn.processRequest({
+        author        : originalAgentDidUri,
+        target        : originalAgentDidUri,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : {
+          filter: {
+            protocol     : audienceRecoveryProtocol.protocol,
+            protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+            tags         : {
+              protocol  : audienceRecoveryProtocol.protocol,
+              rolePath  : 'admin',
+              contextId : '',
+              keyId     : audienceRecoveryKeyId,
+            },
+          },
+        },
+      });
+      expect(audienceQuery.reply.status.code).toBe(200);
+      expect(audienceQuery.reply.entries).toHaveLength(1);
+      const audiencePayload = Encoder.base64UrlToObject(audienceQuery.reply.entries![0].encodedData!) as any;
+      expect(audiencePayload.sealedPrivateKey.derivationScheme).toBe('seal');
+    });
+
     it('should close the agent cleanly', async () => {
       await harness.closeStorage();
     });
@@ -286,6 +360,21 @@ describe('e2e: two-layer encryption recovery', () => {
           expect(recovered.y).toBe(originalKeys[i].y);
         }
       }
+    });
+
+    it('should recover a role-audience key from the stored seal using only the seed-derived owner key', async () => {
+      const recoveredAudienceKey = await resolveAudienceDecryptionKey({
+        agent        : harness.agent,
+        sourceDid    : originalAgentDidUri,
+        recipientDid : originalAgentDidUri,
+        protocol     : audienceRecoveryProtocol.protocol,
+        contextId    : '',
+        rolePath     : 'admin',
+        keyId        : audienceRecoveryKeyId,
+      });
+
+      expect(recoveredAudienceKey?.keyMaterial.keyId).toBe(audienceRecoveryKeyId);
+      expect(recoveredAudienceKey?.keyMaterial.privateKeyJwk.d).toBeDefined();
     });
 
     it('should verify the vault is usable with the new password', async () => {
