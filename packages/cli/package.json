@@ -1,0 +1,75 @@
+{
+  "name": "@enbox/cli",
+  "version": "0.1.0",
+  "description": "CLI helpers and connect handlers for Enbox",
+  "type": "module",
+  "main": "./dist/esm/index.js",
+  "module": "./dist/esm/index.js",
+  "sideEffects": false,
+  "types": "./dist/types/index.d.ts",
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build:esm": "rm -rf dist/esm dist/types && bun tsc -p tsconfig.json",
+    "build": "bun run clean && bun run build:esm",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix",
+    "test:node": "bun test --timeout 10000 .spec.ts",
+    "test:node:coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage .spec.ts"
+  },
+  "homepage": "https://github.com/enboxorg/enbox/tree/main/packages/cli#readme",
+  "bugs": "https://github.com/enboxorg/enbox/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/enboxorg/enbox.git",
+    "directory": "packages/cli"
+  },
+  "license": "Apache-2.0",
+  "contributors": [
+    {
+      "name": "Liran Cohen",
+      "url": "https://github.com/LiranCohen"
+    }
+  ],
+  "files": [
+    "dist",
+    "src"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/esm/index.js"
+    }
+  },
+  "keywords": [
+    "cli",
+    "decentralized",
+    "decentralized-applications",
+    "decentralized-identity",
+    "DID",
+    "enbox",
+    "wallet-connect"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "dependencies": {
+    "@enbox/agent": "workspace:*",
+    "@enbox/api": "workspace:*",
+    "@enbox/auth": "workspace:*",
+    "qrcode": "1.5.4"
+  },
+  "devDependencies": {
+    "@enbox/common": "workspace:*",
+    "@enbox/dwn-sdk-js": "workspace:*",
+    "@types/node": "22.19.15",
+    "@types/qrcode": "1.5.6",
+    "@types/sinon": "22.0.0",
+    "bun-types": "1.3.14",
+    "eslint": "9.7.0",
+    "sinon": "18.0.0",
+    "typescript": "5.9.3"
+  }
+}

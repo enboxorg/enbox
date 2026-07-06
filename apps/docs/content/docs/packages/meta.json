@@ -3,6 +3,7 @@
   "pages": [
     "api",
     "browser",
+    "cli",
     "dwn-server",
     "replication-sync",
     "agent",

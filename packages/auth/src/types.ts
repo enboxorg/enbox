@@ -543,6 +543,9 @@ export interface WalletConnectOptions {
   /** Optional client/environment metadata for wallet session display. */
   clientMetadata?: ConnectClientMetadata;
 
+  /** Preferred session TTL in seconds. Wallets may clamp this to their policy maximum. */
+  requestedSessionTtlSeconds?: number;
+
   /** URL of the connect relay server. */
   connectServerUrl: string;
 
@@ -560,10 +563,22 @@ export interface WalletConnectOptions {
   permissionRequests: ConnectPermissionRequest[];
 
   /** Called when the wallet URI is ready (render as QR code). */
-  onWalletUriReady: (uri: string) => void;
+  onWalletUriReady: (uri: string) => Promise<void> | void;
 
   /** Called to collect the PIN from the user. */
   validatePin: () => Promise<string>;
+
+  /**
+   * Milliseconds to wait for wallet approval.
+   * Defaults to the relay client's 300 second poll TTL.
+   */
+  timeoutMs?: number;
+
+  /**
+   * Milliseconds between relay polling attempts.
+   * Defaults to 3000.
+   */
+  pollIntervalMs?: number;
 
   /** Override manager default sync interval. */
   sync?: SyncOption;

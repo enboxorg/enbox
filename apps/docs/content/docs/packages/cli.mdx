@@ -1,0 +1,44 @@
+---
+title: "@enbox/cli"
+description: CLI-first Enbox entrypoint for app APIs, auth, and relay/PIN wallet connect.
+---
+
+`@enbox/cli` is the terminal-focused package for Enbox apps. It re-exports the
+main app API from `@enbox/api`, auth/session helpers from `@enbox/auth`, and a
+Node/Bun-only connect handler for wallet approvals.
+
+## Installation
+
+```bash
+bun add @enbox/cli
+```
+
+## Usage
+
+```ts
+import { CliConnectHandler, Enbox, defineProtocol } from '@enbox/cli';
+
+const { enbox, session } = await Enbox.connect({
+  connectHandler: CliConnectHandler({
+    appName          : 'Notes CLI',
+    connectServerUrl : 'https://your-dwn.example/connect',
+  }),
+  protocols: [NotesProtocol],
+});
+```
+
+The handler uses the encrypted relay flow. It prints a terminal QR code and
+wallet link by default, prompts for the wallet-displayed PIN, then returns the
+delegated session through the normal `Enbox.connect()` lifecycle.
+
+Set `openBrowser: true` for same-machine flows that should open the wallet
+approval link in the local default browser instead of printing a QR code.
+
+## Key exports
+
+| Export | Description |
+|---|---|
+| `Enbox` | High-level app API from `@enbox/api` |
+| `defineProtocol()` | Type-safe protocol definition helper |
+| `AuthManager` | Auth/session lifecycle from `@enbox/auth` |
+| `CliConnectHandler` | Terminal relay/PIN wallet connect handler |

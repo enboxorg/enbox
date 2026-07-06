@@ -190,6 +190,9 @@ export type EnboxConnectRequest = {
   /** Optional client/environment metadata for wallet session display. */
   clientMetadata?: ConnectClientMetadata;
 
+  /** Preferred session TTL in seconds. Wallets may clamp this to their policy maximum. */
+  requestedSessionTtlSeconds?: number;
+
   /** DWN protocols and permission scopes being requested. */
   permissionRequests: ConnectPermissionRequest[];
 
@@ -419,6 +422,12 @@ function requireNumber(payload: Record<string, unknown>, field: string, context:
   if (typeof payload[field] !== 'number') { fail(context, field, 'must be a number'); }
 }
 
+function requireOptionalNumber(payload: Record<string, unknown>, field: string, context: string): void {
+  if (payload[field] !== undefined && typeof payload[field] !== 'number') {
+    fail(context, field, 'must be a number when present');
+  }
+}
+
 function requireArray(payload: Record<string, unknown>, field: string, context: string): void {
   if (!Array.isArray(payload[field])) { fail(context, field, 'must be an array'); }
 }
@@ -482,6 +491,7 @@ function assertConnectRequest(payload: Record<string, unknown>): asserts payload
   requireString(payload, 'appName', ctx);
   requireOptionalString(payload, 'appIcon', ctx);
   requireOptionalObject(payload, 'clientMetadata', ctx);
+  requireOptionalNumber(payload, 'requestedSessionTtlSeconds', ctx);
   requireArray(payload, 'permissionRequests', ctx);
   requireString(payload, 'nonce', ctx);
   requireString(payload, 'state', ctx);

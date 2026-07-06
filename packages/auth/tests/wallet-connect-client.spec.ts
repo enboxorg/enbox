@@ -59,16 +59,17 @@ describe('WalletConnect', () => {
   describe('initClient — happy path', () => {
     it('should complete the full relay flow and return delegate info', async () => {
       // Stub EnboxConnectProtocol methods used by initClient.
-      sinon.stub(EnboxConnectProtocol, 'createConnectRequest').resolves({
-        clientDid           : 'did:jwk:test',
-        callbackUrl         : 'http://localhost:3000/connect/callback',
-        permissionRequests  : [],
-        appName             : 'Sample App',
-        nonce               : 'test-nonce',
-        responseMode        : 'direct_post',
-        state               : 'test-state',
-        supportedDidMethods : ['did:dht', 'did:jwk'],
-      } as any);
+      sinon.stub(EnboxConnectProtocol, 'createConnectRequest').callsFake(async (options: any): Promise<any> => ({
+        clientDid                  : 'did:jwk:test',
+        callbackUrl                : 'http://localhost:3000/connect/callback',
+        permissionRequests         : [],
+        appName                    : 'Sample App',
+        requestedSessionTtlSeconds : options.requestedSessionTtlSeconds,
+        nonce                      : 'test-nonce',
+        responseMode               : 'direct_post',
+        state                      : 'test-state',
+        supportedDidMethods        : ['did:dht', 'did:jwk'],
+      }));
       sinon.stub(EnboxConnectProtocol, 'signJwt').resolves('signed.jwt.value');
       sinon.stub(EnboxConnectProtocol, 'encryptRequest').resolves('encrypted-jwe');
       sinon.stub(EnboxConnectProtocol, 'decryptResponse').resolves('decrypted.jwt.value');
@@ -100,12 +101,13 @@ describe('WalletConnect', () => {
       const walletUris: string[] = [];
 
       const result = await WalletConnect.initClient({
-        displayName        : 'Sample App',
-        walletUri          : 'http://localhost:3000/',
-        connectServerUrl   : 'http://localhost:3000/connect',
-        permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
-        onWalletUriReady   : (uri: string): void => { walletUris.push(uri); },
-        validatePin        : async (): Promise<string> => '1234',
+        displayName                : 'Sample App',
+        walletUri                  : 'http://localhost:3000/',
+        connectServerUrl           : 'http://localhost:3000/connect',
+        permissionRequests         : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
+        onWalletUriReady           : (uri: string): void => { walletUris.push(uri); },
+        validatePin                : async (): Promise<string> => '1234',
+        requestedSessionTtlSeconds : 2_592_000,
       });
 
       // Verify result shape.
@@ -113,6 +115,7 @@ describe('WalletConnect', () => {
       expect(result!.connectedDid).toBe('did:dht:provider789');
       expect(result!.delegatePortableDid.uri).toBe('did:dht:delegate123');
       expect(result!.delegateGrants).toHaveLength(1);
+      expect((EnboxConnectProtocol.createConnectRequest as sinon.SinonStub).firstCall.args[0].requestedSessionTtlSeconds).toBe(2_592_000);
 
       // Verify onWalletUriReady was called with the correct URI.
       expect(walletUris).toHaveLength(1);
@@ -161,6 +164,86 @@ describe('WalletConnect', () => {
 
       expect(result).toBeUndefined();
       expect(decryptResponse.called).toBe(false);
+    });
+
+    it('should await wallet URI handling before polling for the response', async () => {
+      sinon.stub(EnboxConnectProtocol, 'createConnectRequest').resolves({
+        clientDid           : 'did:jwk:test',
+        callbackUrl         : 'http://localhost:3000/connect/callback',
+        permissionRequests  : [],
+        appName             : 'Sample App',
+        nonce               : 'test-nonce',
+        responseMode        : 'direct_post',
+        state               : 'test-state',
+        supportedDidMethods : ['did:dht', 'did:jwk'],
+      } as any);
+      sinon.stub(EnboxConnectProtocol, 'signJwt').resolves('signed.jwt.value');
+      sinon.stub(EnboxConnectProtocol, 'encryptRequest').resolves('encrypted-jwe');
+
+      let callbackComplete = false;
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+      fetchStub.onFirstCall().resolves(
+        new Response(JSON.stringify({ request_uri: 'http://localhost:3000/connect/authorize/req.jwt' }), {
+          status  : 200,
+          headers : { 'Content-Type': 'application/json' },
+        })
+      );
+      fetchStub.onSecondCall().callsFake(async (): Promise<Response> => {
+        expect(callbackComplete).toBe(true);
+        return new Response('DENIED', { status: 200 });
+      });
+
+      const result = await WalletConnect.initClient({
+        displayName        : 'Sample App',
+        walletUri          : 'http://localhost:3000/',
+        connectServerUrl   : 'http://localhost:3000/connect',
+        permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
+        onWalletUriReady   : async (): Promise<void> => {
+          await new Promise((resolve): void => { setTimeout(resolve, 0); });
+          callbackComplete = true;
+        },
+        validatePin: async (): Promise<string> => '1234',
+      });
+
+      expect(result).toBeUndefined();
+    });
+
+    it('should stop polling after a custom timeout', async () => {
+      sinon.stub(EnboxConnectProtocol, 'createConnectRequest').resolves({
+        clientDid           : 'did:jwk:test',
+        callbackUrl         : 'http://localhost:3000/connect/callback',
+        permissionRequests  : [],
+        appName             : 'Sample App',
+        nonce               : 'test-nonce',
+        responseMode        : 'direct_post',
+        state               : 'test-state',
+        supportedDidMethods : ['did:dht', 'did:jwk'],
+      } as any);
+      sinon.stub(EnboxConnectProtocol, 'signJwt').resolves('signed.jwt.value');
+      sinon.stub(EnboxConnectProtocol, 'encryptRequest').resolves('encrypted-jwe');
+
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+      fetchStub.onFirstCall().resolves(
+        new Response(JSON.stringify({ request_uri: 'http://localhost:3000/connect/authorize/req.jwt' }), {
+          status  : 200,
+          headers : { 'Content-Type': 'application/json' },
+        })
+      );
+      fetchStub.callsFake(async (): Promise<Response> => new Response('Not Found', { status: 404 }));
+
+      const result = await WalletConnect.initClient({
+        displayName        : 'Sample App',
+        walletUri          : 'http://localhost:3000/',
+        connectServerUrl   : 'http://localhost:3000/connect',
+        permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
+        onWalletUriReady   : (): void => {},
+        validatePin        : async (): Promise<string> => '1234',
+        timeoutMs          : 5,
+        pollIntervalMs     : 1,
+      });
+
+      expect(result).toBeUndefined();
+      expect(fetchStub.callCount).toBeGreaterThan(1);
     });
 
   });

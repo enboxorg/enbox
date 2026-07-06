@@ -36,7 +36,7 @@ Enbox is a Bun/TypeScript monorepo for building apps on
 - A headless auth layer for local vaults, wallet connect, session restore, and sync startup.
 - An agent runtime with encrypted identity/key stores and live/durable DWN sync.
 - A self-hostable DWN server with HTTP/WebSocket APIs and SQL-backed persistence.
-- Shared DID, crypto, protocol, browser, and codegen packages.
+- Shared DID, crypto, protocol, browser, CLI, and codegen packages.
 
 The model is protocol-first: apps define portable record schemas and access
 rules, users control their DIDs and DWN endpoints, and encrypted data can move
@@ -97,6 +97,8 @@ console.log(session.did, record.id, records.length);
 
 For browser apps, `@enbox/browser` re-exports the main app APIs and adds
 browser-specific connect helpers and DRL polyfills.
+For terminal tools, `@enbox/cli` provides the same app APIs with a relay/PIN
+connect handler that prints a QR code or opens the wallet approval link.
 
 See [packages/api/README.md](./packages/api/README.md) and the
 [public docs site](https://enbox-docs.pages.dev) for more examples.
@@ -145,6 +147,7 @@ configuration, storage backends, and registration options.
 | [`@enbox/api`](./packages/api) | High-level SDK: `Enbox.connect()`, typed protocols, records, subscriptions |
 | [`@enbox/auth`](./packages/auth) | Headless auth, local vault connect, wallet connect, session restore |
 | [`@enbox/browser`](./packages/browser) | Browser helpers and polyfills |
+| [`@enbox/cli`](./packages/cli) | CLI helpers and relay/PIN wallet connect handler |
 | [`@enbox/protocols`](./packages/protocols) | Shared protocol definitions and JSON Schemas |
 | [`@enbox/protocol-codegen`](./packages/protocol-codegen) | TypeScript generation from protocol definitions and schemas |
 | [`@enbox/agent`](./packages/agent) | Identity vault, key management, local DWN, sync engine |

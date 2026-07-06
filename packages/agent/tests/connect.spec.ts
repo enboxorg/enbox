@@ -230,10 +230,11 @@ describe('enbox connect', () => {
       });
 
       const options = {
-        appName            : 'Sample App',
-        clientDid          : clientEphemeralPortableDid.uri,
-        permissionRequests : [{ protocolDefinition, permissionScopes }],
-        callbackUrl        : callbackUrl,
+        appName                    : 'Sample App',
+        clientDid                  : clientEphemeralPortableDid.uri,
+        permissionRequests         : [{ protocolDefinition, permissionScopes }],
+        callbackUrl                : callbackUrl,
+        requestedSessionTtlSeconds : 2_592_000,
       };
       connectRequest = await EnboxConnectProtocol.createConnectRequest(options);
       expect(connectRequest).toEqual(expect.objectContaining(options));

@@ -38,6 +38,9 @@ export type WalletConnectClientOptions = {
   /** Optional client/environment metadata for wallet session display. */
   clientMetadata?: ConnectClientMetadata;
 
+  /** Preferred session TTL in seconds. Wallets may clamp this to their policy maximum. */
+  requestedSessionTtlSeconds?: number;
+
   /** The URL of the connect server which relays messages between the app and wallet. */
   connectServerUrl: string;
 
@@ -61,7 +64,7 @@ export type WalletConnectClientOptions = {
    *
    * @param uri - The wallet URI with connect payload.
    */
-  onWalletUriReady: (uri: string) => void;
+  onWalletUriReady: (uri: string) => Promise<void> | void;
 
   /**
    * Called to collect the PIN from the user. The PIN is used as AAD
@@ -70,6 +73,18 @@ export type WalletConnectClientOptions = {
    * @returns A promise that resolves to the PIN as a string.
    */
   validatePin: () => Promise<string>;
+
+  /**
+   * Milliseconds to poll the relay for a wallet response.
+   * @default 300_000
+   */
+  timeoutMs?: number;
+
+  /**
+   * Milliseconds between relay polling attempts.
+   * @default 3000
+   */
+  pollIntervalMs?: number;
 };
 
 import type { Permission } from './types.js';
@@ -93,11 +108,14 @@ async function initClient({
   displayName,
   appIcon,
   clientMetadata,
+  requestedSessionTtlSeconds,
   connectServerUrl,
   walletUri,
   permissionRequests,
   onWalletUriReady,
   validatePin,
+  timeoutMs = 300_000,
+  pollIntervalMs = 3000,
 }: WalletConnectClientOptions): Promise<{
   delegateGrants: EnboxConnectResponse['delegateGrants'];
   delegatePortableDid: EnboxConnectResponse['delegatePortableDid'];
@@ -128,6 +146,7 @@ async function initClient({
     appName            : displayName,
     appIcon,
     clientMetadata,
+    requestedSessionTtlSeconds,
   });
 
   // Sign the request as a JWT.
@@ -176,7 +195,7 @@ async function initClient({
   );
 
   // call user's callback so they can send the URI to the wallet as they see fit
-  onWalletUriReady(generatedWalletUri.toString());
+  await onWalletUriReady(generatedWalletUri.toString());
 
   const tokenUrl = EnboxConnectProtocol.buildConnectUrl({
     baseURL    : connectServerUrl,
@@ -184,8 +203,12 @@ async function initClient({
     tokenParam : request.state,
   });
 
-  // subscribe to receiving a response from the wallet with default TTL. receive ciphertext of {@link EnboxConnectResponse}
-  const authResponse = await pollWithTtl(() => fetch(tokenUrl, { signal: AbortSignal.timeout(30_000) }));
+  // subscribe to receiving a response from the wallet. receive ciphertext of {@link EnboxConnectResponse}
+  const authResponse = await pollWithTtl(
+    () => fetch(tokenUrl, { signal: AbortSignal.timeout(30_000) }),
+    pollIntervalMs,
+    timeoutMs,
+  );
 
   if (authResponse) {
     const jwe = await authResponse?.text();

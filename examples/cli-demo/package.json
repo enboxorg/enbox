@@ -1,0 +1,11 @@
+{
+  "name": "@enbox/example-cli-demo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "connect": "bun src/connect.ts"
+  },
+  "dependencies": {
+    "@enbox/cli": "workspace:*"
+  }
+}
