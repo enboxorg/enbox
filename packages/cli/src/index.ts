@@ -49,5 +49,10 @@ export type {
   WalletConnectOptions,
 } from '@enbox/auth';
 
-export { CliConnectHandler, DEFAULT_CLI_WALLET_URL } from './cli-connect-handler.js';
+export {
+  CliConnectHandler,
+  DEFAULT_CLI_SESSION_TTL_SECONDS,
+  DEFAULT_CLI_WALLET_URL,
+  WALLET_WELL_KNOWN_PATH,
+} from './cli-connect-handler.js';
 export type { BrowserOpenFunction, CliConnectHandlerOptions, PromptFunction, QrRenderer } from './cli-connect-handler.js';

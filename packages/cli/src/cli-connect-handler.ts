@@ -8,7 +8,15 @@ import { DwnPermissionGrant, DwnPermissionsProtocol } from '@enbox/agent';
 import { openBrowser as defaultOpenBrowser, promptLine, renderTerminalQr } from './terminal.js';
 
 export const DEFAULT_CLI_WALLET_URL = 'https://enbox-wallet.pages.dev';
+
+/** Default requested session TTL for CLI connects. Wallets may clamp it. */
+export const DEFAULT_CLI_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+/** Well-known path on the wallet origin naming its preferred connect relay. */
+export const WALLET_WELL_KNOWN_PATH = '/.well-known/enbox-connect';
+
 const DEFAULT_WALLET_CONNECT_PATH = '/connect/app';
+const WELL_KNOWN_FETCH_TIMEOUT_MS = 5_000;
 
 export type PromptFunction = (question: string) => Promise<string>;
 export type QrRenderer = (uri: string) => Promise<string> | string;
@@ -25,6 +33,9 @@ export interface CliConnectHandlerOptions {
   /**
    * Connect relay URL. Usually the dwn-server URL already configured by the
    * hosting tool, with `/connect` available on that server.
+   *
+   * When omitted, the handler tries `connectServerUrlProvider`, then the
+   * wallet origin's `/.well-known/enbox-connect` document, then prompts.
    */
   connectServerUrl?: string;
 
@@ -44,7 +55,9 @@ export interface CliConnectHandlerOptions {
   clientMetadata?: ConnectClientMetadata;
 
   /**
-   * Preferred session TTL in seconds. Wallets may clamp this to their policy maximum.
+   * Preferred session TTL in seconds. Defaults to 30 days
+   * ({@link DEFAULT_CLI_SESSION_TTL_SECONDS}). Wallets may clamp this to
+   * their policy maximum.
    */
   requestedSessionTtlSeconds?: number;
 
@@ -102,13 +115,13 @@ export function CliConnectHandler(options: CliConnectHandlerOptions = {}): Conne
       permissionRequests: ConnectPermissionRequest[];
     }): Promise<ConnectResult | undefined> {
       const walletUrl = await resolveWalletUrl(options, walletUrlState);
-      const connectServerUrl = await resolveConnectServerUrl(options);
+      const connectServerUrl = await resolveConnectServerUrl(options, walletUrl);
       const walletUri = buildWalletUri(walletUrl);
       const result = await WalletConnect.initClient({
         displayName                : options.appName ?? 'Enbox CLI',
         appIcon                    : options.appIcon,
         clientMetadata             : options.clientMetadata,
-        requestedSessionTtlSeconds : options.requestedSessionTtlSeconds,
+        requestedSessionTtlSeconds : options.requestedSessionTtlSeconds ?? DEFAULT_CLI_SESSION_TTL_SECONDS,
         preSupplyDelegateDid       : options.preSupplyDelegateDid ?? true,
         connectServerUrl,
         walletUri,
@@ -157,7 +170,7 @@ async function resolveWalletUrl(options: CliConnectHandlerOptions, state: Wallet
   }
 }
 
-async function resolveConnectServerUrl(options: CliConnectHandlerOptions): Promise<string> {
+async function resolveConnectServerUrl(options: CliConnectHandlerOptions, walletUrl: string): Promise<string> {
   if (options.connectServerUrl !== undefined && options.connectServerUrl.trim() !== '') {
     const normalized = normalizeUrl(options.connectServerUrl);
     if (normalized !== undefined) {
@@ -175,6 +188,11 @@ async function resolveConnectServerUrl(options: CliConnectHandlerOptions): Promi
     }
 
     throw new Error(`@enbox/cli: invalid connect relay URL '${providedUrl}'. Enter a URL such as https://dwn.example/connect.`);
+  }
+
+  const discoveredUrl = await discoverWellKnownConnectServerUrl(options, walletUrl);
+  if (discoveredUrl !== undefined) {
+    return discoveredUrl;
   }
 
   const prompt = options.connectServerUrlPrompt ?? defaultPrompt(options);
@@ -207,6 +225,46 @@ function buildWalletUri(walletUrl: string): string {
     url.pathname = DEFAULT_WALLET_CONNECT_PATH;
   }
   return url.toString();
+}
+
+/**
+ * Discover the wallet's preferred connect relay from its well-known document.
+ *
+ * Fetches `{walletOrigin}/.well-known/enbox-connect` and returns the
+ * `connectServerUrl` it names. Absent or unreachable documents resolve to
+ * `undefined` so resolution falls through to the prompt; a document naming an
+ * invalid URL is reported and ignored.
+ */
+async function discoverWellKnownConnectServerUrl(
+  options: CliConnectHandlerOptions,
+  walletUrl: string,
+): Promise<string | undefined> {
+  const wellKnownUrl = new URL(WALLET_WELL_KNOWN_PATH, new URL(walletUrl).origin).toString();
+
+  let payload: unknown;
+  try {
+    const response = await fetch(wellKnownUrl, { signal: AbortSignal.timeout(WELL_KNOWN_FETCH_TIMEOUT_MS) });
+    if (!response.ok) {
+      return undefined;
+    }
+    payload = await response.json();
+  } catch {
+    return undefined;
+  }
+
+  const connectServerUrl = (payload as { connectServerUrl?: unknown } | null)?.connectServerUrl;
+  if (typeof connectServerUrl !== 'string') {
+    return undefined;
+  }
+
+  const normalized = normalizeUrl(connectServerUrl);
+  if (normalized === undefined) {
+    writeLine(options, `@enbox/cli: ignoring invalid connect relay URL in ${wellKnownUrl}.`);
+    return undefined;
+  }
+
+  writeLine(options, `Using connect relay from wallet: ${normalized}`);
+  return normalized;
 }
 
 function normalizeUrl(url: string): string | undefined {
