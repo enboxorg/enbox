@@ -425,6 +425,67 @@ describe('CliConnectHandler', () => {
     await expect(handler.requestAccess({ permissionRequests })).rejects.toThrow('@enbox/cli: invalid wallet URL');
   });
 
+  it('should normalize configured bare relay URLs', async () => {
+    let capturedOptions: WalletConnectClientOptions | undefined;
+    sinon.stub(WalletConnect, 'initClient').callsFake(async (options: WalletConnectClientOptions): Promise<ConnectResult | undefined> => {
+      capturedOptions = options;
+      return undefined;
+    });
+
+    const handler = CliConnectHandler({
+      walletUrl        : 'https://wallet.example',
+      connectServerUrl : 'my-dwn.example/connect',
+      pinPrompt        : async (): Promise<string> => '428113',
+      qrRenderer       : async (): Promise<string> => '[qr]',
+    });
+
+    await handler.requestAccess({ permissionRequests });
+
+    expect(capturedOptions?.connectServerUrl).toBe('https://my-dwn.example/connect');
+  });
+
+  it('should reject configured invalid relay URLs with a friendly error', async () => {
+    const handler = CliConnectHandler({
+      walletUrl        : 'https://wallet.example',
+      connectServerUrl : 'http://',
+      pinPrompt        : async (): Promise<string> => '428113',
+      qrRenderer       : async (): Promise<string> => '[qr]',
+    });
+
+    await expect(handler.requestAccess({ permissionRequests })).rejects.toThrow('@enbox/cli: invalid connect relay URL');
+  });
+
+  it('should normalize bare prompted relay hosts and re-prompt invalid relay URLs', async () => {
+    let capturedOptions: WalletConnectClientOptions | undefined;
+    sinon.stub(WalletConnect, 'initClient').callsFake(async (options: WalletConnectClientOptions): Promise<ConnectResult | undefined> => {
+      capturedOptions = options;
+      return undefined;
+    });
+
+    const prompts: string[] = [];
+    const answers = ['http://', 'my-dwn.example/connect'];
+    const output = createWritableBuffer();
+    const handler = CliConnectHandler({
+      output,
+      walletUrl              : 'https://wallet.example',
+      connectServerUrlPrompt : async (question: string): Promise<string> => {
+        prompts.push(question);
+        return answers.shift() ?? '';
+      },
+      pinPrompt  : async (): Promise<string> => '428113',
+      qrRenderer : async (): Promise<string> => '[qr]',
+    });
+
+    await handler.requestAccess({ permissionRequests });
+
+    expect(prompts).toEqual([
+      'Connect relay URL: ',
+      'Connect relay URL: ',
+    ]);
+    expect(capturedOptions?.connectServerUrl).toBe('https://my-dwn.example/connect');
+    expect(output.text()).toContain('invalid connect relay URL');
+  });
+
   it('should use a provider-supplied relay URL before prompting', async () => {
     let capturedOptions: WalletConnectClientOptions | undefined;
     sinon.stub(WalletConnect, 'initClient').callsFake(async (options: WalletConnectClientOptions): Promise<ConnectResult | undefined> => {
@@ -434,7 +495,7 @@ describe('CliConnectHandler', () => {
 
     const handler = CliConnectHandler({
       walletUrl                : 'https://wallet.example',
-      connectServerUrlProvider : async (): Promise<string> => 'https://relay.example/connect',
+      connectServerUrlProvider : async (): Promise<string> => 'provider-dwn.example/connect',
       connectServerUrlPrompt   : async (): Promise<string> => { throw new Error('should not prompt'); },
       pinPrompt                : async (): Promise<string> => '428113',
       qrRenderer               : async (): Promise<string> => '[qr]',
@@ -442,7 +503,7 @@ describe('CliConnectHandler', () => {
 
     await handler.requestAccess({ permissionRequests });
 
-    expect(capturedOptions?.connectServerUrl).toBe('https://relay.example/connect');
+    expect(capturedOptions?.connectServerUrl).toBe('https://provider-dwn.example/connect');
   });
 });
 

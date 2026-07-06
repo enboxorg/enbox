@@ -126,7 +126,7 @@ export function CliConnectHandler(options: CliConnectHandlerOptions = {}): Conne
 
 async function resolveWalletUrl(options: CliConnectHandlerOptions, state: WalletUrlState): Promise<string> {
   if (options.walletUrl !== undefined && options.walletUrl.trim() !== '') {
-    const normalized = normalizeWalletUrl(options.walletUrl);
+    const normalized = normalizeUrl(options.walletUrl);
     if (normalized !== undefined) {
       return normalized;
     }
@@ -139,7 +139,7 @@ async function resolveWalletUrl(options: CliConnectHandlerOptions, state: Wallet
     const defaultWalletUrl = state.lastPromptedWalletUrl ?? DEFAULT_CLI_WALLET_URL;
     const answer = (await prompt(`Wallet [${defaultWalletUrl}]: `)).trim();
     const walletUrl = answer === '' ? defaultWalletUrl : answer;
-    const normalized = normalizeWalletUrl(walletUrl);
+    const normalized = normalizeUrl(walletUrl);
 
     if (normalized !== undefined) {
       state.lastPromptedWalletUrl = normalized;
@@ -152,20 +152,38 @@ async function resolveWalletUrl(options: CliConnectHandlerOptions, state: Wallet
 
 async function resolveConnectServerUrl(options: CliConnectHandlerOptions): Promise<string> {
   if (options.connectServerUrl !== undefined && options.connectServerUrl.trim() !== '') {
-    return options.connectServerUrl.trim();
+    const normalized = normalizeUrl(options.connectServerUrl);
+    if (normalized !== undefined) {
+      return normalized;
+    }
+
+    throw new Error(`@enbox/cli: invalid connect relay URL '${options.connectServerUrl}'. Enter a URL such as https://dwn.example/connect.`);
   }
 
   const providedUrl = await options.connectServerUrlProvider?.();
   if (providedUrl !== undefined && providedUrl.trim() !== '') {
-    return providedUrl.trim();
+    const normalized = normalizeUrl(providedUrl);
+    if (normalized !== undefined) {
+      return normalized;
+    }
+
+    throw new Error(`@enbox/cli: invalid connect relay URL '${providedUrl}'. Enter a URL such as https://dwn.example/connect.`);
   }
 
   const prompt = options.connectServerUrlPrompt ?? defaultPrompt(options);
-  const answer = (await prompt('Connect relay URL: ')).trim();
-  if (answer === '') {
-    throw new Error('@enbox/cli: connect relay URL is required.');
+  while (true) {
+    const answer = (await prompt('Connect relay URL: ')).trim();
+    if (answer === '') {
+      throw new Error('@enbox/cli: connect relay URL is required.');
+    }
+
+    const normalized = normalizeUrl(answer);
+    if (normalized !== undefined) {
+      return normalized;
+    }
+
+    writeLine(options, '@enbox/cli: invalid connect relay URL. Enter a URL such as https://dwn.example/connect.');
   }
-  return answer;
 }
 
 function defaultPrompt(options: CliConnectHandlerOptions): PromptFunction {
@@ -184,15 +202,15 @@ function buildWalletUri(walletUrl: string): string {
   return url.toString();
 }
 
-function normalizeWalletUrl(walletUrl: string): string | undefined {
-  const trimmedWalletUrl = walletUrl.trim();
-  if (trimmedWalletUrl === '') {
+function normalizeUrl(url: string): string | undefined {
+  const trimmedUrl = url.trim();
+  if (trimmedUrl === '') {
     return undefined;
   }
 
-  const candidate = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(trimmedWalletUrl)
-    ? trimmedWalletUrl
-    : `https://${trimmedWalletUrl}`;
+  const candidate = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(trimmedUrl)
+    ? trimmedUrl
+    : `https://${trimmedUrl}`;
 
   try {
     return new URL(candidate).toString();
