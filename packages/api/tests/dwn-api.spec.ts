@@ -158,7 +158,7 @@ describe('DwnApi', () => {
       expect(bobNotesProtocolSend.code).toBe(202);
 
       const grants = await EnboxConnectProtocol.createPermissionGrants(
-        aliceDid.uri, delegatedBearerDid, testHarness.agent, grantRequest.permissionScopes
+        aliceDid.uri, delegatedBearerDid.uri, testHarness.agent, grantRequest.permissionScopes
       );
 
       // Import the delegate DID as a full identity (with connectedDid metadata)
@@ -709,7 +709,7 @@ describe('DwnApi', () => {
 
         // grant the delegate DID access to query the non-public protocol
         const delegatedBearerDid = await delegateHarness.agent.did.get({ didUri: delegateDid.uri });
-        const grants = await EnboxConnectProtocol.createPermissionGrants(aliceDid.uri, delegatedBearerDid, testHarness.agent, [{
+        const grants = await EnboxConnectProtocol.createPermissionGrants(aliceDid.uri, delegatedBearerDid.uri, testHarness.agent, [{
           interface : DwnInterfaceName.Protocols,
           method    : DwnMethodName.Query,
           protocol  : nonPublicProtocol.protocol

@@ -246,6 +246,26 @@ describe('enbox connect', () => {
       );
     });
 
+    it('should create and assert a connect request with a pre-supplied delegate DID', async () => {
+      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
+        baseURL  : 'http://localhost:3000',
+        endpoint : 'callback',
+      });
+
+      const request = await EnboxConnectProtocol.createConnectRequest({
+        appName            : 'Sample App',
+        clientDid          : clientEphemeralPortableDid.uri,
+        delegateDid        : delegateBearerDid.uri,
+        permissionRequests : [{ protocolDefinition, permissionScopes }],
+        callbackUrl,
+      });
+      const payload = { ...request } as Record<string, unknown>;
+
+      EnboxConnectProtocol.assertConnectRequest(payload);
+
+      expect(request.delegateDid).toBe(delegateBearerDid.uri);
+    });
+
     it('should construct a signed JWT of a connect request', async () => {
       connectRequestJwt = await EnboxConnectProtocol.signJwt({
         did  : clientEphemeralBearerDid,
@@ -298,7 +318,7 @@ describe('enbox connect', () => {
 
       const results = await EnboxConnectProtocol.createPermissionGrants(
         providerIdentity.did.uri,
-        delegateBearerDid,
+        delegateBearerDid.uri,
         testHarness.agent,
         permissionScopes
       );
@@ -352,7 +372,7 @@ describe('enbox connect', () => {
       for (const method of ['Query', 'Subscribe', 'Count']) {
         await expect(EnboxConnectProtocol.createPermissionGrants(
           providerIdentity.did.uri,
-          delegateBearerDid,
+          delegateBearerDid.uri,
           testHarness.agent,
           [{
             interface : 'Records' as any,
@@ -366,7 +386,7 @@ describe('enbox connect', () => {
     it('should reject delegated protocol configure scopes', async () => {
       await expect(EnboxConnectProtocol.createPermissionGrants(
         providerIdentity.did.uri,
-        delegateBearerDid,
+        delegateBearerDid.uri,
         testHarness.agent,
         [{
           interface : 'Protocols' as any,
@@ -786,18 +806,21 @@ describe('enbox connect', () => {
   describe('submitConnectResponse', () => {
     type SubmitConnectResponseStubs = {
       capturedSessions: Array<{ createdAt: string; expiresAt: string }>;
+      capturedDelegateDids: string[];
       revocationGrantStub: sinon.SinonStub;
     };
 
     function stubSubmitConnectResponseDependencies(): SubmitConnectResponseStubs {
       const capturedSessions: Array<{ createdAt: string; expiresAt: string }> = [];
+      const capturedDelegateDids: string[] = [];
       sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').callsFake(async (
         _selectedDid,
-        _delegateBearerDid,
+        delegateDid,
         _agent,
         _scopes,
         options,
       ): Promise<any> => {
+        capturedDelegateDids.push(delegateDid);
         if (options?.connectSession !== undefined) {
           capturedSessions.push(options.connectSession);
         }
@@ -815,7 +838,7 @@ describe('enbox connect', () => {
       sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget').resolves([]);
       sinon.stub(globalThis, 'fetch').resolves(new Response());
 
-      return { capturedSessions, revocationGrantStub };
+      return { capturedDelegateDids, capturedSessions, revocationGrantStub };
     }
 
     it('should stamp requested session TTL onto permission and revocation grants', async () => {
@@ -870,6 +893,104 @@ describe('enbox connect', () => {
       expect(capturedSessions).toHaveLength(1);
       const session = capturedSessions[0];
       expect(Date.parse(session.expiresAt) - Date.parse(session.createdAt)).toBe(CONNECT_SESSION_MAX_TTL_SECONDS * 1000);
+    });
+
+    it('should grant to a pre-supplied delegate DID without returning delegate private material', async () => {
+      const preSuppliedDelegateDid = 'did:jwk:requester-delegate';
+      const { capturedDelegateDids, revocationGrantStub } = stubSubmitConnectResponseDependencies();
+      const createConnectResponse = EnboxConnectProtocol.createConnectResponse;
+      const createConnectResponseStub = sinon.stub(EnboxConnectProtocol, 'createConnectResponse')
+        .callsFake((options: any): Promise<EnboxConnectResponse> => createConnectResponse(options));
+      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
+        baseURL  : 'http://localhost:3000',
+        endpoint : 'callback',
+      });
+      const request = await EnboxConnectProtocol.createConnectRequest({
+        appName            : 'Sample App',
+        clientDid          : clientEphemeralPortableDid.uri,
+        delegateDid        : preSuppliedDelegateDid,
+        permissionRequests : [{ protocolDefinition, permissionScopes }],
+        callbackUrl,
+      });
+
+      await EnboxConnectProtocol.submitConnectResponse(
+        providerIdentity.did.uri,
+        request,
+        randomPin,
+        testHarness.agent,
+      );
+
+      expect(capturedDelegateDids).toEqual([preSuppliedDelegateDid]);
+      expect(revocationGrantStub.firstCall.args[0].grantedTo).toBe(preSuppliedDelegateDid);
+      expect(createConnectResponseStub.firstCall.args[0].delegateDid).toBe(preSuppliedDelegateDid);
+      expect(createConnectResponseStub.firstCall.args[0].delegatePortableDid).toBeUndefined();
+    });
+
+    it('should reject encrypted read scopes before creating a response DID when using a pre-supplied delegate DID', async () => {
+      const delegateCreateStub = sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
+      const encryptedProtocol: DwnProtocolDefinition = {
+        protocol  : 'http://pre-supplied-encrypted.xyz',
+        published : true,
+        types     : {
+          note: {
+            schema             : 'http://pre-supplied-encrypted.xyz/note',
+            dataFormats        : ['text/plain'],
+            encryptionRequired : true,
+          },
+        },
+        structure: { note: {} },
+      };
+      const readScopes: RecordsPermissionScope[] = [{
+        interface : 'Records' as any,
+        method    : 'Read' as any,
+        protocol  : encryptedProtocol.protocol,
+      }];
+      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
+        baseURL  : 'http://localhost:3000',
+        endpoint : 'callback',
+      });
+      const request = await EnboxConnectProtocol.createConnectRequest({
+        appName            : 'Sample App',
+        clientDid          : clientEphemeralPortableDid.uri,
+        delegateDid        : 'did:jwk:requester-delegate',
+        permissionRequests : [{ protocolDefinition: encryptedProtocol, permissionScopes: readScopes }],
+        callbackUrl,
+      });
+
+      await expect(
+        EnboxConnectProtocol.submitConnectResponse(
+          providerIdentity.did.uri,
+          request,
+          randomPin,
+          testHarness.agent,
+        )
+      ).rejects.toThrow('Connect pre-supplied delegate DID cannot be used with encrypted read scopes yet');
+      expect(delegateCreateStub.callCount).toBe(0);
+    });
+
+    it('should reject malformed pre-supplied delegate DID values before creating a response DID', async () => {
+      const delegateCreateStub = sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
+      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
+        baseURL  : 'http://localhost:3000',
+        endpoint : 'callback',
+      });
+      const request = await EnboxConnectProtocol.createConnectRequest({
+        appName            : 'Sample App',
+        clientDid          : clientEphemeralPortableDid.uri,
+        delegateDid        : 'wallet.example',
+        permissionRequests : [{ protocolDefinition, permissionScopes }],
+        callbackUrl,
+      });
+
+      await expect(
+        EnboxConnectProtocol.submitConnectResponse(
+          providerIdentity.did.uri,
+          request,
+          randomPin,
+          testHarness.agent,
+        )
+      ).rejects.toThrow('Connect delegateDid must be a valid DID URI.');
+      expect(delegateCreateStub.callCount).toBe(0);
     });
 
     it('should reject invalid requested session TTL before creating a delegate DID', async () => {

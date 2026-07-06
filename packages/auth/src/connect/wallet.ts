@@ -44,6 +44,8 @@ export async function walletConnect(
     appIcon                    : options.appIcon,
     clientMetadata             : options.clientMetadata,
     requestedSessionTtlSeconds : options.requestedSessionTtlSeconds,
+    preSupplyDelegateDid       : options.preSupplyDelegateDid,
+    delegatePortableDid        : options.delegatePortableDid,
     connectServerUrl           : options.connectServerUrl,
     walletUri                  : options.walletUri ?? 'enbox://connect',
     permissionRequests         : options.permissionRequests,

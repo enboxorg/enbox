@@ -12,12 +12,21 @@
  * @module
  */
 
-import type { ConnectClientMetadata, ConnectPermissionRequest, DwnPermissionScope, DwnProtocolDefinition } from '@enbox/agent';
-import type { ConnectPushedResponse, EnboxConnectResponse } from '@enbox/agent';
+import type { Permission } from './types.js';
+import type { PortableDid } from '@enbox/dids';
+import type { PrivateKeyJwk } from '@enbox/crypto';
+import type {
+  ConnectClientMetadata,
+  ConnectPermissionRequest,
+  ConnectPushedResponse,
+  DwnPermissionScope,
+  DwnProtocolDefinition,
+  EnboxConnectResponse,
+} from '@enbox/agent';
 
-import { CryptoUtils } from '@enbox/crypto';
 import { DidJwk } from '@enbox/dids';
 import { Convert, logger } from '@enbox/common';
+import { CryptoUtils, Ed25519 } from '@enbox/crypto';
 import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 import { EnboxConnectProtocol, pollWithTtl } from '@enbox/agent';
 
@@ -40,6 +49,20 @@ export type WalletConnectClientOptions = {
 
   /** Preferred session TTL in seconds. Wallets may clamp this to their policy maximum. */
   requestedSessionTtlSeconds?: number;
+
+  /**
+   * Generate a local delegate DID and send its URI in the connect request.
+   *
+   * This keeps delegate signing keys in the requesting process. If omitted,
+   * the wallet mints and returns the delegate DID as before.
+   */
+  preSupplyDelegateDid?: boolean;
+
+  /**
+   * Existing local delegate DID to request grants for. Takes precedence over
+   * `preSupplyDelegateDid` and must include private keys so auth can import it.
+   */
+  delegatePortableDid?: PortableDid;
 
   /** The URL of the connect server which relays messages between the app and wallet. */
   connectServerUrl: string;
@@ -87,8 +110,6 @@ export type WalletConnectClientOptions = {
   pollIntervalMs?: number;
 };
 
-import type { Permission } from './types.js';
-
 /**
  * The options for creating a permission request for a given protocol.
  */
@@ -109,6 +130,8 @@ async function initClient({
   appIcon,
   clientMetadata,
   requestedSessionTtlSeconds,
+  preSupplyDelegateDid,
+  delegatePortableDid,
   connectServerUrl,
   walletUri,
   permissionRequests,
@@ -118,12 +141,16 @@ async function initClient({
   pollIntervalMs = 3000,
 }: WalletConnectClientOptions): Promise<{
   delegateGrants: EnboxConnectResponse['delegateGrants'];
-  delegatePortableDid: EnboxConnectResponse['delegatePortableDid'];
+  delegatePortableDid: PortableDid;
   connectedDid: string;
   sessionRevocations?: EnboxConnectResponse['sessionRevocations'];
 } | undefined> {
   // ephemeral client did for ECDH, signing, verification
   const clientDid = await DidJwk.create();
+  const localDelegatePortableDid = await resolveLocalDelegatePortableDid({
+    delegatePortableDid,
+    preSupplyDelegateDid,
+  });
 
   // TODO: properly implement PKCE. this implementation is lacking server side validations and more.
   // https://github.com/enboxorg/enbox/issues/829
@@ -147,6 +174,7 @@ async function initClient({
     appIcon,
     clientMetadata,
     requestedSessionTtlSeconds,
+    delegateDid        : localDelegatePortableDid?.uri,
   });
 
   // Sign the request as a JWT.
@@ -226,14 +254,90 @@ async function initClient({
     // the shape validated. After this line `verifiedPayload` is narrowed
     // to `EnboxConnectResponse`.
     EnboxConnectProtocol.assertConnectResponse(verifiedPayload);
+    const resolvedDelegatePortableDid = resolveDelegatePortableDid({
+      localDelegatePortableDid,
+      response: verifiedPayload,
+    });
 
     return {
       delegateGrants      : verifiedPayload.delegateGrants,
-      delegatePortableDid : verifiedPayload.delegatePortableDid,
+      delegatePortableDid : resolvedDelegatePortableDid,
       connectedDid        : verifiedPayload.providerDid,
       sessionRevocations  : verifiedPayload.sessionRevocations,
     };
   }
+}
+
+async function resolveLocalDelegatePortableDid({
+  delegatePortableDid,
+  preSupplyDelegateDid,
+}: {
+  delegatePortableDid?: PortableDid;
+  preSupplyDelegateDid?: boolean;
+}): Promise<PortableDid | undefined> {
+  if (delegatePortableDid !== undefined) {
+    return prepareDelegatePortableDid(delegatePortableDid);
+  }
+
+  if (preSupplyDelegateDid === true) {
+    return createDelegatePortableDid();
+  }
+
+  return undefined;
+}
+
+async function createDelegatePortableDid(): Promise<PortableDid> {
+  const delegateBearerDid = await DidJwk.create();
+  return prepareDelegatePortableDid(await delegateBearerDid.export());
+}
+
+async function prepareDelegatePortableDid(delegatePortableDid: PortableDid): Promise<PortableDid> {
+  const privateKeys = [...(delegatePortableDid.privateKeys ?? [])];
+  if (privateKeys.length === 0) {
+    throw new Error('WalletConnect: delegatePortableDid must include private keys.');
+  }
+
+  const delegateEdPrivateKey = privateKeys.find((key) => key.crv === 'Ed25519');
+  if (delegateEdPrivateKey === undefined) {
+    throw new Error('WalletConnect: delegatePortableDid must include an Ed25519 private key.');
+  }
+
+  const hasX25519Key = privateKeys.some((key) => key.crv === 'X25519');
+  if (!hasX25519Key) {
+    const delegateX25519PrivateKey = await Ed25519.convertPrivateKeyToX25519({
+      privateKey: delegateEdPrivateKey as PrivateKeyJwk,
+    });
+    privateKeys.push(delegateX25519PrivateKey);
+  }
+
+  return {
+    ...delegatePortableDid,
+    privateKeys,
+  };
+}
+
+function resolveDelegatePortableDid({
+  localDelegatePortableDid,
+  response,
+}: {
+  localDelegatePortableDid?: PortableDid;
+  response: EnboxConnectResponse;
+}): PortableDid {
+  if (localDelegatePortableDid !== undefined) {
+    if (response.delegateDid !== localDelegatePortableDid.uri) {
+      throw new Error(
+        `WalletConnect: wallet returned delegate DID '${response.delegateDid}', but '${localDelegatePortableDid.uri}' was requested. ` +
+        'Revoke the just-approved session in the wallet and try again.'
+      );
+    }
+    return localDelegatePortableDid;
+  }
+
+  if (response.delegatePortableDid === undefined) {
+    throw new Error('WalletConnect: wallet response omitted delegatePortableDid.');
+  }
+
+  return response.delegatePortableDid;
 }
 
 /**

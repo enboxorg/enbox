@@ -69,6 +69,7 @@ describe('CliConnectHandler', () => {
     expect(capturedOptions?.connectServerUrl).toBe('https://relay.example/connect');
     expect(capturedOptions?.timeoutMs).toBe(10_000);
     expect(capturedOptions?.requestedSessionTtlSeconds).toBe(2_592_000);
+    expect(capturedOptions?.preSupplyDelegateDid).toBe(true);
     expect(authUrls).toEqual(['https://wallet.example/connect/app?request_uri=urn:test&encryption_key=test']);
     expect(output.text()).toContain('[qr]');
     expect(output.text()).toContain('Waiting for approval...');
@@ -78,6 +79,7 @@ describe('CliConnectHandler', () => {
     const relay = await createTestRelay();
     let requestUri = '';
     let tokenUrl = '';
+    let requestedDelegateDid = '';
 
     try {
       const output = createWritableBuffer();
@@ -99,30 +101,30 @@ describe('CliConnectHandler', () => {
 
           expect(connectRequest.appName).toBe('Relay CLI');
           expect(connectRequest.requestedSessionTtlSeconds).toBe(2_592_000);
+          expect(connectRequest.delegateDid?.startsWith('did:jwk:')).toBe(true);
+          requestedDelegateDid = connectRequest.delegateDid!;
 
-          const delegateBearerDid = await DidJwk.create();
-          const delegatePortableDid = await delegateBearerDid.export();
+          const responseBearerDid = await DidJwk.create();
           const clientDidResolution = await DidJwk.resolve(connectRequest.clientDid);
           if (clientDidResolution?.didDocument === undefined) {
             throw new Error('test setup failed to resolve client DID');
           }
 
-          const delegatePublicKeyJwk = delegateBearerDid.document.verificationMethod?.[0].publicKeyJwk;
+          const delegatePublicKeyJwk = responseBearerDid.document.verificationMethod?.[0].publicKeyJwk;
           if (delegatePublicKeyJwk === undefined) {
             throw new Error('test setup failed to read delegate public key');
           }
 
-          const sharedKey = await EnboxConnectProtocol.deriveSharedKey(delegateBearerDid, clientDidResolution.didDocument);
+          const sharedKey = await EnboxConnectProtocol.deriveSharedKey(responseBearerDid, clientDidResolution.didDocument);
           const responseObject = await EnboxConnectProtocol.createConnectResponse({
             providerDid    : connectedDid,
-            delegateDid    : delegateBearerDid.uri,
+            delegateDid    : requestedDelegateDid,
             aud            : connectRequest.clientDid,
             nonce          : connectRequest.nonce,
-            delegateGrants : [createGrant({ grantee: delegateBearerDid.uri, scope: requestedScope })],
-            delegatePortableDid,
+            delegateGrants : [createGrant({ grantee: requestedDelegateDid, scope: requestedScope })],
           });
           const responseJwt = await EnboxConnectProtocol.signJwt({
-            did  : delegateBearerDid,
+            did  : responseBearerDid,
             data : responseObject,
           });
           if (responseJwt === undefined) {
@@ -149,7 +151,7 @@ describe('CliConnectHandler', () => {
       const result = await handler.requestAccess({ permissionRequests });
 
       expect(result?.connectedDid).toBe(connectedDid);
-      expect(result?.delegatePortableDid.uri.startsWith('did:jwk:')).toBe(true);
+      expect(result?.delegatePortableDid.uri).toBe(requestedDelegateDid);
       expect(result?.delegateGrants).toHaveLength(1);
       expect(output.text()).toContain('[qr]');
       expect(relay.requestReads()).toBe(1);
