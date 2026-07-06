@@ -390,6 +390,12 @@ describe('walletConnect', () => {
   test('passes correct options to initClient', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
+    const delegatePortableDid = {
+      uri         : 'did:jwk:local-delegate',
+      document    : {},
+      metadata    : {},
+      privateKeys : [],
+    };
     const identity = createMockIdentity({
       did      : { uri: 'did:dht:delegate123' },
       metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected456' },
@@ -409,17 +415,21 @@ describe('walletConnect', () => {
     await walletConnect(
       { userAgent: agent, emitter, storage, defaultSync: '15s' },
       {
-        displayName        : 'Test App',
-        connectServerUrl   : 'https://relay.example.com',
-        permissionRequests : [],
-        onWalletUriReady   : () => {},
-        validatePin        : async () => '1234',
+        displayName          : 'Test App',
+        connectServerUrl     : 'https://relay.example.com',
+        permissionRequests   : [],
+        onWalletUriReady     : () => {},
+        validatePin          : async () => '1234',
+        preSupplyDelegateDid : true,
+        delegatePortableDid  : delegatePortableDid,
       },
     );
 
     expect(capturedOptions.displayName).toBe('Test App');
     expect(capturedOptions.connectServerUrl).toBe('https://relay.example.com');
     expect(capturedOptions.walletUri).toBe('enbox://connect');
+    expect(capturedOptions.preSupplyDelegateDid).toBe(true);
+    expect(capturedOptions.delegatePortableDid).toBe(delegatePortableDid);
   });
 
   test('uses custom walletUri when provided', async () => {

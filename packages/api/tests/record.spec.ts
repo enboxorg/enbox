@@ -197,7 +197,7 @@ describe('Record', () => {
       expect(bobNotesProtocolSend.code).toBe(202);
 
       const grants = await EnboxConnectProtocol.createPermissionGrants(
-        aliceDid.uri, delegatedBearerDid, testHarness.agent, grantRequest.permissionScopes
+        aliceDid.uri, delegatedBearerDid.uri, testHarness.agent, grantRequest.permissionScopes
       );
 
       // Import the delegate DID as a full identity (with connectedDid metadata)

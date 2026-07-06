@@ -217,7 +217,7 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
 
     const grants = await EnboxConnectProtocol.createPermissionGrants(
       walletDid.uri,
-      delegatedBearerDid,
+      delegatedBearerDid.uri,
       walletHarness.agent,
       grantRequest.permissionScopes,
     );
@@ -560,7 +560,7 @@ class InProcessWalletHandler implements ConnectHandler {
 
       // Create permission grants.
       const grants = await EnboxConnectProtocol.createPermissionGrants(
-        this.ownerDid, delegateBearerDid, this.walletAgent, permissionScopes,
+        this.ownerDid, delegateBearerDid.uri, this.walletAgent, permissionScopes,
       );
       allGrants.push(...grants);
     }

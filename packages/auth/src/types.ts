@@ -546,6 +546,19 @@ export interface WalletConnectOptions {
   /** Preferred session TTL in seconds. Wallets may clamp this to their policy maximum. */
   requestedSessionTtlSeconds?: number;
 
+  /**
+   * Generate a local delegate DID and request wallet grants to that DID.
+   *
+   * If omitted, the wallet mints and returns the delegate DID as before.
+   */
+  preSupplyDelegateDid?: boolean;
+
+  /**
+   * Existing local delegate DID to request grants for. Takes precedence over
+   * `preSupplyDelegateDid` and must include private keys.
+   */
+  delegatePortableDid?: PortableDid;
+
   /** URL of the connect relay server. */
   connectServerUrl: string;
 

@@ -72,7 +72,6 @@ export type ConnectPermissionGrantOptions = {
   connectSession?: ConnectSessionMetadata;
 };
 
-import { DidJwk } from '@enbox/dids';
 import { concatenateUrl, Convert, logger, nowMs, timed } from '@enbox/common';
 import {
   CryptoUtils,
@@ -82,6 +81,7 @@ import {
   X25519,
   XChaCha20Poly1305,
 } from '@enbox/crypto';
+import { Did, DidJwk } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
@@ -196,6 +196,14 @@ export type EnboxConnectRequest = {
   /** Preferred session TTL in seconds. Wallets may clamp this to their policy maximum. */
   requestedSessionTtlSeconds?: number;
 
+  /**
+   * Optional delegate DID supplied by the requester.
+   *
+   * When present, the wallet grants permissions to this DID instead of
+   * minting a new delegate DID and returning its private key material.
+   */
+  delegateDid?: string;
+
   /** DWN protocols and permission scopes being requested. */
   permissionRequests: ConnectPermissionRequest[];
 
@@ -226,7 +234,7 @@ export type EnboxConnectResponse = {
   /** The wallet owner's real DID that authorised the delegation. */
   providerDid: string;
 
-  /** The newly created delegate DID identifier. */
+  /** The delegate DID identifier that received the grants. */
   delegateDid: string;
 
   /** Audience — must match the `clientDid` from the request. */
@@ -244,8 +252,13 @@ export type EnboxConnectResponse = {
   /** DWN permission grant messages (serialised RecordsWrite with encoded data). */
   delegateGrants: DwnDataEncodedRecordsWriteMessage[];
 
-  /** The delegate DID's full portable form, including private keys. */
-  delegatePortableDid: PortableDid;
+  /**
+   * The delegate DID's full portable form, including private keys.
+   *
+   * Present for wallet-minted delegate sessions and omitted when the request
+   * supplied its own delegate DID.
+   */
+  delegatePortableDid?: PortableDid;
 
   /** Per-grant revocation mappings for session-bound self-revocation on disconnect. */
   sessionRevocations?: { grantId: string; revocationGrantId: string }[];
@@ -435,13 +448,6 @@ function requireArray(payload: Record<string, unknown>, field: string, context: 
   if (!Array.isArray(payload[field])) { fail(context, field, 'must be an array'); }
 }
 
-function requireObject(payload: Record<string, unknown>, field: string, context: string): void {
-  const value = payload[field];
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    fail(context, field, 'must be an object');
-  }
-}
-
 function requireLiteral<L extends string | number | boolean>(
   payload: Record<string, unknown>, field: string, expected: L, context: string,
 ): void {
@@ -495,6 +501,7 @@ function assertConnectRequest(payload: Record<string, unknown>): asserts payload
   requireOptionalString(payload, 'appIcon', ctx);
   requireOptionalObject(payload, 'clientMetadata', ctx);
   requireOptionalNumber(payload, 'requestedSessionTtlSeconds', ctx);
+  requireOptionalString(payload, 'delegateDid', ctx);
   requireArray(payload, 'permissionRequests', ctx);
   requireString(payload, 'nonce', ctx);
   requireString(payload, 'state', ctx);
@@ -517,7 +524,7 @@ function assertConnectResponse(payload: Record<string, unknown>): asserts payloa
   requireNumber(payload, 'exp', ctx);
   requireOptionalString(payload, 'nonce', ctx);
   requireArray(payload, 'delegateGrants', ctx);
-  requireObject(payload, 'delegatePortableDid', ctx);
+  requireOptionalObject(payload, 'delegatePortableDid', ctx);
   requireOptionalArray(payload, 'sessionRevocations', ctx);
 }
 
@@ -774,7 +781,7 @@ async function getConnectRequest(requestUri: string, encryptionKey: string): Pro
 async function createConnectResponse(
   options: RequireOnly<
     EnboxConnectResponse,
-    'providerDid' | 'delegateDid' | 'aud' | 'delegateGrants' | 'delegatePortableDid'
+    'providerDid' | 'delegateDid' | 'aud' | 'delegateGrants'
   >
 ): Promise<EnboxConnectResponse> {
   const currentTimeInSeconds = Math.floor(Date.now() / 1000);
@@ -894,6 +901,33 @@ function resolveRequestedSessionTtlSeconds(requestedSessionTtlSeconds: number | 
   );
 }
 
+function hasEncryptedProtocolTypes(protocolDefinition: DwnProtocolDefinition): boolean {
+  return Object.values(protocolDefinition.types ?? {})
+    .some((type: any) => type?.encryptionRequired === true);
+}
+
+function hasEncryptedReadScope(permissionRequest: ConnectPermissionRequest): boolean {
+  return hasEncryptedProtocolTypes(permissionRequest.protocolDefinition)
+    && permissionRequest.permissionScopes.some(isConnectReadScope);
+}
+
+function resolvePreSuppliedDelegateDid(delegateDid: string | undefined): string | undefined {
+  if (delegateDid === undefined) {
+    return undefined;
+  }
+
+  if (delegateDid.trim() === '' || delegateDid.trim() !== delegateDid) {
+    throw new Error('Connect delegateDid must be a non-empty DID URI.');
+  }
+
+  const parsedDelegateDid = Did.parse(delegateDid);
+  if (parsedDelegateDid === null || parsedDelegateDid.uri !== delegateDid) {
+    throw new Error('Connect delegateDid must be a valid DID URI.');
+  }
+
+  return delegateDid;
+}
+
 function resolveConnectPermissionGrantOptions(
   options?: ConnectPermissionGrantOptions,
 ): { dateExpires: string; connectSession: ConnectSessionMetadata } {
@@ -915,7 +949,7 @@ function resolveConnectPermissionGrantOptions(
  */
 async function createPermissionGrants(
   selectedDid: string,
-  delegateBearerDid: BearerDid,
+  delegateDid: string,
   agent: EnboxPlatformAgent,
   scopes: DwnPermissionScope[],
   options?: ConnectPermissionGrantOptions,
@@ -935,7 +969,7 @@ async function createPermissionGrants(
       return permissionsApi.createGrant({
         delegated,
         store     : true,
-        grantedTo : delegateBearerDid.uri,
+        grantedTo : delegateDid,
         scope,
         dateExpires,
         author    : selectedDid,
@@ -1166,7 +1200,7 @@ async function prepareProtocol(
 
 /**
  * Executes the full wallet-side (provider) flow:
- * 1. Creates a delegate DID
+ * 1. Uses a requester-supplied delegate DID, or creates one when omitted
  * 2. Installs requested protocols
  * 3. Creates permission grants
  * 4. Builds, signs, and encrypts the response
@@ -1201,8 +1235,41 @@ async function submitConnectResponse(
 
   try {
     const sessionTtlSeconds = resolveRequestedSessionTtlSeconds(connectRequest.requestedSessionTtlSeconds);
-    const delegateBearerDid = await timed(`${CONNECT_PERF_LOG_PREFIX} delegateDid.create`, () => DidJwk.create());
-    const delegatePortableDid = await delegateBearerDid.export();
+    const preSuppliedDelegateDid = resolvePreSuppliedDelegateDid(connectRequest.delegateDid);
+
+    if (preSuppliedDelegateDid !== undefined && connectRequest.permissionRequests.some(hasEncryptedReadScope)) {
+      throw new Error(
+        'Connect pre-supplied delegate DID cannot be used with encrypted read scopes yet; use a wallet-minted delegate for encrypted protocols.'
+      );
+    }
+
+    let delegatePortableDid: PortableDid | undefined;
+    let delegateRootPrivateKey: PrivateKeyJwk | undefined;
+    let responseBearerDid: BearerDid;
+    let grantedDelegateDid: string;
+
+    if (preSuppliedDelegateDid !== undefined) {
+      grantedDelegateDid = preSuppliedDelegateDid;
+      responseBearerDid = await timed(`${CONNECT_PERF_LOG_PREFIX} responseDid.create`, () => DidJwk.create());
+    } else {
+      const delegateBearerDid = await timed(`${CONNECT_PERF_LOG_PREFIX} delegateDid.create`, () => DidJwk.create());
+      delegatePortableDid = await delegateBearerDid.export();
+
+      // Add X25519 key derived from the delegate's Ed25519 key.
+      // did:jwk only supports one verification method, but DWN encryption
+      // requires X25519 for key agreement. Including the derived X25519
+      // private key in the PortableDid ensures the delegate agent's KMS
+      // has both keys after import. The Ed25519→X25519 conversion is a
+      // standard cryptographic operation (RFC 8032 / libsodium).
+      const delegateEdPrivateKey = delegatePortableDid.privateKeys![0];
+      delegateRootPrivateKey = await Ed25519.convertPrivateKeyToX25519({
+        privateKey: delegateEdPrivateKey,
+      }) as PrivateKeyJwk;
+      delegatePortableDid.privateKeys!.push(delegateRootPrivateKey);
+      responseBearerDid = delegateBearerDid;
+      grantedDelegateDid = delegateBearerDid.uri;
+    }
+
     const connectSession = createConnectSessionMetadata({
       appName        : connectRequest.appName,
       appIcon        : connectRequest.appIcon,
@@ -1210,18 +1277,6 @@ async function submitConnectResponse(
       clientMetadata : connectRequest.clientMetadata,
       transport      : 'relay',
     });
-
-    // Add X25519 key derived from the delegate's Ed25519 key.
-    // did:jwk only supports one verification method, but DWN encryption
-    // requires X25519 for key agreement. Including the derived X25519
-    // private key in the PortableDid ensures the delegate agent's KMS
-    // has both keys after import. The Ed25519→X25519 conversion is a
-    // standard cryptographic operation (RFC 8032 / libsodium).
-    const delegateEdPrivateKey = delegatePortableDid.privateKeys![0];
-    const delegateX25519PrivateKey = await Ed25519.convertPrivateKeyToX25519({
-      privateKey: delegateEdPrivateKey,
-    });
-    delegatePortableDid.privateKeys!.push(delegateX25519PrivateKey);
 
     const durableGrantKeyRecords: DwnDataEncodedRecordsWriteMessage[] = [];
 
@@ -1241,24 +1296,27 @@ async function submitConnectResponse(
 
             await prepareProtocol(selectedDid, agent, protocolDefinition);
 
-            const hasEncryptedTypes = Object.values(protocolDefinition.types ?? {})
-              .some((type: any) => type?.encryptionRequired === true);
+            const hasEncryptedTypes = hasEncryptedProtocolTypes(protocolDefinition);
             const hasEncryptedReadScopes = hasEncryptedTypes && permissionScopes.some(isConnectReadScope);
 
             const grants = await EnboxConnectProtocol.createPermissionGrants(
               selectedDid,
-              delegateBearerDid,
+              grantedDelegateDid,
               agent,
               permissionScopes,
               { connectSession },
             );
 
             if (hasEncryptedReadScopes) {
+              if (delegateRootPrivateKey === undefined) {
+                throw new Error('Connect encrypted read grants require a wallet-minted delegate DID.');
+              }
+
               const grantKeyRecords = await EnboxConnectProtocol.createGrantKeyRecordsForGrants({
                 agent,
                 ownerDid              : selectedDid,
-                granteeDid            : delegateBearerDid.uri,
-                granteeRootPrivateKey : delegateX25519PrivateKey as PrivateKeyJwk,
+                granteeDid            : grantedDelegateDid,
+                granteeRootPrivateKey : delegateRootPrivateKey,
                 grantMessages         : grants,
                 protocolDefinitions   : [protocolDefinition],
               });
@@ -1310,7 +1368,7 @@ async function submitConnectResponse(
           permissionsApi.createGrant({
             delegated : true,
             store     : true,
-            grantedTo : delegateBearerDid.uri,
+            grantedTo : grantedDelegateDid,
             scope     : {
               interface : DwnInterfaceName.Records,
               method    : DwnMethodName.Write,
@@ -1364,7 +1422,7 @@ async function submitConnectResponse(
       `${CONNECT_PERF_LOG_PREFIX} response.build`,
       () => EnboxConnectProtocol.createConnectResponse({
         providerDid        : selectedDid,
-        delegateDid        : delegateBearerDid.uri,
+        delegateDid        : grantedDelegateDid,
         aud                : connectRequest.clientDid,
         nonce              : connectRequest.nonce,
         delegateGrants,
@@ -1376,7 +1434,7 @@ async function submitConnectResponse(
     const responseObjectJwt = await timed(
       `${CONNECT_PERF_LOG_PREFIX} response.sign`,
       () => EnboxConnectProtocol.signJwt({
-        did  : delegateBearerDid,
+        did  : responseBearerDid,
         data : responseObject,
       }),
     );
@@ -1389,7 +1447,7 @@ async function submitConnectResponse(
     const sharedKey = await timed(
       `${CONNECT_PERF_LOG_PREFIX} response.deriveSharedKey`,
       () => EnboxConnectProtocol.deriveSharedKey(
-        delegateBearerDid,
+        responseBearerDid,
         clientDid?.didDocument!,
       ),
     );
@@ -1399,7 +1457,7 @@ async function submitConnectResponse(
       () => EnboxConnectProtocol.encryptResponse({
         jwt                  : responseObjectJwt,
         encryptionKey        : sharedKey,
-        delegatePublicKeyJwk : delegateBearerDid.document.verificationMethod![0].publicKeyJwk!,
+        delegatePublicKeyJwk : responseBearerDid.document.verificationMethod![0].publicKeyJwk!,
         pin,
       }),
     );
