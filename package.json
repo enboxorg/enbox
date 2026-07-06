@@ -12,6 +12,7 @@
     "packages/auth",
     "packages/protocols",
     "packages/browser",
+    "packages/cli",
     "packages/protocol-codegen",
     "packages/dwn-sdk-js",
     "packages/dwn-sql-store",

@@ -8,7 +8,7 @@ Enbox is a **Bun** monorepo for **Decentralized Web Nodes (DWN)**, **DIDs** (`di
 
 - A spec-aligned **DWN engine** (`@enbox/dwn-sdk-js`) and **SQL-backed stores** (`@enbox/dwn-sql-store`).
 - A production-style **DWN server** (`@enbox/dwn-server`) with HTTP/WebSocket APIs, registration, and admin features.
-- **Client libraries**: low-level DWN clients (`@enbox/dwn-clients`), an **agent** with encrypted vault and DWN-backed stores (`@enbox/agent`), **headless auth** (`@enbox/auth`), a **high-level SDK** (`@enbox/api`), and **browser helpers** (`@enbox/browser`).
+- **Client libraries**: low-level DWN clients (`@enbox/dwn-clients`), an **agent** with encrypted vault and DWN-backed stores (`@enbox/agent`), **headless auth** (`@enbox/auth`), a **high-level SDK** (`@enbox/api`), **browser helpers** (`@enbox/browser`), and **CLI helpers** (`@enbox/cli`).
 - **Shared protocol definitions** (`@enbox/protocols`) and optional **codegen** (`@enbox/protocol-codegen`).
 - **`apps/docs`**: the public documentation site (Fumadocs + Next.js); it uses its own linter (Biome), not the ESLint graph used by packages.
 
@@ -128,6 +128,7 @@ Published / primary packages live under `packages/`. Root `package.json` lists a
 | `@enbox/auth` | `AuthManager`, sessions, password/connect flows, storage adapters |
 | `@enbox/api` | App-facing SDK; composes agent + auth |
 | `@enbox/browser` | Browser connect handlers and DWeb wiring (builds on agent, api, auth) |
+| `@enbox/cli` | Terminal connect handlers and CLI entrypoint helpers (builds on agent, api, auth) |
 | `@enbox/protocols` | Reusable protocol definitions for the ecosystem |
 | `@enbox/protocol-codegen` | CLI to generate TS from schemas / protocols |
 | `@enbox/dwn-server-admin-ui` | Bundled Preact admin UI assets for the server |
@@ -150,6 +151,7 @@ Core stack (simplified — follow `workspace:*` in each `package.json` for exact
               @enbox/api (high-level app SDK — uses agent + auth + dwn-clients)
                 @enbox/protocols (published protocol definitions — uses api + dwn-sdk-js)
                 @enbox/browser (BrowserConnectHandler, DWeb connect UI helpers — uses agent + api + auth + dids)
+                @enbox/cli (CliConnectHandler, terminal helpers — uses agent + api + auth)
 ```
 
 Notes on the graph:
@@ -157,6 +159,7 @@ Notes on the graph:
 - `@enbox/agent` does **not** depend on `@enbox/dwn-sql-store`; only `@enbox/dwn-server` does. The agent talks to a DWN over `@enbox/dwn-clients`.
 - `@enbox/auth` depends directly on `@enbox/agent`, `@enbox/dwn-sdk-js`, and `@enbox/dwn-clients` (plus `common`/`crypto`/`dids`).
 - `@enbox/browser` composes `agent` + `api` + `auth` + `dids`; it does not pull in `dwn-server` or `dwn-sql-store`.
+- `@enbox/cli` composes `agent` + `api` + `auth` with Node/Bun-only terminal dependencies; it does not expose a browser bundle.
 
 Build from the bottom up. If you change `dwn-sdk-js`, rebuild it before building `agent`:
 
@@ -170,7 +173,7 @@ Most packages expose a `build:browser` script, but it means different things:
 - **`@enbox/agent`**, **`@enbox/api`**, **`@enbox/auth`**, and **`@enbox/browser`** emit bundled `dist/browser.mjs` artifacts via `build/browser-bundle.js` (esbuild). `agent`, `api`, and `browser` expose those artifacts from their browser-conditioned root exports; `auth` exposes its browser-safe surface from `@enbox/auth/browser` and from the root browser condition.
 - **`@enbox/common`**, **`@enbox/crypto`**, and **`@enbox/dids`** expose `build:browser` for their browser bundle artifacts.
 - **`@enbox/dwn-sdk-js`** emits `dist/browser.mjs` via its `bundle` script, not a `build:browser` script.
-- **`@enbox/dwn-clients`**, **`@enbox/dwn-server`**, **`@enbox/dwn-sql-store`**, **`@enbox/protocols`**, and **`@enbox/protocol-codegen`** do not define `build:browser`.
+- **`@enbox/cli`**, **`@enbox/dwn-clients`**, **`@enbox/dwn-server`**, **`@enbox/dwn-sql-store`**, **`@enbox/protocols`**, and **`@enbox/protocol-codegen`** do not define `build:browser`.
 
 Browser storage rule: do not replace the browser Level stack with SQLite or in-memory stores. In browsers, `level` resolves to `browser-level` over IndexedDB, which is required for concurrent writes from tabs, workers, and service workers on the same origin.
 
@@ -190,6 +193,7 @@ Browser storage rule: do not replace the browser Level stack with SQLite or in-m
 | `packages/dwn-sdk-js/json-schemas/` | JSON Schema definitions for DWN messages |
 | `packages/dwn-clients/src/` | DWN client transport / JSON-RPC |
 | `packages/auth/src/` | `AuthManager`, storage adapters, connect and discovery helpers |
+| `packages/cli/src/` | CLI connect handler and terminal wallet approval helpers |
 | `packages/protocols/src/` | Shared protocol definitions consumed by apps |
 | `packages/protocol-codegen/src/` | Codegen CLI implementation |
 | `packages/dwn-server-admin-ui/` | Admin UI bundle source and build scripts |
@@ -222,6 +226,7 @@ When changing public APIs, assume **multiple external apps** pin different semve
 | Agent vault, DWN-backed stores, sync | `packages/agent/src/` |
 | Login/session/connect, `AuthManager` | `packages/auth/src/` |
 | High-level APIs for apps | `packages/api/src/` |
+| CLI wallet connect, terminal QR/link flows | `packages/cli/src/` |
 | `dwn://` discovery, browser connect | `packages/browser/src/`, `packages/auth/src/discovery.ts` |
 | Shared protocol definitions | `packages/protocols/` |
 | Docs site content | `apps/docs/content/docs/` |
@@ -272,6 +277,7 @@ After `bun run dev:ensure`, just run the suite — the `export DID_DHT_*` lines 
 | `@enbox/crypto` | `bun test` | `bun run test:node` |
 | `@enbox/dids` | `bun test` | `bun run test:node` |
 | `@enbox/auth` | `bun test` | `bun run test:node` |
+| `@enbox/cli` | `bun test` | `bun run test:node` |
 | `@enbox/dwn-clients` | `bun test` | `bun run test:node` |
 | `@enbox/protocols` | `bun test` | `bun run test:node` |
 | `@enbox/protocol-codegen` | `bun test` | `bun run test:node` |

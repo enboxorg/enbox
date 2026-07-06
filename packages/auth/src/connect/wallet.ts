@@ -40,14 +40,17 @@ export async function walletConnect(
 
   // Run the Enbox Connect relay flow.
   const result = await WalletConnect.initClient({
-    displayName        : options.displayName,
-    appIcon            : options.appIcon,
-    clientMetadata     : options.clientMetadata,
-    connectServerUrl   : options.connectServerUrl,
-    walletUri          : options.walletUri ?? 'enbox://connect',
-    permissionRequests : options.permissionRequests,
-    onWalletUriReady   : options.onWalletUriReady,
-    validatePin        : options.validatePin,
+    displayName                : options.displayName,
+    appIcon                    : options.appIcon,
+    clientMetadata             : options.clientMetadata,
+    requestedSessionTtlSeconds : options.requestedSessionTtlSeconds,
+    connectServerUrl           : options.connectServerUrl,
+    walletUri                  : options.walletUri ?? 'enbox://connect',
+    permissionRequests         : options.permissionRequests,
+    onWalletUriReady           : options.onWalletUriReady,
+    validatePin                : options.validatePin,
+    timeoutMs                  : options.timeoutMs,
+    pollIntervalMs             : options.pollIntervalMs,
   });
 
   if (!result) {
