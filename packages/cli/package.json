@@ -63,6 +63,7 @@
   },
   "devDependencies": {
     "@enbox/common": "workspace:*",
+    "@enbox/dids": "workspace:*",
     "@enbox/dwn-sdk-js": "workspace:*",
     "@types/node": "22.19.15",
     "@types/qrcode": "1.5.6",

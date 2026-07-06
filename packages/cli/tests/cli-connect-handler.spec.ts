@@ -1,9 +1,14 @@
+import type { AddressInfo } from 'node:net';
 import type { ConnectPermissionRequest, DwnPermissionScope } from '@enbox/agent';
 import type { ConnectResult, WalletConnectClientOptions } from '@enbox/auth';
+import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 
 import sinon from 'sinon';
 
 import { Convert } from '@enbox/common';
+import { createServer } from 'node:http';
+import { DidJwk } from '@enbox/dids';
+import { EnboxConnectProtocol } from '@enbox/agent';
 import { WalletConnect } from '@enbox/auth';
 import { afterEach, describe, expect, it } from 'bun:test';
 import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
@@ -67,6 +72,93 @@ describe('CliConnectHandler', () => {
     expect(authUrls).toEqual(['https://wallet.example/connect/app?request_uri=urn:test&encryption_key=test']);
     expect(output.text()).toContain('[qr]');
     expect(output.text()).toContain('Waiting for approval...');
+  });
+
+  it('should complete through an encrypted relay stub and consume relay artifacts once', async () => {
+    const relay = await createTestRelay();
+    let requestUri = '';
+    let tokenUrl = '';
+
+    try {
+      const output = createWritableBuffer();
+      const handler = CliConnectHandler({
+        appName                    : 'Relay CLI',
+        walletUrl                  : 'https://wallet.example/connect/app',
+        connectServerUrl           : `${relay.url}/connect`,
+        output,
+        pinPrompt                  : async (): Promise<string> => '428113',
+        qrRenderer                 : async (): Promise<string> => '[qr]',
+        timeoutMs                  : 1000,
+        pollIntervalMs             : 1,
+        requestedSessionTtlSeconds : 2_592_000,
+        onAuthUrl                  : async (uri: string): Promise<void> => {
+          const walletUrl = new URL(uri);
+          requestUri = getRequiredSearchParam(walletUrl, 'request_uri');
+          const encryptionKey = getRequiredSearchParam(walletUrl, 'encryption_key');
+          const connectRequest = await EnboxConnectProtocol.getConnectRequest(requestUri, encryptionKey);
+
+          expect(connectRequest.appName).toBe('Relay CLI');
+          expect(connectRequest.requestedSessionTtlSeconds).toBe(2_592_000);
+
+          const delegateBearerDid = await DidJwk.create();
+          const delegatePortableDid = await delegateBearerDid.export();
+          const clientDidResolution = await DidJwk.resolve(connectRequest.clientDid);
+          if (clientDidResolution?.didDocument === undefined) {
+            throw new Error('test setup failed to resolve client DID');
+          }
+
+          const delegatePublicKeyJwk = delegateBearerDid.document.verificationMethod?.[0].publicKeyJwk;
+          if (delegatePublicKeyJwk === undefined) {
+            throw new Error('test setup failed to read delegate public key');
+          }
+
+          const sharedKey = await EnboxConnectProtocol.deriveSharedKey(delegateBearerDid, clientDidResolution.didDocument);
+          const responseObject = await EnboxConnectProtocol.createConnectResponse({
+            providerDid    : connectedDid,
+            delegateDid    : delegateBearerDid.uri,
+            aud            : connectRequest.clientDid,
+            nonce          : connectRequest.nonce,
+            delegateGrants : [createGrant({ grantee: delegateBearerDid.uri, scope: requestedScope })],
+            delegatePortableDid,
+          });
+          const responseJwt = await EnboxConnectProtocol.signJwt({
+            did  : delegateBearerDid,
+            data : responseObject,
+          });
+          if (responseJwt === undefined) {
+            throw new Error('test setup failed to sign connect response');
+          }
+
+          const encryptedResponse = await EnboxConnectProtocol.encryptResponse({
+            jwt           : responseJwt,
+            encryptionKey : sharedKey,
+            delegatePublicKeyJwk,
+            pin           : '428113',
+          });
+
+          const callbackResponse = await fetch(connectRequest.callbackUrl, {
+            body    : new URLSearchParams({ id_token: encryptedResponse, state: connectRequest.state }).toString(),
+            method  : 'POST',
+            headers : { 'Content-Type': 'application/x-www-form-urlencoded' },
+          });
+          expect(callbackResponse.status).toBe(200);
+          tokenUrl = `${relay.url}/connect/token/${connectRequest.state}.jwt`;
+        },
+      });
+
+      const result = await handler.requestAccess({ permissionRequests });
+
+      expect(result?.connectedDid).toBe(connectedDid);
+      expect(result?.delegatePortableDid.uri.startsWith('did:jwk:')).toBe(true);
+      expect(result?.delegateGrants).toHaveLength(1);
+      expect(output.text()).toContain('[qr]');
+      expect(relay.requestReads()).toBe(1);
+      expect(relay.tokenReads()).toBe(1);
+      expect((await fetch(requestUri)).status).toBe(404);
+      expect((await fetch(tokenUrl)).status).toBe(404);
+    } finally {
+      await relay.close();
+    }
   });
 
   it('should open the browser instead of printing a QR code when requested', async () => {
@@ -256,6 +348,186 @@ describe('CliConnectHandler', () => {
     expect(capturedOptions?.connectServerUrl).toBe('https://relay.example/connect');
   });
 });
+
+type TestRelay = {
+  close: () => Promise<void>;
+  requestReads: () => number;
+  tokenReads: () => number;
+  url: string;
+};
+
+type StoredRelayEntry = {
+  consumed: boolean;
+  value: string;
+};
+
+async function createTestRelay(): Promise<TestRelay> {
+  const requests = new Map<string, StoredRelayEntry>();
+  const tokens = new Map<string, StoredRelayEntry>();
+  let requestReadCount = 0;
+  let tokenReadCount = 0;
+  let nextRequestId = 0;
+  let baseUrl = '';
+
+  const server = createServer((request: IncomingMessage, response: ServerResponse): void => {
+    void handleRelayRequest({
+      baseUrl,
+      request,
+      requests,
+      response,
+      tokens,
+      nextRequestId: (): string => {
+        nextRequestId += 1;
+        return `request-${nextRequestId}`;
+      },
+      incrementRequestReads : (): void => { requestReadCount += 1; },
+      incrementTokenReads   : (): void => { tokenReadCount += 1; },
+    }).catch((error: unknown): void => {
+      writeResponse(response, 500, error instanceof Error ? error.message : String(error));
+    });
+  });
+
+  await listen(server);
+  const address = server.address() as AddressInfo;
+  baseUrl = `http://127.0.0.1:${address.port}`;
+
+  return {
+    url          : baseUrl,
+    requestReads : (): number => requestReadCount,
+    tokenReads   : (): number => tokenReadCount,
+    close        : (): Promise<void> => close(server),
+  };
+}
+
+async function handleRelayRequest({
+  baseUrl,
+  request,
+  requests,
+  response,
+  tokens,
+  nextRequestId,
+  incrementRequestReads,
+  incrementTokenReads,
+}: {
+  baseUrl: string;
+  request: IncomingMessage;
+  requests: Map<string, StoredRelayEntry>;
+  response: ServerResponse;
+  tokens: Map<string, StoredRelayEntry>;
+  nextRequestId: () => string;
+  incrementRequestReads: () => void;
+  incrementTokenReads: () => void;
+}): Promise<void> {
+  const url = new URL(request.url ?? '/', baseUrl);
+
+  if (request.method === 'POST' && url.pathname === '/connect/par') {
+    const body = JSON.parse(await readRequestBody(request)) as { request?: string };
+    if (body.request === undefined) {
+      writeResponse(response, 400, 'missing request');
+      return;
+    }
+
+    const requestId = nextRequestId();
+    requests.set(requestId, { consumed: false, value: body.request });
+    writeJson(response, {
+      request_uri: `${baseUrl}/connect/authorize/${requestId}.jwt`,
+    });
+    return;
+  }
+
+  const authorizeMatch = url.pathname.match(/^\/connect\/authorize\/([^/]+)\.jwt$/);
+  if (request.method === 'GET' && authorizeMatch !== null) {
+    const requestId = authorizeMatch[1];
+    const stored = requests.get(requestId);
+    if (stored === undefined || stored.consumed) {
+      writeResponse(response, 404, 'not found');
+      return;
+    }
+
+    stored.consumed = true;
+    incrementRequestReads();
+    writeResponse(response, 200, stored.value, 'application/jwt');
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/connect/callback') {
+    const body = new URLSearchParams(await readRequestBody(request));
+    const state = body.get('state');
+    const idToken = body.get('id_token');
+    if (state === null || idToken === null) {
+      writeResponse(response, 400, 'missing response');
+      return;
+    }
+
+    tokens.set(state, { consumed: false, value: idToken });
+    writeResponse(response, 200, 'ok');
+    return;
+  }
+
+  const tokenMatch = url.pathname.match(/^\/connect\/token\/([^/]+)\.jwt$/);
+  if (request.method === 'GET' && tokenMatch !== null) {
+    const state = tokenMatch[1];
+    const stored = tokens.get(state);
+    if (stored === undefined || stored.consumed) {
+      writeResponse(response, 404, 'not found');
+      return;
+    }
+
+    stored.consumed = true;
+    incrementTokenReads();
+    writeResponse(response, 200, stored.value, 'application/jwt');
+    return;
+  }
+
+  writeResponse(response, 404, 'not found');
+}
+
+function getRequiredSearchParam(url: URL, name: string): string {
+  const value = url.searchParams.get(name);
+  if (value === null || value === '') {
+    throw new Error(`missing ${name} search parameter`);
+  }
+  return value;
+}
+
+async function readRequestBody(request: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    request.on('data', (chunk: Buffer | string): void => {
+      body += typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+    });
+    request.on('end', (): void => { resolve(body); });
+    request.on('error', (error: Error): void => { reject(error); });
+  });
+}
+
+function writeJson(response: ServerResponse, body: unknown): void {
+  writeResponse(response, 200, JSON.stringify(body), 'application/json');
+}
+
+function writeResponse(response: ServerResponse, statusCode: number, body: string, contentType = 'text/plain'): void {
+  response.writeHead(statusCode, { 'Content-Type': contentType });
+  response.end(body);
+}
+
+async function listen(server: Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', (error: Error): void => { reject(error); });
+    server.listen(0, '127.0.0.1', (): void => { resolve(); });
+  });
+}
+
+async function close(server: Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error?: Error): void => {
+      if (error !== undefined) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
 
 function createConnectResult(
   delegateGrants: ConnectResult['delegateGrants'],

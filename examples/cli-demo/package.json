@@ -4,8 +4,5 @@
   "type": "module",
   "scripts": {
     "connect": "bun src/connect.ts"
-  },
-  "dependencies": {
-    "@enbox/cli": "workspace:*"
   }
 }
