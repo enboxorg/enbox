@@ -13,7 +13,12 @@ import { WalletConnect } from '@enbox/auth';
 import { afterEach, describe, expect, it } from 'bun:test';
 import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 
-import { CliConnectHandler, DEFAULT_CLI_WALLET_URL } from '../src/cli-connect-handler.js';
+import {
+  CliConnectHandler,
+  DEFAULT_CLI_SESSION_TTL_SECONDS,
+  DEFAULT_CLI_WALLET_URL,
+  WALLET_WELL_KNOWN_PATH,
+} from '../src/cli-connect-handler.js';
 
 const delegateDid = 'did:jwk:delegate';
 const connectedDid = 'did:dht:owner';
@@ -58,7 +63,7 @@ describe('CliConnectHandler', () => {
       pinPrompt                  : async (): Promise<string> => '428113',
       qrRenderer                 : async (): Promise<string> => '[qr]',
       timeoutMs                  : 10_000,
-      requestedSessionTtlSeconds : 2_592_000,
+      requestedSessionTtlSeconds : 604_800,
     });
 
     const connectResult = await handler.requestAccess({ permissionRequests });
@@ -68,7 +73,7 @@ describe('CliConnectHandler', () => {
     expect(capturedOptions?.walletUri).toBe('https://wallet.example/connect/app');
     expect(capturedOptions?.connectServerUrl).toBe('https://relay.example/connect');
     expect(capturedOptions?.timeoutMs).toBe(10_000);
-    expect(capturedOptions?.requestedSessionTtlSeconds).toBe(2_592_000);
+    expect(capturedOptions?.requestedSessionTtlSeconds).toBe(604_800);
     expect(capturedOptions?.preSupplyDelegateDid).toBe(true);
     expect(authUrls).toEqual(['https://wallet.example/connect/app?request_uri=urn:test&encryption_key=test']);
     expect(output.text()).toContain('[qr]');
@@ -325,6 +330,7 @@ describe('CliConnectHandler', () => {
       capturedOptions = options;
       return undefined;
     });
+    sinon.stub(globalThis, 'fetch').rejects(new Error('offline'));
 
     const prompts: string[] = [];
     const answers = ['', 'https://relay.example/connect'];
@@ -355,6 +361,7 @@ describe('CliConnectHandler', () => {
       capturedOptions = options;
       return undefined;
     });
+    sinon.stub(globalThis, 'fetch').rejects(new Error('offline'));
 
     const prompts: string[] = [];
     const answers = ['http://', 'localhost:5173', 'https://relay.example/connect'];
@@ -463,6 +470,7 @@ describe('CliConnectHandler', () => {
       capturedOptions = options;
       return undefined;
     });
+    sinon.stub(globalThis, 'fetch').rejects(new Error('offline'));
 
     const prompts: string[] = [];
     const answers = ['http://', 'my-dwn.example/connect'];
@@ -506,6 +514,103 @@ describe('CliConnectHandler', () => {
     await handler.requestAccess({ permissionRequests });
 
     expect(capturedOptions?.connectServerUrl).toBe('https://provider-dwn.example/connect');
+  });
+
+  it('should resolve the connect relay from the wallet well-known document', async () => {
+    let capturedOptions: WalletConnectClientOptions | undefined;
+    sinon.stub(WalletConnect, 'initClient').callsFake(async (options: WalletConnectClientOptions): Promise<ConnectResult | undefined> => {
+      capturedOptions = options;
+      return undefined;
+    });
+    const fetchStub = sinon.stub(globalThis, 'fetch').resolves(
+      new Response(JSON.stringify({ connectServerUrl: 'https://dwn.example/connect' }), {
+        status  : 200,
+        headers : { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const output = createWritableBuffer();
+    const handler = CliConnectHandler({
+      output,
+      walletUrl              : 'https://wallet.example/connect/app',
+      connectServerUrlPrompt : async (): Promise<string> => { throw new Error('should not prompt'); },
+      pinPrompt              : async (): Promise<string> => '428113',
+      qrRenderer             : async (): Promise<string> => '[qr]',
+    });
+
+    await handler.requestAccess({ permissionRequests });
+
+    expect(fetchStub.firstCall.args[0]).toBe(`https://wallet.example${WALLET_WELL_KNOWN_PATH}`);
+    expect(capturedOptions?.connectServerUrl).toBe('https://dwn.example/connect');
+    expect(output.text()).toContain('Using connect relay from wallet: https://dwn.example/connect');
+  });
+
+  it('should fall back to prompting when the well-known document is missing', async () => {
+    let capturedOptions: WalletConnectClientOptions | undefined;
+    sinon.stub(WalletConnect, 'initClient').callsFake(async (options: WalletConnectClientOptions): Promise<ConnectResult | undefined> => {
+      capturedOptions = options;
+      return undefined;
+    });
+    sinon.stub(globalThis, 'fetch').resolves(new Response('not found', { status: 404 }));
+
+    const handler = CliConnectHandler({
+      walletUrl              : 'https://wallet.example',
+      connectServerUrlPrompt : async (): Promise<string> => 'https://relay.example/connect',
+      pinPrompt              : async (): Promise<string> => '428113',
+      qrRenderer             : async (): Promise<string> => '[qr]',
+    });
+
+    await handler.requestAccess({ permissionRequests });
+
+    expect(capturedOptions?.connectServerUrl).toBe('https://relay.example/connect');
+  });
+
+  it('should ignore an invalid relay URL in the well-known document and prompt instead', async () => {
+    let capturedOptions: WalletConnectClientOptions | undefined;
+    sinon.stub(WalletConnect, 'initClient').callsFake(async (options: WalletConnectClientOptions): Promise<ConnectResult | undefined> => {
+      capturedOptions = options;
+      return undefined;
+    });
+    sinon.stub(globalThis, 'fetch').resolves(
+      new Response(JSON.stringify({ connectServerUrl: 'http://' }), {
+        status  : 200,
+        headers : { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const output = createWritableBuffer();
+    const handler = CliConnectHandler({
+      output,
+      walletUrl              : 'https://wallet.example',
+      connectServerUrlPrompt : async (): Promise<string> => 'https://relay.example/connect',
+      pinPrompt              : async (): Promise<string> => '428113',
+      qrRenderer             : async (): Promise<string> => '[qr]',
+    });
+
+    await handler.requestAccess({ permissionRequests });
+
+    expect(capturedOptions?.connectServerUrl).toBe('https://relay.example/connect');
+    expect(output.text()).toContain('ignoring invalid connect relay URL');
+  });
+
+  it('should default the requested session TTL to 30 days', async () => {
+    let capturedOptions: WalletConnectClientOptions | undefined;
+    sinon.stub(WalletConnect, 'initClient').callsFake(async (options: WalletConnectClientOptions): Promise<ConnectResult | undefined> => {
+      capturedOptions = options;
+      return undefined;
+    });
+
+    const handler = CliConnectHandler({
+      walletUrl        : 'https://wallet.example',
+      connectServerUrl : 'https://relay.example/connect',
+      pinPrompt        : async (): Promise<string> => '428113',
+      qrRenderer       : async (): Promise<string> => '[qr]',
+    });
+
+    await handler.requestAccess({ permissionRequests });
+
+    expect(capturedOptions?.requestedSessionTtlSeconds).toBe(DEFAULT_CLI_SESSION_TTL_SECONDS);
+    expect(DEFAULT_CLI_SESSION_TTL_SECONDS).toBe(30 * 24 * 60 * 60);
   });
 });
 
