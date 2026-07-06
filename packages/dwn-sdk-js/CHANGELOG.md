@@ -1,5 +1,58 @@
 # @enbox/dwn-sdk-js
 
+## 0.4.7
+
+### Patch Changes
+
+- [#1108](https://github.com/enboxorg/enbox/pull/1108) [`7ddb0d6`](https://github.com/enboxorg/enbox/commit/7ddb0d677065483968ef9d80773e3fd81048f4ad) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Authorize source-protocol encryption control records for read, query, and subscribe operations.
+
+- [#1150](https://github.com/enboxorg/enbox/pull/1150) [`37895ff`](https://github.com/enboxorg/enbox/commit/37895ff511258ed48d10660b1f73ce597e818921) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: reject invalid encryption-control protocol definitions
+
+- [#1105](https://github.com/enboxorg/enbox/pull/1105) [`cda1d31`](https://github.com/enboxorg/enbox/commit/cda1d31b4c8a7df444beadd0271ff50a3482fa00) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add source-protocol encryption control record validation.
+
+- [#1149](https://github.com/enboxorg/enbox/pull/1149) [`5de6973`](https://github.com/enboxorg/enbox/commit/5de6973f98216a3732800a6ec461520b47171902) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Project audience control enumeration to the deterministic current key per role-audience tuple.
+
+- [#1121](https://github.com/enboxorg/enbox/pull/1121) [`6660507`](https://github.com/enboxorg/enbox/commit/6660507d9fe4d1157c9afa2f870bd3f54b92c9f6) Thanks [@LiranCohen](https://github.com/LiranCohen)! - chore: dedupe runtime dependency versions and pin dependency declarations
+
+- [#1120](https://github.com/enboxorg/enbox/pull/1120) [`c33b1ae`](https://github.com/enboxorg/enbox/commit/c33b1ae23c152c9f27fb740fd650199acc958ad2) Thanks [@LiranCohen](https://github.com/LiranCohen)! - chore: reduce runtime dependency footprint by moving optional backends behind subpath imports and optional peer dependencies, removing unused DID and helper packages, and replacing small CLI/runtime dependencies with built-in implementations.
+
+- [#1101](https://github.com/enboxorg/enbox/pull/1101) [`042879e`](https://github.com/enboxorg/enbox/commit/042879ea1e05d45b99ab35e23f1ab2f730afa757) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add foundation schemas and reserved path types for source-protocol encryption control records.
+
+- [#1102](https://github.com/enboxorg/enbox/pull/1102) [`efa5171`](https://github.com/enboxorg/enbox/commit/efa5171b36aa0f46e957e74506323f9cbd4d8dc7) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Reserve encryption control write paths for protocol-native validation.
+
+- [#1103](https://github.com/enboxorg/enbox/pull/1103) [`97dced6`](https://github.com/enboxorg/enbox/commit/97dced6b0eb80fccbd71ea5a8a1c250ba40153bb) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Restrict grantKey records to Records.Read permission grants.
+
+- [#1106](https://github.com/enboxorg/enbox/pull/1106) [`c6feb1c`](https://github.com/enboxorg/enbox/commit/c6feb1c1b80ef2646308c3499476802d12af702e) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: expand durable grantKey coverage for role-path encryption keys
+
+- [#1146](https://github.com/enboxorg/enbox/pull/1146) [`6bb25d3`](https://github.com/enboxorg/enbox/commit/6bb25d3f5cfa8dadbd3ae7cfe36f9c5d24bd554c) Thanks [@LiranCohen](https://github.com/LiranCohen)! - chore: isolate Level-backed DWN and DID store implementations behind explicit subpath exports
+
+- [#1098](https://github.com/enboxorg/enbox/pull/1098) [`a9106f1`](https://github.com/enboxorg/enbox/commit/a9106f17c94aee5f236cd5a8e81d93b70da53f58) Thanks [@LiranCohen](https://github.com/LiranCohen)! - refactor: make DWN key wrapping algorithm-discriminated
+
+- [#1136](https://github.com/enboxorg/enbox/pull/1136) [`23ae738`](https://github.com/enboxorg/enbox/commit/23ae7389a4c14aedf360c5b3b3bbdd8c274ef53a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: treat Messages surfaces as encrypted control-record transport
+
+- [#1109](https://github.com/enboxorg/enbox/pull/1109) [`b38dd5e`](https://github.com/enboxorg/enbox/commit/b38dd5ec24129a37e8e2bb17b3173144ac9bb863) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: enforce encryption control record visibility on Messages read and feed surfaces
+
+- [#1156](https://github.com/enboxorg/enbox/pull/1156) [`ed62ddc`](https://github.com/enboxorg/enbox/commit/ed62ddc55aeb364000ef5eda2c0ae9fb16da73cc) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Remove the legacy epoch-based role-audience encryption path and pin sealed-audience end-to-end coverage.
+
+- [#1141](https://github.com/enboxorg/enbox/pull/1141) [`96bc5f5`](https://github.com/enboxorg/enbox/commit/96bc5f5c2d80f0cb543042e3f41f5c2d4156c3d3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - chore: replace Temporal polyfill usage with native timestamp utilities.
+
+- [#1138](https://github.com/enboxorg/enbox/pull/1138) [`f0a65e9`](https://github.com/enboxorg/enbox/commit/f0a65e917fe4b694ecb555f7e639607c5f5c41e6) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: admit source-protocol role-audience encryption entries
+
+- [#1154](https://github.com/enboxorg/enbox/pull/1154) [`c921621`](https://github.com/enboxorg/enbox/commit/c92162135f165c1e06423d72180994b27434bc4c) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Remove role-creator audience delivery paths and require seal-covered audience minting.
+
+- [#1151](https://github.com/enboxorg/enbox/pull/1151) [`25a0d8c`](https://github.com/enboxorg/enbox/commit/25a0d8ca35157762aad360459bb81800e6e2d688) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: replace delegate response key delivery with sealed audience control records
+
+- [#1135](https://github.com/enboxorg/enbox/pull/1135) [`cd08e9a`](https://github.com/enboxorg/enbox/commit/cd08e9a2dfbf060244744d88bfdf5b4b6c6b3852) Thanks [@LiranCohen](https://github.com/LiranCohen)! - chore: reduce runtime dependency surface for SDK cache, wake publisher, server logging, and SQL store manifests.
+
+- [#1155](https://github.com/enboxorg/enbox/pull/1155) [`d3e267e`](https://github.com/enboxorg/enbox/commit/d3e267e3ca259432e477715cba1b9c50db5fdb97) Thanks [@LiranCohen](https://github.com/LiranCohen)! - refactor: share sealed audience key wrapping and agent read-through helpers
+
+- [#1143](https://github.com/enboxorg/enbox/pull/1143) [`57c66a3`](https://github.com/enboxorg/enbox/commit/57c66a34079625793c8b26028f29d1eb63b969ef) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: derive role-audience dependency repair from structured context
+
+- Updated dependencies [[`d006765`](https://github.com/enboxorg/enbox/commit/d00676570a8645ab440e017695351828354a2251), [`6660507`](https://github.com/enboxorg/enbox/commit/6660507d9fe4d1157c9afa2f870bd3f54b92c9f6), [`c33b1ae`](https://github.com/enboxorg/enbox/commit/c33b1ae23c152c9f27fb740fd650199acc958ad2), [`78cd3e5`](https://github.com/enboxorg/enbox/commit/78cd3e5b8412b308077f318b58bf5fd3db63d996), [`6bb25d3`](https://github.com/enboxorg/enbox/commit/6bb25d3f5cfa8dadbd3ae7cfe36f9c5d24bd554c), [`3825320`](https://github.com/enboxorg/enbox/commit/38253204113d8d6110a4f97c8f0bfa2b79f16850), [`60f194e`](https://github.com/enboxorg/enbox/commit/60f194ea16cd8938635ee15e648b2c315ae366a7), [`425cc9d`](https://github.com/enboxorg/enbox/commit/425cc9d6835f0cc75e90050ac23ceac65ebc3f46)]:
+  - @enbox/dids@0.1.3
+  - @enbox/common@0.1.2
+  - @enbox/crypto@0.1.3
+
 ## 0.4.6
 
 ### Patch Changes

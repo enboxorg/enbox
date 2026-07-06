@@ -1,5 +1,17 @@
 # @enbox/common
 
+## 0.1.2
+
+### Patch Changes
+
+- [#1121](https://github.com/enboxorg/enbox/pull/1121) [`6660507`](https://github.com/enboxorg/enbox/commit/6660507d9fe4d1157c9afa2f870bd3f54b92c9f6) Thanks [@LiranCohen](https://github.com/LiranCohen)! - chore: dedupe runtime dependency versions and pin dependency declarations
+
+- [#1148](https://github.com/enboxorg/enbox/pull/1148) [`3825320`](https://github.com/enboxorg/enbox/commit/38253204113d8d6110a4f97c8f0bfa2b79f16850) Thanks [@LiranCohen](https://github.com/LiranCohen)! - chore: replace ttlcache dependency with a local in-memory TTL cache tailored to Enbox's used API surface. Disposal callbacks are accepted through constructor options.
+
+- [#1137](https://github.com/enboxorg/enbox/pull/1137) [`60f194e`](https://github.com/enboxorg/enbox/commit/60f194ea16cd8938635ee15e648b2c315ae366a7) Thanks [@LiranCohen](https://github.com/LiranCohen)! - chore: replace direct ms usage with a shared duration parser.
+
+- [#1144](https://github.com/enboxorg/enbox/pull/1144) [`425cc9d`](https://github.com/enboxorg/enbox/commit/425cc9d6835f0cc75e90050ac23ceac65ebc3f46) Thanks [@LiranCohen](https://github.com/LiranCohen)! - chore: move the Level-backed common store behind a dedicated optional subpath.
+
 ## 0.1.1
 
 ### Patch Changes
