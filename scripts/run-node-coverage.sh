@@ -69,6 +69,7 @@ node_packages=(
   "@enbox/common"
   "@enbox/crypto"
   "@enbox/auth"
+  "@enbox/cli"
   "@enbox/protocols"
   "@enbox/protocol-codegen"
   "@enbox/dwn-sdk-js"
