@@ -882,12 +882,14 @@ function resolveRequestedSessionTtlSeconds(requestedSessionTtlSeconds: number | 
     return CONNECT_SESSION_DEFAULT_TTL_SECONDS;
   }
 
-  if (!Number.isFinite(requestedSessionTtlSeconds) || requestedSessionTtlSeconds <= 0) {
-    throw new Error('Connect requestedSessionTtlSeconds must be a positive finite number.');
+  const requestedWholeSeconds = Math.floor(requestedSessionTtlSeconds);
+
+  if (!Number.isFinite(requestedSessionTtlSeconds) || requestedWholeSeconds <= 0) {
+    throw new Error('Connect requestedSessionTtlSeconds must resolve to at least one whole second.');
   }
 
   return Math.min(
-    Math.floor(requestedSessionTtlSeconds),
+    requestedWholeSeconds,
     CONNECT_SESSION_MAX_TTL_SECONDS,
   );
 }

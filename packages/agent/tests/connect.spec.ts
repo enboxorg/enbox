@@ -873,28 +873,31 @@ describe('enbox connect', () => {
     });
 
     it('should reject invalid requested session TTL before creating a delegate DID', async () => {
-      const delegateCreateStub = sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
-      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-        baseURL  : 'http://localhost:3000',
-        endpoint : 'callback',
-      });
-      const request = await EnboxConnectProtocol.createConnectRequest({
-        appName                    : 'Sample App',
-        clientDid                  : clientEphemeralPortableDid.uri,
-        permissionRequests         : [{ protocolDefinition, permissionScopes }],
-        callbackUrl,
-        requestedSessionTtlSeconds : 0,
-      });
+      for (const requestedSessionTtlSeconds of [0, 0.5]) {
+        const delegateCreateStub = sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
+        const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
+          baseURL  : 'http://localhost:3000',
+          endpoint : 'callback',
+        });
+        const request = await EnboxConnectProtocol.createConnectRequest({
+          appName            : 'Sample App',
+          clientDid          : clientEphemeralPortableDid.uri,
+          permissionRequests : [{ protocolDefinition, permissionScopes }],
+          callbackUrl,
+          requestedSessionTtlSeconds,
+        });
 
-      await expect(
-        EnboxConnectProtocol.submitConnectResponse(
-          providerIdentity.did.uri,
-          request,
-          randomPin,
-          testHarness.agent,
-        )
-      ).rejects.toThrow('Connect requestedSessionTtlSeconds must be a positive finite number.');
-      expect(delegateCreateStub.callCount).toBe(0);
+        await expect(
+          EnboxConnectProtocol.submitConnectResponse(
+            providerIdentity.did.uri,
+            request,
+            randomPin,
+            testHarness.agent,
+          )
+        ).rejects.toThrow('Connect requestedSessionTtlSeconds must resolve to at least one whole second.');
+        expect(delegateCreateStub.callCount).toBe(0);
+        delegateCreateStub.restore();
+      }
     });
 
     it('should emit a total perf log when submission fails', async () => {
