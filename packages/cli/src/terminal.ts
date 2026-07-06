@@ -5,6 +5,11 @@ import { spawn } from 'node:child_process';
 
 import QRCode from 'qrcode';
 
+export type BrowserOpenCommand = {
+  args: string[];
+  command: string;
+};
+
 /**
  * Prompt for one line of terminal input.
  */
@@ -44,20 +49,7 @@ export async function renderTerminalQr(uri: string): Promise<string> {
  * Open a URL with the host platform's default browser.
  */
 export async function openBrowser(uri: string): Promise<void> {
-  const platform = process.platform;
-  let command: string;
-  let args: string[];
-
-  if (platform === 'darwin') {
-    command = 'open';
-    args = [uri];
-  } else if (platform === 'win32') {
-    command = 'cmd';
-    args = ['/c', 'start', '', uri];
-  } else {
-    command = 'xdg-open';
-    args = [uri];
-  }
+  const { args, command } = getBrowserOpenCommand(uri);
 
   await new Promise<void>((resolve, reject) => {
     const child = spawn(command, args, {
@@ -70,4 +62,28 @@ export async function openBrowser(uri: string): Promise<void> {
       resolve();
     });
   });
+}
+
+/**
+ * Returns the platform command used to open URLs in the default browser.
+ */
+export function getBrowserOpenCommand(uri: string, platform: NodeJS.Platform = process.platform): BrowserOpenCommand {
+  if (platform === 'darwin') {
+    return {
+      args    : [uri],
+      command : 'open',
+    };
+  }
+
+  if (platform === 'win32') {
+    return {
+      args    : ['url.dll,FileProtocolHandler', uri],
+      command : 'rundll32',
+    };
+  }
+
+  return {
+    args    : [uri],
+    command : 'xdg-open',
+  };
 }

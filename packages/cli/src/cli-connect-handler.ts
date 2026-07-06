@@ -8,14 +8,15 @@ import { DwnPermissionGrant, DwnPermissionsProtocol } from '@enbox/agent';
 import { openBrowser as defaultOpenBrowser, promptLine, renderTerminalQr } from './terminal.js';
 
 export const DEFAULT_CLI_WALLET_URL = 'https://enbox-wallet.pages.dev';
-const DEFAULT_CONNECT_TIMEOUT_MS = 300_000;
 const DEFAULT_WALLET_CONNECT_PATH = '/connect/app';
-
-let lastPromptedWalletUrl: string | undefined;
 
 export type PromptFunction = (question: string) => Promise<string>;
 export type QrRenderer = (uri: string) => Promise<string> | string;
 export type BrowserOpenFunction = (uri: string) => Promise<void> | void;
+
+type WalletUrlState = {
+  lastPromptedWalletUrl?: string;
+};
 
 export interface CliConnectHandlerOptions {
   /** Wallet app URL. A bare origin is normalized to `/connect/app`. */
@@ -88,11 +89,13 @@ export interface CliConnectHandlerOptions {
  * returns the same delegated session shape as the browser connect handler.
  */
 export function CliConnectHandler(options: CliConnectHandlerOptions = {}): ConnectHandler {
+  const walletUrlState: WalletUrlState = {};
+
   return {
     async requestAccess(params: {
       permissionRequests: ConnectPermissionRequest[];
     }): Promise<ConnectResult | undefined> {
-      const walletUrl = await resolveWalletUrl(options);
+      const walletUrl = await resolveWalletUrl(options, walletUrlState);
       const connectServerUrl = await resolveConnectServerUrl(options);
       const walletUri = buildWalletUri(walletUrl);
       const result = await WalletConnect.initClient({
@@ -107,7 +110,7 @@ export function CliConnectHandler(options: CliConnectHandlerOptions = {}): Conne
           await handleAuthUrl(uri, options);
         },
         validatePin    : async (): Promise<string> => resolvePin(options),
-        timeoutMs      : options.timeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS,
+        timeoutMs      : options.timeoutMs,
         pollIntervalMs : options.pollIntervalMs,
       } satisfies WalletConnectClientOptions);
 
@@ -121,17 +124,30 @@ export function CliConnectHandler(options: CliConnectHandlerOptions = {}): Conne
   };
 }
 
-async function resolveWalletUrl(options: CliConnectHandlerOptions): Promise<string> {
+async function resolveWalletUrl(options: CliConnectHandlerOptions, state: WalletUrlState): Promise<string> {
   if (options.walletUrl !== undefined && options.walletUrl.trim() !== '') {
-    return options.walletUrl.trim();
+    const normalized = normalizeWalletUrl(options.walletUrl);
+    if (normalized !== undefined) {
+      return normalized;
+    }
+
+    throw new Error(`@enbox/cli: invalid wallet URL '${options.walletUrl}'. Enter a URL such as https://wallet.example.`);
   }
 
   const prompt = options.walletPrompt ?? defaultPrompt(options);
-  const defaultWalletUrl = lastPromptedWalletUrl ?? DEFAULT_CLI_WALLET_URL;
-  const answer = (await prompt(`Wallet [${defaultWalletUrl}]: `)).trim();
-  const walletUrl = answer === '' ? defaultWalletUrl : answer;
-  lastPromptedWalletUrl = walletUrl;
-  return walletUrl;
+  while (true) {
+    const defaultWalletUrl = state.lastPromptedWalletUrl ?? DEFAULT_CLI_WALLET_URL;
+    const answer = (await prompt(`Wallet [${defaultWalletUrl}]: `)).trim();
+    const walletUrl = answer === '' ? defaultWalletUrl : answer;
+    const normalized = normalizeWalletUrl(walletUrl);
+
+    if (normalized !== undefined) {
+      state.lastPromptedWalletUrl = normalized;
+      return normalized;
+    }
+
+    writeLine(options, '@enbox/cli: invalid wallet URL. Enter a URL such as https://wallet.example.');
+  }
 }
 
 async function resolveConnectServerUrl(options: CliConnectHandlerOptions): Promise<string> {
@@ -166,6 +182,23 @@ function buildWalletUri(walletUrl: string): string {
     url.pathname = DEFAULT_WALLET_CONNECT_PATH;
   }
   return url.toString();
+}
+
+function normalizeWalletUrl(walletUrl: string): string | undefined {
+  const trimmedWalletUrl = walletUrl.trim();
+  if (trimmedWalletUrl === '') {
+    return undefined;
+  }
+
+  const candidate = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(trimmedWalletUrl)
+    ? trimmedWalletUrl
+    : `https://${trimmedWalletUrl}`;
+
+  try {
+    return new URL(candidate).toString();
+  } catch {
+    return undefined;
+  }
 }
 
 async function resolvePin(options: CliConnectHandlerOptions): Promise<string> {

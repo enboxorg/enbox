@@ -33,7 +33,7 @@ const connected = await Enbox.connect({
     connectServerUrl,
     openBrowser,
   }),
-  protocols: [DemoProtocol],
+  protocols: [{ definition: DemoProtocol.definition, permissions: ['write'] }],
 });
 
 try {
@@ -63,10 +63,8 @@ try {
 type ActiveSession = Pick<EnboxConnectResult, 'enbox' | 'session'>;
 
 async function writeDemoNote(active: ActiveSession, phase: string): Promise<void> {
-  await active.enbox.records.write({
-    protocol : DemoProtocol.protocol,
-    schema   : 'https://example.com/enbox/cli-demo/note',
-    data     : {
+  await active.enbox.using(DemoProtocol).records.create('note', {
+    data: {
       body      : `CLI demo ${phase} write at ${new Date().toISOString()}`,
       connected : active.session.did,
     },

@@ -18,12 +18,30 @@ bun add @enbox/cli
 ```ts
 import { CliConnectHandler, Enbox, defineProtocol } from '@enbox/cli';
 
+const NotesProtocol = defineProtocol({
+  protocol  : 'https://example.com/protocols/notes',
+  published : true,
+  types     : {
+    note: {
+      schema      : 'https://example.com/schemas/note',
+      dataFormats : ['application/json'],
+    },
+  },
+  structure: {
+    note: {},
+  },
+});
+
 const { enbox, session } = await Enbox.connect({
   connectHandler: CliConnectHandler({
     appName          : 'Notes CLI',
     connectServerUrl : 'https://your-dwn.example/connect',
   }),
-  protocols: [NotesProtocol],
+  protocols: [{ definition: NotesProtocol.definition, permissions: ['write'] }],
+});
+
+await enbox.using(NotesProtocol).records.create('note', {
+  data: { body: `Connected as ${session.did}` },
 });
 ```
 

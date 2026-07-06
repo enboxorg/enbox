@@ -236,6 +236,25 @@ describe('CliConnectHandler', () => {
     expect(pollIntervalMs).toBe(50);
   });
 
+  it('should let the relay client apply the default timeout', async () => {
+    let capturedOptions: WalletConnectClientOptions | undefined;
+    sinon.stub(WalletConnect, 'initClient').callsFake(async (options: WalletConnectClientOptions): Promise<ConnectResult | undefined> => {
+      capturedOptions = options;
+      return undefined;
+    });
+
+    const handler = CliConnectHandler({
+      walletUrl        : 'https://wallet.example',
+      connectServerUrl : 'https://relay.example/connect',
+      pinPrompt        : async (): Promise<string> => '428113',
+      qrRenderer       : async (): Promise<string> => '[qr]',
+    });
+
+    await handler.requestAccess({ permissionRequests });
+
+    expect(capturedOptions?.timeoutMs).toBeUndefined();
+  });
+
   it('should reject grants issued to a DID other than the returned delegate DID', async () => {
     sinon.stub(WalletConnect, 'initClient').resolves(createConnectResult([
       createGrant({ grantee: 'did:jwk:other', scope: requestedScope }),
@@ -326,6 +345,84 @@ describe('CliConnectHandler', () => {
     expect(prompts[1]).toBe('Connect relay URL: ');
     expect(capturedOptions?.walletUri).toBe(`${DEFAULT_CLI_WALLET_URL}/connect/app`);
     expect(capturedOptions?.connectServerUrl).toBe('https://relay.example/connect');
+  });
+
+  it('should normalize bare prompted wallet hosts and re-prompt invalid wallet URLs', async () => {
+    let capturedOptions: WalletConnectClientOptions | undefined;
+    sinon.stub(WalletConnect, 'initClient').callsFake(async (options: WalletConnectClientOptions): Promise<ConnectResult | undefined> => {
+      capturedOptions = options;
+      return undefined;
+    });
+
+    const prompts: string[] = [];
+    const answers = ['http://', 'localhost:5173', 'https://relay.example/connect'];
+    const output = createWritableBuffer();
+    const handler = CliConnectHandler({
+      output,
+      walletPrompt: async (question: string): Promise<string> => {
+        prompts.push(question);
+        return answers.shift() ?? '';
+      },
+      connectServerUrlPrompt: async (question: string): Promise<string> => {
+        prompts.push(question);
+        return answers.shift() ?? '';
+      },
+      pinPrompt  : async (): Promise<string> => '428113',
+      qrRenderer : async (): Promise<string> => '[qr]',
+    });
+
+    await handler.requestAccess({ permissionRequests });
+
+    expect(prompts).toEqual([
+      `Wallet [${DEFAULT_CLI_WALLET_URL}]: `,
+      `Wallet [${DEFAULT_CLI_WALLET_URL}]: `,
+      'Connect relay URL: ',
+    ]);
+    expect(capturedOptions?.walletUri).toBe('https://localhost:5173/connect/app');
+    expect(output.text()).toContain('invalid wallet URL');
+  });
+
+  it('should remember prompted wallet URLs per handler instance', async () => {
+    const walletUris: string[] = [];
+    sinon.stub(WalletConnect, 'initClient').callsFake(async (options: WalletConnectClientOptions): Promise<ConnectResult | undefined> => {
+      walletUris.push(options.walletUri);
+      return undefined;
+    });
+
+    const firstHandlerAnswers = ['https://wallet-one.example', ''];
+    const firstHandler = CliConnectHandler({
+      connectServerUrl : 'https://relay.example/connect',
+      walletPrompt     : async (): Promise<string> => firstHandlerAnswers.shift() ?? '',
+      pinPrompt        : async (): Promise<string> => '428113',
+      qrRenderer       : async (): Promise<string> => '[qr]',
+    });
+    const secondHandler = CliConnectHandler({
+      connectServerUrl : 'https://relay.example/connect',
+      walletPrompt     : async (): Promise<string> => '',
+      pinPrompt        : async (): Promise<string> => '428113',
+      qrRenderer       : async (): Promise<string> => '[qr]',
+    });
+
+    await firstHandler.requestAccess({ permissionRequests });
+    await firstHandler.requestAccess({ permissionRequests });
+    await secondHandler.requestAccess({ permissionRequests });
+
+    expect(walletUris).toEqual([
+      'https://wallet-one.example/connect/app',
+      'https://wallet-one.example/connect/app',
+      `${DEFAULT_CLI_WALLET_URL}/connect/app`,
+    ]);
+  });
+
+  it('should reject configured invalid wallet URLs with a friendly error', async () => {
+    const handler = CliConnectHandler({
+      walletUrl        : 'http://',
+      connectServerUrl : 'https://relay.example/connect',
+      pinPrompt        : async (): Promise<string> => '428113',
+      qrRenderer       : async (): Promise<string> => '[qr]',
+    });
+
+    await expect(handler.requestAccess({ permissionRequests })).rejects.toThrow('@enbox/cli: invalid wallet URL');
   });
 
   it('should use a provider-supplied relay URL before prompting', async () => {
