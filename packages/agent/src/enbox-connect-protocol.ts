@@ -131,6 +131,9 @@ const CONNECT_PERF_LOG_PREFIX = '[connect.perf]';
  */
 export const CONNECT_SESSION_DEFAULT_TTL_SECONDS = 24 * 60 * 60;
 
+/** Maximum lifetime a wallet will stamp onto relay connect session grants. */
+export const CONNECT_SESSION_MAX_TTL_SECONDS = 90 * 24 * 60 * 60;
+
 const CONNECT_SESSION_METADATA_LIMITS = {
   id        : 128,
   appName   : 128,
@@ -874,6 +877,21 @@ function createConnectSessionMetadata(
   };
 }
 
+function resolveRequestedSessionTtlSeconds(requestedSessionTtlSeconds: number | undefined): number {
+  if (requestedSessionTtlSeconds === undefined) {
+    return CONNECT_SESSION_DEFAULT_TTL_SECONDS;
+  }
+
+  if (!Number.isFinite(requestedSessionTtlSeconds) || requestedSessionTtlSeconds <= 0) {
+    throw new Error('Connect requestedSessionTtlSeconds must be a positive finite number.');
+  }
+
+  return Math.min(
+    Math.floor(requestedSessionTtlSeconds),
+    CONNECT_SESSION_MAX_TTL_SECONDS,
+  );
+}
+
 function resolveConnectPermissionGrantOptions(
   options?: ConnectPermissionGrantOptions,
 ): { dateExpires: string; connectSession: ConnectSessionMetadata } {
@@ -1180,11 +1198,13 @@ async function submitConnectResponse(
   );
 
   try {
+    const sessionTtlSeconds = resolveRequestedSessionTtlSeconds(connectRequest.requestedSessionTtlSeconds);
     const delegateBearerDid = await timed(`${CONNECT_PERF_LOG_PREFIX} delegateDid.create`, () => DidJwk.create());
     const delegatePortableDid = await delegateBearerDid.export();
     const connectSession = createConnectSessionMetadata({
       appName        : connectRequest.appName,
       appIcon        : connectRequest.appIcon,
+      ttlSeconds     : sessionTtlSeconds,
       clientMetadata : connectRequest.clientMetadata,
       transport      : 'relay',
     });

@@ -15,6 +15,7 @@ import { Convert, logger } from '@enbox/common';
 
 import { AgentPermissionsApi, DwnInterface, DwnPermissionGrant } from '../src/index.js';
 import {
+  CONNECT_SESSION_MAX_TTL_SECONDS,
   EnboxConnectProtocol,
   type EnboxConnectRequest,
   type EnboxConnectResponse,
@@ -783,6 +784,119 @@ describe('enbox connect', () => {
   });
 
   describe('submitConnectResponse', () => {
+    type SubmitConnectResponseStubs = {
+      capturedSessions: Array<{ createdAt: string; expiresAt: string }>;
+      revocationGrantStub: sinon.SinonStub;
+    };
+
+    function stubSubmitConnectResponseDependencies(): SubmitConnectResponseStubs {
+      const capturedSessions: Array<{ createdAt: string; expiresAt: string }> = [];
+      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').callsFake(async (
+        _selectedDid,
+        _delegateBearerDid,
+        _agent,
+        _scopes,
+        options,
+      ): Promise<any> => {
+        if (options?.connectSession !== undefined) {
+          capturedSessions.push(options.connectSession);
+        }
+        return permissionGrants as any;
+      });
+      const revocationGrantStub = sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
+        grant   : {} as any,
+        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
+      });
+      sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
+      sinon.stub(testHarness.agent, 'processDwnRequest').resolves({
+        messageCid : '',
+        reply      : { status: { code: 200, detail: 'OK' }, entries: [{ descriptor: { interface: 'Protocols', method: 'Configure' } }] },
+      } as any);
+      sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget').resolves([]);
+      sinon.stub(globalThis, 'fetch').resolves(new Response());
+
+      return { capturedSessions, revocationGrantStub };
+    }
+
+    it('should stamp requested session TTL onto permission and revocation grants', async () => {
+      const requestedSessionTtlSeconds = 30 * 24 * 60 * 60;
+      const { capturedSessions, revocationGrantStub } = stubSubmitConnectResponseDependencies();
+      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
+        baseURL  : 'http://localhost:3000',
+        endpoint : 'callback',
+      });
+      const request = await EnboxConnectProtocol.createConnectRequest({
+        appName            : 'Sample App',
+        clientDid          : clientEphemeralPortableDid.uri,
+        permissionRequests : [{ protocolDefinition, permissionScopes }],
+        callbackUrl,
+        requestedSessionTtlSeconds,
+      });
+
+      await EnboxConnectProtocol.submitConnectResponse(
+        providerIdentity.did.uri,
+        request,
+        randomPin,
+        testHarness.agent,
+      );
+
+      expect(capturedSessions).toHaveLength(1);
+      const session = capturedSessions[0];
+      expect(Date.parse(session.expiresAt) - Date.parse(session.createdAt)).toBe(requestedSessionTtlSeconds * 1000);
+      expect(revocationGrantStub.firstCall.args[0].dateExpires).toBe(session.expiresAt);
+    });
+
+    it('should clamp requested session TTL to the wallet maximum', async () => {
+      const { capturedSessions } = stubSubmitConnectResponseDependencies();
+      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
+        baseURL  : 'http://localhost:3000',
+        endpoint : 'callback',
+      });
+      const request = await EnboxConnectProtocol.createConnectRequest({
+        appName                    : 'Sample App',
+        clientDid                  : clientEphemeralPortableDid.uri,
+        permissionRequests         : [{ protocolDefinition, permissionScopes }],
+        callbackUrl,
+        requestedSessionTtlSeconds : CONNECT_SESSION_MAX_TTL_SECONDS + 60,
+      });
+
+      await EnboxConnectProtocol.submitConnectResponse(
+        providerIdentity.did.uri,
+        request,
+        randomPin,
+        testHarness.agent,
+      );
+
+      expect(capturedSessions).toHaveLength(1);
+      const session = capturedSessions[0];
+      expect(Date.parse(session.expiresAt) - Date.parse(session.createdAt)).toBe(CONNECT_SESSION_MAX_TTL_SECONDS * 1000);
+    });
+
+    it('should reject invalid requested session TTL before creating a delegate DID', async () => {
+      const delegateCreateStub = sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
+      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
+        baseURL  : 'http://localhost:3000',
+        endpoint : 'callback',
+      });
+      const request = await EnboxConnectProtocol.createConnectRequest({
+        appName                    : 'Sample App',
+        clientDid                  : clientEphemeralPortableDid.uri,
+        permissionRequests         : [{ protocolDefinition, permissionScopes }],
+        callbackUrl,
+        requestedSessionTtlSeconds : 0,
+      });
+
+      await expect(
+        EnboxConnectProtocol.submitConnectResponse(
+          providerIdentity.did.uri,
+          request,
+          randomPin,
+          testHarness.agent,
+        )
+      ).rejects.toThrow('Connect requestedSessionTtlSeconds must be a positive finite number.');
+      expect(delegateCreateStub.callCount).toBe(0);
+    });
+
     it('should emit a total perf log when submission fails', async () => {
       const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
         baseURL  : 'http://localhost:3000',
