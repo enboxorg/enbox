@@ -1,5 +1,5 @@
 import type { Jwk } from '@enbox/crypto';
-import type { ProtocolDefinition, RecordsWriteMessage, RoleAudienceKeyEncryption } from '@enbox/dwn-sdk-js';
+import type { ProtocolDefinition, RecordsWriteMessage, SourceRoleAudienceKeyEncryption } from '@enbox/dwn-sdk-js';
 
 import { Convert } from '@enbox/common';
 import { afterAll, describe, expect, it } from 'bun:test';
@@ -245,7 +245,7 @@ describe('e2e: two-layer encryption recovery', () => {
       expect(reply.status.code).toBe(202);
 
       const roleAudienceEntry = (message as RecordsWriteMessage).encryption?.keyEncryption.find(
-        (entry): entry is RoleAudienceKeyEncryption => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME
+        (entry): entry is SourceRoleAudienceKeyEncryption => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME
       );
       expect(roleAudienceEntry).toBeDefined();
       audienceRecoveryKeyId = roleAudienceEntry!.keyId;

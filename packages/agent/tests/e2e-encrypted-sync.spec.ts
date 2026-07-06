@@ -1,6 +1,6 @@
 import type { BearerIdentity } from '../src/bearer-identity.js';
 import type { PrivateKeyJwk } from '@enbox/crypto';
-import type { GenericMessage, ProtocolDefinition, RecordsWriteMessage, RoleAudienceKeyEncryption } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, ProtocolDefinition, RecordsWriteMessage, SourceRoleAudienceKeyEncryption } from '@enbox/dwn-sdk-js';
 
 import { DidJwk } from '@enbox/dids';
 import { DwnInterface } from '../src/types/dwn.js';
@@ -738,7 +738,7 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
     expect(chatReply.status.code).toBe(202);
 
     const roleAudienceEntry = (chatMessage as RecordsWriteMessage).encryption!.keyEncryption.find(
-      (entry): entry is RoleAudienceKeyEncryption => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME
+      (entry): entry is SourceRoleAudienceKeyEncryption => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME
     );
     expect(roleAudienceEntry).toBeDefined();
     expect(roleAudienceEntry!.protocol).toBe(chatProtocol.protocol);
@@ -827,7 +827,7 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
     expect(chatReply.status.code).toBe(202);
 
     const roleAudienceEntry = (chatMessage as RecordsWriteMessage).encryption!.keyEncryption.find(
-      (entry): entry is RoleAudienceKeyEncryption => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME
+      (entry): entry is SourceRoleAudienceKeyEncryption => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME
     );
     expect(roleAudienceEntry).toBeDefined();
     expect(roleAudienceEntry!.rolePath).toBe('thread/participant');

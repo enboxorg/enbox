@@ -14,7 +14,7 @@ import type {
   RecordsWriteDescriptor,
   RecordsWriteMessage,
   ReplicationApplyResult,
-  RoleAudienceKeyEncryptionInput,
+  SourceRoleAudienceKeyEncryptionInput,
 } from '@enbox/dwn-sdk-js';
 import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
 import type { KeyIdentifier, PublicKeyJwk } from '@enbox/crypto';
@@ -801,8 +801,8 @@ export class AgentDwnApi {
     protocolRole?: string;
     protocolDefinition: ProtocolDefinition;
     sourceRuleSet: ProtocolRuleSet;
-  }): Promise<{ inputs: RoleAudienceKeyEncryptionInput[]; pendingAudienceRecords: PendingAudienceRecord[] }> {
-    const inputs: RoleAudienceKeyEncryptionInput[] = [];
+  }): Promise<{ inputs: SourceRoleAudienceKeyEncryptionInput[]; pendingAudienceRecords: PendingAudienceRecord[] }> {
+    const inputs: SourceRoleAudienceKeyEncryptionInput[] = [];
     const pendingAudienceRecords: PendingAudienceRecord[] = [];
     const readRules = params.sourceRuleSet.$actions?.filter((rule: ProtocolActionRule): boolean =>
       rule.role !== undefined && rule.can?.includes('read')

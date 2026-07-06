@@ -53,9 +53,7 @@ export type SourceRoleAudienceKeyEncryption = X25519KeyEncryptionBase & {
   rolePath: string;
 };
 
-export type RoleAudienceKeyEncryption = SourceRoleAudienceKeyEncryption;
-
-export type X25519KeyEncryption = ProtocolPathKeyEncryption | RoleAudienceKeyEncryption;
+export type X25519KeyEncryption = ProtocolPathKeyEncryption | SourceRoleAudienceKeyEncryption;
 
 export type SealKeyWrap = X25519KeyEncryptionBase & {
   derivationScheme: typeof SEAL_DERIVATION_SCHEME;
@@ -83,9 +81,7 @@ export type SourceRoleAudienceKeyEncryptionInput = X25519KeyEncryptionInputBase 
   rolePath: string;
 };
 
-export type RoleAudienceKeyEncryptionInput = SourceRoleAudienceKeyEncryptionInput;
-
-export type X25519KeyEncryptionInput = ProtocolPathKeyEncryptionInput | RoleAudienceKeyEncryptionInput;
+export type X25519KeyEncryptionInput = ProtocolPathKeyEncryptionInput | SourceRoleAudienceKeyEncryptionInput;
 
 export type SealKeyWrapInput = X25519KeyEncryptionInputBase & {
   derivationScheme: typeof SEAL_DERIVATION_SCHEME;
