@@ -121,12 +121,12 @@ describe('sync-scope-acceptance', () => {
 
   it('accepts encryption records tagged for a covered protocol', () => {
     const message = {
-      recordId   : 'audience-key-record',
+      recordId   : 'grant-key-record',
       descriptor : {
         interface    : DwnInterfaceName.Records,
         method       : DwnMethodName.Write,
         protocol     : EncryptionProtocol.uri,
-        protocolPath : EncryptionProtocol.audienceKeyPath,
+        protocolPath : EncryptionProtocol.grantKeyPath,
         tags         : { protocol: profileProtocol },
       },
       authorization: { signature: { payload: '', signatures: [] } },
@@ -139,12 +139,12 @@ describe('sync-scope-acceptance', () => {
 
   it('rejects encryption records tagged for a sibling protocol', () => {
     const message = {
-      recordId   : 'audience-key-record',
+      recordId   : 'grant-key-record',
       descriptor : {
         interface    : DwnInterfaceName.Records,
         method       : DwnMethodName.Write,
         protocol     : EncryptionProtocol.uri,
-        protocolPath : EncryptionProtocol.audienceKeyPath,
+        protocolPath : EncryptionProtocol.grantKeyPath,
         tags         : { protocol: socialProtocol },
       },
       authorization: { signature: { payload: '', signatures: [] } },

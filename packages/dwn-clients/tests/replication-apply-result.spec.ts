@@ -5,24 +5,34 @@ import { parseReplicationApplyResult } from '../src/replication-apply-result.js'
 
 describe('parseReplicationApplyResult', () => {
   it('should accept encryption protocol dependency paths', () => {
-    for (const protocolPath of ['audienceEpoch', 'audienceKey', 'grantKey']) {
-      const result = parseReplicationApplyResult({
-        kind    : 'Incomplete',
-        missing : [{
-          type : 'EncryptionProtocol',
-          protocolPath,
-          tags : { protocol: 'https://example.com/protocol' },
-        }],
-      });
+    const result = parseReplicationApplyResult({
+      kind    : 'Incomplete',
+      missing : [{
+        type         : 'EncryptionProtocol',
+        protocolPath : 'grantKey',
+        tags         : { protocol: 'https://example.com/protocol' },
+      }],
+    });
 
-      expect(result).toEqual({
+    expect(result).toEqual({
+      kind    : 'Incomplete',
+      missing : [{
+        type         : 'EncryptionProtocol',
+        protocolPath : 'grantKey',
+        tags         : { protocol: 'https://example.com/protocol' },
+      }],
+    });
+  });
+
+  it('should reject legacy encryption protocol dependency paths', () => {
+    for (const protocolPath of ['audienceEpoch', 'audienceKey']) {
+      expect(() => parseReplicationApplyResult({
         kind    : 'Incomplete',
         missing : [{
-          type : 'EncryptionProtocol',
+          type: 'EncryptionProtocol',
           protocolPath,
-          tags : { protocol: 'https://example.com/protocol' },
         }],
-      });
+      })).toThrow(DwnRpcError);
     }
   });
 

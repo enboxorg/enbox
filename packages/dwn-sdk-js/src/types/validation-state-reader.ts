@@ -79,19 +79,6 @@ export interface ValidationStateReader {
   }): Promise<RecordsWriteMessage[]>;
 
   /**
-   * Queries accepted audience epoch records in the Encryption Protocol.
-   * The optional `keyId` narrows the lookup to one published audience key.
-   */
-  queryAudienceEpochs(input: {
-    tenant: string;
-    protocol: string;
-    contextId: string;
-    role: string;
-    epoch: number;
-    keyId?: string;
-  }): Promise<RecordsWriteMessage[]>;
-
-  /**
    * Queries accepted source-protocol-native audience control records by role-audience coordinates.
    */
   queryAudienceRecords(input: {

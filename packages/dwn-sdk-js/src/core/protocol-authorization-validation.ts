@@ -1,7 +1,7 @@
 import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
+import type { SourceRoleAudienceKeyEncryption } from '../utils/encryption.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
-import type { LegacyRoleAudienceKeyEncryption, SourceRoleAudienceKeyEncryption } from '../utils/encryption.js';
 import type { ProtocolActionRule, ProtocolDefinition, ProtocolRuleSet, ProtocolType, ProtocolTypes } from '../types/protocols-types.js';
 
 import { KeyDerivationScheme } from '../utils/hd-key.js';
@@ -345,12 +345,7 @@ async function verifyResolvedRoleAudienceEncryption(
     return;
   }
 
-  const legacyEntryValidation = await validateLegacyRoleAudienceEntry(tenant, roleAudience, inboundMessage, validationStateReader);
-  if (legacyEntryValidation.hasAudience) {
-    return;
-  }
-
-  if (!sourceEntryValidation.hasEntry && !legacyEntryValidation.hasEntry) {
+  if (!sourceEntryValidation.hasEntry) {
     throw new DwnError(
       DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceEntryMissing,
       `encrypted record is missing a roleAudience keyEncryption entry for role '${roleAudience.rolePath}'`
@@ -358,7 +353,7 @@ async function verifyResolvedRoleAudienceEncryption(
   }
 
   throw new DwnError(
-    DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceEpochMissing,
+    DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceMissing,
     `encrypted record references a missing audience for role '${roleAudience.rolePath}'`
   );
 }
@@ -390,42 +385,6 @@ async function validateSourceRoleAudienceEntry(
     });
 
     if (matchingAudienceRecords.length > 0) {
-      return { hasAudience: true, hasEntry: true };
-    }
-  }
-
-  return { hasAudience: false, hasEntry: true };
-}
-
-async function validateLegacyRoleAudienceEntry(
-  tenant: string,
-  roleAudience: ResolvedRoleAudience,
-  inboundMessage: RecordsWriteMessage,
-  validationStateReader: ValidationStateReader,
-): Promise<RoleAudienceEntryValidationResult> {
-  const matchingLegacyEntries = inboundMessage.encryption!.keyEncryption.filter((entry): entry is LegacyRoleAudienceKeyEncryption =>
-    entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
-    entry.protocol === roleAudience.protocol &&
-    'role' in entry &&
-    entry.role === roleAudience.rolePath &&
-    'epoch' in entry
-  );
-
-  if (matchingLegacyEntries.length === 0) {
-    return { hasAudience: false, hasEntry: false };
-  }
-
-  for (const matchingLegacyEntry of matchingLegacyEntries) {
-    const matchingEpochs = await validationStateReader.queryAudienceEpochs({
-      tenant,
-      protocol  : roleAudience.protocol,
-      contextId : roleAudience.contextId,
-      role      : roleAudience.rolePath,
-      epoch     : matchingLegacyEntry.epoch,
-      keyId     : matchingLegacyEntry.keyId,
-    });
-
-    if (matchingEpochs.length > 0) {
       return { hasAudience: true, hasEntry: true };
     }
   }

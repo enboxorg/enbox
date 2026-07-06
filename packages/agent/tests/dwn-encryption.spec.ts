@@ -365,6 +365,7 @@ describe('dwn-encryption', () => {
       const delegateCache = {
         get: sinon.stub().returns([{
           derivedPrivateKey : protocolKey,
+          grantorDid        : owner.did,
           protocol,
           scope             : { kind: 'protocol' },
         }]),
@@ -537,8 +538,9 @@ describe('dwn-encryption', () => {
             derivationScheme  : KeyDerivationScheme.ProtocolPath,
             derivedPrivateKey : delegateRootPrivateKey,
           },
+          grantorDid : recipientDid,
           protocol,
-          scope: { kind: 'protocol' },
+          scope      : { kind: 'protocol' },
         }]),
         set: sinon.stub(),
       };
@@ -1207,6 +1209,7 @@ describe('dwn-encryption', () => {
       const delegateCache = {
         get: sinon.stub().returns([{
           derivedPrivateKey : cachedKey,
+          grantorDid        : 'did:example:alice',
           protocol          : 'https://proto.example.com',
           scope             : { kind: 'protocolPath', protocolPath: 'message' },
         }]),
@@ -1224,7 +1227,7 @@ describe('dwn-encryption', () => {
         delegateDecryptionKeyCache : delegateCache,
         granteeDid                 : 'did:example:delegate',
         recordsWrite,
-        targetDid                  : undefined,
+        targetDid                  : 'did:example:alice',
       });
 
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
@@ -1243,6 +1246,7 @@ describe('dwn-encryption', () => {
       const delegateCache = {
         get: sinon.stub().returns([{
           derivedPrivateKey : cachedKey,
+          grantorDid        : 'did:example:alice',
           protocol          : 'https://proto.example.com',
           scope             : { kind: 'protocolPath', protocolPath: 'message' },
         }]),
@@ -1260,7 +1264,7 @@ describe('dwn-encryption', () => {
         delegateDecryptionKeyCache : delegateCache,
         granteeDid                 : 'did:example:delegate',
         recordsWrite,
-        targetDid                  : undefined,
+        targetDid                  : 'did:example:alice',
       });
 
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
@@ -1279,6 +1283,7 @@ describe('dwn-encryption', () => {
       const delegateCache = {
         get: sinon.stub().returns([{
           derivedPrivateKey : protocolKey,
+          grantorDid        : 'did:example:alice',
           protocol          : 'https://proto.example.com',
           scope             : { kind: 'protocol' },
         }]),
@@ -1296,10 +1301,42 @@ describe('dwn-encryption', () => {
         delegateDecryptionKeyCache : delegateCache,
         granteeDid                 : 'did:example:delegate',
         recordsWrite,
-        targetDid                  : undefined,
+        targetDid                  : 'did:example:alice',
       });
 
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+    });
+
+    it('should ignore cached delegate keys issued by a different grantor', async () => {
+      const mockAgent = makeAliceAgent();
+      const protocolKey: DerivedPrivateJwk = {
+        rootKeyId         : 'bob-protocol-root',
+        derivationScheme  : KeyDerivationScheme.ProtocolPath,
+        derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'x', d: 'd' } as any,
+        derivationPath    : [KeyDerivationScheme.ProtocolPath, 'https://proto.example.com'],
+      };
+      const delegateCache = {
+        get: sinon.stub().returns([{
+          derivedPrivateKey : protocolKey,
+          grantorDid        : 'did:example:bob',
+          protocol          : 'https://proto.example.com',
+          scope             : { kind: 'protocol' },
+        }]),
+      };
+      const recordsWrite = {
+        recordId   : 'rec-wrong-grantor',
+        contextId  : 'rec-wrong-grantor',
+        descriptor : { protocol: 'https://proto.example.com', protocolPath: 'message' },
+      } as unknown as RecordsWriteMessage;
+
+      await expect(resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:alice',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : 'did:example:alice',
+      })).rejects.toThrow('no delivered decryption key covers encrypted record');
     });
 
     it('should fail closed for a delegate when no delivered key covers the record', async () => {
@@ -1312,8 +1349,9 @@ describe('dwn-encryption', () => {
             derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'x', d: 'd' } as any,
             derivationPath    : [KeyDerivationScheme.ProtocolPath, 'https://other.example.com'],
           },
-          protocol : 'https://other.example.com',
-          scope    : { kind: 'protocol' },
+          grantorDid : 'did:example:alice',
+          protocol   : 'https://other.example.com',
+          scope      : { kind: 'protocol' },
         }]),
       };
 

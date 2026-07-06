@@ -53,16 +53,7 @@ export type SourceRoleAudienceKeyEncryption = X25519KeyEncryptionBase & {
   rolePath: string;
 };
 
-export type LegacyRoleAudienceKeyEncryption = X25519KeyEncryptionBase & {
-  derivationScheme: typeof ROLE_AUDIENCE_DERIVATION_SCHEME;
-  protocol: string;
-  role: string;
-  epoch: number;
-};
-
-export type RoleAudienceKeyEncryption = SourceRoleAudienceKeyEncryption | LegacyRoleAudienceKeyEncryption;
-
-export type X25519KeyEncryption = ProtocolPathKeyEncryption | RoleAudienceKeyEncryption;
+export type X25519KeyEncryption = ProtocolPathKeyEncryption | SourceRoleAudienceKeyEncryption;
 
 export type SealKeyWrap = X25519KeyEncryptionBase & {
   derivationScheme: typeof SEAL_DERIVATION_SCHEME;
@@ -90,16 +81,7 @@ export type SourceRoleAudienceKeyEncryptionInput = X25519KeyEncryptionInputBase 
   rolePath: string;
 };
 
-export type LegacyRoleAudienceKeyEncryptionInput = X25519KeyEncryptionInputBase & {
-  derivationScheme: typeof ROLE_AUDIENCE_DERIVATION_SCHEME;
-  protocol: string;
-  role: string;
-  epoch: number;
-};
-
-export type RoleAudienceKeyEncryptionInput = SourceRoleAudienceKeyEncryptionInput | LegacyRoleAudienceKeyEncryptionInput;
-
-export type X25519KeyEncryptionInput = ProtocolPathKeyEncryptionInput | RoleAudienceKeyEncryptionInput;
+export type X25519KeyEncryptionInput = ProtocolPathKeyEncryptionInput | SourceRoleAudienceKeyEncryptionInput;
 
 export type SealKeyWrapInput = X25519KeyEncryptionInputBase & {
   derivationScheme: typeof SEAL_DERIVATION_SCHEME;
@@ -377,20 +359,12 @@ export class Encryption {
       };
     }
 
-    return 'rolePath' in keyInput
-      ? {
-        ...common,
-        derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
-        protocol         : keyInput.protocol,
-        rolePath         : keyInput.rolePath,
-      }
-      : {
-        ...common,
-        derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
-        epoch            : keyInput.epoch,
-        protocol         : keyInput.protocol,
-        role             : keyInput.role,
-      };
+    return {
+      ...common,
+      derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+      protocol         : keyInput.protocol,
+      rolePath         : keyInput.rolePath,
+    };
   }
 
   private static validateKeyEncryptionEntry(entry: X25519KeyEncryption): void {
@@ -442,22 +416,11 @@ export class Encryption {
     }
 
     if (keyEncryption.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME) {
-      if ('rolePath' in keyEncryption) {
-        return JSON.stringify([
-          KEK_INFO_PREFIX,
-          ROLE_AUDIENCE_DERIVATION_SCHEME,
-          keyEncryption.protocol,
-          keyEncryption.rolePath,
-          keyEncryption.keyId,
-        ]);
-      }
-
       return JSON.stringify([
         KEK_INFO_PREFIX,
         ROLE_AUDIENCE_DERIVATION_SCHEME,
         keyEncryption.protocol,
-        keyEncryption.role,
-        keyEncryption.epoch,
+        keyEncryption.rolePath,
         keyEncryption.keyId,
       ]);
     }

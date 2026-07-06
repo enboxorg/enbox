@@ -333,53 +333,6 @@ describe('orderMessagesForAdmission', () => {
     expect(result.includes(otherRole)).toBe(true);
   });
 
-  it('should place audienceEpoch and role records before audienceKey records', () => {
-    const protocol = 'https://example.com/encrypted-chat';
-    const tags = {
-      protocol,
-      contextId : 'chat-1',
-      role      : 'chat/member',
-      epoch     : 1,
-      keyId     : 'key-1',
-    };
-    const audienceKey: SortEntry = {
-      message: {
-        ...makeMessage({
-          protocol     : EncryptionProtocol.uri,
-          protocolPath : EncryptionProtocol.audienceKeyPath,
-          recipient    : 'did:example:bob',
-          tags,
-        }),
-        recordId: 'audience-key',
-      } as unknown as GenericMessage,
-    };
-    const audienceEpoch: SortEntry = {
-      message: {
-        ...makeMessage({
-          protocol     : EncryptionProtocol.uri,
-          protocolPath : EncryptionProtocol.audienceEpochPath,
-          tags,
-        }),
-        recordId: 'audience-epoch',
-      } as unknown as GenericMessage,
-    };
-    const role: SortEntry = {
-      message: {
-        ...makeMessage({
-          protocol,
-          protocolPath : 'chat/member',
-          recipient    : 'did:example:bob',
-        }),
-        recordId  : 'member-role',
-        contextId : 'chat-1/member-role',
-      } as unknown as GenericMessage,
-    };
-
-    const result = orderMessagesForAdmission([audienceKey, audienceEpoch, role]);
-
-    expect(result.indexOf(audienceEpoch)).toBeLessThan(result.indexOf(audienceKey));
-    expect(result.indexOf(role)).toBeLessThan(result.indexOf(audienceKey));
-  });
 
   it('should place source-protocol audience records before encrypted records that reference them', () => {
     const protocol = 'https://example.com/source-audience-ordering';

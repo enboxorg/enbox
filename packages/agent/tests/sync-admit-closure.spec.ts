@@ -1,7 +1,7 @@
 import sinon from 'sinon';
 
 import { afterEach, describe, expect, it } from 'bun:test';
-import { DwnErrorCode, Encoder, ENCRYPTION_CONTROL_AUDIENCE_PATH, EncryptionProtocol, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { DwnErrorCode, Encoder, ENCRYPTION_CONTROL_AUDIENCE_PATH, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { admitClosure } from '../src/sync-admit-closure.js';
 import { DwnInterface } from '../src/types/dwn.js';
@@ -412,69 +412,6 @@ describe('admitClosure', () => {
     expect(agent.dwn.applyReplicatedMessage.secondCall.args[1]).toEqual(referenced.message);
   });
 
-  it('fetches encryption protocol dependencies from the tagged application protocol feed', async () => {
-    const protocol = 'https://example.com/protocol';
-    const root = await TestDataGenerator.generateRecordsWrite({ protocol });
-    const tags = {
-      protocol,
-      contextId : 'root-context',
-      role      : 'thread/member',
-      epoch     : 1,
-      keyId     : 'key-id',
-    };
-    const audienceEpoch = await TestDataGenerator.generateRecordsWrite({
-      protocol     : EncryptionProtocol.uri,
-      protocolPath : EncryptionProtocol.audienceEpochPath,
-      tags,
-    });
-    const rootCid = await Message.getCid(root.message);
-    const audienceEpochCid = await Message.getCid(audienceEpoch.message);
-    const agent = createMockAgent();
-
-    agent.rpc.sendDwnRequest.resolves({
-      status  : { code: 200 },
-      entries : [{
-        seq               : '1',
-        messageCid        : audienceEpochCid,
-        isLatestBaseState : true,
-        protocol          : EncryptionProtocol.uri,
-        message           : audienceEpoch.message,
-        encodedData       : Encoder.bytesToBase64Url(audienceEpoch.dataBytes!),
-      }],
-    });
-    agent.dwn.applyReplicatedMessage
-      .onFirstCall().resolves({
-        kind    : 'Incomplete',
-        missing : [{
-          type         : 'EncryptionProtocol',
-          protocolPath : EncryptionProtocol.audienceEpochPath,
-          tags,
-        }],
-      })
-      .onSecondCall().resolves({ kind: 'Applied' })
-      .onThirdCall().resolves({ kind: 'Applied' });
-
-    const outcome = await admitClosure(rootCid, {
-      did                : 'did:example:alice',
-      dwnUrl             : 'https://dwn.example.com',
-      delegateDid        : 'did:example:delegate',
-      permissionGrantIds : ['messages-query-grant'],
-      agent,
-      prefetched         : [{ message: root.message }],
-    });
-
-    expect(outcome).toEqual({ kind: 'admitted', appliedCids: [audienceEpochCid, rootCid] });
-    expect(agent.processDwnRequest.firstCall.args[0]).toMatchObject({
-      author        : 'did:example:alice',
-      granteeDid    : 'did:example:delegate',
-      messageType   : DwnInterface.MessagesQuery,
-      messageParams : {
-        filters            : [{ protocol }],
-        permissionGrantIds : ['messages-query-grant'],
-      },
-    });
-    expect(agent.dwn.applyReplicatedMessage.secondCall.args[1]).toEqual(audienceEpoch.message);
-  });
 
   it('fetches encryption control dependencies from the source protocol feed', async () => {
     const protocol = 'https://example.com/protocol-control';

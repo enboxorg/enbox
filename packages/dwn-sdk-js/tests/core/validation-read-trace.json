@@ -14,7 +14,7 @@
   "live: encrypted role-audience write": [
     "fetchParentRecord",
     "fetchProtocolDefinition",
-    "queryAudienceEpochs"
+    "queryAudienceRecords"
   ],
   "live: composed protocol configure": [
     "fetchProtocolDefinition"

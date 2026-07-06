@@ -129,6 +129,6 @@ function isOptionalObject(value: unknown): value is Record<string, unknown> | un
   return value === undefined || isObject(value);
 }
 
-function isEncryptionProtocolPath(value: unknown): value is 'audienceEpoch' | 'audienceKey' | 'grantKey' {
-  return value === 'audienceEpoch' || value === 'audienceKey' || value === 'grantKey';
+function isEncryptionProtocolPath(value: unknown): value is 'grantKey' {
+  return value === 'grantKey';
 }

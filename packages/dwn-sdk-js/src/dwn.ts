@@ -495,8 +495,7 @@ export class Dwn {
   ): Promise<ProtocolDefinition | undefined> {
     const detail = reply.status.detail ?? '';
     if (
-      !detail.startsWith(`${DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound}:`) &&
-      !detail.startsWith(`${DwnErrorCode.EncryptionProtocolValidateAudienceWriterUnauthorized}:`)
+      !detail.startsWith(`${DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound}:`)
     ) {
       return undefined;
     }

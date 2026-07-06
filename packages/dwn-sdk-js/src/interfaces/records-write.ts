@@ -97,7 +97,7 @@ export type RecordsWriteOptions = {
 export type {
   EncryptionInput,
   ProtocolPathKeyEncryptionInput,
-  RoleAudienceKeyEncryptionInput,
+  SourceRoleAudienceKeyEncryptionInput,
   X25519KeyEncryptionInput,
 } from '../utils/encryption.js';
 

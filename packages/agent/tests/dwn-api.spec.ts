@@ -8,7 +8,7 @@ import {
   DataStream,
   DwnInterfaceName,
   DwnMethodName,
-  EncryptionProtocol,
+  ENCRYPTION_CONTROL_DELIVERY_PATH,
   KeyAgreementAlgorithm,
   KeyDerivationScheme,
   Message,
@@ -4257,18 +4257,18 @@ describe('Role record write behavior', () => {
     });
     expect(roleReply.status.code).toBe(202);
 
-    const { reply: audienceKeyReply } = await testHarness.agent.dwn.processRequest({
+    const { reply: deliveryReply } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
         filter: {
-          protocol     : EncryptionProtocol.uri,
-          protocolPath : EncryptionProtocol.audienceKeyPath,
+          protocol     : chatProtocol.protocol,
+          protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
         },
       },
     });
-    expect(audienceKeyReply.entries ?? []).toHaveLength(0);
+    expect(deliveryReply.entries ?? []).toHaveLength(0);
   });
 });
 

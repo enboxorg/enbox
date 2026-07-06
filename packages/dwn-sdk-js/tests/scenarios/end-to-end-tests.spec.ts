@@ -3,6 +3,7 @@ import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../../src/types/subscriptions.js';
 import type { DataStore, EncryptionInput, MessageStore, ProtocolDefinition, ProtocolRuleSet, RecordsReadReply, ResumableTaskStore } from '../../src/index.js';
 
+import { createAudienceControlWrite } from '../utils/encryption-control-test-utils.js';
 import { Encoder } from '../../src/index.js';
 import { KeyDerivationScheme } from '../../src/utils/hd-key.js';
 import sinon from 'sinon';
@@ -18,13 +19,11 @@ import {
   DataStream,
   Dwn,
   Encryption,
-  EncryptionProtocol,
   Jws,
   KeyAgreementAlgorithm,
   Protocols,
   Records,
   RecordsRead,
-  RecordsWrite,
   ROLE_AUDIENCE_DERIVATION_SCHEME
 } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
@@ -133,37 +132,21 @@ export function testEndToEndScenarios(): void {
       expect(participantRecordReply.status.code).toBe(202);
 
       const role = 'thread/participant';
-      const rolePublicKey = encryptedParticipantRuleSet.$keyAgreement!.publicKeyJwk;
-      const roleKeyId = await Encryption.getKeyId(rolePublicKey);
-      const audienceEpochData = Encoder.objectToBytes({
-        protocol     : protocolDefinition.protocol,
-        contextId    : threadRecord.message.contextId,
-        role,
-        epoch        : 1,
-        keyId        : roleKeyId,
-        publicKeyJwk : rolePublicKey,
+      const audience = await createAudienceControlWrite({
+        author      : alice,
+        protocol    : protocolDefinition.protocol,
+        rolePath    : role,
+        contextId   : threadRecord.message.contextId!,
+        roleRuleSet : encryptedParticipantRuleSet,
       });
-      const audienceEpoch = await RecordsWrite.create({
-        data         : audienceEpochData,
-        dataFormat   : 'application/json',
-        protocol     : EncryptionProtocol.uri,
-        protocolPath : EncryptionProtocol.audienceEpochPath,
-        schema       : EncryptionProtocol.definition.types.audienceEpoch.schema,
-        signer       : Jws.createSigner(alice),
-        tags         : {
-          protocol  : protocolDefinition.protocol,
-          contextId : threadRecord.message.contextId!,
-          role,
-          epoch     : 1,
-          keyId     : roleKeyId,
-        },
-      });
-      const audienceEpochReply = await dwn.processMessage(
+      const audienceReply = await dwn.processMessage(
         alice.did,
-        audienceEpoch.message,
-        { dataStream: DataStream.fromBytes(audienceEpochData) }
+        audience.recordsWrite.message,
+        { dataStream: DataStream.fromBytes(audience.dataBytes) }
       );
-      expect(audienceEpochReply.status.code).toBe(202);
+      expect(audienceReply.status.code).toBe(202);
+      const roleKeyId = audience.keyId;
+      const rolePublicKey = alice.encryptionKeyPair.publicJwk;
 
       // 3. Alice writes a chat message in the thread.
       const messageByAlice = 'Message from Alice';
@@ -192,8 +175,7 @@ export function testEndToEndScenarios(): void {
             publicKey        : rolePublicKey,
             derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
             protocol         : protocolDefinition.protocol,
-            role,
-            epoch            : 1,
+            rolePath         : role,
           },
         ],
       };

@@ -1,18 +1,10 @@
 import type { BearerIdentity } from '../src/bearer-identity.js';
-import type { GenericMessage, ProtocolDefinition, RecordsWriteMessage, RoleAudienceKeyEncryption } from '@enbox/dwn-sdk-js';
+import type { PrivateKeyJwk } from '@enbox/crypto';
+import type { GenericMessage, ProtocolDefinition, RecordsWriteMessage, SourceRoleAudienceKeyEncryption } from '@enbox/dwn-sdk-js';
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import {
-  ContentEncryptionAlgorithm,
-  DataStream,
-  Encoder,
-  ENCRYPTION_CONTROL_AUDIENCE_PATH,
-  ENCRYPTION_CONTROL_DELIVERY_PATH,
-  KeyDerivationScheme,
-  ROLE_AUDIENCE_DERIVATION_SCHEME,
-} from '@enbox/dwn-sdk-js';
-
+import { DidJwk } from '@enbox/dids';
 import { DwnInterface } from '../src/types/dwn.js';
+import { Ed25519 } from '@enbox/crypto';
 import { EnboxUserAgent } from '../src/enbox-user-agent.js';
 import { JwkProtocolDefinition } from '../src/store-data-protocols.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
@@ -21,6 +13,20 @@ import { retryFreshDidResolution } from './utils/remote-dwn-retry.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import {
+  ContentEncryptionAlgorithm,
+  DataStream,
+  DwnInterfaceName,
+  DwnMethodName,
+  Encoder,
+  ENCRYPTION_CONTROL_AUDIENCE_PATH,
+  ENCRYPTION_CONTROL_DELIVERY_PATH,
+  EncryptionProtocol,
+  KeyDerivationScheme,
+  ROLE_AUDIENCE_DERIVATION_SCHEME,
+} from '@enbox/dwn-sdk-js';
+import { createGrantKeyRecordsForGrants, resolveAudienceDecryptionKey } from '../src/dwn-encryption.js';
 
 const testDwnUrls: string[] = [testDwnUrl];
 const syncConvergenceRetryDelaysMs = [500, 1_000, 2_000, 4_000, 8_000, 16_000];
@@ -437,6 +443,7 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
 
   let testHarness: PlatformAgentTestHarness;
   let bobHarness: PlatformAgentTestHarness;
+  let bobDelegateHarness: PlatformAgentTestHarness;
   let alice: BearerIdentity;
   let bob: BearerIdentity;
   let carol: BearerIdentity;
@@ -476,15 +483,22 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       agentStores      : 'dwn',
       testDataLocation : '__TESTDATA__/e2e-multiparty-chat-bob',
     });
+    bobDelegateHarness = await PlatformAgentTestHarness.setup({
+      agentClass       : TestAgent,
+      agentStores      : 'dwn',
+      testDataLocation : '__TESTDATA__/e2e-multiparty-chat-bob-delegate',
+    });
   });
 
   beforeEach(async () => {
     await testHarness.clearStorage();
     await bobHarness.clearStorage();
+    await bobDelegateHarness.clearStorage();
     await (testHarness.agent as EnboxUserAgent).initialize({ password });
     await (testHarness.agent as EnboxUserAgent).start({ password });
     await (bobHarness.agent as EnboxUserAgent).initialize({ password: bobPassword });
     await (bobHarness.agent as EnboxUserAgent).start({ password: bobPassword });
+    await bobDelegateHarness.createAgentDid();
     alice = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
     bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
     carol = await testHarness.createIdentity({ name: 'Carol', testDwnUrls });
@@ -494,8 +508,10 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
   afterAll(async () => {
     await testHarness.clearStorage();
     await bobHarness.clearStorage();
+    await bobDelegateHarness.clearStorage();
     await testHarness.closeStorage();
     await bobHarness.closeStorage();
+    await bobDelegateHarness.closeStorage();
   });
 
   async function installChatProtocol(harness: PlatformAgentTestHarness, did: string): Promise<void> {
@@ -576,6 +592,27 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       { dataStream: DataStream.fromBytes(Encoder.base64UrlToBytes(encodedData)) },
     );
     expect([202, 409]).toContain(applyReply.status.code);
+  }
+
+  async function createDelegateDid(harness: PlatformAgentTestHarness): Promise<{
+    delegateDid: string;
+    delegateX25519PrivateKey: PrivateKeyJwk;
+  }> {
+    const delegateDid = await DidJwk.create();
+    const portableDid = await delegateDid.export();
+    const delegateX25519PrivateKey = await Ed25519.convertPrivateKeyToX25519({
+      privateKey: portableDid.privateKeys![0],
+    }) as PrivateKeyJwk;
+    portableDid.privateKeys!.push(delegateX25519PrivateKey);
+    await harness.agent.did.import({
+      portableDid,
+      tenant: harness.agent.agentDid.uri,
+    });
+
+    return {
+      delegateDid: delegateDid.uri,
+      delegateX25519PrivateKey,
+    };
   }
 
   async function queryOneControlRecord(params: {
@@ -701,7 +738,7 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
     expect(chatReply.status.code).toBe(202);
 
     const roleAudienceEntry = (chatMessage as RecordsWriteMessage).encryption!.keyEncryption.find(
-      (entry): entry is RoleAudienceKeyEncryption => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME
+      (entry): entry is SourceRoleAudienceKeyEncryption => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME
     );
     expect(roleAudienceEntry).toBeDefined();
     expect(roleAudienceEntry!.protocol).toBe(chatProtocol.protocol);
@@ -790,7 +827,7 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
     expect(chatReply.status.code).toBe(202);
 
     const roleAudienceEntry = (chatMessage as RecordsWriteMessage).encryption!.keyEncryption.find(
-      (entry): entry is RoleAudienceKeyEncryption => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME
+      (entry): entry is SourceRoleAudienceKeyEncryption => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME
     );
     expect(roleAudienceEntry).toBeDefined();
     expect(roleAudienceEntry!.rolePath).toBe('thread/participant');
@@ -837,6 +874,141 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
     expect(bobReadReply.status.code).toBe(200);
     const decryptedBytes = await DataStream.toBytes(bobReadReply.entry!.data!);
     expect(new TextDecoder().decode(decryptedBytes)).toBe(chatText);
-  }, 30_000);
+
+    const { delegateDid, delegateX25519PrivateKey } = await createDelegateDid(bobDelegateHarness);
+    const bobDelegateReadGrant = await bobHarness.agent.permissions.createGrant({
+      author      : separateBob.did.uri,
+      dateExpires : '2040-06-25T16:09:16.693356Z',
+      delegated   : true,
+      grantedTo   : delegateDid,
+      scope       : {
+        interface : DwnInterfaceName.Records,
+        method    : DwnMethodName.Read,
+        protocol  : chatProtocol.protocol,
+      },
+      store: true,
+    });
+    const grantKeyRecords = await createGrantKeyRecordsForGrants({
+      agent                 : bobHarness.agent,
+      ownerDid              : separateBob.did.uri,
+      granteeDid            : delegateDid,
+      granteeRootPrivateKey : delegateX25519PrivateKey,
+      grantMessages         : [bobDelegateReadGrant.message as RecordsWriteMessage & { encodedData: string }],
+      protocolDefinitions   : [chatProtocol],
+    });
+    expect(grantKeyRecords.map((record) => record.descriptor.protocolPath)).toContain(EncryptionProtocol.grantKeyPath);
+
+    await copyProtocolToHarness(testHarness, bobDelegateHarness, alice.did.uri);
+    await copyRecordToHarness(testHarness, bobDelegateHarness, alice.did.uri, (threadMessage as RecordsWriteMessage).recordId);
+    await copyRecordToHarness(testHarness, bobDelegateHarness, alice.did.uri, (roleMessage as RecordsWriteMessage).recordId);
+    await copyDataEncodedRecordToHarness(bobDelegateHarness, alice.did.uri, audienceRecord);
+    await copyDataEncodedRecordToHarness(bobDelegateHarness, alice.did.uri, deliveryRecord);
+    await copyRecordToHarness(testHarness, bobDelegateHarness, alice.did.uri, (chatMessage as RecordsWriteMessage).recordId);
+    await copyDataEncodedRecordToHarness(
+      bobDelegateHarness,
+      separateBob.did.uri,
+      bobDelegateReadGrant.message as RecordsWriteMessage & { encodedData: string },
+    );
+    for (const grantKeyRecord of grantKeyRecords) {
+      await copyDataEncodedRecordToHarness(
+        bobDelegateHarness,
+        separateBob.did.uri,
+        grantKeyRecord as RecordsWriteMessage & { encodedData: string },
+      );
+    }
+
+    expect(await bobDelegateHarness.agent.did.get({ didUri: alice.did.uri })).toBeUndefined();
+    expect(await bobDelegateHarness.agent.did.get({ didUri: separateBob.did.uri })).toBeUndefined();
+
+    const localGrantKeyQuery = await bobDelegateHarness.agent.dwn.processRequest({
+      author        : delegateDid,
+      target        : separateBob.did.uri,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : {
+        filter: {
+          recipient    : delegateDid,
+          protocol     : EncryptionProtocol.uri,
+          protocolPath : EncryptionProtocol.grantKeyPath,
+          tags         : { protocol: chatProtocol.protocol },
+        },
+      },
+    });
+    expect(localGrantKeyQuery.reply.status.code).toBe(200);
+    expect(localGrantKeyQuery.reply.entries?.map((entry) => entry.recordId)).toEqual(
+      expect.arrayContaining(grantKeyRecords.map((record) => record.recordId)),
+    );
+
+    const delegatedDeliveryQuery = await bobDelegateHarness.agent.dwn.processRequest({
+      author        : separateBob.did.uri,
+      granteeDid    : delegateDid,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : {
+        delegatedGrant : bobDelegateReadGrant.message,
+        filter         : {
+          recipient    : separateBob.did.uri,
+          protocol     : chatProtocol.protocol,
+          protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+          tags         : {
+            contextId : threadContextId,
+            keyId     : roleAudienceEntry!.keyId,
+            protocol  : chatProtocol.protocol,
+            rolePath  : 'thread/participant',
+          },
+        },
+      },
+    });
+    expect(delegatedDeliveryQuery.reply.status.code).toBe(200);
+    expect(delegatedDeliveryQuery.reply.entries?.map((entry) => entry.recordId)).toContain(deliveryRecord.recordId);
+
+    const isolatedDelegateCache = new Map();
+    const isolatedAudienceCache = new Map();
+    const delegatedAudienceKey = await resolveAudienceDecryptionKey({
+      agent                      : bobDelegateHarness.agent,
+      audienceDecryptionKeyCache : isolatedAudienceCache,
+      contextId                  : threadContextId,
+      delegatedGrant             : bobDelegateReadGrant.message as RecordsWriteMessage & { encodedData: string },
+      delegateDecryptionKeyCache : isolatedDelegateCache,
+      granteeDid                 : delegateDid,
+      keyId                      : roleAudienceEntry!.keyId,
+      protocol                   : chatProtocol.protocol,
+      recipientDid               : separateBob.did.uri,
+      rolePath                   : 'thread/participant',
+      sourceDid                  : alice.did.uri,
+    });
+    expect(delegatedAudienceKey?.keyMaterial.keyId).toBe(roleAudienceEntry!.keyId);
+
+    const { reply: delegateReadReply } = await bobDelegateHarness.agent.dwn.processRequest({
+      author        : separateBob.did.uri,
+      granteeDid    : delegateDid,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsRead,
+      messageParams : {
+        delegatedGrant : bobDelegateReadGrant.message,
+        filter         : { recordId: (chatMessage as RecordsWriteMessage).recordId },
+        protocolRole   : 'thread/participant',
+      },
+      encryption: true,
+    });
+    expect(delegateReadReply.status.code).toBe(200);
+    const delegateDecryptedBytes = await DataStream.toBytes(delegateReadReply.entry!.data!);
+    expect(new TextDecoder().decode(delegateDecryptedBytes)).toBe(chatText);
+
+    const { reply: secondDelegateReadReply } = await bobDelegateHarness.agent.dwn.processRequest({
+      author        : separateBob.did.uri,
+      granteeDid    : delegateDid,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsRead,
+      messageParams : {
+        delegatedGrant : bobDelegateReadGrant.message,
+        filter         : { recordId: (chatMessage as RecordsWriteMessage).recordId },
+        protocolRole   : 'thread/participant',
+      },
+      encryption: true,
+    });
+    expect(secondDelegateReadReply.status.code).toBe(200);
+    const secondDelegateDecryptedBytes = await DataStream.toBytes(secondDelegateReadReply.entry!.data!);
+    expect(new TextDecoder().decode(secondDelegateDecryptedBytes)).toBe(chatText);
+  }, 60_000);
 
 });
