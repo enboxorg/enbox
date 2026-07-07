@@ -53,6 +53,7 @@ import { importFromPortable } from './connect/import.js';
 import { normalizeProtocolRequests } from './permissions.js';
 import { restoreSession } from './connect/restore.js';
 import { STORAGE_KEYS } from './types.js';
+import { validateConnectResultGrants } from './connect/validate-grants.js';
 import { vaultConnect } from './connect/vault.js';
 import { walletConnect } from './connect/wallet.js';
 import { deriveActiveSyncScope, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, resolveIdentityDids, resolvePassword, startSyncIfEnabled, toSyncIdentityProtocols } from './connect/lifecycle.js';
@@ -1052,7 +1053,12 @@ export class AuthManager {
       throw new Error('[@enbox/auth] Connect was denied or cancelled by the user.');
     }
 
-    // 5. Import delegate DID, process grants, set up sync.
+    // 5. Validate the returned grants against the request before importing
+    //    anything — grantee must be the delegate DID and every scope must
+    //    have been requested.
+    validateConnectResultGrants(result, permissionRequests);
+
+    // 6. Import delegate DID, process grants, set up sync.
     const {
       delegatePortableDid, connectedDid, delegateGrants, sessionRevocations,
     } = result;
@@ -1061,7 +1067,7 @@ export class AuthManager {
       flowName: 'Connect',
     });
 
-    // 6. Finalize session. Pass the transient delegate state explicitly
+    // 7. Finalize session. Pass the transient delegate state explicitly
     // so `persistOrClearDelegateSecrets` doesn't need to read it back
     // off the identity (which was the old `(identity as any)._foo`
     // smuggling pattern).
