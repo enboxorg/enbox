@@ -1,5 +1,13 @@
 # @enbox/dwn-clients
 
+## 0.4.13
+
+### Patch Changes
+
+- [#1180](https://github.com/enboxorg/enbox/pull/1180) [`e4f3a08`](https://github.com/enboxorg/enbox/commit/e4f3a0878b59dddcfed83512969c5dac68fd2979) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: release sockets and store handles on shutdown so CLI processes exit
+
+  WebSocket RPC connections are pooled process-wide with heartbeat timers and were never closed, keeping the event loop alive after AuthManager.shutdown() resolved; the agent's DWN stores, DID resolver cache, and vault/secret stores also stayed open, wedging same-dataPath reopens and cross-process writes. Adds WebSocketDwnRpcClient.closeAllConnections() and a close() contract to EnboxRpc, a full EnboxUserAgent.shutdown() lifecycle, and delegates AuthManager.shutdown() to it.
+
 ## 0.4.12
 
 ### Patch Changes
