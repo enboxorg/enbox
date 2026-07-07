@@ -29,7 +29,7 @@ function buildTestGrant(protocol: string, grantId: string): any {
       method       : 'Write',
       protocol     : 'https://identity.foundation/dwn/permissions',
       protocolPath : 'grant',
-      recipient    : 'did:jwk:delegate1',
+      recipient    : 'did:dht:delegate123',
       dateCreated  : '2025-01-01T00:00:00.000000Z',
       dataFormat   : 'application/json',
       dataCid      : 'bafytest',
@@ -58,7 +58,7 @@ function buildTestGrantNonMessages(grantId: string): any {
       method       : 'Write',
       protocol     : 'https://identity.foundation/dwn/permissions',
       protocolPath : 'grant',
-      recipient    : 'did:jwk:delegate1',
+      recipient    : 'did:dht:delegate123',
       dateCreated  : '2025-01-01T00:00:00.000000Z',
       dataFormat   : 'application/json',
       dataCid      : 'bafytest',
@@ -77,6 +77,18 @@ function createInitClientResult(delegateGrants: any[] = []): any {
     delegateGrants,
   };
 }
+
+const CHAT_PERMISSION_REQUESTS: any = [{
+  protocolDefinition: {
+    protocol  : 'https://proto.example/chat',
+    published : true,
+    types     : {},
+    structure : {},
+  },
+  permissionScopes: [
+    { interface: 'Messages', method: 'Read', protocol: 'https://proto.example/chat' },
+  ],
+}];
 
 let initClientStub: sinon.SinonStub;
 
@@ -559,7 +571,7 @@ describe('walletConnect', () => {
       {
         displayName        : 'Test App',
         connectServerUrl   : 'https://relay.example.com',
-        permissionRequests : [],
+        permissionRequests : CHAT_PERMISSION_REQUESTS,
         onWalletUriReady   : () => {},
         validatePin        : async () => '1234',
       },
@@ -624,7 +636,7 @@ describe('walletConnect', () => {
         {
           displayName        : 'Test App',
           connectServerUrl   : 'https://relay.example.com',
-          permissionRequests : [],
+          permissionRequests : CHAT_PERMISSION_REQUESTS,
           onWalletUriReady   : () => {},
           validatePin        : async () => '1234',
         },
@@ -662,7 +674,7 @@ describe('walletConnect', () => {
         {
           displayName        : 'Test App',
           connectServerUrl   : 'https://relay.example.com',
-          permissionRequests : [],
+          permissionRequests : CHAT_PERMISSION_REQUESTS,
           onWalletUriReady   : () => {},
           validatePin        : async () => '1234',
         },

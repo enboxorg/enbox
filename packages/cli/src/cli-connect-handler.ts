@@ -1,9 +1,8 @@
-import type { ConnectClientMetadata, ConnectPermissionRequest, DwnPermissionScope } from '@enbox/agent';
+import type { ConnectClientMetadata, ConnectPermissionRequest } from '@enbox/agent';
 import type { ConnectHandler, ConnectResult, WalletConnectClientOptions } from '@enbox/auth';
 import type { Readable, Writable } from 'node:stream';
 
 import { WalletConnect } from '@enbox/auth';
-import { DwnPermissionGrant, DwnPermissionsProtocol } from '@enbox/agent';
 
 import { openBrowser as defaultOpenBrowser, promptLine, renderTerminalQr } from './terminal.js';
 
@@ -134,11 +133,8 @@ export function CliConnectHandler(options: CliConnectHandlerOptions = {}): Conne
         pollIntervalMs : options.pollIntervalMs,
       } satisfies WalletConnectClientOptions);
 
-      if (result === undefined) {
-        return undefined;
-      }
-
-      validateConnectResult(result, params.permissionRequests);
+      // Grant validation (grantee + scope subset) runs in @enbox/auth's
+      // shared connect path for every handler.
       return result;
     },
   };
@@ -318,81 +314,3 @@ function writeLine(options: CliConnectHandlerOptions, line: string): void {
   output.write(`${line}\n`);
 }
 
-function validateConnectResult(result: ConnectResult, permissionRequests: ConnectPermissionRequest[]): void {
-  const delegateDid = result.delegatePortableDid.uri;
-  const revocationGrantIds = new Map<string, string>();
-
-  for (const revocation of result.sessionRevocations ?? []) {
-    revocationGrantIds.set(revocation.revocationGrantId, revocation.grantId);
-  }
-
-  for (const grantMessage of result.delegateGrants) {
-    const grant = DwnPermissionGrant.parse(grantMessage);
-
-    if (grant.grantee !== delegateDid) {
-      throw new Error(
-        `@enbox/cli: wallet returned a grant for '${grant.grantee}', but the delegate DID is '${delegateDid}'. ` +
-        'Revoke the approved session in your wallet.'
-      );
-    }
-
-    if (isSessionRevocationGrant(grant, revocationGrantIds)) {
-      continue;
-    }
-
-    if (!isRequestedScope(grant.scope, permissionRequests)) {
-      throw new Error('@enbox/cli: wallet returned a grant outside the requested permission scope. Revoke the approved session in your wallet.');
-    }
-  }
-}
-
-function isSessionRevocationGrant(
-  grant: ReturnType<typeof DwnPermissionGrant.parse>,
-  revocationGrantIds: Map<string, string>,
-): boolean {
-  const revokedGrantId = revocationGrantIds.get(grant.id);
-  if (revokedGrantId === undefined) {
-    return false;
-  }
-
-  return grant.scope.interface === 'Records' &&
-    grant.scope.method === 'Write' &&
-    'protocol' in grant.scope &&
-    grant.scope.protocol === DwnPermissionsProtocol.uri &&
-    'contextId' in grant.scope &&
-    grant.scope.contextId === revokedGrantId;
-}
-
-function isRequestedScope(grantScope: DwnPermissionScope, permissionRequests: ConnectPermissionRequest[]): boolean {
-  return permissionRequests.some((permissionRequest) =>
-    permissionRequest.permissionScopes.some((requestedScope) => isScopeSubset(grantScope, requestedScope))
-  );
-}
-
-function isScopeSubset(grantScope: DwnPermissionScope, requestedScope: DwnPermissionScope): boolean {
-  if (grantScope.interface !== requestedScope.interface || grantScope.method !== requestedScope.method) {
-    return false;
-  }
-
-  const requested = requestedScope as Record<string, unknown>;
-  const granted = grantScope as Record<string, unknown>;
-  for (const [key, requestedValue] of Object.entries(requested)) {
-    if (!isEqualScopeValue(granted[key], requestedValue)) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-function isEqualScopeValue(left: unknown, right: unknown): boolean {
-  if (left === right) {
-    return true;
-  }
-
-  if (left === undefined || right === undefined) {
-    return false;
-  }
-
-  return JSON.stringify(left) === JSON.stringify(right);
-}

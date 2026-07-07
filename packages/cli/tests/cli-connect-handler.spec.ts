@@ -262,67 +262,8 @@ describe('CliConnectHandler', () => {
     expect(capturedOptions?.timeoutMs).toBeUndefined();
   });
 
-  it('should reject grants issued to a DID other than the returned delegate DID', async () => {
-    sinon.stub(WalletConnect, 'initClient').resolves(createConnectResult([
-      createGrant({ grantee: 'did:jwk:other', scope: requestedScope }),
-    ]));
 
-    const handler = CliConnectHandler({
-      walletUrl        : 'https://wallet.example',
-      connectServerUrl : 'https://relay.example/connect',
-      pinPrompt        : async (): Promise<string> => '428113',
-      qrRenderer       : async (): Promise<string> => '[qr]',
-    });
 
-    await expect(handler.requestAccess({ permissionRequests })).rejects.toThrow('Revoke the approved session in your wallet');
-  });
-
-  it('should reject grants broader than the requested scope', async () => {
-    const broaderScope: DwnPermissionScope = {
-      interface : DwnInterfaceName.Records,
-      method    : DwnMethodName.Write,
-    };
-    sinon.stub(WalletConnect, 'initClient').resolves(createConnectResult([
-      createGrant({ scope: broaderScope }),
-    ]));
-
-    const handler = CliConnectHandler({
-      walletUrl        : 'https://wallet.example',
-      connectServerUrl : 'https://relay.example/connect',
-      pinPrompt        : async (): Promise<string> => '428113',
-      qrRenderer       : async (): Promise<string> => '[qr]',
-    });
-
-    await expect(handler.requestAccess({ permissionRequests })).rejects.toThrow('outside the requested permission scope');
-  });
-
-  it('should allow session revocation grants returned with sessionRevocations metadata', async () => {
-    const sessionGrant = createGrant({ grantId: 'grant-1', scope: requestedScope });
-    const revocationGrant = createGrant({
-      grantId : 'revocation-1',
-      scope   : {
-        interface : DwnInterfaceName.Records,
-        method    : DwnMethodName.Write,
-        protocol  : 'https://identity.foundation/dwn/permissions',
-        contextId : 'grant-1',
-      },
-    });
-    sinon.stub(WalletConnect, 'initClient').resolves(createConnectResult(
-      [sessionGrant, revocationGrant],
-      { sessionRevocations: [{ grantId: 'grant-1', revocationGrantId: 'revocation-1' }] },
-    ));
-
-    const handler = CliConnectHandler({
-      walletUrl        : 'https://wallet.example',
-      connectServerUrl : 'https://relay.example/connect',
-      pinPrompt        : async (): Promise<string> => '428113',
-      qrRenderer       : async (): Promise<string> => '[qr]',
-    });
-
-    const result = await handler.requestAccess({ permissionRequests });
-
-    expect(result?.delegateGrants).toHaveLength(2);
-  });
 
   it('should prompt for wallet and relay URLs when options are omitted', async () => {
     let capturedOptions: WalletConnectClientOptions | undefined;

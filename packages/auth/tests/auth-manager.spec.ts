@@ -3,6 +3,7 @@ import type { DwnProtocolDefinition, EnboxUserAgent } from '@enbox/agent';
 import { describe, expect, test } from 'bun:test';
 
 import { AuthManager } from '../src/auth-manager.js';
+import { Convert } from '@enbox/common';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { PasswordProvider } from '../src/password-provider.js';
 import { STORAGE_KEYS } from '../src/types.js';
@@ -21,6 +22,45 @@ const HANDLER_PROTOCOLS: DwnProtocolDefinition[] = [
     structure : {},
   },
 ];
+
+/** Builds a parseable delegated permission-grant message for validation tests. */
+function createGrantMessage({
+  grantId = 'grant-1',
+  grantee,
+  scope,
+}: {
+  grantId?: string;
+  grantee: string;
+  scope: Record<string, unknown>;
+}): any {
+  return {
+    recordId    : grantId,
+    contextId   : grantId,
+    encodedData : Convert.object({
+      dateExpires : '2040-01-01T00:00:00.000000Z',
+      delegated   : true,
+      scope,
+    }).toBase64Url(),
+    descriptor: {
+      interface    : 'Records',
+      method       : 'Write',
+      protocol     : 'https://identity.foundation/dwn/permissions',
+      protocolPath : 'grant',
+      recipient    : grantee,
+      dateCreated  : '2026-01-01T00:00:00.000000Z',
+      dataFormat   : 'application/json',
+      dataCid      : 'bafytest',
+      dataSize     : 100,
+    },
+    authorization: {
+      signature: {
+        signatures: [{
+          protected: Convert.object({ kid: 'did:dht:owner456#key-1' }).toBase64Url(),
+        }],
+      },
+    },
+  };
+}
 
 /**
  * Construct an AuthManager instance with a pre-built mock agent.
@@ -337,6 +377,83 @@ describe('AuthManager', () => {
 
       expect(session.did).toBe('did:dht:owner456');
       expect(manager.isConnected).toBe(true);
+    });
+
+    test('rejects grants issued to a DID other than the delegate DID', async () => {
+      const agent = createMockAgent({ firstLaunch: async () => false, identityList: async () => [] });
+      const handler = {
+        requestAccess: async (): Promise<any> => ({
+          delegatePortableDid : { uri: 'did:jwk:delegate123', document: {}, privateKeys: [] },
+          connectedDid        : 'did:dht:owner456',
+          delegateGrants      : [createGrantMessage({
+            grantee : 'did:jwk:someone-else',
+            scope   : { interface: 'Records', method: 'Write', protocol: 'https://example.com/handler-routing' },
+          })],
+        }),
+      };
+
+      const manager = createTestManager(agent);
+      await expect(manager.connect({ connectHandler: handler, protocols: HANDLER_PROTOCOLS }))
+        .rejects.toThrow('Revoke the approved session in your wallet');
+    });
+
+    test('rejects grants broader than the requested permission scopes', async () => {
+      const agent = createMockAgent({ firstLaunch: async () => false, identityList: async () => [] });
+      const handler = {
+        requestAccess: async (): Promise<any> => ({
+          delegatePortableDid : { uri: 'did:jwk:delegate123', document: {}, privateKeys: [] },
+          connectedDid        : 'did:dht:owner456',
+          delegateGrants      : [createGrantMessage({
+            grantee : 'did:jwk:delegate123',
+            scope   : { interface: 'Records', method: 'Write', protocol: 'https://example.com/other-protocol' },
+          })],
+        }),
+      };
+
+      const manager = createTestManager(agent);
+      await expect(manager.connect({ connectHandler: handler, protocols: HANDLER_PROTOCOLS }))
+        .rejects.toThrow('outside the requested permission scope');
+    });
+
+    test('accepts session revocation grants declared in sessionRevocations', async () => {
+      const delegateIdentity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate123' },
+        metadata : { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner456' },
+      });
+      const agent = createMockAgent({
+        firstLaunch    : async () => false,
+        identityList   : async () => [],
+        identityImport : async () => delegateIdentity,
+        syncSync       : async () => {},
+      });
+      const handler = {
+        requestAccess: async (): Promise<any> => ({
+          delegatePortableDid : { uri: 'did:jwk:delegate123', document: {}, privateKeys: [] },
+          connectedDid        : 'did:dht:owner456',
+          delegateGrants      : [
+            createGrantMessage({
+              grantId : 'session-grant',
+              grantee : 'did:jwk:delegate123',
+              scope   : { interface: 'Records', method: 'Write', protocol: 'https://example.com/handler-routing' },
+            }),
+            createGrantMessage({
+              grantId : 'revocation-grant',
+              grantee : 'did:jwk:delegate123',
+              scope   : {
+                interface : 'Records',
+                method    : 'Write',
+                protocol  : 'https://identity.foundation/dwn/permissions',
+                contextId : 'session-grant',
+              },
+            }),
+          ],
+          sessionRevocations: [{ grantId: 'session-grant', revocationGrantId: 'revocation-grant' }],
+        }),
+      };
+
+      const manager = createTestManager(agent);
+      const session = await manager.connect({ connectHandler: handler, protocols: HANDLER_PROTOCOLS });
+      expect(session.did).toBe('did:dht:owner456');
     });
 
     test('per-call connectHandler overrides default handler', async () => {

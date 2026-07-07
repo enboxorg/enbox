@@ -13,6 +13,7 @@ import type { WalletConnectOptions } from '../types.js';
 
 import { DEFAULT_DWN_ENDPOINTS } from '../types.js';
 import { registerWithDwnEndpoints } from '../registration.js';
+import { validateConnectResultGrants } from './validate-grants.js';
 import { WalletConnect } from '../wallet-connect-client.js';
 import { ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, resolvePassword } from './lifecycle.js';
 
@@ -58,6 +59,11 @@ export async function walletConnect(
   if (!result) {
     throw new Error('[@enbox/auth] Connection was denied by the wallet.');
   }
+
+  // Validate the returned grants against the request before importing
+  // anything — grantee must be the delegate DID and every scope must have
+  // been requested.
+  validateConnectResultGrants(result, options.permissionRequests);
 
   // Import delegate DID, process grants, and set up sync.
   const {
