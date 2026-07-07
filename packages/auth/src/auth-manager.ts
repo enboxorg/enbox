@@ -766,32 +766,22 @@ export class AuthManager {
     const { timeout = 2000 } = options;
     const did = this._session?.did;
 
-    // 1. Stop sync.
+    // 1. Tear down the agent: stops sync, drains the RPC socket pool, locks
+    //    the vault, and closes the DWN stores, DID resolver cache, and vault
+    //    and secret stores. Without the full teardown the process cannot
+    //    exit (WebSocket heartbeats keep the event loop alive) and the same
+    //    dataPath cannot be reopened in-process.
     try {
-      await this._userAgent.sync.stopSync(timeout);
+      await this._userAgent.shutdown({ syncStopTimeoutMs: timeout });
+      this._emitter.emit('vault-locked', {});
     } catch {
-      // Best-effort — don't block shutdown on sync errors.
+      // Best-effort — don't block shutdown on teardown errors.
     }
 
     // 2. Clear the active session.
     this._session = undefined;
 
-    // 3. Lock the vault.
-    try {
-      await this._userAgent.vault.lock();
-      this._emitter.emit('vault-locked', {});
-    } catch {
-      // Vault may already be locked or uninitialised — safe to ignore.
-    }
-
-    // 4. Close the sync engine (releases LevelDB handles, timers).
-    try {
-      await this._userAgent.sync.close();
-    } catch {
-      // Best-effort.
-    }
-
-    // 5. Close the storage adapter (e.g. LevelDB session store).
+    // 3. Close the storage adapter (e.g. LevelDB session store).
     if (typeof this._storage.close === 'function') {
       try {
         await this._storage.close();
@@ -800,11 +790,11 @@ export class AuthManager {
       }
     }
 
-    // 6. Mark as shut down and transition state.
+    // 4. Mark as shut down and transition state.
     this._isShutDown = true;
     this._setState('locked');
 
-    // 7. Emit session-end if there was an active session.
+    // 5. Emit session-end if there was an active session.
     if (did) {
       this._emitter.emit('session-end', { did });
     }

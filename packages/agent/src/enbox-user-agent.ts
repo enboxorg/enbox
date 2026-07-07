@@ -303,4 +303,71 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
     // Set the Agent's DID.
     this.agentDid = await this.vault.getDid();
   }
+
+  /**
+   * Releases every resource the agent holds so the process can exit and the
+   * same data path can be reopened: stops sync (subscriptions and timers),
+   * closes the sync engine's store, drains the process-wide RPC socket pool
+   * (WebSocket heartbeats otherwise keep the event loop alive), locks the
+   * vault, and closes the in-process DWN's stores, the DID resolver cache,
+   * and the vault and secret stores.
+   *
+   * Each step is best-effort so a partially torn-down agent cannot block
+   * shutdown. The agent must not be used afterwards — create a new agent to
+   * reopen the same data path.
+   *
+   * @param options.syncStopTimeoutMs - How long to wait for in-flight sync
+   *   work to settle before force-stopping. Defaults to 2000.
+   */
+  public async shutdown(options: { syncStopTimeoutMs?: number } = {}): Promise<void> {
+    const { syncStopTimeoutMs = 2000 } = options;
+
+    try {
+      await this.sync.stopSync(syncStopTimeoutMs);
+    } catch {
+      // Best-effort — sync may never have been started.
+    }
+
+    try {
+      await this.sync.close();
+    } catch {
+      // Best-effort.
+    }
+
+    try {
+      await this.rpc.close();
+    } catch {
+      // Best-effort.
+    }
+
+    try {
+      await this.vault.lock();
+    } catch {
+      // Vault may already be locked or uninitialised — safe to ignore.
+    }
+
+    try {
+      await this.dwn.close();
+    } catch {
+      // Best-effort — remote-mode agents have no in-process DWN.
+    }
+
+    try {
+      await this.did.close();
+    } catch {
+      // Best-effort — the resolver cache may be in-memory.
+    }
+
+    try {
+      await this.vault.close();
+    } catch {
+      // Best-effort.
+    }
+
+    try {
+      await this.secrets.close();
+    } catch {
+      // Best-effort — the secret store may share the vault's store.
+    }
+  }
 }

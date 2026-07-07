@@ -39,7 +39,14 @@ export type RpcStatus = {
   message: string;
 };
 
-export interface EnboxRpc extends DwnRpc, DidRpc, DwnServerInfoRpc {}
+export interface EnboxRpc extends DwnRpc, DidRpc, DwnServerInfoRpc {
+  /**
+   * Releases any persistent transport resources (e.g. pooled WebSocket
+   * connections and their heartbeat timers). Called during application
+   * shutdown so the process's event loop can drain.
+   */
+  close(): Promise<void>;
+}
 
 /**
  * Client used to communicate with Dwn Servers
@@ -63,6 +70,18 @@ export class EnboxRpcClient implements EnboxRpc {
 
   get transportProtocols(): string[] {
     return Array.from(this.transportClients.keys());
+  }
+
+  /** Closes every distinct transport client (the same client may serve multiple schemes). */
+  async close(): Promise<void> {
+    const closed = new Set<EnboxRpc>();
+    for (const client of this.transportClients.values()) {
+      if (closed.has(client)) {
+        continue;
+      }
+      closed.add(client);
+      await client.close();
+    }
   }
 
   async sendDidRequest(request: DidRpcRequest): Promise<DidRpcResponse> {
@@ -126,6 +145,9 @@ export class EnboxRpcClient implements EnboxRpc {
 }
 
 export class HttpEnboxRpcClient extends HttpDwnRpcClient implements EnboxRpc {
+  /** HTTP transport holds no persistent connections — nothing to release. */
+  public async close(): Promise<void> {}
+
   async sendDidRequest(request: DidRpcRequest): Promise<DidRpcResponse> {
     const requestId = CryptoUtils.randomUuid();
     const jsonRpcRequest = createJsonRpcRequest(requestId, request.method, {
@@ -165,6 +187,11 @@ export class HttpEnboxRpcClient extends HttpDwnRpcClient implements EnboxRpc {
 }
 
 export class WebSocketEnboxRpcClient extends WebSocketDwnRpcClient implements EnboxRpc {
+  /** Closes the process-wide WebSocket connection pool. */
+  public async close(): Promise<void> {
+    await WebSocketDwnRpcClient.closeAllConnections();
+  }
+
   async sendDidRequest(_request: DidRpcRequest): Promise<DidRpcResponse> {
     throw new Error(`not implemented for transports [${this.transportProtocols.join(', ')}]`);
   }
