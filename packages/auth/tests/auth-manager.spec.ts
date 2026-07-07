@@ -573,22 +573,31 @@ describe('AuthManager', () => {
   describe('in-memory cache cleanup on reconnect', () => {
     test('clears previous delegate keys on successful reconnect', async () => {
       const clearCalls: (string | undefined)[] = [];
-      const identity = createMockIdentity({
+      const oldIdentity = createMockIdentity({
         did      : { uri: 'did:delegate:old' },
         metadata : { name: 'Old', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected' },
       });
+      const newIdentity = createMockIdentity({
+        did      : { uri: 'did:delegate:new' },
+        metadata : { name: 'New', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected' },
+      });
+      let identities = [oldIdentity];
+      const storage = new MemoryStorage();
       const agent = createMockAgent({
         firstLaunch                    : async () => false,
-        identityList                   : async () => [identity],
+        identityList                   : async () => identities,
         dwnClearDelegateDecryptionKeys : (did?: string) => { clearCalls.push(did); },
       });
-      const manager = createTestManager(agent);
+      const manager = createTestManager(agent, { storage });
 
       // First connect — no previous session, so no clear.
       await manager.connect({ password: 'test' });
       expect(clearCalls).toHaveLength(0);
 
-      // Reconnect — should clear the previous delegate's keys.
+      // Simulate a fresh wallet connect having replaced the delegate, then
+      // reconnect — the previous delegate's in-memory keys must be cleared.
+      identities = [oldIdentity, newIdentity];
+      await storage.set(STORAGE_KEYS.DELEGATE_DID, 'did:delegate:new');
       await manager.connect({ password: 'test' });
       expect(clearCalls).toHaveLength(1);
       expect(clearCalls[0]).toBe('did:delegate:old');
@@ -691,6 +700,37 @@ describe('AuthManager', () => {
 
   });
 
+  describe('restoreSession() identity selection', () => {
+    test('prefers the persisted active identity over other connected identities', async () => {
+      const staleIdentity = createMockIdentity({
+        did      : { uri: 'did:jwk:stale-delegate' },
+        metadata : { name: 'Stale', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner456' },
+      });
+      const activeIdentity = createMockIdentity({
+        did      : { uri: 'did:jwk:fresh-delegate' },
+        metadata : { name: 'Fresh', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner456' },
+      });
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      // Production persists the owner DID in ACTIVE_IDENTITY and the
+      // delegate's own DID in DELEGATE_DID.
+      await storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, 'did:dht:owner456');
+      await storage.set(STORAGE_KEYS.DELEGATE_DID, 'did:jwk:fresh-delegate');
+
+      const agent = createMockAgent({
+        firstLaunch               : async () => false,
+        identityGet               : async (params: any) => (params?.didUri === 'did:jwk:fresh-delegate' ? activeIdentity : undefined),
+        identityConnectedIdentity : async () => staleIdentity,
+        identityList              : async () => [staleIdentity, activeIdentity],
+      });
+
+      const manager = createTestManager(agent, { storage });
+      const session = await manager.restoreSession();
+
+      expect(session?.delegateDid).toBe('did:jwk:fresh-delegate');
+    });
+  });
+
   describe('disconnect()', () => {
     test('stops sync before sending session revocations', async () => {
       const order: string[] = [];
@@ -723,6 +763,59 @@ describe('AuthManager', () => {
       const firstReadIndex = order.indexOf('dwn:RecordsRead');
       expect(stopIndex).toBeGreaterThanOrEqual(0);
       expect(firstReadIndex).toBeGreaterThan(stopIndex);
+    });
+
+    test('clean disconnect removes the delegate identity locally', async () => {
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      const delegateIdentity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate123' },
+        metadata : { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner456' },
+      });
+      const deletedDids: string[] = [];
+      const deletedIdentities: string[] = [];
+      const agent = createMockAgent({
+        firstLaunch    : async () => false,
+        identityList   : async () => [delegateIdentity],
+        identityGet    : async () => delegateIdentity,
+        didDelete      : async (params: any) => { deletedDids.push(params.didUri); },
+        identityDelete : async (params: any) => { deletedIdentities.push(params.didUri); },
+      });
+      const manager = createTestManager(agent, { storage });
+      await manager.connect({ password: 'test' });
+
+      await manager.disconnect();
+
+      expect(deletedDids).toContain('did:jwk:delegate123');
+      expect(deletedIdentities).toContain('did:jwk:delegate123');
+    });
+
+    test('disconnect keeps the delegate identity while revocations are queued for retry', async () => {
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await storage.set(STORAGE_KEYS.SESSION_REVOCATIONS, JSON.stringify([{ grantId: 'g1', revocationGrantId: 'r1' }]));
+      const delegateIdentity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate123' },
+        metadata : { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner456' },
+      });
+      const deletedIdentities: string[] = [];
+      const agent = createMockAgent({
+        firstLaunch    : async () => false,
+        identityList   : async () => [delegateIdentity],
+        identityGet    : async () => delegateIdentity,
+        identityDelete : async (params: any) => { deletedIdentities.push(params.didUri); },
+      });
+      // The revocation read returns 202, so every revocation fails and
+      // lands in the retry queue — the delegate must remain usable.
+      (agent as any).dwn.processRequest = async (): Promise<any> => ({ reply: { status: { code: 202, detail: 'Accepted' } } });
+
+      const manager = createTestManager(agent, { storage });
+      await manager.connect({ password: 'test' });
+
+      await manager.disconnect();
+
+      expect(deletedIdentities).toHaveLength(0);
+      expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).not.toBeNull();
     });
 
     test('clean disconnect removes session markers', async () => {

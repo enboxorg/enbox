@@ -156,9 +156,14 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
     }),
 
     identity: {
-      list              : overrides.identityList ?? (async (): Promise<MockIdentity[]> => [defaultIdentity]),
-      create            : overrides.identityCreate ?? (async (): Promise<MockIdentity> => defaultIdentity),
-      get               : overrides.identityGet ?? (async (): Promise<MockIdentity | undefined> => defaultIdentity),
+      list   : overrides.identityList ?? (async (): Promise<MockIdentity[]> => [defaultIdentity]),
+      create : overrides.identityCreate ?? (async (): Promise<MockIdentity> => defaultIdentity),
+      // Mirrors the real store: resolves only the identity whose own DID
+      // matches `didUri` (from the same list the mock exposes).
+      get    : overrides.identityGet ?? (async (params: any): Promise<MockIdentity | undefined> => {
+        const identities = await (overrides.identityList ?? (async (): Promise<MockIdentity[]> => [defaultIdentity]))();
+        return identities.find((identity) => identity.did.uri === params?.didUri);
+      }),
       import            : overrides.identityImport ?? (async (): Promise<MockIdentity> => defaultIdentity),
       delete            : overrides.identityDelete ?? (async (): Promise<void> => {}),
       export            : overrides.identityExport ?? (async (): Promise<any> => ({})),
