@@ -1,5 +1,13 @@
 # @enbox/agent
 
+## 0.8.12
+
+### Patch Changes
+
+- [#1185](https://github.com/enboxorg/enbox/pull/1185) [`60a9abb`](https://github.com/enboxorg/enbox/commit/60a9abb62e3c16368793f17b9ee0e735938ae804) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: stop sync before revoking session grants and park links on revoked/expired authorization
+
+  Disconnect revoked delegated grants while live sync still ran under them, so the engine treated the self-inflicted 401s as repairable failures — error stacks and pointless retries on every successful delegate disconnect. AuthManager.disconnect() now stops sync first (revocation delivery is direct RPC and unaffected), and SyncEngineLevel classifies GrantAuthorizationGrantRevoked/GrantAuthorizationGrantExpired/MessagesSubscribeDeliveryAuthorizationFailed as terminal: the link parks (paused) with one concise log line instead of repair-retrying, which also quiets wallet-initiated revocation while a tool is running.
+
 ## 0.8.11
 
 ### Patch Changes
