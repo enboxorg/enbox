@@ -486,10 +486,18 @@ export class AuthManager {
     const { clearStorage = false, timeout = 2000 } = options;
     const did = this._session?.did;
 
-    // Revoke delegated session grants BEFORE stopping sync so the
-    // revocations can be sent to the owner's remote DWN endpoints.
-    // Each revocation grant is contextId-scoped to the specific
-    // session grant it can revoke.
+    // Stop live sync BEFORE revoking. Revocation delivery uses direct RPC
+    // (not the sync engine), and revoking while subscriptions and the
+    // repair loop still run under the session's grants makes them fail
+    // against the delegate's own revocation.
+    try {
+      await this._userAgent.sync.stopSync(timeout);
+    } catch {
+      // Best-effort — sync may never have been started.
+    }
+
+    // Revoke delegated session grants. Each revocation grant is
+    // contextId-scoped to the specific session grant it can revoke.
     const delegateDid = this._session?.delegateDid;
     const connectedDid = this._session?.did;
     let failedRevocations: { grantId: string; revocationGrantId: string }[] = [];
@@ -625,11 +633,6 @@ export class AuthManager {
       } catch (error: any) {
         console.warn(`AuthManager: Grant revocation on disconnect failed: ${error.message}`);
       }
-    }
-
-    // Stop sync AFTER revocations are sent to remote endpoints.
-    if (this._session) {
-      await this._userAgent.sync.stopSync(timeout);
     }
 
     this._session = undefined;
