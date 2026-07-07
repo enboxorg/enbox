@@ -1,5 +1,12 @@
 # @enbox/dwn-server
 
+## 0.1.17
+
+### Patch Changes
+
+- Updated dependencies [[`e4f3a08`](https://github.com/enboxorg/enbox/commit/e4f3a0878b59dddcfed83512969c5dac68fd2979)]:
+  - @enbox/dwn-clients@0.4.13
+
 ## 0.1.16
 
 ### Patch Changes

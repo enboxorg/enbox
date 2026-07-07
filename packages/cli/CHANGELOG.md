@@ -1,5 +1,14 @@
 # @enbox/cli
 
+## 0.1.2
+
+### Patch Changes
+
+- Updated dependencies [[`e4f3a08`](https://github.com/enboxorg/enbox/commit/e4f3a0878b59dddcfed83512969c5dac68fd2979)]:
+  - @enbox/agent@0.8.11
+  - @enbox/auth@0.6.57
+  - @enbox/api@0.6.49
+
 ## 0.1.1
 
 ### Patch Changes
