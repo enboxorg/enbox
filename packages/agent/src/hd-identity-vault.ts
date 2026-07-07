@@ -522,6 +522,15 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
    * @throws An error if the identity vault has not been initialized.
    * @returns A promise that resolves when the vault is successfully locked.
    */
+  /**
+   * Closes the vault's backing store, releasing its resources (e.g. the
+   * LevelDB handle). Lock the vault first; after close the vault must not
+   * be used until a new instance is created over the same store location.
+   */
+  public async close(): Promise<void> {
+    await this._store.close();
+  }
+
   public async lock(): Promise<void> {
     // Verify the identity vault has already been initialized.
     if (await this.isInitialized() === false) {

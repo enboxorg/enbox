@@ -50,6 +50,12 @@ export interface SecretStore {
    * @returns `true` if the key existed and was removed, `false` otherwise.
    */
   delete(key: string): Promise<boolean>;
+
+  /**
+   * Releases the store's backing resources (e.g. a LevelDB handle).
+   * Called during application shutdown; the store must not be used after.
+   */
+  close(): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -88,6 +94,10 @@ export class VaultBackedSecretStore implements SecretStore {
   }) {
     this._vault = vault;
     this._store = store;
+  }
+
+  public async close(): Promise<void> {
+    await this._store.close();
   }
 
   public async put(
@@ -142,6 +152,10 @@ export class VaultBackedSecretStore implements SecretStore {
  */
 export class InMemorySecretStore implements SecretStore {
   private readonly _store = new Map<string, { value: Uint8Array; expiresAt?: string }>();
+
+  public async close(): Promise<void> {
+    this._store.clear();
+  }
 
   public async put(
     key: string,

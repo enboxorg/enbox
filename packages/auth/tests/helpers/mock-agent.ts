@@ -88,6 +88,7 @@ export interface MockAgentOverrides {
   vaultIsLocked?: () => boolean;
   vaultUnlock?: (params: any) => Promise<void>;
   vaultLock?: () => Promise<void>;
+  shutdown?: (options?: { syncStopTimeoutMs?: number }) => Promise<void>;
   vaultChangePassword?: (params: any) => Promise<void>;
   vaultResetPasswordWithRecoveryPhrase?: (params: any) => Promise<void>;
   vaultBackup?: () => Promise<any>;
@@ -144,6 +145,15 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
     firstLaunch : overrides.firstLaunch ?? (async (): Promise<boolean> => false),
     initialize  : overrides.initialize ?? (async (): Promise<string> => 'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12'),
     start       : overrides.start ?? (async (): Promise<void> => {}),
+
+    // Mirrors EnboxUserAgent.shutdown ordering (best-effort steps) so tests
+    // can observe component calls through the manager's delegated teardown.
+    shutdown: overrides.shutdown ?? (async function (this: any, options: { syncStopTimeoutMs?: number } = {}): Promise<void> {
+      const { syncStopTimeoutMs = 2000 } = options;
+      try { await this.sync.stopSync(syncStopTimeoutMs); } catch { /* best-effort */ }
+      try { await this.sync.close(); } catch { /* best-effort */ }
+      try { await this.vault.lock(); } catch { /* best-effort */ }
+    }),
 
     identity: {
       list              : overrides.identityList ?? (async (): Promise<MockIdentity[]> => [defaultIdentity]),

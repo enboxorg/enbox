@@ -432,6 +432,17 @@ export class AgentDwnApi {
    *   `EnboxPlatformAgent`. In other words, so that a developer can call `agent.dwn.node` to access
    *   the DWN instance and not `agent.dwn.dwn`.
    */
+  /**
+   * Closes the in-process DWN's stores (message store, data store, event log,
+   * resumable task store), releasing their LevelDB handles. No-op when the
+   * agent operates in remote mode (no in-process DWN).
+   */
+  public async close(): Promise<void> {
+    if (this._dwn !== undefined) {
+      await this._dwn.close();
+    }
+  }
+
   get node(): Dwn {
     if (!this._dwn) {
       throw new Error(

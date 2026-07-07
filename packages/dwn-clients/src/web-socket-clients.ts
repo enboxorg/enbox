@@ -89,6 +89,44 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
   public constructor(private readonly serverInfoRpc: DwnServerInfoRpc = new HttpDwnRpcClient()) {}
 
+  /**
+   * Closes every pooled WebSocket connection and clears the pool.
+   *
+   * Each connection's tracked subscriptions are closed best-effort, then the
+   * underlying socket (and its heartbeat timer) is closed. Connections still
+   * being established are awaited so they cannot leak into a cleared pool.
+   * The pool is process-wide, so this is intended for application shutdown.
+   */
+  public static async closeAllConnections(): Promise<void> {
+    const pending = [...WebSocketDwnRpcClient.pendingConnections.values()];
+    WebSocketDwnRpcClient.pendingConnections.clear();
+    for (const pendingConnection of pending) {
+      try {
+        await pendingConnection;
+      } catch {
+        // The connection failed to establish — nothing to close.
+      }
+    }
+
+    const connections = [...WebSocketDwnRpcClient.connections.values()];
+    WebSocketDwnRpcClient.connections.clear();
+    for (const connection of connections) {
+      for (const tracked of connection.subscriptions.values()) {
+        try {
+          await tracked.subscription.close();
+        } catch {
+          // Best-effort — closing the socket below tears down the transport.
+        }
+      }
+      connection.subscriptions.clear();
+      try {
+        connection.socket.close();
+      } catch {
+        // Best-effort.
+      }
+    }
+  }
+
   async sendDwnRequest(request: DwnRpcRequest): Promise<DwnRpcResponse> {
 
     // validate that the dwn URL provided is a valid WebSocket URL
