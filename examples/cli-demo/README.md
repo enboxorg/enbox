@@ -8,7 +8,17 @@ This example exercises the CLI wallet-connect lifecycle:
 4. Restore the persisted session and write another record.
 5. Disconnect, requesting self-revocation for the session grants.
 
-Run it from the repository root after `bun install`:
+Run it from the repository root after `bun install` — no configuration
+needed; the connect relay is discovered from the wallet origin's
+`/.well-known/enbox-connect` document (you are prompted for the wallet URL,
+with the default wallet suggested):
+
+```bash
+bun examples/cli-demo/src/connect.ts
+```
+
+To pin a specific relay instead of discovering it, set
+`ENBOX_CONNECT_SERVER_URL`:
 
 ```bash
 ENBOX_CONNECT_SERVER_URL=https://your-dwn.example/connect \

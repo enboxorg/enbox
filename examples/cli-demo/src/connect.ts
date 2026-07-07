@@ -16,10 +16,10 @@ const DemoProtocol = defineProtocol({
   },
 });
 
-const connectServerUrl = process.env.ENBOX_CONNECT_SERVER_URL;
-if (connectServerUrl === undefined || connectServerUrl.trim() === '') {
-  throw new Error('Set ENBOX_CONNECT_SERVER_URL to your DWN server connect relay URL, for example https://example.com/connect.');
-}
+// Optional override. When unset, the handler resolves the relay from the
+// wallet origin's /.well-known/enbox-connect document, and prompts only if
+// the wallet does not advertise one.
+const connectServerUrl = process.env.ENBOX_CONNECT_SERVER_URL?.trim() || undefined;
 
 const dataPath = process.env.ENBOX_DATA_PATH ?? '.enbox-cli-demo';
 const password = process.env.ENBOX_PASSWORD ?? 'enbox-cli-demo-password';
