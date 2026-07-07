@@ -57,6 +57,7 @@ import RecordsWriteDataEncoded from '../json-schemas/interface-methods/records-w
 import RecordsWriteSignaturePayload from '../json-schemas/signature-payloads/records-write-signature-payload.json' with { type: 'json' };
 import RecordsWriteUnidentified from '../json-schemas/interface-methods/records-write-unidentified.json' with { type: 'json' };
 import StringRangeFilter from '../json-schemas/interface-methods/string-range-filter.json' with { type: 'json' };
+import WrappedGrantKeyEnvelope from '../json-schemas/encryption/wrapped-grant-key-envelope.json' with { type: 'json' };
 
 const schemas = {
   Authorization,
@@ -97,7 +98,8 @@ const schemas = {
   PublicJwk,
   GenericSignaturePayload,
   RecordsWriteSignaturePayload,
-  StringRangeFilter
+  StringRangeFilter,
+  WrappedGrantKeyEnvelope
 };
 
 const ajv = new Ajv({

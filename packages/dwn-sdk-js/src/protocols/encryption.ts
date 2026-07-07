@@ -6,13 +6,41 @@ import type { PermissionScope } from '../types/permission-types.js';
 import type { ProtocolDefinition } from '../types/protocols-types.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
+import type { ContentEncryptionAlgorithm, X25519KeyEncryptionBase } from '../utils/encryption.js';
 
+import { DwnConstant } from '../core/dwn-constant.js';
+import { Encoder } from '../utils/encoder.js';
 import { ENCRYPTION_PROTOCOL_URI } from '../core/constants.js';
 import { FilterUtility } from '../utils/filter.js';
 import { Message } from '../core/message.js';
 import { Records } from '../utils/records.js';
+import { validateJsonSchema } from '../schema-validator.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { grantKeyScopeCoversDeliveredScope, isGrantKeyEligibleRecordsScope, isGrantKeyRecordsScope } from '../utils/grant-key-coverage.js';
+
+export const WRAPPED_GRANT_KEY_FORMAT = 'enbox/wrapped-grant-key@1';
+
+export type WrappedGrantKeyEnvelope = {
+  format: typeof WRAPPED_GRANT_KEY_FORMAT;
+  keyEncryption: X25519KeyEncryptionBase;
+  contentEncryption: {
+    algorithm: typeof ContentEncryptionAlgorithm.A256CTR;
+    initializationVector: string;
+  };
+  ciphertext: string;
+};
+
+export function assertWrappedGrantKeyEnvelope(envelope: unknown): asserts envelope is WrappedGrantKeyEnvelope {
+  try {
+    validateJsonSchema('WrappedGrantKeyEnvelope', envelope);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new DwnError(
+      DwnErrorCode.EncryptionProtocolValidateGrantKeyWrappedDeliveryInvalid,
+      `wrapped grantKey envelope is invalid: ${detail}`
+    );
+  }
+}
 
 export class EncryptionProtocol implements CoreProtocol {
   public static readonly uri = ENCRYPTION_PROTOCOL_URI;
@@ -64,9 +92,9 @@ export class EncryptionProtocol implements CoreProtocol {
     }
   }
 
-  public async validateRecord(message: RecordsWriteMessage, _dataBytes: Uint8Array): Promise<void> {
+  public async validateRecord(message: RecordsWriteMessage, dataBytes: Uint8Array): Promise<void> {
     if (message.descriptor.protocolPath === EncryptionProtocol.grantKeyPath) {
-      EncryptionProtocol.verifyEncryptedDelivery(message);
+      EncryptionProtocol.verifyGrantKeyDelivery(message, dataBytes);
       return;
     }
 
@@ -81,7 +109,7 @@ export class EncryptionProtocol implements CoreProtocol {
     message: RecordsWriteMessage,
     validationStateReader: ValidationStateReader,
   ): Promise<void> {
-    EncryptionProtocol.verifyEncryptedDelivery(message);
+    EncryptionProtocol.verifyInlineWrappedGrantKeyDelivery(message);
 
     const grantId = EncryptionProtocol.getRequiredStringTag(message, 'grantId');
     const protocol = EncryptionProtocol.getRequiredStringTag(message, 'protocol');
@@ -102,11 +130,36 @@ export class EncryptionProtocol implements CoreProtocol {
     });
   }
 
-  private static verifyEncryptedDelivery(message: RecordsWriteMessage): void {
-    if (message.encryption === undefined) {
+  private static verifyInlineWrappedGrantKeyDelivery(message: RecordsWriteMessage): void {
+    if (message.encryption !== undefined) {
+      return;
+    }
+
+    if (message.descriptor.dataSize > DwnConstant.maxDataSizeAllowedToBeEncoded) {
       throw new DwnError(
         DwnErrorCode.EncryptionProtocolValidateEncryptedDeliveryMissingEncryption,
-        `${message.descriptor.protocolPath} records must be encrypted.`
+        'plaintext grantKey records must carry an inline wrapped grantKey envelope.'
+      );
+    }
+  }
+
+  private static verifyGrantKeyDelivery(message: RecordsWriteMessage, dataBytes: Uint8Array): void {
+    if (message.encryption !== undefined) {
+      return;
+    }
+
+    try {
+      const envelope = Encoder.bytesToObject(dataBytes);
+      assertWrappedGrantKeyEnvelope(envelope);
+    } catch (error) {
+      if (error instanceof DwnError) {
+        throw error;
+      }
+
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new DwnError(
+        DwnErrorCode.EncryptionProtocolValidateEncryptedDeliveryMissingEncryption,
+        `${message.descriptor.protocolPath} records must be encrypted or carry a valid wrapped grantKey envelope: ${detail}`
       );
     }
   }

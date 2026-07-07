@@ -1,0 +1,87 @@
+{
+  "$id": "https://identity.foundation/dwn/json-schemas/encryption/wrapped-grant-key-envelope.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "keyEncryption",
+    "contentEncryption",
+    "ciphertext"
+  ],
+  "properties": {
+    "format": {
+      "const": "enbox/wrapped-grant-key@1"
+    },
+    "keyEncryption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "keyId",
+        "ephemeralPublicKey",
+        "encryptedKey"
+      ],
+      "properties": {
+        "algorithm": {
+          "const": "X25519-HKDF-SHA256+A256KW"
+        },
+        "keyId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        },
+        "ephemeralPublicKey": {
+          "$ref": "#/$defs/x25519PublicKey"
+        },
+        "encryptedKey": {
+          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/base64url"
+        }
+      }
+    },
+    "contentEncryption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "initializationVector"
+      ],
+      "properties": {
+        "algorithm": {
+          "const": "A256CTR"
+        },
+        "initializationVector": {
+          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/base64url"
+        }
+      }
+    },
+    "ciphertext": {
+      "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/base64url"
+    }
+  },
+  "$defs": {
+    "x25519PublicKey": {
+      "allOf": [
+        {
+          "$ref": "https://identity.foundation/dwn/json-schemas/public-jwk.json"
+        }
+      ],
+      "type": "object",
+      "required": [
+        "kty",
+        "crv",
+        "x"
+      ],
+      "properties": {
+        "kty": {
+          "const": "OKP"
+        },
+        "crv": {
+          "const": "X25519"
+        },
+        "x": {
+          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/base64url"
+        }
+      }
+    }
+  }
+}

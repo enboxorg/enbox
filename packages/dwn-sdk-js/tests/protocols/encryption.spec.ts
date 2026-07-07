@@ -9,9 +9,11 @@ import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { describe, expect, it } from 'bun:test';
 
 import {
+  DwnConstant,
   DwnErrorCode,
   DwnInterfaceName,
   DwnMethodName,
+  Encoder,
   Encryption,
   EncryptionProtocol,
   Jws,
@@ -19,6 +21,7 @@ import {
   KeyDerivationScheme,
   RecordsWrite,
   Time,
+  WRAPPED_GRANT_KEY_FORMAT,
 } from '../../src/index.js';
 
 describe('EncryptionProtocol', () => {
@@ -67,6 +70,38 @@ describe('EncryptionProtocol', () => {
       const encryptionProtocol = new EncryptionProtocol();
 
       await encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ grant }));
+    });
+
+    it('should reject plaintext grantKey records whose data cannot be inline validated', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const bob = await TestDataGenerator.generatePersona();
+      const protocol = 'https://example.com/protocol/chat';
+      const grant = createGrant({
+        grantor : alice.did,
+        grantee : bob.did,
+        id      : 'grant1',
+        protocol,
+      });
+      const message = await createGrantKeyMessage({
+        encrypted : false,
+        grant,
+        protocol,
+        recipient : bob.did,
+        signer    : Jws.createSigner(alice),
+      });
+      const largePlaintextMessage = {
+        ...message,
+        descriptor: {
+          ...message.descriptor,
+          dataSize: DwnConstant.maxDataSizeAllowedToBeEncoded + 1,
+        },
+      } as RecordsWriteMessage;
+
+      const encryptionProtocol = new EncryptionProtocol();
+
+      await expect(
+        encryptionProtocol.preProcessWrite('did:example:tenant', largePlaintextMessage, createValidationStateReader({ grant }))
+      ).rejects.toThrow(DwnErrorCode.EncryptionProtocolValidateEncryptedDeliveryMissingEncryption);
     });
 
     it('should accept read-grant grantKey records for referenced role paths outside the read subtree', async () => {
@@ -469,7 +504,7 @@ describe('EncryptionProtocol', () => {
       ).rejects.toThrow(DwnErrorCode.GrantAuthorizationGrantRevoked);
     });
 
-    it('should reject grantKey records that are not encrypted', async () => {
+    it('should accept grantKey metadata before wrapped envelope data validation', async () => {
       const alice = await TestDataGenerator.generatePersona();
       const bob = await TestDataGenerator.generatePersona();
       const protocol = 'https://example.com/protocol';
@@ -489,9 +524,7 @@ describe('EncryptionProtocol', () => {
 
       const encryptionProtocol = new EncryptionProtocol();
 
-      await expect(
-        encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ grant }))
-      ).rejects.toThrow(DwnErrorCode.EncryptionProtocolValidateEncryptedDeliveryMissingEncryption);
+      await encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ grant }));
     });
 
     it('should reject grantKey records for context-scoped permission grants', async () => {
@@ -560,6 +593,59 @@ describe('EncryptionProtocol', () => {
       await expect(
         encryptionProtocol.validateRecord(message, TestDataGenerator.randomBytes(32))
       ).rejects.toThrow(DwnErrorCode.EncryptionProtocolValidateEncryptedDeliveryMissingEncryption);
+    });
+
+    it('should accept wrapped grantKey envelope records without Records encryption', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const bob = await TestDataGenerator.generatePersona();
+      const protocol = 'https://example.com/protocol/chat';
+      const grant = createGrant({
+        grantor : alice.did,
+        grantee : bob.did,
+        id      : 'grant1',
+        protocol,
+      });
+      const message = await createGrantKeyMessage({
+        encrypted : false,
+        grant,
+        protocol,
+        recipient : bob.did,
+        signer    : Jws.createSigner(alice),
+      });
+
+      const encryptionProtocol = new EncryptionProtocol();
+      const keyId = message.descriptor.tags!.keyId;
+      expect(typeof keyId).toBe('string');
+
+      await encryptionProtocol.validateRecord(message, createWrappedGrantKeyEnvelopeBytes(keyId as string));
+    });
+
+    it('should reject malformed wrapped grantKey envelopes', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const bob = await TestDataGenerator.generatePersona();
+      const protocol = 'https://example.com/protocol/chat';
+      const grant = createGrant({
+        grantor : alice.did,
+        grantee : bob.did,
+        id      : 'grant1',
+        protocol,
+      });
+      const message = await createGrantKeyMessage({
+        encrypted : false,
+        grant,
+        protocol,
+        recipient : bob.did,
+        signer    : Jws.createSigner(alice),
+      });
+
+      const envelope = Encoder.bytesToObject(createWrappedGrantKeyEnvelopeBytes(message.descriptor.tags!.keyId as string)) as any;
+      envelope.keyEncryption.ephemeralPublicKey.x = '';
+
+      const encryptionProtocol = new EncryptionProtocol();
+
+      await expect(
+        encryptionProtocol.validateRecord(message, Encoder.objectToBytes(envelope))
+      ).rejects.toThrow(DwnErrorCode.EncryptionProtocolValidateGrantKeyWrappedDeliveryInvalid);
     });
   });
 
@@ -632,6 +718,27 @@ function createValidationStateReader(input: {
     fetchOldestGrantRevocation : async (): Promise<GenericMessage | undefined> => input.revocation,
     fetchProtocolDefinition    : async (): Promise<ProtocolDefinition> => input.protocolDefinition!,
   } as unknown as ValidationStateReader;
+}
+
+function createWrappedGrantKeyEnvelopeBytes(keyId: string): Uint8Array {
+  return Encoder.objectToBytes({
+    format        : WRAPPED_GRANT_KEY_FORMAT,
+    keyEncryption : {
+      algorithm          : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+      encryptedKey       : Encoder.bytesToBase64Url(TestDataGenerator.randomBytes(40)),
+      ephemeralPublicKey : {
+        crv : 'X25519',
+        kty : 'OKP',
+        x   : Encoder.bytesToBase64Url(TestDataGenerator.randomBytes(32)),
+      },
+      keyId,
+    },
+    contentEncryption: {
+      algorithm            : 'A256CTR',
+      initializationVector : Encoder.bytesToBase64Url(TestDataGenerator.randomBytes(16)),
+    },
+    ciphertext: Encoder.bytesToBase64Url(TestDataGenerator.randomBytes(32)),
+  });
 }
 
 function createGrantKeyCoverageProtocolDefinition(

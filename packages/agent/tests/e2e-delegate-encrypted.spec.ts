@@ -7,20 +7,20 @@
  */
 
 import type { BearerIdentity } from '../src/bearer-identity.js';
+import type { PublicKeyJwk } from '@enbox/crypto';
 import type { ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
-import { DidJwk } from '@enbox/dids';
-import { Ed25519 } from '@enbox/crypto';
 import sinon from 'sinon';
-
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { ContentEncryptionAlgorithm, DataStream, DwnInterfaceName, DwnMethodName, Encoder, EncryptionProtocol, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
 
+import { createImportedDelegateDid } from './utils/delegate-did.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
-import { createGrantKeyRecordsForGrants, resolveKeyDecrypter } from '../src/dwn-encryption.js';
+
+import { ContentEncryptionAlgorithm, DataStream, DwnInterfaceName, DwnMethodName, Encoder, EncryptionProtocol, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
+import { createGrantKeyRecordsForGrants, getEncryptionKeyInfo, resolveKeyDecrypter } from '../src/dwn-encryption.js';
 
 const encryptedNoteProtocol: ProtocolDefinition = {
   published : true,
@@ -80,23 +80,6 @@ async function applyDataEncodedRecord(
   );
 
   expect([202, 409]).toContain(applyReply.status.code);
-}
-
-async function createImportedDelegateDid(
-  harness: PlatformAgentTestHarness,
-): Promise<{ delegateDid: string; delegateX25519PrivateKey: any }> {
-  const delegateBearerDid = await DidJwk.create();
-  const delegatePortableDid = await delegateBearerDid.export();
-  const delegateX25519PrivateKey = await Ed25519.convertPrivateKeyToX25519({
-    privateKey: delegatePortableDid.privateKeys![0],
-  });
-  delegatePortableDid.privateKeys!.push(delegateX25519PrivateKey);
-  await harness.agent.did.import({
-    portableDid : delegatePortableDid,
-    tenant      : harness.agent.agentDid.uri,
-  });
-
-  return { delegateDid: delegateBearerDid.uri, delegateX25519PrivateKey };
 }
 
 async function copyProtocolToHarness(
@@ -163,10 +146,11 @@ async function createReadGrantAndGrantKey(params: {
   delegateHarness: PlatformAgentTestHarness;
   walletDid: string;
   delegateDid: string;
-  delegateX25519PrivateKey: any;
+  delegateRootPublicKey?: PublicKeyJwk;
+  delegateX25519PrivateKey?: any;
   protocol: string;
   protocolPath?: string;
-}): Promise<{ grant: any; grantId: string }> {
+}): Promise<{ grant: any; grantId: string; grantKeyRecords: Array<RecordsWriteMessage & { encodedData: string }> }> {
   const readGrant = await params.walletHarness.agent.permissions.createGrant({
     author      : params.walletDid,
     dateExpires : '2040-06-25T16:09:16.693356Z',
@@ -187,12 +171,18 @@ async function createReadGrantAndGrantKey(params: {
     readGrant.message as RecordsWriteMessage & { encodedData: string },
   );
 
+  if ((params.delegateX25519PrivateKey === undefined) === (params.delegateRootPublicKey === undefined)) {
+    throw new Error('test helper requires exactly one delegate key input.');
+  }
+
   const grantKeyRecords = await createGrantKeyRecordsForGrants({
-    agent                 : params.walletHarness.agent,
-    ownerDid              : params.walletDid,
-    granteeDid            : params.delegateDid,
-    granteeRootPrivateKey : params.delegateX25519PrivateKey,
-    grantMessages         : [readGrant.message as any],
+    agent      : params.walletHarness.agent,
+    ownerDid   : params.walletDid,
+    granteeDid : params.delegateDid,
+    ...(params.delegateX25519PrivateKey !== undefined
+      ? { granteeRootPrivateKey: params.delegateX25519PrivateKey }
+      : { granteeRootPublicKey: params.delegateRootPublicKey }),
+    grantMessages: [readGrant.message as any],
   });
   expect(grantKeyRecords).toHaveLength(1);
   expect(grantKeyRecords[0].descriptor.protocol).toBe(EncryptionProtocol.uri);
@@ -204,7 +194,11 @@ async function createReadGrantAndGrantKey(params: {
     grantKeyRecords[0] as RecordsWriteMessage & { encodedData: string },
   );
 
-  return { grant: readGrant.grant, grantId: readGrant.grant.id };
+  return {
+    grant           : readGrant.grant,
+    grantId         : readGrant.grant.id,
+    grantKeyRecords : grantKeyRecords as Array<RecordsWriteMessage & { encodedData: string }>,
+  };
 }
 
 describe('e2e: delegate + encrypted protocol', () => {
@@ -365,6 +359,58 @@ describe('e2e: delegate + encrypted protocol', () => {
       targetDid    : walletIdentity.did.uri,
     })).rejects.toThrow('no delivered decryption key covers encrypted record');
     expect(delegateDecryptionKeyCache.set.called).toBe(false);
+  });
+
+  it('should hydrate wrapped durable grantKeys for a pre-supplied delegate DID', async () => {
+    await installProtocol(walletHarness, walletIdentity.did.uri, encryptedNoteProtocol);
+
+    const noteData = 'Secret note from wrapped durable grantKey';
+    const { message: noteWrite } = await walletHarness.agent.processDwnRequest({
+      author        : walletIdentity.did.uri,
+      target        : walletIdentity.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol     : encryptedNoteProtocol.protocol,
+        protocolPath : 'note',
+        schema       : 'https://schemas.xyz/note',
+        dataFormat   : 'text/plain',
+        data         : new TextEncoder().encode(noteData),
+      },
+      encryption: true,
+    });
+
+    const { delegateDid } = await createImportedDelegateDid(delegateHarness);
+    const delegateRootPublicKey = (await getEncryptionKeyInfo(delegateHarness.agent, delegateDid)).publicKeyJwk;
+    const { grantId, grantKeyRecords } = await createReadGrantAndGrantKey({
+      delegateDid,
+      delegateHarness,
+      delegateRootPublicKey,
+      protocol  : encryptedNoteProtocol.protocol,
+      walletDid : walletIdentity.did.uri,
+      walletHarness,
+    });
+
+    expect(grantKeyRecords[0].encryption).toBeUndefined();
+
+    await copyProtocolToHarness(walletHarness, delegateHarness, walletIdentity.did.uri, encryptedNoteProtocol.protocol);
+    await copyRecordToHarness(walletHarness, delegateHarness, walletIdentity.did.uri, (noteWrite as RecordsWriteMessage).recordId);
+
+    delegateHarness.agent.dwn.clearDelegateDecryptionKeys(delegateDid);
+
+    const { reply } = await delegateHarness.agent.processDwnRequest({
+      author        : delegateDid,
+      target        : walletIdentity.did.uri,
+      messageType   : DwnInterface.RecordsRead,
+      messageParams : {
+        filter            : { recordId: (noteWrite as RecordsWriteMessage).recordId },
+        permissionGrantId : grantId,
+      },
+      encryption : true,
+      granteeDid : delegateDid,
+    });
+
+    expect(reply.status.code).toBe(200);
+    expect(new TextDecoder().decode(await DataStream.toBytes(reply.entry!.data!))).toBe(noteData);
   });
 
   it('should hydrate protocolPath-scoped durable grantKeys without owner KMS fallback', async () => {

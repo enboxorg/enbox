@@ -28,24 +28,26 @@
  * for every write.
  */
 
+import type { PrivateKeyJwk } from '@enbox/crypto';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type { BearerDid, PortableDid } from '@enbox/dids';
 import type { ConnectHandler, ConnectResult } from '@enbox/auth';
-import type { DwnProtocolDefinition, EnboxPlatformAgent } from '@enbox/agent';
+import type { DwnDataEncodedRecordsWriteMessage, DwnProtocolDefinition, EnboxPlatformAgent } from '@enbox/agent';
 
 import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
+import { DidJwk } from '@enbox/dids';
 import { Ed25519 } from '@enbox/crypto';
-import { Jws } from '@enbox/dwn-sdk-js';
+import { PlatformAgentTestHarness } from '@enbox/agent/test';
+
 import {
   AuthManager, MemoryStorage, processConnectedGrants, WalletConnect,
 } from '@enbox/auth';
-
-import { PlatformAgentTestHarness } from '@enbox/agent/test';
 import {
-  EnboxConnectProtocol, EnboxUserAgent,
+  DwnInterface, EnboxConnectProtocol, EnboxUserAgent, getEncryptionKeyInfo,
 } from '@enbox/agent';
+import { DwnInterfaceName, DwnMethodName, Encoder, EncryptionProtocol, Jws, WRAPPED_GRANT_KEY_FORMAT } from '@enbox/dwn-sdk-js';
 
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
@@ -516,6 +518,7 @@ class InProcessWalletHandler implements ConnectHandler {
   constructor(
     private walletAgent: EnboxPlatformAgent,
     private ownerDid: string,
+    private options: { preSupplyDelegateDid?: boolean } = {},
   ) {
     this.walletDwn = new DwnApi({
       agent: walletAgent, connectedDid: ownerDid,
@@ -525,20 +528,16 @@ class InProcessWalletHandler implements ConnectHandler {
   async requestAccess(params: {
     permissionRequests: any[];
   }): Promise<ConnectResult | undefined> {
-    const delegateBearerDid = await this.walletAgent.did.create({
-      store: false, method: 'jwk',
-    });
-    const delegatePortableDid = await delegateBearerDid.export();
-
-    // Add X25519 private key derived from the delegate's Ed25519 key
-    // (same as submitConnectResponse does).
-    const delegateEdPrivateKey = delegatePortableDid.privateKeys![0];
-    const delegateX25519PrivateKey = await Ed25519.convertPrivateKeyToX25519({
-      privateKey: delegateEdPrivateKey,
-    });
-    delegatePortableDid.privateKeys!.push(delegateX25519PrivateKey);
+    const delegatePortableDid = this.options.preSupplyDelegateDid === true
+      ? await createClientDelegatePortableDid()
+      : await createWalletMintedDelegatePortableDid(this.walletAgent);
+    const delegateRootPrivateKey = delegatePortableDid.privateKeys!.find((key) => key.crv === 'X25519') as PrivateKeyJwk | undefined;
+    if (delegateRootPrivateKey === undefined) {
+      throw new Error('test delegate DID must include an X25519 private key.');
+    }
 
     const allGrants: any[] = [];
+    const allGrantKeyRecords: DwnDataEncodedRecordsWriteMessage[] = [];
 
     for (const permissionRequest of params.permissionRequests) {
       const { protocolDefinition, permissionScopes } = permissionRequest;
@@ -560,10 +559,29 @@ class InProcessWalletHandler implements ConnectHandler {
 
       // Create permission grants.
       const grants = await EnboxConnectProtocol.createPermissionGrants(
-        this.ownerDid, delegateBearerDid.uri, this.walletAgent, permissionScopes,
+        this.ownerDid, delegatePortableDid.uri, this.walletAgent, permissionScopes,
       );
       allGrants.push(...grants);
+
+      if (permissionRequestHasEncryptedReadScopes(permissionRequest)) {
+        const delegateRootPublicKey = this.options.preSupplyDelegateDid === true
+          ? (await getEncryptionKeyInfo(this.walletAgent, delegatePortableDid.uri)).publicKeyJwk
+          : undefined;
+        const grantKeyRecords = await EnboxConnectProtocol.createGrantKeyRecordsForGrants({
+          agent      : this.walletAgent,
+          ownerDid   : this.ownerDid,
+          granteeDid : delegatePortableDid.uri,
+          ...(delegateRootPublicKey === undefined
+            ? { granteeRootPrivateKey: delegateRootPrivateKey }
+            : { granteeRootPublicKey: delegateRootPublicKey }),
+          grantMessages       : grants,
+          protocolDefinitions : [protocolDefinition],
+        });
+        allGrantKeyRecords.push(...grantKeyRecords);
+      }
     }
+
+    await fanOutDataEncodedRecords(this.walletAgent, this.ownerDid, allGrantKeyRecords);
 
     return {
       delegatePortableDid,
@@ -571,6 +589,121 @@ class InProcessWalletHandler implements ConnectHandler {
       connectedDid   : this.ownerDid,
     };
   }
+}
+
+async function createWalletMintedDelegatePortableDid(
+  walletAgent: EnboxPlatformAgent,
+): Promise<PortableDid> {
+  const delegateBearerDid = await walletAgent.did.create({
+    store  : false,
+    method : 'jwk',
+  });
+  return addX25519PrivateKey(await delegateBearerDid.export());
+}
+
+async function createClientDelegatePortableDid(): Promise<PortableDid> {
+  const delegateBearerDid = await DidJwk.create();
+  return addX25519PrivateKey(await delegateBearerDid.export());
+}
+
+async function addX25519PrivateKey(delegatePortableDid: PortableDid): Promise<PortableDid> {
+  const privateKeys = [...(delegatePortableDid.privateKeys ?? [])];
+  const delegateEdPrivateKey = privateKeys.find((key) => key.crv === 'Ed25519');
+  if (delegateEdPrivateKey === undefined) {
+    throw new Error('test delegate DID must include an Ed25519 private key.');
+  }
+
+  if (!privateKeys.some((key) => key.crv === 'X25519')) {
+    privateKeys.push(await Ed25519.convertPrivateKeyToX25519({
+      privateKey: delegateEdPrivateKey as PrivateKeyJwk,
+    }) as PrivateKeyJwk);
+  }
+
+  return {
+    ...delegatePortableDid,
+    privateKeys,
+  };
+}
+
+function permissionRequestHasEncryptedReadScopes(permissionRequest: any): boolean {
+  return Object.values(permissionRequest.protocolDefinition.types ?? {})
+    .some((type: any) => type?.encryptionRequired === true) &&
+    permissionRequest.permissionScopes.some(
+      (scope: any) => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Read
+    );
+}
+
+async function fanOutDataEncodedRecords(
+  agent: EnboxPlatformAgent,
+  ownerDid: string,
+  records: DwnDataEncodedRecordsWriteMessage[],
+): Promise<void> {
+  if (records.length === 0) {
+    return;
+  }
+
+  const dwnEndpointUrls = await agent.dwn.getDwnEndpointUrlsForTarget(ownerDid);
+  await Promise.all(records.flatMap((record) => {
+    const { encodedData, ...rawMessage } = record;
+    const data = Encoder.base64UrlToBytes(encodedData);
+    return dwnEndpointUrls.map(async (dwnUrl) => {
+      const reply = await agent.rpc.sendDwnRequest({
+        dwnUrl,
+        targetDid : ownerDid,
+        message   : rawMessage,
+        data      : new Blob([data as BlobPart]),
+      });
+      expect([202, 409]).toContain(reply.status.code);
+    });
+  }));
+}
+
+async function queryWrappedGrantKeyEnvelope(params: {
+  agent: EnboxPlatformAgent;
+  ownerDid: string;
+  delegateDid: string;
+  protocol: string;
+}): Promise<any> {
+  const { reply } = await params.agent.processDwnRequest({
+    author        : params.ownerDid,
+    target        : params.ownerDid,
+    messageType   : DwnInterface.RecordsQuery,
+    messageParams : {
+      filter: {
+        protocol     : EncryptionProtocol.uri,
+        protocolPath : EncryptionProtocol.grantKeyPath,
+        recipient    : params.delegateDid,
+        tags         : { protocol: params.protocol },
+      },
+    },
+  });
+
+  expect(reply.status.code).toBe(200);
+  const wrappedEntry = reply.entries?.find((entry: any) => entry.encryption === undefined && entry.encodedData !== undefined);
+  expect(wrappedEntry).toBeDefined();
+  return Encoder.bytesToObject(Encoder.base64UrlToBytes((wrappedEntry as any).encodedData));
+}
+
+async function queryDataEncodedRecord(params: {
+  agent: EnboxPlatformAgent;
+  ownerDid: string;
+  recordId: string;
+}): Promise<DwnDataEncodedRecordsWriteMessage> {
+  const { reply } = await params.agent.processDwnRequest({
+    author        : params.ownerDid,
+    target        : params.ownerDid,
+    messageType   : DwnInterface.RecordsQuery,
+    messageParams : {
+      filter: {
+        recordId: params.recordId,
+      },
+    },
+  });
+
+  expect(reply.status.code).toBe(200);
+  const record = reply.entries?.[0] as DwnDataEncodedRecordsWriteMessage | undefined;
+  expect(record?.encodedData).toBeDefined();
+  return record!;
 }
 
 describe('E2E: AuthManager.connect() with encrypted protocol', () => {
@@ -607,6 +740,10 @@ describe('E2E: AuthManager.connect() with encrypted protocol', () => {
     sinon.restore();
     await walletHarness.clearStorage();
     await walletHarness.closeStorage();
+  });
+
+  beforeEach(() => {
+    sinon.restore();
   });
 
   it('should write encrypted records through the full auth.connect() → Enbox.using() flow', async () => {
@@ -681,6 +818,102 @@ describe('E2E: AuthManager.connect() with encrypted protocol', () => {
         rec.rawMessage.authorization.signature.signatures[0],
       );
       expect(signer).toBe(session.delegateDid);
+    }
+  });
+
+  it('should hydrate wrapped grantKeys for a pre-supplied delegate DID through auth.connect()', async () => {
+    sinon.stub(console, 'warn');
+
+    const suppliedDappHarness = await PlatformAgentTestHarness.setup({
+      agentClass       : EnboxUserAgent,
+      agentStores      : 'memory',
+      testDataLocation : `__TESTDATA__/e2e-auth-connect-presupplied-${TestDataGenerator.randomString(8)}`,
+    });
+    await suppliedDappHarness.clearStorage();
+    await suppliedDappHarness.createAgentDid();
+
+    const protocolUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
+    const protocolDef = createEncryptedProtocol(protocolUri);
+
+    const EncTestProtocol = defineProtocol(
+      protocolDef as ProtocolDefinition,
+      {} as EncryptedSchemaMap,
+    );
+
+    try {
+      const auth = await AuthManager.create({
+        agent          : suppliedDappHarness.agent as EnboxUserAgent,
+        password       : 'test-password',
+        storage        : new MemoryStorage(),
+        connectHandler : new InProcessWalletHandler(
+          walletHarness.agent,
+          walletDid.uri,
+          { preSupplyDelegateDid: true },
+        ),
+      });
+
+      const session = await auth.connect({
+        protocols: [protocolDef],
+      });
+
+      expect(session.did).toBe(walletDid.uri);
+      expect(session.delegateDid).toBeDefined();
+      expect(session.delegateDid).not.toBe(walletDid.uri);
+
+      const envelope = await queryWrappedGrantKeyEnvelope({
+        agent       : walletHarness.agent,
+        ownerDid    : walletDid.uri,
+        delegateDid : session.delegateDid!,
+        protocol    : protocolUri,
+      });
+      expect(envelope.format).toBe(WRAPPED_GRANT_KEY_FORMAT);
+
+      const walletRecordData = { type: 'receive', amount: 700 };
+      const walletWrite = await walletHarness.agent.processDwnRequest({
+        author        : walletDid.uri,
+        target        : walletDid.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        encryption    : true,
+        messageParams : {
+          protocol     : protocolUri,
+          protocolPath : 'transaction',
+          schema       : protocolDef.types.transaction.schema,
+          dataFormat   : 'application/json',
+        },
+        dataStream: new Blob([JSON.stringify(walletRecordData)]),
+      });
+      expect(walletWrite.reply.status.code).toBe(202);
+      expect((walletWrite.message as any).encryption).toBeDefined();
+      const walletWriteMessage = await queryDataEncodedRecord({
+        agent    : walletHarness.agent,
+        ownerDid : walletDid.uri,
+        recordId : walletWrite.message!.recordId,
+      });
+      await fanOutDataEncodedRecords(walletHarness.agent, walletDid.uri, [
+        walletWriteMessage,
+      ]);
+
+      const enbox = Enbox.fromSession(session);
+      const typed = enbox.using(EncTestProtocol);
+      const { status: readStatus, record: hydratedRecord } = await typed.records.read('transaction', {
+        from   : walletDid.uri,
+        filter : { recordId: walletWrite.message!.recordId },
+      });
+      expect(readStatus.code).toBe(200);
+      expect(hydratedRecord).toBeDefined();
+      expect(await hydratedRecord!.data.json()).toEqual(walletRecordData);
+
+      const delegateRecordData = { type: 'send', amount: 250 };
+      const { status: delegateWriteStatus, record: delegateRecord } = await typed.records.create('transaction', {
+        data: delegateRecordData,
+      });
+      expect(delegateWriteStatus.code).toBe(202);
+      expect(delegateRecord).toBeDefined();
+      expect((delegateRecord!.rawMessage as any).encryption).toBeDefined();
+      expect(await delegateRecord!.data.json()).toEqual(delegateRecordData);
+    } finally {
+      await suppliedDappHarness.clearStorage();
+      await suppliedDappHarness.closeStorage();
     }
   });
 });
