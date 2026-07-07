@@ -16,6 +16,7 @@ import type {
   RecordsReadReply,
   RecordsWriteMessage,
   RoleAudienceKeyMaterial,
+  WrappedGrantKeyEnvelope,
 } from '@enbox/dwn-sdk-js';
 import type { KeyIdentifier, PrivateKeyJwk, PublicKeyJwk } from '@enbox/crypto';
 
@@ -29,6 +30,7 @@ import type {
 
 import { logger } from '@enbox/common';
 import {
+  assertWrappedGrantKeyEnvelope,
   Cid,
   ContentEncryptionAlgorithm,
   DataStream,
@@ -56,6 +58,7 @@ import {
   ROLE_AUDIENCE_DERIVATION_SCHEME,
   SEAL_DERIVATION_SCHEME,
   Time,
+  WRAPPED_GRANT_KEY_FORMAT,
 } from '@enbox/dwn-sdk-js';
 import { Ed25519, X25519 } from '@enbox/crypto';
 
@@ -416,17 +419,49 @@ export type DelegateDecryptionKeyEntry = {
   derivedPrivateKey: DerivedPrivateJwk;
 };
 
+type GrantKeyDeliveryKey =
+  | {
+    kind: 'encrypted';
+    granteeGrantKeyKeyId: string;
+    granteeGrantKeyPublicKey: PublicKeyJwk;
+  }
+  | {
+    kind: 'wrapped';
+    granteeRootKeyId: string;
+    granteeRootPublicKey: PublicKeyJwk;
+  };
+
+type GrantKeyRecordData = {
+  dataBytes: Uint8Array;
+  dataCid: string;
+  dataSize: number;
+  encryptionInput?: EncryptionInput;
+};
+
+type WrappedGrantKeyRecipient = {
+  keyUri: KeyIdentifier;
+  rootKeyId: string;
+};
+
+class WrappedGrantKeyTargetMismatchError extends Error {
+  public constructor(actualKeyId: string, expectedKeyId: string) {
+    super(`AgentDwnApi: wrapped grantKey targets key '${actualKeyId}', expected '${expectedKeyId}'.`);
+  }
+}
+
 /**
  * Creates durable grantKey records for read grants that carry encrypted protocol access.
  *
- * The record payload delivers the owner-derived ProtocolPath private key. The record
- * itself is encrypted to the grantee's own Encryption Protocol `grantKey` path.
+ * The record payload delivers the owner-derived ProtocolPath private key. Wallet-minted
+ * delegates receive an encrypted `grantKey` record, while supplied delegates receive a
+ * plaintext record carrying a wrapped envelope encrypted to their root X25519 key.
  */
 export async function createGrantKeyRecordsForGrants(params: {
   agent: EnboxPlatformAgent;
   ownerDid: string;
   granteeDid: string;
-  granteeRootPrivateKey: PrivateKeyJwk;
+  granteeRootPrivateKey?: PrivateKeyJwk;
+  granteeRootPublicKey?: PublicKeyJwk;
   grantMessages: DataEncodedRecordsWriteMessage[];
   protocolDefinitions?: ProtocolDefinition[];
 }): Promise<DataEncodedRecordsWriteMessage[]> {
@@ -434,11 +469,7 @@ export async function createGrantKeyRecordsForGrants(params: {
   const protocolDefinitions = new Map(
     (params.protocolDefinitions ?? []).map((definition) => [definition.protocol, definition])
   );
-  const granteeGrantKeyPublicKey = await derivePublicKeyFromPrivateKey(
-    params.granteeRootPrivateKey,
-    GRANT_KEY_DERIVATION_PATH,
-  );
-  const granteeGrantKeyKeyId = await Encryption.getKeyId(granteeGrantKeyPublicKey);
+  const deliveryKey = await resolveGrantKeyDeliveryKey(params);
 
   for (const grantMessage of params.grantMessages) {
     const grant = DwnPermissionGrant.parse(grantMessage);
@@ -448,59 +479,210 @@ export async function createGrantKeyRecordsForGrants(params: {
 
     const payloads = await buildGrantKeyPayloads(params.agent, params.ownerDid, grant, protocolDefinitions);
     for (const payload of payloads) {
-      const payloadBytes = Encoder.objectToBytes(payload);
-      const contentEncryptionAlgorithm = ContentEncryptionAlgorithm.A256CTR;
-      const dataEncryptionKey = crypto.getRandomValues(new Uint8Array(32));
-      const dataEncryptionIV = crypto.getRandomValues(new Uint8Array(ivLength(contentEncryptionAlgorithm)));
-      const encryptionInput = buildEncryptionInput(
-        dataEncryptionKey,
-        dataEncryptionIV,
-        granteeGrantKeyKeyId,
-        granteeGrantKeyPublicKey,
-        KeyDerivationScheme.ProtocolPath,
-      );
-      const { encryptedBytes, dataCid, dataSize } = await encryptAndComputeCid(
-        payloadBytes,
-        dataEncryptionKey,
-        dataEncryptionIV,
-        contentEncryptionAlgorithm,
-      );
-
-      const { reply, message } = await params.agent.processDwnRequest({
-        author        : params.ownerDid,
-        target        : params.ownerDid,
-        messageType   : DwnInterface.RecordsWrite,
-        messageParams : {
-          recipient    : params.granteeDid,
-          protocol     : EncryptionProtocol.uri,
-          protocolPath : EncryptionProtocol.grantKeyPath,
-          schema       : EncryptionProtocol.definition.types.grantKey.schema,
-          dataFormat   : 'application/json',
-          dataCid,
-          dataSize,
-          encryptionInput,
-          tags         : {
-            grantId  : grant.id,
-            protocol : payload.scope.protocol,
-            ...(payload.scope.protocolPath ? { protocolPath: payload.scope.protocolPath } : {}),
-            keyId    : payload.keyMaterial.keyId,
-          },
-        },
-        dataStream: DataStream.fromBytes(encryptedBytes),
-      });
-
-      if (reply.status.code !== 202 && reply.status.code !== 409) {
-        throw new Error(`AgentDwnApi: Failed to create grantKey record: ${reply.status.detail}`);
-      }
-
-      grantKeyRecords.push({
-        ...message!,
-        encodedData: Encoder.bytesToBase64Url(encryptedBytes),
-      } as DataEncodedRecordsWriteMessage);
+      grantKeyRecords.push(await createGrantKeyRecordForPayload({
+        agent      : params.agent,
+        deliveryKey,
+        grant,
+        granteeDid : params.granteeDid,
+        ownerDid   : params.ownerDid,
+        payload,
+      }));
     }
   }
 
   return grantKeyRecords;
+}
+
+async function resolveGrantKeyDeliveryKey(params: {
+  granteeRootPrivateKey?: PrivateKeyJwk;
+  granteeRootPublicKey?: PublicKeyJwk;
+}): Promise<GrantKeyDeliveryKey> {
+  if (params.granteeRootPrivateKey !== undefined) {
+    if (params.granteeRootPublicKey !== undefined) {
+      throw new Error('AgentDwnApi: createGrantKeyRecordsForGrants requires exactly one grantee root key.');
+    }
+
+    const granteeGrantKeyPublicKey = await derivePublicKeyFromPrivateKey(
+      params.granteeRootPrivateKey,
+      GRANT_KEY_DERIVATION_PATH,
+    );
+
+    return {
+      kind                 : 'encrypted',
+      granteeGrantKeyKeyId : await Encryption.getKeyId(granteeGrantKeyPublicKey),
+      granteeGrantKeyPublicKey,
+    };
+  }
+
+  if (params.granteeRootPublicKey === undefined) {
+    throw new Error('AgentDwnApi: createGrantKeyRecordsForGrants requires exactly one grantee root key.');
+  }
+
+  return {
+    kind                 : 'wrapped',
+    granteeRootKeyId     : await Encryption.getKeyId(params.granteeRootPublicKey),
+    granteeRootPublicKey : params.granteeRootPublicKey,
+  };
+}
+
+async function createGrantKeyRecordForPayload(params: {
+  agent: EnboxPlatformAgent;
+  deliveryKey: GrantKeyDeliveryKey;
+  grant: PermissionGrant;
+  granteeDid: string;
+  ownerDid: string;
+  payload: GrantKeyPayload;
+}): Promise<DataEncodedRecordsWriteMessage> {
+  const payloadBytes = Encoder.objectToBytes(params.payload);
+  const contentEncryptionAlgorithm = ContentEncryptionAlgorithm.A256CTR;
+  const dataEncryptionKey = crypto.getRandomValues(new Uint8Array(32));
+  const dataEncryptionIV = crypto.getRandomValues(new Uint8Array(ivLength(contentEncryptionAlgorithm)));
+  const recordData = await buildGrantKeyRecordData({
+    contentEncryptionAlgorithm,
+    dataEncryptionIV,
+    dataEncryptionKey,
+    deliveryKey: params.deliveryKey,
+    payloadBytes,
+  });
+
+  const { reply, message } = await params.agent.processDwnRequest({
+    author        : params.ownerDid,
+    target        : params.ownerDid,
+    messageType   : DwnInterface.RecordsWrite,
+    messageParams : {
+      recipient    : params.granteeDid,
+      protocol     : EncryptionProtocol.uri,
+      protocolPath : EncryptionProtocol.grantKeyPath,
+      schema       : EncryptionProtocol.definition.types.grantKey.schema,
+      dataFormat   : 'application/json',
+      dataCid      : recordData.dataCid,
+      dataSize     : recordData.dataSize,
+      ...(recordData.encryptionInput !== undefined ? { encryptionInput: recordData.encryptionInput } : {}),
+      tags         : buildGrantKeyRecordTags(params.grant, params.payload),
+    },
+    dataStream: DataStream.fromBytes(recordData.dataBytes),
+  });
+
+  if (reply.status.code !== 202 && reply.status.code !== 409) {
+    throw new Error(`AgentDwnApi: Failed to create grantKey record: ${reply.status.detail}`);
+  }
+
+  return {
+    ...message!,
+    encodedData: Encoder.bytesToBase64Url(recordData.dataBytes),
+  } as DataEncodedRecordsWriteMessage;
+}
+
+function buildGrantKeyRecordTags(grant: PermissionGrant, payload: GrantKeyPayload): Record<string, string> {
+  return {
+    grantId  : grant.id,
+    protocol : payload.scope.protocol,
+    ...(payload.scope.protocolPath !== undefined ? { protocolPath: payload.scope.protocolPath } : {}),
+    keyId    : payload.keyMaterial.keyId,
+  };
+}
+
+async function buildGrantKeyRecordData(params: {
+  contentEncryptionAlgorithm: ContentEncryptionAlgorithm;
+  dataEncryptionIV: Uint8Array;
+  dataEncryptionKey: Uint8Array;
+  deliveryKey: GrantKeyDeliveryKey;
+  payloadBytes: Uint8Array;
+}): Promise<GrantKeyRecordData> {
+  if (params.deliveryKey.kind === 'encrypted') {
+    return buildEncryptedGrantKeyRecordData({
+      contentEncryptionAlgorithm : params.contentEncryptionAlgorithm,
+      dataEncryptionIV           : params.dataEncryptionIV,
+      dataEncryptionKey          : params.dataEncryptionKey,
+      granteeGrantKeyKeyId       : params.deliveryKey.granteeGrantKeyKeyId,
+      granteeGrantKeyPublicKey   : params.deliveryKey.granteeGrantKeyPublicKey,
+      payloadBytes               : params.payloadBytes,
+    });
+  }
+
+  return buildWrappedGrantKeyRecordData({
+    contentEncryptionAlgorithm : params.contentEncryptionAlgorithm,
+    dataEncryptionIV           : params.dataEncryptionIV,
+    dataEncryptionKey          : params.dataEncryptionKey,
+    granteeRootKeyId           : params.deliveryKey.granteeRootKeyId,
+    granteeRootPublicKey       : params.deliveryKey.granteeRootPublicKey,
+    payloadBytes               : params.payloadBytes,
+  });
+}
+
+async function buildEncryptedGrantKeyRecordData(params: {
+  contentEncryptionAlgorithm: ContentEncryptionAlgorithm;
+  dataEncryptionIV: Uint8Array;
+  dataEncryptionKey: Uint8Array;
+  granteeGrantKeyKeyId: string;
+  granteeGrantKeyPublicKey: PublicKeyJwk;
+  payloadBytes: Uint8Array;
+}): Promise<GrantKeyRecordData> {
+  const encryptionInput = buildEncryptionInput(
+    params.dataEncryptionKey,
+    params.dataEncryptionIV,
+    params.granteeGrantKeyKeyId,
+    params.granteeGrantKeyPublicKey,
+    KeyDerivationScheme.ProtocolPath,
+  );
+  const { encryptedBytes, dataCid, dataSize } = await encryptAndComputeCid(
+    params.payloadBytes,
+    params.dataEncryptionKey,
+    params.dataEncryptionIV,
+    params.contentEncryptionAlgorithm,
+  );
+
+  return {
+    dataBytes: encryptedBytes,
+    dataCid,
+    dataSize,
+    encryptionInput,
+  };
+}
+
+async function buildWrappedGrantKeyRecordData(params: {
+  contentEncryptionAlgorithm: ContentEncryptionAlgorithm;
+  dataEncryptionIV: Uint8Array;
+  dataEncryptionKey: Uint8Array;
+  granteeRootKeyId: string;
+  granteeRootPublicKey: PublicKeyJwk;
+  payloadBytes: Uint8Array;
+}): Promise<GrantKeyRecordData> {
+  const ciphertext = await Encryption.encrypt(
+    params.contentEncryptionAlgorithm,
+    params.dataEncryptionKey,
+    params.dataEncryptionIV,
+    params.payloadBytes,
+  );
+  const encryption = await Encryption.buildEncryptionProperty({
+    algorithm            : params.contentEncryptionAlgorithm,
+    initializationVector : params.dataEncryptionIV,
+    key                  : params.dataEncryptionKey,
+    keyEncryptionInputs  : [{
+      algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+      derivationScheme : KeyDerivationScheme.ProtocolPath,
+      keyId            : params.granteeRootKeyId,
+      publicKey        : params.granteeRootPublicKey,
+    }],
+  });
+  const [{ derivationScheme: _derivationScheme, ...keyEncryption }] = encryption.keyEncryption;
+  const envelope: WrappedGrantKeyEnvelope = {
+    format            : WRAPPED_GRANT_KEY_FORMAT,
+    keyEncryption,
+    contentEncryption : {
+      algorithm            : encryption.algorithm,
+      initializationVector : encryption.initializationVector,
+    },
+    ciphertext: Encoder.bytesToBase64Url(ciphertext),
+  };
+  const dataBytes = Encoder.objectToBytes(envelope);
+  const dataCid = await Cid.computeDagPbCidFromBytes(dataBytes);
+
+  return {
+    dataBytes,
+    dataCid,
+    dataSize: dataBytes.length,
+  };
 }
 
 /**
@@ -2031,13 +2213,21 @@ function getDelegateDecryptionKeyCacheKey(key: DelegateDecryptionKeyEntry): stri
     : `${key.grantorDid}~${key.protocol}~protocolPath~${key.scope.protocolPath}`;
 }
 
-async function resolveGrantKeyRecords(params: {
+type ResolveGrantKeyRecordsParams = {
   agent: EnboxPlatformAgent;
   grantorDid: string;
   granteeDid: string;
   protocol: string;
   protocolPath?: string;
-}): Promise<DelegateDecryptionKeyEntry[]> {
+};
+
+type ResolveGrantKeyRecordParams = ResolveGrantKeyRecordsParams & {
+  grantKeyMessage: RecordsWriteMessage & { encodedData?: string };
+  granteeDecrypter: KeyDecrypter;
+  granteeWrappedGrantKeyRecipient: WrappedGrantKeyRecipient;
+};
+
+async function resolveGrantKeyRecords(params: ResolveGrantKeyRecordsParams): Promise<DelegateDecryptionKeyEntry[]> {
   const { reply } = await processDwnRequestWithRemoteFallback(params.agent, {
     author        : params.granteeDid,
     target        : params.grantorDid,
@@ -2056,65 +2246,153 @@ async function resolveGrantKeyRecords(params: {
     return [];
   }
 
-  const granteeDecrypter = await getKeyDecrypter(params.agent, params.granteeDid);
+  const granteeKeyInfo = await getEncryptionKeyInfo(params.agent, params.granteeDid);
+  const granteeWrappedGrantKeyRecipient: WrappedGrantKeyRecipient = {
+    keyUri    : granteeKeyInfo.keyUri,
+    rootKeyId : await Encryption.getKeyId(granteeKeyInfo.publicKeyJwk),
+  };
+  const granteeDecrypter = buildKmsDecryptCallback(
+    params.agent,
+    granteeKeyInfo.keyId,
+    granteeKeyInfo.keyUri,
+    KeyDerivationScheme.ProtocolPath,
+  );
   const resolvedKeys: DelegateDecryptionKeyEntry[] = [];
+  const targetMismatches: WrappedGrantKeyTargetMismatchError[] = [];
 
   for (const entry of reply.entries) {
     const grantKeyMessage = entry as RecordsWriteMessage & { encodedData?: string };
-    if (Message.getAuthor(grantKeyMessage) !== params.grantorDid) {
-      continue;
-    }
-
-    const encryptedData = await getGrantKeyEncryptedData(params.agent, params.granteeDid, params.grantorDid, grantKeyMessage);
-    if (encryptedData === undefined) {
-      continue;
-    }
-
     try {
-      const decryptedStream = await Records.decrypt(
+      const resolvedKey = await resolveGrantKeyRecord({
+        ...params,
         grantKeyMessage,
         granteeDecrypter,
-        DataStream.fromBytes(encryptedData),
-      );
-      const payload = Encoder.bytesToObject(await DataStream.toBytes(decryptedStream)) as GrantKeyPayload;
-      const grant = await readPermissionGrant(params.agent, params.granteeDid, params.grantorDid, payload.grantId);
-      await verifyPermissionGrantActive(params.agent, params.granteeDid, params.grantorDid, grant);
-
-      await verifyGrantKeyPayload({
-        agent        : params.agent,
-        payload,
-        grant,
-        grantKeyMessage,
-        grantorDid   : params.grantorDid,
-        granteeDid   : params.granteeDid,
-        protocol     : params.protocol,
-        protocolPath : params.protocolPath,
+        granteeWrappedGrantKeyRecipient,
       });
-
-      resolvedKeys.push({
-        grantorDid : params.grantorDid,
-        protocol   : payload.scope.protocol,
-        scope      : payload.scope.protocolPath === undefined
-          ? { kind: 'protocol' }
-          : { kind: 'protocolPath', protocolPath: payload.scope.protocolPath },
-        derivedPrivateKey: {
-          rootKeyId         : payload.keyMaterial.keyId,
-          keyId             : payload.keyMaterial.keyId,
-          derivationScheme  : KeyDerivationScheme.ProtocolPath,
-          derivationPath    : payload.keyMaterial.derivationPath,
-          derivedPrivateKey : payload.keyMaterial.privateKeyJwk,
-        },
-      });
+      if (resolvedKey !== undefined) {
+        resolvedKeys.push(resolvedKey);
+      }
     } catch (error) {
-      logger.log(
-        `AgentDwnApi: skipped grantKey '${grantKeyMessage.recordId}' while resolving delegate decryption key: ` +
-        `${error instanceof Error ? error.message : String(error)}`
-      );
-      continue;
+      collectGrantKeyRecordResolutionError(error, grantKeyMessage, targetMismatches);
     }
   }
 
+  if (resolvedKeys.length === 0 && targetMismatches.length > 0) {
+    throw targetMismatches[0];
+  }
+
   return resolvedKeys;
+}
+
+async function resolveGrantKeyRecord(params: ResolveGrantKeyRecordParams): Promise<DelegateDecryptionKeyEntry | undefined> {
+  const { grantKeyMessage } = params;
+  if (Message.getAuthor(grantKeyMessage) !== params.grantorDid) {
+    return undefined;
+  }
+
+  const encryptedData = await getGrantKeyEncryptedData(params.agent, params.granteeDid, params.grantorDid, grantKeyMessage);
+  if (encryptedData === undefined) {
+    return undefined;
+  }
+
+  const payload = await readGrantKeyPayload(params, encryptedData);
+  const grant = await readPermissionGrant(params.agent, params.granteeDid, params.grantorDid, payload.grantId);
+  await verifyPermissionGrantActive(params.agent, params.granteeDid, params.grantorDid, grant);
+
+  await verifyGrantKeyPayload({
+    agent        : params.agent,
+    payload,
+    grant,
+    grantKeyMessage,
+    grantorDid   : params.grantorDid,
+    granteeDid   : params.granteeDid,
+    protocol     : params.protocol,
+    protocolPath : params.protocolPath,
+  });
+
+  return buildDelegateDecryptionKeyEntry(params.grantorDid, payload);
+}
+
+async function readGrantKeyPayload(
+  params: ResolveGrantKeyRecordParams,
+  encryptedData: Uint8Array,
+): Promise<GrantKeyPayload> {
+  return params.grantKeyMessage.encryption === undefined
+    ? unwrapGrantKeyPayload(params.agent, params.granteeWrappedGrantKeyRecipient, encryptedData)
+    : decryptGrantKeyPayload(params.grantKeyMessage, params.granteeDecrypter, encryptedData);
+}
+
+function buildDelegateDecryptionKeyEntry(grantorDid: string, payload: GrantKeyPayload): DelegateDecryptionKeyEntry {
+  return {
+    grantorDid,
+    protocol : payload.scope.protocol,
+    scope    : payload.scope.protocolPath === undefined
+      ? { kind: 'protocol' }
+      : { kind: 'protocolPath', protocolPath: payload.scope.protocolPath },
+    derivedPrivateKey: {
+      rootKeyId         : payload.keyMaterial.keyId,
+      keyId             : payload.keyMaterial.keyId,
+      derivationScheme  : KeyDerivationScheme.ProtocolPath,
+      derivationPath    : payload.keyMaterial.derivationPath,
+      derivedPrivateKey : payload.keyMaterial.privateKeyJwk,
+    },
+  };
+}
+
+function collectGrantKeyRecordResolutionError(
+  error: unknown,
+  grantKeyMessage: RecordsWriteMessage,
+  targetMismatches: WrappedGrantKeyTargetMismatchError[],
+): void {
+  if (error instanceof WrappedGrantKeyTargetMismatchError) {
+    targetMismatches.push(error);
+  }
+
+  logger.log(
+    `AgentDwnApi: skipped grantKey '${grantKeyMessage.recordId}' while resolving delegate decryption key: ` +
+    `${error instanceof Error ? error.message : String(error)}`
+  );
+}
+
+async function decryptGrantKeyPayload(
+  grantKeyMessage: RecordsWriteMessage,
+  granteeDecrypter: KeyDecrypter,
+  encryptedData: Uint8Array,
+): Promise<GrantKeyPayload> {
+  const decryptedStream = await Records.decrypt(
+    grantKeyMessage,
+    granteeDecrypter,
+    DataStream.fromBytes(encryptedData),
+  );
+  return Encoder.bytesToObject(await DataStream.toBytes(decryptedStream)) as GrantKeyPayload;
+}
+
+async function unwrapGrantKeyPayload(
+  agent: EnboxPlatformAgent,
+  recipient: WrappedGrantKeyRecipient,
+  envelopeBytes: Uint8Array,
+): Promise<GrantKeyPayload> {
+  const envelope = Encoder.bytesToObject(envelopeBytes);
+  assertWrappedGrantKeyEnvelope(envelope);
+
+  if (envelope.keyEncryption.keyId !== recipient.rootKeyId) {
+    throw new WrappedGrantKeyTargetMismatchError(envelope.keyEncryption.keyId, recipient.rootKeyId);
+  }
+
+  const dataEncryptionKey = await agent.keyManager.unwrapContentKey({
+    keyUri             : recipient.keyUri,
+    derivationPath     : [],
+    encryptedKey       : Encoder.base64UrlToBytes(envelope.keyEncryption.encryptedKey),
+    ephemeralPublicKey : envelope.keyEncryption.ephemeralPublicKey,
+  });
+  const plaintext = await Encryption.decrypt(
+    envelope.contentEncryption.algorithm,
+    dataEncryptionKey,
+    Encoder.base64UrlToBytes(envelope.contentEncryption.initializationVector),
+    Encoder.base64UrlToBytes(envelope.ciphertext),
+  );
+
+  return Encoder.bytesToObject(plaintext) as GrantKeyPayload;
 }
 
 async function getGrantKeyEncryptedData(

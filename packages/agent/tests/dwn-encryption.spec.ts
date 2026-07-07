@@ -1,9 +1,30 @@
 import type { DataEncodedRecordsWriteMessage, DerivedPrivateJwk, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
+import { afterEach, describe, expect, it } from 'bun:test';
 
 import { X25519 } from '@enbox/crypto';
-import { afterEach, describe, expect, it } from 'bun:test';
+
+import { createPortableDidWithEncryptionKey } from './utils/delegate-did.js';
+import { DwnInterface } from '../src/types/dwn.js';
+import { PlatformAgentTestHarness } from '../src/test-harness.js';
+import { TestAgent } from './utils/test-agent.js';
+
+import {
+  buildEncryptionInput,
+  buildKmsDecryptCallback,
+  buildProtocolPathSubtreeDecrypter,
+  createGrantKeyRecordsForGrants,
+  encryptAndComputeCid,
+  getEncryptionKeyDeriver,
+  getEncryptionKeyInfo,
+  getKeyDecrypter,
+  hasAudienceSealCoverage,
+  ivLength,
+  maybeDecryptReply,
+  resolveAudienceDecryptionKey,
+  resolveKeyDecrypter,
+} from '../src/dwn-encryption.js';
 import {
   ContentEncryptionAlgorithm,
   DataStream,
@@ -22,24 +43,8 @@ import {
   ROLE_AUDIENCE_DERIVATION_SCHEME,
   TestDataGenerator,
   Time,
+  WRAPPED_GRANT_KEY_FORMAT,
 } from '@enbox/dwn-sdk-js';
-
-import { DwnInterface } from '../src/types/dwn.js';
-import {
-  buildEncryptionInput,
-  buildKmsDecryptCallback,
-  buildProtocolPathSubtreeDecrypter,
-  createGrantKeyRecordsForGrants,
-  encryptAndComputeCid,
-  getEncryptionKeyDeriver,
-  getEncryptionKeyInfo,
-  getKeyDecrypter,
-  hasAudienceSealCoverage,
-  ivLength,
-  maybeDecryptReply,
-  resolveAudienceDecryptionKey,
-  resolveKeyDecrypter,
-} from '../src/dwn-encryption.js';
 
 describe('dwn-encryption', () => {
   afterEach(() => {
@@ -941,6 +946,158 @@ describe('dwn-encryption', () => {
       expect(records.map((record) => record.descriptor.tags?.protocolPath).sort()).toEqual(['chat/admin', 'chat/member']);
       expect(processDwnRequest.callCount).toBe(2);
     });
+
+    it('should wrap and hydrate grantKey records for a pre-supplied did:jwk delegate', async () => {
+      const testHarness = await PlatformAgentTestHarness.setup({
+        agentClass       : TestAgent,
+        agentStores      : 'memory',
+        testDataLocation : '__TESTDATA__/wrapped-grant-key-roundtrip',
+      });
+
+      try {
+        await testHarness.clearStorage();
+        await testHarness.createAgentDid();
+
+        const delegatePortableDid = await createPortableDidWithEncryptionKey();
+        const delegateDid = await testHarness.agent.did.import({
+          portableDid : delegatePortableDid,
+          tenant      : testHarness.agent.agentDid.uri,
+        });
+        const delegateKeyInfo = await getEncryptionKeyInfo(testHarness.agent, delegateDid.uri);
+
+        const grantor = await TestDataGenerator.generatePersona({ did: 'did:example:alice' });
+        const grantee = await TestDataGenerator.generatePersona({ did: delegateDid.uri });
+        const ownerPrivateKey = await X25519.generateKey();
+        const protocol = 'https://wrapped-grant-key.example.com';
+        const readGrant = await TestDataGenerator.generateGrantCreate({
+          author      : grantor,
+          grantedTo   : grantee,
+          delegated   : true,
+          dateExpires : '2040-06-25T16:09:16.693356Z',
+          scope       : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Read,
+            protocol,
+          },
+        });
+        const grantKeyWriteStub = sinon.stub().callsFake(async (request: any): Promise<any> => {
+          const dataBytes = await DataStream.toBytes(request.dataStream);
+          const grantKeyWrite = await TestDataGenerator.generateRecordsWrite({
+            author       : grantor,
+            data         : dataBytes,
+            dataFormat   : 'application/json',
+            protocol     : EncryptionProtocol.uri,
+            protocolPath : EncryptionProtocol.grantKeyPath,
+            recipient    : delegateDid.uri,
+            schema       : EncryptionProtocol.definition.types.grantKey.schema,
+            tags         : request.messageParams.tags,
+          });
+
+          return {
+            message: {
+              ...grantKeyWrite.message,
+              descriptor: {
+                ...grantKeyWrite.message.descriptor,
+                dataCid  : request.messageParams.dataCid,
+                dataSize : request.messageParams.dataSize,
+                tags     : request.messageParams.tags,
+              },
+            },
+            reply: { status: { code: 202, detail: 'Accepted' } },
+          };
+        });
+        const producerAgent = await createGrantKeyProducerAgent(grantor.did, ownerPrivateKey, grantKeyWriteStub);
+
+        const grantKeyRecords = await createGrantKeyRecordsForGrants({
+          agent                : producerAgent,
+          ownerDid             : grantor.did,
+          granteeDid           : delegateDid.uri,
+          granteeRootPublicKey : delegateKeyInfo.publicKeyJwk,
+          grantMessages        : [readGrant.dataEncodedMessage],
+        });
+
+        expect(grantKeyRecords).toHaveLength(1);
+        expect(grantKeyRecords[0].encryption).toBeUndefined();
+        const envelope = Encoder.bytesToObject(Encoder.base64UrlToBytes(grantKeyRecords[0].encodedData)) as any;
+        expect(envelope.format).toBe(WRAPPED_GRANT_KEY_FORMAT);
+        expect(envelope.keyEncryption.keyId).toBe(await Encryption.getKeyId(delegateKeyInfo.publicKeyJwk));
+        expect(envelope.contentEncryption.algorithm).toBe(ContentEncryptionAlgorithm.A256CTR);
+        expect(typeof envelope.ciphertext).toBe('string');
+
+        const staleEnvelope = structuredClone(envelope);
+        staleEnvelope.keyEncryption.keyId = 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG';
+        const staleGrantKeyRecord = {
+          ...grantKeyRecords[0],
+          encodedData : Encoder.bytesToBase64Url(Encoder.objectToBytes(staleEnvelope)),
+          recordId    : 'stale-wrapped-grant-key',
+        };
+        const processDwnRequestStub = sinon.stub(testHarness.agent, 'processDwnRequest');
+        processDwnRequestStub.onFirstCall().resolves({
+          reply: {
+            status  : { code: 200, detail: 'OK' },
+            entries : [staleGrantKeyRecord, grantKeyRecords[0]],
+          },
+        });
+        processDwnRequestStub.onSecondCall().resolves({
+          reply: {
+            status : { code: 200, detail: 'OK' },
+            entry  : {
+              recordsWrite : readGrant.message,
+              data         : DataStream.fromBytes(readGrant.dataBytes),
+            },
+          },
+        });
+        sinon.stub(testHarness.agent.permissions, 'isGrantRevoked').resolves(false);
+
+        const delegateCache = {
+          get : sinon.stub().returns(undefined),
+          set : sinon.stub(),
+        };
+        const keyDecrypter = await resolveKeyDecrypter({
+          agent                      : testHarness.agent,
+          authorDid                  : delegateDid.uri,
+          delegateDecryptionKeyCache : delegateCache,
+          granteeDid                 : delegateDid.uri,
+          recordsWrite               : {
+            recordId   : 'wrapped-record',
+            contextId  : 'wrapped-record',
+            descriptor : { protocol, protocolPath: 'note' },
+          } as unknown as RecordsWriteMessage,
+          targetDid: grantor.did,
+        });
+
+        expect(keyDecrypter.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+        expect(delegateCache.set.calledOnce).toBe(true);
+        expect(processDwnRequestStub.callCount).toBe(2);
+
+        processDwnRequestStub.onThirdCall().resolves({
+          reply: {
+            status  : { code: 200, detail: 'OK' },
+            entries : [staleGrantKeyRecord],
+          },
+        });
+        const mismatchedOnlyCache = {
+          get : sinon.stub().returns(undefined),
+          set : sinon.stub(),
+        };
+        await expect(resolveKeyDecrypter({
+          agent                      : testHarness.agent,
+          authorDid                  : delegateDid.uri,
+          delegateDecryptionKeyCache : mismatchedOnlyCache,
+          granteeDid                 : delegateDid.uri,
+          recordsWrite               : {
+            recordId   : 'wrapped-record',
+            contextId  : 'wrapped-record',
+            descriptor : { protocol, protocolPath: 'note' },
+          } as unknown as RecordsWriteMessage,
+          targetDid: grantor.did,
+        })).rejects.toThrow('targets key');
+        expect(mismatchedOnlyCache.set.called).toBe(false);
+      } finally {
+        await testHarness.clearStorage();
+        await testHarness.closeStorage();
+      }
+    });
   });
 
   describe('resolveKeyDecrypter', () => {
@@ -1055,6 +1212,11 @@ describe('dwn-encryption', () => {
       });
       const grantKeyMessage = {
         ...grantKeyWrite.message,
+        encryption: {
+          algorithm            : ContentEncryptionAlgorithm.A256CTR,
+          initializationVector : Encoder.bytesToBase64Url(new Uint8Array(16)),
+          keyEncryption        : [],
+        },
         ...(includeEncodedData ? { encodedData: Encoder.bytesToBase64Url(grantKeyWrite.dataBytes!) } : {}),
       } as RecordsWriteMessage & { encodedData?: string };
 

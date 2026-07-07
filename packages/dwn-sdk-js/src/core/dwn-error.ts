@@ -40,6 +40,7 @@ export enum DwnErrorCode {
   EncryptionProtocolValidateGrantKeyGrantScopeMismatch = 'EncryptionProtocolValidateGrantKeyGrantScopeMismatch',
   EncryptionProtocolValidateGrantKeyMissingRequiredTag = 'EncryptionProtocolValidateGrantKeyMissingRequiredTag',
   EncryptionProtocolValidateGrantKeyRecipientMismatch = 'EncryptionProtocolValidateGrantKeyRecipientMismatch',
+  EncryptionProtocolValidateGrantKeyWrappedDeliveryInvalid = 'EncryptionProtocolValidateGrantKeyWrappedDeliveryInvalid',
   EncryptionProtocolValidateSchemaUnexpectedRecord = 'EncryptionProtocolValidateSchemaUnexpectedRecord',
   EventLogNotOpenError = 'EventLogNotOpenError',
   EventLogProgressGap = 'EventLogProgressGap',

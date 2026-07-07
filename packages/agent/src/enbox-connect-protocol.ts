@@ -85,9 +85,12 @@ import { Did, DidJwk } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
-import { createGrantKeyRecordsForGrants as createGrantKeyRecordsForGrantsFn } from './dwn-encryption.js';
 import { DwnInterface } from './types/dwn.js';
 import { isRecordPermissionScope } from './dwn-api.js';
+import {
+  createGrantKeyRecordsForGrants as createGrantKeyRecordsForGrantsFn,
+  getEncryptionKeyInfo,
+} from './dwn-encryption.js';
 import { mapConcurrent, mapConcurrentSettled } from './utils.js';
 
 // ---------------------------------------------------------------------------
@@ -906,9 +909,20 @@ function hasEncryptedProtocolTypes(protocolDefinition: DwnProtocolDefinition): b
     .some((type: any) => type?.encryptionRequired === true);
 }
 
-function hasEncryptedReadScope(permissionRequest: ConnectPermissionRequest): boolean {
-  return hasEncryptedProtocolTypes(permissionRequest.protocolDefinition)
-    && permissionRequest.permissionScopes.some(isConnectReadScope);
+function permissionRequestHasEncryptedReadScopes(permissionRequest: ConnectPermissionRequest): boolean {
+  return hasEncryptedProtocolTypes(permissionRequest.protocolDefinition) &&
+    permissionRequest.permissionScopes.some(isConnectReadScope);
+}
+
+function validatePermissionRequestProtocolUris(permissionRequests: ConnectPermissionRequest[]): void {
+  for (const { protocolDefinition, permissionScopes } of permissionRequests) {
+    const grantsMatchProtocolUri = permissionScopes.every(
+      scope => 'protocol' in scope && scope.protocol === protocolDefinition.protocol
+    );
+    if (!grantsMatchProtocolUri) {
+      throw new Error('All permission scopes must match the protocol URI they are provided with.');
+    }
+  }
 }
 
 function resolvePreSuppliedDelegateDid(delegateDid: string | undefined): string | undefined {
@@ -1237,12 +1251,6 @@ async function submitConnectResponse(
     const sessionTtlSeconds = resolveRequestedSessionTtlSeconds(connectRequest.requestedSessionTtlSeconds);
     const preSuppliedDelegateDid = resolvePreSuppliedDelegateDid(connectRequest.delegateDid);
 
-    if (preSuppliedDelegateDid !== undefined && connectRequest.permissionRequests.some(hasEncryptedReadScope)) {
-      throw new Error(
-        'Connect pre-supplied delegate DID cannot be used with encrypted read scopes yet; use a wallet-minted delegate for encrypted protocols.'
-      );
-    }
-
     let delegatePortableDid: PortableDid | undefined;
     let delegateRootPrivateKey: PrivateKeyJwk | undefined;
     let responseBearerDid: BearerDid;
@@ -1270,6 +1278,16 @@ async function submitConnectResponse(
       grantedDelegateDid = delegateBearerDid.uri;
     }
 
+    validatePermissionRequestProtocolUris(connectRequest.permissionRequests);
+
+    const preSuppliedDelegateRootPublicKey = preSuppliedDelegateDid !== undefined &&
+      connectRequest.permissionRequests.some(permissionRequestHasEncryptedReadScopes)
+      ? (await timed(
+        `${CONNECT_PERF_LOG_PREFIX} delegateDid.encryptionKey.resolve`,
+        () => getEncryptionKeyInfo(agent, grantedDelegateDid),
+      )).publicKeyJwk
+      : undefined;
+
     const connectSession = createConnectSessionMetadata({
       appName        : connectRequest.appName,
       appIcon        : connectRequest.appIcon,
@@ -1287,13 +1305,6 @@ async function submitConnectResponse(
           async (permissionRequest) => {
             const { protocolDefinition, permissionScopes } = permissionRequest;
 
-            const grantsMatchProtocolUri = permissionScopes.every(
-              scope => 'protocol' in scope && scope.protocol === protocolDefinition.protocol
-            );
-            if (!grantsMatchProtocolUri) {
-              throw new Error('All permission scopes must match the protocol URI they are provided with.');
-            }
-
             await prepareProtocol(selectedDid, agent, protocolDefinition);
 
             const hasEncryptedTypes = hasEncryptedProtocolTypes(protocolDefinition);
@@ -1308,17 +1319,15 @@ async function submitConnectResponse(
             );
 
             if (hasEncryptedReadScopes) {
-              if (delegateRootPrivateKey === undefined) {
-                throw new Error('Connect encrypted read grants require a wallet-minted delegate DID.');
-              }
-
               const grantKeyRecords = await EnboxConnectProtocol.createGrantKeyRecordsForGrants({
                 agent,
-                ownerDid              : selectedDid,
-                granteeDid            : grantedDelegateDid,
-                granteeRootPrivateKey : delegateRootPrivateKey,
-                grantMessages         : grants,
-                protocolDefinitions   : [protocolDefinition],
+                ownerDid   : selectedDid,
+                granteeDid : grantedDelegateDid,
+                ...(delegateRootPrivateKey !== undefined
+                  ? { granteeRootPrivateKey: delegateRootPrivateKey }
+                  : { granteeRootPublicKey: preSuppliedDelegateRootPublicKey }),
+                grantMessages       : grants,
+                protocolDefinitions : [protocolDefinition],
               });
               durableGrantKeyRecords.push(...grantKeyRecords);
             }

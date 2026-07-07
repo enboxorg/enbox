@@ -926,8 +926,10 @@ describe('enbox connect', () => {
       expect(createConnectResponseStub.firstCall.args[0].delegatePortableDid).toBeUndefined();
     });
 
-    it('should reject encrypted read scopes before creating a response DID when using a pre-supplied delegate DID', async () => {
-      const delegateCreateStub = sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
+    it('should create public-key wrapped grantKeys for encrypted read scopes when using a pre-supplied delegate DID', async () => {
+      const preSuppliedDelegate = await DidJwk.create();
+      const { capturedDelegateDids } = stubSubmitConnectResponseDependencies();
+      const grantKeyStub = sinon.stub(EnboxConnectProtocol, 'createGrantKeyRecordsForGrants').resolves([]);
       const encryptedProtocol: DwnProtocolDefinition = {
         protocol  : 'http://pre-supplied-encrypted.xyz',
         published : true,
@@ -952,20 +954,69 @@ describe('enbox connect', () => {
       const request = await EnboxConnectProtocol.createConnectRequest({
         appName            : 'Sample App',
         clientDid          : clientEphemeralPortableDid.uri,
-        delegateDid        : 'did:jwk:requester-delegate',
+        delegateDid        : preSuppliedDelegate.uri,
         permissionRequests : [{ protocolDefinition: encryptedProtocol, permissionScopes: readScopes }],
         callbackUrl,
       });
 
-      await expect(
-        EnboxConnectProtocol.submitConnectResponse(
-          providerIdentity.did.uri,
-          request,
-          randomPin,
-          testHarness.agent,
-        )
-      ).rejects.toThrow('Connect pre-supplied delegate DID cannot be used with encrypted read scopes yet');
-      expect(delegateCreateStub.callCount).toBe(0);
+      await EnboxConnectProtocol.submitConnectResponse(
+        providerIdentity.did.uri,
+        request,
+        randomPin,
+        testHarness.agent,
+      );
+
+      expect(capturedDelegateDids).toEqual([preSuppliedDelegate.uri]);
+      expect(grantKeyStub.calledOnce).toBe(true);
+      const grantKeyParams = grantKeyStub.firstCall.args[0] as any;
+      expect(grantKeyParams.granteeDid).toBe(preSuppliedDelegate.uri);
+      expect(grantKeyParams.granteeRootPrivateKey).toBeUndefined();
+      expect(grantKeyParams.granteeRootPublicKey).toBeDefined();
+      expect(grantKeyParams.granteeRootPublicKey.crv).toBe('X25519');
+    });
+
+    it('should reject unusable pre-supplied delegate encryption keys before creating grants', async () => {
+      const { capturedDelegateDids, revocationGrantStub } = stubSubmitConnectResponseDependencies();
+      const grantKeyStub = sinon.stub(EnboxConnectProtocol, 'createGrantKeyRecordsForGrants').resolves([]);
+      const encryptedProtocol: DwnProtocolDefinition = {
+        protocol  : 'http://pre-supplied-invalid-encryption.xyz',
+        published : true,
+        types     : {
+          note: {
+            schema             : 'http://pre-supplied-invalid-encryption.xyz/note',
+            dataFormats        : ['text/plain'],
+            encryptionRequired : true,
+          },
+        },
+        structure: { note: {} },
+      };
+      const readScopes: RecordsPermissionScope[] = [{
+        interface : 'Records' as any,
+        method    : 'Read' as any,
+        protocol  : encryptedProtocol.protocol,
+      }];
+      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
+        baseURL  : 'http://localhost:3000',
+        endpoint : 'callback',
+      });
+      const request = await EnboxConnectProtocol.createConnectRequest({
+        appName            : 'Sample App',
+        clientDid          : clientEphemeralPortableDid.uri,
+        delegateDid        : 'did:example:delegate',
+        permissionRequests : [{ protocolDefinition: encryptedProtocol, permissionScopes: readScopes }],
+        callbackUrl,
+      });
+
+      await expect(EnboxConnectProtocol.submitConnectResponse(
+        providerIdentity.did.uri,
+        request,
+        randomPin,
+        testHarness.agent,
+      )).rejects.toThrow();
+
+      expect(capturedDelegateDids).toEqual([]);
+      expect(grantKeyStub.called).toBe(false);
+      expect(revocationGrantStub.called).toBe(false);
     });
 
     it('should reject malformed pre-supplied delegate DID values before creating a response DID', async () => {
