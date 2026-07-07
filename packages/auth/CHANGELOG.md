@@ -1,5 +1,18 @@
 # @enbox/auth
 
+## 0.6.59
+
+### Patch Changes
+
+- [#1187](https://github.com/enboxorg/enbox/pull/1187) [`96ea6cb`](https://github.com/enboxorg/enbox/commit/96ea6cbda08a4bb6540d8a4e2664278f82d6fba8) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: restore the active identity (not a stale delegate), remove revoked delegates on disconnect, and surface authorization failures in delegate protocol ensure
+
+  restoreSession preferred any connected identity over the persisted active marker, so a leftover delegate from a disconnected session (grants revoked) shadowed the current one and every call failed with 401. Disconnect now also removes the dead delegate identity locally after clean revocation (kept while revocations are queued for retry), and TypedEnbox reports the query status when the wallet's protocol definition cannot be fetched instead of misreporting a revoked grant as a missing protocol.
+
+- Updated dependencies [[`6b5b978`](https://github.com/enboxorg/enbox/commit/6b5b9786ee931f8d80d84e5f2865166c39568eb6)]:
+  - @enbox/agent@0.8.13
+  - @enbox/dwn-sdk-js@0.4.8
+  - @enbox/dwn-clients@0.4.14
+
 ## 0.6.58
 
 ### Patch Changes

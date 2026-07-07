@@ -1,5 +1,11 @@
 # @enbox/dwn-sdk-js
 
+## 0.4.8
+
+### Patch Changes
+
+- [#1189](https://github.com/enboxorg/enbox/pull/1189) [`6b5b978`](https://github.com/enboxorg/enbox/commit/6b5b9786ee931f8d80d84e5f2865166c39568eb6) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Support wrapped grantKey delivery for pre-supplied delegate DIDs with encrypted read scopes.
+
 ## 0.4.7
 
 ### Patch Changes
