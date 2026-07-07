@@ -107,19 +107,27 @@ export async function restoreSession(
   const storedDelegateDid = await storage.get(STORAGE_KEYS.DELEGATE_DID);
 
   // First try the connected identity (wallet-connected sessions).
-  let identity = await userAgent.identity.connectedIdentity();
+  // Prefer the session's persisted delegate identity: a stale delegate from
+  // an earlier session (its grants revoked on disconnect) must not shadow
+  // the one the most recent session finalized. DELEGATE_DID stores that
+  // identity's own DID; ACTIVE_IDENTITY stores the connected (owner) DID,
+  // which only resolves an identity for local (non-delegate) sessions.
+  let identity = storedDelegateDid
+    ? await userAgent.identity.get({ didUri: storedDelegateDid })
+    : undefined;
+
+  if (!identity && activeIdentityDid) {
+    identity = await userAgent.identity.get({ didUri: activeIdentityDid });
+  }
 
   if (!identity) {
-    // Try to find the specific active identity.
-    if (activeIdentityDid) {
-      identity = await userAgent.identity.get({ didUri: activeIdentityDid });
-    }
+    identity = await userAgent.identity.connectedIdentity();
+  }
 
-    // Fall back to the first available identity.
-    if (!identity) {
-      const identities = await userAgent.identity.list();
-      identity = identities[0];
-    }
+  // Fall back to the first available identity.
+  if (!identity) {
+    const identities = await userAgent.identity.list();
+    identity = identities[0];
   }
 
   if (!identity) {

@@ -732,6 +732,29 @@ export class AuthManager {
       } catch { /* best effort */ }
     }
 
+    // A cleanly revoked delegate is dead — connect sessions have no renewal
+    // path and its grants are revoked — so remove the identity locally.
+    // Otherwise a later restore can select the stale delegate and every
+    // call under its revoked grants fails with 401. Keep the identity while
+    // revocations are queued for retry: the retry path signs as the delegate.
+    if (delegateDid && failedRevocations.length === 0) {
+      try {
+        const delegateIdentity = await this._userAgent.identity.get({ didUri: delegateDid });
+        if (delegateIdentity) {
+          try {
+            await this._userAgent.did.delete({
+              didUri    : delegateIdentity.did.uri,
+              tenant    : delegateIdentity.metadata.tenant,
+              deleteKey : true,
+            });
+          } catch { /* best effort */ }
+          await this._userAgent.identity.delete({ didUri: delegateIdentity.did.uri });
+        }
+      } catch {
+        // Best-effort — a leftover identity is recoverable by reconnecting.
+      }
+    }
+
     this._setState('unlocked');
 
     if (did) {

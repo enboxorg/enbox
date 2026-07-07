@@ -839,10 +839,19 @@ export class TypedEnbox<
    * Returns the local import response when the remote configuration was found.
    */
   private async _autoConfigureDelegateProtocol(): Promise<ProtocolsConfigureResponse | undefined> {
-    const { protocols: remoteProtocols } = await this._dwn.protocols.query({
+    const { protocols: remoteProtocols, status: queryStatus } = await this._dwn.protocols.query({
       from   : this._dwn.connectedDid,
       filter : { protocol: this._definition.protocol },
     });
+
+    if (queryStatus !== undefined && queryStatus.code >= 300) {
+      throw new Error(
+        `TypedEnbox: delegate could not fetch the wallet's protocol definition for ` +
+        `'${this._definition.protocol}' from the owner's DWN: ${queryStatus.code} ` +
+        `${queryStatus.detail}. A revoked or expired session grant fails with 401 — ` +
+        `reconnect to obtain fresh grants.`,
+      );
+    }
 
     if (remoteProtocols.length === 0) {
       return undefined;
