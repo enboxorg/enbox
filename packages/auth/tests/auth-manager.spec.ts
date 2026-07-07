@@ -692,6 +692,39 @@ describe('AuthManager', () => {
   });
 
   describe('disconnect()', () => {
+    test('stops sync before sending session revocations', async () => {
+      const order: string[] = [];
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await storage.set(STORAGE_KEYS.SESSION_REVOCATIONS, JSON.stringify([{ grantId: 'g1', revocationGrantId: 'r1' }]));
+
+      const delegateIdentity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate123' },
+        metadata : { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner456' },
+      });
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [delegateIdentity],
+        syncStopSync : async () => { order.push('stopSync'); },
+      });
+      // Disconnect reads revocation grants through the agent's DWN API.
+      (agent as any).dwn.processRequest = async (params: any): Promise<any> => {
+        order.push(`dwn:${params.messageType}`);
+        return { reply: { status: { code: 202, detail: 'Accepted' } } };
+      };
+
+      const manager = createTestManager(agent, { storage });
+      await manager.connect({ password: 'test' });
+      order.length = 0; // observe only the disconnect sequence
+
+      await manager.disconnect();
+
+      const stopIndex = order.indexOf('stopSync');
+      const firstReadIndex = order.indexOf('dwn:RecordsRead');
+      expect(stopIndex).toBeGreaterThanOrEqual(0);
+      expect(firstReadIndex).toBeGreaterThan(stopIndex);
+    });
+
     test('clean disconnect removes session markers', async () => {
       const storage = new MemoryStorage();
       await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');

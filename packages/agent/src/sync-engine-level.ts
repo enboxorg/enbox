@@ -4,7 +4,7 @@ import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clie
 import type { GenericMessage, MessageEvent, MessagesFilter, MessagesQueryReply, MessagesQueryReplyEntry, MessagesSubscribeReply, ProgressToken, ProtocolDefinition, RecordsQueryReply, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
 import { Level } from 'level';
-import { DwnInterfaceName, DwnMethodName, Encoder, Message } from '@enbox/dwn-sdk-js';
+import { DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Message } from '@enbox/dwn-sdk-js';
 import { parseDurationInMilliseconds, sleep } from '@enbox/common';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
@@ -1649,6 +1649,13 @@ export class SyncEngineLevel implements SyncEngine {
       // hot-remove + re-add, don't retry or terminalize the replacement link.
       if (this._engineGeneration !== generation || isStaleLink()) { return; }
 
+      if (SyncEngineLevel.isTerminalAuthorizationFailure(String(error?.message ?? error))) {
+        console.warn(`SyncEngineLevel: sync authorization for ${did} -> ${dwnUrl} was revoked or expired — pausing link (reconnect to resume).`);
+        this.emitEvent({ type: 'repair:failed', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope, attempt: attempts, error: String(error.message ?? error) });
+        await this.transitionToPaused(linkKey, link);
+        return;
+      }
+
       console.error(`SyncEngineLevel: Repair failed for ${did} -> ${dwnUrl} (attempt ${attempts})`, error);
       this.emitEvent({ type: 'repair:failed', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope, attempt: attempts, error: String(error.message ?? error) });
 
@@ -2359,10 +2366,33 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
+  /**
+   * Authorization failures that cannot heal by retrying — the link's grant
+   * was revoked or expired, so every repair attempt would fail identically.
+   * Such links park (`paused`) until a reconnect installs fresh grants.
+   */
+  private static isTerminalAuthorizationFailure(detail: string | undefined): boolean {
+    if (!detail) {
+      return false;
+    }
+
+    return detail.includes(DwnErrorCode.GrantAuthorizationGrantRevoked) ||
+      detail.includes(DwnErrorCode.GrantAuthorizationGrantExpired) ||
+      detail.includes(DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed);
+  }
+
   private async handleLivePullSubscriptionError(
     { did, dwnUrl, linkKey, link, isStale }: LivePullContext,
     subMessage: Extract<SubscriptionMessage, { type: 'error' }>,
   ): Promise<void> {
+    if (SyncEngineLevel.isTerminalAuthorizationFailure(String(subMessage.error.code ?? ''))) {
+      console.warn(`SyncEngineLevel: sync authorization for ${did} -> ${dwnUrl} was revoked or expired — pausing link (reconnect to resume).`);
+      if (link && !isStale()) {
+        await this.transitionToPaused(linkKey, link);
+      }
+      return;
+    }
+
     console.warn(`SyncEngineLevel: subscription error for ${did} -> ${dwnUrl}: ${subMessage.error.code}`);
 
     if (link && !isStale()) {

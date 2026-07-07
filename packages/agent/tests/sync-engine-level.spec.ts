@@ -55,6 +55,41 @@ describe('SyncEngineLevel', () => {
     });
   });
 
+  describe('terminal authorization failures', () => {
+    const isTerminal = (detail: string | undefined): boolean =>
+      (SyncEngineLevel as any).isTerminalAuthorizationFailure(detail);
+
+    it('should classify revoked, expired, and subscribe-delivery authorization failures as terminal', () => {
+      expect(isTerminal('401 GrantAuthorizationGrantRevoked: Permission grant with CID bafy… has been revoked')).toBe(true);
+      expect(isTerminal('GrantAuthorizationGrantExpired: grant expired')).toBe(true);
+      expect(isTerminal('MessagesSubscribeDeliveryAuthorizationFailed')).toBe(true);
+      expect(isTerminal('503 something transient')).toBe(false);
+      expect(isTerminal(undefined)).toBe(false);
+      expect(isTerminal('')).toBe(false);
+    });
+
+    it('should pause instead of repairing when a live pull subscription reports a terminal authorization error', async () => {
+      const syncEngine = new SyncEngineLevel({ agent: { agentDid: 'did:method:abc123' } as any, db: {} as any });
+      const transitions: string[] = [];
+      (syncEngine as any).transitionToPaused = async (): Promise<void> => { transitions.push('paused'); };
+      (syncEngine as any).transitionToRepairing = async (): Promise<void> => { transitions.push('repairing'); };
+
+      const context = { did: 'did:dht:tenant', dwnUrl: 'https://dwn.example', linkKey: 'k', link: {} as any, isStale: (): boolean => false };
+
+      await (syncEngine as any).handleLivePullSubscriptionError(context, {
+        type  : 'error',
+        error : { code: 'MessagesSubscribeDeliveryAuthorizationFailed', message: 'delivery authorization failed' },
+      });
+      expect(transitions).toEqual(['paused']);
+
+      await (syncEngine as any).handleLivePullSubscriptionError(context, {
+        type  : 'error',
+        error : { code: 'SomeTransientCode', message: 'flaky network' },
+      });
+      expect(transitions).toEqual(['paused', 'repairing']);
+    });
+  });
+
   describe('delegated permission grant bootstrap', () => {
     it('uses delegate-local grant entries without probing the owner signer', async () => {
       const ownerDid = 'did:example:owner';
