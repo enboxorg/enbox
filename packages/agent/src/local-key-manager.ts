@@ -38,12 +38,12 @@ import {
   isPrivateJwk,
   KEY_URI_PREFIX_JWK,
   Sha2Algorithm,
+  X25519,
   X25519Algorithm,
 } from '@enbox/crypto';
 
 import type { PrivateKeyJwk } from '@enbox/dwn-sdk-js';
 
-import { X25519 } from '@enbox/crypto';
 import { Encoder, Encryption, HdKey, KeyAgreementAlgorithm, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
 
 import type { AgentDataStore } from './store-data.js';

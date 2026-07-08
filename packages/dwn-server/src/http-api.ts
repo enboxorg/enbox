@@ -1,6 +1,4 @@
-import type { JsonRpcRequest } from '@enbox/dwn-clients';
-import type { RecordsReadReply } from '@enbox/dwn-sdk-js';
-import type { ServerInfo } from '@enbox/dwn-clients';
+import type { JsonRpcRequest, ServerInfo } from '@enbox/dwn-clients';
 import type { Server, ServerWebSocket } from 'bun';
 
 import type { Dialect } from '@enbox/dwn-sql-store';
@@ -30,7 +28,7 @@ import {
   maxWsJsonRpcPayloadBytes,
   normalizeReadableStream,
 } from '@enbox/dwn-clients';
-import { DateSort, type Dwn, ProtocolsQuery, RecordsQuery, RecordsRead } from '@enbox/dwn-sdk-js';
+import { DateSort, type Dwn, ProtocolsQuery, RecordsQuery, RecordsRead, type RecordsReadReply } from '@enbox/dwn-sdk-js';
 import { existsSync, readFileSync } from 'fs';
 import { join, resolve } from 'path';
 
@@ -464,7 +462,7 @@ export class HttpApi {
 
     // /:did/read/protocols/:protocol/*  (also matches trailing slash with empty path)
     {
-      const match = path.match(/^\/([^/]+)\/read\/protocols\/([^/]+)\/(.*)$/);
+      const match = /^\/([^/]+)\/read\/protocols\/([^/]+)\/(.*)$/.exec(path);
       if (match && req.method === 'GET') {
         const [, did, protocolParam, protocolPathRaw] = match;
         return this.#handleReadProtocolRecord(did, protocolParam, protocolPathRaw, url, leadTailSlashRegex);
@@ -473,7 +471,7 @@ export class HttpApi {
 
     // /:did/read/protocols/:protocol
     {
-      const match = path.match(/^\/([^/]+)\/read\/protocols\/([^/]+)$/);
+      const match = /^\/([^/]+)\/read\/protocols\/([^/]+)$/.exec(path);
       if (match && req.method === 'GET') {
         const [, did, protocolParam] = match;
         return this.#handleReadProtocol(did, protocolParam);
@@ -482,7 +480,7 @@ export class HttpApi {
 
     // /:did/read/records/:id  OR  /:did/records/:id
     {
-      const match = path.match(/^\/([^/]+)\/(?:read\/)?records\/([^/]+)$/);
+      const match = /^\/([^/]+)\/(?:read\/)?records\/([^/]+)$/.exec(path);
       if (match && req.method === 'GET') {
         const [, did, recordId] = match;
         return this.#handleReadRecord(did, recordId);
@@ -491,7 +489,7 @@ export class HttpApi {
 
     // /:did/query/protocols
     {
-      const match = path.match(/^\/([^/]+)\/query\/protocols$/);
+      const match = /^\/([^/]+)\/query\/protocols$/.exec(path);
       if (match && req.method === 'GET') {
         const [, did] = match;
         return this.#handleQueryProtocols(did);
@@ -500,7 +498,7 @@ export class HttpApi {
 
     // /:did/query
     {
-      const match = path.match(/^\/([^/]+)\/query$/);
+      const match = /^\/([^/]+)\/query$/.exec(path);
       if (match && req.method === 'GET') {
         const [, did] = match;
         return this.#handleQueryRecords(did, url);
@@ -1028,7 +1026,7 @@ export class HttpApi {
 
     // GET /connect/authorize/:requestId.jwt
     {
-      const match = path.match(/^\/connect\/authorize\/([^/]+)\.jwt$/);
+      const match = /^\/connect\/authorize\/([^/]+)\.jwt$/.exec(path);
       if (match && method === 'GET') {
         const requestId = match[1];
         log.info(`Retrieving Connect Request object of ID: ${requestId}...`);
@@ -1088,7 +1086,7 @@ export class HttpApi {
 
     // GET /connect/token/:state.jwt
     {
-      const match = path.match(/^\/connect\/token\/([^/]+)\.jwt$/);
+      const match = /^\/connect\/token\/([^/]+)\.jwt$/.exec(path);
       if (match && method === 'GET') {
         const state = match[1];
         log.info(`Retrieving ID token for state: ${state}...`);

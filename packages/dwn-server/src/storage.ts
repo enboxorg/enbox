@@ -21,15 +21,14 @@ import { createRequire } from 'node:module';
 
 import { Kysely } from 'kysely';
 
-import { createBunSqliteDatabase } from '@enbox/dwn-sql-store';
 import { PluginLoader } from './plugin-loader.js';
 import { runServerMigrations } from './server-migration-runner.js';
 
 import {
   DurableEventLog,
 } from '@enbox/dwn-sdk-js';
-import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '@enbox/dwn-sdk-js/stores/level';
 import {
+  createBunSqliteDatabase,
   DataStoreSql,
   MessageStoreSql,
   MysqlDialect,
@@ -38,6 +37,7 @@ import {
   runDwnStoreMigrations,
   SqliteDialect,
 } from '@enbox/dwn-sql-store';
+import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '@enbox/dwn-sdk-js/stores/level';
 
 const require = createRequire(import.meta.url);
 

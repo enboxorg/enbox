@@ -1,7 +1,6 @@
-import type { MessagesFilter } from '../types/messages-types.js';
 import type { MessageSigner } from '../types/signer.js';
 import type { ProgressToken } from '../types/subscriptions.js';
-import type { MessagesSubscribeDescriptor, MessagesSubscribeMessage } from '../types/messages-types.js';
+import type { MessagesFilter, MessagesSubscribeDescriptor, MessagesSubscribeMessage } from '../types/messages-types.js';
 
 import { AbstractMessage } from '../core/abstract-message.js';
 import { Message } from '../core/message.js';
