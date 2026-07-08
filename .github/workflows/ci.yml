@@ -201,6 +201,18 @@ jobs:
           browser_pkg="${{ steps.filter.outputs.browser-pkg }}"
           cli="${{ steps.filter.outputs.cli }}"
 
+          # On pushes to `main`, force the full test + coverage suite so the
+          # SonarCloud main-branch analysis always receives a complete LCOV
+          # report. Without this, a merge touching only a package that emits no
+          # coverage (e.g. dwn-server-admin-ui) skips every test job, produces
+          # no merged coverage artifact, and SonarCloud then records the ENTIRE
+          # project at 0% coverage. Setting the graph-root `workspace` flag
+          # cascades `true` to every package below. PRs keep the fast,
+          # selective behavior.
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ steps.src-filter.outputs.src }}" = "true" ]; then
+            workspace=true
+          fi
+
           # Propagate down the dependency graph
           needs_common_crypto=$( [ "$workspace" = "true" ] || [ "$common_crypto" = "true" ] && echo true || echo false )
           needs_dids=$( [ "$needs_common_crypto" = "true" ] || [ "$dids" = "true" ] && echo true || echo false )
