@@ -80,7 +80,7 @@ If CI fails:
 - **Transient failures:** re-run with `gh run rerun <run-id> --failed` only after you've confirmed the failure is genuinely environmental (e.g. registry flake). Document the rationale in a PR comment; never silently re-run to mask a real bug.
 - **Quality Gate (SonarCloud) / coverage regressions** count as CI failures — address them, don't override.
 
-Merging the PR is the final step of the task, not opening it.
+Merging the PR is the final step of the task, not opening it. **Do not merge a PR unless the user explicitly asks you to merge it.** Once CI is green, report that the PR is ready and wait for approval.
 
 ### 4. Style is non-negotiable — match the codebase, not your preference
 
