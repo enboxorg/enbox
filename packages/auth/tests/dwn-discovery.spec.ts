@@ -134,7 +134,7 @@ describe('local-node pairing storage', () => {
     const storage = new MemoryStorage();
     await persistLocalDwnPairingRecord(storage, pairingRecord);
 
-    await withGlobalFetch(undefined, async (): Promise<void> => {
+    await withoutGlobalFetch(async (): Promise<void> => {
       expect(await discoverLocalDwnPairing(storage)).toBeUndefined();
     });
 
@@ -171,7 +171,7 @@ describe('local-node pairing storage', () => {
 
 describe('probeLocalDwn', () => {
   test('returns unsupported when fetch is unavailable', async () => {
-    await withGlobalFetch(undefined, async (): Promise<void> => {
+    await withoutGlobalFetch(async (): Promise<void> => {
       expect(await probeLocalDwn()).toEqual({ reason: 'no-fetch', status: 'unsupported' });
     });
   });
@@ -366,7 +366,7 @@ describe('probeLocalDwn', () => {
 
 describe('requestLocalDwnPairing', () => {
   test('returns unsupported when fetch is unavailable', async () => {
-    await withGlobalFetch(undefined, async (): Promise<void> => {
+    await withoutGlobalFetch(async (): Promise<void> => {
       const result = await requestLocalDwnPairing({ storage: new MemoryStorage() });
 
       expect(result).toEqual({ reason: 'no-fetch', status: 'unsupported' });
@@ -529,7 +529,7 @@ describe('requestLocalDwnPairing', () => {
 
 describe('pairing HTTP helpers', () => {
   test('throws when fetch is unavailable for explicit HTTP helpers', async () => {
-    await withGlobalFetch(undefined, async (): Promise<void> => {
+    await withoutGlobalFetch(async (): Promise<void> => {
       await expect(initiateLocalDwnPairing({
         endpoint   : pairingRecord.endpoint,
         serverInfo : localNodeInfo,
@@ -731,18 +731,30 @@ function pairingFetch(result: { status: 'pending' | 'approved' | 'denied' | 'exp
   };
 }
 
-async function withGlobalFetch<T>(fetchValue: FetchLike | undefined, run: () => Promise<T>): Promise<T> {
+async function withoutGlobalFetch<T>(run: () => Promise<T>): Promise<T> {
   const originalFetch = globalThis.fetch;
 
-  if (fetchValue === undefined) {
-    delete (globalThis as { fetch?: FetchLike }).fetch;
-  } else {
+  delete (globalThis as { fetch?: FetchLike }).fetch;
+
+  try {
+    return await run();
+  } finally {
     Object.defineProperty(globalThis, 'fetch', {
       configurable : true,
-      value        : fetchValue,
+      value        : originalFetch,
       writable     : true,
     });
   }
+}
+
+async function withGlobalFetch<T>(fetchValue: FetchLike, run: () => Promise<T>): Promise<T> {
+  const originalFetch = globalThis.fetch;
+
+  Object.defineProperty(globalThis, 'fetch', {
+    configurable : true,
+    value        : fetchValue,
+    writable     : true,
+  });
 
   try {
     return await run();

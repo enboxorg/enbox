@@ -286,7 +286,7 @@ describe('AuthManager.create()', () => {
   test('probeLocalNode returns unsupported when fetch is unavailable', async () => {
     const manager = await AuthManager.create({ storage: new MemoryStorage() });
 
-    await withGlobalFetch(undefined, async (): Promise<void> => {
+    await withoutGlobalFetch(async (): Promise<void> => {
       expect(await manager.probeLocalNode()).toEqual({ reason: 'no-fetch', status: 'unsupported' });
     });
   });
@@ -578,18 +578,10 @@ describe('AuthManager.walletConnect()', () => {
 
 type FetchLike = typeof fetch;
 
-async function withGlobalFetch<T>(fetchValue: FetchLike | undefined, run: () => Promise<T>): Promise<T> {
+async function withoutGlobalFetch<T>(run: () => Promise<T>): Promise<T> {
   const originalFetch = globalThis.fetch;
 
-  if (fetchValue === undefined) {
-    delete (globalThis as { fetch?: FetchLike }).fetch;
-  } else {
-    Object.defineProperty(globalThis, 'fetch', {
-      configurable : true,
-      value        : fetchValue,
-      writable     : true,
-    });
-  }
+  delete (globalThis as { fetch?: FetchLike }).fetch;
 
   try {
     return await run();
