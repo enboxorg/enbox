@@ -58,6 +58,13 @@ export class WsApi {
     return this.#connectionManager;
   }
 
+  /**
+   * Closes live local-node WebSocket connections authenticated by the given pairing token.
+   */
+  async closeLocalNodeConnectionsByToken(token: string): Promise<number> {
+    return this.#connectionManager.closeLocalNodeConnectionsByToken(token);
+  }
+
   async close(): Promise<void> {
     await this.#connectionManager.closeAll();
   }

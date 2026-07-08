@@ -1063,11 +1063,12 @@ describe('AdminApi — metrics and connection manager lifecycle', () => {
 
     // setConnectionManager
     const mockConnectionManager = {
-      connect                : async (): Promise<void> => {},
-      closeAll               : async (): Promise<void> => {},
-      getConnectionCount     : (): number => 42,
-      getSubscriptionCount   : (): number => 7,
-      getConnectionSnapshots : (): any[] => [],
+      closeAll                         : async (): Promise<void> => {},
+      closeLocalNodeConnectionsByToken : async (): Promise<number> => 0,
+      connect                          : async (): Promise<void> => {},
+      getConnectionCount               : (): number => 42,
+      getConnectionSnapshots           : (): any[] => [],
+      getSubscriptionCount             : (): number => 7,
     };
     adminApi.setConnectionManager(mockConnectionManager);
 

@@ -20,6 +20,8 @@ export interface ConnectionManager {
   connect(socket: ServerWebSocket<WsData>): Promise<void>;
   /** closes all of the connections */
   closeAll(): Promise<void>;
+  /** Closes local-node connections authenticated with the given pairing token. */
+  closeLocalNodeConnectionsByToken(token: string): Promise<number>;
   /** Returns the number of active connections. */
   getConnectionCount(): number;
   /** Returns the total number of active subscriptions across all connections. */
@@ -65,6 +67,19 @@ export class InMemoryConnectionManager implements ConnectionManager {
     const closePromises: Promise<void>[] = [];
     this.connections.forEach((connection) => closePromises.push(connection.close()));
     await Promise.all(closePromises);
+  }
+
+  async closeLocalNodeConnectionsByToken(token: string): Promise<number> {
+    const closePromises: Promise<void>[] = [];
+
+    this.connections.forEach((connection, socket) => {
+      if (socket.data.localNodeSession?.token === token) {
+        closePromises.push(connection.close());
+      }
+    });
+
+    await Promise.all(closePromises);
+    return closePromises.length;
   }
 
   getConnectionCount(): number {
