@@ -1401,6 +1401,38 @@ describe('http api', function () {
       }
     });
 
+    it('should expose authenticated local-node status for paired clients', async () => {
+      const localNodePairingManager = new LocalNodePairingManager();
+      const token = localNodePairingManager.createSession('https://paired.example');
+      const { api, url } = await createStartedHttpApiWithConfig({
+        hostname                : '127.0.0.1',
+        localNodeProfileEnabled : true,
+      }, { localNodePairingManager });
+
+      try {
+        const unauthorizedResponse = await fetch(`${url}/local/status`, {
+          headers: { origin: 'https://paired.example' },
+        });
+        expect(unauthorizedResponse.status).toBe(401);
+
+        const response = await fetch(`${url}/local/status`, {
+          headers: {
+            authorization : `Bearer ${token}`,
+            origin        : 'https://paired.example',
+          },
+        });
+        expect(response.status).toBe(200);
+        expect(response.headers.get('access-control-allow-origin')).toBe('https://paired.example');
+        expect(await response.json()).toEqual({
+          localNode : true,
+          origin    : 'https://paired.example',
+          paired    : true,
+        });
+      } finally {
+        await api.close();
+      }
+    });
+
     it('should enforce local-node tokens before WebSocket upgrade', async () => {
       const localNodePairingManager = new LocalNodePairingManager();
       const token = localNodePairingManager.createSession('https://paired.example');

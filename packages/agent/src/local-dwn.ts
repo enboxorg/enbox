@@ -7,8 +7,8 @@
  * 2. **Discovery file** (`~/.enbox/dwn.json`) — written by `electrobun-dwn`
  *    on startup. Fast filesystem read, no network. Available for CLI and
  *    native apps; skipped in browsers.
- * 3. **Injected endpoint** — in browsers, the `dwn://connect` redirect
- *    flow delivers the endpoint, which is injected via
+ * 3. **Injected endpoint** — browser auth can inject a validated local-node
+ *    endpoint from a persisted pairing record via
  *    {@link LocalDwnDiscovery.setCachedEndpoint | setCachedEndpoint()}.
  *
  * @see https://github.com/enboxorg/enbox/issues/677
@@ -38,9 +38,8 @@ export const localDwnServerName = '@enbox/dwn-server';
  * Well-known ports the packaged local DWN server may bind to.
  *
  * This list is used by the server/runtime surfaces for port selection and
- * status display. Client discovery must use an explicit pairing channel
- * (discovery file, persisted endpoint, or `dwn://connect`) rather than sweeping
- * this list.
+ * status display. Startup discovery must use an explicit channel (discovery
+ * file or persisted pairing) rather than sweeping this list.
  */
 export const localDwnPortCandidates = [
   55500,
@@ -76,7 +75,7 @@ export function normalizeBaseUrl(url: string): string {
  * const endpoint = await discovery.getEndpoint();
  * ```
  *
- * @example Browser: inject cached endpoint from `dwn://connect` redirect
+ * @example Browser: inject cached endpoint from a persisted pairing
  * ```ts
  * const discovery = new LocalDwnDiscovery(rpcClient);
  * discovery.setCachedEndpoint('http://127.0.0.1:55557');
@@ -107,8 +106,8 @@ export class LocalDwnDiscovery {
    *
    * In browser environments (where no discovery file is available), the
    * endpoint must be injected externally via
-   * {@link setCachedEndpoint | setCachedEndpoint()} — typically after a
-   * `dwn://connect` redirect delivers the endpoint in the URL fragment.
+   * {@link setCachedEndpoint | setCachedEndpoint()} after auth validates a
+   * stored local-node pairing.
    */
   public async getEndpoint(): Promise<string | undefined> {
     const now = Date.now();
@@ -130,9 +129,8 @@ export class LocalDwnDiscovery {
   }
 
   /**
-   * Inject a cached endpoint (e.g. from a `dwn://connect` browser redirect
-   * or from `localStorage`). The endpoint is validated via `GET /info` before
-   * caching.
+   * Inject a cached endpoint, typically from a validated local-node pairing.
+   * The endpoint is validated via `GET /info` before caching.
    *
    * @returns `true` if the endpoint was validated and cached, `false` otherwise.
    */

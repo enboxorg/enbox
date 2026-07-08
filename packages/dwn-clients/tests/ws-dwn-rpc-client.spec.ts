@@ -825,6 +825,75 @@ describe('WebSocketDwnRpcClient', () => {
         expect(secondConnection).toBe(firstConnection);
       });
 
+      it('should append local-node token query params to WebSocket connection URLs', async () => {
+        const authClient = new WebSocketDwnRpcClient(
+          { getServerInfo: async (): Promise<ServerInfo> => testServerInfo() },
+          { getBearerToken: (): string => 'local-node-token' },
+        );
+        const { message } = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : { schema: 'foo/bar' },
+        });
+        const socket = {
+          request: async (request: any): Promise<any> => ({
+            jsonrpc : '2.0',
+            id      : request.id,
+            result  : {
+              reply: {
+                status  : { code: 200, detail: 'OK' },
+                entries : [],
+              },
+            },
+          }),
+        };
+        const createConnectionStub = sinon.stub(WebSocketDwnRpcClient as any, 'createConnection').callsFake(async (url: URL): Promise<any> => {
+          return { socket, subscriptions: new Map(), url: url.toString() };
+        });
+
+        await authClient.sendDwnRequest({ dwnUrl: socketDwnUrl, targetDid: alice.did, message });
+
+        expect(createConnectionStub.calledOnce).toBe(true);
+        expect(createConnectionStub.firstCall.args[0].searchParams.get('localNodeToken')).toBe('local-node-token');
+      });
+
+      it('should not reuse a connection when the local-node token changes', async () => {
+        let token = 'first-token';
+        const authClient = new WebSocketDwnRpcClient(
+          { getServerInfo: async (): Promise<ServerInfo> => testServerInfo() },
+          { getBearerToken: (): string => token },
+        );
+        const { message } = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : { schema: 'foo/bar' },
+        });
+        const createConnectionStub = sinon.stub(WebSocketDwnRpcClient as any, 'createConnection').callsFake(async (url: URL): Promise<any> => {
+          return {
+            socket: {
+              request: async (request: any): Promise<any> => ({
+                jsonrpc : '2.0',
+                id      : request.id,
+                result  : {
+                  reply: {
+                    status  : { code: 200, detail: 'OK' },
+                    entries : [],
+                  },
+                },
+              }),
+            },
+            subscriptions : new Map(),
+            url           : url.toString(),
+          };
+        });
+
+        await authClient.sendDwnRequest({ dwnUrl: socketDwnUrl, targetDid: alice.did, message });
+        token = 'second-token';
+        await authClient.sendDwnRequest({ dwnUrl: socketDwnUrl, targetDid: alice.did, message });
+
+        expect(createConnectionStub.callCount).toBe(2);
+        expect(createConnectionStub.firstCall.args[0].searchParams.get('localNodeToken')).toBe('first-token');
+        expect(createConnectionStub.secondCall.args[0].searchParams.get('localNodeToken')).toBe('second-token');
+      });
+
       it('should not reuse a connection for a different path on the same host', async () => {
         const baseUrl = new URL(socketDwnUrl);
         baseUrl.pathname = '/tenant-a';

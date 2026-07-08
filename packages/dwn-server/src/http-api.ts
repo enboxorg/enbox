@@ -400,6 +400,10 @@ export class HttpApi {
       return this.#handleInfo();
     }
 
+    if (this.#config.localNodeProfileEnabled && path === '/local/status' && method === 'GET') {
+      return this.#handleLocalNodeStatus(req);
+    }
+
     if (this.#config.localNodeProfileEnabled && path === '/local/pair' && method === 'POST') {
       return this.#handleLocalNodePairRequest(req);
     }
@@ -726,6 +730,14 @@ export class HttpApi {
     }
 
     return Response.json(result);
+  }
+
+  #handleLocalNodeStatus(req: Request): Response {
+    return Response.json({
+      localNode : true,
+      origin    : req.headers.get('origin') ?? undefined,
+      paired    : true,
+    });
   }
 
   async #handleJsonRpcPost(req: Request): Promise<Response> {

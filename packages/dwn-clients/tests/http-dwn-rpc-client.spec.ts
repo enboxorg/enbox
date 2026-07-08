@@ -197,6 +197,38 @@ describe('HttpDwnRpcClient', () => {
       expect(fetchOpts.duplex).toBeUndefined();
     });
 
+    it('adds endpoint bearer tokens to DWN HTTP requests', async () => {
+      const authClient = new HttpDwnRpcClient(undefined, { maxRetries: 0 }, {
+        getBearerToken: (dwnUrl: string): string | undefined => {
+          return dwnUrl === testDwnUrl ? 'local-node-token' : undefined;
+        },
+      });
+      const jsonRpcResponse = {
+        id      : 'test',
+        jsonrpc : '2.0',
+        result  : { reply: { status: { code: 200, detail: 'OK' }, entries: [] } },
+      };
+      const fetchStub = sinon.stub(globalThis, 'fetch').resolves({
+        status  : 200,
+        headers : new Headers(),
+        text    : async (): Promise<string> => JSON.stringify(jsonRpcResponse),
+      } as any);
+      const { message } = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : { schema: 'foo/bar' },
+      });
+
+      await authClient.sendDwnRequest({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message,
+      });
+
+      const fetchOpts = fetchStub.firstCall.args[1] as RequestInit;
+      const headers = fetchOpts.headers as Record<string, string>;
+      expect(headers.authorization).toBe('Bearer local-node-token');
+    });
+
     it('sends replicated apply requests to the replication JSON-RPC method', async () => {
       const position = { streamId: 's1', epoch: 'e1', position: '42' };
       const jsonRpcResponse = {
@@ -226,6 +258,35 @@ describe('HttpDwnRpcClient', () => {
       expect(dwnRequest.method).toBe('dwn.applyReplicatedMessage');
       expect(dwnRequest.params.target).toBe(alice.did);
       expect(dwnRequest.params.message).toEqual(message);
+    });
+
+    it('adds endpoint bearer tokens to replicated apply HTTP requests', async () => {
+      const authClient = new HttpDwnRpcClient(undefined, { maxRetries: 0 }, {
+        getBearerToken: (dwnUrl: string): string | undefined => {
+          return dwnUrl === testDwnUrl ? 'local-node-token' : undefined;
+        },
+      });
+      const jsonRpcResponse = {
+        id      : 'test',
+        jsonrpc : '2.0',
+        result  : { result: { kind: 'Applied' } },
+      };
+      const fetchStub = sinon.stub(globalThis, 'fetch').resolves({
+        status  : 200,
+        headers : new Headers(),
+        text    : async (): Promise<string> => JSON.stringify(jsonRpcResponse),
+      } as any);
+      const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+
+      await authClient.applyReplicatedMessage({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message,
+      });
+
+      const fetchOpts = fetchStub.firstCall.args[1] as RequestInit;
+      const headers = fetchOpts.headers as Record<string, string>;
+      expect(headers.authorization).toBe('Bearer local-node-token');
     });
 
     it('sends large replicated apply data in the HTTP request body', async () => {

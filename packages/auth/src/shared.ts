@@ -18,12 +18,30 @@ export { loadTokensFromStorage, saveTokensToStorage } from './registration.js';
 
 export {
   applyLocalDwnDiscovery,
-  checkUrlForDwnDiscoveryPayload,
   clearLocalDwnEndpoint,
+  createLocalDwnRpcClient,
   discoverLocalDwn,
-  persistLocalDwnEndpoint,
-  requestLocalDwnDiscovery,
+  discoverLocalDwnPairing,
+  initiateLocalDwnPairing,
+  persistLocalDwnPairingRecord,
+  pollLocalDwnPairing,
+  probeLocalDwn,
+  readLocalDwnPairingRecord,
+  requestLocalDwnPairing,
   restoreLocalDwnEndpoint,
+} from './discovery.js';
+
+export type {
+  InitiateLocalDwnPairingOptions,
+  LocalDwnPairingInitiateResult,
+  LocalDwnPairingPollResult,
+  LocalDwnPairingRecord,
+  LocalDwnPairingRequestResult,
+  LocalDwnProbeResult,
+  LocalDwnUnsupportedReason,
+  PollLocalDwnPairingOptions,
+  ProbeLocalDwnOptions,
+  RequestLocalDwnPairingOptions,
 } from './discovery.js';
 
 export { BrowserStorage, LevelStorage, MemoryStorage, createDefaultStorage } from './storage/storage.js';

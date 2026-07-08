@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 import { AuthEventEmitter } from '../src/events.js';
 import { MemoryStorage } from '../src/storage/storage.js';
+import { persistLocalDwnPairingRecord } from '../src/discovery.js';
 import { vaultConnect } from '../src/connect/vault.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
 import { INSECURE_DEFAULT_PASSWORD, STORAGE_KEYS } from '../src/types.js';
@@ -537,13 +538,18 @@ describe('vaultConnect', () => {
     expect(createCalls[0].metadata.name).toBe('My Custom Name');
   });
 
-  test('applies local DWN discovery from stored endpoint', async () => {
+  test('applies local DWN discovery from stored pairing', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     const identity = createMockIdentity();
 
-    // Pre-populate a stored endpoint (simulating a previous dwn:// redirect).
-    await storage.set(STORAGE_KEYS.LOCAL_DWN_ENDPOINT, 'http://127.0.0.1:55557');
+    await persistLocalDwnPairingRecord(storage, {
+      createdAt    : 123,
+      endpoint     : 'http://127.0.0.1:55557',
+      pairedOrigin : 'https://app.example',
+      token        : 'paired-token',
+      version      : 1,
+    });
 
     const setCalls: string[] = [];
     const agent = createMockAgent({

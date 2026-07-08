@@ -77,7 +77,7 @@ export interface AuthEventMap {
   'vault-locked': Record<string, never>;
   'vault-unlocked': Record<string, never>;
   /** Emitted when a local DWN server is discovered and validated. */
-  'local-dwn-available': { endpoint: string };
+  'local-dwn-available': { endpoint: string; paired?: boolean };
   /** Emitted when no local DWN server could be discovered or a previously known one is no longer reachable. */
   'local-dwn-unavailable': Record<string, never>;
 }
@@ -306,9 +306,10 @@ export interface AuthManagerOptions {
    * DID-document endpoints. `'only'` requires a local server. `'off'` disables
    * local DWN discovery entirely.
    *
-   * Discovery is passive by default: the SDK validates only an explicit
-   * `dwn://connect` result, a persisted endpoint, or the native discovery file.
-   * It does not sweep localhost ports.
+   * Discovery is passive by default: the SDK validates only a persisted
+   * local-node pairing or the native discovery file. Browser localhost port
+   * probing is explicit via `AuthManager.probeLocalNode()` or
+   * `AuthManager.enableLocalNode()`.
    *
    * Ignored when `agent` is provided.
    */
@@ -733,13 +734,7 @@ export const STORAGE_KEYS = {
   /** Legacy multi-party protocol cache key, retained for cleanup during session restore. */
   DELEGATE_MULTI_PARTY_PROTOCOLS: 'enbox:auth:delegateMultiPartyProtocols',
 
-  /**
-   * The base URL of the local DWN server discovered via the `dwn://connect`
-   * browser redirect flow. Persisted so subsequent page loads can skip the
-   * redirect and inject the endpoint directly.
-   *
-   * @see https://github.com/enboxorg/enbox/issues/589
-   */
+  /** Versioned local-node pairing record: endpoint, bearer token, origin, and metadata. */
   LOCAL_DWN_ENDPOINT: 'enbox:auth:localDwnEndpoint',
 
   /**
