@@ -4,7 +4,7 @@ import type { Dwn, GenericMessage, ProtocolDefinition } from '@enbox/dwn-sdk-js'
 
 import sinon from 'sinon';
 import { afterEach, describe, expect, it } from 'bun:test';
-import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnConstant, DwnInterfaceName, DwnMethodName, Encoder, Message } from '@enbox/dwn-sdk-js';
 
 import { config } from '../src/config.js';
 import { DeliveryService } from '../src/delivery-service.js';
@@ -54,13 +54,24 @@ function throwingResolver(): DidResolver {
   } as unknown as DidResolver;
 }
 
+/** Optional storage stubs for `mockDwn` — used by the record-data forwarding tests. */
+type MockDwnStorage = {
+  messageStoreGet?: sinon.SinonStub;
+  dataStoreGet?: sinon.SinonStub;
+};
+
 /** Creates a mock DWN with a configurable processMessage stub. */
-function mockDwn(processMessageFn?: sinon.SinonStub): Dwn {
+function mockDwn(processMessageFn?: sinon.SinonStub, storage: MockDwnStorage = {}): Dwn {
   return {
     processMessage: processMessageFn ?? sinon.stub().resolves({
       status  : { code: 200 },
       entries : [],
     }),
+    storage: {
+      messageStore : { get: storage.messageStoreGet ?? sinon.stub().resolves(undefined) },
+      dataStore    : { get: storage.dataStoreGet ?? sinon.stub().resolves(undefined) },
+      eventLog     : undefined,
+    },
     close: sinon.stub(),
   } as unknown as Dwn;
 }
@@ -132,6 +143,23 @@ function recordsWriteMessage(recordId = 'test-record'): GenericMessage {
       messageTimestamp : new Date().toISOString(),
     },
     recordId,
+  } as unknown as GenericMessage;
+}
+
+/**
+ * A RecordsWrite message referencing record data, for payload-forwarding tests.
+ * Every descriptor key is defined so the message can be CID-computed.
+ */
+function dataBearingWriteMessage(opts: { recordId?: string; dataCid?: string; dataSize: number }): GenericMessage {
+  return {
+    descriptor: {
+      interface        : DwnInterfaceName.Records,
+      method           : DwnMethodName.Write,
+      messageTimestamp : new Date().toISOString(),
+      dataCid          : opts.dataCid ?? 'bafy-test-data-cid',
+      dataSize         : opts.dataSize,
+    },
+    recordId: opts.recordId ?? 'data-record-1',
   } as unknown as GenericMessage;
 }
 
@@ -536,6 +564,229 @@ describe('DeliveryService — coverage', () => {
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 100));
 
       expect(fetchStub.callCount).toBe(0);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Record data payloads (#getRecordsWriteData)
+  // -----------------------------------------------------------------------
+
+  describe('forwarding record data', () => {
+    it('should attach small record data from the message store as the request body', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch').resolves(
+        new Response(null, { status: 200 }),
+      );
+
+      const dataBytes = new TextEncoder().encode('{"hello":"world"}');
+      const message = dataBearingWriteMessage({ dataSize: dataBytes.length });
+      const messageStoreGet = sinon.stub().resolves({ ...message, encodedData: Encoder.bytesToBase64Url(dataBytes) });
+
+      const tenant = 'did:test:alice';
+      const resolver = fakeResolver({
+        [tenant]: didDocWithDwnService(tenant, ['http://self.example.com', 'http://peer.example.com']),
+      });
+
+      const dwn = mockDwn(undefined, { messageStoreGet });
+      const svc = DeliveryService.create(dwn, resolver, testConfig());
+
+      svc.dispatchIfNeeded(tenant, message, 202);
+      await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
+
+      expect(fetchStub.callCount).toBe(1);
+      expect(messageStoreGet.callCount).toBe(1);
+      expect(messageStoreGet.firstCall.args[0]).toBe(tenant);
+      expect(messageStoreGet.firstCall.args[1]).toBe(await Message.getCid(message));
+
+      const [, fetchOptions] = fetchStub.firstCall.args;
+      const headers = new Headers(fetchOptions?.headers);
+      expect(headers.get('content-type')).toBe('application/octet-stream');
+      expect(fetchOptions?.body).toBeInstanceOf(ReadableStream);
+
+      const sentBytes = new Uint8Array(await new Response(fetchOptions?.body).arrayBuffer());
+      expect(sentBytes).toEqual(dataBytes);
+    });
+
+    it('should stream large record data from the data store with a one-shot body', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch').resolves(
+        new Response(null, { status: 200 }),
+      );
+
+      const dataSize = DwnConstant.maxDataSizeAllowedToBeEncoded + 1;
+      const dataBytes = new TextEncoder().encode('large-record-data');
+      const dataStoreGet = sinon.stub().callsFake(
+        async (): Promise<{ dataSize: number; dataStream: ReadableStream<Uint8Array> }> => ({
+          dataSize,
+          dataStream: DataStream.fromBytes(dataBytes),
+        }),
+      );
+      const message = dataBearingWriteMessage({ recordId: 'large-record-1', dataSize });
+
+      const tenant = 'did:test:alice';
+      const resolver = fakeResolver({
+        [tenant]: didDocWithDwnService(tenant, ['http://self.example.com', 'http://peer.example.com']),
+      });
+
+      const dwn = mockDwn(undefined, { dataStoreGet });
+      const svc = DeliveryService.create(dwn, resolver, testConfig());
+
+      svc.dispatchIfNeeded(tenant, message, 202);
+      await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
+
+      expect(fetchStub.callCount).toBe(1);
+      expect(dataStoreGet.callCount).toBe(1);
+      expect(dataStoreGet.firstCall.args).toEqual([tenant, 'large-record-1', 'bafy-test-data-cid']);
+
+      const [, fetchOptions] = fetchStub.firstCall.args;
+      const headers = new Headers(fetchOptions?.headers);
+      expect(headers.get('content-type')).toBe('application/octet-stream');
+      expect(fetchOptions).toMatchObject({ duplex: 'half' });
+      expect(fetchOptions?.body).toBeInstanceOf(ReadableStream);
+
+      const sentBytes = new Uint8Array(await new Response(fetchOptions?.body).arrayBuffer());
+      expect(sentBytes).toEqual(dataBytes);
+    });
+
+    it('should skip the send without retrying when record data is no longer available locally', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+
+      const message = dataBearingWriteMessage({ recordId: 'displaced-record-1', dataSize: 32 });
+      const messageStoreGet = sinon.stub().resolves(undefined);
+
+      const tenant = 'did:test:alice';
+      const resolver = fakeResolver({
+        [tenant]: didDocWithDwnService(tenant, ['http://self.example.com', 'http://peer.example.com']),
+      });
+
+      const dwn = mockDwn(undefined, { messageStoreGet });
+      const svc = DeliveryService.create(dwn, resolver, testConfig());
+
+      svc.dispatchIfNeeded(tenant, message, 202);
+      await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
+
+      expect(fetchStub.callCount).toBe(0);
+      expect(messageStoreGet.callCount).toBe(1);
+    });
+
+    it('should re-read the data for each retry attempt', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+      fetchStub.onFirstCall().resolves(new Response(null, { status: 500 }));
+      fetchStub.onSecondCall().resolves(new Response(null, { status: 200 }));
+
+      const dataSize = DwnConstant.maxDataSizeAllowedToBeEncoded + 1;
+      const dataBytes = new TextEncoder().encode('retry-payload');
+      const dataStoreGet = sinon.stub().callsFake(
+        async (): Promise<{ dataSize: number; dataStream: ReadableStream<Uint8Array> }> => ({
+          dataSize,
+          dataStream: DataStream.fromBytes(dataBytes),
+        }),
+      );
+      const message = dataBearingWriteMessage({ recordId: 'retry-record-1', dataSize });
+
+      const tenant = 'did:test:alice';
+      const resolver = fakeResolver({
+        [tenant]: didDocWithDwnService(tenant, ['http://self.example.com', 'http://peer.example.com']),
+      });
+
+      const dwn = mockDwn(undefined, { dataStoreGet });
+      const svc = DeliveryService.create(dwn, resolver, testConfig());
+
+      svc.dispatchIfNeeded(tenant, message, 202);
+
+      // Wait for the first attempt plus the 1s retry delay.
+      await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 2_500));
+
+      // Each attempt gets a freshly-read body — a stream cannot be replayed.
+      expect(fetchStub.callCount).toBe(2);
+      expect(dataStoreGet.callCount).toBe(2);
+    }, 10_000);
+
+    it('should read delivery payload data from the origin tenant while targeting the participant', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch').resolves(
+        new Response(null, { status: 200 }),
+      );
+
+      const tenant = 'did:test:alice';
+      const participant = 'did:test:bob';
+
+      const protocolDef: ProtocolDefinition = {
+        protocol  : 'http://example.com/chat',
+        published : true,
+        types     : {
+          thread      : {},
+          participant : {},
+          message     : {},
+        },
+        structure: {
+          thread: {
+            participant : { $actions: [{ role: 'thread/participant', can: ['read'] }] },
+            message     : {
+              $delivery : 'direct',
+              $actions  : [{ role: 'thread/participant', can: ['create', 'read'] }],
+            },
+          },
+        },
+      };
+
+      const processStub = sinon.stub();
+      processStub.onFirstCall().resolves({
+        status  : { code: 200 },
+        entries : [{ descriptor: { definition: protocolDef } }],
+      });
+      processStub.onSecondCall().resolves({
+        status  : { code: 200 },
+        entries : [
+          { descriptor: { recipient: participant } },
+        ],
+      });
+
+      const dataSize = DwnConstant.maxDataSizeAllowedToBeEncoded + 1;
+      const dataBytes = new TextEncoder().encode('delivered-data');
+      const dataStoreGet = sinon.stub().callsFake(
+        async (): Promise<{ dataSize: number; dataStream: ReadableStream<Uint8Array> }> => ({
+          dataSize,
+          dataStream: DataStream.fromBytes(dataBytes),
+        }),
+      );
+
+      const dwn = mockDwn(processStub, { dataStoreGet });
+      const resolver = fakeResolver({
+        [participant]: didDocWithDwnService(participant, ['http://bob-dwn.example.com']),
+      });
+
+      const svc = DeliveryService.create(dwn, resolver, testConfig({
+        forwardingEnabled : false,
+        deliveryEnabled   : true,
+      }));
+
+      const message = {
+        descriptor: {
+          interface        : DwnInterfaceName.Records,
+          method           : DwnMethodName.Write,
+          messageTimestamp : new Date().toISOString(),
+          protocol         : 'http://example.com/chat',
+          protocolPath     : 'thread/message',
+          contextId        : 'ctx-data-1',
+          dataCid          : 'bafy-delivered-data',
+          dataSize,
+        },
+        recordId: 'deliver-data-1',
+      } as unknown as GenericMessage;
+
+      svc.dispatchIfNeeded(tenant, message, 202);
+      await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
+
+      expect(fetchStub.callCount).toBe(1);
+      expect(fetchStub.firstCall.args[0]).toBe('http://bob-dwn.example.com');
+
+      // The data is read from the origin tenant's store...
+      expect(dataStoreGet.callCount).toBe(1);
+      expect(dataStoreGet.firstCall.args[0]).toBe(tenant);
+
+      // ...while the JSON-RPC envelope targets the participant.
+      const [, fetchOptions] = fetchStub.firstCall.args;
+      const headers = new Headers(fetchOptions?.headers);
+      const rpcRequest = JSON.parse(headers.get('dwn-request') ?? '');
+      expect(rpcRequest.params.target).toBe(participant);
     });
   });
 

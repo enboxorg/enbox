@@ -1,13 +1,14 @@
 import type { DwnServerConfig } from './config.js';
+import type { JsonRpcRequest } from '@enbox/dwn-clients';
 import type { DidDocument, DidResolver } from '@enbox/dids';
-import type { Dwn, GenericMessage, ProtocolDefinition, ProtocolRuleSet } from '@enbox/dwn-sdk-js';
+import type { Dwn, GenericMessage, ProtocolDefinition, ProtocolRuleSet, RecordsQueryReplyEntry, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 import type { MessageProcessedContext, MessageProcessedHook } from './message-processed-hook.js';
 
 import log from 'loglevel';
 
 import { createJsonRpcRequest } from '@enbox/dwn-clients';
 import { sleep } from '@enbox/common';
-import { DwnInterfaceName, DwnMethodName, getRuleSetAtPath, Message } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnConstant, DwnInterfaceName, DwnMethodName, Encoder, getRuleSetAtPath, Message, Records } from '@enbox/dwn-sdk-js';
 
 /** Strips trailing `/` characters without regex (avoids ReDoS scanners). */
 function stripTrailingSlashes(value: string): string {
@@ -16,6 +17,15 @@ function stripTrailingSlashes(value: string): string {
     end--;
   }
   return end === value.length ? value : value.slice(0, end);
+}
+
+/**
+ * Type guard for `RecordsWrite` messages as read back from the message store,
+ * which optionally carry the record data inline as `encodedData`
+ * (`RecordsQueryReplyEntry`).
+ */
+function isStoredRecordsWrite(message: GenericMessage): message is RecordsQueryReplyEntry {
+  return Records.isRecordsWrite(message);
 }
 
 // ---------------------------------------------------------------------------
@@ -40,6 +50,10 @@ type DeliveryTarget = {
   did: string;
   endpoints: DwnEndpoint[];
 };
+
+type SendMessageAttemptResult = 'retry' | 'sent' | 'skipped';
+
+type RequestInitWithDuplex = RequestInit & { duplex?: 'half' };
 
 // ---------------------------------------------------------------------------
 // DeliveryService
@@ -282,7 +296,7 @@ export class DeliveryService implements MessageProcessedHook {
 
       // For delivery, the target is the participant DID (not the tenant).
       // We need to send to each participant's DWN with the *participant* as the target.
-      await this.#sendToEndpointsGrouped(uniqueEndpoints, endpointTargetMap, message, concurrency);
+      await this.#sendToEndpointsGrouped(uniqueEndpoints, endpointTargetMap, tenant, message, concurrency);
     }
 
     // 'subscribe' strategy: no outbound push needed from the origin.
@@ -641,7 +655,7 @@ export class DeliveryService implements MessageProcessedHook {
     for (let i = 0; i < endpoints.length; i += concurrency) {
       const batch = endpoints.slice(i, i + concurrency);
       await Promise.allSettled(
-        batch.map((ep: DwnEndpoint): Promise<void> => this.#sendMessage(ep.url, tenant, message)),
+        batch.map((ep: DwnEndpoint): Promise<void> => this.#sendMessage(ep.url, tenant, message, tenant)),
       );
     }
   }
@@ -649,10 +663,13 @@ export class DeliveryService implements MessageProcessedHook {
   /**
    * Sends a DWN message to endpoints grouped by target DID.
    * Used for delivery where each endpoint maps to a specific participant DID.
+   * The record data still lives in the *origin* tenant's stores, so `tenant`
+   * is threaded through separately from the per-endpoint target DID.
    */
   async #sendToEndpointsGrouped(
     endpoints: DwnEndpoint[],
     endpointTargetMap: Map<string, string>,
+    tenant: string,
     message: GenericMessage,
     concurrency: number,
   ): Promise<void> {
@@ -661,7 +678,7 @@ export class DeliveryService implements MessageProcessedHook {
       await Promise.allSettled(
         batch.map((ep: DwnEndpoint): Promise<void> => {
           const targetDid = endpointTargetMap.get(ep.url)!;
-          return this.#sendMessage(ep.url, targetDid, message);
+          return this.#sendMessage(ep.url, targetDid, message, tenant);
         }),
       );
     }
@@ -669,50 +686,181 @@ export class DeliveryService implements MessageProcessedHook {
 
   /**
    * Sends a single DWN message to a remote endpoint via JSON-RPC over HTTP.
+   * The JSON-RPC envelope rides the `dwn-request` header; for data-bearing
+   * `RecordsWrite` messages the record data is sent as an
+   * `application/octet-stream` request body (the same wire shape
+   * `HttpDwnRpcClient.sendDwnRequest` produces), read back from the source
+   * tenant's local stores since the original request stream was consumed
+   * when the message was processed.
    * Follows the same retry pattern as WebhookManager.
    */
-  async #sendMessage(endpointUrl: string, target: string, message: GenericMessage): Promise<void> {
+  async #sendMessage(endpointUrl: string, target: string, message: GenericMessage, sourceTenant: string): Promise<void> {
     const rpcRequest = createJsonRpcRequest(
       crypto.randomUUID(),
       'dwn.processMessage',
       { target, message },
     );
 
-    const body = JSON.stringify(rpcRequest);
-    const headers: Record<string, string> = {
-      'content-type' : 'application/json',
-      'dwn-request'  : body,
-    };
+    const dataBearingWrite = DeliveryService.#getDataBearingWrite(message);
+    const headers = DeliveryService.#createHeaders(rpcRequest, dataBearingWrite);
 
     for (let attempt = 0; attempt <= DeliveryService.#maxRetries; attempt++) {
-      try {
-        const response = await fetch(endpointUrl, {
-          method: 'POST', headers, body: new Uint8Array(0), signal: AbortSignal.timeout(DeliveryService.#requestTimeoutMs),
-        });
-
-        if (response.ok) {
-          log.debug(`DeliveryService: sent to ${endpointUrl} for ${target} (${response.status})`);
-          return;
-        }
-
-        // 409 means duplicate — the remote already has this message. That's success.
-        if (response.status === 409) {
-          log.debug(`DeliveryService: ${endpointUrl} already has message for ${target} (409)`);
-          return;
-        }
-
-        log.warn(`DeliveryService: ${endpointUrl} returned ${response.status} (attempt ${attempt + 1})`);
-      } catch (err) {
-        log.warn(`DeliveryService: fetch error to ${endpointUrl} (attempt ${attempt + 1}):`, err);
+      const result = await this.#sendMessageAttempt({
+        attempt,
+        dataBearingWrite,
+        endpointUrl,
+        headers,
+        sourceTenant,
+        target,
+      });
+      if (result !== 'retry') {
+        return;
       }
 
-      // Wait before retry (skip wait on last attempt).
-      if (attempt < DeliveryService.#maxRetries) {
-        await sleep(DeliveryService.#retryDelaysMs[attempt]);
-      }
+      await DeliveryService.#sleepBeforeRetry(attempt);
     }
 
     log.error(`DeliveryService: delivery to ${endpointUrl} failed after ${DeliveryService.#maxRetries + 1} attempts`);
+  }
+
+  async #sendMessageAttempt({
+    attempt,
+    dataBearingWrite,
+    endpointUrl,
+    headers,
+    sourceTenant,
+    target,
+  }: {
+    attempt: number;
+    dataBearingWrite: RecordsWriteMessage | undefined;
+    endpointUrl: string;
+    headers: Record<string, string>;
+    sourceTenant: string;
+    target: string;
+  }): Promise<SendMessageAttemptResult> {
+    try {
+      const fetchOptions = await this.#createFetchOptions(sourceTenant, endpointUrl, headers, dataBearingWrite);
+      if (fetchOptions === undefined) {
+        return 'skipped';
+      }
+
+      const response = await fetch(endpointUrl, fetchOptions);
+      return DeliveryService.#handleSendResponse(endpointUrl, target, response, attempt);
+    } catch (err) {
+      log.warn(`DeliveryService: fetch error to ${endpointUrl} (attempt ${attempt + 1}):`, err);
+      return 'retry';
+    }
+  }
+
+  async #createFetchOptions(
+    sourceTenant: string,
+    endpointUrl: string,
+    headers: Record<string, string>,
+    dataBearingWrite: RecordsWriteMessage | undefined,
+  ): Promise<RequestInitWithDuplex | undefined> {
+    const body = await this.#createRequestBody(sourceTenant, endpointUrl, dataBearingWrite);
+    if (body === undefined) {
+      return undefined;
+    }
+
+    const fetchOptions: RequestInitWithDuplex = {
+      body,
+      headers,
+      method : 'POST',
+      signal : AbortSignal.timeout(DeliveryService.#requestTimeoutMs),
+    };
+
+    if (body instanceof ReadableStream) {
+      // Required by the Fetch standard for streaming request bodies.
+      fetchOptions.duplex = 'half';
+    }
+
+    return fetchOptions;
+  }
+
+  /**
+   * Creates the request body for one send attempt; record data streams are one-shot,
+   * so retries must re-read them from local storage instead of replaying a prior body.
+   */
+  async #createRequestBody(
+    sourceTenant: string,
+    endpointUrl: string,
+    dataBearingWrite: RecordsWriteMessage | undefined,
+  ): Promise<BodyInit | undefined> {
+    if (dataBearingWrite === undefined) {
+      return new Uint8Array(0);
+    }
+
+    const data = await this.#getRecordsWriteData(sourceTenant, dataBearingWrite);
+    if (data === undefined) {
+      log.warn(`DeliveryService: data for ${dataBearingWrite.recordId} is no longer available locally; skipping send to ${endpointUrl}`);
+      return undefined;
+    }
+
+    return data;
+  }
+
+  static #getDataBearingWrite(message: GenericMessage): RecordsWriteMessage | undefined {
+    return Records.isRecordsWrite(message) && message.descriptor.dataSize > 0 ? message : undefined;
+  }
+
+  static #createHeaders(
+    rpcRequest: JsonRpcRequest,
+    dataBearingWrite: RecordsWriteMessage | undefined,
+  ): Record<string, string> {
+    return {
+      'content-type' : dataBearingWrite !== undefined ? 'application/octet-stream' : 'application/json',
+      'dwn-request'  : JSON.stringify(rpcRequest),
+    };
+  }
+
+  static #handleSendResponse(endpointUrl: string, target: string, response: Response, attempt: number): SendMessageAttemptResult {
+    if (response.ok) {
+      log.debug(`DeliveryService: sent to ${endpointUrl} for ${target} (${response.status})`);
+      return 'sent';
+    }
+
+    // 409 means duplicate — the remote already has this message. That's success.
+    if (response.status === 409) {
+      log.debug(`DeliveryService: ${endpointUrl} already has message for ${target} (409)`);
+      return 'sent';
+    }
+
+    log.warn(`DeliveryService: ${endpointUrl} returned ${response.status} (attempt ${attempt + 1})`);
+    return 'retry';
+  }
+
+  static async #sleepBeforeRetry(attempt: number): Promise<void> {
+    if (attempt < DeliveryService.#maxRetries) {
+      await sleep(DeliveryService.#retryDelaysMs[attempt]);
+    }
+  }
+
+  /**
+   * Reads the stored record data of a data-bearing `RecordsWrite` as a stream
+   * for use as the outbound request body. Data at or below
+   * `DwnConstant.maxDataSizeAllowedToBeEncoded` lives as `encodedData` on the
+   * stored message; larger data lives in the data store.
+   *
+   * Returns `undefined` when the data is no longer available locally — e.g.
+   * the message was displaced by a newer write between processing and this
+   * fire-and-forget send. The displacing write triggers its own dispatch, so
+   * the stale send is skipped rather than retried.
+   */
+  async #getRecordsWriteData(tenant: string, message: RecordsWriteMessage): Promise<ReadableStream<Uint8Array> | undefined> {
+    const { dataCid, dataSize } = message.descriptor;
+
+    if (dataSize <= DwnConstant.maxDataSizeAllowedToBeEncoded) {
+      const messageCid = await Message.getCid(message);
+      const storedMessage = await this.#dwn.storage.messageStore.get(tenant, messageCid);
+      if (storedMessage === undefined || !isStoredRecordsWrite(storedMessage) || storedMessage.encodedData === undefined) {
+        return undefined;
+      }
+      return DataStream.fromBytes(Encoder.base64UrlToBytes(storedMessage.encodedData));
+    }
+
+    const result = await this.#dwn.storage.dataStore.get(tenant, message.recordId, dataCid);
+    return result?.dataStream;
   }
 
   // -------------------------------------------------------------------------
