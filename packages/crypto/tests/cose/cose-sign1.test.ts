@@ -359,7 +359,7 @@ describe('CoseSign1', () => {
   });
 
   describe('verify() — unsupported algorithm', () => {
-    it('should throw when verifying a message with an unsupported algorithm in the protected header', () => {
+    it('should throw when verifying a message with an unsupported algorithm in the protected header', async () => {
       // Manually construct a COSE_Sign1 array with an unsupported algorithm.
       const unsupportedAlgProtected = Cbor.encode(new Map<number, unknown>([[1, 9999]]));
       const fakeSign1 = Cbor.encode([
@@ -369,7 +369,7 @@ describe('CoseSign1', () => {
         new Uint8Array(64),
       ]);
 
-      expect(
+      await expect(
         CoseSign1.verify({
           coseSign1 : fakeSign1,
           key       : ed25519PublicKey,
