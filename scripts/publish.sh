@@ -36,6 +36,7 @@ PACKAGES=(
   "packages/dwn-sql-store"
   "packages/dwn-server-admin-ui"
   "packages/dwn-server"
+  "packages/local-node"
 )
 
 # resolve_workspace_deps <package.json path>

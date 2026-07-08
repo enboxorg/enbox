@@ -34,6 +34,7 @@ jobs:
       needs_dwn_sql_store: ${{ steps.propagate.outputs.needs_dwn_sql_store }}
       needs_dwn_server: ${{ steps.propagate.outputs.needs_dwn_server }}
       needs_agent: ${{ steps.propagate.outputs.needs_agent }}
+      needs_local_node: ${{ steps.propagate.outputs.needs_local_node }}
       needs_auth: ${{ steps.propagate.outputs.needs_auth }}
       needs_api: ${{ steps.propagate.outputs.needs_api }}
       needs_agent_api_group: ${{ steps.propagate.outputs.needs_agent_api_group }}
@@ -128,6 +129,12 @@ jobs:
               - 'packages/dwn-server/tsconfig.json'
               - 'packages/dwn-server/vitest*.config.*'
 
+            local-node:
+              - 'packages/local-node/src/**'
+              - 'packages/local-node/tests/**'
+              - 'packages/local-node/package.json'
+              - 'packages/local-node/tsconfig.json'
+
             agent:
               - 'packages/agent/src/**'
               - 'packages/agent/tests/**'
@@ -185,6 +192,7 @@ jobs:
           dwn_clients="${{ steps.filter.outputs.dwn-clients }}"
           dwn_sql_store="${{ steps.filter.outputs.dwn-sql-store }}"
           dwn_server="${{ steps.filter.outputs.dwn-server }}"
+          local_node="${{ steps.filter.outputs.local-node }}"
           agent="${{ steps.filter.outputs.agent }}"
           auth="${{ steps.filter.outputs.auth }}"
           api="${{ steps.filter.outputs.api }}"
@@ -201,10 +209,11 @@ jobs:
           needs_dwn_sql_store=$( [ "$needs_dwn_sdk" = "true" ] || [ "$dwn_sql_store" = "true" ] && echo true || echo false )
           needs_dwn_server=$( [ "$needs_dwn_sdk" = "true" ] || [ "$needs_dwn_clients" = "true" ] || [ "$needs_dwn_sql_store" = "true" ] || [ "$dwn_server" = "true" ] && echo true || echo false )
           needs_agent=$( [ "$needs_dids" = "true" ] || [ "$needs_dwn_sdk" = "true" ] || [ "$needs_dwn_clients" = "true" ] || [ "$agent" = "true" ] && echo true || echo false )
+          needs_local_node=$( [ "$needs_agent" = "true" ] || [ "$needs_dwn_server" = "true" ] || [ "$local_node" = "true" ] && echo true || echo false )
           needs_auth=$( [ "$needs_agent" = "true" ] || [ "$auth" = "true" ] && echo true || echo false )
           needs_api=$( [ "$needs_agent" = "true" ] || [ "$needs_auth" = "true" ] || [ "$api" = "true" ] && echo true || echo false )
           needs_cli=$( [ "$needs_api" = "true" ] || [ "$cli" = "true" ] && echo true || echo false )
-          needs_lightweight=$( [ "$needs_common_crypto" = "true" ] || [ "$needs_auth" = "true" ] || [ "$protocol_codegen" = "true" ] || [ "$needs_cli" = "true" ] && echo true || echo false )
+          needs_lightweight=$( [ "$needs_common_crypto" = "true" ] || [ "$needs_auth" = "true" ] || [ "$protocol_codegen" = "true" ] || [ "$needs_cli" = "true" ] || [ "$needs_local_node" = "true" ] && echo true || echo false )
           needs_agent_api_group=$( [ "$needs_dids" = "true" ] || [ "$needs_agent" = "true" ] || [ "$needs_auth" = "true" ] || [ "$needs_api" = "true" ] || [ "$dwn_clients" = "true" ] || [ "$protocols" = "true" ] && echo true || echo false )
           needs_browser_tests=$( [ "$needs_common_crypto" = "true" ] || [ "$needs_dids" = "true" ] || [ "$needs_dwn_sdk" = "true" ] || [ "$needs_agent" = "true" ] || [ "$needs_api" = "true" ] || [ "$browser_pkg" = "true" ] && echo true || echo false )
           needs_e2e=$( [ "$needs_agent" = "true" ] && echo true || echo false )
@@ -219,6 +228,7 @@ jobs:
             echo "needs_dwn_sql_store=$needs_dwn_sql_store"
             echo "needs_dwn_server=$needs_dwn_server"
             echo "needs_agent=$needs_agent"
+            echo "needs_local_node=$needs_local_node"
             echo "needs_auth=$needs_auth"
             echo "needs_api=$needs_api"
             echo "needs_agent_api_group=$needs_agent_api_group"
@@ -229,7 +239,7 @@ jobs:
           echo "Change detection results:"
           echo "  common_crypto=$needs_common_crypto dids=$needs_dids dwn_sdk=$needs_dwn_sdk"
           echo "  dwn_clients=$needs_dwn_clients dwn_sql_store=$needs_dwn_sql_store dwn_server=$needs_dwn_server"
-          echo "  agent=$needs_agent auth=$needs_auth api=$needs_api protocol_codegen=$protocol_codegen cli=$needs_cli"
+          echo "  agent=$needs_agent local_node=$needs_local_node auth=$needs_auth api=$needs_api protocol_codegen=$protocol_codegen cli=$needs_cli"
           echo "  agent_api_group=$needs_agent_api_group browser=$needs_browser_tests e2e=$needs_e2e"
 
   # ---------------------------------------------------------------------------
@@ -308,7 +318,7 @@ jobs:
           retention-days: 1
 
   # ---------------------------------------------------------------------------
-  # Lightweight packages: common, crypto, auth, protocol-codegen, cli
+  # Lightweight packages: common, crypto, auth, protocol-codegen, cli, local-node
   # (no external services needed)
   # ---------------------------------------------------------------------------
   test-lightweight:
@@ -351,16 +361,18 @@ jobs:
           bun run --filter @enbox/auth    test:node:coverage
           bun run --filter @enbox/protocol-codegen test:node:coverage
           bun run --filter @enbox/cli     test:node:coverage
+          bun run --filter @enbox/local-node test:node:coverage
 
       - name: Stage coverage
         if: always()
         run: |
-          mkdir -p coverage-staging/packages/common/coverage coverage-staging/packages/crypto/coverage coverage-staging/packages/auth/coverage coverage-staging/packages/protocol-codegen/coverage coverage-staging/packages/cli/coverage
+          mkdir -p coverage-staging/packages/common/coverage coverage-staging/packages/crypto/coverage coverage-staging/packages/auth/coverage coverage-staging/packages/protocol-codegen/coverage coverage-staging/packages/cli/coverage coverage-staging/packages/local-node/coverage
           cp packages/common/coverage/lcov.info coverage-staging/packages/common/coverage/lcov.info 2>/dev/null || true
           cp packages/crypto/coverage/lcov.info coverage-staging/packages/crypto/coverage/lcov.info 2>/dev/null || true
           cp packages/auth/coverage/lcov.info coverage-staging/packages/auth/coverage/lcov.info 2>/dev/null || true
           cp packages/protocol-codegen/coverage/lcov.info coverage-staging/packages/protocol-codegen/coverage/lcov.info 2>/dev/null || true
           cp packages/cli/coverage/lcov.info coverage-staging/packages/cli/coverage/lcov.info 2>/dev/null || true
+          cp packages/local-node/coverage/lcov.info coverage-staging/packages/local-node/coverage/lcov.info 2>/dev/null || true
 
       - name: Upload coverage
         if: always()
