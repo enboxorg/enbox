@@ -36,6 +36,11 @@ export interface DwnDiscoveryRecord {
    * Optional per the DWN Transport Spec.
    */
   capabilities?: string[];
+  /**
+   * Bearer token for local non-browser clients that do not send an Origin header.
+   * Browser origins receive their own tokens through the pairing flow.
+   */
+  localNodeToken?: string;
 }
 
 /**
@@ -172,6 +177,10 @@ export class DwnDiscoveryFile {
       result.capabilities = parsed.capabilities;
     }
 
+    if (parsed.localNodeToken !== undefined) {
+      result.localNodeToken = parsed.localNodeToken;
+    }
+
     return result;
   }
 
@@ -188,6 +197,10 @@ export class DwnDiscoveryFile {
 
     if (record.capabilities !== undefined && record.capabilities.length > 0) {
       serialized.capabilities = record.capabilities;
+    }
+
+    if (record.localNodeToken !== undefined) {
+      serialized.localNodeToken = record.localNodeToken;
     }
 
     const json = JSON.stringify(serialized, null, 2);
@@ -231,6 +244,9 @@ function isValidRecord(value: unknown): value is DwnDiscoveryRecord {
     }
   }
 
+  if (record.localNodeToken !== undefined && (typeof record.localNodeToken !== 'string' || record.localNodeToken.length === 0)) {
+    return false;
+  }
+
   return true;
 }
-

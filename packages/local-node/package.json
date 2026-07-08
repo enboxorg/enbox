@@ -1,0 +1,58 @@
+{
+  "name": "@enbox/local-node",
+  "version": "0.0.0",
+  "description": "Shell-agnostic local DWN node runtime for Enbox",
+  "type": "module",
+  "main": "./dist/esm/index.js",
+  "module": "./dist/esm/index.js",
+  "sideEffects": false,
+  "types": "./dist/types/index.d.ts",
+  "bin": {
+    "enbox-local-node": "./dist/esm/cli.js"
+  },
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build:esm": "rm -rf dist/esm dist/types && bun tsc -p tsconfig.json",
+    "build": "bun run clean && bun run build:esm",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix",
+    "test:node": "bun test --timeout 10000 .spec.ts",
+    "test:node:coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage .spec.ts"
+  },
+  "homepage": "https://github.com/enboxorg/enbox/tree/main/packages/local-node#readme",
+  "bugs": "https://github.com/enboxorg/enbox/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/enboxorg/enbox.git",
+    "directory": "packages/local-node"
+  },
+  "license": "Apache-2.0",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/esm/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "bun": ">=1.3.14"
+  },
+  "dependencies": {
+    "@enbox/agent": "workspace:*",
+    "@enbox/dwn-server": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.15",
+    "@typescript-eslint/eslint-plugin": "8.32.1",
+    "@typescript-eslint/parser": "8.32.1",
+    "bun-types": "1.3.14",
+    "eslint": "9.7.0",
+    "typescript": "5.9.3"
+  }
+}

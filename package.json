@@ -18,6 +18,7 @@
     "packages/dwn-sql-store",
     "packages/dwn-server",
     "packages/dwn-server-admin-ui",
+    "packages/local-node",
     "packages/electrobun-dwn",
     "apps/docs"
   ],

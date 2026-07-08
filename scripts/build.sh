@@ -14,7 +14,7 @@ set -e
 #   L3: browser, dwn-sdk-js                             (dids | crypto, dids)
 #   L4: dwn-sql-store, dwn-clients                      (dwn-sdk-js | common, crypto, dwn-sdk-js)
 #   L5: agent, dwn-server                               (common, crypto, dids, dwn-clients, dwn-sdk-js | + dwn-sql-store, dwn-server-admin-ui)
-#   L6: auth                                            (agent, common, dids, dwn-clients)
+#   L6: auth, local-node                                (agent, common, dids, dwn-clients | agent, dwn-server)
 #   L7: api                                             (agent, auth, common, dwn-clients)
 #   L8: protocols, electrobun-dwn                       (api, dwn-sdk-js | agent, dwn-server)
 
@@ -38,8 +38,8 @@ bun run --filter '@enbox/dwn-sql-store' --filter '@enbox/dwn-clients' build
 echo "[L5] agent, dwn-server"
 bun run --filter '@enbox/agent' --filter '@enbox/dwn-server' build
 
-echo "[L6] auth"
-bun run --filter '@enbox/auth' build
+echo "[L6] auth, local-node"
+bun run --filter '@enbox/auth' --filter '@enbox/local-node' build
 
 echo "[L7] api"
 bun run --filter '@enbox/api' build

@@ -397,6 +397,38 @@ describe('DwnDiscoveryFile', () => {
     });
   });
 
+  describe('localNodeToken', () => {
+    it('should round-trip a record with a local node token', async () => {
+      const fs = createMemoryFs({ isProcessAlive: () => true });
+      const file = new DwnDiscoveryFile(fs, testFilePath);
+
+      const record: DwnDiscoveryRecord = {
+        endpoint       : 'http://127.0.0.1:55500',
+        localNodeToken : 'local-node-token',
+        pid            : 42,
+      };
+      await file.write(record);
+      const result = await file.read();
+
+      expect(result).toEqual(record);
+    });
+
+    it('should reject an empty local node token', async () => {
+      const fs = createMemoryFs({ isProcessAlive: () => true });
+      fs.files.set(testFilePath, JSON.stringify({
+        endpoint       : 'http://127.0.0.1:55500',
+        localNodeToken : '',
+        pid            : 42,
+      }));
+
+      const file = new DwnDiscoveryFile(fs, testFilePath);
+      const result = await file.read();
+
+      expect(result).toBeUndefined();
+      expect(fs.files.has(testFilePath)).toBe(false);
+    });
+  });
+
   describe('round-trip', () => {
     it('should write and then read the same record', async () => {
       const fs = createMemoryFs({ isProcessAlive: () => true });
