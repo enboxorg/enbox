@@ -108,7 +108,9 @@ async function run(): Promise<void> {
   await new Promise((): void => {});
 }
 
-run().catch((error: unknown): void => {
+try {
+  await run();
+} catch (error: unknown) {
   console.error(error);
   process.exit(1);
-});
+}

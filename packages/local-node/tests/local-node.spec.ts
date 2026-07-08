@@ -146,7 +146,7 @@ describe('LocalNode', () => {
     });
 
     await expect(node.start()).rejects.toThrow(LocalNodeAlreadyRunningError);
-    expect(servers.length).toBe(0);
+    expect(servers).toHaveLength(0);
   });
 
   it('should remove a stale discovery file when liveness validation fails', async () => {

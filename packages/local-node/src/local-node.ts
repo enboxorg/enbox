@@ -324,7 +324,8 @@ export class LocalNode {
 
   async #isLiveLocalNode(endpoint: string): Promise<boolean> {
     try {
-      const response = await this.#fetch(`${endpoint.replace(/\/+$/, '')}/info`);
+      const endpointWithTrailingSlash = endpoint.endsWith('/') ? endpoint : `${endpoint}/`;
+      const response = await this.#fetch(new URL('info', endpointWithTrailingSlash).toString());
       if (!response.ok) {
         return false;
       }
