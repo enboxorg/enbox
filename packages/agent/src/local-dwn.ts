@@ -22,14 +22,39 @@ import type { DwnDiscoveryFile } from './dwn-discovery-file.js';
 /**
  * Controls how the agent discovers and routes to a local DWN server.
  *
- * - `'off'`    — (default) skip local discovery entirely.
- * - `'prefer'` — try local DWN first; fall back to DID-document endpoints.
+ * - `'prefer'` — (default) use a paired local DWN first; fall back to DID-document endpoints.
  * - `'only'`   — require a local server; throw if none is found.
+ * - `'off'`    — skip local discovery entirely.
  */
 export type LocalDwnStrategy = 'prefer' | 'only' | 'off';
 
+/** Default local DWN strategy. Discovery is passive: no localhost port sweep is performed. */
+export const DEFAULT_LOCAL_DWN_STRATEGY: LocalDwnStrategy = 'prefer';
+
 /** The `server` field returned by `GET /info` on `@enbox/dwn-server`. */
 export const localDwnServerName = '@enbox/dwn-server';
+
+/**
+ * Well-known ports the packaged local DWN server may bind to.
+ *
+ * This list is used by the server/runtime surfaces for port selection and
+ * status display. Client discovery must use an explicit pairing channel
+ * (discovery file, persisted endpoint, or `dwn://connect`) rather than sweeping
+ * this list.
+ */
+export const localDwnPortCandidates = [
+  55500,
+  55501,
+  55502,
+  55503,
+  55504,
+  55505,
+  55506,
+  55507,
+  55508,
+  55509,
+  3000,
+] as const;
 
 /** Strips a trailing slash from a URL so endpoint comparisons are consistent. */
 export function normalizeBaseUrl(url: string): string {

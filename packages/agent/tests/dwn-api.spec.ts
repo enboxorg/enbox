@@ -25,6 +25,7 @@ import type { PortableIdentity } from '../src/types/identity.js';
 import type { BearerIdentity } from '../src/bearer-identity.js';
 import type { DwnPermissionScope } from '../src/types/dwn.js';
 
+import { DEFAULT_LOCAL_DWN_STRATEGY } from '../src/local-dwn.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' with { type: 'json' };
 import freeForAllProtocolDefinition from './fixtures/protocol-definitions/free-for-all.json' with { type: 'json' };
@@ -87,6 +88,14 @@ describe('AgentDwnApi', () => {
       expect(dwnApi).toBeDefined();
       expect(dwnApi.node).toBeDefined();
       expect(dwnApi.node).toHaveProperty('test', 'value');
+    });
+
+    it('defaults to passive local DWN preference', () => {
+      const mockDwn = ({} as unknown) as Dwn;
+      const dwnApi = new AgentDwnApi({ dwn: mockDwn });
+
+      expect(dwnApi.localDwnStrategy).toBe(DEFAULT_LOCAL_DWN_STRATEGY);
+      expect(dwnApi.localDwnStrategy).toBe('prefer');
     });
   });
 

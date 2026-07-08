@@ -3,9 +3,11 @@ import type {
   ConnectionSnapshot,
 } from '../state/app-store.js';
 
+import { localDwnPortCandidates } from '@enbox/agent';
 import { sleep } from '@enbox/common';
 
-const candidatePorts = [3000, 55500, 55501, 55502, 55503, 55504, 55505, 55506, 55507, 55508, 55509];
+const defaultCandidatePort = localDwnPortCandidates[0];
+const candidatePorts = [...localDwnPortCandidates];
 const candidateHosts = ['127.0.0.1'];
 const maxRetries = 5;
 const retryDelayMs = 800;
@@ -109,7 +111,7 @@ async function detectLocalDwnBaseUrl(): Promise<string> {
     }
   }
 
-  return 'http://127.0.0.1:3000';
+  return `http://127.0.0.1:${defaultCandidatePort}`;
 }
 
 async function resolveServerEndpoint(): Promise<string> {
@@ -133,4 +135,3 @@ async function fetchServerInfo(baseUrl: string): Promise<ServerInfo | null> {
     return null;
   }
 }
-

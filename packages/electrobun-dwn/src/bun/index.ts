@@ -6,18 +6,9 @@ import { existsSync, rmSync } from 'node:fs';
 import {
   buildDwnDiscoveryRedirectUrl,
   DwnDiscoveryFile,
+  localDwnPortCandidates,
   parseDwnConnectUrl,
 } from '@enbox/agent';
-
-/**
- * Well-known port candidates for the local DWN server.
- *
- * Previously imported as `localDwnPortCandidates` from `@enbox/agent`, but
- * that export was removed as part of the port-probing removal refactor
- * (see https://github.com/enboxorg/enbox/issues/711). The server-side port
- * selection list is maintained here as a local constant.
- */
-const localDwnPortCandidates = [3000, 55500, 55501, 55502, 55503, 55504, 55505, 55506, 55507, 55508, 55509] as const;
 import Electrobun, { ApplicationMenu, BrowserWindow, Tray, Utils } from 'electrobun/bun';
 
 function selectPortCandidates(): number[] {

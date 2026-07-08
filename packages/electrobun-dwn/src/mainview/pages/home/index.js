@@ -124,7 +124,7 @@ class HomePage extends SignalWatcher(LitElement) {
                     : html`<span class="server-url">--</span>`}
                 </div>
                 <div class="metric-note">
-                  Close this window to stop the server. The DWN uses ports 3000, then 55500-55509.
+                  Close this window to stop the server. The DWN uses ports 55500-55509, then 3000.
                 </div>
               </wa-card>
             </div>
