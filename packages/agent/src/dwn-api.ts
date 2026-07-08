@@ -65,7 +65,7 @@ import type {
 
 import { AgentPermissionsApi } from './permissions-api.js';
 import { DwnDiscoveryFile } from './dwn-discovery-file.js';
-import { LocalDwnDiscovery } from './local-dwn.js';
+import { DEFAULT_LOCAL_DWN_STRATEGY, LocalDwnDiscovery } from './local-dwn.js';
 import { DwnInterface, dwnMessageConstructors } from './types/dwn.js';
 import { getDwnServiceEndpointUrls, isRecordsWrite } from './utils.js';
 
@@ -209,7 +209,7 @@ export class AgentDwnApi {
   private _localDwnDiscovery?: LocalDwnDiscovery;
 
   constructor(params: DwnApiParams) {
-    const { agent, localDwnStrategy = 'prefer' } = params;
+    const { agent, localDwnStrategy = DEFAULT_LOCAL_DWN_STRATEGY } = params;
 
     // If an agent is provided, set it as the execution context for this API.
     this._agent = agent;

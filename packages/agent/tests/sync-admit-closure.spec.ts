@@ -210,6 +210,33 @@ describe('admitClosure', () => {
     expect(agent.rpc.sendDwnRequest.called).toBe(false);
   });
 
+  it('fails scoped RecordsDelete admission as unknown when the initial write is unavailable in remote mode', async () => {
+    const protocol = 'https://example.com/protocol';
+    const initial = await TestDataGenerator.generateRecordsWrite({ protocol });
+    const recordsDelete = await TestDataGenerator.generateRecordsDelete({
+      author   : initial.author,
+      recordId : initial.message.recordId,
+    });
+    const rootCid = await Message.getCid(recordsDelete.message);
+    const agent = createMockAgent();
+
+    const outcome = await admitClosure(rootCid, {
+      did        : 'did:example:alice',
+      dwnUrl     : 'https://dwn.example.com',
+      scope      : { kind: 'protocolSet', protocols: [protocol] },
+      agent,
+      prefetched : [{ message: recordsDelete.message }],
+    });
+
+    expect(outcome).toEqual({
+      kind   : 'failed',
+      rootCid,
+      reason : 'terminal',
+      detail : 'root message scope is unknown',
+    });
+    expect(agent.dwn.applyReplicatedMessage.called).toBe(false);
+  });
+
   it('fetches dependencies by message CID', async () => {
     const root = await TestDataGenerator.generateRecordsWrite();
     const dependency = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([1, 2, 3]) });

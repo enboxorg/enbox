@@ -14,6 +14,7 @@ import { AgentDidApi } from './did-api.js';
 import { AgentDwnApi } from './dwn-api.js';
 import { AgentIdentityApi } from './identity-api.js';
 import { AgentPermissionsApi } from './permissions-api.js';
+import { DEFAULT_LOCAL_DWN_STRATEGY } from './local-dwn.js';
 import { DwnDidStore } from './store-did.js';
 import { DwnIdentityStore } from './store-identity.js';
 import { DwnKeyStore } from './store-key.js';
@@ -196,13 +197,13 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
         // RPC to the local DWN server.
         dwnApi = new AgentDwnApi({
           localDwnEndpoint,
-          localDwnStrategy: localDwnStrategy ?? 'prefer',
+          localDwnStrategy: localDwnStrategy ?? DEFAULT_LOCAL_DWN_STRATEGY,
         });
       } else {
         // Local mode: create an in-process DWN with LevelDB stores.
         dwnApi = new AgentDwnApi({
           dwn              : await AgentDwnApi.createDwn({ dataPath, didResolver: didApi }),
-          localDwnStrategy : localDwnStrategy ?? 'prefer',
+          localDwnStrategy : localDwnStrategy ?? DEFAULT_LOCAL_DWN_STRATEGY,
         });
       }
     }

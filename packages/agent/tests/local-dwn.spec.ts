@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import type { DwnDiscoveryFile, DwnDiscoveryRecord } from '../src/dwn-discovery-file.js';
 import {
   LocalDwnDiscovery,
+  localDwnPortCandidates,
   localDwnServerName,
 } from '../src/local-dwn.js';
 
@@ -39,6 +40,22 @@ function createDiscoveryFileStub(record?: DwnDiscoveryRecord | null): DwnDiscove
 describe('LocalDwnDiscovery', () => {
   afterEach(() => {
     sinon.restore();
+  });
+
+  it('exports the authoritative local DWN server port candidates', () => {
+    expect([...localDwnPortCandidates]).toEqual([
+      55500,
+      55501,
+      55502,
+      55503,
+      55504,
+      55505,
+      55506,
+      55507,
+      55508,
+      55509,
+      3000,
+    ]);
   });
 
   // ─── No discovery file (browser-like) ─────────────────────────

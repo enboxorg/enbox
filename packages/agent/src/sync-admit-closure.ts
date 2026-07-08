@@ -66,6 +66,8 @@ type AdmissionEntryResult =
   | { kind: 'retry'; entries: SyncMessageEntry[] }
   | { kind: 'done'; outcome: AdmitOutcome };
 
+type ScopeCheckResult = 'in-scope' | 'out-of-scope' | 'unknown';
+
 // applyReplicatedMessage reports the full set of missing ancestors in a single
 // Incomplete, so a well-formed closure converges in a handful of passes. Keep a
 // high cap anyway as a safety bound against malformed or adversarial remotes (and
@@ -141,10 +143,18 @@ class AdmitClosureContext {
 
   private async admitEntry(rootCid: string, entry: SyncMessageEntry): Promise<AdmissionEntryResult> {
     const cid = await this.rememberEntry(entry);
-    if (cid === rootCid && !await this.rootIsInScope(entry)) {
+    const rootScope = cid === rootCid ? await this.checkRootScope(entry) : 'in-scope';
+    if (rootScope !== 'in-scope') {
       return {
         kind    : 'done',
-        outcome : { kind: 'failed', rootCid, reason: 'terminal', detail: 'root message is outside the sync scope' },
+        outcome : {
+          kind   : 'failed',
+          rootCid,
+          reason : 'terminal',
+          detail : rootScope === 'unknown'
+            ? 'root message scope is unknown'
+            : 'root message is outside the sync scope',
+        },
       };
     }
 
@@ -227,18 +237,17 @@ class AdmitClosureContext {
     return fetched;
   }
 
-  private async rootIsInScope(entry: SyncMessageEntry): Promise<boolean> {
+  private async checkRootScope(entry: SyncMessageEntry): Promise<ScopeCheckResult> {
     const { scope } = this.deps;
     if (scope === undefined || scope.kind === 'full') {
-      return true;
+      return 'in-scope';
     }
 
-    const classification = classifySyncMessageScope({
+    return classifySyncMessageScope({
       message      : entry.message,
       initialWrite : await this.getInitialWriteForDelete(entry.message),
       scope,
     });
-    return classification === 'in-scope';
   }
 
   private async getInitialWriteForDelete(message: GenericMessage): Promise<RecordsWriteMessage | undefined> {
