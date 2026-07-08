@@ -1,3 +1,4 @@
+import type { LocalNodePairingSessionStore } from './pairing-session-store.js';
 import type { LocalNodeServerConfigOptions } from './local-node-config.js';
 import type { PairingBroker } from './pairing-broker.js';
 import type { DwnDiscoveryFile, DwnDiscoveryRecord } from '@enbox/agent';
@@ -15,6 +16,7 @@ import {
 import { LocalNodePairingManager as DefaultLocalNodePairingManager, DwnServer } from '@enbox/dwn-server';
 
 import { createLocalNodeDwnServerConfig } from './local-node-config.js';
+import { LocalNodePairingSessionFile } from './pairing-session-store.js';
 
 export type LocalNodeState = 'stopped' | 'running';
 
@@ -61,6 +63,7 @@ export type LocalNodeOptions = Omit<LocalNodeServerConfigOptions, 'port'> & {
   pairingBroker? : PairingBroker;
   pairingPollIntervalMs? : number;
   pairingManager? : LocalNodePairingManager;
+  pairingSessionStore? : LocalNodePairingSessionStore;
   pid? : number;
   portCandidates? : readonly number[];
 };
@@ -86,6 +89,7 @@ export class LocalNode {
   readonly #pairingBroker: PairingBroker | undefined;
   readonly #pairingManager: LocalNodePairingManager;
   readonly #pairingPollIntervalMs: number;
+  readonly #pairingSessionStore: LocalNodePairingSessionStore;
   readonly #pid: number;
   readonly #portCandidates: readonly number[];
   readonly #inFlightPairingRequestIds: Set<string> = new Set();
@@ -124,6 +128,7 @@ export class LocalNode {
     this.#pairingBroker = options.pairingBroker;
     this.#pairingManager = options.pairingManager ?? new DefaultLocalNodePairingManager();
     this.#pairingPollIntervalMs = options.pairingPollIntervalMs ?? 500;
+    this.#pairingSessionStore = options.pairingSessionStore ?? new LocalNodePairingSessionFile();
     this.#pid = options.pid ?? process.pid;
     this.#portCandidates = options.portCandidates ?? localDwnPortCandidates;
   }
@@ -153,6 +158,8 @@ export class LocalNode {
     if (existingNode !== undefined) {
       throw new LocalNodeAlreadyRunningError(existingNode);
     }
+
+    await this.#loadPairingSessions();
 
     const startResult = await this.#startFirstAvailableServer();
     this.#server = startResult.server;
@@ -221,6 +228,16 @@ export class LocalNode {
       state                  : this.#state,
       webSocketSupport       : this.#configOptions.webSocketSupport ?? true,
     };
+  }
+
+  public async revokePairingToken(token: string): Promise<boolean> {
+    const revoked = this.#pairingManager.revokeToken(token);
+    if (!revoked) {
+      return false;
+    }
+
+    await this.#savePairingSessions();
+    return true;
   }
 
   public async processPendingPairingRequests(): Promise<void> {
@@ -313,7 +330,10 @@ export class LocalNode {
     try {
       const decision = await this.#pairingBroker!.decidePairingRequest(request);
       if (decision === 'approve') {
-        this.#pairingManager.approveRequest(request.id);
+        const approved = this.#pairingManager.approveRequest(request.id);
+        if (approved) {
+          await this.#savePairingSessions();
+        }
       } else {
         this.#pairingManager.denyRequest(request.id);
       }
@@ -335,6 +355,18 @@ export class LocalNode {
     } catch {
       return false;
     }
+  }
+
+  async #loadPairingSessions(): Promise<void> {
+    const sessions = await this.#pairingSessionStore.read();
+    this.#pairingManager.importSessions(sessions);
+  }
+
+  async #savePairingSessions(): Promise<void> {
+    const browserSessions = this.#pairingManager.exportSessions()
+      .filter((session): boolean => session.origin !== undefined);
+
+    await this.#pairingSessionStore.write(browserSessions);
   }
 
   #getStartResult(): LocalNodeStartResult {

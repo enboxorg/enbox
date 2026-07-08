@@ -20,6 +20,7 @@ export type {
   LocalNodePairingManagerOptions,
   LocalNodePairingPollResult,
   LocalNodePairingRequestView,
+  LocalNodePairingSessionRecord,
 } from './local-node-pairing.js';
 export type { MessageProcessedContext, MessageProcessedHook } from './message-processed-hook.js';
 export { OpenAuthHandler } from './registration/open-auth-handler.js';
