@@ -58,7 +58,7 @@ export async function vaultConnect(
     dwnEndpoints,
   });
 
-  // Apply local DWN discovery (browser redirect payload or persisted endpoint).
+  // Apply a stored local-node pairing when the agent was created in local mode.
   // In remote mode, discovery already ran before agent creation — skip.
   if (!userAgent.dwn.isRemoteMode) {
     await applyLocalDwnDiscovery(userAgent, storage, emitter);

@@ -9,6 +9,7 @@ import { EnboxUserAgent } from '@enbox/agent';
 
 import { AuthManager } from '../src/auth-manager.js';
 import { MemoryStorage } from '../src/storage/storage.js';
+import { persistLocalDwnPairingRecord } from '../src/discovery.js';
 import { WalletConnect } from '../src/wallet-connect-client.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
 
@@ -26,6 +27,30 @@ let userAgentCreateStub: sinon.SinonStub;
 function setupStubs(): void {
   initClientStub = sinon.stub(WalletConnect, 'initClient').resolves(createInitClientResult());
   userAgentCreateStub = sinon.stub(EnboxUserAgent, 'create').resolves(createMockAgent() as any);
+}
+
+function localNodeInfo(): any {
+  return {
+    localNode    : true,
+    localPairing : {
+      pairUrl         : 'http://127.0.0.1:55500/local/pair',
+      pollUrlTemplate : 'http://127.0.0.1:55500/local/pair/{requestId}',
+    },
+    maxFileSize              : 10_000_000,
+    registrationRequirements : [],
+    server                   : '@enbox/dwn-server',
+    sdkVersion               : '0.0.1',
+    url                      : 'http://127.0.0.1:55500',
+    version                  : '0.0.1',
+    webSocketSupport         : true,
+  };
+}
+
+function jsonResponse(body: unknown, status: number = 200): Response {
+  return new Response(JSON.stringify(body), {
+    headers: { 'content-type': 'application/json' },
+    status,
+  });
 }
 
 describe('AuthManager.create()', () => {
@@ -46,6 +71,7 @@ describe('AuthManager.create()', () => {
     expect(manager).toBeInstanceOf(AuthManager);
     expect(manager.state).toBe('uninitialized');
     expect(manager.agent).toBe(agent);
+    expect(manager.localDwnStatus).toEqual({ status: 'unavailable' });
   });
 
   test('creates instance with custom options', async () => {
@@ -177,6 +203,157 @@ describe('AuthManager.create()', () => {
     expect(capturedOptions.dataPath).toBe('/custom/path');
     expect(capturedOptions.agentVault).toBe(fakeVault);
     expect(capturedOptions.localDwnStrategy).toBe('only');
+  });
+
+  test('creates remote-mode agent with a stored local-node pairing', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnPairingRecord(storage, {
+      createdAt    : 123,
+      endpoint     : 'http://127.0.0.1:55500',
+      pairedOrigin : 'https://app.example',
+      token        : 'paired-token',
+      version      : 1,
+    });
+
+    sinon.stub(globalThis, 'fetch').callsFake(async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const href = url.toString();
+      if (href.endsWith('/info')) {
+        return jsonResponse(localNodeInfo());
+      }
+
+      expect((init?.headers as Record<string, string>).authorization).toBe('Bearer paired-token');
+      return jsonResponse({ localNode: true, paired: true });
+    });
+
+    let capturedOptions: any;
+    userAgentCreateStub.onFirstCall().callsFake((...args: any[]): any => {
+      capturedOptions = args[0];
+      return Promise.resolve(createMockAgent());
+    });
+
+    const manager = await AuthManager.create({ storage });
+
+    expect(capturedOptions.localDwnEndpoint).toBe('http://127.0.0.1:55500');
+    expect(capturedOptions.rpcClient).toBeDefined();
+    expect(manager.localDwnStatus).toEqual({
+      endpoint     : 'http://127.0.0.1:55500',
+      pairedOrigin : 'https://app.example',
+      status       : 'paired',
+    });
+  });
+
+  test('enableLocalNode pairs and emits local-dwn-available', async () => {
+    const storage = new MemoryStorage();
+    userAgentCreateStub.onFirstCall().resolves(createMockAgent() as any);
+    let pollCount = 0;
+
+    sinon.stub(globalThis, 'fetch').callsFake(async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const href = url.toString();
+      if (href.endsWith('/info')) {
+        return jsonResponse(localNodeInfo());
+      }
+
+      if (href.endsWith('/local/pair') && init?.method === 'POST') {
+        return jsonResponse({ requestId: 'request-1', status: 'pending' });
+      }
+
+      pollCount++;
+      return pollCount === 1
+        ? jsonResponse({ origin: 'https://app.example', status: 'pending' })
+        : jsonResponse({ origin: 'https://app.example', status: 'approved', token: 'new-token' });
+    });
+
+    const manager = await AuthManager.create({ storage });
+    const events: any[] = [];
+    manager.on('local-dwn-available', (event) => { events.push(event); });
+
+    const result = await manager.enableLocalNode({
+      endpoint       : 'http://127.0.0.1:55500',
+      origin         : 'https://app.example',
+      pollIntervalMs : 0,
+      timeoutMs      : 100,
+    });
+
+    expect(result.status).toBe('paired');
+    expect(events).toEqual([{ endpoint: 'http://127.0.0.1:55500', paired: true }]);
+    expect(manager.localDwnStatus).toEqual({
+      endpoint     : 'http://127.0.0.1:55500',
+      pairedOrigin : 'https://app.example',
+      status       : 'paired',
+    });
+  });
+
+  test('probeLocalNode returns unsupported when fetch is unavailable', async () => {
+    const manager = await AuthManager.create({ storage: new MemoryStorage() });
+
+    await withoutGlobalFetch(async (): Promise<void> => {
+      expect(await manager.probeLocalNode()).toEqual({ reason: 'no-fetch', status: 'unsupported' });
+    });
+  });
+
+  test('enableLocalNode emits unavailable when endpoint is not a local node', async () => {
+    const storage = new MemoryStorage();
+    userAgentCreateStub.onFirstCall().resolves(createMockAgent() as any);
+    sinon.stub(globalThis, 'fetch').resolves(jsonResponse({ ...localNodeInfo(), localNode: false }));
+
+    const manager = await AuthManager.create({ storage });
+    const unavailableEvents: any[] = [];
+    manager.on('local-dwn-unavailable', (event) => { unavailableEvents.push(event); });
+
+    const result = await manager.enableLocalNode({ endpoint: 'http://127.0.0.1:55500' });
+
+    expect(result).toEqual({ status: 'not-found' });
+    expect(unavailableEvents).toEqual([{}]);
+    expect(manager.localDwnStatus).toEqual({ status: 'unavailable' });
+  });
+
+  test('enableLocalNode updates remote-mode agent RPC client and cached endpoint', async () => {
+    const storage = new MemoryStorage();
+    const endpointCalls: string[] = [];
+    const agent = createMockAgent({
+      dwnIsRemoteMode              : true,
+      dwnSetCachedLocalDwnEndpoint : async (endpoint): Promise<boolean> => {
+        endpointCalls.push(endpoint);
+        return true;
+      },
+    });
+    const originalRpc = (agent as any).rpc;
+    userAgentCreateStub.onFirstCall().resolves(agent as any);
+    let pollCount = 0;
+
+    sinon.stub(globalThis, 'fetch').callsFake(async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const href = url.toString();
+      if (href.endsWith('/info')) {
+        return jsonResponse(localNodeInfo());
+      }
+
+      if (href.endsWith('/local/pair') && init?.method === 'POST') {
+        return jsonResponse({ requestId: 'request-1', status: 'pending' });
+      }
+
+      pollCount++;
+      return pollCount === 1
+        ? jsonResponse({ origin: 'https://app.example', status: 'pending' })
+        : jsonResponse({ origin: 'https://app.example', status: 'approved', token: 'remote-token' });
+    });
+
+    const manager = await AuthManager.create({ storage });
+    const result = await manager.enableLocalNode({
+      endpoint       : 'http://127.0.0.1:55500',
+      origin         : 'https://app.example',
+      pollIntervalMs : 0,
+      timeoutMs      : 100,
+    });
+
+    expect(result.status).toBe('paired');
+    expect(manager.localDwnEndpoint).toBe('http://127.0.0.1:55500');
+    expect(endpointCalls).toEqual(['http://127.0.0.1:55500']);
+    expect((agent as any).rpc).not.toBe(originalRpc);
+    expect(manager.localDwnStatus).toEqual({
+      endpoint     : 'http://127.0.0.1:55500',
+      pairedOrigin : 'https://app.example',
+      status       : 'paired',
+    });
   });
 });
 
@@ -398,3 +575,21 @@ describe('AuthManager.walletConnect()', () => {
     expect(syncCalls[0].interval).toBe('20s');
   });
 });
+
+type FetchLike = typeof fetch;
+
+async function withoutGlobalFetch<T>(run: () => Promise<T>): Promise<T> {
+  const originalFetch = globalThis.fetch;
+
+  delete (globalThis as { fetch?: FetchLike }).fetch;
+
+  try {
+    return await run();
+  } finally {
+    Object.defineProperty(globalThis, 'fetch', {
+      configurable : true,
+      value        : originalFetch,
+      writable     : true,
+    });
+  }
+}

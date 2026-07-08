@@ -9,6 +9,7 @@ export * from './provider-directory-types.js';
 export * from './rate-limit-error.js';
 export * from './readable-stream.js';
 export * from './registration-types.js';
+export * from './rpc-auth.js';
 export * from './rpc-client.js';
 export * from './server-info-types.js';
 export * from './ws-payload-size.js';

@@ -1,6 +1,6 @@
 import type { JsonRpcResponse } from './json-rpc.js';
 import type { ReplicationApplyResult } from '@enbox/dwn-sdk-js';
-import type { DwnReplicationApplyRequest, DwnRpc, DwnRpcRequest, DwnRpcResponse } from './dwn-rpc-types.js';
+import type { DwnReplicationApplyRequest, DwnRpc, DwnRpcAuthOptions, DwnRpcRequest, DwnRpcResponse } from './dwn-rpc-types.js';
 import type { DwnServerInfoRpc, ServerInfo } from './server-info-types.js';
 
 import { createJsonRpcRequest } from './json-rpc.js';
@@ -48,18 +48,27 @@ export interface EnboxRpc extends DwnRpc, DidRpc, DwnServerInfoRpc {
   close(): Promise<void>;
 }
 
+export type EnboxRpcClientOptions = {
+  auth?: DwnRpcAuthOptions;
+};
+
 /**
  * Client used to communicate with Dwn Servers
  */
 export class EnboxRpcClient implements EnboxRpc {
   private readonly transportClients: Map<string, EnboxRpc>;
 
-  constructor(clients: EnboxRpc[] = []) {
+  constructor(clients: EnboxRpc[] = [], options: EnboxRpcClientOptions = {}) {
     this.transportClients = new Map();
 
     // include http and socket clients as default.
     // can be overwritten for 'http:', 'https:', 'ws: or ':wss' if instantiated with other clients.
-    clients = [new HttpEnboxRpcClient(), new WebSocketEnboxRpcClient(), ...clients];
+    const httpClient = new HttpEnboxRpcClient(undefined, undefined, options.auth);
+    clients = [
+      httpClient,
+      new WebSocketEnboxRpcClient(httpClient, options.auth),
+      ...clients,
+    ];
 
     for (const client of clients) {
       for (const transportScheme of client.transportProtocols) {

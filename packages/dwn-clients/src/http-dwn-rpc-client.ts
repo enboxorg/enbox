@@ -1,8 +1,9 @@
 import type { JsonRpcResponse } from './json-rpc.js';
 import type { ReplicationApplyResult } from '@enbox/dwn-sdk-js';
-import type { DwnReplicationApplyRequest, DwnRpc, DwnRpcRequest, DwnRpcResponse } from './dwn-rpc-types.js';
+import type { DwnReplicationApplyRequest, DwnRpc, DwnRpcAuthOptions, DwnRpcRequest, DwnRpcResponse } from './dwn-rpc-types.js';
 import type { DwnServerInfoCache, ServerInfo } from './server-info-types.js';
 
+import { attachBearerToken } from './rpc-auth.js';
 import { CryptoUtils } from '@enbox/crypto';
 import { DwnRpcError } from './dwn-rpc-error.js';
 import { DwnServerInfoCacheMemory } from './dwn-server-info-cache-memory.js';
@@ -151,9 +152,11 @@ function attachDataRequestBody(fetchOpts: RequestInit, requestHeaders: Record<st
 export class HttpDwnRpcClient implements DwnRpc {
   private readonly serverInfoCache: DwnServerInfoCache;
   private readonly _retryOptions: Required<HttpRetryOptions>;
+  private readonly _authOptions: DwnRpcAuthOptions;
 
-  constructor(serverInfoCache?: DwnServerInfoCache, retryOptions?: HttpRetryOptions) {
+  constructor(serverInfoCache?: DwnServerInfoCache, retryOptions?: HttpRetryOptions, authOptions: DwnRpcAuthOptions = {}) {
     this.serverInfoCache = serverInfoCache ?? new DwnServerInfoCacheMemory();
+    this._authOptions = authOptions;
     this._retryOptions = {
       maxRetries  : retryOptions?.maxRetries ?? DEFAULT_MAX_RETRIES,
       baseDelayMs : retryOptions?.baseDelayMs ?? DEFAULT_BASE_DELAY_MS,
@@ -173,6 +176,7 @@ export class HttpDwnRpcClient implements DwnRpc {
     const requestHeaders: Record<string, string> = {
       'dwn-request': JSON.stringify(jsonRpcRequest)
     };
+    attachBearerToken(requestHeaders, this._authOptions, request.dwnUrl);
 
     const fetchOpts: RequestInit = {
       method  : 'POST',
@@ -263,6 +267,7 @@ export class HttpDwnRpcClient implements DwnRpc {
     const requestHeaders: Record<string, string> = {
       'dwn-request': JSON.stringify(jsonRpcRequest)
     };
+    attachBearerToken(requestHeaders, this._authOptions, request.dwnUrl);
 
     const fetchOpts: RequestInit = {
       method  : 'POST',
@@ -323,6 +328,8 @@ export class HttpDwnRpcClient implements DwnRpc {
         const results = await response.json() as ServerInfo;
 
         const serverInfo: ServerInfo = {
+          localNode                : results.localNode,
+          localPairing             : results.localPairing,
           maxFileSize              : results.maxFileSize,
           maxInFlight              : results.maxInFlight,
           providerAuth             : results.providerAuth,

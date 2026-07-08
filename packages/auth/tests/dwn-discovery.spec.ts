@@ -1,559 +1,863 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import type { ServerInfo } from '@enbox/dwn-clients';
 
-import { encodeDwnDiscoveryPayload } from '@enbox/agent';
+import { WebSocketDwnRpcClient } from '@enbox/dwn-clients';
+import { describe, expect, test } from 'bun:test';
 
-import { AuthEventEmitter } from '../src/events.js';
 import { createMockAgent } from './helpers/mock-agent.js';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import {
   applyLocalDwnDiscovery,
-  checkUrlForDwnDiscoveryPayload,
   clearLocalDwnEndpoint,
-  persistLocalDwnEndpoint,
-  requestLocalDwnDiscovery,
+  createLocalDwnRpcClient,
+  discoverLocalDwn,
+  discoverLocalDwnPairing,
+  initiateLocalDwnPairing,
+  persistLocalDwnPairingRecord,
+  pollLocalDwnPairing,
+  probeLocalDwn,
+  readLocalDwnPairingRecord,
+  requestLocalDwnPairing,
   restoreLocalDwnEndpoint,
 } from '../src/discovery.js';
 
-// ─── Helpers ────────────────────────────────────────────────────────
+const localNodeInfo: ServerInfo = {
+  localNode    : true,
+  localPairing : {
+    pairUrl         : 'http://127.0.0.1:55500/local/pair',
+    pollUrlTemplate : 'http://127.0.0.1:55500/local/pair/{requestId}',
+  },
+  maxFileSize              : 10_000_000,
+  registrationRequirements : [],
+  server                   : '@enbox/dwn-server',
+  sdkVersion               : '0.0.1',
+  url                      : 'http://127.0.0.1:55500',
+  version                  : '0.0.1',
+  webSocketSupport         : true,
+};
 
-/** Build a fake page URL with a DWN discovery payload in the fragment. */
-function buildUrlWithPayload(endpoint: string): string {
-  const encoded = encodeDwnDiscoveryPayload({ endpoint });
-  return `https://myapp.example.com/callback#${encoded}`;
+const pairingRecord = {
+  createdAt    : 123,
+  endpoint     : 'http://127.0.0.1:55500',
+  pairedOrigin : 'https://app.example',
+  token        : 'paired-token',
+  version      : 1 as const,
+};
+
+let originalLocation: Location | undefined;
+let originalNavigator: Navigator | undefined;
+let originalIsSecureContext: boolean | undefined;
+
+describe('local-node pairing storage', () => {
+  test('persists and reads a versioned pairing record', async () => {
+    const storage = new MemoryStorage();
+
+    await persistLocalDwnPairingRecord(storage, {
+      ...pairingRecord,
+      endpoint: `${pairingRecord.endpoint}/`,
+    });
+
+    const raw = await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT);
+    expect(raw).not.toBeNull();
+    expect(JSON.parse(raw!)).toEqual(pairingRecord);
+    expect(await readLocalDwnPairingRecord(storage)).toEqual(pairingRecord);
+  });
+
+  test('clears legacy endpoint-only values', async () => {
+    const storage = new MemoryStorage();
+    await storage.set(STORAGE_KEYS.LOCAL_DWN_ENDPOINT, pairingRecord.endpoint);
+
+    expect(await readLocalDwnPairingRecord(storage)).toBeUndefined();
+    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBeNull();
+  });
+
+  test('clears malformed versioned pairing records', async () => {
+    const storage = new MemoryStorage();
+    await storage.set(STORAGE_KEYS.LOCAL_DWN_ENDPOINT, JSON.stringify({
+      ...pairingRecord,
+      localNodeId: 123,
+    }));
+
+    expect(await readLocalDwnPairingRecord(storage)).toBeUndefined();
+    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBeNull();
+  });
+
+  test('clears stale pairing records during passive discovery', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnPairingRecord(storage, pairingRecord);
+
+    const result = await discoverLocalDwnPairing(storage, async (url, init): Promise<Response> => {
+      if (url.toString().endsWith('/info')) {
+        return jsonResponse(localNodeInfo);
+      }
+
+      expect((init?.headers as Record<string, string>).authorization).toBe('Bearer paired-token');
+      return jsonResponse({ error: 'Unauthorized' }, 401);
+    });
+
+    expect(result).toBeUndefined();
+    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBeNull();
+  });
+
+  test('returns valid stored pairing during passive discovery', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnPairingRecord(storage, pairingRecord);
+    const fetchFn = async (url: string | URL | Request): Promise<Response> => {
+      return url.toString().endsWith('/info')
+        ? jsonResponse(localNodeInfo)
+        : jsonResponse({ localNode: true, paired: true });
+    };
+
+    const result = await discoverLocalDwnPairing(storage, fetchFn);
+
+    expect(result).toEqual(pairingRecord);
+
+    const originalFetch = globalThis.fetch;
+    Object.defineProperty(globalThis, 'fetch', {
+      configurable : true,
+      value        : fetchFn,
+      writable     : true,
+    });
+
+    try {
+      expect(await discoverLocalDwn(storage)).toBe(pairingRecord.endpoint);
+    } finally {
+      Object.defineProperty(globalThis, 'fetch', {
+        configurable : true,
+        value        : originalFetch,
+        writable     : true,
+      });
+    }
+  });
+
+  test('returns undefined for stored pairing when fetch is unavailable', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnPairingRecord(storage, pairingRecord);
+
+    await withoutGlobalFetch(async (): Promise<void> => {
+      expect(await discoverLocalDwnPairing(storage)).toBeUndefined();
+    });
+
+    expect(await readLocalDwnPairingRecord(storage)).toEqual(pairingRecord);
+  });
+
+  test('restores stored pairing endpoint into an agent', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnPairingRecord(storage, pairingRecord);
+    const endpoints: string[] = [];
+    const agent = createMockAgent({
+      dwnSetCachedLocalDwnEndpoint: async (endpoint): Promise<boolean> => {
+        endpoints.push(endpoint);
+        return true;
+      },
+    });
+
+    expect(await restoreLocalDwnEndpoint(agent, storage)).toBe(true);
+    expect(await applyLocalDwnDiscovery(agent, storage)).toBe(true);
+    expect(endpoints).toEqual([pairingRecord.endpoint, pairingRecord.endpoint]);
+  });
+
+  test('clears stored pairing when an agent rejects the endpoint', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnPairingRecord(storage, pairingRecord);
+    const agent = createMockAgent({
+      dwnSetCachedLocalDwnEndpoint: async (): Promise<boolean> => false,
+    });
+
+    expect(await restoreLocalDwnEndpoint(agent, storage)).toBe(false);
+    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBeNull();
+  });
+});
+
+describe('probeLocalDwn', () => {
+  test('returns unsupported when fetch is unavailable', async () => {
+    await withoutGlobalFetch(async (): Promise<void> => {
+      expect(await probeLocalDwn()).toEqual({ reason: 'no-fetch', status: 'unsupported' });
+    });
+  });
+
+  test('returns unsupported in insecure browser contexts', async () => {
+    setBrowserGlobals({
+      href            : 'http://app.example',
+      isSecureContext : false,
+      userAgent       : 'Mozilla/5.0 Chrome/120.0',
+    });
+
+    try {
+      const result = await probeLocalDwn({
+        fetch: async (): Promise<Response> => {
+          throw new Error('should not fetch');
+        },
+      });
+
+      expect(result).toEqual({ reason: 'insecure-context', status: 'unsupported' });
+    } finally {
+      restoreBrowserGlobals();
+    }
+  });
+
+  test('returns not-found when no candidate port responds', async () => {
+    const result = await probeLocalDwn({
+      fetch: async (): Promise<Response> => {
+        throw new Error('connection refused');
+      },
+      portCandidates : [55500],
+      scanPorts      : true,
+    });
+
+    expect(result).toEqual({ status: 'not-found' });
+  });
+
+  test('returns not-found when candidate server info is not OK', async () => {
+    const result = await probeLocalDwn({
+      fetch          : async (): Promise<Response> => jsonResponse({ error: 'boom' }, 500),
+      portCandidates : [55500],
+      scanPorts      : true,
+    });
+
+    expect(result).toEqual({ status: 'not-found' });
+  });
+
+  test('returns found-unpaired for an unpaired local node', async () => {
+    const requestedUrls: string[] = [];
+    const result = await probeLocalDwn({
+      fetch: async (url): Promise<Response> => {
+        requestedUrls.push(url.toString());
+        return jsonResponse(localNodeInfo);
+      },
+      portCandidates : [55500],
+      scanPorts      : true,
+    });
+
+    expect(requestedUrls).toEqual(['http://127.0.0.1:55500/info']);
+    expect(result).toEqual({
+      endpoint   : 'http://127.0.0.1:55500',
+      serverInfo : localNodeInfo,
+      status     : 'found-unpaired',
+    });
+  });
+
+  test('returns paired when a stored token is accepted', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnPairingRecord(storage, pairingRecord);
+
+    const result = await probeLocalDwn({
+      fetch: async (url, init): Promise<Response> => {
+        if (url.toString().endsWith('/info')) {
+          return jsonResponse(localNodeInfo);
+        }
+
+        expect(url.toString()).toBe('http://127.0.0.1:55500/local/status');
+        expect((init?.headers as Record<string, string>).authorization).toBe('Bearer paired-token');
+        expect((init?.headers as Record<string, string>).origin).toBe('https://app.example');
+        return jsonResponse({ localNode: true, paired: true });
+      },
+      origin: 'https://app.example',
+      storage,
+    });
+
+    expect(result).toEqual({
+      endpoint   : pairingRecord.endpoint,
+      pairing    : pairingRecord,
+      serverInfo : localNodeInfo,
+      status     : 'paired',
+    });
+  });
+
+  test('does not scan ports when scanPorts is false', async () => {
+    let fetchCount = 0;
+
+    const result = await probeLocalDwn({
+      fetch: async (): Promise<Response> => {
+        fetchCount++;
+        return jsonResponse(localNodeInfo);
+      },
+      scanPorts: false,
+    });
+
+    expect(result).toEqual({ status: 'not-found' });
+    expect(fetchCount).toBe(0);
+  });
+
+  test('returns unsupported for Safari user agents', async () => {
+    setBrowserGlobals({
+      href            : 'https://app.example',
+      isSecureContext : true,
+      userAgent       : 'Mozilla/5.0 Version/17.0 Safari/605.1.15',
+    });
+
+    try {
+      const result = await probeLocalDwn({
+        fetch: async (): Promise<Response> => {
+          throw new Error('should not fetch');
+        },
+      });
+
+      expect(result).toEqual({ reason: 'safari', status: 'unsupported' });
+    } finally {
+      restoreBrowserGlobals();
+    }
+  });
+
+  test('does not treat missing navigator userAgent as Safari', async () => {
+    setBrowserGlobals({
+      href            : 'https://app.example',
+      isSecureContext : true,
+      userAgent       : '',
+    });
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable : true,
+      value        : {},
+      writable     : true,
+    });
+
+    try {
+      const result = await probeLocalDwn({
+        fetch: async (): Promise<Response> => {
+          throw new Error('connection refused');
+        },
+        portCandidates: [55500],
+      });
+
+      expect(result).toEqual({ status: 'not-found' });
+    } finally {
+      restoreBrowserGlobals();
+    }
+  });
+
+  test('clears stored pairing when probe revalidation fails', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnPairingRecord(storage, pairingRecord);
+
+    const result = await probeLocalDwn({
+      fetch: async (url): Promise<Response> => {
+        return url.toString().endsWith('/info')
+          ? jsonResponse(localNodeInfo)
+          : jsonResponse({ error: 'Unauthorized' }, 401);
+      },
+      portCandidates: [],
+      storage,
+    });
+
+    expect(result).toEqual({ status: 'not-found' });
+    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBeNull();
+  });
+
+  test('returns not-found when stored pairing status request throws', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnPairingRecord(storage, pairingRecord);
+
+    const result = await probeLocalDwn({
+      fetch: async (url): Promise<Response> => {
+        if (url.toString().endsWith('/info')) {
+          return jsonResponse(localNodeInfo);
+        }
+
+        throw new Error('status unreachable');
+      },
+      portCandidates: [],
+      storage,
+    });
+
+    expect(result).toEqual({ status: 'not-found' });
+    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBeNull();
+  });
+});
+
+describe('requestLocalDwnPairing', () => {
+  test('returns unsupported when fetch is unavailable', async () => {
+    await withoutGlobalFetch(async (): Promise<void> => {
+      const result = await requestLocalDwnPairing({ storage: new MemoryStorage() });
+
+      expect(result).toEqual({ reason: 'no-fetch', status: 'unsupported' });
+    });
+  });
+
+  test('returns not-found when explicit endpoint is not a local node', async () => {
+    const result = await requestLocalDwnPairing({
+      endpoint : pairingRecord.endpoint,
+      fetch    : async (): Promise<Response> => jsonResponse({ ...localNodeInfo, localNode: false }),
+      storage  : new MemoryStorage(),
+    });
+
+    expect(result).toEqual({ status: 'not-found' });
+  });
+
+  test('returns existing paired status without re-pairing', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnPairingRecord(storage, pairingRecord);
+
+    const result = await requestLocalDwnPairing({
+      fetch: async (url): Promise<Response> => {
+        const href = url.toString();
+        expect(href.endsWith('/local/pair')).toBe(false);
+
+        return href.endsWith('/info')
+          ? jsonResponse(localNodeInfo)
+          : jsonResponse({ localNode: true, paired: true });
+      },
+      storage,
+    });
+
+    expect(result).toEqual({
+      endpoint   : pairingRecord.endpoint,
+      pairing    : pairingRecord,
+      serverInfo : localNodeInfo,
+      status     : 'paired',
+    });
+  });
+
+  test('initiates, polls, and persists an approved pairing token', async () => {
+    const storage = new MemoryStorage();
+    let pollCount = 0;
+
+    const result = await requestLocalDwnPairing({
+      fetch: async (url, init): Promise<Response> => {
+        const href = url.toString();
+
+        if (href.endsWith('/info')) {
+          return jsonResponse(localNodeInfo);
+        }
+
+        if (href.endsWith('/local/pair') && init?.method === 'POST') {
+          expect((init.headers as Record<string, string>).origin).toBe('https://app.example');
+          return jsonResponse({ requestId: 'request-1', status: 'pending' });
+        }
+
+        if (href.endsWith('/local/pair/request-1')) {
+          pollCount++;
+          return pollCount === 1
+            ? jsonResponse({ origin: 'https://app.example', status: 'pending' })
+            : jsonResponse({ origin: 'https://app.example', status: 'approved', token: 'new-token' });
+        }
+
+        throw new Error(`unexpected fetch ${href}`);
+      },
+      origin         : 'https://app.example',
+      pollIntervalMs : 0,
+      portCandidates : [55500],
+      storage,
+      timeoutMs      : 100,
+    });
+
+    expect(result).toEqual({
+      endpoint : 'http://127.0.0.1:55500',
+      pairing  : {
+        createdAt    : expect.any(Number),
+        endpoint     : 'http://127.0.0.1:55500',
+        pairedOrigin : 'https://app.example',
+        token        : 'new-token',
+        version      : 1,
+      },
+      serverInfo : localNodeInfo,
+      status     : 'paired',
+    });
+
+    expect(await readLocalDwnPairingRecord(storage)).toEqual((result as any).pairing);
+  });
+
+  test('returns rate-limited when pairing initiation is rate limited', async () => {
+    const storage = new MemoryStorage();
+
+    const result = await requestLocalDwnPairing({
+      fetch: async (url): Promise<Response> => {
+        return url.toString().endsWith('/info')
+          ? jsonResponse(localNodeInfo)
+          : jsonResponse({ error: 'rate limited' }, 429, { 'retry-after': '9' });
+      },
+      endpoint: pairingRecord.endpoint,
+      storage,
+    });
+
+    expect(result).toEqual({ retryAfterSec: 9, status: 'rate-limited' });
+  });
+
+  test('returns denied and expired terminal pairing statuses', async () => {
+    const storage = new MemoryStorage();
+    const denied = await requestLocalDwnPairing({
+      fetch    : pairingFetch({ status: 'denied' }),
+      endpoint : pairingRecord.endpoint,
+      storage,
+    });
+    const expired = await requestLocalDwnPairing({
+      fetch    : pairingFetch({ status: 'expired' }),
+      endpoint : pairingRecord.endpoint,
+      storage,
+    });
+
+    expect(denied).toEqual({
+      endpoint : pairingRecord.endpoint,
+      origin   : 'https://app.example',
+      status   : 'denied',
+    });
+    expect(expired).toEqual({
+      endpoint : pairingRecord.endpoint,
+      origin   : 'https://app.example',
+      status   : 'expired',
+    });
+  });
+
+  test('returns timeout when pairing remains pending', async () => {
+    const storage = new MemoryStorage();
+
+    const result = await requestLocalDwnPairing({
+      endpoint       : pairingRecord.endpoint,
+      fetch          : pairingFetch({ status: 'pending' }),
+      pollIntervalMs : 0,
+      storage,
+      timeoutMs      : 0,
+    });
+
+    expect(result).toEqual({
+      endpoint  : pairingRecord.endpoint,
+      pollUrl   : 'http://127.0.0.1:55500/local/pair/request-1',
+      requestId : 'request-1',
+      status    : 'timeout',
+    });
+  });
+
+  test('throws when approved pairing omits token', async () => {
+    const storage = new MemoryStorage();
+
+    await expect(requestLocalDwnPairing({
+      endpoint : pairingRecord.endpoint,
+      fetch    : pairingFetch({ status: 'approved' }),
+      storage,
+    })).rejects.toThrow('approved pairing did not include a token');
+  });
+});
+
+describe('pairing HTTP helpers', () => {
+  test('throws when fetch is unavailable for explicit HTTP helpers', async () => {
+    await withoutGlobalFetch(async (): Promise<void> => {
+      await expect(initiateLocalDwnPairing({
+        endpoint   : pairingRecord.endpoint,
+        serverInfo : localNodeInfo,
+      })).rejects.toThrow('fetch is not available');
+
+      await expect(pollLocalDwnPairing({
+        endpoint : pairingRecord.endpoint,
+        pollUrl  : 'http://127.0.0.1:55500/local/pair/request-1',
+      })).rejects.toThrow('fetch is not available');
+    });
+  });
+
+  test('rejects endpoints that do not advertise local-node support', async () => {
+    await expect(initiateLocalDwnPairing({
+      endpoint : pairingRecord.endpoint,
+      fetch    : async (): Promise<Response> => jsonResponse({ ...localNodeInfo, localNode: false }),
+    })).rejects.toThrow('endpoint is not an Enbox local node');
+  });
+
+  test('fetches server info before initiating when serverInfo is omitted', async () => {
+    const fetchUrls: string[] = [];
+
+    const initiated = await initiateLocalDwnPairing({
+      endpoint : pairingRecord.endpoint,
+      fetch    : async (url): Promise<Response> => {
+        const href = url.toString();
+        fetchUrls.push(href);
+
+        return href.endsWith('/info')
+          ? jsonResponse(localNodeInfo)
+          : jsonResponse({ requestId: 'request-1', status: 'pending' });
+      },
+    });
+
+    expect(fetchUrls).toEqual([
+      'http://127.0.0.1:55500/info',
+      'http://127.0.0.1:55500/local/pair',
+    ]);
+    expect(initiated).toEqual({
+      endpoint   : pairingRecord.endpoint,
+      pollUrl    : 'http://127.0.0.1:55500/local/pair/request-1',
+      requestId  : 'request-1',
+      serverInfo : localNodeInfo,
+      status     : 'pending',
+    });
+  });
+
+  test('uses fallback pairing URLs when /info omits localPairing', async () => {
+    const serverInfo = {
+      ...localNodeInfo,
+      localPairing: undefined,
+    };
+    const fetchUrls: string[] = [];
+
+    const initiated = await initiateLocalDwnPairing({
+      endpoint : pairingRecord.endpoint,
+      fetch    : async (url): Promise<Response> => {
+        fetchUrls.push(url.toString());
+        return jsonResponse({ requestId: 'fallback-request', status: 'pending' });
+      },
+      serverInfo,
+    });
+
+    expect(fetchUrls).toEqual(['http://127.0.0.1:55500/local/pair']);
+    expect(initiated).toEqual({
+      endpoint  : pairingRecord.endpoint,
+      pollUrl   : 'http://127.0.0.1:55500/local/pair/fallback-request',
+      requestId : 'fallback-request',
+      serverInfo,
+      status    : 'pending',
+    });
+  });
+
+  test('rejects malformed initiate and poll responses', async () => {
+    await expect(initiateLocalDwnPairing({
+      endpoint   : pairingRecord.endpoint,
+      fetch      : async (): Promise<Response> => jsonResponse({ requestId: 1, status: 'pending' }),
+      serverInfo : localNodeInfo,
+    })).rejects.toThrow('malformed pairing response');
+
+    await expect(pollLocalDwnPairing({
+      endpoint : pairingRecord.endpoint,
+      fetch    : async (): Promise<Response> => jsonResponse({ status: 'pending' }),
+      pollUrl  : 'http://127.0.0.1:55500/local/pair/request-1',
+    })).rejects.toThrow('malformed pairing poll response');
+  });
+
+  test('rejects non-OK initiate and poll responses', async () => {
+    await expect(initiateLocalDwnPairing({
+      endpoint   : pairingRecord.endpoint,
+      fetch      : async (): Promise<Response> => jsonResponse({ error: 'boom' }, 500),
+      serverInfo : localNodeInfo,
+    })).rejects.toThrow('pairing request failed with HTTP 500');
+
+    await expect(pollLocalDwnPairing({
+      endpoint : pairingRecord.endpoint,
+      fetch    : async (): Promise<Response> => jsonResponse({ error: 'boom' }, 500),
+      pollUrl  : 'http://127.0.0.1:55500/local/pair/request-1',
+    })).rejects.toThrow('pairing poll failed with HTTP 500');
+  });
+});
+
+describe('createLocalDwnRpcClient', () => {
+  test('attaches bearer token only for the paired endpoint', async () => {
+    const client = createLocalDwnRpcClient(pairingRecord);
+    const authorizationHeaders: Array<string | undefined> = [];
+
+    await withGlobalFetch(async (_url, init): Promise<Response> => {
+      const headers = init?.headers as Record<string, string>;
+      authorizationHeaders.push(headers.authorization);
+
+      return jsonResponse({
+        id      : 'test',
+        jsonrpc : '2.0',
+        result  : { reply: { status: { code: 202, detail: 'Accepted' } } },
+      });
+    }, async (): Promise<void> => {
+      await client.sendDwnRequest({
+        dwnUrl    : `${pairingRecord.endpoint}/`,
+        message   : { descriptor: {} } as any,
+        targetDid : 'did:dht:alice',
+      });
+
+      await client.sendDwnRequest({
+        dwnUrl    : 'http://127.0.0.1:55501',
+        message   : { descriptor: {} } as any,
+        targetDid : 'did:dht:alice',
+      });
+    });
+
+    expect(authorizationHeaders).toEqual(['Bearer paired-token', undefined]);
+  });
+
+  test('normalizes WebSocket URLs before attaching local-node token query params', async () => {
+    await withStubbedWebSocketConnections(async (createdUrls): Promise<void> => {
+      const wsClient = createLocalDwnRpcClient({
+        ...pairingRecord,
+        endpoint: 'http://127.0.0.1:55500',
+      });
+      await wsClient.sendDwnRequest({
+        dwnUrl    : 'ws://127.0.0.1:55500/',
+        message   : { descriptor: {} } as any,
+        targetDid : 'did:dht:alice',
+      });
+
+      const wssClient = createLocalDwnRpcClient({
+        ...pairingRecord,
+        endpoint: 'https://127.0.0.1:55501',
+      });
+      await wssClient.sendDwnRequest({
+        dwnUrl    : 'wss://127.0.0.1:55501/',
+        message   : { descriptor: {} } as any,
+        targetDid : 'did:dht:alice',
+      });
+
+      expect(createdUrls).toHaveLength(2);
+      expect(createdUrls[0].searchParams.get('localNodeToken')).toBe('paired-token');
+      expect(createdUrls[1].searchParams.get('localNodeToken')).toBe('paired-token');
+    });
+  });
+});
+
+describe('clearLocalDwnEndpoint', () => {
+  test('removes the persisted pairing key', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnPairingRecord(storage, pairingRecord);
+
+    await clearLocalDwnEndpoint(storage);
+
+    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBeNull();
+  });
+});
+
+function jsonResponse(body: unknown, status: number = 200, headers: HeadersInit = {}): Response {
+  return new Response(JSON.stringify(body), {
+    headers: {
+      'content-type': 'application/json',
+      ...headers,
+    },
+    status,
+  });
 }
 
-// ─── checkUrlForDwnDiscoveryPayload ─────────────────────────────────
-
-describe('checkUrlForDwnDiscoveryPayload', () => {
-  let originalLocation: Location | undefined;
-  let originalHistory: History | undefined;
-
-  beforeEach(() => {
-    originalLocation = globalThis.location;
-    originalHistory = globalThis.history;
-  });
-
-  afterEach(() => {
-    // Restore globalThis.location
-    if (originalLocation !== undefined) {
-      Object.defineProperty(globalThis, 'location', {
-        value        : originalLocation,
-        writable     : true,
-        configurable : true,
-      });
-    } else {
-      delete (globalThis as any).location;
+function pairingFetch(result: { status: 'pending' | 'approved' | 'denied' | 'expired' }): typeof fetch {
+  return async (url): Promise<Response> => {
+    const href = url.toString();
+    if (href.endsWith('/info')) {
+      return jsonResponse(localNodeInfo);
     }
-    // Restore globalThis.history
-    if (originalHistory !== undefined) {
-      Object.defineProperty(globalThis, 'history', {
-        value        : originalHistory,
-        writable     : true,
-        configurable : true,
-      });
-    } else {
-      delete (globalThis as any).history;
+
+    if (href.endsWith('/local/pair')) {
+      return jsonResponse({ requestId: 'request-1', status: 'pending' });
     }
-  });
 
-  test('should return undefined when globalThis.location is undefined', () => {
-    // In Bun/Node, globalThis.location is typically undefined
-    delete (globalThis as any).location;
-    expect(checkUrlForDwnDiscoveryPayload()).toBeUndefined();
-  });
-
-  test('should return the endpoint from a valid payload in the URL fragment', () => {
-    const url = buildUrlWithPayload('http://127.0.0.1:55557');
-    const replaceStateCalls: any[] = [];
-
-    Object.defineProperty(globalThis, 'location', {
-      value        : { href: url },
-      writable     : true,
-      configurable : true,
+    return jsonResponse({
+      origin : 'https://app.example',
+      status : result.status,
     });
-    Object.defineProperty(globalThis, 'history', {
-      value        : { replaceState: (...args: any[]): void => { replaceStateCalls.push(args); } },
-      writable     : true,
+  };
+}
+
+async function withoutGlobalFetch<T>(run: () => Promise<T>): Promise<T> {
+  const originalFetch = globalThis.fetch;
+
+  delete (globalThis as { fetch?: FetchLike }).fetch;
+
+  try {
+    return await run();
+  } finally {
+    Object.defineProperty(globalThis, 'fetch', {
       configurable : true,
-    });
-
-    const result = checkUrlForDwnDiscoveryPayload();
-    expect(result).toBe('http://127.0.0.1:55557');
-
-    // Should have cleared the fragment via history.replaceState
-    expect(replaceStateCalls).toHaveLength(1);
-    expect(replaceStateCalls[0][2]).toBe('https://myapp.example.com/callback');
-  });
-
-  test('should return undefined when URL has no fragment', () => {
-    Object.defineProperty(globalThis, 'location', {
-      value        : { href: 'https://myapp.example.com/page' },
+      value        : originalFetch,
       writable     : true,
-      configurable : true,
     });
-    Object.defineProperty(globalThis, 'history', {
-      value        : { replaceState: (): void => {} },
+  }
+}
+
+async function withGlobalFetch<T>(fetchValue: FetchLike, run: () => Promise<T>): Promise<T> {
+  const originalFetch = globalThis.fetch;
+
+  Object.defineProperty(globalThis, 'fetch', {
+    configurable : true,
+    value        : fetchValue,
+    writable     : true,
+  });
+
+  try {
+    return await run();
+  } finally {
+    Object.defineProperty(globalThis, 'fetch', {
+      configurable : true,
+      value        : originalFetch,
       writable     : true,
-      configurable : true,
     });
+  }
+}
 
-    expect(checkUrlForDwnDiscoveryPayload()).toBeUndefined();
-  });
+async function withStubbedWebSocketConnections<T>(run: (createdUrls: URL[]) => Promise<T>): Promise<T> {
+  const originalCreateConnection = (WebSocketDwnRpcClient as any).createConnection;
+  const createdUrls: URL[] = [];
 
-  test('should return undefined when fragment contains invalid data', () => {
-    Object.defineProperty(globalThis, 'location', {
-      value        : { href: 'https://myapp.example.com/page#not-valid-base64url' },
-      writable     : true,
-      configurable : true,
-    });
-    Object.defineProperty(globalThis, 'history', {
-      value        : { replaceState: (): void => {} },
-      writable     : true,
-      configurable : true,
-    });
+  await WebSocketDwnRpcClient.closeAllConnections();
+  (WebSocketDwnRpcClient as any).createConnection = async (url: URL): Promise<any> => {
+    createdUrls.push(new URL(url.toString()));
 
-    expect(checkUrlForDwnDiscoveryPayload()).toBeUndefined();
-  });
-
-  test('should not clear fragment when history.replaceState is unavailable', () => {
-    const url = buildUrlWithPayload('http://localhost:3000');
-
-    Object.defineProperty(globalThis, 'location', {
-      value        : { href: url },
-      writable     : true,
-      configurable : true,
-    });
-    // No history object
-    delete (globalThis as any).history;
-
-    const result = checkUrlForDwnDiscoveryPayload();
-    expect(result).toBe('http://localhost:3000');
-  });
-});
-
-// ─── persistLocalDwnEndpoint / clearLocalDwnEndpoint ────────────────
-
-describe('persistLocalDwnEndpoint / clearLocalDwnEndpoint', () => {
-  test('should persist and retrieve an endpoint', async () => {
-    const storage = new MemoryStorage();
-    await persistLocalDwnEndpoint(storage, 'http://127.0.0.1:55557');
-    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBe('http://127.0.0.1:55557');
-  });
-
-  test('should clear a persisted endpoint', async () => {
-    const storage = new MemoryStorage();
-    await persistLocalDwnEndpoint(storage, 'http://127.0.0.1:55557');
-    await clearLocalDwnEndpoint(storage);
-    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBeNull();
-  });
-});
-
-// ─── restoreLocalDwnEndpoint ────────────────────────────────────────
-
-describe('restoreLocalDwnEndpoint', () => {
-  test('should return false when no endpoint is stored', async () => {
-    const storage = new MemoryStorage();
-    const agent = createMockAgent();
-
-    const result = await restoreLocalDwnEndpoint(agent, storage);
-    expect(result).toBe(false);
-  });
-
-  test('should return true and inject endpoint when stored and agent accepts it', async () => {
-    const storage = new MemoryStorage();
-    await storage.set(STORAGE_KEYS.LOCAL_DWN_ENDPOINT, 'http://127.0.0.1:55557');
-
-    const setCalls: string[] = [];
-    const agent = createMockAgent({
-      dwnSetCachedLocalDwnEndpoint: async (endpoint): Promise<boolean> => {
-        setCalls.push(endpoint);
-        return true;
+    return {
+      socket: {
+        request: async (request: any): Promise<any> => ({
+          id      : request.id,
+          jsonrpc : '2.0',
+          result  : {
+            reply: {
+              entries : [],
+              status  : { code: 200, detail: 'OK' },
+            },
+          },
+        }),
       },
-    });
+      subscriptions : new Map(),
+      url           : url.toString(),
+    };
+  };
 
-    const result = await restoreLocalDwnEndpoint(agent, storage);
-    expect(result).toBe(true);
-    expect(setCalls).toEqual(['http://127.0.0.1:55557']);
+  try {
+    return await run(createdUrls);
+  } finally {
+    (WebSocketDwnRpcClient as any).createConnection = originalCreateConnection;
+    await WebSocketDwnRpcClient.closeAllConnections();
+  }
+}
 
-    // Endpoint should still be in storage
-    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBe('http://127.0.0.1:55557');
+function setBrowserGlobals(params: {
+  href: string;
+  isSecureContext: boolean;
+  userAgent: string;
+}): void {
+  originalLocation ??= globalThis.location;
+  originalNavigator ??= globalThis.navigator;
+  originalIsSecureContext ??= globalThis.isSecureContext;
+
+  Object.defineProperty(globalThis, 'location', {
+    configurable : true,
+    value        : { href: params.href },
+    writable     : true,
   });
-
-  test('should clear stale endpoint from storage when agent rejects it', async () => {
-    const storage = new MemoryStorage();
-    await storage.set(STORAGE_KEYS.LOCAL_DWN_ENDPOINT, 'http://127.0.0.1:9999');
-
-    const agent = createMockAgent({
-      dwnSetCachedLocalDwnEndpoint: async (): Promise<boolean> => false,
-    });
-
-    const result = await restoreLocalDwnEndpoint(agent, storage);
-    expect(result).toBe(false);
-
-    // Stale endpoint should be removed
-    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBeNull();
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable : true,
+    value        : { userAgent: params.userAgent },
+    writable     : true,
   });
-});
-
-// ─── applyLocalDwnDiscovery ─────────────────────────────────────────
-
-describe('applyLocalDwnDiscovery', () => {
-  let originalLocation: Location | undefined;
-  let originalHistory: History | undefined;
-
-  beforeEach(() => {
-    originalLocation = globalThis.location;
-    originalHistory = globalThis.history;
+  Object.defineProperty(globalThis, 'isSecureContext', {
+    configurable : true,
+    value        : params.isSecureContext,
+    writable     : true,
   });
+}
 
-  afterEach(() => {
-    if (originalLocation !== undefined) {
-      Object.defineProperty(globalThis, 'location', {
-        value        : originalLocation,
-        writable     : true,
-        configurable : true,
-      });
-    } else {
-      delete (globalThis as any).location;
-    }
-    if (originalHistory !== undefined) {
-      Object.defineProperty(globalThis, 'history', {
-        value        : originalHistory,
-        writable     : true,
-        configurable : true,
-      });
-    } else {
-      delete (globalThis as any).history;
-    }
-  });
-
-  test('should return false when no URL payload and no stored endpoint', async () => {
-    delete (globalThis as any).location;
-
-    const storage = new MemoryStorage();
-    const agent = createMockAgent();
-
-    const result = await applyLocalDwnDiscovery(agent, storage);
-    expect(result).toBe(false);
-  });
-
-  test('should inject and persist a fresh endpoint from the URL fragment', async () => {
-    const url = buildUrlWithPayload('http://127.0.0.1:55557');
-
+function restoreBrowserGlobals(): void {
+  if (originalLocation !== undefined) {
     Object.defineProperty(globalThis, 'location', {
-      value        : { href: url },
+      configurable : true,
+      value        : originalLocation,
       writable     : true,
-      configurable : true,
     });
-    Object.defineProperty(globalThis, 'history', {
-      value        : { replaceState: (): void => {} },
+  } else {
+    delete (globalThis as { location?: Location }).location;
+  }
+
+  if (originalNavigator !== undefined) {
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable : true,
+      value        : originalNavigator,
       writable     : true,
+    });
+  } else {
+    delete (globalThis as { navigator?: Navigator }).navigator;
+  }
+
+  if (originalIsSecureContext !== undefined) {
+    Object.defineProperty(globalThis, 'isSecureContext', {
       configurable : true,
-    });
-
-    const storage = new MemoryStorage();
-    const setCalls: string[] = [];
-    const agent = createMockAgent({
-      dwnSetCachedLocalDwnEndpoint: async (endpoint): Promise<boolean> => {
-        setCalls.push(endpoint);
-        return true;
-      },
-    });
-
-    const result = await applyLocalDwnDiscovery(agent, storage);
-    expect(result).toBe(true);
-    expect(setCalls).toEqual(['http://127.0.0.1:55557']);
-
-    // Endpoint should be persisted in storage
-    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBe('http://127.0.0.1:55557');
-  });
-
-  test('should fall back to stored endpoint when URL fragment has no payload', async () => {
-    delete (globalThis as any).location;
-
-    const storage = new MemoryStorage();
-    await storage.set(STORAGE_KEYS.LOCAL_DWN_ENDPOINT, 'http://127.0.0.1:3000');
-
-    const setCalls: string[] = [];
-    const agent = createMockAgent({
-      dwnSetCachedLocalDwnEndpoint: async (endpoint): Promise<boolean> => {
-        setCalls.push(endpoint);
-        return true;
-      },
-    });
-
-    const result = await applyLocalDwnDiscovery(agent, storage);
-    expect(result).toBe(true);
-    expect(setCalls).toEqual(['http://127.0.0.1:3000']);
-  });
-
-  test('should prefer fresh URL payload over stored endpoint', async () => {
-    const url = buildUrlWithPayload('http://127.0.0.1:55557');
-
-    Object.defineProperty(globalThis, 'location', {
-      value        : { href: url },
+      value        : originalIsSecureContext,
       writable     : true,
-      configurable : true,
     });
-    Object.defineProperty(globalThis, 'history', {
-      value        : { replaceState: (): void => {} },
-      writable     : true,
-      configurable : true,
-    });
-
-    const storage = new MemoryStorage();
-    // Pre-populate with a different endpoint
-    await storage.set(STORAGE_KEYS.LOCAL_DWN_ENDPOINT, 'http://127.0.0.1:3000');
-
-    const setCalls: string[] = [];
-    const agent = createMockAgent({
-      dwnSetCachedLocalDwnEndpoint: async (endpoint): Promise<boolean> => {
-        setCalls.push(endpoint);
-        return true;
-      },
-    });
-
-    const result = await applyLocalDwnDiscovery(agent, storage);
-    expect(result).toBe(true);
-    // Should have used the fresh URL endpoint, not the stored one
-    expect(setCalls).toEqual(['http://127.0.0.1:55557']);
-    // Storage should be updated to the new endpoint
-    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBe('http://127.0.0.1:55557');
-  });
-
-  test('should fall through to stored endpoint when fresh URL endpoint is rejected', async () => {
-    const url = buildUrlWithPayload('http://127.0.0.1:55557');
-
-    Object.defineProperty(globalThis, 'location', {
-      value        : { href: url },
-      writable     : true,
-      configurable : true,
-    });
-    Object.defineProperty(globalThis, 'history', {
-      value        : { replaceState: (): void => {} },
-      writable     : true,
-      configurable : true,
-    });
-
-    const storage = new MemoryStorage();
-    await storage.set(STORAGE_KEYS.LOCAL_DWN_ENDPOINT, 'http://127.0.0.1:3000');
-
-    let callCount = 0;
-    const agent = createMockAgent({
-      dwnSetCachedLocalDwnEndpoint: async (endpoint): Promise<boolean> => {
-        callCount++;
-        // Reject the first (fresh URL) call, accept the second (stored) call
-        if (endpoint === 'http://127.0.0.1:55557') { return false; }
-        return true;
-      },
-    });
-
-    const result = await applyLocalDwnDiscovery(agent, storage);
-    expect(result).toBe(true);
-    // Called twice: once for fresh URL, once for stored
-    expect(callCount).toBe(2);
-  });
-
-  test('should return false when both fresh URL and stored endpoints are rejected', async () => {
-    const url = buildUrlWithPayload('http://127.0.0.1:55557');
-
-    Object.defineProperty(globalThis, 'location', {
-      value        : { href: url },
-      writable     : true,
-      configurable : true,
-    });
-    Object.defineProperty(globalThis, 'history', {
-      value        : { replaceState: (): void => {} },
-      writable     : true,
-      configurable : true,
-    });
-
-    const storage = new MemoryStorage();
-    await storage.set(STORAGE_KEYS.LOCAL_DWN_ENDPOINT, 'http://127.0.0.1:3000');
-
-    const agent = createMockAgent({
-      dwnSetCachedLocalDwnEndpoint: async (): Promise<boolean> => false,
-    });
-
-    const result = await applyLocalDwnDiscovery(agent, storage);
-    expect(result).toBe(false);
-
-    // The stale stored endpoint should be removed
-    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBeNull();
-  });
-
-  test('should emit local-dwn-available when discovery succeeds via URL fragment', async () => {
-    const url = buildUrlWithPayload('http://127.0.0.1:55500');
-
-    Object.defineProperty(globalThis, 'location', {
-      value        : { href: url },
-      writable     : true,
-      configurable : true,
-    });
-    Object.defineProperty(globalThis, 'history', {
-      value        : { replaceState: (): void => {} },
-      writable     : true,
-      configurable : true,
-    });
-
-    const storage = new MemoryStorage();
-    const emitter = new AuthEventEmitter();
-    const events: { endpoint: string }[] = [];
-    emitter.on('local-dwn-available', (payload) => { events.push(payload); });
-
-    const agent = createMockAgent({
-      dwnSetCachedLocalDwnEndpoint: async (): Promise<boolean> => true,
-    });
-
-    await applyLocalDwnDiscovery(agent, storage, emitter);
-
-    expect(events).toHaveLength(1);
-    expect(events[0].endpoint).toBe('http://127.0.0.1:55500');
-  });
-
-  test('should emit local-dwn-unavailable when no endpoint is found', async () => {
-    delete (globalThis as any).location;
-
-    const storage = new MemoryStorage();
-    const emitter = new AuthEventEmitter();
-    const events: Record<string, never>[] = [];
-    emitter.on('local-dwn-unavailable', (payload) => { events.push(payload); });
-
-    const agent = createMockAgent();
-
-    await applyLocalDwnDiscovery(agent, storage, emitter);
-
-    expect(events).toHaveLength(1);
-  });
-
-  test('should emit local-dwn-available when restoring from storage', async () => {
-    delete (globalThis as any).location;
-
-    const storage = new MemoryStorage();
-    await storage.set(STORAGE_KEYS.LOCAL_DWN_ENDPOINT, 'http://127.0.0.1:3000');
-
-    const emitter = new AuthEventEmitter();
-    const events: { endpoint: string }[] = [];
-    emitter.on('local-dwn-available', (payload) => { events.push(payload); });
-
-    const agent = createMockAgent({
-      dwnSetCachedLocalDwnEndpoint: async (): Promise<boolean> => true,
-    });
-
-    await applyLocalDwnDiscovery(agent, storage, emitter);
-
-    expect(events).toHaveLength(1);
-    expect(events[0].endpoint).toBe('http://127.0.0.1:3000');
-  });
-});
-
-// ─── requestLocalDwnDiscovery ───────────────────────────────────────
-
-describe('requestLocalDwnDiscovery', () => {
-  let originalLocation: Location | undefined;
-  let originalOpen: typeof globalThis.open | undefined;
-
-  beforeEach(() => {
-    originalLocation = globalThis.location;
-    originalOpen = globalThis.open;
-  });
-
-  afterEach(() => {
-    if (originalLocation !== undefined) {
-      Object.defineProperty(globalThis, 'location', {
-        value        : originalLocation,
-        writable     : true,
-        configurable : true,
-      });
-    } else {
-      delete (globalThis as any).location;
-    }
-    if (originalOpen !== undefined) {
-      Object.defineProperty(globalThis, 'open', {
-        value        : originalOpen,
-        writable     : true,
-        configurable : true,
-      });
-    } else {
-      delete (globalThis as any).open;
-    }
-  });
-
-  test('should return false when no location and no callback provided', () => {
-    delete (globalThis as any).location;
-    delete (globalThis as any).open;
-
-    expect(requestLocalDwnDiscovery()).toBe(false);
-  });
-
-  test('should open a dwn://connect URL via globalThis.open', () => {
-    const openedUrls: string[] = [];
-    Object.defineProperty(globalThis, 'open', {
-      value        : (url: string): void => { openedUrls.push(url); },
-      writable     : true,
-      configurable : true,
-    });
-
-    const result = requestLocalDwnDiscovery('https://myapp.com/callback');
-
-    expect(result).toBe(true);
-    expect(openedUrls).toHaveLength(1);
-    expect(openedUrls[0]).toBe('dwn://connect?callback=https%3A%2F%2Fmyapp.com%2Fcallback');
-  });
-
-  test('should default callback to current page URL', () => {
-    Object.defineProperty(globalThis, 'location', {
-      value        : { href: 'https://myapp.com/dashboard#old' },
-      writable     : true,
-      configurable : true,
-    });
-
-    const openedUrls: string[] = [];
-    Object.defineProperty(globalThis, 'open', {
-      value        : (url: string): void => { openedUrls.push(url); },
-      writable     : true,
-      configurable : true,
-    });
-
-    const result = requestLocalDwnDiscovery();
-
-    expect(result).toBe(true);
-    expect(openedUrls).toHaveLength(1);
-    // Should use the page URL without the fragment.
-    expect(openedUrls[0]).toBe('dwn://connect?callback=https%3A%2F%2Fmyapp.com%2Fdashboard');
-  });
-
-  test('should fall back to location.href when open is unavailable', () => {
-    delete (globalThis as any).open;
-    const hrefValues: string[] = [];
-
-    Object.defineProperty(globalThis, 'location', {
-      value: {
-        href : 'https://myapp.com/page',
-        set  : undefined,
-      },
-      writable     : true,
-      configurable : true,
-    });
-    // Override href to be a setter.
-    Object.defineProperty(globalThis.location, 'href', {
-      set          : (v: string): void => { hrefValues.push(v); },
-      get          : (): string => 'https://myapp.com/page',
-      configurable : true,
-    });
-
-    const result = requestLocalDwnDiscovery('https://myapp.com/callback');
-
-    expect(result).toBe(true);
-    expect(hrefValues).toHaveLength(1);
-    expect(hrefValues[0]).toContain('dwn://connect');
-  });
-
-  test('should return false when callback is explicit but no opener or location exists', () => {
-    delete (globalThis as any).location;
-    delete (globalThis as any).open;
-
-    expect(requestLocalDwnDiscovery('https://myapp.com/callback')).toBe(false);
-  });
-});
+  } else {
+    delete (globalThis as { isSecureContext?: boolean }).isSecureContext;
+  }
+  originalLocation = undefined;
+  originalNavigator = undefined;
+  originalIsSecureContext = undefined;
+}

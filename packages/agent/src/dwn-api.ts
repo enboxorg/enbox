@@ -275,9 +275,8 @@ export class AgentDwnApi {
   }
 
   /**
-   * Inject a cached local DWN endpoint (e.g. from a `dwn://connect`
-   * browser redirect or from persisted storage). The endpoint is validated
-   * via `GET /info` before being accepted.
+   * Inject a cached local DWN endpoint from a validated discovery channel.
+   * The endpoint is validated via `GET /info` before being accepted.
    *
    * @param endpoint - The local DWN server base URL.
    * @returns `true` if the endpoint was validated and cached, `false` otherwise.
@@ -313,7 +312,7 @@ export class AgentDwnApi {
       if (!localDwnEndpoint) {
         throw new Error(
           `AgentDwnApi: Local DWN strategy is 'only' but no local DWN endpoint was discovered. ` +
-          `Ensure the local DWN server is running and discoverable via the discovery file (~/.enbox/dwn.json) or dwn://connect.`
+          `Ensure the local DWN server is running and discoverable via the discovery file (~/.enbox/dwn.json) or a browser pairing.`
         );
       }
 

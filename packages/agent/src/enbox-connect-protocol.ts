@@ -6,7 +6,7 @@
  * with the granted permissions.
  *
  * Two transport modes:
- * - Local (`dwn://connect`): same-device, direct HTTP against the local DWN
+ * - Local: same-device, direct HTTP against a paired local DWN
  * - Remote (`enbox://connect`): cross-device, relay-mediated with QR/deep link
  *
  * The protocol uses JWTs for signing, JWE (XChaCha20-Poly1305) for encryption,

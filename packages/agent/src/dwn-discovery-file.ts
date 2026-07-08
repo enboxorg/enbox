@@ -79,7 +79,7 @@ export const DISCOVERY_FILENAME = 'dwn.json';
  * Reads, writes, and validates the `~/.enbox/dwn.json` discovery file.
  *
  * This is the **file-based discovery channel** for CLI and native apps.
- * It is complementary to the `dwn://connect` browser redirect flow.
+ * Browser apps use the auth package's local-node pairing flow instead.
  *
  * @example Reading the discovery file
  * ```ts

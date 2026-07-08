@@ -40,6 +40,11 @@ import type {
   VaultConnectOptions,
   WalletConnectOptions,
 } from './types.js';
+import type {
+  LocalDwnPairingRecord,
+  LocalDwnPairingRequestResult,
+  LocalDwnProbeResult,
+} from './discovery.js';
 
 import { Convert } from '@enbox/common';
 import { DataStream } from '@enbox/dwn-sdk-js';
@@ -48,7 +53,6 @@ import { DwnInterface, DwnPermissionGrant, EnboxUserAgent } from '@enbox/agent';
 import { AuthEventEmitter } from './events.js';
 import { AuthSession } from './identity-session.js';
 import { createDefaultStorage } from './storage/storage.js';
-import { discoverLocalDwn } from './discovery.js';
 import { importFromPortable } from './connect/import.js';
 import { normalizeProtocolRequests } from './permissions.js';
 import { restoreSession } from './connect/restore.js';
@@ -56,6 +60,7 @@ import { STORAGE_KEYS } from './types.js';
 import { validateConnectResultGrants } from './connect/validate-grants.js';
 import { vaultConnect } from './connect/vault.js';
 import { walletConnect } from './connect/wallet.js';
+import { createLocalDwnRpcClient, discoverLocalDwnPairing, probeLocalDwn, requestLocalDwnPairing } from './discovery.js';
 import { deriveActiveSyncScope, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, resolveIdentityDids, resolvePassword, startSyncIfEnabled, toSyncIdentityProtocols } from './connect/lifecycle.js';
 
 /**
@@ -115,7 +120,8 @@ export class AuthManager {
    * event listeners are attached, so consumers should check this property
    * after `create()` returns rather than relying solely on events.
    */
-  private readonly _localDwnEndpoint?: string;
+  private _localDwnEndpoint?: string;
+  private _localDwnPairing?: LocalDwnPairingRecord;
 
   private constructor(params: {
     userAgent: EnboxUserAgent;
@@ -128,6 +134,7 @@ export class AuthManager {
     defaultDwnEndpoints?: string[];
     registration?: RegistrationOptions;
     localDwnEndpoint?: string;
+    localDwnPairing?: LocalDwnPairingRecord;
     connectHandler?: ConnectHandler;
   }) {
     this._userAgent = params.userAgent;
@@ -140,6 +147,7 @@ export class AuthManager {
     this._defaultDwnEndpoints = params.defaultDwnEndpoints;
     this._registration = params.registration;
     this._localDwnEndpoint = params.localDwnEndpoint;
+    this._localDwnPairing = params.localDwnPairing;
     this._connectHandler = params.connectHandler;
   }
 
@@ -158,15 +166,17 @@ export class AuthManager {
     const storage = options.storage ?? createDefaultStorage();
 
     // Run local DWN discovery BEFORE creating the agent. Discovery has
-    // zero vault/DWN dependencies — it only checks the URL fragment,
-    // reads localStorage, and validates via GET /info.
+    // zero vault/DWN dependencies — it reads the persisted pairing record
+    // and validates it via GET /info plus authenticated /local/status.
     //
     // When a local DWN server is available, the agent is created in
     // "remote mode": it skips creating an in-process DWN and routes all
     // DWN operations through RPC to the local server.
     let localDwnEndpoint: string | undefined;
+    let localDwnPairing: LocalDwnPairingRecord | undefined;
     if (!options.agent && options.localDwnStrategy !== 'off') {
-      localDwnEndpoint = await discoverLocalDwn(storage);
+      localDwnPairing = await discoverLocalDwnPairing(storage);
+      localDwnEndpoint = localDwnPairing?.endpoint;
       // NOTE: We intentionally do NOT emit 'local-dwn-available' here
       // because event listeners aren't attached yet. Consumers should
       // check `authManager.localDwnEndpoint` after create() returns.
@@ -178,6 +188,7 @@ export class AuthManager {
       agentVault       : options.agentVault,
       localDwnStrategy : options.localDwnStrategy,
       localDwnEndpoint,
+      rpcClient        : localDwnPairing === undefined ? undefined : createLocalDwnRpcClient(localDwnPairing),
     });
 
     const manager = new AuthManager({
@@ -191,6 +202,7 @@ export class AuthManager {
       defaultDwnEndpoints          : options.dwnEndpoints,
       registration                 : options.registration,
       localDwnEndpoint,
+      localDwnPairing,
       connectHandler               : options.connectHandler,
     });
 
@@ -999,6 +1011,74 @@ export class AuthManager {
    */
   get localDwnEndpoint(): string | undefined {
     return this._localDwnEndpoint;
+  }
+
+  /** Current local-node pairing status without exposing the bearer token. */
+  get localDwnStatus(): { status: 'paired'; endpoint: string; pairedOrigin: string } | { status: 'unavailable' } {
+    if (this._localDwnPairing === undefined) {
+      return { status: 'unavailable' };
+    }
+
+    return {
+      endpoint     : this._localDwnPairing.endpoint,
+      pairedOrigin : this._localDwnPairing.pairedOrigin,
+      status       : 'paired',
+    };
+  }
+
+  /**
+   * Explicitly probe localhost for an Enbox local-node profile.
+   *
+   * This method may walk the local-node port list and should be called from a
+   * user gesture unless the app is only checking a previously stored pairing.
+   */
+  async probeLocalNode(): Promise<LocalDwnProbeResult> {
+    this._guardShutdown();
+
+    return probeLocalDwn({ storage: this._storage });
+  }
+
+  /**
+   * Pair this origin with a local node and persist the resulting token.
+   *
+   * When pairing succeeds, future `AuthManager.create()` calls boot in
+   * authenticated remote mode. If this manager was already created in remote
+   * mode, its RPC client is updated immediately.
+   */
+  async enableLocalNode(options: {
+    endpoint?: string;
+    origin?: string;
+    pollIntervalMs?: number;
+    timeoutMs?: number;
+  } = {}): Promise<LocalDwnPairingRequestResult> {
+    this._guardShutdown();
+
+    const result = await requestLocalDwnPairing({
+      endpoint       : options.endpoint,
+      origin         : options.origin,
+      pollIntervalMs : options.pollIntervalMs,
+      storage        : this._storage,
+      timeoutMs      : options.timeoutMs,
+    });
+
+    if (result.status !== 'paired') {
+      if (result.status === 'not-found' || result.status === 'unsupported') {
+        this._emitter.emit('local-dwn-unavailable', {});
+      }
+      return result;
+    }
+
+    this._localDwnEndpoint = result.endpoint;
+    this._localDwnPairing = result.pairing;
+
+    if (this._userAgent.dwn.isRemoteMode) {
+      this._userAgent.rpc = createLocalDwnRpcClient(result.pairing);
+      await this._userAgent.dwn.setCachedLocalDwnEndpoint(result.endpoint);
+    }
+
+    this._emitter.emit('local-dwn-available', { endpoint: result.endpoint, paired: true });
+
+    return result;
   }
 
   // ─── Private helpers ───────────────────────────────────────────

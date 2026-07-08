@@ -1,6 +1,7 @@
 import type {
   DwnReplicationApplyRequest,
   DwnRpc,
+  DwnRpcAuthOptions,
   DwnRpcRequest,
   DwnRpcResponse,
   DwnSubscriptionHandler,
@@ -21,6 +22,7 @@ import { DwnRpcError } from './dwn-rpc-error.js';
 import { HttpDwnRpcClient } from './http-dwn-rpc-client.js';
 import { JsonRpcSocket } from './json-rpc-socket.js';
 import { parseReplicationApplyResult } from './replication-apply-result.js';
+import { withLocalNodeTokenQuery } from './rpc-auth.js';
 import { createJsonRpcAck, createJsonRpcRequest, createJsonRpcSubscriptionRequest, JsonRpcErrorCodes } from './json-rpc.js';
 import { DataStream, Encoder } from '@enbox/dwn-sdk-js';
 import { DEFAULT_MAX_WS_RAW_RECORD_DATA_BYTES, maxWsJsonRpcPayloadBytes } from './ws-payload-size.js';
@@ -87,7 +89,10 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   private static readonly connections = new Map<string, SocketConnection>();
   private static readonly pendingConnections = new Map<string, Promise<SocketConnection>>();
 
-  public constructor(private readonly serverInfoRpc: DwnServerInfoRpc = new HttpDwnRpcClient()) {}
+  public constructor(
+    private readonly serverInfoRpc: DwnServerInfoRpc = new HttpDwnRpcClient(),
+    private readonly authOptions: DwnRpcAuthOptions = {},
+  ) {}
 
   /**
    * Closes every pooled WebSocket connection and clears the pool.
@@ -135,7 +140,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       throw new Error(`Invalid websocket protocol ${url.protocol}`);
     }
 
-    const connection = await WebSocketDwnRpcClient.getConnection(request.dwnUrl);
+    const connection = await this.getConnection(request.dwnUrl);
     const { targetDid, message, subscription } = request;
 
     if (subscription) {
@@ -151,7 +156,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     WebSocketDwnRpcClient.assertReplicatedApplyDataIsPresent(request);
     const maxPayloadBytes = await this.maxPayloadBytesForReplicatedApply(request);
     WebSocketDwnRpcClient.assertReplicatedApplyDataSizeIsSupported(request, maxPayloadBytes);
-    const connection = await WebSocketDwnRpcClient.getConnection(request.dwnUrl);
+    const connection = await this.getConnection(request.dwnUrl);
     const encodedData = request.data === undefined ? undefined : await dataToBase64Url(request.data);
     return WebSocketDwnRpcClient.applyReplicatedMessage(connection, request.targetDid, request.message, encodedData, maxPayloadBytes);
   }
@@ -170,8 +175,8 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     return maxWsJsonRpcPayloadBytes(serverInfo.maxFileSize);
   }
 
-  private static async getConnection(dwnUrl: string): Promise<SocketConnection> {
-    const url = new URL(dwnUrl);
+  private async getConnection(dwnUrl: string): Promise<SocketConnection> {
+    const url = withLocalNodeTokenQuery(dwnUrl, this.authOptions);
     if (url.protocol !== 'ws:' && url.protocol !== 'wss:') {
       throw new Error(`Invalid websocket protocol ${url.protocol}`);
     }

@@ -64,6 +64,17 @@ export type DwnSubscriptionHandler = (message: DwnSubscriptionMessage) => void;
 export type ResubscribeFactory = (cursor?: ProgressToken) => Promise<GenericMessage>;
 
 /**
+ * Returns a bearer token for a DWN endpoint URL, or `undefined` when the
+ * endpoint does not require transport authentication.
+ */
+export type DwnRpcAuthTokenProvider = (dwnUrl: string) => string | undefined;
+
+/** Endpoint-auth options shared by HTTP and WebSocket DWN transports. */
+export type DwnRpcAuthOptions = {
+  getBearerToken?: DwnRpcAuthTokenProvider;
+};
+
+/**
  * Interface for communicating with {@link https://github.com/enboxorg/enbox | DWN Servers}
  * via JSON-RPC, supporting operations like sending DWN requests.
  */
