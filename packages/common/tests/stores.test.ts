@@ -63,7 +63,7 @@ describe('LevelStore', () => {
       await store.close();
 
       // Try to set a value in the store and confirm it is no longer open.
-      expect(store.set('key', 'value')).rejects.toThrow('Database is not open');
+      await expect(store.set('key', 'value')).rejects.toThrow('Database is not open');
     });
   });
 
@@ -104,7 +104,7 @@ describe('LevelStore', () => {
       await levelStore.close();
 
       // Try to get a value from the store and confirm an error is thrown.
-      expect(levelStore.get('key')).rejects.toThrow('Database is not open');
+      await expect(levelStore.get('key')).rejects.toThrow('Database is not open');
     });
   });
 

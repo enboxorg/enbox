@@ -1,4 +1,4 @@
-import type { Filter } from '@enbox/dwn-sdk-js';
+import type { Filter, KeyValues } from '@enbox/dwn-sdk-js';
 
 import { describe, expect, it } from 'bun:test';
 import {
@@ -44,7 +44,9 @@ describe('sanitize utilities', () => {
 
   describe('sanitizeIndexes()', () => {
     it('should sanitize boolean values in indexes', () => {
-      const records = { isActive: true, isClosed: false, name: 'test' };
+      // Typed as KeyValues because sanitizeIndexes mutates booleans to 1/0 in place;
+      // the union value type keeps the post-mutation numeric assertions well-typed.
+      const records: KeyValues = { isActive: true, isClosed: false, name: 'test' };
       sanitizeIndexes(records);
 
       expect(records.isActive).toBe(1);

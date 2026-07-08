@@ -738,7 +738,7 @@ export class HttpApi {
         }
         const nestObj = (obj: Record<string, any>, key: string): Record<string, any> =>
           obj[key] = obj[key] || {};
-        const lastLevelObject = keys.reduce(nestObj, queryOptions);
+        const lastLevelObject = keys.reduce((obj, key) => nestObj(obj, key), queryOptions);
         lastLevelObject[lastKey!] = value;
       }
 
@@ -822,7 +822,7 @@ export class HttpApi {
         }
         const nestObj = (obj: Record<string, any>, key: string): Record<string, any> =>
           obj[key] = obj[key] || {};
-        const lastLevelObject = keys.reduce(nestObj, recordsQueryOptions);
+        const lastLevelObject = keys.reduce((obj, key) => nestObj(obj, key), recordsQueryOptions);
         lastLevelObject[lastKey!] = value;
       }
 
