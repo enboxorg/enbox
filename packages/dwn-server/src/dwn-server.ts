@@ -489,6 +489,22 @@ export class DwnServer {
   }
 
   /**
+   * Revokes a local-node pairing token and immediately closes any live WebSocket connections authenticated by it.
+   */
+  public async revokeLocalNodePairingToken(token: string): Promise<boolean> {
+    const revoked = this.#localNodePairingManager.revokeToken(token);
+    if (!revoked) {
+      return false;
+    }
+
+    if (this.#wsApi !== undefined) {
+      await this.#wsApi.closeLocalNodeConnectionsByToken(token);
+    }
+
+    return true;
+  }
+
+  /**
    * Gets the RegistrationManager for testing purposes.
    */
   get registrationManager(): RegistrationManager {

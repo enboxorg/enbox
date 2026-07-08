@@ -73,6 +73,7 @@ class MemoryPairingSessionStore implements LocalNodePairingSessionStore {
 type FakeServer = LocalNodeDwnServer & {
   closedDwn : boolean;
   config : DwnServerConfig;
+  revokedTokens : string[];
   started : boolean;
   stopped : boolean;
 };
@@ -95,8 +96,17 @@ function createFakeServerFactory(options: { busyPorts?: number[] } = {}): {
           },
         },
         localNodePairingManager : pairingManager,
+        revokedTokens           : [],
         started                 : false,
         stopped                 : false,
+        async revokeLocalNodePairingToken(token: string): Promise<boolean> {
+          const revoked = pairingManager.revokeToken(token);
+          if (revoked) {
+            this.revokedTokens.push(token);
+          }
+
+          return revoked;
+        },
         async start(): Promise<void> {
           if (busyPorts.has(config.port)) {
             const error = new Error('address already in use') as Error & { code: string };
@@ -371,7 +381,7 @@ describe('LocalNode', () => {
       token     : 'paired-token',
     }]);
     const pairingManager = new LocalNodePairingManager();
-    const { createServer } = createFakeServerFactory();
+    const { createServer, servers } = createFakeServerFactory();
     const node = new LocalNode({
       createServer,
       discoveryFile       : createDiscoveryFile(),
@@ -386,6 +396,7 @@ describe('LocalNode', () => {
     expect(await node.revokePairingToken('paired-token')).toBe(true);
     expect(pairingManager.validateSession('https://app.example', 'paired-token')).toBe(false);
     expect(sessionStore.sessions).toEqual([]);
+    expect(servers[0].revokedTokens).toEqual(['paired-token']);
 
     await node.stop();
   });

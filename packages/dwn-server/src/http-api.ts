@@ -54,8 +54,14 @@ try {
 }
 
 /** Data attached to each Bun WebSocket via `ws.data`. */
+export type LocalNodeWebSocketSession = {
+  origin : string | undefined;
+  token : string;
+};
+
 export interface WsData {
-  connection: SocketConnection;
+  connection: SocketConnection | null;
+  localNodeSession? : LocalNodeWebSocketSession;
 }
 
 export class HttpApi {
@@ -209,17 +215,22 @@ export class HttpApi {
           return new Response('Forbidden', { status: 403 });
         }
 
+        const isWebSocketUpgrade = method === 'GET' && req.headers.get('upgrade')?.toLowerCase() === 'websocket';
+        let localNodeSession: LocalNodeWebSocketSession | undefined;
+
         if (self.#config.localNodeProfileEnabled) {
-          const authorizationResponse = self.#authorizeLocalNodeRequest(req, url, path, method);
-          if (authorizationResponse !== undefined) {
-            self.#applyCorsHeaders(req, authorizationResponse, path);
-            return authorizationResponse;
+          const authorizationResult = self.#authorizeLocalNodeRequest(req, url, path, method, isWebSocketUpgrade);
+          if (authorizationResult.status === 'unauthorized') {
+            self.#applyCorsHeaders(req, authorizationResult.response, path);
+            return authorizationResult.response;
           }
+
+          localNodeSession = authorizationResult.session;
         }
 
         // --- WebSocket upgrade ---
-        if (method === 'GET' && req.headers.get('upgrade') === 'websocket') {
-          const upgraded = server.upgrade(req, { data: { connection: null } });
+        if (isWebSocketUpgrade) {
+          const upgraded = server.upgrade(req, { data: { connection: null, localNodeSession } });
           if (upgraded) {
             return undefined;
           }
@@ -646,25 +657,41 @@ export class HttpApi {
       || path.startsWith('/local/pair/');
   }
 
-  static #isLocalNodePublicRoute(path: string, method: string): boolean {
+  static #isLocalNodePublicRoute(path: string, method: string, isWebSocketUpgrade: boolean): boolean {
+    if (isWebSocketUpgrade) {
+      return false;
+    }
+
     return method === 'OPTIONS'
       || (method === 'GET' && path === '/info')
       || (method === 'POST' && path === '/local/pair')
       || (method === 'GET' && path.startsWith('/local/pair/'));
   }
 
-  #authorizeLocalNodeRequest(req: Request, url: URL, path: string, method: string): Response | undefined {
-    if (HttpApi.#isLocalNodePublicRoute(path, method)) {
-      return undefined;
+  #authorizeLocalNodeRequest(
+    req: Request,
+    url: URL,
+    path: string,
+    method: string,
+    isWebSocketUpgrade: boolean
+  ): { session?: LocalNodeWebSocketSession; status: 'authorized' } | { response: Response; status: 'unauthorized' } {
+    if (HttpApi.#isLocalNodePublicRoute(path, method, isWebSocketUpgrade)) {
+      return { status: 'authorized' };
     }
 
     const origin = req.headers.get('origin') ?? undefined;
     const token = HttpApi.#getLocalNodeAuthToken(req, url);
-    if (this.#localNodePairingManager.validateSession(origin, token)) {
-      return undefined;
+    if (token !== undefined && this.#localNodePairingManager.validateSession(origin, token)) {
+      return {
+        session : { origin, token },
+        status  : 'authorized',
+      };
     }
 
-    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    return {
+      response : Response.json({ error: 'Unauthorized' }, { status: 401 }),
+      status   : 'unauthorized',
+    };
   }
 
   static #getLocalNodeAuthToken(req: Request, url: URL): string | undefined {
@@ -673,7 +700,7 @@ export class HttpApi {
       return bearerToken;
     }
 
-    if (req.headers.get('upgrade') === 'websocket') {
+    if (req.headers.get('upgrade')?.toLowerCase() === 'websocket') {
       return url.searchParams.get('localNodeToken') ?? undefined;
     }
 

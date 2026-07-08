@@ -1443,6 +1443,7 @@ describe('http api', function () {
       const wsUrl = url.replace(/^http:/, 'ws:');
 
       try {
+        await expect(requestWebSocketUpgradeStatus(`${wsUrl}/info`, 'https://paired.example')).resolves.toBe(401);
         await expect(requestWebSocketUpgradeStatus(`${wsUrl}?localNodeToken=wrong`, 'https://paired.example')).resolves.toBe(401);
         await expect(requestWebSocketUpgradeStatus(`${wsUrl}?localNodeToken=${token}`, 'https://unpaired.example')).resolves.toBe(401);
         await expect(requestWebSocketUpgradeStatus(`${wsUrl}?localNodeToken=${token}`, 'https://paired.example')).resolves.toBe(101);

@@ -1,11 +1,48 @@
 import type { Dwn } from '@enbox/dwn-sdk-js';
 
+import { WebSocket } from 'ws';
 import { describe, expect, it } from 'bun:test';
 
 import { config } from '../src/config.js';
 import { DwnServer } from '../src/dwn-server.js';
 import { getTestDwn } from './test-dwn.js';
 import { LocalNodePairingManager } from '../src/local-node-pairing.js';
+
+async function waitForWebSocketOpen(socket: WebSocket): Promise<void> {
+  if (socket.readyState === WebSocket.OPEN) {
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout((): void => reject(new Error('WebSocket open timeout')), 3000);
+    socket.onopen = (): void => {
+      clearTimeout(timeout);
+      resolve();
+    };
+    socket.onerror = (error): void => {
+      clearTimeout(timeout);
+      reject(error);
+    };
+  });
+}
+
+async function waitForWebSocketClose(socket: WebSocket): Promise<void> {
+  if (socket.readyState === WebSocket.CLOSED) {
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout((): void => reject(new Error('WebSocket close timeout')), 3000);
+    socket.onclose = (): void => {
+      clearTimeout(timeout);
+      resolve();
+    };
+    socket.onerror = (error): void => {
+      clearTimeout(timeout);
+      reject(error);
+    };
+  });
+}
 
 describe('DwnServer', () => {
   const dwnServerConfig = { ...config, port: 0 };
@@ -97,6 +134,38 @@ describe('DwnServer', () => {
         await expect(server.start()).rejects.toThrow('DwnServer local node profile requires a loopback bind hostname.');
       } finally {
         await dwn.close();
+      }
+    });
+
+    it('should close live WebSocket connections when a local-node pairing token is revoked', async () => {
+      ({ dwn } = await getTestDwn({ withEvents: true }));
+      const localNodePairingManager = new LocalNodePairingManager();
+      const token = localNodePairingManager.createSession('https://paired.example');
+      const server = new DwnServer({
+        dwn,
+        localNodePairingManager,
+        config: {
+          ...dwnServerConfig,
+          hostname                : '127.0.0.1',
+          localNodeProfileEnabled : true,
+          webSocketSupport        : true,
+        }
+      });
+
+      try {
+        await server.start();
+        const socket = new WebSocket(`ws://127.0.0.1:${server.httpServer.port}?localNodeToken=${token}`, {
+          headers: { Origin: 'https://paired.example' },
+        });
+
+        await waitForWebSocketOpen(socket);
+        const closed = waitForWebSocketClose(socket);
+
+        expect(await server.revokeLocalNodePairingToken(token)).toBe(true);
+        await closed;
+        expect(localNodePairingManager.validateSession('https://paired.example', token)).toBe(false);
+      } finally {
+        await server.stop();
       }
     });
   });

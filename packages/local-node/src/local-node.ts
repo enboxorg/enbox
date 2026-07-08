@@ -23,6 +23,7 @@ export type LocalNodeState = 'stopped' | 'running';
 export type LocalNodeDwnServer = {
   dwn?: { close(): Promise<void> };
   localNodePairingManager: LocalNodePairingManager;
+  revokeLocalNodePairingToken?(token: string): Promise<boolean>;
   start(): Promise<void>;
   stop(): Promise<void>;
 };
@@ -231,7 +232,9 @@ export class LocalNode {
   }
 
   public async revokePairingToken(token: string): Promise<boolean> {
-    const revoked = this.#pairingManager.revokeToken(token);
+    const revoked = this.#server?.revokeLocalNodePairingToken !== undefined
+      ? await this.#server.revokeLocalNodePairingToken(token)
+      : this.#pairingManager.revokeToken(token);
     if (!revoked) {
       return false;
     }
