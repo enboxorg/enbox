@@ -120,7 +120,7 @@ describe('Sync scope closure — delegated protocol history', () => {
       .map(call => call.args[0] as ProtocolHistoryRequest)
       .filter(request => isProtocolHistoryQuery(request, commentsProtocol));
 
-    expect(commentsHistoryCalls.length).toBe(1);
+    expect(commentsHistoryCalls).toHaveLength(1);
     expect(commentsHistoryCalls[0].granteeDid).toBe(delegateDid);
     expect(commentsHistoryCalls[0].messageParams?.permissionGrantIds).toEqual([commentsGrant.grant.id]);
     expect(commentsHistoryCalls[0].messageParams?.cursor).toBeUndefined();

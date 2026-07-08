@@ -2131,7 +2131,7 @@ export function testRecordsTags(): void {
 
         const tagsQueryMatchReply = await dwn.processMessage(alice.did, tagsQueryMatch.message);
         expect(tagsQueryMatchReply.status.code).toBe(200);
-        expect(tagsQueryMatchReply.entries?.length).toBe(1);
+        expect(tagsQueryMatchReply.entries).toHaveLength(1);
         expect(tagsQueryMatchReply.entries![0].recordId).toBe(tagsRecord1.message.recordId);
 
         // update the record with new tags
@@ -2151,7 +2151,7 @@ export function testRecordsTags(): void {
         // Sanity: Query for the old tag value should return no results
         const tagsQueryMatchReply2 = await dwn.processMessage(alice.did, tagsQueryMatch.message);
         expect(tagsQueryMatchReply2.status.code).toBe(200);
-        expect(tagsQueryMatchReply2.entries?.length).toBe(0);
+        expect(tagsQueryMatchReply2.entries).toHaveLength(0);
       });
 
       it('should not index tags when the record is not `latestBaseState`', async () => {
@@ -2233,7 +2233,7 @@ export function testRecordsTags(): void {
 
         const tagsQueryMatchReply = await dwn.processMessage(alice.did, tagsQueryMatch.message);
         expect(tagsQueryMatchReply.status.code).toBe(200);
-        expect(tagsQueryMatchReply.entries?.length).toBe(1);
+        expect(tagsQueryMatchReply.entries).toHaveLength(1);
         expect(tagsQueryMatchReply.entries![0].recordId).toBe(tagsRecord1.message.recordId);
 
         // negative result same tag different value
@@ -2247,7 +2247,7 @@ export function testRecordsTags(): void {
         });
         let tagsQueryNegativeReply = await dwn.processMessage(alice.did, tagsQueryNegative.message);
         expect(tagsQueryNegativeReply.status.code).toBe(200);
-        expect(tagsQueryNegativeReply.entries?.length).toBe(0);
+        expect(tagsQueryNegativeReply.entries).toHaveLength(0);
 
         // negative result different tag same value
         tagsQueryNegative = await TestDataGenerator.generateRecordsQuery({
@@ -2260,7 +2260,7 @@ export function testRecordsTags(): void {
         });
         tagsQueryNegativeReply = await dwn.processMessage(alice.did, tagsQueryNegative.message);
         expect(tagsQueryNegativeReply.status.code).toBe(200);
-        expect(tagsQueryNegativeReply.entries?.length).toBe(0);
+        expect(tagsQueryNegativeReply.entries).toHaveLength(0);
       });
 
       it('should be able to filter by number match', async () => {
@@ -2293,7 +2293,7 @@ export function testRecordsTags(): void {
 
         const tagsQueryMatchReply = await dwn.processMessage(alice.did, tagsQueryMatch.message);
         expect(tagsQueryMatchReply.status.code).toBe(200);
-        expect(tagsQueryMatchReply.entries?.length).toBe(1);
+        expect(tagsQueryMatchReply.entries).toHaveLength(1);
         expect(tagsQueryMatchReply.entries![0].recordId).toBe(tagsRecord1.message.recordId);
 
         // negative result same tag different value
@@ -2307,7 +2307,7 @@ export function testRecordsTags(): void {
         });
         let tagsQueryNegativeReply = await dwn.processMessage(alice.did, tagsQueryNegative.message);
         expect(tagsQueryNegativeReply.status.code).toBe(200);
-        expect(tagsQueryNegativeReply.entries?.length).toBe(0);
+        expect(tagsQueryNegativeReply.entries).toHaveLength(0);
 
         // negative result different tag same value
         tagsQueryNegative = await TestDataGenerator.generateRecordsQuery({
@@ -2320,7 +2320,7 @@ export function testRecordsTags(): void {
         });
         tagsQueryNegativeReply = await dwn.processMessage(alice.did, tagsQueryNegative.message);
         expect(tagsQueryNegativeReply.status.code).toBe(200);
-        expect(tagsQueryNegativeReply.entries?.length).toBe(0);
+        expect(tagsQueryNegativeReply.entries).toHaveLength(0);
       });
 
       it('should be able to filter by boolean match', async () => {
@@ -2371,7 +2371,7 @@ export function testRecordsTags(): void {
 
         const tagsQueryMatchTrueReply = await dwn.processMessage(alice.did, tagsQueryMatchTrue.message);
         expect(tagsQueryMatchTrueReply.status.code).toBe(200);
-        expect(tagsQueryMatchTrueReply.entries?.length).toBe(1);
+        expect(tagsQueryMatchTrueReply.entries).toHaveLength(1);
         expect(tagsQueryMatchTrueReply.entries![0].recordId).toBe(tagsRecordTrue.message.recordId);
 
         // query for records with a `booleanTag` set to false, should return the record with the false tag
@@ -2386,7 +2386,7 @@ export function testRecordsTags(): void {
 
         const tagsQueryMatchFalseReply = await dwn.processMessage(alice.did, tagsQueryMatchFalse.message);
         expect(tagsQueryMatchFalseReply.status.code).toBe(200);
-        expect(tagsQueryMatchFalseReply.entries?.length).toBe(1);
+        expect(tagsQueryMatchFalseReply.entries).toHaveLength(1);
         expect(tagsQueryMatchFalseReply.entries![0].recordId).toBe(tagsRecordFalse.message.recordId);
 
         // negative result for a non existent boolean tag.
@@ -2400,7 +2400,7 @@ export function testRecordsTags(): void {
         });
         const tagsQueryNegativeReply = await dwn.processMessage(alice.did, tagsQueryNegative.message);
         expect(tagsQueryNegativeReply.status.code).toBe(200);
-        expect(tagsQueryNegativeReply.entries?.length).toBe(0);
+        expect(tagsQueryNegativeReply.entries).toHaveLength(0);
       });
 
       it('should be able to range filter by string value', async () => {
@@ -2462,7 +2462,7 @@ export function testRecordsTags(): void {
         });
         const queryForAllReply = await dwn.processMessage(alice.did, queryForAll.message);
         expect(queryForAllReply.status.code).toBe(200);
-        expect(queryForAllReply.entries?.length).toBe(4); // all 4 records
+        expect(queryForAllReply.entries).toHaveLength(4); // all 4 records
 
 
         // query for first names that begin with 'a' and 'b'
@@ -2477,7 +2477,7 @@ export function testRecordsTags(): void {
         });
         const queryForAtoBReply = await dwn.processMessage(alice.did, queryForAtoB.message);
         expect(queryForAtoBReply.status.code).toBe(200);
-        expect(queryForAtoBReply.entries?.length).toBe(2);
+        expect(queryForAtoBReply.entries).toHaveLength(2);
         const atobRecordIds = queryForAtoBReply.entries!.map(entry => entry.recordId);
         expect(atobRecordIds).toEqual(expect.arrayContaining([ aliceRecord.message.recordId, bobRecord.message.recordId ]));
 
@@ -2493,7 +2493,7 @@ export function testRecordsTags(): void {
         });
         const queryForBtoDReply = await dwn.processMessage(alice.did, queryForBtoD.message);
         expect(queryForBtoDReply.status.code).toBe(200);
-        expect(queryForBtoDReply.entries?.length).toBe(2);
+        expect(queryForBtoDReply.entries).toHaveLength(2);
         const btodRecordIds = queryForBtoDReply.entries!.map(entry => entry.recordId);
         expect(btodRecordIds).toEqual(expect.arrayContaining([ carolRecord.message.recordId, danielRecord.message.recordId ]));
 
@@ -2509,7 +2509,7 @@ export function testRecordsTags(): void {
         });
         const queryForCarolOnwardReply = await dwn.processMessage(alice.did, queryForCarolOnward.message);
         expect(queryForCarolOnwardReply.status.code).toBe(200);
-        expect(queryForCarolOnwardReply.entries?.length).toBe(2);
+        expect(queryForCarolOnwardReply.entries).toHaveLength(2);
         const onwardResults = queryForCarolOnwardReply.entries!.map(entry => entry.recordId);
         expect(onwardResults).toEqual(expect.arrayContaining([ carolRecord.message.recordId, danielRecord.message.recordId ]));
       });
@@ -2566,7 +2566,7 @@ export function testRecordsTags(): void {
 
         const tagsQueryMatchReply = await dwn.processMessage(alice.did, tagsQueryMatch.message);
         expect(tagsQueryMatchReply.status.code).toBe(200);
-        expect(tagsQueryMatchReply.entries?.length).toBe(2);
+        expect(tagsQueryMatchReply.entries).toHaveLength(2);
         const matchedRecords = tagsQueryMatchReply.entries!.map(entry => entry.recordId);
         expect(matchedRecords).toEqual(expect.arrayContaining([ tagsRecord1.message.recordId, tagsRecord2.message.recordId ]));
 
@@ -2583,7 +2583,7 @@ export function testRecordsTags(): void {
 
         const tagsQueryRangeReply = await dwn.processMessage(alice.did, tagsQueryRange.message);
         expect(tagsQueryRangeReply.status.code).toBe(200);
-        expect(tagsQueryRangeReply.entries?.length).toBe(3); // returned all 3 records
+        expect(tagsQueryRangeReply.entries).toHaveLength(3); // returned all 3 records
       });
 
       it('should be able to range filter by number value', async () => {
@@ -2649,7 +2649,7 @@ export function testRecordsTags(): void {
         });
         const queryForAllReply = await dwn.processMessage(alice.did, queryForAll.message);
         expect(queryForAllReply.status.code).toBe(200);
-        expect(queryForAllReply.entries?.length).toBe(4); // all 4 records
+        expect(queryForAllReply.entries).toHaveLength(4); // all 4 records
 
 
         // query for all records that received higher than(not including) an 80
@@ -2665,7 +2665,7 @@ export function testRecordsTags(): void {
         });
         const queryForHighReply = await dwn.processMessage(alice.did, queryForHighGrade.message);
         expect(queryForHighReply.status.code).toBe(200);
-        expect(queryForHighReply.entries?.length).toBe(1);
+        expect(queryForHighReply.entries).toHaveLength(1);
         expect(queryForHighReply.entries![0].recordId).toBe(danielRecord.message.recordId);
 
         // query for all records that received higher (and including) a 75
@@ -2681,7 +2681,7 @@ export function testRecordsTags(): void {
         });
         const queryForPassingGradeReply = await dwn.processMessage(alice.did, queryForPassingGrade.message);
         expect(queryForPassingGradeReply.status.code).toBe(200);
-        expect(queryForPassingGradeReply.entries?.length).toBe(3);
+        expect(queryForPassingGradeReply.entries).toHaveLength(3);
         const passingRecords = queryForPassingGradeReply.entries!.map(entry => entry.recordId);
         expect(passingRecords).toEqual(expect.arrayContaining([
           danielRecord.message.recordId, bobRecord.message.recordId, aliceRecord.message.recordId
@@ -2699,7 +2699,7 @@ export function testRecordsTags(): void {
         });
         const queryForPoorGradesReply = await dwn.processMessage(alice.did, queryForPoorGrades.message);
         expect(queryForPoorGradesReply.status.code).toBe(200);
-        expect(queryForPoorGradesReply.entries?.length).toBe(1);
+        expect(queryForPoorGradesReply.entries).toHaveLength(1);
         expect(queryForPoorGradesReply.entries![0].recordId).toBe(carolRecord.message.recordId);
 
         // query for passing grades that were not perfect scores
@@ -2714,7 +2714,7 @@ export function testRecordsTags(): void {
         });
         const queryForRangeReply = await dwn.processMessage(alice.did, queryForRange.message);
         expect(queryForRangeReply.status.code).toBe(200);
-        expect(queryForRangeReply.entries?.length).toBe(2);
+        expect(queryForRangeReply.entries).toHaveLength(2);
         const rangeRecords = queryForRangeReply.entries!.map(entry => entry.recordId);
         expect(rangeRecords).toEqual(expect.arrayContaining([ bobRecord.message.recordId, aliceRecord.message.recordId ]));
       });
@@ -2746,7 +2746,7 @@ export function testRecordsTags(): void {
 
         const tagsQueryMatchReply = await dwn.processMessage(alice.did, tagsQueryMatch.message);
         expect(tagsQueryMatchReply.status.code).toBe(200);
-        expect(tagsQueryMatchReply.entries?.length).toBe(1);
+        expect(tagsQueryMatchReply.entries).toHaveLength(1);
         expect(tagsQueryMatchReply.entries![0].recordId).toBe(tagsRecord1.message.recordId);
 
 
@@ -2762,7 +2762,7 @@ export function testRecordsTags(): void {
         // issuing the same query should return no results
         const tagsQueryMatchReply2 = await dwn.processMessage(alice.did, tagsQueryMatch.message);
         expect(tagsQueryMatchReply2.status.code).toBe(200);
-        expect(tagsQueryMatchReply2.entries?.length).toBe(0);
+        expect(tagsQueryMatchReply2.entries).toHaveLength(0);
       });
 
       it('should not return results if the record was updated with empty tags', async () => {
@@ -2792,7 +2792,7 @@ export function testRecordsTags(): void {
 
         const tagsQueryMatchReply = await dwn.processMessage(alice.did, tagsQueryMatch.message);
         expect(tagsQueryMatchReply.status.code).toBe(200);
-        expect(tagsQueryMatchReply.entries?.length).toBe(1);
+        expect(tagsQueryMatchReply.entries).toHaveLength(1);
         expect(tagsQueryMatchReply.entries![0].recordId).toBe(tagsRecord1.message.recordId);
 
 
@@ -2807,7 +2807,7 @@ export function testRecordsTags(): void {
         // issuing the same query should return no results
         const tagsQueryMatchReply2 = await dwn.processMessage(alice.did, tagsQueryMatch.message);
         expect(tagsQueryMatchReply2.status.code).toBe(200);
-        expect(tagsQueryMatchReply2.entries?.length).toBe(0);
+        expect(tagsQueryMatchReply2.entries).toHaveLength(0);
       });
     });
 
@@ -2841,7 +2841,7 @@ export function testRecordsTags(): void {
 
         const tagsQueryMatchReply = await dwn.processMessage(alice.did, tagsQueryMatch.message);
         expect(tagsQueryMatchReply.status.code).toBe(200);
-        expect(tagsQueryMatchReply.entries?.length).toBe(1);
+        expect(tagsQueryMatchReply.entries).toHaveLength(1);
         expect(tagsQueryMatchReply.entries![0].recordId).toBe(tagsRecord1.message.recordId);
 
 
@@ -2856,7 +2856,7 @@ export function testRecordsTags(): void {
         // issue the the same query should return no results
         const tagsQueryMatchReply2 = await dwn.processMessage(alice.did, tagsQueryMatch.message);
         expect(tagsQueryMatchReply2.status.code).toBe(200);
-        expect(tagsQueryMatchReply2.entries?.length).toBe(0);
+        expect(tagsQueryMatchReply2.entries).toHaveLength(0);
       });
     });
   });

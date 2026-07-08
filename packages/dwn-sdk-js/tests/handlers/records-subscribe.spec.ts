@@ -136,7 +136,7 @@ export function testRecordsSubscribeHandler(): void {
         expect(reply.status.code).toBe(200);
         expect(reply.subscription).toBeDefined();
         expect(reply.entries).toBeDefined();
-        expect(reply.entries!.length).toBe(0); // no matching records exist yet
+        expect(reply.entries!).toHaveLength(0); // no matching records exist yet
       });
 
       it('should return initial entries matching the filter', async () => {
@@ -166,7 +166,7 @@ export function testRecordsSubscribeHandler(): void {
         expect(subReply.status.code).toBe(200);
         expect(subReply.subscription).toBeDefined();
         expect(subReply.entries).toBeDefined();
-        expect(subReply.entries!.length).toBe(2);
+        expect(subReply.entries!).toHaveLength(2);
 
         const returnedRecordIds = subReply.entries!.map(e => e.recordId);
         expect(returnedRecordIds).toContain(write1.message.recordId);
@@ -194,7 +194,7 @@ export function testRecordsSubscribeHandler(): void {
         expect(subReply.status.code).toBe(200);
         expect(subReply.subscription).toBeDefined();
         expect(subReply.entries).toBeDefined();
-        expect(subReply.entries!.length).toBe(2);
+        expect(subReply.entries!).toHaveLength(2);
         expect(subReply.cursor).toBeDefined();
       });
 
@@ -223,7 +223,7 @@ export function testRecordsSubscribeHandler(): void {
         const subReply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler: () => {} });
         expect(subReply.status.code).toBe(200);
         expect(subReply.entries).toBeDefined();
-        expect(subReply.entries!.length).toBe(1);
+        expect(subReply.entries!).toHaveLength(1);
 
         // the entry should be the update, with initialWrite attached
         expect(subReply.entries![0].recordId).toBe(write.message.recordId);
@@ -249,7 +249,7 @@ export function testRecordsSubscribeHandler(): void {
         });
         const subReply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler });
         expect(subReply.status.code).toBe(200);
-        expect(subReply.entries!.length).toBe(1); // initial entries has write1
+        expect(subReply.entries!).toHaveLength(1); // initial entries has write1
 
         // write another record after subscribing
         const write2 = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://live-test' });
@@ -258,7 +258,7 @@ export function testRecordsSubscribeHandler(): void {
 
         // wait for the event to arrive
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(receivedEvents.length).toBe(1);
+          expect(receivedEvents).toHaveLength(1);
           expect((receivedEvents[0].message as RecordsWriteMessage).recordId).toBe(write2.message.recordId);
         });
       });
@@ -632,7 +632,7 @@ export function testRecordsSubscribeHandler(): void {
 
           // Wait for catch-up events. Should only get the matching one.
           await Poller.pollUntilSuccessOrTimeout(async () => {
-            expect(receivedEvents.length).toBe(1);
+            expect(receivedEvents).toHaveLength(1);
             expect((receivedEvents[0].message as RecordsWriteMessage).recordId).toBe(matchWrite.message.recordId);
           });
         });
@@ -964,12 +964,12 @@ export function testRecordsSubscribeHandler(): void {
           const chatRecordForCarol2Cid = await Message.getCid(chatRecordForCarol2.message);
 
           await Poller.pollUntilSuccessOrTimeout(async () => {
-            expect(bobMessages.length).toBe(1);
+            expect(bobMessages).toHaveLength(1);
             expect(bobMessages).toEqual(expect.arrayContaining([ chatRecordForBobCid ]));
           });
 
           await Poller.pollUntilSuccessOrTimeout(async () => {
-            expect(carolMessages.length).toBe(2);
+            expect(carolMessages).toHaveLength(2);
             expect(carolMessages).toEqual(expect.arrayContaining([ chatRecordForCarol1Cid, chatRecordForCarol2Cid ]));
           });
         });
@@ -1227,7 +1227,7 @@ export function testRecordsSubscribeHandler(): void {
             expect(recordIds).toEqual(expect.arrayContaining(chatRecordIds));
 
             // there should not be any messages in the subscription without a participant role.
-            expect(noRoleRecords.length).toBe(0);
+            expect(noRoleRecords).toHaveLength(0);
           });
         });
 

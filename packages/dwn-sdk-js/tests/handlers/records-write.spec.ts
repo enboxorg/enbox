@@ -1125,7 +1125,7 @@ export function testRecordsWriteHandler(): void {
         // verify the message written can be queried
         const recordsQueryReply = await dwn.processMessage(tenant, recordsQueryMessageData.message);
         expect(recordsQueryReply.status.code).toBe(200);
-        expect(recordsQueryReply.entries?.length).toBe(1);
+        expect(recordsQueryReply.entries).toHaveLength(1);
         expect(recordsQueryReply.entries![0].encodedData).toBe(base64url.baseEncode(data1));
 
         // generate and write a new RecordsWrite to overwrite the existing record
@@ -1148,7 +1148,7 @@ export function testRecordsWriteHandler(): void {
         const newRecordsQueryReply = await dwn.processMessage(tenant, recordsQueryMessageData.message);
 
         expect(newRecordsQueryReply.status.code).toBe(200);
-        expect(newRecordsQueryReply.entries?.length).toBe(1);
+        expect(newRecordsQueryReply.entries).toHaveLength(1);
         expect(newRecordsQueryReply.entries![0].encodedData).toBe(newDataEncoded);
 
         // try to write the older message to store again and verify that it is not accepted
@@ -1159,7 +1159,7 @@ export function testRecordsWriteHandler(): void {
         // expecting unchanged
         const thirdRecordsQueryReply = await dwn.processMessage(tenant, recordsQueryMessageData.message);
         expect(thirdRecordsQueryReply.status.code).toBe(200);
-        expect(thirdRecordsQueryReply.entries?.length).toBe(1);
+        expect(thirdRecordsQueryReply.entries).toHaveLength(1);
         expect(thirdRecordsQueryReply.entries![0].encodedData).toBe(newDataEncoded);
       });
 
@@ -1283,7 +1283,7 @@ export function testRecordsWriteHandler(): void {
         // verify the data is written
         const recordsQueryReply = await dwn.processMessage(tenant, recordsQueryMessageData.message);
         expect(recordsQueryReply.status.code).toBe(200);
-        expect(recordsQueryReply.entries?.length).toBe(1);
+        expect(recordsQueryReply.entries).toHaveLength(1);
         expect(recordsQueryReply.entries![0].descriptor.dataCid)
           .toBe(olderWrite.message.descriptor.dataCid);
 
@@ -1294,7 +1294,7 @@ export function testRecordsWriteHandler(): void {
         // verify new record has overwritten the existing record
         const newRecordsQueryReply = await dwn.processMessage(tenant, recordsQueryMessageData.message);
         expect(newRecordsQueryReply.status.code).toBe(200);
-        expect(newRecordsQueryReply.entries?.length).toBe(1);
+        expect(newRecordsQueryReply.entries).toHaveLength(1);
         expect(newRecordsQueryReply.entries![0].descriptor.dataCid)
           .toBe(newerWrite.message.descriptor.dataCid);
 
@@ -1309,7 +1309,7 @@ export function testRecordsWriteHandler(): void {
         // verify the message in store is still the one with larger lexicographical message CID
         const thirdRecordsQueryReply = await dwn.processMessage(tenant, recordsQueryMessageData.message);
         expect(thirdRecordsQueryReply.status.code).toBe(200);
-        expect(thirdRecordsQueryReply.entries?.length).toBe(1);
+        expect(thirdRecordsQueryReply.entries).toHaveLength(1);
         expect(thirdRecordsQueryReply.entries![0].descriptor.dataCid)
           .toBe(newerWrite.message.descriptor.dataCid); // expecting unchanged
       });
@@ -1481,7 +1481,7 @@ export function testRecordsWriteHandler(): void {
         const recordsQueryReply = await dwn.processMessage(alice.did, recordsQueryMessageData.message);
 
         expect(recordsQueryReply.status.code).toBe(200);
-        expect(recordsQueryReply.entries?.length).toBe(0);
+        expect(recordsQueryReply.entries).toHaveLength(0);
 
         // generate and write a new `RecordsWrite` to overwrite the existing record
         const newDataBytes = Encoder.stringToBytes('new data');
@@ -1499,7 +1499,7 @@ export function testRecordsWriteHandler(): void {
         const newRecordsQueryReply = await dwn.processMessage(alice.did, recordsQueryMessageData.message);
 
         expect(newRecordsQueryReply.status.code).toBe(200);
-        expect(newRecordsQueryReply.entries?.length).toBe(1);
+        expect(newRecordsQueryReply.entries).toHaveLength(1);
         expect(newRecordsQueryReply.entries![0].encodedData).toBe(newDataEncoded);
       });
 
@@ -1523,7 +1523,7 @@ export function testRecordsWriteHandler(): void {
         const recordsQueryReply = await dwn.processMessage(alice.did, recordsQueryMessageData.message);
 
         expect(recordsQueryReply.status.code).toBe(200);
-        expect(recordsQueryReply.entries?.length).toBe(1);
+        expect(recordsQueryReply.entries).toHaveLength(1);
 
         // generate and write a new `RecordsWrite` to overwrite the existing record
         const newDataBytes = Encoder.stringToBytes('new data');
@@ -1542,7 +1542,7 @@ export function testRecordsWriteHandler(): void {
         const newRecordsQueryReply = await dwn.processMessage(alice.did, recordsQueryMessageData.message);
 
         expect(newRecordsQueryReply.status.code).toBe(200);
-        expect(newRecordsQueryReply.entries?.length).toBe(1);
+        expect(newRecordsQueryReply.entries).toHaveLength(1);
         const originalEncodedData = Encoder.bytesToBase64Url(dataBytes!);
         expect(newRecordsQueryReply.entries![0].encodedData).toBe(originalEncodedData);
       });
@@ -1959,7 +1959,7 @@ export function testRecordsWriteHandler(): void {
 
             const recordsQueryReply = await dwn.processMessage(tenant, recordsQueryMessageData.message);
             expect(recordsQueryReply.status.code).toBe(200);
-            expect(recordsQueryReply.entries?.length).toBe(1);
+            expect(recordsQueryReply.entries).toHaveLength(1);
             expect(recordsQueryReply.entries![0].descriptor.published).toBe(true);
 
             // very importantly verify the original data is still returned
@@ -2001,7 +2001,7 @@ export function testRecordsWriteHandler(): void {
 
             const recordsQueryReply = await dwn.processMessage(tenant, recordsQueryMessageData.message);
             expect(recordsQueryReply.status.code).toBe(200);
-            expect(recordsQueryReply.entries?.length).toBe(1);
+            expect(recordsQueryReply.entries).toHaveLength(1);
 
             const recordsWriteReturned = recordsQueryReply.entries![0];
             expect(recordsWriteReturned.encodedData).toBe(Encoder.bytesToBase64Url(newData));
@@ -2098,7 +2098,7 @@ export function testRecordsWriteHandler(): void {
 
             const deletedMessageCid = await Message.getCid(newWrite.message);
             const { messages } = await messageStore.query(author.did, [{ recordId: message.recordId }]);
-            expect(messages.length).toBe(2); // first write + latest write
+            expect(messages).toHaveLength(2); // first write + latest write
 
             const retainedCids = await Promise.all(messages.map((storedMessage) => Message.getCid(storedMessage)));
             expect(retainedCids).not.toContain(deletedMessageCid);
@@ -2149,7 +2149,7 @@ export function testRecordsWriteHandler(): void {
           });
           const bobRecordsQueryReply = await dwn.processMessage(alice.did, messageDataForQueryingBobsWrite.message);
           expect(bobRecordsQueryReply.status.code).toBe(200);
-          expect(bobRecordsQueryReply.entries?.length).toBe(1);
+          expect(bobRecordsQueryReply.entries).toHaveLength(1);
           expect(bobRecordsQueryReply.entries![0].encodedData).toBe(Encoder.bytesToBase64Url(bobData));
         });
 
@@ -2270,7 +2270,7 @@ export function testRecordsWriteHandler(): void {
             });
             const applicationResponseQueryReply = await dwn.processMessage(alice.did, messageDataForQueryingCredentialResponse.message);
             expect(applicationResponseQueryReply.status.code).toBe(200);
-            expect(applicationResponseQueryReply.entries?.length).toBe(1);
+            expect(applicationResponseQueryReply.entries).toHaveLength(1);
             expect(applicationResponseQueryReply.entries![0].encodedData)
               .toBe(base64url.baseEncode(encodedCredentialResponse));
           });
@@ -2456,7 +2456,7 @@ export function testRecordsWriteHandler(): void {
             });
             const applicationResponseQueryReply = await dwn.processMessage(bob.did, messageDataForQueryingCaptionResponse.message);
             expect(applicationResponseQueryReply.status.code).toBe(200);
-            expect(applicationResponseQueryReply.entries?.length).toBe(1);
+            expect(applicationResponseQueryReply.entries).toHaveLength(1);
             expect(applicationResponseQueryReply.entries![0].encodedData)
               .toBe(base64url.baseEncode(encodedCaption));
           });
@@ -3254,7 +3254,7 @@ export function testRecordsWriteHandler(): void {
           });
           const bobRecordsQueryReply = await dwn.processMessage(alice.did, messageDataForQueryingBobsWrite.message);
           expect(bobRecordsQueryReply.status.code).toBe(200);
-          expect(bobRecordsQueryReply.entries?.length).toBe(1);
+          expect(bobRecordsQueryReply.entries).toHaveLength(1);
           expect(bobRecordsQueryReply.entries![0].encodedData).toBe(base64url.baseEncode(bobData));
 
           // generate a new message from bob updating the existing message
@@ -3271,7 +3271,7 @@ export function testRecordsWriteHandler(): void {
           // verify bob's message got written to the DB
           const newRecordQueryReply = await dwn.processMessage(alice.did, messageDataForQueryingBobsWrite.message);
           expect(newRecordQueryReply.status.code).toBe(200);
-          expect(newRecordQueryReply.entries?.length).toBe(1);
+          expect(newRecordQueryReply.entries).toHaveLength(1);
           expect(newRecordQueryReply.entries![0].encodedData).toBe(Encoder.bytesToBase64Url(updatedMessageBytes));
         });
 
@@ -3319,7 +3319,7 @@ export function testRecordsWriteHandler(): void {
           });
           const bobRecordsQueryReply = await dwn.processMessage(alice.did, messageDataForQueryingBobsWrite.message);
           expect(bobRecordsQueryReply.status.code).toBe(200);
-          expect(bobRecordsQueryReply.entries?.length).toBe(1);
+          expect(bobRecordsQueryReply.entries).toHaveLength(1);
           expect(bobRecordsQueryReply.entries![0].encodedData).toBe(base64url.baseEncode(bobData));
 
           // generate a well-formed update from Carol, which should not be allowed/accepted
@@ -3382,7 +3382,7 @@ export function testRecordsWriteHandler(): void {
           });
           const bobRecordsQueryReply = await dwn.processMessage(alice.did, messageDataForQueryingBobsWrite.message);
           expect(bobRecordsQueryReply.status.code).toBe(200);
-          expect(bobRecordsQueryReply.entries?.length).toBe(1);
+          expect(bobRecordsQueryReply.entries).toHaveLength(1);
           expect(bobRecordsQueryReply.entries![0].encodedData).toBe(base64url.baseEncode(bobData));
 
           // generate a new message from bob changing immutable recipient
@@ -4672,7 +4672,7 @@ export function testRecordsWriteHandler(): void {
           const recordsQueryReply = await dwn.processMessage(
             pfi.did, recordsQueryMessageData.message);
           expect(recordsQueryReply.status.code).toBe(200);
-          expect(recordsQueryReply.entries?.length).toBe(1);
+          expect(recordsQueryReply.entries).toHaveLength(1);
           expect(recordsQueryReply.entries![0].descriptor.dataCid).toBe(fulfillmentMessageData.message.descriptor.dataCid);
         });
 
@@ -5000,7 +5000,7 @@ export function testRecordsWriteHandler(): void {
           });
           const bobRecordsQueryReply = await dwn.processMessage(alice.did, bobRecordsQuery.message);
           expect(bobRecordsQueryReply.status.code).toBe(200);
-          expect(bobRecordsQueryReply.entries?.length).toBe(0);
+          expect(bobRecordsQueryReply.entries).toHaveLength(0);
 
           //further sanity query for specific recordId
           const bobRecordsQueryRecordId = await RecordsQuery.create({
@@ -5011,7 +5011,7 @@ export function testRecordsWriteHandler(): void {
           });
           const bobRecordsQueryRecordIdReply = await dwn.processMessage(alice.did, bobRecordsQueryRecordId.message);
           expect(bobRecordsQueryRecordIdReply.status.code).toBe(200);
-          expect(bobRecordsQueryRecordIdReply.entries?.length).toBe(0);
+          expect(bobRecordsQueryRecordIdReply.entries).toHaveLength(0);
 
           // attempt update recordsWrite without data, this will reject
           const updateRecord = await RecordsWrite.createFrom({
@@ -5026,7 +5026,7 @@ export function testRecordsWriteHandler(): void {
           // sanity still can't query
           const bobRecordsQueryReply2 = await dwn.processMessage(alice.did, bobRecordsQuery.message);
           expect(bobRecordsQueryReply2.status.code).toBe(200);
-          expect(bobRecordsQueryReply2.entries?.length).toBe(0);
+          expect(bobRecordsQueryReply2.entries).toHaveLength(0);
         });
 
         it('#359 - should not allow access of data by referencing `dataCid` in protocol authorized `RecordsWrite` with large data', async () => {
@@ -5094,7 +5094,7 @@ export function testRecordsWriteHandler(): void {
           });
           const bobRecordsQueryReply = await dwn.processMessage(alice.did, bobRecordsQuery.message);
           expect(bobRecordsQueryReply.status.code).toBe(200);
-          expect(bobRecordsQueryReply.entries?.length).toBe(0);
+          expect(bobRecordsQueryReply.entries).toHaveLength(0);
 
           //further sanity query for specific recordId
           const bobRecordsQueryRecordId = await RecordsQuery.create({
@@ -5105,7 +5105,7 @@ export function testRecordsWriteHandler(): void {
           });
           const bobRecordsQueryRecordIdReply = await dwn.processMessage(alice.did, bobRecordsQueryRecordId.message);
           expect(bobRecordsQueryRecordIdReply.status.code).toBe(200);
-          expect(bobRecordsQueryRecordIdReply.entries?.length).toBe(0);
+          expect(bobRecordsQueryRecordIdReply.entries).toHaveLength(0);
 
           // attempt update recordsWrite without data, this will reject
           const updateRecord = await RecordsWrite.createFrom({
@@ -5120,7 +5120,7 @@ export function testRecordsWriteHandler(): void {
           // sanity still can't query
           const bobRecordsQueryReply2 = await dwn.processMessage(alice.did, bobRecordsQuery.message);
           expect(bobRecordsQueryReply2.status.code).toBe(200);
-          expect(bobRecordsQueryReply2.entries?.length).toBe(0);
+          expect(bobRecordsQueryReply2.entries).toHaveLength(0);
         });
 
         it('should allow record with or without schema if protocol does not require schema for a record type', async () => {
@@ -5178,7 +5178,7 @@ export function testRecordsWriteHandler(): void {
           });
           const recordsReadReply = await dwn.processMessage(alice.did, recordsQuery.message);
           expect(recordsReadReply.status.code).toBe(200);
-          expect(recordsReadReply.entries?.length).toBe(2);
+          expect(recordsReadReply.entries).toHaveLength(2);
         });
 
         it('should allow authorization if protocol message size is within min and max size', async () => {
@@ -6132,7 +6132,7 @@ export function testRecordsWriteHandler(): void {
         });
         const aliceQueryWriteAfterAliceWriteReply = await dwn.processMessage(alice.did, aliceQueryWriteAfterAliceWriteData.message);
         expect(aliceQueryWriteAfterAliceWriteReply.status.code).toBe(200);
-        expect(aliceQueryWriteAfterAliceWriteReply.entries?.length).toBe(1);
+        expect(aliceQueryWriteAfterAliceWriteReply.entries).toHaveLength(1);
         expect(aliceQueryWriteAfterAliceWriteReply.entries![0].encodedData).toBe(encodedData);
 
         // bob learns of the CID of data of alice and tries to gain unauthorized access by referencing it in his own DWN
@@ -6150,7 +6150,7 @@ export function testRecordsWriteHandler(): void {
         });
         const aliceQueryWriteAfterBobWriteReply = await dwn.processMessage(alice.did, aliceQueryWriteAfterBobWriteData.message);
         expect(aliceQueryWriteAfterBobWriteReply.status.code).toBe(200);
-        expect(aliceQueryWriteAfterBobWriteReply.entries?.length).toBe(1);
+        expect(aliceQueryWriteAfterBobWriteReply.entries).toHaveLength(1);
         expect(aliceQueryWriteAfterBobWriteReply.entries![0].encodedData).toBe(encodedData);
 
         // verify that bob has not gained access to alice's data
@@ -6160,7 +6160,7 @@ export function testRecordsWriteHandler(): void {
         });
         const bobQueryAfterBobWriteReply = await dwn.processMessage(bob.did, bobQueryAfterBobWriteData.message);
         expect(bobQueryAfterBobWriteReply.status.code).toBe(200);
-        expect(bobQueryAfterBobWriteReply.entries?.length).toBe(0);
+        expect(bobQueryAfterBobWriteReply.entries).toHaveLength(0);
       });
 
       describe('encodedData threshold', () => {

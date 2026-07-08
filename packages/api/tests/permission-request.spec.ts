@@ -188,7 +188,7 @@ describe('PermissionRequest', () => {
         from     : bobDid.uri,
         protocol : protocolUri
       });
-      expect(fetchedRequests.length).toBe(0);
+      expect(fetchedRequests).toHaveLength(0);
 
       const sentToBob = await request.send(bobDid.uri);
       expect(sentToBob.status.code).toBe(202);
@@ -198,12 +198,12 @@ describe('PermissionRequest', () => {
         from     : bobDid.uri,
         protocol : protocolUri
       });
-      expect(fetchedRequests.length).toBe(1);
+      expect(fetchedRequests).toHaveLength(1);
 
       let localRequests = await bobDwn.permissions.queryRequests({
         protocol: protocolUri
       });
-      expect(localRequests.length).toBe(0);
+      expect(localRequests).toHaveLength(0);
 
       const remoteGrant = fetchedRequests[0];
 
@@ -215,7 +215,7 @@ describe('PermissionRequest', () => {
       localRequests = await bobDwn.permissions.queryRequests({
         protocol: protocolUri
       });
-      expect(localRequests.length).toBe(1);
+      expect(localRequests).toHaveLength(1);
       expect(localRequests[0].toJSON()).toEqual(request.toJSON());
     });
   });
@@ -235,13 +235,13 @@ describe('PermissionRequest', () => {
         from     : aliceDid.uri,
         protocol : protocolUri
       });
-      expect(requests.length).toBe(1);
+      expect(requests).toHaveLength(1);
 
       // confirm no grants exist
       let grants = await aliceDwn.permissions.queryGrants({
         protocol: protocolUri
       });
-      expect(grants.length).toBe(0);
+      expect(grants).toHaveLength(0);
 
       // Alice grants the request and it will be stored by default
       const dateExpires = Time.createOffsetTimestamp({ seconds: 60 });
@@ -252,7 +252,7 @@ describe('PermissionRequest', () => {
       grants = await aliceDwn.permissions.queryGrants({
         protocol: protocolUri
       });
-      expect(grants.length).toBe(1);
+      expect(grants).toHaveLength(1);
       expect(grants[0].id).toBe(grant.id);
     });
 
@@ -270,13 +270,13 @@ describe('PermissionRequest', () => {
         from     : aliceDid.uri,
         protocol : protocolUri
       });
-      expect(requests.length).toBe(1);
+      expect(requests).toHaveLength(1);
 
       // confirm no grants exist
       let grants = await aliceDwn.permissions.queryGrants({
         protocol: protocolUri
       });
-      expect(grants.length).toBe(0);
+      expect(grants).toHaveLength(0);
 
       // Alice grants the request but does not store it
       const dateExpires = Time.createOffsetTimestamp({ seconds: 60 });
@@ -287,7 +287,7 @@ describe('PermissionRequest', () => {
       grants = await aliceDwn.permissions.queryGrants({
         protocol: protocolUri
       });
-      expect(grants.length).toBe(0);
+      expect(grants).toHaveLength(0);
     });
   });
 

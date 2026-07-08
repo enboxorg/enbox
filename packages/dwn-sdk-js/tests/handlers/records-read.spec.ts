@@ -1883,7 +1883,7 @@ export function testRecordsReadHandler(): void {
 
         const reply = await dwn.processMessage(alice.did, queryData.message);
         expect(reply.status.code).toBe(200);
-        expect(reply.entries?.length).toBe(1);
+        expect(reply.entries).toHaveLength(1);
 
         // RecordsDelete
         const recordsDelete = await RecordsDelete.create({

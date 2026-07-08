@@ -226,9 +226,9 @@ export function testResumableTasks(): void {
       const resumeTaskBatch1 = await grabSpy.firstCall.returnValue;
       const resumeTaskBatch2 = await grabSpy.secondCall.returnValue;
       const resumeTaskBatch3 = await grabSpy.thirdCall.returnValue;
-      expect(resumeTaskBatch1.length).toBe(2);
-      expect(resumeTaskBatch2.length).toBe(1);
-      expect(resumeTaskBatch3.length).toBe(0);
+      expect(resumeTaskBatch1).toHaveLength(2);
+      expect(resumeTaskBatch2).toHaveLength(1);
+      expect(resumeTaskBatch3).toHaveLength(0);
 
       // 6. Verify that 3 processed resumable tasks are deleted from resumable task store.
       const [task2, task3] = resumeTaskBatch1;

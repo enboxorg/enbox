@@ -160,7 +160,7 @@ describe('AdminStore', () => {
 
     it('should support pagination with limit', async () => {
       const page1 = await adminStore.getDistinctTenants({ limit: 2 });
-      expect(page1.tenants.length).toBe(2);
+      expect(page1.tenants).toHaveLength(2);
       expect(page1.cursor).toBeDefined();
     });
 
@@ -365,7 +365,7 @@ describe('AdminStore', () => {
     it('should return empty results for a tenant with no messages', async () => {
       const { messages } = await adminStore.getTenantMessages('did:key:nonexistent-tenant');
       expect(messages).toBeInstanceOf(Array);
-      expect(messages.length).toBe(0);
+      expect(messages).toHaveLength(0);
     });
 
     it('should support pagination with limit and cursor', async () => {
@@ -380,12 +380,12 @@ describe('AdminStore', () => {
 
       // Fetch first page.
       const page1 = await adminStore.getTenantMessages(persona.did, { limit: 2 });
-      expect(page1.messages.length).toBe(2);
+      expect(page1.messages).toHaveLength(2);
       expect(page1.cursor).toBeDefined();
 
       // Fetch second page.
       const page2 = await adminStore.getTenantMessages(persona.did, { limit: 2, cursor: page1.cursor });
-      expect(page2.messages.length).toBe(2);
+      expect(page2.messages).toHaveLength(2);
 
       // No overlap (compare messageCids).
       const page1Cids = page1.messages.map((m): string => m.messageCid);
@@ -453,7 +453,7 @@ describe('AdminStore', () => {
     it('should return empty array for tenant with no protocol messages', async () => {
       const protocols = await adminStore.getTenantProtocolCounts('did:key:no-protocols');
       expect(protocols).toBeInstanceOf(Array);
-      expect(protocols.length).toBe(0);
+      expect(protocols).toHaveLength(0);
     });
 
     it('should order by messageCount descending', async () => {
@@ -509,7 +509,7 @@ describe('AdminStore', () => {
 
       // Verify no rows in dataRefs — the data is inline.
       const refs = await rawDb.selectFrom('dataRefs').select('dataCid').where('tenant', '=', persona.did).execute();
-      expect(refs.length).toBe(0);
+      expect(refs).toHaveLength(0);
 
       // Storage size should still reflect the small data.
       const storageSize = await adminStore.getTenantStorageSize(persona.did);
@@ -600,7 +600,7 @@ describe('AdminStore', () => {
       expect(stats.messageCount).toBeGreaterThanOrEqual(2);
       expect(stats.dataStorageBytes).toBe(data.length);
       expect(stats.protocolCount).toBeGreaterThanOrEqual(1);
-      expect(stats.protocols.length).toBe(stats.protocolCount);
+      expect(stats.protocols).toHaveLength(stats.protocolCount);
     });
 
     it('should return all-zero stats for a nonexistent tenant', async () => {
@@ -715,7 +715,7 @@ describe('AdminStore', () => {
         .select('blockCid')
         .where('rootDataCid', '=', dataCid)
         .execute();
-      expect(blocksAfter.length).toBe(0);
+      expect(blocksAfter).toHaveLength(0);
     });
 
     it('should NOT garbage-collect dataBlocks when another tenant still references the same dataCid', async () => {
@@ -790,7 +790,7 @@ describe('AdminStore', () => {
       // Purge tenant B — now blocks should be garbage-collected.
       await adminStore.purgeTenantData(tenantB.did);
       blocks = await rawDb.selectFrom('dataBlocks').select('blockCid').where('rootDataCid', '=', dataCid).execute();
-      expect(blocks.length).toBe(0);
+      expect(blocks).toHaveLength(0);
     });
 
     it('should handle multiple records with different dataCids for one tenant', async () => {
@@ -809,7 +809,7 @@ describe('AdminStore', () => {
       for (const ref of refs) {
         dataCids.push(ref.dataCid);
       }
-      expect(dataCids.length).toBe(3);
+      expect(dataCids).toHaveLength(3);
 
       // Purge.
       await adminStore.purgeTenantData(persona.did);
@@ -817,7 +817,7 @@ describe('AdminStore', () => {
       // All refs and blocks should be gone.
       for (const cid of dataCids) {
         const remaining = await rawDb.selectFrom('dataBlocks').select('blockCid').where('rootDataCid', '=', cid).execute();
-        expect(remaining.length).toBe(0);
+        expect(remaining).toHaveLength(0);
       }
       expect(await adminStore.getTenantStorageSize(persona.did)).toBe(0);
     });
@@ -845,14 +845,14 @@ describe('AdminStore', () => {
       expect(exported.metadata.dataRecordCount).toBeGreaterThanOrEqual(1);
 
       // Messages should include expected fields.
-      expect(exported.messages.length).toBe(exported.metadata.messageCount);
+      expect(exported.messages).toHaveLength(exported.metadata.messageCount);
       const recordsMsg = exported.messages.find((m): boolean => m.method === 'Write' && m.interface === 'Records');
       expect(recordsMsg).toBeDefined();
       expect(recordsMsg!.messageCid).toBeDefined();
       expect(recordsMsg!.recordId).toBeDefined();
 
       // Data records from dataRefs.
-      expect(exported.dataRecords.length).toBe(exported.metadata.dataRecordCount);
+      expect(exported.dataRecords).toHaveLength(exported.metadata.dataRecordCount);
       const dataRec = exported.dataRecords[0];
       expect(dataRec.recordId).toBeDefined();
       expect(dataRec.dataCid).toBeDefined();

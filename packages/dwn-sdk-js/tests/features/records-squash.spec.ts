@@ -253,7 +253,7 @@ export function testRecordsSquash(): void {
         });
         const queryReply = await dwn.processMessage(alice.did, query.message);
         expect(queryReply.status.code).toBe(200);
-        expect(queryReply.entries!.length).toBe(1);
+        expect(queryReply.entries!).toHaveLength(1);
         expect(queryReply.entries![0].recordId).toBe(squashRecord.message.recordId);
       });
 
@@ -312,7 +312,7 @@ export function testRecordsSquash(): void {
         });
         const queryReply = await dwn.processMessage(alice.did, query.message);
         expect(queryReply.status.code).toBe(200);
-        expect(queryReply.entries!.length).toBe(2);
+        expect(queryReply.entries!).toHaveLength(2);
 
         const recordIds = queryReply.entries!.map((e) => e.recordId);
         expect(recordIds).toContain(squashRecord.message.recordId);
@@ -393,7 +393,7 @@ export function testRecordsSquash(): void {
         });
         const queryReply = await dwn.processMessage(alice.did, query.message);
         expect(queryReply.status.code).toBe(200);
-        expect(queryReply.entries!.length).toBe(1);
+        expect(queryReply.entries!).toHaveLength(1);
         expect(queryReply.entries![0].recordId).toBe(secondSquash.message.recordId);
       });
     });
@@ -608,7 +608,7 @@ export function testRecordsSquash(): void {
         });
         const queryReply = await dwn.processMessage(alice.did, query.message);
         expect(queryReply.status.code).toBe(200);
-        expect(queryReply.entries!.length).toBe(1);
+        expect(queryReply.entries!).toHaveLength(1);
         expect(queryReply.entries![0].recordId).toBe(bobSquash.message.recordId);
       });
 
@@ -777,7 +777,7 @@ export function testRecordsSquash(): void {
         });
         const queryReply = await dwn.processMessage(alice.did, query.message);
         expect(queryReply.status.code).toBe(200);
-        expect(queryReply.entries!.length).toBe(1);
+        expect(queryReply.entries!).toHaveLength(1);
         expect(queryReply.entries![0].recordId).toBe(squashRecord.message.recordId);
       });
 
@@ -896,7 +896,7 @@ export function testRecordsSquash(): void {
         });
         const queryAReply = await dwn.processMessage(alice.did, queryA.message);
         expect(queryAReply.status.code).toBe(200);
-        expect(queryAReply.entries!.length).toBe(1);
+        expect(queryAReply.entries!).toHaveLength(1);
         expect(queryAReply.entries![0].recordId).toBe(squashA.message.recordId);
 
         // verify patchB is still present (different parent context)
@@ -910,7 +910,7 @@ export function testRecordsSquash(): void {
         });
         const queryBReply = await dwn.processMessage(alice.did, queryB.message);
         expect(queryBReply.status.code).toBe(200);
-        expect(queryBReply.entries!.length).toBe(1);
+        expect(queryBReply.entries!).toHaveLength(1);
         expect(queryBReply.entries![0].recordId).toBe(patchB.message.recordId);
       });
     });
@@ -1170,7 +1170,7 @@ export function testRecordsSquash(): void {
         });
         const queryReply = await dwn.processMessage(alice.did, query.message);
         expect(queryReply.status.code).toBe(200);
-        expect(queryReply.entries!.length).toBe(1);
+        expect(queryReply.entries!).toHaveLength(1);
         expect(queryReply.entries![0].recordId).toBe(squashRecord.message.recordId);
 
         // verify the deleted patch1's messages are fully purged from message store
@@ -1181,7 +1181,7 @@ export function testRecordsSquash(): void {
         });
         const directReply = await dwn.processMessage(alice.did, directQuery.message);
         expect(directReply.status.code).toBe(200);
-        expect(directReply.entries!.length).toBe(0);
+        expect(directReply.entries!).toHaveLength(0);
       });
     });
   });

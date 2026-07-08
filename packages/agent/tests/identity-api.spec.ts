@@ -517,7 +517,7 @@ describe('AgentIdentityApi', () => {
             }
           });
 
-          expect(storeSpy.mock.calls.length).toBe(1);
+          expect(storeSpy.mock.calls).toHaveLength(1);
 
           try {
             await testHarness.agent.identity.setMetadataName({ didUri: identity.did.uri, name: '' });
@@ -534,7 +534,7 @@ describe('AgentIdentityApi', () => {
           }
 
           // call count should not have changed
-          expect(storeSpy.mock.calls.length).toBe(1);
+          expect(storeSpy.mock.calls).toHaveLength(1);
 
           // sanity confirm the name did not change
           const storedIdentity = await testHarness.agent.identity.get({ didUri: identity.did.uri });

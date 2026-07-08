@@ -75,7 +75,7 @@ describe('HttpDwnRpcClient', () => {
       // should return success but without any records as none exist yet
       expect(response.status.code).toBe(200);
       expect(response.entries).toBeDefined();
-      expect(response.entries?.length).toBe(0);
+      expect(response.entries).toHaveLength(0);
     });
 
     it('send RecordsWrite message', async () => {

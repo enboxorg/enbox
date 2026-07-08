@@ -325,7 +325,7 @@ describe('deriveActiveSyncScope', () => {
     expect(filters.some(filter =>
       filter?.protocolPath === PermissionsProtocol.revocationPath && filter.contextId === undefined
     )).toBe(false);
-    expect(filters.length).toBe(0);
+    expect(filters).toHaveLength(0);
   });
 
   test('throws when grant fetching fails', async () => {

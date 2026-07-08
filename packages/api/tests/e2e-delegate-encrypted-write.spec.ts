@@ -410,7 +410,7 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
 
       // Step 4: Verify non-encrypted records are queryable.
       const { records: mints } = await typed.records.query('mint');
-      expect(mints.length).toBe(1);
+      expect(mints).toHaveLength(1);
 
       // Step 5: Verify no owner private key was used — all signed by delegate.
       // Check the non-encrypted mint record.

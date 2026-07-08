@@ -152,7 +152,7 @@ export function testRecordsPrune(): void {
         protocol  : nestedProtocol.protocol
       }];
       const queryResult = await messageStore.query(alice.did, queryFilter);
-      expect(queryResult.messages.length).toBe(8); // 2 foos, 2 bars, 2 bazes x 2 messages each
+      expect(queryResult.messages).toHaveLength(8); // 2 foos, 2 bars, 2 bazes x 2 messages each
 
       // sanity test data is inserted in data store
       const bar1DataGetResult = await dataStore.get(alice.did, bar1.message.recordId, bar1.message.descriptor.dataCid);
@@ -172,7 +172,7 @@ export function testRecordsPrune(): void {
 
       // verify all bar and baz message are permanently deleted
       const queryResult2 = await messageStore.query(alice.did, queryFilter, { messageTimestamp: SortDirection.Ascending });
-      expect(queryResult2.messages.length).toBe(3); // foo2 RecordsWrite, foo1 RecordsWrite and RecordsDelete
+      expect(queryResult2.messages).toHaveLength(3); // foo2 RecordsWrite, foo1 RecordsWrite and RecordsDelete
       expect(queryResult2.messages[0]).toEqual(expect.objectContaining(foo1.message));
       expect(queryResult2.messages[1]).toEqual(expect.objectContaining(foo2.message));
       expect(queryResult2.messages[2]).toEqual(expect.objectContaining(foo1Delete.message));
@@ -190,7 +190,7 @@ export function testRecordsPrune(): void {
       });
       const reply2 = await dwn.processMessage(alice.did, queryData.message);
       expect(reply2.status.code).toBe(200);
-      expect(reply2.entries?.length).toBe(1); // only foo2 is left
+      expect(reply2.entries).toHaveLength(1); // only foo2 is left
       expect(reply2.entries![0]).toEqual(expect.objectContaining(foo2.message));
     });
 
@@ -262,7 +262,7 @@ export function testRecordsPrune(): void {
         protocol  : nestedProtocol.protocol
       }];
       const messagesBeforeDelete = await messageStore.query(alice.did, queryFilter);
-      expect(messagesBeforeDelete.messages.length).toBe(3);
+      expect(messagesBeforeDelete.messages).toHaveLength(3);
 
       // sanity verify RecordsQuery returns no records
       const recordsQuery = await RecordsQuery.create({
@@ -271,7 +271,7 @@ export function testRecordsPrune(): void {
       });
       const recordsQueryBeforeDeleteReply = await dwn.processMessage(alice.did, recordsQuery.message);
       expect(recordsQueryBeforeDeleteReply.status.code).toBe(200);
-      expect(recordsQueryBeforeDeleteReply.entries?.length).toBe(3);
+      expect(recordsQueryBeforeDeleteReply.entries).toHaveLength(3);
 
 
       // 2. Alice deletes the record `foo` WITHOUT prune, leaving the descendants intact
@@ -286,12 +286,12 @@ export function testRecordsPrune(): void {
 
       // verify bar and baz messages still exists
       const messagesAfterDelete = await messageStore.query(alice.did, queryFilter, { messageTimestamp: SortDirection.Ascending });
-      expect(messagesAfterDelete.messages.length).toBe(4); // RecordsWrite for foo, bar, baz, and RecordsDelete for foo
+      expect(messagesAfterDelete.messages).toHaveLength(4); // RecordsWrite for foo, bar, baz, and RecordsDelete for foo
 
       // sanity verify RecordsQuery returns the descendants
       const recordsQueryAfterDeleteReply = await dwn.processMessage(alice.did, recordsQuery.message);
       expect(recordsQueryAfterDeleteReply.status.code).toBe(200);
-      expect(recordsQueryAfterDeleteReply.entries?.length).toBe(2);
+      expect(recordsQueryAfterDeleteReply.entries).toHaveLength(2);
 
       // 3. Verify that Alice is able to perform a prune on `foo` to delete all its descendants
       const fooPrune = await RecordsDelete.create({
@@ -305,14 +305,14 @@ export function testRecordsPrune(): void {
 
       // verify bar and baz messages are permanently deleted
       const messagesAfterPrune = await messageStore.query(alice.did, queryFilter, { messageTimestamp: SortDirection.Ascending });
-      expect(messagesAfterPrune.messages.length).toBe(2); // just RecordsWrite and RecordsDelete for foo
+      expect(messagesAfterPrune.messages).toHaveLength(2); // just RecordsWrite and RecordsDelete for foo
       expect(messagesAfterPrune.messages[0]).toEqual(expect.objectContaining(foo.message));
       expect(messagesAfterPrune.messages[1]).toEqual(expect.objectContaining(fooPrune.message));
 
       // sanity verify RecordsQuery returns no records
       const recordsQueryAfterPruneReply = await dwn.processMessage(alice.did, recordsQuery.message);
       expect(recordsQueryAfterPruneReply.status.code).toBe(200);
-      expect(recordsQueryAfterPruneReply.entries?.length).toBe(0);
+      expect(recordsQueryAfterPruneReply.entries).toHaveLength(0);
     });
 
     it('should resolve competing prunes to the newest as the canonical winner', async () => {
@@ -384,7 +384,7 @@ export function testRecordsPrune(): void {
         protocol  : nestedProtocol.protocol
       }];
       const queryResult = await messageStore.query(alice.did, queryFilter);
-      expect(queryResult.messages.length).toBe(3);
+      expect(queryResult.messages).toHaveLength(3);
 
       // sanity verify RecordsQuery returns no records
       const recordsQuery = await RecordsQuery.create({
@@ -393,7 +393,7 @@ export function testRecordsPrune(): void {
       });
       const recordsQueryBeforeDeleteReply = await dwn.processMessage(alice.did, recordsQuery.message);
       expect(recordsQueryBeforeDeleteReply.status.code).toBe(200);
-      expect(recordsQueryBeforeDeleteReply.entries?.length).toBe(3);
+      expect(recordsQueryBeforeDeleteReply.entries).toHaveLength(3);
 
 
       // 2. Alice prunes the record `foo`
@@ -532,7 +532,7 @@ export function testRecordsPrune(): void {
         });
         const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
         expect(recordsQueryReply.status.code).toBe(200);
-        expect(recordsQueryReply.entries?.length).toBe(0);
+        expect(recordsQueryReply.entries).toHaveLength(0);
       });
 
       it('should not allow a non-owner author to prune if `prune` is not an authorized action', async () => {
@@ -600,7 +600,7 @@ export function testRecordsPrune(): void {
         });
         const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
         expect(recordsQueryReply.status.code).toBe(200);
-        expect(recordsQueryReply.entries?.length).toBe(2);
+        expect(recordsQueryReply.entries).toHaveLength(2);
       });
 
       it('should allow a non-author to prune if `co-prune` is allowed and `prune` is set to `true` in RecordsDelete', async () => {
@@ -711,7 +711,7 @@ export function testRecordsPrune(): void {
         });
         const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
         expect(recordsQueryReply.status.code).toBe(200);
-        expect(recordsQueryReply.entries?.length).toBe(0);
+        expect(recordsQueryReply.entries).toHaveLength(0);
       });
 
       it('should not allow a non-author to prune if `prune` is allowed but `co-prune` is not allowed', async () => {
@@ -813,7 +813,7 @@ export function testRecordsPrune(): void {
         });
         const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
         expect(recordsQueryReply.status.code).toBe(200);
-        expect(recordsQueryReply.entries?.length).toBe(2);
+        expect(recordsQueryReply.entries).toHaveLength(2);
       });
 
       it('should throw if only `delete` is allowed but received a RecordsDelete with `prune` set to `true`', async () => {

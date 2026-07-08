@@ -202,7 +202,7 @@ describe('FilterSelector — fuzz', () => {
             expect(reduced).toEqual(f);
           } else {
             // Otherwise, reduced should have exactly 1 key
-            expect(reducedKeys.length).toBe(1);
+            expect(reducedKeys).toHaveLength(1);
           }
         }),
         { numRuns }

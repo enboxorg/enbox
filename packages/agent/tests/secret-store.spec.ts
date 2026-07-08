@@ -245,7 +245,7 @@ describe('SecretStore', () => {
 
         // Compact JWE has 5 dot-separated parts.
         const parts = envelope.jwe.split('.');
-        expect(parts.length).toBe(5);
+        expect(parts).toHaveLength(5);
       });
 
       it('should persist expiresAt metadata alongside the JWE', async () => {
@@ -404,7 +404,7 @@ describe('SecretStore', () => {
 
         const result = await store.get('empty');
         expect(result).toBeDefined();
-        expect(result!.length).toBe(0);
+        expect(result!).toHaveLength(0);
       });
 
       it('should handle keys with special characters', async () => {

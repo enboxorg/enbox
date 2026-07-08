@@ -301,7 +301,7 @@ describe('Record', () => {
       });
 
       expect(aliceDeviceRemoteQuery.status.code).toBe(200);
-      expect(aliceDeviceRemoteQuery.records.length).toBe(1);
+      expect(aliceDeviceRemoteQuery.records).toHaveLength(1);
       const aliceRecord = aliceDeviceRemoteQuery.records[0];
 
       // attempt to delete the record with the delegated grant
@@ -338,7 +338,7 @@ describe('Record', () => {
       });
 
       expect(queryResult.status.code).toBe(200);
-      expect(queryResult.records.length).toBe(0);
+      expect(queryResult.records).toHaveLength(0);
 
       // attempting to delete again is beaten by the standing tombstone: 409 Conflict
       const deleteResult2 = await deletedRecord.delete();
@@ -369,7 +369,7 @@ describe('Record', () => {
         }
       });
       expect(aliceDeviceLocal.status.code).toBe(200);
-      expect(aliceDeviceLocal.records.length).toBe(0);
+      expect(aliceDeviceLocal.records).toHaveLength(0);
 
       // alice delegate is able to query for the note
       const { records: aliceQueryFromBobRecords, status: aliceQueryFromBobStatus } = await delegateDwn.records.query({
@@ -381,7 +381,7 @@ describe('Record', () => {
       });
       expect(aliceQueryFromBobStatus.code).toBe(200);
       expect(aliceQueryFromBobRecords).toBeDefined();
-      expect(aliceQueryFromBobRecords.length).toBe(1);
+      expect(aliceQueryFromBobRecords).toHaveLength(1);
 
       const recordFromBob = aliceQueryFromBobRecords[0];
       // alice delegate imports the note
@@ -396,7 +396,7 @@ describe('Record', () => {
         }
       });
       expect(aliceDeviceLocal.status.code).toBe(200);
-      expect(aliceDeviceLocal.records.length).toBe(1);
+      expect(aliceDeviceLocal.records).toHaveLength(1);
       expect(aliceDeviceLocal.records[0].id).toBe(recordFromBob.id);
     });
 
@@ -423,7 +423,7 @@ describe('Record', () => {
         }
       });
       expect(aliceDelegateResults.status.code).toBe(200);
-      expect(aliceDelegateResults.records.length).toBe(0);
+      expect(aliceDelegateResults.records).toHaveLength(0);
 
       // alice delegate is able to query for the note
       const { records: aliceQueryFromBobRecords, status: aliceQueryFromBobStatus } = await delegateDwn.records.query({
@@ -435,7 +435,7 @@ describe('Record', () => {
       });
       expect(aliceQueryFromBobStatus.code).toBe(200);
       expect(aliceQueryFromBobRecords).toBeDefined();
-      expect(aliceQueryFromBobRecords.length).toBe(1);
+      expect(aliceQueryFromBobRecords).toHaveLength(1);
 
       const recordFromBob = aliceQueryFromBobRecords[0];
 
@@ -451,7 +451,7 @@ describe('Record', () => {
         }
       });
       expect(aliceDelegateResults.status.code).toBe(200);
-      expect(aliceDelegateResults.records.length).toBe(1);
+      expect(aliceDelegateResults.records).toHaveLength(1);
     });
 
     it('should read large data payloads as a stream with a delegated grant', async () => {
@@ -476,7 +476,7 @@ describe('Record', () => {
         }
       });
       expect(queryRecordStatus.code).toBe(200);
-      expect(queryRecords.length).toBe(1);
+      expect(queryRecords).toHaveLength(1);
       const queriedRecord = queryRecords[0];
 
       // Read the data stream JSON
@@ -537,7 +537,7 @@ describe('Record', () => {
         }
       });
       expect(publicStatus.code).toBe(200);
-      expect(publicRecords.length).toBe(1);
+      expect(publicRecords).toHaveLength(1);
       const publicRecord = publicRecords[0];
       expect(publicRecord.author).toBe(aliceDid.uri);
       const publicDataBytes = await publicRecord.data.bytes();
@@ -584,7 +584,7 @@ describe('Record', () => {
       }
     });
     expect(bobQueryBobDwn.status.code).toBe(200);
-    expect(bobQueryBobDwn.records.length).toBe(0); // no results
+    expect(bobQueryBobDwn.records).toHaveLength(0); // no results
 
     // Bob queries for the record that was just created on Alice's remote DWN.
     let bobQueryAliceDwn = await dwnBob.records.query({
@@ -595,7 +595,7 @@ describe('Record', () => {
       }
     });
     expect(bobQueryAliceDwn.status.code).toBe(200);
-    expect(bobQueryAliceDwn.records.length).toBe(1);
+    expect(bobQueryAliceDwn.records).toHaveLength(1);
 
     // Bob imports the record.
     const importRecord = bobQueryAliceDwn.records[0];
@@ -615,7 +615,7 @@ describe('Record', () => {
       }
     });
     expect(bobQueryBobDwn.status.code).toBe(200);
-    expect(bobQueryBobDwn.records.length).toBe(1);
+    expect(bobQueryBobDwn.records).toHaveLength(1);
     expect(bobQueryBobDwn.records[0].id).toBe(importRecord.id);
 
     // Alice updates her record
@@ -647,7 +647,7 @@ describe('Record', () => {
       }
     });
     expect(bobQueryAliceDwn.status.code).toBe(200);
-    expect(bobQueryAliceDwn.records.length).toBe(1);
+    expect(bobQueryAliceDwn.records).toHaveLength(1);
     const updatedRecord = bobQueryAliceDwn.records[0];
 
     // Bob stores the record on his own DWN.
@@ -668,7 +668,7 @@ describe('Record', () => {
       }
     });
     expect(bobQueryBobDwn.status.code).toBe(200);
-    expect(bobQueryBobDwn.records.length).toBe(1);
+    expect(bobQueryBobDwn.records).toHaveLength(1);
     expect(bobQueryBobDwn.records[0].id).toBe(importRecord.id);
     expect(await bobQueryBobDwn.records[0].data.text()).toBe(updatedText);
   });
@@ -948,7 +948,7 @@ describe('Record', () => {
         // Confirm that the size, in bytes, of the data read as JSON matches the original input data.
         const readDataJson = await record!.data.json();
         const readDataBytes = new TextEncoder().encode(JSON.stringify(readDataJson));
-        expect(readDataBytes.length).toBe(inputDataBytes.length);
+        expect(readDataBytes).toHaveLength(inputDataBytes.length);
 
         // Ensure the JSON returned matches the input data, byte for byte.
         expect(readDataBytes).toEqual(inputDataBytes);
@@ -977,7 +977,7 @@ describe('Record', () => {
         // Confirm that the size, in bytes, of the data read as JSON matches the original input data.
         const readDataJson = await readRecord!.data.json();
         const readDataBytes = new TextEncoder().encode(JSON.stringify(readDataJson));
-        expect(readDataBytes.length).toBe(inputDataBytes.length);
+        expect(readDataBytes).toHaveLength(inputDataBytes.length);
 
         // Ensure the JSON returned matches the input data, byte for byte.
         expect(readDataBytes).toEqual(inputDataBytes);
@@ -1001,7 +1001,7 @@ describe('Record', () => {
         // Confirm that the size, in bytes, of the data read as JSON matches the original input data.
         const readDataJson = await record!.data.json();
         const readDataBytes = new TextEncoder().encode(JSON.stringify(readDataJson));
-        expect(readDataBytes.length).toBe(inputDataBytes.length);
+        expect(readDataBytes).toHaveLength(inputDataBytes.length);
 
         // Ensure the JSON returned matches the input data, byte for byte.
         expect(readDataBytes).toEqual(inputDataBytes);
@@ -1033,7 +1033,7 @@ describe('Record', () => {
 
         // Convert the JSON to bytes and ensure it matches the input data, byte for byte.
         const queriedDataBytes = new TextEncoder().encode(JSON.stringify(queriedDataBlob));
-        expect(queriedDataBytes.length).toBe(inputDataBytes.length);
+        expect(queriedDataBytes).toHaveLength(inputDataBytes.length);
         expect(queriedDataBytes).toEqual(inputDataBytes);
       });
 
@@ -1062,7 +1062,7 @@ describe('Record', () => {
         // Confirm that the size, in bytes, of the data read as JSON matches the original input data.
         const readDataJson = await readRecord!.data.json();
         const readDataBytes = new TextEncoder().encode(JSON.stringify(readDataJson));
-        expect(readDataBytes.length).toBe(inputDataBytes.length);
+        expect(readDataBytes).toHaveLength(inputDataBytes.length);
 
         // Ensure the JSON returned matches the input data, byte for byte.
         expect(readDataBytes).toEqual(inputDataBytes);
@@ -1086,7 +1086,7 @@ describe('Record', () => {
         // Confirm that the length of the data read as text matches the original input data.
         const dataStream = await record!.data.stream();
         const dataStreamBytes = await Stream.consumeToBytes({ readableStream: dataStream });
-        expect(dataStreamBytes.length).toBe(dataText500Bytes.length);
+        expect(dataStreamBytes).toHaveLength(dataText500Bytes.length);
 
         // Ensure the text returned matches the input data, byte for byte.
         expect(dataStreamBytes).toEqual(inputDataBytes);
@@ -1112,7 +1112,7 @@ describe('Record', () => {
         // Confirm that the length of the data read as text matches the original input data.
         const dataStream = await readRecord!.data.stream();
         const dataStreamBytes = await Stream.consumeToBytes({ readableStream: dataStream });
-        expect(dataStreamBytes.length).toBe(dataText500Bytes.length);
+        expect(dataStreamBytes).toHaveLength(dataText500Bytes.length);
 
         // Ensure the text returned matches the input data, byte for byte.
         expect(dataStreamBytes).toEqual(inputDataBytes);
@@ -1134,7 +1134,7 @@ describe('Record', () => {
         // Confirm that the length of the data read as text matches the original input data.
         const dataStream = await record!.data.stream();
         const dataStreamBytes = await Stream.consumeToBytes({ readableStream: dataStream });
-        expect(dataStreamBytes.length).toBe(dataTextExceedingMaxSize.length);
+        expect(dataStreamBytes).toHaveLength(dataTextExceedingMaxSize.length);
 
         // Ensure the text returned matches the input data, byte for byte.
         expect(dataStreamBytes).toEqual(inputDataBytes);
@@ -1163,7 +1163,7 @@ describe('Record', () => {
         const [ queryRecord ] = queryRecords;
         const dataStream = await queryRecord!.data.stream();
         const dataStreamBytes = await Stream.consumeToBytes({ readableStream: dataStream });
-        expect(dataStreamBytes.length).toBe(dataTextExceedingMaxSize.length);
+        expect(dataStreamBytes).toHaveLength(dataTextExceedingMaxSize.length);
 
         // Ensure the text returned matches the input data, byte for byte.
         expect(dataStreamBytes).toEqual(inputDataBytes);
@@ -1192,7 +1192,7 @@ describe('Record', () => {
         // Confirm that the length of the data read as text matches the original input data.
         const dataStream = await readRecord!.data.stream();
         const dataStreamBytes = await Stream.consumeToBytes({ readableStream: dataStream });
-        expect(dataStreamBytes.length).toBe(dataTextExceedingMaxSize.length);
+        expect(dataStreamBytes).toHaveLength(dataTextExceedingMaxSize.length);
 
         // Ensure the text returned matches the input data, byte for byte.
         expect(dataStreamBytes).toEqual(inputDataBytes);
@@ -1216,7 +1216,7 @@ describe('Record', () => {
 
         // Confirm that the length of the data read as text matches the original input data.
         const readDataText = await record!.data.text();
-        expect(readDataText.length).toBe(dataText.length);
+        expect(readDataText).toHaveLength(dataText.length);
 
         // Ensure the text returned matches the input data, char for char.
         expect(readDataText).toEqual(dataText);
@@ -1243,7 +1243,7 @@ describe('Record', () => {
 
         // Confirm that the length of the data read as text matches the original input data.
         const readDataText = await readRecord!.data.text();
-        expect(readDataText.length).toBe(dataText.length);
+        expect(readDataText).toHaveLength(dataText.length);
 
         // Ensure the text returned matches the input data, char for char.
         expect(readDataText).toEqual(dataText);
@@ -1265,7 +1265,7 @@ describe('Record', () => {
 
         // Confirm that the length of the data read as text matches the original input data.
         const readDataText = await record!.data.text();
-        expect(readDataText.length).toBe(dataText.length);
+        expect(readDataText).toHaveLength(dataText.length);
 
         // Ensure the text returned matches the input data, char for char.
         expect(readDataText).toEqual(dataText);
@@ -1293,7 +1293,7 @@ describe('Record', () => {
         // Confirm that the length of the data read as text matches the original input data.
         const [ queryRecord ] = queryRecords;
         const queriedDataText = await queryRecord!.data.text();
-        expect(queriedDataText.length).toBe(dataText.length);
+        expect(queriedDataText).toHaveLength(dataText.length);
 
         // Ensure the text returned matches the input data, char for char.
         expect(queriedDataText).toEqual(dataText);
@@ -1322,7 +1322,7 @@ describe('Record', () => {
 
         // Confirm that the length of the data read as text matches the original input data.
         const readDataText = await readRecord!.data.text();
-        expect(readDataText.length).toBe(dataText.length);
+        expect(readDataText).toHaveLength(dataText.length);
 
         // Ensure the text returned matches the input data, char for char.
         expect(readDataText).toEqual(dataText);
@@ -1346,7 +1346,7 @@ describe('Record', () => {
         // Confirm that the length of the data read as text matches the original input data.
         const dataStream = await record.data.then(stream => stream);
         const dataStreamBytes = await Stream.consumeToBytes({ readableStream: dataStream });
-        expect(dataStreamBytes.length).toBe(dataText500Bytes.length);
+        expect(dataStreamBytes).toHaveLength(dataText500Bytes.length);
 
         // Ensure the text returned matches the input data, byte for byte.
         expect(dataStreamBytes).toEqual(inputDataBytes);
@@ -1369,7 +1369,7 @@ describe('Record', () => {
         // Confirm that the length of the data read as text matches the original input data.
         const dataStream = await record.data.then(stream => stream);
         const readDataText = await Stream.consumeToText({ readableStream: dataStream });
-        expect(readDataText.length).toBe(dataText.length);
+        expect(readDataText).toHaveLength(dataText.length);
 
         // Ensure the text returned matches the input data, char for char.
         expect(readDataText).toEqual(dataText);
@@ -1490,7 +1490,7 @@ describe('Record', () => {
       // Confirm that the size, in bytes, of the data read as JSON matches the original input data.
       let readDataJson = await record!.data.json();
       let readDataBytes = new TextEncoder().encode(JSON.stringify(readDataJson));
-      expect(readDataBytes.length).toBe(inputDataBytes.length);
+      expect(readDataBytes).toHaveLength(inputDataBytes.length);
 
       // Ensure the JSON returned matches the input data, byte for byte.
       expect(readDataBytes).toEqual(inputDataBytes);
@@ -1498,7 +1498,7 @@ describe('Record', () => {
       // Attempt to read the record again.
       readDataJson = await record!.data.json();
       readDataBytes = new TextEncoder().encode(JSON.stringify(readDataJson));
-      expect(readDataBytes.length).toBe(inputDataBytes.length);
+      expect(readDataBytes).toHaveLength(inputDataBytes.length);
 
       // Ensure the JSON returned matches the input data, byte for byte.
       expect(readDataBytes).toEqual(inputDataBytes);
@@ -1506,7 +1506,7 @@ describe('Record', () => {
       // Attempt to read the record again.
       readDataJson = await record!.data.json();
       readDataBytes = new TextEncoder().encode(JSON.stringify(readDataJson));
-      expect(readDataBytes.length).toBe(inputDataBytes.length);
+      expect(readDataBytes).toHaveLength(inputDataBytes.length);
 
       // Ensure the JSON returned matches the input data, byte for byte.
       expect(readDataBytes).toEqual(inputDataBytes);
@@ -1529,12 +1529,12 @@ describe('Record', () => {
       // Consume the data stream as bytes.
       let readDataStream = await record!.data.stream();
       let readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
-      expect(readDataBytes.length).toBe(inputDataBytes.length);
+      expect(readDataBytes).toHaveLength(inputDataBytes.length);
 
       // Consume the data stream as bytes a second time.
       readDataStream = await record!.data.stream();
       readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
-      expect(readDataBytes.length).toBe(inputDataBytes.length);
+      expect(readDataBytes).toHaveLength(inputDataBytes.length);
     });
 
     it('allows large data payloads written locally to be consumed as a stream repeatedly', async () => {
@@ -1554,12 +1554,12 @@ describe('Record', () => {
       // Consume the data stream as bytes.
       let readDataStream = await record!.data.stream();
       let readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
-      expect(readDataBytes.length).toBe(inputDataBytes.length);
+      expect(readDataBytes).toHaveLength(inputDataBytes.length);
 
       // Consume the data stream as bytes a second time.
       readDataStream = await record!.data.stream();
       readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
-      expect(readDataBytes.length).toBe(inputDataBytes.length);
+      expect(readDataBytes).toHaveLength(inputDataBytes.length);
     });
 
     it('allows small data payloads read from a remote to be consumed as a stream repeatedly', async () => {
@@ -1595,12 +1595,12 @@ describe('Record', () => {
       // Confirm that the size, in bytes, of the data read as JSON matches the original input data.
       let readDataStream = await readRecord!.data.stream();
       let readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
-      expect(readDataBytes.length).toBe(inputDataBytes.length);
+      expect(readDataBytes).toHaveLength(inputDataBytes.length);
 
       // Consume the data stream as bytes a third time.
       readDataStream = await readRecord!.data.stream();
       readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
-      expect(readDataBytes.length).toBe(inputDataBytes.length);
+      expect(readDataBytes).toHaveLength(inputDataBytes.length);
     });
 
     it('allows large data payloads read from a remote to be consumed as a stream repeatedly', async () => {
@@ -1632,17 +1632,17 @@ describe('Record', () => {
       // Consume the data stream as bytes.
       let readDataStream = await readRecord!.data.stream();
       let readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
-      expect(readDataBytes.length).toBe(inputDataBytes.length);
+      expect(readDataBytes).toHaveLength(inputDataBytes.length);
 
       // Consume the data stream as bytes a second time.
       readDataStream = await record!.data.stream();
       readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
-      expect(readDataBytes.length).toBe(inputDataBytes.length);
+      expect(readDataBytes).toHaveLength(inputDataBytes.length);
 
       // Consume the data stream as bytes a third time.
       readDataStream = await record!.data.stream();
       readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
-      expect(readDataBytes.length).toBe(inputDataBytes.length);
+      expect(readDataBytes).toHaveLength(inputDataBytes.length);
     });
 
     it('allows small data payloads queried from a remote to be consumed as a stream repeatedly', async () => {
@@ -1676,17 +1676,17 @@ describe('Record', () => {
       // Consume the data stream as bytes.
       let readDataStream = await queriedRecord!.data.stream();
       let readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
-      expect(readDataBytes.length).toBe(inputDataBytes.length);
+      expect(readDataBytes).toHaveLength(inputDataBytes.length);
 
       // Consume the data stream as bytes a second time.
       readDataStream = await queriedRecord!.data.stream();
       readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
-      expect(readDataBytes.length).toBe(inputDataBytes.length);
+      expect(readDataBytes).toHaveLength(inputDataBytes.length);
 
       // Consume the data stream as bytes a third time.
       readDataStream = await queriedRecord!.data.stream();
       readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
-      expect(readDataBytes.length).toBe(inputDataBytes.length);
+      expect(readDataBytes).toHaveLength(inputDataBytes.length);
     });
 
     it('allows large data payloads queried from a remote to be consumed as a stream repeatedly', async () => {
@@ -1720,17 +1720,17 @@ describe('Record', () => {
       // Consume the data stream as bytes.
       let readDataStream = await queriedRecord!.data.stream();
       let readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
-      expect(readDataBytes.length).toBe(inputDataBytes.length);
+      expect(readDataBytes).toHaveLength(inputDataBytes.length);
 
       // Consume the data stream as bytes a second time.
       readDataStream = await queriedRecord!.data.stream();
       readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
-      expect(readDataBytes.length).toBe(inputDataBytes.length);
+      expect(readDataBytes).toHaveLength(inputDataBytes.length);
 
       // Consume the data stream as bytes a third time.
       readDataStream = await queriedRecord!.data.stream();
       readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
-      expect(readDataBytes.length).toBe(inputDataBytes.length);
+      expect(readDataBytes).toHaveLength(inputDataBytes.length);
     });
 
     describe('with two Agents', () => {
@@ -1949,7 +1949,7 @@ describe('Record', () => {
 
       expect(aliceRemoteQueryResult.status.code).toBe(200);
       expect(aliceRemoteQueryResult.records).toBeDefined();
-      expect(aliceRemoteQueryResult.records.length).toBe(1);
+      expect(aliceRemoteQueryResult.records).toHaveLength(1);
       const [ aliceRemoteEmailRecord ] = aliceAgentQueryResult.records;
       expect(await aliceRemoteEmailRecord.data.text()).toBe(dataString);
     });
@@ -2116,7 +2116,7 @@ describe('Record', () => {
       });
       expect(bobQueryResult.status.code).toBe(200);
       expect(bobQueryResult.records).toBeDefined();
-      expect(bobQueryResult.records.length).toBe(1);
+      expect(bobQueryResult.records).toHaveLength(1);
     });
 
     it('writes large records to remote DWNs that were initially read from a remote DWN', async () => {
@@ -2159,7 +2159,7 @@ describe('Record', () => {
       });
       expect(bobQueryResult.status.code).toBe(200);
       expect(bobQueryResult.records).toBeDefined();
-      expect(bobQueryResult.records.length).toBe(1);
+      expect(bobQueryResult.records).toHaveLength(1);
     });
 
     it(`writes records to remote DWNs for someone else's DID`, async () => {
@@ -2190,7 +2190,7 @@ describe('Record', () => {
 
       expect(bobQueryResult.status.code).toBe(200);
       expect(bobQueryResult.records).toBeDefined();
-      expect(bobQueryResult.records.length).toBe(1);
+      expect(bobQueryResult.records).toHaveLength(1);
       const [ bobRemoteEmailRecord ] = bobQueryResult.records;
       expect(await bobRemoteEmailRecord.data.text()).toBe(dataString);
     });
@@ -2225,7 +2225,7 @@ describe('Record', () => {
         // Confirm no `email` schema records were written.
         expect(queryResult.status.code).toBe(200);
         expect(queryResult.records).toBeDefined();
-        expect(queryResult.records.length).toBe(0);
+        expect(queryResult.records).toHaveLength(0);
 
         // Alice writes the message to her remote DWN.
         const { status } = await writeResult.record.send(aliceDid.uri);
@@ -2244,7 +2244,7 @@ describe('Record', () => {
         // Confirm `email` schema record was written to Alice's remote DWN.
         expect(aliceRemoteQueryResult.status.code).toBe(200);
         expect(aliceRemoteQueryResult.records).toBeDefined();
-        expect(aliceRemoteQueryResult.records.length).toBe(1);
+        expect(aliceRemoteQueryResult.records).toHaveLength(1);
         const [ aliceRemoteEmailRecord ] = aliceRemoteQueryResult.records;
         expect(await aliceRemoteEmailRecord.data.text()).toBe(dataString);
       });
@@ -2278,7 +2278,7 @@ describe('Record', () => {
         // Confirm no `thread` schema records were written.
         expect(queryResult.status.code).toBe(200);
         expect(queryResult.records).toBeDefined();
-        expect(queryResult.records.length).toBe(0);
+        expect(queryResult.records).toHaveLength(0);
 
         // Alice writes the message to Bob's remote DWN.
         const { status } = await writeResult.record.send(bobDid.uri);
@@ -2297,7 +2297,7 @@ describe('Record', () => {
         // Confirm `thread` schema record was written to Bob's remote DWN.
         expect(bobQueryResult.status.code).toBe(200);
         expect(bobQueryResult.records).toBeDefined();
-        expect(bobQueryResult.records.length).toBe(1);
+        expect(bobQueryResult.records).toHaveLength(1);
         const [ bobRemoteEmailRecord ] = bobQueryResult.records;
         expect(await bobRemoteEmailRecord.data.text()).toBe(dataString);
       });
@@ -2331,7 +2331,7 @@ describe('Record', () => {
         // Confirm the `email` schema records was written.
         expect(queryResult.status.code).toBe(200);
         expect(queryResult.records).toBeDefined();
-        expect(queryResult.records.length).toBe(1);
+        expect(queryResult.records).toHaveLength(1);
         const [ aliceAgentRecord ] = queryResult.records;
         expect(await aliceAgentRecord.data.text()).toBe(dataString);
 
@@ -2352,7 +2352,7 @@ describe('Record', () => {
         // Confirm `email` schema record was written to Alice's remote DWN.
         expect(aliceRemoteQueryResult.status.code).toBe(200);
         expect(aliceRemoteQueryResult.records).toBeDefined();
-        expect(aliceRemoteQueryResult.records.length).toBe(1);
+        expect(aliceRemoteQueryResult.records).toHaveLength(1);
         const [ aliceRemoteEmailRecord ] = aliceRemoteQueryResult.records;
         expect(await aliceRemoteEmailRecord.data.text()).toBe(dataString);
       });
@@ -2766,7 +2766,7 @@ describe('Record', () => {
       });
       expect(queryResult.status.code).toBe(200);
       expect(queryResult.records).toBeDefined();
-      expect(queryResult.records.length).toBe(1);
+      expect(queryResult.records).toHaveLength(1);
 
       // Attempt to update the queried record
       const [ queriedRecord ] = queryResult.records;
@@ -3249,7 +3249,7 @@ describe('Record', () => {
       });
       expect(aliceQueryStatus.code).toBe(200);
       expect(bobNotesAliceQuery).toBeDefined();
-      expect(bobNotesAliceQuery.length).toBe(records.size);
+      expect(bobNotesAliceQuery).toHaveLength(records.size);
 
       // Alice looks for the record she has a co-author rule on
       const coAuthorNote = bobNotesAliceQuery.find((record) => record.id === aliceCoAuthorNoteId);
@@ -3963,7 +3963,7 @@ describe('Record', () => {
 
       // wait for the record to be received
       await Poller.pollUntilSuccessOrTimeout(async () => {
-        expect(receivedRecords.length).toBe(1);
+        expect(receivedRecords).toHaveLength(1);
         expect(receivedRecords[0].id).toBe(bobWriteRecord.id);
       });
 
@@ -4008,7 +4008,7 @@ describe('Record', () => {
 
       // wait for the record to be received
       await Poller.pollUntilSuccessOrTimeout(async () => {
-        expect(receivedRecords.length).toBe(1);
+        expect(receivedRecords).toHaveLength(1);
         expect(receivedRecords[0].id).toBe(bobWriteRecord.id);
       });
 
@@ -4107,7 +4107,7 @@ describe('Record', () => {
       });
       expect(aliceQueryStatus.code).toBe(200);
       expect(bobNotesAliceQuery).toBeDefined();
-      expect(bobNotesAliceQuery.length).toBe(records.size);
+      expect(bobNotesAliceQuery).toHaveLength(records.size);
 
       // Alice looks for the record she has a co-author rule on
       const coDeleteNote = bobNotesAliceQuery.find((record) => record.id === aliceCoAuthorNoteId);
@@ -4212,7 +4212,7 @@ describe('Record', () => {
         }
       });
       expect(aliceQueryResult.status.code).toBe(200);
-      expect(aliceQueryResult.records.length).toBe(1);
+      expect(aliceQueryResult.records).toHaveLength(1);
       const queriedRecord = aliceQueryResult.records[0];
 
       // Bob queries his own DWN for the record, which should not return any results.
@@ -4222,7 +4222,7 @@ describe('Record', () => {
         }
       });
       expect(bobQueryResult.status.code).toBe(200);
-      expect(bobQueryResult.records.length).toBe(0);
+      expect(bobQueryResult.records).toHaveLength(0);
 
       // Attempts to store the record without importing it, which should fail.
       let { status: storeRecordStatus } = await queriedRecord.store();
@@ -4239,7 +4239,7 @@ describe('Record', () => {
         }
       });
       expect(bobQueryResult.status.code).toBe(200);
-      expect(bobQueryResult.records.length).toBe(1);
+      expect(bobQueryResult.records).toHaveLength(1);
       const storedRecord = bobQueryResult.records[0];
       expect(storedRecord.id).toBe(record.id);
     });
@@ -4271,7 +4271,7 @@ describe('Record', () => {
         }
       });
       expect(queryResult.status.code).toBe(200);
-      expect(queryResult.records.length).toBe(0);
+      expect(queryResult.records).toHaveLength(0);
 
       // Bob queries for the record from Alice's remote DWN.
       const queryResultFromAlice = await dwnBob.records.query({
@@ -4281,7 +4281,7 @@ describe('Record', () => {
         }
       });
       expect(queryResultFromAlice.status.code).toBe(200);
-      expect(queryResultFromAlice.records.length).toBe(1);
+      expect(queryResultFromAlice.records).toHaveLength(1);
       const queriedRecord = queryResultFromAlice.records[0];
       expect(await queriedRecord.data.text()).toBe(updatedText);
 
@@ -4302,7 +4302,7 @@ describe('Record', () => {
         }
       });
       expect(queryResult.status.code).toBe(200);
-      expect(queryResult.records.length).toBe(1);
+      expect(queryResult.records).toHaveLength(1);
       const storedRecord = queryResult.records[0];
       expect(storedRecord.id).toBe(record!.id);
       expect(await storedRecord.data.text()).toBe(updatedText);
@@ -4459,7 +4459,7 @@ describe('Record', () => {
         }
       });
       expect(aliceQueryResult.status.code).toBe(200);
-      expect(aliceQueryResult.records.length).toBe(1);
+      expect(aliceQueryResult.records).toHaveLength(1);
       const queriedRecord = aliceQueryResult.records[0];
 
       // Imports the record without storing it.
@@ -4473,7 +4473,7 @@ describe('Record', () => {
         }
       });
       expect(bobQueryResult.status.code).toBe(200);
-      expect(bobQueryResult.records.length).toBe(1);
+      expect(bobQueryResult.records).toHaveLength(1);
       const storedRecord = bobQueryResult.records[0];
       expect(storedRecord.id).toBe(record.id);
     });
@@ -4505,7 +4505,7 @@ describe('Record', () => {
         }
       });
       expect(aliceQueryResult.status.code).toBe(200);
-      expect(aliceQueryResult.records.length).toBe(1);
+      expect(aliceQueryResult.records).toHaveLength(1);
       const queriedRecord = aliceQueryResult.records[0];
 
       // Imports the record without storing it.
@@ -4519,7 +4519,7 @@ describe('Record', () => {
         }
       });
       expect(bobQueryResult.status.code).toBe(200);
-      expect(bobQueryResult.records.length).toBe(1);
+      expect(bobQueryResult.records).toHaveLength(1);
       const storedRecord = bobQueryResult.records[0];
       expect(storedRecord.id).toBe(record.id);
     });
@@ -4599,7 +4599,7 @@ describe('Record', () => {
           }
         });
         expect(aliceQueryResult.status.code).toBe(200);
-        expect(aliceQueryResult.records.length).toBe(1);
+        expect(aliceQueryResult.records).toHaveLength(1);
         const queriedRecord = aliceQueryResult.records[0];
 
         // Imports the record without storing it.
@@ -4613,7 +4613,7 @@ describe('Record', () => {
           }
         });
         expect(bobQueryResult.status.code).toBe(200);
-        expect(bobQueryResult.records.length).toBe(0);
+        expect(bobQueryResult.records).toHaveLength(0);
 
         // Attempts to store the record without explicitly marking it for import as it's already
         // been imported
@@ -4627,7 +4627,7 @@ describe('Record', () => {
           }
         });
         expect(bobQueryResult.status.code).toBe(200);
-        expect(bobQueryResult.records.length).toBe(1);
+        expect(bobQueryResult.records).toHaveLength(1);
         const storedRecord = bobQueryResult.records[0];
         expect(storedRecord.id).toBe(record.id);
       });
@@ -4659,7 +4659,7 @@ describe('Record', () => {
           }
         });
         expect(aliceQueryResult.status.code).toBe(200);
-        expect(aliceQueryResult.records.length).toBe(1);
+        expect(aliceQueryResult.records).toHaveLength(1);
         const queriedRecord = aliceQueryResult.records[0];
 
         // Imports the record without storing it.
@@ -4673,7 +4673,7 @@ describe('Record', () => {
           }
         });
         expect(bobQueryResult.status.code).toBe(200);
-        expect(bobQueryResult.records.length).toBe(0);
+        expect(bobQueryResult.records).toHaveLength(0);
 
         // Attempts to store the record without explicitly marking it for import as it's already been imported.
         ({ status: importRecordStatus } = await queriedRecord.store());
@@ -4686,7 +4686,7 @@ describe('Record', () => {
           }
         });
         expect(bobQueryResult.status.code).toBe(200);
-        expect(bobQueryResult.records.length).toBe(1);
+        expect(bobQueryResult.records).toHaveLength(1);
         const storedRecord = bobQueryResult.records[0];
         expect(storedRecord.id).toBe(record.id);
       });

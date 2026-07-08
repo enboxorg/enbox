@@ -188,7 +188,7 @@ describe('repository()', () => {
       const { protocols } = await dwnAlice.protocols.query({
         filter: { protocol: TodoProtocolDefinition.protocol },
       });
-      expect(protocols.length).toBe(1);
+      expect(protocols).toHaveLength(1);
     });
   });
 
@@ -224,7 +224,7 @@ describe('repository()', () => {
       const result = await repo.list.query();
 
       expect(result.status.code).toBe(200);
-      expect(result.records.length).toBe(2);
+      expect(result.records).toHaveLength(2);
       expect(result.records[0]).toBeInstanceOf(TypedRecord);
       expect(result.records[1]).toBeInstanceOf(TypedRecord);
     });
@@ -251,7 +251,7 @@ describe('repository()', () => {
 
       // Verify it's gone
       const { records } = await repo.list.query();
-      expect(records.length).toBe(0);
+      expect(records).toHaveLength(0);
     });
 
     it('should subscribe to records via subscribe()', async () => {
@@ -308,7 +308,7 @@ describe('repository()', () => {
       const result = await repo.list.task.query(listRecord.contextId);
 
       expect(result.status.code).toBe(200);
-      expect(result.records.length).toBe(2);
+      expect(result.records).toHaveLength(2);
       expect(result.records[0]).toBeInstanceOf(TypedRecord);
     });
 
@@ -341,7 +341,7 @@ describe('repository()', () => {
       expect(deleteResult.status.code).toBe(202);
 
       const { records } = await repo.list.task.query(listRecord.contextId);
-      expect(records.length).toBe(0);
+      expect(records).toHaveLength(0);
     });
 
     it('should subscribe to nested records under a parent context', async () => {
@@ -577,7 +577,7 @@ describe('repository()', () => {
 
       // Query members
       const { records: members } = await repo.group.member.query(groupRecord.contextId);
-      expect(members.length).toBe(2);
+      expect(members).toHaveLength(2);
 
       // Get singleton settings
       const settings = await repo.group.settings.get(groupRecord.contextId);

@@ -74,7 +74,7 @@ describe('DataStoreSql — content-addressed dedup', () => {
 
         // Verify: two refs exist.
         const refs = await db.selectFrom('dataRefs').selectAll().execute();
-        expect(refs.length).toBe(2);
+        expect(refs).toHaveLength(2);
 
         // Verify: blocks are stored only once (one set of blocks for this dataCid).
         const blocks = await db
@@ -84,7 +84,7 @@ describe('DataStoreSql — content-addressed dedup', () => {
           .execute();
 
         // For small data, the importer produces 1 block (root = leaf).
-        expect(blocks.length).toBe(1);
+        expect(blocks).toHaveLength(1);
 
         // Both records should be readable.
         const get1 = await store.get('did:example:alice', 'rec-1', dataCid);
@@ -117,7 +117,7 @@ describe('DataStoreSql — content-addressed dedup', () => {
 
         // Only one ref should exist.
         const refs = await db.selectFrom('dataRefs').selectAll().execute();
-        expect(refs.length).toBe(1);
+        expect(refs).toHaveLength(1);
       });
 
       it('should be idempotent when duplicate puts overlap', async () => {
@@ -132,7 +132,7 @@ describe('DataStoreSql — content-addressed dedup', () => {
         expect(result2.dataSize).toBe(bytes.length);
 
         const refs = await db.selectFrom('dataRefs').selectAll().execute();
-        expect(refs.length).toBe(1);
+        expect(refs).toHaveLength(1);
       });
 
       // ─── GC on delete ──────────────────────────────────────────────
@@ -176,11 +176,11 @@ describe('DataStoreSql — content-addressed dedup', () => {
           .selectAll()
           .where('rootDataCid', '=', dataCid)
           .execute();
-        expect(blocks.length).toBe(0);
+        expect(blocks).toHaveLength(0);
 
         // No refs should remain.
         const refs = await db.selectFrom('dataRefs').selectAll().execute();
-        expect(refs.length).toBe(0);
+        expect(refs).toHaveLength(0);
       });
 
       it('should garbage-collect blocks when single ref is deleted', async () => {
@@ -194,7 +194,7 @@ describe('DataStoreSql — content-addressed dedup', () => {
           .selectAll()
           .where('rootDataCid', '=', dataCid)
           .execute();
-        expect(blocks.length).toBe(0);
+        expect(blocks).toHaveLength(0);
       });
 
       // ─── Isolation between different dataCids ──────────────────────
@@ -234,7 +234,7 @@ describe('DataStoreSql — content-addressed dedup', () => {
           .selectAll()
           .where('rootDataCid', '=', data1.dataCid)
           .execute();
-        expect(remainingBlocks1.length).toBe(0);
+        expect(remainingBlocks1).toHaveLength(0);
 
         const remainingBlocks2 = await db
           .selectFrom('dataBlocks')
@@ -288,7 +288,7 @@ describe('DataStoreSql — content-addressed dedup', () => {
           .selectAll()
           .where('dataCid', '=', dataCid)
           .execute();
-        expect(refsAfterDelete.length).toBe(0);
+        expect(refsAfterDelete).toHaveLength(0);
 
         // Now put again with same dataCid — should hit the orphaned blocks path.
         // blocks exist (blocksExist=true) but no ref (otherRef=undefined),
@@ -302,7 +302,7 @@ describe('DataStoreSql — content-addressed dedup', () => {
           .selectAll()
           .where('dataCid', '=', dataCid)
           .execute();
-        expect(newRefs.length).toBe(1);
+        expect(newRefs).toHaveLength(1);
         expect(newRefs[0].recordId).toBe('rec-2');
       });
 
@@ -320,8 +320,8 @@ describe('DataStoreSql — content-addressed dedup', () => {
         const refs = await db.selectFrom('dataRefs').selectAll().execute();
         const blocks = await db.selectFrom('dataBlocks').selectAll().execute();
 
-        expect(refs.length).toBe(0);
-        expect(blocks.length).toBe(0);
+        expect(refs).toHaveLength(0);
+        expect(blocks).toHaveLength(0);
       });
     });
   }

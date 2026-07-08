@@ -555,7 +555,7 @@ describe('LocalKeyManager', () => {
 
           // Verify unwrapping succeeded — the unwrapped bytes should match the original CEK
           expect(unwrapped).toBeInstanceOf(Uint8Array);
-          expect(unwrapped.length).toBe(32);
+          expect(unwrapped).toHaveLength(32);
           expect(Convert.uint8Array(unwrapped).toHex()).toBe(
             Convert.uint8Array(plaintext).toHex()
           );
@@ -616,7 +616,7 @@ describe('LocalKeyManager', () => {
 
           // Verify the result
           expect(derivedKeyBytes).toBeInstanceOf(Uint8Array);
-          expect(derivedKeyBytes.length).toBe(32); // X25519 private keys are 32 bytes
+          expect(derivedKeyBytes).toHaveLength(32); // X25519 private keys are 32 bytes
         });
 
         it('should derive different keys for different derivation paths', async () => {

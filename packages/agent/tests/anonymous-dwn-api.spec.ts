@@ -85,7 +85,7 @@ describe('AnonymousDwnApi', () => {
 
       expect(reply.status.code).toBe(200);
       expect(reply.entries).toBeDefined();
-      expect(reply.entries!.length).toBe(1);
+      expect(reply.entries!).toHaveLength(1);
 
       // Verify the RPC client was called with correct target.
       expect(rpcStub.sendDwnRequest.calledOnce).toBe(true);
@@ -203,7 +203,7 @@ describe('AnonymousDwnApi', () => {
 
       expect(reply.status.code).toBe(200);
       expect(reply.entries).toBeDefined();
-      expect(reply.entries!.length).toBe(1);
+      expect(reply.entries!).toHaveLength(1);
 
       const rpcArgs = rpcStub.sendDwnRequest.args[0][0];
       expect(rpcArgs.message.authorization).toBeUndefined();
@@ -218,7 +218,7 @@ describe('AnonymousDwnApi', () => {
       const reply = await anonymousDwn.protocolsQuery(targetDid);
 
       expect(reply.status.code).toBe(200);
-      expect(reply.entries!.length).toBe(0);
+      expect(reply.entries!).toHaveLength(0);
     });
   });
 

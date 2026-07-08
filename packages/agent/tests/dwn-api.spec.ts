@@ -1200,7 +1200,7 @@ describe('AgentDwnApi', () => {
       });
       const reply = queryBobResponse.reply;
       expect(reply.status.code).toBe(200);
-      expect(reply.entries!.length).toBe(1);
+      expect(reply.entries!).toHaveLength(1);
       expect(reply.entries![0].recordId).toBe(message.recordId);
 
       // alice attempts to process the rawMessage as is without signing it, should fail
@@ -1225,7 +1225,7 @@ describe('AgentDwnApi', () => {
         }
       });
       expect(queryAliceResponse.reply.status.code).toBe(200);
-      expect(queryAliceResponse.reply.entries!.length).toBe(0);
+      expect(queryAliceResponse.reply.entries!).toHaveLength(0);
 
       // alice attempts to process the rawMessage again this time marking it to be signed as owner
       aliceWrite = await testHarness.agent.dwn.processRequest({
@@ -1250,7 +1250,7 @@ describe('AgentDwnApi', () => {
         }
       });
       expect(queryAliceResponse.reply.status.code).toBe(200);
-      expect(queryAliceResponse.reply.entries!.length).toBe(1);
+      expect(queryAliceResponse.reply.entries!).toHaveLength(1);
     });
 
     it('handles RecordsWrite messages to sign as delegate owner', async () => {
@@ -1335,7 +1335,7 @@ describe('AgentDwnApi', () => {
       });
       const reply = queryBobResponse.reply;
       expect(reply.status.code).toBe(200);
-      expect(reply.entries!.length).toBe(1);
+      expect(reply.entries!).toHaveLength(1);
       expect(reply.entries![0].recordId).toBe(message.recordId);
 
       // alice attempts to process the rawMessage as is without signing it, should fail
@@ -1360,7 +1360,7 @@ describe('AgentDwnApi', () => {
         }
       });
       expect(queryAliceResponse.reply.status.code).toBe(200);
-      expect(queryAliceResponse.reply.entries!.length).toBe(0);
+      expect(queryAliceResponse.reply.entries!).toHaveLength(0);
 
       // alice attempts to process the rawMessage again this time marking it to be signed as owner
       aliceWrite = await testHarness.agent.dwn.processRequest({
@@ -1389,7 +1389,7 @@ describe('AgentDwnApi', () => {
         }
       });
       expect(queryAliceResponse.reply.status.code).toBe(200);
-      expect(queryAliceResponse.reply.entries!.length).toBe(1);
+      expect(queryAliceResponse.reply.entries!).toHaveLength(1);
     });
 
     it('should throw if attempting to sign as owner delegate without providing a delegated grant in the messageParams', async () => {

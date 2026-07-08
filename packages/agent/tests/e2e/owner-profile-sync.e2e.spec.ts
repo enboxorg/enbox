@@ -302,7 +302,7 @@ async function expectRecord(
     messageParams : { filter },
   });
   expect(result.reply.status.code).toBe(200);
-  expect(result.reply.entries?.length).toBe(1);
+  expect(result.reply.entries).toHaveLength(1);
   return result.reply.entries![0];
 }
 

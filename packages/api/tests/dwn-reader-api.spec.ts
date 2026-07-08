@@ -81,7 +81,7 @@ describe('DwnReaderApi', () => {
       });
 
       expect(status.code).toBe(200);
-      expect(records.length).toBe(1);
+      expect(records).toHaveLength(1);
       expect(records[0]).toBeInstanceOf(ReadOnlyRecord);
       expect(records[0].id).toBe('test-record-id');
       expect(records[0].protocol).toBe('https://social.example/posts');
@@ -129,7 +129,7 @@ describe('DwnReaderApi', () => {
       });
 
       expect(status.code).toBe(200);
-      expect(records.length).toBe(0);
+      expect(records).toHaveLength(0);
     });
   });
 
@@ -230,7 +230,7 @@ describe('DwnReaderApi', () => {
       });
 
       expect(status.code).toBe(200);
-      expect(protocols.length).toBe(1);
+      expect(protocols).toHaveLength(1);
       expect(protocols[0].protocol).toBe('https://social.example/posts');
       expect(protocols[0].published).toBe(true);
     });

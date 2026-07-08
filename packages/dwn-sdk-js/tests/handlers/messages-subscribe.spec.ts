@@ -361,7 +361,7 @@ export function testMessagesSubscribeHandler(): void {
 
           // ensure that all messages have been received
           await Poller.pollUntilSuccessOrTimeout(async () => {
-            expect(messageCids.length).toBe(4);
+            expect(messageCids).toHaveLength(4);
             const expectedCids = [
               await Message.getCid(freeForAllConfigure),
               await Message.getCid(protocolMessage),
@@ -646,7 +646,7 @@ export function testMessagesSubscribeHandler(): void {
 
             // ensure that all messages have been received as a control
             await Poller.pollUntilSuccessOrTimeout(async () => {
-              expect(allMessages.length).toBe(2);
+              expect(allMessages).toHaveLength(2);
               const expectedAllCids = [
                 await Message.getCid(proto1Message),
                 await Message.getCid(proto2Message)
@@ -654,7 +654,7 @@ export function testMessagesSubscribeHandler(): void {
               expect(allMessages.sort()).toEqual(expectedAllCids.sort());
 
               // proto 1 messages should only have one message
-              expect(proto1MessageCids.length).toBe(1);
+              expect(proto1MessageCids).toHaveLength(1);
               const expectedProto1Cids = [await Message.getCid(proto1Message)];
               expect(proto1MessageCids.sort()).toEqual(expectedProto1Cids.sort());
             });
@@ -838,7 +838,7 @@ export function testMessagesSubscribeHandler(): void {
             await writeProtocolPost(alice, protocolDefinition);
 
             await Poller.pollUntilSuccessOrTimeout(async () => {
-              expect(received.filter(msg => msg.type === 'event').length).toBe(1);
+              expect(received.filter(msg => msg.type === 'event')).toHaveLength(1);
             });
 
             await Time.minimalSleep();
@@ -855,7 +855,7 @@ export function testMessagesSubscribeHandler(): void {
             await Poller.pollUntilSuccessOrTimeout(async () => {
               const errorMessage = received.find(msg => msg.type === 'error');
               expect(errorMessage?.error.code).toBe(DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed);
-              expect(received.filter(msg => msg.type === 'event').length).toBe(1);
+              expect(received.filter(msg => msg.type === 'event')).toHaveLength(1);
             });
           });
 
@@ -869,7 +869,7 @@ export function testMessagesSubscribeHandler(): void {
             await writeProtocolPost(alice, protocolDefinition);
 
             await Poller.pollUntilSuccessOrTimeout(async () => {
-              expect(received.filter(msg => msg.type === 'event').length).toBe(1);
+              expect(received.filter(msg => msg.type === 'event')).toHaveLength(1);
             });
 
             const secondRecord = await TestDataGenerator.generateRecordsWrite({
@@ -884,7 +884,7 @@ export function testMessagesSubscribeHandler(): void {
             await Poller.pollUntilSuccessOrTimeout(async () => {
               const errorMessage = received.find(msg => msg.type === 'error');
               expect(errorMessage?.error.code).toBe(DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed);
-              expect(received.filter(msg => msg.type === 'event').length).toBe(1);
+              expect(received.filter(msg => msg.type === 'event')).toHaveLength(1);
             });
           });
 
@@ -912,11 +912,11 @@ export function testMessagesSubscribeHandler(): void {
             await writeProtocolPost(alice, protocolDefinition);
 
             await Time.minimalSleep();
-            expect(received.filter(msg => msg.type === 'event').length).toBe(0);
+            expect(received.filter(msg => msg.type === 'event')).toHaveLength(0);
 
             releaseFirstAuthorization();
             await Poller.pollUntilSuccessOrTimeout(async () => {
-              expect(received.filter(msg => msg.type === 'event').length).toBe(2);
+              expect(received.filter(msg => msg.type === 'event')).toHaveLength(2);
             });
 
             const eventPositions = received
@@ -942,12 +942,12 @@ export function testMessagesSubscribeHandler(): void {
 
             releaseAuthorizationFailures();
             await Poller.pollUntilSuccessOrTimeout(async () => {
-              expect(received.filter(msg => msg.type === 'error').length).toBe(1);
+              expect(received.filter(msg => msg.type === 'error')).toHaveLength(1);
             });
             await Time.minimalSleep();
-            expect(received.filter(msg => msg.type === 'error').length).toBe(1);
+            expect(received.filter(msg => msg.type === 'error')).toHaveLength(1);
             expect(received.find(msg => msg.type === 'error')?.error.code).toBe(DwnErrorCode.MessagesSubscribeDeliveryFailed);
-            expect(received.filter(msg => msg.type === 'event').length).toBe(0);
+            expect(received.filter(msg => msg.type === 'event')).toHaveLength(0);
           });
 
           it('does not run delivery grant checks for owner subscriptions', async () => {
@@ -980,7 +980,7 @@ export function testMessagesSubscribeHandler(): void {
             expect((await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream })).status.code).toBe(202);
 
             await Poller.pollUntilSuccessOrTimeout(async () => {
-              expect(received.filter(msg => msg.type === 'event').length).toBe(1);
+              expect(received.filter(msg => msg.type === 'event')).toHaveLength(1);
             });
             expect(deliveryAuthorizationStub.callCount).toBe(0);
           });
@@ -1064,7 +1064,7 @@ export function testMessagesSubscribeHandler(): void {
             // verify: prefix subscription received the ProtocolsConfigure + both records
             // but NOT the unrelated protocol's ProtocolsConfigure or record.
             await Poller.pollUntilSuccessOrTimeout(async () => {
-              expect(prefixMessageCids.length).toBe(3); // ProtocolsConfigure + post + post/attachment
+              expect(prefixMessageCids).toHaveLength(3); // ProtocolsConfigure + post + post/attachment
               const expectedCids = [
                 await Message.getCid(freeForAllConfigure),
                 await Message.getCid(postMessage),
@@ -1154,7 +1154,7 @@ export function testMessagesSubscribeHandler(): void {
 
             await Poller.pollUntilSuccessOrTimeout(async () => {
               // prefix subscription should receive 'post' and 'post/attachment' but NOT 'poster'
-              expect(prefixCids.length).toBe(2);
+              expect(prefixCids).toHaveLength(2);
               const expectedCids = [
                 await Message.getCid(postMsg),
                 await Message.getCid(attachMsg),
@@ -1209,7 +1209,7 @@ export function testMessagesSubscribeHandler(): void {
               // only the attachment record should be received (ProtocolsConfigure
               // was installed before the subscription was opened, so it's not
               // delivered as a live event)
-              expect(childCids.length).toBe(1);
+              expect(childCids).toHaveLength(1);
               expect(childCids[0]).toBe(await Message.getCid(attachMsg));
             });
           });

@@ -27,7 +27,7 @@ describe('DataStream', () => {
 
       const result = await DataStream.toBytes(stream);
       expect(result).toBeInstanceOf(Uint8Array);
-      expect(result.length).toBe(0);
+      expect(result).toHaveLength(0);
     });
 
     it('should handle a stream with many small chunks', async () => {
@@ -45,7 +45,7 @@ describe('DataStream', () => {
       });
 
       const result = await DataStream.toBytes(stream);
-      expect(result.length).toBe(100);
+      expect(result).toHaveLength(100);
       for (let i = 0; i < 100; i++) {
         expect(result[i]).toBe(i % 256);
       }
@@ -102,10 +102,10 @@ describe('DataStream', () => {
       }
 
       // 250KB / 100KB chunks = 3 chunks (100K, 100K, 50K)
-      expect(chunks.length).toBe(3);
-      expect(chunks[0].length).toBe(100_000);
-      expect(chunks[1].length).toBe(100_000);
-      expect(chunks[2].length).toBe(50_000);
+      expect(chunks).toHaveLength(3);
+      expect(chunks[0]).toHaveLength(100_000);
+      expect(chunks[1]).toHaveLength(100_000);
+      expect(chunks[2]).toHaveLength(50_000);
     });
 
     it('should produce a single chunk for data smaller than 100KB', async () => {
@@ -120,14 +120,14 @@ describe('DataStream', () => {
         chunks.push(value);
       }
 
-      expect(chunks.length).toBe(1);
-      expect(chunks[0].length).toBe(50_000);
+      expect(chunks).toHaveLength(1);
+      expect(chunks[0]).toHaveLength(50_000);
     });
 
     it('should handle an empty Uint8Array', async () => {
       const stream = DataStream.fromBytes(new Uint8Array(0));
       const result = await DataStream.toBytes(stream);
-      expect(result.length).toBe(0);
+      expect(result).toHaveLength(0);
     });
   });
 
@@ -174,13 +174,13 @@ describe('DataStream', () => {
       const stream = DataStream.fromBytes(new Uint8Array([1, 2, 3]));
       const result = DataStream.duplicateDataStream(stream, 0);
       expect(Array.isArray(result)).toBe(true);
-      expect(result.length).toBe(0);
+      expect(result).toHaveLength(0);
     });
 
     it('should return the original stream when count is 1', () => {
       const stream = DataStream.fromBytes(new Uint8Array([1, 2, 3]));
       const result = DataStream.duplicateDataStream(stream, 1);
-      expect(result.length).toBe(1);
+      expect(result).toHaveLength(1);
       expect(result[0]).toBe(stream);
     });
 
@@ -201,7 +201,7 @@ describe('DataStream', () => {
       const stream = DataStream.fromBytes(data);
       const copies = DataStream.duplicateDataStream(stream, 4);
 
-      expect(copies.length).toBe(4);
+      expect(copies).toHaveLength(4);
 
       for (const copy of copies) {
         const bytes = await DataStream.toBytes(copy);
@@ -216,8 +216,8 @@ describe('DataStream', () => {
       const bytes1 = await DataStream.toBytes(copy1);
       const bytes2 = await DataStream.toBytes(copy2);
 
-      expect(bytes1.length).toBe(0);
-      expect(bytes2.length).toBe(0);
+      expect(bytes1).toHaveLength(0);
+      expect(bytes2).toHaveLength(0);
     });
 
     it('should handle large data with count = 3', async () => {
@@ -225,7 +225,7 @@ describe('DataStream', () => {
       const stream = DataStream.fromBytes(data);
       const copies = DataStream.duplicateDataStream(stream, 3);
 
-      expect(copies.length).toBe(3);
+      expect(copies).toHaveLength(3);
 
       for (const copy of copies) {
         const bytes = await DataStream.toBytes(copy);

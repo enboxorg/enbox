@@ -47,7 +47,7 @@ describe('RPC Clients', () => {
       // delete the cache entry to force a fetch call
       await client['serverInfoCache'].delete(testDwnUrl);
       const noResult = await client['serverInfoCache'].get(testDwnUrl);
-      expect(noResult).toBe(undefined);
+      expect(noResult).toBeUndefined();
 
       // make a third call and confirm that a new fetch request was made and data is in the cache
       const serverInfo3 = await client.getServerInfo(testDwnUrl);
@@ -403,7 +403,7 @@ describe('RPC Clients', () => {
         // should return success but without any records as none exist yet
         expect(response.status.code).toBe(200);
         expect(response.entries).toBeDefined();
-        expect(response.entries?.length).toBe(0);
+        expect(response.entries).toHaveLength(0);
       });
     });
 
@@ -497,7 +497,7 @@ describe('RPC Clients', () => {
         // should return success but without any records as none exist yet
         expect(response.status.code).toBe(200);
         expect(response.entries).toBeDefined();
-        expect(response.entries?.length).toBe(0);
+        expect(response.entries).toHaveLength(0);
       });
     });
 

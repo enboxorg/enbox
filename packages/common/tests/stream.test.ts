@@ -19,7 +19,7 @@ describe('Stream', () => {
       const readableStream = Stream.fromBlob(blob);
 
       const result = await Stream.consumeToBytes({ readableStream });
-      expect(result.length).toBe(0);
+      expect(result).toHaveLength(0);
     });
 
     it('creates a ReadableStream from a Blob with binary data', async () => {
@@ -46,7 +46,7 @@ describe('Stream', () => {
       const readableStream = Stream.fromBytes(inputBytes);
 
       const result = await Stream.consumeToBytes({ readableStream });
-      expect(result.length).toBe(0);
+      expect(result).toHaveLength(0);
     });
 
     it('creates a ReadableStream from a large Uint8Array', async () => {
@@ -72,10 +72,10 @@ describe('Stream', () => {
       }
 
       // 250 bytes / 100 byte chunks = 3 chunks (100, 100, 50)
-      expect(chunks.length).toBe(3);
-      expect(chunks[0].length).toBe(100);
-      expect(chunks[1].length).toBe(100);
-      expect(chunks[2].length).toBe(50);
+      expect(chunks).toHaveLength(3);
+      expect(chunks[0]).toHaveLength(100);
+      expect(chunks[1]).toHaveLength(100);
+      expect(chunks[2]).toHaveLength(50);
     });
 
     it('uses the default chunk length of 100,000 bytes', async () => {
@@ -92,10 +92,10 @@ describe('Stream', () => {
       }
 
       // 250,000 bytes / 100,000 byte default chunks = 3 chunks (100K, 100K, 50K)
-      expect(chunks.length).toBe(3);
-      expect(chunks[0].length).toBe(100_000);
-      expect(chunks[1].length).toBe(100_000);
-      expect(chunks[2].length).toBe(50_000);
+      expect(chunks).toHaveLength(3);
+      expect(chunks[0]).toHaveLength(100_000);
+      expect(chunks[1]).toHaveLength(100_000);
+      expect(chunks[2]).toHaveLength(50_000);
     });
   });
 
@@ -288,7 +288,7 @@ describe('Stream', () => {
 
       const result = await Stream.consumeToBytes({ readableStream });
       expect(result).toBeInstanceOf(Uint8Array);
-      expect(result.length).toBe(0);
+      expect(result).toHaveLength(0);
     });
 
     it('throws an error for a stream that errors', async () => {
@@ -441,7 +441,7 @@ describe('Stream', () => {
       const consumedBytes = await Stream.consumeToBytes({ readableStream: stream });
 
       // Check the length of the received bytes
-      expect(consumedBytes.length).toBe(streamByteLength);
+      expect(consumedBytes).toHaveLength(streamByteLength);
 
       // Check if all bytes are set to 43
       consumedBytes.forEach(byte => {
@@ -470,7 +470,7 @@ describe('Stream', () => {
       }
 
       // Check the length of the received bytes.
-      expect(receivedBytes.length).toBe(streamByteLength);
+      expect(receivedBytes).toHaveLength(streamByteLength);
 
       // Check the number of chunks received.
       expect(chunkCount).toBe(Math.ceil(streamByteLength / chunkLength));
@@ -488,7 +488,7 @@ describe('Stream', () => {
       const consumedBytes = await Stream.consumeToBytes({ readableStream: stream });
 
       // Confirm that the stream contents are as expected.
-      expect(consumedBytes.length).toBe(streamByteLength);
+      expect(consumedBytes).toHaveLength(streamByteLength);
     });
 
     it('handles stream lengths that are not evenly divisible by chunk length', async function () {
@@ -500,7 +500,7 @@ describe('Stream', () => {
       const consumedBytes = await Stream.consumeToBytes({ readableStream: stream });
 
       // Confirm that the stream contents are as expected.
-      expect(consumedBytes.length).toBe(streamByteLength);
+      expect(consumedBytes).toHaveLength(streamByteLength);
     });
 
     it('generates a stream with zero-filled chunks when fillValue is omitted', async () => {
@@ -508,7 +508,7 @@ describe('Stream', () => {
       const stream = Stream.generateByteStream({ streamLength: streamByteLength });
 
       const consumedBytes = await Stream.consumeToBytes({ readableStream: stream });
-      expect(consumedBytes.length).toBe(streamByteLength);
+      expect(consumedBytes).toHaveLength(streamByteLength);
       for (const byte of consumedBytes) {
         expect(byte).toBe(0);
       }

@@ -140,12 +140,12 @@ describe('DataStoreLevel Test Suite', () => {
 
       const keysBeforeDelete = await ArrayUtility.fromAsyncGenerator(store.blockstore.db.keys());
       // 40 block keys + 1 ref key + 1 refcount key = 42
-      expect(keysBeforeDelete.length).toBe(42);
+      expect(keysBeforeDelete).toHaveLength(42);
 
       await store.delete(tenant, recordId, dataCid);
 
       const keysAfterDelete = await ArrayUtility.fromAsyncGenerator(store.blockstore.db.keys());
-      expect(keysAfterDelete.length).toBe(0);
+      expect(keysAfterDelete).toHaveLength(0);
     });
 
     it('should keep shared blocks when deleting one ref but other refs remain', async () => {
@@ -252,7 +252,7 @@ describe('DataStoreLevel Test Suite', () => {
       expect(await store.get(bob, recordId4, dataCid)).toBeUndefined();
 
       const keysAfterDelete = await ArrayUtility.fromAsyncGenerator(store.blockstore.db.keys());
-      expect(keysAfterDelete.length).toBe(0);
+      expect(keysAfterDelete).toHaveLength(0);
     });
   });
 });

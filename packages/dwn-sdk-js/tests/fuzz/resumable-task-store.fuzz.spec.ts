@@ -91,7 +91,7 @@ describe('ResumableTaskStoreLevel — fuzz', () => {
             await store.register(taskData, 3600);
 
             const grabbed = await store.grab(10);
-            expect(grabbed.length).toBe(0);
+            expect(grabbed).toHaveLength(0);
           }
         ),
         { numRuns: Math.min(numRuns, 20) }
@@ -115,7 +115,7 @@ describe('ResumableTaskStoreLevel — fuzz', () => {
             const managed = await store.register(taskData, 0);
 
             const grabbed = await store.grab(10);
-            expect(grabbed.length).toBe(1);
+            expect(grabbed).toHaveLength(1);
             expect(grabbed[0].id).toBe(managed.id);
             expect(grabbed[0].task).toEqual(taskData);
             expect(grabbed[0].retryCount).toBe(1); // retryCount incremented on grab
@@ -143,11 +143,11 @@ describe('ResumableTaskStoreLevel — fuzz', () => {
 
             // First grab should succeed
             const first = await store.grab(10);
-            expect(first.length).toBe(1);
+            expect(first).toHaveLength(1);
 
             // Second grab should return empty (task was given a new 60s timeout)
             const second = await store.grab(10);
-            expect(second.length).toBe(0);
+            expect(second).toHaveLength(0);
           }
         ),
         { numRuns: Math.min(numRuns, 20) }

@@ -11,7 +11,7 @@ describe('Secp256k1', () => {
   describe('generateKeyPairRaw()', () => {
     it('should generate compressed publicKey', async () => {
       const { publicKey } = await Secp256k1.generateKeyPairRaw();
-      expect(publicKey.length).toBe(33);
+      expect(publicKey).toHaveLength(33);
     });
   });
 
@@ -47,7 +47,7 @@ describe('Secp256k1', () => {
       const contentBytes = TestDataGenerator.randomBytes(16);
       const signatureBytes = await Secp256k1.sign(contentBytes, privateJwk);
 
-      expect(signatureBytes.length).toBe(64); // DER format would be 70 bytes
+      expect(signatureBytes).toHaveLength(64); // DER format would be 70 bytes
     });
   });
 });

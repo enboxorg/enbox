@@ -69,7 +69,7 @@ describe('Secp256r1', () => {
       const contentBytes = TestDataGenerator.randomBytes(16);
       const signatureBytes = await Secp256r1.sign(contentBytes, privateJwk);
 
-      expect(signatureBytes.length).toBe(64); // DER format would be 70 bytes
+      expect(signatureBytes).toHaveLength(64); // DER format would be 70 bytes
     });
   });
 });

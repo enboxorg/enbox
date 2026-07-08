@@ -107,7 +107,7 @@ describe('Encryption', () => {
         const ciphertext = await Encryption.encrypt(ContentEncryptionAlgorithm.A256CTR, key, iv, inputBytes);
         const plaintext = await Encryption.decrypt(ContentEncryptionAlgorithm.A256CTR, key, iv, ciphertext);
 
-        expect(plaintext.length).toBe(size);
+        expect(plaintext).toHaveLength(size);
         expect(ArrayUtility.byteArraysEqual(inputBytes, plaintext)).toBe(true);
       }
     });
