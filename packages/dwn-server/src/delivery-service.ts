@@ -1,4 +1,5 @@
 import type { DwnServerConfig } from './config.js';
+import type { JsonRpcRequest } from '@enbox/dwn-clients';
 import type { DidDocument, DidResolver } from '@enbox/dids';
 import type { Dwn, GenericMessage, ProtocolDefinition, ProtocolRuleSet, RecordsQueryReplyEntry, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 import type { MessageProcessedContext, MessageProcessedHook } from './message-processed-hook.js';
@@ -53,8 +54,6 @@ type DeliveryTarget = {
 type SendMessageAttemptResult = 'retry' | 'sent' | 'skipped';
 
 type RequestInitWithDuplex = RequestInit & { duplex?: 'half' };
-
-type DwnProcessMessageRpcRequest = ReturnType<typeof createJsonRpcRequest>;
 
 // ---------------------------------------------------------------------------
 // DeliveryService
@@ -779,6 +778,10 @@ export class DeliveryService implements MessageProcessedHook {
     return fetchOptions;
   }
 
+  /**
+   * Creates the request body for one send attempt; record data streams are one-shot,
+   * so retries must re-read them from local storage instead of replaying a prior body.
+   */
   async #createRequestBody(
     sourceTenant: string,
     endpointUrl: string,
@@ -802,7 +805,7 @@ export class DeliveryService implements MessageProcessedHook {
   }
 
   static #createHeaders(
-    rpcRequest: DwnProcessMessageRpcRequest,
+    rpcRequest: JsonRpcRequest,
     dataBearingWrite: RecordsWriteMessage | undefined,
   ): Record<string, string> {
     return {
