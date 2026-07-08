@@ -79,7 +79,7 @@ describe('Protocol', () => {
 
       expect(aliceRemoteQueryResult.status.code).toBe(200);
       expect(aliceRemoteQueryResult.protocols).toBeDefined();
-      expect(aliceRemoteQueryResult.protocols.length).toBe(1);
+      expect(aliceRemoteQueryResult.protocols).toHaveLength(1);
       const [ aliceRemoteEmailProtocol ] = aliceRemoteQueryResult.protocols;
       expect(aliceRemoteEmailProtocol.definition).toEqual({
         ...emailProtocolDefinition,

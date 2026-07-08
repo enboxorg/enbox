@@ -152,7 +152,7 @@ export function testProtocolsConfigureHandler(): void {
         const queryReply = await dwn.processMessage(alice.did, queryMessageData.message);
 
         expect(queryReply.status.code).toBe(200);
-        expect(queryReply.entries?.length).toBe(1);
+        expect(queryReply.entries).toHaveLength(1);
       });
 
       it('should store all protocol versions with identical timestamps and query should only return the newest (by CID tiebreak)', async () => {
@@ -222,7 +222,7 @@ export function testProtocolsConfigureHandler(): void {
         const queryReply = await dwn.processMessage(alice.did, queryMessageData.message);
 
         expect(queryReply.status.code).toBe(200);
-        expect(queryReply.entries?.length).toBe(1);
+        expect(queryReply.entries).toHaveLength(1);
       });
 
       it('should demote stored protocol versions without re-validating historical definitions', async () => {
@@ -385,7 +385,7 @@ export function testProtocolsConfigureHandler(): void {
           interface : DwnInterfaceName.Records,
           recordId  : invalidBobRecord.message.recordId
         }]);
-        expect(invalidBobMessages.messages.length).toBe(0);
+        expect(invalidBobMessages.messages).toHaveLength(0);
 
         const tenantMessages = await messageStore.query(alice.did, [{
           interface : DwnInterfaceName.Records,
@@ -690,7 +690,7 @@ export function testProtocolsConfigureHandler(): void {
           interface : DwnInterfaceName.Records,
           recordId  : post.message.recordId
         }]);
-        expect(postMessages.messages.length).toBe(0);
+        expect(postMessages.messages).toHaveLength(0);
 
         const commentMessages = await messageStore.query(alice.did, [{
           interface : DwnInterfaceName.Records,
@@ -1639,7 +1639,7 @@ export function testProtocolsConfigureHandler(): void {
           });
           const queryReply = await dwn.processMessage(alice.did, queryMessageData.message);
           expect(queryReply.status.code).toBe(200);
-          expect(queryReply.entries?.length).toBe(1);
+          expect(queryReply.entries).toHaveLength(1);
           expect(queryReply.entries![0].descriptor.definition.types.post.schema).toBe('https://example.com/post-v2');
 
           // writing a new record with v2 schema should succeed (latest definition)

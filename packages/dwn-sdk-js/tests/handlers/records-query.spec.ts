@@ -200,7 +200,7 @@ export function testRecordsQueryHandler(): void {
         const query = await TestDataGenerator.generateRecordsQuery({ author: alice, filter: { dataFormat } });
         const reply = await dwn.processMessage(alice.did, query.message);
 
-        expect(reply.entries?.length).toBe(1);
+        expect(reply.entries).toHaveLength(1);
         const entry = reply.entries![0];
         expect(entry.authorization).toEqual(write.message.authorization);
         expect(entry.attestation).toEqual(write.message.attestation);
@@ -235,7 +235,7 @@ export function testRecordsQueryHandler(): void {
         const reply = await dwn.processMessage(alice.did, messageData.message);
 
         expect(reply.status.code).toBe(200);
-        expect(reply.entries?.length).toBe(2); // only 2 entries should match the query on protocol
+        expect(reply.entries).toHaveLength(2); // only 2 entries should match the query on protocol
 
         // testing multi-conditional query, reuse data generated above for bob
         const messageData2 = await TestDataGenerator.generateRecordsQuery({
@@ -249,7 +249,7 @@ export function testRecordsQueryHandler(): void {
         const reply2 = await dwn.processMessage(alice.did, messageData2.message);
 
         expect(reply2.status.code).toBe(200);
-        expect(reply2.entries?.length).toBe(1); // only 1 entry should match the query
+        expect(reply2.entries).toHaveLength(1); // only 1 entry should match the query
       });
 
       it('should allow exact-tuple audience control queries without broad enumeration', async () => {
@@ -825,7 +825,7 @@ export function testRecordsQueryHandler(): void {
         const reply = await dwn.processMessage(alice.did, messageData.message);
 
         expect(reply.status.code).toBe(200);
-        expect(reply.entries?.length).toBe(1);
+        expect(reply.entries).toHaveLength(1);
         expect(reply.entries![0].encodedData).toBe(Encoder.bytesToBase64Url(data));
       });
 
@@ -842,7 +842,7 @@ export function testRecordsQueryHandler(): void {
         const reply = await dwn.processMessage(alice.did, messageData.message);
 
         expect(reply.status.code).toBe(200);
-        expect(reply.entries?.length).toBe(1);
+        expect(reply.entries).toHaveLength(1);
         expect(reply.entries![0].encodedData).toBeUndefined();
       });
 
@@ -864,7 +864,7 @@ export function testRecordsQueryHandler(): void {
         const reply = await dwn.processMessage(alice.did, messageData.message);
 
         expect(reply.status.code).toBe(200);
-        expect(reply.entries?.length).toBe(1);
+        expect(reply.entries).toHaveLength(1);
         expect(reply.entries![0].initialWrite).toBeDefined();
         expect(reply.entries![0].initialWrite?.recordId).toBe(write.message.recordId);
 
@@ -887,7 +887,7 @@ export function testRecordsQueryHandler(): void {
         // testing attester filter
         const recordsQuery1 = await TestDataGenerator.generateRecordsQuery({ author: alice, filter: { attester: alice.did } });
         const reply1 = await dwn.processMessage(alice.did, recordsQuery1.message);
-        expect(reply1.entries?.length).toBe(1);
+        expect(reply1.entries).toHaveLength(1);
         const reply1Attester = Jws.getSignerDid(reply1.entries![0].attestation!.signatures[0]);
         expect(reply1Attester).toBe(alice.did);
 
@@ -897,7 +897,7 @@ export function testRecordsQueryHandler(): void {
           filter : { attester: bob.did, schema: recordsWrite2.message.descriptor.schema }
         });
         const reply2 = await dwn.processMessage(alice.did, recordsQuery2.message);
-        expect(reply2.entries?.length).toBe(1);
+        expect(reply2.entries).toHaveLength(1);
         const reply2Attester = Jws.getSignerDid(reply2.entries![0].attestation!.signatures[0]);
         expect(reply2Attester).toBe(bob.did);
 
@@ -905,7 +905,7 @@ export function testRecordsQueryHandler(): void {
         const carol = await TestDataGenerator.generateDidKeyPersona();
         const recordsQuery3 = await TestDataGenerator.generateRecordsQuery({ author: alice, filter: { attester: carol.did } });
         const reply3 = await dwn.processMessage(alice.did, recordsQuery3.message);
-        expect(reply3.entries?.length).toBe(0);
+        expect(reply3.entries).toHaveLength(0);
       });
 
       it('should be able to query by author', async () => {
@@ -955,7 +955,7 @@ export function testRecordsQueryHandler(): void {
         });
         let queryReply = await dwn.processMessage(alice.did, recordsQuery.message);
         expect(queryReply.status.code).toBe(200);
-        expect(queryReply.entries?.length).toBe(2);
+        expect(queryReply.entries).toHaveLength(2);
 
         // filter for bob as author
         recordsQuery = await TestDataGenerator.generateRecordsQuery({
@@ -970,7 +970,7 @@ export function testRecordsQueryHandler(): void {
         });
         queryReply = await dwn.processMessage(alice.did, recordsQuery.message);
         expect(queryReply.status.code).toBe(200);
-        expect(queryReply.entries?.length).toBe(1);
+        expect(queryReply.entries).toHaveLength(1);
         expect(queryReply.entries![0].recordId).toBe(bobAuthorWrite.message.recordId);
 
         // empty array for author should return all same as undefined author field
@@ -986,7 +986,7 @@ export function testRecordsQueryHandler(): void {
         });
         queryReply = await dwn.processMessage(alice.did, recordsQuery.message);
         expect(queryReply.status.code).toBe(200);
-        expect(queryReply.entries?.length).toBe(2);
+        expect(queryReply.entries).toHaveLength(2);
 
         // query for both authors explicitly
         recordsQuery = await TestDataGenerator.generateRecordsQuery({
@@ -1001,7 +1001,7 @@ export function testRecordsQueryHandler(): void {
         });
         queryReply = await dwn.processMessage(alice.did, recordsQuery.message);
         expect(queryReply.status.code).toBe(200);
-        expect(queryReply.entries?.length).toBe(2);
+        expect(queryReply.entries).toHaveLength(2);
       });
 
       it('should be able to query by recipient', async () => {
@@ -1054,7 +1054,7 @@ export function testRecordsQueryHandler(): void {
         });
         let queryReply = await dwn.processMessage(alice.did, recordsQuery.message);
         expect(queryReply.status.code).toBe(200);
-        expect(queryReply.entries?.length).toBe(2);
+        expect(queryReply.entries).toHaveLength(2);
 
         // filter for bob as recipient
         recordsQuery = await TestDataGenerator.generateRecordsQuery({
@@ -1069,7 +1069,7 @@ export function testRecordsQueryHandler(): void {
         });
         queryReply = await dwn.processMessage(alice.did, recordsQuery.message);
         expect(queryReply.status.code).toBe(200);
-        expect(queryReply.entries?.length).toBe(1);
+        expect(queryReply.entries).toHaveLength(1);
         expect(queryReply.entries![0].recordId).toBe(aliceToBob.message.recordId);
 
         // filter for carol as recipient
@@ -1085,7 +1085,7 @@ export function testRecordsQueryHandler(): void {
         });
         queryReply = await dwn.processMessage(alice.did, recordsQuery.message);
         expect(queryReply.status.code).toBe(200);
-        expect(queryReply.entries?.length).toBe(1);
+        expect(queryReply.entries).toHaveLength(1);
         expect(queryReply.entries![0].recordId).toBe(aliceToCarol.message.recordId);
 
         // empty array for recipient should return all same as undefined recipient field
@@ -1101,7 +1101,7 @@ export function testRecordsQueryHandler(): void {
         });
         queryReply = await dwn.processMessage(alice.did, recordsQuery.message);
         expect(queryReply.status.code).toBe(200);
-        expect(queryReply.entries?.length).toBe(2);
+        expect(queryReply.entries).toHaveLength(2);
 
         // query for both recipients explicitly
         recordsQuery = await TestDataGenerator.generateRecordsQuery({
@@ -1116,7 +1116,7 @@ export function testRecordsQueryHandler(): void {
         });
         queryReply = await dwn.processMessage(alice.did, recordsQuery.message);
         expect(queryReply.status.code).toBe(200);
-        expect(queryReply.entries?.length).toBe(2);
+        expect(queryReply.entries).toHaveLength(2);
       });
 
       it('should be able to query for published records', async () => {
@@ -1138,21 +1138,21 @@ export function testRecordsQueryHandler(): void {
         const publishedPostQuery = await TestDataGenerator.generateRecordsQuery({ author: alice, filter: { schema: 'post', published: true } });
         let publishedPostReply = await dwn.processMessage(alice.did, publishedPostQuery.message);
         expect(publishedPostReply.status.code).toBe(200);
-        expect(publishedPostReply.entries?.length).toBe(1);
+        expect(publishedPostReply.entries).toHaveLength(1);
         expect(publishedPostReply.entries![0].recordId).toBe(publishedWrite.message.recordId);
 
         // make an query for published records from non owner
         const notOwnerPostQuery = await TestDataGenerator.generateRecordsQuery({ author: bob, filter: { schema: 'post', published: true } });
         let notOwnerPublishedPostReply = await dwn.processMessage(alice.did, notOwnerPostQuery.message);
         expect(notOwnerPublishedPostReply.status.code).toBe(200);
-        expect(notOwnerPublishedPostReply.entries?.length).toBe(1);
+        expect(notOwnerPublishedPostReply.entries).toHaveLength(1);
         expect(notOwnerPublishedPostReply.entries![0].recordId).toBe(publishedWrite.message.recordId);
 
         // anonymous query for published records
         const anonymousPostQuery = await RecordsQuery.create({ filter: { schema: 'post', published: true } });
         let anonymousPublishedPostReply = await dwn.processMessage(alice.did, anonymousPostQuery.message);
         expect(anonymousPublishedPostReply.status.code).toBe(200);
-        expect(anonymousPublishedPostReply.entries?.length).toBe(1);
+        expect(anonymousPublishedPostReply.entries).toHaveLength(1);
         expect(anonymousPublishedPostReply.entries![0].recordId).toBe(publishedWrite.message.recordId);
 
         // publish the unpublished record
@@ -1167,7 +1167,7 @@ export function testRecordsQueryHandler(): void {
         // issue the same query for published records
         publishedPostReply = await dwn.processMessage(alice.did, publishedPostQuery.message);
         expect(publishedPostReply.status.code).toBe(200);
-        expect(publishedPostReply.entries?.length).toBe(2);
+        expect(publishedPostReply.entries).toHaveLength(2);
         const returnedRecordIds = publishedPostReply.entries?.map(e => e.recordId);
 
         // ensure that both records now exist in results
@@ -1176,14 +1176,14 @@ export function testRecordsQueryHandler(): void {
         // query after publishing from non owner
         notOwnerPublishedPostReply = await dwn.processMessage(alice.did, anonymousPostQuery.message);
         expect(notOwnerPublishedPostReply.status.code).toBe(200);
-        expect(notOwnerPublishedPostReply.entries?.length).toBe(2);
+        expect(notOwnerPublishedPostReply.entries).toHaveLength(2);
         const nonOwnerReturnedRecordIds = notOwnerPublishedPostReply.entries?.map(e => e.recordId);
         expect(nonOwnerReturnedRecordIds).toEqual(expect.arrayContaining([ publishedWrite.message.recordId, draftWrite.message.recordId ]));
 
         // anonymous query after publishing
         anonymousPublishedPostReply = await dwn.processMessage(alice.did, anonymousPostQuery.message);
         expect(anonymousPublishedPostReply.status.code).toBe(200);
-        expect(anonymousPublishedPostReply.entries?.length).toBe(2);
+        expect(anonymousPublishedPostReply.entries).toHaveLength(2);
         const anonymousReturnedRecordIds = anonymousPublishedPostReply.entries?.map(e => e.recordId);
         expect(anonymousReturnedRecordIds).toEqual(expect.arrayContaining([ publishedWrite.message.recordId, draftWrite.message.recordId ]));
       });
@@ -1206,7 +1206,7 @@ export function testRecordsQueryHandler(): void {
         const unpublishedPostQuery = await TestDataGenerator.generateRecordsQuery({ author: alice, filter: { schema: 'post', published: false } });
         let unpublishedPostReply = await dwn.processMessage(alice.did, unpublishedPostQuery.message);
         expect(unpublishedPostReply.status.code).toBe(200);
-        expect(unpublishedPostReply.entries?.length).toBe(1);
+        expect(unpublishedPostReply.entries).toHaveLength(1);
         expect(unpublishedPostReply.entries![0].recordId).toBe(draftWrite.message.recordId);
 
         // publish the unpublished record
@@ -1221,7 +1221,7 @@ export function testRecordsQueryHandler(): void {
         // issue the same query for unpublished records
         unpublishedPostReply = await dwn.processMessage(alice.did, unpublishedPostQuery.message);
         expect(unpublishedPostReply.status.code).toBe(200);
-        expect(unpublishedPostReply.entries?.length).toBe(0);
+        expect(unpublishedPostReply.entries).toHaveLength(0);
       });
 
       it('should not be able to query for unpublished records if unauthorized', async () => {
@@ -1243,7 +1243,7 @@ export function testRecordsQueryHandler(): void {
         const unpublishedNotOwner = await TestDataGenerator.generateRecordsQuery({ author: bob, filter: { schema: 'post', published: false } });
         let notOwnerPostReply = await dwn.processMessage(alice.did, unpublishedNotOwner.message);
         expect(notOwnerPostReply.status.code).toBe(200);
-        expect(notOwnerPostReply.entries?.length).toBe(0);
+        expect(notOwnerPostReply.entries).toHaveLength(0);
 
         // publish the unpublished record
         const publishedDraftWrite = await RecordsWrite.createFrom({
@@ -1258,18 +1258,18 @@ export function testRecordsQueryHandler(): void {
         let publishedNotOwner = await TestDataGenerator.generateRecordsQuery({ author: bob, filter: { schema: 'post' } });
         let publishedNotOwnerReply = await dwn.processMessage(alice.did, publishedNotOwner.message);
         expect(publishedNotOwnerReply.status.code).toBe(200);
-        expect(publishedNotOwnerReply.entries?.length).toBe(2);
+        expect(publishedNotOwnerReply.entries).toHaveLength(2);
 
         // with explicit published true
         publishedNotOwner = await TestDataGenerator.generateRecordsQuery({ author: bob, filter: { schema: 'post', published: true } });
         publishedNotOwnerReply = await dwn.processMessage(alice.did, publishedNotOwner.message);
         expect(publishedNotOwnerReply.status.code).toBe(200);
-        expect(publishedNotOwnerReply.entries?.length).toBe(2);
+        expect(publishedNotOwnerReply.entries).toHaveLength(2);
 
         // with explicit published false after publishing should still return nothing
         notOwnerPostReply = await dwn.processMessage(alice.did, unpublishedNotOwner.message);
         expect(notOwnerPostReply.status.code).toBe(200);
-        expect(notOwnerPostReply.entries?.length).toBe(0);
+        expect(notOwnerPostReply.entries).toHaveLength(0);
       });
 
       it('should query unpublished records authorized by permissionGrantId', async () => {
@@ -1365,7 +1365,7 @@ export function testRecordsQueryHandler(): void {
         const dataCidQuery = await TestDataGenerator.generateRecordsQuery({ author: alice, filter: { dataCid: recordDataCid } });
         const dataCidQueryReply = await dwn.processMessage(alice.did, dataCidQuery.message);
         expect(dataCidQueryReply.status.code).toBe(200);
-        expect(dataCidQueryReply.entries?.length).toBe(1);
+        expect(dataCidQueryReply.entries).toHaveLength(1);
         expect(dataCidQueryReply.entries![0].recordId).toBe(writeRecord.message.recordId);
       });
 
@@ -1390,7 +1390,7 @@ export function testRecordsQueryHandler(): void {
           filter : { dataSize: { gt: 10 } },
         });
         const reply1 = await dwn.processMessage(alice.did, recordsQuery1.message);
-        expect(reply1.entries?.length).toBe(2);
+        expect(reply1.entries).toHaveLength(2);
 
         expect(
           reply1.entries?.map((entry) => entry.encodedData)
@@ -1405,7 +1405,7 @@ export function testRecordsQueryHandler(): void {
           filter : { dataSize: { lt: 100 } },
         });
         const reply2 = await dwn.processMessage(alice.did, recordsQuery2.message);
-        expect(reply2.entries?.length).toBe(2);
+        expect(reply2.entries).toHaveLength(2);
         expect(
           reply2.entries?.map((entry) => entry.encodedData)
         ).toEqual(expect.arrayContaining([
@@ -1419,7 +1419,7 @@ export function testRecordsQueryHandler(): void {
           filter : { dataSize: { gte: 10 } },
         });
         const reply3 = await dwn.processMessage(alice.did, recordsQuery3.message);
-        expect(reply3.entries?.length).toBe(3);
+        expect(reply3.entries).toHaveLength(3);
         expect(
           reply3.entries?.map((entry) => entry.encodedData)
         ).toEqual(expect.arrayContaining([
@@ -1434,7 +1434,7 @@ export function testRecordsQueryHandler(): void {
           filter : { dataSize: { lte: 100 } },
         });
         const reply4 = await dwn.processMessage(alice.did, recordsQuery4.message);
-        expect(reply4.entries?.length).toBe(3);
+        expect(reply4.entries).toHaveLength(3);
         expect(
           reply4.entries?.map((entry) => entry.encodedData)
         ).toEqual(expect.arrayContaining([
@@ -1465,7 +1465,7 @@ export function testRecordsQueryHandler(): void {
           filter : { dataSize: { gt: 10, lt: 60 } },
         });
         const reply1 = await dwn.processMessage(alice.did, recordsQuery1.message);
-        expect(reply1.entries?.length).toBe(1);
+        expect(reply1.entries).toHaveLength(1);
         expect(reply1.entries![0].recordId).toBe(write2.message.recordId);
 
         // testing range using gte & lt
@@ -1474,7 +1474,7 @@ export function testRecordsQueryHandler(): void {
           filter : { dataSize: { gte: 10, lt: 60 } },
         });
         const reply2 = await dwn.processMessage(alice.did, recordsQuery2.message);
-        expect(reply2.entries?.length).toBe(2);
+        expect(reply2.entries).toHaveLength(2);
         const reply2RecordIds = reply2.entries?.map(e => e.recordId);
         expect(reply2RecordIds).toEqual(expect.arrayContaining([ write1.message.recordId, write2.message.recordId ]));
 
@@ -1484,7 +1484,7 @@ export function testRecordsQueryHandler(): void {
           filter : { dataSize: { gt: 50, lte: 100 } },
         });
         const reply3 = await dwn.processMessage(alice.did, recordsQuery3.message);
-        expect(reply3.entries?.length).toBe(1);
+        expect(reply3.entries).toHaveLength(1);
         expect(reply3.entries![0].recordId).toBe(write3.message.recordId);
 
         // testing range using gte & lte
@@ -1493,7 +1493,7 @@ export function testRecordsQueryHandler(): void {
           filter : { dataSize: { gte: 10, lte: 100 } },
         });
         const reply4 = await dwn.processMessage(alice.did, recordsQuery4.message);
-        expect(reply4.entries?.length).toBe(3);
+        expect(reply4.entries).toHaveLength(3);
         const reply4RecordIds = reply4.entries?.map(e => e.recordId);
         expect(reply4RecordIds).toEqual(expect.arrayContaining([ write1.message.recordId, write2.message.recordId, write3.message.recordId ]));
       });
@@ -1526,7 +1526,7 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         const reply1 = await dwn.processMessage(alice.did, recordsQuery1.message);
-        expect(reply1.entries?.length).toBe(2);
+        expect(reply1.entries).toHaveLength(2);
         expect(reply1.entries![0].encodedData).toBe(Encoder.bytesToBase64Url(write2.dataBytes!));
         expect(reply1.entries![1].encodedData).toBe(Encoder.bytesToBase64Url(write3.dataBytes!));
 
@@ -1538,7 +1538,7 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         const reply2 = await dwn.processMessage(alice.did, recordsQuery2.message);
-        expect(reply2.entries?.length).toBe(2);
+        expect(reply2.entries).toHaveLength(2);
         expect(reply2.entries![0].encodedData).toBe(Encoder.bytesToBase64Url(write1.dataBytes!));
         expect(reply2.entries![1].encodedData).toBe(Encoder.bytesToBase64Url(write2.dataBytes!));
 
@@ -1550,7 +1550,7 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         const reply3 = await dwn.processMessage(alice.did, recordsQuery3.message);
-        expect(reply3.entries?.length).toBe(1);
+        expect(reply3.entries).toHaveLength(1);
         expect(reply3.entries![0].encodedData).toBe(Encoder.bytesToBase64Url(write3.dataBytes!));
 
         // testing edge case where value equals `from` and `to`
@@ -1560,7 +1560,7 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         const reply4 = await dwn.processMessage(alice.did, recordsQuery4.message);
-        expect(reply4.entries?.length).toBe(1);
+        expect(reply4.entries).toHaveLength(1);
         expect(reply4.entries![0].encodedData).toBe(Encoder.bytesToBase64Url(write2.dataBytes!));
       });
 
@@ -1607,7 +1607,7 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         const reply1 = await dwn.processMessage(alice.did, ownerRangeQuery.message);
-        expect(reply1.entries?.length).toBe(2);
+        expect(reply1.entries).toHaveLength(2);
         const reply1RecordIds = reply1.entries?.map(e => e.recordId);
         expect(reply1RecordIds).toEqual(expect.arrayContaining([ write2.message.recordId, write3.message.recordId ]));
 
@@ -1619,7 +1619,7 @@ export function testRecordsQueryHandler(): void {
         });
         let ownerPublishedReply = await dwn.processMessage(alice.did, ownerPublishedQuery.message);
         expect(ownerPublishedReply.status.code).toBe(200);
-        expect(ownerPublishedReply.entries?.length).toBe(3);
+        expect(ownerPublishedReply.entries).toHaveLength(3);
         const ownerPublishedIds = ownerPublishedReply.entries?.map(e => e.recordId);
         expect(ownerPublishedIds).toEqual(expect.arrayContaining([ write1.message.recordId, write2.message.recordId, write3.message.recordId ]));
 
@@ -1631,7 +1631,7 @@ export function testRecordsQueryHandler(): void {
 
         let anonymousRangeReply = await dwn.processMessage(alice.did, anonymousRangeQuery.message);
         expect(anonymousRangeReply.status.code).toBe(200);
-        expect(anonymousRangeReply.entries?.length).toBe(2);
+        expect(anonymousRangeReply.entries).toHaveLength(2);
         const anonymousReplyIds = anonymousRangeReply.entries?.map(e => e.recordId);
         expect(anonymousReplyIds).toEqual(expect.arrayContaining([ write2.message.recordId, write3.message.recordId ]));
 
@@ -1642,7 +1642,7 @@ export function testRecordsQueryHandler(): void {
         });
         let anonymousPublishedReply = await dwn.processMessage(alice.did, anonymousPublishedQuery.message);
         expect(anonymousPublishedReply.status.code).toBe(200);
-        expect(anonymousPublishedReply.entries?.length).toBe(3);
+        expect(anonymousPublishedReply.entries).toHaveLength(3);
         const anonymousPublishedIds = anonymousPublishedReply.entries?.map(e => e.recordId);
         expect(anonymousPublishedIds).toEqual(expect.arrayContaining([ write1.message.recordId, write2.message.recordId, write3.message.recordId ]));
 
@@ -1672,22 +1672,22 @@ export function testRecordsQueryHandler(): void {
         // try datePublished range query as an anonymous user after unpublish
         anonymousRangeReply = await dwn.processMessage(alice.did, anonymousRangeQuery.message);
         expect(anonymousRangeReply.status.code).toBe(200);
-        expect(anonymousRangeReply.entries?.length).toBe(0);
+        expect(anonymousRangeReply.entries).toHaveLength(0);
 
         // try published:true filter as an anonymous user after unpublish
         anonymousPublishedReply = await dwn.processMessage(alice.did, anonymousPublishedQuery.message);
         expect(anonymousPublishedReply.status.code).toBe(200);
-        expect(anonymousPublishedReply.entries?.length).toBe(0);
+        expect(anonymousPublishedReply.entries).toHaveLength(0);
 
         // try datePublished range query as owner after unpublish
         const ownerRangeReply = await dwn.processMessage(alice.did, ownerRangeQuery.message);
         expect(ownerRangeReply.status.code).toBe(200);
-        expect(ownerRangeReply.entries?.length).toBe(0);
+        expect(ownerRangeReply.entries).toHaveLength(0);
 
         // try published:true filter as owner after unpublish
         ownerPublishedReply = await dwn.processMessage(alice.did, ownerPublishedQuery.message);
         expect(ownerPublishedReply.status.code).toBe(200);
-        expect(ownerPublishedReply.entries?.length).toBe(0);
+        expect(ownerPublishedReply.entries).toHaveLength(0);
       });
 
       it('should be able to range query by `datePublished`', async () => {
@@ -1726,7 +1726,7 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         const reply1 = await dwn.processMessage(alice.did, recordsQuery1.message);
-        expect(reply1.entries?.length).toBe(2);
+        expect(reply1.entries).toHaveLength(2);
         const reply1RecordIds = reply1.entries?.map(e => e.recordId);
         expect(reply1RecordIds).toEqual(expect.arrayContaining([ write2.message.recordId, write3.message.recordId ]));
 
@@ -1738,7 +1738,7 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         const reply2 = await dwn.processMessage(alice.did, recordsQuery2.message);
-        expect(reply2.entries?.length).toBe(2);
+        expect(reply2.entries).toHaveLength(2);
         const reply2RecordIds = reply2.entries?.map(e => e.recordId);
         expect(reply2RecordIds).toEqual(expect.arrayContaining([ write1.message.recordId, write2.message.recordId ]));
 
@@ -1750,7 +1750,7 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         const reply3 = await dwn.processMessage(alice.did, recordsQuery3.message);
-        expect(reply3.entries?.length).toBe(1);
+        expect(reply3.entries).toHaveLength(1);
         expect(reply3.entries![0].recordId).toBe(write3.message.recordId);
 
         // testing edge case where value equals `from` and `to`
@@ -1760,7 +1760,7 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         const reply4 = await dwn.processMessage(alice.did, recordsQuery4.message);
-        expect(reply4.entries?.length).toBe(1);
+        expect(reply4.entries).toHaveLength(1);
         expect(reply4.entries![0].recordId).toBe(write2.message.recordId);
 
         // check for anonymous range query
@@ -1771,7 +1771,7 @@ export function testRecordsQueryHandler(): void {
 
         const anonymousReply = await dwn.processMessage(alice.did, anonymousRecordQuery.message);
         expect(anonymousReply.status.code).toBe(200);
-        expect(anonymousReply.entries?.length).toBe(2);
+        expect(anonymousReply.entries).toHaveLength(2);
         const anonymousReplyIds = anonymousReply.entries?.map(e => e.recordId);
         expect(anonymousReplyIds).toEqual(expect.arrayContaining([ write2.message.recordId, write3.message.recordId ]));
 
@@ -1785,7 +1785,7 @@ export function testRecordsQueryHandler(): void {
 
         const nonOwnerReply = await dwn.processMessage(alice.did, nonOwnerRange.message);
         expect(nonOwnerReply.status.code).toBe(200);
-        expect(nonOwnerReply.entries?.length).toBe(2);
+        expect(nonOwnerReply.entries).toHaveLength(2);
         const nonOwnerReplyIds = nonOwnerReply.entries?.map(e => e.recordId);
         expect(nonOwnerReplyIds).toEqual(expect.arrayContaining([ write2.message.recordId, write3.message.recordId ]));
       });
@@ -1866,7 +1866,7 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         const reply1 = await dwn.processMessage(alice.did, recordsQuery1.message);
-        expect(reply1.entries?.length).toBe(2);
+        expect(reply1.entries).toHaveLength(2);
         const reply1RecordIds = reply1.entries?.map(e => e.recordId);
         expect(reply1RecordIds).toEqual(expect.arrayContaining([ write2.message.recordId, write3.message.recordId ]));
 
@@ -1878,7 +1878,7 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         const reply2 = await dwn.processMessage(alice.did, recordsQuery2.message);
-        expect(reply2.entries?.length).toBe(2);
+        expect(reply2.entries).toHaveLength(2);
         const reply2RecordIds = reply2.entries?.map(e => e.recordId);
         expect(reply2RecordIds).toEqual(expect.arrayContaining([ write1.message.recordId, write2.message.recordId ]));
 
@@ -1890,7 +1890,7 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         const reply3 = await dwn.processMessage(alice.did, recordsQuery3.message);
-        expect(reply3.entries?.length).toBe(1);
+        expect(reply3.entries).toHaveLength(1);
         expect(reply3.entries![0].recordId).toBe(write3.message.recordId);
 
         // testing edge case where value equals `from` and `to`
@@ -1900,7 +1900,7 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         const reply4 = await dwn.processMessage(alice.did, recordsQuery4.message);
-        expect(reply4.entries?.length).toBe(1);
+        expect(reply4.entries).toHaveLength(1);
         expect(reply4.entries![0].recordId).toBe(write2.message.recordId);
       });
 
@@ -1943,7 +1943,7 @@ export function testRecordsQueryHandler(): void {
           dateSort: DateSort.CreatedAscending
         });
         const reply = await dwn.processMessage(alice.did, recordsQuery5.message);
-        expect(reply.entries?.length).toBe(1);
+        expect(reply.entries).toHaveLength(1);
         expect(reply.entries![0].encodedData).toBe(Encoder.bytesToBase64Url(write2.dataBytes!));
       });
 
@@ -1966,7 +1966,7 @@ export function testRecordsQueryHandler(): void {
 
         const queryReply = await dwn.processMessage(alice.did, queryData.message);
         expect(queryReply.status.code).toBe(200);
-        expect(queryReply.entries?.length).toBe(1);
+        expect(queryReply.entries).toHaveLength(1);
         expect((queryReply.entries![0] as any).authorization).toEqual(message.authorization);
       });
 
@@ -1987,10 +1987,10 @@ export function testRecordsQueryHandler(): void {
 
         const queryReply = await dwn.processMessage(alice.did, queryData.message);
         expect(queryReply.status.code).toBe(200);
-        expect(queryReply.entries?.length).toBe(1);
+        expect(queryReply.entries).toHaveLength(1);
 
         const recordsWriteMessage = queryReply.entries![0] as any;
-        expect(recordsWriteMessage.attestation?.signatures?.length).toBe(1);
+        expect(recordsWriteMessage.attestation?.signatures).toHaveLength(1);
       });
 
       it('should omit records that are not published if `dateSort` sorts on `datePublished`', async () => {
@@ -2023,7 +2023,7 @@ export function testRecordsQueryHandler(): void {
           filter   : { schema }
         });
         const publishedAscendingQueryReply = await dwn.processMessage(alice.did, publishedAscendingQueryData.message);
-        expect(publishedAscendingQueryReply.entries?.length).toBe(1);
+        expect(publishedAscendingQueryReply.entries).toHaveLength(1);
         expect(publishedAscendingQueryReply.entries![0].recordId).toBe(publishedWriteData.message.recordId);
 
         // test published date scending sort does not include any records that are not published
@@ -2033,7 +2033,7 @@ export function testRecordsQueryHandler(): void {
           filter   : { schema }
         });
         const publishedDescendingQueryReply = await dwn.processMessage(alice.did, publishedDescendingQueryData.message);
-        expect(publishedDescendingQueryReply.entries?.length).toBe(1);
+        expect(publishedDescendingQueryReply.entries).toHaveLength(1);
         expect(publishedDescendingQueryReply.entries![0].recordId).toBe(publishedWriteData.message.recordId);
       });
 
@@ -2068,7 +2068,7 @@ export function testRecordsQueryHandler(): void {
           filter   : { schema }
         });
         let createdAscendingQueryReply = await dwn.processMessage(alice.did, createdAscendingQueryData.message);
-        expect(createdAscendingQueryReply.entries!.length).toBe(3);
+        expect(createdAscendingQueryReply.entries!).toHaveLength(3);
         expect(createdAscendingQueryReply.entries?.[0].recordId).toBe(write1Data.message.recordId);
         expect(createdAscendingQueryReply.entries?.[1].recordId).toBe(write2Data.message.recordId);
         expect(createdAscendingQueryReply.entries?.[2].recordId).toBe(write3Data.message.recordId);
@@ -2081,7 +2081,7 @@ export function testRecordsQueryHandler(): void {
           pagination : { limit: 1 }
         });
         createdAscendingQueryReply = await dwn.processMessage(alice.did, createdAscendingQueryData.message);
-        expect(createdAscendingQueryReply.entries!.length).toBe(1);
+        expect(createdAscendingQueryReply.entries!).toHaveLength(1);
 
         // we then use the single record query's cursor to get the rest of the records
         createdAscendingQueryData = await TestDataGenerator.generateRecordsQuery({
@@ -2091,7 +2091,7 @@ export function testRecordsQueryHandler(): void {
           pagination : { cursor: createdAscendingQueryReply.cursor }
         });
         createdAscendingQueryReply = await dwn.processMessage(alice.did, createdAscendingQueryData.message);
-        expect(createdAscendingQueryReply.entries!.length).toBe(2);
+        expect(createdAscendingQueryReply.entries!).toHaveLength(2);
         expect(createdAscendingQueryReply.entries![0].recordId).toBe(write2Data.message.recordId);
         expect(createdAscendingQueryReply.entries![1].recordId).toBe(write3Data.message.recordId);
 
@@ -2102,7 +2102,7 @@ export function testRecordsQueryHandler(): void {
           filter   : { schema }
         });
         let createdDescendingQueryReply = await dwn.processMessage(alice.did, createdDescendingQueryData.message);
-        expect(createdDescendingQueryReply.entries!.length).toBe(3);
+        expect(createdDescendingQueryReply.entries!).toHaveLength(3);
         expect(createdDescendingQueryReply.entries?.[0].recordId).toBe(write3Data.message.recordId);
         expect(createdDescendingQueryReply.entries?.[1].recordId).toBe(write2Data.message.recordId);
         expect(createdDescendingQueryReply.entries?.[2].recordId).toBe(write1Data.message.recordId);
@@ -2115,7 +2115,7 @@ export function testRecordsQueryHandler(): void {
           pagination : { limit: 1 }
         });
         createdDescendingQueryReply = await dwn.processMessage(alice.did, createdDescendingQueryData.message);
-        expect(createdDescendingQueryReply.entries!.length).toBe(1);
+        expect(createdDescendingQueryReply.entries!).toHaveLength(1);
 
         // we then use the single record query's cursor to get the rest of the records
         createdDescendingQueryData = await TestDataGenerator.generateRecordsQuery({
@@ -2125,7 +2125,7 @@ export function testRecordsQueryHandler(): void {
           pagination : { cursor: createdDescendingQueryReply.cursor }
         });
         createdDescendingQueryReply = await dwn.processMessage(alice.did, createdDescendingQueryData.message);
-        expect(createdDescendingQueryReply.entries!.length).toBe(2);
+        expect(createdDescendingQueryReply.entries!).toHaveLength(2);
         expect(createdDescendingQueryReply.entries![0].recordId).toBe(write2Data.message.recordId);
         expect(createdDescendingQueryReply.entries![1].recordId).toBe(write1Data.message.recordId);
 
@@ -2136,7 +2136,7 @@ export function testRecordsQueryHandler(): void {
           filter   : { schema }
         });
         let publishedAscendingQueryReply = await dwn.processMessage(alice.did, publishedAscendingQueryData.message);
-        expect(publishedAscendingQueryReply.entries!.length).toBe(3);
+        expect(publishedAscendingQueryReply.entries!).toHaveLength(3);
         expect(publishedAscendingQueryReply.entries?.[0].recordId).toBe(write1Data.message.recordId);
         expect(publishedAscendingQueryReply.entries?.[1].recordId).toBe(write2Data.message.recordId);
         expect(publishedAscendingQueryReply.entries?.[2].recordId).toBe(write3Data.message.recordId);
@@ -2149,7 +2149,7 @@ export function testRecordsQueryHandler(): void {
           pagination : { limit: 1 }
         });
         publishedAscendingQueryReply = await dwn.processMessage(alice.did, publishedAscendingQueryData.message);
-        expect(publishedAscendingQueryReply.entries!.length).toBe(1);
+        expect(publishedAscendingQueryReply.entries!).toHaveLength(1);
 
         publishedAscendingQueryData = await TestDataGenerator.generateRecordsQuery({
           author     : alice,
@@ -2158,7 +2158,7 @@ export function testRecordsQueryHandler(): void {
           pagination : { cursor: publishedAscendingQueryReply.cursor }
         });
         publishedAscendingQueryReply = await dwn.processMessage(alice.did, publishedAscendingQueryData.message);
-        expect(publishedAscendingQueryReply.entries!.length).toBe(2);
+        expect(publishedAscendingQueryReply.entries!).toHaveLength(2);
         expect(publishedAscendingQueryReply.entries![0].recordId).toBe(write2Data.message.recordId);
         expect(publishedAscendingQueryReply.entries![1].recordId).toBe(write3Data.message.recordId);
 
@@ -2169,7 +2169,7 @@ export function testRecordsQueryHandler(): void {
           filter   : { schema }
         });
         let publishedDescendingQueryReply = await dwn.processMessage(alice.did, publishedDescendingQueryData.message);
-        expect(publishedDescendingQueryReply.entries!.length).toBe(3);
+        expect(publishedDescendingQueryReply.entries!).toHaveLength(3);
         expect(publishedDescendingQueryReply.entries?.[0].recordId).toBe(write3Data.message.recordId);
         expect(publishedDescendingQueryReply.entries?.[1].recordId).toBe(write2Data.message.recordId);
         expect(publishedDescendingQueryReply.entries?.[2].recordId).toBe(write1Data.message.recordId);
@@ -2181,7 +2181,7 @@ export function testRecordsQueryHandler(): void {
           pagination : { limit: 1 }
         });
         publishedDescendingQueryReply = await dwn.processMessage(alice.did, publishedDescendingQueryData.message);
-        expect(publishedDescendingQueryReply.entries!.length).toBe(1);
+        expect(publishedDescendingQueryReply.entries!).toHaveLength(1);
 
         publishedDescendingQueryData = await TestDataGenerator.generateRecordsQuery({
           author     : alice,
@@ -2190,7 +2190,7 @@ export function testRecordsQueryHandler(): void {
           pagination : { cursor: publishedDescendingQueryReply.cursor }
         });
         publishedDescendingQueryReply = await dwn.processMessage(alice.did, publishedDescendingQueryData.message);
-        expect(publishedDescendingQueryReply.entries!.length).toBe(2);
+        expect(publishedDescendingQueryReply.entries!).toHaveLength(2);
         expect(publishedDescendingQueryReply.entries![0].recordId).toBe(write2Data.message.recordId);
         expect(publishedDescendingQueryReply.entries![1].recordId).toBe(write1Data.message.recordId);
       });
@@ -2221,7 +2221,7 @@ export function testRecordsQueryHandler(): void {
           filter   : { schema }
         });
         const updatedAscendingQueryReply = await dwn.processMessage(alice.did, updatedAscendingQueryData.message);
-        expect(updatedAscendingQueryReply.entries!.length).toBe(3);
+        expect(updatedAscendingQueryReply.entries!).toHaveLength(3);
         expect(updatedAscendingQueryReply.entries?.[0].recordId).toBe(write1Data.message.recordId);
         expect(updatedAscendingQueryReply.entries?.[1].recordId).toBe(write2Data.message.recordId);
         expect(updatedAscendingQueryReply.entries?.[2].recordId).toBe(write3Data.message.recordId);
@@ -2233,7 +2233,7 @@ export function testRecordsQueryHandler(): void {
           filter   : { schema }
         });
         const updatedDescendingQueryReply = await dwn.processMessage(alice.did, updatedDescendingQueryData.message);
-        expect(updatedDescendingQueryReply.entries!.length).toBe(3);
+        expect(updatedDescendingQueryReply.entries!).toHaveLength(3);
         expect(updatedDescendingQueryReply.entries?.[0].recordId).toBe(write3Data.message.recordId);
         expect(updatedDescendingQueryReply.entries?.[1].recordId).toBe(write2Data.message.recordId);
         expect(updatedDescendingQueryReply.entries?.[2].recordId).toBe(write1Data.message.recordId);
@@ -2302,7 +2302,7 @@ export function testRecordsQueryHandler(): void {
           filter   : { schema }
         });
         const updatedAscReply = await dwn.processMessage(alice.did, updatedAscQuery.message);
-        expect(updatedAscReply.entries!.length).toBe(3);
+        expect(updatedAscReply.entries!).toHaveLength(3);
         expect(updatedAscReply.entries![0].recordId).toBe(write3.message.recordId);
         expect(updatedAscReply.entries![1].recordId).toBe(write2.message.recordId);
         expect(updatedAscReply.entries![2].recordId).toBe(write1.message.recordId);
@@ -2314,7 +2314,7 @@ export function testRecordsQueryHandler(): void {
           filter   : { schema }
         });
         const updatedDescReply = await dwn.processMessage(alice.did, updatedDescQuery.message);
-        expect(updatedDescReply.entries!.length).toBe(3);
+        expect(updatedDescReply.entries!).toHaveLength(3);
         expect(updatedDescReply.entries![0].recordId).toBe(write1.message.recordId);
         expect(updatedDescReply.entries![1].recordId).toBe(write2.message.recordId);
         expect(updatedDescReply.entries![2].recordId).toBe(write3.message.recordId);
@@ -2355,7 +2355,7 @@ export function testRecordsQueryHandler(): void {
 
         // verify that messages returned are sorted/tiebreak by `messageCid`
         expect(queryReply.status.code).toBe(200);
-        expect(queryReply.entries?.length).toBe(3);
+        expect(queryReply.entries).toHaveLength(3);
         expect((queryReply.entries![0]).recordId).toBe(oldestWrite.message.recordId);
         expect((queryReply.entries![1]).recordId).toBe(middleWrite.message.recordId);
         expect((queryReply.entries![2]).recordId).toBe(newestWrite.message.recordId);
@@ -2410,7 +2410,7 @@ export function testRecordsQueryHandler(): void {
             break;
           }
         }
-        expect(results.length).toBe(messages.length);
+        expect(results).toHaveLength(messages.length);
         expect(messages.every(({ message }) => results.map(e => (e as RecordsWriteMessage).recordId).includes(message.recordId)));
       });
 
@@ -2452,7 +2452,7 @@ export function testRecordsQueryHandler(): void {
             break;
           }
         }
-        expect(results.length).toBe(messages.length);
+        expect(results).toHaveLength(messages.length);
         expect(messages.every(({ message }) => results.map(e => (e as RecordsWriteMessage).recordId).includes(message.recordId)));
       });
 
@@ -2486,7 +2486,7 @@ export function testRecordsQueryHandler(): void {
         const replyToQuery = await dwn.processMessage(alice.did, anonymousQueryMessageData.message);
 
         expect(replyToQuery.status.code).toBe(200);
-        expect(replyToQuery.entries?.length).toBe(1);
+        expect(replyToQuery.entries).toHaveLength(1);
         expect((replyToQuery.entries![0].descriptor as RecordsWriteDescriptor).schema).toBe('https://schema2');
 
         // explicitly for published records
@@ -2500,7 +2500,7 @@ export function testRecordsQueryHandler(): void {
         // should return the published records
         const publishedReply = await dwn.processMessage(alice.did, anonymousQueryPublished.message);
         expect(publishedReply.status.code).toBe(200);
-        expect(publishedReply.entries?.length).toBe(1);
+        expect(publishedReply.entries).toHaveLength(1);
         expect((publishedReply.entries![0].descriptor as RecordsWriteDescriptor).schema).toBe('https://schema2');
       });
 
@@ -2697,7 +2697,7 @@ export function testRecordsQueryHandler(): void {
         });
         const bobQueryMessagesForBobAliceReply = await dwn.processMessage(alice.did, bobQueryMessagesForBobAlice.message);
         expect(bobQueryMessagesForBobAliceReply.status.code).toBe(200);
-        expect(bobQueryMessagesForBobAliceReply.entries?.length).toBe(7);
+        expect(bobQueryMessagesForBobAliceReply.entries).toHaveLength(7);
 
         // Since Bob is the author if the query, we expect for him to be able to see:
         // Private Messages THAT ANYONE sent to Bob
@@ -2721,7 +2721,7 @@ export function testRecordsQueryHandler(): void {
         });
         const carolQueryMessagesForCarolAliceReply = await dwn.processMessage(alice.did, carolQueryMessagesForCarolAlice.message);
         expect(carolQueryMessagesForCarolAliceReply.status.code).toBe(200);
-        expect(carolQueryMessagesForCarolAliceReply.entries?.length).toBe(4);
+        expect(carolQueryMessagesForCarolAliceReply.entries).toHaveLength(4);
 
         // Since Carol is the author if the query, we expect for her to be able to see:
         // Private Messages THAT ANYONE sent to Carol
@@ -2742,7 +2742,7 @@ export function testRecordsQueryHandler(): void {
         });
         const aliceQueryPublishedReply = await dwn.processMessage(alice.did, aliceQueryPublished.message);
         expect(aliceQueryPublishedReply.status.code).toBe(200);
-        expect(aliceQueryPublishedReply.entries?.length).toBe(4);
+        expect(aliceQueryPublishedReply.entries).toHaveLength(4);
         expect(aliceQueryPublishedReply.entries!.map(e => e.recordId)).toEqual(expect.arrayContaining([
           alicePublicToBob.message.recordId,
           carolPublicToBob.message.recordId,
@@ -2757,7 +2757,7 @@ export function testRecordsQueryHandler(): void {
         });
         const carolQueryPrivateReply = await dwn.processMessage(alice.did, carolQueryPrivate.message);
         expect(carolQueryPrivateReply.status.code).toBe(200);
-        expect(carolQueryPrivateReply.entries?.length).toBe(3);
+        expect(carolQueryPrivateReply.entries).toHaveLength(3);
         // Carol can query for private messages she authored to alice, and her own private messages with herself as the recipient
         expect(carolQueryPrivateReply.entries!.map(e => e.recordId)).toEqual(expect.arrayContaining([
           alicePrivateToCarol.message.recordId,
@@ -2959,7 +2959,7 @@ export function testRecordsQueryHandler(): void {
         });
         const bobQueryMessagesForBobAliceReply = await dwn.processMessage(alice.did, bobQueryMessagesForBobAlice.message);
         expect(bobQueryMessagesForBobAliceReply.status.code).toBe(200);
-        expect(bobQueryMessagesForBobAliceReply.entries?.length).toBe(7);
+        expect(bobQueryMessagesForBobAliceReply.entries).toHaveLength(7);
 
         // Since Bob is the author if the query, we expect for him to be able to see:
         // Private Messages Bob authored TO ANYONE
@@ -2983,7 +2983,7 @@ export function testRecordsQueryHandler(): void {
         });
         const carolQueryMessagesForCarolAliceReply = await dwn.processMessage(alice.did, carolQueryMessagesForCarolAlice.message);
         expect(carolQueryMessagesForCarolAliceReply.status.code).toBe(200);
-        expect(carolQueryMessagesForCarolAliceReply.entries?.length).toBe(4);
+        expect(carolQueryMessagesForCarolAliceReply.entries).toHaveLength(4);
 
         // Since Carol is the author if the query, we expect for her to be able to see:
         // All messages that Carol sent to anyone, private or public
@@ -3001,7 +3001,7 @@ export function testRecordsQueryHandler(): void {
         });
         const aliceQueryPublishedReply = await dwn.processMessage(alice.did, aliceQueryPublished.message);
         expect(aliceQueryPublishedReply.status.code).toBe(200);
-        expect(aliceQueryPublishedReply.entries?.length).toBe(4);
+        expect(aliceQueryPublishedReply.entries).toHaveLength(4);
         expect(aliceQueryPublishedReply.entries!.map(e => e.recordId)).toEqual(expect.arrayContaining([
           alicePublicToBob.message.recordId,
           alicePublicToCarol.message.recordId,
@@ -3016,7 +3016,7 @@ export function testRecordsQueryHandler(): void {
         });
         const carolQueryPrivateReply = await dwn.processMessage(alice.did, carolQueryPrivate.message);
         expect(carolQueryPrivateReply.status.code).toBe(200);
-        expect(carolQueryPrivateReply.entries?.length).toBe(3);
+        expect(carolQueryPrivateReply.entries).toHaveLength(3);
         expect(carolQueryPrivateReply.entries!.map(e => e.recordId)).toEqual(expect.arrayContaining([
           alicePrivateToCarol.message.recordId,
           carolPrivateToAlice.message.recordId,
@@ -3185,7 +3185,7 @@ export function testRecordsQueryHandler(): void {
         });
         const replyToAliceQuery = await dwn.processMessage(alice.did, queryByAlice.message);
         expect(replyToAliceQuery.status.code).toBe(200);
-        expect(replyToAliceQuery.entries?.length).toBe(1);
+        expect(replyToAliceQuery.entries).toHaveLength(1);
 
         // actual test: bob should not be able to see unpublished record
         const queryByBob = await TestDataGenerator.generateRecordsQuery({
@@ -3194,7 +3194,7 @@ export function testRecordsQueryHandler(): void {
         });
         const replyToBobQuery = await dwn.processMessage(alice.did, queryByBob.message);
         expect(replyToBobQuery.status.code).toBe(200);
-        expect(replyToBobQuery.entries?.length).toBe(0);
+        expect(replyToBobQuery.entries).toHaveLength(0);
       });
 
       it('should allow DWN owner to use `recipient` as a filter in queries', async () => {
@@ -3233,7 +3233,7 @@ export function testRecordsQueryHandler(): void {
         const reply = await dwn.processMessage(alice.did, aliceQueryMessageData.message);
 
         expect(reply.status.code).toBe(200);
-        expect(reply.entries?.length).toBe(1);
+        expect(reply.entries).toHaveLength(1);
       });
 
       it('should return 400 if protocol is not normalized', async () => {
@@ -3313,7 +3313,7 @@ export function testRecordsQueryHandler(): void {
         const unpublishedPostQuery = await TestDataGenerator.generateRecordsQuery({ author: alice, filter: { schema: 'post', published: false } });
         const unpublishedPostReply = await dwn.processMessage(alice.did, unpublishedPostQuery.message);
         expect(unpublishedPostReply.status.code).toBe(200);
-        expect(unpublishedPostReply.entries?.length).toBe(1);
+        expect(unpublishedPostReply.entries).toHaveLength(1);
         expect(unpublishedPostReply.entries![0].recordId).toBe(draftWrite.message.recordId);
 
         // anonymous query for unpublished records
@@ -3406,7 +3406,7 @@ export function testRecordsQueryHandler(): void {
           });
           const foo1ContextIdQueryReply = await dwn.processMessage(alice.did, foo1ContextIdQuery.message);
           expect(foo1ContextIdQueryReply.status.code).toBe(200);
-          expect(foo1ContextIdQueryReply.entries?.length).toBe(5);
+          expect(foo1ContextIdQueryReply.entries).toHaveLength(5);
           expect(foo1ContextIdQueryReply.entries!.map((entry) => entry.recordId)).toEqual(expect.arrayContaining([
             foo1.message.recordId,
             bar1.message.recordId,
@@ -3422,7 +3422,7 @@ export function testRecordsQueryHandler(): void {
           });
           const bar1ContextIdQueryReply = await dwn.processMessage(alice.did, bar1ContextIdQuery.message);
           expect(bar1ContextIdQueryReply.status.code).toBe(200);
-          expect(bar1ContextIdQueryReply.entries?.length).toBe(3);
+          expect(bar1ContextIdQueryReply.entries).toHaveLength(3);
           expect(bar1ContextIdQueryReply.entries!.map((entry) => entry.recordId)).toEqual(expect.arrayContaining([
             bar1.message.recordId,
             baz1.message.recordId,
@@ -3436,7 +3436,7 @@ export function testRecordsQueryHandler(): void {
           });
           const baz1ContextIdQueryReply = await dwn.processMessage(alice.did, baz1ContextIdQuery.message);
           expect(baz1ContextIdQueryReply.status.code).toBe(200);
-          expect(baz1ContextIdQueryReply.entries?.length).toBe(1);
+          expect(baz1ContextIdQueryReply.entries).toHaveLength(1);
           expect(baz1ContextIdQueryReply.entries!.map((entry) => entry.recordId)).toEqual(expect.arrayContaining([ baz1.message.recordId ]));
         });
 
@@ -3503,7 +3503,7 @@ export function testRecordsQueryHandler(): void {
           });
           const chatQueryReply = await dwn.processMessage(alice.did, chatQuery.message);
           expect(chatQueryReply.status.code).toBe(200);
-          expect(chatQueryReply.entries?.length).toBe(1);
+          expect(chatQueryReply.entries).toHaveLength(1);
           expect(chatQueryReply.entries![0].recordId).toBe(chatRecordForBob.message.recordId);
 
           // bob queries without invoking any protocolRole and filters for unpublished records
@@ -3516,7 +3516,7 @@ export function testRecordsQueryHandler(): void {
           });
           const unpublishedChatReply = await dwn.processMessage(alice.did, unpublishedChatQuery.message);
           expect(unpublishedChatReply.status.code).toBe(200);
-          expect(unpublishedChatReply.entries?.length).toBe(1);
+          expect(unpublishedChatReply.entries).toHaveLength(1);
           expect(unpublishedChatReply.entries![0].recordId).toBe(chatRecordForBob.message.recordId);
 
         });
@@ -3575,7 +3575,7 @@ export function testRecordsQueryHandler(): void {
           });
           const chatQueryReply = await dwn.processMessage(alice.did, chatQuery.message);
           expect(chatQueryReply.status.code).toBe(200);
-          expect(chatQueryReply.entries?.length).toBe(3);
+          expect(chatQueryReply.entries).toHaveLength(3);
           expect(chatQueryReply.entries!.map((record) => record.recordId)).toEqual(expect.arrayContaining(chatRecordIds));
 
           // Bob invokes his friendRole along with an explicit filter for unpublished records
@@ -3590,7 +3590,7 @@ export function testRecordsQueryHandler(): void {
           });
           const unpublishedChatReply = await dwn.processMessage(alice.did, unpublishedChatQuery.message);
           expect(unpublishedChatReply.status.code).toBe(200);
-          expect(unpublishedChatReply.entries?.length).toBe(3);
+          expect(unpublishedChatReply.entries).toHaveLength(3);
           expect(unpublishedChatReply.entries!.map((record) => record.recordId)).toEqual(expect.arrayContaining(chatRecordIds));
         });
 
@@ -3660,7 +3660,7 @@ export function testRecordsQueryHandler(): void {
           });
           const chatQueryReply = await dwn.processMessage(alice.did, chatQuery.message) as RecordsQueryReply;
           expect(chatQueryReply.status.code).toBe(200);
-          expect(chatQueryReply.entries?.length).toBe(3);
+          expect(chatQueryReply.entries).toHaveLength(3);
           expect(chatQueryReply.entries!.map((record) => record.recordId)).toEqual(expect.arrayContaining(chatRecordIds));
         });
 
@@ -3993,7 +3993,7 @@ export function testRecordsQueryHandler(): void {
             });
             const bobQueryReply = await dwn.processMessage(alice.did, bobQuery.message) as RecordsQueryReply;
             expect(bobQueryReply.status.code).toBe(200);
-            expect(bobQueryReply.entries?.length).toBe(2);
+            expect(bobQueryReply.entries).toHaveLength(2);
             expect(bobQueryReply.entries!.map((e) => e.recordId)).toEqual(expect.arrayContaining(bobRecordIds));
 
             // Carol queries — should see exactly her 1 message
@@ -4006,7 +4006,7 @@ export function testRecordsQueryHandler(): void {
             });
             const carolQueryReply = await dwn.processMessage(alice.did, carolQuery.message) as RecordsQueryReply;
             expect(carolQueryReply.status.code).toBe(200);
-            expect(carolQueryReply.entries?.length).toBe(1);
+            expect(carolQueryReply.entries).toHaveLength(1);
             expect(carolQueryReply.entries![0].recordId).toBe(carolMsg.message.recordId);
           });
 
@@ -4047,7 +4047,7 @@ export function testRecordsQueryHandler(): void {
             });
             const bobQueryReply = await dwn.processMessage(alice.did, bobQuery.message) as RecordsQueryReply;
             expect(bobQueryReply.status.code).toBe(200);
-            expect(bobQueryReply.entries?.length).toBe(1);
+            expect(bobQueryReply.entries).toHaveLength(1);
             expect(bobQueryReply.entries![0].recordId).toBe(bobMsg.message.recordId);
 
             // Carol queries — should see nothing (she is neither author nor recipient)
@@ -4060,7 +4060,7 @@ export function testRecordsQueryHandler(): void {
             });
             const carolQueryReply = await dwn.processMessage(alice.did, carolQuery.message) as RecordsQueryReply;
             expect(carolQueryReply.status.code).toBe(200);
-            expect(carolQueryReply.entries?.length).toBe(0);
+            expect(carolQueryReply.entries).toHaveLength(0);
           });
 
           it('unauthorized party cannot see any unpublished records via query', async () => {
@@ -4102,7 +4102,7 @@ export function testRecordsQueryHandler(): void {
             });
             const daveQueryReply = await dwn.processMessage(alice.did, daveQuery.message) as RecordsQueryReply;
             expect(daveQueryReply.status.code).toBe(200);
-            expect(daveQueryReply.entries?.length).toBe(0);
+            expect(daveQueryReply.entries).toHaveLength(0);
 
             // Dave queries with explicit unpublished filter — still sees nothing
             const daveUnpubQuery = await TestDataGenerator.generateRecordsQuery({
@@ -4115,7 +4115,7 @@ export function testRecordsQueryHandler(): void {
             });
             const daveUnpubReply = await dwn.processMessage(alice.did, daveUnpubQuery.message) as RecordsQueryReply;
             expect(daveUnpubReply.status.code).toBe(200);
-            expect(daveUnpubReply.entries?.length).toBe(0);
+            expect(daveUnpubReply.entries).toHaveLength(0);
           });
 
           it('who-based query rules do not grant role-like broad access', async () => {
@@ -4206,7 +4206,7 @@ export function testRecordsQueryHandler(): void {
             });
             const bobRoleQueryReply = await dwn.processMessage(alice.did, bobRoleQuery.message) as RecordsQueryReply;
             expect(bobRoleQueryReply.status.code).toBe(200);
-            expect(bobRoleQueryReply.entries?.length).toBe(3);
+            expect(bobRoleQueryReply.entries).toHaveLength(3);
 
             // Dave (who is NOT a participant) tries to invoke the role — should be rejected
             const daveRoleQuery = await TestDataGenerator.generateRecordsQuery({
@@ -4233,7 +4233,7 @@ export function testRecordsQueryHandler(): void {
             });
             const daveNoRoleQueryReply = await dwn.processMessage(alice.did, daveNoRoleQuery.message) as RecordsQueryReply;
             expect(daveNoRoleQueryReply.status.code).toBe(200);
-            expect(daveNoRoleQueryReply.entries?.length).toBe(0);
+            expect(daveNoRoleQueryReply.entries).toHaveLength(0);
           });
         });
       });

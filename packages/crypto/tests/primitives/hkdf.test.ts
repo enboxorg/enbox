@@ -18,7 +18,7 @@ describe('Hkdf', () => {
         info,
       });
       expect(derivedKey).toBeInstanceOf(Uint8Array);
-      expect(derivedKey.length).toBe(32);
+      expect(derivedKey).toHaveLength(32);
     });
 
     it('should derive a key using SHA-384', async () => {
@@ -33,7 +33,7 @@ describe('Hkdf', () => {
         info,
       });
       expect(derivedKey).toBeInstanceOf(Uint8Array);
-      expect(derivedKey.length).toBe(48);
+      expect(derivedKey).toHaveLength(48);
     });
 
     it('should derive a key using SHA-512', async () => {
@@ -48,7 +48,7 @@ describe('Hkdf', () => {
         info,
       });
       expect(derivedKey).toBeInstanceOf(Uint8Array);
-      expect(derivedKey.length).toBe(64);
+      expect(derivedKey).toHaveLength(64);
     });
 
     for (const vector of hkdfTestVectors) {

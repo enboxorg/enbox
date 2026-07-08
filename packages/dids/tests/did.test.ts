@@ -156,17 +156,17 @@ describe('Did', () => {
     });
 
     it('returns null for an invalid DID URI', () => {
-      expect(Did.parse('')).toBe(null);
-      expect(Did.parse('not-a-did-uri')).toBe(null);
-      expect(Did.parse('did:')).toBe(null);
-      expect(Did.parse('did:uport')).toBe(null);
-      expect(Did.parse('did:uport:')).toBe(null);
-      expect(Did.parse('did:uport:1234_12313***')).toBe(null);
-      expect(Did.parse('123')).toBe(null);
-      expect(Did.parse('did:method:%12%1')).toBe(null);
-      expect(Did.parse('did:method:%1233%Ay')).toBe(null);
-      expect(Did.parse('did:CAP:id')).toBe(null);
-      expect(Did.parse('did:method:id::anotherid%r9')).toBe(null);
+      expect(Did.parse('')).toBeNull();
+      expect(Did.parse('not-a-did-uri')).toBeNull();
+      expect(Did.parse('did:')).toBeNull();
+      expect(Did.parse('did:uport')).toBeNull();
+      expect(Did.parse('did:uport:')).toBeNull();
+      expect(Did.parse('did:uport:1234_12313***')).toBeNull();
+      expect(Did.parse('123')).toBeNull();
+      expect(Did.parse('did:method:%12%1')).toBeNull();
+      expect(Did.parse('did:method:%1233%Ay')).toBeNull();
+      expect(Did.parse('did:CAP:id')).toBeNull();
+      expect(Did.parse('did:method:id::anotherid%r9')).toBeNull();
     });
   });
 });

@@ -132,7 +132,7 @@ describe('filterSelectQuery', () => {
       query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
-      expect(results.length).toBe(1);
+      expect(results).toHaveLength(1);
       expect(results[0].messageCid).toBe('cid-1');
     });
   });
@@ -157,7 +157,7 @@ describe('filterSelectQuery', () => {
       query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
-      expect(results.length).toBe(2);
+      expect(results).toHaveLength(2);
       const cids = results.map((r) => r.messageCid).sort();
       expect(cids).toEqual(['cid-1', 'cid-3']);
     });
@@ -183,7 +183,7 @@ describe('filterSelectQuery', () => {
       query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
-      expect(results.length).toBe(1);
+      expect(results).toHaveLength(1);
       expect(results[0].messageCid).toBe('cid-3');
     });
 
@@ -203,7 +203,7 @@ describe('filterSelectQuery', () => {
       query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
-      expect(results.length).toBe(1);
+      expect(results).toHaveLength(1);
       expect(results[0].messageCid).toBe('cid-2');
     });
 
@@ -223,7 +223,7 @@ describe('filterSelectQuery', () => {
       query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
-      expect(results.length).toBe(1);
+      expect(results).toHaveLength(1);
       expect(results[0].messageCid).toBe('cid-1');
     });
 
@@ -244,7 +244,7 @@ describe('filterSelectQuery', () => {
       query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
-      expect(results.length).toBe(2);
+      expect(results).toHaveLength(2);
       const cids = results.map((r) => r.messageCid).sort();
       expect(cids).toEqual(['cid-1', 'cid-2']);
     });
@@ -278,7 +278,7 @@ describe('filterSelectQuery', () => {
       query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
-      expect(results.length).toBe(3); // root + 2 children
+      expect(results).toHaveLength(3); // root + 2 children
       const cids = results.map((r) => r.messageCid).sort();
       expect(cids).toEqual(['cid-child-1', 'cid-child-2', 'cid-root']);
     });
@@ -326,7 +326,7 @@ describe('filterSelectQuery', () => {
       query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
-      expect(results.length).toBe(2);
+      expect(results).toHaveLength(2);
       const cids = results.map((r) => r.messageCid).sort();
       expect(cids).toEqual(['cid-1', 'cid-2']);
     });
@@ -356,7 +356,7 @@ describe('filterSelectQuery', () => {
       query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
-      expect(results.length).toBe(2);
+      expect(results).toHaveLength(2);
       const cids = results.map((r) => r.messageCid).sort();
       expect(cids).toEqual(['cid-1', 'cid-3']);
     });
@@ -384,7 +384,7 @@ describe('filterSelectQuery', () => {
       query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
-      expect(results.length).toBe(1);
+      expect(results).toHaveLength(1);
       expect(results[0].messageCid).toBe('cid-1');
     });
 
@@ -407,7 +407,7 @@ describe('filterSelectQuery', () => {
       query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
-      expect(results.length).toBe(1);
+      expect(results).toHaveLength(1);
       expect(results[0].messageCid).toBe('cid-1');
     });
 
@@ -475,7 +475,7 @@ describe('filterSelectQuery', () => {
       query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
-      expect(results.length).toBe(2);
+      expect(results).toHaveLength(2);
       const cids = results.map((r) => r.messageCid).sort();
       expect(cids).toEqual(['cid-2', 'cid-3']);
     });
@@ -501,7 +501,7 @@ describe('filterSelectQuery', () => {
       query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
-      expect(results.length).toBe(1);
+      expect(results).toHaveLength(1);
       expect(results[0].messageCid).toBe('cid-2');
     });
 
@@ -551,7 +551,7 @@ describe('filterSelectQuery', () => {
       query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
-      expect(results.length).toBe(2);
+      expect(results).toHaveLength(2);
       const cids = results.map((r) => r.messageCid).sort();
       expect(cids).toEqual(['cid-1', 'cid-3']);
     });
@@ -577,7 +577,7 @@ describe('filterSelectQuery', () => {
       query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
-      expect(results.length).toBe(2);
+      expect(results).toHaveLength(2);
       const cids = results.map((r) => r.messageCid).sort();
       expect(cids).toEqual(['cid-1', 'cid-3']);
     });

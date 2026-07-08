@@ -236,14 +236,14 @@ export function testRecordsPruneCrossProtocol(): void {
         })).message,
       );
       expect(commentsQueryReply.status.code).toBe(200);
-      expect(commentsQueryReply.entries?.length).toBe(0);
+      expect(commentsQueryReply.entries).toHaveLength(0);
 
       // Message store has no residual messages for the comment's protocol.
       const commentsStoreMessages = await messageStore.query(alice.did, [{
         interface : DwnInterfaceName.Records,
         protocol  : commentsProtocol.protocol,
       }]);
-      expect(commentsStoreMessages.messages.length).toBe(0);
+      expect(commentsStoreMessages.messages).toHaveLength(0);
     });
 
     it('should cascade recursively through mixed same-protocol + cross-protocol subtrees', async () => {
@@ -334,7 +334,7 @@ export function testRecordsPruneCrossProtocol(): void {
         })).message,
       );
       expect(reactionsQueryReply.status.code).toBe(200);
-      expect(reactionsQueryReply.entries?.length).toBe(0);
+      expect(reactionsQueryReply.entries).toHaveLength(0);
     });
 
     it('should cascade across multiple sibling protocols rooted at the same parent', async () => {
@@ -430,7 +430,7 @@ export function testRecordsPruneCrossProtocol(): void {
           })).message,
         );
         expect(queryReply.status.code).toBe(200);
-        expect(queryReply.entries?.length).toBe(0);
+        expect(queryReply.entries).toHaveLength(0);
       }
     });
 
@@ -491,7 +491,7 @@ export function testRecordsPruneCrossProtocol(): void {
         interface : DwnInterfaceName.Records,
         protocol  : commentsProtocol.protocol,
       }]);
-      expect(commentsStoreMessages.messages.length).toBe(0);
+      expect(commentsStoreMessages.messages).toHaveLength(0);
 
       // Data store: comment's data is gone.
       expect(

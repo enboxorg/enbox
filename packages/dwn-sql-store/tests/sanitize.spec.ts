@@ -126,7 +126,7 @@ describe('sanitize utilities', () => {
 
       const result = sanitizeFiltersAndSeparateTags(filters);
 
-      expect(result.length).toBe(1);
+      expect(result).toHaveLength(1);
       expect(result[0].filter).toEqual({ protocol: 'proto-1' });
       expect(result[0].tags).toEqual({ color: 'red' });
     });
@@ -150,7 +150,7 @@ describe('sanitize utilities', () => {
 
       const result = sanitizeFiltersAndSeparateTags(filters);
 
-      expect(result.length).toBe(2);
+      expect(result).toHaveLength(2);
       expect(result[0].filter).toEqual({ protocol: 'proto-a' });
       expect(result[0].tags).toEqual({});
       expect(result[1].filter).toEqual({ method: 'Write' });

@@ -205,7 +205,7 @@ describe('AgentPermissionsApi', () => {
       });
       expect(fetchedGrant.message.recordId).toBe(recordsWriteGrant.message.recordId);
 
-      expect(fetchGrantSpy.mock.calls.length).toBe(1);
+      expect(fetchGrantSpy.mock.calls).toHaveLength(1);
 
       // get the grant again
       const fetchedGrant2 = await testHarness.agent.permissions.getPermissionForRequest({
@@ -218,7 +218,7 @@ describe('AgentPermissionsApi', () => {
       expect(fetchedGrant2.message.recordId).toBe(recordsWriteGrant.message.recordId);
 
       // expect the fetchGrant method to not have been called again
-      expect(fetchGrantSpy.mock.calls.length).toBe(1);
+      expect(fetchGrantSpy.mock.calls).toHaveLength(1);
     });
 
     it('should cache the results of a fetch even if cache is set to false', async () => {
@@ -263,7 +263,7 @@ describe('AgentPermissionsApi', () => {
       });
       expect(fetchedGrant.message.recordId).toBe(recordsWriteGrant.message.recordId);
 
-      expect(fetchGrantSpy.mock.calls.length).toBe(1);
+      expect(fetchGrantSpy.mock.calls).toHaveLength(1);
 
       // get the grant again (with cache set to true)
       const fetchedGrant2 = await testHarness.agent.permissions.getPermissionForRequest({
@@ -276,7 +276,7 @@ describe('AgentPermissionsApi', () => {
       expect(fetchedGrant2.message.recordId).toBe(recordsWriteGrant.message.recordId);
 
       // expect the fetchGrant method to not have been called again
-      expect(fetchGrantSpy.mock.calls.length).toBe(1);
+      expect(fetchGrantSpy.mock.calls).toHaveLength(1);
 
       // call again with cache set to false
       const fetchedGrant3 = await testHarness.agent.permissions.getPermissionForRequest({
@@ -289,7 +289,7 @@ describe('AgentPermissionsApi', () => {
       expect(fetchedGrant3.message.recordId).toBe(recordsWriteGrant.message.recordId);
 
       // now cache was not set to true, so expect the fetchGrant method to have been called again
-      expect(fetchGrantSpy.mock.calls.length).toBe(2);
+      expect(fetchGrantSpy.mock.calls).toHaveLength(2);
     });
 
     it('uses unambiguous cache keys for protocolPath-scoped grants', async () => {
@@ -340,7 +340,7 @@ describe('AgentPermissionsApi', () => {
         cached       : false
       });
       expect(firstFetched.message.recordId).toBe(firstGrant.message.recordId);
-      expect(fetchGrantSpy.mock.calls.length).toBe(1);
+      expect(fetchGrantSpy.mock.calls).toHaveLength(1);
 
       const secondFetched = await testHarness.agent.permissions.getPermissionForRequest({
         connectedDid : aliceDid.uri,
@@ -351,7 +351,7 @@ describe('AgentPermissionsApi', () => {
         cached       : true
       });
       expect(secondFetched.message.recordId).toBe(secondGrant.message.recordId);
-      expect(fetchGrantSpy.mock.calls.length).toBe(2);
+      expect(fetchGrantSpy.mock.calls).toHaveLength(2);
     });
   });
 
@@ -429,13 +429,13 @@ describe('AgentPermissionsApi', () => {
         checkRevoked : true,
       });
 
-      expect(grants.length).toBe(1);
+      expect(grants).toHaveLength(1);
       expect(grants[0].message.recordId).toBe(readGrant.message.recordId);
 
       const revocationFilters = sendDwnRequestStub.mock.calls
         .map(([request]) => ('messageParams' in request ? request.messageParams.filter as Record<string, unknown> : {}))
         .filter(filter => filter.protocolPath === PermissionsProtocol.revocationPath);
-      expect(revocationFilters.length).toBe(2);
+      expect(revocationFilters).toHaveLength(2);
       expect(revocationFilters.some(filter => filter.parentId === writeGrant.message.recordId)).toBe(true);
       expect(revocationFilters.some(filter => filter.parentId === readGrant.message.recordId)).toBe(true);
       expect(revocationFilters.every(filter => filter.contextId === undefined)).toBe(true);
@@ -475,7 +475,7 @@ describe('AgentPermissionsApi', () => {
         target   : aliceDid.uri,
         protocol : 'http://example.com/protocol-1'
       });
-      expect(protocol1Grants.length).toBe(1);
+      expect(protocol1Grants).toHaveLength(1);
       expect(protocol1Grants[0].grant.id).toBe(protocol1Grant.grant.id);
 
       const protocol2Grants = await testHarness.agent.permissions.fetchGrants({
@@ -483,7 +483,7 @@ describe('AgentPermissionsApi', () => {
         target   : aliceDid.uri,
         protocol : 'http://example.com/protocol-2'
       });
-      expect(protocol2Grants.length).toBe(1);
+      expect(protocol2Grants).toHaveLength(1);
       expect(protocol2Grants[0].grant.id).toBe(protocol2Grant.grant.id);
     });
 
@@ -534,7 +534,7 @@ describe('AgentPermissionsApi', () => {
         target   : aliceDid.uri,
         protocol : 'http://example.com/revocation-test',
       });
-      expect(grants.length).toBe(2);
+      expect(grants).toHaveLength(2);
 
       // revoke grant1
       await testHarness.agent.permissions.createRevocation({
@@ -550,7 +550,7 @@ describe('AgentPermissionsApi', () => {
         protocol     : 'http://example.com/revocation-test',
         checkRevoked : true,
       });
-      expect(grants.length).toBe(1);
+      expect(grants).toHaveLength(1);
       expect(grants[0].grant.id).toBe(grant2.grant.id);
     });
 
@@ -581,7 +581,7 @@ describe('AgentPermissionsApi', () => {
         target   : aliceDid.uri,
         protocol : 'http://example.com/revocation-test-2',
       });
-      expect(grants.length).toBe(1);
+      expect(grants).toHaveLength(1);
       expect(grants[0].grant.id).toBe(grant.grant.id);
 
       // with checkRevoked: false, the revoked grant should still be returned.
@@ -591,7 +591,7 @@ describe('AgentPermissionsApi', () => {
         protocol     : 'http://example.com/revocation-test-2',
         checkRevoked : false,
       });
-      expect(grants.length).toBe(1);
+      expect(grants).toHaveLength(1);
       expect(grants[0].grant.id).toBe(grant.grant.id);
     });
 
@@ -634,13 +634,13 @@ describe('AgentPermissionsApi', () => {
         checkRevoked : true,
       });
 
-      expect(grants.length).toBe(1);
+      expect(grants).toHaveLength(1);
       expect(grants[0].message.recordId).toBe(readGrant.message.recordId);
 
       const revocationFilters = processDwnRequestSpy.mock.calls
         .filter(([request]) => request.messageType === DwnInterface.RecordsRead)
         .map(([request]) => request.messageParams.filter as Record<string, unknown>);
-      expect(revocationFilters.length).toBe(2);
+      expect(revocationFilters).toHaveLength(2);
 
       expect(revocationFilters.map(filter => filter.parentId).sort()).toEqual([
         readGrant.message.recordId,
@@ -656,13 +656,13 @@ describe('AgentPermissionsApi', () => {
         protocol     : 'http://example.com/revocation-roundtrip-test',
         checkRevoked : true,
       });
-      expect(grantsAgain.length).toBe(1);
+      expect(grantsAgain).toHaveLength(1);
       expect(grantsAgain[0].message.recordId).toBe(readGrant.message.recordId);
 
       const repeatedRevocationFilters = processDwnRequestSpy.mock.calls
         .filter(([request]) => request.messageType === DwnInterface.RecordsRead)
         .map(([request]) => request.messageParams.filter as Record<string, unknown>);
-      expect(repeatedRevocationFilters.length).toBe(3);
+      expect(repeatedRevocationFilters).toHaveLength(3);
       expect(repeatedRevocationFilters[2].parentId).toBe(readGrant.message.recordId);
     });
 
@@ -703,7 +703,7 @@ describe('AgentPermissionsApi', () => {
         checkRevoked : true,
       });
 
-      expect(grants.length).toBe(1);
+      expect(grants).toHaveLength(1);
 
       const revocationFilters = processDwnRequestStub.mock.calls
         .filter(([request]) => request.messageType === DwnInterface.RecordsRead)
@@ -780,7 +780,7 @@ describe('AgentPermissionsApi', () => {
         target   : aliceDid.uri,
         protocol : 'http://example.com/protocol-1'
       });
-      expect(protocol1Requests.length).toBe(1);
+      expect(protocol1Requests).toHaveLength(1);
       expect(protocol1Requests[0].request.id).toBe(protocol1Request.request.id);
 
       const protocol2Requests = await testHarness.agent.permissions.fetchRequests({
@@ -788,7 +788,7 @@ describe('AgentPermissionsApi', () => {
         target   : aliceDid.uri,
         protocol : 'http://example.com/protocol-2'
       });
-      expect(protocol2Requests.length).toBe(1);
+      expect(protocol2Requests).toHaveLength(1);
       expect(protocol2Requests[0].request.id).toBe(protocol2Request.request.id);
     });
 
@@ -943,7 +943,7 @@ describe('AgentPermissionsApi', () => {
       });
 
       // expect to have the 1 grant created for deviceX
-      expect(grants.length).toBe(1);
+      expect(grants).toHaveLength(1);
       expect(grants[0].message.recordId).toBe(deviceXGrant.message.recordId);
     });
 
@@ -1138,7 +1138,7 @@ describe('AgentPermissionsApi', () => {
       });
 
       // expect to have the 1 request created
-      expect(fetchedRequests.length).toBe(1);
+      expect(fetchedRequests).toHaveLength(1);
       expect(fetchedRequests[0].request.id).toBe(deviceXRequest.message.recordId);
     });
 
@@ -1162,7 +1162,7 @@ describe('AgentPermissionsApi', () => {
       });
 
       // expect to have no requests
-      expect(fetchedRequests.length).toBe(0);
+      expect(fetchedRequests).toHaveLength(0);
     });
   });
 

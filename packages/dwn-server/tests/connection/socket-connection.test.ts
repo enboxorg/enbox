@@ -193,7 +193,7 @@ describe('SocketConnection', () => {
       expect(new Date(snapshot.connectedAt).toISOString()).toBe(snapshot.connectedAt);
       expect(snapshot.subscriptionCount).toBe(0);
       expect(snapshot.subscriptions).toBeInstanceOf(Array);
-      expect(snapshot.subscriptions.length).toBe(0);
+      expect(snapshot.subscriptions).toHaveLength(0);
 
       await connection.close();
     });
@@ -234,7 +234,7 @@ describe('SocketConnection', () => {
 
       const snapshot = connection.toSnapshot();
       expect(snapshot.subscriptionCount).toBe(1);
-      expect(snapshot.subscriptions.length).toBe(1);
+      expect(snapshot.subscriptions).toHaveLength(1);
       expect(snapshot.subscriptions[0].id).toBe('fc-sub-1');
       expect(snapshot.subscriptions[0].inflight).toBe(0);
       expect(snapshot.subscriptions[0].buffered).toBe(0);

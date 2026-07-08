@@ -300,7 +300,7 @@ describe('DwnApi', () => {
 
         // wait for the create event
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(changes.length).toBe(1);
+          expect(changes).toHaveLength(1);
           expect(changes[0].type).toBe('create');
           expect(changes[0].record.id).toBe(writeResult.record.id);
           expect(changes[0].record.deleted).toBe(false);
@@ -312,7 +312,7 @@ describe('DwnApi', () => {
 
         // wait for the delete event
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(changes.length).toBe(2);
+          expect(changes).toHaveLength(2);
           expect(changes[1].type).toBe('delete');
           expect(changes[1].record.id).toBe(writeResult.record.id);
         });
@@ -330,7 +330,7 @@ describe('DwnApi', () => {
 
         // wait for the create event
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(changes.length).toBe(3);
+          expect(changes).toHaveLength(3);
           expect(changes[2].type).toBe('create');
           expect(changes[2].record.id).toBe(writeResult2.record.id);
         });
@@ -606,7 +606,7 @@ describe('DwnApi', () => {
         // wait for the records to be received
         // alice receives both the public and private records on her subscription
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(aliceOtherProtocolChanges.length).toBe(2);
+          expect(aliceOtherProtocolChanges).toHaveLength(2);
           expect(aliceOtherProtocolChanges.some(c => c.record.id === publicRecord.id)).toBe(true);
           expect(aliceOtherProtocolChanges.some(c => c.record.id === privateRecord.id)).toBe(true);
         });
@@ -614,11 +614,11 @@ describe('DwnApi', () => {
         // delegated agent only receives the public record from the other protocol
         await Poller.pollUntilSuccessOrTimeout(async () => {
           // permissionedNotesChanges should have the allowedRecord
-          expect(permissionedNotesChanges.length).toBe(1);
+          expect(permissionedNotesChanges).toHaveLength(1);
           expect(permissionedNotesChanges[0].record.id).toBe(allowedRecord.id);
 
           // otherProtocolChanges should have only the publicRecord
-          expect(otherProtocolChanges.length).toBe(1);
+          expect(otherProtocolChanges).toHaveLength(1);
           expect(otherProtocolChanges[0].record.id).toBe(publicRecord.id);
         });
 
@@ -792,7 +792,7 @@ describe('DwnApi', () => {
         });
 
         expect(queryResponse.status.code).toBe(200);
-        expect(queryResponse.protocols.length).toBe(1);
+        expect(queryResponse.protocols).toHaveLength(1);
         expect(queryResponse.protocols[0].definition).toHaveProperty('types');
         expect(queryResponse.protocols[0].definition).toHaveProperty('protocol');
         expect(queryResponse.protocols[0].definition.protocol).toBe(protocolDefinition.protocol);
@@ -821,7 +821,7 @@ describe('DwnApi', () => {
         });
 
         expect(queryResponse.status.code).toBe(200);
-        expect(queryResponse.protocols.length).toBe(1);
+        expect(queryResponse.protocols).toHaveLength(1);
         expect(queryResponse.protocols[0].definition).toHaveProperty('types');
         expect(queryResponse.protocols[0].definition).toHaveProperty('protocol');
         expect(queryResponse.protocols[0].definition.protocol).toBe(protocolDefinition.protocol);
@@ -839,7 +839,7 @@ describe('DwnApi', () => {
 
         expect(response.status.code).toBe(200);
         expect(response.protocols).toBeDefined();
-        expect(response.protocols.length).toBe(0);
+        expect(response.protocols).toHaveLength(0);
       });
 
       it('returns published protocol definitions for requests from external DID', async () => {
@@ -863,7 +863,7 @@ describe('DwnApi', () => {
 
         // Verify that one query result is returned.
         expect(publishedResponse.status.code).toBe(200);
-        expect(publishedResponse.protocols.length).toBe(1);
+        expect(publishedResponse.protocols).toHaveLength(1);
         expect(publishedResponse.protocols[0].definition.protocol).toBe('http://proto-published');
       });
 
@@ -888,7 +888,7 @@ describe('DwnApi', () => {
 
         // Verify that no query results are returned.
         expect(nonPublishedResponse.status.code).toBe(200);
-        expect(nonPublishedResponse.protocols.length).toBe(0);
+        expect(nonPublishedResponse.protocols).toHaveLength(0);
       });
 
       it('returns a 401 with an invalid permissions grant', async () => {
@@ -904,7 +904,7 @@ describe('DwnApi', () => {
         expect(response.status.code).toBe(401);
         expect(response.status.detail).toContain('GrantAuthorizationGrantMissing');
         expect(response.protocols).toBeDefined();
-        expect(response.protocols.length).toBe(0);
+        expect(response.protocols).toHaveLength(0);
       });
     });
   });
@@ -1194,7 +1194,7 @@ describe('DwnApi', () => {
 
         expect(queryResult.status.code).toBe(200);
         expect(queryResult.records).toBeDefined();
-        expect(queryResult.records.length).toBe(0);
+        expect(queryResult.records).toHaveLength(0);
       });
 
       it('has no effect if `store: true`', async () => {
@@ -1221,7 +1221,7 @@ describe('DwnApi', () => {
 
         expect(queryResult.status.code).toBe(200);
         expect(queryResult.records).toBeDefined();
-        expect(queryResult.records.length).toBe(1);
+        expect(queryResult.records).toHaveLength(1);
         expect(queryResult.records[0].id).toBe(createResult.record.id);
         expect(await queryResult.records[0].data.text()).toBe(dataString);
       });
@@ -1540,7 +1540,7 @@ describe('DwnApi', () => {
 
         expect(result.status.code).toBe(200);
         expect(result.records).toBeDefined();
-        expect(result.records.length).toBe(1);
+        expect(result.records).toHaveLength(1);
         expect(result.records[0].id).toBe(writeResult.record.id);
       });
 
@@ -1571,7 +1571,7 @@ describe('DwnApi', () => {
 
         expect(results.status.code).toBe(200);
         expect(results.records).toBeDefined();
-        expect(results.records.length).toBe(2);
+        expect(results.records).toHaveLength(2);
         expect(results.cursor).toBeDefined();
 
         const additionalResults = await dwnAlice.records.query({
@@ -1585,7 +1585,7 @@ describe('DwnApi', () => {
         });
         expect(additionalResults.status.code).toBe(200);
         expect(additionalResults.records).toBeDefined();
-        expect(additionalResults.records.length).toBe(1);
+        expect(additionalResults.records).toHaveLength(1);
         expect(additionalResults.cursor).toBeUndefined();
       });
 
@@ -1629,7 +1629,7 @@ describe('DwnApi', () => {
         });
         expect(createdAscResults.status.code).toBe(200);
         expect(createdAscResults.records).toBeDefined();
-        expect(createdAscResults.records.length).toBe(6);
+        expect(createdAscResults.records).toHaveLength(6);
         expect(createdAscResults.records.map(r => r.id)).toEqual(items);
 
         // query in descending order by the dateCreated field
@@ -1644,7 +1644,7 @@ describe('DwnApi', () => {
         });
         expect(createdDescResults.status.code).toBe(200);
         expect(createdDescResults.records).toBeDefined();
-        expect(createdDescResults.records.length).toBe(6);
+        expect(createdDescResults.records).toHaveLength(6);
         expect(createdDescResults.records.map(r => r.id)).toEqual([...items].reverse());
 
         // query in ascending order by the datePublished field, this will only return published records
@@ -1659,7 +1659,7 @@ describe('DwnApi', () => {
         });
         expect(publishedAscResults.status.code).toBe(200);
         expect(publishedAscResults.records).toBeDefined();
-        expect(publishedAscResults.records.length).toBe(3);
+        expect(publishedAscResults.records).toHaveLength(3);
         expect(publishedAscResults.records.map(r => r.id)).toEqual(publishedItems);
 
         // query in desscending order by the datePublished field, this will only return published records
@@ -1674,7 +1674,7 @@ describe('DwnApi', () => {
         });
         expect(publishedDescResults.status.code).toBe(200);
         expect(publishedDescResults.records).toBeDefined();
-        expect(publishedDescResults.records.length).toBe(3);
+        expect(publishedDescResults.records).toHaveLength(3);
         expect(publishedDescResults.records.map(r => r.id)).toEqual([...publishedItems].reverse());
       });
 
@@ -1719,7 +1719,7 @@ describe('DwnApi', () => {
         // should return both records
         expect(result.status.code).toBe(200);
         expect(result.records).toBeDefined();
-        expect(result.records.length).toBe(2);
+        expect(result.records).toHaveLength(2);
 
 
         // Query the agent's local DWN for the record using the tags.
@@ -1738,7 +1738,7 @@ describe('DwnApi', () => {
         // should only return the record with the tag `foo` and value `bar`
         expect(fooBarResult.status.code).toBe(200);
         expect(fooBarResult.records).toBeDefined();
-        expect(fooBarResult.records.length).toBe(1);
+        expect(fooBarResult.records).toHaveLength(1);
         expect(fooBarResult.records[0].id).toBe(record.id);
         expect(fooBarResult.records[0].tags).toEqual({ foo: 'bar' });
       });
@@ -1772,7 +1772,7 @@ describe('DwnApi', () => {
         // Verify the query returns a result.
         expect(result.status.code).toBe(200);
         expect(result.records).toBeDefined();
-        expect(result.records.length).toBe(1);
+        expect(result.records).toHaveLength(1);
         expect(result.records[0].id).toBe(record.id);
       });
 
@@ -1787,7 +1787,7 @@ describe('DwnApi', () => {
         // Confirm that the record does not currently exist on Bob's DWN.
         expect(result.status.code).toBe(200);
         expect(result.records).toBeDefined();
-        expect(result.records.length).toBe(0);
+        expect(result.records).toHaveLength(0);
       });
 
       it('returns the correct author for records signed by another DID', async () => {
@@ -1890,7 +1890,7 @@ describe('DwnApi', () => {
         // should return both records
         expect(result.status.code).toBe(200);
         expect(result.records).toBeDefined();
-        expect(result.records.length).toBe(2);
+        expect(result.records).toHaveLength(2);
 
 
         // Query the agent's local DWN for the record using the tags.
@@ -1910,7 +1910,7 @@ describe('DwnApi', () => {
         // should only return the record with the tag `foo` and value `bar`
         expect(fooBarResult.status.code).toBe(200);
         expect(fooBarResult.records).toBeDefined();
-        expect(fooBarResult.records.length).toBe(1);
+        expect(fooBarResult.records).toHaveLength(1);
         expect(fooBarResult.records[0].id).toBe(record.id);
         expect(fooBarResult.records[0].tags).toEqual({ foo: 'bar' });
       });
@@ -2199,7 +2199,7 @@ describe('DwnApi', () => {
         const live = subscribeResult.liveQuery!;
 
         // initial records should contain write1
-        expect(live.records.length).toBe(1);
+        expect(live.records).toHaveLength(1);
         expect(live.records[0].id).toBe(write1.record.id);
 
         // track change events
@@ -2218,7 +2218,7 @@ describe('DwnApi', () => {
         expect(write2.status.code).toBe(202);
 
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(changes.length).toBe(1);
+          expect(changes).toHaveLength(1);
           expect(changes[0].type).toBe('create');
           expect(changes[0].record.id).toBe(write2.record.id);
         });
@@ -2229,7 +2229,7 @@ describe('DwnApi', () => {
 
         // wait for the delete event
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(changes.length).toBe(2);
+          expect(changes).toHaveLength(2);
           expect(changes[1].type).toBe('delete');
           expect(changes[1].record.id).toBe(write1.record.id);
         });
@@ -2310,7 +2310,7 @@ describe('DwnApi', () => {
           filter: { protocol: emailProtocolDefinition.protocol }
         });
         expect(live).toBeDefined();
-        expect(live!.records.length).toBe(1);
+        expect(live!.records).toHaveLength(1);
 
         const changes: RecordChange[] = [];
         live!.on('change', (change) => { changes.push(change); });
@@ -2320,7 +2320,7 @@ describe('DwnApi', () => {
         expect(updateResult.status.code).toBe(202);
 
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(changes.length).toBe(1);
+          expect(changes).toHaveLength(1);
           expect(changes[0].type).toBe('update');
           expect(changes[0].record.id).toBe(write1.record.id);
         });
@@ -2359,7 +2359,7 @@ describe('DwnApi', () => {
         expect(deleteResult.status.code).toBe(202);
 
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(changes.length).toBe(1);
+          expect(changes).toHaveLength(1);
           expect(changes[0].type).toBe('delete');
           expect(changes[0].record.id).toBe(write1.record.id);
         });
@@ -2397,7 +2397,7 @@ describe('DwnApi', () => {
         expect(writeResult.status.code).toBe(202);
 
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(created.length).toBe(1);
+          expect(created).toHaveLength(1);
           expect(created[0].id).toBe(writeResult.record.id);
         });
 
@@ -2406,7 +2406,7 @@ describe('DwnApi', () => {
         expect(updateResult.status.code).toBe(202);
 
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(updated.length).toBe(1);
+          expect(updated).toHaveLength(1);
           expect(updated[0].id).toBe(writeResult.record.id);
         });
 
@@ -2415,7 +2415,7 @@ describe('DwnApi', () => {
         expect(deleteResult.status.code).toBe(202);
 
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(deleted.length).toBe(1);
+          expect(deleted).toHaveLength(1);
           expect(deleted[0].id).toBe(writeResult.record.id);
         });
 
@@ -2448,7 +2448,7 @@ describe('DwnApi', () => {
         expect(write1.status.code).toBe(202);
 
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(changes.length).toBe(1);
+          expect(changes).toHaveLength(1);
         });
 
         // unsubscribe
@@ -2467,7 +2467,7 @@ describe('DwnApi', () => {
 
         // give it time to potentially arrive (it shouldn't)
         await new Promise((resolve) => setTimeout(resolve, 100));
-        expect(changes.length).toBe(1); // still only 1
+        expect(changes).toHaveLength(1); // still only 1
 
         await live!.close();
       });
@@ -2499,7 +2499,7 @@ describe('DwnApi', () => {
         expect(live).toBeDefined();
 
         // should have 2 initial records and a cursor for the next page
-        expect(live!.records.length).toBe(2);
+        expect(live!.records).toHaveLength(2);
         expect(live!.cursor).toBeDefined();
         expect(live!.cursor!.messageCid).toBeDefined();
         expect(live!.cursor!.value).toBeDefined();
@@ -2514,7 +2514,7 @@ describe('DwnApi', () => {
         expect(live2).toBeDefined();
 
         // should have 1 remaining record and no cursor (end of results)
-        expect(live2!.records.length).toBe(1);
+        expect(live2!.records).toHaveLength(1);
         expect(live2!.cursor).toBeUndefined();
 
         await live2!.close();
@@ -2566,7 +2566,7 @@ describe('DwnApi', () => {
 
         // wait for the create event
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(changes.length).toBe(1);
+          expect(changes).toHaveLength(1);
           expect(changes[0].type).toBe('create');
           expect(changes[0].record.id).toBe(writeResult.record.id);
         });
@@ -2579,7 +2579,7 @@ describe('DwnApi', () => {
 
         // wait for the delete event
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(changes.length).toBe(2);
+          expect(changes).toHaveLength(2);
           expect(changes[1].type).toBe('delete');
           expect(changes[1].record.id).toBe(writeResult.record.id);
         });
@@ -2598,7 +2598,7 @@ describe('DwnApi', () => {
 
         // wait for the create event
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(changes.length).toBe(3);
+          expect(changes).toHaveLength(3);
           expect(changes[2].type).toBe('create');
           expect(changes[2].record.id).toBe(writeResult2.record.id);
         });
@@ -2674,7 +2674,7 @@ describe('DwnApi', () => {
 
         // poll for the note records to be received
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(notes.length).toBe(3);
+          expect(notes).toHaveLength(3);
         });
 
         // spy on sendDwnRequest to ensure that the protocolRole is used to read the data of the notes
@@ -2789,7 +2789,7 @@ describe('DwnApi', () => {
       // expect to have the 1 grant created for deviceX
       expect(fetchedGrants.status.code).toBe(200);
       expect(fetchedGrants.records).toBeDefined();
-      expect(fetchedGrants.records.length).toBe(1);
+      expect(fetchedGrants.records).toHaveLength(1);
       expect(fetchedGrants.records[0].id).toBe(deviceXGrant.rawMessage.recordId);
     });
 
@@ -2825,7 +2825,7 @@ describe('DwnApi', () => {
       // expect to have no grants
       expect(fetchedGrants.status.code).toBe(200);
       expect(fetchedGrants.records).toBeDefined();
-      expect(fetchedGrants.records.length).toBe(0);
+      expect(fetchedGrants.records).toHaveLength(0);
 
       // store the grant
       const processGrantReply = await deviceXGrant.store();
@@ -2842,7 +2842,7 @@ describe('DwnApi', () => {
       // expect to have the 1 grant created for deviceX
       expect(fetchedGrants.status.code).toBe(200);
       expect(fetchedGrants.records).toBeDefined();
-      expect(fetchedGrants.records.length).toBe(1);
+      expect(fetchedGrants.records).toHaveLength(1);
       expect(fetchedGrants.records[0].id).toBe(deviceXGrant.rawMessage.recordId);
     });
   });
@@ -2919,7 +2919,7 @@ describe('DwnApi', () => {
       // expect to have the 1 request created
       expect(fetchedRequests.status.code).toBe(200);
       expect(fetchedRequests.records).toBeDefined();
-      expect(fetchedRequests.records.length).toBe(1);
+      expect(fetchedRequests.records).toHaveLength(1);
       expect(fetchedRequests.records[0].id).toBe(deviceXRequest.rawMessage.recordId);
     });
 
@@ -2946,7 +2946,7 @@ describe('DwnApi', () => {
       // expect to have no requests
       expect(fetchedRequests.status.code).toBe(200);
       expect(fetchedRequests.records).toBeDefined();
-      expect(fetchedRequests.records.length).toBe(0);
+      expect(fetchedRequests.records).toHaveLength(0);
 
       // store the request
       const storeDeviceXRequest = await deviceXRequest.store();
@@ -2963,7 +2963,7 @@ describe('DwnApi', () => {
       // expect to have the 1 request created for deviceX
       expect(fetchedRequests.status.code).toBe(200);
       expect(fetchedRequests.records).toBeDefined();
-      expect(fetchedRequests.records.length).toBe(1);
+      expect(fetchedRequests.records).toHaveLength(1);
       expect(fetchedRequests.records[0].id).toBe(deviceXRequest.rawMessage.recordId);
     });
   });
@@ -2987,7 +2987,7 @@ describe('DwnApi', () => {
 
       // Query for requests
       const deviceXRequests = await dwnAlice.permissions.queryRequests();
-      expect(deviceXRequests.length).toBe(1);
+      expect(deviceXRequests).toHaveLength(1);
 
       // confirm alice is the connected DID
       expect(dwnAlice['connectedDid']).toBe(aliceDid.uri);
@@ -3023,7 +3023,7 @@ describe('DwnApi', () => {
 
       // Query for requests
       const deviceXRequests = await dwnAlice.permissions.queryRequests();
-      expect(deviceXRequests.length).toBe(1);
+      expect(deviceXRequests).toHaveLength(1);
 
       // confirm alice is the connected DID, and aliceDeviceX is the delegate DID
       expect(dwnAlice['connectedDid']).toBe(aliceDid.uri);
@@ -3047,7 +3047,7 @@ describe('DwnApi', () => {
 
       // query for the requests
       const fetchedRequests = await dwnBob.permissions.queryRequests();
-      expect(fetchedRequests.length).toBe(1);
+      expect(fetchedRequests).toHaveLength(1);
       expect(fetchedRequests[0].id).toBe(bobRequest.id);
     });
 
@@ -3069,7 +3069,7 @@ describe('DwnApi', () => {
       const fetchedRequests = await dwnAlice.permissions.queryRequests({
         from: aliceDid.uri
       });
-      expect(fetchedRequests.length).toBe(1);
+      expect(fetchedRequests).toHaveLength(1);
       expect(fetchedRequests[0].id).toBe(bobRequest.id);
     });
 
@@ -3097,14 +3097,14 @@ describe('DwnApi', () => {
       const fetchedRequests = await dwnBob.permissions.queryRequests({
         protocol: 'http://example.com/protocol-1'
       });
-      expect(fetchedRequests.length).toBe(1);
+      expect(fetchedRequests).toHaveLength(1);
       expect(fetchedRequests[0].id).toBe(bobRequest1.id);
 
       // query for the requests with protocol-2
       const fetchedRequests2 = await dwnBob.permissions.queryRequests({
         protocol: 'http://example.com/protocol-2'
       });
-      expect(fetchedRequests2.length).toBe(1);
+      expect(fetchedRequests2).toHaveLength(1);
       expect(fetchedRequests2[0].id).toBe(bobRequest2.id);
     });
   });
@@ -3118,7 +3118,7 @@ describe('DwnApi', () => {
 
       // Query for grants
       const deviceXGrants = await dwnAlice.permissions.queryGrants();
-      expect(deviceXGrants.length).toBe(0);
+      expect(deviceXGrants).toHaveLength(0);
 
       // confirm alice is the connected DID
       expect(dwnAlice['connectedDid']).toBe(aliceDid.uri);
@@ -3144,7 +3144,7 @@ describe('DwnApi', () => {
 
       // Query for grants
       const deviceXGrants = await dwnAlice.permissions.queryGrants();
-      expect(deviceXGrants.length).toBe(0);
+      expect(deviceXGrants).toHaveLength(0);
 
       // confirm alice is the connected DID, and aliceDeviceX is the delegate DID
       expect(dwnAlice['connectedDid']).toBe(aliceDid.uri);
@@ -3170,7 +3170,7 @@ describe('DwnApi', () => {
 
       // query for the grants
       const fetchedGrants = await dwnAlice.permissions.queryGrants();
-      expect(fetchedGrants.length).toBe(1);
+      expect(fetchedGrants).toHaveLength(1);
       expect(fetchedGrants[0].id).toBe(bobGrant.id);
     });
 
@@ -3191,7 +3191,7 @@ describe('DwnApi', () => {
         from     : aliceDid.uri,
         protocol : protocolUri
       });
-      expect(fetchedGrants.length).toBe(0);
+      expect(fetchedGrants).toHaveLength(0);
 
       // send the grant to alice's remote DWN
       const sentToAlice = await bobGrant.send(aliceDid.uri);
@@ -3202,7 +3202,7 @@ describe('DwnApi', () => {
         from     : aliceDid.uri,
         protocol : protocolUri
       });
-      expect(fetchedGrants.length).toBe(1);
+      expect(fetchedGrants).toHaveLength(1);
       expect(fetchedGrants[0].id).toBe(bobGrant.id);
     });
 
@@ -3234,14 +3234,14 @@ describe('DwnApi', () => {
       let fetchedGrants = await dwnAlice.permissions.queryGrants({
         protocol: protocolUri + '-1' // protocol 1
       });
-      expect(fetchedGrants.length).toBe(1);
+      expect(fetchedGrants).toHaveLength(1);
       expect(fetchedGrants[0].id).toBe(bobGrant1.id);
 
       // query for the grants with protocol-2
       fetchedGrants = await dwnAlice.permissions.queryGrants({
         protocol: protocolUri + '-2' // protocol 2
       });
-      expect(fetchedGrants.length).toBe(1);
+      expect(fetchedGrants).toHaveLength(1);
       expect(fetchedGrants[0].id).toBe(bobGrant2.id);
     });
 
@@ -3280,14 +3280,14 @@ describe('DwnApi', () => {
       let fetchedGrants = await dwnAlice.permissions.queryGrants({
         grantee: bobDid.uri
       });
-      expect(fetchedGrants.length).toBe(1);
+      expect(fetchedGrants).toHaveLength(1);
       expect(fetchedGrants[0].id).toBe(bobGrant.id);
 
       // query for the grants with carol as the grantee
       fetchedGrants = await dwnAlice.permissions.queryGrants({
         grantee: carolDid.uri
       });
-      expect(fetchedGrants.length).toBe(1);
+      expect(fetchedGrants).toHaveLength(1);
       expect(fetchedGrants[0].id).toBe(carolGrant.id);
     });
 
@@ -3347,14 +3347,14 @@ describe('DwnApi', () => {
       const fetchedGrantsAlice = await dwnBob.permissions.queryGrants({
         grantor: aliceDid.uri
       });
-      expect(fetchedGrantsAlice.length).toBe(1);
+      expect(fetchedGrantsAlice).toHaveLength(1);
       expect(fetchedGrantsAlice[0].id).toBe(grantFromAlice.id);
 
       // query for the grants with carol as the grantor
       const fetchedGrantsCarol = await dwnBob.permissions.queryGrants({
         grantor: carolDid.uri
       });
-      expect(fetchedGrantsCarol.length).toBe(1);
+      expect(fetchedGrantsCarol).toHaveLength(1);
       expect(fetchedGrantsCarol[0].id).toBe(grantFromCarol.id);
     });
 

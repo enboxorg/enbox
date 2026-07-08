@@ -64,7 +64,7 @@ describe('Records utility functions — fuzz', () => {
               expect(key.startsWith('tag.')).toBe(true);
             }
             // Same number of keys
-            expect(Object.keys(result).length).toBe(Object.keys(tags).length);
+            expect(Object.keys(result)).toHaveLength(Object.keys(tags).length);
           }
         ),
         { numRuns }
@@ -109,7 +109,7 @@ describe('Records utility functions — fuzz', () => {
         const result = Records.convertDateSort(dateSort);
         // Exactly one sort property should be set
         const keys = Object.keys(result);
-        expect(keys.length).toBe(1);
+        expect(keys).toHaveLength(1);
         const value = Object.values(result)[0];
         // SortDirection is 1 (ascending) or -1 (descending)
         expect(value === 1 || value === -1).toBe(true);

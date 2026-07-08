@@ -265,7 +265,7 @@ describe('TypedProtocol API', () => {
           filter: { protocol: TodoProtocol.definition.protocol },
         });
         expect(status.code).toBe(200);
-        expect(protocols.length).toBe(1);
+        expect(protocols).toHaveLength(1);
       });
 
       it('should skip re-configuration when the definition is unchanged', async () => {
@@ -445,7 +445,7 @@ describe('TypedProtocol API', () => {
         const { records } = await squashed.records.query('doc/snapshot', {
           filter: { contextId: doc.contextId },
         });
-        expect(records.length).toBe(1);
+        expect(records).toHaveLength(1);
         expect(records[0].id).toBe(squashRec.id);
       });
 
@@ -485,7 +485,7 @@ describe('TypedProtocol API', () => {
 
         expect(status.code).toBe(200);
         expect(records).toBeDefined();
-        expect(records.length).toBe(2);
+        expect(records).toHaveLength(2);
         expect(records[0]).toBeInstanceOf(TypedRecord);
         expect(records[1]).toBeInstanceOf(TypedRecord);
       });
@@ -512,7 +512,7 @@ describe('TypedProtocol API', () => {
         });
 
         expect(records).toBeDefined();
-        expect(records.length).toBe(2);
+        expect(records).toHaveLength(2);
         expect(records[0]).toBeInstanceOf(TypedRecord);
       });
 
@@ -560,7 +560,7 @@ describe('TypedProtocol API', () => {
 
         // Verify it's gone
         const { records } = await typed.records.query('list');
-        expect(records.length).toBe(0);
+        expect(records).toHaveLength(0);
       });
     });
 
@@ -602,7 +602,7 @@ describe('TypedProtocol API', () => {
         );
 
         expect(queryStatus.code).toBe(200);
-        expect(records.length).toBe(1);
+        expect(records).toHaveLength(1);
         expect(records[0].id).toBe(attachmentRecord.id);
         expect(records[0]).toBeInstanceOf(TypedRecord);
       });
@@ -747,7 +747,7 @@ describe('TypedProtocol API', () => {
         const { protocols } = await dwnAlice.protocols.query({
           filter: { protocol: TodoProtocol.definition.protocol },
         });
-        expect(protocols.length).toBe(1);
+        expect(protocols).toHaveLength(1);
       });
     });
 

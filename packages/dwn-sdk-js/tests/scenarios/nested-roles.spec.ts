@@ -158,7 +158,7 @@ export function testNestedRoleScenarios(): void {
       });
       const bobQueryReply = await dwn.processMessage(alice.did, bobQuery.message);
       expect(bobQueryReply.status.code).toBe(200);
-      expect(bobQueryReply.entries?.length).toBe(2);
+      expect(bobQueryReply.entries).toHaveLength(2);
 
       // 5. Bob as the creator/author of the channels can  add participants in the gated-channels
       // 5a. Bob can add himself and Carol as participants in the gated-channel 1

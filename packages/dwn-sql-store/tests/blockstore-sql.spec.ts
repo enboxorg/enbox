@@ -196,7 +196,7 @@ describe('BlockstoreSql', () => {
         putCids.push(cid);
       }
 
-      expect(putCids.length).toBe(3);
+      expect(putCids).toHaveLength(3);
       expect(putCids[0].toString()).toBe(pairs[0].cid.toString());
       expect(putCids[1].toString()).toBe(pairs[1].cid.toString());
       expect(putCids[2].toString()).toBe(pairs[2].cid.toString());
@@ -228,7 +228,7 @@ describe('BlockstoreSql', () => {
         results.push(pair);
       }
 
-      expect(results.length).toBe(2);
+      expect(results).toHaveLength(2);
       expect(results[0].cid.toString()).toBe(cid1.toString());
       expect(await collectBytes(results[0].bytes)).toEqual(new Uint8Array([20]));
       expect(results[1].cid.toString()).toBe(cid2.toString());
@@ -250,7 +250,7 @@ describe('BlockstoreSql', () => {
         results.push(pair);
       }
 
-      expect(results.length).toBe(2);
+      expect(results).toHaveLength(2);
 
       // Check that both CIDs are present (order may vary).
       const cidStrings = results.map((p) => p.cid.toString()).sort();
@@ -264,7 +264,7 @@ describe('BlockstoreSql', () => {
         results.push(pair);
       }
 
-      expect(results.length).toBe(0);
+      expect(results).toHaveLength(0);
     });
   });
 
@@ -287,7 +287,7 @@ describe('BlockstoreSql', () => {
         deletedCids.push(cid);
       }
 
-      expect(deletedCids.length).toBe(2);
+      expect(deletedCids).toHaveLength(2);
       expect(await blockstore.has(cid1)).toBe(false);
       expect(await blockstore.has(cid2)).toBe(false);
     });

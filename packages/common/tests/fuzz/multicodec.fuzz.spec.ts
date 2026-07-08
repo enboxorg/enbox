@@ -65,7 +65,7 @@ describe('Multicodec — fuzz', () => {
             const prefixed = Multicodec.addPrefix({ code: codec.code, data });
             // varint encoding: codes < 128 use 1 byte, codes < 16384 use 2 bytes
             const varintLength = codec.code < 128 ? 1 : codec.code < 16384 ? 2 : 3;
-            expect(prefixed.length).toBe(data.length + varintLength);
+            expect(prefixed).toHaveLength(data.length + varintLength);
           }
         ),
         { numRuns }

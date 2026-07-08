@@ -79,7 +79,7 @@ describe('BlockstoreMock', () => {
     const cid = CID.parse('bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi');
     const result = await collectBytes(blockstore.get(cid));
     expect(result).toBeInstanceOf(Uint8Array);
-    expect(result.length).toBe(0);
+    expect(result).toHaveLength(0);
   });
 
   it('should implement has method', async () => {

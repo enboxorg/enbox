@@ -56,7 +56,7 @@ describe('AuditLog', () => {
       });
 
       const { events } = await auditLog.query({ limit: 1 });
-      expect(events.length).toBe(1);
+      expect(events).toHaveLength(1);
       expect(events[0].actor).toBe('admin');
       expect(events[0].action).toBe('tenant.suspend');
       expect(events[0].target).toBe('did:test:target1');
@@ -72,7 +72,7 @@ describe('AuditLog', () => {
       });
 
       const { events } = await auditLog.query({ action: 'server.start', limit: 1 });
-      expect(events.length).toBe(1);
+      expect(events).toHaveLength(1);
       expect(events[0].actor).toBe('system');
       expect(events[0].action).toBe('server.start');
       expect(events[0].target).toBeUndefined();
@@ -172,11 +172,11 @@ describe('AuditLog', () => {
 
     it('should support cursor-based pagination', async () => {
       const page1 = await auditLog.query({ limit: 3 });
-      expect(page1.events.length).toBe(3);
+      expect(page1.events).toHaveLength(3);
       expect(page1.cursor).toBeDefined();
 
       const page2 = await auditLog.query({ limit: 3, cursor: page1.cursor });
-      expect(page2.events.length).toBe(3);
+      expect(page2.events).toHaveLength(3);
 
       // No overlap: page2 IDs should all be less than page1's last ID.
       const page1Ids = page1.events.map((e): number => e.id);

@@ -223,7 +223,7 @@ export function testOwnerDelegatedGrant(): void {
       });
       const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
       expect(recordsQueryReply.status.code).toBe(200);
-      expect(recordsQueryReply.entries?.length).toBe(1);
+      expect(recordsQueryReply.entries).toHaveLength(1);
 
       const fetchedEntry = recordsQueryReply.entries![0];
       expect(fetchedEntry.encodedData).toBe(Encoder.bytesToBase64Url(bobRecordsWriteBytes));
@@ -300,7 +300,7 @@ export function testOwnerDelegatedGrant(): void {
       });
       const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
       expect(recordsQueryReply.status.code).toBe(200);
-      expect(recordsQueryReply.entries?.length).toBe(0);
+      expect(recordsQueryReply.entries).toHaveLength(0);
     });
 
     it('should fail if owner-delegated grant invoked for write has a mismatching interface method or protocol scope', async () => {
@@ -403,7 +403,7 @@ export function testOwnerDelegatedGrant(): void {
       });
       const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
       expect(recordsQueryReply.status.code).toBe(200);
-      expect(recordsQueryReply.entries?.length).toBe(0);
+      expect(recordsQueryReply.entries).toHaveLength(0);
     });
 
     it('should fail RecordsWrite if presented with an owner-delegated grant with invalid grantor signature', async () => {
@@ -474,7 +474,7 @@ export function testOwnerDelegatedGrant(): void {
       });
       const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
       expect(recordsQueryReply.status.code).toBe(200);
-      expect(recordsQueryReply.entries?.length).toBe(0);
+      expect(recordsQueryReply.entries).toHaveLength(0);
     });
 
     it('should fail RecordsWrite if grant ID in owner signature payload and CID of owner-delegated grant are mismatching', async () => {
@@ -554,7 +554,7 @@ export function testOwnerDelegatedGrant(): void {
       });
       const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
       expect(recordsQueryReply.status.code).toBe(200);
-      expect(recordsQueryReply.entries?.length).toBe(0);
+      expect(recordsQueryReply.entries).toHaveLength(0);
     });
 
     it('should fail RecordsWrite if owner-delegated grant is revoked', async () => {
@@ -639,7 +639,7 @@ export function testOwnerDelegatedGrant(): void {
       });
       const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
       expect(recordsQueryReply.status.code).toBe(200);
-      expect(recordsQueryReply.entries?.length).toBe(0);
+      expect(recordsQueryReply.entries).toHaveLength(0);
     });
 
     it('should fail RecordsWrite if owner-delegated grant is expired', async () => {
@@ -707,7 +707,7 @@ export function testOwnerDelegatedGrant(): void {
       });
       const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
       expect(recordsQueryReply.status.code).toBe(200);
-      expect(recordsQueryReply.entries?.length).toBe(0);
+      expect(recordsQueryReply.entries).toHaveLength(0);
     });
   });
 }

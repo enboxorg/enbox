@@ -142,7 +142,7 @@ describe('PermissionGrant', () => {
         from     : aliceDid.uri,
         protocol : protocolUri,
       });
-      expect(fetchedRemote.length).toBe(0);
+      expect(fetchedRemote).toHaveLength(0);
 
       // send the grant
       const sent = await grant.send();
@@ -153,7 +153,7 @@ describe('PermissionGrant', () => {
         from     : aliceDid.uri,
         protocol : protocolUri,
       });
-      expect(fetchedRemote.length).toBe(1);
+      expect(fetchedRemote).toHaveLength(1);
     });
 
     it('sends to a remote target', async () => {
@@ -173,14 +173,14 @@ describe('PermissionGrant', () => {
         from     : aliceDid.uri,
         protocol : protocolUri,
       });
-      expect(fetchedFromAlice.length).toBe(1);
+      expect(fetchedFromAlice).toHaveLength(1);
 
       // fetch from bob's remote. should have no grants
       let fetchedRemote = await bobDwn.permissions.queryGrants({
         from     : bobDid.uri,
         protocol : protocolUri,
       });
-      expect(fetchedRemote.length).toBe(0);
+      expect(fetchedRemote).toHaveLength(0);
 
       // fetchedGrant
       const fetchedGrant = fetchedFromAlice[0];
@@ -198,7 +198,7 @@ describe('PermissionGrant', () => {
         from     : bobDid.uri,
         protocol : protocolUri,
       });
-      expect(fetchedRemote.length).toBe(1);
+      expect(fetchedRemote).toHaveLength(1);
       expect(fetchedRemote[0].toJSON()).toEqual(grant.toJSON());
     });
   });
@@ -217,7 +217,7 @@ describe('PermissionGrant', () => {
       let fetchedGrants = await aliceDwn.permissions.queryGrants({
         protocol: protocolUri,
       });
-      expect(fetchedGrants.length).toBe(0);
+      expect(fetchedGrants).toHaveLength(0);
 
       // store the grant
       const stored = await grant.store();
@@ -227,7 +227,7 @@ describe('PermissionGrant', () => {
       fetchedGrants = await aliceDwn.permissions.queryGrants({
         protocol: protocolUri,
       });
-      expect(fetchedGrants.length).toBe(1);
+      expect(fetchedGrants).toHaveLength(1);
       expect(fetchedGrants[0].toJSON()).toEqual(grant.toJSON());
     });
 
@@ -247,7 +247,7 @@ describe('PermissionGrant', () => {
         from     : aliceDid.uri,
         protocol : protocolUri,
       });
-      expect(fetchedFromAlice.length).toBe(1);
+      expect(fetchedFromAlice).toHaveLength(1);
 
       // attempt to store it without importing, should fail
       const fetchedGrant = fetchedFromAlice[0];
@@ -258,7 +258,7 @@ describe('PermissionGrant', () => {
       let fetchedLocal = await bobDwn.permissions.queryGrants({
         protocol: protocolUri,
       });
-      expect(fetchedLocal.length).toBe(0);
+      expect(fetchedLocal).toHaveLength(0);
 
       // store the grant and import it
       stored = await fetchedGrant.store(true);
@@ -268,7 +268,7 @@ describe('PermissionGrant', () => {
       fetchedLocal = await bobDwn.permissions.queryGrants({
         protocol: protocolUri,
       });
-      expect(fetchedLocal.length).toBe(1);
+      expect(fetchedLocal).toHaveLength(1);
       expect(fetchedLocal[0].toJSON()).toEqual(fetchedGrant.toJSON());
     });
   });
@@ -290,7 +290,7 @@ describe('PermissionGrant', () => {
         from     : aliceDid.uri,
         protocol : protocolUri,
       });
-      expect(fetchedFromAlice.length).toBe(1);
+      expect(fetchedFromAlice).toHaveLength(1);
       const fetchedGrant = fetchedFromAlice[0];
 
       // confirm the grant does not yet exist in bob's remote
@@ -298,7 +298,7 @@ describe('PermissionGrant', () => {
         from     : bobDid.uri,
         protocol : protocolUri,
       });
-      expect(fetchedRemote.length).toBe(0);
+      expect(fetchedRemote).toHaveLength(0);
 
       // attempt to send it to bob's remote without importing it first
       let sentToBob = await fetchedGrant.send(bobDid.uri);
@@ -312,7 +312,7 @@ describe('PermissionGrant', () => {
       const fetchedLocal = await bobDwn.permissions.queryGrants({
         protocol: protocolUri,
       });
-      expect(fetchedLocal.length).toBe(0);
+      expect(fetchedLocal).toHaveLength(0);
 
       // send the grant to bob's remote
       sentToBob = await fetchedGrant.send(bobDid.uri);
@@ -323,7 +323,7 @@ describe('PermissionGrant', () => {
         from     : bobDid.uri,
         protocol : protocolUri,
       });
-      expect(fetchedRemote.length).toBe(1);
+      expect(fetchedRemote).toHaveLength(1);
       expect(fetchedRemote[0].toJSON()).toEqual(fetchedGrant.toJSON());
     });
 
@@ -343,7 +343,7 @@ describe('PermissionGrant', () => {
         from     : aliceDid.uri,
         protocol : protocolUri,
       });
-      expect(fetchedFromAlice.length).toBe(1);
+      expect(fetchedFromAlice).toHaveLength(1);
       const fetchedGrant = fetchedFromAlice[0];
 
       // confirm the grant does not yet exist in bob's remote
@@ -351,7 +351,7 @@ describe('PermissionGrant', () => {
         from     : bobDid.uri,
         protocol : protocolUri,
       });
-      expect(fetchedRemote.length).toBe(0);
+      expect(fetchedRemote).toHaveLength(0);
 
       // import the grant and store it
       const imported = await fetchedGrant.import(true);
@@ -361,7 +361,7 @@ describe('PermissionGrant', () => {
       const fetchedLocal = await bobDwn.permissions.queryGrants({
         protocol: protocolUri,
       });
-      expect(fetchedLocal.length).toBe(1);
+      expect(fetchedLocal).toHaveLength(1);
       expect(fetchedLocal[0].toJSON()).toEqual(fetchedGrant.toJSON());
     });
   });

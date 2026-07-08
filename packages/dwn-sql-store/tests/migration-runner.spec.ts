@@ -116,7 +116,7 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
           .orderBy('name', 'asc')
           .execute();
 
-        expect(rows.length).toBe(4);
+        expect(rows).toHaveLength(4);
         expect((rows[0] as any).name).toBe('001-initial-schema');
         expect((rows[1] as any).name).toBe('002-content-addressed-datastore');
         expect((rows[2] as any).name).toBe('003-add-squash-column');
@@ -129,10 +129,10 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
 
       it('should be idempotent — second run returns no new migrations', async () => {
         const firstRun = await runDwnStoreMigrations(db, dialect);
-        expect(firstRun.length).toBe(4);
+        expect(firstRun).toHaveLength(4);
 
         const secondRun = await runDwnStoreMigrations(db, dialect);
-        expect(secondRun.length).toBe(0);
+        expect(secondRun).toHaveLength(0);
       });
 
       it('should apply only pending migrations when some are already applied', async () => {
@@ -186,7 +186,7 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
           .orderBy('dataCid', 'asc')
           .execute();
 
-        expect(refs.length).toBe(2);
+        expect(refs).toHaveLength(2);
         expect(refs[0].tenant).toBe('did:example:alice');
         expect(refs[0].recordId).toBe('record-1');
         expect(refs[0].dataCid).toBe('bafkreiabc');
@@ -204,7 +204,7 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
           .orderBy('rootDataCid', 'asc')
           .execute();
 
-        expect(blocks.length).toBe(2);
+        expect(blocks).toHaveLength(2);
         expect(blocks[0].rootDataCid).toBe('bafkreiabc');
         expect(blocks[0].blockCid).toBe('bafkreiabc');
         expect(Buffer.from(blocks[0].data).toString()).toBe('hello world');
@@ -253,7 +253,7 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
           .selectAll()
           .execute();
 
-        expect(refs.length).toBe(2);
+        expect(refs).toHaveLength(2);
 
         const blocks = await db
           .selectFrom('dataBlocks')
@@ -261,7 +261,7 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
           .execute();
 
         // Only one block should exist despite two refs (dedup via INSERT IGNORE/ON CONFLICT)
-        expect(blocks.length).toBe(1);
+        expect(blocks).toHaveLength(1);
         expect(blocks[0].rootDataCid).toBe('bafkreishared');
       });
 
@@ -305,7 +305,7 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
           .selectAll()
           .execute();
 
-        expect(rows.length).toBe(4); // only the 4 real migrations
+        expect(rows).toHaveLength(4); // only the 4 real migrations
         const names = rows.map((r: any) => r.name);
         expect(names).not.toContain('999-failing-migration');
       });
@@ -341,7 +341,7 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
           .selectAll()
           .execute();
 
-        expect(rows.length).toBe(4);
+        expect(rows).toHaveLength(4);
       });
 
       // ─── Empty migrations list test ─────────────────────────────────

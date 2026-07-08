@@ -159,7 +159,7 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
     expect(snapshots.a.some(entry => entry.recordId === reply.message.recordId)).toBe(false);
     expect(snapshots.a.find(entry => entry.recordId === aNote.message.recordId)?.data).toBe('device-a note after update');
     const syncedLargeNote = snapshots.a.find(entry => entry.recordId === largeNote.message.recordId);
-    expect(syncedLargeNote?.data.length).toBe(largeNoteData.length);
+    expect(syncedLargeNote?.data).toHaveLength(largeNoteData.length);
     expect(syncedLargeNote?.data === largeNoteData).toBe(true);
     expect(snapshots.a.find(entry => entry.recordId === bookmark.message.recordId)?.data).toBe('device-b bookmark after config churn');
     await expectRecordLimitOccupantsConverged('profile', 1);

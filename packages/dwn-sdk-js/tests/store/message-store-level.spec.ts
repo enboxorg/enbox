@@ -300,7 +300,7 @@ describe('MessageStoreLevel Test Suite', () => {
       expect(events.map((entry) => entry.seq)).toEqual(['1', '2']);
       expect(events[0].indexes.isLatestBaseState).toBe(false);
       expect((await messageStore.get(alice.did, first.messageCid))!.encodedData).toBe('c29tZSBkYXRh');
-      expect(wakes.length).toBe(wakeCountBefore);
+      expect(wakes).toHaveLength(wakeCountBefore);
       expect((await messageStore.logBounds(alice.did))!.latest.position).toBe('2');
     });
 
@@ -344,7 +344,7 @@ describe('MessageStoreLevel Test Suite', () => {
       expect(events.map((entry) => entry.seq)).toEqual(['1', '2']);
       expect(events[0].indexes.isLatestBaseState).toBe(false);
       expect((await messageStore.get(alice.did, first.messageCid))!.encodedData).toBeUndefined();
-      expect(wakes.length).toBe(wakeCountBefore);
+      expect(wakes).toHaveLength(wakeCountBefore);
       expect((await messageStore.logBounds(alice.did))!.latest.position).toBe('2');
     });
 

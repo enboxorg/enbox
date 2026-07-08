@@ -863,7 +863,7 @@ export function testProtocolComposition(): void {
         });
         const bobQueryReply = await dwn.processMessage(alice.did, bobQuery.message);
         expect(bobQueryReply.status.code).toBe(200);
-        expect(bobQueryReply.entries?.length).toBe(2);
+        expect(bobQueryReply.entries).toHaveLength(2);
       });
 
       it('should allow a cross-protocol role holder to co-delete records in the composing protocol', async () => {
@@ -2020,7 +2020,7 @@ export function testProtocolComposition(): void {
           filter : { protocol: commentsProtocol.protocol },
         });
         const commentsQueryReply = await dwn.processMessage(alice.did, commentsQuery.message);
-        expect(commentsQueryReply.entries!.length).toBe(1);
+        expect(commentsQueryReply.entries!).toHaveLength(1);
         expect(commentsQueryReply.entries![0].recordId).toBe(commentWrite.message.recordId);
 
         // Querying ratings returns only ratings
@@ -2029,7 +2029,7 @@ export function testProtocolComposition(): void {
           filter : { protocol: ratingsProtocol.protocol },
         });
         const ratingsQueryReply = await dwn.processMessage(alice.did, ratingsQuery.message);
-        expect(ratingsQueryReply.entries!.length).toBe(1);
+        expect(ratingsQueryReply.entries!).toHaveLength(1);
         expect(ratingsQueryReply.entries![0].recordId).toBe(ratingWrite.message.recordId);
       });
     });

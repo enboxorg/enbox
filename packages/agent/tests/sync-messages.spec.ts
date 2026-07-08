@@ -1051,7 +1051,7 @@ describe('sync-messages', () => {
           dependencyCalls++;
           expect(data).toBeInstanceOf(ReadableStream);
           const bytes = await readStreamBytes(data!);
-          expect(bytes.length).toBe(dataBytes.length);
+          expect(bytes).toHaveLength(dataBytes.length);
           expect(bytes[0]).toBe(1);
           expect(bytes[bytes.length - 1]).toBe(2);
           return dependencyCalls === 1

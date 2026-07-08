@@ -1309,7 +1309,7 @@ describe('enbox connect', () => {
       const configureSends = rpcSendRequestSpy.getCalls().filter(
         (c) => (c.args[0]?.message as any)?.descriptor?.method === 'Configure',
       );
-      expect(configureSends.length).toBe(endpointUrls.length);
+      expect(configureSends).toHaveLength(endpointUrls.length);
       expect(new Set(configureSends.map((c) => c.args[0].dwnUrl))).toEqual(new Set(endpointUrls));
 
       // Every per-request send carries the connect-flow per-request abort
@@ -1513,7 +1513,7 @@ describe('enbox connect', () => {
       const configureSends = rpcSendRequestSpy.getCalls().filter(
         (c) => (c.args[0]?.message as any)?.descriptor?.method === 'Configure',
       );
-      expect(configureSends.length).toBe(2);
+      expect(configureSends).toHaveLength(2);
     });
 
     it('should throw if protocol could not be fetched at all', async () => {
@@ -2024,7 +2024,7 @@ describe('enbox connect', () => {
         const configureSends = rpcSendRequestStub.getCalls().filter(
           (c) => (c.args[0]?.message as any)?.descriptor?.method === 'Configure',
         );
-        expect(configureSends.length).toBe(endpointUrls.length);
+        expect(configureSends).toHaveLength(endpointUrls.length);
       });
 
       it('should attach a per-request AbortSignal with a bounded timeout to every connect-flow fan-out send', async () => {

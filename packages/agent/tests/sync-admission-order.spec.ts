@@ -499,7 +499,7 @@ describe('orderMessagesForAdmission', () => {
     };
 
     const result = orderMessagesForAdmission([selfRef]);
-    expect(result.length).toBe(1);
+    expect(result).toHaveLength(1);
     expect(result[0]).toBe(selfRef);
   });
 
@@ -541,7 +541,7 @@ describe('orderMessagesForAdmission', () => {
 
     const result = orderMessagesForAdmission([msgA, msgB, independent]);
     // The independent node should be first; the cycle nodes appended at the end.
-    expect(result.length).toBe(3);
+    expect(result).toHaveLength(3);
     expect(result[0]).toBe(independent);
     // Both cycle nodes are present in the result.
     expect(result.includes(msgA)).toBe(true);
@@ -554,6 +554,6 @@ describe('orderMessagesForAdmission', () => {
     const msg3: SortEntry = { message: makeMessage({ interface: DwnInterfaceName.Protocols, method: DwnMethodName.Query }) };
 
     const result = orderMessagesForAdmission([msg1, msg2, msg3]);
-    expect(result.length).toBe(3);
+    expect(result).toHaveLength(3);
   });
 });

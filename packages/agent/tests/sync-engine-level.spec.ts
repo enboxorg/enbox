@@ -357,7 +357,7 @@ describe('SyncEngineLevel', () => {
       });
       let localProtocolsQueryReply = localProtocolsQueryResponse.reply;
       expect(localProtocolsQueryReply.status.code).toBe(200);
-      expect(localProtocolsQueryReply.entries?.length).toBe(2);
+      expect(localProtocolsQueryReply.entries).toHaveLength(2);
       expect(localProtocolsQueryReply.entries).toEqual(expect.arrayContaining([ protocolsConfigure1.message ]));
 
       // query local and check for only local records
@@ -387,7 +387,7 @@ describe('SyncEngineLevel', () => {
       });
       let remoteProtocolsQueryReply = remoteProtocolsQueryResponse.reply;
       expect(remoteProtocolsQueryReply.status.code).toBe(200);
-      expect(remoteProtocolsQueryReply.entries?.length).toBe(2);
+      expect(remoteProtocolsQueryReply.entries).toHaveLength(2);
       expect(remoteProtocolsQueryReply.entries).toEqual(expect.arrayContaining([ protocolsConfigure2.message ]));
 
       // query remote and check for only remote records
@@ -426,7 +426,7 @@ describe('SyncEngineLevel', () => {
       });
       localProtocolsQueryReply = localProtocolsQueryResponse.reply;
       expect(localProtocolsQueryReply.status.code).toBe(200);
-      expect(localProtocolsQueryReply.entries?.length).toBe(3);
+      expect(localProtocolsQueryReply.entries).toHaveLength(3);
       expect(localProtocolsQueryReply.entries).toEqual(expect.arrayContaining([ protocolsConfigure1.message, protocolsConfigure2.message ]));
 
       // query local node to see all records
@@ -456,7 +456,7 @@ describe('SyncEngineLevel', () => {
       });
       remoteProtocolsQueryReply = remoteProtocolsQueryResponse.reply;
       expect(remoteProtocolsQueryReply.status.code).toBe(200);
-      expect(remoteProtocolsQueryReply.entries?.length).toBe(3);
+      expect(remoteProtocolsQueryReply.entries).toHaveLength(3);
       expect(remoteProtocolsQueryReply.entries).toEqual(expect.arrayContaining([ protocolsConfigure1.message, protocolsConfigure2.message ]));
 
       // query remote node to see all records
@@ -870,7 +870,7 @@ describe('SyncEngineLevel', () => {
         });
 
         expect(localReply.status.code).toBe(200);
-        expect(localReply.entries?.length).toBe(0);
+        expect(localReply.entries).toHaveLength(0);
 
         // initiate sync
         await syncEngine.sync('pull');
@@ -884,7 +884,7 @@ describe('SyncEngineLevel', () => {
         });
 
         expect(localReply2.status.code).toBe(200);
-        expect(localReply2.entries?.length).toBe(1);
+        expect(localReply2.entries).toHaveLength(1);
         const [ entry ] = localReply2.entries!;
         expect(entry.encodedData).toBeUndefined(); // encodedData is undefined
 
@@ -1328,7 +1328,7 @@ describe('SyncEngineLevel', () => {
         });
 
         expect(remoteReply.status.code).toBe(200);
-        expect(remoteReply.entries?.length).toBe(0);
+        expect(remoteReply.entries).toHaveLength(0);
 
         // initiate sync
         await syncEngine.sync('push');
@@ -1342,7 +1342,7 @@ describe('SyncEngineLevel', () => {
         });
 
         expect(remoteReply2.status.code).toBe(200);
-        expect(remoteReply2.entries?.length).toBe(1);
+        expect(remoteReply2.entries).toHaveLength(1);
         const entry = remoteReply2.entries![0];
         expect(entry.encodedData).toBeUndefined();
         // check for response encodedData if it doesn't exist issue a RecordsRead
@@ -2474,7 +2474,7 @@ describe('SyncEngineLevel', () => {
         });
         const remoteProtocolsQueryReply = remoteProtocolsQueryResponse.reply;
         expect(remoteProtocolsQueryReply.status.code).toBe(200);
-        expect(remoteProtocolsQueryReply.entries?.length).toBe(2);
+        expect(remoteProtocolsQueryReply.entries).toHaveLength(2);
         expect(remoteProtocolsQueryReply.entries).toEqual([ protocolsFoo.message, protocolsBar.message ]);
 
         // query remote to see foo record

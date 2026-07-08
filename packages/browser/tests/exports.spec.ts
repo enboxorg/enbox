@@ -80,7 +80,7 @@ describe('@enbox/browser exports', () => {
     const mod = await getBrowserExports();
     const wallets = mod.DEFAULT_WALLETS as Array<{ name: string; url: string; description?: string }>;
     expect(Array.isArray(wallets)).toBe(true);
-    expect(wallets.length).toBe(2);
+    expect(wallets).toHaveLength(2);
     expect(wallets[0].url).toBe('https://enbox-wallet.pages.dev');
     expect(wallets[1].url).toBe('https://blue-enbox-wallet.pages.dev');
     expect(wallets[0].description).toBeDefined();

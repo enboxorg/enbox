@@ -443,8 +443,8 @@ export function testDwnClass(): void {
           };
           const { messages: tombstonesA } = await messageStore.query(alice.did, [tombstoneFilter]);
           const { messages: tombstonesB } = await messageStoreB.query(alice.did, [tombstoneFilter]);
-          expect(tombstonesA.length).toBe(1);
-          expect(tombstonesB.length).toBe(1);
+          expect(tombstonesA).toHaveLength(1);
+          expect(tombstonesB).toHaveLength(1);
           expect(await Message.getCid(tombstonesA[0])).toBe(await Message.getCid(recordsDelete.message));
           expect(await Message.getCid(tombstonesB[0])).toBe(await Message.getCid(recordsDelete.message));
         } finally {
@@ -497,7 +497,7 @@ export function testDwnClass(): void {
           method     : DwnMethodName.Delete,
           'tag.team' : 'blue',
         }]);
-        expect(reindexedTombstones.length).toBe(0);
+        expect(reindexedTombstones).toHaveLength(0);
       });
 
       it('reports missing data for tombstone-beaten replicated writes without data', async () => {
@@ -546,7 +546,7 @@ export function testDwnClass(): void {
             method        : DwnMethodName.Delete,
             'tag.storage' : storage,
           }]);
-          expect(reindexedTombstones.length).toBe(0);
+          expect(reindexedTombstones).toHaveLength(0);
         }
       });
 
@@ -585,7 +585,7 @@ export function testDwnClass(): void {
           method        : DwnMethodName.Delete,
           'tag.storage' : 'data-store',
         }]);
-        expect(reindexedTombstones.length).toBe(1);
+        expect(reindexedTombstones).toHaveLength(1);
         expect(await Message.getCid(reindexedTombstones[0])).toBe(await Message.getCid(recordsDelete.message));
       });
 

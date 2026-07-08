@@ -115,7 +115,7 @@ describe('Convert — fuzz', () => {
           fc.uint8Array({ minLength: 0, maxLength: 256 }),
           (bytes) => {
             const hex = Convert.uint8Array(bytes).toHex();
-            expect(hex.length).toBe(bytes.length * 2);
+            expect(hex).toHaveLength(bytes.length * 2);
             expect(hex).toMatch(/^[0-9a-f]*$/);
           }
         ),

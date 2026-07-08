@@ -244,7 +244,7 @@ export function testPermissions(): void {
       const requestQueryReply = await dwn.processMessage(alice.did, requestQuery.message);
       const requestFromBob = requestQueryReply.entries?.[0]!;
       expect(requestQueryReply.status.code).toBe(200);
-      expect(requestQueryReply.entries?.length).toBe(1);
+      expect(requestQueryReply.entries).toHaveLength(1);
       expect(requestFromBob.recordId).toBe(requestToAlice.recordsWrite.message.recordId);
 
       // 3. Verify a non-owner cannot create a grant for Bob in Alice's DWN
@@ -294,7 +294,7 @@ export function testPermissions(): void {
       const grantQueryReply = await dwn.processMessage(alice.did, grantQuery.message);
       const grantFromBob = grantQueryReply.entries?.[0]!;
       expect(grantQueryReply.status.code).toBe(200);
-      expect(grantQueryReply.entries?.length).toBe(1);
+      expect(grantQueryReply.entries).toHaveLength(1);
       expect(grantFromBob.recordId).toBe(grantWrite.recordsWrite.message.recordId);
 
       // 6. Verify that any third-party can fetch revocation of the grant and find it is still active (not revoked)
@@ -1170,7 +1170,7 @@ export function testPermissions(): void {
         });
         const queryBeforeReply = await dwn.processMessage(alice.did, queryBefore.message);
         expect(queryBeforeReply.status.code).toBe(200);
-        expect(queryBeforeReply.entries!.length).toBe(1);
+        expect(queryBeforeReply.entries!).toHaveLength(1);
 
         // Alice revokes the grant (messageTimestamp is auto-set to current time, which is before futureTimestamp)
         const revokeWrite = await PermissionsProtocol.createRevocation({
@@ -1191,7 +1191,7 @@ export function testPermissions(): void {
         });
         const queryAfterReply = await dwn.processMessage(alice.did, queryAfter.message);
         expect(queryAfterReply.status.code).toBe(200);
-        expect(queryAfterReply.entries!.length).toBe(0);
+        expect(queryAfterReply.entries!).toHaveLength(0);
       });
 
       it('should not delete grant-authorized messages created before the revocation timestamp', async () => {
@@ -1261,7 +1261,7 @@ export function testPermissions(): void {
         });
         const queryAfterReply = await dwn.processMessage(alice.did, queryAfter.message);
         expect(queryAfterReply.status.code).toBe(200);
-        expect(queryAfterReply.entries!.length).toBe(1);
+        expect(queryAfterReply.entries!).toHaveLength(1);
       });
 
       it('should delete data from the data store for large records when revoking a grant', async () => {
@@ -1340,7 +1340,7 @@ export function testPermissions(): void {
         });
         const queryAfterReply = await dwn.processMessage(alice.did, queryAfter.message);
         expect(queryAfterReply.status.code).toBe(200);
-        expect(queryAfterReply.entries!.length).toBe(0);
+        expect(queryAfterReply.entries!).toHaveLength(0);
 
         // The data blob should also be deleted from the data store
         const dataResultAfter = await dataStore.get(alice.did, recordsWrite.message.recordId, recordsWrite.message.descriptor.dataCid);
@@ -1430,7 +1430,7 @@ export function testPermissions(): void {
         });
         const queryBeforeReply = await dwn.processMessage(alice.did, queryBefore.message);
         expect(queryBeforeReply.status.code).toBe(200);
-        expect(queryBeforeReply.entries!.length).toBe(3);
+        expect(queryBeforeReply.entries!).toHaveLength(3);
 
         // Alice revokes the grant (messageTimestamp is "now", between record 1 and records 2/3)
         const revokeWrite = await PermissionsProtocol.createRevocation({
@@ -1451,7 +1451,7 @@ export function testPermissions(): void {
         });
         const queryAfterReply = await dwn.processMessage(alice.did, queryAfter.message);
         expect(queryAfterReply.status.code).toBe(200);
-        expect(queryAfterReply.entries!.length).toBe(1);
+        expect(queryAfterReply.entries!).toHaveLength(1);
         expect(queryAfterReply.entries![0].recordId).toBe(write1.recordsWrite.message.recordId);
       });
     });

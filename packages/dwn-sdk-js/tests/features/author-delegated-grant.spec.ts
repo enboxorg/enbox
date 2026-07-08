@@ -100,7 +100,7 @@ export function testAuthorDelegatedGrant(): void {
 
         const { status, entries } = await dwn.processMessage(alice.did, protocolsQuery.message);
         expect(status.code).toBe(200);
-        expect(entries?.length).toBe(1);
+        expect(entries).toHaveLength(1);
 
         const fetchedProtocolConfigure = entries![0];
         expect(fetchedProtocolConfigure.descriptor.definition).toEqual(emailProtocolDefinition);
@@ -152,7 +152,7 @@ export function testAuthorDelegatedGrant(): void {
 
         const { status, entries } = await dwn.processMessage(alice.did, protocolsQuery.message);
         expect(status.code).toBe(200);
-        expect(entries?.length).toBe(1);
+        expect(entries).toHaveLength(1);
 
         const fetchedProtocolConfigure = entries![0];
         expect(fetchedProtocolConfigure.descriptor.definition).toEqual(emailProtocolDefinition);
@@ -325,7 +325,7 @@ export function testAuthorDelegatedGrant(): void {
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
       expect(bobRecordsQueryReply.status.code).toBe(200);
-      expect(bobRecordsQueryReply.entries?.length).toBe(1);
+      expect(bobRecordsQueryReply.entries).toHaveLength(1);
 
       const fetchedDeviceXWriteEntry = bobRecordsQueryReply.entries![0];
       expect(fetchedDeviceXWriteEntry.encodedData).toBe(base64url.baseEncode(deviceXData));
@@ -349,7 +349,7 @@ export function testAuthorDelegatedGrant(): void {
       // verify the message by device Y got written to Bob's DWN, AND Alice is the logical author
       const bobRecordsQueryReply2 = await dwn.processMessage(bob.did, recordsQueryByBob.message);
       expect(bobRecordsQueryReply2.status.code).toBe(200);
-      expect(bobRecordsQueryReply2.entries?.length).toBe(1);
+      expect(bobRecordsQueryReply2.entries).toHaveLength(1);
 
       const fetchedDeviceYWriteEntry = bobRecordsQueryReply2.entries![0];
       expect(fetchedDeviceYWriteEntry.encodedData).toBe(base64url.baseEncode(deviceYData));
@@ -460,7 +460,7 @@ export function testAuthorDelegatedGrant(): void {
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
       expect(bobRecordsQueryReply.status.code).toBe(200);
-      expect(bobRecordsQueryReply.entries?.length).toBe(3);
+      expect(bobRecordsQueryReply.entries).toHaveLength(3);
 
       // sanity verify Alice herself is able to query for the chat message from Bob's DWN
       const recordsQueryByAlice = await RecordsQuery.create({
@@ -474,7 +474,7 @@ export function testAuthorDelegatedGrant(): void {
       });
       const aliceRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByAlice.message);
       expect(aliceRecordsQueryReply.status.code).toBe(200);
-      expect(aliceRecordsQueryReply.entries?.length).toBe(1);
+      expect(aliceRecordsQueryReply.entries).toHaveLength(1);
 
       // verify device X is able to query for the chat message from Bob's DWN
       const recordsQueryByDeviceX = await RecordsQuery.create({
@@ -489,7 +489,7 @@ export function testAuthorDelegatedGrant(): void {
       });
       const deviceXRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByDeviceX.message);
       expect(deviceXRecordsQueryReply.status.code).toBe(200);
-      expect(deviceXRecordsQueryReply.entries?.length).toBe(1);
+      expect(deviceXRecordsQueryReply.entries).toHaveLength(1);
 
       // verify device X is able to read the chat message from Bob's DWN
       const recordsReadByDeviceX = await RecordsRead.create({
@@ -918,7 +918,7 @@ export function testAuthorDelegatedGrant(): void {
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
       expect(bobRecordsQueryReply.status.code).toBe(200);
-      expect(bobRecordsQueryReply.entries?.length).toBe(1);
+      expect(bobRecordsQueryReply.entries).toHaveLength(1);
 
       // verify device X is able to delete Carol's chat message from Bob's DWN
       const recordsDeleteByDeviceX = await RecordsDelete.create({
@@ -933,7 +933,7 @@ export function testAuthorDelegatedGrant(): void {
       // sanity verify the chat message is no longer queryable from Bob's DWN
       const bobRecordsQueryReply2 = await dwn.processMessage(bob.did, recordsQueryByBob.message);
       expect(bobRecordsQueryReply2.status.code).toBe(200);
-      expect(bobRecordsQueryReply2.entries?.length).toBe(0);
+      expect(bobRecordsQueryReply2.entries).toHaveLength(0);
     });
 
     it('should not allow entity using a non-delegated grant as an author-delegated grant to invoke write', async () => {
@@ -995,7 +995,7 @@ export function testAuthorDelegatedGrant(): void {
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
       expect(bobRecordsQueryReply.status.code).toBe(200);
-      expect(bobRecordsQueryReply.entries?.length).toBe(0);
+      expect(bobRecordsQueryReply.entries).toHaveLength(0);
     });
 
     it('should not allow entity using a non-delegated grant as an author-delegated grant to invoke read', async () => {
@@ -1166,7 +1166,7 @@ export function testAuthorDelegatedGrant(): void {
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
       expect(bobRecordsQueryReply.status.code).toBe(200);
-      expect(bobRecordsQueryReply.entries?.length).toBe(1);
+      expect(bobRecordsQueryReply.entries).toHaveLength(1);
     });
 
     it('should fail if author-delegated grant has a mismatching protocol scope - write', async () => {
@@ -1461,7 +1461,7 @@ export function testAuthorDelegatedGrant(): void {
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
       expect(bobRecordsQueryReply.status.code).toBe(200);
-      expect(bobRecordsQueryReply.entries?.length).toBe(1);
+      expect(bobRecordsQueryReply.entries).toHaveLength(1);
     });
 
     it('should fail if presented with an author-delegated grant with invalid grantor signature - write', async () => {
@@ -1526,7 +1526,7 @@ export function testAuthorDelegatedGrant(): void {
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
       expect(bobRecordsQueryReply.status.code).toBe(200);
-      expect(bobRecordsQueryReply.entries?.length).toBe(0);
+      expect(bobRecordsQueryReply.entries).toHaveLength(0);
     });
 
     it('should fail if the CID of the author-delegated grant and the grant ID in the payload of the message signature is mismatching - write', async () => {
@@ -1600,7 +1600,7 @@ export function testAuthorDelegatedGrant(): void {
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
       expect(bobRecordsQueryReply.status.code).toBe(200);
-      expect(bobRecordsQueryReply.entries?.length).toBe(0);
+      expect(bobRecordsQueryReply.entries).toHaveLength(0);
     });
 
     it('should fail if author-delegated grant is revoked - write', async () => {
@@ -1679,7 +1679,7 @@ export function testAuthorDelegatedGrant(): void {
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
       expect(bobRecordsQueryReply.status.code).toBe(200);
-      expect(bobRecordsQueryReply.entries?.length).toBe(0);
+      expect(bobRecordsQueryReply.entries).toHaveLength(0);
     });
 
     it('should fail if author-delegated grant is expired - write', async () => {
@@ -1741,7 +1741,7 @@ export function testAuthorDelegatedGrant(): void {
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
       expect(bobRecordsQueryReply.status.code).toBe(200);
-      expect(bobRecordsQueryReply.entries?.length).toBe(0);
+      expect(bobRecordsQueryReply.entries).toHaveLength(0);
     });
   });
 }

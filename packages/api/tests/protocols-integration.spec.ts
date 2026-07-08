@@ -504,7 +504,7 @@ describe('protocol API integration fixtures', () => {
       });
 
       const { records } = await typed.records.query('friend');
-      expect(records.length).toBe(2);
+      expect(records).toHaveLength(2);
       expect(records[0]).toBeInstanceOf(TypedRecord);
     });
   });
@@ -668,7 +668,7 @@ describe('protocol API integration fixtures', () => {
       await typed.records.create('status', { data: { text: 'Status 2' } });
 
       const { records } = await typed.records.query('status');
-      expect(records.length).toBe(2);
+      expect(records).toHaveLength(2);
     });
   });
 
@@ -733,7 +733,7 @@ describe('protocol API integration fixtures', () => {
       const { records } = await typed.records.query('folder/folder', {
         filter: { contextId: folder1.contextId },
       });
-      expect(records.length).toBe(2);
+      expect(records).toHaveLength(2);
     });
   });
 });

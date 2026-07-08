@@ -66,7 +66,7 @@ describe('IndexLevel', () => {
       });
 
       let keys = await ArrayUtility.fromAsyncGenerator(testIndex.db.keys());
-      expect(keys.length).toBe(5);
+      expect(keys).toHaveLength(5);
 
       await testIndex.clear();
 
@@ -77,7 +77,7 @@ describe('IndexLevel', () => {
         dateCreated, // 1 key
       });
       keys = await ArrayUtility.fromAsyncGenerator(testIndex.db.keys());
-      expect(keys.length).toBe(6);
+      expect(keys).toHaveLength(6);
     });
 
     it('should not put anything if aborted beforehand', async () => {
@@ -94,7 +94,7 @@ describe('IndexLevel', () => {
       await expect(indexPromise).rejects.toThrow('reason');
 
       const entries = await testIndex.query(tenant, [{ foo: 'bar' }], { sortProperty: 'id' });
-      expect(entries.length).toBe(0);
+      expect(entries).toHaveLength(0);
     });
   });
 
@@ -146,7 +146,7 @@ describe('IndexLevel', () => {
         'c' : 'e'
       }], { sortProperty: 'id' });
 
-      expect(entries.length).toBe(1);
+      expect(entries).toHaveLength(1);
       expect(entries[0].messageCid).toBe(id3);
     });
 
@@ -182,32 +182,32 @@ describe('IndexLevel', () => {
 
         // query with limit, default (ascending)
         const results = await testIndex.queryWithIteratorPaging(tenant, filters, { sortProperty: 'val', limit: 2 });
-        expect(results.length).toBe(2);
+        expect(results).toHaveLength(2);
         expect(results.map(({ messageCid }) => messageCid)).toEqual(['a', 'b']);
 
         // query with cursor, default (ascending)
         const resultsAfterCursor = await testIndex.queryWithIteratorPaging(tenant, filters, { sortProperty: 'val', cursor: IndexLevel.createCursorFromLastArrayItem(results, 'val') });
-        expect(resultsAfterCursor.length).toBe(2);
+        expect(resultsAfterCursor).toHaveLength(2);
         expect(resultsAfterCursor.map(({ messageCid }) => messageCid)).toEqual(['c', 'd']);
 
         // query with limit, explicit ascending
         const ascResults = await testIndex.queryWithIteratorPaging(tenant, filters, { sortProperty: 'val', limit: 2 });
-        expect(ascResults.length).toBe(2);
+        expect(ascResults).toHaveLength(2);
         expect(ascResults.map(({ messageCid }) => messageCid)).toEqual(['a', 'b']);
 
         // query with cursor, explicit ascending
         const ascResultsAfterCursor = await testIndex.queryWithIteratorPaging(tenant, filters, { sortProperty: 'val', cursor: IndexLevel.createCursorFromLastArrayItem(ascResults, 'val') });
-        expect(ascResultsAfterCursor.length).toBe(2);
+        expect(ascResultsAfterCursor).toHaveLength(2);
         expect(ascResultsAfterCursor.map(({ messageCid }) => messageCid)).toEqual(['c', 'd']);
 
         // query with limit, descending
         const descResults = await testIndex.queryWithIteratorPaging(tenant, filters, { sortDirection: SortDirection.Descending, sortProperty: 'val', limit: 2 });
-        expect(descResults.length).toBe(2);
+        expect(descResults).toHaveLength(2);
         expect(descResults.map(({ messageCid }) => messageCid)).toEqual(['d', 'c']);
 
         // query with cursor, descending
         const descResultsAfterCursor = await testIndex.queryWithIteratorPaging(tenant, filters, { sortDirection: SortDirection.Descending, sortProperty: 'val', cursor: IndexLevel.createCursorFromLastArrayItem(descResults, 'val') });
-        expect(descResultsAfterCursor.length).toBe(2);
+        expect(descResultsAfterCursor).toHaveLength(2);
         expect(descResultsAfterCursor.map(({ messageCid }) => messageCid)).toEqual(['b', 'a']);
       });
 
@@ -227,11 +227,11 @@ describe('IndexLevel', () => {
 
         // control test: return all results
         const validResults = await testIndex.queryWithIteratorPaging(tenant, filters, { sortProperty: 'val' });
-        expect(validResults.length).toBe(4);
+        expect(validResults).toHaveLength(4);
 
         // sort by invalid property returns no results
         const invalidResults = await testIndex.queryWithIteratorPaging(tenant, filters, { sortProperty: 'invalid' });
-        expect(invalidResults.length).toBe(0);
+        expect(invalidResults).toHaveLength(0);
       });
 
       it('cursor is valid but out of range of matched results', async () => {
@@ -255,7 +255,7 @@ describe('IndexLevel', () => {
         // cursor `e-id` doesn't actually exist, but the value `e` is sorted after to the result set.
         const cursorE = { messageCid: 'e-id', value: 'e' };
         const noResults = await testIndex.queryWithIteratorPaging(tenant, filters, { sortProperty: 'val', cursor: cursorE });
-        expect(noResults.length).toEqual(0);
+        expect(noResults).toHaveLength(0);
       });
     });
 
@@ -280,12 +280,12 @@ describe('IndexLevel', () => {
 
         const filterForItemTag = [{ tag: 'item' }];
         const allResults = await testIndex.queryWithIteratorPaging(tenant, filterForItemTag, { sortProperty: 'id' });
-        expect(allResults.length).toBe(4);
+        expect(allResults).toHaveLength(4);
         expect(allResults.map(item => item.messageCid)).toEqual(expect.arrayContaining(items.map(item => item.id)));
 
         const filterForItem3 = [{ tag: 'item3' }];
         const item3Results = await testIndex.queryWithIteratorPaging(tenant, filterForItem3, { sortProperty: 'id' });
-        expect(item3Results.length).toBe(1);
+        expect(item3Results).toHaveLength(1);
         expect(item3Results.map(item => item.messageCid)).toEqual(expect.arrayContaining([items[2].id]));
       });
 
@@ -309,18 +309,18 @@ describe('IndexLevel', () => {
 
         const filterForItemTag = [{ tag: 1 }];
         const allResults = await testIndex.queryWithIteratorPaging(tenant, filterForItemTag, { sortProperty: 'id' });
-        expect(allResults.length).toBe(4);
+        expect(allResults).toHaveLength(4);
         expect(allResults.map(item => item.messageCid)).toEqual(expect.arrayContaining(items.map(item => item.id)));
 
         const filterForItem3 = [{ tag: 3 }];
         const item3Results = await testIndex.queryWithIteratorPaging(tenant, filterForItem3, { sortProperty: 'id' });
-        expect(item3Results.length).toBe(1);
+        expect(item3Results).toHaveLength(1);
         expect(item3Results.map(item => item.messageCid)).toEqual(expect.arrayContaining([items[2].id]));
 
 
         const filterForRange = [{ tag: { gt: 1, lt: 4 } }];
         const rangeItems = await testIndex.queryWithIteratorPaging(tenant, filterForRange, { sortProperty: 'id' });
-        expect(rangeItems.length).toBe(2);
+        expect(rangeItems).toHaveLength(2);
         expect(rangeItems.map(item => item.messageCid)).toEqual(expect.arrayContaining([ items[1].id, items[2].id ]));
       });
     });
@@ -342,32 +342,32 @@ describe('IndexLevel', () => {
 
         // query with limit, default (ascending)
         const results = await testIndex.queryWithInMemoryPaging(tenant, filters, { sortProperty: 'val', limit: 2 });
-        expect(results.length).toBe(2);
+        expect(results).toHaveLength(2);
         expect(results.map(({ messageCid }) => messageCid)).toEqual(['a', 'b']);
 
         // query with cursor, default (ascending)
         const resultsAfterCursor = await testIndex.queryWithInMemoryPaging(tenant, filters, { sortProperty: 'val', cursor: IndexLevel.createCursorFromLastArrayItem(results, 'val') });
-        expect(resultsAfterCursor.length).toBe(2);
+        expect(resultsAfterCursor).toHaveLength(2);
         expect(resultsAfterCursor.map(({ messageCid }) => messageCid)).toEqual(['c', 'd']);
 
         // query with limit, explicit ascending
         const ascResults = await testIndex.queryWithInMemoryPaging(tenant, filters, { sortProperty: 'val', limit: 2 });
-        expect(ascResults.length).toBe(2);
+        expect(ascResults).toHaveLength(2);
         expect(ascResults.map(({ messageCid }) => messageCid)).toEqual(['a', 'b']);
 
         // query with cursor, explicit ascending
         const ascResultsAfterCursor = await testIndex.queryWithInMemoryPaging(tenant, filters, { sortProperty: 'val', cursor: IndexLevel.createCursorFromLastArrayItem(ascResults, 'val') });
-        expect(ascResultsAfterCursor.length).toBe(2);
+        expect(ascResultsAfterCursor).toHaveLength(2);
         expect(ascResultsAfterCursor.map(({ messageCid }) => messageCid)).toEqual(['c', 'd']);
 
         // query with limit, descending
         const descResults = await testIndex.queryWithInMemoryPaging(tenant, filters, { sortDirection: SortDirection.Descending, sortProperty: 'val', limit: 2 });
-        expect(descResults.length).toBe(2);
+        expect(descResults).toHaveLength(2);
         expect(descResults.map(({ messageCid }) => messageCid)).toEqual(['d', 'c']);
 
         // query with cursor, descending
         const descResultsAfterCursor = await testIndex.queryWithInMemoryPaging(tenant, filters, { sortDirection: SortDirection.Descending, sortProperty: 'val', cursor: IndexLevel.createCursorFromLastArrayItem(descResults, 'val') });
-        expect(descResultsAfterCursor.length).toBe(2);
+        expect(descResultsAfterCursor).toHaveLength(2);
         expect(descResultsAfterCursor.map(({ messageCid }) => messageCid)).toEqual(['b', 'a']);
       });
 
@@ -387,11 +387,11 @@ describe('IndexLevel', () => {
 
         // control test: return all results
         const validResults = await testIndex.queryWithInMemoryPaging(tenant, filters, { sortProperty: 'val', limit: 3 });
-        expect(validResults.length).toBe(3);
+        expect(validResults).toHaveLength(3);
 
         // sort by invalid property returns no results
         const invalidResults = await testIndex.queryWithInMemoryPaging(tenant, filters, { sortProperty: 'invalid' });
-        expect(invalidResults.length).toBe(0);
+        expect(invalidResults).toHaveLength(0);
       });
 
       it('cursor is valid but out of range of matched results', async () => {
@@ -414,7 +414,7 @@ describe('IndexLevel', () => {
 
         const cursorE = { messageCid: 'e', value: 'e' }; // after results
         const noResults = await testIndex.queryWithInMemoryPaging(tenant, filters, { sortProperty: 'val', cursor: cursorE });
-        expect(noResults.length).toEqual(0);
+        expect(noResults).toHaveLength(0);
       });
 
       it('supports range queries', async () => {
@@ -448,7 +448,7 @@ describe('IndexLevel', () => {
 
         const entries = await testIndex.queryWithInMemoryPaging(tenant, filters, { sortProperty: 'id' });
 
-        expect(entries.length).toBe(2);
+        expect(entries).toHaveLength(2);
         expect(entries.map(({ messageCid }) => messageCid)).toEqual(expect.arrayContaining([id2, id3]));
 
         // only upper bounds
@@ -459,7 +459,7 @@ describe('IndexLevel', () => {
         }];
         const lteReply = await testIndex.queryWithInMemoryPaging(tenant, lteFilter, { sortProperty: 'id' });
 
-        expect(lteReply.length).toBe(3);
+        expect(lteReply).toHaveLength(3);
         expect(lteReply.map(({ messageCid }) => messageCid)).toEqual(expect.arrayContaining([id, id2, id3]));
       });
 
@@ -484,12 +484,12 @@ describe('IndexLevel', () => {
 
           const filterForItemTag = [{ tag: 'item' }];
           const allResults = await testIndex.queryWithInMemoryPaging(tenant, filterForItemTag, { sortProperty: 'id' });
-          expect(allResults.length).toBe(4);
+          expect(allResults).toHaveLength(4);
           expect(allResults.map(item => item.messageCid)).toEqual(expect.arrayContaining(items.map(item => item.id)));
 
           const filterForItem3 = [{ tag: 'item3' }];
           const item3Results = await testIndex.queryWithInMemoryPaging(tenant, filterForItem3, { sortProperty: 'id' });
-          expect(item3Results.length).toBe(1);
+          expect(item3Results).toHaveLength(1);
           expect(item3Results.map(item => item.messageCid)).toEqual(expect.arrayContaining([items[2].id]));
         });
 
@@ -513,18 +513,18 @@ describe('IndexLevel', () => {
 
           const filterForItemTag = [{ tag: 1 }];
           const allResults = await testIndex.queryWithInMemoryPaging(tenant, filterForItemTag, { sortProperty: 'id' });
-          expect(allResults.length).toBe(4);
+          expect(allResults).toHaveLength(4);
           expect(allResults.map(item => item.messageCid)).toEqual(expect.arrayContaining(items.map(item => item.id)));
 
           const filterForItem3 = [{ tag: 3 }];
           const item3Results = await testIndex.queryWithInMemoryPaging(tenant, filterForItem3, { sortProperty: 'id' });
-          expect(item3Results.length).toBe(1);
+          expect(item3Results).toHaveLength(1);
           expect(item3Results.map(item => item.messageCid)).toEqual(expect.arrayContaining([items[2].id]));
 
 
           const filterForRange = [{ tag: { gt: 1, lt: 4 } }];
           const rangeItems = await testIndex.queryWithInMemoryPaging(tenant, filterForRange, { sortProperty: 'id' });
-          expect(rangeItems.length).toBe(2);
+          expect(rangeItems).toHaveLength(2);
           expect(rangeItems.map(item => item.messageCid)).toEqual(expect.arrayContaining([ items[1].id, items[2].id ]));
         });
       });
@@ -542,7 +542,7 @@ describe('IndexLevel', () => {
 
         const filters = [{ value: 'foo' }];
         const entries = await testIndex.query(tenant, filters, { sortProperty: 'id' });
-        expect(entries.length).toBe(0);
+        expect(entries).toHaveLength(0);
 
       });
 
@@ -575,7 +575,7 @@ describe('IndexLevel', () => {
 
         const entries = await testIndex.query(tenant, filters , { sortProperty: 'id' });
 
-        expect(entries.length).toBe(2);
+        expect(entries).toHaveLength(2);
         expect(entries.map(({ messageCid }) => messageCid)).toContain(id1);
         expect(entries.map(({ messageCid }) => messageCid)).toContain(id2);
       });
@@ -598,7 +598,7 @@ describe('IndexLevel', () => {
         }];
         const entries = await testIndex.query(tenant, filters, { sortProperty: 'id' });
 
-        expect(entries.length).toBe(5);
+        expect(entries).toHaveLength(5);
       });
 
       it('supports prefixed range queries', async () => {
@@ -618,7 +618,7 @@ describe('IndexLevel', () => {
 
         const entries = await testIndex.query(tenant, filters, { sortProperty: 'id' });
 
-        expect(entries.length).toBe(1);
+        expect(entries).toHaveLength(1);
         expect(entries.map(({ messageCid }) => messageCid)).toContain(id);
       });
 
@@ -646,7 +646,7 @@ describe('IndexLevel', () => {
 
         const entries = await testIndex.query(tenant, filters, { sortProperty: 'id' });
 
-        expect(entries.length).toBe(1);
+        expect(entries).toHaveLength(1);
         expect(entries.map(({ messageCid }) => messageCid)).toContain(id1);
       });
 
@@ -672,7 +672,7 @@ describe('IndexLevel', () => {
 
         const entries = await testIndex.query(tenant, filters, { sortProperty: 'id' });
 
-        expect(entries.length).toBe(1);
+        expect(entries).toHaveLength(1);
         expect(entries.map(({ messageCid }) => messageCid)).toContain(id1);
       });
 
@@ -696,7 +696,7 @@ describe('IndexLevel', () => {
 
           const entries = await testIndex.query(tenant, filters, { sortProperty: 'digit' });
 
-          expect(entries.length).toBe(1);
+          expect(entries).toHaveLength(1);
           expect(entries.at(0)?.messageCid).toBe(testNumbers.at(index)!.toString());
         });
 
@@ -709,7 +709,7 @@ describe('IndexLevel', () => {
           const filters = [{ digit: 1 }];
           const entries = await testIndex.query(tenant, filters, { sortProperty: 'digit' });
 
-          expect(entries.length).toBe(0);
+          expect(entries).toHaveLength(0);
         });
 
         it('supports range queries with positive numbers inclusive', async () => {
@@ -847,19 +847,19 @@ describe('IndexLevel', () => {
           const bothFilter = [{ schema: 'schema' }];
           // control
           const entries = await testIndex.query(tenant, bothFilter, { sortProperty: 'id' });
-          expect(entries.length).toBe(2);
+          expect(entries).toHaveLength(2);
           expect(entries.map(({ messageCid }) => messageCid)).toEqual(expect.arrayContaining([ itemTrueId, itemFalseId ]));
 
           const trueFilter = [{ published: true, schema: 'schema' }];
           // equality true
           const respTrue = await testIndex.query(tenant, trueFilter, { sortProperty: 'id' });
-          expect(respTrue.length).toBe(1);
+          expect(respTrue).toHaveLength(1);
           expect(respTrue.map(({ messageCid }) => messageCid)).toEqual(expect.arrayContaining([ itemTrueId ]));
 
           const falseFilter = [{ published: false, schema: 'schema' }];
           // equality false
           const respFalse = await testIndex.query(tenant, falseFilter, { sortProperty: 'id' });
-          expect(respFalse.length).toBe(1);
+          expect(respFalse).toHaveLength(1);
           expect(respFalse.map(({ messageCid }) => messageCid)).toEqual(expect.arrayContaining([ itemFalseId ]));
         });
       });
@@ -875,12 +875,12 @@ describe('IndexLevel', () => {
 
           // limit results without cursor
           let ascResults = await testIndex.query(tenant, filters, { sortProperty: 'val', limit: 2 });
-          expect(ascResults.length).toBe(2);
+          expect(ascResults).toHaveLength(2);
           expect(ascResults.map(({ messageCid }) => messageCid)).toEqual(['a', 'b']);
 
           // limit results with a cursor
           ascResults = await testIndex.query(tenant, filters, { sortProperty: 'val', limit: 2, cursor: IndexLevel.createCursorFromLastArrayItem(ascResults, 'val') });
-          expect(ascResults.length).toBe(2);
+          expect(ascResults).toHaveLength(2);
           expect(ascResults.map(({ messageCid }) => messageCid)).toEqual(['c', 'd']);
         });
 
@@ -894,22 +894,22 @@ describe('IndexLevel', () => {
 
           // sort by value ascending
           const ascResults = await testIndex.query(tenant, filters, { sortProperty: 'val' });
-          expect(ascResults.length).toBe(testVals.length);
+          expect(ascResults).toHaveLength(testVals.length);
           expect(ascResults.map(({ messageCid }) => messageCid)).toEqual(['a', 'b', 'c', 'd']);
 
           // sort by index ascending
           const ascIndexResults = await testIndex.query(tenant, filters, { sortProperty: 'index' });
-          expect(ascIndexResults.length).toBe(testVals.length);
+          expect(ascIndexResults).toHaveLength(testVals.length);
           expect(ascIndexResults.map(({ messageCid }) => messageCid)).toEqual(testVals);
 
           // sort by value descending
           const descResults = await testIndex.query(tenant, filters, { sortProperty: 'val', sortDirection: SortDirection.Descending });
-          expect(descResults.length).toBe(testVals.length);
+          expect(descResults).toHaveLength(testVals.length);
           expect(descResults.map(({ messageCid }) => messageCid)).toEqual(['d', 'c', 'b', 'a']);
 
           // sort by index descending
           const descIndexResults = await testIndex.query(tenant, filters, { sortProperty: 'index', sortDirection: SortDirection.Descending });
-          expect(descIndexResults.length).toBe(testVals.length);
+          expect(descIndexResults).toHaveLength(testVals.length);
           expect(descIndexResults.map(({ messageCid }) => messageCid)).toEqual([...testVals].reverse());
         });
 
@@ -921,12 +921,12 @@ describe('IndexLevel', () => {
           const filters = [{ schema: 'schema' }];
           // sort ascending
           const ascResults = await testIndex.query(tenant, filters, { sortProperty: 'val' });
-          expect(ascResults.length).toBe(4);
+          expect(ascResults).toHaveLength(4);
           expect(ascResults.map(({ messageCid }) => messageCid)).toEqual(['a', 'b', 'c', 'd']);
 
           // sort descending
           const descResults = await testIndex.query(tenant, filters, { sortProperty: 'val', sortDirection: SortDirection.Descending });
-          expect(descResults.length).toBe(4);
+          expect(descResults).toHaveLength(4);
           expect(descResults.map(({ messageCid }) => messageCid)).toEqual(['d', 'c', 'b', 'a']);
         });
 
@@ -939,12 +939,12 @@ describe('IndexLevel', () => {
           const filters = [{ schema: 'schema' }];
           // sort ascending
           const ascResults = await testIndex.query(tenant, filters, { sortProperty: 'val' });
-          expect(ascResults.length).toBe(testVals.length);
+          expect(ascResults).toHaveLength(testVals.length);
           expect(ascResults.map(({ messageCid }) => messageCid)).toEqual(['-2', '-1', '0', '1', '2' , '3' , '4']);
 
           // sort descending
           const descResults = await testIndex.query(tenant, filters, { sortProperty: 'val', sortDirection: SortDirection.Descending });
-          expect(descResults.length).toEqual(testVals.length);
+          expect(descResults).toHaveLength(testVals.length);
           expect(descResults.map(({ messageCid }) => messageCid)).toEqual(['4', '3', '2', '1', '0' , '-1' , '-2']);
         });
 
@@ -1249,19 +1249,19 @@ describe('IndexLevel', () => {
 
       let result = await testIndex.query(tenant, [{ 'a': 'b', 'c': 'e' }], { sortProperty: 'id' });
 
-      expect(result.length).toBe(2);
+      expect(result).toHaveLength(2);
       expect(result.map(({ messageCid }) => messageCid)).toContain(id1);
 
       await testIndex.delete(tenant, id1);
 
       result = await testIndex.query(tenant, [{ 'a': 'b', 'c': 'e' }], { sortProperty: 'id' });
 
-      expect(result.length).toBe(1);
+      expect(result).toHaveLength(1);
 
       await testIndex.delete(tenant, id2);
 
       const allKeys = await ArrayUtility.fromAsyncGenerator(testIndex.db.keys());
-      expect(allKeys.length).toBe(0);
+      expect(allKeys).toHaveLength(0);
     });
 
     it('should not delete anything if aborted beforehand', async () => {
@@ -1283,7 +1283,7 @@ describe('IndexLevel', () => {
       }
 
       const result = await testIndex.query(tenant, [{ foo: 'bar' }], { sortProperty: 'id' });
-      expect(result.length).toBe(1);
+      expect(result).toHaveLength(1);
       expect(result.map(({ messageCid }) => messageCid)).toContain(id);
     });
 
@@ -1303,7 +1303,7 @@ describe('IndexLevel', () => {
       await testIndex.delete(tenant, 'invalidCid');
 
       const result = await testIndex.query(tenant, [{ foo: 'bar' }], { sortProperty: 'id' });
-      expect(result.length).toBe(1);
+      expect(result).toHaveLength(1);
       expect(result.map(({ messageCid }) => messageCid)).toContain(id);
     });
   });
@@ -1362,7 +1362,7 @@ describe('IndexLevel', () => {
   describe('createCursorFromLastArrayItem', () => {
     it('returns undefined if an empty array is provided', async () => {
       const cursor = IndexLevel.createCursorFromLastArrayItem([], 'someProperty');
-      expect(cursor).toBe(undefined);
+      expect(cursor).toBeUndefined();
     });
     it('returns a PaginationCursor for the last item given a valid sort property', async () => {
       const items:IndexedItem[] = [{
@@ -1405,7 +1405,7 @@ describe('IndexLevel', () => {
     it('should encode positive digits and pad with leading zeros', () => {
       const expectedLength = String(Number.MAX_SAFE_INTEGER).length; //16
       const encoded = IndexLevel.encodeNumberValue(100);
-      expect(encoded.length).toBe(expectedLength);
+      expect(encoded).toHaveLength(expectedLength);
       expect(encoded).toBe('0000000000000100');
     });
 
@@ -1414,8 +1414,8 @@ describe('IndexLevel', () => {
       // expected length is maximum padding + the prefix.
       const expectedLength = (expectedPrefix + String(Number.MAX_SAFE_INTEGER)).length; //17
       const encoded = IndexLevel.encodeNumberValue(-100);
-      expect(encoded.length).toBe(String(Number.MIN_SAFE_INTEGER).length);
-      expect(encoded.length).toBe(expectedLength);
+      expect(encoded).toHaveLength(String(Number.MIN_SAFE_INTEGER).length);
+      expect(encoded).toHaveLength(expectedLength);
       expect(encoded).toBe('!9007199254740891');
     });
 
@@ -1525,7 +1525,7 @@ describe('IndexLevel', () => {
           { sortProperty: 'messageTimestamp' }
         );
 
-        expect(results.length).toBe(1);
+        expect(results).toHaveLength(1);
         expect(results[0].messageCid).toBe(id);
       });
 
@@ -1545,7 +1545,7 @@ describe('IndexLevel', () => {
           [{ protocol: 'https://protocol.xyz', protocolPath: 'chat/message' }],
           { sortProperty: 'messageTimestamp' }
         );
-        expect(results.length).toBe(1);
+        expect(results).toHaveLength(1);
 
         // delete
         await compoundIndex.delete(compoundTenant, id);
@@ -1556,7 +1556,7 @@ describe('IndexLevel', () => {
           [{ protocol: 'https://protocol.xyz', protocolPath: 'chat/message' }],
           { sortProperty: 'messageTimestamp' }
         );
-        expect(results.length).toBe(0);
+        expect(results).toHaveLength(0);
       });
 
       it('should skip compound index entries when required properties are missing', async () => {
@@ -1574,7 +1574,7 @@ describe('IndexLevel', () => {
           [{ schema: 'https://schema.org/Message' }],
           { sortProperty: 'dateCreated' }
         );
-        expect(schemaResults.length).toBe(1);
+        expect(schemaResults).toHaveLength(1);
         expect(schemaResults[0].messageCid).toBe(id);
       });
     });
@@ -1602,7 +1602,7 @@ describe('IndexLevel', () => {
           { sortProperty: 'messageTimestamp' }
         );
 
-        expect(results.length).toBe(3);
+        expect(results).toHaveLength(3);
         expect(results.map(r => r.messageCid)).toEqual(['msg-a', 'msg-b', 'msg-c']);
       });
 
@@ -1628,7 +1628,7 @@ describe('IndexLevel', () => {
           { sortProperty: 'messageTimestamp', sortDirection: SortDirection.Descending }
         );
 
-        expect(results.length).toBe(3);
+        expect(results).toHaveLength(3);
         expect(results.map(r => r.messageCid)).toEqual(['msg-c', 'msg-b', 'msg-a']);
       });
 
@@ -1647,7 +1647,7 @@ describe('IndexLevel', () => {
           { sortProperty: 'messageTimestamp', limit: 3 }
         );
 
-        expect(results.length).toBe(3);
+        expect(results).toHaveLength(3);
         expect(results.map(r => r.messageCid)).toEqual(['msg-0', 'msg-1', 'msg-2']);
       });
 
@@ -1666,7 +1666,7 @@ describe('IndexLevel', () => {
           [{ protocol: 'https://proto.xyz', protocolPath: 'items' }],
           { sortProperty: 'messageTimestamp', limit: 3 }
         );
-        expect(page1.length).toBe(3);
+        expect(page1).toHaveLength(3);
         expect(page1.map(r => r.messageCid)).toEqual(['msg-0', 'msg-1', 'msg-2']);
 
         // second page using cursor
@@ -1676,7 +1676,7 @@ describe('IndexLevel', () => {
           [{ protocol: 'https://proto.xyz', protocolPath: 'items' }],
           { sortProperty: 'messageTimestamp', cursor }
         );
-        expect(page2.length).toBe(3);
+        expect(page2).toHaveLength(3);
         expect(page2.map(r => r.messageCid)).toEqual(['msg-3', 'msg-4', 'msg-5']);
       });
 
@@ -1695,7 +1695,7 @@ describe('IndexLevel', () => {
           [{ protocol: 'https://proto.xyz', protocolPath: 'items' }],
           { sortProperty: 'messageTimestamp', sortDirection: SortDirection.Descending, limit: 3 }
         );
-        expect(page1.length).toBe(3);
+        expect(page1).toHaveLength(3);
         expect(page1.map(r => r.messageCid)).toEqual(['msg-5', 'msg-4', 'msg-3']);
 
         // second page descending using cursor
@@ -1705,7 +1705,7 @@ describe('IndexLevel', () => {
           [{ protocol: 'https://proto.xyz', protocolPath: 'items' }],
           { sortProperty: 'messageTimestamp', sortDirection: SortDirection.Descending, cursor }
         );
-        expect(page2.length).toBe(3);
+        expect(page2).toHaveLength(3);
         expect(page2.map(r => r.messageCid)).toEqual(['msg-2', 'msg-1', 'msg-0']);
       });
 
@@ -1728,7 +1728,7 @@ describe('IndexLevel', () => {
           { sortProperty: 'messageTimestamp' }
         );
 
-        expect(results.length).toBe(2);
+        expect(results).toHaveLength(2);
         expect(results.map(r => r.messageCid)).toEqual(['msg-0', 'msg-2']);
       });
 
@@ -1757,7 +1757,7 @@ describe('IndexLevel', () => {
           { sortProperty: 'messageTimestamp' }
         );
 
-        expect(results.length).toBe(1);
+        expect(results).toHaveLength(1);
         expect(results[0].messageCid).toBe('msg-1');
       });
 
@@ -1783,7 +1783,7 @@ describe('IndexLevel', () => {
           { sortProperty: 'messageTimestamp' }
         );
 
-        expect(results.length).toBe(2);
+        expect(results).toHaveLength(2);
       });
 
       it('should prefer the compound index with the most properties', async () => {
@@ -1806,7 +1806,7 @@ describe('IndexLevel', () => {
           [{ schema: 'https://schema.org/Item' }],
           { sortProperty: 'dateCreated' }
         );
-        expect(schemaResults.length).toBe(1);
+        expect(schemaResults).toHaveLength(1);
         expect(schemaResults[0].messageCid).toBe('msg-1');
 
         // query using protocol+protocolPath compound index
@@ -1815,7 +1815,7 @@ describe('IndexLevel', () => {
           [{ protocol: 'https://proto.xyz', protocolPath: 'items' }],
           { sortProperty: 'messageTimestamp' }
         );
-        expect(protocolResults.length).toBe(1);
+        expect(protocolResults).toHaveLength(1);
         expect(protocolResults[0].messageCid).toBe('msg-1');
       });
 
@@ -1836,7 +1836,7 @@ describe('IndexLevel', () => {
           [{ protocol: 'https://proto.xyz', protocolPath: 'items' }],
           { sortProperty: 'dateCreated' }
         );
-        expect(results.length).toBe(1);
+        expect(results).toHaveLength(1);
       });
     });
 
@@ -1971,7 +1971,7 @@ describe('IndexLevel', () => {
           [{ schema: 'https://schema.org/Item' }],
           { sortProperty: 'dateCreated', limit: 3 }
         );
-        expect(page1.length).toBe(3);
+        expect(page1).toHaveLength(3);
         expect(page1.map(r => r.messageCid)).toEqual(['msg-0', 'msg-1', 'msg-2']);
 
         // second page with cursor — this should still use the compound index
@@ -1981,7 +1981,7 @@ describe('IndexLevel', () => {
           [{ schema: 'https://schema.org/Item' }],
           { sortProperty: 'dateCreated', cursor }
         );
-        expect(page2.length).toBe(3);
+        expect(page2).toHaveLength(3);
         expect(page2.map(r => r.messageCid)).toEqual(['msg-3', 'msg-4', 'msg-5']);
       });
     });

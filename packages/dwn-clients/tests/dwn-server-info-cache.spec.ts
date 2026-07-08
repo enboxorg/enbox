@@ -56,7 +56,7 @@ describe('DwnServerInfoCache', () => {
 
       // check results after delete
       const resultAfterDelete = await cache.get(key1);
-      expect(resultAfterDelete).toBe(undefined);
+      expect(resultAfterDelete).toBeUndefined();
 
       // key 2 still exists
       const result2AfterDelete = await cache.get(key2);
@@ -81,9 +81,9 @@ describe('DwnServerInfoCache', () => {
 
       // check results after delete
       const resultAfterDelete = await cache.get(key1);
-      expect(resultAfterDelete).toBe(undefined);
+      expect(resultAfterDelete).toBeUndefined();
       const result2AfterDelete = await cache.get(key2);
-      expect(result2AfterDelete).toBe(undefined);
+      expect(result2AfterDelete).toBeUndefined();
     });
 
     it('returns undefined after ttl', async function () {

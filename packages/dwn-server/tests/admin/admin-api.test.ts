@@ -314,7 +314,7 @@ describe('AdminApi — tenant management', () => {
     const page1 = await adminFetch({ port }, '/tenants?limit=2');
     expect(page1.status).toBe(200);
     const body1 = await page1.json();
-    expect(body1.data.length).toBe(2);
+    expect(body1.data).toHaveLength(2);
     expect(body1.cursor).toBeDefined();
 
     // Fetch page 2.
@@ -397,7 +397,7 @@ describe('ActivityLog', () => {
     expect(log.size).toBe(2);
 
     const { events, cursor } = log.getEvents();
-    expect(events.length).toBe(2);
+    expect(events).toHaveLength(2);
     expect(events[0].tenant).toBe('did:test:a');
     expect(events[0].interface).toBe('Records');
     expect(events[0].method).toBe('Write');
@@ -424,12 +424,12 @@ describe('ActivityLog', () => {
 
     // Get first 3.
     const page1 = log.getEvents({ limit: 3 });
-    expect(page1.events.length).toBe(3);
+    expect(page1.events).toHaveLength(3);
     expect(page1.cursor).toBe(3);
 
     // Get next 3 using cursor.
     const page2 = log.getEvents({ since: page1.cursor, limit: 3 });
-    expect(page2.events.length).toBe(3);
+    expect(page2.events).toHaveLength(3);
     expect(page2.events[0].id).toBe(4);
     expect(page2.cursor).toBe(6);
   });
@@ -468,7 +468,7 @@ describe('ActivityLog', () => {
     });
 
     const { events, cursor } = log.getEvents({ since: 999 });
-    expect(events.length).toBe(0);
+    expect(events).toHaveLength(0);
     expect(cursor).toBeUndefined();
   });
 
@@ -586,7 +586,7 @@ describe('AdminApi — Phase 2 endpoints', () => {
       const response = await adminFetch({ port }, `/events?since=${cursor}&limit=1`);
       expect(response.status).toBe(200);
       const body = await response.json();
-      expect(body.events.length).toBe(1);
+      expect(body.events).toHaveLength(1);
       expect(body.events[0].tenant).toBe('did:test:events2');
     });
   });
@@ -598,7 +598,7 @@ describe('AdminApi — Phase 2 endpoints', () => {
       const body = await response.json();
       expect(body.connections).toBeInstanceOf(Array);
       // No WS support in test config, so connections should be empty.
-      expect(body.connections.length).toBe(0);
+      expect(body.connections).toHaveLength(0);
     });
   });
 });
@@ -1198,7 +1198,7 @@ describe('InMemoryConnectionManager — admin methods', () => {
     const manager = new InMemoryConnectionManager({} as any);
     const snapshots = manager.getConnectionSnapshots();
     expect(snapshots).toBeInstanceOf(Array);
-    expect(snapshots.length).toBe(0);
+    expect(snapshots).toHaveLength(0);
   });
 });
 
@@ -1414,7 +1414,7 @@ describe('AdminApi — runtime config endpoints', () => {
       });
       expect(response.status).toBe(200);
       const body = await response.json();
-      expect(body.updated.length).toBe(3);
+      expect(body.updated).toHaveLength(3);
       expect(body.updated).toContain('quotaMaxMessages');
       expect(body.updated).toContain('quotaMaxStorageBytes');
       expect(body.updated).toContain('rateLimitBurst');
@@ -1529,7 +1529,7 @@ describe('AdminApi — tenant data browser endpoints', () => {
       expect(response.status).toBe(200);
       const body = await response.json();
       expect(body.messages).toBeInstanceOf(Array);
-      expect(body.messages.length).toBe(0);
+      expect(body.messages).toHaveLength(0);
     });
 
     it('should return messages after a DWN request creates data', async () => {
@@ -1979,7 +1979,7 @@ describe('AdminApi — tenant search/filter (#390)', () => {
     const response = await adminFetch({ port }, '/tenants?search=alice');
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body.data.length).toBe(1);
+    expect(body.data).toHaveLength(1);
     expect(body.data[0].did).toBe('did:test:alice-001');
   });
 
@@ -1987,7 +1987,7 @@ describe('AdminApi — tenant search/filter (#390)', () => {
     const response = await adminFetch({ port }, '/tenants?status=suspended');
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body.data.length).toBe(1);
+    expect(body.data).toHaveLength(1);
     expect(body.data[0].did).toBe('did:test:bob-002');
   });
 
@@ -1995,7 +1995,7 @@ describe('AdminApi — tenant search/filter (#390)', () => {
     const response = await adminFetch({ port }, '/tenants?status=active');
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body.data.length).toBe(2);
+    expect(body.data).toHaveLength(2);
   });
 
   it('should return totalCount matching the filter', async () => {
@@ -2232,7 +2232,7 @@ describe('AdminApi — webhooks (#395)', () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.webhooks).toBeInstanceOf(Array);
-    expect(body.webhooks.length).toBe(0);
+    expect(body.webhooks).toHaveLength(0);
   });
 
   it('should create a webhook', async () => {
@@ -2255,7 +2255,7 @@ describe('AdminApi — webhooks (#395)', () => {
     const response = await adminFetch({ port }, '/webhooks');
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body.webhooks.length).toBe(1);
+    expect(body.webhooks).toHaveLength(1);
   });
 
   it('should delete a webhook', async () => {
@@ -2552,7 +2552,7 @@ describe('AdminSessionManager', () => {
     const mgr = new AdminSessionManager();
     const token = mgr.create();
     expect(typeof token).toBe('string');
-    expect(token.length).toBe(64); // 32 random bytes → 64 hex chars
+    expect(token).toHaveLength(64); // 32 random bytes → 64 hex chars
     expect(mgr.validate(token)).toBe(true);
     mgr.destroy();
   });
@@ -2677,7 +2677,7 @@ describe('AdminPasskeyStore', () => {
     });
 
     const list = await store.list();
-    expect(list.length).toBe(2);
+    expect(list).toHaveLength(2);
     // Newest first.
     expect(list[0].id).toBe('cred-b');
     expect(list[1].id).toBe('cred-a');
@@ -2932,7 +2932,7 @@ describe('Passkey routes', () => {
       expect(response.status).toBe(200);
       const body = await response.json();
       expect(body.passkeys).toBeInstanceOf(Array);
-      expect(body.passkeys.length).toBe(0);
+      expect(body.passkeys).toHaveLength(0);
     });
 
     it('should return 401 without authorization', async () => {
@@ -3183,7 +3183,7 @@ describe('Passkey routes — unit coverage', () => {
     const res = await routeReq(api, '/passkeys', 'GET');
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.passkeys.length).toBe(1);
+    expect(body.passkeys).toHaveLength(1);
     expect(body.passkeys[0].id).toBe('cred-test-1');
     expect(body.passkeys[0].name).toBe('Test Key');
     expect(body.passkeys[0].createdAt).toBe('2025-01-15T10:00:00.000Z');
@@ -3208,7 +3208,7 @@ describe('Passkey routes — unit coverage', () => {
     const body = await res.json();
     expect(body.challenge).toBeDefined();
     expect(body.excludeCredentials).toBeDefined();
-    expect(body.excludeCredentials.length).toBe(1);
+    expect(body.excludeCredentials).toHaveLength(1);
     expect(body.excludeCredentials[0].id).toBe('cred-test-1');
 
     await store.close();
@@ -3352,7 +3352,7 @@ describe('Passkey routes — unit coverage', () => {
     const body = await res.json();
     expect(body.challenge).toBeDefined();
     expect(body.allowCredentials).toBeDefined();
-    expect(body.allowCredentials.length).toBe(1);
+    expect(body.allowCredentials).toHaveLength(1);
     expect(body.allowCredentials[0].id).toBe('cred-test-1');
 
     await store.close();

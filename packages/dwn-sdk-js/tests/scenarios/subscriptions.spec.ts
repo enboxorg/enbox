@@ -101,7 +101,7 @@ export function testSubscriptionScenarios(): void {
 
         // poll until the messages are received by the handler
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(messageCids.length).toBe(3);
+          expect(messageCids).toHaveLength(3);
           expect(messageCids).toEqual([ write1MessageCid, protocol1MessageCid, delete1MessageCid ]);
         });
 
@@ -174,11 +174,11 @@ export function testSubscriptionScenarios(): void {
         // Poll until the messages are received by the handler
         await Poller.pollUntilSuccessOrTimeout(async () =>{
           // check record message
-          expect(recordsMessageCids.length).toBe(1);
+          expect(recordsMessageCids).toHaveLength(1);
           expect(recordsMessageCids).toEqual(expect.arrayContaining([ await Message.getCid(record.message) ]));
 
           // check protocols message
-          expect(protocolsMessageCids.length).toBe(1);
+          expect(protocolsMessageCids).toHaveLength(1);
           expect(protocolsMessageCids).toEqual(expect.arrayContaining([ await Message.getCid(protocol.message) ]));
         });
 
@@ -190,11 +190,11 @@ export function testSubscriptionScenarios(): void {
         // poll until the delete message is received by the handler
         await Poller.pollUntilSuccessOrTimeout(async () => {
           // check record messages to include the delete message
-          expect(recordsMessageCids.length).toBe(2);
+          expect(recordsMessageCids).toHaveLength(2);
           expect(recordsMessageCids).toEqual(expect.arrayContaining([ await Message.getCid(recordDelete.message) ]));
 
           // check that the protocols message array does not include the delete message
-          expect(protocolsMessageCids.length).toBe(1); // unchanged
+          expect(protocolsMessageCids).toHaveLength(1); // unchanged
         });
 
         // clean up the subscriptions
@@ -273,7 +273,7 @@ export function testSubscriptionScenarios(): void {
         // Poll until the messages are received by the handler
         await Poller.pollUntilSuccessOrTimeout(async () => {
           // check the array for both the RecordsWrite messages
-          expect(recordsWriteMessageCids.length).toBe(2);
+          expect(recordsWriteMessageCids).toHaveLength(2);
           expect(recordsWriteMessageCids).toEqual(expect.arrayContaining([
             record1MessageCid,
             recordUpdateMessageCid,
@@ -281,7 +281,7 @@ export function testSubscriptionScenarios(): void {
         });
 
         // confirm that the delete array is empty
-        expect(recordsDeleteMessageCids.length).toBe(0);
+        expect(recordsDeleteMessageCids).toHaveLength(0);
 
         // delete the record
         const recordDelete = await TestDataGenerator.generateRecordsDelete({ author: alice, recordId: record.message.recordId });
@@ -297,7 +297,7 @@ export function testSubscriptionScenarios(): void {
 
         await Poller.pollUntilSuccessOrTimeout(async () => {
           // ensure the new record is in the recordsWrite array, but not the delete
-          expect(recordsWriteMessageCids.length).toBe(3);
+          expect(recordsWriteMessageCids).toHaveLength(3);
           expect(recordsWriteMessageCids).toEqual(expect.arrayContaining([
             record1MessageCid,
             recordUpdateMessageCid,
@@ -305,7 +305,7 @@ export function testSubscriptionScenarios(): void {
           ]));
 
           // ensure the delete message is in the recordsDelete array
-          expect(recordsDeleteMessageCids.length).toBe(1);
+          expect(recordsDeleteMessageCids).toHaveLength(1);
           expect(recordsDeleteMessageCids).toEqual(expect.arrayContaining([
             recordDeleteMessageCid,
           ]));
@@ -457,7 +457,7 @@ export function testSubscriptionScenarios(): void {
         // poll until the messages are received by the handlers
         await Poller.pollUntilSuccessOrTimeout(async () => {
           // check for proto1 messages
-          expect(proto1Messages.length).toBe(4);
+          expect(proto1Messages).toHaveLength(4);
           expect(proto1Messages).toEqual(expect.arrayContaining([
             await Message.getCid(protoConf1.message),
             await Message.getCid(write1proto1.message),
@@ -466,7 +466,7 @@ export function testSubscriptionScenarios(): void {
           ]));
 
           // check for proto2 messages
-          expect(proto2Messages.length).toBe(4);
+          expect(proto2Messages).toHaveLength(4);
           expect(proto2Messages).toEqual(expect.arrayContaining([
             await Message.getCid(protoConf2.message),
             await Message.getCid(write1proto2.message),
@@ -512,14 +512,14 @@ export function testSubscriptionScenarios(): void {
         // poll until the messages are received by the handlers
         await Poller.pollUntilSuccessOrTimeout(async () => {
           // check for the delete and revocation in proto1 messages
-          expect(proto1Messages.length).toBe(6); // 2 additional messages
+          expect(proto1Messages).toHaveLength(6); // 2 additional messages
           expect(proto1Messages).toEqual(expect.arrayContaining([
             await Message.getCid(deleteProto1Message.message),
             await Message.getCid(revokeProto1.recordsWrite.message),
           ]));
 
           // check for the delete and revocation in proto2 messages
-          expect(proto2Messages.length).toBe(6); // 2 additional messages
+          expect(proto2Messages).toHaveLength(6); // 2 additional messages
           expect(proto2Messages).toEqual(expect.arrayContaining([
             await Message.getCid(deleteProto2Message.message),
             await Message.getCid(revokeProto2.recordsWrite.message),
@@ -565,8 +565,8 @@ export function testSubscriptionScenarios(): void {
         expect(messagesSubscription2Reply.status.code).toBe(200);
 
         // no event message exist yet
-        expect(sub1MessageCids.length).toBe(0);
-        expect(sub2MessageCids.length).toBe(0);
+        expect(sub1MessageCids).toHaveLength(0);
+        expect(sub2MessageCids).toHaveLength(0);
 
         // write a record
         const record1 = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -576,10 +576,10 @@ export function testSubscriptionScenarios(): void {
 
         await Poller.pollUntilSuccessOrTimeout(async () => {
           // both subscriptions should have received the message
-          expect(sub1MessageCids.length).toBe(1); // message exists
+          expect(sub1MessageCids).toHaveLength(1); // message exists
           expect(sub1MessageCids).toEqual([ record1MessageCid ]);
 
-          expect(sub2MessageCids.length).toBe(1); // message exists
+          expect(sub2MessageCids).toHaveLength(1); // message exists
           expect(sub2MessageCids).toEqual([ record1MessageCid ]);
         });
 
@@ -598,14 +598,14 @@ export function testSubscriptionScenarios(): void {
         const record3MessageCid = await Message.getCid(record3.message);
 
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(sub1MessageCids.length).toBe(3); // all three messages exist
+          expect(sub1MessageCids).toHaveLength(3); // all three messages exist
           expect(sub1MessageCids).toEqual([
             record1MessageCid,
             record2MessageCid,
             record3MessageCid
           ]);
 
-          expect(sub2MessageCids.length).toBe(1); // only the first message exists
+          expect(sub2MessageCids).toHaveLength(1); // only the first message exists
           expect(sub2MessageCids).toEqual([ record1MessageCid ]);
         });
       });
@@ -673,14 +673,14 @@ export function testSubscriptionScenarios(): void {
 
         await Poller.pollUntilSuccessOrTimeout(async () => {
           // publishedMessages array should only contain the two published messages
-          expect(publishedMessages.length).toBe(2);
+          expect(publishedMessages).toHaveLength(2);
           expect(publishedMessages).toEqual(expect.arrayContaining([
             await Message.getCid(write1.message),
             await Message.getCid(write2.message),
           ]));
 
           // allMessages array should contain all three messages
-          expect(allMessages.length).toBe(3);
+          expect(allMessages).toHaveLength(3);
           expect(allMessages).toEqual(expect.arrayContaining([
             await Message.getCid(writeNotPublished.message),
             await Message.getCid(write1.message),
@@ -804,7 +804,7 @@ export function testSubscriptionScenarios(): void {
 
         await Poller.pollUntilSuccessOrTimeout(async () => {
           // carol should have received the message intended for her
-          expect(carolSubscribeCarolAndAlice.length).toBe(4);
+          expect(carolSubscribeCarolAndAlice).toHaveLength(4);
           expect(carolSubscribeCarolAndAlice).toEqual(expect.arrayContaining([
             await Message.getCid(publicBobToAlice.message),
             await Message.getCid(privateCarolToAlice.message),
@@ -813,7 +813,7 @@ export function testSubscriptionScenarios(): void {
           ]));
 
           // bob should have received the two messages intended for him
-          expect(bobSubscribeAlice.length).toBe(2);
+          expect(bobSubscribeAlice).toHaveLength(2);
           expect(bobSubscribeAlice).toEqual(expect.arrayContaining([
             await Message.getCid(privateBobToAlice.message),
             await Message.getCid(publicBobToAlice.message),
@@ -952,7 +952,7 @@ export function testSubscriptionScenarios(): void {
 
         await Poller.pollUntilSuccessOrTimeout(async () => {
           // carol should have received the message intended for her
-          expect(carolSubscribeCarolAndAlice.length).toBe(4);
+          expect(carolSubscribeCarolAndAlice).toHaveLength(4);
           expect(carolSubscribeCarolAndAlice).toEqual(expect.arrayContaining([
             await Message.getCid(publicAliceToCarol.message),
             await Message.getCid(privateAliceToCarol.message),
@@ -961,7 +961,7 @@ export function testSubscriptionScenarios(): void {
           ]));
 
           // bob should have received the two messages intended for him
-          expect(bobSubscribeAlice.length).toBe(2);
+          expect(bobSubscribeAlice).toHaveLength(2);
           expect(bobSubscribeAlice).toEqual(expect.arrayContaining([
             await Message.getCid(publicAliceToBob.message),
             await Message.getCid(publicAliceToCarol.message)
@@ -1075,7 +1075,7 @@ export function testSubscriptionScenarios(): void {
         expect(additionalThreadReply.status.code).toBe(202);
 
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(messages.length).toBe(2);
+          expect(messages).toHaveLength(2);
           expect(messages).toEqual(expect.arrayContaining([
             await Message.getCid(bobParticipant.message),
             await Message.getCid(carolParticipant.message),
@@ -1117,7 +1117,7 @@ export function testSubscriptionScenarios(): void {
         expect(message3Reply.status.code).toBe(202);
 
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(messages.length).toBe(5);
+          expect(messages).toHaveLength(5);
           expect(messages).toEqual(expect.arrayContaining([
             await Message.getCid(message1.message),
             await Message.getCid(message2.message),
@@ -1134,7 +1134,7 @@ export function testSubscriptionScenarios(): void {
         expect(deleteCarolReply.status.code).toBe(202);
 
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(messages.length).toBe(6);
+          expect(messages).toHaveLength(6);
           expect(messages).toEqual(expect.arrayContaining([
             await Message.getCid(deleteCarol.message)
           ]));

@@ -118,7 +118,7 @@ describe('WebSocketDwnRpcClient', () => {
       // should return success but without any records as none exist yet
       expect(response.status.code).toBe(200);
       expect(response.entries).toBeDefined();
-      expect(response.entries?.length).toBe(0);
+      expect(response.entries).toHaveLength(0);
     });
 
     it('only supports WebSocket and Secure WebSocket protocols', async () => {
@@ -731,7 +731,7 @@ describe('WebSocketDwnRpcClient', () => {
 
         const tracked = [...subscriptions.values()][0];
         expect(tracked.lastCursor).toEqual(highToken);
-        expect(sentMessages.length).toBe(2);
+        expect(sentMessages).toHaveLength(2);
       });
 
       it('should send rpc.ack when cursor events arrive', async () => {
@@ -1111,14 +1111,14 @@ describe('WebSocketDwnRpcClient', () => {
         // Trigger onclose — handler should receive 'disconnected'.
         capturedOptions.onclose();
         const disconnectMsgs = receivedMessages.filter((m) => m.type === 'disconnected');
-        expect(disconnectMsgs.length).toBe(1);
+        expect(disconnectMsgs).toHaveLength(1);
 
         // Trigger onreconnecting — handler should receive 'reconnecting' with attempt.
         capturedOptions.onreconnecting(1);
         const reconnectingMsgs = receivedMessages.filter(
           (m) => m.type === 'reconnecting'
         );
-        expect(reconnectingMsgs.length).toBe(1);
+        expect(reconnectingMsgs).toHaveLength(1);
         expect((reconnectingMsgs[0] as any).attempt).toBe(1);
 
         connectStub.restore();
@@ -1175,7 +1175,7 @@ describe('WebSocketDwnRpcClient', () => {
 
         // Handler should have received a 'reconnected' message
         const reconnectedMsgs = receivedMessages.filter((m) => m.type === 'reconnected');
-        expect(reconnectedMsgs.length).toBe(1);
+        expect(reconnectedMsgs).toHaveLength(1);
 
         subscriptionRequestStub.restore();
         socket.close();
@@ -1215,7 +1215,7 @@ describe('WebSocketDwnRpcClient', () => {
 
         // Handler should have received 'reconnected' message
         const reconnectedMsgs = receivedMessages.filter((m) => m.type === 'reconnected');
-        expect(reconnectedMsgs.length).toBe(1);
+        expect(reconnectedMsgs).toHaveLength(1);
 
         subscriptionRequestStub.restore();
         socket.close();
@@ -1269,11 +1269,11 @@ describe('WebSocketDwnRpcClient', () => {
 
         // First handler should NOT have received 'reconnected' (it failed)
         const reconnectedA = messagesA.filter((m) => m.type === 'reconnected');
-        expect(reconnectedA.length).toBe(0);
+        expect(reconnectedA).toHaveLength(0);
 
         // Second handler SHOULD have received 'reconnected'
         const reconnectedB = messagesB.filter((m) => m.type === 'reconnected');
-        expect(reconnectedB.length).toBe(1);
+        expect(reconnectedB).toHaveLength(1);
 
         subscriptionRequestStub.restore();
         socket.close();

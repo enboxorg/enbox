@@ -345,7 +345,7 @@ describe('DwnDiscoveryPayload', () => {
       expect(redirectUrl).not.toContain('old-fragment');
       // Should have exactly one # separator.
       const parts = redirectUrl.split('#');
-      expect(parts.length).toBe(2);
+      expect(parts).toHaveLength(2);
       expect(parts[0]).toBe('https://notes.sh/dwn');
     });
 

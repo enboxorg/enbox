@@ -806,7 +806,7 @@ describe('E2E Multi-Agent Sync', () => {
         },
       });
       expect(remoteGrantKeyQuery.reply.status.code).toBe(200);
-      expect(remoteGrantKeyQuery.reply.entries?.length).toBe(1);
+      expect(remoteGrantKeyQuery.reply.entries).toHaveLength(1);
 
       const noteText = 'encrypted sync note decrypted from connect-created grantKey';
       const writeResult = await primaryHarness.agent.dwn.processRequest({
@@ -852,7 +852,7 @@ describe('E2E Multi-Agent Sync', () => {
         },
       });
       expect(localGrantKeyQuery.reply.status.code).toBe(200);
-      expect(localGrantKeyQuery.reply.entries?.length).toBe(1);
+      expect(localGrantKeyQuery.reply.entries).toHaveLength(1);
 
       deviceHarness.agent.dwn.clearDelegateDecryptionKeys(connectResponse.delegateDid);
       expect(await deviceHarness.agent.did.get({ didUri: alice.did.uri })).toBeUndefined();
@@ -952,7 +952,7 @@ describe('E2E Multi-Agent Sync', () => {
         messageParams : { filter: { protocol: chatProtocol.protocol } },
       }));
       expect(bobProtocolQueryFromAlice.reply.status.code).toBe(200);
-      expect(bobProtocolQueryFromAlice.reply.entries?.length).toBe(1);
+      expect(bobProtocolQueryFromAlice.reply.entries).toHaveLength(1);
 
       const bobMessagesReadGrant = await createAndDistributeGrant(primaryHarness, deviceHarness, {
         grantor : alice,
@@ -1019,7 +1019,7 @@ describe('E2E Multi-Agent Sync', () => {
         },
       });
       expect(sourceAudienceRecordQuery.reply.status.code).toBe(200);
-      expect(sourceAudienceRecordQuery.reply.entries?.length).toBe(1);
+      expect(sourceAudienceRecordQuery.reply.entries).toHaveLength(1);
       const audienceKeyId = (sourceAudienceRecordQuery.reply.entries![0] as RecordsWriteMessage).descriptor.tags!.keyId;
 
       const chatText = 'role-audience encrypted message from sync';
@@ -1060,7 +1060,7 @@ describe('E2E Multi-Agent Sync', () => {
         },
       });
       expect(remoteDeliveryQuery.reply.status.code).toBe(200);
-      expect(remoteDeliveryQuery.reply.entries?.length).toBe(1);
+      expect(remoteDeliveryQuery.reply.entries).toHaveLength(1);
 
       const remoteFeedQuery = await deviceHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
@@ -1139,7 +1139,7 @@ describe('E2E Multi-Agent Sync', () => {
         },
       });
       expect(deliveryQuery.reply.status.code).toBe(200);
-      expect(deliveryQuery.reply.entries?.length).toBe(1);
+      expect(deliveryQuery.reply.entries).toHaveLength(1);
       expect(await deviceHarness.agent.did.get({ didUri: alice.did.uri })).toBeUndefined();
 
       const readResult = await deviceHarness.agent.dwn.processRequest({

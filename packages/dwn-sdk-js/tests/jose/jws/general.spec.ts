@@ -51,7 +51,7 @@ describe('General JWS Sign/Verify', () => {
     });
 
     const verificationResult = await GeneralJwsVerifier.verifySignatures(jws, resolverStub);
-    expect(verificationResult.signers.length).toBe(1);
+    expect(verificationResult.signers).toHaveLength(1);
     expect(verificationResult.signers).toContain('did:jank:alice');
   });
 
@@ -92,7 +92,7 @@ describe('General JWS Sign/Verify', () => {
       jws,
       resolverStub
     );
-    expect(verificationResult.signers.length).toBe(1);
+    expect(verificationResult.signers).toHaveLength(1);
     expect(verificationResult.signers).toContain('did:jank:alice');
   });
 
@@ -123,7 +123,7 @@ describe('General JWS Sign/Verify', () => {
     });
 
     const verificationResult = await GeneralJwsVerifier.verifySignatures(jws, resolverStub);
-    expect(verificationResult.signers.length).toBe(1);
+    expect(verificationResult.signers).toHaveLength(1);
     expect(verificationResult.signers).toContain('did:jank:alice');
   });
 
@@ -216,7 +216,7 @@ describe('General JWS Sign/Verify', () => {
     });
 
     const verificationResult = await GeneralJwsVerifier.verifySignatures(jws, resolverStub);
-    expect(verificationResult.signers.length).toBe(2);
+    expect(verificationResult.signers).toHaveLength(2);
     expect(verificationResult.signers).toContain(alice.did);
     expect(verificationResult.signers).toContain(bob.did);
   });

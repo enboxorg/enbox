@@ -103,7 +103,7 @@ export function testRecordsDeleteHandler(): void {
 
         const reply = await dwn.processMessage(alice.did, queryData.message);
         expect(reply.status.code).toBe(200);
-        expect(reply.entries?.length).toBe(1);
+        expect(reply.entries).toHaveLength(1);
 
         // testing delete
         const recordsDelete = await RecordsDelete.create({
@@ -117,7 +117,7 @@ export function testRecordsDeleteHandler(): void {
         // ensure a query will no longer find the deleted record
         const reply2 = await dwn.processMessage(alice.did, queryData.message);
         expect(reply2.status.code).toBe(200);
-        expect(reply2.entries?.length).toBe(0);
+        expect(reply2.entries).toHaveLength(0);
 
         // a newer tombstone displaces the older one — one canonical winner per record
         const recordsDelete2 = await RecordsDelete.create({
@@ -287,7 +287,7 @@ export function testRecordsDeleteHandler(): void {
         });
         const queryReply = await dwn.processMessage(alice.did, queryData.message);
         expect(queryReply.status.code).toBe(200);
-        expect(queryReply.entries?.length).toBe(1);
+        expect(queryReply.entries).toHaveLength(1);
       });
 
       it('should apply a tombstone over a newer RecordsWrite (delete-wins)', async () => {
@@ -327,7 +327,7 @@ export function testRecordsDeleteHandler(): void {
         });
         const reply = await dwn.processMessage(alice.did, queryData.message);
         expect(reply.status.code).toBe(200);
-        expect(reply.entries?.length).toBe(0);
+        expect(reply.entries).toHaveLength(0);
       });
 
       it('should apply a stale prune over the record\'s newest plain tombstone (prune dominates)', async () => {
@@ -403,7 +403,7 @@ export function testRecordsDeleteHandler(): void {
         });
         const aliceQueryWriteAfterAliceWriteReply = await dwn.processMessage(alice.did, aliceQueryWriteAfterAliceWriteData.message);
         expect(aliceQueryWriteAfterAliceWriteReply.status.code).toBe(200);
-        expect(aliceQueryWriteAfterAliceWriteReply.entries?.length).toBe(1);
+        expect(aliceQueryWriteAfterAliceWriteReply.entries).toHaveLength(1);
         expect(aliceQueryWriteAfterAliceWriteReply.entries![0].encodedData).toBe(encodedData);
 
         // alice deleting the record
@@ -420,7 +420,7 @@ export function testRecordsDeleteHandler(): void {
         });
         const aliceQueryWriteAfterAliceDeleteReply = await dwn.processMessage(alice.did, aliceQueryWriteAfterAliceDeleteData.message);
         expect(aliceQueryWriteAfterAliceDeleteReply.status.code).toBe(200);
-        expect(aliceQueryWriteAfterAliceDeleteReply.entries?.length).toBe(0);
+        expect(aliceQueryWriteAfterAliceDeleteReply.entries).toHaveLength(0);
 
         // alice writes a new record with the same data
         const aliceRewriteData = await TestDataGenerator.generateRecordsWrite({
@@ -436,7 +436,7 @@ export function testRecordsDeleteHandler(): void {
         });
         const aliceQueryWriteAfterAliceRewriteReply = await dwn.processMessage(alice.did, aliceQueryWriteAfterAliceRewriteData.message);
         expect(aliceQueryWriteAfterAliceRewriteReply.status.code).toBe(200);
-        expect(aliceQueryWriteAfterAliceRewriteReply.entries?.length).toBe(1);
+        expect(aliceQueryWriteAfterAliceRewriteReply.entries).toHaveLength(1);
         expect(aliceQueryWriteAfterAliceRewriteReply.entries![0].encodedData).toBe(encodedData);
       });
 
@@ -940,7 +940,7 @@ export function testRecordsDeleteHandler(): void {
 
         // message store
         const { messages } = await messageStore.query(alice.did, [{ schema: normalizeSchemaUrl('testSchema'), method: DwnMethodName.Delete }]);
-        expect(messages.length).toBe(1);
+        expect(messages).toHaveLength(1);
         expect(await Message.getCid(messages[0])).toBe(deleteMessageCid);
 
       });
@@ -970,7 +970,7 @@ export function testRecordsDeleteHandler(): void {
           // the permission shadow filter shape matches the live grant record
           const shadowFilter = { 'protocol': PermissionsProtocol.uri, 'tag.protocol': scopedProtocol };
           const { messages: liveMatches } = await messageStore.query(alice.did, [shadowFilter]);
-          expect(liveMatches.length).toBe(1);
+          expect(liveMatches).toHaveLength(1);
 
           // alice deletes the grant record
           const recordsDelete = await RecordsDelete.create({
@@ -983,7 +983,7 @@ export function testRecordsDeleteHandler(): void {
           // the tombstone is now the only message matching the shadow filter:
           // the retained initial write no longer indexes tags once displaced from the latest base state
           const { messages: matchesAfterDelete } = await messageStore.query(alice.did, [shadowFilter]);
-          expect(matchesAfterDelete.length).toBe(1);
+          expect(matchesAfterDelete).toHaveLength(1);
           expect(await Message.getCid(matchesAfterDelete[0])).toBe(await Message.getCid(recordsDelete.message));
           expect(matchesAfterDelete[0].descriptor.method).toBe(DwnMethodName.Delete);
         });
@@ -1047,18 +1047,18 @@ export function testRecordsDeleteHandler(): void {
             schema    : normalizeSchemaUrl('http://published-tombstone'),
           };
           const { messages: publishedTombstones } = await messageStore.query(alice.did, [publishedTombstoneFilter]);
-          expect(publishedTombstones.length).toBe(1);
+          expect(publishedTombstones).toHaveLength(1);
           expect(await Message.getCid(publishedTombstones[0])).toBe(await Message.getCid(publishedDelete.message));
 
           // the subscription receives the published record's write and delete events only
           await Poller.pollUntilSuccessOrTimeout(async () => {
-            expect(receivedEvents.length).toBe(2);
+            expect(receivedEvents).toHaveLength(2);
           });
           const writeEvents = receivedEvents.filter((event) => event.message.descriptor.method === DwnMethodName.Write);
           const deleteEvents = receivedEvents.filter((event) => event.message.descriptor.method === DwnMethodName.Delete);
-          expect(writeEvents.length).toBe(1);
+          expect(writeEvents).toHaveLength(1);
           expect((writeEvents[0].message as RecordsWriteMessage).recordId).toBe(publishedWrite.message.recordId);
-          expect(deleteEvents.length).toBe(1);
+          expect(deleteEvents).toHaveLength(1);
           expect((deleteEvents[0].message as RecordsDeleteMessage).descriptor.recordId).toBe(publishedWrite.message.recordId);
 
           await subscribeReply.subscription!.close();
@@ -1100,11 +1100,11 @@ export function testRecordsDeleteHandler(): void {
 
           // mutable facts come from the update that was the latest write immediately before deletion
           const { messages: blueMatches } = await messageStore.query(alice.did, [{ 'method': DwnMethodName.Delete, 'tag.team': 'blue' }]);
-          expect(blueMatches.length).toBe(1);
+          expect(blueMatches).toHaveLength(1);
           expect(await Message.getCid(blueMatches[0])).toBe(deleteMessageCid);
 
           const { messages: redMatches } = await messageStore.query(alice.did, [{ 'method': DwnMethodName.Delete, 'tag.team': 'red' }]);
-          expect(redMatches.length).toBe(0);
+          expect(redMatches).toHaveLength(0);
 
           // immutable facts still come from the initial write
           const { messages: immutableMatches } = await messageStore.query(alice.did, [{
@@ -1114,7 +1114,7 @@ export function testRecordsDeleteHandler(): void {
             published   : true,
             datePublished,
           }]);
-          expect(immutableMatches.length).toBe(1);
+          expect(immutableMatches).toHaveLength(1);
           expect(await Message.getCid(immutableMatches[0])).toBe(deleteMessageCid);
         });
 
@@ -1168,12 +1168,12 @@ export function testRecordsDeleteHandler(): void {
             'published'     : true,
             'datePublished' : datePublished
           }]);
-          expect(tombstones.length).toBe(1);
+          expect(tombstones).toHaveLength(1);
           expect(await Message.getCid(tombstones[0])).toBe(await Message.getCid(pruneDelete.message));
           expect((tombstones[0] as RecordsDeleteMessage).descriptor.prune).toBe(true);
 
           const { messages: redMatches } = await messageStore.query(alice.did, [{ 'method': DwnMethodName.Delete, 'tag.team': 'red' }]);
-          expect(redMatches.length).toBe(0);
+          expect(redMatches).toHaveLength(0);
         });
 
         it('should carry the displaced newer write tags and published state when a tombstone applies over it (delete-wins)', async () => {
@@ -1218,11 +1218,11 @@ export function testRecordsDeleteHandler(): void {
             'published'     : true,
             'datePublished' : datePublished
           }]);
-          expect(blueMatches.length).toBe(1);
+          expect(blueMatches).toHaveLength(1);
           expect(await Message.getCid(blueMatches[0])).toBe(await Message.getCid(recordsDelete.message));
 
           const { messages: redMatches } = await messageStore.query(alice.did, [{ 'method': DwnMethodName.Delete, 'tag.team': 'red' }]);
-          expect(redMatches.length).toBe(0);
+          expect(redMatches).toHaveLength(0);
         });
       });
 
@@ -1284,7 +1284,7 @@ export function testRecordsDeleteHandler(): void {
           expect(deleteReply.status.code).toBe(202);
 
           const { messages } = await messageStore.query(author.did, [{ recordId: message.recordId }]);
-          expect(messages.length).toBe(3); // first write + latest pre-delete write + delete
+          expect(messages).toHaveLength(3); // first write + latest pre-delete write + delete
           const retainedWriteCid = await Message.getCid(newWrite.message);
           const retainedCids = await Promise.all(messages.map((storedMessage) => Message.getCid(storedMessage)));
           expect(retainedCids).toContain(retainedWriteCid);

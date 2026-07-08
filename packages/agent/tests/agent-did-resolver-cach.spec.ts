@@ -133,7 +133,7 @@ describe('AgentDidResolverCache', () => {
 
     // get should be called once, and resolve should be called once
     expect(getStub.callCount).toBe(1);
-    expect(result).toBe(undefined);
+    expect(result).toBeUndefined();
   });
 
   it('throws if the error is anything other than a notFound error', async () => {

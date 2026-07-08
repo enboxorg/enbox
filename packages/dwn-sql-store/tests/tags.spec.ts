@@ -87,7 +87,7 @@ describe('TagTables', () => {
         .where('messageInsertId', '=', parentId)
         .execute();
 
-      expect(rows.length).toBe(2);
+      expect(rows).toHaveLength(2);
 
       const colorRow = rows.find((r) => r.tag === 'color');
       expect(colorRow).toBeDefined();
@@ -115,7 +115,7 @@ describe('TagTables', () => {
         .where('messageInsertId', '=', parentId)
         .execute();
 
-      expect(rows.length).toBe(2);
+      expect(rows).toHaveLength(2);
 
       const priorityRow = rows.find((r) => r.tag === 'priority');
       expect(priorityRow).toBeDefined();
@@ -143,7 +143,7 @@ describe('TagTables', () => {
         .where('messageInsertId', '=', parentId)
         .execute();
 
-      expect(rows.length).toBe(3);
+      expect(rows).toHaveLength(3);
       expect(rows.every((r) => r.tag === 'colors')).toBe(true);
 
       const values = rows.map((r) => r.valueString).sort();
@@ -163,7 +163,7 @@ describe('TagTables', () => {
         .where('messageInsertId', '=', parentId)
         .execute();
 
-      expect(rows.length).toBe(3);
+      expect(rows).toHaveLength(3);
       expect(rows.every((r) => r.tag === 'levels')).toBe(true);
 
       const values = rows.map((r) => r.valueNumber).sort();
@@ -183,7 +183,7 @@ describe('TagTables', () => {
         .where('messageInsertId', '=', parentId)
         .execute();
 
-      expect(rows.length).toBe(2);
+      expect(rows).toHaveLength(2);
 
       const activeRow = rows.find((r) => r.tag === 'active');
       expect(activeRow).toBeDefined();
@@ -209,7 +209,7 @@ describe('TagTables', () => {
         .where('messageInsertId', '=', parentId)
         .execute();
 
-      expect(rows.length).toBe(0);
+      expect(rows).toHaveLength(0);
     });
   });
 });

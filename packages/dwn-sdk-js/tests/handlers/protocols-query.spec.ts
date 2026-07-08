@@ -83,7 +83,7 @@ export function testProtocolsQueryHandler(): void {
         const reply = await dwn.processMessage(alice.did, queryMessageData.message);
 
         expect(reply.status.code).toBe(200);
-        expect(reply.entries?.length).toBe(1); // only 1 entry should match the query on protocol
+        expect(reply.entries).toHaveLength(1); // only 1 entry should match the query on protocol
 
         // testing fetch-all query without filter
         const queryMessageData2 = await TestDataGenerator.generateProtocolsQuery({
@@ -93,7 +93,7 @@ export function testProtocolsQueryHandler(): void {
         const reply2 = await dwn.processMessage(alice.did, queryMessageData2.message);
 
         expect(reply2.status.code).toBe(200);
-        expect(reply2.entries?.length).toBe(3); // expecting all 3 entries written above match the query
+        expect(reply2.entries).toHaveLength(3); // expecting all 3 entries written above match the query
       });
 
 
@@ -124,7 +124,7 @@ export function testProtocolsQueryHandler(): void {
 
         const conditionalQueryReply = await dwn.processMessage(alice.did, conditionalQuery.message);
         expect(conditionalQueryReply.status.code).toBe(200);
-        expect(conditionalQueryReply.entries?.length).toBe(1); // only 1 entry should match the query on protocol
+        expect(conditionalQueryReply.entries).toHaveLength(1); // only 1 entry should match the query on protocol
 
         const protocolConfigured = conditionalQueryReply.entries![0] as ProtocolsConfigureMessage;
         expect(protocolConfigured).toEqual(protocol2.message);
@@ -137,7 +137,7 @@ export function testProtocolsQueryHandler(): void {
 
         const signedConditionalQueryReply = await dwn.processMessage(alice.did, signedConditionalQuery.message);
         expect(signedConditionalQueryReply.status.code).toBe(200);
-        expect(signedConditionalQueryReply.entries?.length).toBe(1); // only 1 entry should match the query on protocol
+        expect(signedConditionalQueryReply.entries).toHaveLength(1); // only 1 entry should match the query on protocol
 
         const protocolConfigured2 = conditionalQueryReply.entries![0] as ProtocolsConfigureMessage;
         expect(protocolConfigured2).toEqual(protocol2.message);
@@ -148,7 +148,7 @@ export function testProtocolsQueryHandler(): void {
 
         const fetchAllQueryReply = await dwn.processMessage(alice.did, fetchAllQuery.message);
         expect(fetchAllQueryReply.status.code).toBe(200);
-        expect(fetchAllQueryReply.entries?.length).toBe(2);
+        expect(fetchAllQueryReply.entries).toHaveLength(2);
         expect(fetchAllQueryReply.entries).toContainEqual(protocol2.message);
         expect(fetchAllQueryReply.entries).toContainEqual(protocol3.message);
 
@@ -159,7 +159,7 @@ export function testProtocolsQueryHandler(): void {
 
         const signedFetchAllQueryReply = await dwn.processMessage(alice.did, signedFetchAllQuery.message);
         expect(signedFetchAllQueryReply.status.code).toBe(200);
-        expect(signedFetchAllQueryReply.entries?.length).toBe(2);
+        expect(signedFetchAllQueryReply.entries).toHaveLength(2);
         expect(signedFetchAllQueryReply.entries).toContainEqual(protocol2.message);
         expect(signedFetchAllQueryReply.entries).toContainEqual(protocol3.message);
       });
@@ -269,7 +269,7 @@ export function testProtocolsQueryHandler(): void {
           });
           const protocolsQueryReply = await dwn.processMessage(alice.did, protocolsQuery.message);
           expect(protocolsQueryReply.status.code).toBe(200);
-          expect(protocolsQueryReply.entries?.length).toBe(2);
+          expect(protocolsQueryReply.entries).toHaveLength(2);
 
           // 3. Verify that Mallory cannot to use Bob's permission grant to gain access to Alice's DWN
           const malloryProtocolsQuery = await TestDataGenerator.generateProtocolsQuery({
@@ -358,7 +358,7 @@ export function testProtocolsQueryHandler(): void {
 
           const protocolQueryAllowedReply = await dwn.processMessage(alice.did, protocolsQueryAllowed.message);
           expect(protocolQueryAllowedReply.status.code).toBe(200);
-          expect(protocolQueryAllowedReply.entries?.length).toBe(1);
+          expect(protocolQueryAllowedReply.entries).toHaveLength(1);
           expect(protocolQueryAllowedReply.entries![0].descriptor.definition.protocol).toEqual(allowedProtocol);
 
           // Bob tries to ProtocolsQuery to Alice's DWN for a different protocol
@@ -372,7 +372,7 @@ export function testProtocolsQueryHandler(): void {
 
           const protocolQueryNotAllowedReply = await dwn.processMessage(alice.did, protocolQueryNotAllowed.message);
           expect(protocolQueryNotAllowedReply.status.code).toBe(200);
-          expect(protocolQueryNotAllowedReply.entries?.length).toBe(0);
+          expect(protocolQueryNotAllowedReply.entries).toHaveLength(0);
 
           // Bob tries to ProtocolsQuery to Alice's DWN for a published protocol with the same grant
           const protocolQueryPublished = await TestDataGenerator.generateProtocolsQuery({
@@ -385,7 +385,7 @@ export function testProtocolsQueryHandler(): void {
 
           const protocolQueryPublishedReply = await dwn.processMessage(alice.did, protocolQueryPublished.message);
           expect(protocolQueryPublishedReply.status.code).toBe(200);
-          expect(protocolQueryPublishedReply.entries?.length).toBe(1);
+          expect(protocolQueryPublishedReply.entries).toHaveLength(1);
           expect(protocolQueryPublishedReply.entries![0].descriptor.definition.protocol).toEqual(publishedProtocol);
 
           // Bob tries to ProtocolsQuery to Alice's DWN with no filters, using the same grant
@@ -396,7 +396,7 @@ export function testProtocolsQueryHandler(): void {
 
           const protocolQueryNoFiltersReply = await dwn.processMessage(alice.did, protocolQueryNoFilters.message);
           expect(protocolQueryNoFiltersReply.status.code).toBe(200);
-          expect(protocolQueryNoFiltersReply.entries?.length).toBe(1);
+          expect(protocolQueryNoFiltersReply.entries).toHaveLength(1);
           expect(protocolQueryNoFiltersReply.entries![0].descriptor.definition.protocol).toEqual(publishedProtocol);
         });
 

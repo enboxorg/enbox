@@ -65,7 +65,7 @@ describe('registerWithDwnEndpoints', () => {
 
     expect(successCalled).toBe(true);
     // No registration calls should have been made
-    expect(mockRegisterTenant.mock.calls.length).toBe(0);
+    expect(mockRegisterTenant.mock.calls).toHaveLength(0);
   });
 
   test('registers via PoW when server requires it and no provider auth callback', async () => {
@@ -94,7 +94,7 @@ describe('registerWithDwnEndpoints', () => {
 
     expect(successCalled).toBe(true);
     // Should register both agent DID and connected DID via PoW
-    expect(mockRegisterTenant.mock.calls.length).toBe(2);
+    expect(mockRegisterTenant.mock.calls).toHaveLength(2);
     expect(mockRegisterTenant.mock.calls[0]).toEqual(['https://dwn1.example.com', 'did:dht:agent1']);
     expect(mockRegisterTenant.mock.calls[1]).toEqual(['https://dwn1.example.com', 'did:dht:user1']);
   });
@@ -125,7 +125,7 @@ describe('registerWithDwnEndpoints', () => {
 
     expect(successCalled).toBe(true);
     // Only one registration call since DIDs are the same
-    expect(mockRegisterTenant.mock.calls.length).toBe(1);
+    expect(mockRegisterTenant.mock.calls).toHaveLength(1);
   });
 
   test('uses provider auth when server supports it and callback is provided', async () => {
@@ -167,12 +167,12 @@ describe('registerWithDwnEndpoints', () => {
     expect(successCalled).toBe(true);
 
     // Should have exchanged auth code
-    expect(mockExchangeAuthCode.mock.calls.length).toBe(1);
+    expect(mockExchangeAuthCode.mock.calls).toHaveLength(1);
     expect(mockExchangeAuthCode.mock.calls[0][0]).toBe('https://auth.example.com/token');
     expect(mockExchangeAuthCode.mock.calls[0][1]).toBe('auth-code-123');
 
     // Should have registered both DIDs with token
-    expect(mockRegisterTenantWithToken.mock.calls.length).toBe(2);
+    expect(mockRegisterTenantWithToken.mock.calls).toHaveLength(2);
 
     // Tokens should have been emitted
     expect(capturedTokens).toBeDefined();
@@ -227,9 +227,9 @@ describe('registerWithDwnEndpoints', () => {
     // Should NOT have called onProviderAuthRequired since we have a valid token
     expect(authCallCount.value).toBe(0);
     // Should NOT have exchanged auth code
-    expect(mockExchangeAuthCode.mock.calls.length).toBe(0);
+    expect(mockExchangeAuthCode.mock.calls).toHaveLength(0);
     // Should have registered using the existing token
-    expect(mockRegisterTenantWithToken.mock.calls.length).toBe(2);
+    expect(mockRegisterTenantWithToken.mock.calls).toHaveLength(2);
     expect(mockRegisterTenantWithToken.mock.calls[0][2]).toBe('existing-token');
   });
 
@@ -280,13 +280,13 @@ describe('registerWithDwnEndpoints', () => {
 
     expect(successCalled).toBe(true);
     // Should have called refresh
-    expect(mockRefreshRegistrationToken.mock.calls.length).toBe(1);
+    expect(mockRefreshRegistrationToken.mock.calls).toHaveLength(1);
     expect(mockRefreshRegistrationToken.mock.calls[0][0]).toBe('https://auth.example.com/refresh');
     expect(mockRefreshRegistrationToken.mock.calls[0][1]).toBe('refresh-tok');
     // Should NOT have called the full auth flow
-    expect(mockExchangeAuthCode.mock.calls.length).toBe(0);
+    expect(mockExchangeAuthCode.mock.calls).toHaveLength(0);
     // Should have registered with the refreshed token
-    expect(mockRegisterTenantWithToken.mock.calls.length).toBe(2);
+    expect(mockRegisterTenantWithToken.mock.calls).toHaveLength(2);
     expect(mockRegisterTenantWithToken.mock.calls[0][2]).toBe('refreshed-token');
     // Updated tokens should be emitted
     expect(capturedTokens!['https://dwn1.example.com'].registrationToken).toBe('refreshed-token');
@@ -334,9 +334,9 @@ describe('registerWithDwnEndpoints', () => {
 
     expect(successCalled).toBe(true);
     // Should NOT have called refresh (no refreshUrl)
-    expect(mockRefreshRegistrationToken.mock.calls.length).toBe(0);
+    expect(mockRefreshRegistrationToken.mock.calls).toHaveLength(0);
     // Should have done full auth flow
-    expect(mockExchangeAuthCode.mock.calls.length).toBe(1);
+    expect(mockExchangeAuthCode.mock.calls).toHaveLength(1);
   });
 
   test('detects CSRF state mismatch', async () => {
@@ -441,7 +441,7 @@ describe('registerWithDwnEndpoints', () => {
     expect(successCalled).toBe(true);
     expect(getServerInfoCalls).toEqual(['https://dwn1.example.com', 'https://dwn2.example.com']);
     // 2 DIDs x 2 endpoints = 4 registration calls
-    expect(mockRegisterTenant.mock.calls.length).toBe(4);
+    expect(mockRegisterTenant.mock.calls).toHaveLength(4);
   });
 
   test('falls back to PoW when provider auth is supported but no callback', async () => {
@@ -477,8 +477,8 @@ describe('registerWithDwnEndpoints', () => {
 
     expect(successCalled).toBe(true);
     // Should have used PoW fallback
-    expect(mockRegisterTenant.mock.calls.length).toBe(2);
-    expect(mockRegisterTenantWithToken.mock.calls.length).toBe(0);
+    expect(mockRegisterTenant.mock.calls).toHaveLength(2);
+    expect(mockRegisterTenantWithToken.mock.calls).toHaveLength(0);
   });
 
   test('constructs correct authorize URL with query separator', async () => {
@@ -564,9 +564,9 @@ describe('registerWithDwnEndpoints', () => {
     expect(successCalled).toBe(true);
     // Should not have re-authed
     expect(authCallCount.value).toBe(0);
-    expect(mockExchangeAuthCode.mock.calls.length).toBe(0);
+    expect(mockExchangeAuthCode.mock.calls).toHaveLength(0);
     // Should use the existing token
-    expect(mockRegisterTenantWithToken.mock.calls.length).toBe(1);
+    expect(mockRegisterTenantWithToken.mock.calls).toHaveLength(1);
     expect(mockRegisterTenantWithToken.mock.calls[0][2]).toBe('no-expiry-token');
   });
 });
@@ -707,9 +707,9 @@ describe('registerWithDwnEndpoints with persistTokens', () => {
     expect(successCalled).toBe(true);
     // Should NOT have run the auth flow — used stored token
     expect(authCallCount.value).toBe(0);
-    expect(mockExchangeAuthCode.mock.calls.length).toBe(0);
+    expect(mockExchangeAuthCode.mock.calls).toHaveLength(0);
     // Should have registered using the stored token
-    expect(mockRegisterTenantWithToken.mock.calls.length).toBe(2);
+    expect(mockRegisterTenantWithToken.mock.calls).toHaveLength(2);
     expect(mockRegisterTenantWithToken.mock.calls[0][2]).toBe('stored-token');
   });
 

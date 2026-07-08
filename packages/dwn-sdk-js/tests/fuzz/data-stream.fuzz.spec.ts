@@ -33,7 +33,7 @@ describe('DataStream — fuzz', () => {
           async (bytes, count) => {
             const stream = DataStream.fromBytes(bytes);
             const copies = DataStream.duplicateDataStream(stream, count);
-            expect(copies.length).toBe(count);
+            expect(copies).toHaveLength(count);
           }
         ),
         { numRuns: Math.min(numRuns, 30) }
@@ -48,7 +48,7 @@ describe('DataStream — fuzz', () => {
           (bytes, count) => {
             const stream = DataStream.fromBytes(bytes);
             const copies = DataStream.duplicateDataStream(stream, count);
-            expect(copies.length).toBe(0);
+            expect(copies).toHaveLength(0);
           }
         ),
         { numRuns: Math.min(numRuns, 20) }

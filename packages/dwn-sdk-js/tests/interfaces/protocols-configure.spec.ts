@@ -869,7 +869,7 @@ describe('ProtocolsConfigure', () => {
             signer     : Jws.createSigner(alice),
             definition : encryptedDefinition,
           })).rejects.toThrow(DwnErrorCode.ProtocolsConfigureInvalidEncryptedAnyoneRead);
-          expect(capturedWarnings.length).toBe(0);
+          expect(capturedWarnings).toHaveLength(0);
         });
 
         it('should not warn when encryptionRequired is absent', async () => {
@@ -899,7 +899,7 @@ describe('ProtocolsConfigure', () => {
           });
 
           expect(result).toBeDefined();
-          expect(capturedWarnings.length).toBe(0);
+          expect(capturedWarnings).toHaveLength(0);
         });
 
         it('should not warn when encryptionRequired is true but no anyone-can-read rule', async () => {
@@ -943,7 +943,7 @@ describe('ProtocolsConfigure', () => {
           });
 
           expect(result).toBeDefined();
-          expect(capturedWarnings.length).toBe(0);
+          expect(capturedWarnings).toHaveLength(0);
         });
 
         it('should reject encryptionRequired: true when read roles resolve through uses', async () => {
@@ -980,7 +980,7 @@ describe('ProtocolsConfigure', () => {
             signer     : Jws.createSigner(alice),
             definition : encryptedDefinition,
           })).rejects.toThrow(DwnErrorCode.ProtocolsConfigureInvalidEncryptedCrossProtocolRole);
-          expect(capturedWarnings.length).toBe(0);
+          expect(capturedWarnings).toHaveLength(0);
         });
       });
     });
