@@ -50,6 +50,12 @@ type DeliveryTarget = {
   endpoints: DwnEndpoint[];
 };
 
+type SendMessageAttemptResult = 'retry' | 'sent' | 'skipped';
+
+type RequestInitWithDuplex = RequestInit & { duplex?: 'half' };
+
+type DwnProcessMessageRpcRequest = ReturnType<typeof createJsonRpcRequest>;
+
 // ---------------------------------------------------------------------------
 // DeliveryService
 // ---------------------------------------------------------------------------
@@ -696,60 +702,135 @@ export class DeliveryService implements MessageProcessedHook {
       { target, message },
     );
 
-    const dataBearingWrite = Records.isRecordsWrite(message) && message.descriptor.dataSize > 0 ? message : undefined;
-
-    const headers: Record<string, string> = {
-      'content-type' : dataBearingWrite !== undefined ? 'application/octet-stream' : 'application/json',
-      'dwn-request'  : JSON.stringify(rpcRequest),
-    };
+    const dataBearingWrite = DeliveryService.#getDataBearingWrite(message);
+    const headers = DeliveryService.#createHeaders(rpcRequest, dataBearingWrite);
 
     for (let attempt = 0; attempt <= DeliveryService.#maxRetries; attempt++) {
-      try {
-        // Data streams are one-shot, so the body is re-read from local
-        // storage on every attempt rather than replayed.
-        let body: BodyInit = new Uint8Array(0);
-        if (dataBearingWrite !== undefined) {
-          const data = await this.#getRecordsWriteData(sourceTenant, dataBearingWrite);
-          if (data === undefined) {
-            log.warn(`DeliveryService: data for ${dataBearingWrite.recordId} is no longer available locally; skipping send to ${endpointUrl}`);
-            return;
-          }
-          body = data;
-        }
-
-        const fetchOptions: RequestInit & { duplex?: 'half' } = {
-          method: 'POST', headers, body, signal: AbortSignal.timeout(DeliveryService.#requestTimeoutMs),
-        };
-        if (body instanceof ReadableStream) {
-          // Required by the Fetch standard for streaming request bodies.
-          fetchOptions.duplex = 'half';
-        }
-
-        const response = await fetch(endpointUrl, fetchOptions);
-
-        if (response.ok) {
-          log.debug(`DeliveryService: sent to ${endpointUrl} for ${target} (${response.status})`);
-          return;
-        }
-
-        // 409 means duplicate — the remote already has this message. That's success.
-        if (response.status === 409) {
-          log.debug(`DeliveryService: ${endpointUrl} already has message for ${target} (409)`);
-          return;
-        }
-
-        log.warn(`DeliveryService: ${endpointUrl} returned ${response.status} (attempt ${attempt + 1})`);
-      } catch (err) {
-        log.warn(`DeliveryService: fetch error to ${endpointUrl} (attempt ${attempt + 1}):`, err);
+      const result = await this.#sendMessageAttempt({
+        attempt,
+        dataBearingWrite,
+        endpointUrl,
+        headers,
+        sourceTenant,
+        target,
+      });
+      if (result !== 'retry') {
+        return;
       }
 
-      // Wait before retry (skip wait on last attempt).
-      if (attempt < DeliveryService.#maxRetries) {
-        await sleep(DeliveryService.#retryDelaysMs[attempt]);
-      }
+      await DeliveryService.#sleepBeforeRetry(attempt);
     }
 
     log.error(`DeliveryService: delivery to ${endpointUrl} failed after ${DeliveryService.#maxRetries + 1} attempts`);
+  }
+
+  async #sendMessageAttempt({
+    attempt,
+    dataBearingWrite,
+    endpointUrl,
+    headers,
+    sourceTenant,
+    target,
+  }: {
+    attempt: number;
+    dataBearingWrite: RecordsWriteMessage | undefined;
+    endpointUrl: string;
+    headers: Record<string, string>;
+    sourceTenant: string;
+    target: string;
+  }): Promise<SendMessageAttemptResult> {
+    try {
+      const fetchOptions = await this.#createFetchOptions(sourceTenant, endpointUrl, headers, dataBearingWrite);
+      if (fetchOptions === undefined) {
+        return 'skipped';
+      }
+
+      const response = await fetch(endpointUrl, fetchOptions);
+      return DeliveryService.#handleSendResponse(endpointUrl, target, response, attempt);
+    } catch (err) {
+      log.warn(`DeliveryService: fetch error to ${endpointUrl} (attempt ${attempt + 1}):`, err);
+      return 'retry';
+    }
+  }
+
+  async #createFetchOptions(
+    sourceTenant: string,
+    endpointUrl: string,
+    headers: Record<string, string>,
+    dataBearingWrite: RecordsWriteMessage | undefined,
+  ): Promise<RequestInitWithDuplex | undefined> {
+    const body = await this.#createRequestBody(sourceTenant, endpointUrl, dataBearingWrite);
+    if (body === undefined) {
+      return undefined;
+    }
+
+    const fetchOptions: RequestInitWithDuplex = {
+      body,
+      headers,
+      method : 'POST',
+      signal : AbortSignal.timeout(DeliveryService.#requestTimeoutMs),
+    };
+
+    if (body instanceof ReadableStream) {
+      // Required by the Fetch standard for streaming request bodies.
+      fetchOptions.duplex = 'half';
+    }
+
+    return fetchOptions;
+  }
+
+  async #createRequestBody(
+    sourceTenant: string,
+    endpointUrl: string,
+    dataBearingWrite: RecordsWriteMessage | undefined,
+  ): Promise<BodyInit | undefined> {
+    if (dataBearingWrite === undefined) {
+      return new Uint8Array(0);
+    }
+
+    const data = await this.#getRecordsWriteData(sourceTenant, dataBearingWrite);
+    if (data === undefined) {
+      log.warn(`DeliveryService: data for ${dataBearingWrite.recordId} is no longer available locally; skipping send to ${endpointUrl}`);
+      return undefined;
+    }
+
+    return data;
+  }
+
+  static #getDataBearingWrite(message: GenericMessage): RecordsWriteMessage | undefined {
+    return Records.isRecordsWrite(message) && message.descriptor.dataSize > 0 ? message : undefined;
+  }
+
+  static #createHeaders(
+    rpcRequest: DwnProcessMessageRpcRequest,
+    dataBearingWrite: RecordsWriteMessage | undefined,
+  ): Record<string, string> {
+    return {
+      'content-type' : dataBearingWrite !== undefined ? 'application/octet-stream' : 'application/json',
+      'dwn-request'  : JSON.stringify(rpcRequest),
+    };
+  }
+
+  static #handleSendResponse(endpointUrl: string, target: string, response: Response, attempt: number): SendMessageAttemptResult {
+    if (response.ok) {
+      log.debug(`DeliveryService: sent to ${endpointUrl} for ${target} (${response.status})`);
+      return 'sent';
+    }
+
+    // 409 means duplicate — the remote already has this message. That's success.
+    if (response.status === 409) {
+      log.debug(`DeliveryService: ${endpointUrl} already has message for ${target} (409)`);
+      return 'sent';
+    }
+
+    log.warn(`DeliveryService: ${endpointUrl} returned ${response.status} (attempt ${attempt + 1})`);
+    return 'retry';
+  }
+
+  static async #sleepBeforeRetry(attempt: number): Promise<void> {
+    if (attempt < DeliveryService.#maxRetries) {
+      await sleep(DeliveryService.#retryDelaysMs[attempt]);
+    }
   }
 
   /**
