@@ -33,7 +33,7 @@ export const migration002ContentAddressedDatastore: DwnMigrationFactory = (diale
 
   async up(db: Kysely<any>): Promise<void> {
 
-    // ─── Create dataRefs table ──────────────────────────────────────────
+    // Create dataRefs table.
     if (!(await dialect.hasTable(db, 'dataRefs'))) {
       await db.schema
         .createTable('dataRefs')
@@ -57,7 +57,7 @@ export const migration002ContentAddressedDatastore: DwnMigrationFactory = (diale
         .on('dataRefs').column('tenant').execute();
     }
 
-    // ─── Create dataBlocks table ────────────────────────────────────────
+    // Create dataBlocks table.
     if (!(await dialect.hasTable(db, 'dataBlocks'))) {
       let table = db.schema
         .createTable('dataBlocks')
@@ -73,7 +73,7 @@ export const migration002ContentAddressedDatastore: DwnMigrationFactory = (diale
         .on('dataBlocks').columns(['rootDataCid', 'blockCid']).unique().execute();
     }
 
-    // ─── Migrate data from old dataStore table ──────────────────────────
+    // Migrate data from old dataStore table.
     const oldTableExists = await dialect.hasTable(db, 'dataStore');
     if (oldTableExists) {
       // Check if old table has any data to migrate

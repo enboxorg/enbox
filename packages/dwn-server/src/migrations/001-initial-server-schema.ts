@@ -23,7 +23,7 @@ export const migration001InitialServerSchema: ServerMigrationFactory = (dialect)
 
   async up(db: Kysely<any>): Promise<void> {
 
-    // ─── registeredTenants ────────────────────────────────────────────
+    // registeredTenants
     await db.schema
       .createTable('registeredTenants')
       .ifNotExists()
@@ -36,7 +36,7 @@ export const migration001InitialServerSchema: ServerMigrationFactory = (dialect)
       .addColumn('metadata', 'text')
       .execute();
 
-    // ─── tenantQuotas ─────────────────────────────────────────────────
+    // tenantQuotas
     await db.schema
       .createTable('tenantQuotas')
       .ifNotExists()
@@ -45,7 +45,7 @@ export const migration001InitialServerSchema: ServerMigrationFactory = (dialect)
       .addColumn('maxStorageBytes', 'bigint', (col) => col.defaultTo(0))
       .execute();
 
-    // ─── adminAuditLog ────────────────────────────────────────────────
+    // adminAuditLog
     let auditTable = db.schema
       .createTable('adminAuditLog')
       .ifNotExists()
@@ -73,7 +73,7 @@ export const migration001InitialServerSchema: ServerMigrationFactory = (dialect)
         .ifNotExists().on('adminAuditLog').column('action').execute();
     } catch { /* index already exists */ }
 
-    // ─── adminWebhooks ────────────────────────────────────────────────
+    // adminWebhooks
     await db.schema
       .createTable('adminWebhooks')
       .ifNotExists()
@@ -84,7 +84,7 @@ export const migration001InitialServerSchema: ServerMigrationFactory = (dialect)
       .addColumn('createdAt', 'text', (col) => col.notNull())
       .execute();
 
-    // ─── adminPasskeys ────────────────────────────────────────────────
+    // adminPasskeys
     await db.schema
       .createTable('adminPasskeys')
       .ifNotExists()
@@ -97,7 +97,7 @@ export const migration001InitialServerSchema: ServerMigrationFactory = (dialect)
       .addColumn('lastUsedAt', 'text')
       .execute();
 
-    // ─── cacheEntries (TTL cache) ─────────────────────────────────────
+    // cacheEntries (TTL cache)
     await db.schema
       .createTable('cacheEntries')
       .ifNotExists()
