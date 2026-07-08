@@ -1,5 +1,13 @@
 # @enbox/dwn-server
 
+## 0.1.19
+
+### Patch Changes
+
+- [#1199](https://github.com/enboxorg/enbox/pull/1199) [`1ed6eb3`](https://github.com/enboxorg/enbox/commit/1ed6eb3dd31c7b4159b5198a212943251cae44e5) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: forward record data with DeliveryService messages
+
+  Endpoint forwarding and `$delivery: 'direct'` participant delivery previously POSTed data-bearing `RecordsWrite` messages with an empty body, so receiving DWNs only ever got metadata. `DeliveryService` now reads the record data back from the source tenant's stores (`encodedData` for small records, the data store for large ones) and sends it as the `application/octet-stream` request body.
+
 ## 0.1.18
 
 ### Patch Changes
