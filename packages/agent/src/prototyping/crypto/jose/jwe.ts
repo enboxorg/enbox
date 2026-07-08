@@ -107,7 +107,8 @@ export interface JweHeaderParams extends JoseHeaderParams {
     // PBES2 with HMAC SHA-512 and "XC20PKW" wrapping
     | 'PBES2-HS512+XC20PKW'
     // an unregistered, case-sensitive, collision-resistant string
-    | string;
+    // `string & {}` preserves the literal hints above while still accepting any string.
+    | (string & {});
 
   /**
    * Agreement PartyUInfo Header Parameter
@@ -175,7 +176,8 @@ export interface JweHeaderParams extends JoseHeaderParams {
     // XChaCha20-Poly1305 authenticated encryption algorithm
     | 'XC20P'
     // an unregistered, case-sensitive, collision-resistant string
-    | string;
+    // `string & {}` preserves the literal hints above while still accepting any string.
+    | (string & {});
 
   /**
    * Ephemeral Public Key Header Parameter

@@ -237,7 +237,8 @@ type ProtocolRuleSetValue =
   | ProtocolTagsDefinition
   | ProtocolSizeDefinition
   | ProtocolRecordLimitDefinition
-  | ProtocolDeliveryStrategy
+  // `ProtocolDeliveryStrategy` ('direct' | 'subscribe') is intentionally omitted here: its
+  // values are already covered by the `string` member below (see the `$delivery` field typing).
   | boolean
   | string
   | undefined;

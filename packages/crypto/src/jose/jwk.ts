@@ -77,7 +77,7 @@ export type JwkOperation = 'encrypt' | 'decrypt' | 'sign' | 'verify' | 'deriveKe
  * "enc" value is also to be used for public keys used for key agreement
  * operations.
  */
-export type JwkUse = 'sig' | 'enc' | string;
+export type JwkUse = 'sig' | 'enc' | (string & {});
 
 /**
  * JSON Web Key Types
