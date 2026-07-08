@@ -1,6 +1,7 @@
 import type { Dialect } from '@enbox/dwn-sql-store';
+import type { DwnServerConfig } from '../src/config.js';
 import type { Dwn, Persona, ProtocolsConfigureMessage, RecordsQueryReply } from '@enbox/dwn-sdk-js';
-import type { JsonRpcErrorResponse, JsonRpcResponse } from '@enbox/dwn-clients';
+import type { JsonRpcErrorResponse, JsonRpcResponse, ServerInfo } from '@enbox/dwn-clients';
 
 import { Convert } from '@enbox/common';
 import log from 'loglevel';
@@ -36,6 +37,19 @@ describe('http api', function () {
   let dialect: Dialect;
   let clock;
   let baseUrl: string;
+
+  async function createStartedHttpApiWithConfig(overrides: Partial<DwnServerConfig>): Promise<{ api: HttpApi; url: string; }> {
+    const testConfig: DwnServerConfig = {
+      ...config,
+      ...overrides,
+    };
+    const api = await HttpApi.create(testConfig, dwn, registrationManager, undefined, undefined, { ttlCacheDialect: dialect });
+    await api.start(0);
+
+    const hostname = testConfig.hostname ?? 'localhost';
+    const urlHostname = hostname === '::1' ? '[::1]' : hostname;
+    return { api, url: `http://${urlHostname}:${api.server.port}` };
+  }
 
   beforeAll(async function () {
     clock = useFakeTimers({ shouldAdvanceTime: true });
@@ -979,6 +993,8 @@ describe('http api', function () {
       const info = await resp.json();
       expect(info['url']).toBe('http://localhost:3000');
       expect(info['server']).toBe('@enbox/dwn-server');
+      expect(info['localNode']).toBeUndefined();
+      expect(info['localPairing']).toBeUndefined();
       expect(info['registrationRequirements']).toContain('terms-of-service');
       expect(info['registrationRequirements']).toContain(
         'proof-of-work-sha256-v0',
@@ -1070,6 +1086,32 @@ describe('http api', function () {
       // restore server name config
       config.serverName = serverName;
     });
+
+    it('verify /info includes local-node metadata in local-node profile', async function () {
+      const { api, url } = await createStartedHttpApiWithConfig({
+        baseUrl                 : 'http://127.0.0.1:55500',
+        hostname                : '127.0.0.1',
+        localNodeProfileEnabled : true,
+      });
+
+      try {
+        const resp = await fetch(`${url}/info`, {
+          headers: { origin: 'https://app.example' },
+        });
+        const info = await resp.json() as ServerInfo;
+        expect(resp.status).toBe(200);
+
+        expect(info.localNode).toBe(true);
+        expect(info.localPairing).toEqual({
+          pairUrl         : 'http://127.0.0.1:55500/local/pair',
+          pollUrlTemplate : 'http://127.0.0.1:55500/local/pair/{requestId}',
+        });
+        expect(resp.headers.get('access-control-allow-origin')).toBe('https://app.example');
+        expect(resp.headers.get('vary')).toBe('Origin');
+      } finally {
+        await api.close();
+      }
+    });
   });
 
   describe('CORS headers', () => {
@@ -1142,6 +1184,72 @@ describe('http api', function () {
 
       expect(response.headers.get('access-control-allow-origin')).toBe('*');
       expect(response.headers.get('access-control-max-age')).toBe('86400');
+    });
+
+    it('should reflect public local-node route origins without wildcard CORS', async () => {
+      const { api, url } = await createStartedHttpApiWithConfig({
+        hostname                : '127.0.0.1',
+        localNodeProfileEnabled : true,
+      });
+
+      try {
+        const response = await fetch(`${url}/info`, {
+          headers: { origin: 'https://unpaired.example' },
+        });
+        expect(response.status).toBe(200);
+
+        expect(response.headers.get('access-control-allow-origin')).toBe('https://unpaired.example');
+        expect(response.headers.get('access-control-allow-headers')).toBe('authorization, content-type, dwn-request');
+        expect(response.headers.get('vary')).toBe('Origin');
+      } finally {
+        await api.close();
+      }
+    });
+
+    it('should only reflect configured origins on local-node protected routes', async () => {
+      const { api, url } = await createStartedHttpApiWithConfig({
+        hostname                : '127.0.0.1',
+        localNodeAllowedOrigins : ['https://paired.example'],
+        localNodeProfileEnabled : true,
+      });
+
+      try {
+        const pairedResponse = await fetch(`${url}/health`, {
+          headers: { origin: 'https://paired.example' },
+        });
+        expect(pairedResponse.status).toBe(200);
+        expect(pairedResponse.headers.get('access-control-allow-origin')).toBe('https://paired.example');
+
+        const unpairedResponse = await fetch(`${url}/health`, {
+          headers: { origin: 'https://unpaired.example' },
+        });
+        expect(unpairedResponse.status).toBe(200);
+        expect(unpairedResponse.headers.get('access-control-allow-origin')).toBeNull();
+      } finally {
+        await api.close();
+      }
+    });
+  });
+
+  describe('local node profile', () => {
+    it('should reject requests with non-loopback Host headers', async () => {
+      const { api, url } = await createStartedHttpApiWithConfig({
+        hostname                : '127.0.0.1',
+        localNodeProfileEnabled : true,
+      });
+
+      try {
+        const response = await fetch(`${url}/info`, {
+          headers: {
+            host   : 'evil.example',
+            origin : 'https://app.example',
+          },
+        });
+        expect(response.status).toBe(403);
+        expect(response.headers.get('access-control-allow-origin')).toBeNull();
+      } finally {
+        await api.close();
+      }
     });
   });
 

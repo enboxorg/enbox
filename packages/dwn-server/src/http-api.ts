@@ -33,11 +33,11 @@ import { DateSort, type Dwn, ProtocolsQuery, RecordsQuery, RecordsRead } from '@
 import { existsSync, readFileSync } from 'fs';
 import { join, resolve } from 'path';
 
-import { config } from './config.js';
 import { ConnectServer } from './connect/connect-server.js';
 import { getDialectFromUrl } from './storage.js';
 import { jsonRpcRouter } from './json-rpc-api.js';
 import { validateAdminAuth } from './admin/admin-auth.js';
+import { assertLocalNodeBindHostname, isLocalNodeHostHeaderAllowed } from './local-node-profile.js';
 import { requestCounter, responseHistogram } from './metrics.js';
 
 /** Property names that must never be used as keys when building objects from user input. */
@@ -184,7 +184,12 @@ export class HttpApi {
   async start(port: number): Promise<void> {
     const self = this; // capture for closures
 
+    if (this.#config.localNodeProfileEnabled) {
+      assertLocalNodeBindHostname(this.#config.hostname);
+    }
+
     this.#server = Bun.serve<WsData>({
+      hostname: this.#config.hostname,
       port,
 
       async fetch(req: Request, server): Promise<Response | undefined> {
@@ -192,6 +197,10 @@ export class HttpApi {
         const url = new URL(req.url);
         const path = url.pathname;
         const method = req.method;
+
+        if (self.#config.localNodeProfileEnabled && !isLocalNodeHostHeaderAllowed(req.headers.get('host'))) {
+          return new Response('Forbidden', { status: 403 });
+        }
 
         // --- WebSocket upgrade ---
         if (method === 'GET' && req.headers.get('upgrade') === 'websocket') {
@@ -208,20 +217,18 @@ export class HttpApi {
           const result = self.#ipRateLimiter.consume(ip);
           if (result.allowed === false) {
             const retryAfterSec = Math.ceil(result.retryAfterMs / 1000);
-            return new Response(
+            const response = new Response(
               JSON.stringify({ error: 'Rate limit exceeded' }),
               {
                 status  : 429,
                 headers : {
-                  'content-type'                  : 'application/json',
-                  'retry-after'                   : String(retryAfterSec),
-                  'access-control-allow-origin'   : '*',
-                  'access-control-allow-methods'  : 'GET, POST, OPTIONS',
-                  'access-control-allow-headers'  : '*',
-                  'access-control-expose-headers' : 'dwn-response',
+                  'content-type' : 'application/json',
+                  'retry-after'  : String(retryAfterSec),
                 },
               },
             );
+            self.#applyCorsHeaders(req, response, path);
+            return response;
           }
         }
 
@@ -237,16 +244,7 @@ export class HttpApi {
         // --- CORS headers ---
         // Admin API and metrics endpoints do not receive wildcard CORS headers
         // to limit cross-origin access when the admin token is configured.
-        const isAdminRoute = path.startsWith('/admin') || path === '/metrics';
-        if (!isAdminRoute) {
-          response.headers.set('access-control-allow-origin', '*');
-          response.headers.set('access-control-allow-methods', 'GET, POST, OPTIONS');
-          response.headers.set('access-control-allow-headers', '*');
-          response.headers.set('access-control-expose-headers', 'dwn-response');
-          // Cache preflight responses for 24 hours to reduce OPTIONS round-trips
-          // for browser-based DWN clients communicating with a local server.
-          response.headers.set('access-control-max-age', '86400');
-        }
+        self.#applyCorsHeaders(req, response, path);
 
         // --- Response-time metrics ---
         const elapsed = performance.now() - startTime;
@@ -525,37 +523,95 @@ export class HttpApi {
 
   #handleInfo(): Response {
     const registrationRequirements: string[] = [];
-    if (config.registrationProofOfWorkEnabled) {
+    if (this.#config.registrationProofOfWorkEnabled) {
       registrationRequirements.push('proof-of-work-sha256-v0');
     }
-    if (config.termsOfServiceFilePath !== undefined) {
+    if (this.#config.termsOfServiceFilePath !== undefined) {
       registrationRequirements.push('terms-of-service');
     }
-    if (config.providerAuthEnabled && !registrationRequirements.includes('provider-auth-v0')) {
+    if (this.#config.providerAuthEnabled && !registrationRequirements.includes('provider-auth-v0')) {
       registrationRequirements.push('provider-auth-v0');
     }
 
     const serverInfo: ServerInfo = {
-      maxFileSize              : config.maxRecordDataSize,
-      maxInFlight              : config.maxInFlight,
+      maxFileSize              : this.#config.maxRecordDataSize,
+      maxInFlight              : this.#config.maxInFlight,
       registrationRequirements : registrationRequirements,
       server                   : this.#packageInfo.server,
       sdkVersion               : this.#packageInfo.sdkVersion,
-      url                      : config.baseUrl,
+      url                      : this.#config.baseUrl,
       version                  : this.#packageInfo.version,
-      webSocketSupport         : config.webSocketSupport,
+      webSocketSupport         : this.#config.webSocketSupport,
     };
 
-    if (config.providerAuthEnabled) {
+    if (this.#config.localNodeProfileEnabled) {
+      const baseUrl = this.#config.baseUrl.replace(/\/+$/, '');
+      serverInfo.localNode = true;
+      serverInfo.localPairing = {
+        pairUrl         : `${baseUrl}/local/pair`,
+        pollUrlTemplate : `${baseUrl}/local/pair/{requestId}`,
+      };
+    }
+
+    if (this.#config.providerAuthEnabled) {
       serverInfo.providerAuth = {
-        authorizeUrl  : config.providerAuthAuthorizeUrl,
-        tokenUrl      : config.providerAuthTokenUrl,
-        refreshUrl    : config.providerAuthRefreshUrl,
-        managementUrl : config.providerAuthManagementUrl,
+        authorizeUrl  : this.#config.providerAuthAuthorizeUrl,
+        tokenUrl      : this.#config.providerAuthTokenUrl,
+        refreshUrl    : this.#config.providerAuthRefreshUrl,
+        managementUrl : this.#config.providerAuthManagementUrl,
       };
     }
 
     return Response.json(serverInfo);
+  }
+
+  #applyCorsHeaders(req: Request, response: Response, path: string): void {
+    const isAdminRoute = path.startsWith('/admin') || path === '/metrics';
+    if (isAdminRoute) {
+      return;
+    }
+
+    const allowedOrigin = this.#getCorsAllowedOrigin(req, path);
+    if (allowedOrigin === undefined) {
+      return;
+    }
+
+    response.headers.set('access-control-allow-origin', allowedOrigin);
+    response.headers.set('access-control-allow-methods', 'GET, POST, OPTIONS');
+    response.headers.set('access-control-allow-headers', this.#config.localNodeProfileEnabled
+      ? 'authorization, content-type, dwn-request'
+      : '*');
+    response.headers.set('access-control-expose-headers', 'dwn-response');
+    // Cache preflight responses for 24 hours to reduce OPTIONS round-trips
+    // for browser-based DWN clients communicating with a local server.
+    response.headers.set('access-control-max-age', '86400');
+
+    if (allowedOrigin !== '*') {
+      response.headers.set('vary', 'Origin');
+    }
+  }
+
+  #getCorsAllowedOrigin(req: Request, path: string): string | undefined {
+    if (!this.#config.localNodeProfileEnabled) {
+      return '*';
+    }
+
+    const origin = req.headers.get('origin');
+    if (origin === null) {
+      return undefined;
+    }
+
+    if (HttpApi.#isLocalNodePublicCorsRoute(path)) {
+      return origin;
+    }
+
+    return this.#config.localNodeAllowedOrigins.includes(origin) ? origin : undefined;
+  }
+
+  static #isLocalNodePublicCorsRoute(path: string): boolean {
+    return path === '/info'
+      || path === '/local/pair'
+      || path.startsWith('/local/pair/');
   }
 
   async #handleJsonRpcPost(req: Request): Promise<Response> {

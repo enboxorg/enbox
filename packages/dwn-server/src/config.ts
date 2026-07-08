@@ -9,6 +9,17 @@ const byteSizeUnits: Record<string, number> = {
   mb : 1024 ** 2,
 };
 
+function parseCommaSeparatedList(value: string | undefined): string[] {
+  if (value === undefined) {
+    return [];
+  }
+
+  return value
+    .split(',')
+    .map((entry: string): string => entry.trim())
+    .filter((entry: string): boolean => entry.length > 0);
+}
+
 /**
  * Parses a byte-size string with optional b/kb/mb/gb suffix into bytes.
  */
@@ -46,6 +57,25 @@ export const config = {
    * Port that server listens on.
    */
   port: parseInt(process.env.DS_PORT || '3000'),
+
+  /**
+   * Hostname or interface that the HTTP server binds to. When the local-node
+   * profile is enabled, this defaults to loopback and non-loopback values are rejected.
+   */
+  hostname: process.env.DS_HOST || (process.env.DWN_LOCAL_NODE_PROFILE === 'true' ? '127.0.0.1' : undefined),
+
+  /**
+   * Enables the local DWN node trust profile. This profile is opt-in so cloud
+   * deployments keep their existing behavior unless explicitly configured.
+   */
+  localNodeProfileEnabled: process.env.DWN_LOCAL_NODE_PROFILE === 'true',
+
+  /**
+   * Origins allowed to use local-node protected routes before the dynamic
+   * pairing store is wired in. Public local-node routes such as `/info` still
+   * reflect the caller origin because they are used to initiate pairing.
+   */
+  localNodeAllowedOrigins: parseCommaSeparatedList(process.env.DWN_LOCAL_NODE_ALLOWED_ORIGINS),
 
   /**
    * The URL of the TTL cache used by the DWN.
