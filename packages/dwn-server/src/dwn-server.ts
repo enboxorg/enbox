@@ -12,6 +12,7 @@ import { AdminApi } from './admin/admin-api.js';
 import { AdminPasskeyStore } from './admin/admin-passkey-store.js';
 import { AdminSessionManager } from './admin/admin-session.js';
 import { AdminStore } from './admin/admin-store.js';
+import { assertLocalNodeBindHostname } from './local-node-profile.js';
 import { AuditLog } from './admin/audit-log.js';
 import { config as defaultConfig } from './config.js';
 import { DeliveryService } from './delivery-service.js';
@@ -126,6 +127,10 @@ export class DwnServer {
   async start(): Promise<void> {
     if (this.serverState === DwnServerState.Started) {
       return;
+    }
+
+    if (this.config.localNodeProfileEnabled) {
+      assertLocalNodeBindHostname(this.config.hostname);
     }
 
     await this.#setupServer();

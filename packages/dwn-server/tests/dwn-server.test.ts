@@ -58,4 +58,24 @@ describe('DwnServer', () => {
       console.log('server Stop');
     });
   });
+
+  describe('local node profile', () => {
+    it('should reject non-loopback bind hostnames', async () => {
+      ({ dwn } = await getTestDwn());
+      const server = new DwnServer({
+        dwn,
+        config: {
+          ...dwnServerConfig,
+          hostname                : '0.0.0.0',
+          localNodeProfileEnabled : true,
+        }
+      });
+
+      try {
+        await expect(server.start()).rejects.toThrow('DwnServer local node profile requires a loopback bind hostname.');
+      } finally {
+        await dwn.close();
+      }
+    });
+  });
 });

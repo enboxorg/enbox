@@ -16,7 +16,27 @@ export type ProviderAuthInfo = {
   managementUrl? : string;
 };
 
+/**
+ * Local-node pairing metadata exposed by `GET /info` when the server is running
+ * under the opt-in local-node profile.
+ */
+export type LocalNodePairingInfo = {
+  /** URL where browser clients initiate pairing. */
+  pairUrl : string;
+  /** URL template used to poll a pairing request, with `{requestId}` as placeholder. */
+  pollUrlTemplate : string;
+};
+
 export type ServerInfo = {
+  /**
+   * Indicates that this DWN is a localhost local-node profile, not a cloud DWN.
+   * Absent on ordinary DWN server deployments.
+   */
+  localNode?: boolean,
+  /**
+   * Pairing endpoints for browser clients. Present only when `localNode` is true.
+   */
+  localPairing?: LocalNodePairingInfo,
   /** the maximum file size the user can request to store */
   maxFileSize: number,
   /**
