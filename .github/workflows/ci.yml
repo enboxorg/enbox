@@ -74,6 +74,7 @@ jobs:
               - 'tsconfig.json'
               - 'turbo.json'
               - 'eslint.config.cjs'
+              - 'sonar-project.properties'
               - '.github/workflows/ci.yml'
               - 'scripts/**'
               - 'build/**'
