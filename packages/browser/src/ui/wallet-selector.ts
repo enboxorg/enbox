@@ -21,7 +21,13 @@ export function showWalletSelector(wallets: WalletOption[]): Promise<string> {
     host.id = 'enbox-wallet-selector';
     const shadow = host.attachShadow({ mode: 'open' });
 
+    let onKeydown: ((e: KeyboardEvent) => void) | undefined;
     const cleanup = (): void => {
+      if (onKeydown !== undefined) {
+        document.removeEventListener('keydown', onKeydown);
+        onKeydown = undefined;
+      }
+
       try { document.body.removeChild(host); } catch { /* best effort */ }
     };
 
@@ -169,9 +175,8 @@ export function showWalletSelector(wallets: WalletOption[]): Promise<string> {
     });
 
     // Close on Escape.
-    const onKeydown = (e: KeyboardEvent): void => {
+    onKeydown = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
-        document.removeEventListener('keydown', onKeydown);
         cleanup();
         reject(new Error('[@enbox/browser] Wallet selection cancelled.'));
       }
