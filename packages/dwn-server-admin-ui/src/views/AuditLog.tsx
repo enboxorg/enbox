@@ -93,8 +93,9 @@ export function AuditLog({ path }: { path?: string }) {
       <div class="card" style="margin-bottom:16px">
         <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
           <div class="form-group" style="margin-bottom:0;flex:1;min-width:160px">
-            <label>Action</label>
+            <label for="audit-filter-action">Action</label>
             <input
+              id="audit-filter-action"
               type="text"
               placeholder="e.g. tenant.*"
               value={filters.action}
@@ -104,8 +105,9 @@ export function AuditLog({ path }: { path?: string }) {
             />
           </div>
           <div class="form-group" style="margin-bottom:0;flex:1;min-width:160px">
-            <label>Target (DID)</label>
+            <label for="audit-filter-target">Target (DID)</label>
             <input
+              id="audit-filter-target"
               type="text"
               placeholder="did:dht:..."
               value={filters.target}
@@ -115,8 +117,9 @@ export function AuditLog({ path }: { path?: string }) {
             />
           </div>
           <div class="form-group" style="margin-bottom:0;flex:1;min-width:160px">
-            <label>Since</label>
+            <label for="audit-filter-since">Since</label>
             <input
+              id="audit-filter-since"
               type="datetime-local"
               value={filters.since}
               onInput={(e: Event) =>

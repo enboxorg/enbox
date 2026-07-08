@@ -123,7 +123,7 @@ export class ResumableTaskStoreSql implements ResumableTaskStore {
       // NOTE: special handling ONLY for PostgreSQL:
       // Even though PostgreSQL stores `bigint` as a 64 bit number, the `pg` library we depend on returns it as a string, hence the conversion.
       if (typeof task.timeout !== 'number') {
-        task.timeout = parseInt(task.timeout, 10);
+        task.timeout = Number.parseInt(task.timeout, 10);
       }
     }
 

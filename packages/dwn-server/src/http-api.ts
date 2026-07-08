@@ -251,7 +251,7 @@ export class HttpApi {
         const routeLabel = (method + (path === '/' ? '/jsonrpc' : path))
           .toLowerCase()
           .replace(/[:.]/g, '')
-          .replace(/\//g, '_');
+          .replaceAll('/', '_');
         responseHistogram.labels(routeLabel, String(response.status)).observe(elapsed);
         log.info(method, decodeURI(path), response.status);
 
@@ -545,7 +545,12 @@ export class HttpApi {
     };
 
     if (this.#config.localNodeProfileEnabled) {
-      const baseUrl = this.#config.baseUrl.replace(/\/+$/, '');
+      // Strip trailing slashes without a backtracking-prone regex (`/\/+$/`
+      // is super-linear on adversarial input — SonarCloud S8786).
+      let baseUrl = this.#config.baseUrl;
+      while (baseUrl.endsWith('/')) {
+        baseUrl = baseUrl.slice(0, -1);
+      }
       serverInfo.localNode = true;
       serverInfo.localPairing = {
         pairUrl         : `${baseUrl}/local/pair`,
@@ -637,7 +642,7 @@ export class HttpApi {
     const contentLength = req.headers.get('content-length');
     const transferEncoding = req.headers.get('transfer-encoding');
     let requestDataStream: ReadableStream<Uint8Array> | undefined;
-    if (parseInt(contentLength ?? '0') > 0 || transferEncoding !== null) {
+    if (Number.parseInt(contentLength ?? '0') > 0 || transferEncoding !== null) {
       if (req.body === null) {
         const reply = createJsonRpcErrorResponse(
           dwnRpcRequest.id, JsonRpcErrorCodes.BadRequest, 'request advertised a body but none was provided.'

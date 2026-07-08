@@ -136,7 +136,7 @@ async function hashCanonicalObject(value: Record<string, unknown>): Promise<stri
 
   let base64 = '';
   for (const b of hashArray) {
-    base64 += String.fromCharCode(b);
+    base64 += String.fromCodePoint(b);
   }
   const result = btoa(base64).replaceAll('+', '-').replaceAll('/', '_');
   let end = result.length;

@@ -198,7 +198,7 @@ export class HttpDwnRpcClient implements DwnRpc {
     // Per-IP 429s return plain JSON (not a JSON-RPC envelope), so we must
     // check the status before attempting JSON-RPC parsing.
     if (resp.status === 429) {
-      const retryAfter = parseInt(resp.headers.get('retry-after') ?? '1', 10);
+      const retryAfter = Number.parseInt(resp.headers.get('retry-after') ?? '1', 10);
       throw new RateLimitError(retryAfter);
     }
 
@@ -316,7 +316,7 @@ export class HttpDwnRpcClient implements DwnRpc {
     try {
       const response = await this.fetchWithRetry(url.toString());
       if (response.status === 429) {
-        const retryAfter = parseInt(response.headers.get('retry-after') ?? '1', 10);
+        const retryAfter = Number.parseInt(response.headers.get('retry-after') ?? '1', 10);
         throw new RateLimitError(retryAfter);
       }
       if (response.ok) {

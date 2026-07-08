@@ -89,7 +89,7 @@ export function readPasswordRawMode(
     stdin.resume();
 
     const onData = (ch: string): void => {
-      const code = ch.charCodeAt(0);
+      const code = ch.codePointAt(0)!;
 
       if (ch === '\r' || ch === '\n') {
         // Enter — done.

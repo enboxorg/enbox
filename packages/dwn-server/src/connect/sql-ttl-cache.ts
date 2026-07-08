@@ -86,7 +86,7 @@ export class SqlTtlCache {
     const entry = result[0];
 
     // if the entry is expired, don't return it and delete it
-    const expiry = typeof entry.expiry === 'string' ? parseInt(entry.expiry, 10) : entry.expiry;
+    const expiry = typeof entry.expiry === 'string' ? Number.parseInt(entry.expiry, 10) : entry.expiry;
     if (Date.now() >= expiry) {
       this.delete(key); // no need to await
       return undefined;

@@ -56,7 +56,7 @@ export const config = {
   /**
    * Port that server listens on.
    */
-  port: parseInt(process.env.DS_PORT || '3000'),
+  port: Number.parseInt(process.env.DS_PORT || '3000'),
 
   /**
    * Hostname or interface that the HTTP server binds to. When the local-node
@@ -109,7 +109,7 @@ export const config = {
    * per subscription before pausing delivery. Clients must send `rpc.ack` to
    * advance the window. Configurable via `DWN_MAX_IN_FLIGHT` env var.
    */
-  maxInFlight: parseInt(process.env.DWN_MAX_IN_FLIGHT || '32'),
+  maxInFlight: Number.parseInt(process.env.DWN_MAX_IN_FLIGHT || '32'),
 
   // whether to enable 'ws:'
   webSocketSupport: { on: true, off: false }[process.env.DS_WEBSOCKET_SERVER] ?? true,
@@ -130,9 +130,9 @@ export const config = {
    * Postgres connection URL, a single shared pool is used instead of one pool
    * per store (which would be 4 pools x 10 default connections = 40 connections).
    */
-  pgPoolMin         : parseInt(process.env.DWN_PG_POOL_MIN || '5'),
-  pgPoolMax         : parseInt(process.env.DWN_PG_POOL_MAX || '30'),
-  pgPoolIdleTimeout : parseInt(process.env.DWN_PG_POOL_IDLE_TIMEOUT || '30000'),
+  pgPoolMin         : Number.parseInt(process.env.DWN_PG_POOL_MIN || '5'),
+  pgPoolMax         : Number.parseInt(process.env.DWN_PG_POOL_MAX || '30'),
+  pgPoolIdleTimeout : Number.parseInt(process.env.DWN_PG_POOL_IDLE_TIMEOUT || '30000'),
 
   // tenant registration feature configuration
   registrationStoreUrl                  : process.env.DWN_REGISTRATION_STORE_URL || process.env.DWN_STORAGE,
@@ -168,13 +168,13 @@ export const config = {
    * Maximum number of recent DWN activity events retained in the in-memory
    * ring buffer for the admin `/events` endpoint. Defaults to 10,000.
    */
-  adminActivityLogCapacity: parseInt(process.env.DWN_ADMIN_ACTIVITY_LOG_CAPACITY || '10000'),
+  adminActivityLogCapacity: Number.parseInt(process.env.DWN_ADMIN_ACTIVITY_LOG_CAPACITY || '10000'),
 
   /**
    * Interval (in seconds) at which Prometheus gauge metrics are updated from
    * the admin store. Defaults to 30 seconds.
    */
-  adminMetricsUpdateIntervalSeconds: parseInt(process.env.DWN_ADMIN_METRICS_UPDATE_INTERVAL || '30'),
+  adminMetricsUpdateIntervalSeconds: Number.parseInt(process.env.DWN_ADMIN_METRICS_UPDATE_INTERVAL || '30'),
 
   /**
    * WebAuthn Relying Party ID for admin passkey authentication. Typically
@@ -195,7 +195,7 @@ export const config = {
    * Session time-to-live (in seconds) for passkey-authenticated sessions.
    * Defaults to 86400 (24 hours).
    */
-  adminSessionTtlSeconds: parseInt(process.env.DWN_ADMIN_SESSION_TTL || '86400'),
+  adminSessionTtlSeconds: Number.parseInt(process.env.DWN_ADMIN_SESSION_TTL || '86400'),
 
   // ---------------------------------------------------------------------------
   // Per-tenant storage quotas
@@ -205,13 +205,13 @@ export const config = {
    * Default maximum number of messages a tenant may store. 0 = unlimited (default).
    * Per-tenant overrides are managed via the admin API.
    */
-  quotaMaxMessages: parseInt(process.env.DWN_QUOTA_MAX_MESSAGES || '0'),
+  quotaMaxMessages: Number.parseInt(process.env.DWN_QUOTA_MAX_MESSAGES || '0'),
 
   /**
    * Default maximum data storage in bytes a tenant may use. 0 = unlimited (default).
    * Per-tenant overrides are managed via the admin API.
    */
-  quotaMaxStorageBytes: parseInt(process.env.DWN_QUOTA_MAX_STORAGE_BYTES || '0'),
+  quotaMaxStorageBytes: Number.parseInt(process.env.DWN_QUOTA_MAX_STORAGE_BYTES || '0'),
 
   // ---------------------------------------------------------------------------
   // Audit log retention
@@ -223,7 +223,7 @@ export const config = {
    *
    * @see https://github.com/enboxorg/enbox/issues/394
    */
-  auditLogMaxAgeDays: parseInt(process.env.DWN_AUDIT_LOG_MAX_AGE_DAYS || '90'),
+  auditLogMaxAgeDays: Number.parseInt(process.env.DWN_AUDIT_LOG_MAX_AGE_DAYS || '90'),
 
   /**
    * Maximum number of audit log rows to retain. Oldest entries are purged when exceeded.
@@ -231,7 +231,7 @@ export const config = {
    *
    * @see https://github.com/enboxorg/enbox/issues/394
    */
-  auditLogMaxRows: parseInt(process.env.DWN_AUDIT_LOG_MAX_ROWS || '100000'),
+  auditLogMaxRows: Number.parseInt(process.env.DWN_AUDIT_LOG_MAX_ROWS || '100000'),
 
   // ---------------------------------------------------------------------------
   // Rate limiting
@@ -242,25 +242,25 @@ export const config = {
    * Defaults to 30 req/s which is generous for normal usage while limiting abuse.
    * Can be reconfigured at runtime via the admin `PATCH /config` endpoint.
    */
-  rateLimitRequestsPerSecond: parseInt(process.env.DWN_RATE_LIMIT_REQUESTS_PER_SECOND || '30'),
+  rateLimitRequestsPerSecond: Number.parseInt(process.env.DWN_RATE_LIMIT_REQUESTS_PER_SECOND || '30'),
 
   /**
    * Maximum burst size for per-IP rate limiting. Allows short spikes above the
    * sustained rate without triggering 429s. Defaults to 50.
    */
-  rateLimitBurst: parseInt(process.env.DWN_RATE_LIMIT_BURST || '50'),
+  rateLimitBurst: Number.parseInt(process.env.DWN_RATE_LIMIT_BURST || '50'),
 
   /**
    * Maximum DWN requests per second per tenant DID. Set to 0 to disable.
    * Defaults to 20 req/s. Applies to both HTTP and WebSocket transports.
    * Can be reconfigured at runtime via the admin `PATCH /config` endpoint.
    */
-  rateLimitTenantRequestsPerSecond: parseInt(process.env.DWN_RATE_LIMIT_TENANT_REQUESTS_PER_SECOND || '20'),
+  rateLimitTenantRequestsPerSecond: Number.parseInt(process.env.DWN_RATE_LIMIT_TENANT_REQUESTS_PER_SECOND || '20'),
 
   /**
    * Maximum burst size for per-tenant rate limiting. Defaults to 50.
    */
-  rateLimitTenantBurst: parseInt(process.env.DWN_RATE_LIMIT_TENANT_BURST || '50'),
+  rateLimitTenantBurst: Number.parseInt(process.env.DWN_RATE_LIMIT_TENANT_BURST || '50'),
 
   // ---------------------------------------------------------------------------
   // Record delivery & endpoint forwarding
@@ -285,20 +285,20 @@ export const config = {
    * Prevents unbounded parallelism when delivering to many providers.
    * Defaults to 10.
    */
-  deliveryMaxConcurrency: parseInt(process.env.DWN_DELIVERY_MAX_CONCURRENCY || '10'),
+  deliveryMaxConcurrency: Number.parseInt(process.env.DWN_DELIVERY_MAX_CONCURRENCY || '10'),
 
   /**
    * TTL in seconds for caching DID document service endpoint resolution results.
    * Avoids resolving the same DID document on every delivery. Defaults to 300 (5 min).
    */
-  deliveryEndpointCacheTtlSeconds: parseInt(process.env.DWN_DELIVERY_ENDPOINT_CACHE_TTL || '300'),
+  deliveryEndpointCacheTtlSeconds: Number.parseInt(process.env.DWN_DELIVERY_ENDPOINT_CACHE_TTL || '300'),
 
   /**
    * TTL in seconds for the recently-forwarded messageCid deduplication cache.
    * Messages with CIDs in this cache are not forwarded again, reducing redundant
    * outbound requests between peer endpoints. Defaults to 60.
    */
-  forwardingDeduplicationTtlSeconds: parseInt(process.env.DWN_FORWARDING_DEDUP_TTL || '60'),
+  forwardingDeduplicationTtlSeconds: Number.parseInt(process.env.DWN_FORWARDING_DEDUP_TTL || '60'),
 };
 
 /**

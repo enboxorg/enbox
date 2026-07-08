@@ -274,7 +274,7 @@ function stringToBase64Url(input: string): string {
   // consume it (btoa only accepts Latin-1 / code points ≤ U+00FF).
   let binary = '';
   for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
+    binary += String.fromCodePoint(bytes[i]);
   }
   const result = btoa(binary).replaceAll('+', '-').replaceAll('/', '_');
   // Strip trailing '=' padding without regex quantifiers (avoids ReDoS scanners).
@@ -292,7 +292,7 @@ function stringToBase64Url(input: string): string {
  */
 function base64UrlToString(input: string): string {
   // Restore standard base64 alphabet and padding.
-  let base64 = input.replace(/-/g, '+').replace(/_/g, '/');
+  let base64 = input.replaceAll('-', '+').replaceAll('_', '/');
   const remainder = base64.length % 4;
   if (remainder === 2) {
     base64 += '==';
@@ -302,7 +302,7 @@ function base64UrlToString(input: string): string {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
+    bytes[i] = binary.codePointAt(i)!;
   }
   return new TextDecoder().decode(bytes);
 }

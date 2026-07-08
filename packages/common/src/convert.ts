@@ -409,8 +409,8 @@ export class Convert {
       case 'Hex': {
         const u8a = new Uint8Array(this.data.length / 2);
         for (let i = 0; i < this.data.length; i += 2) {
-          const byteValue = parseInt(this.data.substring(i, i + 2), 16);
-          if (isNaN(byteValue)) {
+          const byteValue = Number.parseInt(this.data.substring(i, i + 2), 16);
+          if (Number.isNaN(byteValue)) {
             throw new TypeError('Input is not a valid hexadecimal string.');
           }
           u8a[i / 2] = byteValue;

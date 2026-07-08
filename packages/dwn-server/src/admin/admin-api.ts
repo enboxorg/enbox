@@ -48,7 +48,7 @@ function parseIntOrDefault(value: string | null, defaultValue: number): number {
   if (value === null) {
     return defaultValue;
   }
-  const parsed = parseInt(value, 10);
+  const parsed = Number.parseInt(value, 10);
   return Number.isNaN(parsed) ? defaultValue : parsed;
 }
 

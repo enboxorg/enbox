@@ -251,8 +251,12 @@ export class LevelWrapper<V> {
     }
 
     // derive an exclusive `maxKey` by changing the last prefix character to the immediate succeeding character in unicode
-    // (which matches how `abstract-level` creates a `boundary`)
-    const maxKey = prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1);
+    // (which matches how `abstract-level` creates a `boundary`).
+    //
+    // This MUST stay UTF-16 code-unit based (`charCodeAt`/`fromCharCode`) to match `abstract-level`'s
+    // boundary semantics: `fromCharCode` wraps at 0xFFFF whereas `fromCodePoint` would emit an astral
+    // surrogate pair, producing a different — and incorrect — key range. NOSONAR (typescript:S7758).
+    const maxKey = prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1); // NOSONAR
     const minKey = prefix;
 
     return [minKey, maxKey];
