@@ -317,6 +317,65 @@ function buildConnectUrl({
   }
 }
 
+/**
+ * Builds the wallet URI handed to the user (QR code or deep link) for a
+ * pushed connect request.
+ *
+ * The request pointer and the single-use symmetric encryption key travel in
+ * the URI **fragment**, never in the query string: the fragment stays on the
+ * local channel (terminal → camera, or entirely within the opening browser)
+ * and is never sent to the wallet's web server, so the key cannot surface in
+ * server or CDN logs on the deep-link path.
+ *
+ * @param options.walletUri - The wallet app URI (typically ending in the
+ *   connect route, e.g. `https://wallet.example/connect/app`).
+ * @param options.requestUri - The relay `request_uri` returned by the pushed
+ *   authorization request.
+ * @param options.encryptionKey - The single-use symmetric key protecting the
+ *   pushed request.
+ */
+function buildWalletConnectUri({
+  walletUri,
+  requestUri,
+  encryptionKey,
+}: {
+  walletUri: string;
+  requestUri: string;
+  encryptionKey: Uint8Array;
+}): string {
+  const uri = new URL(walletUri);
+  const fragmentParams = new URLSearchParams();
+  fragmentParams.set('request_uri', requestUri);
+  fragmentParams.set('encryption_key', Convert.uint8Array(encryptionKey).toBase64Url());
+  uri.hash = fragmentParams.toString();
+  return uri.toString();
+}
+
+/**
+ * Parses a wallet connect URI produced by {@link buildWalletConnectUri},
+ * returning the relay request pointer and the request encryption key, or
+ * `undefined` when the URI does not carry connect parameters.
+ */
+function parseWalletConnectUri(uri: string): {
+  requestUri: string;
+  encryptionKeyBase64Url: string;
+} | undefined {
+  let parsed: URL;
+  try {
+    parsed = new URL(uri);
+  } catch {
+    return undefined;
+  }
+  const fragment = parsed.hash.startsWith('#') ? parsed.hash.slice(1) : parsed.hash;
+  const params = new URLSearchParams(fragment);
+  const requestUri = params.get('request_uri');
+  const encryptionKeyBase64Url = params.get('encryption_key');
+  if (!requestUri || !encryptionKeyBase64Url) {
+    return undefined;
+  }
+  return { requestUri, encryptionKeyBase64Url };
+}
+
 // ---------------------------------------------------------------------------
 // JWT signing and verification
 // ---------------------------------------------------------------------------
@@ -1516,6 +1575,8 @@ async function submitConnectResponse(
 
 export const EnboxConnectProtocol = {
   buildConnectUrl,
+  buildWalletConnectUri,
+  parseWalletConnectUri,
   signJwt,
   verifyJwt,
   assertConnectRequest,

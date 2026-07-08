@@ -61,6 +61,56 @@ describe('EnboxConnectProtocol — edge cases', () => {
     });
   });
 
+  describe('wallet connect URI (fragment)', () => {
+    const encryptionKey = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+
+    it('should carry the request pointer and key in the fragment, never the query', () => {
+      const uri = EnboxConnectProtocol.buildWalletConnectUri({
+        walletUri  : 'https://wallet.example/connect/app',
+        requestUri : 'https://relay.example/connect/authorize/req.jwt',
+        encryptionKey,
+      });
+
+      const parsed = new URL(uri);
+      expect(parsed.search).toBe('');
+      expect(parsed.hash.startsWith('#')).toBe(true);
+
+      const fragmentParams = new URLSearchParams(parsed.hash.slice(1));
+      expect(fragmentParams.get('request_uri')).toBe('https://relay.example/connect/authorize/req.jwt');
+      expect(fragmentParams.get('encryption_key')).toBe(Convert.uint8Array(encryptionKey).toBase64Url());
+    });
+
+    it('should round-trip through parseWalletConnectUri', () => {
+      const uri = EnboxConnectProtocol.buildWalletConnectUri({
+        walletUri  : 'https://wallet.example/connect/app',
+        requestUri : 'urn:test:req',
+        encryptionKey,
+      });
+
+      const parsed = EnboxConnectProtocol.parseWalletConnectUri(uri);
+      expect(parsed?.requestUri).toBe('urn:test:req');
+      expect(parsed?.encryptionKeyBase64Url).toBe(Convert.uint8Array(encryptionKey).toBase64Url());
+    });
+
+    it('should preserve an existing wallet path and origin', () => {
+      const uri = EnboxConnectProtocol.buildWalletConnectUri({
+        walletUri  : 'https://wallet.example/connect/app',
+        requestUri : 'urn:test:req',
+        encryptionKey,
+      });
+
+      const parsed = new URL(uri);
+      expect(parsed.origin).toBe('https://wallet.example');
+      expect(parsed.pathname).toBe('/connect/app');
+    });
+
+    it('should return undefined for a URI without connect fragment params', () => {
+      expect(EnboxConnectProtocol.parseWalletConnectUri('https://wallet.example/connect/app')).toBeUndefined();
+      expect(EnboxConnectProtocol.parseWalletConnectUri('https://wallet.example/connect/app#request_uri=urn:test')).toBeUndefined();
+      expect(EnboxConnectProtocol.parseWalletConnectUri('not a url')).toBeUndefined();
+    });
+  });
+
   // generateCodeChallenge tests removed — PKCE was never functional and has been stripped.
 
   describe('verifyJwt', () => {
