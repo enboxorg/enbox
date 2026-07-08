@@ -1,9 +1,6 @@
+import type { CompoundIndexDefinition, IndexedItem, IndexLevelOptions } from './index-level.js';
 import type { Filter, KeyValues, QueryOptions } from '../types/query-types.js';
-import type { IndexedItem, IndexLevelOptions } from './index-level.js';
-import type { LevelWrapperBatchOperation, LevelWrapperIteratorOptions } from './level-wrapper.js';
-
-import type { CompoundIndexDefinition } from './index-level.js';
-import type { LevelWrapper } from './level-wrapper.js';
+import type { LevelWrapper, LevelWrapperBatchOperation, LevelWrapperIteratorOptions } from './level-wrapper.js';
 
 import { FilterUtility } from '../utils/filter.js';
 import { SortDirection } from '../types/query-types.js';

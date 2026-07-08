@@ -7,11 +7,10 @@
  */
 
 import type {
+  DwnInterface,
   DwnMessage,
   DwnMessageDescriptor,
 } from '@enbox/agent';
-
-import type { DwnInterface } from '@enbox/agent';
 
 /**
  * Represents Immutable Record properties that cannot be changed after the record is created.

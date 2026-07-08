@@ -39,10 +39,8 @@
 
 import type { Record } from './record.js';
 import type { RecordData } from './record-data.js';
-import type { DwnDateSort, DwnMessage, DwnPaginationCursor, DwnResponseStatus } from '@enbox/agent';
+import type { DwnDateSort, DwnInterface, DwnMessage, DwnPaginationCursor, DwnResponseStatus } from '@enbox/agent';
 import type { RecordDeleteParams, RecordModel, RecordUpdateParams } from './record-types.js';
-
-import type { DwnInterface } from '@enbox/agent';
 
 // ---------------------------------------------------------------------------
 // Typed data accessor

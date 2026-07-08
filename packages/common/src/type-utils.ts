@@ -201,9 +201,9 @@ export function universalTypeOf(value: unknown): string {
   // Returns '[Object Type]' string.
   const typeString = Object.prototype.toString.call(value);
   // Returns ['Object', 'Type'] array or null.
-  const match = typeString.match(/\s([a-zA-Z0-9]+)/);
+  const match = /\s([a-zA-Z0-9]+)/.exec(typeString);
   // Deconstructs the array and gets just the type from index 1.
-  const [_, type] = match as RegExpMatchArray;
+  const [_, type] = match as RegExpExecArray;
 
   return type;
 }

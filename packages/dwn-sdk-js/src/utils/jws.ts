@@ -1,6 +1,5 @@
-import type { GeneralJws } from '../types/jws-types.js';
 import type { MessageSigner } from '../types/signer.js';
-import type { SignatureEntry } from '../types/jws-types.js';
+import type { GeneralJws, SignatureEntry } from '../types/jws-types.js';
 import type { KeyMaterial, PublicKeyJwk } from '../types/jose-types.js';
 
 import { Encoder } from './encoder.js';

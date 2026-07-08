@@ -8,9 +8,7 @@
 
 import type { AuthSession } from '../identity-session.js';
 import type { FlowContext } from './lifecycle.js';
-import type { RestoreSessionOptions } from '../types.js';
-
-import type { StorageAdapter } from '../types.js';
+import type { RestoreSessionOptions, StorageAdapter } from '../types.js';
 
 import type { RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 import type { DwnDataEncodedRecordsWriteMessage, EnboxUserAgent } from '@enbox/agent';

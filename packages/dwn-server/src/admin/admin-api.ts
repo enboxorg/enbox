@@ -212,7 +212,7 @@ export class AdminApi {
         return this.#handlePasskeyList();
       }
       {
-        const match = subPath.match(/^\/passkeys\/([^/]+)$/);
+        const match = /^\/passkeys\/([^/]+)$/.exec(subPath);
         if (match && method === 'DELETE') {
           if (authResult.authMethod !== 'token') {
             return Response.json({ error: 'Passkey deletion requires static token authentication.' }, { status: 403 });
@@ -243,7 +243,7 @@ export class AdminApi {
 
       // --- Tenant detail / suspend / unsuspend / delete ---
       {
-        const match = subPath.match(/^\/tenants\/([^/]+)$/);
+        const match = /^\/tenants\/([^/]+)$/.exec(subPath);
         if (match) {
           const did = decodeURIComponent(match[1]);
           if (method === 'GET') {
@@ -258,7 +258,7 @@ export class AdminApi {
 
       // --- Tenant suspend ---
       {
-        const match = subPath.match(/^\/tenants\/([^/]+)\/suspend$/);
+        const match = /^\/tenants\/([^/]+)\/suspend$/.exec(subPath);
         if (match && method === 'POST') {
           const did = decodeURIComponent(match[1]);
           return this.#handleTenantSuspend(did);
@@ -267,7 +267,7 @@ export class AdminApi {
 
       // --- Tenant unsuspend ---
       {
-        const match = subPath.match(/^\/tenants\/([^/]+)\/unsuspend$/);
+        const match = /^\/tenants\/([^/]+)\/unsuspend$/.exec(subPath);
         if (match && method === 'POST') {
           const did = decodeURIComponent(match[1]);
           return this.#handleTenantUnsuspend(did);
@@ -276,7 +276,7 @@ export class AdminApi {
 
       // --- Tenant quota ---
       {
-        const match = subPath.match(/^\/tenants\/([^/]+)\/quota$/);
+        const match = /^\/tenants\/([^/]+)\/quota$/.exec(subPath);
         if (match) {
           const did = decodeURIComponent(match[1]);
           if (method === 'GET') {
@@ -293,7 +293,7 @@ export class AdminApi {
 
       // --- Tenant messages browser ---
       {
-        const match = subPath.match(/^\/tenants\/([^/]+)\/messages$/);
+        const match = /^\/tenants\/([^/]+)\/messages$/.exec(subPath);
         if (match && method === 'GET') {
           const did = decodeURIComponent(match[1]);
           return this.#handleTenantMessages(did, url);
@@ -302,7 +302,7 @@ export class AdminApi {
 
       // --- Tenant protocols ---
       {
-        const match = subPath.match(/^\/tenants\/([^/]+)\/protocols$/);
+        const match = /^\/tenants\/([^/]+)\/protocols$/.exec(subPath);
         if (match && method === 'GET') {
           const did = decodeURIComponent(match[1]);
           return this.#handleTenantProtocols(did);
@@ -311,7 +311,7 @@ export class AdminApi {
 
       // --- Tenant data export ---
       {
-        const match = subPath.match(/^\/tenants\/([^/]+)\/export$/);
+        const match = /^\/tenants\/([^/]+)\/export$/.exec(subPath);
         if (match && method === 'POST') {
           const did = decodeURIComponent(match[1]);
           return this.#handleTenantExport(did);
@@ -360,7 +360,7 @@ export class AdminApi {
 
       // --- Webhook delete ---
       {
-        const match = subPath.match(/^\/webhooks\/([^/]+)$/);
+        const match = /^\/webhooks\/([^/]+)$/.exec(subPath);
         if (match && method === 'DELETE') {
           return this.#handleWebhookDelete(match[1]);
         }

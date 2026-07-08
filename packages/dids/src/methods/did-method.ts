@@ -11,9 +11,8 @@ import type {
   DidResolutionOptions,
   DidResolutionResult,
   DidVerificationMethod,
+  DidVerificationRelationship,
 } from '../types/did-core.js';
-
-import type { DidVerificationRelationship } from '../types/did-core.js';
 
 /**
  * Represents options during the creation of a Decentralized Identifier (DID).

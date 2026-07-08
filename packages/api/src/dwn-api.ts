@@ -19,11 +19,7 @@ import type {
 
 import type { DwnSubscriptionMessage } from '@enbox/dwn-clients';
 
-import {
-  AgentPermissionsApi,
-} from '@enbox/agent';
-
-import { DwnInterface, getRecordAuthor } from '@enbox/agent';
+import { AgentPermissionsApi, DwnInterface, getRecordAuthor } from '@enbox/agent';
 
 import { dataToBlob } from './utils.js';
 import { LiveQuery } from './live-query.js';
