@@ -101,8 +101,9 @@ export function Passkeys() {
         </div>
         <div style="display:flex;gap:12px;align-items:flex-end">
           <div class="form-group" style="flex:1;margin-bottom:0">
-            <label>Passkey Name (optional)</label>
+            <label for="passkey-register-name">Passkey Name (optional)</label>
             <input
+              id="passkey-register-name"
               type="text"
               placeholder="e.g. MacBook Touch ID"
               value={registerName}

@@ -137,20 +137,20 @@ export async function decryptPostMessagePayload(
 function toBase64url(bytes: Uint8Array): string {
   let binary = '';
   for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
+    binary += String.fromCodePoint(bytes[i]);
   }
-  let b64 = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_');
+  let b64 = btoa(binary).replaceAll('+', '-').replaceAll('/', '_');
   // Strip trailing padding without a backtracking-vulnerable regex.
   while (b64.endsWith('=')) { b64 = b64.slice(0, -1); }
   return b64;
 }
 
 function fromBase64url(str: string): Uint8Array {
-  const padded = str.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = str.replaceAll('-', '+').replaceAll('_', '/');
   const binary = atob(padded);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
+    bytes[i] = binary.codePointAt(i)!;
   }
   return bytes;
 }

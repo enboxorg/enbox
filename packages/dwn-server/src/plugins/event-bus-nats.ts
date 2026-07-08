@@ -153,5 +153,5 @@ function decodeWake(data: Uint8Array): Wake | undefined {
  * wildcard/delimiter characters with URL-safe equivalents.
  */
 function tenantToSubjectToken(tenant: string): string {
-  return tenant.split('.').join('~').split('>').join('_').split('*').join('-');
+  return tenant.replaceAll('.', '~').replaceAll('>', '_').replaceAll('*', '-');
 }

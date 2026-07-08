@@ -376,7 +376,7 @@ export class DidWeb extends DidMethod {
 
     // Replace ":" with "/" in the identifier and prepend "https://" to obtain the fully qualified
     // domain name and optional path.
-    let baseUrl = `https://${parsedDid.id.replace(/:/g, '/')}`;
+    let baseUrl = `https://${parsedDid.id.replaceAll(':', '/')}`;
 
     // If the domain contains a percent encoded port value, decode the colon.
     baseUrl = decodeURIComponent(baseUrl);
