@@ -93,7 +93,7 @@ export function AuditLog({ path }: { path?: string }) {
       <div class="card" style="margin-bottom:16px">
         <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
           <div class="form-group" style="margin-bottom:0;flex:1;min-width:160px">
-            <label for="audit-filter-action">Action</label>
+            <label htmlFor="audit-filter-action">Action</label>
             <input
               id="audit-filter-action"
               type="text"
@@ -105,7 +105,7 @@ export function AuditLog({ path }: { path?: string }) {
             />
           </div>
           <div class="form-group" style="margin-bottom:0;flex:1;min-width:160px">
-            <label for="audit-filter-target">Target (DID)</label>
+            <label htmlFor="audit-filter-target">Target (DID)</label>
             <input
               id="audit-filter-target"
               type="text"
@@ -117,7 +117,7 @@ export function AuditLog({ path }: { path?: string }) {
             />
           </div>
           <div class="form-group" style="margin-bottom:0;flex:1;min-width:160px">
-            <label for="audit-filter-since">Since</label>
+            <label htmlFor="audit-filter-since">Since</label>
             <input
               id="audit-filter-since"
               type="datetime-local"
