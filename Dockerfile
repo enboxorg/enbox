@@ -36,6 +36,7 @@ COPY packages/agent/package.json             packages/agent/
 COPY packages/api/package.json               packages/api/
 COPY packages/auth/package.json              packages/auth/
 COPY packages/browser/package.json           packages/browser/
+COPY packages/cli/package.json               packages/cli/
 COPY packages/electrobun-dwn/package.json    packages/electrobun-dwn/
 COPY packages/protocols/package.json         packages/protocols/
 COPY packages/protocol-codegen/package.json  packages/protocol-codegen/
@@ -82,9 +83,11 @@ COPY packages/agent/package.json             packages/agent/
 COPY packages/api/package.json               packages/api/
 COPY packages/auth/package.json              packages/auth/
 COPY packages/browser/package.json           packages/browser/
+COPY packages/cli/package.json               packages/cli/
 COPY packages/electrobun-dwn/package.json    packages/electrobun-dwn/
 COPY packages/protocols/package.json         packages/protocols/
 COPY packages/protocol-codegen/package.json  packages/protocol-codegen/
+COPY apps/docs/package.json                  apps/docs/
 
 # Build packages in dependency order.
 # common -> crypto -> dids -> dwn-sdk-js -> dwn-sql-store, dwn-clients, admin-ui -> dwn-server
