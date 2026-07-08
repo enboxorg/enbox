@@ -6,7 +6,7 @@ import type { Dwn, GenericMessage } from '@enbox/dwn-sdk-js';
 import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
-import { DwnConstant, DwnInterfaceName, DwnMethodName, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { DwnConstant, DwnInterfaceName, DwnMethodName, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { config } from '../src/config.js';
 import { createJsonRpcRequest } from '@enbox/dwn-clients';
@@ -406,6 +406,90 @@ describe('DeliveryService', () => {
 
       await testDwn.close();
     });
+  });
+
+  describe('forwarding to a live dwn-server', () => {
+    /**
+     * Reproduces the #1169 scenario end-to-end with a real HTTP hop: a write
+     * processed on the sender is forwarded (real fetch, no stubs) to a running
+     * receiver `DwnServer`, then read back from the receiver with the data.
+     */
+    async function forwardAndReadBack(data: Uint8Array): Promise<void> {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice, { data });
+
+      // Receiver: a live DwnServer on an ephemeral port.
+      const receiverConfig: DwnServerConfig = {
+        ...config,
+        port               : 0,
+        forwardingEnabled  : false,
+        deliveryEnabled    : false,
+        messageStore       : 'sqlite://',
+        dataStore          : 'sqlite://',
+        resumableTaskStore : 'sqlite://',
+        packageJsonPath    : './package.json',
+      };
+      const { dwn: receiverDwn } = await getTestDwn();
+      await TestDataGenerator.installDefaultTestProtocol(receiverDwn, alice);
+      const receiverServer = new DwnServer({ config: receiverConfig, dwn: receiverDwn });
+      await receiverServer.start();
+      const receiverUrl = `http://127.0.0.1:${receiverServer.httpServer.port}`;
+
+      // Sender: a DWN whose DeliveryService resolves alice's endpoints to the receiver.
+      const { dwn: senderDwn } = await getTestDwn();
+      await TestDataGenerator.installDefaultTestProtocol(senderDwn, alice);
+
+      const senderConfig: DwnServerConfig = {
+        ...config,
+        baseUrl           : 'http://localhost:9999',
+        forwardingEnabled : true,
+        deliveryEnabled   : false,
+      };
+      const deliveryService = DeliveryService.create(senderDwn, endpointResolver(alice.did, [receiverUrl]), senderConfig);
+
+      const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.processMessage', {
+        message : recordsWrite.toJSON(),
+        target  : alice.did,
+      });
+      const context: RequestContext = {
+        dwn                   : senderDwn,
+        transport             : 'http',
+        dataStream,
+        messageProcessedHooks : [deliveryService],
+      };
+
+      const { jsonRpcResponse } = await handleDwnProcessMessage(dwnRequest, context);
+      expect(jsonRpcResponse.error).toBeUndefined();
+      expect(jsonRpcResponse.result.reply.status.code).toBe(202);
+
+      // The forward is fire-and-forget — poll the receiver until the record lands.
+      const recordsRead = await RecordsRead.create({
+        filter : { recordId: recordsWrite.message.recordId },
+        signer : alice.signer,
+      });
+      let readReply = await receiverDwn.processMessage(alice.did, recordsRead.message);
+      for (let i = 0; i < 40 && readReply.status.code !== 200; i++) {
+        await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
+        readReply = await receiverDwn.processMessage(alice.did, recordsRead.message);
+      }
+
+      expect(readReply.status.code).toBe(200);
+      expect(readReply.entry?.data).toBeDefined();
+      const receivedBytes = new Uint8Array(await new Response(readReply.entry?.data).arrayBuffer());
+      expect(receivedBytes).toEqual(data);
+
+      await receiverServer.stop();
+      await receiverDwn.close();
+      await senderDwn.close();
+    }
+
+    it('should replicate a small record with its data to the receiving server', async () => {
+      await forwardAndReadBack(randomBytes(256));
+    }, 15_000);
+
+    it('should replicate a large record with its data to the receiving server', async () => {
+      await forwardAndReadBack(randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1_000));
+    }, 15_000);
   });
 
   describe('endpoint resolution', () => {
