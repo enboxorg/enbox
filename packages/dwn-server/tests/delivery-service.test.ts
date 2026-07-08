@@ -1,20 +1,39 @@
 import type { DwnServerConfig } from '../src/config.js';
 import type { RequestContext } from '../src/lib/json-rpc-router.js';
+import type { DidResolutionResult, DidResolver } from '@enbox/dids';
 import type { Dwn, GenericMessage } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
-import { DwnInterfaceName, DwnMethodName, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { DwnConstant, DwnInterfaceName, DwnMethodName, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { config } from '../src/config.js';
 import { createJsonRpcRequest } from '@enbox/dwn-clients';
-import { createRecordsWriteMessage } from './utils.js';
 import { DeliveryService } from '../src/delivery-service.js';
 import { DwnServer } from '../src/dwn-server.js';
 import { getTestDwn } from './test-dwn.js';
 import { handleDwnApplyReplicatedMessage } from '../src/json-rpc-handlers/dwn/apply-replicated-message.js';
 import { handleDwnProcessMessage } from '../src/json-rpc-handlers/dwn/process-message.js';
+import { createRecordsWriteMessage, randomBytes } from './utils.js';
+
+/** Creates a fake DidResolver that resolves any DID to the given DWN endpoints. */
+function endpointResolver(did: string, endpoints: string[]): DidResolver {
+  return {
+    resolve: async (): Promise<DidResolutionResult> => ({
+      didResolutionMetadata : {},
+      didDocument           : {
+        id      : did,
+        service : [{
+          id              : `${did}#dwn`,
+          type            : 'DecentralizedWebNode',
+          serviceEndpoint : endpoints,
+        }],
+      },
+      didDocumentMetadata: {},
+    } as DidResolutionResult),
+  } as unknown as DidResolver;
+}
 
 describe('DeliveryService', () => {
   let dwn: Dwn;
@@ -275,6 +294,115 @@ describe('DeliveryService', () => {
       expect(hookSpy.calledOnce).toBe(true);
       expect(hookSpy.firstCall.args[0].tenant).toBe(alice.did);
       expect(hookSpy.firstCall.args[0].status.code).toBe(202);
+
+      await testDwn.close();
+    });
+  });
+
+  describe('forwarded record data', () => {
+    it('should forward small record data read back from the message store', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const data = randomBytes(256);
+      const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice, { data });
+
+      const { dwn: testDwn } = await getTestDwn();
+      await TestDataGenerator.installDefaultTestProtocol(testDwn, alice);
+
+      const testConfig: DwnServerConfig = {
+        ...config,
+        baseUrl           : 'http://localhost:9999',
+        forwardingEnabled : true,
+        deliveryEnabled   : false,
+      };
+
+      const resolver = endpointResolver(alice.did, ['http://peer.example.com']);
+      const deliveryService = DeliveryService.create(testDwn, resolver, testConfig);
+      const fetchStub = sinon.stub(globalThis, 'fetch').resolves(new Response(null, { status: 200 }));
+
+      const requestId = crypto.randomUUID();
+      const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
+        message : recordsWrite.toJSON(),
+        target  : alice.did,
+      });
+
+      const context: RequestContext = {
+        dwn                   : testDwn,
+        transport             : 'http',
+        dataStream,
+        messageProcessedHooks : [deliveryService],
+      };
+
+      const { jsonRpcResponse } = await handleDwnProcessMessage(dwnRequest, context);
+      expect(jsonRpcResponse.error).toBeUndefined();
+      expect(jsonRpcResponse.result.reply.status.code).toBe(202);
+
+      // Forwarding is fire-and-forget; give the async dispatch time to run.
+      await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 300));
+
+      expect(fetchStub.callCount).toBe(1);
+      expect(fetchStub.firstCall.args[0]).toBe('http://peer.example.com');
+
+      const [, fetchOptions] = fetchStub.firstCall.args;
+      const headers = new Headers(fetchOptions?.headers);
+      expect(headers.get('content-type')).toBe('application/octet-stream');
+
+      const rpcRequest = JSON.parse(headers.get('dwn-request') ?? '');
+      expect(rpcRequest.params.target).toBe(alice.did);
+
+      const sentBytes = new Uint8Array(await new Response(fetchOptions?.body).arrayBuffer());
+      expect(sentBytes).toEqual(data);
+
+      await testDwn.close();
+    });
+
+    it('should forward large record data streamed from the data store', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const data = randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1_000);
+      const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice, { data });
+
+      const { dwn: testDwn } = await getTestDwn();
+      await TestDataGenerator.installDefaultTestProtocol(testDwn, alice);
+
+      const testConfig: DwnServerConfig = {
+        ...config,
+        baseUrl           : 'http://localhost:9999',
+        forwardingEnabled : true,
+        deliveryEnabled   : false,
+      };
+
+      const resolver = endpointResolver(alice.did, ['http://peer.example.com']);
+      const deliveryService = DeliveryService.create(testDwn, resolver, testConfig);
+      const fetchStub = sinon.stub(globalThis, 'fetch').resolves(new Response(null, { status: 200 }));
+
+      const requestId = crypto.randomUUID();
+      const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
+        message : recordsWrite.toJSON(),
+        target  : alice.did,
+      });
+
+      const context: RequestContext = {
+        dwn                   : testDwn,
+        transport             : 'http',
+        dataStream,
+        messageProcessedHooks : [deliveryService],
+      };
+
+      const { jsonRpcResponse } = await handleDwnProcessMessage(dwnRequest, context);
+      expect(jsonRpcResponse.error).toBeUndefined();
+      expect(jsonRpcResponse.result.reply.status.code).toBe(202);
+
+      await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 300));
+
+      expect(fetchStub.callCount).toBe(1);
+
+      const [, fetchOptions] = fetchStub.firstCall.args;
+      const headers = new Headers(fetchOptions?.headers);
+      expect(headers.get('content-type')).toBe('application/octet-stream');
+      expect(fetchOptions).toMatchObject({ duplex: 'half' });
+      expect(fetchOptions?.body).toBeInstanceOf(ReadableStream);
+
+      const sentBytes = new Uint8Array(await new Response(fetchOptions?.body).arrayBuffer());
+      expect(sentBytes).toEqual(data);
 
       await testDwn.close();
     });
