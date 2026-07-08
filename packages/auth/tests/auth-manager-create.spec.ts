@@ -71,6 +71,7 @@ describe('AuthManager.create()', () => {
     expect(manager).toBeInstanceOf(AuthManager);
     expect(manager.state).toBe('uninitialized');
     expect(manager.agent).toBe(agent);
+    expect(manager.localDwnStatus).toEqual({ status: 'unavailable' });
   });
 
   test('creates instance with custom options', async () => {
@@ -275,6 +276,79 @@ describe('AuthManager.create()', () => {
 
     expect(result.status).toBe('paired');
     expect(events).toEqual([{ endpoint: 'http://127.0.0.1:55500', paired: true }]);
+    expect(manager.localDwnStatus).toEqual({
+      endpoint     : 'http://127.0.0.1:55500',
+      pairedOrigin : 'https://app.example',
+      status       : 'paired',
+    });
+  });
+
+  test('probeLocalNode returns unsupported when fetch is unavailable', async () => {
+    const manager = await AuthManager.create({ storage: new MemoryStorage() });
+
+    await withGlobalFetch(undefined, async (): Promise<void> => {
+      expect(await manager.probeLocalNode()).toEqual({ reason: 'no-fetch', status: 'unsupported' });
+    });
+  });
+
+  test('enableLocalNode emits unavailable when endpoint is not a local node', async () => {
+    const storage = new MemoryStorage();
+    userAgentCreateStub.onFirstCall().resolves(createMockAgent() as any);
+    sinon.stub(globalThis, 'fetch').resolves(jsonResponse({ ...localNodeInfo(), localNode: false }));
+
+    const manager = await AuthManager.create({ storage });
+    const unavailableEvents: any[] = [];
+    manager.on('local-dwn-unavailable', (event) => { unavailableEvents.push(event); });
+
+    const result = await manager.enableLocalNode({ endpoint: 'http://127.0.0.1:55500' });
+
+    expect(result).toEqual({ status: 'not-found' });
+    expect(unavailableEvents).toEqual([{}]);
+    expect(manager.localDwnStatus).toEqual({ status: 'unavailable' });
+  });
+
+  test('enableLocalNode updates remote-mode agent RPC client and cached endpoint', async () => {
+    const storage = new MemoryStorage();
+    const endpointCalls: string[] = [];
+    const agent = createMockAgent({
+      dwnIsRemoteMode              : true,
+      dwnSetCachedLocalDwnEndpoint : async (endpoint): Promise<boolean> => {
+        endpointCalls.push(endpoint);
+        return true;
+      },
+    });
+    const originalRpc = (agent as any).rpc;
+    userAgentCreateStub.onFirstCall().resolves(agent as any);
+    let pollCount = 0;
+
+    sinon.stub(globalThis, 'fetch').callsFake(async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const href = url.toString();
+      if (href.endsWith('/info')) {
+        return jsonResponse(localNodeInfo());
+      }
+
+      if (href.endsWith('/local/pair') && init?.method === 'POST') {
+        return jsonResponse({ requestId: 'request-1', status: 'pending' });
+      }
+
+      pollCount++;
+      return pollCount === 1
+        ? jsonResponse({ origin: 'https://app.example', status: 'pending' })
+        : jsonResponse({ origin: 'https://app.example', status: 'approved', token: 'remote-token' });
+    });
+
+    const manager = await AuthManager.create({ storage });
+    const result = await manager.enableLocalNode({
+      endpoint       : 'http://127.0.0.1:55500',
+      origin         : 'https://app.example',
+      pollIntervalMs : 0,
+      timeoutMs      : 100,
+    });
+
+    expect(result.status).toBe('paired');
+    expect(manager.localDwnEndpoint).toBe('http://127.0.0.1:55500');
+    expect(endpointCalls).toEqual(['http://127.0.0.1:55500']);
+    expect((agent as any).rpc).not.toBe(originalRpc);
     expect(manager.localDwnStatus).toEqual({
       endpoint     : 'http://127.0.0.1:55500',
       pairedOrigin : 'https://app.example',
@@ -501,3 +575,29 @@ describe('AuthManager.walletConnect()', () => {
     expect(syncCalls[0].interval).toBe('20s');
   });
 });
+
+type FetchLike = typeof fetch;
+
+async function withGlobalFetch<T>(fetchValue: FetchLike | undefined, run: () => Promise<T>): Promise<T> {
+  const originalFetch = globalThis.fetch;
+
+  if (fetchValue === undefined) {
+    delete (globalThis as { fetch?: FetchLike }).fetch;
+  } else {
+    Object.defineProperty(globalThis, 'fetch', {
+      configurable : true,
+      value        : fetchValue,
+      writable     : true,
+    });
+  }
+
+  try {
+    return await run();
+  } finally {
+    Object.defineProperty(globalThis, 'fetch', {
+      configurable : true,
+      value        : originalFetch,
+      writable     : true,
+    });
+  }
+}

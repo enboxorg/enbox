@@ -1,5 +1,6 @@
 import type { ServerInfo } from '@enbox/dwn-clients';
 
+import { WebSocketDwnRpcClient } from '@enbox/dwn-clients';
 import { describe, expect, test } from 'bun:test';
 
 import { createMockAgent } from './helpers/mock-agent.js';
@@ -8,6 +9,7 @@ import { STORAGE_KEYS } from '../src/types.js';
 import {
   applyLocalDwnDiscovery,
   clearLocalDwnEndpoint,
+  createLocalDwnRpcClient,
   discoverLocalDwn,
   discoverLocalDwnPairing,
   initiateLocalDwnPairing,
@@ -69,6 +71,17 @@ describe('local-node pairing storage', () => {
     expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBeNull();
   });
 
+  test('clears malformed versioned pairing records', async () => {
+    const storage = new MemoryStorage();
+    await storage.set(STORAGE_KEYS.LOCAL_DWN_ENDPOINT, JSON.stringify({
+      ...pairingRecord,
+      localNodeId: 123,
+    }));
+
+    expect(await readLocalDwnPairingRecord(storage)).toBeUndefined();
+    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBeNull();
+  });
+
   test('clears stale pairing records during passive discovery', async () => {
     const storage = new MemoryStorage();
     await persistLocalDwnPairingRecord(storage, pairingRecord);
@@ -117,6 +130,17 @@ describe('local-node pairing storage', () => {
     }
   });
 
+  test('returns undefined for stored pairing when fetch is unavailable', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnPairingRecord(storage, pairingRecord);
+
+    await withGlobalFetch(undefined, async (): Promise<void> => {
+      expect(await discoverLocalDwnPairing(storage)).toBeUndefined();
+    });
+
+    expect(await readLocalDwnPairingRecord(storage)).toEqual(pairingRecord);
+  });
+
   test('restores stored pairing endpoint into an agent', async () => {
     const storage = new MemoryStorage();
     await persistLocalDwnPairingRecord(storage, pairingRecord);
@@ -146,6 +170,12 @@ describe('local-node pairing storage', () => {
 });
 
 describe('probeLocalDwn', () => {
+  test('returns unsupported when fetch is unavailable', async () => {
+    await withGlobalFetch(undefined, async (): Promise<void> => {
+      expect(await probeLocalDwn()).toEqual({ reason: 'no-fetch', status: 'unsupported' });
+    });
+  });
+
   test('returns unsupported in insecure browser contexts', async () => {
     setBrowserGlobals({
       href            : 'http://app.example',
@@ -171,6 +201,16 @@ describe('probeLocalDwn', () => {
       fetch: async (): Promise<Response> => {
         throw new Error('connection refused');
       },
+      portCandidates : [55500],
+      scanPorts      : true,
+    });
+
+    expect(result).toEqual({ status: 'not-found' });
+  });
+
+  test('returns not-found when candidate server info is not OK', async () => {
+    const result = await probeLocalDwn({
+      fetch          : async (): Promise<Response> => jsonResponse({ error: 'boom' }, 500),
       portCandidates : [55500],
       scanPorts      : true,
     });
@@ -259,6 +299,32 @@ describe('probeLocalDwn', () => {
     }
   });
 
+  test('does not treat missing navigator userAgent as Safari', async () => {
+    setBrowserGlobals({
+      href            : 'https://app.example',
+      isSecureContext : true,
+      userAgent       : '',
+    });
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable : true,
+      value        : {},
+      writable     : true,
+    });
+
+    try {
+      const result = await probeLocalDwn({
+        fetch: async (): Promise<Response> => {
+          throw new Error('connection refused');
+        },
+        portCandidates: [55500],
+      });
+
+      expect(result).toEqual({ status: 'not-found' });
+    } finally {
+      restoreBrowserGlobals();
+    }
+  });
+
   test('clears stored pairing when probe revalidation fails', async () => {
     const storage = new MemoryStorage();
     await persistLocalDwnPairingRecord(storage, pairingRecord);
@@ -276,9 +342,71 @@ describe('probeLocalDwn', () => {
     expect(result).toEqual({ status: 'not-found' });
     expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBeNull();
   });
+
+  test('returns not-found when stored pairing status request throws', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnPairingRecord(storage, pairingRecord);
+
+    const result = await probeLocalDwn({
+      fetch: async (url): Promise<Response> => {
+        if (url.toString().endsWith('/info')) {
+          return jsonResponse(localNodeInfo);
+        }
+
+        throw new Error('status unreachable');
+      },
+      portCandidates: [],
+      storage,
+    });
+
+    expect(result).toEqual({ status: 'not-found' });
+    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBeNull();
+  });
 });
 
 describe('requestLocalDwnPairing', () => {
+  test('returns unsupported when fetch is unavailable', async () => {
+    await withGlobalFetch(undefined, async (): Promise<void> => {
+      const result = await requestLocalDwnPairing({ storage: new MemoryStorage() });
+
+      expect(result).toEqual({ reason: 'no-fetch', status: 'unsupported' });
+    });
+  });
+
+  test('returns not-found when explicit endpoint is not a local node', async () => {
+    const result = await requestLocalDwnPairing({
+      endpoint : pairingRecord.endpoint,
+      fetch    : async (): Promise<Response> => jsonResponse({ ...localNodeInfo, localNode: false }),
+      storage  : new MemoryStorage(),
+    });
+
+    expect(result).toEqual({ status: 'not-found' });
+  });
+
+  test('returns existing paired status without re-pairing', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnPairingRecord(storage, pairingRecord);
+
+    const result = await requestLocalDwnPairing({
+      fetch: async (url): Promise<Response> => {
+        const href = url.toString();
+        expect(href.endsWith('/local/pair')).toBe(false);
+
+        return href.endsWith('/info')
+          ? jsonResponse(localNodeInfo)
+          : jsonResponse({ localNode: true, paired: true });
+      },
+      storage,
+    });
+
+    expect(result).toEqual({
+      endpoint   : pairingRecord.endpoint,
+      pairing    : pairingRecord,
+      serverInfo : localNodeInfo,
+      status     : 'paired',
+    });
+  });
+
   test('initiates, polls, and persists an approved pairing token', async () => {
     const storage = new MemoryStorage();
     let pollCount = 0;
@@ -400,6 +528,55 @@ describe('requestLocalDwnPairing', () => {
 });
 
 describe('pairing HTTP helpers', () => {
+  test('throws when fetch is unavailable for explicit HTTP helpers', async () => {
+    await withGlobalFetch(undefined, async (): Promise<void> => {
+      await expect(initiateLocalDwnPairing({
+        endpoint   : pairingRecord.endpoint,
+        serverInfo : localNodeInfo,
+      })).rejects.toThrow('fetch is not available');
+
+      await expect(pollLocalDwnPairing({
+        endpoint : pairingRecord.endpoint,
+        pollUrl  : 'http://127.0.0.1:55500/local/pair/request-1',
+      })).rejects.toThrow('fetch is not available');
+    });
+  });
+
+  test('rejects endpoints that do not advertise local-node support', async () => {
+    await expect(initiateLocalDwnPairing({
+      endpoint : pairingRecord.endpoint,
+      fetch    : async (): Promise<Response> => jsonResponse({ ...localNodeInfo, localNode: false }),
+    })).rejects.toThrow('endpoint is not an Enbox local node');
+  });
+
+  test('fetches server info before initiating when serverInfo is omitted', async () => {
+    const fetchUrls: string[] = [];
+
+    const initiated = await initiateLocalDwnPairing({
+      endpoint : pairingRecord.endpoint,
+      fetch    : async (url): Promise<Response> => {
+        const href = url.toString();
+        fetchUrls.push(href);
+
+        return href.endsWith('/info')
+          ? jsonResponse(localNodeInfo)
+          : jsonResponse({ requestId: 'request-1', status: 'pending' });
+      },
+    });
+
+    expect(fetchUrls).toEqual([
+      'http://127.0.0.1:55500/info',
+      'http://127.0.0.1:55500/local/pair',
+    ]);
+    expect(initiated).toEqual({
+      endpoint   : pairingRecord.endpoint,
+      pollUrl    : 'http://127.0.0.1:55500/local/pair/request-1',
+      requestId  : 'request-1',
+      serverInfo : localNodeInfo,
+      status     : 'pending',
+    });
+  });
+
   test('uses fallback pairing URLs when /info omits localPairing', async () => {
     const serverInfo = {
       ...localNodeInfo,
@@ -455,6 +632,66 @@ describe('pairing HTTP helpers', () => {
   });
 });
 
+describe('createLocalDwnRpcClient', () => {
+  test('attaches bearer token only for the paired endpoint', async () => {
+    const client = createLocalDwnRpcClient(pairingRecord);
+    const authorizationHeaders: Array<string | undefined> = [];
+
+    await withGlobalFetch(async (_url, init): Promise<Response> => {
+      const headers = init?.headers as Record<string, string>;
+      authorizationHeaders.push(headers.authorization);
+
+      return jsonResponse({
+        id      : 'test',
+        jsonrpc : '2.0',
+        result  : { reply: { status: { code: 202, detail: 'Accepted' } } },
+      });
+    }, async (): Promise<void> => {
+      await client.sendDwnRequest({
+        dwnUrl    : `${pairingRecord.endpoint}/`,
+        message   : { descriptor: {} } as any,
+        targetDid : 'did:dht:alice',
+      });
+
+      await client.sendDwnRequest({
+        dwnUrl    : 'http://127.0.0.1:55501',
+        message   : { descriptor: {} } as any,
+        targetDid : 'did:dht:alice',
+      });
+    });
+
+    expect(authorizationHeaders).toEqual(['Bearer paired-token', undefined]);
+  });
+
+  test('normalizes WebSocket URLs before attaching local-node token query params', async () => {
+    await withStubbedWebSocketConnections(async (createdUrls): Promise<void> => {
+      const wsClient = createLocalDwnRpcClient({
+        ...pairingRecord,
+        endpoint: 'http://127.0.0.1:55500',
+      });
+      await wsClient.sendDwnRequest({
+        dwnUrl    : 'ws://127.0.0.1:55500/',
+        message   : { descriptor: {} } as any,
+        targetDid : 'did:dht:alice',
+      });
+
+      const wssClient = createLocalDwnRpcClient({
+        ...pairingRecord,
+        endpoint: 'https://127.0.0.1:55501',
+      });
+      await wssClient.sendDwnRequest({
+        dwnUrl    : 'wss://127.0.0.1:55501/',
+        message   : { descriptor: {} } as any,
+        targetDid : 'did:dht:alice',
+      });
+
+      expect(createdUrls).toHaveLength(2);
+      expect(createdUrls[0].searchParams.get('localNodeToken')).toBe('paired-token');
+      expect(createdUrls[1].searchParams.get('localNodeToken')).toBe('paired-token');
+    });
+  });
+});
+
 describe('clearLocalDwnEndpoint', () => {
   test('removes the persisted pairing key', async () => {
     const storage = new MemoryStorage();
@@ -492,6 +729,64 @@ function pairingFetch(result: { status: 'pending' | 'approved' | 'denied' | 'exp
       status : result.status,
     });
   };
+}
+
+async function withGlobalFetch<T>(fetchValue: FetchLike | undefined, run: () => Promise<T>): Promise<T> {
+  const originalFetch = globalThis.fetch;
+
+  if (fetchValue === undefined) {
+    delete (globalThis as { fetch?: FetchLike }).fetch;
+  } else {
+    Object.defineProperty(globalThis, 'fetch', {
+      configurable : true,
+      value        : fetchValue,
+      writable     : true,
+    });
+  }
+
+  try {
+    return await run();
+  } finally {
+    Object.defineProperty(globalThis, 'fetch', {
+      configurable : true,
+      value        : originalFetch,
+      writable     : true,
+    });
+  }
+}
+
+async function withStubbedWebSocketConnections<T>(run: (createdUrls: URL[]) => Promise<T>): Promise<T> {
+  const originalCreateConnection = (WebSocketDwnRpcClient as any).createConnection;
+  const createdUrls: URL[] = [];
+
+  await WebSocketDwnRpcClient.closeAllConnections();
+  (WebSocketDwnRpcClient as any).createConnection = async (url: URL): Promise<any> => {
+    createdUrls.push(new URL(url.toString()));
+
+    return {
+      socket: {
+        request: async (request: any): Promise<any> => ({
+          id      : request.id,
+          jsonrpc : '2.0',
+          result  : {
+            reply: {
+              entries : [],
+              status  : { code: 200, detail: 'OK' },
+            },
+          },
+        }),
+      },
+      subscriptions : new Map(),
+      url           : url.toString(),
+    };
+  };
+
+  try {
+    return await run(createdUrls);
+  } finally {
+    (WebSocketDwnRpcClient as any).createConnection = originalCreateConnection;
+    await WebSocketDwnRpcClient.closeAllConnections();
+  }
 }
 
 function setBrowserGlobals(params: {
