@@ -95,4 +95,18 @@ describe('LocalNodePairingManager', () => {
     expect(manager.validateSession(undefined, token)).toBe(true);
     expect(manager.validateSession('https://app.example', token)).toBe(false);
   });
+
+  it('should export, import, and revoke sessions', () => {
+    const manager = new LocalNodePairingManager({ now: (): number => 1234 });
+    const browserToken = manager.createSession('https://app.example');
+    const localToken = manager.createSession(undefined);
+
+    const restoredManager = new LocalNodePairingManager();
+    restoredManager.importSessions(manager.exportSessions());
+
+    expect(restoredManager.validateSession('https://app.example', browserToken)).toBe(true);
+    expect(restoredManager.validateSession(undefined, localToken)).toBe(true);
+    expect(restoredManager.revokeToken(browserToken)).toBe(true);
+    expect(restoredManager.validateSession('https://app.example', browserToken)).toBe(false);
+  });
 });

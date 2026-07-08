@@ -1,6 +1,11 @@
 import type { LocalNodeDwnServer } from '../src/local-node.js';
+import type { LocalNodePairingSessionStore } from '../src/pairing-session-store.js';
 import type { DwnDiscoveryFile, DwnDiscoveryRecord } from '@enbox/agent';
-import type { DwnServerConfig, LocalNodePairingManager as LocalNodePairingManagerType } from '@enbox/dwn-server';
+import type {
+  DwnServerConfig,
+  LocalNodePairingManager as LocalNodePairingManagerType,
+  LocalNodePairingSessionRecord,
+} from '@enbox/dwn-server';
 import type { PairingBroker, PairingDecision } from '../src/pairing-broker.js';
 
 import { describe, expect, it } from 'bun:test';
@@ -39,6 +44,29 @@ class FailingWriteDiscoveryFile extends MemoryDiscoveryFile {
   public async write(_record: DwnDiscoveryRecord): Promise<void> {
     this.writeCount += 1;
     throw new Error('write failed');
+  }
+}
+
+class MemoryPairingSessionStore implements LocalNodePairingSessionStore {
+  public readonly path = '/tmp/enbox-local-node/local-node-sessions.json';
+  public sessions: LocalNodePairingSessionRecord[];
+  public writeCount = 0;
+
+  public constructor(sessions: LocalNodePairingSessionRecord[] = []) {
+    this.sessions = sessions;
+  }
+
+  public async read(): Promise<LocalNodePairingSessionRecord[]> {
+    return this.sessions.map(clonePairingSession);
+  }
+
+  public async write(sessions: LocalNodePairingSessionRecord[]): Promise<void> {
+    this.sessions = sessions.map(clonePairingSession);
+    this.writeCount += 1;
+  }
+
+  public async remove(): Promise<void> {
+    this.sessions = [];
   }
 }
 
@@ -93,6 +121,14 @@ function createDiscoveryFile(record?: DwnDiscoveryRecord): MemoryDiscoveryFile &
   return new MemoryDiscoveryFile(record) as MemoryDiscoveryFile & DwnDiscoveryFile;
 }
 
+function createPairingSessionStore(sessions: LocalNodePairingSessionRecord[] = []): MemoryPairingSessionStore {
+  return new MemoryPairingSessionStore(sessions);
+}
+
+function clonePairingSession(session: LocalNodePairingSessionRecord): LocalNodePairingSessionRecord {
+  return { ...session };
+}
+
 describe('LocalNode', () => {
   it('should select the first available port and write a discovery record with a no-Origin token', async () => {
     const discoveryFile = createDiscoveryFile();
@@ -102,8 +138,9 @@ describe('LocalNode', () => {
       createServer,
       discoveryFile,
       pairingManager,
-      pid            : 1234,
-      portCandidates : [55500, 55501],
+      pairingSessionStore : createPairingSessionStore(),
+      pid                 : 1234,
+      portCandidates      : [55500, 55501],
     });
 
     const result = await node.start();
@@ -141,8 +178,9 @@ describe('LocalNode', () => {
     const node = new LocalNode({
       createServer,
       discoveryFile,
-      fetch          : fetchOk,
-      portCandidates : [55500],
+      fetch               : fetchOk,
+      pairingSessionStore : createPairingSessionStore(),
+      portCandidates      : [55500],
     });
 
     await expect(node.start()).rejects.toThrow(LocalNodeAlreadyRunningError);
@@ -162,8 +200,9 @@ describe('LocalNode', () => {
     const node = new LocalNode({
       createServer,
       discoveryFile,
-      fetch          : fetchWrongServer,
-      portCandidates : [55500],
+      fetch               : fetchWrongServer,
+      pairingSessionStore : createPairingSessionStore(),
+      portCandidates      : [55500],
     });
 
     await node.start();
@@ -180,7 +219,8 @@ describe('LocalNode', () => {
     const node = new LocalNode({
       createServer,
       discoveryFile,
-      portCandidates: [55500],
+      pairingSessionStore : createPairingSessionStore(),
+      portCandidates      : [55500],
     });
 
     await expect(node.start()).rejects.toThrow('write failed');
@@ -205,6 +245,7 @@ describe('LocalNode', () => {
       pairingBroker         : broker,
       pairingManager,
       pairingPollIntervalMs : 60_000,
+      pairingSessionStore   : createPairingSessionStore(),
       portCandidates        : [55500],
     });
 
@@ -239,6 +280,7 @@ describe('LocalNode', () => {
       pairingBroker         : broker,
       pairingManager,
       pairingPollIntervalMs : 60_000,
+      pairingSessionStore   : createPairingSessionStore(),
       portCandidates        : [55500],
     });
 
@@ -254,6 +296,96 @@ describe('LocalNode', () => {
       origin : 'https://app.example',
       status : 'denied',
     });
+
+    await node.stop();
+  });
+
+  it('should persist approved browser pairings and reload them on restart', async () => {
+    const sessionStore = createPairingSessionStore([{
+      createdAt : 1000,
+      origin    : 'https://existing.example',
+      token     : 'existing-token',
+    }]);
+    const broker: PairingBroker = {
+      async decidePairingRequest(): Promise<PairingDecision> {
+        return 'approve';
+      },
+    };
+    const firstDiscoveryFile = createDiscoveryFile();
+    const firstPairingManager = new LocalNodePairingManager();
+    const firstServerFactory = createFakeServerFactory();
+    const firstNode = new LocalNode({
+      createServer          : firstServerFactory.createServer,
+      discoveryFile         : firstDiscoveryFile,
+      pairingBroker         : broker,
+      pairingManager        : firstPairingManager,
+      pairingPollIntervalMs : 60_000,
+      pairingSessionStore   : sessionStore,
+      portCandidates        : [55500],
+    });
+
+    await firstNode.start();
+    expect(firstPairingManager.validateSession('https://existing.example', 'existing-token')).toBe(true);
+
+    const createResult = firstPairingManager.createRequest('https://app.example');
+    if (createResult.status !== 'created') {
+      throw new Error(`expected created request, got ${createResult.status}`);
+    }
+
+    await firstNode.processPendingPairingRequests();
+    const pollResult = firstPairingManager.pollRequest(createResult.requestId);
+    if (pollResult?.status !== 'approved' || pollResult.token === undefined) {
+      throw new Error('expected approved pairing token');
+    }
+
+    expect(sessionStore.sessions.map((session) => session.origin)).toEqual([
+      'https://existing.example',
+      'https://app.example',
+    ]);
+    expect(sessionStore.sessions.some((session) => session.origin === undefined)).toBe(false);
+
+    await firstNode.stop();
+
+    const secondPairingManager = new LocalNodePairingManager();
+    const secondServerFactory = createFakeServerFactory();
+    const secondNode = new LocalNode({
+      createServer        : secondServerFactory.createServer,
+      discoveryFile       : createDiscoveryFile(),
+      pairingManager      : secondPairingManager,
+      pairingSessionStore : sessionStore,
+      portCandidates      : [55500],
+    });
+
+    await secondNode.start();
+
+    expect(secondPairingManager.validateSession('https://app.example', pollResult.token)).toBe(true);
+    expect(secondPairingManager.validateSession('https://existing.example', 'existing-token')).toBe(true);
+
+    await secondNode.stop();
+  });
+
+  it('should persist pairing revocation', async () => {
+    const sessionStore = createPairingSessionStore([{
+      createdAt : 1000,
+      origin    : 'https://app.example',
+      token     : 'paired-token',
+    }]);
+    const pairingManager = new LocalNodePairingManager();
+    const { createServer } = createFakeServerFactory();
+    const node = new LocalNode({
+      createServer,
+      discoveryFile       : createDiscoveryFile(),
+      pairingManager,
+      pairingSessionStore : sessionStore,
+      portCandidates      : [55500],
+    });
+
+    await node.start();
+
+    expect(pairingManager.validateSession('https://app.example', 'paired-token')).toBe(true);
+    expect(await node.revokePairingToken('paired-token')).toBe(true);
+    expect(pairingManager.validateSession('https://app.example', 'paired-token')).toBe(false);
+    expect(sessionStore.sessions).toEqual([]);
 
     await node.stop();
   });

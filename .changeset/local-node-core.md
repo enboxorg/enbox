@@ -1,5 +1,5 @@
 ---
-"@enbox/local-node": minor
+"@enbox/local-node": patch
 "@enbox/agent": patch
 ---
 

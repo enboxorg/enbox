@@ -20,6 +20,12 @@ export type LocalNodePairingRequestView = {
   expiresAt : number;
 };
 
+export type LocalNodePairingSessionRecord = {
+  createdAt : number;
+  origin? : string;
+  token : string;
+};
+
 export type LocalNodePairingManagerOptions = {
   now? : () => number;
   pairingRequestTtlMs? : number;
@@ -228,6 +234,34 @@ export class LocalNodePairingManager {
     });
 
     return token;
+  }
+
+  public exportSessions(): LocalNodePairingSessionRecord[] {
+    return Array.from(this.#sessionsByToken.values())
+      .map((session: LocalNodeSession): LocalNodePairingSessionRecord => {
+        const record: LocalNodePairingSessionRecord = {
+          createdAt : session.createdAt,
+          token     : session.token,
+        };
+
+        if (session.origin !== undefined) {
+          record.origin = session.origin;
+        }
+
+        return record;
+      });
+  }
+
+  public importSessions(sessions: LocalNodePairingSessionRecord[]): void {
+    this.#sessionsByToken.clear();
+
+    for (const session of sessions) {
+      this.#sessionsByToken.set(session.token, {
+        createdAt : session.createdAt,
+        origin    : session.origin,
+        token     : session.token,
+      });
+    }
   }
 
   public validateSession(origin: string | undefined, token: string | undefined): boolean {
