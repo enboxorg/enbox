@@ -1,5 +1,5 @@
 ---
-"@enbox/agent": minor
+"@enbox/agent": patch
 "@enbox/auth": patch
 ---
 
