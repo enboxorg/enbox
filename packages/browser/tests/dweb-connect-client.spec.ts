@@ -333,3 +333,75 @@ describe('DWebConnect.initClient', () => {
     });
   });
 });
+
+describe('DWebConnect.probeWalletSupport', () => {
+  const probeWalletUrl = `${globalThis.location.origin}/wallet-support`;
+  const probeWalletOrigin = globalThis.location.origin;
+
+  afterEach(() => {
+    document.querySelectorAll('iframe').forEach((iframe) => iframe.remove());
+  });
+
+  it('should post a support request to the wallet iframe and resolve true when supported', async () => {
+    const promise = DWebConnect.probeWalletSupport(probeWalletUrl, TEST_DID, 1000);
+    const iframe = document.querySelector('iframe') as HTMLIFrameElement;
+
+    expect(iframe).toBeDefined();
+    expect(iframe.style.display).toBe('none');
+    expect(iframe.src).toBe(probeWalletUrl);
+
+    const postMessageSpy = spyOn(iframe.contentWindow!, 'postMessage');
+    iframe.dispatchEvent(new Event('load'));
+
+    expect(postMessageSpy).toHaveBeenCalledWith({
+      type : 'dweb-connect-support-request',
+      did  : TEST_DID,
+    }, probeWalletOrigin);
+
+    window.dispatchEvent(new MessageEvent('message', {
+      data   : { type: 'dweb-connect-support-response', supported: true },
+      origin : probeWalletOrigin,
+    }));
+
+    await expect(promise).resolves.toBe(true);
+    expect(document.querySelector('iframe')).toBeNull();
+
+    postMessageSpy.mockRestore();
+  });
+
+  it('should resolve false when the wallet reports unsupported DID', async () => {
+    const promise = DWebConnect.probeWalletSupport(probeWalletUrl, TEST_DID, 1000);
+
+    window.dispatchEvent(new MessageEvent('message', {
+      data   : { type: 'dweb-connect-support-response', supported: false },
+      origin : probeWalletOrigin,
+    }));
+
+    await expect(promise).resolves.toBe(false);
+    expect(document.querySelector('iframe')).toBeNull();
+  });
+
+  it('should ignore support responses from other origins', async () => {
+    const promise = DWebConnect.probeWalletSupport(probeWalletUrl, TEST_DID, 1000);
+
+    window.dispatchEvent(new MessageEvent('message', {
+      data   : { type: 'dweb-connect-support-response', supported: true },
+      origin : 'https://evil.example.com',
+    }));
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(document.querySelector('iframe')).not.toBeNull();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      data   : { type: 'dweb-connect-support-response', supported: true },
+      origin : probeWalletOrigin,
+    }));
+
+    await expect(promise).resolves.toBe(true);
+  });
+
+  it('should resolve false and remove the iframe when probing times out', async () => {
+    await expect(DWebConnect.probeWalletSupport(probeWalletUrl, TEST_DID, 10)).resolves.toBe(false);
+    expect(document.querySelector('iframe')).toBeNull();
+  });
+});
