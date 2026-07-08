@@ -118,11 +118,14 @@ describe('WalletConnect', () => {
       expect(result!.delegateGrants).toHaveLength(1);
       expect((EnboxConnectProtocol.createConnectRequest as sinon.SinonStub).firstCall.args[0].requestedSessionTtlSeconds).toBe(2_592_000);
 
-      // Verify onWalletUriReady was called with the correct URI.
+      // Verify onWalletUriReady was called with the correct URI. The relay
+      // pointer and encryption key ride in the fragment, never the query string.
       expect(walletUris).toHaveLength(1);
       const uri = new URL(walletUris[0]);
-      expect(uri.searchParams.get('request_uri')).toBe('http://localhost:3000/connect/authorize/req.jwt');
-      expect(uri.searchParams.get('encryption_key')).toBeDefined();
+      expect(uri.search).toBe('');
+      const parsed = EnboxConnectProtocol.parseWalletConnectUri(walletUris[0]);
+      expect(parsed?.requestUri).toBe('http://localhost:3000/connect/authorize/req.jwt');
+      expect(parsed?.encryptionKeyBase64Url).toBeDefined();
 
       // Verify fetch was called for PAR and poll.
       expect(fetchStub.callCount).toBeGreaterThanOrEqual(2);

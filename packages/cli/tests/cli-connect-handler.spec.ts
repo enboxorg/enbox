@@ -47,7 +47,7 @@ describe('CliConnectHandler', () => {
     const result = createConnectResult([createGrant({ scope: requestedScope })]);
     sinon.stub(WalletConnect, 'initClient').callsFake(async (options: WalletConnectClientOptions): Promise<ConnectResult | undefined> => {
       capturedOptions = options;
-      await options.onWalletUriReady('https://wallet.example/connect/app?request_uri=urn:test&encryption_key=test');
+      await options.onWalletUriReady('https://wallet.example/connect/app#request_uri=urn:test&encryption_key=test');
       expect(await options.validatePin()).toBe('428113');
       return result;
     });
@@ -75,7 +75,7 @@ describe('CliConnectHandler', () => {
     expect(capturedOptions?.timeoutMs).toBe(10_000);
     expect(capturedOptions?.requestedSessionTtlSeconds).toBe(604_800);
     expect(capturedOptions?.preSupplyDelegateDid).toBe(true);
-    expect(authUrls).toEqual(['https://wallet.example/connect/app?request_uri=urn:test&encryption_key=test']);
+    expect(authUrls).toEqual(['https://wallet.example/connect/app#request_uri=urn:test&encryption_key=test']);
     expect(output.text()).toContain('[qr]');
     expect(output.text()).toContain('Waiting for approval...');
   });
@@ -99,10 +99,12 @@ describe('CliConnectHandler', () => {
         pollIntervalMs             : 1,
         requestedSessionTtlSeconds : 2_592_000,
         onAuthUrl                  : async (uri: string): Promise<void> => {
-          const walletUrl = new URL(uri);
-          requestUri = getRequiredSearchParam(walletUrl, 'request_uri');
-          const encryptionKey = getRequiredSearchParam(walletUrl, 'encryption_key');
-          const connectRequest = await EnboxConnectProtocol.getConnectRequest(requestUri, encryptionKey);
+          const connectParams = EnboxConnectProtocol.parseWalletConnectUri(uri);
+          if (connectParams === undefined) {
+            throw new Error('wallet URI did not carry connect fragment params');
+          }
+          requestUri = connectParams.requestUri;
+          const connectRequest = await EnboxConnectProtocol.getConnectRequest(requestUri, connectParams.encryptionKeyBase64Url);
 
           expect(connectRequest.appName).toBe('Relay CLI');
           expect(connectRequest.requestedSessionTtlSeconds).toBe(2_592_000);
@@ -170,7 +172,7 @@ describe('CliConnectHandler', () => {
 
   it('should open the browser instead of printing a QR code when requested', async () => {
     sinon.stub(WalletConnect, 'initClient').callsFake(async (options: WalletConnectClientOptions): Promise<ConnectResult | undefined> => {
-      await options.onWalletUriReady('https://wallet.example/connect/app?request_uri=urn:test&encryption_key=test');
+      await options.onWalletUriReady('https://wallet.example/connect/app#request_uri=urn:test&encryption_key=test');
       return createConnectResult([createGrant({ scope: requestedScope })]);
     });
 
@@ -188,7 +190,7 @@ describe('CliConnectHandler', () => {
 
     await handler.requestAccess({ permissionRequests });
 
-    expect(openedUrls).toEqual(['https://wallet.example/connect/app?request_uri=urn:test&encryption_key=test']);
+    expect(openedUrls).toEqual(['https://wallet.example/connect/app#request_uri=urn:test&encryption_key=test']);
     expect(output.text()).toContain('Opening wallet for approval...');
     expect(output.text()).not.toContain('[qr]');
   });
@@ -686,14 +688,6 @@ async function handleRelayRequest({
   }
 
   writeResponse(response, 404, 'not found');
-}
-
-function getRequiredSearchParam(url: URL, name: string): string {
-  const value = url.searchParams.get(name);
-  if (value === null || value === '') {
-    throw new Error(`missing ${name} search parameter`);
-  }
-  return value;
 }
 
 async function readRequestBody(request: IncomingMessage): Promise<string> {

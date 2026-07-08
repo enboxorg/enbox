@@ -25,7 +25,7 @@ import type {
 } from '@enbox/agent';
 
 import { DidJwk } from '@enbox/dids';
-import { Convert, logger } from '@enbox/common';
+import { logger } from '@enbox/common';
 import { CryptoUtils, Ed25519 } from '@enbox/crypto';
 import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 import { EnboxConnectProtocol, pollWithTtl } from '@enbox/agent';
@@ -68,7 +68,7 @@ export type WalletConnectClientOptions = {
   connectServerUrl: string;
 
   /**
-   * The URI of the wallet app. Query params (`request_uri`, `encryption_key`)
+   * The URI of the wallet app. Fragment params (`request_uri`, `encryption_key`)
    * are appended and passed to `onWalletUriReady`.
    * @example `enbox://connect` or `http://localhost:3000/`
    */
@@ -82,7 +82,7 @@ export type WalletConnectClientOptions = {
   permissionRequests: ConnectPermissionRequest[];
 
   /**
-   * Called with the wallet URI including query params (`request_uri`, `encryption_key`).
+   * Called with the wallet URI carrying fragment params (`request_uri`, `encryption_key`).
    * The app should render this as a QR code or use it as a deep link.
    *
    * @param uri - The wallet URI with connect payload.
@@ -215,15 +215,14 @@ async function initClient({
   // a deeplink to a compatible wallet. if the wallet scans this link it should receive
   // a route to its Connect provider flow and the params of where to fetch the auth request.
   logger.log(`Wallet URI: ${walletUri}`);
-  const generatedWalletUri = new URL(walletUri);
-  generatedWalletUri.searchParams.set('request_uri', parData.request_uri);
-  generatedWalletUri.searchParams.set(
-    'encryption_key',
-    Convert.uint8Array(encryptionKey).toBase64Url()
-  );
+  const generatedWalletUri = EnboxConnectProtocol.buildWalletConnectUri({
+    walletUri,
+    requestUri: parData.request_uri,
+    encryptionKey,
+  });
 
   // call user's callback so they can send the URI to the wallet as they see fit
-  await onWalletUriReady(generatedWalletUri.toString());
+  await onWalletUriReady(generatedWalletUri);
 
   const tokenUrl = EnboxConnectProtocol.buildConnectUrl({
     baseURL    : connectServerUrl,

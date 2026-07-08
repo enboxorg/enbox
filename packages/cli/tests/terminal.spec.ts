@@ -4,8 +4,8 @@ import { getBrowserOpenCommand } from '../src/terminal.js';
 
 describe('terminal', () => {
   describe('getBrowserOpenCommand()', () => {
-    it('should use a Windows browser opener that preserves wallet query strings', () => {
-      const uri = 'https://wallet.example/connect/app?request_uri=urn%3Atest&encryption_key=test';
+    it('should use a Windows browser opener that preserves the wallet URI fragment', () => {
+      const uri = 'https://wallet.example/connect/app#request_uri=urn%3Atest&encryption_key=test';
 
       const command = getBrowserOpenCommand(uri, 'win32');
 
