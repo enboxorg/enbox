@@ -66,8 +66,8 @@ describe('EnboxConnectProtocol — edge cases', () => {
 
     it('should carry the request pointer and key in the fragment, never the query', () => {
       const uri = EnboxConnectProtocol.buildWalletConnectUri({
-        walletUri     : 'https://wallet.example/connect/app',
-        requestUri    : 'https://relay.example/connect/authorize/req.jwt',
+        walletUri  : 'https://wallet.example/connect/app',
+        requestUri : 'https://relay.example/connect/authorize/req.jwt',
         encryptionKey,
       });
 
@@ -82,8 +82,8 @@ describe('EnboxConnectProtocol — edge cases', () => {
 
     it('should round-trip through parseWalletConnectUri', () => {
       const uri = EnboxConnectProtocol.buildWalletConnectUri({
-        walletUri     : 'https://wallet.example/connect/app',
-        requestUri    : 'urn:test:req',
+        walletUri  : 'https://wallet.example/connect/app',
+        requestUri : 'urn:test:req',
         encryptionKey,
       });
 
@@ -94,8 +94,8 @@ describe('EnboxConnectProtocol — edge cases', () => {
 
     it('should preserve an existing wallet path and origin', () => {
       const uri = EnboxConnectProtocol.buildWalletConnectUri({
-        walletUri     : 'https://wallet.example/connect/app',
-        requestUri    : 'urn:test:req',
+        walletUri  : 'https://wallet.example/connect/app',
+        requestUri : 'urn:test:req',
         encryptionKey,
       });
 
