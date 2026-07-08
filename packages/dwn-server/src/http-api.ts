@@ -11,6 +11,7 @@ import type { AdminSessionManager } from './admin/admin-session.js';
 import type { AdminStore } from './admin/admin-store.js';
 import type { DwnServerConfig } from './config.js';
 import type { DwnServerError } from './dwn-error.js';
+import type { LocalNodePairingManager } from './local-node-pairing.js';
 import type { MessageProcessedHook } from './message-processed-hook.js';
 import type { OpenAuthHandler } from './registration/open-auth-handler.js';
 import type { RateLimiter } from './rate-limiter.js';
@@ -35,6 +36,7 @@ import { join, resolve } from 'path';
 
 import { ConnectServer } from './connect/connect-server.js';
 import { getDialectFromUrl } from './storage.js';
+import { LocalNodePairingManager as InMemoryLocalNodePairingManager } from './local-node-pairing.js';
 import { jsonRpcRouter } from './json-rpc-api.js';
 import { validateAdminAuth } from './admin/admin-auth.js';
 import { assertLocalNodeBindHostname, isLocalNodeHostHeaderAllowed } from './local-node-profile.js';
@@ -72,6 +74,7 @@ export class HttpApi {
   #openAuthHandler: OpenAuthHandler | undefined;
   #sessionManager: AdminSessionManager | undefined;
   #adminUiPath: string | undefined;
+  #localNodePairingManager: LocalNodePairingManager;
   connectServer: ConnectServer;
   registrationManager: RegistrationManager;
   dwn: Dwn;
@@ -93,6 +96,7 @@ export class HttpApi {
       openAuthHandler? : OpenAuthHandler;
       sessionManager? : AdminSessionManager;
       ttlCacheDialect? : Dialect;
+      localNodePairingManager?: LocalNodePairingManager;
     },
   ): Promise<HttpApi> {
     const httpApi = new HttpApi();
@@ -132,6 +136,7 @@ export class HttpApi {
     httpApi.#openAuthHandler = options?.openAuthHandler;
     httpApi.#sessionManager = options?.sessionManager;
     httpApi.#adminUiPath = resolvedAdminUiPath;
+    httpApi.#localNodePairingManager = options?.localNodePairingManager ?? new InMemoryLocalNodePairingManager();
 
     if (registrationManager !== undefined) {
       httpApi.registrationManager = registrationManager;
@@ -177,6 +182,10 @@ export class HttpApi {
     return this.#registrationStore;
   }
 
+  get localNodePairingManager(): LocalNodePairingManager {
+    return this.#localNodePairingManager;
+  }
+
   // ---------------------------------------------------------------------------
   // HTTP request handler
   // ---------------------------------------------------------------------------
@@ -200,6 +209,14 @@ export class HttpApi {
 
         if (self.#config.localNodeProfileEnabled && !isLocalNodeHostHeaderAllowed(req.headers.get('host'))) {
           return new Response('Forbidden', { status: 403 });
+        }
+
+        if (self.#config.localNodeProfileEnabled) {
+          const authorizationResponse = self.#authorizeLocalNodeRequest(req, url, path, method);
+          if (authorizationResponse !== undefined) {
+            self.#applyCorsHeaders(req, authorizationResponse, path);
+            return authorizationResponse;
+          }
         }
 
         // --- WebSocket upgrade ---
@@ -381,6 +398,14 @@ export class HttpApi {
 
     if (method === 'GET' && path === '/info') {
       return this.#handleInfo();
+    }
+
+    if (this.#config.localNodeProfileEnabled && path === '/local/pair' && method === 'POST') {
+      return this.#handleLocalNodePairRequest(req);
+    }
+
+    if (this.#config.localNodeProfileEnabled && path.startsWith('/local/pair/') && method === 'GET') {
+      return this.#handleLocalNodePairPoll(path);
     }
 
     // --- JSON-RPC POST ---
@@ -605,13 +630,97 @@ export class HttpApi {
       return origin;
     }
 
-    return this.#config.localNodeAllowedOrigins.includes(origin) ? origin : undefined;
+    return this.#localNodePairingManager.isOriginPaired(origin) ? origin : undefined;
   }
 
   static #isLocalNodePublicCorsRoute(path: string): boolean {
     return path === '/info'
       || path === '/local/pair'
       || path.startsWith('/local/pair/');
+  }
+
+  static #isLocalNodePublicRoute(path: string, method: string): boolean {
+    return method === 'OPTIONS'
+      || (method === 'GET' && path === '/info')
+      || (method === 'POST' && path === '/local/pair')
+      || (method === 'GET' && path.startsWith('/local/pair/'));
+  }
+
+  #authorizeLocalNodeRequest(req: Request, url: URL, path: string, method: string): Response | undefined {
+    if (HttpApi.#isLocalNodePublicRoute(path, method)) {
+      return undefined;
+    }
+
+    const origin = req.headers.get('origin') ?? undefined;
+    const token = HttpApi.#getLocalNodeAuthToken(req, url);
+    if (this.#localNodePairingManager.validateSession(origin, token)) {
+      return undefined;
+    }
+
+    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  static #getLocalNodeAuthToken(req: Request, url: URL): string | undefined {
+    const bearerToken = HttpApi.#getBearerToken(req.headers.get('authorization'));
+    if (bearerToken !== undefined) {
+      return bearerToken;
+    }
+
+    if (req.headers.get('upgrade') === 'websocket') {
+      return url.searchParams.get('localNodeToken') ?? undefined;
+    }
+
+    return undefined;
+  }
+
+  static #getBearerToken(authorizationHeader: string | null): string | undefined {
+    if (authorizationHeader === null) {
+      return undefined;
+    }
+
+    const parts = authorizationHeader.trim().split(/\s+/);
+    if (parts.length !== 2 || parts[0].toLowerCase() !== 'bearer') {
+      return undefined;
+    }
+
+    return parts[1];
+  }
+
+  #handleLocalNodePairRequest(req: Request): Response {
+    const result = this.#localNodePairingManager.createRequest(req.headers.get('origin'));
+
+    if (result.status === 'invalid-origin') {
+      return Response.json({ error: result.message }, { status: 400 });
+    }
+
+    if (result.status === 'rate-limited') {
+      return Response.json(
+        { error: 'Pairing rate limit exceeded.' },
+        {
+          headers : { 'retry-after': String(Math.ceil(result.retryAfterMs / 1000)) },
+          status  : 429,
+        },
+      );
+    }
+
+    return Response.json({
+      requestId : result.requestId,
+      status    : 'pending',
+    });
+  }
+
+  #handleLocalNodePairPoll(path: string): Response {
+    const requestId = path.slice('/local/pair/'.length);
+    if (requestId.length === 0) {
+      return Response.json({ error: 'Pairing request ID is required.' }, { status: 400 });
+    }
+
+    const result = this.#localNodePairingManager.pollRequest(requestId);
+    if (result === undefined) {
+      return Response.json({ error: 'Pairing request not found.' }, { status: 404 });
+    }
+
+    return Response.json(result);
   }
 
   async #handleJsonRpcPost(req: Request): Promise<Response> {

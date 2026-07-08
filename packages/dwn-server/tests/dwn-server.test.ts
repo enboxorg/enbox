@@ -5,6 +5,7 @@ import { describe, expect, it } from 'bun:test';
 import { config } from '../src/config.js';
 import { DwnServer } from '../src/dwn-server.js';
 import { getTestDwn } from './test-dwn.js';
+import { LocalNodePairingManager } from '../src/local-node-pairing.js';
 
 describe('DwnServer', () => {
   const dwnServerConfig = { ...config, port: 0 };
@@ -60,6 +61,27 @@ describe('DwnServer', () => {
   });
 
   describe('local node profile', () => {
+    it('should expose the injected local node pairing manager', async () => {
+      ({ dwn } = await getTestDwn());
+      const localNodePairingManager = new LocalNodePairingManager();
+      const server = new DwnServer({
+        dwn,
+        localNodePairingManager,
+        config: {
+          ...dwnServerConfig,
+          hostname                : '127.0.0.1',
+          localNodeProfileEnabled : true,
+        }
+      });
+
+      try {
+        await server.start();
+        expect(server.localNodePairingManager).toBe(localNodePairingManager);
+      } finally {
+        await server.stop();
+      }
+    });
+
     it('should reject non-loopback bind hostnames', async () => {
       ({ dwn } = await getTestDwn());
       const server = new DwnServer({

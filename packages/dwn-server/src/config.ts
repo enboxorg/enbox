@@ -71,9 +71,8 @@ export const config = {
   localNodeProfileEnabled: process.env.DWN_LOCAL_NODE_PROFILE === 'true',
 
   /**
-   * Origins allowed to use local-node protected routes before the dynamic
-   * pairing store is wired in. Public local-node routes such as `/info` still
-   * reflect the caller origin because they are used to initiate pairing.
+   * Origins supplied by local-node wrappers for development/CI policy.
+   * Protected local-node routes are authorized by per-origin pairing tokens.
    */
   localNodeAllowedOrigins: parseCommaSeparatedList(process.env.DWN_LOCAL_NODE_ALLOWED_ORIGINS),
 
