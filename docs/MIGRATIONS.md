@@ -95,12 +95,13 @@ export const allServerMigrations: ReadonlyArray<readonly [name: string, factory:
 
 ## Migration conventions
 
-1. **Naming**: `NNN-kebab-case-description.ts` (e.g., `003-add-squash-column.ts`). Zero-padded 3-digit prefix for sort order.
-2. **Forward-only**: Migrations have `up()` only — no `down()`. Rollback is done by deploying a new forward migration.
-3. **Idempotent DDL**: Use `ifNotExists()` for `createTable` and `createIndex`. Wrap `alterTable` in try/catch when the column might already exist.
-4. **No data migrations**: Migration files are for DDL only. Data migrations belong in application code.
-5. **No inline DDL in stores**: Store `open()` / `initialize()` methods must NOT create or alter tables. They perform a `SELECT 1 FROM <table> LIMIT 0` health check and throw if the table is missing.
-6. **Run before stores**: Migrations must run before any store `open()` call. In `dwn-server`, `runServerMigrationsIfNeeded()` is called first in `DwnServer.#setupServer()`, before `RegistrationManager.create()` or any admin store creation.
+1. **Naming**: migration modules use `NNN-kebab-case-description.ts` (e.g., `003-add-squash-column.ts`). This convention is scoped to migration files only; do not use numbered prefixes for ordinary source files.
+2. **Stable names**: the filename stem is also the Kysely migration key stored in the migration tracking table. Never rename, renumber, reorder, or remove a released migration. Add the next sequential migration instead.
+3. **Forward-only**: Migrations have `up()` only — no `down()`. Rollback is done by deploying a new forward migration.
+4. **Idempotent DDL**: Use `ifNotExists()` for `createTable` and `createIndex`. Wrap `alterTable` in try/catch when the column might already exist.
+5. **No data migrations**: Migration files are for DDL only. Data migrations belong in application code.
+6. **No inline DDL in stores**: Store `open()` / `initialize()` methods must NOT create or alter tables. They perform a `SELECT 1 FROM <table> LIMIT 0` health check and throw if the table is missing.
+7. **Run before stores**: Migrations must run before any store `open()` call. In `dwn-server`, `runServerMigrationsIfNeeded()` is called first in `DwnServer.#setupServer()`, before `RegistrationManager.create()` or any admin store creation.
 
 ## Startup order (`DwnServer`)
 

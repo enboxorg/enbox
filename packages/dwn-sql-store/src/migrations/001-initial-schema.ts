@@ -15,7 +15,7 @@ export const migration001InitialSchema: DwnMigrationFactory = (dialect: Dialect)
 
   async up(db: Kysely<any>): Promise<void> {
 
-    // ─── messageStoreMessages ───────────────────────────────────────────
+    // messageStoreMessages
     if (!(await dialect.hasTable(db, 'messageStoreMessages'))) {
       let table = db.schema
         .createTable('messageStoreMessages')
@@ -80,7 +80,7 @@ export const migration001InitialSchema: DwnMigrationFactory = (dialect: Dialect)
       }
     }
 
-    // ─── messageStoreRecordsTags ─────────────────────────────────────────
+    // messageStoreRecordsTags
     if (!(await dialect.hasTable(db, 'messageStoreRecordsTags'))) {
       let table = db.schema
         .createTable('messageStoreRecordsTags')
@@ -107,7 +107,7 @@ export const migration001InitialSchema: DwnMigrationFactory = (dialect: Dialect)
       }
     }
 
-    // ─── dataStore ──────────────────────────────────────────────────────
+    // dataStore
     if (!(await dialect.hasTable(db, 'dataStore'))) {
       let table = db.schema
         .createTable('dataStore')
@@ -124,7 +124,7 @@ export const migration001InitialSchema: DwnMigrationFactory = (dialect: Dialect)
         .on('dataStore').columns(['tenant', 'recordId', 'dataCid']).unique().execute();
     }
 
-    // ─── resumableTasks ─────────────────────────────────────────────────
+    // resumableTasks
     if (!(await dialect.hasTable(db, 'resumableTasks'))) {
       await db.schema
         .createTable('resumableTasks')
