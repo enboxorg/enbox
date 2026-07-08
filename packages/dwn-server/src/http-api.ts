@@ -418,7 +418,7 @@ export class HttpApi {
     }
 
     if (this.#config.localNodeProfileEnabled && path.startsWith('/local/pair/') && method === 'GET') {
-      return this.#handleLocalNodePairPoll(path);
+      return this.#handleLocalNodePairPoll(req, path);
     }
 
     // --- JSON-RPC POST ---
@@ -644,17 +644,17 @@ export class HttpApi {
       return undefined;
     }
 
-    if (HttpApi.#isLocalNodePublicCorsRoute(path)) {
+    if (path === '/info' || path === '/local/pair') {
       return origin;
     }
 
-    return this.#localNodePairingManager.isOriginPaired(origin) ? origin : undefined;
-  }
+    if (path.startsWith('/local/pair/')) {
+      const requestId = path.slice('/local/pair/'.length);
+      const request = this.#localNodePairingManager.getRequest(requestId);
+      return request?.origin === origin ? origin : undefined;
+    }
 
-  static #isLocalNodePublicCorsRoute(path: string): boolean {
-    return path === '/info'
-      || path === '/local/pair'
-      || path.startsWith('/local/pair/');
+    return this.#localNodePairingManager.isOriginPaired(origin) ? origin : undefined;
   }
 
   static #isLocalNodePublicRoute(path: string, method: string, isWebSocketUpgrade: boolean): boolean {
@@ -743,10 +743,15 @@ export class HttpApi {
     });
   }
 
-  #handleLocalNodePairPoll(path: string): Response {
+  #handleLocalNodePairPoll(req: Request, path: string): Response {
     const requestId = path.slice('/local/pair/'.length);
     if (requestId.length === 0) {
       return Response.json({ error: 'Pairing request ID is required.' }, { status: 400 });
+    }
+
+    const request = this.#localNodePairingManager.getRequest(requestId);
+    if (request === undefined || req.headers.get('origin') !== request.origin) {
+      return Response.json({ error: 'Pairing request not found.' }, { status: 404 });
     }
 
     const result = this.#localNodePairingManager.pollRequest(requestId);
