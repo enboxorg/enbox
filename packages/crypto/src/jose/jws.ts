@@ -79,7 +79,8 @@ export interface JwsHeaderParams extends JoseHeaderParams {
     // HMAC using SHA-512
     | 'HS512'
     // an unregistered, case-sensitive, collision-resistant string
-    | string;
+    // `string & {}` preserves the literal hints above while still accepting any string.
+    | (string & {});
 
   /**
    * Critical Header Parameter
