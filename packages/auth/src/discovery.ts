@@ -565,7 +565,7 @@ function getUnsupportedReason(): LocalDwnUnsupportedReason | undefined {
 }
 
 function isBrowserLike(): boolean {
-  return typeof globalThis.location !== 'undefined' && typeof globalThis.navigator !== 'undefined';
+  return globalThis.location !== undefined && globalThis.navigator !== undefined;
 }
 
 function isSafari(): boolean {

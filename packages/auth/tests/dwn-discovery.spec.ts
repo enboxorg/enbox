@@ -2,15 +2,21 @@ import type { ServerInfo } from '@enbox/dwn-clients';
 
 import { describe, expect, test } from 'bun:test';
 
+import { createMockAgent } from './helpers/mock-agent.js';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import {
+  applyLocalDwnDiscovery,
   clearLocalDwnEndpoint,
+  discoverLocalDwn,
   discoverLocalDwnPairing,
+  initiateLocalDwnPairing,
   persistLocalDwnPairingRecord,
+  pollLocalDwnPairing,
   probeLocalDwn,
   readLocalDwnPairingRecord,
   requestLocalDwnPairing,
+  restoreLocalDwnEndpoint,
 } from '../src/discovery.js';
 
 const localNodeInfo: ServerInfo = {
@@ -77,6 +83,64 @@ describe('local-node pairing storage', () => {
     });
 
     expect(result).toBeUndefined();
+    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBeNull();
+  });
+
+  test('returns valid stored pairing during passive discovery', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnPairingRecord(storage, pairingRecord);
+    const fetchFn = async (url: string | URL | Request): Promise<Response> => {
+      return url.toString().endsWith('/info')
+        ? jsonResponse(localNodeInfo)
+        : jsonResponse({ localNode: true, paired: true });
+    };
+
+    const result = await discoverLocalDwnPairing(storage, fetchFn);
+
+    expect(result).toEqual(pairingRecord);
+
+    const originalFetch = globalThis.fetch;
+    Object.defineProperty(globalThis, 'fetch', {
+      configurable : true,
+      value        : fetchFn,
+      writable     : true,
+    });
+
+    try {
+      expect(await discoverLocalDwn(storage)).toBe(pairingRecord.endpoint);
+    } finally {
+      Object.defineProperty(globalThis, 'fetch', {
+        configurable : true,
+        value        : originalFetch,
+        writable     : true,
+      });
+    }
+  });
+
+  test('restores stored pairing endpoint into an agent', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnPairingRecord(storage, pairingRecord);
+    const endpoints: string[] = [];
+    const agent = createMockAgent({
+      dwnSetCachedLocalDwnEndpoint: async (endpoint): Promise<boolean> => {
+        endpoints.push(endpoint);
+        return true;
+      },
+    });
+
+    expect(await restoreLocalDwnEndpoint(agent, storage)).toBe(true);
+    expect(await applyLocalDwnDiscovery(agent, storage)).toBe(true);
+    expect(endpoints).toEqual([pairingRecord.endpoint, pairingRecord.endpoint]);
+  });
+
+  test('clears stored pairing when an agent rejects the endpoint', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnPairingRecord(storage, pairingRecord);
+    const agent = createMockAgent({
+      dwnSetCachedLocalDwnEndpoint: async (): Promise<boolean> => false,
+    });
+
+    expect(await restoreLocalDwnEndpoint(agent, storage)).toBe(false);
     expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBeNull();
   });
 });
@@ -159,6 +223,59 @@ describe('probeLocalDwn', () => {
       status     : 'paired',
     });
   });
+
+  test('does not scan ports when scanPorts is false', async () => {
+    let fetchCount = 0;
+
+    const result = await probeLocalDwn({
+      fetch: async (): Promise<Response> => {
+        fetchCount++;
+        return jsonResponse(localNodeInfo);
+      },
+      scanPorts: false,
+    });
+
+    expect(result).toEqual({ status: 'not-found' });
+    expect(fetchCount).toBe(0);
+  });
+
+  test('returns unsupported for Safari user agents', async () => {
+    setBrowserGlobals({
+      href            : 'https://app.example',
+      isSecureContext : true,
+      userAgent       : 'Mozilla/5.0 Version/17.0 Safari/605.1.15',
+    });
+
+    try {
+      const result = await probeLocalDwn({
+        fetch: async (): Promise<Response> => {
+          throw new Error('should not fetch');
+        },
+      });
+
+      expect(result).toEqual({ reason: 'safari', status: 'unsupported' });
+    } finally {
+      restoreBrowserGlobals();
+    }
+  });
+
+  test('clears stored pairing when probe revalidation fails', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnPairingRecord(storage, pairingRecord);
+
+    const result = await probeLocalDwn({
+      fetch: async (url): Promise<Response> => {
+        return url.toString().endsWith('/info')
+          ? jsonResponse(localNodeInfo)
+          : jsonResponse({ error: 'Unauthorized' }, 401);
+      },
+      portCandidates: [],
+      storage,
+    });
+
+    expect(result).toEqual({ status: 'not-found' });
+    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBeNull();
+  });
 });
 
 describe('requestLocalDwnPairing', () => {
@@ -210,6 +327,132 @@ describe('requestLocalDwnPairing', () => {
 
     expect(await readLocalDwnPairingRecord(storage)).toEqual((result as any).pairing);
   });
+
+  test('returns rate-limited when pairing initiation is rate limited', async () => {
+    const storage = new MemoryStorage();
+
+    const result = await requestLocalDwnPairing({
+      fetch: async (url): Promise<Response> => {
+        return url.toString().endsWith('/info')
+          ? jsonResponse(localNodeInfo)
+          : jsonResponse({ error: 'rate limited' }, 429, { 'retry-after': '9' });
+      },
+      endpoint: pairingRecord.endpoint,
+      storage,
+    });
+
+    expect(result).toEqual({ retryAfterSec: 9, status: 'rate-limited' });
+  });
+
+  test('returns denied and expired terminal pairing statuses', async () => {
+    const storage = new MemoryStorage();
+    const denied = await requestLocalDwnPairing({
+      fetch    : pairingFetch({ status: 'denied' }),
+      endpoint : pairingRecord.endpoint,
+      storage,
+    });
+    const expired = await requestLocalDwnPairing({
+      fetch    : pairingFetch({ status: 'expired' }),
+      endpoint : pairingRecord.endpoint,
+      storage,
+    });
+
+    expect(denied).toEqual({
+      endpoint : pairingRecord.endpoint,
+      origin   : 'https://app.example',
+      status   : 'denied',
+    });
+    expect(expired).toEqual({
+      endpoint : pairingRecord.endpoint,
+      origin   : 'https://app.example',
+      status   : 'expired',
+    });
+  });
+
+  test('returns timeout when pairing remains pending', async () => {
+    const storage = new MemoryStorage();
+
+    const result = await requestLocalDwnPairing({
+      endpoint       : pairingRecord.endpoint,
+      fetch          : pairingFetch({ status: 'pending' }),
+      pollIntervalMs : 0,
+      storage,
+      timeoutMs      : 0,
+    });
+
+    expect(result).toEqual({
+      endpoint  : pairingRecord.endpoint,
+      pollUrl   : 'http://127.0.0.1:55500/local/pair/request-1',
+      requestId : 'request-1',
+      status    : 'timeout',
+    });
+  });
+
+  test('throws when approved pairing omits token', async () => {
+    const storage = new MemoryStorage();
+
+    await expect(requestLocalDwnPairing({
+      endpoint : pairingRecord.endpoint,
+      fetch    : pairingFetch({ status: 'approved' }),
+      storage,
+    })).rejects.toThrow('approved pairing did not include a token');
+  });
+});
+
+describe('pairing HTTP helpers', () => {
+  test('uses fallback pairing URLs when /info omits localPairing', async () => {
+    const serverInfo = {
+      ...localNodeInfo,
+      localPairing: undefined,
+    };
+    const fetchUrls: string[] = [];
+
+    const initiated = await initiateLocalDwnPairing({
+      endpoint : pairingRecord.endpoint,
+      fetch    : async (url): Promise<Response> => {
+        fetchUrls.push(url.toString());
+        return jsonResponse({ requestId: 'fallback-request', status: 'pending' });
+      },
+      serverInfo,
+    });
+
+    expect(fetchUrls).toEqual(['http://127.0.0.1:55500/local/pair']);
+    expect(initiated).toEqual({
+      endpoint  : pairingRecord.endpoint,
+      pollUrl   : 'http://127.0.0.1:55500/local/pair/fallback-request',
+      requestId : 'fallback-request',
+      serverInfo,
+      status    : 'pending',
+    });
+  });
+
+  test('rejects malformed initiate and poll responses', async () => {
+    await expect(initiateLocalDwnPairing({
+      endpoint   : pairingRecord.endpoint,
+      fetch      : async (): Promise<Response> => jsonResponse({ requestId: 1, status: 'pending' }),
+      serverInfo : localNodeInfo,
+    })).rejects.toThrow('malformed pairing response');
+
+    await expect(pollLocalDwnPairing({
+      endpoint : pairingRecord.endpoint,
+      fetch    : async (): Promise<Response> => jsonResponse({ status: 'pending' }),
+      pollUrl  : 'http://127.0.0.1:55500/local/pair/request-1',
+    })).rejects.toThrow('malformed pairing poll response');
+  });
+
+  test('rejects non-OK initiate and poll responses', async () => {
+    await expect(initiateLocalDwnPairing({
+      endpoint   : pairingRecord.endpoint,
+      fetch      : async (): Promise<Response> => jsonResponse({ error: 'boom' }, 500),
+      serverInfo : localNodeInfo,
+    })).rejects.toThrow('pairing request failed with HTTP 500');
+
+    await expect(pollLocalDwnPairing({
+      endpoint : pairingRecord.endpoint,
+      fetch    : async (): Promise<Response> => jsonResponse({ error: 'boom' }, 500),
+      pollUrl  : 'http://127.0.0.1:55500/local/pair/request-1',
+    })).rejects.toThrow('pairing poll failed with HTTP 500');
+  });
 });
 
 describe('clearLocalDwnEndpoint', () => {
@@ -231,6 +474,24 @@ function jsonResponse(body: unknown, status: number = 200, headers: HeadersInit 
     },
     status,
   });
+}
+
+function pairingFetch(result: { status: 'pending' | 'approved' | 'denied' | 'expired' }): typeof fetch {
+  return async (url): Promise<Response> => {
+    const href = url.toString();
+    if (href.endsWith('/info')) {
+      return jsonResponse(localNodeInfo);
+    }
+
+    if (href.endsWith('/local/pair')) {
+      return jsonResponse({ requestId: 'request-1', status: 'pending' });
+    }
+
+    return jsonResponse({
+      origin : 'https://app.example',
+      status : result.status,
+    });
+  };
 }
 
 function setBrowserGlobals(params: {
