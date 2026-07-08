@@ -1,5 +1,13 @@
 # @enbox/agent
 
+## 0.8.14
+
+### Patch Changes
+
+- [#1202](https://github.com/enboxorg/enbox/pull/1202) [`d7467fe`](https://github.com/enboxorg/enbox/commit/d7467fef30d809e25bd0c840338301b9b9d912e0) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: carry the wallet connect request pointer and encryption key in the URI fragment
+
+  `EnboxConnectProtocol` now exposes `buildWalletConnectUri` and `parseWalletConnectUri`, which place the relay `request_uri` and the single-use `encryption_key` in the URI **fragment** rather than the query string. The fragment never leaves the local channel (it is not sent to the wallet's web server on the deep-link path), so the single-use symmetric key protecting the pushed request cannot surface in server or CDN logs. `WalletConnect.initClient` builds the wallet URI through the new helper; consumers that read connect parameters from a wallet URI should parse them with `parseWalletConnectUri`.
+
 ## 0.8.13
 
 ### Patch Changes

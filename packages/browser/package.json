@@ -1,6 +1,6 @@
 {
   "name": "@enbox/browser",
-  "version": "0.3.37",
+  "version": "0.3.38",
   "description": "Enbox tools and features to use in the browser",
   "type": "module",
   "main": "./dist/esm/index.js",
