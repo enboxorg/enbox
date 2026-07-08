@@ -3,6 +3,7 @@ import type { DwnServerConfig } from '../src/config.js';
 import type { Dwn, Persona, ProtocolsConfigureMessage, RecordsQueryReply } from '@enbox/dwn-sdk-js';
 import type { JsonRpcErrorResponse, JsonRpcResponse, ServerInfo } from '@enbox/dwn-clients';
 
+import { connect } from 'net';
 import { Convert } from '@enbox/common';
 import log from 'loglevel';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -20,6 +21,7 @@ import CommonScenarioValidator from './common-scenario-validator.js';
 import { config } from '../src/config.js';
 import { getTestDwn } from './test-dwn.js';
 import { HttpApi } from '../src/http-api.js';
+import { LocalNodePairingManager } from '../src/local-node-pairing.js';
 import { RegistrationManager } from '../src/registration/registration-manager.js';
 import { runServerMigrationsIfNeeded } from '../src/storage.js';
 import { createJsonRpcRequest, JsonRpcErrorCodes } from '@enbox/dwn-clients';
@@ -38,12 +40,18 @@ describe('http api', function () {
   let clock;
   let baseUrl: string;
 
-  async function createStartedHttpApiWithConfig(overrides: Partial<DwnServerConfig>): Promise<{ api: HttpApi; url: string; }> {
+  async function createStartedHttpApiWithConfig(
+    overrides: Partial<DwnServerConfig>,
+    options: { localNodePairingManager?: LocalNodePairingManager } = {},
+  ): Promise<{ api: HttpApi; url: string; }> {
     const testConfig: DwnServerConfig = {
       ...config,
       ...overrides,
     };
-    const api = await HttpApi.create(testConfig, dwn, registrationManager, undefined, undefined, { ttlCacheDialect: dialect });
+    const api = await HttpApi.create(testConfig, dwn, registrationManager, undefined, undefined, {
+      localNodePairingManager : options.localNodePairingManager,
+      ttlCacheDialect         : dialect,
+    });
     await api.start(0);
 
     const hostname = testConfig.hostname ?? 'localhost';
@@ -1206,24 +1214,31 @@ describe('http api', function () {
       }
     });
 
-    it('should only reflect configured origins on local-node protected routes', async () => {
+    it('should only reflect paired origins on local-node protected routes', async () => {
+      const localNodePairingManager = new LocalNodePairingManager();
+      const token = localNodePairingManager.createSession('https://paired.example');
       const { api, url } = await createStartedHttpApiWithConfig({
         hostname                : '127.0.0.1',
-        localNodeAllowedOrigins : ['https://paired.example'],
         localNodeProfileEnabled : true,
-      });
+      }, { localNodePairingManager });
 
       try {
         const pairedResponse = await fetch(`${url}/health`, {
-          headers: { origin: 'https://paired.example' },
+          headers: {
+            authorization : `Bearer ${token}`,
+            origin        : 'https://paired.example',
+          },
         });
         expect(pairedResponse.status).toBe(200);
         expect(pairedResponse.headers.get('access-control-allow-origin')).toBe('https://paired.example');
 
         const unpairedResponse = await fetch(`${url}/health`, {
-          headers: { origin: 'https://unpaired.example' },
+          headers: {
+            authorization : `Bearer ${token}`,
+            origin        : 'https://unpaired.example',
+          },
         });
-        expect(unpairedResponse.status).toBe(200);
+        expect(unpairedResponse.status).toBe(401);
         expect(unpairedResponse.headers.get('access-control-allow-origin')).toBeNull();
       } finally {
         await api.close();
@@ -1232,6 +1247,178 @@ describe('http api', function () {
   });
 
   describe('local node profile', () => {
+    async function requestWebSocketUpgradeStatus(wsUrl: string, origin: string): Promise<number> {
+      const url = new URL(wsUrl);
+      const requestPath = `${url.pathname}${url.search}`;
+
+      return new Promise<number>((resolve, reject) => {
+        const socket = connect({
+          host : url.hostname,
+          port : Number.parseInt(url.port, 10),
+        });
+        let response = '';
+        const timeout = setTimeout((): void => {
+          socket.destroy();
+          reject(new Error('WebSocket upgrade response timeout'));
+        }, 3000);
+
+        socket.setEncoding('utf8');
+        socket.once('connect', (): void => {
+          socket.write([
+            `GET ${requestPath} HTTP/1.1`,
+            `Host: ${url.host}`,
+            'Upgrade: websocket',
+            'Connection: Upgrade',
+            'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+            'Sec-WebSocket-Version: 13',
+            `Origin: ${origin}`,
+            '',
+            '',
+          ].join('\r\n'));
+        });
+        socket.on('data', (chunk: string): void => {
+          response += chunk;
+          const statusLineEnd = response.indexOf('\r\n');
+          if (statusLineEnd === -1) {
+            return;
+          }
+
+          clearTimeout(timeout);
+          socket.destroy();
+
+          const statusLine = response.slice(0, statusLineEnd);
+          const statusMatch = /^HTTP\/1\.1 (\d{3})/.exec(statusLine);
+          if (statusMatch === null) {
+            reject(new Error(`unexpected WebSocket upgrade response: ${statusLine}`));
+            return;
+          }
+
+          resolve(Number.parseInt(statusMatch[1], 10));
+        });
+        socket.once('error', (error: Error): void => {
+          clearTimeout(timeout);
+          reject(error);
+        });
+      });
+    }
+
+    it('should create and poll pairing requests and return approved tokens once', async () => {
+      const localNodePairingManager = new LocalNodePairingManager();
+      const { api, url } = await createStartedHttpApiWithConfig({
+        hostname                : '127.0.0.1',
+        localNodeProfileEnabled : true,
+      }, { localNodePairingManager });
+
+      try {
+        const pairResponse = await fetch(`${url}/local/pair`, {
+          headers : { origin: 'https://app.example' },
+          method  : 'POST',
+        });
+        expect(pairResponse.status).toBe(200);
+        expect(pairResponse.headers.get('access-control-allow-origin')).toBe('https://app.example');
+
+        const pairBody = await pairResponse.json() as { requestId: string; status: string };
+        expect(typeof pairBody.requestId).toBe('string');
+        expect(pairBody.status).toBe('pending');
+        expect(localNodePairingManager.listPendingRequests()[0].origin).toBe('https://app.example');
+
+        const pendingResponse = await fetch(`${url}/local/pair/${pairBody.requestId}`, {
+          headers: { origin: 'https://app.example' },
+        });
+        expect(await pendingResponse.json()).toEqual({
+          origin : 'https://app.example',
+          status : 'pending',
+        });
+
+        expect(localNodePairingManager.approveRequest(pairBody.requestId)).toBe(true);
+
+        const approvedResponse = await fetch(`${url}/local/pair/${pairBody.requestId}`, {
+          headers: { origin: 'https://app.example' },
+        });
+        const approvedBody = await approvedResponse.json() as { origin: string; status: string; token?: string };
+        expect(approvedBody.origin).toBe('https://app.example');
+        expect(approvedBody.status).toBe('approved');
+        expect(typeof approvedBody.token).toBe('string');
+
+        const secondApprovedResponse = await fetch(`${url}/local/pair/${pairBody.requestId}`, {
+          headers: { origin: 'https://app.example' },
+        });
+        expect(await secondApprovedResponse.json()).toEqual({
+          origin : 'https://app.example',
+          status : 'approved',
+        });
+
+        const authenticatedResponse = await fetch(`${url}/health`, {
+          headers: {
+            authorization : `Bearer ${approvedBody.token}`,
+            origin        : 'https://app.example',
+          },
+        });
+        expect(authenticatedResponse.status).toBe(200);
+        expect(authenticatedResponse.headers.get('access-control-allow-origin')).toBe('https://app.example');
+
+        const missingTokenResponse = await fetch(`${url}/health`, {
+          headers: { origin: 'https://app.example' },
+        });
+        expect(missingTokenResponse.status).toBe(401);
+        expect(missingTokenResponse.headers.get('access-control-allow-origin')).toBe('https://app.example');
+      } finally {
+        await api.close();
+      }
+    });
+
+    it('should reject pairing requests without an Origin header', async () => {
+      const { api, url } = await createStartedHttpApiWithConfig({
+        hostname                : '127.0.0.1',
+        localNodeProfileEnabled : true,
+      });
+
+      try {
+        const response = await fetch(`${url}/local/pair`, { method: 'POST' });
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ error: 'Origin header is required.' });
+      } finally {
+        await api.close();
+      }
+    });
+
+    it('should accept no-Origin requests with a no-Origin local session token', async () => {
+      const localNodePairingManager = new LocalNodePairingManager();
+      const token = localNodePairingManager.createSession(undefined);
+      const { api, url } = await createStartedHttpApiWithConfig({
+        hostname                : '127.0.0.1',
+        localNodeProfileEnabled : true,
+      }, { localNodePairingManager });
+
+      try {
+        const response = await fetch(`${url}/health`, {
+          headers: { authorization: `Bearer ${token}` },
+        });
+        expect(response.status).toBe(200);
+        expect(response.headers.get('access-control-allow-origin')).toBeNull();
+      } finally {
+        await api.close();
+      }
+    });
+
+    it('should enforce local-node tokens before WebSocket upgrade', async () => {
+      const localNodePairingManager = new LocalNodePairingManager();
+      const token = localNodePairingManager.createSession('https://paired.example');
+      const { api, url } = await createStartedHttpApiWithConfig({
+        hostname                : '127.0.0.1',
+        localNodeProfileEnabled : true,
+      }, { localNodePairingManager });
+      const wsUrl = url.replace(/^http:/, 'ws:');
+
+      try {
+        await expect(requestWebSocketUpgradeStatus(`${wsUrl}?localNodeToken=wrong`, 'https://paired.example')).resolves.toBe(401);
+        await expect(requestWebSocketUpgradeStatus(`${wsUrl}?localNodeToken=${token}`, 'https://unpaired.example')).resolves.toBe(401);
+        await expect(requestWebSocketUpgradeStatus(`${wsUrl}?localNodeToken=${token}`, 'https://paired.example')).resolves.toBe(101);
+      } finally {
+        await api.close();
+      }
+    });
+
     it('should reject requests with non-loopback Host headers', async () => {
       const { api, url } = await createStartedHttpApiWithConfig({
         hostname                : '127.0.0.1',

@@ -14,6 +14,13 @@ export { InMemoryEventBus } from './event-bus.js';
 export type { EventBus } from './event-bus.js';
 export { HttpApi } from './http-api.js';
 export { jsonRpcRouter } from './json-rpc-api.js';
+export { LocalNodePairingManager } from './local-node-pairing.js';
+export type {
+  LocalNodePairingCreateResult,
+  LocalNodePairingManagerOptions,
+  LocalNodePairingPollResult,
+  LocalNodePairingRequestView,
+} from './local-node-pairing.js';
 export type { MessageProcessedContext, MessageProcessedHook } from './message-processed-hook.js';
 export { OpenAuthHandler } from './registration/open-auth-handler.js';
 export { RegistrationManager } from './registration/registration-manager.js';

@@ -1,6 +1,7 @@
 import type { DidResolver } from '@enbox/dids';
 import type { DwnServerConfig } from './config.js';
 import type { EventBus } from './event-bus.js';
+import type { LocalNodePairingManager } from './local-node-pairing.js';
 import type { MessageProcessedHook } from './message-processed-hook.js';
 import type { ProcessHandlers } from './process-handlers.js';
 import type { ProviderAuthPlugin } from './registration/provider-auth-plugin.js';
@@ -19,6 +20,7 @@ import { DeliveryService } from './delivery-service.js';
 import { Dwn } from '@enbox/dwn-sdk-js';
 import { HttpApi } from './http-api.js';
 import { InMemoryEventBus } from './event-bus.js';
+import { LocalNodePairingManager as InMemoryLocalNodePairingManager } from './local-node-pairing.js';
 import { JwtProviderAuthPlugin } from './registration/jwt-provider-auth-plugin.js';
 import { loadProviderAuthPlugin } from './registration/provider-auth-plugin.js';
 import log from 'loglevel';
@@ -70,6 +72,12 @@ export type DwnServerOptions = {
    * open-auth flow with a pre-built DWN.
    */
   openAuthHandler?: OpenAuthHandler;
+
+  /**
+   * Pairing/session manager used by the local-node profile.
+   * Shell-specific wrappers use this to approve or deny pairing requests.
+   */
+  localNodePairingManager?: LocalNodePairingManager;
 };
 
 /**
@@ -103,6 +111,7 @@ export class DwnServer {
   readonly #externalHooks: MessageProcessedHook[];
   readonly #externalRegistrationManager: RegistrationManager | undefined;
   readonly #externalOpenAuthHandler: OpenAuthHandler | undefined;
+  readonly #localNodePairingManager: LocalNodePairingManager;
 
   /**
    * @param options.dwn - Dwn instance to use as an override.
@@ -117,6 +126,7 @@ export class DwnServer {
     this.#externalHooks = options.messageProcessedHooks ?? [];
     this.#externalRegistrationManager = options.registrationManager;
     this.#externalOpenAuthHandler = options.openAuthHandler;
+    this.#localNodePairingManager = options.localNodePairingManager ?? new InMemoryLocalNodePairingManager();
 
     log.setLevel(this.config.logLevel as log.LogLevelDesc);
   }
@@ -334,7 +344,8 @@ export class DwnServer {
       {
         adminStore, registrationStore, ipRateLimiter, tenantRateLimiter,
         messageProcessedHooks, openAuthHandler, sessionManager,
-        ttlCacheDialect: serverDialect,
+        localNodePairingManager : this.#localNodePairingManager,
+        ttlCacheDialect         : serverDialect,
       },
     );
 
@@ -471,6 +482,10 @@ export class DwnServer {
 
   get httpServer(): Server<WsData> {
     return this.#httpApi.server;
+  }
+
+  get localNodePairingManager(): LocalNodePairingManager {
+    return this.#localNodePairingManager;
   }
 
   /**
