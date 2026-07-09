@@ -10,7 +10,29 @@ import { parseDurationInMilliseconds, sleep } from '@enbox/common';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
 import type { SyncMessageEntry } from './sync-messages.js';
-import type { DeadLetterCategory, DeadLetterEntry, DirectionCheckpoint, NonEmptyStringArray, PushFailure, PushResult, ReplicationLinkState, StartSyncParams, SyncAuthorization, SyncConnectivityState, SyncEngine, SyncEvent, SyncEventListener, SyncEventScope, SyncHealthSummary, SyncIdentityOptions, SyncMode, SyncScope } from './types/sync.js';
+import type {
+  DeadLetterCategory,
+  DeadLetterEntry,
+  DirectionCheckpoint,
+  NonEmptyStringArray,
+  PushFailure,
+  PushResult,
+  ReplicationLinkState,
+  StartSyncParams,
+  SyncAuthorization,
+  SyncConnectivityState,
+  SyncDrainOptions,
+  SyncDrainResult,
+  SyncDrainTargetResult,
+  SyncEngine,
+  SyncEvent,
+  SyncEventListener,
+  SyncEventScope,
+  SyncHealthSummary,
+  SyncIdentityOptions,
+  SyncMode,
+  SyncScope,
+} from './types/sync.js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 
@@ -112,6 +134,11 @@ type SyncReconcileOptions = {
 
 type SyncRunOptions = {
   verifyConvergence?: boolean;
+};
+
+type SyncDrainPlan = {
+  targets: SyncTarget[];
+  failures: SyncDrainTargetResult[];
 };
 
 type SyncScopeClosureValidationState = {
@@ -956,6 +983,172 @@ export class SyncEngineLevel implements SyncEngine {
     } finally {
       this._syncLock = false;
     }
+  }
+
+  public async drainTo(endpoint: string, options: SyncDrainOptions = {}): Promise<SyncDrainResult> {
+    if (this._syncLock) {
+      throw new Error('SyncEngineLevel: Sync operation is already in progress.');
+    }
+
+    const normalizedEndpoint = SyncEngineLevel.normalizeDwnEndpoint(endpoint);
+    this._syncLock = true;
+    try {
+      const plan = await this.buildSyncDrainPlan(normalizedEndpoint);
+      const shouldContinue = (): boolean => options.signal?.aborted !== true;
+      const targets = [...plan.failures];
+
+      for (const target of plan.targets) {
+        targets.push(await this.drainSyncTarget(target, shouldContinue));
+      }
+
+      const completed = targets.every((target): boolean => target.completed);
+      this.updateConnectivityAfterDrain(targets);
+
+      return {
+        completed,
+        endpoint: normalizedEndpoint,
+        targets,
+      };
+    } finally {
+      this._syncLock = false;
+    }
+  }
+
+  private async buildSyncDrainPlan(remoteEndpoint: string): Promise<SyncDrainPlan> {
+    const plan: SyncDrainPlan = {
+      failures : [],
+      targets  : [],
+    };
+
+    for await (const [did, options] of this._db.sublevel('registeredIdentities').iterator()) {
+      let parsed: SyncIdentityOptions;
+      try {
+        parsed = JSON.parse(options) as SyncIdentityOptions;
+      } catch (error: unknown) {
+        plan.failures.push({
+          tenantDid : did,
+          remoteEndpoint,
+          completed : false,
+          converged : false,
+          error     : `corrupt sync options: ${SyncEngineLevel.errorMessage(error)}`,
+        });
+        continue;
+      }
+
+      try {
+        plan.targets.push(...await this.buildSyncTargetsForEndpoint(did, remoteEndpoint, parsed));
+      } catch (error: unknown) {
+        plan.failures.push({
+          tenantDid : did,
+          remoteEndpoint,
+          scope     : SyncEngineLevel.syncScopeForDrainFailure(parsed),
+          completed : false,
+          converged : false,
+          error     : SyncEngineLevel.errorMessage(error),
+        });
+      }
+    }
+
+    return plan;
+  }
+
+  private async drainSyncTarget(target: SyncTarget, shouldContinue: () => boolean): Promise<SyncDrainTargetResult> {
+    try {
+      const result = await this.syncTargetWithDurableFeeds(target, { verifyConvergence: true }, shouldContinue);
+      if (result.admittedCids !== undefined && result.admittedCids.length > 0) {
+        this.emitReconcileApplied(target, result.admittedCids);
+      }
+
+      const pushFailures = result.pushFailures ?? [];
+      if (pushFailures.length > 0) {
+        await this.recordTerminalSyncPushFailures(target, pushFailures);
+      }
+
+      if (result.converged === false) {
+        await this.handleVerifiedFeedDivergence(target, result);
+      } else if (result.converged === true) {
+        await this.clearFeedConvergenceFailure(target);
+      }
+
+      const link = await this.getOrCreateReplicationLink(target);
+      const error = SyncEngineLevel.drainError(result, pushFailures);
+
+      return {
+        tenantDid         : target.did,
+        remoteEndpoint    : target.dwnUrl,
+        scope             : target.scope,
+        completed         : error === undefined,
+        converged         : result.converged === true,
+        pushCheckpoint    : link.push.contiguousAppliedToken,
+        localFingerprint  : result.localFingerprint,
+        remoteFingerprint : result.remoteFingerprint,
+        ...(error !== undefined ? { error } : {}),
+      };
+    } catch (error: unknown) {
+      return {
+        tenantDid      : target.did,
+        remoteEndpoint : target.dwnUrl,
+        scope          : target.scope,
+        completed      : false,
+        converged      : false,
+        error          : SyncEngineLevel.errorMessage(error),
+      };
+    }
+  }
+
+  private updateConnectivityAfterDrain(targets: SyncDrainTargetResult[]): void {
+    if (targets.length === 0) {
+      return;
+    }
+
+    if (targets.some((target): boolean => target.completed)) {
+      this.recordSyncSuccess();
+      return;
+    }
+
+    this.recordSyncFailure();
+  }
+
+  private static drainError(result: SyncReconcileResult, pushFailures: PushFailure[]): string | undefined {
+    if (result.aborted === true) {
+      return 'drain aborted';
+    }
+    if (pushFailures.length > 0) {
+      return `drain push failed for ${pushFailures.length} message(s)`;
+    }
+    if (result.converged !== true) {
+      return 'feed fingerprints did not converge';
+    }
+  }
+
+  private static syncScopeForDrainFailure(options: SyncIdentityOptions): SyncScope | undefined {
+    try {
+      return syncScopeFromProtocols(options.protocols);
+    } catch {
+      return;
+    }
+  }
+
+  private static normalizeDwnEndpoint(endpoint: string): string {
+    let url: URL;
+    try {
+      url = new URL(endpoint);
+    } catch {
+      throw new Error('SyncEngineLevel: drain endpoint must be a valid URL.');
+    }
+
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      throw new Error('SyncEngineLevel: drain endpoint must use http or https.');
+    }
+
+    url.hash = '';
+    url.search = '';
+    const normalized = url.toString();
+    return normalized.endsWith('/') ? normalized.slice(0, -1) : normalized;
+  }
+
+  private static errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
   }
 
   private async syncTargetGroups(

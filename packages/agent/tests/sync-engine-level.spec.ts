@@ -518,6 +518,67 @@ describe('SyncEngineLevel', () => {
       });
     });
 
+    describe('drainTo()', () => {
+      it('throws an error if a drain is currently already running', async () => {
+        const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
+        const buildDrainPlanStub = sinon.stub(syncEngine as any, 'buildSyncDrainPlan');
+        buildDrainPlanStub.returns(new Promise<any>((resolve) => {
+          clock.setTimeout(() => {
+            resolve({ failures: [], targets: [] });
+          }, 90);
+        }));
+
+        const firstDrain = syncEngine.drainTo('https://dwn.example');
+
+        await clock.tickAsync(50);
+
+        try {
+          await syncEngine.drainTo('https://dwn.example');
+          throw new Error('Expected an error to be thrown');
+        } catch (error:any) {
+          expect(error.message).toBe('SyncEngineLevel: Sync operation is already in progress.');
+        }
+
+        await clock.tickAsync(50);
+        await firstDrain;
+
+        buildDrainPlanStub.restore();
+        clock.restore();
+      });
+
+      it('rejects invalid drain endpoints', async () => {
+        await expect(syncEngine.drainTo('not a url')).rejects.toThrow('SyncEngineLevel: drain endpoint must be a valid URL.');
+        await expect(syncEngine.drainTo('ftp://dwn.example')).rejects.toThrow('SyncEngineLevel: drain endpoint must use http or https.');
+      });
+
+      it('reports target failures without throwing', async () => {
+        const target = {
+          authorization      : { kind: 'owner' },
+          authorizationEpoch : 'owner-epoch',
+          did                : alice.did.uri,
+          dwnUrl             : 'https://dwn.example',
+          scope              : { kind: 'full' },
+        };
+        sinon.stub(syncEngine as any, 'buildSyncDrainPlan').resolves({
+          failures : [],
+          targets  : [target],
+        });
+        sinon.stub(syncEngine as any, 'syncTargetWithDurableFeeds').rejects(new Error('remote unavailable'));
+
+        const result = await syncEngine.drainTo('https://dwn.example');
+
+        expect(result.completed).toBe(false);
+        expect(result.targets).toHaveLength(1);
+        expect(result.targets[0]).toMatchObject({
+          completed      : false,
+          converged      : false,
+          error          : 'remote unavailable',
+          remoteEndpoint : 'https://dwn.example',
+          tenantDid      : alice.did.uri,
+        });
+      });
+    });
+
     describe('pull()', () => {
       it('synchronizes records that have been updated', async () => {
         // Write a test record to Alice's remote DWN.
