@@ -721,7 +721,8 @@ export class HttpApi {
   }
 
   #handleLocalNodePairRequest(req: Request): Response {
-    const result = this.#localNodePairingManager.createRequest(req.headers.get('origin'));
+    const origin = req.headers.get('origin');
+    const result = this.#localNodePairingManager.createRequest(origin);
 
     if (result.status === 'invalid-origin') {
       return Response.json({ error: result.message }, { status: 400 });
@@ -735,6 +736,10 @@ export class HttpApi {
           status  : 429,
         },
       );
+    }
+
+    if (origin !== null && this.#config.localNodeAllowedOrigins.includes(origin)) {
+      this.#localNodePairingManager.approveRequest(result.requestId);
     }
 
     return Response.json({
