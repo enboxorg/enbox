@@ -750,7 +750,7 @@ export class HttpApi {
     }
 
     const request = this.#localNodePairingManager.getRequest(requestId);
-    if (request === undefined || req.headers.get('origin') !== request.origin) {
+    if (req.headers.get('origin') !== request?.origin) {
       return Response.json({ error: 'Pairing request not found.' }, { status: 404 });
     }
 
