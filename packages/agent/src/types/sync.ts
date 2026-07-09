@@ -30,6 +30,18 @@ export type SyncIdentityOptions = {
 };
 
 /**
+ * Durable identity of a local sync replica and the registrations it currently
+ * owns. Callers persist this snapshot with an eject marker so a later session
+ * can prove that it is retiring the same replica and registration topology.
+ */
+export type SyncEjectionSnapshot = {
+  /** Random identifier persisted for the lifetime of the sync-store replica. */
+  replicaId: string;
+  /** SHA-256 fingerprint of the canonical registered-identity configuration. */
+  registrationFingerprint: string;
+};
+
+/**
  * Connectivity state of the sync engine.
  */
 export type SyncConnectivityState = 'online' | 'offline' | 'unknown';
@@ -544,6 +556,11 @@ export interface SyncEngine {
    * Get the Sync Options for a specific identity.
    */
   getIdentityOptions(did: string): Promise<SyncIdentityOptions | undefined>;
+  /**
+   * Returns the durable replica identifier and a deterministic fingerprint of
+   * the current registered-identity topology.
+   */
+  getEjectionSnapshot(): Promise<SyncEjectionSnapshot>;
   /**
    * Update the Sync Options for a specific identity, replaces the existing options.
    */

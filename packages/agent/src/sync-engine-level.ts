@@ -24,6 +24,7 @@ import type {
   SyncDrainOptions,
   SyncDrainResult,
   SyncDrainTargetResult,
+  SyncEjectionSnapshot,
   SyncEngine,
   SyncEvent,
   SyncEventListener,
@@ -43,7 +44,7 @@ import { DwnInterface } from './types/dwn.js';
 import { getProtocolClosureEdges } from './sync-scope-closure.js';
 import { isRecordsWrite } from './utils.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
-import { computeAuthorizationEpoch, computeProjectionId, isTenantInactivePushFailure, isTerminalPushFailure, lexicographicalCompare, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
+import { computeAuthorizationEpoch, computeProjectionId, isTenantInactivePushFailure, isTerminalPushFailure, lexicographicalCompare, normalizeSyncProtocols, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
 import { fetchRemoteMessages, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, SyncPullAbortedError } from './sync-messages.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, resolveMessagesScopes, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds, toSyncAuthorizationGrants } from './sync-permission-grants.js';
 
@@ -69,6 +70,12 @@ const MAX_IN_FLIGHT_PULL_DELIVERIES = 100;
 
 /** Page size for local retained ProtocolsConfigure history scans. */
 const PROTOCOL_HISTORY_PAGE_LIMIT = 500;
+
+/** Version of the canonical registration topology included in eject snapshots. */
+const EJECTION_REGISTRATION_FINGERPRINT_VERSION = 1;
+
+/** Key containing the random replica identifier in the durable metadata sublevel. */
+const REPLICA_ID_KEY = 'replicaId';
 
 /** Tracks a live subscription to a remote DWN for one sync target. */
 type LiveSubscription = {
@@ -326,6 +333,7 @@ export class SyncEngineLevel implements SyncEngine {
   private _permissionsApi: PermissionsApi;
 
   private readonly _db: AbstractLevel<string | Buffer | Uint8Array>;
+  private _replicaIdPromise?: Promise<string>;
   private _syncIntervalId?: ReturnType<typeof setInterval>;
   private _syncLock = false;
 
@@ -772,6 +780,11 @@ export class SyncEngineLevel implements SyncEngine {
     return this._db.sublevel('deferredPulls') as unknown as AbstractLevel<string | Buffer | Uint8Array, string, string>;
   }
 
+  /** LevelDB sublevel for metadata that identifies the local replica itself. */
+  private get _replicaMetadata(): AbstractLevel<string | Buffer | Uint8Array, string, string> {
+    return this._db.sublevel('replicaMetadata') as unknown as AbstractLevel<string | Buffer | Uint8Array, string, string>;
+  }
+
   private async clearSyncDb(): Promise<void> {
     const sublevelNames = [
       'deadLetters',
@@ -869,6 +882,7 @@ export class SyncEngineLevel implements SyncEngine {
     this._syncMode = undefined;
     await this._permissionsApi.clear();
     await this.clearSyncDb();
+    this._replicaIdPromise = undefined;
   }
 
   public async close(): Promise<void> {
@@ -937,6 +951,79 @@ export class SyncEngineLevel implements SyncEngine {
       } else {
         throw new Error(`SyncEngineLevel: Error reading level: ${e.code}.`);
       }
+    }
+  }
+
+  public async getEjectionSnapshot(): Promise<SyncEjectionSnapshot> {
+    const generationAtStart = this._syncTargetsCacheGeneration;
+    const [replicaId, registrationFingerprint] = await Promise.all([
+      this.getReplicaId(),
+      this.computeRegistrationFingerprint(),
+    ]);
+
+    if (generationAtStart !== this._syncTargetsCacheGeneration) {
+      throw new Error('SyncEngineLevel: identity registrations changed while creating the ejection snapshot.');
+    }
+
+    return { replicaId, registrationFingerprint };
+  }
+
+  private getReplicaId(): Promise<string> {
+    this._replicaIdPromise ??= this.initializeReplicaId().catch((error: unknown) => {
+      this._replicaIdPromise = undefined;
+      throw error;
+    });
+    return this._replicaIdPromise;
+  }
+
+  private async initializeReplicaId(): Promise<string> {
+    try {
+      return await this._replicaMetadata.get(REPLICA_ID_KEY);
+    } catch (error: unknown) {
+      if ((error as { code?: string }).code !== 'LEVEL_NOT_FOUND') {
+        throw error;
+      }
+    }
+
+    const replicaId = crypto.randomUUID();
+    await this._replicaMetadata.put(REPLICA_ID_KEY, replicaId);
+    return replicaId;
+  }
+
+  private async computeRegistrationFingerprint(): Promise<string> {
+    const registrations: Array<{
+      did: string;
+      options: { delegateDid?: string; protocols: 'all' | NonEmptyStringArray };
+    }> = [];
+
+    for await (const [did, rawOptions] of this._db.sublevel('registeredIdentities').iterator()) {
+      const options = JSON.parse(rawOptions) as SyncIdentityOptions;
+      SyncEngineLevel.validateEjectionSnapshotOptions(did, options);
+      registrations.push({
+        did,
+        options: {
+          ...(options.delegateDid === undefined ? {} : { delegateDid: options.delegateDid }),
+          protocols: options.protocols === 'all' ? 'all' : normalizeSyncProtocols(options.protocols),
+        },
+      });
+    }
+
+    registrations.sort((a, b): number => lexicographicalCompare(a.did, b.did));
+    const canonical = JSON.stringify({
+      registrations,
+      version: EJECTION_REGISTRATION_FINGERPRINT_VERSION,
+    });
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical));
+    return Encoder.bytesToBase64Url(new Uint8Array(digest));
+  }
+
+  private static validateEjectionSnapshotOptions(did: string, options: SyncIdentityOptions): void {
+    SyncEngineLevel.validateSyncIdentityOptions(options);
+    if (options.delegateDid !== undefined && typeof options.delegateDid !== 'string') {
+      throw new Error(`SyncEngineLevel: corrupt sync options for ${did}: delegateDid must be a string.`);
+    }
+    if (Array.isArray(options.protocols) && options.protocols.some((protocol): boolean => typeof protocol !== 'string')) {
+      throw new Error(`SyncEngineLevel: corrupt sync options for ${did}: protocols must contain only strings.`);
     }
   }
 
@@ -1069,7 +1156,20 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       try {
-        plan.targets.push(...await this.buildSyncTargetsForEndpoint(did, remoteEndpoint, parsed));
+        const targets = await this.buildSyncTargetsForEndpoint(did, remoteEndpoint, parsed);
+        if (targets.length === 0) {
+          plan.failures.push({
+            tenantDid : did,
+            remoteEndpoint,
+            scope     : SyncEngineLevel.syncScopeForDrainFailure(parsed),
+            completed : false,
+            cancelled : false,
+            converged : false,
+            error     : 'registered identity resolved no active sync projections',
+          });
+          continue;
+        }
+        plan.targets.push(...targets);
       } catch (error: unknown) {
         plan.failures.push({
           tenantDid : did,

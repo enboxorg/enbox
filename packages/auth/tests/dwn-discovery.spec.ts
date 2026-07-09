@@ -1,3 +1,4 @@
+import type { LocalReplicaDrainProof } from '@enbox/agent';
 import type { ServerInfo } from '@enbox/dwn-clients';
 
 import { WebSocketDwnRpcClient } from '@enbox/dwn-clients';
@@ -48,6 +49,20 @@ const pairingRecord = {
   version      : 1 as const,
 };
 
+const localFingerprint = 'a'.repeat(64);
+const registrationFingerprint = 'A'.repeat(43);
+const drainProof: LocalReplicaDrainProof = {
+  registrationFingerprint,
+  replicaId : 'replica-id',
+  targets   : [{
+    localFingerprint,
+    pushCheckpoint    : { epoch: 'epoch-1', position: '42', streamId: 'stream-1' },
+    remoteFingerprint : localFingerprint,
+    scope             : { kind: 'full' },
+    tenantDid         : 'did:dht:alice',
+  }],
+};
+
 let originalLocation: Location | undefined;
 let originalNavigator: Navigator | undefined;
 let originalIsSecureContext: boolean | undefined;
@@ -85,6 +100,139 @@ describe('local-node pairing storage', () => {
     expect(raw).not.toBeNull();
     expect(JSON.parse(raw!)).toEqual(expected);
     expect(await readLocalDwnEjectionRecord(storage)).toEqual(expected);
+  });
+
+  test('persists and deeply reads a version 2 drain-proof record', async () => {
+    const storage = new MemoryStorage();
+
+    await persistLocalDwnEjectionRecord(storage, {
+      completedAt : 456,
+      drainProof,
+      endpoint    : `${pairingRecord.endpoint}/`,
+      version     : 2,
+    });
+
+    expect(await readLocalDwnEjectionRecord(storage)).toEqual({
+      completedAt : 456,
+      drainProof,
+      endpoint    : pairingRecord.endpoint,
+      version     : 2,
+    });
+  });
+
+  test('accepts a canonical protocol-set proof with no push checkpoint', async () => {
+    const storage = new MemoryStorage();
+    const proofWithoutCheckpoint: LocalReplicaDrainProof = {
+      ...drainProof,
+      targets: [{
+        localFingerprint,
+        remoteFingerprint : localFingerprint,
+        scope             : { kind: 'protocolSet', protocols: ['https://a.example', 'https://b.example'] },
+        tenantDid         : 'did:dht:alice',
+      }],
+    };
+    await persistLocalDwnEjectionRecord(storage, {
+      completedAt : 456,
+      drainProof  : proofWithoutCheckpoint,
+      endpoint    : pairingRecord.endpoint,
+      version     : 2,
+    });
+
+    expect((await readLocalDwnEjectionRecord(storage))?.version).toBe(2);
+  });
+
+  test('clears version 2 records with malformed nested drain proofs', async () => {
+    const invalidProofs: Array<{ name: string; proof: unknown }> = [
+      { name: 'empty replica ID', proof: { ...drainProof, replicaId: '' } },
+      { name: 'empty registration fingerprint', proof: { ...drainProof, registrationFingerprint: '' } },
+      { name: 'non-canonical registration fingerprint', proof: { ...drainProof, registrationFingerprint: 'a'.repeat(42) } },
+      { name: 'empty targets', proof: { ...drainProof, targets: [] } },
+      {
+        name  : 'invalid tenant DID',
+        proof : { ...drainProof, targets: [{ ...drainProof.targets[0], tenantDid: 'alice' }] },
+      },
+      {
+        name  : 'duplicate tenant and scope target',
+        proof : { ...drainProof, targets: [drainProof.targets[0], { ...drainProof.targets[0] }] },
+      },
+      {
+        name  : 'duplicate logical scope with reordered keys',
+        proof : {
+          ...drainProof,
+          targets: [
+            {
+              ...drainProof.targets[0],
+              scope: { kind: 'protocolSet', protocols: ['https://a.example'] },
+            },
+            {
+              ...drainProof.targets[0],
+              scope: { protocols: ['https://a.example'], kind: 'protocolSet' },
+            },
+          ],
+        },
+      },
+      {
+        name  : 'non-canonical target fingerprint',
+        proof : {
+          ...drainProof,
+          targets: [{ ...drainProof.targets[0], localFingerprint: 'A'.repeat(64), remoteFingerprint: 'A'.repeat(64) }],
+        },
+      },
+      {
+        name  : 'mismatched fingerprints',
+        proof : { ...drainProof, targets: [{ ...drainProof.targets[0], remoteFingerprint: 'b'.repeat(64) }] },
+      },
+      {
+        name  : 'full scope with protocols',
+        proof : { ...drainProof, targets: [{ ...drainProof.targets[0], scope: { kind: 'full', protocols: [] } }] },
+      },
+      {
+        name  : 'unsorted protocol set',
+        proof : {
+          ...drainProof,
+          targets: [{
+            ...drainProof.targets[0],
+            scope: { kind: 'protocolSet', protocols: ['https://b.example', 'https://a.example'] },
+          }],
+        },
+      },
+      {
+        name  : 'non-decimal checkpoint',
+        proof : {
+          ...drainProof,
+          targets: [{
+            ...drainProof.targets[0],
+            pushCheckpoint: { epoch: 'epoch-1', position: '-1', streamId: 'stream-1' },
+          }],
+        },
+      },
+      {
+        name  : 'non-canonical checkpoint position',
+        proof : {
+          ...drainProof,
+          targets: [{
+            ...drainProof.targets[0],
+            pushCheckpoint: { epoch: 'epoch-1', position: '01', streamId: 'stream-1' },
+          }],
+        },
+      },
+    ];
+
+    for (const invalidProof of invalidProofs) {
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.LOCAL_DWN_EJECTION, JSON.stringify({
+        completedAt : 456,
+        drainProof  : invalidProof.proof,
+        endpoint    : pairingRecord.endpoint,
+        version     : 2,
+      }));
+
+      expect({ name: invalidProof.name, record: await readLocalDwnEjectionRecord(storage) }).toEqual({
+        name   : invalidProof.name,
+        record : undefined,
+      });
+      expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_EJECTION)).toBeNull();
+    }
   });
 
   test('clears malformed ejection records', async () => {
