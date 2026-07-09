@@ -364,6 +364,39 @@ export type StartSyncParams = {
   interval?: string;
 };
 
+/**
+ * Options for a one-shot local-node drain. The abort signal is cooperative:
+ * in-flight DWN requests are allowed to settle, then remaining drain work stops.
+ */
+export type SyncDrainOptions = {
+  signal?: AbortSignal;
+};
+
+/**
+ * Per-link drain progress for a tenant and endpoint. A tenant can have more
+ * than one target when delegated grants split the requested sync scope.
+ */
+export type SyncDrainTargetResult = {
+  tenantDid: string;
+  remoteEndpoint: string;
+  scope?: SyncScope;
+  completed: boolean;
+  converged: boolean;
+  pushCheckpoint?: ProgressToken;
+  localFingerprint?: string;
+  remoteFingerprint?: string;
+  error?: string;
+};
+
+/**
+ * Result of draining all registered sync identities to a specific DWN endpoint.
+ */
+export type SyncDrainResult = {
+  endpoint: string;
+  completed: boolean;
+  targets: SyncDrainTargetResult[];
+};
+
 // ---------------------------------------------------------------------------
 // Sync observability events
 // ---------------------------------------------------------------------------
@@ -515,6 +548,16 @@ export interface SyncEngine {
    * @throws {Error} if a sync is already in progress or the sync operation fails.
    */
   sync(direction?: 'push' | 'pull'): Promise<void>;
+  /**
+   * Drains every registered sync identity to the given DWN endpoint.
+   *
+   * This is a one-shot eject primitive: it creates or resumes durable
+   * replication links for `endpoint`, replays local and remote feeds, and
+   * verifies cids-only feed convergence before marking a target complete.
+   *
+   * @throws {Error} if another one-shot sync or drain is already in progress.
+   */
+  drainTo(endpoint: string, options?: SyncDrainOptions): Promise<SyncDrainResult>;
   /**
    * Starts sync. In `'live'` mode opens real-time subscriptions with durable
    * feed repair; in `'poll'` mode uses periodic durable feed reconciliation.

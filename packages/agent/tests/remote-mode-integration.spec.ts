@@ -127,6 +127,50 @@ describe('Agent remote mode integration', () => {
     expect(localServer.httpUrl).not.toBe(remoteServer.httpUrl);
   });
 
+  it('drains local and remote data to an explicit endpoint and reports convergence progress', async () => {
+    context = await setupRemoteModeContext('drain');
+    const { alice, remoteServer, testHarness } = context;
+    const syncEngine = testHarness.agent.sync as any;
+
+    await configureLocalProtocol(testHarness.agent, alice.did.uri, notesProtocol);
+    const localWrite = await writeLocalRecord(testHarness.agent, alice.did.uri, 'drained local body');
+    await configureProtocolOnServer(testHarness.agent, remoteServer.httpUrl, alice.did, notesProtocol);
+    const remoteWrite = await writeRecordToServer(testHarness.agent, remoteServer.httpUrl, alice.did, 'drained remote body');
+
+    await testHarness.agent.sync.registerIdentity({
+      did     : alice.did.uri,
+      options : { protocols: [notesProtocol.protocol] },
+    });
+
+    const endpointResolutionStub = testHarness.agent.dwn.getRemoteDwnEndpointUrls as sinon.SinonStub;
+    endpointResolutionStub.rejects(new Error('drainTo must use the explicit endpoint'));
+
+    const result = await testHarness.agent.sync.drainTo(`${remoteServer.httpUrl}/`);
+
+    expect(result.endpoint).toBe(remoteServer.httpUrl);
+    expect(result.completed).toBe(true);
+    expect(result.targets).toHaveLength(1);
+
+    const target = result.targets[0]!;
+    expect(target.tenantDid).toBe(alice.did.uri);
+    expect(target.remoteEndpoint).toBe(remoteServer.httpUrl);
+    expect(target.completed).toBe(true);
+    expect(target.converged).toBe(true);
+    expect(target.pushCheckpoint).toBeDefined();
+    expect(target.localFingerprint).toBeDefined();
+    expect(target.localFingerprint).toBe(target.remoteFingerprint);
+    expect(target.error).toBeUndefined();
+    expect(await readRecordTextFromServer(testHarness.agent, remoteServer.httpUrl, alice.did, localWrite.recordId)).toBe('drained local body');
+    expect(await readLocalRecordText(testHarness.agent, alice.did.uri, remoteWrite.recordId)).toBe('drained remote body');
+
+    const links = await syncEngine.ledger.getLinksForTenant(alice.did.uri);
+    const link = links.find((candidate: any): boolean => candidate.remoteEndpoint === remoteServer.httpUrl);
+
+    expect(link).toBeDefined();
+    expect(link.push.contiguousAppliedToken).toEqual(target.pushCheckpoint);
+    expect(link.pull.contiguousAppliedToken).toBeDefined();
+  });
+
   it('receives live WebSocket pull events through a real remote-mode local node', async () => {
     context = await setupRemoteModeContext('live');
     const { alice, remoteServer, testHarness } = context;
