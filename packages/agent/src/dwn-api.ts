@@ -19,7 +19,6 @@ import type {
 import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
 import type { KeyIdentifier, PublicKeyJwk } from '@enbox/crypto';
 
-import { CryptoUtils } from '@enbox/crypto';
 import {
   Cid,
   ContentEncryptionAlgorithm,
@@ -45,6 +44,7 @@ import {
   Time,
 } from '@enbox/dwn-sdk-js';
 import { Convert, TtlCache } from '@enbox/common';
+import { CryptoUtils, X25519 } from '@enbox/crypto';
 import { DidDht, DidJwk, UniversalResolver } from '@enbox/dids';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
@@ -145,13 +145,24 @@ type DwnApiCreateDwnParams = Omit<Partial<DwnConfig>, 'eventLog' | 'messageStore
 /**
  * Validates a caller-supplied `recipientRolePublicKey`. A role-path key is a
  * hardened X25519 derivation of the recipient's own encryption root, so the
- * supplied value MUST be a well-formed X25519 OKP public key. An Ed25519 (or any
- * non-X25519) key would wrap through the X25519 ECDH without error but produce a
- * delivery the recipient cannot decrypt — so it is rejected, not converted
- * (converting the recipient's root would yield the wrong key, not the role-path
- * child). Throws with a clear message on any violation.
+ * supplied value MUST be a well-formed AND usable X25519 OKP public key. Beyond
+ * the shape (`kty: 'OKP'`, `crv: 'X25519'`, no private `d`, 32-byte `x`), two
+ * further checks reject keys that pass the shape test but still can't deliver:
+ *
+ *   - The `x` must be the CANONICAL (unpadded) base64url of those 32 bytes. The
+ *     recipient derives its role-path key id from the canonical encoding, so a
+ *     padded or otherwise non-canonical `x` would key the delivery to a different
+ *     id than the recipient looks up — reported `delivered: true`, undecryptable.
+ *   - The point must not be low-order. An ephemeral ECDH against a low-order point
+ *     (e.g. the all-zero key) yields an all-zero shared secret, so the wrapped
+ *     delivery key would be recoverable/undecryptable.
+ *
+ * An Ed25519 (or any non-X25519) key would wrap through the X25519 ECDH without
+ * error but produce a delivery the recipient cannot decrypt — so it is rejected,
+ * not converted (converting the recipient's root would yield the wrong key, not
+ * the role-path child). Throws with a clear message on any violation.
  */
-function assertX25519RolePublicKey(jwk: PublicKeyJwk): void {
+async function assertX25519RolePublicKey(jwk: PublicKeyJwk): Promise<void> {
   const { kty, crv, x, d } = jwk as { kty?: string; crv?: string; x?: string; d?: string };
   if (kty !== 'OKP' || crv !== 'X25519') {
     throw new Error(
@@ -165,15 +176,38 @@ function assertX25519RolePublicKey(jwk: PublicKeyJwk): void {
       'AgentDwnApi: recipientRolePublicKey must be a PUBLIC key, but a private key (\'d\') was provided.',
     );
   }
-  let byteLength = -1;
+  let publicKeyBytes: Uint8Array | undefined;
   try {
-    byteLength = Convert.base64Url(x ?? '').toUint8Array().length;
+    publicKeyBytes = Convert.base64Url(x ?? '').toUint8Array();
   } catch { /* reported as invalid below */ }
-  if (byteLength !== 32) {
-    const detail = byteLength < 0 ? 'invalid base64url' : `${byteLength} bytes`;
+  if (publicKeyBytes === undefined || publicKeyBytes.length !== 32) {
+    const detail = publicKeyBytes === undefined ? 'invalid base64url' : `${publicKeyBytes.length} bytes`;
     throw new Error(
       'AgentDwnApi: recipientRolePublicKey must have a 32-byte base64url \'x\' (X25519 public key); ' +
       `got ${detail}.`,
+    );
+  }
+  if (Convert.uint8Array(publicKeyBytes).toBase64Url() !== x) {
+    throw new Error(
+      'AgentDwnApi: recipientRolePublicKey \'x\' is not canonical base64url; re-encode the 32-byte ' +
+      'X25519 public key without padding so its key id matches what the recipient derives.',
+    );
+  }
+  let sharedSecret: Uint8Array;
+  try {
+    const ephemeral = await X25519.generateKey();
+    sharedSecret = await X25519.sharedSecret({ privateKeyA: ephemeral, publicKeyB: jwk });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      'AgentDwnApi: recipientRolePublicKey failed X25519 key agreement and cannot wrap a delivery: ' +
+      detail,
+    );
+  }
+  if (sharedSecret.every((byte) => byte === 0)) {
+    throw new Error(
+      'AgentDwnApi: recipientRolePublicKey is a low-order X25519 point (all-zero shared secret); it ' +
+      'cannot wrap a delivery the recipient can decrypt.',
     );
   }
 }
@@ -531,7 +565,7 @@ export class AgentDwnApi {
   public async processRequest<T extends DwnInterface>(
     request: ProcessDwnRequest<T>
   ): Promise<DwnResponse<T>> {
-    this.assertRecipientRolePublicKeyUsable(request);
+    await this.assertRecipientRolePublicKeyUsable(request);
 
     // Constructs a DWN message. and if there is a data payload, prepares the data as a
     // Web ReadableStream.
@@ -583,48 +617,101 @@ export class AgentDwnApi {
 
   /**
    * Guards use of `recipientRolePublicKey`, which only drives role-audience key
-   * delivery provisioning (an accepted, non-raw RecordsWrite). Rejects it on any
-   * path that cannot honor it — a different message type, or a raw/replayed
-   * message — so a "must deliver" assertion is never silently dropped, and
-   * validates its shape BEFORE the record is written so a malformed key fails
-   * fast without leaving an accepted-but-undeliverable role grant behind.
+   * delivery provisioning for an accepted, stored, non-raw RecordsWrite to a
+   * `$role` path with a `recipient`. Runs entirely BEFORE the record is written so
+   * any request that cannot honor the "must deliver" assertion fails fast without
+   * leaving state behind. Rejects:
+   *   - a non-RecordsWrite, a raw/replayed message, or `store: false` (nothing is
+   *     persisted to deliver against), so the assertion is never silently dropped;
+   *   - a malformed/unusable key (see {@link assertX25519RolePublicKey}); and
+   *   - a target path that is not a `$role` with a `$keyAgreement` audience and a
+   *     `recipient` (see {@link assertRoleRecipientPathDeliverable}), which would
+   *     otherwise be written and then silently skipped by provisioning.
    */
-  private assertRecipientRolePublicKeyUsable<T extends DwnInterface>(request: ProcessDwnRequest<T>): void {
+  private async assertRecipientRolePublicKeyUsable<T extends DwnInterface>(request: ProcessDwnRequest<T>): Promise<void> {
     if (request.recipientRolePublicKey === undefined) {
       return;
     }
-    if (!isDwnRequest(request, DwnInterface.RecordsWrite) || request.rawMessage !== undefined) {
+    if (!isDwnRequest(request, DwnInterface.RecordsWrite) ||
+        request.rawMessage !== undefined ||
+        request.store === false) {
       throw new Error(
-        'AgentDwnApi: recipientRolePublicKey is only supported when writing a $role record via ' +
-        'processRequest (a non-raw RecordsWrite); it is not honored for other message types or ' +
-        'raw messages, so it must not be supplied there.',
+        'AgentDwnApi: recipientRolePublicKey is only supported when writing (and storing) a $role ' +
+        'record via processRequest (a non-raw, stored RecordsWrite); it is not honored for other ' +
+        'message types, raw messages, or store:false, so it must not be supplied there.',
       );
     }
-    assertX25519RolePublicKey(request.recipientRolePublicKey);
+    await assertX25519RolePublicKey(request.recipientRolePublicKey);
+    await this.assertRoleRecipientPathDeliverable(request);
+  }
+
+  /**
+   * Confirms — before the write — that a `recipientRolePublicKey`-bearing request
+   * actually targets a deliverable role audience: a `recipient`, a resolvable
+   * protocol definition, a `$role: true` rule at the path, and a `$keyAgreement`
+   * audience to wrap the delivery to. A supplied key asserts delivery MUST happen,
+   * so a path that cannot provision one is a caller error caught up front rather
+   * than an accepted write whose delivery is silently skipped.
+   */
+  private async assertRoleRecipientPathDeliverable(
+    request: ProcessDwnRequest<DwnInterface.RecordsWrite>,
+  ): Promise<void> {
+    const { protocol, protocolPath, recipient } = request.messageParams ?? {};
+    if (protocol === undefined || protocolPath === undefined || recipient === undefined) {
+      throw new Error(
+        'AgentDwnApi: recipientRolePublicKey requires a RecordsWrite with protocol, protocolPath, and ' +
+        'recipient set (a $role grant to a specific recipient); one or more is missing.',
+      );
+    }
+    const protocolDefinition = await this.getProtocolDefinition(request.target, protocol, request.granteeDid);
+    if (protocolDefinition === undefined) {
+      throw new Error(
+        `AgentDwnApi: recipientRolePublicKey was supplied but protocol '${protocol}' is not installed ` +
+        `on target '${request.target}', so its role-audience delivery cannot be provisioned.`,
+      );
+    }
+    const ruleSet = getRuleSetAtPath(protocolPath, protocolDefinition.structure);
+    if (ruleSet?.$role !== true) {
+      throw new Error(
+        `AgentDwnApi: recipientRolePublicKey was supplied but '${protocol}/${protocolPath}' is not a ` +
+        '$role path; role-audience delivery only applies to $role records.',
+      );
+    }
+    if (ruleSet.$keyAgreement?.publicKeyJwk === undefined) {
+      throw new Error(
+        `AgentDwnApi: recipientRolePublicKey was supplied but '${protocol}/${protocolPath}' has no ` +
+        '$keyAgreement audience, so there is no delivery to wrap to the recipient.',
+      );
+    }
   }
 
   /**
    * Provisions role-audience key delivery for a RecordsWrite reply and turns the
    * result into a returned outcome or a thrown error.
    *
-   * Runs on 202 (freshly accepted) AND 409 (the identical record already exists):
-   * the role record is stored before provisioning runs, so a strict delivery
-   * failure leaves an accepted-but-undelivered grant, and re-issuing the same
-   * write (409) must re-attempt delivery rather than skip it (get-or-create
-   * audience + 409-tolerant delivery write make it idempotent). `!rawMessage`
+   * Runs ONLY on a fresh 202 accept of a stored, non-raw RecordsWrite. A 409 means
+   * the identical record already existed — it was provisioned when first accepted,
+   * and `createAudienceDeliveryRecord` mints a fresh DEK/IV per call, so re-running
+   * on 409 would pile up duplicate delivery records; 409 is therefore skipped.
+   * `store: false` persists nothing to deliver against and is excluded too (a
+   * supplied key on `store: false` is already rejected up front). `!rawMessage`
    * keeps this off the sync/replay path.
    *
-   * A supplied `recipientRolePublicKey` asserts delivery MUST succeed, so a
-   * failure is rethrown loudly; otherwise delivery is best-effort and a failure
-   * is reported as `{ delivered: false, reason }`.
+   * A supplied `recipientRolePublicKey` asserts delivery MUST succeed. Because the
+   * role record is stored before provisioning runs, a strict failure would leave a
+   * holder that is authorized to read but can never decrypt — and one that cannot
+   * be repaired by retry (a duplicate $role to the same recipient is rejected 400).
+   * So on a strict failure the just-accepted grant is compensating-deleted (making
+   * the write atomic and a fresh retry possible) and the error is rethrown loudly.
+   * Without a supplied key, delivery is best-effort and a failure is reported as
+   * `{ delivered: false, reason }`.
    */
   private async provisionAudienceKeyDeliveryForReply<T extends DwnInterface>(
     request: ProcessDwnRequest<T>,
     message: DwnMessage[T],
     reply: DwnMessageReply[T],
   ): Promise<AudienceKeyDeliveryOutcome | undefined> {
-    const acceptedOrExists = reply.status.code === 202 || reply.status.code === 409;
-    if (!acceptedOrExists || request.rawMessage !== undefined) {
+    if (reply.status.code !== 202 || request.rawMessage !== undefined || request.store === false) {
       return undefined;
     }
     if (!isDwnRequest(request, DwnInterface.RecordsWrite)) {
@@ -633,16 +720,25 @@ export class AgentDwnApi {
 
     const recordsWrite = message as RecordsWriteMessage;
     try {
-      return await this.provisionAudienceKeyForAcceptedRoleRecord(request, recordsWrite);
+      const outcome = await this.provisionAudienceKeyForAcceptedRoleRecord(request, recordsWrite);
+      // A supplied key asserts delivery MUST happen. The preflight already proved the
+      // path is a deliverable role recipient, so provisioning should never skip it —
+      // but if it ever returns `undefined` here, treat that as a strict failure (fall
+      // into the rollback below) rather than silently reporting success.
+      if (request.recipientRolePublicKey !== undefined && outcome === undefined) {
+        throw new Error('provisioning unexpectedly skipped delivery for the supplied recipient key');
+      }
+      return outcome;
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       if (request.recipientRolePublicKey !== undefined) {
-        // Strict path: the supplied key asserted delivery MUST succeed. Surface the
-        // failure loudly rather than leaving a role holder that can never decrypt.
+        // Strict path: the supplied key asserted delivery MUST succeed. Roll the
+        // just-accepted grant back so we neither leave a holder that can never
+        // decrypt nor block a fresh retry, then surface the failure loudly.
+        const rollback = await this.revokeAcceptedRoleRecord(request, recordsWrite);
         throw new Error(
           `AgentDwnApi: role record '${recordsWrite.recordId}' was accepted, but provisioning its ` +
-          'role-audience key delivery to the supplied recipient key failed, so the recipient will ' +
-          `not be able to decrypt: ${detail}`,
+          `role-audience key delivery to the supplied recipient key failed${rollback}: ${detail}`,
           { cause: error instanceof Error ? error : undefined },
         );
       }
@@ -654,6 +750,46 @@ export class AgentDwnApi {
         recipientDid : recordsWrite.descriptor.recipient ?? '',
         reason       : detail,
       };
+    }
+  }
+
+  /**
+   * Compensating rollback for a strict role-audience delivery failure: deletes the
+   * just-accepted `$role` record so the failed grant leaves no trace and the caller
+   * can safely retry the whole write (a leftover grant would block retry with a 400
+   * duplicate-role). Reuses {@link processRequest} so the delete follows the same
+   * local/remote routing, carrying the original write's authorization context
+   * (`protocolRole`, `permissionGrantId`, `delegatedGrant`). Returns a suffix for
+   * the thrown error describing the rollback outcome; a rollback that does not
+   * confirm (non-202 or throws) is reported as a leftover grant but never masks the
+   * original delivery failure.
+   */
+  private async revokeAcceptedRoleRecord(
+    request: ProcessDwnRequest<DwnInterface.RecordsWrite>,
+    recordsWrite: RecordsWriteMessage,
+  ): Promise<string> {
+    try {
+      const { reply } = await this.processRequest({
+        author        : request.author,
+        target        : request.target,
+        granteeDid    : request.granteeDid,
+        messageType   : DwnInterface.RecordsDelete,
+        messageParams : {
+          recordId          : recordsWrite.recordId,
+          protocolRole      : request.messageParams?.protocolRole,
+          permissionGrantId : request.messageParams?.permissionGrantId,
+          delegatedGrant    : request.messageParams?.delegatedGrant,
+        },
+      });
+      if (reply.status.code === 202) {
+        return ' — the accepted grant was rolled back';
+      }
+      return ` — WARNING: rollback delete returned ${reply.status.code} (${reply.status.detail}); the ` +
+        'undeliverable grant may still be present and must be removed manually';
+    } catch (revokeError) {
+      const revokeDetail = revokeError instanceof Error ? revokeError.message : String(revokeError);
+      return ` — WARNING: rollback delete threw '${revokeDetail}'; the undeliverable grant may still be ` +
+        'present and must be removed manually';
     }
   }
 

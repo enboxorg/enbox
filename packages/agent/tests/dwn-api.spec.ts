@@ -4285,6 +4285,19 @@ describe('Role record write behavior', () => {
     await expect(testHarness.agent.dwn.processRequest(roleParamsWithKey(malformedKey)))
       .rejects.toThrow(/32-byte|invalid base64url/i);
 
+    // A low-order point (here the all-zero public key) has the right shape but cannot
+    // produce a usable ECDH secret: X25519 rejects it during key agreement (some impls
+    // instead return an all-zero secret, which the explicit zero-check would catch).
+    const allZeroKey = { kty: 'OKP', crv: 'X25519', x: 'A'.repeat(43) } as any;
+    await expect(testHarness.agent.dwn.processRequest(roleParamsWithKey(allZeroKey)))
+      .rejects.toThrow(/low-order|all-zero shared secret|failed X25519 key agreement/i);
+
+    // A non-canonical (padded) `x` decodes to 32 bytes but would key the delivery to a
+    // different id than the recipient derives from the canonical encoding.
+    const nonCanonicalKey = { kty: 'OKP', crv: 'X25519', x: `${VALID_X25519_KEY.x}=` } as any;
+    await expect(testHarness.agent.dwn.processRequest(roleParamsWithKey(nonCanonicalKey)))
+      .rejects.toThrow(/not canonical/i);
+
     // Validation runs BEFORE the write, so no role record was created.
     const query = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -4295,7 +4308,7 @@ describe('Role record write behavior', () => {
     expect(query.reply.entries?.length ?? 0).toBe(0);
   }, 10000);
 
-  it('rejects recipientRolePublicKey on unsupported paths (sendRequest / raw / non-RecordsWrite)', async () => {
+  it('rejects recipientRolePublicKey on unsupported paths (sendRequest / raw / non-RecordsWrite / store:false)', async () => {
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
@@ -4321,7 +4334,7 @@ describe('Role record write behavior', () => {
       messageType            : DwnInterface.RecordsQuery,
       messageParams          : { filter: { protocol: chatProtocol.protocol } },
       recipientRolePublicKey : VALID_X25519_KEY,
-    })).rejects.toThrow(/only supported when writing a \$role record|non-raw RecordsWrite/i);
+    })).rejects.toThrow(/only supported when writing .*\$role record|non-raw, stored RecordsWrite/i);
 
     // A raw (synced/replayed) RecordsWrite skips provisioning — reject the option there too.
     const { message: rawWrite } = await testHarness.agent.dwn.processRequest({
@@ -4337,11 +4350,41 @@ describe('Role record write behavior', () => {
       messageType            : DwnInterface.RecordsWrite,
       rawMessage             : rawWrite,
       recipientRolePublicKey : VALID_X25519_KEY,
-    })).rejects.toThrow(/only supported when writing a \$role record|non-raw RecordsWrite/i);
+    })).rejects.toThrow(/only supported when writing .*\$role record|non-raw, stored RecordsWrite/i);
+
+    // `store: false` persists nothing to deliver against, so a supplied key there
+    // would provision a delivery for a role record that was never stored — reject it.
+    const { message: threadForStoreFalse } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : { protocol: chatProtocol.protocol, protocolPath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
+      dataStream    : new Blob([new TextEncoder().encode('{"title":"StoreFalse"}')]),
+      encryption    : true,
+    });
+    await expect(testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        recipient       : alice.did.uri,
+        protocol        : chatProtocol.protocol,
+        protocolPath    : 'thread/participant',
+        parentContextId : (threadForStoreFalse as RecordsWriteMessage).contextId,
+        dataFormat      : 'application/json',
+        schema          : 'https://schemas.xyz/participant',
+      },
+      dataStream             : new Blob([new TextEncoder().encode('{"name":"Alice"}')]),
+      store                  : false,
+      recipientRolePublicKey : VALID_X25519_KEY,
+    })).rejects.toThrow(/store:false|non-raw, stored RecordsWrite/i);
   }, 10000);
 
-  it('persists the role grant on a strict delivery failure and delivers on an idempotent retry', async () => {
-    const bob = await testHarness.createIdentity({ name: 'Bob Retry', testDwnUrls });
+  it('delivers to the supplied recipient key on the happy path', async () => {
+    // Bob is a DWN-less recipient: no protocol is installed for him, so the owner
+    // cannot resolve his role-path key. He supplies it out of band and the owner
+    // wraps the delivery to it directly.
+    const bob = await testHarness.createIdentity({ name: 'Bob Supplied', testDwnUrls });
 
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -4355,31 +4398,78 @@ describe('Role record write behavior', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : { protocol: chatProtocol.protocol, protocolPath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
-      dataStream    : new Blob([new TextEncoder().encode('{"title":"Retry"}')]),
+      dataStream    : new Blob([new TextEncoder().encode('{"title":"Supplied"}')]),
       encryption    : true,
     });
 
-    // Byte-identical role write (pinned timestamps) so a retry produces the SAME
-    // CID → 409, exercising the idempotent-repair path.
+    const roleWrite = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        recipient       : bob.did.uri,
+        protocol        : chatProtocol.protocol,
+        protocolPath    : 'thread/participant',
+        parentContextId : (threadMessage as RecordsWriteMessage).contextId,
+        dataFormat      : 'application/json',
+        schema          : 'https://schemas.xyz/participant',
+      },
+      dataStream             : new Blob([new TextEncoder().encode('{"name":"Bob"}')]),
+      recipientRolePublicKey : VALID_X25519_KEY,
+    });
+
+    expect(roleWrite.reply.status.code).toBe(202);
+    expect(roleWrite.audienceKeyDelivery).toEqual({ delivered: true, recipientDid: bob.did.uri });
+
+    // Exactly one delivery record was written to the owner's DWN for the recipient.
+    const deliveries = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : { filter: { protocol: chatProtocol.protocol, protocolPath: ENCRYPTION_CONTROL_DELIVERY_PATH, recipient: bob.did.uri } },
+    });
+    expect(deliveries.reply.entries ?? []).toHaveLength(1);
+  }, 15000);
+
+  it('rolls back the accepted grant on a strict delivery failure so a fresh retry succeeds', async () => {
+    const bob = await testHarness.createIdentity({ name: 'Bob Rollback', testDwnUrls });
+
+    await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: chatProtocol },
+      encryption    : true,
+    });
+    const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : { protocol: chatProtocol.protocol, protocolPath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
+      dataStream    : new Blob([new TextEncoder().encode('{"title":"Rollback"}')]),
+      encryption    : true,
+    });
+
+    // Fresh timestamps each call, so the retry is a DIFFERENT record. If the failed
+    // grant were NOT rolled back it would collide with a 400 duplicate-role; a clean
+    // 202 on retry is the proof that the rollback removed it.
     const roleRequest = {
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite as const,
       messageParams : {
-        recipient        : bob.did.uri,
-        protocol         : chatProtocol.protocol,
-        protocolPath     : 'thread/participant',
-        parentContextId  : (threadMessage as RecordsWriteMessage).contextId,
-        dataFormat       : 'application/json',
-        schema           : 'https://schemas.xyz/participant',
-        dateCreated      : '2024-01-01T00:00:00.000000Z',
-        messageTimestamp : '2024-01-01T00:00:00.000000Z',
+        recipient       : bob.did.uri,
+        protocol        : chatProtocol.protocol,
+        protocolPath    : 'thread/participant',
+        parentContextId : (threadMessage as RecordsWriteMessage).contextId,
+        dataFormat      : 'application/json',
+        schema          : 'https://schemas.xyz/participant',
       },
       dataStream             : new Blob([new TextEncoder().encode('{"name":"Bob"}')]),
       recipientRolePublicKey : VALID_X25519_KEY,
     };
 
-    // Force provisioning to fail transiently (e.g. a momentary audience-key error).
+    // Force provisioning to fail once (e.g. a momentary audience-key error).
     let failProvisioning = true;
     const audienceStub = sinon.stub(testHarness.agent.dwn as any, 'getOrCreateAudienceKey');
     audienceStub.callsFake(async (...args: any[]) => {
@@ -4387,21 +4477,75 @@ describe('Role record write behavior', () => {
       return (audienceStub.wrappedMethod as any).apply(testHarness.agent.dwn, args);
     });
 
-    // Strict failure: a key was supplied, so the write throws — but the role record
-    // was already accepted (stored) before provisioning ran.
-    await expect(testHarness.agent.dwn.processRequest(roleRequest)).rejects.toThrow(/not be able to decrypt/i);
+    // Strict failure: the write throws, and the just-accepted grant is compensating-
+    // deleted so no undeliverable, retry-blocking grant is left behind.
+    await expect(testHarness.agent.dwn.processRequest(roleRequest)).rejects.toThrow(/rolled back/i);
 
-    // Idempotent repair: re-issue the byte-identical write. It returns 409 — which
-    // proves the role grant persisted despite the strict throw (a non-persisted
-    // record would be freshly accepted with 202) — and provisioning now runs on the
-    // 409 and completes delivery. Without the 202-or-409 fix, provisioning would be
-    // skipped here and the recipient would stay permanently undecryptable.
+    // Retry (provisioning restored): a fresh 202 (not a 400 duplicate-role) proves the
+    // failed grant was rolled back, and delivery now completes.
     failProvisioning = false;
     const retry = await testHarness.agent.dwn.processRequest(roleRequest);
-    expect(retry.reply.status.code).toBe(409);
-    expect(retry.audienceKeyDelivery?.delivered).toBe(true);
+    expect(retry.reply.status.code).toBe(202);
+    expect(retry.audienceKeyDelivery).toEqual({ delivered: true, recipientDid: bob.did.uri });
 
     audienceStub.restore();
+  }, 15000);
+
+  it('rejects a supplied key up front when the path is not a deliverable $role recipient', async () => {
+    const bob = await testHarness.createIdentity({ name: 'Bob Preflight', testDwnUrls });
+
+    // Protocol not installed on the target: nothing to resolve $role/$keyAgreement from.
+    await expect(testHarness.agent.dwn.processRequest({
+      author                 : alice.did.uri,
+      target                 : alice.did.uri,
+      messageType            : DwnInterface.RecordsWrite,
+      messageParams          : { recipient: bob.did.uri, protocol: chatProtocol.protocol, protocolPath: 'thread/participant', dataFormat: 'application/json', schema: 'https://schemas.xyz/participant' },
+      dataStream             : new Blob([new TextEncoder().encode('{"name":"Bob"}')]),
+      recipientRolePublicKey : VALID_X25519_KEY,
+    })).rejects.toThrow(/is not installed on target/i);
+
+    await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: chatProtocol },
+      encryption    : true,
+    });
+
+    // A missing recipient: a $role grant must name who it is granted to.
+    await expect(testHarness.agent.dwn.processRequest({
+      author                 : alice.did.uri,
+      target                 : alice.did.uri,
+      messageType            : DwnInterface.RecordsWrite,
+      messageParams          : { protocol: chatProtocol.protocol, protocolPath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
+      dataStream             : new Blob([new TextEncoder().encode('{"title":"NoRecipient"}')]),
+      recipientRolePublicKey : VALID_X25519_KEY,
+    })).rejects.toThrow(/protocol, protocolPath, and recipient/i);
+
+    // A non-$role path (thread): delivery only applies to $role records.
+    const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : { protocol: chatProtocol.protocol, protocolPath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
+      dataStream    : new Blob([new TextEncoder().encode('{"title":"Preflight"}')]),
+      encryption    : true,
+    });
+    await expect(testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        recipient       : bob.did.uri,
+        protocol        : chatProtocol.protocol,
+        protocolPath    : 'thread/chat',
+        parentContextId : (threadMessage as RecordsWriteMessage).contextId,
+        dataFormat      : 'text/plain',
+        schema          : 'https://schemas.xyz/chat',
+      },
+      dataStream             : new Blob([new TextEncoder().encode('hi')]),
+      recipientRolePublicKey : VALID_X25519_KEY,
+    })).rejects.toThrow(/is not a\s*\$role path/i);
   }, 15000);
 
   it('should not provision audience keys for role records without key agreement', async () => {
