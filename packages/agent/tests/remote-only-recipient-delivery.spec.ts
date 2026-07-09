@@ -311,14 +311,15 @@ describe('AgentDwnApi role-audience delivery to remote-only recipients', () => {
     expect(text).toBe(chatText);
   }, 120_000);
 
-  it('fails loudly (strict) when a supplied recipient key cannot be delivered to', async () => {
-    const dave = await createRemoteOnlyRecipient('Dave Remote-Only (bad supplied key)');
+  it('rejects a supplied Ed25519 role key instead of falsely reporting delivered', async () => {
+    const dave = await createRemoteOnlyRecipient('Dave Remote-Only (ed25519 key)');
 
-    // Supplying a key asserts delivery MUST succeed. A structurally invalid key
-    // cannot be wrapped, so provisioning fails — and because a key was supplied,
-    // that surfaces as a hard error at write time rather than a best-effort skip.
-    const badKey = { kty: 'OKP', crv: 'X25519', x: 'not-a-valid-x25519-public-key' } as unknown as PublicKeyJwk;
-    await expect(seedThreadFor(dave.did.uri, { recipientRolePublicKey: badKey }))
-      .rejects.toThrow(/supplied recipient key|not be able to decrypt/i);
+    // A structurally VALID Ed25519 public JWK (32-byte x). The role-path key is a
+    // hardened X25519 derivation, so an Ed25519 key would wrap through X25519 ECDH
+    // without error but be undecryptable by the recipient — it must be rejected at
+    // write time, not silently "delivered".
+    const ed25519Key = { kty: 'OKP', crv: 'Ed25519', x: '11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo' } as unknown as PublicKeyJwk;
+    await expect(seedThreadFor(dave.did.uri, { recipientRolePublicKey: ed25519Key }))
+      .rejects.toThrow(/X25519 OKP public key/i);
   }, 120_000);
 });

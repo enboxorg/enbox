@@ -230,21 +230,29 @@ export type SendDwnRequest<T extends DwnInterface> = DwnRequest<T> & (ProcessDwn
  * record write. Surfaced on {@link DwnResponse.audienceKeyDelivery} so a skipped
  * best-effort delivery is visible and inspectable instead of silently swallowed.
  */
-export type AudienceKeyDeliveryOutcome = {
-  /** Whether a `$encryption/delivery` record was written for the recipient. */
-  delivered: boolean;
+export type AudienceKeyDeliveryOutcome =
+  | {
+      /** A `$encryption/delivery` record was written for the recipient. */
+      delivered: true;
 
-  /** The recipient the role-audience key was (or was not) delivered to. */
-  recipientDid: string;
+      /** The recipient the role-audience key was delivered to. */
+      recipientDid: string;
+    }
+  | {
+      /** No `$encryption/delivery` record was written for the recipient. */
+      delivered: false;
 
-  /**
-   * Why best-effort delivery was skipped. Present only when `delivered` is
-   * false — e.g. the recipient publishes no resolvable DWN endpoint and supplied
-   * no `recipientRolePublicKey`. (A supplied key that fails to deliver throws
-   * rather than surfacing here.)
-   */
-  reason?: string;
-};
+      /** The recipient the role-audience key was NOT delivered to. */
+      recipientDid: string;
+
+      /**
+       * Why best-effort delivery was skipped — e.g. the recipient publishes no
+       * resolvable DWN endpoint and supplied no `recipientRolePublicKey`.
+       * Required on the failure branch. (A supplied key that fails to deliver
+       * throws rather than surfacing here.)
+       */
+      reason: string;
+    };
 
 export type DwnResponse<T extends DwnInterface> = {
   message?: DwnMessage[T];

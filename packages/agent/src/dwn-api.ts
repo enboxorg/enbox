@@ -142,6 +142,41 @@ type DwnApiCreateDwnParams = Omit<Partial<DwnConfig>, 'eventLog' | 'messageStore
   messageLog?: MessageLog;
 };
 
+/**
+ * Validates a caller-supplied `recipientRolePublicKey`. A role-path key is a
+ * hardened X25519 derivation of the recipient's own encryption root, so the
+ * supplied value MUST be a well-formed X25519 OKP public key. An Ed25519 (or any
+ * non-X25519) key would wrap through the X25519 ECDH without error but produce a
+ * delivery the recipient cannot decrypt — so it is rejected, not converted
+ * (converting the recipient's root would yield the wrong key, not the role-path
+ * child). Throws with a clear message on any violation.
+ */
+function assertX25519RolePublicKey(jwk: PublicKeyJwk): void {
+  const { kty, crv, x, d } = jwk as { kty?: string; crv?: string; x?: string; d?: string };
+  if (kty !== 'OKP' || crv !== 'X25519') {
+    throw new Error(
+      `AgentDwnApi: recipientRolePublicKey must be an X25519 OKP public key (got kty='${kty}', ` +
+      `crv='${crv}'). The role-path key is a hardened X25519 derivation of the recipient's ` +
+      `encryption root and must not be an Ed25519 or otherwise non-X25519 key.`,
+    );
+  }
+  if (d !== undefined) {
+    throw new Error(
+      'AgentDwnApi: recipientRolePublicKey must be a PUBLIC key, but a private key (\'d\') was provided.',
+    );
+  }
+  let byteLength = -1;
+  try {
+    byteLength = Convert.base64Url(x ?? '').toUint8Array().length;
+  } catch { /* reported as invalid below */ }
+  if (byteLength !== 32) {
+    throw new Error(
+      'AgentDwnApi: recipientRolePublicKey must have a 32-byte base64url \'x\' (X25519 public key); ' +
+      `got ${byteLength < 0 ? 'invalid base64url' : `${byteLength} bytes`}.`,
+    );
+  }
+}
+
 export class AgentDwnApi {
   /**
    * Holds the instance of a `EnboxPlatformAgent` that represents the current execution context for
@@ -495,6 +530,23 @@ export class AgentDwnApi {
   public async processRequest<T extends DwnInterface>(
     request: ProcessDwnRequest<T>
   ): Promise<DwnResponse<T>> {
+    // `recipientRolePublicKey` only drives role-audience key delivery provisioning,
+    // which runs for an accepted, non-raw RecordsWrite. Reject it on any path that
+    // cannot honor it — a different message type, or a raw (synced/replayed) message
+    // — so a "must deliver" assertion is never silently dropped. Validate its shape
+    // here too, BEFORE the record is written, so a malformed key fails fast without
+    // leaving an accepted-but-undeliverable role grant behind.
+    if (request.recipientRolePublicKey !== undefined) {
+      if (!isDwnRequest(request, DwnInterface.RecordsWrite) || request.rawMessage !== undefined) {
+        throw new Error(
+          'AgentDwnApi: recipientRolePublicKey is only supported when writing a $role record via ' +
+          'processRequest (a non-raw RecordsWrite); it is not honored for other message types or ' +
+          'raw messages, so it must not be supplied there.',
+        );
+      }
+      assertX25519RolePublicKey(request.recipientRolePublicKey);
+    }
+
     // Constructs a DWN message. and if there is a data payload, prepares the data as a
     // Web ReadableStream.
     const { message, dataStream } =
@@ -530,7 +582,15 @@ export class AgentDwnApi {
     }
 
     let audienceKeyDelivery: AudienceKeyDeliveryOutcome | undefined;
-    if (reply.status.code === 202 &&
+    // Provision on 202 (freshly accepted) AND 409 (the identical record already
+    // exists). The role record is stored before provisioning runs, so a strict
+    // delivery failure leaves an accepted-but-undelivered grant; re-issuing the
+    // same write returns 409, and running provisioning on it re-attempts delivery
+    // (get-or-create audience + 409-tolerant delivery write make it idempotent).
+    // Without the 409 case, a retry would silently skip provisioning and the
+    // recipient would stay permanently undecryptable. `!request.rawMessage` keeps
+    // this off the sync/replay path.
+    if ((reply.status.code === 202 || reply.status.code === 409) &&
         isDwnRequest(request, DwnInterface.RecordsWrite) &&
         !request.rawMessage) {
       try {
@@ -637,6 +697,16 @@ export class AgentDwnApi {
   public async sendRequest<T extends DwnInterface>(
     request: SendDwnRequest<T>
   ): Promise<DwnResponse<T>> {
+    // Role-audience key delivery is provisioned on the owner's LOCAL DWN during
+    // processRequest; sendRequest dispatches to a remote target and never provisions.
+    // Reject a supplied key here so a "must deliver" assertion can't be silently lost.
+    if ('recipientRolePublicKey' in request && request.recipientRolePublicKey !== undefined) {
+      throw new Error(
+        'AgentDwnApi: recipientRolePublicKey is not supported on sendRequest. Role-audience key ' +
+        'delivery is provisioned on the owner\'s local DWN via processRequest; supply it there.',
+      );
+    }
+
     // Resolve DWN service endpoint URLs, with local DWN discovery if enabled.
     const dwnEndpointUrls = await this.getDwnEndpointUrlsForTarget(request.target);
     if (dwnEndpointUrls.length === 0) {
