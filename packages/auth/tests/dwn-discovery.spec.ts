@@ -8,14 +8,18 @@ import { MemoryStorage } from '../src/storage/storage.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import {
   applyLocalDwnDiscovery,
+  clearLocalDwnEjection,
   clearLocalDwnEndpoint,
   createLocalDwnRpcClient,
+  discoverEjectedLocalDwnPairing,
   discoverLocalDwn,
   discoverLocalDwnPairing,
   initiateLocalDwnPairing,
+  persistLocalDwnEjectionRecord,
   persistLocalDwnPairingRecord,
   pollLocalDwnPairing,
   probeLocalDwn,
+  readLocalDwnEjectionRecord,
   readLocalDwnPairingRecord,
   requestLocalDwnPairing,
   restoreLocalDwnEndpoint,
@@ -61,6 +65,82 @@ describe('local-node pairing storage', () => {
     expect(raw).not.toBeNull();
     expect(JSON.parse(raw!)).toEqual(pairingRecord);
     expect(await readLocalDwnPairingRecord(storage)).toEqual(pairingRecord);
+  });
+
+  test('persists and reads a versioned ejection record', async () => {
+    const storage = new MemoryStorage();
+
+    await persistLocalDwnEjectionRecord(storage, {
+      completedAt : 456,
+      endpoint    : `${pairingRecord.endpoint}/`,
+      version     : 1,
+    });
+
+    const expected = {
+      completedAt : 456,
+      endpoint    : pairingRecord.endpoint,
+      version     : 1,
+    };
+    const raw = await storage.get(STORAGE_KEYS.LOCAL_DWN_EJECTION);
+    expect(raw).not.toBeNull();
+    expect(JSON.parse(raw!)).toEqual(expected);
+    expect(await readLocalDwnEjectionRecord(storage)).toEqual(expected);
+  });
+
+  test('clears malformed ejection records', async () => {
+    const storage = new MemoryStorage();
+    await storage.set(STORAGE_KEYS.LOCAL_DWN_EJECTION, JSON.stringify({
+      completedAt : Number.NaN,
+      endpoint    : pairingRecord.endpoint,
+      version     : 1,
+    }));
+
+    expect(await readLocalDwnEjectionRecord(storage)).toBeUndefined();
+    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_EJECTION)).toBeNull();
+  });
+
+  test('clears ejection when clearing the pairing endpoint', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnPairingRecord(storage, pairingRecord);
+    await persistLocalDwnEjectionRecord(storage, {
+      completedAt : 456,
+      endpoint    : pairingRecord.endpoint,
+      version     : 1,
+    });
+
+    await clearLocalDwnEndpoint(storage);
+
+    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBeNull();
+    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_EJECTION)).toBeNull();
+  });
+
+  test('discovers an ejected pairing only when the marker matches the pairing endpoint', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnPairingRecord(storage, pairingRecord);
+    await persistLocalDwnEjectionRecord(storage, {
+      completedAt : 456,
+      endpoint    : pairingRecord.endpoint,
+      version     : 1,
+    });
+
+    const fetchFn = async (url: string | URL | Request): Promise<Response> => {
+      return url.toString().endsWith('/info')
+        ? jsonResponse(localNodeInfo)
+        : jsonResponse({ localNode: true, paired: true });
+    };
+
+    expect(await discoverEjectedLocalDwnPairing(storage, fetchFn)).toEqual(pairingRecord);
+
+    await clearLocalDwnEjection(storage);
+    expect(await discoverEjectedLocalDwnPairing(storage, fetchFn)).toBeUndefined();
+
+    await persistLocalDwnEjectionRecord(storage, {
+      completedAt : 789,
+      endpoint    : 'http://127.0.0.1:55501',
+      version     : 1,
+    });
+    expect(await discoverEjectedLocalDwnPairing(storage, fetchFn)).toBeUndefined();
+    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_EJECTION)).toBeNull();
   });
 
   test('clears legacy endpoint-only values', async () => {

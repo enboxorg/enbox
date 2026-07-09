@@ -31,6 +31,12 @@ export type LocalDwnPairingRecord = {
   createdAt: number;
 };
 
+export type LocalDwnEjectionRecord = {
+  version: 1;
+  endpoint: string;
+  completedAt: number;
+};
+
 export type LocalDwnUnsupportedReason = 'no-fetch' | 'insecure-context' | 'safari';
 
 export type LocalDwnProbeResult =
@@ -94,6 +100,7 @@ export type LocalDwnPairingRequestResult =
   | { status: 'timeout'; endpoint: string; requestId: string; pollUrl: string };
 
 const localDwnPairingRecordVersion = 1;
+const localDwnEjectionRecordVersion = 1;
 const defaultPairingTimeoutMs = 5 * 60 * 1000;
 const defaultPairingPollIntervalMs = 1500;
 
@@ -140,6 +147,42 @@ export async function persistLocalDwnPairingRecord(
   }));
 }
 
+/** Reads and validates the persisted local-node ejection marker. */
+export async function readLocalDwnEjectionRecord(
+  storage: StorageAdapter,
+): Promise<LocalDwnEjectionRecord | undefined> {
+  const raw = await storage.get(STORAGE_KEYS.LOCAL_DWN_EJECTION);
+  if (raw === null) {
+    return undefined;
+  }
+
+  const record = parseLocalDwnEjectionRecord(raw);
+  if (record === undefined) {
+    await clearLocalDwnEjection(storage);
+  }
+
+  return record;
+}
+
+/** Persists the marker that allows the next session to boot against the local node. */
+export async function persistLocalDwnEjectionRecord(
+  storage: StorageAdapter,
+  record: LocalDwnEjectionRecord,
+): Promise<void> {
+  await storage.set(STORAGE_KEYS.LOCAL_DWN_EJECTION, JSON.stringify({
+    ...record,
+    endpoint : normalizeBaseUrl(record.endpoint),
+    version  : localDwnEjectionRecordVersion,
+  }));
+}
+
+/** Clears the local-node ejection marker while leaving the pairing intact. */
+export async function clearLocalDwnEjection(
+  storage: StorageAdapter,
+): Promise<void> {
+  await storage.remove(STORAGE_KEYS.LOCAL_DWN_EJECTION);
+}
+
 /**
  * Clear the persisted local DWN pairing from auth storage.
  *
@@ -149,7 +192,53 @@ export async function persistLocalDwnPairingRecord(
 export async function clearLocalDwnEndpoint(
   storage: StorageAdapter,
 ): Promise<void> {
-  await storage.remove(STORAGE_KEYS.LOCAL_DWN_ENDPOINT);
+  await Promise.all([
+    storage.remove(STORAGE_KEYS.LOCAL_DWN_ENDPOINT),
+    clearLocalDwnEjection(storage),
+  ]);
+}
+
+/**
+ * Returns the persisted ejection marker only when it belongs to the validated
+ * pairing endpoint. Mismatched markers are stale and are cleared.
+ */
+export async function readLocalDwnEjectionRecordForPairing(
+  storage: StorageAdapter,
+  pairing: LocalDwnPairingRecord,
+): Promise<LocalDwnEjectionRecord | undefined> {
+  const ejection = await readLocalDwnEjectionRecord(storage);
+  if (ejection === undefined) {
+    return undefined;
+  }
+
+  if (!isSameEndpoint(ejection.endpoint, pairing.endpoint)) {
+    await clearLocalDwnEjection(storage);
+    return undefined;
+  }
+
+  return ejection;
+}
+
+/**
+ * Returns the validated pairing only when a successful drain/ejection marker
+ * exists for the same endpoint.
+ */
+export async function discoverEjectedLocalDwnPairing(
+  storage: StorageAdapter,
+  fetchOption?: FetchLike,
+): Promise<LocalDwnPairingRecord | undefined> {
+  const pairing = await discoverLocalDwnPairing(storage, fetchOption);
+  if (pairing === undefined) {
+    await clearLocalDwnEjection(storage);
+    return undefined;
+  }
+
+  const ejection = await readLocalDwnEjectionRecordForPairing(storage, pairing);
+  if (ejection === undefined) {
+    return undefined;
+  }
+
+  return pairing;
 }
 
 /**
@@ -468,6 +557,28 @@ function parseLocalDwnPairingRecord(raw: string): LocalDwnPairingRecord | undefi
       token        : value.token,
       version      : localDwnPairingRecordVersion,
       ...(value.localNodeId === undefined ? {} : { localNodeId: value.localNodeId }),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function parseLocalDwnEjectionRecord(raw: string): LocalDwnEjectionRecord | undefined {
+  try {
+    const value = JSON.parse(raw) as Partial<LocalDwnEjectionRecord>;
+    if (
+      value.version !== localDwnEjectionRecordVersion
+      || typeof value.endpoint !== 'string'
+      || typeof value.completedAt !== 'number'
+      || !Number.isFinite(value.completedAt)
+    ) {
+      return undefined;
+    }
+
+    return {
+      completedAt : value.completedAt,
+      endpoint    : normalizeBaseUrl(value.endpoint),
+      version     : localDwnEjectionRecordVersion,
     };
   } catch {
     return undefined;

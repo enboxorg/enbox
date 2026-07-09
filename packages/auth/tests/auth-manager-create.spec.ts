@@ -9,9 +9,9 @@ import { EnboxUserAgent } from '@enbox/agent';
 
 import { AuthManager } from '../src/auth-manager.js';
 import { MemoryStorage } from '../src/storage/storage.js';
-import { persistLocalDwnPairingRecord } from '../src/discovery.js';
 import { WalletConnect } from '../src/wallet-connect-client.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
+import { persistLocalDwnEjectionRecord, persistLocalDwnPairingRecord, readLocalDwnEjectionRecord } from '../src/discovery.js';
 
 function createInitClientResult(): any {
   return {
@@ -205,7 +205,7 @@ describe('AuthManager.create()', () => {
     expect(capturedOptions.localDwnStrategy).toBe('only');
   });
 
-  test('creates remote-mode agent with a stored local-node pairing', async () => {
+  test('does not create remote-mode agent from a stored pairing before eject', async () => {
     const storage = new MemoryStorage();
     await persistLocalDwnPairingRecord(storage, {
       createdAt    : 123,
@@ -233,8 +233,52 @@ describe('AuthManager.create()', () => {
 
     const manager = await AuthManager.create({ storage });
 
+    expect(capturedOptions.localDwnEndpoint).toBeUndefined();
+    expect(capturedOptions.rpcClient).toBeUndefined();
+    expect(manager.localDwnEndpoint).toBeUndefined();
+    expect(manager.localDwnStatus).toEqual({
+      endpoint     : 'http://127.0.0.1:55500',
+      pairedOrigin : 'https://app.example',
+      status       : 'paired',
+    });
+  });
+
+  test('creates remote-mode agent with a stored local-node pairing after eject', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnPairingRecord(storage, {
+      createdAt    : 123,
+      endpoint     : 'http://127.0.0.1:55500',
+      pairedOrigin : 'https://app.example',
+      token        : 'paired-token',
+      version      : 1,
+    });
+    await persistLocalDwnEjectionRecord(storage, {
+      completedAt : 456,
+      endpoint    : 'http://127.0.0.1:55500',
+      version     : 1,
+    });
+
+    sinon.stub(globalThis, 'fetch').callsFake(async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const href = url.toString();
+      if (href.endsWith('/info')) {
+        return jsonResponse(localNodeInfo());
+      }
+
+      expect((init?.headers as Record<string, string>).authorization).toBe('Bearer paired-token');
+      return jsonResponse({ localNode: true, paired: true });
+    });
+
+    let capturedOptions: any;
+    userAgentCreateStub.onFirstCall().callsFake((...args: any[]): any => {
+      capturedOptions = args[0];
+      return Promise.resolve(createMockAgent());
+    });
+
+    const manager = await AuthManager.create({ storage });
+
     expect(capturedOptions.localDwnEndpoint).toBe('http://127.0.0.1:55500');
     expect(capturedOptions.rpcClient).toBeDefined();
+    expect(manager.localDwnEndpoint).toBe('http://127.0.0.1:55500');
     expect(manager.localDwnStatus).toEqual({
       endpoint     : 'http://127.0.0.1:55500',
       pairedOrigin : 'https://app.example',
@@ -276,6 +320,7 @@ describe('AuthManager.create()', () => {
 
     expect(result.status).toBe('paired');
     expect(events).toEqual([{ endpoint: 'http://127.0.0.1:55500', paired: true }]);
+    expect(manager.localDwnEndpoint).toBeUndefined();
     expect(manager.localDwnStatus).toEqual({
       endpoint     : 'http://127.0.0.1:55500',
       pairedOrigin : 'https://app.example',
@@ -354,6 +399,189 @@ describe('AuthManager.create()', () => {
       pairedOrigin : 'https://app.example',
       status       : 'paired',
     });
+  });
+
+  test('ejectToLocalNode drains paired endpoint and marks the next session for remote mode', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnPairingRecord(storage, {
+      createdAt    : 123,
+      endpoint     : 'http://127.0.0.1:55500',
+      pairedOrigin : 'https://app.example',
+      token        : 'paired-token',
+      version      : 1,
+    });
+
+    sinon.stub(globalThis, 'fetch').callsFake(async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const href = url.toString();
+      if (href.endsWith('/info')) {
+        return jsonResponse(localNodeInfo());
+      }
+
+      expect((init?.headers as Record<string, string>).authorization).toBe('Bearer paired-token');
+      return jsonResponse({ localNode: true, paired: true });
+    });
+
+    const drainCalls: string[] = [];
+    const agent = createMockAgent({
+      syncDrainTo: async (endpoint): Promise<any> => {
+        drainCalls.push(endpoint);
+        return {
+          completed : true,
+          endpoint,
+          targets   : [{
+            completed      : true,
+            converged      : true,
+            remoteEndpoint : endpoint,
+            tenantDid      : 'did:dht:alice',
+          }],
+        };
+      },
+    });
+    userAgentCreateStub.onFirstCall().resolves(agent as any);
+
+    const manager = await AuthManager.create({ storage });
+    const result = await manager.ejectToLocalNode();
+
+    expect(result.status).toBe('completed');
+    expect(result.nextSessionRemoteMode).toBe(true);
+    expect(drainCalls).toEqual(['http://127.0.0.1:55500']);
+    expect(manager.localDwnEndpoint).toBeUndefined();
+    expect(await readLocalDwnEjectionRecord(storage)).toEqual({
+      completedAt : expect.any(Number),
+      endpoint    : 'http://127.0.0.1:55500',
+      version     : 1,
+    });
+
+    let capturedOptions: any;
+    userAgentCreateStub.onSecondCall().callsFake((...args: any[]): any => {
+      capturedOptions = args[0];
+      return Promise.resolve(createMockAgent());
+    });
+
+    const nextManager = await AuthManager.create({ storage });
+
+    expect(capturedOptions.localDwnEndpoint).toBe('http://127.0.0.1:55500');
+    expect(capturedOptions.rpcClient).toBeDefined();
+    expect(nextManager.localDwnEndpoint).toBe('http://127.0.0.1:55500');
+  });
+
+  test('ejectToLocalNode does not persist remote-mode marker when drain is incomplete', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnPairingRecord(storage, {
+      createdAt    : 123,
+      endpoint     : 'http://127.0.0.1:55500',
+      pairedOrigin : 'https://app.example',
+      token        : 'paired-token',
+      version      : 1,
+    });
+
+    sinon.stub(globalThis, 'fetch').callsFake(async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const href = url.toString();
+      if (href.endsWith('/info')) {
+        return jsonResponse(localNodeInfo());
+      }
+
+      expect((init?.headers as Record<string, string>).authorization).toBe('Bearer paired-token');
+      return jsonResponse({ localNode: true, paired: true });
+    });
+
+    const agent = createMockAgent({
+      syncDrainTo: async (endpoint): Promise<any> => ({
+        completed : false,
+        endpoint,
+        targets   : [{
+          completed      : false,
+          converged      : false,
+          error          : 'push failed',
+          remoteEndpoint : endpoint,
+          tenantDid      : 'did:dht:alice',
+        }],
+      }),
+    });
+    userAgentCreateStub.onFirstCall().resolves(agent as any);
+
+    const manager = await AuthManager.create({ storage });
+    const result = await manager.ejectToLocalNode();
+
+    expect(result.status).toBe('incomplete');
+    expect(result.nextSessionRemoteMode).toBe(false);
+    expect(await readLocalDwnEjectionRecord(storage)).toBeUndefined();
+
+    let capturedOptions: any;
+    userAgentCreateStub.onSecondCall().callsFake((...args: any[]): any => {
+      capturedOptions = args[0];
+      return Promise.resolve(createMockAgent());
+    });
+
+    const nextManager = await AuthManager.create({ storage });
+
+    expect(capturedOptions.localDwnEndpoint).toBeUndefined();
+    expect(capturedOptions.rpcClient).toBeUndefined();
+    expect(nextManager.localDwnEndpoint).toBeUndefined();
+  });
+
+  test('ejectToLocalNode returns unavailable and clears stale marker without a pairing', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnEjectionRecord(storage, {
+      completedAt : 456,
+      endpoint    : 'http://127.0.0.1:55500',
+      version     : 1,
+    });
+
+    userAgentCreateStub.onFirstCall().resolves(createMockAgent() as any);
+
+    const manager = await AuthManager.create({ storage });
+    const events: any[] = [];
+    manager.on('local-dwn-unavailable', (event): void => {
+      events.push(event);
+    });
+
+    const result = await manager.ejectToLocalNode();
+
+    expect(result).toEqual({
+      nextSessionRemoteMode : false,
+      reason                : 'not-paired',
+      status                : 'unavailable',
+    });
+    expect(events).toEqual([{}]);
+    expect(await readLocalDwnEjectionRecord(storage)).toBeUndefined();
+  });
+
+  test('ejectToLocalNode rejects remote-mode agents before draining', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnPairingRecord(storage, {
+      createdAt    : 123,
+      endpoint     : 'http://127.0.0.1:55500',
+      pairedOrigin : 'https://app.example',
+      token        : 'paired-token',
+      version      : 1,
+    });
+
+    sinon.stub(globalThis, 'fetch').callsFake(async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const href = url.toString();
+      if (href.endsWith('/info')) {
+        return jsonResponse(localNodeInfo());
+      }
+
+      expect((init?.headers as Record<string, string>).authorization).toBe('Bearer paired-token');
+      return jsonResponse({ localNode: true, paired: true });
+    });
+
+    let drainCalls = 0;
+    userAgentCreateStub.onFirstCall().resolves(createMockAgent({
+      dwnIsRemoteMode : true,
+      syncDrainTo     : async (): Promise<any> => {
+        drainCalls += 1;
+        return { completed: true, endpoint: 'http://127.0.0.1:55500', targets: [] };
+      },
+    }) as any);
+
+    const manager = await AuthManager.create({ storage });
+
+    await expect(manager.ejectToLocalNode()).rejects.toThrow(
+      '[@enbox/auth] Local node eject requires an in-process DWN. The current agent is already in remote mode.'
+    );
+    expect(drainCalls).toBe(0);
   });
 });
 
