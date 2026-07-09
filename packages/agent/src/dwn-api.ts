@@ -180,7 +180,7 @@ async function assertX25519RolePublicKey(jwk: PublicKeyJwk): Promise<void> {
   try {
     publicKeyBytes = Convert.base64Url(x ?? '').toUint8Array();
   } catch { /* reported as invalid below */ }
-  if (publicKeyBytes === undefined || publicKeyBytes.length !== 32) {
+  if (publicKeyBytes?.length !== 32) {
     const detail = publicKeyBytes === undefined ? 'invalid base64url' : `${publicKeyBytes.length} bytes`;
     throw new Error(
       'AgentDwnApi: recipientRolePublicKey must have a 32-byte base64url \'x\' (X25519 public key); ' +
