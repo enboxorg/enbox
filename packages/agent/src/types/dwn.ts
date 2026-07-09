@@ -219,6 +219,12 @@ export type ProcessDwnRequest<T extends DwnInterface> = DwnRequest<T> & {
    * (local, then via the recipient's DWN), and a recipient whose key cannot be
    * resolved is reported via {@link DwnResponse.audienceKeyDelivery} with
    * `delivered: false` rather than failing the write.
+   *
+   * The agent validates the key's shape and usability, but NOT that it truly belongs
+   * to the recipient — that binding rests entirely on the out-of-band channel the
+   * caller trusts (e.g. the signed join request). The caller owns key authenticity.
+   * Not supported on grant-authorized writes (`permissionGrantId`/`delegatedGrant`),
+   * which cannot roll back a strict failure.
    */
   recipientRolePublicKey?: PublicKeyJwk;
 };
