@@ -381,6 +381,8 @@ export type SyncDrainTargetResult = {
   remoteEndpoint: string;
   scope?: SyncScope;
   completed: boolean;
+  /** True only when this target stopped because the caller's abort signal fired. */
+  cancelled: boolean;
   converged: boolean;
   pushCheckpoint?: ProgressToken;
   localFingerprint?: string;
@@ -394,7 +396,12 @@ export type SyncDrainTargetResult = {
 export type SyncDrainResult = {
   endpoint: string;
   completed: boolean;
+  /** True only when the caller's abort signal was observed before completion. */
+  cancelled: boolean;
+  /** True when identity registration or agent topology changed while the drain was running. */
+  topologyChanged: boolean;
   targets: SyncDrainTargetResult[];
+  error?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -552,8 +559,11 @@ export interface SyncEngine {
    * Drains every registered sync identity to the given DWN endpoint.
    *
    * This is a one-shot eject primitive: it creates or resumes durable
-   * replication links for `endpoint`, replays local and remote feeds, and
-   * verifies cids-only feed convergence before marking a target complete.
+   * replication links for `endpoint`, persists it as a supplemental target
+   * for later poll/live sync, replays local and remote feeds, and requires two
+   * stable cids-only convergence snapshots before marking a target complete.
+   * Empty plans, paused links, cancellation, or registration changes produce
+   * an incomplete result that callers may safely retry.
    *
    * @throws {Error} if another one-shot sync or drain is already in progress.
    */

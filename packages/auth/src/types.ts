@@ -4,7 +4,7 @@
  */
 
 import type { PortableDid } from '@enbox/dids';
-import type { AgentSessionIdentity, ConnectClientMetadata, ConnectPermissionRequest, DwnDataEncodedRecordsWriteMessage, DwnProtocolDefinition, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
+import type { AgentSessionIdentity, ConnectClientMetadata, ConnectPermissionRequest, DwnDataEncodedRecordsWriteMessage, DwnProtocolDefinition, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity, SyncDrainOptions, SyncDrainResult } from '@enbox/agent';
 
 import type { PasswordProvider } from './password-provider.js';
 
@@ -401,6 +401,27 @@ export interface AuthManagerOptions {
   connectHandler?: ConnectHandler;
 }
 
+export type LocalNodeEjectOptions = SyncDrainOptions;
+
+export type LocalNodeEjectResult =
+  | {
+    status: 'completed';
+    endpoint: string;
+    drain: SyncDrainResult;
+    nextSessionRemoteMode: true;
+  }
+  | {
+    status: 'incomplete';
+    endpoint: string;
+    drain: SyncDrainResult;
+    nextSessionRemoteMode: false;
+  }
+  | {
+    status: 'unavailable';
+    reason: 'not-paired';
+    nextSessionRemoteMode: false;
+  };
+
 /** Options for {@link AuthManager.connectVault}. */
 export interface VaultConnectOptions {
   /** Vault password (overrides manager default). */
@@ -736,6 +757,9 @@ export const STORAGE_KEYS = {
 
   /** Versioned local-node pairing record: endpoint, bearer token, origin, and metadata. */
   LOCAL_DWN_ENDPOINT: 'enbox:auth:localDwnEndpoint',
+
+  /** Versioned marker that allows a paired local node to become the next-session local DWN. */
+  LOCAL_DWN_EJECTION: 'enbox:auth:localDwnEjection',
 
   /**
    * JSON-serialised `Record<string, RegistrationTokenData>` for DWN endpoint

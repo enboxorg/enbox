@@ -26,6 +26,8 @@ export type LocalNodePairingSessionRecord = {
   token : string;
 };
 
+export type LocalNodePairingSessionsChangedListener = (sessions: LocalNodePairingSessionRecord[]) => void;
+
 export type LocalNodePairingManagerOptions = {
   now? : () => number;
   pairingRequestTtlMs? : number;
@@ -85,6 +87,7 @@ export class LocalNodePairingManager {
   readonly #pendingRequestIdsByOrigin: Map<string, string> = new Map();
   readonly #pairingAttemptsByOrigin: Map<string, number[]> = new Map();
   readonly #sessionsByToken: Map<string, LocalNodeSession> = new Map();
+  readonly #sessionsChangedListeners: Set<LocalNodePairingSessionsChangedListener> = new Set();
 
   public constructor(options: LocalNodePairingManagerOptions = {}) {
     this.#now = options.now ?? ((): number => Date.now());
@@ -148,6 +151,7 @@ export class LocalNodePairingManager {
     request.token = token;
     this.#pendingRequestIdsByOrigin.delete(request.origin);
     this.#sessionsByToken.set(token, { createdAt: now, origin: request.origin, token });
+    this.#notifySessionsChanged();
 
     return true;
   }
@@ -232,8 +236,20 @@ export class LocalNodePairingManager {
       origin    : normalizedOrigin,
       token,
     });
+    this.#notifySessionsChanged();
 
     return token;
+  }
+
+  /**
+   * Registers a listener that is called synchronously after the set of pairing sessions changes.
+   * The returned function removes the listener.
+   */
+  public onSessionsChanged(listener: LocalNodePairingSessionsChangedListener): () => void {
+    this.#sessionsChangedListeners.add(listener);
+    return (): void => {
+      this.#sessionsChangedListeners.delete(listener);
+    };
   }
 
   public exportSessions(): LocalNodePairingSessionRecord[] {
@@ -296,7 +312,19 @@ export class LocalNodePairingManager {
   }
 
   public revokeToken(token: string): boolean {
-    return this.#sessionsByToken.delete(token);
+    const revoked = this.#sessionsByToken.delete(token);
+    if (revoked) {
+      this.#notifySessionsChanged();
+    }
+
+    return revoked;
+  }
+
+  #notifySessionsChanged(): void {
+    const sessions = this.exportSessions();
+    for (const listener of this.#sessionsChangedListeners) {
+      listener(sessions.map((session: LocalNodePairingSessionRecord): LocalNodePairingSessionRecord => ({ ...session })));
+    }
   }
 
   #getActivePendingRequest(requestId: string): LocalNodePairingRequest | undefined {

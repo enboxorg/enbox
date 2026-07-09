@@ -109,4 +109,30 @@ describe('LocalNodePairingManager', () => {
     expect(restoredManager.revokeToken(browserToken)).toBe(true);
     expect(restoredManager.validateSession('https://app.example', browserToken)).toBe(false);
   });
+
+  it('should notify session listeners after approvals and revocations', () => {
+    const manager = new LocalNodePairingManager({ now: (): number => 1234 });
+    const sessionSnapshots: string[][] = [];
+    const unsubscribe = manager.onSessionsChanged((sessions): void => {
+      sessionSnapshots.push(sessions.map((session): string => session.token));
+    });
+    const created = manager.createRequest('https://app.example');
+    if (created.status !== 'created') {
+      throw new Error('expected created pairing request');
+    }
+
+    expect(manager.approveRequest(created.requestId)).toBe(true);
+    const approved = manager.pollRequest(created.requestId);
+    if (approved?.status !== 'approved' || approved.token === undefined) {
+      throw new Error('expected approved pairing token');
+    }
+
+    expect(sessionSnapshots).toEqual([[approved.token]]);
+    expect(manager.revokeToken(approved.token)).toBe(true);
+    expect(sessionSnapshots).toEqual([[approved.token], []]);
+
+    unsubscribe();
+    manager.createSession('https://other.example');
+    expect(sessionSnapshots).toHaveLength(2);
+  });
 });

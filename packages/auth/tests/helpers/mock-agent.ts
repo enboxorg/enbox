@@ -79,6 +79,7 @@ export interface MockAgentOverrides {
   syncStartSync?: (params: any) => Promise<void>;
   syncStopSync?: (timeout: number) => Promise<void>;
   syncSync?: (direction: string) => Promise<void>;
+  syncDrainTo?: (endpoint: string, options?: any) => Promise<any>;
   syncClose?: () => Promise<void>;
   syncHasActiveSubscriptions?: boolean;
   processDwnRequest?: (params: any) => Promise<any>;
@@ -181,6 +182,7 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
       startSync              : overrides.syncStartSync ?? (async (): Promise<void> => {}),
       stopSync               : overrides.syncStopSync ?? (async (): Promise<void> => {}),
       sync                   : overrides.syncSync ?? (async (): Promise<void> => {}),
+      drainTo                : overrides.syncDrainTo ?? (async (endpoint: string): Promise<any> => ({ completed: true, endpoint, targets: [] })),
       close                  : overrides.syncClose ?? (async (): Promise<void> => {}),
       hasActiveSubscriptions : overrides.syncHasActiveSubscriptions ?? false,
     },
@@ -202,7 +204,9 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
     },
 
     rpc: {
-      getServerInfo: overrides.rpcGetServerInfo ?? (async (): Promise<any> => ({
+      applyReplicatedMessage : async (): Promise<any> => ({ status: { code: 202, detail: 'Applied' } }),
+      close                  : async (): Promise<void> => {},
+      getServerInfo          : overrides.rpcGetServerInfo ?? (async (): Promise<any> => ({
         registrationRequirements : [],
         maxFileSize              : 10_000_000,
         server                   : '@enbox/dwn-server',
@@ -211,6 +215,9 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
         version                  : '0.0.1',
         webSocketSupport         : true,
       })),
+      sendDidRequest     : async (): Promise<any> => ({ ok: true, status: { code: 200, message: 'OK' } }),
+      sendDwnRequest     : async (): Promise<any> => ({ status: { code: 202, detail: 'Accepted' } }),
+      transportProtocols : ['http:', 'https:'],
     },
 
     vault: {

@@ -18,14 +18,18 @@ export { loadTokensFromStorage, saveTokensToStorage } from './registration.js';
 
 export {
   applyLocalDwnDiscovery,
+  clearLocalDwnEjection,
   clearLocalDwnEndpoint,
   createLocalDwnRpcClient,
+  discoverEjectedLocalDwnPairing,
   discoverLocalDwn,
   discoverLocalDwnPairing,
   initiateLocalDwnPairing,
+  persistLocalDwnEjectionRecord,
   persistLocalDwnPairingRecord,
   pollLocalDwnPairing,
   probeLocalDwn,
+  readLocalDwnEjectionRecord,
   readLocalDwnPairingRecord,
   requestLocalDwnPairing,
   restoreLocalDwnEndpoint,
@@ -33,6 +37,7 @@ export {
 
 export type {
   InitiateLocalDwnPairingOptions,
+  LocalDwnEjectionRecord,
   LocalDwnPairingInitiateResult,
   LocalDwnPairingPollResult,
   LocalDwnPairingRecord,
@@ -67,6 +72,8 @@ export type {
   IdentityInfo,
   IdentityVaultBackup,
   ImportFromPortableOptions,
+  LocalNodeEjectOptions,
+  LocalNodeEjectResult,
   LocalDwnStrategy,
   Permission,
   PortableIdentity,

@@ -2,7 +2,7 @@ import * as BrowserDiscoveryFileFs from '../src/dwn-discovery-file-fs.browser.js
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'bun:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { chmod, mkdtemp, rm, stat } from 'node:fs/promises';
 
 import {
   createNodeDiscoveryFileFs,
@@ -97,6 +97,10 @@ describe('DwnDiscoveryFile', () => {
       try {
         await fs.writeFile(filePath, 'hello');
         expect(await fs.readFile(filePath)).toBe('hello');
+
+        await chmod(filePath, 0o644);
+        await fs.writeFile(filePath, 'updated');
+        expect((await stat(filePath)).mode & 0o777).toBe(0o600);
 
         await fs.removeFile(filePath);
         expect(await fs.readFile(filePath)).toBeNull();

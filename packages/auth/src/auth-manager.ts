@@ -31,6 +31,8 @@ import type {
   HeadlessConnectOptions,
   IdentitySyncProtocols,
   ImportFromPortableOptions,
+  LocalNodeEjectOptions,
+  LocalNodeEjectResult,
   RegistrationOptions,
   RestoreFromPhraseOptions,
   RestoreSessionOptions,
@@ -60,7 +62,15 @@ import { STORAGE_KEYS } from './types.js';
 import { validateConnectResultGrants } from './connect/validate-grants.js';
 import { vaultConnect } from './connect/vault.js';
 import { walletConnect } from './connect/wallet.js';
-import { createLocalDwnRpcClient, discoverLocalDwnPairing, probeLocalDwn, requestLocalDwnPairing } from './discovery.js';
+import {
+  clearLocalDwnEjection,
+  createLocalDwnRpcClient,
+  discoverLocalDwnPairing,
+  persistLocalDwnEjectionRecord,
+  probeLocalDwn,
+  readLocalDwnEjectionRecordForPairing,
+  requestLocalDwnPairing,
+} from './discovery.js';
 import { deriveActiveSyncScope, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, resolveIdentityDids, resolvePassword, startSyncIfEnabled, toSyncIdentityProtocols } from './connect/lifecycle.js';
 
 /**
@@ -169,14 +179,18 @@ export class AuthManager {
     // zero vault/DWN dependencies — it reads the persisted pairing record
     // and validates it via GET /info plus authenticated /local/status.
     //
-    // When a local DWN server is available, the agent is created in
-    // "remote mode": it skips creating an in-process DWN and routes all
-    // DWN operations through RPC to the local server.
+    // A stored pairing alone is not enough to change the agent's storage mode:
+    // pairing establishes trust, while the ejection marker proves the local
+    // in-process DWN has drained to the paired node. Only then does the next
+    // session boot in remote mode.
     let localDwnEndpoint: string | undefined;
     let localDwnPairing: LocalDwnPairingRecord | undefined;
     if (!options.agent && options.localDwnStrategy !== 'off') {
       localDwnPairing = await discoverLocalDwnPairing(storage);
-      localDwnEndpoint = localDwnPairing?.endpoint;
+      if (localDwnPairing !== undefined) {
+        const ejection = await readLocalDwnEjectionRecordForPairing(storage, localDwnPairing);
+        localDwnEndpoint = ejection === undefined ? undefined : localDwnPairing.endpoint;
+      }
       // NOTE: We intentionally do NOT emit 'local-dwn-available' here
       // because event listeners aren't attached yet. Consumers should
       // check `authManager.localDwnEndpoint` after create() returns.
@@ -188,7 +202,9 @@ export class AuthManager {
       agentVault       : options.agentVault,
       localDwnStrategy : options.localDwnStrategy,
       localDwnEndpoint,
-      rpcClient        : localDwnPairing === undefined ? undefined : createLocalDwnRpcClient(localDwnPairing),
+      rpcClient        : localDwnEndpoint === undefined || localDwnPairing === undefined
+        ? undefined
+        : createLocalDwnRpcClient(localDwnPairing),
     });
 
     const manager = new AuthManager({
@@ -1041,9 +1057,11 @@ export class AuthManager {
   /**
    * Pair this origin with a local node and persist the resulting token.
    *
-   * When pairing succeeds, future `AuthManager.create()` calls boot in
-   * authenticated remote mode. If this manager was already created in remote
-   * mode, its RPC client is updated immediately.
+   * Pairing only establishes trust with the local node. Future
+   * `AuthManager.create()` calls boot in authenticated remote mode only after
+   * {@link ejectToLocalNode} drains the current in-process DWN and persists the
+   * ejection marker. If this manager was already created in remote mode, its
+   * RPC client is updated immediately.
    */
   async enableLocalNode(options: {
     endpoint?: string;
@@ -1068,17 +1086,74 @@ export class AuthManager {
       return result;
     }
 
-    this._localDwnEndpoint = result.endpoint;
     this._localDwnPairing = result.pairing;
+    this._userAgent.rpc = createLocalDwnRpcClient(result.pairing, this._userAgent.rpc);
 
     if (this._userAgent.dwn.isRemoteMode) {
-      this._userAgent.rpc = createLocalDwnRpcClient(result.pairing);
+      this._localDwnEndpoint = result.endpoint;
       await this._userAgent.dwn.setCachedLocalDwnEndpoint(result.endpoint);
+    } else {
+      this._localDwnEndpoint = undefined;
+      await clearLocalDwnEjection(this._storage);
     }
 
     this._emitter.emit('local-dwn-available', { endpoint: result.endpoint, paired: true });
 
     return result;
+  }
+
+  /**
+   * Drain the current in-process DWN to the paired local node and mark the
+   * next session for remote-mode boot.
+   *
+   * This method deliberately does not mutate the active agent into remote mode.
+   * The local/remote switch happens only at the next `AuthManager.create()`
+   * boundary, which keeps the running agent's DWN handles and sync state stable.
+   */
+  async ejectToLocalNode(options: LocalNodeEjectOptions = {}): Promise<LocalNodeEjectResult> {
+    this._guardShutdown();
+
+    const pairing = this._localDwnPairing ?? await discoverLocalDwnPairing(this._storage);
+    if (pairing === undefined) {
+      await clearLocalDwnEjection(this._storage);
+      this._emitter.emit('local-dwn-unavailable', {});
+      return {
+        nextSessionRemoteMode : false,
+        reason                : 'not-paired',
+        status                : 'unavailable',
+      };
+    }
+
+    this._localDwnPairing = pairing;
+
+    if (this._userAgent.dwn.isRemoteMode) {
+      throw new Error('[@enbox/auth] Local node eject requires an in-process DWN. The current agent is already in remote mode.');
+    }
+
+    this._userAgent.rpc = createLocalDwnRpcClient(pairing, this._userAgent.rpc);
+    const drain = await this._userAgent.sync.drainTo(pairing.endpoint, options);
+    if (!drain.completed) {
+      await clearLocalDwnEjection(this._storage);
+      return {
+        drain,
+        endpoint              : drain.endpoint,
+        nextSessionRemoteMode : false,
+        status                : 'incomplete',
+      };
+    }
+
+    await persistLocalDwnEjectionRecord(this._storage, {
+      completedAt : Date.now(),
+      endpoint    : drain.endpoint,
+      version     : 1,
+    });
+
+    return {
+      drain,
+      endpoint              : drain.endpoint,
+      nextSessionRemoteMode : true,
+      status                : 'completed',
+    };
   }
 
   // ─── Private helpers ───────────────────────────────────────────

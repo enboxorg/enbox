@@ -6,6 +6,7 @@ import type {
   DwnServerConfig,
   LocalNodePairingManager,
   LocalNodePairingRequestView,
+  LocalNodePairingSessionRecord,
 } from '@enbox/dwn-server';
 
 import {
@@ -93,11 +94,15 @@ export class LocalNode {
   readonly #pairingSessionStore: LocalNodePairingSessionStore;
   readonly #pid: number;
   readonly #portCandidates: readonly number[];
-  readonly #inFlightPairingRequestIds: Set<string> = new Set();
 
   #endpoint: string | undefined;
   #localNodeToken: string | undefined;
+  #pairingBrokerLoopFailure: { error: unknown } | undefined;
+  #pairingBrokerProcessing: Promise<void> | undefined;
   #pairingBrokerTimer: ReturnType<typeof setInterval> | undefined;
+  #pairingSessionChangeUnsubscribe: (() => void) | undefined;
+  #pairingSessionWriteFailure: { error: unknown } | undefined;
+  #pairingSessionWriteQueue: Promise<void> = Promise.resolve();
   #port: number | undefined;
   #server: LocalNodeDwnServer | undefined;
   #state: LocalNodeState = 'stopped';
@@ -161,15 +166,17 @@ export class LocalNode {
     }
 
     await this.#loadPairingSessions();
-
-    const startResult = await this.#startFirstAvailableServer();
-    this.#server = startResult.server;
-    this.#port = startResult.port;
-    this.#endpoint = startResult.endpoint;
-    this.#localNodeToken = this.#pairingManager.createSession(undefined);
-    this.#state = 'running';
+    const localNodeToken = this.#pairingManager.createSession(undefined);
+    this.#subscribeToPairingSessionChanges();
 
     try {
+      const startResult = await this.#startFirstAvailableServer();
+      this.#server = startResult.server;
+      this.#port = startResult.port;
+      this.#endpoint = startResult.endpoint;
+      this.#localNodeToken = localNodeToken;
+      this.#state = 'running';
+
       await this.#writeDiscoveryFile();
       this.#startPairingBrokerLoop();
     } catch (error) {
@@ -186,17 +193,37 @@ export class LocalNode {
     }
 
     this.#stopPairingBrokerLoop();
+    let stopFailure: { error: unknown } | undefined;
 
     try {
       await this.#discoveryFile.remove();
-    } finally {
+    } catch (error) {
+      stopFailure = { error };
+    }
+
+    try {
       await this.#server?.stop();
-      this.#endpoint = undefined;
-      this.#localNodeToken = undefined;
-      this.#port = undefined;
-      this.#server = undefined;
-      this.#state = 'stopped';
-      this.#inFlightPairingRequestIds.clear();
+    } catch (error) {
+      stopFailure ??= { error };
+    }
+
+    this.#unsubscribeFromPairingSessionChanges();
+    try {
+      await this.#flushPairingSessionWrites();
+    } catch (error) {
+      stopFailure ??= { error };
+    }
+
+    stopFailure ??= this.#pairingBrokerLoopFailure;
+    this.#endpoint = undefined;
+    this.#localNodeToken = undefined;
+    this.#pairingBrokerLoopFailure = undefined;
+    this.#port = undefined;
+    this.#server = undefined;
+    this.#state = 'stopped';
+
+    if (stopFailure !== undefined) {
+      throw stopFailure.error;
     }
   }
 
@@ -239,7 +266,7 @@ export class LocalNode {
       return false;
     }
 
-    await this.#savePairingSessions();
+    await this.#flushPairingSessionWrites();
     return true;
   }
 
@@ -248,13 +275,24 @@ export class LocalNode {
       return;
     }
 
+    if (this.#pairingBrokerProcessing !== undefined) {
+      await this.#pairingBrokerProcessing;
+      return;
+    }
+
+    const processing = this.#processPendingPairingRequests();
+    this.#pairingBrokerProcessing = processing;
+
+    try {
+      await processing;
+    } finally {
+      this.#pairingBrokerProcessing = undefined;
+    }
+  }
+
+  async #processPendingPairingRequests(): Promise<void> {
     const pendingRequests = this.#pairingManager.listPendingRequests();
     for (const request of pendingRequests) {
-      if (this.#inFlightPairingRequestIds.has(request.id)) {
-        continue;
-      }
-
-      this.#inFlightPairingRequestIds.add(request.id);
       await this.#processPairingRequest(request);
     }
   }
@@ -314,9 +352,13 @@ export class LocalNode {
       return;
     }
 
-    void this.processPendingPairingRequests();
+    void this.processPendingPairingRequests().catch((error: unknown): void => {
+      this.#pairingBrokerLoopFailure ??= { error };
+    });
     this.#pairingBrokerTimer = setInterval((): void => {
-      void this.processPendingPairingRequests();
+      void this.processPendingPairingRequests().catch((error: unknown): void => {
+        this.#pairingBrokerLoopFailure ??= { error };
+      });
     }, this.#pairingPollIntervalMs);
   }
 
@@ -330,18 +372,14 @@ export class LocalNode {
   }
 
   async #processPairingRequest(request: LocalNodePairingRequestView): Promise<void> {
-    try {
-      const decision = await this.#pairingBroker!.decidePairingRequest(request);
-      if (decision === 'approve') {
-        const approved = this.#pairingManager.approveRequest(request.id);
-        if (approved) {
-          await this.#savePairingSessions();
-        }
-      } else {
-        this.#pairingManager.denyRequest(request.id);
+    const decision = await this.#pairingBroker!.decidePairingRequest(request);
+    if (decision === 'approve') {
+      const approved = this.#pairingManager.approveRequest(request.id);
+      if (approved) {
+        await this.#flushPairingSessionWrites();
       }
-    } finally {
-      this.#inFlightPairingRequestIds.delete(request.id);
+    } else {
+      this.#pairingManager.denyRequest(request.id);
     }
   }
 
@@ -365,11 +403,48 @@ export class LocalNode {
     this.#pairingManager.importSessions(sessions);
   }
 
-  async #savePairingSessions(): Promise<void> {
-    const browserSessions = this.#pairingManager.exportSessions()
-      .filter((session): boolean => session.origin !== undefined);
+  #subscribeToPairingSessionChanges(): void {
+    this.#pairingSessionChangeUnsubscribe = this.#pairingManager.onSessionsChanged(
+      (sessions: LocalNodePairingSessionRecord[]): void => {
+        const browserSessions = sessions
+          .filter((session: LocalNodePairingSessionRecord): boolean => session.origin !== undefined);
 
-    await this.#pairingSessionStore.write(browserSessions);
+        this.#pairingSessionWriteQueue = this.#pairingSessionWriteQueue.then(async (): Promise<void> => {
+          try {
+            await this.#pairingSessionStore.write(browserSessions);
+          } catch (error) {
+            this.#pairingSessionWriteFailure ??= { error };
+          }
+        });
+      },
+    );
+  }
+
+  #unsubscribeFromPairingSessionChanges(): void {
+    this.#pairingSessionChangeUnsubscribe?.();
+    this.#pairingSessionChangeUnsubscribe = undefined;
+  }
+
+  async #flushPairingSessionWrites(): Promise<void> {
+    let pendingWrites: Promise<void>;
+    do {
+      pendingWrites = this.#pairingSessionWriteQueue;
+      await pendingWrites;
+    } while (pendingWrites !== this.#pairingSessionWriteQueue);
+
+    const failure = this.#pairingSessionWriteFailure;
+    this.#pairingSessionWriteFailure = undefined;
+    if (failure !== undefined) {
+      throw failure.error;
+    }
+  }
+
+  async #waitForPairingSessionWrites(): Promise<void> {
+    let pendingWrites: Promise<void>;
+    do {
+      pendingWrites = this.#pairingSessionWriteQueue;
+      await pendingWrites;
+    } while (pendingWrites !== this.#pairingSessionWriteQueue);
   }
 
   #getStartResult(): LocalNodeStartResult {
@@ -406,12 +481,14 @@ export class LocalNode {
     try {
       await this.#server?.stop();
     } finally {
+      this.#unsubscribeFromPairingSessionChanges();
+      await this.#waitForPairingSessionWrites();
       this.#endpoint = undefined;
       this.#localNodeToken = undefined;
+      this.#pairingBrokerLoopFailure = undefined;
       this.#port = undefined;
       this.#server = undefined;
       this.#state = 'stopped';
-      this.#inFlightPairingRequestIds.clear();
     }
   }
 }

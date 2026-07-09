@@ -137,6 +137,93 @@ describe('LocalDwnDiscovery', () => {
       expect((rpcClient.getServerInfo as sinon.SinonStub).firstCall.args[0]).toBe('http://127.0.0.1:55557');
     });
 
+    it('should register a discovery-file token for the validated endpoint', async () => {
+      const clearDwnEndpointBearerToken = sinon.stub();
+      const setDwnEndpointBearerToken = sinon.stub();
+      const rpcClient = {
+        clearDwnEndpointBearerToken,
+        getServerInfo: sinon.stub().resolves({ server: localDwnServerName }),
+        setDwnEndpointBearerToken,
+      } as unknown as EnboxRpc;
+      const discoveryFile = createDiscoveryFileStub({
+        endpoint       : 'http://127.0.0.1:55557',
+        localNodeToken : 'native-local-node-token',
+        pid            : 12345,
+      });
+
+      const discovery = new LocalDwnDiscovery(rpcClient, 10_000, discoveryFile);
+
+      expect(await discovery.getEndpoint()).toBe('http://127.0.0.1:55557');
+      expect(setDwnEndpointBearerToken.calledOnceWithExactly(
+        'http://127.0.0.1:55557',
+        'native-local-node-token',
+      )).toBe(true);
+    });
+
+    it('should clear a registered token when the discovery file later disappears', async () => {
+      const clearDwnEndpointBearerToken = sinon.stub();
+      const discoveryFile = createDiscoveryFileStub();
+      const record = {
+        endpoint       : 'http://127.0.0.1:55557',
+        localNodeToken : 'native-local-node-token',
+        pid            : 12345,
+      };
+      (discoveryFile.read as sinon.SinonStub)
+        .onFirstCall().resolves(record)
+        .onSecondCall().resolves(undefined);
+      const rpcClient = {
+        clearDwnEndpointBearerToken,
+        getServerInfo             : sinon.stub().resolves({ server: localDwnServerName }),
+        setDwnEndpointBearerToken : sinon.stub(),
+      } as unknown as EnboxRpc;
+      const discovery = new LocalDwnDiscovery(rpcClient, 0, discoveryFile);
+
+      expect(await discovery.getEndpoint()).toBe(record.endpoint);
+      expect(await discovery.getEndpoint()).toBeUndefined();
+      expect(clearDwnEndpointBearerToken.calledOnceWithExactly(record.endpoint)).toBe(true);
+    });
+
+    it('should clear a registered token when the endpoint later fails validation', async () => {
+      const clearDwnEndpointBearerToken = sinon.stub();
+      const discoveryFile = createDiscoveryFileStub({
+        endpoint       : 'http://127.0.0.1:55557',
+        localNodeToken : 'native-local-node-token',
+        pid            : 12345,
+      });
+      const getServerInfo = sinon.stub();
+      getServerInfo.onFirstCall().resolves({ server: localDwnServerName });
+      getServerInfo.onSecondCall().resolves({ server: 'some-other-server' });
+      const rpcClient = {
+        clearDwnEndpointBearerToken,
+        getServerInfo,
+        setDwnEndpointBearerToken: sinon.stub(),
+      } as unknown as EnboxRpc;
+      const discovery = new LocalDwnDiscovery(rpcClient, 0, discoveryFile);
+
+      expect(await discovery.getEndpoint()).toBe('http://127.0.0.1:55557');
+      expect(await discovery.getEndpoint()).toBeUndefined();
+      expect(clearDwnEndpointBearerToken.calledOnceWithExactly('http://127.0.0.1:55557')).toBe(true);
+    });
+
+    it('should not register a discovery-file token for an invalid endpoint', async () => {
+      const setDwnEndpointBearerToken = sinon.stub();
+      const rpcClient = {
+        clearDwnEndpointBearerToken : sinon.stub(),
+        getServerInfo               : sinon.stub().resolves({ server: 'some-other-server' }),
+        setDwnEndpointBearerToken,
+      } as unknown as EnboxRpc;
+      const discoveryFile = createDiscoveryFileStub({
+        endpoint       : 'http://127.0.0.1:55557',
+        localNodeToken : 'native-local-node-token',
+        pid            : 12345,
+      });
+
+      const discovery = new LocalDwnDiscovery(rpcClient, 10_000, discoveryFile);
+
+      expect(await discovery.getEndpoint()).toBeUndefined();
+      expect(setDwnEndpointBearerToken.called).toBe(false);
+    });
+
     it('should return undefined when the discovery file is empty', async () => {
       const rpcClient = createRpcStub('valid');
       const discoveryFile = createDiscoveryFileStub(null);
@@ -246,10 +333,17 @@ describe('LocalDwnDiscovery', () => {
 
   describe('clearCache', () => {
     it('should force fresh discovery on the next getEndpoint call', async () => {
-      const rpcClient = createRpcStub('valid');
+      const clearDwnEndpointBearerToken = sinon.stub();
+      const setDwnEndpointBearerToken = sinon.stub();
+      const rpcClient = {
+        clearDwnEndpointBearerToken,
+        getServerInfo: sinon.stub().resolves({ server: localDwnServerName }),
+        setDwnEndpointBearerToken,
+      } as unknown as EnboxRpc;
       const discoveryFile = createDiscoveryFileStub({
-        endpoint : 'http://127.0.0.1:55557',
-        pid      : 12345,
+        endpoint       : 'http://127.0.0.1:55557',
+        localNodeToken : 'native-local-node-token',
+        pid            : 12345,
       });
       const discovery = new LocalDwnDiscovery(rpcClient, 10_000, discoveryFile);
 
@@ -259,6 +353,8 @@ describe('LocalDwnDiscovery', () => {
 
       // Two validation calls: one before and one after cache clear.
       expect((rpcClient.getServerInfo as sinon.SinonStub).callCount).toBe(2);
+      expect(clearDwnEndpointBearerToken.calledOnceWithExactly('http://127.0.0.1:55557')).toBe(true);
+      expect(setDwnEndpointBearerToken.callCount).toBe(2);
     });
 
     it('should clear a previously cached positive result', async () => {

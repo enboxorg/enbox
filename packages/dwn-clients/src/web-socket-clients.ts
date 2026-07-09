@@ -71,6 +71,25 @@ function stripTrailingSlash(url: string): string {
   return url.endsWith('/') ? url.slice(0, -1) : url;
 }
 
+function redactConnectionError(error: unknown, url: URL, displayUrl: URL): string {
+  let detail = error instanceof Error ? error.message : String(error);
+  const unsafeUrls = new Set([url.toString(), stripTrailingSlash(url.toString())]);
+  for (const unsafeUrl of unsafeUrls) {
+    detail = detail.replaceAll(unsafeUrl, displayUrl.toString());
+  }
+
+  const sensitiveValues = [url.username, url.password, ...url.searchParams.values()];
+  for (const value of sensitiveValues) {
+    if (value.length === 0) {
+      continue;
+    }
+    detail = detail.replaceAll(value, '[REDACTED]');
+    detail = detail.replaceAll(encodeURIComponent(value), '[REDACTED]');
+  }
+
+  return detail;
+}
+
 function shouldReplaceLastCursor(current: ProgressToken | undefined, candidate: ProgressToken): boolean {
   if (current === undefined) {
     return true;
@@ -182,6 +201,11 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     }
 
     const key = connectionCacheKey(url);
+    const displayUrl = new URL(url);
+    displayUrl.username = '';
+    displayUrl.password = '';
+    displayUrl.search = '';
+    displayUrl.hash = '';
     const existing = WebSocketDwnRpcClient.connections.get(key);
     if (existing !== undefined) {
       return existing;
@@ -195,7 +219,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
           return connection;
         })
         .catch((error: unknown) => {
-          throw new Error(`Error connecting to ${key}: ${(error as Error).message}`);
+          throw new Error(`Error connecting to ${displayUrl.toString()}: ${redactConnectionError(error, url, displayUrl)}`);
         })
         .finally(() => {
           WebSocketDwnRpcClient.pendingConnections.delete(key);
