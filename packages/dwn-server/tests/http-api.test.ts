@@ -1383,6 +1383,67 @@ describe('http api', function () {
       }
     });
 
+    it('should auto-approve pairing requests from configured local-node allowed origins', async () => {
+      const localNodePairingManager = new LocalNodePairingManager();
+      const { api, url } = await createStartedHttpApiWithConfig({
+        hostname                : '127.0.0.1',
+        localNodeAllowedOrigins : ['https://app.example'],
+        localNodeProfileEnabled : true,
+      }, { localNodePairingManager });
+
+      try {
+        const pairResponse = await fetch(`${url}/local/pair`, {
+          headers : { origin: 'https://app.example' },
+          method  : 'POST',
+        });
+        expect(pairResponse.status).toBe(200);
+        expect(pairResponse.headers.get('access-control-allow-origin')).toBe('https://app.example');
+
+        const pairBody = await pairResponse.json() as { requestId: string; status: string };
+        expect(typeof pairBody.requestId).toBe('string');
+        expect(pairBody.status).toBe('pending');
+        expect(localNodePairingManager.listPendingRequests()).toEqual([]);
+
+        const approvedResponse = await fetch(`${url}/local/pair/${pairBody.requestId}`, {
+          headers: { origin: 'https://app.example' },
+        });
+        expect(approvedResponse.headers.get('access-control-allow-origin')).toBe('https://app.example');
+
+        const approvedBody = await approvedResponse.json() as { origin: string; status: string; token?: string };
+        expect(approvedBody.origin).toBe('https://app.example');
+        expect(approvedBody.status).toBe('approved');
+        expect(typeof approvedBody.token).toBe('string');
+        expect(localNodePairingManager.validateSession('https://app.example', approvedBody.token)).toBe(true);
+
+        const authenticatedResponse = await fetch(`${url}/health`, {
+          headers: {
+            authorization : `Bearer ${approvedBody.token}`,
+            origin        : 'https://app.example',
+          },
+        });
+        expect(authenticatedResponse.status).toBe(200);
+
+        const unlistedPairResponse = await fetch(`${url}/local/pair`, {
+          headers : { origin: 'https://unlisted.example' },
+          method  : 'POST',
+        });
+        const unlistedPairBody = await unlistedPairResponse.json() as { requestId: string; status: string };
+        expect(unlistedPairResponse.status).toBe(200);
+        expect(unlistedPairBody.status).toBe('pending');
+        expect(localNodePairingManager.listPendingRequests().map((request): string => request.origin)).toEqual(['https://unlisted.example']);
+
+        const unlistedPollResponse = await fetch(`${url}/local/pair/${unlistedPairBody.requestId}`, {
+          headers: { origin: 'https://unlisted.example' },
+        });
+        expect(await unlistedPollResponse.json()).toEqual({
+          origin : 'https://unlisted.example',
+          status : 'pending',
+        });
+      } finally {
+        await api.close();
+      }
+    });
+
     it('should rate-limit completed pairing requests per origin over HTTP', async () => {
       const localNodePairingManager = new LocalNodePairingManager({
         now                        : (): number => 1_000,
