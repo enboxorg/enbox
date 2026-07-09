@@ -1322,6 +1322,16 @@ describe('http api', function () {
         expect(pairBody.status).toBe('pending');
         expect(localNodePairingManager.listPendingRequests()[0].origin).toBe('https://app.example');
 
+        const coalescedResponse = await fetch(`${url}/local/pair`, {
+          headers : { origin: 'https://app.example' },
+          method  : 'POST',
+        });
+        expect(coalescedResponse.status).toBe(200);
+        expect(await coalescedResponse.json()).toEqual({
+          requestId : pairBody.requestId,
+          status    : 'pending',
+        });
+
         const pendingResponse = await fetch(`${url}/local/pair/${pairBody.requestId}`, {
           headers: { origin: 'https://app.example' },
         });
@@ -1331,6 +1341,12 @@ describe('http api', function () {
         });
 
         expect(localNodePairingManager.approveRequest(pairBody.requestId)).toBe(true);
+
+        const wrongOriginResponse = await fetch(`${url}/local/pair/${pairBody.requestId}`, {
+          headers: { origin: 'https://evil.example' },
+        });
+        expect(wrongOriginResponse.status).toBe(404);
+        expect(wrongOriginResponse.headers.get('access-control-allow-origin')).toBeNull();
 
         const approvedResponse = await fetch(`${url}/local/pair/${pairBody.requestId}`, {
           headers: { origin: 'https://app.example' },
@@ -1362,6 +1378,41 @@ describe('http api', function () {
         });
         expect(missingTokenResponse.status).toBe(401);
         expect(missingTokenResponse.headers.get('access-control-allow-origin')).toBe('https://app.example');
+      } finally {
+        await api.close();
+      }
+    });
+
+    it('should rate-limit completed pairing requests per origin over HTTP', async () => {
+      const localNodePairingManager = new LocalNodePairingManager({
+        now                        : (): number => 1_000,
+        pairingRateLimitMax        : 1,
+        pairingRateLimitWindowMs   : 60_000,
+        terminalRequestRetentionMs : 60_000,
+      });
+      const { api, url } = await createStartedHttpApiWithConfig({
+        hostname                : '127.0.0.1',
+        localNodeProfileEnabled : true,
+      }, { localNodePairingManager });
+
+      try {
+        const pairResponse = await fetch(`${url}/local/pair`, {
+          headers : { origin: 'https://app.example' },
+          method  : 'POST',
+        });
+        const pairBody = await pairResponse.json() as { requestId: string };
+
+        expect(pairResponse.status).toBe(200);
+        expect(localNodePairingManager.denyRequest(pairBody.requestId)).toBe(true);
+
+        const rateLimitedResponse = await fetch(`${url}/local/pair`, {
+          headers : { origin: 'https://app.example' },
+          method  : 'POST',
+        });
+        expect(rateLimitedResponse.status).toBe(429);
+        expect(rateLimitedResponse.headers.get('retry-after')).toBe('60');
+        expect(rateLimitedResponse.headers.get('access-control-allow-origin')).toBe('https://app.example');
+        expect(await rateLimitedResponse.json()).toEqual({ error: 'Pairing rate limit exceeded.' });
       } finally {
         await api.close();
       }
