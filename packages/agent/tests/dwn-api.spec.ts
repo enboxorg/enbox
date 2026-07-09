@@ -4286,11 +4286,10 @@ describe('Role record write behavior', () => {
       .rejects.toThrow(/32-byte|invalid base64url/i);
 
     // A low-order point (here the all-zero public key) has the right shape but cannot
-    // produce a usable ECDH secret: X25519 rejects it during key agreement (some impls
-    // instead return an all-zero secret, which the explicit zero-check would catch).
+    // produce a usable ECDH secret: X25519 rejects it during key agreement.
     const allZeroKey = { kty: 'OKP', crv: 'X25519', x: 'A'.repeat(43) } as any;
     await expect(testHarness.agent.dwn.processRequest(roleParamsWithKey(allZeroKey)))
-      .rejects.toThrow(/low-order|all-zero shared secret|failed X25519 key agreement/i);
+      .rejects.toThrow(/low-order|failed X25519 key agreement/i);
 
     // A non-canonical (padded) `x` decodes to 32 bytes but would key the delivery to a
     // different id than the recipient derives from the canonical encoding.

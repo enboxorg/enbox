@@ -154,8 +154,8 @@ type DwnApiCreateDwnParams = Omit<Partial<DwnConfig>, 'eventLog' | 'messageStore
  *     padded or otherwise non-canonical `x` would key the delivery to a different
  *     id than the recipient looks up — reported `delivered: true`, undecryptable.
  *   - The point must not be low-order. An ephemeral ECDH against a low-order point
- *     (e.g. the all-zero key) yields an all-zero shared secret, so the wrapped
- *     delivery key would be recoverable/undecryptable.
+ *     (e.g. the all-zero key) fails key agreement, so the wrapped delivery key
+ *     would be undecryptable/insecure.
  *
  * An Ed25519 (or any non-X25519) key would wrap through the X25519 ECDH without
  * error but produce a delivery the recipient cannot decrypt — so it is rejected,
@@ -193,21 +193,17 @@ async function assertX25519RolePublicKey(jwk: PublicKeyJwk): Promise<void> {
       'X25519 public key without padding so its key id matches what the recipient derives.',
     );
   }
-  let sharedSecret: Uint8Array;
   try {
+    // A low-order point (e.g. the all-zero key) produces a degenerate shared secret;
+    // the X25519 agreement rejects it here, so we never wrap a delivery to a key the
+    // recipient cannot decrypt.
     const ephemeral = await X25519.generateKey();
-    sharedSecret = await X25519.sharedSecret({ privateKeyA: ephemeral, publicKeyB: jwk });
+    await X25519.sharedSecret({ privateKeyA: ephemeral, publicKeyB: jwk });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(
-      'AgentDwnApi: recipientRolePublicKey failed X25519 key agreement and cannot wrap a delivery: ' +
-      detail,
-    );
-  }
-  if (sharedSecret.every((byte) => byte === 0)) {
-    throw new Error(
-      'AgentDwnApi: recipientRolePublicKey is a low-order X25519 point (all-zero shared secret); it ' +
-      'cannot wrap a delivery the recipient can decrypt.',
+      'AgentDwnApi: recipientRolePublicKey failed X25519 key agreement (e.g. a low-order point) and ' +
+      `cannot wrap a delivery: ${detail}`,
     );
   }
 }
@@ -647,42 +643,62 @@ export class AgentDwnApi {
 
   /**
    * Confirms — before the write — that a `recipientRolePublicKey`-bearing request
-   * actually targets a deliverable role audience: a `recipient`, a resolvable
-   * protocol definition, a `$role: true` rule at the path, and a `$keyAgreement`
-   * audience to wrap the delivery to. A supplied key asserts delivery MUST happen,
-   * so a path that cannot provision one is a caller error caught up front rather
-   * than an accepted write whose delivery is silently skipped.
+   * actually targets a deliverable role audience. A supplied key asserts delivery
+   * MUST happen, so a path that cannot provision one is a caller error caught up
+   * front rather than an accepted write whose delivery is silently skipped. Shares
+   * {@link resolveDeliverableRoleAudience} with post-write provisioning so the
+   * strict guard and the best-effort skip can never drift.
    */
   private async assertRoleRecipientPathDeliverable(
     request: ProcessDwnRequest<DwnInterface.RecordsWrite>,
   ): Promise<void> {
     const { protocol, protocolPath, recipient } = request.messageParams ?? {};
-    if (protocol === undefined || protocolPath === undefined || recipient === undefined) {
+    const resolved = await this.resolveDeliverableRoleAudience({
+      target: request.target, protocol, protocolPath, recipient, granteeDid: request.granteeDid,
+    });
+    if (!resolved.deliverable) {
       throw new Error(
-        'AgentDwnApi: recipientRolePublicKey requires a RecordsWrite with protocol, protocolPath, and ' +
-        'recipient set (a $role grant to a specific recipient); one or more is missing.',
+        `AgentDwnApi: recipientRolePublicKey was supplied but ${resolved.reason}, so its role-audience ` +
+        'delivery cannot be provisioned.',
       );
     }
-    const protocolDefinition = await this.getProtocolDefinition(request.target, protocol, request.granteeDid);
+  }
+
+  /**
+   * Resolves whether `protocolPath` on `protocol` (as installed at `target`) is a
+   * deliverable role audience for a grant to `recipient`: the write must name all
+   * three, the protocol must resolve, the path must be a `$role` rule, and that
+   * rule must carry a `$keyAgreement` audience to wrap the delivery to. Returns the
+   * (now-defined) identifiers when deliverable, or a human-readable reason it is
+   * not. The pre-write strict guard throws the reason; post-write provisioning
+   * skips on it — one ladder, so the two never disagree.
+   */
+  private async resolveDeliverableRoleAudience(params: {
+    target: string;
+    protocol?: string;
+    protocolPath?: string;
+    recipient?: string;
+    granteeDid?: string;
+  }): Promise<
+    | { deliverable: true; protocol: string; protocolPath: string; recipient: string }
+    | { deliverable: false; reason: string }
+  > {
+    const { target, protocol, protocolPath, recipient, granteeDid } = params;
+    if (protocol === undefined || protocolPath === undefined || recipient === undefined) {
+      return { deliverable: false, reason: 'the write must set protocol, protocolPath, and recipient (a $role grant to a specific recipient)' };
+    }
+    const protocolDefinition = await this.getProtocolDefinition(target, protocol, granteeDid);
     if (protocolDefinition === undefined) {
-      throw new Error(
-        `AgentDwnApi: recipientRolePublicKey was supplied but protocol '${protocol}' is not installed ` +
-        `on target '${request.target}', so its role-audience delivery cannot be provisioned.`,
-      );
+      return { deliverable: false, reason: `protocol '${protocol}' is not installed on target '${target}'` };
     }
     const ruleSet = getRuleSetAtPath(protocolPath, protocolDefinition.structure);
     if (ruleSet?.$role !== true) {
-      throw new Error(
-        `AgentDwnApi: recipientRolePublicKey was supplied but '${protocol}/${protocolPath}' is not a ` +
-        '$role path; role-audience delivery only applies to $role records.',
-      );
+      return { deliverable: false, reason: `'${protocol}/${protocolPath}' is not a $role path` };
     }
     if (ruleSet.$keyAgreement?.publicKeyJwk === undefined) {
-      throw new Error(
-        `AgentDwnApi: recipientRolePublicKey was supplied but '${protocol}/${protocolPath}' has no ` +
-        '$keyAgreement audience, so there is no delivery to wrap to the recipient.',
-      );
+      return { deliverable: false, reason: `'${protocol}/${protocolPath}' has no $keyAgreement audience` };
     }
+    return { deliverable: true, protocol, protocolPath, recipient };
   }
 
   /**
@@ -701,9 +717,11 @@ export class AgentDwnApi {
    * role record is stored before provisioning runs, a strict failure would leave a
    * holder that is authorized to read but can never decrypt — and one that cannot
    * be repaired by retry (a duplicate $role to the same recipient is rejected 400).
-   * So on a strict failure the just-accepted grant is compensating-deleted (making
-   * the write atomic and a fresh retry possible) and the error is rethrown loudly.
-   * Without a supplied key, delivery is best-effort and a failure is reported as
+   * So on a strict failure the just-accepted grant is compensating-deleted, which
+   * removes the read authorization and unblocks a fresh retry, before the error is
+   * rethrown loudly. (This rolls back the grant, not every side effect — a partially
+   * minted audience record may remain, but it is inert without the grant.) Without a
+   * supplied key, delivery is best-effort and a failure is reported as
    * `{ delivered: false, reason }`.
    */
   private async provisionAudienceKeyDeliveryForReply<T extends DwnInterface>(
@@ -720,15 +738,10 @@ export class AgentDwnApi {
 
     const recordsWrite = message as RecordsWriteMessage;
     try {
-      const outcome = await this.provisionAudienceKeyForAcceptedRoleRecord(request, recordsWrite);
-      // A supplied key asserts delivery MUST happen. The preflight already proved the
-      // path is a deliverable role recipient, so provisioning should never skip it —
-      // but if it ever returns `undefined` here, treat that as a strict failure (fall
-      // into the rollback below) rather than silently reporting success.
-      if (request.recipientRolePublicKey !== undefined && outcome === undefined) {
-        throw new Error('provisioning unexpectedly skipped delivery for the supplied recipient key');
-      }
-      return outcome;
+      // For a supplied key the preflight already proved the path is a deliverable role
+      // recipient (same resolveDeliverableRoleAudience check), so provisioning either
+      // delivers or throws — it cannot skip to `undefined` here.
+      return await this.provisionAudienceKeyForAcceptedRoleRecord(request, recordsWrite);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       if (request.recipientRolePublicKey !== undefined) {
@@ -736,9 +749,13 @@ export class AgentDwnApi {
         // just-accepted grant back so we neither leave a holder that can never
         // decrypt nor block a fresh retry, then surface the failure loudly.
         const rollback = await this.revokeAcceptedRoleRecord(request, recordsWrite);
+        const rollbackNote = rollback.rolledBack
+          ? 'the accepted grant was rolled back'
+          : `WARNING: ${rollback.warning}, so the undeliverable grant may still be present and must ` +
+            'be removed manually';
         throw new Error(
           `AgentDwnApi: role record '${recordsWrite.recordId}' was accepted, but provisioning its ` +
-          `role-audience key delivery to the supplied recipient key failed${rollback}: ${detail}`,
+          `role-audience key delivery to the supplied recipient key failed — ${rollbackNote}: ${detail}`,
           { cause: error instanceof Error ? error : undefined },
         );
       }
@@ -759,15 +776,15 @@ export class AgentDwnApi {
    * can safely retry the whole write (a leftover grant would block retry with a 400
    * duplicate-role). Reuses {@link processRequest} so the delete follows the same
    * local/remote routing, carrying the original write's authorization context
-   * (`protocolRole`, `permissionGrantId`, `delegatedGrant`). Returns a suffix for
-   * the thrown error describing the rollback outcome; a rollback that does not
-   * confirm (non-202 or throws) is reported as a leftover grant but never masks the
-   * original delivery failure.
+   * (`protocolRole`, `permissionGrantId`, `delegatedGrant`). Returns whether the
+   * grant was confirmed removed; a rollback that does not confirm (non-202 or
+   * throws) reports `warning` for the caller to surface, but never throws itself so
+   * it cannot mask the original delivery failure.
    */
   private async revokeAcceptedRoleRecord(
     request: ProcessDwnRequest<DwnInterface.RecordsWrite>,
     recordsWrite: RecordsWriteMessage,
-  ): Promise<string> {
+  ): Promise<{ rolledBack: true } | { rolledBack: false; warning: string }> {
     try {
       const { reply } = await this.processRequest({
         author        : request.author,
@@ -782,14 +799,12 @@ export class AgentDwnApi {
         },
       });
       if (reply.status.code === 202) {
-        return ' — the accepted grant was rolled back';
+        return { rolledBack: true };
       }
-      return ` — WARNING: rollback delete returned ${reply.status.code} (${reply.status.detail}); the ` +
-        'undeliverable grant may still be present and must be removed manually';
+      return { rolledBack: false, warning: `rollback delete returned ${reply.status.code} (${reply.status.detail})` };
     } catch (revokeError) {
       const revokeDetail = revokeError instanceof Error ? revokeError.message : String(revokeError);
-      return ` — WARNING: rollback delete threw '${revokeDetail}'; the undeliverable grant may still be ` +
-        'present and must be removed manually';
+      return { rolledBack: false, warning: `rollback delete threw '${revokeDetail}'` };
     }
   }
 
@@ -989,40 +1004,33 @@ export class AgentDwnApi {
   /**
    * Provisions role-audience key delivery for an accepted `$role` record write.
    *
-   * Returns `undefined` when the record is not a role record that needs delivery
-   * (the early guards below), or an {@link AudienceKeyDeliveryOutcome} with
-   * `delivered: true` on success. It does NOT decide strict-vs-best-effort: it
-   * simply throws if delivery cannot be provisioned, and the caller
-   * ({@link processRequest}) chooses whether to rethrow (a `recipientRolePublicKey`
-   * was supplied → delivery asserted) or record a best-effort skip.
+   * Returns `undefined` when the record is not a deliverable role audience (via the
+   * shared {@link resolveDeliverableRoleAudience} check — the best-effort skip), or
+   * an {@link AudienceKeyDeliveryOutcome} with `delivered: true` on success. It does
+   * NOT decide strict-vs-best-effort: it simply throws if delivery cannot be
+   * provisioned, and the caller ({@link processRequest}) chooses whether to rethrow
+   * (a `recipientRolePublicKey` was supplied → delivery asserted) or record a skip.
    */
   private async provisionAudienceKeyForAcceptedRoleRecord(
     request: ProcessDwnRequest<DwnInterface.RecordsWrite>,
     recordsWrite: RecordsWriteMessage,
   ): Promise<AudienceKeyDeliveryOutcome | undefined> {
     const descriptor = recordsWrite.descriptor;
-    if (descriptor.protocol === undefined ||
-        descriptor.protocolPath === undefined ||
-        descriptor.recipient === undefined) {
+    const resolved = await this.resolveDeliverableRoleAudience({
+      target       : request.target,
+      protocol     : descriptor.protocol,
+      protocolPath : descriptor.protocolPath,
+      recipient    : descriptor.recipient,
+      granteeDid   : request.granteeDid,
+    });
+    if (!resolved.deliverable) {
       return;
     }
+    const { protocol, protocolPath, recipient } = resolved;
 
-    const protocolDefinition = await this.getProtocolDefinition(request.target, descriptor.protocol, request.granteeDid);
-    if (protocolDefinition === undefined) {
-      return;
-    }
-
-    const ruleSet = getRuleSetAtPath(descriptor.protocolPath, protocolDefinition.structure);
-    if (ruleSet?.$role !== true) {
-      return;
-    }
-    if (ruleSet.$keyAgreement?.publicKeyJwk === undefined) {
-      return;
-    }
-
-    const contextId = getRoleAudienceContextId(descriptor.protocolPath, recordsWrite.contextId);
+    const contextId = getRoleAudienceContextId(protocolPath, recordsWrite.contextId);
     if (contextId === undefined) {
-      throw new Error(`AgentDwnApi: Unable to determine role audience context for '${descriptor.protocolPath}'.`);
+      throw new Error(`AgentDwnApi: Unable to determine role audience context for '${protocolPath}'.`);
     }
 
     const audienceKey = await this.getOrCreateAudienceKey({
@@ -1031,9 +1039,9 @@ export class AgentDwnApi {
       delegatedGrant    : request.messageParams?.delegatedGrant,
       granteeDid        : request.granteeDid,
       permissionGrantId : request.messageParams?.permissionGrantId,
-      protocol          : descriptor.protocol,
+      protocol,
       protocolRole      : request.messageParams?.protocolRole,
-      rolePath          : descriptor.protocolPath,
+      rolePath          : protocolPath,
       sourceDid         : request.target,
     });
     // Prefer a caller-supplied recipient role-path key. Endpoint-less recipients
@@ -1043,9 +1051,9 @@ export class AgentDwnApi {
     // recipient's installed protocol definition.
     const recipientRolePublicKey = request.recipientRolePublicKey
       ?? await this.getRecipientRolePublicKey({
-        protocol     : descriptor.protocol,
-        recipientDid : descriptor.recipient,
-        rolePath     : descriptor.protocolPath,
+        protocol,
+        recipientDid : recipient,
+        rolePath     : protocolPath,
       });
 
     await createAudienceDeliveryRecordFn({
@@ -1057,12 +1065,12 @@ export class AgentDwnApi {
       permissionGrantId  : request.messageParams?.permissionGrantId,
       protocolRole       : request.messageParams?.protocolRole,
       recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
-      recipientDid       : descriptor.recipient,
+      recipientDid       : recipient,
       recipientRolePublicKey,
       sourceDid          : request.target,
     });
 
-    return { delivered: true, recipientDid: descriptor.recipient };
+    return { delivered: true, recipientDid: recipient };
   }
 
   private async getRoleAudienceKeyEncryptionInputs(params: {
