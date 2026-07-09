@@ -143,10 +143,15 @@ describe('AuditLog — retention cleanup timer coverage', () => {
     const tmpDir = mkdtempSync(join(tmpdir(), 'audit-double-'));
     const dialect = await createMigratedFileDialect(`sqlite://${tmpDir}/double.db`);
 
+    const setIntervalSpy = sinon.spy(globalThis, 'setInterval');
     const auditLog = await AuditLog.create(dialect, {
       maxAgeDays : 1,
       maxRows    : 100,
     });
+
+    // Retention config starts exactly one cleanup interval — never a duplicate.
+    expect(setIntervalSpy.calledOnce).toBe(true);
+    setIntervalSpy.restore();
 
     await auditLog.close();
     rmSync(tmpDir, { recursive: true, force: true });

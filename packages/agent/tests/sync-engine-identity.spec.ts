@@ -387,8 +387,8 @@ describe('SyncEngineLevel — identity management', () => {
   describe('stopSync', () => {
     it('should stop when there is no sync in progress', async () => {
       const engine = new SyncEngineLevel({ db });
-      // Should not throw.
-      await engine.stopSync();
+      // With no sync running, stopSync resolves cleanly without throwing.
+      await expect(engine.stopSync()).resolves.toBeUndefined();
     });
 
     it('should throw when sync lock does not clear within timeout', async () => {

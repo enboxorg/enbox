@@ -2582,11 +2582,9 @@ describe('Encryption Callback Factories', () => {
       }
     });
 
-    it('should throw if keyAgreement key is not X25519', async () => {
-      // This test would require creating a DID with a non-X25519 keyAgreement key
-      // which is uncommon, so we'll skip implementation details for now
-      // In practice, X25519 is required for DWN encryption
-    });
+    // Unimplemented: exercising a non-X25519 keyAgreement key requires an unusual
+    // DID setup; X25519 is required for DWN encryption in practice.
+    it.todo('should throw if keyAgreement key is not X25519');
   });
 
   describe('getEncryptionKeyDeriver()', () => {

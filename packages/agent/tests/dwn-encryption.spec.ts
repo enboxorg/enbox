@@ -156,15 +156,18 @@ describe('dwn-encryption', () => {
       const request = { author: 'did:example:alice', target: 'did:example:alice' } as any;
       const reply = {} as any;
 
-      // Should not throw and should return without doing anything.
+      // No encryption flag: it returns immediately without mutating the reply.
       await maybeDecryptReply(request, reply, {} as any);
+      expect(reply).toEqual({});
     });
 
     it('should return immediately when encryption is false', async () => {
       const request = { author: 'did:example:alice', target: 'did:example:alice', encryption: false } as any;
       const reply = {} as any;
 
+      // encryption:false short-circuits the same way — the reply is left untouched.
       await maybeDecryptReply(request, reply, {} as any);
+      expect(reply).toEqual({});
     });
 
     it('should throw wrapped error when RecordsRead decryption fails', async () => {
