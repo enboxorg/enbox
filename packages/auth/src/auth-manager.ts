@@ -187,46 +187,12 @@ export class AuthManager {
     const storage = options.storage ?? createDefaultStorage();
     const dataPath = options.dataPath ?? 'DATA/AGENT';
 
-    // Run local DWN discovery BEFORE creating the agent. Discovery has
-    // zero vault/DWN dependencies — it reads the persisted pairing record
-    // and validates it via GET /info plus authenticated /local/status.
-    //
-    // A stored pairing alone is not enough to change the agent's storage mode:
-    // pairing establishes trust, while the ejection marker proves the local
-    // in-process DWN has drained to the paired node. Only then does the next
-    // session boot in remote mode.
-    let localDwnEndpoint: string | undefined;
-    let localDwnPairing: LocalDwnPairingRecord | undefined;
-    if (!options.agent && options.localDwnStrategy !== 'off') {
-      localDwnPairing = await discoverLocalDwnPairing(storage);
-      if (localDwnPairing !== undefined) {
-        const localDwnEjection = await readLocalDwnEjectionRecordForPairing(storage, localDwnPairing);
-        if (localDwnEjection?.version === 2) {
-          let proofIsValid = false;
-          try {
-            const inspection = await EnboxUserAgent.inspectLocalReplicaDrainProof({
-              dataPath,
-              proof: localDwnEjection.drainProof,
-            });
-            proofIsValid = inspection.valid;
-          } catch {
-            // Treat unreadable replica proof as invalid and boot locally.
-          }
-
-          if (proofIsValid) {
-            localDwnEndpoint = localDwnPairing.endpoint;
-          } else {
-            await clearLocalDwnEjection(storage);
-          }
-        } else if (localDwnEjection !== undefined) {
-          // Legacy endpoint-only markers are not proof of this replica.
-          await clearLocalDwnEjection(storage);
-        }
-      }
-      // NOTE: We intentionally do NOT emit 'local-dwn-available' here
-      // because event listeners aren't attached yet. Consumers should
-      // check `authManager.localDwnEndpoint` after create() returns.
-    }
+    const { localDwnEndpoint, localDwnPairing } = await AuthManager._resolveLocalDwnBootState({
+      agent            : options.agent,
+      dataPath,
+      localDwnStrategy : options.localDwnStrategy,
+      storage,
+    });
 
     // Use a pre-built agent or create one with the given options.
     const userAgent = options.agent ?? await EnboxUserAgent.create({
@@ -1463,6 +1429,64 @@ export class AuthManager {
     }
 
     await this._registerOrUpdateSyncIdentity(connectedDid, delegateDid, narrowed);
+  }
+
+  /** Resolve whether a persisted local-node pairing can safely authorize remote-mode boot. */
+  private static async _resolveLocalDwnBootState({
+    agent,
+    dataPath,
+    localDwnStrategy,
+    storage,
+  }: {
+    agent: AuthManagerOptions['agent'];
+    dataPath: string;
+    localDwnStrategy: AuthManagerOptions['localDwnStrategy'];
+    storage: StorageAdapter;
+  }): Promise<{
+    localDwnEndpoint?: string;
+    localDwnPairing?: LocalDwnPairingRecord;
+  }> {
+    if (agent || localDwnStrategy === 'off') {
+      return {};
+    }
+
+    // Discovery has no vault/DWN dependency, so it must complete before the
+    // agent is created. Pairing establishes trust; only a valid v2 proof
+    // establishes that the exact in-process replica was safely drained.
+    const localDwnPairing = await discoverLocalDwnPairing(storage);
+    if (localDwnPairing === undefined) {
+      return {};
+    }
+
+    const ejection = await readLocalDwnEjectionRecordForPairing(storage, localDwnPairing);
+    if (
+      ejection?.version === 2
+      && await AuthManager._isLocalReplicaDrainProofValid(dataPath, ejection.drainProof)
+    ) {
+      return { localDwnEndpoint: localDwnPairing.endpoint, localDwnPairing };
+    }
+
+    if (ejection !== undefined) {
+      // Invalid/unreadable v2 proofs and legacy endpoint-only v1 markers can
+      // never authorize remote mode. Preserve the pairing for a future eject.
+      await clearLocalDwnEjection(storage);
+    }
+
+    // NOTE: We intentionally do NOT emit 'local-dwn-available' here because
+    // event listeners are not attached until after create() returns.
+    return { localDwnPairing };
+  }
+
+  private static async _isLocalReplicaDrainProofValid(
+    dataPath: string,
+    proof: LocalReplicaDrainProof,
+  ): Promise<boolean> {
+    try {
+      const inspection = await EnboxUserAgent.inspectLocalReplicaDrainProof({ dataPath, proof });
+      return inspection.valid;
+    } catch {
+      return false;
+    }
   }
 
   private static _createLocalReplicaDrainProof(

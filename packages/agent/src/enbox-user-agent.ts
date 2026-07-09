@@ -21,6 +21,7 @@ import { DwnIdentityStore } from './store-identity.js';
 import { DwnKeyStore } from './store-key.js';
 import { EnboxRpcClient } from '@enbox/dwn-clients';
 import { HdIdentityVault } from './hd-identity-vault.js';
+import { lexicographicalCompare } from './types/sync.js';
 import { LocalKeyManager } from './local-key-manager.js';
 import { Replication } from '@enbox/dwn-sdk-js';
 import { DidDht, DidJwk } from '@enbox/dids';
@@ -316,7 +317,8 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
         EnboxUserAgent.assertLocalReplicaFeedHead(target, bounds?.latest);
       }
 
-      for await (const _entry of resumableTaskStore.db.iterator()) {
+      const hasPendingTask = await EnboxUserAgent.hasIteratorEntry(resumableTaskStore.db.iterator({ limit: 1 }));
+      if (hasPendingTask) {
         throw new LocalReplicaDrainProofMismatch('local replica has a pending resumable task');
       }
 
@@ -331,7 +333,8 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
       };
     }
 
-    const closeResults = await Promise.allSettled(stores.reverse().map((store): Promise<void> => store.close()));
+    stores.reverse();
+    const closeResults = await Promise.allSettled(stores.map((store): Promise<void> => store.close()));
     const closeFailure = closeResults.find((closeResult): closeResult is PromiseRejectedResult => closeResult.status === 'rejected');
     if (closeFailure !== undefined) {
       const detail = closeFailure.reason instanceof Error ? closeFailure.reason.message : String(closeFailure.reason);
@@ -371,8 +374,6 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
       }
       targetKeys.add(targetKey);
     }
-
-    return;
   }
 
   private static invalidLocalReplicaDrainTargetProofReason(
@@ -414,14 +415,12 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
         || typeof epoch !== 'string'
         || epoch.length === 0
         || typeof position !== 'string'
-        || !/^(0|[1-9][0-9]*)$/.test(position)
+        || !/^(?:0|[1-9]\d*)$/.test(position)
         || (messageCid !== undefined && (typeof messageCid !== 'string' || messageCid.length === 0))
       ) {
         return `target for tenant '${target.tenantDid}' has an invalid pushCheckpoint`;
       }
     }
-
-    return;
   }
 
   private static localReplicaDrainTargetKey(target: LocalReplicaDrainTargetProof): string {
@@ -450,15 +449,21 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
       return 'protocols must contain non-empty strings';
     }
 
-    const canonicalProtocols = [...new Set(scope.protocols)].sort();
+    const canonicalProtocols = [...new Set(scope.protocols)].sort(lexicographicalCompare);
     if (
       canonicalProtocols.length !== scope.protocols.length
       || canonicalProtocols.some((protocol: string, index: number): boolean => protocol !== scope.protocols[index])
     ) {
       return 'protocols must be sorted and duplicate-free';
     }
+  }
 
-    return;
+  private static async hasIteratorEntry<T>(iterator: AsyncGenerator<T>): Promise<boolean> {
+    try {
+      return !(await iterator.next()).done;
+    } finally {
+      await iterator.return(undefined);
+    }
   }
 
   private static assertLocalReplicaSyncSnapshot(

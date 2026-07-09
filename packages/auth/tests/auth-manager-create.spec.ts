@@ -406,6 +406,54 @@ describe('AuthManager.create()', () => {
     expect(await readLocalDwnEjectionRecord(storage)).toBeUndefined();
   });
 
+  test('falls back to local mode when late v2 proof inspection throws', async () => {
+    const storage = await createEjectedLocalNodeStorage();
+    stubPairedLocalNodeFetch();
+    inspectLocalReplicaDrainProofStub.rejects(new Error('proof store unavailable'));
+
+    let capturedOptions: any;
+    userAgentCreateStub.onFirstCall().callsFake((...args: any[]): any => {
+      capturedOptions = args[0];
+      return Promise.resolve(createMockAgent());
+    });
+
+    const manager = await AuthManager.create({ storage });
+
+    expect(capturedOptions.localDwnEndpoint).toBeUndefined();
+    expect(capturedOptions.rpcClient).toBeUndefined();
+    expect(manager.localDwnEndpoint).toBeUndefined();
+    expect(await readLocalDwnPairingRecord(storage)).toBeDefined();
+    expect(await readLocalDwnEjectionRecord(storage)).toBeUndefined();
+  });
+
+  test('bypasses local-node proof resolution for supplied agents and strategy off', async () => {
+    const customAgentStorage = await createEjectedLocalNodeStorage();
+    const customAgent = createMockAgent({ vaultIsInitialized: async () => false });
+
+    const customManager = await AuthManager.create({
+      agent   : customAgent as any,
+      storage : customAgentStorage,
+    });
+
+    expect(customManager.agent).toBe(customAgent);
+    expect(inspectLocalReplicaDrainProofStub.called).toBe(false);
+    expect(await readLocalDwnEjectionRecord(customAgentStorage)).toBeDefined();
+
+    const disabledStorage = await createEjectedLocalNodeStorage();
+    let capturedOptions: any;
+    userAgentCreateStub.onFirstCall().callsFake((...args: any[]): any => {
+      capturedOptions = args[0];
+      return Promise.resolve(createMockAgent());
+    });
+
+    await AuthManager.create({ localDwnStrategy: 'off', storage: disabledStorage });
+
+    expect(inspectLocalReplicaDrainProofStub.called).toBe(false);
+    expect(capturedOptions.localDwnEndpoint).toBeUndefined();
+    expect(capturedOptions.rpcClient).toBeUndefined();
+    expect(await readLocalDwnEjectionRecord(disabledStorage)).toBeDefined();
+  });
+
   test('falls back to an in-process agent without discarding an unavailable pairing', async () => {
     const storage = new MemoryStorage();
     const pairing = {
