@@ -286,9 +286,7 @@ export class LocalNode {
     try {
       await processing;
     } finally {
-      if (this.#pairingBrokerProcessing === processing) {
-        this.#pairingBrokerProcessing = undefined;
-      }
+      this.#pairingBrokerProcessing = undefined;
     }
   }
 

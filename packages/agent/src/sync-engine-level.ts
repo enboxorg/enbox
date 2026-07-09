@@ -1168,7 +1168,7 @@ export class SyncEngineLevel implements SyncEngine {
         scope             : target.scope,
         completed         : error === undefined,
         cancelled         : stopReason === 'cancelled',
-        converged         : result.converged === true && link.status !== 'paused' && !feedHeadChanged && stopReason === undefined,
+        converged         : SyncEngineLevel.drainConverged(result, link.status === 'paused', feedHeadChanged, stopReason),
         pushCheckpoint    : link.push.contiguousAppliedToken,
         localFingerprint  : result.localFingerprint,
         remoteFingerprint : result.remoteFingerprint,
@@ -1233,6 +1233,15 @@ export class SyncEngineLevel implements SyncEngine {
     if (result.converged !== true) {
       return 'feed fingerprints did not converge';
     }
+  }
+
+  private static drainConverged(
+    result: SyncReconcileResult,
+    paused: boolean,
+    feedHeadChanged: boolean,
+    stopReason: SyncDrainStopReason | undefined,
+  ): boolean {
+    return result.converged === true && !paused && !feedHeadChanged && stopReason === undefined;
   }
 
   private static stoppedDrainTarget(target: SyncTarget, stopReason: SyncDrainStopReason): SyncDrainTargetResult {
