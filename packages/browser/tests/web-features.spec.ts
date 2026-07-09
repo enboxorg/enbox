@@ -591,7 +591,7 @@ describe('web features', () => {
       consoleErrorSpy.mockRestore();
     });
 
-    it('should not register when no installUrl is available', async () => {
+    it('should register using the import.meta.url fallback when no script src is available', async () => {
       const originalSW = navigator.serviceWorker;
 
       const registerMock = mock(() => Promise.resolve({} as ServiceWorkerRegistration));
@@ -603,13 +603,15 @@ describe('web features', () => {
         configurable : true,
       });
 
-      // No path — document.currentScript is null in test context
+      // document.currentScript is null in this context, so the install URL falls
+      // back to import.meta.url (always defined for the served module).
       activatePolyfills({ serviceWorker: true, injectStyles: false, links: false });
 
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      // With no install URL available, registration must never be attempted.
-      expect(registerMock).not.toHaveBeenCalled();
+      // No existing registration + a resolvable module URL => registration is attempted.
+      expect(getRegistrationMock).toHaveBeenCalled();
+      expect(registerMock).toHaveBeenCalled();
 
       Object.defineProperty(navigator, 'serviceWorker', {
         value        : originalSW,
