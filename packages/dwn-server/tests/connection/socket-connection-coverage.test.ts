@@ -232,8 +232,10 @@ describe('SocketConnection — overflow callback coverage', () => {
       const socket = createMockSocket();
       const connection = new SocketConnection(socket, dwn);
 
-      // Should not throw.
-      connection.ackSubscription('nonexistent', { streamId: 's1', epoch: 'e1', position: '1', messageCid: 'cid-1' });
+      // Acking an unknown subscription is a no-op: it must not throw and must
+      // not register anything.
+      expect(() => connection.ackSubscription('nonexistent', { streamId: 's1', epoch: 'e1', position: '1', messageCid: 'cid-1' })).not.toThrow();
+      expect(connection.subscriptionCount).toBe(0);
 
       await connection.close();
     });

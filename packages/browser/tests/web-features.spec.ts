@@ -296,10 +296,10 @@ describe('web features', () => {
 
   describe('context menu handling', () => {
     it('should handle pointercancel event without error', async () => {
-      document.dispatchEvent(new PointerEvent('pointercancel', {
+      expect(() => document.dispatchEvent(new PointerEvent('pointercancel', {
         bubbles    : true,
         cancelable : true,
-      }));
+      }))).not.toThrow();
       await new Promise((resolve) => setTimeout(resolve, 50));
     });
 
@@ -307,13 +307,13 @@ describe('web features', () => {
       const div = document.createElement('div');
       document.body.appendChild(div);
 
-      div.dispatchEvent(new PointerEvent('pointerdown', {
+      expect(() => div.dispatchEvent(new PointerEvent('pointerdown', {
         bubbles     : true,
         cancelable  : true,
         button      : 2,
         pointerType : 'mouse',
         composed    : true,
-      }));
+      }))).not.toThrow();
       await new Promise((resolve) => setTimeout(resolve, 50));
       div.remove();
     });
@@ -591,7 +591,7 @@ describe('web features', () => {
       consoleErrorSpy.mockRestore();
     });
 
-    it('should not register when no installUrl is available', async () => {
+    it('should register using the import.meta.url fallback when no script src is available', async () => {
       const originalSW = navigator.serviceWorker;
 
       const registerMock = mock(() => Promise.resolve({} as ServiceWorkerRegistration));
@@ -603,10 +603,15 @@ describe('web features', () => {
         configurable : true,
       });
 
-      // No path — document.currentScript is null in test context
+      // document.currentScript is null in this context, so the install URL falls
+      // back to import.meta.url (always defined for the served module).
       activatePolyfills({ serviceWorker: true, injectStyles: false, links: false });
 
       await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // No existing registration + a resolvable module URL => registration is attempted.
+      expect(getRegistrationMock).toHaveBeenCalled();
+      expect(registerMock).toHaveBeenCalled();
 
       Object.defineProperty(navigator, 'serviceWorker', {
         value        : originalSW,

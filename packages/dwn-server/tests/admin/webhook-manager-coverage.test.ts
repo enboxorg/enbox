@@ -45,13 +45,15 @@ describe('WebhookManager — error path coverage', () => {
       });
 
       // Stub fetch to reject (simulating network error).
-      sinon.stub(globalThis, 'fetch').rejects(new Error('connection refused'));
+      const fetchStub = sinon.stub(globalThis, 'fetch').rejects(new Error('connection refused'));
 
       // `fire()` is fire-and-forget — it should NOT throw.
-      manager.fire('test.event', 'did:test:target');
+      expect(() => manager.fire('test.event', 'did:test:target')).not.toThrow();
 
-      // Give async dispatch time to run.
+      // Give async dispatch time to run, then confirm delivery was attempted and
+      // the rejection was swallowed by the catch path rather than surfaced.
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
+      expect(fetchStub.called).toBe(true);
     });
   });
 
@@ -68,15 +70,16 @@ describe('WebhookManager — error path coverage', () => {
       });
 
       // Stub fetch to always fail.
-      sinon.stub(globalThis, 'fetch').rejects(new Error('network error'));
+      const fetchStub = sinon.stub(globalThis, 'fetch').rejects(new Error('network error'));
 
       // Fire the event — the #deliver catch path (line 159) should handle it.
-      freshManager.fire('test.fail', 'did:test:fail-target');
+      expect(() => freshManager.fire('test.fail', 'did:test:fail-target')).not.toThrow();
 
       // Wait for the delivery attempts (including retries) to complete.
       // Retry delays: 1000, 5000, 15000 — total ~21s. We use a shorter timeout
       // since the retries will all fail fast with our stub.
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 25_000));
+      expect(fetchStub.called).toBe(true);
 
       await freshManager.close();
       rmSync(freshTmpDir, { recursive: true, force: true });
@@ -92,11 +95,12 @@ describe('WebhookManager — error path coverage', () => {
         events : ['error.*'],
       });
 
-      sinon.stub(globalThis, 'fetch').resolves(new Response(null, { status: 500 }));
+      const fetchStub = sinon.stub(globalThis, 'fetch').resolves(new Response(null, { status: 500 }));
 
-      freshManager.fire('error.test', 'did:test:500-target');
+      expect(() => freshManager.fire('error.test', 'did:test:500-target')).not.toThrow();
 
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 25_000));
+      expect(fetchStub.called).toBe(true);
 
       await freshManager.close();
       rmSync(freshTmpDir, { recursive: true, force: true });

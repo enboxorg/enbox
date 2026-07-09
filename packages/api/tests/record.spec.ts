@@ -761,7 +761,7 @@ describe('Record', () => {
     expect(record.id).toBe(recordsWrite.message.recordId);
     expect(record.encryption).toBeDefined();
     expect(record.encryption).toEqual(recordsWrite.message.encryption);
-    expect(record.encryption!.keyEncryption.find(r => r.derivationScheme === DwnKeyDerivationScheme.ProtocolPath));
+    expect(record.encryption!.keyEncryption.find(r => r.derivationScheme === DwnKeyDerivationScheme.ProtocolPath)).toBeDefined();
     expect(record.attestation).toBeDefined();
     expect(record.attestation).toHaveProperty('signatures');
 
@@ -2451,7 +2451,7 @@ describe('Record', () => {
       expect(record.id).toBe(recordsWrite.message.recordId);
       expect(record.encryption).toBeDefined();
       expect(record.encryption).toEqual(recordsWrite.message.encryption);
-      expect(record.encryption!.keyEncryption.find(r => r.derivationScheme === DwnKeyDerivationScheme.ProtocolPath));
+      expect(record.encryption!.keyEncryption.find(r => r.derivationScheme === DwnKeyDerivationScheme.ProtocolPath)).toBeDefined();
       expect(record.attestation).toBeDefined();
       expect(record.attestation).toHaveProperty('signatures');
 

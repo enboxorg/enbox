@@ -2411,7 +2411,7 @@ export function testRecordsQueryHandler(): void {
           }
         }
         expect(results).toHaveLength(messages.length);
-        expect(messages.every(({ message }) => results.map(e => (e as RecordsWriteMessage).recordId).includes(message.recordId)));
+        expect(messages.every(({ message }) => results.map(e => (e as RecordsWriteMessage).recordId).includes(message.recordId))).toBe(true);
       });
 
       it('should paginate all records in descending order', async () => {
@@ -2453,7 +2453,7 @@ export function testRecordsQueryHandler(): void {
           }
         }
         expect(results).toHaveLength(messages.length);
-        expect(messages.every(({ message }) => results.map(e => (e as RecordsWriteMessage).recordId).includes(message.recordId)));
+        expect(messages.every(({ message }) => results.map(e => (e as RecordsWriteMessage).recordId).includes(message.recordId))).toBe(true);
       });
 
       it('should allow an anonymous unauthenticated query to return published records', async () => {
@@ -3126,7 +3126,7 @@ export function testRecordsQueryHandler(): void {
         const compareRecordId = (a: GenericMessage, b:GenericMessage): boolean => {
           return (a as RecordsWriteMessage).recordId === (b as RecordsWriteMessage).recordId;
         };
-        expect(sortedMessages.every((m, i) => compareRecordId(aliceRetrieved.at(i)!, m)));
+        expect(sortedMessages.every((m, i) => compareRecordId(aliceRetrieved.at(i)!, m))).toBe(true);
 
         const bobs = (m: RecordsWriteMessage): boolean => {
           return m.descriptor.recipient === bob.did || m.descriptor.published === true || Message.getSigner(m) === bob.did;
@@ -3162,7 +3162,7 @@ export function testRecordsQueryHandler(): void {
         expect(results.cursor, 'bob page 2 cursor').toBeUndefined();
         bobRetrieved.push(...results.entries!);
 
-        expect(bobSorted.every((m, i) => compareRecordId(bobRetrieved.at(i)!, m)));
+        expect(bobSorted.every((m, i) => compareRecordId(bobRetrieved.at(i)!, m))).toBe(true);
       });
 
       // https://github.com/enboxorg/enbox/issues/170

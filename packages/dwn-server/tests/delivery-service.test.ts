@@ -51,7 +51,7 @@ describe('DeliveryService', () => {
   });
 
   describe('dispatchIfNeeded', () => {
-    it('should not dispatch for non-202 status codes', () => {
+    it('should not dispatch for non-202 status codes', async () => {
       const testConfig: DwnServerConfig = {
         ...config,
         forwardingEnabled : true,
@@ -60,6 +60,7 @@ describe('DeliveryService', () => {
 
       const didResolver = new UniversalResolver({ didResolvers: [DidKey] });
       const service = DeliveryService.create(dwn, didResolver, testConfig);
+      const resolveSpy = sinon.spy(didResolver, 'resolve');
 
       const message: GenericMessage = {
         descriptor: {
@@ -69,13 +70,17 @@ describe('DeliveryService', () => {
         },
       } as GenericMessage;
 
-      // Should not throw or trigger any async work for non-202
+      // Non-202 status codes must short-circuit before any dispatch is scheduled.
       service.dispatchIfNeeded('did:key:test', message, 400);
       service.dispatchIfNeeded('did:key:test', message, 409);
       service.dispatchIfNeeded('did:key:test', message, 500);
+
+      // Dispatch resolves DIDs to find endpoints; a short-circuit never resolves.
+      await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 10));
+      expect(resolveSpy.called).toBe(false);
     });
 
-    it('should not dispatch for non-Records interfaces', () => {
+    it('should not dispatch for non-Records interfaces', async () => {
       const testConfig: DwnServerConfig = {
         ...config,
         forwardingEnabled : true,
@@ -84,6 +89,7 @@ describe('DeliveryService', () => {
 
       const didResolver = new UniversalResolver({ didResolvers: [DidKey] });
       const service = DeliveryService.create(dwn, didResolver, testConfig);
+      const resolveSpy = sinon.spy(didResolver, 'resolve');
 
       const message: GenericMessage = {
         descriptor: {
@@ -93,11 +99,14 @@ describe('DeliveryService', () => {
         },
       } as GenericMessage;
 
-      // Should not throw or trigger any async work for Protocols interface
+      // A Protocols interface must short-circuit before any dispatch is scheduled.
       service.dispatchIfNeeded('did:key:test', message, 202);
+
+      await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 10));
+      expect(resolveSpy.called).toBe(false);
     });
 
-    it('should not dispatch for Records.Query or Records.Read', () => {
+    it('should not dispatch for Records.Query or Records.Read', async () => {
       const testConfig: DwnServerConfig = {
         ...config,
         forwardingEnabled : true,
@@ -106,6 +115,7 @@ describe('DeliveryService', () => {
 
       const didResolver = new UniversalResolver({ didResolvers: [DidKey] });
       const service = DeliveryService.create(dwn, didResolver, testConfig);
+      const resolveSpy = sinon.spy(didResolver, 'resolve');
 
       const queryMessage: GenericMessage = {
         descriptor: {
@@ -125,9 +135,13 @@ describe('DeliveryService', () => {
 
       service.dispatchIfNeeded('did:key:test', queryMessage, 202);
       service.dispatchIfNeeded('did:key:test', readMessage, 202);
+
+      // Query/Read are not forwarded, so no dispatch (and no DID resolution) happens.
+      await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 10));
+      expect(resolveSpy.called).toBe(false);
     });
 
-    it('should not dispatch when forwarding and delivery are both disabled', () => {
+    it('should not dispatch when forwarding and delivery are both disabled', async () => {
       const testConfig: DwnServerConfig = {
         ...config,
         forwardingEnabled : false,
@@ -136,6 +150,7 @@ describe('DeliveryService', () => {
 
       const didResolver = new UniversalResolver({ didResolvers: [DidKey] });
       const service = DeliveryService.create(dwn, didResolver, testConfig);
+      const resolveSpy = sinon.spy(didResolver, 'resolve');
 
       const message: GenericMessage = {
         descriptor: {
@@ -146,8 +161,11 @@ describe('DeliveryService', () => {
         },
       } as GenericMessage;
 
-      // Should return immediately without any async dispatch
+      // With both features disabled, nothing is scheduled and no DID is resolved.
       service.dispatchIfNeeded('did:key:test', message, 202);
+
+      await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 10));
+      expect(resolveSpy.called).toBe(false);
     });
   });
 
@@ -414,7 +432,7 @@ describe('DeliveryService', () => {
      * processed on the sender is forwarded (real fetch, no stubs) to a running
      * receiver `DwnServer`, then read back from the receiver with the data.
      */
-    async function forwardAndReadBack(data: Uint8Array): Promise<void> {
+    async function forwardAndReadBack(data: Uint8Array): Promise<Uint8Array> {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice, { data });
 
@@ -476,19 +494,23 @@ describe('DeliveryService', () => {
       expect(readReply.status.code).toBe(200);
       expect(readReply.entry?.data).toBeDefined();
       const receivedBytes = new Uint8Array(await new Response(readReply.entry?.data).arrayBuffer());
-      expect(receivedBytes).toEqual(data);
 
       await receiverServer.stop();
       await receiverDwn.close();
       await senderDwn.close();
+
+      // Returned so each test asserts the round-tripped bytes directly.
+      return receivedBytes;
     }
 
     it('should replicate a small record with its data to the receiving server', async () => {
-      await forwardAndReadBack(randomBytes(256));
+      const data = randomBytes(256);
+      expect(await forwardAndReadBack(data)).toEqual(data);
     }, 15_000);
 
     it('should replicate a large record with its data to the receiving server', async () => {
-      await forwardAndReadBack(randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1_000));
+      const data = randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1_000);
+      expect(await forwardAndReadBack(data)).toEqual(data);
     }, 15_000);
   });
 
