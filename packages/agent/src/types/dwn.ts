@@ -1,4 +1,5 @@
 import type { DidService } from '@enbox/dids';
+import type { PublicKeyJwk } from '@enbox/crypto';
 import type { RequireOnly } from '@enbox/common';
 
 import type {
@@ -199,14 +200,80 @@ export type ProcessDwnRequest<T extends DwnInterface> = DwnRequest<T> & {
    * Requires the identity to have an X25519 keyAgreement key.
    */
   encryption?: boolean;
+  /**
+   * The recipient's role-path public key for this write, at the record's own
+   * `protocolPath`. When writing a `$role` record with a `recipient`, the agent
+   * provisions a `$encryption/delivery` record wrapping the role-audience key to
+   * this key.
+   *
+   * Supply it for recipients that publish no resolvable DWN endpoint (e.g. a bare
+   * `did:jwk` running in "remote-only" mode): the recipient's role-path key is a
+   * hardened derivation of its own encryption root, so only the recipient can
+   * produce it and the agent cannot discover it by resolving the recipient's DID.
+   * The recipient computes this public key locally and carries it out of band —
+   * e.g. in a signed join request — for the owner to supply here.
+   *
+   * Supplying this key asserts that delivery MUST succeed: if the delivery cannot
+   * be provisioned, the write throws. When omitted, delivery is best-effort — the
+   * agent resolves the recipient's key from its installed protocol definition
+   * (local, then via the recipient's DWN), and a recipient whose key cannot be
+   * resolved is reported via {@link DwnResponse.audienceKeyDelivery} with
+   * `delivered: false` rather than failing the write.
+   *
+   * The agent validates the key's shape and usability, but NOT that it truly belongs
+   * to the recipient — that binding rests entirely on the out-of-band channel the
+   * caller trusts (e.g. the signed join request). The caller owns key authenticity.
+   * Not supported on grant-authorized writes (`permissionGrantId`/`delegatedGrant`),
+   * which cannot roll back a strict failure.
+   */
+  recipientRolePublicKey?: PublicKeyJwk;
 };
 
 export type SendDwnRequest<T extends DwnInterface> = DwnRequest<T> & (ProcessDwnRequest<T> | { messageCid: string });
+
+/**
+ * Outcome of role-audience key delivery provisioning for an accepted `$role`
+ * record write. Surfaced on {@link DwnResponse.audienceKeyDelivery} so a skipped
+ * best-effort delivery is visible and inspectable instead of silently swallowed.
+ */
+export type AudienceKeyDeliveryOutcome =
+  | {
+      /** A `$encryption/delivery` record was written for the recipient. */
+      delivered: true;
+
+      /** The recipient the role-audience key was delivered to. */
+      recipientDid: string;
+    }
+  | {
+      /** No `$encryption/delivery` record was written for the recipient. */
+      delivered: false;
+
+      /** The recipient the role-audience key was NOT delivered to. */
+      recipientDid: string;
+
+      /**
+       * Why best-effort delivery was skipped — e.g. the recipient publishes no
+       * resolvable DWN endpoint and supplied no `recipientRolePublicKey`.
+       * Required on the failure branch. (A supplied key that fails to deliver
+       * throws rather than surfacing here.)
+       */
+      reason: string;
+    };
 
 export type DwnResponse<T extends DwnInterface> = {
   message?: DwnMessage[T];
   messageCid: string;
   reply: DwnMessageReply[T];
+
+  /**
+   * Present only for accepted `$role` record writes that triggered role-audience
+   * key delivery provisioning. Reports whether the recipient's
+   * `$encryption/delivery` record was written. On the best-effort path (no
+   * `recipientRolePublicKey` supplied), a recipient whose key could not be
+   * resolved is reported here with `delivered: false` instead of failing the
+   * write. A supplied key that fails to deliver throws instead of surfacing here.
+   */
+  audienceKeyDelivery?: AudienceKeyDeliveryOutcome;
 };
 
 /**
