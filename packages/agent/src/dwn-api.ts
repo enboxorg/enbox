@@ -44,13 +44,14 @@ import {
   ROLE_AUDIENCE_DERIVATION_SCHEME,
   Time,
 } from '@enbox/dwn-sdk-js';
-import { Convert, logger, TtlCache } from '@enbox/common';
+import { Convert, TtlCache } from '@enbox/common';
 import { DidDht, DidJwk, UniversalResolver } from '@enbox/dids';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { LocalDwnStrategy } from './local-dwn.js';
 import type { AudienceDecryptionKeyEntry, AudienceKeyPayload, DelegateDecryptionKeyEntry } from './dwn-encryption.js';
 import type {
+  AudienceKeyDeliveryOutcome,
   DwnMessage,
   DwnMessageInstance,
   DwnMessageParams,
@@ -528,19 +529,41 @@ export class AgentDwnApi {
       });
     }
 
+    let audienceKeyDelivery: AudienceKeyDeliveryOutcome | undefined;
     if (reply.status.code === 202 &&
         isDwnRequest(request, DwnInterface.RecordsWrite) &&
         !request.rawMessage) {
       try {
-        await this.provisionAudienceKeyForAcceptedRoleRecord(
+        audienceKeyDelivery = await this.provisionAudienceKeyForAcceptedRoleRecord(
           request,
           message as RecordsWriteMessage,
         );
       } catch (error) {
-        logger.log(
-          `AgentDwnApi: audience delivery provisioning failed after accepting role record '${(message as RecordsWriteMessage).recordId}': ` +
-          `${error instanceof Error ? error.message : String(error)}`
-        );
+        const recipientDid = (message as RecordsWriteMessage).descriptor.recipient;
+        if (request.recipientRolePublicKey !== undefined) {
+          // Strict path: the caller supplied the recipient's role-path key,
+          // asserting that delivery MUST succeed. A failure here means an
+          // accepted `$role` record whose audience key cannot reach the
+          // recipient — surface it loudly at write/approval time rather than
+          // leaving a role holder that can never decrypt.
+          throw new Error(
+            `AgentDwnApi: role record '${(message as RecordsWriteMessage).recordId}' was accepted, but ` +
+            `provisioning its role-audience key delivery to the supplied recipient key failed, so the ` +
+            `recipient will not be able to decrypt: ${error instanceof Error ? error.message : String(error)}`,
+            { cause: error instanceof Error ? error : undefined },
+          );
+        }
+        // Best-effort path: no recipient key was supplied. A recipient whose
+        // role-path key cannot be resolved (e.g. a DWN-less `did:jwk` that
+        // publishes no endpoint and supplied no key) simply cannot receive a
+        // delivery — but the `$role` write itself is valid. Report the outcome
+        // on the response so it is visible and inspectable, instead of either
+        // swallowing it silently or failing an otherwise-valid write.
+        audienceKeyDelivery = {
+          delivered    : false,
+          recipientDid : recipientDid ?? '',
+          reason       : error instanceof Error ? error.message : String(error),
+        };
       }
     }
 
@@ -552,6 +575,7 @@ export class AgentDwnApi {
       reply,
       message,
       messageCid: await Message.getCid(message),
+      ...(audienceKeyDelivery ? { audienceKeyDelivery } : {}),
     };
   }
 
@@ -738,10 +762,20 @@ export class AgentDwnApi {
     throw new Error(`Failed to send DWN RPC request: ${JSON.stringify(errorMessages)}`);
   }
 
+  /**
+   * Provisions role-audience key delivery for an accepted `$role` record write.
+   *
+   * Returns `undefined` when the record is not a role record that needs delivery
+   * (the early guards below), or an {@link AudienceKeyDeliveryOutcome} with
+   * `delivered: true` on success. It does NOT decide strict-vs-best-effort: it
+   * simply throws if delivery cannot be provisioned, and the caller
+   * ({@link processRequest}) chooses whether to rethrow (a `recipientRolePublicKey`
+   * was supplied → delivery asserted) or record a best-effort skip.
+   */
   private async provisionAudienceKeyForAcceptedRoleRecord(
     request: ProcessDwnRequest<DwnInterface.RecordsWrite>,
     recordsWrite: RecordsWriteMessage,
-  ): Promise<void> {
+  ): Promise<AudienceKeyDeliveryOutcome | undefined> {
     const descriptor = recordsWrite.descriptor;
     if (descriptor.protocol === undefined ||
         descriptor.protocolPath === undefined ||
@@ -778,11 +812,17 @@ export class AgentDwnApi {
       rolePath          : descriptor.protocolPath,
       sourceDid         : request.target,
     });
-    const recipientRolePublicKey = await this.getRecipientRolePublicKey({
-      protocol     : descriptor.protocol,
-      recipientDid : descriptor.recipient,
-      rolePath     : descriptor.protocolPath,
-    });
+    // Prefer a caller-supplied recipient role-path key. Endpoint-less recipients
+    // (e.g. a bare `did:jwk` in "remote-only" mode) publish no DWN to resolve, so
+    // the caller — which learned the key out of band (e.g. from the recipient's
+    // enrollment request) — supplies it here. Otherwise resolve it from the
+    // recipient's installed protocol definition.
+    const recipientRolePublicKey = request.recipientRolePublicKey
+      ?? await this.getRecipientRolePublicKey({
+        protocol     : descriptor.protocol,
+        recipientDid : descriptor.recipient,
+        rolePath     : descriptor.protocolPath,
+      });
 
     await createAudienceDeliveryRecordFn({
       agent              : this.agent,
@@ -797,6 +837,8 @@ export class AgentDwnApi {
       recipientRolePublicKey,
       sourceDid          : request.target,
     });
+
+    return { delivered: true, recipientDid: descriptor.recipient };
   }
 
   private async getRoleAudienceKeyEncryptionInputs(params: {

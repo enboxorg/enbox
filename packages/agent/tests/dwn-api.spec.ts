@@ -4178,7 +4178,7 @@ describe('Role record write behavior', () => {
     }
   }, 10000);
 
-  it('should accept a role record when audience key delivery is retryable', async () => {
+  it('records a best-effort skip (no throw) when no key is supplied and the recipient key cannot be resolved', async () => {
     const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
     const roleKeyLookupStub = sinon.stub(testHarness.agent.dwn as any, 'getRecipientRolePublicKey')
       .rejects(new Error('recipient protocol not installed'));
@@ -4201,11 +4201,17 @@ describe('Role record write behavior', () => {
         dataFormat   : 'application/json',
         schema       : 'https://schemas.xyz/thread',
       },
-      dataStream : new Blob([new TextEncoder().encode('{"title":"Retryable"}')]),
+      dataStream : new Blob([new TextEncoder().encode('{"title":"BestEffort"}')]),
       encryption : true,
     });
 
-    const { reply: roleReply } = await testHarness.agent.dwn.processRequest({
+    // No `recipientRolePublicKey` supplied and the recipient's key cannot be
+    // resolved. Under Design A a DWN-less/unresolvable recipient is a supported
+    // participant state (it may not need to decrypt, or will be supplied a key by
+    // a caller that does), so the `$role` write still succeeds. The skipped
+    // delivery is surfaced on the response — visible and inspectable — instead of
+    // being swallowed into a silent log or failing an otherwise-valid write.
+    const roleWrite = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
@@ -4221,8 +4227,59 @@ describe('Role record write behavior', () => {
       encryption : true,
     });
 
-    expect(roleReply.status.code).toBe(202);
+    expect(roleWrite.reply.status.code).toBe(202);
+    expect(roleWrite.audienceKeyDelivery).toBeDefined();
+    expect(roleWrite.audienceKeyDelivery!.delivered).toBe(false);
+    expect(roleWrite.audienceKeyDelivery!.recipientDid).toBe(bob.did.uri);
+    expect(roleWrite.audienceKeyDelivery!.reason).toContain('recipient protocol not installed');
     expect(roleKeyLookupStub.calledOnce).toBe(true);
+  }, 10000);
+
+  it('fails loudly when a supplied recipient key cannot be delivered to', async () => {
+    const bob = await testHarness.createIdentity({ name: 'Bob Strict', testDwnUrls });
+
+    await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: chatProtocol },
+      encryption    : true,
+    });
+
+    const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol     : chatProtocol.protocol,
+        protocolPath : 'thread',
+        dataFormat   : 'application/json',
+        schema       : 'https://schemas.xyz/thread',
+      },
+      dataStream : new Blob([new TextEncoder().encode('{"title":"Strict"}')]),
+      encryption : true,
+    });
+
+    // Supplying a key asserts delivery MUST succeed. A structurally invalid key
+    // cannot be wrapped, so provisioning fails — and because a key was supplied,
+    // that surfaces as a hard error at write time rather than a best-effort skip.
+    const badKey = { kty: 'OKP', crv: 'X25519', x: 'not-a-valid-x25519-public-key' } as any;
+    await expect(testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        recipient       : bob.did.uri,
+        protocol        : chatProtocol.protocol,
+        protocolPath    : 'thread/participant',
+        parentContextId : (threadMessage as RecordsWriteMessage).contextId,
+        dataFormat      : 'application/json',
+        schema          : 'https://schemas.xyz/participant',
+      },
+      dataStream             : new Blob([new TextEncoder().encode('{"name":"Bob"}')]),
+      encryption             : true,
+      recipientRolePublicKey : badKey,
+    })).rejects.toThrow(/supplied recipient key|not be able to decrypt/i);
   }, 10000);
 
   it('should not provision audience keys for role records without key agreement', async () => {
