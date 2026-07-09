@@ -127,13 +127,15 @@ describe('Agent remote mode integration', () => {
     expect(localServer.httpUrl).not.toBe(remoteServer.httpUrl);
   });
 
-  it('drains local data to an explicit endpoint and reports convergence progress', async () => {
+  it('drains local and remote data to an explicit endpoint and reports convergence progress', async () => {
     context = await setupRemoteModeContext('drain');
     const { alice, remoteServer, testHarness } = context;
     const syncEngine = testHarness.agent.sync as any;
 
     await configureLocalProtocol(testHarness.agent, alice.did.uri, notesProtocol);
     const localWrite = await writeLocalRecord(testHarness.agent, alice.did.uri, 'drained local body');
+    await configureProtocolOnServer(testHarness.agent, remoteServer.httpUrl, alice.did, notesProtocol);
+    const remoteWrite = await writeRecordToServer(testHarness.agent, remoteServer.httpUrl, alice.did, 'drained remote body');
 
     await testHarness.agent.sync.registerIdentity({
       did     : alice.did.uri,
@@ -159,12 +161,14 @@ describe('Agent remote mode integration', () => {
     expect(target.localFingerprint).toBe(target.remoteFingerprint);
     expect(target.error).toBeUndefined();
     expect(await readRecordTextFromServer(testHarness.agent, remoteServer.httpUrl, alice.did, localWrite.recordId)).toBe('drained local body');
+    expect(await readLocalRecordText(testHarness.agent, alice.did.uri, remoteWrite.recordId)).toBe('drained remote body');
 
     const links = await syncEngine.ledger.getLinksForTenant(alice.did.uri);
     const link = links.find((candidate: any): boolean => candidate.remoteEndpoint === remoteServer.httpUrl);
 
     expect(link).toBeDefined();
     expect(link.push.contiguousAppliedToken).toEqual(target.pushCheckpoint);
+    expect(link.pull.contiguousAppliedToken).toBeDefined();
   });
 
   it('receives live WebSocket pull events through a real remote-mode local node', async () => {

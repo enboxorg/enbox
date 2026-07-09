@@ -577,6 +577,84 @@ describe('SyncEngineLevel', () => {
           tenantDid      : alice.did.uri,
         });
       });
+
+      it('reports corrupt registered identities as drain failures', async () => {
+        await (syncEngine as any)._db.sublevel('registeredIdentities').put('did:example:corrupt', '{');
+
+        const result = await syncEngine.drainTo('https://dwn.example/path?token=secret#fragment');
+
+        expect(result.endpoint).toBe('https://dwn.example/path');
+        expect(result.completed).toBe(false);
+        expect(result.targets).toHaveLength(1);
+        expect(result.targets[0]).toMatchObject({
+          completed      : false,
+          converged      : false,
+          remoteEndpoint : 'https://dwn.example/path',
+          tenantDid      : 'did:example:corrupt',
+        });
+        expect(result.targets[0]!.error).toContain('corrupt sync options');
+      });
+
+      it('reports aborted drains without throwing', async () => {
+        const target = {
+          authorization      : { kind: 'owner' },
+          authorizationEpoch : 'owner-epoch',
+          did                : alice.did.uri,
+          dwnUrl             : 'https://dwn.example',
+          scope              : { kind: 'full' },
+        };
+        sinon.stub(syncEngine as any, 'buildSyncDrainPlan').resolves({
+          failures : [],
+          targets  : [target],
+        });
+        sinon.stub(syncEngine as any, 'syncTargetWithDurableFeeds').resolves({ aborted: true, pushFailures: [] });
+
+        const result = await syncEngine.drainTo('https://dwn.example');
+
+        expect(result.completed).toBe(false);
+        expect(result.targets).toHaveLength(1);
+        expect(result.targets[0]).toMatchObject({
+          completed      : false,
+          converged      : false,
+          error          : 'drain aborted',
+          remoteEndpoint : 'https://dwn.example',
+          tenantDid      : alice.did.uri,
+        });
+      });
+
+      it('reports push failures as incomplete drain progress', async () => {
+        const target = {
+          authorization      : { kind: 'owner' },
+          authorizationEpoch : 'owner-epoch',
+          did                : alice.did.uri,
+          dwnUrl             : 'https://dwn.example',
+          scope              : { kind: 'full' },
+        };
+        sinon.stub(syncEngine as any, 'buildSyncDrainPlan').resolves({
+          failures : [],
+          targets  : [target],
+        });
+        sinon.stub(syncEngine as any, 'syncTargetWithDurableFeeds').resolves({
+          converged         : true,
+          localFingerprint  : 'fingerprint',
+          pushFailures      : [{ cid: 'bafyreifailedcid' }],
+          remoteFingerprint : 'fingerprint',
+        });
+
+        const result = await syncEngine.drainTo('https://dwn.example');
+
+        expect(result.completed).toBe(false);
+        expect(result.targets).toHaveLength(1);
+        expect(result.targets[0]).toMatchObject({
+          completed         : false,
+          converged         : true,
+          error             : 'drain push failed for 1 message(s)',
+          localFingerprint  : 'fingerprint',
+          remoteEndpoint    : 'https://dwn.example',
+          remoteFingerprint : 'fingerprint',
+          tenantDid         : alice.did.uri,
+        });
+      });
     });
 
     describe('pull()', () => {
