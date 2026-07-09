@@ -170,9 +170,10 @@ function assertX25519RolePublicKey(jwk: PublicKeyJwk): void {
     byteLength = Convert.base64Url(x ?? '').toUint8Array().length;
   } catch { /* reported as invalid below */ }
   if (byteLength !== 32) {
+    const detail = byteLength < 0 ? 'invalid base64url' : `${byteLength} bytes`;
     throw new Error(
       'AgentDwnApi: recipientRolePublicKey must have a 32-byte base64url \'x\' (X25519 public key); ' +
-      `got ${byteLength < 0 ? 'invalid base64url' : `${byteLength} bytes`}.`,
+      `got ${detail}.`,
     );
   }
 }
@@ -530,22 +531,7 @@ export class AgentDwnApi {
   public async processRequest<T extends DwnInterface>(
     request: ProcessDwnRequest<T>
   ): Promise<DwnResponse<T>> {
-    // `recipientRolePublicKey` only drives role-audience key delivery provisioning,
-    // which runs for an accepted, non-raw RecordsWrite. Reject it on any path that
-    // cannot honor it — a different message type, or a raw (synced/replayed) message
-    // — so a "must deliver" assertion is never silently dropped. Validate its shape
-    // here too, BEFORE the record is written, so a malformed key fails fast without
-    // leaving an accepted-but-undeliverable role grant behind.
-    if (request.recipientRolePublicKey !== undefined) {
-      if (!isDwnRequest(request, DwnInterface.RecordsWrite) || request.rawMessage !== undefined) {
-        throw new Error(
-          'AgentDwnApi: recipientRolePublicKey is only supported when writing a $role record via ' +
-          'processRequest (a non-raw RecordsWrite); it is not honored for other message types or ' +
-          'raw messages, so it must not be supplied there.',
-        );
-      }
-      assertX25519RolePublicKey(request.recipientRolePublicKey);
-    }
+    this.assertRecipientRolePublicKeyUsable(request);
 
     // Constructs a DWN message. and if there is a data payload, prepares the data as a
     // Web ReadableStream.
@@ -581,51 +567,7 @@ export class AgentDwnApi {
       });
     }
 
-    let audienceKeyDelivery: AudienceKeyDeliveryOutcome | undefined;
-    // Provision on 202 (freshly accepted) AND 409 (the identical record already
-    // exists). The role record is stored before provisioning runs, so a strict
-    // delivery failure leaves an accepted-but-undelivered grant; re-issuing the
-    // same write returns 409, and running provisioning on it re-attempts delivery
-    // (get-or-create audience + 409-tolerant delivery write make it idempotent).
-    // Without the 409 case, a retry would silently skip provisioning and the
-    // recipient would stay permanently undecryptable. `!request.rawMessage` keeps
-    // this off the sync/replay path.
-    if ((reply.status.code === 202 || reply.status.code === 409) &&
-        isDwnRequest(request, DwnInterface.RecordsWrite) &&
-        !request.rawMessage) {
-      try {
-        audienceKeyDelivery = await this.provisionAudienceKeyForAcceptedRoleRecord(
-          request,
-          message as RecordsWriteMessage,
-        );
-      } catch (error) {
-        const recipientDid = (message as RecordsWriteMessage).descriptor.recipient;
-        if (request.recipientRolePublicKey !== undefined) {
-          // Strict path: the caller supplied the recipient's role-path key,
-          // asserting that delivery MUST succeed. A failure here means an
-          // accepted `$role` record whose audience key cannot reach the
-          // recipient — surface it loudly at write/approval time rather than
-          // leaving a role holder that can never decrypt.
-          throw new Error(
-            `AgentDwnApi: role record '${(message as RecordsWriteMessage).recordId}' was accepted, but ` +
-            `provisioning its role-audience key delivery to the supplied recipient key failed, so the ` +
-            `recipient will not be able to decrypt: ${error instanceof Error ? error.message : String(error)}`,
-            { cause: error instanceof Error ? error : undefined },
-          );
-        }
-        // Best-effort path: no recipient key was supplied. A recipient whose
-        // role-path key cannot be resolved (e.g. a DWN-less `did:jwk` that
-        // publishes no endpoint and supplied no key) simply cannot receive a
-        // delivery — but the `$role` write itself is valid. Report the outcome
-        // on the response so it is visible and inspectable, instead of either
-        // swallowing it silently or failing an otherwise-valid write.
-        audienceKeyDelivery = {
-          delivered    : false,
-          recipientDid : recipientDid ?? '',
-          reason       : error instanceof Error ? error.message : String(error),
-        };
-      }
-    }
+    const audienceKeyDelivery = await this.provisionAudienceKeyDeliveryForReply(request, message, reply);
 
     await this.maybeDecryptReply(request, reply);
 
@@ -637,6 +579,82 @@ export class AgentDwnApi {
       messageCid: await Message.getCid(message),
       ...(audienceKeyDelivery ? { audienceKeyDelivery } : {}),
     };
+  }
+
+  /**
+   * Guards use of `recipientRolePublicKey`, which only drives role-audience key
+   * delivery provisioning (an accepted, non-raw RecordsWrite). Rejects it on any
+   * path that cannot honor it — a different message type, or a raw/replayed
+   * message — so a "must deliver" assertion is never silently dropped, and
+   * validates its shape BEFORE the record is written so a malformed key fails
+   * fast without leaving an accepted-but-undeliverable role grant behind.
+   */
+  private assertRecipientRolePublicKeyUsable<T extends DwnInterface>(request: ProcessDwnRequest<T>): void {
+    if (request.recipientRolePublicKey === undefined) {
+      return;
+    }
+    if (!isDwnRequest(request, DwnInterface.RecordsWrite) || request.rawMessage !== undefined) {
+      throw new Error(
+        'AgentDwnApi: recipientRolePublicKey is only supported when writing a $role record via ' +
+        'processRequest (a non-raw RecordsWrite); it is not honored for other message types or ' +
+        'raw messages, so it must not be supplied there.',
+      );
+    }
+    assertX25519RolePublicKey(request.recipientRolePublicKey);
+  }
+
+  /**
+   * Provisions role-audience key delivery for a RecordsWrite reply and turns the
+   * result into a returned outcome or a thrown error.
+   *
+   * Runs on 202 (freshly accepted) AND 409 (the identical record already exists):
+   * the role record is stored before provisioning runs, so a strict delivery
+   * failure leaves an accepted-but-undelivered grant, and re-issuing the same
+   * write (409) must re-attempt delivery rather than skip it (get-or-create
+   * audience + 409-tolerant delivery write make it idempotent). `!rawMessage`
+   * keeps this off the sync/replay path.
+   *
+   * A supplied `recipientRolePublicKey` asserts delivery MUST succeed, so a
+   * failure is rethrown loudly; otherwise delivery is best-effort and a failure
+   * is reported as `{ delivered: false, reason }`.
+   */
+  private async provisionAudienceKeyDeliveryForReply<T extends DwnInterface>(
+    request: ProcessDwnRequest<T>,
+    message: DwnMessage[T],
+    reply: DwnMessageReply[T],
+  ): Promise<AudienceKeyDeliveryOutcome | undefined> {
+    const acceptedOrExists = reply.status.code === 202 || reply.status.code === 409;
+    if (!acceptedOrExists || request.rawMessage !== undefined) {
+      return undefined;
+    }
+    if (!isDwnRequest(request, DwnInterface.RecordsWrite)) {
+      return undefined;
+    }
+
+    const recordsWrite = message as RecordsWriteMessage;
+    try {
+      return await this.provisionAudienceKeyForAcceptedRoleRecord(request, recordsWrite);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      if (request.recipientRolePublicKey !== undefined) {
+        // Strict path: the supplied key asserted delivery MUST succeed. Surface the
+        // failure loudly rather than leaving a role holder that can never decrypt.
+        throw new Error(
+          `AgentDwnApi: role record '${recordsWrite.recordId}' was accepted, but provisioning its ` +
+          'role-audience key delivery to the supplied recipient key failed, so the recipient will ' +
+          `not be able to decrypt: ${detail}`,
+          { cause: error instanceof Error ? error : undefined },
+        );
+      }
+      // Best-effort path: no key supplied. A recipient whose role-path key cannot be
+      // resolved (e.g. a DWN-less `did:jwk`) simply cannot receive a delivery, but the
+      // `$role` write itself is valid — report it visibly instead of failing the write.
+      return {
+        delivered    : false,
+        recipientDid : recordsWrite.descriptor.recipient ?? '',
+        reason       : detail,
+      };
+    }
   }
 
   /**
