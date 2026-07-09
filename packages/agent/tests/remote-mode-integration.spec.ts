@@ -169,6 +169,30 @@ describe('Agent remote mode integration', () => {
     expect(link).toBeDefined();
     expect(link.push.contiguousAppliedToken).toEqual(target.pushCheckpoint);
     expect(link.pull.contiguousAppliedToken).toBeDefined();
+
+    // The explicit handoff endpoint remains a durable supplemental target.
+    // This late write must still reach it even though DID endpoint resolution
+    // is unavailable after the one-shot parity check.
+    const lateWrite = await writeLocalRecord(testHarness.agent, alice.did.uri, 'late handoff body');
+    await testHarness.agent.sync.sync('push');
+    expect(await readRecordTextFromServer(testHarness.agent, remoteServer.httpUrl, alice.did, lateWrite.recordId)).toBe('late handoff body');
+  });
+
+  it('excludes the active local DWN endpoint from supplemental targets after remote-mode boot', async () => {
+    context = await setupRemoteModeContext('self-sync-exclusion');
+    const { alice, localServer, remoteServer, testHarness } = context;
+    const syncEngine = testHarness.agent.sync as any;
+
+    await testHarness.agent.sync.registerIdentity({
+      did     : alice.did.uri,
+      options : { protocols: [notesProtocol.protocol] },
+    });
+    await syncEngine.registerSupplementalDwnEndpoint(localServer.httpUrl);
+
+    const targets = await syncEngine.getSyncTargets();
+
+    expect(targets.some((target: any): boolean => target.dwnUrl === localServer.httpUrl)).toBe(false);
+    expect(targets.some((target: any): boolean => target.dwnUrl === remoteServer.httpUrl)).toBe(true);
   });
 
   it('receives live WebSocket pull events through a real remote-mode local node', async () => {

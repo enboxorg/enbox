@@ -173,6 +173,39 @@ describe('WebSocketDwnRpcClient', () => {
       }
     });
 
+    it('redacts the local-node token from connection errors', async () => {
+      const localNodeToken = 'local-node-token-that-must-not-leak';
+      const authClient = new WebSocketDwnRpcClient(
+        { getServerInfo: async (): Promise<ServerInfo> => testServerInfo() },
+        { getBearerToken: (): string => localNodeToken },
+      );
+      const createConnectionStub = sinon.stub(WebSocketDwnRpcClient as any, 'createConnection').callsFake(async (url: URL): Promise<never> => {
+        throw new Error(`connection refused for ${url.toString()}`);
+      });
+      const { message } = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : { schema: 'foo/bar' },
+      });
+
+      let connectionError: Error | undefined;
+      try {
+        await authClient.sendDwnRequest({
+          dwnUrl    : 'ws://native-user:native-password@127.0.0.1:10',
+          targetDid : alice.did,
+          message,
+        });
+      } catch (error: unknown) {
+        connectionError = error as Error;
+      }
+
+      expect(createConnectionStub.calledOnce).toBe(true);
+      expect(connectionError?.message).toContain('Error connecting to ws://127.0.0.1:10/');
+      expect(connectionError?.message).not.toContain('localNodeToken');
+      expect(connectionError?.message).not.toContain(localNodeToken);
+      expect(connectionError?.message).not.toContain('native-user');
+      expect(connectionError?.message).not.toContain('native-password');
+    });
+
     it('responds to a RecordsRead message', async () => {
       // install the default test protocol so the DWN accepts the record
       await installDefaultTestProtocolViaHttp(httpClient, testDwnUrl, alice);

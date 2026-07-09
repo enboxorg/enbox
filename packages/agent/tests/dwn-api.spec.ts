@@ -141,11 +141,13 @@ describe('AgentDwnApi', () => {
       const mockDwn = ({} as unknown) as Dwn;
       const dwnApi = new AgentDwnApi({ dwn: mockDwn });
       expect(dwnApi.isRemoteMode).toBe(false);
+      expect(dwnApi.localDwnEndpoint).toBeUndefined();
     });
 
     it('returns true when a localDwnEndpoint is provided instead of a DWN', () => {
       const dwnApi = new AgentDwnApi({ localDwnEndpoint: 'http://127.0.0.1:55557' });
       expect(dwnApi.isRemoteMode).toBe(true);
+      expect(dwnApi.localDwnEndpoint).toBe('http://127.0.0.1:55557');
     });
   });
 

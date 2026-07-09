@@ -8,7 +8,7 @@ import { TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
 import {
   createJsonRpcErrorResponse, createJsonRpcSuccessResponse,
-  DwnServerInfoCacheMemory, HttpDwnRpcClient, JsonRpcErrorCodes,
+  DwnServerInfoCacheMemory, HttpDwnRpcClient, JsonRpcErrorCodes, normalizeDwnRpcAuthEndpoint,
 } from '../src/index.js';
 import { DidRpcMethod, EnboxRpcClient, HttpEnboxRpcClient, WebSocketEnboxRpcClient } from '../src/rpc-client.js';
 
@@ -87,6 +87,62 @@ describe('RPC Clients', () => {
         'ws:',
         'wss:'
       ]));
+    });
+
+    describe('endpoint bearer tokens', () => {
+      it('should attach and clear a dynamically registered token only for the normalized endpoint', async () => {
+        const client = new EnboxRpcClient();
+        const localEndpoint = 'http://127.0.0.1:55500';
+        const authorizationHeaders: Array<string | null> = [];
+        client.setDwnEndpointBearerToken(`${localEndpoint}/`, 'native-local-node-token');
+
+        sinon.stub(globalThis, 'fetch').callsFake(async (_url, init): Promise<Response> => {
+          authorizationHeaders.push(new Headers(init?.headers).get('authorization'));
+          return new Response(JSON.stringify({
+            id      : 'test',
+            jsonrpc : '2.0',
+            result  : { reply: { status: { code: 202, detail: 'Accepted' } } },
+          }));
+        });
+
+        await client.sendDwnRequest({
+          dwnUrl    : `${localEndpoint}?transport=http`,
+          message   : { descriptor: {} } as any,
+          targetDid : 'did:dht:alice',
+        });
+        await client.sendDwnRequest({
+          dwnUrl    : 'http://127.0.0.1:55501',
+          message   : { descriptor: {} } as any,
+          targetDid : 'did:dht:alice',
+        });
+        client.clearDwnEndpointBearerToken(`ws://127.0.0.1:55500/?ignored=true`);
+        await client.sendDwnRequest({
+          dwnUrl    : localEndpoint,
+          message   : { descriptor: {} } as any,
+          targetDid : 'did:dht:alice',
+        });
+
+        expect(authorizationHeaders).toEqual(['Bearer native-local-node-token', null, null]);
+      });
+
+      it('should normalize WebSocket schemes without retaining credentials in the URL', () => {
+        const normalized = normalizeDwnRpcAuthEndpoint(
+          'ws://native-user:native-password@127.0.0.1:55500/?localNodeToken=must-not-leak#fragment',
+        );
+
+        expect(normalized).toBe('http://127.0.0.1:55500');
+        expect(normalized).not.toContain('native-user');
+        expect(normalized).not.toContain('native-password');
+        expect(normalized).not.toContain('must-not-leak');
+      });
+
+      it('should reject an empty endpoint bearer token', () => {
+        const client = new EnboxRpcClient();
+
+        expect(() => client.setDwnEndpointBearerToken('http://127.0.0.1:55500', '')).toThrow(
+          'EnboxRpcClient: Endpoint bearer token must not be empty.',
+        );
+      });
     });
 
     describe('sendDidRequest', () => {
@@ -276,6 +332,56 @@ describe('RPC Clients', () => {
 
         expect(response).toEqual(customResponse);
         expect((customClient.sendDwnRequest as sinon.SinonStub).callCount).toBe(1);
+      });
+
+      it('should preserve custom transports for endpoints without a registered token', async () => {
+        const localEndpoint = 'http://127.0.0.1:55500';
+        const fallbackRequests: string[] = [];
+        const customClient = {
+          get transportProtocols(): string[] { return ['http:', 'https:']; },
+          applyReplicatedMessage : sinon.stub().resolves({ kind: 'Applied' }),
+          close                  : sinon.stub().resolves(),
+          getServerInfo          : sinon.stub().resolves({ maxFileSize: 999 }),
+          sendDidRequest         : sinon.stub().resolves({ ok: true, status: { code: 200, message: 'OK' } }),
+          sendDwnRequest         : sinon.stub().callsFake(async (request): Promise<any> => {
+            fallbackRequests.push(request.dwnUrl);
+            return { status: { code: 200, detail: 'Custom transport' } };
+          }),
+        } as unknown as EnboxRpc;
+        const rpcClient = new EnboxRpcClient([customClient]);
+        let localAuthorization: string | null = null;
+        rpcClient.setDwnEndpointBearerToken(localEndpoint, 'native-local-node-token');
+
+        sinon.stub(globalThis, 'fetch').callsFake(async (_url, init): Promise<Response> => {
+          localAuthorization = new Headers(init?.headers).get('authorization');
+          return new Response(JSON.stringify({
+            id      : 'test',
+            jsonrpc : '2.0',
+            result  : { reply: { status: { code: 202, detail: 'Accepted' } } },
+          }));
+        });
+
+        await rpcClient.sendDwnRequest({
+          dwnUrl    : localEndpoint,
+          message   : { descriptor: {} } as any,
+          targetDid : 'did:dht:alice',
+        });
+        const customReply = await rpcClient.sendDwnRequest({
+          dwnUrl    : 'http://remote.example',
+          message   : { descriptor: {} } as any,
+          targetDid : 'did:dht:alice',
+        });
+        rpcClient.clearDwnEndpointBearerToken(localEndpoint);
+        const restoredCustomReply = await rpcClient.sendDwnRequest({
+          dwnUrl    : localEndpoint,
+          message   : { descriptor: {} } as any,
+          targetDid : 'did:dht:alice',
+        });
+
+        expect(localAuthorization).toBe('Bearer native-local-node-token');
+        expect(customReply.status.detail).toBe('Custom transport');
+        expect(restoredCustomReply.status.detail).toBe('Custom transport');
+        expect(fallbackRequests).toEqual(['http://remote.example', localEndpoint]);
       });
     });
 

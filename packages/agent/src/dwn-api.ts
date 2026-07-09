@@ -241,6 +241,11 @@ export class AgentDwnApi {
     return this._dwn === undefined;
   }
 
+  /** The fixed local-side DWN endpoint used when this API operates in remote mode. */
+  get localDwnEndpoint(): string | undefined {
+    return this._localDwnEndpoint;
+  }
+
   /**
    * Retrieves the `EnboxPlatformAgent` execution context.
    *

@@ -1087,10 +1087,10 @@ export class AuthManager {
     }
 
     this._localDwnPairing = result.pairing;
+    this._userAgent.rpc = createLocalDwnRpcClient(result.pairing, this._userAgent.rpc);
 
     if (this._userAgent.dwn.isRemoteMode) {
       this._localDwnEndpoint = result.endpoint;
-      this._userAgent.rpc = createLocalDwnRpcClient(result.pairing);
       await this._userAgent.dwn.setCachedLocalDwnEndpoint(result.endpoint);
     } else {
       this._localDwnEndpoint = undefined;
@@ -1130,6 +1130,7 @@ export class AuthManager {
       throw new Error('[@enbox/auth] Local node eject requires an in-process DWN. The current agent is already in remote mode.');
     }
 
+    this._userAgent.rpc = createLocalDwnRpcClient(pairing, this._userAgent.rpc);
     const drain = await this._userAgent.sync.drainTo(pairing.endpoint, options);
     if (!drain.completed) {
       await clearLocalDwnEjection(this._storage);

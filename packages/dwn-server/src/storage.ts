@@ -18,6 +18,7 @@ import type {
 
 import * as fs from 'fs';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 import { Kysely } from 'kysely';
 
@@ -332,19 +333,23 @@ function getLevelStore(
   storeType: StoreType,
   wakePublisher?: WakePublisher,
 ): DwnStore {
+  const location = storeURI.host === ''
+    ? fileURLToPath(new URL(`file://${storeURI.pathname}`))
+    : storeURI.host + storeURI.pathname;
+
   switch (storeType) {
     case StoreType.DataStore:
       return new DataStoreLevel({
-        blockstoreLocation: storeURI.host + storeURI.pathname + '/DATASTORE',
+        blockstoreLocation: location + '/DATASTORE',
       });
     case StoreType.MessageStore:
       return new MessageStoreLevel({
-        location: storeURI.host + storeURI.pathname + '/MESSAGESTORE',
+        location: location + '/MESSAGESTORE',
         wakePublisher,
       });
     case StoreType.ResumableTaskStore:
       return new ResumableTaskStoreLevel({
-        location: storeURI.host + storeURI.pathname + '/RESUMABLE-TASK-STORE',
+        location: location + '/RESUMABLE-TASK-STORE',
       });
     default:
       throw new Error('Unexpected level store type');

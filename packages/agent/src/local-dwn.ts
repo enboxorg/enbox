@@ -84,6 +84,7 @@ export function normalizeBaseUrl(url: string): string {
 export class LocalDwnDiscovery {
   private _cachedEndpoint?: string;
   private _cacheExpiry = 0;
+  private _fileAuthenticatedEndpoint?: string;
 
   constructor(
     private readonly _rpcClient: EnboxRpc,
@@ -150,6 +151,7 @@ export class LocalDwnDiscovery {
   public clearCache(): void {
     this._cachedEndpoint = undefined;
     this._cacheExpiry = 0;
+    this._clearFileAuthentication();
   }
 
   // ─── Private ──────────────────────────────────────────────────
@@ -167,15 +169,46 @@ export class LocalDwnDiscovery {
     try {
       const record = await this._discoveryFile.read();
       if (!record) {
+        this._clearFileAuthentication();
         return undefined;
+      }
+
+      const hasAuthenticationForEndpoint = record.endpoint === this._fileAuthenticatedEndpoint
+        && record.localNodeToken !== undefined;
+      if (!hasAuthenticationForEndpoint) {
+        this._clearFileAuthentication();
       }
 
       // Validate that the server is actually alive and is ours.
       const valid = await this._validateEndpoint(record.endpoint);
-      return valid ? record.endpoint : undefined;
+      if (!valid) {
+        this._clearFileAuthentication();
+        return undefined;
+      }
+
+      if (
+        record.localNodeToken !== undefined
+        && this._rpcClient.clearDwnEndpointBearerToken !== undefined
+        && this._rpcClient.setDwnEndpointBearerToken !== undefined
+      ) {
+        this._rpcClient.setDwnEndpointBearerToken?.(record.endpoint, record.localNodeToken);
+        this._fileAuthenticatedEndpoint = record.endpoint;
+      }
+
+      return record.endpoint;
     } catch {
+      this._clearFileAuthentication();
       return undefined;
     }
+  }
+
+  /** Removes credentials installed from a previous discovery-file record. */
+  private _clearFileAuthentication(): void {
+    if (this._fileAuthenticatedEndpoint !== undefined) {
+      this._rpcClient.clearDwnEndpointBearerToken?.(this._fileAuthenticatedEndpoint);
+    }
+
+    this._fileAuthenticatedEndpoint = undefined;
   }
 
   /**

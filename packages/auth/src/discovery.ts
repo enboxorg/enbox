@@ -10,7 +10,17 @@
  */
 
 import type { EnboxUserAgent } from '@enbox/agent';
-import type { DwnRpcAuthOptions, ServerInfo } from '@enbox/dwn-clients';
+import type { ReplicationApplyResult } from '@enbox/dwn-sdk-js';
+import type {
+  DidRpcRequest,
+  DidRpcResponse,
+  DwnReplicationApplyRequest,
+  DwnRpcAuthOptions,
+  DwnRpcRequest,
+  DwnRpcResponse,
+  EnboxRpc,
+  ServerInfo,
+} from '@enbox/dwn-clients';
 
 import type { AuthEventEmitter } from './events.js';
 import type { StorageAdapter } from './types.js';
@@ -104,18 +114,103 @@ const localDwnEjectionRecordVersion = 1;
 const defaultPairingTimeoutMs = 5 * 60 * 1000;
 const defaultPairingPollIntervalMs = 1500;
 
+type LocalDwnPairingValidation =
+  | { status: 'paired'; serverInfo: ServerInfo }
+  | { status: 'revoked' }
+  | { status: 'unavailable' };
+
+type LocalDwnServerInfoResult =
+  | { status: 'found'; serverInfo: ServerInfo }
+  | { status: 'invalid' }
+  | { status: 'unavailable' };
+
+/**
+ * Routes paired-endpoint traffic through an authenticated client while
+ * preserving the caller's existing transports for every other endpoint.
+ */
+class LocalDwnAuthenticatedRpcClient implements EnboxRpc {
+  private readonly _authenticatedClient: EnboxRpc;
+  private readonly _fallbackClient: EnboxRpc;
+  private readonly _pairing: LocalDwnPairingRecord;
+
+  public constructor(pairing: LocalDwnPairingRecord, fallbackClient: EnboxRpc) {
+    const auth: DwnRpcAuthOptions = {
+      getBearerToken: (dwnUrl: string): string | undefined => {
+        return isSameEndpoint(dwnUrl, pairing.endpoint) ? pairing.token : undefined;
+      },
+    };
+
+    this._authenticatedClient = new EnboxRpcClient([], { auth });
+    this._fallbackClient = fallbackClient instanceof LocalDwnAuthenticatedRpcClient
+      ? fallbackClient._fallbackClient
+      : fallbackClient;
+    this._pairing = pairing;
+  }
+
+  public get transportProtocols(): string[] {
+    return [...new Set([
+      ...this._authenticatedClient.transportProtocols,
+      ...this._fallbackClient.transportProtocols,
+    ])];
+  }
+
+  public matchesPairing(pairing: LocalDwnPairingRecord): boolean {
+    return pairing.token === this._pairing.token
+      && isSameEndpoint(pairing.endpoint, this._pairing.endpoint);
+  }
+
+  public async close(): Promise<void> {
+    await Promise.all([
+      this._authenticatedClient.close(),
+      this._fallbackClient.close(),
+    ]);
+  }
+
+  public sendDidRequest(request: DidRpcRequest): Promise<DidRpcResponse> {
+    return this._fallbackClient.sendDidRequest(request);
+  }
+
+  public sendDwnRequest(request: DwnRpcRequest): Promise<DwnRpcResponse> {
+    return this.clientFor(request.dwnUrl).sendDwnRequest(request);
+  }
+
+  public applyReplicatedMessage(request: DwnReplicationApplyRequest): Promise<ReplicationApplyResult> {
+    return this.clientFor(request.dwnUrl).applyReplicatedMessage(request);
+  }
+
+  public getServerInfo(dwnUrl: string): Promise<ServerInfo> {
+    return this.clientFor(dwnUrl).getServerInfo(dwnUrl);
+  }
+
+  private clientFor(dwnUrl: string): EnboxRpc {
+    return isSameEndpoint(dwnUrl, this._pairing.endpoint)
+      ? this._authenticatedClient
+      : this._fallbackClient;
+  }
+}
+
 /**
  * Creates a DWN RPC client that attaches the pairing token only when requests
- * target the paired local-node endpoint.
+ * target the paired local-node endpoint. When a fallback client is supplied,
+ * its custom transports and non-local endpoint behavior are preserved.
  */
-export function createLocalDwnRpcClient(pairing: LocalDwnPairingRecord): EnboxRpcClient {
+export function createLocalDwnRpcClient(pairing: LocalDwnPairingRecord, fallbackClient?: EnboxRpc): EnboxRpc {
+  if (
+    fallbackClient instanceof LocalDwnAuthenticatedRpcClient
+    && fallbackClient.matchesPairing(pairing)
+  ) {
+    return fallbackClient;
+  }
+
   const auth: DwnRpcAuthOptions = {
     getBearerToken: (dwnUrl: string): string | undefined => {
       return isSameEndpoint(dwnUrl, pairing.endpoint) ? pairing.token : undefined;
     },
   };
 
-  return new EnboxRpcClient([], { auth });
+  return fallbackClient === undefined
+    ? new EnboxRpcClient([], { auth })
+    : new LocalDwnAuthenticatedRpcClient(pairing, fallbackClient);
 }
 
 /** Reads and validates the persisted local-node pairing record. */
@@ -258,16 +353,18 @@ export async function discoverLocalDwnPairing(
 
   const fetchFn = getFetch(fetchOption);
   if (fetchFn === undefined) {
+    await clearLocalDwnEjection(storage);
     return undefined;
   }
 
-  const serverInfo = await fetchLocalDwnServerInfo(pairing.endpoint, fetchFn);
-  const isPaired = serverInfo !== undefined
-    && serverInfo.localNode === true
-    && await fetchLocalDwnStatus(pairing, fetchFn);
-
-  if (!isPaired) {
+  const validation = await validateLocalDwnPairing(pairing, fetchFn);
+  if (validation.status === 'revoked') {
     await clearLocalDwnEndpoint(storage);
+    return undefined;
+  }
+
+  if (validation.status === 'unavailable') {
+    await clearLocalDwnEjection(storage);
     return undefined;
   }
 
@@ -337,25 +434,35 @@ export async function applyLocalDwnDiscovery(
  * only from a user gesture unless a stored pairing exists.
  */
 export async function probeLocalDwn(options: ProbeLocalDwnOptions = {}): Promise<LocalDwnProbeResult> {
+  const storage = options.storage;
   const fetchFn = getFetch(options.fetch);
   if (fetchFn === undefined) {
+    if (storage !== undefined) {
+      await clearLocalDwnEjection(storage);
+    }
     return { reason: 'no-fetch', status: 'unsupported' };
   }
 
-  const storedPairing = options.storage === undefined
+  const storedPairing = storage === undefined
     ? undefined
-    : await readLocalDwnPairingRecord(options.storage);
-  if (storedPairing !== undefined) {
-    const serverInfo = await fetchLocalDwnServerInfo(storedPairing.endpoint, fetchFn);
-    if (serverInfo !== undefined && await fetchLocalDwnStatus(storedPairing, fetchFn, options.origin)) {
+    : await readLocalDwnPairingRecord(storage);
+  if (storedPairing !== undefined && storage !== undefined) {
+    const validation = await validateLocalDwnPairing(storedPairing, fetchFn, options.origin);
+    if (validation.status === 'paired') {
       return {
-        endpoint : storedPairing.endpoint,
-        pairing  : storedPairing,
-        serverInfo,
-        status   : 'paired',
+        endpoint   : storedPairing.endpoint,
+        pairing    : storedPairing,
+        serverInfo : validation.serverInfo,
+        status     : 'paired',
       };
     }
-    await options.storage?.remove(STORAGE_KEYS.LOCAL_DWN_ENDPOINT);
+
+    if (validation.status === 'unavailable') {
+      await clearLocalDwnEjection(storage);
+      return { status: 'not-found' };
+    }
+
+    await clearLocalDwnEndpoint(storage);
   }
 
   const unsupportedReason = getUnsupportedReason();
@@ -585,18 +692,58 @@ function parseLocalDwnEjectionRecord(raw: string): LocalDwnEjectionRecord | unde
   }
 }
 
-async function fetchLocalDwnServerInfo(endpoint: string, fetchFn: FetchLike): Promise<ServerInfo | undefined> {
-  try {
-    const response = await fetchFn(endpointUrl(endpoint, '/info'), { method: 'GET' });
-    if (!response.ok) {
-      return undefined;
-    }
-
-    const serverInfo = await response.json() as ServerInfo;
-    return serverInfo.server === localDwnServerName ? serverInfo : undefined;
-  } catch {
-    return undefined;
+async function validateLocalDwnPairing(
+  pairing: LocalDwnPairingRecord,
+  fetchFn: FetchLike,
+  origin?: string,
+): Promise<LocalDwnPairingValidation> {
+  const infoResult = await fetchLocalDwnServerInfoResult(pairing.endpoint, fetchFn);
+  if (infoResult.status === 'unavailable') {
+    return infoResult;
   }
+
+  if (infoResult.status === 'invalid' || infoResult.serverInfo.localNode !== true) {
+    return { status: 'revoked' };
+  }
+
+  const status = await fetchLocalDwnStatus(pairing, fetchFn, origin);
+  return status === 'paired'
+    ? { serverInfo: infoResult.serverInfo, status }
+    : { status };
+}
+
+async function fetchLocalDwnServerInfo(endpoint: string, fetchFn: FetchLike): Promise<ServerInfo | undefined> {
+  const result = await fetchLocalDwnServerInfoResult(endpoint, fetchFn);
+  return result.status === 'found' ? result.serverInfo : undefined;
+}
+
+async function fetchLocalDwnServerInfoResult(endpoint: string, fetchFn: FetchLike): Promise<LocalDwnServerInfoResult> {
+  let response: Response;
+  try {
+    response = await fetchFn(endpointUrl(endpoint, '/info'), { method: 'GET' });
+  } catch {
+    return { status: 'unavailable' };
+  }
+
+  if (!response.ok) {
+    return { status: isTransientHttpStatus(response.status) ? 'unavailable' : 'invalid' };
+  }
+
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    return { status: 'invalid' };
+  }
+
+  if (body === null || typeof body !== 'object') {
+    return { status: 'invalid' };
+  }
+
+  const serverInfo = body as ServerInfo;
+  return serverInfo.server === localDwnServerName
+    ? { serverInfo, status: 'found' }
+    : { status: 'invalid' };
 }
 
 async function requireLocalDwnServerInfo(endpoint: string, fetchFn: FetchLike): Promise<ServerInfo> {
@@ -612,24 +759,32 @@ async function fetchLocalDwnStatus(
   pairing: LocalDwnPairingRecord,
   fetchFn: FetchLike,
   origin?: string,
-): Promise<boolean> {
+): Promise<'paired' | 'revoked' | 'unavailable'> {
+  let response: Response;
   try {
     const headers: Record<string, string> = { authorization: `Bearer ${pairing.token}` };
     attachOriginHeader(headers, origin);
 
-    const response = await fetchFn(endpointUrl(pairing.endpoint, '/local/status'), {
+    response = await fetchFn(endpointUrl(pairing.endpoint, '/local/status'), {
       headers,
       method: 'GET',
     });
-    if (!response.ok) {
-      return false;
-    }
-
-    const body = await response.json() as { localNode?: unknown; paired?: unknown };
-    return body.localNode === true && body.paired === true;
   } catch {
-    return false;
+    return 'unavailable';
   }
+
+  if (!response.ok) {
+    return isTransientHttpStatus(response.status) ? 'unavailable' : 'revoked';
+  }
+
+  let body: { localNode?: unknown; paired?: unknown };
+  try {
+    body = await response.json() as { localNode?: unknown; paired?: unknown };
+  } catch {
+    return 'revoked';
+  }
+
+  return body.localNode === true && body.paired === true ? 'paired' : 'revoked';
 }
 
 async function probeEndpointForPairing(endpoint: string, fetchFn: FetchLike): Promise<Extract<LocalDwnProbeResult, { status: 'found-unpaired' }> | { status: 'not-found' }> {
@@ -741,6 +896,10 @@ function normalizeComparableEndpoint(value: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function isTransientHttpStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
 }
 
 async function sleep(ms: number): Promise<void> {

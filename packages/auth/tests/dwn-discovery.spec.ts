@@ -153,6 +153,11 @@ describe('local-node pairing storage', () => {
 
   test('clears malformed versioned pairing records', async () => {
     const storage = new MemoryStorage();
+    await persistLocalDwnEjectionRecord(storage, {
+      completedAt : 456,
+      endpoint    : pairingRecord.endpoint,
+      version     : 1,
+    });
     await storage.set(STORAGE_KEYS.LOCAL_DWN_ENDPOINT, JSON.stringify({
       ...pairingRecord,
       localNodeId: 123,
@@ -160,11 +165,17 @@ describe('local-node pairing storage', () => {
 
     expect(await readLocalDwnPairingRecord(storage)).toBeUndefined();
     expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBeNull();
+    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_EJECTION)).toBeNull();
   });
 
   test('clears stale pairing records during passive discovery', async () => {
     const storage = new MemoryStorage();
     await persistLocalDwnPairingRecord(storage, pairingRecord);
+    await persistLocalDwnEjectionRecord(storage, {
+      completedAt : 456,
+      endpoint    : pairingRecord.endpoint,
+      version     : 1,
+    });
 
     const result = await discoverLocalDwnPairing(storage, async (url, init): Promise<Response> => {
       if (url.toString().endsWith('/info')) {
@@ -177,6 +188,7 @@ describe('local-node pairing storage', () => {
 
     expect(result).toBeUndefined();
     expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBeNull();
+    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_EJECTION)).toBeNull();
   });
 
   test('returns valid stored pairing during passive discovery', async () => {
@@ -213,12 +225,18 @@ describe('local-node pairing storage', () => {
   test('returns undefined for stored pairing when fetch is unavailable', async () => {
     const storage = new MemoryStorage();
     await persistLocalDwnPairingRecord(storage, pairingRecord);
+    await persistLocalDwnEjectionRecord(storage, {
+      completedAt : 456,
+      endpoint    : pairingRecord.endpoint,
+      version     : 1,
+    });
 
     await withoutGlobalFetch(async (): Promise<void> => {
       expect(await discoverLocalDwnPairing(storage)).toBeUndefined();
     });
 
     expect(await readLocalDwnPairingRecord(storage)).toEqual(pairingRecord);
+    expect(await readLocalDwnEjectionRecord(storage)).toBeUndefined();
   });
 
   test('restores stored pairing endpoint into an agent', async () => {
@@ -408,6 +426,11 @@ describe('probeLocalDwn', () => {
   test('clears stored pairing when probe revalidation fails', async () => {
     const storage = new MemoryStorage();
     await persistLocalDwnPairingRecord(storage, pairingRecord);
+    await persistLocalDwnEjectionRecord(storage, {
+      completedAt : 456,
+      endpoint    : pairingRecord.endpoint,
+      version     : 1,
+    });
 
     const result = await probeLocalDwn({
       fetch: async (url): Promise<Response> => {
@@ -421,11 +444,17 @@ describe('probeLocalDwn', () => {
 
     expect(result).toEqual({ status: 'not-found' });
     expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBeNull();
+    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_EJECTION)).toBeNull();
   });
 
-  test('returns not-found when stored pairing status request throws', async () => {
+  test('retains stored pairing but clears ejection when status request is unavailable', async () => {
     const storage = new MemoryStorage();
     await persistLocalDwnPairingRecord(storage, pairingRecord);
+    await persistLocalDwnEjectionRecord(storage, {
+      completedAt : 456,
+      endpoint    : pairingRecord.endpoint,
+      version     : 1,
+    });
 
     const result = await probeLocalDwn({
       fetch: async (url): Promise<Response> => {
@@ -440,7 +469,8 @@ describe('probeLocalDwn', () => {
     });
 
     expect(result).toEqual({ status: 'not-found' });
-    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBeNull();
+    expect(await readLocalDwnPairingRecord(storage)).toEqual(pairingRecord);
+    expect(await readLocalDwnEjectionRecord(storage)).toBeUndefined();
   });
 });
 
@@ -741,6 +771,52 @@ describe('createLocalDwnRpcClient', () => {
     });
 
     expect(authorizationHeaders).toEqual(['Bearer paired-token', undefined]);
+  });
+
+  test('authenticates the paired endpoint while preserving a fallback RPC client', async () => {
+    const fallbackRequests: string[] = [];
+    const fallback = {
+      applyReplicatedMessage : async (): Promise<any> => ({ status: { code: 202, detail: 'Applied' } }),
+      close                  : async (): Promise<void> => {},
+      getServerInfo          : async (): Promise<ServerInfo> => localNodeInfo,
+      sendDidRequest         : async (): Promise<any> => ({ ok: true, status: { code: 200, message: 'OK' } }),
+      sendDwnRequest         : async (request: any): Promise<any> => {
+        fallbackRequests.push(request.dwnUrl);
+        return { status: { code: 200, detail: 'Custom transport' } };
+      },
+      transportProtocols: ['custom:'],
+    };
+    const client = createLocalDwnRpcClient(pairingRecord, fallback as any);
+    const repeatedClient = createLocalDwnRpcClient(pairingRecord, client);
+    let authorization: string | undefined;
+
+    await withGlobalFetch(async (_url, init): Promise<Response> => {
+      authorization = (init?.headers as Record<string, string>).authorization;
+      return jsonResponse({
+        id      : 'test',
+        jsonrpc : '2.0',
+        result  : { reply: { status: { code: 202, detail: 'Accepted' } } },
+      });
+    }, async (): Promise<void> => {
+      const pairedReply = await client.sendDwnRequest({
+        dwnUrl    : pairingRecord.endpoint,
+        message   : { descriptor: {} } as any,
+        targetDid : 'did:dht:alice',
+      });
+      const customReply = await client.sendDwnRequest({
+        dwnUrl    : 'custom://remote.example',
+        message   : { descriptor: {} } as any,
+        targetDid : 'did:dht:alice',
+      });
+
+      expect(pairedReply.status.detail).toBe('Accepted');
+      expect(customReply.status.detail).toBe('Custom transport');
+    });
+
+    expect(authorization).toBe('Bearer paired-token');
+    expect(fallbackRequests).toEqual(['custom://remote.example']);
+    expect(client.transportProtocols).toContain('custom:');
+    expect(repeatedClient).toBe(client);
   });
 
   test('normalizes WebSocket URLs before attaching local-node token query params', async () => {

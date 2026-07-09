@@ -11,7 +11,12 @@ import { AuthManager } from '../src/auth-manager.js';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { WalletConnect } from '../src/wallet-connect-client.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
-import { persistLocalDwnEjectionRecord, persistLocalDwnPairingRecord, readLocalDwnEjectionRecord } from '../src/discovery.js';
+import {
+  persistLocalDwnEjectionRecord,
+  persistLocalDwnPairingRecord,
+  readLocalDwnEjectionRecord,
+  readLocalDwnPairingRecord,
+} from '../src/discovery.js';
 
 function createInitClientResult(): any {
   return {
@@ -286,6 +291,53 @@ describe('AuthManager.create()', () => {
     });
   });
 
+  test('falls back to an in-process agent without discarding an unavailable pairing', async () => {
+    const storage = new MemoryStorage();
+    const pairing = {
+      createdAt    : 123,
+      endpoint     : 'http://127.0.0.1:55500',
+      pairedOrigin : 'https://app.example',
+      token        : 'paired-token',
+      version      : 1 as const,
+    };
+    await persistLocalDwnPairingRecord(storage, pairing);
+    await persistLocalDwnEjectionRecord(storage, {
+      completedAt : 456,
+      endpoint    : pairing.endpoint,
+      version     : 1,
+    });
+
+    const fetchStub = sinon.stub(globalThis, 'fetch').rejects(new Error('connection refused'));
+    let capturedOptions: any;
+    userAgentCreateStub.onFirstCall().callsFake((...args: any[]): any => {
+      capturedOptions = args[0];
+      return Promise.resolve(createMockAgent());
+    });
+
+    const manager = await AuthManager.create({ storage });
+
+    expect(capturedOptions.localDwnEndpoint).toBeUndefined();
+    expect(capturedOptions.rpcClient).toBeUndefined();
+    expect(manager.localDwnStatus).toEqual({ status: 'unavailable' });
+    expect(await readLocalDwnPairingRecord(storage)).toEqual(pairing);
+    expect(await readLocalDwnEjectionRecord(storage)).toBeUndefined();
+
+    fetchStub.callsFake(async (url: string | URL | Request): Promise<Response> => {
+      return url.toString().endsWith('/info')
+        ? jsonResponse(localNodeInfo())
+        : jsonResponse({ localNode: true, paired: true });
+    });
+    userAgentCreateStub.onSecondCall().resolves(createMockAgent() as any);
+
+    const restoredManager = await AuthManager.create({ storage });
+    expect(restoredManager.localDwnStatus).toEqual({
+      endpoint     : pairing.endpoint,
+      pairedOrigin : pairing.pairedOrigin,
+      status       : 'paired',
+    });
+    expect(restoredManager.localDwnEndpoint).toBeUndefined();
+  });
+
   test('enableLocalNode pairs and emits local-dwn-available', async () => {
     const storage = new MemoryStorage();
     userAgentCreateStub.onFirstCall().resolves(createMockAgent() as any);
@@ -411,32 +463,59 @@ describe('AuthManager.create()', () => {
       version      : 1,
     });
 
+    const rpcAuthorizationHeaders: Array<string | undefined> = [];
     sinon.stub(globalThis, 'fetch').callsFake(async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
       const href = url.toString();
       if (href.endsWith('/info')) {
         return jsonResponse(localNodeInfo());
       }
 
-      expect((init?.headers as Record<string, string>).authorization).toBe('Bearer paired-token');
-      return jsonResponse({ localNode: true, paired: true });
+      const authorization = (init?.headers as Record<string, string>).authorization;
+      if (href.endsWith('/local/status')) {
+        expect(authorization).toBe('Bearer paired-token');
+        return jsonResponse({ localNode: true, paired: true });
+      }
+
+      rpcAuthorizationHeaders.push(authorization);
+      return jsonResponse({
+        id      : 'test',
+        jsonrpc : '2.0',
+        result  : { result: { kind: 'Applied' } },
+      });
     });
 
     const drainCalls: string[] = [];
-    const agent = createMockAgent({
-      syncDrainTo: async (endpoint): Promise<any> => {
-        drainCalls.push(endpoint);
-        return {
-          completed : true,
-          endpoint,
-          targets   : [{
-            completed      : true,
-            converged      : true,
-            remoteEndpoint : endpoint,
-            tenantDid      : 'did:dht:alice',
-          }],
-        };
-      },
-    });
+    const fallbackCalls: string[] = [];
+    const agent = createMockAgent();
+    const originalRpc = agent.rpc;
+    originalRpc.sendDwnRequest = async (request): Promise<any> => {
+      fallbackCalls.push(request.dwnUrl);
+      return { status: { code: 200, detail: 'Custom transport' } };
+    };
+    agent.sync.drainTo = async (endpoint): Promise<any> => {
+      drainCalls.push(endpoint);
+      await agent.rpc.applyReplicatedMessage({
+        dwnUrl    : endpoint,
+        message   : { descriptor: {} } as any,
+        targetDid : 'did:dht:alice',
+      });
+      await agent.rpc.sendDwnRequest({
+        dwnUrl    : 'custom://remote.example',
+        message   : { descriptor: {} } as any,
+        targetDid : 'did:dht:alice',
+      });
+
+      return {
+        completed : true,
+        endpoint,
+        targets   : [{
+          completed      : true,
+          converged      : true,
+          remoteEndpoint : endpoint,
+          tenantDid      : 'did:dht:alice',
+        }],
+      };
+    };
     userAgentCreateStub.onFirstCall().resolves(agent as any);
 
     const manager = await AuthManager.create({ storage });
@@ -445,6 +524,9 @@ describe('AuthManager.create()', () => {
     expect(result.status).toBe('completed');
     expect(result.nextSessionRemoteMode).toBe(true);
     expect(drainCalls).toEqual(['http://127.0.0.1:55500']);
+    expect(rpcAuthorizationHeaders).toEqual(['Bearer paired-token']);
+    expect(fallbackCalls).toEqual(['custom://remote.example']);
+    expect(agent.rpc).not.toBe(originalRpc);
     expect(manager.localDwnEndpoint).toBeUndefined();
     expect(await readLocalDwnEjectionRecord(storage)).toEqual({
       completedAt : expect.any(Number),

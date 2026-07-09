@@ -8,6 +8,7 @@ export function createNodeDiscoveryFileFs(): DiscoveryFileFs | undefined {
   try {
     const nodeRequire = require;
     const fs = nodeRequire('node:fs/promises') as {
+      chmod(path: string, mode: number): Promise<void>;
       readFile(path: string, encoding: string): Promise<string>;
       writeFile(path: string, data: string, options: { encoding: string; mode?: number }): Promise<void>;
       mkdir(path: string, options: { recursive: boolean }): Promise<string | undefined>;
@@ -31,8 +32,24 @@ export function createNodeDiscoveryFileFs(): DiscoveryFileFs | undefined {
 
       async writeFile(filePath: string, contents: string): Promise<void> {
         await fs.mkdir(path.dirname(filePath), { recursive: true });
-        // mode 0o600: owner read/write only; this file contains the endpoint and PID of a local DWN server.
+        try {
+          // Restrict a legacy file before replacing its contents so a newly
+          // written bearer token is never briefly exposed under the old mode.
+          await fs.chmod(filePath, 0o600);
+        } catch (error: unknown) {
+          const errorCode = typeof error === 'object' && error !== null && 'code' in error
+            ? error.code
+            : undefined;
+          if (errorCode !== 'ENOENT') {
+            throw error;
+          }
+        }
+
+        // mode 0o600: owner read/write only; this file may contain a bearer token.
         await fs.writeFile(filePath, contents, { encoding: 'utf-8', mode: 0o600 });
+        // `mode` only applies when creating a file, so explicitly repair the
+        // permissions when replacing a legacy discovery file as well.
+        await fs.chmod(filePath, 0o600);
       },
 
       async removeFile(filePath: string): Promise<void> {

@@ -70,6 +70,23 @@ class MemoryPairingSessionStore implements LocalNodePairingSessionStore {
   }
 }
 
+class ConcurrentTrackingPairingSessionStore extends MemoryPairingSessionStore {
+  public activeWrites = 0;
+  public maxActiveWrites = 0;
+
+  public async write(sessions: LocalNodePairingSessionRecord[]): Promise<void> {
+    this.activeWrites += 1;
+    this.maxActiveWrites = Math.max(this.maxActiveWrites, this.activeWrites);
+
+    try {
+      await Promise.resolve();
+      await super.write(sessions);
+    } finally {
+      this.activeWrites -= 1;
+    }
+  }
+}
+
 type FakeServer = LocalNodeDwnServer & {
   closedDwn : boolean;
   config : DwnServerConfig;
@@ -240,6 +257,27 @@ describe('LocalNode', () => {
     expect(node.state).toBe('stopped');
   });
 
+  it('should finish local cleanup when server shutdown fails', async () => {
+    const discoveryFile = createDiscoveryFile();
+    const { createServer, servers } = createFakeServerFactory();
+    const node = new LocalNode({
+      createServer,
+      discoveryFile,
+      pairingSessionStore : createPairingSessionStore(),
+      portCandidates      : [55500],
+    });
+
+    await node.start();
+    servers[0].stop = async (): Promise<void> => {
+      throw new Error('server stop failed');
+    };
+
+    await expect(node.stop()).rejects.toThrow('server stop failed');
+    expect(node.state).toBe('stopped');
+    expect(node.endpoint).toBeUndefined();
+    expect(discoveryFile.record).toBeUndefined();
+  });
+
   it('should approve pending pairing requests through the broker', async () => {
     const discoveryFile = createDiscoveryFile();
     const { createServer } = createFakeServerFactory();
@@ -271,6 +309,64 @@ describe('LocalNode', () => {
     expect(pollResult?.status).toBe('approved');
     expect(pollResult?.origin).toBe('https://app.example');
     expect(pollResult?.status === 'approved' && pollResult.token !== undefined).toBe(true);
+
+    await node.stop();
+  });
+
+  it('should serialize concurrent pairing broker passes', async () => {
+    let activeDecisions = 0;
+    let decisionCount = 0;
+    let maxActiveDecisions = 0;
+    let releaseFirstDecision: (() => void) | undefined;
+    const firstDecision = new Promise<void>((resolve): void => {
+      releaseFirstDecision = resolve;
+    });
+    const broker: PairingBroker = {
+      async decidePairingRequest(): Promise<PairingDecision> {
+        decisionCount += 1;
+        activeDecisions += 1;
+        maxActiveDecisions = Math.max(maxActiveDecisions, activeDecisions);
+
+        if (decisionCount === 1) {
+          await firstDecision;
+        }
+
+        activeDecisions -= 1;
+        return 'approve';
+      },
+    };
+    const pairingManager = new LocalNodePairingManager();
+    const { createServer } = createFakeServerFactory();
+    const node = new LocalNode({
+      createServer,
+      discoveryFile         : createDiscoveryFile(),
+      pairingBroker         : broker,
+      pairingManager,
+      pairingPollIntervalMs : 60_000,
+      pairingSessionStore   : createPairingSessionStore(),
+      portCandidates        : [55500],
+    });
+
+    await node.start();
+    await Promise.resolve();
+    const firstRequest = pairingManager.createRequest('https://first.example');
+    const secondRequest = pairingManager.createRequest('https://second.example');
+    if (firstRequest.status !== 'created' || secondRequest.status !== 'created') {
+      throw new Error('expected created pairing requests');
+    }
+
+    const firstPass = node.processPendingPairingRequests();
+    await Promise.resolve();
+    const overlappingPass = node.processPendingPairingRequests();
+
+    expect(decisionCount).toBe(1);
+    releaseFirstDecision?.();
+    await Promise.all([firstPass, overlappingPass]);
+
+    expect(decisionCount).toBe(2);
+    expect(maxActiveDecisions).toBe(1);
+    expect(pairingManager.pollRequest(firstRequest.requestId)?.status).toBe('approved');
+    expect(pairingManager.pollRequest(secondRequest.requestId)?.status).toBe('approved');
 
     await node.stop();
   });
@@ -372,6 +468,36 @@ describe('LocalNode', () => {
     expect(secondPairingManager.validateSession('https://existing.example', 'existing-token')).toBe(true);
 
     await secondNode.stop();
+  });
+
+  it('should persist and serialize session changes made by server-side auto approval', async () => {
+    const sessionStore = new ConcurrentTrackingPairingSessionStore();
+    const pairingManager = new LocalNodePairingManager();
+    const { createServer } = createFakeServerFactory();
+    const node = new LocalNode({
+      createServer,
+      discoveryFile       : createDiscoveryFile(),
+      pairingManager,
+      pairingSessionStore : sessionStore,
+      portCandidates      : [55500],
+    });
+
+    await node.start();
+    const firstRequest = pairingManager.createRequest('https://first.example');
+    const secondRequest = pairingManager.createRequest('https://second.example');
+    if (firstRequest.status !== 'created' || secondRequest.status !== 'created') {
+      throw new Error('expected created pairing requests');
+    }
+
+    expect(pairingManager.approveRequest(firstRequest.requestId)).toBe(true);
+    expect(pairingManager.approveRequest(secondRequest.requestId)).toBe(true);
+    await node.stop();
+
+    expect(sessionStore.sessions.map((session): string | undefined => session.origin)).toEqual([
+      'https://first.example',
+      'https://second.example',
+    ]);
+    expect(sessionStore.maxActiveWrites).toBe(1);
   });
 
   it('should persist pairing revocation', async () => {

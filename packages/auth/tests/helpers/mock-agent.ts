@@ -204,7 +204,9 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
     },
 
     rpc: {
-      getServerInfo: overrides.rpcGetServerInfo ?? (async (): Promise<any> => ({
+      applyReplicatedMessage : async (): Promise<any> => ({ status: { code: 202, detail: 'Applied' } }),
+      close                  : async (): Promise<void> => {},
+      getServerInfo          : overrides.rpcGetServerInfo ?? (async (): Promise<any> => ({
         registrationRequirements : [],
         maxFileSize              : 10_000_000,
         server                   : '@enbox/dwn-server',
@@ -213,6 +215,9 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
         version                  : '0.0.1',
         webSocketSupport         : true,
       })),
+      sendDidRequest     : async (): Promise<any> => ({ ok: true, status: { code: 200, message: 'OK' } }),
+      sendDwnRequest     : async (): Promise<any> => ({ status: { code: 202, detail: 'Accepted' } }),
+      transportProtocols : ['http:', 'https:'],
     },
 
     vault: {

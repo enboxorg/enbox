@@ -6,6 +6,7 @@ import type { DwnServerInfoRpc, ServerInfo } from './server-info-types.js';
 import { createJsonRpcRequest } from './json-rpc.js';
 import { CryptoUtils } from '@enbox/crypto';
 import { HttpDwnRpcClient } from './http-dwn-rpc-client.js';
+import { normalizeDwnRpcAuthEndpoint } from './rpc-auth.js';
 import { WebSocketDwnRpcClient } from './web-socket-clients.js';
 
 /**
@@ -40,6 +41,15 @@ export type RpcStatus = {
 };
 
 export interface EnboxRpc extends DwnRpc, DidRpc, DwnServerInfoRpc {
+  /** Removes a previously registered endpoint bearer token. */
+  clearDwnEndpointBearerToken?(dwnUrl: string): void;
+
+  /**
+   * Registers a bearer token for one DWN endpoint. Implementations that do
+   * not support dynamic transport authentication may omit this method.
+   */
+  setDwnEndpointBearerToken?(dwnUrl: string, token: string): void;
+
   /**
    * Releases any persistent transport resources (e.g. pooled WebSocket
    * connections and their heartbeat timers). Called during application
@@ -56,17 +66,37 @@ export type EnboxRpcClientOptions = {
  * Client used to communicate with Dwn Servers
  */
 export class EnboxRpcClient implements EnboxRpc {
+  private readonly authenticatedTransportClients: Map<string, EnboxRpc>;
+  private readonly endpointBearerTokens = new Map<string, string>();
   private readonly transportClients: Map<string, EnboxRpc>;
 
   constructor(clients: EnboxRpc[] = [], options: EnboxRpcClientOptions = {}) {
+    this.authenticatedTransportClients = new Map();
     this.transportClients = new Map();
+
+    const auth: DwnRpcAuthOptions = {
+      getBearerToken: (dwnUrl: string): string | undefined => {
+        return this.endpointBearerTokens.get(normalizeDwnRpcAuthEndpoint(dwnUrl))
+          ?? options.auth?.getBearerToken?.(dwnUrl);
+      },
+    };
 
     // include http and socket clients as default.
     // can be overwritten for 'http:', 'https:', 'ws: or ':wss' if instantiated with other clients.
-    const httpClient = new HttpEnboxRpcClient(undefined, undefined, options.auth);
-    clients = [
+    const httpClient = new HttpEnboxRpcClient(undefined, undefined, auth);
+    const defaultClients: EnboxRpc[] = [
       httpClient,
-      new WebSocketEnboxRpcClient(httpClient, options.auth),
+      new WebSocketEnboxRpcClient(httpClient, auth),
+    ];
+
+    for (const client of defaultClients) {
+      for (const transportScheme of client.transportProtocols) {
+        this.authenticatedTransportClients.set(transportScheme, client);
+      }
+    }
+
+    clients = [
+      ...defaultClients,
       ...clients,
     ];
 
@@ -81,10 +111,28 @@ export class EnboxRpcClient implements EnboxRpc {
     return Array.from(this.transportClients.keys());
   }
 
+  /** Removes a dynamically registered bearer token from one normalized endpoint. */
+  public clearDwnEndpointBearerToken(dwnUrl: string): void {
+    this.endpointBearerTokens.delete(normalizeDwnRpcAuthEndpoint(dwnUrl));
+  }
+
+  /** Registers or rotates a bearer token for one normalized DWN endpoint. */
+  public setDwnEndpointBearerToken(dwnUrl: string, token: string): void {
+    if (token.length === 0) {
+      throw new Error('EnboxRpcClient: Endpoint bearer token must not be empty.');
+    }
+
+    this.endpointBearerTokens.set(normalizeDwnRpcAuthEndpoint(dwnUrl), token);
+  }
+
   /** Closes every distinct transport client (the same client may serve multiple schemes). */
   async close(): Promise<void> {
     const closed = new Set<EnboxRpc>();
-    for (const client of this.transportClients.values()) {
+    const clients = [
+      ...this.authenticatedTransportClients.values(),
+      ...this.transportClients.values(),
+    ];
+    for (const client of clients) {
       if (closed.has(client)) {
         continue;
       }
@@ -112,7 +160,7 @@ export class EnboxRpcClient implements EnboxRpc {
     // will throw if url is invalid
     const url = new URL(request.dwnUrl);
 
-    const transportClient = this.transportClients.get(url.protocol);
+    const transportClient = this.getTransportClient(url, request.dwnUrl);
     if (!transportClient) {
       const error = new Error(`no ${url.protocol} transport client available`);
       error.name = 'NO_TRANSPORT_CLIENT';
@@ -126,7 +174,7 @@ export class EnboxRpcClient implements EnboxRpc {
   applyReplicatedMessage(request: DwnReplicationApplyRequest): Promise<ReplicationApplyResult> {
     const url = new URL(request.dwnUrl);
 
-    const transportClient = this.transportClients.get(url.protocol);
+    const transportClient = this.getTransportClient(url, request.dwnUrl);
     if (!transportClient) {
       const error = new Error(`no ${url.protocol} transport client available`);
       error.name = 'NO_TRANSPORT_CLIENT';
@@ -150,6 +198,15 @@ export class EnboxRpcClient implements EnboxRpc {
     }
 
     return transportClient.getServerInfo(dwnUrl);
+  }
+
+  /** Selects the authenticated built-in transport only for registered endpoints. */
+  private getTransportClient(url: URL, dwnUrl: string): EnboxRpc | undefined {
+    if (this.endpointBearerTokens.has(normalizeDwnRpcAuthEndpoint(dwnUrl))) {
+      return this.authenticatedTransportClients.get(url.protocol);
+    }
+
+    return this.transportClients.get(url.protocol);
   }
 }
 

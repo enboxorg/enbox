@@ -551,6 +551,20 @@ describe('SyncEngineLevel', () => {
         await expect(syncEngine.drainTo('ftp://dwn.example')).rejects.toThrow('SyncEngineLevel: drain endpoint must use http or https.');
       });
 
+      it('does not complete an empty drain plan', async () => {
+        sinon.stub(syncEngine as any, 'buildSyncDrainPlan').resolves({ failures: [], targets: [] });
+
+        const result = await syncEngine.drainTo('https://dwn.example');
+
+        expect(result).toMatchObject({
+          completed       : false,
+          cancelled       : false,
+          topologyChanged : false,
+          targets         : [],
+          error           : 'drain plan contained no registered sync targets',
+        });
+      });
+
       it('reports target failures without throwing', async () => {
         const target = {
           authorization      : { kind: 'owner' },
@@ -596,6 +610,7 @@ describe('SyncEngineLevel', () => {
       });
 
       it('reports aborted drains without throwing', async () => {
+        const controller = new AbortController();
         const target = {
           authorization      : { kind: 'owner' },
           authorizationEpoch : 'owner-epoch',
@@ -607,18 +622,124 @@ describe('SyncEngineLevel', () => {
           failures : [],
           targets  : [target],
         });
-        sinon.stub(syncEngine as any, 'syncTargetWithDurableFeeds').resolves({ aborted: true, pushFailures: [] });
+        sinon.stub(syncEngine as any, 'syncTargetWithDurableFeeds').callsFake(async (): Promise<any> => {
+          controller.abort();
+          return { aborted: true, pushFailures: [] };
+        });
 
-        const result = await syncEngine.drainTo('https://dwn.example');
+        const result = await syncEngine.drainTo('https://dwn.example', { signal: controller.signal });
 
         expect(result.completed).toBe(false);
+        expect(result.cancelled).toBe(true);
+        expect(result.topologyChanged).toBe(false);
+        expect(result.error).toBe('drain aborted');
         expect(result.targets).toHaveLength(1);
         expect(result.targets[0]).toMatchObject({
           completed      : false,
+          cancelled      : true,
           converged      : false,
           error          : 'drain aborted',
           remoteEndpoint : 'https://dwn.example',
           tenantDid      : alice.did.uri,
+        });
+      });
+
+      it('does not report a paused replication link as completed or converged', async () => {
+        const target = {
+          authorization      : { kind: 'owner' },
+          authorizationEpoch : 'owner-epoch',
+          did                : alice.did.uri,
+          dwnUrl             : 'https://dwn.example',
+          scope              : { kind: 'full' },
+        };
+        sinon.stub(syncEngine as any, 'buildSyncDrainPlan').resolves({ failures: [], targets: [target] });
+        sinon.stub(syncEngine as any, 'syncTargetWithDurableFeeds').resolves({
+          converged         : true,
+          localFingerprint  : 'fingerprint',
+          pushFailures      : [],
+          remoteFingerprint : 'fingerprint',
+        });
+        sinon.stub(syncEngine as any, 'getOrCreateReplicationLink').resolves({
+          status : 'paused',
+          push   : {},
+        });
+
+        const result = await syncEngine.drainTo('https://dwn.example');
+
+        expect(result.completed).toBe(false);
+        expect(result.targets[0]).toMatchObject({
+          completed : false,
+          cancelled : false,
+          converged : false,
+          error     : 'replication link is paused',
+        });
+      });
+
+      it('invalidates completion when sync registrations change during the drain', async () => {
+        const target = {
+          authorization      : { kind: 'owner' },
+          authorizationEpoch : 'owner-epoch',
+          did                : alice.did.uri,
+          dwnUrl             : 'https://dwn.example',
+          scope              : { kind: 'full' },
+        };
+        sinon.stub(syncEngine as any, 'buildSyncDrainPlan').resolves({ failures: [], targets: [target] });
+        sinon.stub(syncEngine as any, 'syncTargetWithDurableFeeds').callsFake(async (): Promise<any> => {
+          syncEngine['_syncTargetsCacheGeneration']++;
+          return {
+            converged         : true,
+            localFingerprint  : 'fingerprint',
+            pushFailures      : [],
+            remoteFingerprint : 'fingerprint',
+          };
+        });
+
+        const result = await syncEngine.drainTo('https://dwn.example');
+
+        expect(result).toMatchObject({
+          completed       : false,
+          cancelled       : false,
+          topologyChanged : true,
+          error           : 'sync registrations changed during drain; retry required',
+        });
+        expect(result.targets[0]).toMatchObject({
+          completed : false,
+          cancelled : false,
+          converged : false,
+          error     : 'sync registrations changed during drain; retry required',
+        });
+      });
+
+      it('requires a stable feed head before reporting completion', async () => {
+        const target = {
+          authorization      : { kind: 'owner' },
+          authorizationEpoch : 'owner-epoch',
+          did                : alice.did.uri,
+          dwnUrl             : 'https://dwn.example',
+          scope              : { kind: 'full' },
+        };
+        sinon.stub(syncEngine as any, 'buildSyncDrainPlan').resolves({ failures: [], targets: [target] });
+        sinon.stub(syncEngine as any, 'syncTargetWithDurableFeeds').resolves({
+          converged         : true,
+          localFingerprint  : 'first-fingerprint',
+          pushFailures      : [],
+          remoteFingerprint : 'first-fingerprint',
+        });
+        sinon.stub(syncEngine as any, 'verifyFeedConvergence').resolves({
+          converged         : true,
+          localFingerprint  : 'second-fingerprint',
+          pushFailures      : [],
+          remoteFingerprint : 'second-fingerprint',
+        });
+        const result = await syncEngine.drainTo('https://dwn.example');
+
+        expect(result.completed).toBe(false);
+        expect(result.targets[0]).toMatchObject({
+          completed         : false,
+          converged         : false,
+          error             : 'feed head changed during drain; retry required',
+          localFingerprint  : 'second-fingerprint',
+          remoteFingerprint : 'second-fingerprint',
         });
       });
 

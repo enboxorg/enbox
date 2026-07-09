@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { createLocalNodeDwnServerConfig, defaultLocalNodeHostname } from '../src/local-node-config.js';
+import { createLocalNodeDwnServerConfig, defaultLocalNodeHostname, defaultLocalNodeStorageUrl } from '../src/local-node-config.js';
 
 describe('createLocalNodeDwnServerConfig', () => {
   it('should enable the local-node profile with loopback defaults', () => {
@@ -12,6 +12,10 @@ describe('createLocalNodeDwnServerConfig', () => {
     expect(config.localNodeAllowedOrigins).toEqual([]);
     expect(config.forwardingEnabled).toBe(true);
     expect(config.deliveryEnabled).toBe(true);
+    expect(config.dataStore).toBe(process.env.DWN_STORAGE_DATA ?? process.env.DWN_STORAGE ?? defaultLocalNodeStorageUrl);
+    expect(config.messageStore).toBe(process.env.DWN_STORAGE_MESSAGES ?? process.env.DWN_STORAGE ?? defaultLocalNodeStorageUrl);
+    expect(config.resumableTaskStore).toBe(process.env.DWN_STORAGE_RESUMABLE_TASKS ?? process.env.DWN_STORAGE ?? defaultLocalNodeStorageUrl);
+    expect(defaultLocalNodeStorageUrl).toStartWith('level:///');
   });
 
   it('should apply caller-provided local-node server options', () => {

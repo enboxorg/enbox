@@ -2,6 +2,10 @@ import type { DwnServerConfig } from '../src/config.js';
 
 import sinon from 'sinon';
 
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { tmpdir } from 'node:os';
+
 import { config } from '../src/config.js';
 import { DurableEventLog } from '@enbox/dwn-sdk-js';
 import { InMemoryEventBus } from '../src/event-bus.js';
@@ -75,6 +79,21 @@ describe('storage — coverage', () => {
         dataStore          : 'level://test-data-store',
         messageStore       : 'level://test-message-store',
         resumableTaskStore : 'level://test-task-store',
+      });
+
+      const dwnConfig = await getDwnConfig(cfg, {});
+
+      expect(dwnConfig.dataStore).toBeDefined();
+      expect(dwnConfig.messageStore).toBeDefined();
+      expect(dwnConfig.resumableTaskStore).toBeDefined();
+    });
+
+    it('should create Level stores from an absolute file URL', async () => {
+      const storageUrl = pathToFileURL(join(tmpdir(), 'enbox absolute level store')).href.replace('file:', 'level:');
+      const cfg = testConfig({
+        dataStore          : storageUrl,
+        messageStore       : storageUrl,
+        resumableTaskStore : storageUrl,
       });
 
       const dwnConfig = await getDwnConfig(cfg, {});
