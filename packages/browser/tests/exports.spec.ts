@@ -76,15 +76,31 @@ describe('@enbox/browser exports', () => {
     expect(typeof mod.BrowserConnectHandler).toBe('function');
   });
 
-  it('exports DEFAULT_WALLETS with correct pages.dev URLs', async () => {
+  it('exports the ordered default wallet catalog', async () => {
     const mod = await getBrowserExports();
     const wallets = mod.DEFAULT_WALLETS as Array<{ name: string; url: string; description?: string }>;
-    expect(Array.isArray(wallets)).toBe(true);
-    expect(wallets).toHaveLength(2);
-    expect(wallets[0].url).toBe('https://enbox-wallet.pages.dev');
-    expect(wallets[1].url).toBe('https://blue-enbox-wallet.pages.dev');
-    expect(wallets[0].description).toBeDefined();
-    expect(wallets[1].description).toBeDefined();
+    expect(wallets).toEqual([
+      {
+        name        : 'Enbox',
+        url         : 'https://enbox-wallet.pages.dev',
+        description : 'Manage your digital identity and data',
+      },
+      {
+        name        : 'Prism',
+        url         : 'https://prism-wallet.pages.dev',
+        description : 'A clear view into your digital identity',
+      },
+      {
+        name        : 'Matcha',
+        url         : 'https://matcha-wallet.pages.dev',
+        description : 'A fresh approach to digital identity',
+      },
+      {
+        name        : 'Onyx',
+        url         : 'https://onyx-wallet.pages.dev',
+        description : 'A refined home for your digital identity',
+      },
+    ]);
   });
 
   it('exports the popup connect flow and transports', async () => {

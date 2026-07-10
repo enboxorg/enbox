@@ -15,7 +15,7 @@ import { showWalletSelector } from './ui/wallet-selector.js';
 
 /** A wallet entry shown in the wallet selector modal. */
 export interface WalletOption {
-  /** Display name (e.g. "Enbox Wallet"). */
+  /** Display name (e.g. "Enbox"). */
   name: string;
 
   /** Base URL of the wallet app (e.g. "https://enbox-wallet.pages.dev"). */
@@ -31,14 +31,24 @@ export interface WalletOption {
 /** Default wallets shown in the selector when no overrides are provided. */
 export const DEFAULT_WALLETS: WalletOption[] = [
   {
-    name        : 'Enbox Wallet',
+    name        : 'Enbox',
     url         : 'https://enbox-wallet.pages.dev',
-    description : 'Your digital identity wallet',
+    description : 'Manage your digital identity and data',
   },
   {
-    name        : 'Blue Enbox Wallet',
-    url         : 'https://blue-enbox-wallet.pages.dev',
-    description : 'Your digital identity wallet',
+    name        : 'Prism',
+    url         : 'https://prism-wallet.pages.dev',
+    description : 'A clear view into your digital identity',
+  },
+  {
+    name        : 'Matcha',
+    url         : 'https://matcha-wallet.pages.dev',
+    description : 'A fresh approach to digital identity',
+  },
+  {
+    name        : 'Onyx',
+    url         : 'https://onyx-wallet.pages.dev',
+    description : 'A refined home for your digital identity',
   },
 ];
 
