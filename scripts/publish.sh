@@ -25,6 +25,7 @@ PACKAGES=(
   "packages/crypto"
   "packages/dids"
   "packages/dwn-sdk-js"
+  "packages/connect"
   "packages/dwn-clients"
   "packages/agent"
   "packages/auth"

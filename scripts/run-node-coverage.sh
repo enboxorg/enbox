@@ -68,6 +68,7 @@ export DID_DHT_GATEWAY_URI=http://localhost:7527
 node_packages=(
   "@enbox/common"
   "@enbox/crypto"
+  "@enbox/connect"
   "@enbox/auth"
   "@enbox/cli"
   "@enbox/local-node"
