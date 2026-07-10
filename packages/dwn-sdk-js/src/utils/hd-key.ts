@@ -1,7 +1,6 @@
-import type { PrivateKeyJwk, PublicKeyJwk } from '../types/jose-types.js';
+import type { PrivateKeyJwk } from '../types/jose-types.js';
 
 import { Encoder } from './encoder.js';
-import { X25519 } from '@enbox/crypto';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
 export enum KeyDerivationScheme {
@@ -20,36 +19,6 @@ export type DerivedPrivateJwk = {
  * Class containing hierarchical deterministic key related utility methods used by the DWN.
  */
 export class HdKey {
-  /**
-   * Derives a descendant private key.
-   * Uses X25519 keys for encryption key derivation.
-   */
-  public static async derivePrivateKey(ancestorKey: DerivedPrivateJwk, subDerivationPath: string[]): Promise<DerivedPrivateJwk> {
-    const ancestorPrivateKey = await X25519.privateKeyToBytes({ privateKey: ancestorKey.derivedPrivateKey });
-    const ancestorPrivateKeyDerivationPath = ancestorKey.derivationPath ?? [];
-    const derivedPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(ancestorPrivateKey, subDerivationPath);
-    const derivedPrivateKeyJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: derivedPrivateKeyBytes });
-    const derivedDescendantPrivateKey: DerivedPrivateJwk = {
-      rootKeyId         : ancestorKey.rootKeyId,
-      derivationScheme  : ancestorKey.derivationScheme,
-      derivationPath    : [...ancestorPrivateKeyDerivationPath, ...subDerivationPath],
-      derivedPrivateKey : derivedPrivateKeyJwk as PrivateKeyJwk
-    };
-
-    return derivedDescendantPrivateKey;
-  }
-
-  /**
-   * Derives a descendant public key from an ancestor private key.
-   * Uses X25519 keys for encryption key derivation.
-   */
-  public static async derivePublicKey(ancestorKey: DerivedPrivateJwk, subDerivationPath: string[]): Promise<PublicKeyJwk> {
-    const derivedDescendantPrivateKey = await HdKey.derivePrivateKey(ancestorKey, subDerivationPath);
-    const derivedDescendantPublicKey = await X25519.getPublicKey({ key: derivedDescendantPrivateKey.derivedPrivateKey });
-
-    return derivedDescendantPublicKey as PublicKeyJwk;
-  }
-
   /**
    * Derives a hardened hierarchical deterministic private key.
    */

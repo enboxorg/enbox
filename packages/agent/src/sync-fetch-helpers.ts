@@ -2,7 +2,7 @@ import type { DwnInterface } from './types/dwn.js';
 import type { PermissionsApi } from './types/permissions.js';
 import type { DependencyRef, GenericMessage, ProtocolsConfigureMessage } from '@enbox/dwn-sdk-js';
 
-import { DwnInterfaceName, DwnMethodName, EncryptionProtocol, Message } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, Message } from '@enbox/dwn-sdk-js';
 
 /**
  * Helpers shared by the push (`sync-messages.ts`) and pull (`sync-admit-closure.ts`)
@@ -85,19 +85,6 @@ export function newestProtocolConfig(configs: ProtocolsConfigureMessage[]): Prot
     }
   }
   return newest;
-}
-
-/** Predicate matching the exact Encryption Protocol record named by a dependency ref. */
-export function matchesEncryptionProtocolDependency(
-  message: GenericMessage | undefined,
-  ref: Extract<DependencyRef, { type: 'EncryptionProtocol' }>,
-): boolean {
-  return matchesRecordsDependency(message, {
-    protocol     : EncryptionProtocol.uri,
-    protocolPath : ref.protocolPath,
-    recipient    : ref.recipient,
-    tags         : ref.tags,
-  });
 }
 
 /** Predicate matching the exact source-protocol encryption control record named by a dependency ref. */

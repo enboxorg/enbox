@@ -1,4 +1,4 @@
-import type { DataEncodedRecordsWriteMessage, DerivedPrivateJwk, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { DataEncodedRecordsWriteMessage, DerivedPrivateJwk, PrivateKeyJwk, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 import { afterEach, describe, expect, it } from 'bun:test';
@@ -325,8 +325,18 @@ describe('dwn-encryption', () => {
         derivationScheme  : KeyDerivationScheme.ProtocolPath,
         derivedPrivateKey : owner.encryptionKeyPair.privateJwk,
       };
-      const protocolKey = await HdKey.derivePrivateKey(rootKey, [KeyDerivationScheme.ProtocolPath, protocol]);
-      const leafPublicKey = await HdKey.derivePublicKey(rootKey, [KeyDerivationScheme.ProtocolPath, protocol, 'note']);
+      const rootPrivateKeyBytes = await X25519.privateKeyToBytes({ privateKey: rootKey.derivedPrivateKey });
+      const protocolKeyPath = [KeyDerivationScheme.ProtocolPath, protocol];
+      const protocolKeyBytes = await HdKey.derivePrivateKeyBytes(rootPrivateKeyBytes, protocolKeyPath);
+      const protocolKey: DerivedPrivateJwk = {
+        rootKeyId         : owner.keyId,
+        derivationScheme  : KeyDerivationScheme.ProtocolPath,
+        derivationPath    : protocolKeyPath,
+        derivedPrivateKey : await X25519.bytesToPrivateKey({ privateKeyBytes: protocolKeyBytes }) as PrivateKeyJwk,
+      };
+      const leafPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(protocolKeyBytes, ['note']);
+      const leafPrivateKey = await X25519.bytesToPrivateKey({ privateKeyBytes: leafPrivateKeyBytes });
+      const leafPublicKey = await X25519.getPublicKey({ key: leafPrivateKey });
 
       const dataEncryptionKey = crypto.getRandomValues(new Uint8Array(32));
       const dataEncryptionInitializationVector = crypto.getRandomValues(new Uint8Array(16));

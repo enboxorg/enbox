@@ -23,10 +23,8 @@ import AuthorizationDelegatedGrant from '../json-schemas/authorization-delegated
 import AuthorizationOwner from '../json-schemas/authorization-owner.json' with { type: 'json' };
 import Audience from '../json-schemas/encryption/audience.json' with { type: 'json' };
 import Definitions from '../json-schemas/definitions.json' with { type: 'json' };
-import Delivery from '../json-schemas/encryption/delivery.json' with { type: 'json' };
 import GeneralJwk from '../json-schemas/jwk/general-jwk.json' with { type: 'json' };
 import GeneralJws from '../json-schemas/general-jws.json' with { type: 'json' };
-import GrantKey from '../json-schemas/encryption/grant-key.json' with { type: 'json' };
 import GenericSignaturePayload from '../json-schemas/signature-payloads/generic-signature-payload.json' with { type: 'json' };
 import JwkVerificationMethod from '../json-schemas/jwk-verification-method.json' with { type: 'json' };
 import MessagesFilter from '../json-schemas/interface-methods/messages-filter.json' with { type: 'json' };
@@ -64,8 +62,6 @@ const schemas = {
   AuthorizationDelegatedGrant,
   AuthorizationOwner,
   Audience,
-  Delivery,
-  GrantKey,
   RecordsCount,
   RecordsDelete,
   RecordsQuery,

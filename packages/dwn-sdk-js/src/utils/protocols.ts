@@ -1,10 +1,7 @@
-import type { DerivedPrivateJwk } from '../utils/hd-key.js';
 import type { EncryptionKeyDeriver } from '../types/encryption-types.js';
-import type { PrivateKeyJwk, PublicKeyJwk } from '../types/jose-types.js';
 import type { ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
 
-import { X25519 } from '@enbox/crypto';
-import { HdKey, KeyDerivationScheme } from '../utils/hd-key.js';
+import { KeyDerivationScheme } from '../utils/hd-key.js';
 
 /**
  * Result of parsing a cross-protocol reference in `alias:path` format.
@@ -116,104 +113,44 @@ export class Protocols {
    * because their records belong to the referenced protocol, whose own encryption keys govern them.
    * Children of `$ref` nodes are still processed because they belong to the composing protocol.
    *
-   * Overload 1 (callback-based): Accepts an EncryptionKeyDeriver that performs
-   * key derivation internally. The private key never leaves the caller's boundary.
+   * Accepts an EncryptionKeyDeriver that performs key derivation internally.
+   * The private key never leaves the caller's boundary.
    */
   public static async deriveAndInjectPublicEncryptionKeys(
     protocolDefinition: ProtocolDefinition,
     keyDeriver: EncryptionKeyDeriver,
-  ): Promise<ProtocolDefinition>;
-
-  /**
-   * Overload 2 (raw-key): Takes rootKeyId and raw PrivateKeyJwk directly.
-   */
-  public static async deriveAndInjectPublicEncryptionKeys(
-    protocolDefinition: ProtocolDefinition,
-    rootKeyId: string,
-    privateJwk: PrivateKeyJwk,
-  ): Promise<ProtocolDefinition>;
-
-  // Implementation dispatches based on argument type.
-  public static async deriveAndInjectPublicEncryptionKeys(
-    protocolDefinition: ProtocolDefinition,
-    rootKeyIdOrKeyDeriver: string | EncryptionKeyDeriver,
-    privateJwk?: PrivateKeyJwk,
   ): Promise<ProtocolDefinition> {
     // clone before modify
     const clone = JSON.parse(JSON.stringify(protocolDefinition)) as ProtocolDefinition;
 
-    if (typeof rootKeyIdOrKeyDeriver !== 'string') {
-      // Callback-based path
-      const keyDeriver = rootKeyIdOrKeyDeriver;
-      const basePath = [KeyDerivationScheme.ProtocolPath, protocolDefinition.protocol];
-      clone.$keyAgreement = {
-        publicKeyJwk: await keyDeriver.derivePublicKey(basePath),
-      };
+    const basePath = [KeyDerivationScheme.ProtocolPath, protocolDefinition.protocol];
+    clone.$keyAgreement = {
+      publicKeyJwk: await keyDeriver.derivePublicKey(basePath),
+    };
 
-      async function injectKeysViaCallback(
-        ruleSet: ProtocolRuleSet, parentPath: string[],
-      ): Promise<void> {
-        for (const key in ruleSet) {
-          if (!key.startsWith('$')) {
-            const currentPath = [...parentPath, key];
-            const childRuleSet = ruleSet[key] as ProtocolRuleSet;
-
-            // Skip $ref nodes — they are governed by the referenced protocol's encryption keys.
-            // Still recurse into children, which belong to the composing protocol.
-            if (childRuleSet.$ref !== undefined) {
-              await injectKeysViaCallback(childRuleSet, currentPath);
-              continue;
-            }
-
-            const publicKeyJwk = await keyDeriver.derivePublicKey(currentPath);
-            childRuleSet.$keyAgreement = { publicKeyJwk };
-            await injectKeysViaCallback(childRuleSet, currentPath);
-          }
-        }
-      }
-
-      await injectKeysViaCallback(clone.structure as ProtocolRuleSet, basePath);
-      return clone;
-    }
-
-    // Raw-key path
-    const rootKeyId = rootKeyIdOrKeyDeriver;
-
-    // a function that recursively creates and adds `$keyAgreement` property to every rule set
-    async function addEncryptionProperty(ruleSet: ProtocolRuleSet, parentKey: DerivedPrivateJwk): Promise<void> {
+    async function injectKeys(
+      ruleSet: ProtocolRuleSet, parentPath: string[],
+    ): Promise<void> {
       for (const key in ruleSet) {
-        // if we encounter a nested rule set (a property name that doesn't begin with '$'), recursively inject the `$keyAgreement` property
         if (!key.startsWith('$')) {
-          const derivedPrivateKey = await HdKey.derivePrivateKey(parentKey, [key]);
+          const currentPath = [...parentPath, key];
           const childRuleSet = ruleSet[key] as ProtocolRuleSet;
 
           // Skip $ref nodes — they are governed by the referenced protocol's encryption keys.
           // Still recurse into children, which belong to the composing protocol.
           if (childRuleSet.$ref !== undefined) {
-            await addEncryptionProperty(childRuleSet, derivedPrivateKey);
+            await injectKeys(childRuleSet, currentPath);
             continue;
           }
 
-          const publicKeyJwk = await X25519.getPublicKey({ key: derivedPrivateKey.derivedPrivateKey }) as PublicKeyJwk;
-
+          const publicKeyJwk = await keyDeriver.derivePublicKey(currentPath);
           childRuleSet.$keyAgreement = { publicKeyJwk };
-          await addEncryptionProperty(childRuleSet, derivedPrivateKey);
+          await injectKeys(childRuleSet, currentPath);
         }
       }
     }
 
-    // inject encryption property starting from each root level record type
-    const rootKey: DerivedPrivateJwk = {
-      derivationScheme  : KeyDerivationScheme.ProtocolPath,
-      derivedPrivateKey : privateJwk!,
-      rootKeyId
-    };
-    const protocolLevelDerivedKey = await HdKey.derivePrivateKey(rootKey, [KeyDerivationScheme.ProtocolPath, protocolDefinition.protocol]);
-    clone.$keyAgreement = {
-      publicKeyJwk: await X25519.getPublicKey({ key: protocolLevelDerivedKey.derivedPrivateKey }) as PublicKeyJwk,
-    };
-    await addEncryptionProperty(clone.structure as ProtocolRuleSet, protocolLevelDerivedKey);
-
+    await injectKeys(clone.structure as ProtocolRuleSet, basePath);
     return clone;
   }
 }

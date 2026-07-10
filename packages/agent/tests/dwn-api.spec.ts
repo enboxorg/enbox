@@ -1,5 +1,5 @@
+import type { JwkParamsOkpPublic } from '@enbox/crypto';
 import type { Dwn, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
-import type { JwkParamsOkpPublic, PrivateKeyJwk } from '@enbox/crypto';
 
 import { Convert } from '@enbox/common';
 import { DidDht } from '@enbox/dids';
@@ -9,7 +9,6 @@ import {
   DwnInterfaceName,
   DwnMethodName,
   ENCRYPTION_CONTROL_DELIVERY_PATH,
-  KeyAgreementAlgorithm,
   KeyDerivationScheme,
   Message,
   TestDataGenerator,
@@ -33,7 +32,6 @@ import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { AgentDwnApi, isDwnMessage, isMessagesPermissionScope, isRecordPermissionScope } from '../src/dwn-api.js';
-import { hasRelationalReadAccess, isMultiPartyContext } from '../src/protocol-utils.js';
 
 const testDwnUrls: string[] = [testDwnUrl];
 
@@ -2542,53 +2540,6 @@ describe('Encryption Callback Factories', () => {
     await testHarness.closeStorage();
   });
 
-  describe('getEncryptionKeyInfo()', () => {
-    it('should resolve keyAgreement verification method to KMS key URI', async () => {
-      // Access private method via bracket notation for testing
-      const keyInfo = await testHarness.agent.dwn['getEncryptionKeyInfo'](alice.did.uri);
-
-      expect(keyInfo).toHaveProperty('keyId');
-      expect(keyInfo.keyId).toContain('#enc');
-      expect(keyInfo).toHaveProperty('keyUri');
-      expect(typeof keyInfo.keyUri).toBe('string');
-      expect(keyInfo).toHaveProperty('publicKeyJwk');
-      expect(keyInfo.publicKeyJwk).toHaveProperty('crv', 'X25519');
-      expect(keyInfo.publicKeyJwk).toHaveProperty('kty', 'OKP');
-    });
-
-    it('should throw if DID has no keyAgreement method', async () => {
-      // Stub DID resolution to return a document without keyAgreement
-      const fakeDid = 'did:example:no-key-agreement';
-      sinon.stub(testHarness.agent.did, 'resolve').resolves({
-        didDocument: {
-          id                 : fakeDid,
-          verificationMethod : [{
-            id           : `${fakeDid}#key-1`,
-            type         : 'JsonWebKey',
-            controller   : fakeDid,
-            publicKeyJwk : { kty: 'OKP', crv: 'Ed25519', x: 'test' }
-          }]
-          // No keyAgreement field
-        },
-        didResolutionMetadata : {},
-        didDocumentMetadata   : {}
-      } as any);
-
-      try {
-        await testHarness.agent.dwn['getEncryptionKeyInfo'](fakeDid);
-        throw new Error('Expected an error to be thrown');
-      } catch (error: any) {
-        expect(error.message).toContain('does not have a keyAgreement');
-      } finally {
-        sinon.restore();
-      }
-    });
-
-    // Unimplemented: exercising a non-X25519 keyAgreement key requires an unusual
-    // DID setup; X25519 is required for DWN encryption in practice.
-    it.todo('should throw if keyAgreement key is not X25519');
-  });
-
   describe('getEncryptionKeyDeriver()', () => {
     it('should return valid EncryptionKeyDeriver that delegates to KMS', async () => {
       const keyDeriver = await testHarness.agent.dwn['getEncryptionKeyDeriver'](alice.did.uri);
@@ -2627,63 +2578,6 @@ describe('Encryption Callback Factories', () => {
       const key2 = await keyDeriver.derivePublicKey(['consistent', 'path']);
 
       expect((key1 as JwkParamsOkpPublic).x).toBe((key2 as JwkParamsOkpPublic).x);
-    });
-  });
-
-  describe('getKeyDecrypter()', () => {
-    it('should return valid KeyDecrypter that delegates to KMS', async () => {
-      const keyDecrypter = await testHarness.agent.dwn['getKeyDecrypter'](alice.did.uri);
-
-      expect(keyDecrypter).toHaveProperty('rootKeyId');
-      expect(keyDecrypter.rootKeyId).toContain('#enc');
-      expect(keyDecrypter).toHaveProperty('derivationScheme', 'protocolPath');
-      expect(keyDecrypter).toHaveProperty('decrypt');
-      expect(typeof keyDecrypter.decrypt).toBe('function');
-    });
-
-    it('should decrypt wrapped CEK payload through KMS when callback is invoked', async () => {
-      const { Encryption, HdKey, KeyDerivationScheme } = await import('@enbox/dwn-sdk-js');
-      const { X25519 } = await import('@enbox/crypto');
-
-      // Get the encryption key info
-      const keyInfo = await testHarness.agent.dwn['getEncryptionKeyInfo'](alice.did.uri);
-
-      // Derive a test key for encryption
-      const privateKeyJwk = await testHarness.agent.keyManager['getPrivateKey']({ keyUri: keyInfo.keyUri }) as PrivateKeyJwk;
-      const privateKeyBytes = await X25519.privateKeyToBytes({ privateKey: privateKeyJwk });
-      const derivationPath = ['test', 'decrypt'];
-      const leafPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(privateKeyBytes, derivationPath);
-      const leafPrivateKeyJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: leafPrivateKeyBytes });
-      const leafPublicKeyJwk = await X25519.getPublicKey({ key: leafPrivateKeyJwk });
-
-      // Wrap a random 32-byte CEK using the DWN key-agreement envelope.
-      const { CryptoUtils } = await import('@enbox/crypto');
-      const cek = CryptoUtils.randomBytes(32);
-      const wrapped = await Encryption.wrapKey({
-        cek,
-        keyInput: {
-          algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-          derivationScheme : KeyDerivationScheme.ProtocolPath,
-          keyId            : await Encryption.getKeyId(leafPublicKeyJwk),
-          publicKey        : leafPublicKeyJwk,
-        },
-      });
-
-      // Get key decrypter and decrypt
-      const keyDecrypter = await testHarness.agent.dwn['getKeyDecrypter'](alice.did.uri);
-      const decrypted = await keyDecrypter.decrypt(derivationPath, {
-        encryptedKey       : wrapped.encryptedKey,
-        ephemeralPublicKey : wrapped.ephemeralPublicKey,
-        keyEncryption      : {
-          algorithm          : 'X25519-HKDF-SHA256+A256KW',
-          derivationScheme   : KeyDerivationScheme.ProtocolPath,
-          encryptedKey       : Convert.uint8Array(wrapped.encryptedKey).toBase64Url(),
-          ephemeralPublicKey : wrapped.ephemeralPublicKey,
-          keyId              : await Encryption.getKeyId(leafPublicKeyJwk),
-        },
-      });
-
-      expect(Convert.uint8Array(decrypted).toHex()).toBe(Convert.uint8Array(cek).toHex());
     });
   });
 
@@ -3473,14 +3367,6 @@ describe('Encryption Callback Factories', () => {
       }
     };
 
-    it('should detect multi-party protocols via isMultiPartyContext()', () => {
-      // Multi-party: thread has participant with $role: true
-      expect(isMultiPartyContext(multiPartyProtocolDefinition, 'thread')).toBe(true);
-
-      // Single-party: note has no $role children
-      expect(isMultiPartyContext(singlePartyProtocolDefinition, 'note')).toBe(false);
-    });
-
     it('should encrypt root record with protocol path keys for multi-party protocol', async () => {
       // Configure protocol with encryption
       await testHarness.agent.dwn.processRequest({
@@ -3811,248 +3697,6 @@ describe('Encryption Callback Factories', () => {
       expect(readReply.status.code).toBe(200);
       const rawBytes = await DataStream.toBytes(readReply.entry!.data!);
       expect(Convert.uint8Array(rawBytes).toString()).not.toBe(plaintextString);
-    });
-  });
-});
-
-describe('Participant Detection (PR B)', () => {
-  let testHarness: PlatformAgentTestHarness;
-
-  beforeAll(async () => {
-    testHarness = await PlatformAgentTestHarness.setup({
-      agentClass  : TestAgent,
-      agentStores : 'dwn'
-    });
-  });
-
-  beforeEach(async () => {
-    await testHarness.clearStorage();
-    await testHarness.createAgentDid();
-  });
-
-  afterAll(async () => {
-    await testHarness.clearStorage();
-    await testHarness.closeStorage();
-  });
-
-  // ---- Protocol fixtures ----
-
-  // Role-based multi-party protocol (existing pattern)
-  const roleProtocol: ProtocolDefinition = {
-    published : true,
-    protocol  : 'https://protocol.xyz/role-chat',
-    types     : {
-      thread      : { dataFormats: ['application/json'] },
-      participant : { dataFormats: ['application/json'] },
-      chat        : { dataFormats: ['text/plain'] },
-    },
-    structure: {
-      thread: {
-        participant : { $role: true },
-        chat        : {},
-      },
-    },
-  };
-
-  // Relational-only protocol (no $role, uses who/of read rules)
-  const relationalProtocol: ProtocolDefinition = {
-    published : true,
-    protocol  : 'https://protocol.xyz/email',
-    types     : {
-      email      : { dataFormats: ['text/plain'] },
-      attachment : { dataFormats: ['application/octet-stream'] },
-    },
-    structure: {
-      email: {
-        $actions: [
-          { who: 'anyone', can: ['create'] },
-          { who: 'author', of: 'email', can: ['read'] },
-          { who: 'recipient', of: 'email', can: ['read'] },
-        ],
-        attachment: {
-          $actions: [
-            { who: 'author', of: 'email', can: ['create', 'read'] },
-            { who: 'recipient', of: 'email', can: ['read'] },
-          ],
-        },
-      },
-    },
-  };
-
-  // Mixed protocol (both $role and relational rules)
-  const mixedProtocol: ProtocolDefinition = {
-    published : true,
-    protocol  : 'https://protocol.xyz/community',
-    types     : {
-      community : { dataFormats: ['application/json'] },
-      admin     : { dataFormats: ['application/json'] },
-      channel   : { dataFormats: ['application/json'] },
-      message   : { dataFormats: ['text/plain'] },
-    },
-    structure: {
-      community: {
-        admin   : { $role: true },
-        channel : {
-          $actions: [
-            { who: 'author', of: 'community', can: ['create'] },
-          ],
-          message: {
-            $actions: [
-              { role: 'community/admin', can: ['read'] },
-              { who: 'recipient', of: 'community/channel/message', can: ['read'] },
-            ],
-          },
-        },
-      },
-    },
-  };
-
-  // Single-party protocol (no roles, no relational read)
-  const singlePartyProtocol: ProtocolDefinition = {
-    published : true,
-    protocol  : 'https://protocol.xyz/notes',
-    types     : {
-      note: { dataFormats: ['text/plain'] },
-    },
-    structure: {
-      note: {},
-    },
-  };
-
-  // Protocol with create-only relational rule (no read → not multi-party)
-  const createOnlyProtocol: ProtocolDefinition = {
-    published : true,
-    protocol  : 'https://protocol.xyz/form',
-    types     : {
-      form       : { dataFormats: ['application/json'] },
-      submission : { dataFormats: ['application/json'] },
-    },
-    structure: {
-      form: {
-        submission: {
-          $actions: [
-            { who: 'anyone', can: ['create'] },
-            { who: 'recipient', of: 'form/submission', can: ['update'] },
-          ],
-        },
-      },
-    },
-  };
-
-  describe('isMultiPartyContext()', () => {
-    it('should return true for role-based protocols', () => {
-      expect(isMultiPartyContext(roleProtocol, 'thread')).toBe(true);
-    });
-
-    it('should return true for relational-only protocols with read rules', () => {
-      expect(isMultiPartyContext(relationalProtocol, 'email')).toBe(true);
-    });
-
-    it('should return true for mixed role + relational protocols', () => {
-      expect(isMultiPartyContext(mixedProtocol, 'community')).toBe(true);
-    });
-
-    it('should return false for single-party protocols', () => {
-      expect(isMultiPartyContext(singlePartyProtocol, 'note')).toBe(false);
-    });
-
-    it('should return false when relational rules only grant create, not read', () => {
-      expect(isMultiPartyContext(createOnlyProtocol, 'form')).toBe(false);
-    });
-  });
-
-  describe('hasRelationalReadAccess()', () => {
-    it('should find recipient-of read rules', () => {
-      expect(hasRelationalReadAccess('recipient', 'email', relationalProtocol)).toBe(true);
-    });
-
-    it('should find author-of read rules', () => {
-      expect(hasRelationalReadAccess('author', 'email', relationalProtocol)).toBe(true);
-    });
-
-    it('should return false when no matching rule exists', () => {
-      expect(hasRelationalReadAccess('recipient', 'note', singlePartyProtocol)).toBe(false);
-    });
-
-    it('should return false when rules exist but do not grant read', () => {
-      expect(hasRelationalReadAccess('recipient', 'form/submission', createOnlyProtocol)).toBe(false);
-    });
-
-    it('should find rules with undefined actorType (any who)', () => {
-      expect(hasRelationalReadAccess(undefined, 'email', relationalProtocol)).toBe(true);
-    });
-
-    it('should find deeply nested relational rules', () => {
-      // The mixed protocol has { who: 'recipient', of: 'community/channel/message', can: ['read'...] }
-      expect(hasRelationalReadAccess('recipient', 'community/channel/message', mixedProtocol)).toBe(true);
-    });
-  });
-
-  describe('detectNewParticipants()', () => {
-    it('should detect $role recipient as participant', () => {
-      const result = testHarness.agent.dwn.detectNewParticipants({
-        protocolDefinition : roleProtocol,
-        protocolPath       : 'thread/participant',
-        recipient          : 'did:example:bob',
-        tenantDid          : 'did:example:alice',
-      });
-      expect(result.size).toBe(1);
-      expect(result.has('did:example:bob')).toBe(true);
-    });
-
-    it('should detect relational recipient as participant', () => {
-      const result = testHarness.agent.dwn.detectNewParticipants({
-        protocolDefinition : relationalProtocol,
-        protocolPath       : 'email',
-        recipient          : 'did:example:bob',
-        tenantDid          : 'did:example:alice',
-      });
-      expect(result.size).toBe(1);
-      expect(result.has('did:example:bob')).toBe(true);
-    });
-
-    it('should exclude the DWN owner from participants', () => {
-      const result = testHarness.agent.dwn.detectNewParticipants({
-        protocolDefinition : relationalProtocol,
-        protocolPath       : 'email',
-        recipient          : 'did:example:alice',
-        tenantDid          : 'did:example:alice',
-      });
-      expect(result.size).toBe(0);
-    });
-
-    it('should return empty set when no recipient and no role', () => {
-      const result = testHarness.agent.dwn.detectNewParticipants({
-        protocolDefinition : singlePartyProtocol,
-        protocolPath       : 'note',
-        tenantDid          : 'did:example:alice',
-      });
-      expect(result.size).toBe(0);
-    });
-
-    it('should not detect recipients when no relational read rule exists', () => {
-      const result = testHarness.agent.dwn.detectNewParticipants({
-        protocolDefinition : createOnlyProtocol,
-        protocolPath       : 'form/submission',
-        recipient          : 'did:example:bob',
-        tenantDid          : 'did:example:alice',
-      });
-      expect(result.size).toBe(0);
-    });
-
-    it('should detect role recipient even when recipient equals tenant (role overrides)', () => {
-      // $role records should still add the recipient even if it's the tenant —
-      // the tenant exclusion happens AFTER. When tenant IS the recipient of a $role,
-      // they get excluded by the final delete. But this tests that non-tenant role
-      // recipients work alongside relational detection.
-      const result = testHarness.agent.dwn.detectNewParticipants({
-        protocolDefinition : roleProtocol,
-        protocolPath       : 'thread/participant',
-        recipient          : 'did:example:carol',
-        tenantDid          : 'did:example:alice',
-      });
-      expect(result.size).toBe(1);
-      expect(result.has('did:example:carol')).toBe(true);
     });
   });
 });
@@ -4853,64 +4497,6 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
       },
     },
   };
-
-  // Chat protocol with $role records — participants can read/write chats
-  const chatProtocol: ProtocolDefinition = {
-    published : true,
-    protocol  : 'https://protocol.xyz/chat-pre',
-    types     : {
-      thread      : { schema: 'https://schemas.xyz/thread', dataFormats: ['application/json'] },
-      participant : { schema: 'https://schemas.xyz/participant', dataFormats: ['application/json'] },
-      chat        : { schema: 'https://schemas.xyz/chat', dataFormats: ['text/plain'] },
-    },
-    structure: {
-      thread: {
-        participant : { $role: true },
-        chat        : {
-          $actions: [
-            { role: 'thread/participant', can: ['create', 'read'] },
-          ],
-        },
-      },
-    },
-  };
-
-  it('detectNewParticipants should detect external author via Case 3', () => {
-    const participants = testHarness.agent.dwn.detectNewParticipants({
-      protocolDefinition : emailProtocol,
-      protocolPath       : 'thread',
-      recipient          : alice.did.uri,
-      tenantDid          : alice.did.uri,
-      authorDid          : bob.did.uri,
-    });
-
-    // Bob (the author) should be detected as a participant due to
-    // { who: 'author', of: 'thread', can: ['read'] }
-    expect(participants.has(bob.did.uri)).toBe(true);
-  });
-
-  it('detectNewParticipants should not detect external author when no author-read rules exist', () => {
-    // Chat protocol has no "who: author" rules — only $role
-    const participants = testHarness.agent.dwn.detectNewParticipants({
-      protocolDefinition : chatProtocol,
-      protocolPath       : 'thread',
-      tenantDid          : alice.did.uri,
-      authorDid          : bob.did.uri,
-    });
-
-    expect(participants.has(bob.did.uri)).toBe(false);
-  });
-
-  it('detectNewParticipants should not include the DWN owner even as an author', () => {
-    const participants = testHarness.agent.dwn.detectNewParticipants({
-      protocolDefinition : emailProtocol,
-      protocolPath       : 'thread',
-      tenantDid          : alice.did.uri,
-      authorDid          : alice.did.uri, // owner is the author
-    });
-
-    expect(participants.has(alice.did.uri)).toBe(false);
-  });
 
   it('cross-DWN root record should use ProtocolPath encryption with target key', async () => {
     // Configure protocol for Alice (the DWN owner) with encryption

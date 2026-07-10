@@ -23,7 +23,7 @@ describe('Encryption callback interfaces', () => {
   });
 
   describe('Protocols.deriveAndInjectPublicEncryptionKeys()', () => {
-    it('produces the same $keyAgreement output as the raw-key overload', async () => {
+    it('injects the derived public key for each rule set path', async () => {
       const protocolDefinition = {
         protocol  : 'https://example.com/protocol/foo',
         published : true,
@@ -45,16 +45,20 @@ describe('Encryption callback interfaces', () => {
         }
       };
 
-      const resultA = await Protocols.deriveAndInjectPublicEncryptionKeys(protocolDefinition, rootKeyId, privateJwk);
       const keyDeriver = createKeyDeriver(privateJwk, rootKeyId);
-      const resultB = await Protocols.deriveAndInjectPublicEncryptionKeys(protocolDefinition, keyDeriver);
+      const result = await Protocols.deriveAndInjectPublicEncryptionKeys(protocolDefinition, keyDeriver);
 
-      expect(resultA.$keyAgreement!.publicKeyJwk).toEqual(resultB.$keyAgreement!.publicKeyJwk);
-      expect(resultA.structure.thread.$keyAgreement!.publicKeyJwk).toEqual(resultB.structure.thread.$keyAgreement!.publicKeyJwk);
+      // key derivation is deterministic, so re-deriving each path yields the exact key each node must carry
+      const protocol = protocolDefinition.protocol;
+      const rootPublicKey = await keyDeriver.derivePublicKey([KeyDerivationScheme.ProtocolPath, protocol]);
+      const threadPublicKey = await keyDeriver.derivePublicKey([KeyDerivationScheme.ProtocolPath, protocol, 'thread']);
+      const messagePublicKey = await keyDeriver.derivePublicKey([KeyDerivationScheme.ProtocolPath, protocol, 'thread', 'message']);
 
-      const messageRuleSetA = resultA.structure.thread.message as ProtocolRuleSet;
-      const messageRuleSetB = resultB.structure.thread.message as ProtocolRuleSet;
-      expect(messageRuleSetA.$keyAgreement!.publicKeyJwk).toEqual(messageRuleSetB.$keyAgreement!.publicKeyJwk);
+      expect(result.$keyAgreement!.publicKeyJwk).toEqual(rootPublicKey);
+      expect(result.structure.thread.$keyAgreement!.publicKeyJwk).toEqual(threadPublicKey);
+
+      const messageRuleSet = result.structure.thread.message as ProtocolRuleSet;
+      expect(messageRuleSet.$keyAgreement!.publicKeyJwk).toEqual(messagePublicKey);
     });
 
     it('calls derivePublicKey with protocol-root and full protocol-path derivation paths', async () => {
@@ -92,7 +96,7 @@ describe('Encryption callback interfaces', () => {
   });
 
   describe('Records.decrypt() with KeyDecrypter', () => {
-    it('produces the same plaintext as the raw-key overload', async () => {
+    it('decrypts a record encrypted with a protocol-path derived public key', async () => {
       const protocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys({
         protocol  : 'https://example.com/protocol/decrypt-test',
         published : true,
@@ -106,7 +110,7 @@ describe('Encryption callback interfaces', () => {
         structure: {
           note: {},
         }
-      }, rootKeyId, privateJwk);
+      }, createKeyDeriver(privateJwk, rootKeyId));
       const alice = await TestDataGenerator.generatePersona();
       const plaintext = 'This is a secret message';
       const plaintextBytes = Encoder.stringToBytes(plaintext);
@@ -117,27 +121,12 @@ describe('Encryption callback interfaces', () => {
         protocolDefinition,
         protocolPath                                  : 'note',
       });
-      const rootKey = {
-        derivedPrivateKey : privateJwk,
-        derivationScheme  : KeyDerivationScheme.ProtocolPath,
-        rootKeyId,
-      };
 
-      const decryptedStreamA = await Records.decrypt(encryptedRecord.message, rootKey, encryptedRecord.dataStream);
-      const plaintextA = await DataStream.toBytes(decryptedStreamA);
       const keyDecrypter = createKeyDecrypter(privateJwk, rootKeyId);
-      const encryptedRecord2 = await TestDataGenerator.generateProtocolEncryptedRecordsWrite({
-        author                                        : alice,
-        encryptSymmetricKeyWithProtocolPathDerivedKey : true,
-        plaintextBytes,
-        protocolDefinition,
-        protocolPath                                  : 'note',
-      });
-      const decryptedStreamB = await Records.decrypt(encryptedRecord2.message, keyDecrypter, encryptedRecord2.dataStream);
-      const plaintextB = await DataStream.toBytes(decryptedStreamB);
+      const decryptedStream = await Records.decrypt(encryptedRecord.message, keyDecrypter, encryptedRecord.dataStream);
+      const decryptedBytes = await DataStream.toBytes(decryptedStream);
 
-      expect(Encoder.bytesToString(plaintextA)).toBe(plaintext);
-      expect(Encoder.bytesToString(plaintextB)).toBe(plaintext);
+      expect(Encoder.bytesToString(decryptedBytes)).toBe(plaintext);
     });
 
     it('throws if no matching key encryption entry is found', async () => {
@@ -154,7 +143,7 @@ describe('Encryption callback interfaces', () => {
         structure: {
           note: {},
         }
-      }, rootKeyId, privateJwk);
+      }, createKeyDeriver(privateJwk, rootKeyId));
       const alice = await TestDataGenerator.generatePersona();
       const encryptedRecord = await TestDataGenerator.generateProtocolEncryptedRecordsWrite({
         author                                        : alice,
@@ -168,7 +157,7 @@ describe('Encryption callback interfaces', () => {
       await expect(
         Records.decrypt(
           encryptedRecord.message,
-          { derivedPrivateKey: otherPrivateKey, derivationScheme: KeyDerivationScheme.ProtocolPath, rootKeyId: 'did:example:bob#enc' },
+          createKeyDecrypter(otherPrivateKey, 'did:example:bob#enc'),
           encryptedRecord.dataStream,
         )
       ).rejects.toThrow('Unable to find a matching key encryption entry');

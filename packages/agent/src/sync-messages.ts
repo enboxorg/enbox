@@ -33,7 +33,6 @@ import {
   hasTerminalDependency,
   isTenantProtocolConfig,
   matchesEncryptionControlDependency,
-  matchesEncryptionProtocolDependency,
   missingDependencyDetail,
   newestProtocolConfig,
   resolveDelegatePermissionGrantId,
@@ -723,8 +722,6 @@ class RemoteApplyPushContext {
         return this.fetchRecordData(ref);
       case 'EncryptionControl':
         return this.fetchEncryptionControlRecord(ref);
-      case 'EncryptionProtocol':
-        return this.fetchEncryptionProtocolRecord(ref);
       default:
         return unreachable(ref);
     }
@@ -836,39 +833,6 @@ class RemoteApplyPushContext {
     }
 
     return { kind: 'fetched', entries: await this.entriesFromRecordsQueryEntries(recordsReply.entries) };
-  }
-
-  private async fetchEncryptionProtocolRecord(ref: Extract<DependencyRef, { type: 'EncryptionProtocol' }>): Promise<FetchDependencyResult> {
-    const protocol = typeof ref.tags?.protocol === 'string' ? ref.tags.protocol : undefined;
-    if (protocol === undefined) {
-      return { kind: 'failed', detail: `encryption protocol dependency is missing protocol tag` };
-    }
-
-    const reply = await queryLocalMessageFeed({
-      did                : this.deps.did,
-      delegateDid        : this.deps.delegateDid,
-      permissionGrantIds : this.deps.permissionGrantIds,
-      filters            : [{ protocol }],
-      agent              : this.deps.agent,
-    });
-    if (reply.status.code !== 200 || reply.entries === undefined) {
-      return {
-        kind   : 'failed',
-        detail : `local encryption protocol feed query failed for ${protocol}: ${reply.status.code} ${reply.status.detail ?? ''}`,
-      };
-    }
-
-    const entries: SyncMessageEntry[] = [];
-    for (const entry of reply.entries) {
-      if (!matchesEncryptionProtocolDependency(entry.message, ref)) {
-        continue;
-      }
-
-      entries.push(await this.entryForMessageFeedEntry(entry));
-    }
-
-    await this.rememberEntries(entries);
-    return { kind: 'fetched', entries };
   }
 
   private async fetchEncryptionControlRecord(ref: Extract<DependencyRef, { type: 'EncryptionControl' }>): Promise<FetchDependencyResult> {

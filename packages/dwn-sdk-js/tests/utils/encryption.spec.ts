@@ -10,10 +10,11 @@ import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { Encoder } from '../../src/utils/encoder.js';
 import { KeyDerivationScheme } from '../../src/utils/hd-key.js';
 import { Records } from '../../src/utils/records.js';
+import sinon from 'sinon';
 import { TestDataGenerator } from './test-data-generator.js';
 import { X25519 } from '@enbox/crypto';
+import { afterEach, describe, expect, it } from 'bun:test';
 import { ContentEncryptionAlgorithm, Encryption, KeyAgreementAlgorithm, ROLE_AUDIENCE_DERIVATION_SCHEME, SEAL_DERIVATION_SCHEME } from '../../src/utils/encryption.js';
-import { describe, expect, it } from 'bun:test';
 
 const boundarySizes = [0, 1, 15, 16, 17, 32, 256];
 
@@ -70,6 +71,10 @@ async function createEncryptedRecordFixture(plaintext = TestDataGenerator.random
 }
 
 describe('Encryption', () => {
+  afterEach(() => {
+    sinon.restore();
+  });
+
   describe('A256CTR', () => {
     it('should encrypt and decrypt bytes correctly', async () => {
       const key = TestDataGenerator.randomBytes(32);
@@ -82,7 +87,7 @@ describe('Encryption', () => {
       expect(ArrayUtility.byteArraysEqual(inputBytes, plaintext)).toBe(true);
     });
 
-    it('should encrypt and decrypt streams correctly', async () => {
+    it('should encrypt a stream into ciphertext that decrypts back to the plaintext', async () => {
       const key = TestDataGenerator.randomBytes(32);
       const iv = TestDataGenerator.randomBytes(16);
       const inputBytes = TestDataGenerator.randomBytes(1_000_000);
@@ -90,10 +95,8 @@ describe('Encryption', () => {
       const ciphertextStream = await Encryption.encryptStream(
         ContentEncryptionAlgorithm.A256CTR, key, iv, DataStream.fromBytes(inputBytes)
       );
-      const plaintextStream = await Encryption.decryptStream(
-        ContentEncryptionAlgorithm.A256CTR, key, iv, ciphertextStream
-      );
-      const plaintextBytes = await DataStream.toBytes(plaintextStream);
+      const ciphertextBytes = await DataStream.toBytes(ciphertextStream);
+      const plaintextBytes = await Encryption.decrypt(ContentEncryptionAlgorithm.A256CTR, key, iv, ciphertextBytes);
 
       expect(ArrayUtility.byteArraysEqual(inputBytes, plaintextBytes)).toBe(true);
     });
@@ -180,7 +183,6 @@ describe('Encryption', () => {
     it('should domain-separate role-audience KEKs without delimiter ambiguity', async () => {
       const recipientPrivateKey = await X25519.generateKey();
       const recipientPublicKey = await X25519.getPublicKey({ key: recipientPrivateKey }) as PublicKeyJwk;
-      const ephemeralPrivateKey = await X25519.generateKey();
       const cek = TestDataGenerator.randomBytes(32);
       const keyId = await Encryption.getKeyId(recipientPublicKey);
       const baseKeyInput = {
@@ -190,44 +192,34 @@ describe('Encryption', () => {
         publicKey        : recipientPublicKey,
       } as const;
 
-      const wrappedKey1 = await Encryption.wrapKey({
+      const wrappedKey = await Encryption.wrapKey({
         cek,
-        ephemeralPrivateKey,
         keyInput: {
           ...baseKeyInput,
           protocol : 'https://example.com/a|b',
           rolePath : 'c',
         },
       });
-      const wrappedKey2 = await Encryption.wrapKey({
-        cek,
-        ephemeralPrivateKey,
-        keyInput: {
-          ...baseKeyInput,
-          protocol : 'https://example.com/a',
-          rolePath : 'b|c',
-        },
-      });
 
-      expect(ArrayUtility.byteArraysEqual(wrappedKey1.encryptedKey, wrappedKey2.encryptedKey)).toBe(false);
-
-      const unwrapped1 = await Encryption.unwrapKey(recipientPrivateKey, {
+      // unwrapping with the exact (protocol, rolePath) pair used for wrapping round-trips the CEK
+      const unwrapped = await Encryption.unwrapKey(recipientPrivateKey, {
         ...baseKeyInput,
-        encryptedKey       : Encoder.bytesToBase64Url(wrappedKey1.encryptedKey),
-        ephemeralPublicKey : wrappedKey1.ephemeralPublicKey,
+        encryptedKey       : Encoder.bytesToBase64Url(wrappedKey.encryptedKey),
+        ephemeralPublicKey : wrappedKey.ephemeralPublicKey,
         protocol           : 'https://example.com/a|b',
         rolePath           : 'c',
       });
-      const unwrapped2 = await Encryption.unwrapKey(recipientPrivateKey, {
+      expect(ArrayUtility.byteArraysEqual(unwrapped, cek)).toBe(true);
+
+      // a delimiter-shifted (protocol, rolePath) pair must derive a different KEK, so unwrapping must fail;
+      // a naive delimiter-joined KEK info would make both pairs derive the same KEK and let this unwrap succeed
+      await expect(Encryption.unwrapKey(recipientPrivateKey, {
         ...baseKeyInput,
-        encryptedKey       : Encoder.bytesToBase64Url(wrappedKey2.encryptedKey),
-        ephemeralPublicKey : wrappedKey2.ephemeralPublicKey,
+        encryptedKey       : Encoder.bytesToBase64Url(wrappedKey.encryptedKey),
+        ephemeralPublicKey : wrappedKey.ephemeralPublicKey,
         protocol           : 'https://example.com/a',
         rolePath           : 'b|c',
-      });
-
-      expect(ArrayUtility.byteArraysEqual(unwrapped1, cek)).toBe(true);
-      expect(ArrayUtility.byteArraysEqual(unwrapped2, cek)).toBe(true);
+      })).rejects.toThrow();
     });
 
     it('should produce and open the sealed-audience-key fixture byte-for-byte', async () => {
@@ -267,8 +259,10 @@ describe('Encryption', () => {
       } as PublicKeyJwk;
       const audiencePrivateKeyBytes = await X25519.privateKeyToBytes({ privateKey: audiencePrivateKey });
 
+      // pin the ephemeral key pair generated inside `wrapSeal()` so the fixture stays byte-for-byte deterministic
+      sinon.stub(X25519, 'generateKey').resolves(ephemeralPrivateKey);
+
       const seal = await Encryption.wrapSeal({
-        ephemeralPrivateKey,
         privateKeyBytes : audiencePrivateKeyBytes,
         keyInput        : {
           algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
@@ -417,13 +411,14 @@ describe('Encryption', () => {
         },
       } as unknown as RecordsWriteMessage;
       const dummyKey = await X25519.generateKey() as PrivateKeyJwk;
+      const keyDecrypter = TestDataGenerator.createKeyDecrypter({
+        derivationScheme  : KeyDerivationScheme.ProtocolPath,
+        derivedPrivateKey : dummyKey,
+        rootKeyId         : 'did:example:alice#enc',
+      });
 
       await expect(
-        Records.decrypt(messageWithoutEncryption, {
-          derivedPrivateKey : dummyKey,
-          derivationScheme  : KeyDerivationScheme.ProtocolPath,
-          rootKeyId         : 'did:example:alice#enc',
-        }, DataStream.fromBytes(TestDataGenerator.randomBytes(32)))
+        Records.decrypt(messageWithoutEncryption, keyDecrypter, DataStream.fromBytes(TestDataGenerator.randomBytes(32)))
       ).rejects.toThrow(DwnErrorCode.RecordsDecryptNoMatchingKeyEncryptedFound);
     });
 
@@ -434,13 +429,14 @@ describe('Encryption', () => {
         recipientPrivateKey,
       } = await createEncryptedRecordFixture(Encoder.stringToBytes('secret'));
       const wrongCiphertext = TestDataGenerator.randomBytes(ciphertext.length);
+      const keyDecrypter = TestDataGenerator.createKeyDecrypter({
+        derivationScheme  : KeyDerivationScheme.ProtocolPath,
+        derivedPrivateKey : recipientPrivateKey,
+        rootKeyId         : 'did:example:alice#enc',
+      });
 
       await expect(
-        Records.decrypt(message, {
-          derivedPrivateKey : recipientPrivateKey,
-          derivationScheme  : KeyDerivationScheme.ProtocolPath,
-          rootKeyId         : 'did:example:alice#enc',
-        }, DataStream.fromBytes(wrongCiphertext))
+        Records.decrypt(message, keyDecrypter, DataStream.fromBytes(wrongCiphertext))
       ).rejects.toThrow(DwnErrorCode.RecordsWriteDataCidMismatch);
     });
 

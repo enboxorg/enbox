@@ -826,7 +826,7 @@ describe('ProtocolsConfigure', () => {
 
           const alice = await TestDataGenerator.generatePersona();
           const encryptedDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-            definition, alice.keyId, alice.encryptionKeyPair.privateJwk
+            definition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
           );
 
           await expect(ProtocolsConfigure.create({
@@ -862,7 +862,7 @@ describe('ProtocolsConfigure', () => {
 
           const alice = await TestDataGenerator.generatePersona();
           const encryptedDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-            definition, alice.keyId, alice.encryptionKeyPair.privateJwk
+            definition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
           );
 
           await expect(ProtocolsConfigure.create({
@@ -891,7 +891,7 @@ describe('ProtocolsConfigure', () => {
 
           const alice = await TestDataGenerator.generatePersona();
           const encryptedDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-            definition, alice.keyId, alice.encryptionKeyPair.privateJwk
+            definition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
           );
           const result = await ProtocolsConfigure.create({
             signer     : Jws.createSigner(alice),
@@ -935,7 +935,7 @@ describe('ProtocolsConfigure', () => {
 
           const alice = await TestDataGenerator.generatePersona();
           const encryptedDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-            definition, alice.keyId, alice.encryptionKeyPair.privateJwk
+            definition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
           );
           const result = await ProtocolsConfigure.create({
             signer     : Jws.createSigner(alice),
@@ -973,7 +973,7 @@ describe('ProtocolsConfigure', () => {
 
           const alice = await TestDataGenerator.generatePersona();
           const encryptedDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-            definition, alice.keyId, alice.encryptionKeyPair.privateJwk
+            definition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
           );
 
           await expect(ProtocolsConfigure.create({

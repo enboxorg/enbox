@@ -107,13 +107,11 @@ export type KeyUnwrapPayload = {
 export type X25519KeyWrapInput = {
   cek: Uint8Array;
   keyInput: X25519KeyEncryptionInput;
-  ephemeralPrivateKey?: Jwk;
 };
 
 export type SealWrapInput = {
   privateKeyBytes: Uint8Array;
   keyInput: SealKeyWrapInput;
-  ephemeralPrivateKey?: Jwk;
 };
 
 export type SealUnwrapInput = {
@@ -180,17 +178,6 @@ export class Encryption {
     return Encryption.toStream(ciphertext);
   }
 
-  public static async decryptStream(
-    algorithm: ContentEncryptionAlgorithm,
-    keyBytes: Uint8Array,
-    initializationVector: Uint8Array,
-    ciphertextStream: ReadableStream<Uint8Array>,
-  ): Promise<ReadableStream<Uint8Array>> {
-    const ciphertext = await Encryption.readStream(ciphertextStream);
-    const plaintext = await Encryption.decrypt(algorithm, keyBytes, initializationVector, ciphertext);
-    return Encryption.toStream(plaintext);
-  }
-
   public static async wrapKey(input: X25519KeyWrapInput): Promise<{ encryptedKey: Uint8Array; ephemeralPublicKey: PublicKeyJwk }> {
     if (Encryption.isX25519KeyAgreementAlgorithm(input.keyInput.algorithm)) {
       return Encryption.wrapX25519Key(input);
@@ -206,7 +193,7 @@ export class Encryption {
 
     Encryption.validateContentEncryptionKey(input.privateKeyBytes);
 
-    const privateKey = input.ephemeralPrivateKey ?? await X25519.generateKey();
+    const privateKey = await X25519.generateKey();
     const publicKey = await X25519.getPublicKey({ key: privateKey }) as PublicKeyJwk;
     const sharedSecret = await X25519.sharedSecret({
       privateKeyA : privateKey,
@@ -231,7 +218,7 @@ export class Encryption {
   private static async wrapX25519Key(input: X25519KeyWrapInput): Promise<{ encryptedKey: Uint8Array; ephemeralPublicKey: PublicKeyJwk }> {
     Encryption.validateContentEncryptionKey(input.cek);
 
-    const privateKey = input.ephemeralPrivateKey ?? await X25519.generateKey();
+    const privateKey = await X25519.generateKey();
     const publicKey = await X25519.getPublicKey({ key: privateKey }) as PublicKeyJwk;
     const sharedSecret = await X25519.sharedSecret({
       privateKeyA : privateKey,

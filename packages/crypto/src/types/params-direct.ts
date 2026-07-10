@@ -56,36 +56,11 @@ export interface DecryptParams {
 }
 
 /**
- * Parameters for deriving bits.
- */
-export interface DeriveBitsParams {
-  /** A {@link Jwk} containing the base key to be used for derivation. */
-  key: Jwk;
-
-  /**
-   * The number of bits to derive. To be compatible with all browsers, the number should be a
-   * multiple of 8.
-   */
-  length: number;
-}
-
-/**
- * Parameters for deriving a key.
- */
-export interface DeriveKeyParams {
-  /** A {@link Jwk} containing the base key to be used for derivation. */
-  key: Jwk;
-
-  /** An object defining the algorithm-specific parameters for the derived key. */
-  derivedKeyParams: unknown
-}
-
-/**
  * Parameters for deriving a key from raw byte-based key material.
  *
- * Unlike {@link DeriveKeyParams} which operates on JWK keys, this interface works with raw
- * byte arrays as the base key input, making it suitable for agent-level key derivation where
- * keys originate from passphrases, seed phrases, or other byte-oriented sources.
+ * This interface works with raw byte arrays as the base key input, making it suitable for
+ * agent-level key derivation where keys originate from passphrases, seed phrases, or other
+ * byte-oriented sources.
  */
 export interface DeriveKeyFromBytesParams {
   /** The algorithm identifier. */

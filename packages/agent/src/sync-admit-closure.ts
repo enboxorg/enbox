@@ -33,7 +33,6 @@ import {
   hasTerminalDependency,
   isTenantProtocolConfig,
   matchesEncryptionControlDependency,
-  matchesEncryptionProtocolDependency,
   missingDependencyDetail,
   newestProtocolConfig,
   resolveDelegatePermissionGrantId,
@@ -330,8 +329,6 @@ class AdmitClosureContext {
         return this.fetchGrantRecord(ref.permissionGrantId);
       case 'EncryptionControl':
         return this.fetchEncryptionControlRecord(ref);
-      case 'EncryptionProtocol':
-        return this.fetchEncryptionProtocolRecord(ref);
       case 'RecordData':
         return this.fetchRecordData(ref);
       default:
@@ -418,38 +415,6 @@ class AdmitClosureContext {
       targetDid : this.deps.did,
     }) as RecordsQueryReply;
     return this.entriesFromRecordsQueryReply(reply);
-  }
-
-  private async fetchEncryptionProtocolRecord(ref: Extract<DependencyRef, { type: 'EncryptionProtocol' }>): Promise<SyncMessageEntry[]> {
-    const protocol = typeof ref.tags?.protocol === 'string' ? ref.tags.protocol : undefined;
-    if (protocol === undefined) {
-      return [];
-    }
-
-    const reply = await queryRemoteMessageFeed({
-      did                : this.deps.did,
-      dwnUrl             : this.deps.dwnUrl,
-      delegateDid        : this.deps.delegateDid,
-      permissionGrantIds : this.deps.permissionGrantIds,
-      filters            : [{ protocol }],
-      agent              : this.deps.agent,
-    });
-    if (reply.status.code !== 200 || reply.entries === undefined) {
-      return [];
-    }
-
-    const entries: SyncMessageEntry[] = [];
-    for (const entry of reply.entries) {
-      if (!matchesEncryptionProtocolDependency(entry.message, ref)) {
-        continue;
-      }
-
-      entries.push(this.entryFromMessageFeedEntry(entry));
-    }
-
-    const dedupedEntries = await dedupeEntries(entries);
-    await this.rememberEntries(dedupedEntries);
-    return dedupedEntries;
   }
 
   private async fetchEncryptionControlRecord(ref: Extract<DependencyRef, { type: 'EncryptionControl' }>): Promise<SyncMessageEntry[]> {

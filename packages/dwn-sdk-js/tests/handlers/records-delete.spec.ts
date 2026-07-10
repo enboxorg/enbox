@@ -231,7 +231,7 @@ export function testRecordsDeleteHandler(): void {
           },
         };
         const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-          protocolDefinition, alice.keyId, alice.encryptionKeyPair.privateJwk
+          protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
         );
         const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
           author             : alice,

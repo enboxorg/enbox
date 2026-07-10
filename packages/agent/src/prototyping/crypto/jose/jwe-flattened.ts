@@ -254,16 +254,6 @@ export class FlattenedJwe {
       throw new Error('JWE Header is missing required "alg" (Algorithm) and/or "enc" (Encryption) Header Parameters');
     }
 
-    if (Array.isArray(options.allowedAlgValues)
-        && !options.allowedAlgValues.includes(joseHeader.alg)) {
-      throw new Error(`"alg" (Algorithm) Header Parameter value not allowed: ${joseHeader.alg}`);
-    }
-
-    if (Array.isArray(options.allowedEncValues)
-        && !options.allowedEncValues.includes(joseHeader.enc)) {
-      throw new Error(`"enc" (Encryption Algorithm) Header Parameter value not allowed: ${joseHeader.enc}`);
-    }
-
     let cek: KeyIdentifier | Jwk;
     try {
       const encryptedKey = jwe.encrypted_key
@@ -271,7 +261,7 @@ export class FlattenedJwe {
         : undefined;
 
       cek = await JweKeyManagement.decrypt(
-        { key, encryptedKey, joseHeader, keyManager, crypto },
+        { key, encryptedKey, joseHeader, crypto },
         { minP2cCount: options.minP2cCount }
       );
 
@@ -391,7 +381,7 @@ export class FlattenedJwe {
       throw new Error('JWE Header is missing required "alg" (Algorithm) and/or "enc" (Encryption) Header Parameters');
     }
 
-    const { cek, encryptedKey } = await JweKeyManagement.encrypt({ key, joseHeader, keyManager, crypto });
+    const { cek, encryptedKey } = await JweKeyManagement.encrypt({ key, joseHeader, crypto });
 
     // If required for the Content Encryption Algorithm, generate a random JWE Initialization
     // Vector (IV) of the correct size; otherwise, let the JWE Initialization Vector be the empty

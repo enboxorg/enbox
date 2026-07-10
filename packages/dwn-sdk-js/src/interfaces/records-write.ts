@@ -519,19 +519,6 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
   }
 
   /**
-   * Encrypts the symmetric encryption key using the public keys given and attaches the resulting `encryption` property.
-   */
-  public async encryptSymmetricEncryptionKey(
-    encryptionInput: EncryptionInput,
-  ): Promise<void> {
-    this._message.encryption = await createEncryptionProperty(encryptionInput);
-
-    delete this._message.authorization;
-    this._signaturePayload = undefined;
-    this._author = undefined;
-  }
-
-  /**
    * Signs the RecordsWrite, the signer is commonly the author, but can also be a delegate.
    */
   public async sign(options: {

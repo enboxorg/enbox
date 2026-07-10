@@ -91,8 +91,9 @@ export function testEndToEndScenarios(): void {
       ];
 
       // Alice configures chat protocol with encryption
-      const protocolDefinitionForAlice
-        = await Protocols.deriveAndInjectPublicEncryptionKeys(protocolDefinition, alice.keyId, alice.encryptionKeyPair.privateJwk);
+      const protocolDefinitionForAlice = await Protocols.deriveAndInjectPublicEncryptionKeys(
+        protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
+      );
       const encryptedThreadRuleSet = protocolDefinitionForAlice.structure.thread as ProtocolRuleSet;
       const encryptedParticipantRuleSet = encryptedThreadRuleSet.participant as ProtocolRuleSet;
       const encryptedChatRuleSet = encryptedThreadRuleSet.chat as ProtocolRuleSet;
@@ -237,7 +238,7 @@ export function testEndToEndScenarios(): void {
       };
       const decryptedChatMessageStream2 = await Records.decrypt(
         chatReadReply.entry!.recordsWrite!,
-        aliceRootKey,
+        TestDataGenerator.createKeyDecrypter(aliceRootKey),
         DataStream.fromBytes(encryptedChatMessageBytes)
       );
       expect(await DataStream.toBytes(decryptedChatMessageStream2)).toEqual(Encoder.stringToBytes(messageByAlice));

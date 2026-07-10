@@ -2439,11 +2439,10 @@ async function verifyPermissionGrantActive(
   granteeDid: string,
   grantorDid: string,
   grant: PermissionGrant,
-  label = 'grantKey',
 ): Promise<void> {
   const now = Time.getCurrentTimestamp();
   if (now < grant.dateGranted || now >= grant.dateExpires) {
-    throw new Error(`${label} references an inactive permission grant.`);
+    throw new Error('grantKey references an inactive permission grant.');
   }
 
   const revoked = await agent.permissions.isGrantRevoked({
@@ -2452,7 +2451,7 @@ async function verifyPermissionGrantActive(
     grantRecordId : grant.id,
   });
   if (revoked) {
-    throw new Error(`${label} references a revoked permission grant.`);
+    throw new Error('grantKey references a revoked permission grant.');
   }
 }
 

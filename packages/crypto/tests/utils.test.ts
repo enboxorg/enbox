@@ -2,7 +2,7 @@ import type { Jwk } from '../src/jose/jwk.js';
 
 import { describe, expect, it } from 'bun:test';
 
-import { CryptoUtils, isCipher, isKeyExporter, isKeyImporter, isKeyWrapper } from '../src/utils.js';
+import { CryptoUtils, isCipher } from '../src/utils.js';
 
 describe('Crypto Utils', () => {
   describe('getJoseSignatureAlgorithmFromPublicKey()', () => {
@@ -211,78 +211,6 @@ describe('Crypto Utils', () => {
     });
   });
 
-  describe('isKeyExporter()', () => {
-    it('returns true for objects with an exportKey function', () => {
-      const exporter = { exportKey: (): void => {} };
-      expect(isKeyExporter(exporter)).toBe(true);
-    });
-
-    it('returns false for null', () => {
-      expect(isKeyExporter(null)).toBe(false);
-    });
-
-    it('returns false for empty objects', () => {
-      expect(isKeyExporter({})).toBe(false);
-    });
-
-    it('returns false when exportKey is not a function', () => {
-      expect(isKeyExporter({ exportKey: 'not-a-function' })).toBe(false);
-    });
-  });
-
-  describe('isKeyImporter()', () => {
-    it('returns true for objects with an importKey function', () => {
-      const importer = { importKey: (): void => {} };
-      expect(isKeyImporter(importer)).toBe(true);
-    });
-
-    it('returns false for null', () => {
-      expect(isKeyImporter(null)).toBe(false);
-    });
-
-    it('returns false for empty objects', () => {
-      expect(isKeyImporter({})).toBe(false);
-    });
-
-    it('returns false when importKey is not a function', () => {
-      expect(isKeyImporter({ importKey: 'not-a-function' })).toBe(false);
-    });
-  });
-
-  describe('isKeyWrapper()', () => {
-    it('returns true for objects with wrapKey and unwrapKey functions', () => {
-      const wrapper = {
-        wrapKey   : (): void => {},
-        unwrapKey : (): void => {},
-      };
-      expect(isKeyWrapper(wrapper)).toBe(true);
-    });
-
-    it('returns false for null', () => {
-      expect(isKeyWrapper(null)).toBe(false);
-    });
-
-    it('returns false for empty objects', () => {
-      expect(isKeyWrapper({})).toBe(false);
-    });
-
-    it('returns false when wrapKey is missing', () => {
-      expect(isKeyWrapper({ unwrapKey: (): void => {} })).toBe(false);
-    });
-
-    it('returns false when unwrapKey is missing', () => {
-      expect(isKeyWrapper({ wrapKey: (): void => {} })).toBe(false);
-    });
-
-    it('returns false when wrapKey is not a function', () => {
-      expect(isKeyWrapper({ wrapKey: 'not-a-function', unwrapKey: (): void => {} })).toBe(false);
-    });
-
-    it('returns false for primitives', () => {
-      expect(isKeyWrapper(42)).toBe(false);
-      expect(isKeyWrapper('string')).toBe(false);
-    });
-  });
 });
 
 function numberToBytes(value: number, byteLength: number): Uint8Array {

@@ -1,5 +1,5 @@
 import type { EncryptionInput, RecordsWriteOptions } from '../../src/interfaces/records-write.js';
-import type { MessageSigner, PermissionScope } from '../../src/index.js';
+import type { MessageSigner, PermissionScope, PublicKeyJwk } from '../../src/index.js';
 
 import sinon from 'sinon';
 import { beforeEach, describe, expect, it } from 'bun:test';
@@ -13,13 +13,13 @@ import { RecordsWrite } from '../../src/interfaces/records-write.js';
 import { RecordsWriteHandler } from '../../src/handlers/records-write.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { Time } from '../../src/utils/time.js';
+import { X25519 } from '@enbox/crypto';
 
 import {
   ContentEncryptionAlgorithm,
   DwnInterfaceName,
   DwnMethodName,
   Encoder,
-  HdKey,
   Jws,
   KeyAgreementAlgorithm,
   KeyDerivationScheme,
@@ -536,7 +536,8 @@ describe('RecordsWrite', () => {
         derivationScheme  : KeyDerivationScheme.ProtocolPath,
         rootKeyId         : 'unused',
       };
-      const publicKey = await HdKey.derivePublicKey(rootKey, [KeyDerivationScheme.ProtocolPath, protocol, protocolPath]);
+      const leafKey = await TestDataGenerator.deriveDescendantPrivateKey(rootKey, [KeyDerivationScheme.ProtocolPath, protocol, protocolPath]);
+      const publicKey = await X25519.getPublicKey({ key: leafKey.derivedPrivateKey }) as PublicKeyJwk;
       const encryptionInput: EncryptionInput = {
         initializationVector : dataEncryptionInitializationVector,
         key                  : dataEncryptionKey,
@@ -567,7 +568,7 @@ describe('RecordsWrite', () => {
 
       const decryptedStream = await Records.decrypt(
         updateWrite.message,
-        rootKey,
+        TestDataGenerator.createKeyDecrypter(rootKey),
         DataStream.fromBytes(encryptedData)
       );
       expect(await DataStream.toBytes(decryptedStream)).toEqual(plaintext);
@@ -776,57 +777,4 @@ describe('RecordsWrite', () => {
     });
   });
 
-  describe('encryptSymmetricEncryptionKey()', () => {
-    it('should replace encryption property by default', async () => {
-      const alice = await TestDataGenerator.generatePersona();
-      const bob = await TestDataGenerator.generatePersona();
-      const dataEncryptionKey = TestDataGenerator.randomBytes(32);
-      const dataEncryptionIV = TestDataGenerator.randomBytes(16);
-
-      const recordsWrite = await RecordsWrite.create({
-        signer       : Jws.createSigner(alice),
-        protocol     : 'https://example.com/protocol',
-        protocolPath : 'test',
-        schema       : 'https://example.com/schema',
-        dataFormat   : 'application/octet-stream',
-        data         : TestDataGenerator.randomBytes(100),
-      });
-
-      // First encryption — ProtocolPath
-      const encryptionInput1: EncryptionInput = {
-        initializationVector : dataEncryptionIV,
-        key                  : dataEncryptionKey,
-        keyEncryptionInputs  : [{
-          algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-          keyId            : await Encryption.getKeyId(alice.encryptionKeyPair.publicJwk),
-          publicKey        : alice.encryptionKeyPair.publicJwk,
-          derivationScheme : KeyDerivationScheme.ProtocolPath,
-        }],
-      };
-      await recordsWrite.encryptSymmetricEncryptionKey(encryptionInput1);
-
-      expect(recordsWrite['_message'].encryption).toBeDefined();
-      expect(recordsWrite['_message'].encryption!.keyEncryption).toHaveLength(1);
-      expect(recordsWrite['_message'].encryption!.keyEncryption[0].derivationScheme).toBe('protocolPath');
-
-      // Second encryption (replace mode) — should overwrite
-      const encryptionInput2: EncryptionInput = {
-        initializationVector : dataEncryptionIV,
-        key                  : dataEncryptionKey,
-        keyEncryptionInputs  : [{
-          algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-          keyId            : await Encryption.getKeyId(bob.encryptionKeyPair.publicJwk),
-          publicKey        : bob.encryptionKeyPair.publicJwk,
-          derivationScheme : KeyDerivationScheme.ProtocolPath,
-        }],
-      };
-      await recordsWrite.encryptSymmetricEncryptionKey(encryptionInput2);
-
-      // Should have replaced — only Bob's entry remains
-      const encryption = recordsWrite['_message'].encryption!;
-      expect(encryption.keyEncryption).toHaveLength(1);
-      expect(encryption.keyEncryption[0].derivationScheme).toBe('protocolPath');
-      expect(encryption.keyEncryption[0].keyId).toBe(await Encryption.getKeyId(bob.encryptionKeyPair.publicJwk));
-    });
-  });
 });

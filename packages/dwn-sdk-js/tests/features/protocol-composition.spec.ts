@@ -2320,48 +2320,7 @@ export function testProtocolComposition(): void {
         encryptionRootKeyId = 'did:example:alice#enc';
       });
 
-      it('should skip `$keyAgreement` injection on `$ref` nodes but inject on their children (raw-key path)', async () => {
-        const composingProtocol: ProtocolDefinition = {
-          protocol  : 'https://comments.example.com',
-          published : true,
-          uses      : { threads: 'https://threads.example.com' },
-          types     : {
-            comment  : { schema: 'https://comments.example.com/schemas/comment', dataFormats: ['application/json'] },
-            reaction : { schema: 'https://comments.example.com/schemas/reaction', dataFormats: ['application/json'] },
-          },
-          structure: {
-            thread: {
-              $ref    : 'threads:thread',
-              comment : {
-                $actions : [{ who: 'anyone', can: ['create', 'read'] }],
-                reaction : {
-                  $actions: [{ who: 'anyone', can: ['create', 'read'] }],
-                },
-              },
-            },
-          },
-        };
-
-        const result = await Protocols.deriveAndInjectPublicEncryptionKeys(
-          composingProtocol, encryptionRootKeyId, encryptionPrivateJwk,
-        );
-
-        expect(result.$keyAgreement).toBeDefined();
-
-        // $ref node must NOT have $keyAgreement
-        expect(result.structure.thread.$keyAgreement).toBeUndefined();
-
-        // Children of $ref node MUST have $keyAgreement
-        const commentRuleSet = result.structure.thread.comment as ProtocolRuleSet;
-        expect(commentRuleSet.$keyAgreement).toBeDefined();
-        expect(commentRuleSet.$keyAgreement!.publicKeyJwk).toBeDefined();
-
-        // Grandchild of $ref node
-        const reactionRuleSet = commentRuleSet.reaction as ProtocolRuleSet;
-        expect(reactionRuleSet.$keyAgreement).toBeDefined();
-      });
-
-      it('should skip `$keyAgreement` injection on `$ref` nodes but inject on their children (callback path)', async () => {
+      it('should skip `$keyAgreement` injection on `$ref` nodes but inject on their children', async () => {
         const composingProtocol: ProtocolDefinition = {
           protocol  : 'https://comments.example.com',
           published : true,
@@ -2421,7 +2380,7 @@ export function testProtocolComposition(): void {
         expect(calledPaths).toContainEqual(reactionPath);
       });
 
-      it('should produce identical $keyAgreement for children across both overloads', async () => {
+      it('should inject child `$keyAgreement` keys derived under the composing protocol URI', async () => {
         const composingProtocol: ProtocolDefinition = {
           protocol  : 'https://comments.example.com',
           published : true,
@@ -2437,37 +2396,21 @@ export function testProtocolComposition(): void {
           },
         };
 
-        // Raw-key path
-        const resultA = await Protocols.deriveAndInjectPublicEncryptionKeys(
-          composingProtocol, encryptionRootKeyId, encryptionPrivateJwk,
-        );
-
-        // Callback path
-        const keyDeriver = {
-          rootKeyId        : encryptionRootKeyId,
-          derivationScheme : KeyDerivationScheme.ProtocolPath,
-          derivePublicKey  : async (fullDerivationPath: string[]): Promise<PublicKeyJwk> => {
-            const privateKeyBytes = await X25519.privateKeyToBytes({ privateKey: encryptionPrivateJwk });
-            const derivedPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(privateKeyBytes, fullDerivationPath);
-            const derivedPrivateKeyJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: derivedPrivateKeyBytes });
-            return await X25519.getPublicKey({ key: derivedPrivateKeyJwk }) as PublicKeyJwk;
-          },
-        };
-
-        const resultB = await Protocols.deriveAndInjectPublicEncryptionKeys(
+        const keyDeriver = TestDataGenerator.createProtocolPathKeyDeriver(encryptionRootKeyId, encryptionPrivateJwk);
+        const result = await Protocols.deriveAndInjectPublicEncryptionKeys(
           composingProtocol, keyDeriver,
         );
 
-        // Both paths must skip $ref
-        expect(resultA.structure.thread.$keyAgreement).toBeUndefined();
-        expect(resultB.structure.thread.$keyAgreement).toBeUndefined();
+        // The $ref node must be skipped
+        expect(result.structure.thread.$keyAgreement).toBeUndefined();
 
-        // Both paths must produce identical $keyAgreement on children
-        const commentA = resultA.structure.thread.comment as ProtocolRuleSet;
-        const commentB = resultB.structure.thread.comment as ProtocolRuleSet;
-        expect(commentA.$keyAgreement!.publicKeyJwk).toEqual(
-          commentB.$keyAgreement!.publicKeyJwk,
+        // Children of the $ref node must carry a key derived under the COMPOSING protocol's URI,
+        // not the referenced protocol's URI
+        const expectedCommentPublicKey = await keyDeriver.derivePublicKey(
+          [KeyDerivationScheme.ProtocolPath, 'https://comments.example.com', 'thread', 'comment'],
         );
+        const comment = result.structure.thread.comment as ProtocolRuleSet;
+        expect(comment.$keyAgreement!.publicKeyJwk).toEqual(expectedCommentPublicKey);
       });
 
       it('should successfully install a composing protocol with encryption after $ref skip', async () => {
@@ -2486,7 +2429,7 @@ export function testProtocolComposition(): void {
 
         // Inject encryption keys into the composing protocol
         const encryptedComments = await Protocols.deriveAndInjectPublicEncryptionKeys(
-          commentsProtocol, alice.keyId, alice.encryptionKeyPair.privateJwk,
+          commentsProtocol, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk),
         );
 
         // $ref node should not have $keyAgreement
@@ -2521,7 +2464,7 @@ export function testProtocolComposition(): void {
 
         // 2. Install the comments protocol with encryption keys
         const encryptedComments = await Protocols.deriveAndInjectPublicEncryptionKeys(
-          commentsProtocol, alice.keyId, alice.encryptionKeyPair.privateJwk,
+          commentsProtocol, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk),
         );
         const commentsConfigure = await ProtocolsConfigure.create({
           definition : encryptedComments,
@@ -2581,7 +2524,7 @@ export function testProtocolComposition(): void {
           derivedPrivateKey : alice.encryptionKeyPair.privateJwk,
         };
         const decryptedStream = await Records.decrypt(
-          readReply.entry!.recordsWrite!, rootKey, readReply.entry!.data!,
+          readReply.entry!.recordsWrite!, TestDataGenerator.createKeyDecrypter(rootKey), readReply.entry!.data!,
         );
         const decryptedBytes = await DataStream.toBytes(decryptedStream);
         expect(Encoder.bytesToString(decryptedBytes)).toBe(plaintext);
@@ -2604,7 +2547,7 @@ export function testProtocolComposition(): void {
         };
 
         await Protocols.deriveAndInjectPublicEncryptionKeys(
-          composingProtocol, encryptionRootKeyId, encryptionPrivateJwk,
+          composingProtocol, TestDataGenerator.createProtocolPathKeyDeriver(encryptionRootKeyId, encryptionPrivateJwk),
         );
 
         // Original must be unmodified

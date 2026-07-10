@@ -195,7 +195,7 @@ describe('validation read closure', () => {
         },
       };
       const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-        protocolDefinition, alice.keyId, alice.encryptionKeyPair.privateJwk
+        protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
       );
       const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({
         author             : alice,

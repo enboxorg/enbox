@@ -1,4 +1,4 @@
-import type { CryptoApi, JoseHeaderParams, Jwk, KeyIdentifier, KeyManager } from '@enbox/crypto';
+import type { CryptoApi, JoseHeaderParams, Jwk, KeyIdentifier } from '@enbox/crypto';
 
 import { Convert } from '@enbox/common';
 import { CryptoError, CryptoErrorCode } from '@enbox/crypto';
@@ -11,29 +11,6 @@ import { CryptoError, CryptoErrorCode } from '@enbox/crypto';
  * decryption, enhancing security by preventing unexpected algorithm usage.
  */
 export interface JweDecryptOptions {
-  /**
-   * The allowed "alg" (Algorithm) Header Parameter values.
-   *
-   * These values specify the cryptographic algorithms that are permissible for decrypting
-   * the Content Encryption Key (CEK) or for key agreement to determine the CEK.
-   *
-   * Note: If not specified, all algorithm values are considered allowed, which might not be
-   * desirable in all contexts.
-   */
-  allowedAlgValues?: string[];
-
-  /**
-   * The allowed "enc" (Encryption) Header Parameter values.
-   *
-   * These values determine the cryptographic algorithms that can be used for decrypting the
-   * ciphertext and protecting the integrity of the plaintext and Additional Authenticated Data.
-   *
-   * Note: If left unspecified, it implies that all encryption algorithms are acceptable, which may
-   * not be secure in every scenario.
-   *
-   */
-  allowedEncValues?: string[];
-
   /**
    * Minimum acceptable PBES2 iteration count ("p2c") for key derivation during decryption.
    * Per RFC 7518 Section 4.8.1.2, a minimum of 1000 is RECOMMENDED. Set to a lower value
@@ -76,36 +53,14 @@ export interface JweHeaderParams extends JoseHeaderParams {
    * @see {@link https://datatracker.ietf.org/doc/html/rfc7516#section-4.1.1 | RFC 7516, Section 4.1.1}
    */
   alg:
-    // AES Key Wrap with default initial value using 128-bit key
-    | 'A128KW'
-    // AES Key Wrap with default initial value using 192-bit key
-    | 'A192KW'
-    // AES Key Wrap with default initial value using 256-bit key
-    | 'A256KW'
     // Direct use of a shared symmetric key as the CEK
     | 'dir'
-    // Elliptic Curve Diffie-Hellman Ephemeral Static key agreement using Concat KDF
-    | 'ECDH-ES'
-    // ECDH-ES using Concat KDF and CEK wrapped with "A128KW"
-    | 'ECDH-ES+A128KW'
-    // ECDH-ES using Concat KDF and CEK wrapped with "A192KW"
-    | 'ECDH-ES+A192KW'
-    // ECDH-ES using Concat KDF and CEK wrapped with "A256KW"
-    | 'ECDH-ES+A256KW'
-    // Key wrapping with AES GCM using 128-bit key
-    | 'A128GCMKW'
-    // Key wrapping with AES GCM using 192-bit key
-    | 'A192GCMKW'
-    // Key wrapping with AES GCM using 256-bit key
-    | 'A256GCMKW'
     // PBES2 with HMAC SHA-256 and "A128KW" wrapping
     | 'PBES2-HS256+A128KW'
     // PBES2 with HMAC SHA-384 and "A192KW" wrapping
     | 'PBES2-HS384+A192KW'
     // PBES2 with HMAC SHA-512 and "A256KW" wrapping
     | 'PBES2-HS512+A256KW'
-    // PBES2 with HMAC SHA-512 and "XC20PKW" wrapping
-    | 'PBES2-HS512+XC20PKW'
     // an unregistered, case-sensitive, collision-resistant string
     // `string & {}` preserves the literal hints above while still accepting any string.
     | (string & {});
@@ -270,10 +225,9 @@ export interface JweKeyManagementEncryptResult {
  * Defines the parameters required to decrypt a JWE encrypted key, including the key management
  * details.
  *
- * @typeParam TKeyManager - The Key Manager used to manage cryptographic keys.
  * @typeParam TCrypto - The Crypto API used to perform cryptographic operations.
  */
-export interface JweKeyManagementDecryptParams<TKeyManager, TCrypto> {
+export interface JweKeyManagementDecryptParams<TCrypto> {
   /**
    * The decryption key which can be a Key Identifier such as a KMS key URI, a JSON Web Key (JWK),
    * or raw key material represented as a byte array.
@@ -292,9 +246,6 @@ export interface JweKeyManagementDecryptParams<TKeyManager, TCrypto> {
    */
   joseHeader: JweHeaderParams;
 
-  /** Key Manager instance responsible for managing cryptographic keys. */
-  keyManager: TKeyManager;
-
   /** Crypto API instance that provides the necessary cryptographic operations. */
   crypto: TCrypto;
 
@@ -303,10 +254,9 @@ export interface JweKeyManagementDecryptParams<TKeyManager, TCrypto> {
 /**
  * Defines the parameters required for encrypting a JWE CEK, including the key management details.
  *
- * @typeParam TKeyManager - The Key Manager used to manage cryptographic keys.
  * @typeParam TCrypto - The Crypto API used to perform cryptographic operations.
  */
-export interface JweKeyManagementEncryptParams<TKeyManager, TCrypto> {
+export interface JweKeyManagementEncryptParams<TCrypto> {
   /**
    * The encryption key which can be a Key Identifier such as a KMS key URI, a JSON Web Key (JWK),
    * or raw key material represented as a byte array.
@@ -318,9 +268,6 @@ export interface JweKeyManagementEncryptParams<TKeyManager, TCrypto> {
    * the algorithm and encryption method among other settings.
    */
   joseHeader: JweHeaderParams;
-
-  /** Key Manager instanceß responsible for managing cryptographic keys. */
-  keyManager: TKeyManager;
 
   /** Crypto API instance that provides the necessary cryptographic operations. */
   crypto: TCrypto;
@@ -434,9 +381,9 @@ export class JweKeyManagement {
    * @throws Throws an error if the key management algorithm is not supported or if required
    *         parameters are missing or invalid.
    */
-  public static async decrypt<TKeyManager extends KeyManager, TCrypto extends CryptoApi>({
+  public static async decrypt<TCrypto extends CryptoApi>({
     key, encryptedKey, joseHeader, crypto
-  }: JweKeyManagementDecryptParams<TKeyManager, TCrypto>,
+  }: JweKeyManagementDecryptParams<TCrypto>,
   options?: { minP2cCount?: number }
   ): Promise<KeyIdentifier | Jwk> {
     const minP2cCount = options?.minP2cCount ?? 1000;
@@ -575,9 +522,9 @@ export class JweKeyManagement {
    * @throws Throws an error if the key management algorithm is not supported or if required
    *         parameters are missing or invalid.
    */
-  public static async encrypt<TKeyManager extends KeyManager, TCrypto extends CryptoApi>({
+  public static async encrypt<TCrypto extends CryptoApi>({
     key, joseHeader, crypto
-  }: JweKeyManagementEncryptParams<TKeyManager, TCrypto>
+  }: JweKeyManagementEncryptParams<TCrypto>
   ): Promise<JweKeyManagementEncryptResult> {
     let cek: KeyIdentifier | Jwk;
     let encryptedKey: Uint8Array | undefined;
@@ -589,11 +536,6 @@ export class JweKeyManagement {
         // In Direct Encryption mode (dir), a JWE "Encrypted Key" is not provided. Instead, the
         // provided key management `key` is directly used as the Content Encryption Key (CEK) to
         // decrypt the JWE payload.
-
-        // Verify that the JWE Encrypted Key value is empty.
-        if (encryptedKey !== undefined) {
-          throw new CryptoError(CryptoErrorCode.InvalidJwe, 'JWE "encrypted_key" is not allowed when using "dir" (Direct Encryption Mode).');
-        }
 
         // Verify the key management `key` is a Key Identifier or JWK.
         if (key instanceof Uint8Array) {

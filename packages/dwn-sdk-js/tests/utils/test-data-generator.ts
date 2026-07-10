@@ -10,15 +10,17 @@ import type { ProgressToken } from '../../src/types/subscriptions.js';
 import type { ProtocolsConfigureOptions } from '../../src/interfaces/protocols-configure.js';
 import type { ProtocolsQueryOptions } from '../../src/interfaces/protocols-query.js';
 
+import type { DerivedPrivateJwk } from '../../src/utils/hd-key.js';
 import type { RecordsCountOptions } from '../../src/interfaces/records-count.js';
 import type { RecordsQueryOptions } from '../../src/interfaces/records-query.js';
 import type { RecordsSubscribeOptions } from '../../src/interfaces/records-subscribe.js';
 import type { AuthorizationModel, Pagination } from '../../src/types/message-types.js';
 import type { CreateFromOptions, EncryptionInput, ProtocolPathKeyEncryptionInput, RecordsWriteOptions } from '../../src/interfaces/records-write.js';
 import type { DataEncodedRecordsWriteMessage, DateSort, RecordsCountMessage, RecordsDeleteMessage, RecordsFilter, RecordsQueryMessage, RecordsWriteTags } from '../../src/types/records-types.js';
+import type { EncryptionKeyDeriver, KeyDecrypter } from '../../src/types/encryption-types.js';
+import type { Jwk, PrivateKeyJwk, PublicKeyJwk } from '../../src/types/jose-types.js';
 import type { MessagesFilter, MessagesQueryMessage, MessagesReadMessage, MessagesSubscribeMessage } from '../../src/types/messages-types.js';
 import type { PermissionConditions, PermissionScope } from '../../src/types/permission-types.js';
-import type { PrivateKeyJwk, PublicKeyJwk } from '../../src/types/jose-types.js';
 import type { ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureMessage, ProtocolsQueryMessage } from '../../src/types/protocols-types.js';
 import type { RecordsSubscribeMessage, RecordsWriteMessage } from '../../src/types/records-types.js';
 
@@ -29,7 +31,6 @@ import { DidKey } from '@enbox/dids';
 import { ed25519 } from '../../src/jose/algorithms/signing/ed25519.js';
 import { Encoder } from '../../src/utils/encoder.js';
 import { Jws } from '../../src/utils/jws.js';
-import { KeyDerivationScheme } from '../../src/utils/hd-key.js';
 import { MessagesQuery } from '../../src/interfaces/messages-query.js';
 import { MessagesRead } from '../../src/interfaces/messages-read.js';
 import { MessagesSubscribe } from '../../src/interfaces/messages-subscribe.js';
@@ -37,6 +38,7 @@ import { PermissionsProtocol } from '../../src/protocols/permissions.js';
 import { PrivateKeySigner } from '../../src/utils/private-key-signer.js';
 import { ProtocolsConfigure } from '../../src/interfaces/protocols-configure.js';
 import { ProtocolsQuery } from '../../src/interfaces/protocols-query.js';
+import { Records } from '../../src/utils/records.js';
 import { RecordsCount } from '../../src/interfaces/records-count.js';
 import { RecordsDelete } from '../../src/interfaces/records-delete.js';
 import { RecordsQuery } from '../../src/interfaces/records-query.js';
@@ -49,6 +51,7 @@ import { Time } from '../../src/utils/time.js';
 import { X25519 } from '@enbox/crypto';
 import { ContentEncryptionAlgorithm, Encryption, KeyAgreementAlgorithm } from '../../src/utils/encryption.js';
 import { DwnInterfaceName, DwnMethodName } from '../../src/enums/dwn-interface-method.js';
+import { HdKey, KeyDerivationScheme } from '../../src/utils/hd-key.js';
 
 /**
  * A logical grouping of user data used to generate test messages.
@@ -538,6 +541,63 @@ export class TestDataGenerator {
   };
 
   /**
+   * Creates an `EncryptionKeyDeriver` that derives protocol-path public encryption keys from the
+   * given root private key, mirroring how the agent's KMS-backed key deriver behaves.
+   */
+  public static createProtocolPathKeyDeriver(rootKeyId: string, rootPrivateJwk: PrivateKeyJwk): EncryptionKeyDeriver {
+    return {
+      derivationScheme : KeyDerivationScheme.ProtocolPath,
+      derivePublicKey  : async (fullDerivationPath: string[]): Promise<PublicKeyJwk> => {
+        const rootPrivateKeyBytes = await X25519.privateKeyToBytes({ privateKey: rootPrivateJwk });
+        const leafPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(rootPrivateKeyBytes, fullDerivationPath);
+        const leafPrivateKey = await X25519.bytesToPrivateKey({ privateKeyBytes: leafPrivateKeyBytes });
+        return await X25519.getPublicKey({ key: leafPrivateKey }) as PublicKeyJwk;
+      },
+      rootKeyId,
+    };
+  }
+
+  /**
+   * Creates a `KeyDecrypter` that unwraps content encryption keys using a leaf key derived from the
+   * given ancestor private key. The ancestor may be the root key or any derived subtree key.
+   */
+  public static createKeyDecrypter(ancestorPrivateKey: DerivedPrivateJwk): KeyDecrypter {
+    const deriveLeafPrivateKey = async (fullDerivationPath: string[]): Promise<Jwk> => {
+      const leafPrivateKeyBytes = await Records.derivePrivateKey(ancestorPrivateKey, fullDerivationPath);
+      return X25519.bytesToPrivateKey({ privateKeyBytes: leafPrivateKeyBytes });
+    };
+
+    return {
+      decrypt: async (fullDerivationPath, keyUnwrapPayload): Promise<Uint8Array> => {
+        const leafPrivateKey = await deriveLeafPrivateKey(fullDerivationPath);
+        return Encryption.unwrapKey(leafPrivateKey, keyUnwrapPayload.keyEncryption);
+      },
+      derivationScheme : ancestorPrivateKey.derivationScheme,
+      derivePublicKey  : async (fullDerivationPath): Promise<PublicKeyJwk> => {
+        const leafPrivateKey = await deriveLeafPrivateKey(fullDerivationPath);
+        return await X25519.getPublicKey({ key: leafPrivateKey }) as PublicKeyJwk;
+      },
+      rootKeyId: ancestorPrivateKey.rootKeyId,
+    };
+  }
+
+  /**
+   * Derives a descendant `DerivedPrivateJwk` from the given ancestor key along the given sub-derivation path.
+   */
+  public static async deriveDescendantPrivateKey(ancestorKey: DerivedPrivateJwk, subDerivationPath: string[]): Promise<DerivedPrivateJwk> {
+    const ancestorPrivateKeyBytes = await X25519.privateKeyToBytes({ privateKey: ancestorKey.derivedPrivateKey });
+    const descendantPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(ancestorPrivateKeyBytes, subDerivationPath);
+    const descendantPrivateKeyJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: descendantPrivateKeyBytes });
+
+    return {
+      rootKeyId         : ancestorKey.rootKeyId,
+      derivationScheme  : ancestorKey.derivationScheme,
+      derivationPath    : [...(ancestorKey.derivationPath ?? []), ...subDerivationPath],
+      derivedPrivateKey : descendantPrivateKeyJwk as PrivateKeyJwk,
+    };
+  }
+
+  /**
    * Generates a encrypted RecordsWrite message for testing.
    *
    * @param input.protocolDefinition Protocol definition used to generate the RecordsWrite.
@@ -579,8 +639,33 @@ export class TestDataGenerator {
       ContentEncryptionAlgorithm.A256CTR, dataEncryptionKey, dataEncryptionInitializationVector, plaintextBytes
     );
 
-    // author generates a RecordsWrite using the encrypted data
+    // compute the key encryption inputs BEFORE creating the RecordsWrite, mirroring the live agent flow
     const protocolPathSegments = protocolPath.split('/');
+    const keyEncryptionInputs: ProtocolPathKeyEncryptionInput[] = [];
+
+    if (input.encryptSymmetricKeyWithProtocolPathDerivedKey) {
+      // locate the rule set corresponding the protocol path of the message
+      let protocolRuleSetSegment: ProtocolRuleSet = protocolDefinition.structure as ProtocolRuleSet;
+      for (const pathSegment of protocolPathSegments) {
+        protocolRuleSetSegment = protocolRuleSetSegment[pathSegment] as ProtocolRuleSet;
+      }
+
+      const protocolPathDerivedPublicKeyJwk = protocolRuleSetSegment.$keyAgreement?.publicKeyJwk;
+      keyEncryptionInputs.push({
+        algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+        keyId            : await Encryption.getKeyId(protocolPathDerivedPublicKeyJwk!),
+        publicKey        : protocolPathDerivedPublicKeyJwk!,
+        derivationScheme : KeyDerivationScheme.ProtocolPath
+      });
+    }
+
+    const encryptionInput: EncryptionInput = {
+      initializationVector : dataEncryptionInitializationVector,
+      key                  : dataEncryptionKey,
+      keyEncryptionInputs
+    };
+
+    // author generates a RecordsWrite using the encrypted data
     const recordType = protocolPathSegments[protocolPathSegments.length - 1];
     const { message, dataStream, recordsWrite } = await TestDataGenerator.generateRecordsWrite(
       {
@@ -591,37 +676,10 @@ export class TestDataGenerator {
         parentContextId : protocolParentContextId,
         schema          : protocolDefinition.types[recordType].schema,
         dataFormat      : protocolDefinition.types[recordType].dataFormats?.[0],
-        data            : encryptedDataBytes
+        data            : encryptedDataBytes,
+        encryptionInput
       }
     );
-
-    // final encryption input (`keyEncryptionInputs` to be populated below)
-    const encryptionInput: EncryptionInput = {
-      initializationVector : dataEncryptionInitializationVector,
-      key                  : dataEncryptionKey,
-      keyEncryptionInputs  : []
-    };
-
-    if (input.encryptSymmetricKeyWithProtocolPathDerivedKey) {
-      // locate the rule set corresponding the protocol path of the message
-      let protocolRuleSetSegment: ProtocolRuleSet = protocolDefinition.structure as ProtocolRuleSet;
-      for (const pathSegment of protocolPathSegments) {
-        protocolRuleSetSegment = protocolRuleSetSegment[pathSegment] as ProtocolRuleSet;
-      }
-
-      const protocolPathDerivedPublicKeyJwk = protocolRuleSetSegment.$keyAgreement?.publicKeyJwk;
-      const protocolPathDerivedKeyEncryptionInput: ProtocolPathKeyEncryptionInput = {
-        algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-        keyId            : await Encryption.getKeyId(protocolPathDerivedPublicKeyJwk!),
-        publicKey        : protocolPathDerivedPublicKeyJwk!,
-        derivationScheme : KeyDerivationScheme.ProtocolPath
-      };
-
-      encryptionInput.keyEncryptionInputs.push(protocolPathDerivedKeyEncryptionInput);
-    }
-
-    await recordsWrite.encryptSymmetricEncryptionKey(encryptionInput);
-    await recordsWrite.sign({ signer: Jws.createSigner(author) });
 
     return { message, dataStream: dataStream!, recordsWrite, encryptedDataBytes, encryptionInput };
   }

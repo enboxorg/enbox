@@ -160,8 +160,7 @@ describe('ProtocolsConfigure schema definition', () => {
 
     const hydratedDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
       protocolDefinition,
-      'root-key-id',
-      alice.encryptionKeyPair.privateJwk,
+      TestDataGenerator.createProtocolPathKeyDeriver('root-key-id', alice.encryptionKeyPair.privateJwk),
     );
 
     const messageRuleSet = hydratedDefinition.structure.message;

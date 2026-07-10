@@ -1,8 +1,7 @@
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { hmac } from '@noble/hashes/hmac.js';
-import { ripemd160 } from '@noble/hashes/legacy.js';
+import { sha512 } from '@noble/hashes/sha2.js';
 import { concatBytes, createView, utf8ToBytes } from '@noble/hashes/utils.js';
-import { sha256, sha512 } from '@noble/hashes/sha2.js';
 
 const HARDENED_OFFSET = 0x80000000;
 const MASTER_SECRET = utf8ToBytes('ed25519 seed');
@@ -12,7 +11,6 @@ type Ed25519HdKeyOptions = {
   chainCode: Uint8Array;
   depth?: number;
   index?: number;
-  parentFingerprint?: number;
   privateKey: Uint8Array;
 };
 
@@ -35,14 +33,6 @@ function toU32(n: number): Uint8Array {
   return bytes;
 }
 
-function fromU32(bytes: Uint8Array): number {
-  return createView(bytes).getUint32(0, false);
-}
-
-function hash160(data: Uint8Array): Uint8Array {
-  return ripemd160(sha256(data));
-}
-
 /**
  * Minimal SLIP-0010 Ed25519 HD key derivation used by {@link HdIdentityVault}.
  */
@@ -50,7 +40,6 @@ export class Ed25519HdKey {
   public readonly chainCode: Uint8Array;
   public readonly depth: number;
   public readonly index: number;
-  public readonly parentFingerprint: number;
   public readonly privateKey: Uint8Array;
 
   public static fromMasterSeed(seed: Uint8Array): Ed25519HdKey {
@@ -68,18 +57,17 @@ export class Ed25519HdKey {
     });
   }
 
-  public constructor({ chainCode, depth = 0, index = 0, parentFingerprint = 0, privateKey }: Ed25519HdKeyOptions) {
+  public constructor({ chainCode, depth = 0, index = 0, privateKey }: Ed25519HdKeyOptions) {
     assertBytes(privateKey, 32);
     assertBytes(chainCode, 32);
 
-    if (depth === 0 && (parentFingerprint !== 0 || index !== 0)) {
-      throw new Error('Ed25519HdKey: zero depth with non-zero index/parent fingerprint');
+    if (depth === 0 && index !== 0) {
+      throw new Error('Ed25519HdKey: zero depth with non-zero index');
     }
 
     this.chainCode = chainCode;
     this.depth = depth;
     this.index = index;
-    this.parentFingerprint = parentFingerprint;
     this.privateKey = privateKey;
   }
 
@@ -91,11 +79,7 @@ export class Ed25519HdKey {
     return concatBytes(ZERO, this.publicKeyRaw);
   }
 
-  public get fingerprint(): number {
-    return fromU32(hash160(this.publicKey));
-  }
-
-  public derive(path: string, forceHardened = false): Ed25519HdKey {
+  public derive(path: string): Ed25519HdKey {
     if (!/^[mM]'?/.test(path)) {
       throw new Error('Path must start with m or M');
     }
@@ -105,7 +89,7 @@ export class Ed25519HdKey {
 
     const parts = path.replace(/^[mM]'?\//, '').split('/');
     return parts.reduce(
-      (parent: Ed25519HdKey, part: string): Ed25519HdKey => parent.deriveChild(Ed25519HdKey.parseChildIndex(part, forceHardened)),
+      (parent: Ed25519HdKey, part: string): Ed25519HdKey => parent.deriveChild(Ed25519HdKey.parseChildIndex(part)),
       this
     );
   }
@@ -117,15 +101,14 @@ export class Ed25519HdKey {
 
     const digest = hmac(sha512, this.chainCode, concatBytes(ZERO, this.privateKey, toU32(index)));
     return new Ed25519HdKey({
-      chainCode         : digest.slice(32),
-      depth             : this.depth + 1,
+      chainCode  : digest.slice(32),
+      depth      : this.depth + 1,
       index,
-      parentFingerprint : this.fingerprint,
-      privateKey        : digest.slice(0, 32),
+      privateKey : digest.slice(0, 32),
     });
   }
 
-  private static parseChildIndex(part: string, forceHardened: boolean): number {
+  private static parseChildIndex(part: string): number {
     const match = /^(\d+)('?)$/.exec(part);
     if (match?.length !== 3) {
       throw new Error(`Invalid child index: ${part}`);
@@ -136,7 +119,7 @@ export class Ed25519HdKey {
       throw new Error('Invalid index');
     }
 
-    if (forceHardened || match[2] === '\'') {
+    if (match[2] === '\'') {
       index += HARDENED_OFFSET;
     }
 

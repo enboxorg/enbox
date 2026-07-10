@@ -8,7 +8,6 @@ import type {
   Jwk,
   KeyGenerator,
   KeyIdentifier,
-  KeyWrapper,
   KmsCipherParams,
   KmsDigestParams,
   KmsExportKeyParams,
@@ -17,15 +16,11 @@ import type {
   KmsGetPublicKeyParams,
   KmsImportKeyParams,
   KmsSignParams,
-  KmsUriUnwrapKeyParams,
-  KmsUriWrapKeyParams,
   KmsVerifyParams,
   PublicKeyJwk,
   Signer,
   SignParams,
-  UnwrapKeyParams,
-  VerifyParams,
-  WrapKeyParams } from '@enbox/crypto';
+  VerifyParams } from '@enbox/crypto';
 
 import {
   AesGcmAlgorithm,
@@ -142,24 +137,6 @@ export interface LocalKmsGenerateKeyParams extends KmsGenerateKeyParams {
    * A string defining the type of key to generate.
    */
   algorithm: SupportedKeyGeneratorAlgorithm
-}
-
-/**
- * The `LocalKmsUnwrapKeyParams` interface defines the algorithm-specific parameters that
- * should be passed into the {@link LocalKeyManager.wrapKey} method when wrapping a key using a
- * key stored in the local KMS to encrypt the key material.
- */
-export interface LocalKmsUnwrapKeyParams extends KmsUriUnwrapKeyParams {
-  /**
-   * A string defining the type of wrapped key. The value must be one of the following:
-   * - `"A128GCM"`: AES GCM using a 128-bit key.
-   * - `"A192GCM"`: AES GCM using a 192-bit key.
-   * - `"A256GCM"`: AES GCM using a 256-bit key.
-   * - `"A128KW"`: AES Key Wrap using a 128-bit key.
-   * - `"A192KW"`: AES Key Wrap using a 192-bit key.
-   * - `"A256KW"`: AES Key Wrap using a 256-bit key.
-   */
-  wrappedKeyAlgorithm: 'A128GCM' | 'A192GCM' | 'A256GCM' | 'A128KW' | 'A192KW' | 'A256KW';
 }
 
 export class LocalKeyManager implements AgentKeyManager {
@@ -571,24 +548,6 @@ export class LocalKeyManager implements AgentKeyManager {
     return signature;
   }
 
-  public async unwrapKey({ wrappedKeyBytes, wrappedKeyAlgorithm, decryptionKeyUri }:
-    LocalKmsUnwrapKeyParams
-  ): Promise<Jwk> {
-    // Get the private key from the key store.
-    const decryptionKey = await this.getPrivateKey({ keyUri: decryptionKeyUri });
-
-    // Determine the algorithm name based on the JWK's `alg` property.
-    const algorithm = this.getAlgorithmName({ key: decryptionKey });
-
-    // Get the key wrapping algorithm based on the algorithm name.
-    const keyWrapper = this.getAlgorithm({ algorithm }) as KeyWrapper<WrapKeyParams, UnwrapKeyParams>;
-
-    // Decrypt the key.
-    const unwrappedKey = await keyWrapper.unwrapKey({ wrappedKeyBytes, wrappedKeyAlgorithm, decryptionKey });
-
-    return unwrappedKey;
-  }
-
   /**
    * Verifies a digital signature associated the provided data using the provided key.
    *
@@ -627,24 +586,6 @@ export class LocalKeyManager implements AgentKeyManager {
     const isSignatureValid = signer.verify({ key, signature, data });
 
     return isSignatureValid;
-  }
-
-  public async wrapKey({ unwrappedKey, encryptionKeyUri }:
-    KmsUriWrapKeyParams
-  ): Promise<Uint8Array> {
-    // Get the private key from the key store.
-    const encryptionKey = await this.getPrivateKey({ keyUri: encryptionKeyUri });
-
-    // Determine the algorithm name based on the JWK's `alg` property.
-    const algorithm = this.getAlgorithmName({ key: encryptionKey });
-
-    // Get the key wrapping algorithm based on the algorithm name.
-    const keyWrapper = this.getAlgorithm({ algorithm }) as KeyWrapper<WrapKeyParams, UnwrapKeyParams>;
-
-    // Encrypt the key.
-    const wrappedKeyBytes = await keyWrapper.wrapKey({ unwrappedKey, encryptionKey });
-
-    return wrappedKeyBytes;
   }
 
   public async deleteKey({ keyUri }:{ keyUri: KeyIdentifier }): Promise<void> {
