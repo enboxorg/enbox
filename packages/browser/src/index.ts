@@ -74,15 +74,34 @@ export type {
   WalletConnectOptions,
 } from '@enbox/auth/browser';
 
+// ─── Re-exports from @enbox/connect ─────────────────────────────
+//
+// The connect kernel pieces wallet apps need alongside the popup
+// transports: opening/sealing envelopes and the deny token.
+
+export { CONNECT_DENIED_TOKEN, ConnectProvider } from '@enbox/connect';
+export type { ConnectApproval, ConnectPermissionRequest, ConnectRequest } from '@enbox/connect';
+
 // ─── Browser-specific exports ───────────────────────────────────
 //
-// DWeb Connect, wallet selector, DRL polyfills.
+// DWeb Connect popup transports, wallet selector, DRL polyfills.
 
 export * from './web-features.js';
 export { BrowserConnectHandler, DEFAULT_WALLETS } from './browser-connect-handler.js';
 export type { BrowserConnectHandlerOptions, WalletOption } from './browser-connect-handler.js';
-export { DWebConnect } from './dweb-connect-client.js';
-export type { DWebConnectClientOptions } from './dweb-connect-client.js';
+export { connectViaPopup, PopupClientTransport, PopupWindowClosedError } from './dweb-connect-client.js';
+export type { PopupClientTransportOptions, PopupConnectOptions } from './dweb-connect-client.js';
+export { WalletPostMessageTransport } from './dweb-connect-wallet.js';
+export type { WalletPostMessageTransportOptions } from './dweb-connect-wallet.js';
+export {
+  DWEB_CONNECT_LOADED_MESSAGE_TYPE,
+  DWEB_CONNECT_PATH,
+  DWEB_CONNECT_REQUEST_MESSAGE_TYPE,
+  DWEB_CONNECT_RESPONSE_MESSAGE_TYPE,
+} from './dweb-connect-messages.js';
+export type {
+  DWebConnectLoadedMessage,
+  DWebConnectRequestMessage,
+  DWebConnectResponseMessage,
+} from './dweb-connect-messages.js';
 export { showWalletSelector } from './ui/wallet-selector.js';
-export { encryptPostMessagePayload, generateEphemeralKeyPair } from './dweb-connect-crypto.js';
-export type { EncryptedPostMessagePayload } from './dweb-connect-crypto.js';

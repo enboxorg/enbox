@@ -11,7 +11,7 @@
   "scripts": {
     "clean": "rm -rf dist",
     "build:esm": "rm -rf dist/esm dist/types && bun tsc -p tsconfig.json",
-    "build:browser": "rm -rf dist/browser.mjs && bun ../../build/browser-bundle.js --metafile --external @enbox/agent --external @enbox/api --external @enbox/auth --external @enbox/auth/browser --external @enbox/dids",
+    "build:browser": "rm -rf dist/browser.mjs && bun ../../build/browser-bundle.js --metafile --external @enbox/agent --external @enbox/api --external @enbox/auth --external @enbox/auth/browser --external @enbox/common --external @enbox/connect --external @enbox/crypto --external @enbox/dids",
     "build": "bun run clean && bun run build:esm && bun run build:browser",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
@@ -69,6 +69,9 @@
     "@enbox/agent": "workspace:*",
     "@enbox/api": "workspace:*",
     "@enbox/auth": "workspace:*",
+    "@enbox/common": "workspace:*",
+    "@enbox/connect": "workspace:*",
+    "@enbox/crypto": "workspace:*",
     "@enbox/dids": "workspace:*"
   },
   "devDependencies": {

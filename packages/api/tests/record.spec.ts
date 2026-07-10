@@ -9,8 +9,8 @@ import { PlatformAgentTestHarness } from '@enbox/agent/test';
 import { Stream } from '@enbox/common';
 
 import {
-  DwnConstant, DwnContentEncryptionAlgorithm, DwnDateSort, DwnInterface, DwnKeyAgreementAlgorithm, DwnKeyDerivationScheme,
-  dwnMessageConstructors, EnboxConnectProtocol, EnboxUserAgent, getRecordAuthor,
+  createPermissionGrants, DwnConstant, DwnContentEncryptionAlgorithm, DwnDateSort, DwnInterface, DwnKeyAgreementAlgorithm,
+  DwnKeyDerivationScheme, dwnMessageConstructors, EnboxUserAgent, getRecordAuthor,
   getRecordProtocolRole,
 } from '@enbox/agent';
 import { DwnErrorCode, Jws, Message, Poller, Time } from '@enbox/dwn-sdk-js';
@@ -196,7 +196,7 @@ describe('Record', () => {
       const { status: bobNotesProtocolSend } = await bobNotesProtocol!.send(bobDid.uri);
       expect(bobNotesProtocolSend.code).toBe(202);
 
-      const grants = await EnboxConnectProtocol.createPermissionGrants(
+      const grants = await createPermissionGrants(
         aliceDid.uri, delegatedBearerDid.uri, testHarness.agent, grantRequest.permissionScopes
       );
 

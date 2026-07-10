@@ -1,5 +1,6 @@
 import type { AddressInfo } from 'node:net';
-import type { ConnectPermissionRequest, DwnPermissionScope } from '@enbox/agent';
+import type { ConnectPermissionRequest } from '@enbox/connect';
+import type { DwnPermissionScope } from '@enbox/agent';
 import type { ConnectResult, WalletConnectClientOptions } from '@enbox/auth';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 
@@ -8,9 +9,9 @@ import sinon from 'sinon';
 import { Convert } from '@enbox/common';
 import { createServer } from 'node:http';
 import { DidJwk } from '@enbox/dids';
-import { EnboxConnectProtocol } from '@enbox/agent';
 import { WalletConnect } from '@enbox/auth';
 import { afterEach, describe, expect, it } from 'bun:test';
+import { ConnectProvider, fetchRelayRequest, parseWalletConnectUri, postRelayResponse } from '@enbox/connect';
 import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 
 import {
@@ -99,58 +100,42 @@ describe('CliConnectHandler', () => {
         pollIntervalMs             : 1,
         requestedSessionTtlSeconds : 2_592_000,
         onAuthUrl                  : async (uri: string): Promise<void> => {
-          const connectParams = EnboxConnectProtocol.parseWalletConnectUri(uri);
+          const connectParams = parseWalletConnectUri(uri);
           if (connectParams === undefined) {
             throw new Error('wallet URI did not carry connect fragment params');
           }
           requestUri = connectParams.requestUri;
-          const connectRequest = await EnboxConnectProtocol.getConnectRequest(requestUri, connectParams.encryptionKeyBase64Url);
+          const requestJwe = await fetchRelayRequest({ requestUri });
+          const connectRequest = await ConnectProvider.openRequest({
+            jwe        : requestJwe,
+            decryption : { mode: 'dir', requestKey: connectParams.encryptionKey },
+          });
 
           expect(connectRequest.appName).toBe('Relay CLI');
           expect(connectRequest.requestedSessionTtlSeconds).toBe(2_592_000);
           expect(connectRequest.delegateDid?.startsWith('did:jwk:')).toBe(true);
           requestedDelegateDid = connectRequest.delegateDid!;
-
-          const responseBearerDid = await DidJwk.create();
-          const clientDidResolution = await DidJwk.resolve(connectRequest.clientDid);
-          if (clientDidResolution?.didDocument === undefined) {
-            throw new Error('test setup failed to resolve client DID');
+          if (connectRequest.reply.mode !== 'direct_post') {
+            throw new Error('expected a direct_post reply descriptor on the relay channel');
           }
 
-          const delegatePublicKeyJwk = responseBearerDid.document.verificationMethod?.[0].publicKeyJwk;
-          if (delegatePublicKeyJwk === undefined) {
-            throw new Error('test setup failed to read delegate public key');
-          }
-
-          const sharedKey = await EnboxConnectProtocol.deriveSharedKey(responseBearerDid, clientDidResolution.didDocument);
-          const responseObject = await EnboxConnectProtocol.createConnectResponse({
-            providerDid    : connectedDid,
-            delegateDid    : requestedDelegateDid,
-            aud            : connectRequest.clientDid,
-            nonce          : connectRequest.nonce,
-            delegateGrants : [createGrant({ grantee: requestedDelegateDid, scope: requestedScope })],
-          });
-          const responseJwt = await EnboxConnectProtocol.signJwt({
-            did  : responseBearerDid,
-            data : responseObject,
-          });
-          if (responseJwt === undefined) {
-            throw new Error('test setup failed to sign connect response');
-          }
-
-          const encryptedResponse = await EnboxConnectProtocol.encryptResponse({
-            jwt           : responseJwt,
-            encryptionKey : sharedKey,
-            delegatePublicKeyJwk,
-            pin           : '428113',
+          const idToken = await ConnectProvider.sealApprovedResponse({
+            request     : connectRequest,
+            providerDid : connectedDid,
+            approval    : {
+              delegateDid        : requestedDelegateDid,
+              delegateGrants     : [createGrant({ grantee: requestedDelegateDid, scope: requestedScope })],
+              sessionRevocations : [],
+            },
+            signer : await DidJwk.create(),
+            pin    : '428113',
           });
 
-          const callbackResponse = await fetch(connectRequest.callbackUrl, {
-            body    : new URLSearchParams({ id_token: encryptedResponse, state: connectRequest.state }).toString(),
-            method  : 'POST',
-            headers : { 'Content-Type': 'application/x-www-form-urlencoded' },
+          await postRelayResponse({
+            callbackUrl : connectRequest.reply.callbackUrl,
+            state       : connectRequest.state,
+            idToken,
           });
-          expect(callbackResponse.status).toBe(200);
           tokenUrl = `${relay.url}/connect/token/${connectRequest.state}.jwt`;
         },
       });
@@ -638,7 +623,8 @@ async function handleRelayRequest({
     const requestId = nextRequestId();
     requests.set(requestId, { consumed: false, value: body.request });
     writeJson(response, {
-      request_uri: `${baseUrl}/connect/authorize/${requestId}.jwt`,
+      request_uri : `${baseUrl}/connect/authorize/${requestId}.jwt`,
+      expires_in  : 600,
     });
     return;
   }

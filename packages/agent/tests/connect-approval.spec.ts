@@ -1,11 +1,9 @@
-import type { PortableDid } from '@enbox/dids';
 import type { RecordsPermissionScope } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
-import { CryptoUtils } from '@enbox/crypto';
 import { EncryptionProtocol } from '@enbox/dwn-sdk-js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
@@ -16,25 +14,22 @@ import { Convert, logger } from '@enbox/common';
 import { AgentPermissionsApi, DwnInterface, DwnPermissionGrant } from '../src/index.js';
 import {
   CONNECT_SESSION_MAX_TTL_SECONDS,
-  EnboxConnectProtocol,
-  type EnboxConnectRequest,
-  type EnboxConnectResponse,
-} from '../src/enbox-connect-protocol.js';
+  type ConnectApprovalRequest,
+  ConnectCeremony,
+  createConnectSessionMetadata,
+  createPermissionGrants,
+  executeConnectApproval,
+} from '../src/connect-approval.js';
 
 import type { BearerIdentity, DwnMessage, DwnProtocolDefinition } from '../src/index.js';
 
-describe('enbox connect', () => {
-
-  /** The temporary DID that web5 connect created on behalf of the client */
-  let clientEphemeralBearerDid: BearerDid;
-  let clientEphemeralPortableDid: PortableDid;
+describe('connect approval ceremony', () => {
 
   /** The real tenant (identity) of the DWN that the provider had chosen to connect */
   let providerIdentity: BearerIdentity;
 
-  /** The new DID created for the delegate which it will impersonate in the future */
+  /** The delegate DID minted for wallet-minted sessions in these tests */
   let delegateBearerDid: BearerDid;
-  let delegatePortableDid: PortableDid;
 
   /** The real tenant (identity) of the DWN that the provider is using and selecting */
   let providerIdentityBearerDid: BearerDid;
@@ -165,19 +160,14 @@ describe('enbox connect', () => {
 
   let testHarness: PlatformAgentTestHarness;
 
-  let connectRequest: EnboxConnectRequest;
-  let connectRequestJwt: string;
-  let connectRequestJwe: string;
-
-  let connectResponse: EnboxConnectResponse;
-  let connectResponseJwt: string;
-  let connectResponseJwe: string;
-
-  let sharedECDHPrivateKey: Uint8Array;
-
-  const connectRequestEncryptionKey = CryptoUtils.randomBytes(32);
-  const encryptionNonce = CryptoUtils.randomBytes(24);
-  const randomPin = '9999';
+  /** Builds the ceremony request the way a kernel `ConnectRequest` supplies it. */
+  function approvalRequest(overrides: Partial<ConnectApprovalRequest> = {}): ConnectApprovalRequest {
+    return {
+      appName            : 'Sample App',
+      permissionRequests : [{ protocolDefinition, permissionScopes }],
+      ...overrides,
+    };
+  }
 
   beforeAll(async () => {
     providerIdentityBearerDid = await DidDht.import({
@@ -196,11 +186,7 @@ describe('enbox connect', () => {
       testDwnUrls : [testDwnUrl],
     });
 
-    clientEphemeralBearerDid = await DidJwk.create();
-    clientEphemeralPortableDid = await clientEphemeralBearerDid.export();
-
     delegateBearerDid = await DidJwk.create();
-    delegatePortableDid = await delegateBearerDid.export();
   });
 
   afterAll(async () => {
@@ -213,110 +199,14 @@ describe('enbox connect', () => {
     sinon.restore();
   });
 
-  describe('client connect request phase', () => {
-    // it('should create a code challenge', async () => {
-    //   const result = await Oidc.generateCodeChallenge();
-    //   expect(result.codeChallengeBytes).toBeInstanceOf(Uint8Array);
-    //   expect(typeof result.codeChallengeBase64Url).toBe('string');
-    // });
-
-    it('should create a connect request with the client DID', async () => {
-      const _randomBytesStub = sinon
-        .stub(CryptoUtils, 'randomBytes')
-        .returns(connectRequestEncryptionKey);
-
-      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-        baseURL  : 'http://localhost:3000',
-        endpoint : 'callback',
-      });
-
-      const options = {
-        appName                    : 'Sample App',
-        clientDid                  : clientEphemeralPortableDid.uri,
-        permissionRequests         : [{ protocolDefinition, permissionScopes }],
-        callbackUrl                : callbackUrl,
-        requestedSessionTtlSeconds : 2_592_000,
-      };
-      connectRequest = await EnboxConnectProtocol.createConnectRequest(options);
-      expect(connectRequest).toEqual(expect.objectContaining(options));
-      expect(typeof connectRequest.nonce).toBe('string');
-      expect(typeof connectRequest.state).toBe('string');
-      expect(connectRequest.callbackUrl).toBe(
-        'http://localhost:3000/callback'
-      );
-    });
-
-    it('should create and assert a connect request with a pre-supplied delegate DID', async () => {
-      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-        baseURL  : 'http://localhost:3000',
-        endpoint : 'callback',
-      });
-
-      const request = await EnboxConnectProtocol.createConnectRequest({
-        appName            : 'Sample App',
-        clientDid          : clientEphemeralPortableDid.uri,
-        delegateDid        : delegateBearerDid.uri,
-        permissionRequests : [{ protocolDefinition, permissionScopes }],
-        callbackUrl,
-      });
-      const payload = { ...request } as Record<string, unknown>;
-
-      EnboxConnectProtocol.assertConnectRequest(payload);
-
-      expect(request.delegateDid).toBe(delegateBearerDid.uri);
-    });
-
-    it('should construct a signed JWT of a connect request', async () => {
-      connectRequestJwt = await EnboxConnectProtocol.signJwt({
-        did  : clientEphemeralBearerDid,
-        data : connectRequest,
-      });
-      expect(typeof connectRequestJwt).toBe('string');
-    });
-
-    it('should encrypt a connect request', async () => {
-      connectRequestJwe = await EnboxConnectProtocol.encryptRequest({
-        jwt           : connectRequestJwt,
-        encryptionKey : connectRequestEncryptionKey
-      });
-      expect(typeof connectRequestJwe).toBe('string');
-      expect(connectRequestJwe.split('.')).toHaveLength(5);
-    });
-  });
-
-  describe('provider connect response phase', () => {
-    it('should get connect request from server, decrypt and verify the JWT', async () => {
-      const fetchStub = sinon
-        .stub(globalThis, 'fetch')
-        .onFirstCall()
-        .resolves({
-          text: sinon.stub().resolves(connectRequestJwe),
-        } as any);
-      fetchStub.callThrough();
-
-      const authorizeUrl = EnboxConnectProtocol.buildConnectUrl({
-        baseURL   : 'http://localhost:3000',
-        endpoint  : 'authorize',
-        authParam : '12345',
-      });
-      expect(authorizeUrl).toBe(
-        'http://localhost:3000/authorize/12345.jwt'
-      );
-
-      const result = await EnboxConnectProtocol.getConnectRequest(
-        authorizeUrl,
-        Convert.uint8Array(connectRequestEncryptionKey).toBase64Url()
-      );
-      expect(result).toEqual(connectRequest);
-    });
-
-    it('should create permission grants for each selected did', async () => {
+  describe('createPermissionGrants', () => {
+    it('should create permission grants for each requested scope with shared session metadata', async () => {
       sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget').resolves(['https://dwn.example']);
       sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').resolves({
         status: { code: 202, detail: 'Accepted' },
       } as any);
 
-      const results = await EnboxConnectProtocol.createPermissionGrants(
+      const results = await createPermissionGrants(
         providerIdentity.did.uri,
         delegateBearerDid.uri,
         testHarness.agent,
@@ -335,7 +225,7 @@ describe('enbox connect', () => {
 
       for (const grant of grants) {
         expect(grant.connectSession?.id).toBe(firstSession?.id);
-        expect(grant.dateExpires).toBe(firstSession?.expiresAt);
+        expect(grant.dateExpires).toBe(firstSession!.expiresAt);
       }
     });
 
@@ -357,7 +247,7 @@ describe('enbox connect', () => {
         return { status: { code: 202, detail: 'Accepted' } } as any;
       });
 
-      const result = EnboxConnectProtocol.createPermissionGrants(
+      const result = createPermissionGrants(
         providerIdentity.did.uri,
         delegateBearerDid.uri,
         testHarness.agent,
@@ -399,7 +289,7 @@ describe('enbox connect', () => {
         return { status: { code: 202, detail: 'Accepted' } } as any;
       });
 
-      const result = EnboxConnectProtocol.createPermissionGrants(
+      const result = createPermissionGrants(
         providerIdentity.did.uri,
         delegateBearerDid.uri,
         testHarness.agent,
@@ -434,7 +324,7 @@ describe('enbox connect', () => {
         return { status: { code: 202, detail: 'Accepted' } } as any;
       });
 
-      const grants = await EnboxConnectProtocol.createPermissionGrants(
+      const grants = await createPermissionGrants(
         providerIdentity.did.uri,
         delegateBearerDid.uri,
         testHarness.agent,
@@ -459,7 +349,7 @@ describe('enbox connect', () => {
         })
       );
 
-      const result = EnboxConnectProtocol.createPermissionGrants(
+      const result = createPermissionGrants(
         providerIdentity.did.uri,
         delegateBearerDid.uri,
         testHarness.agent,
@@ -479,7 +369,7 @@ describe('enbox connect', () => {
       sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget').resolves([]);
       const sendStub = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest');
 
-      await expect(EnboxConnectProtocol.createPermissionGrants(
+      await expect(createPermissionGrants(
         providerIdentity.did.uri,
         delegateBearerDid.uri,
         testHarness.agent,
@@ -491,8 +381,38 @@ describe('enbox connect', () => {
       expect(sendStub.callCount).toBe(0);
     });
 
+    it('should reject obsolete read-like record grant scopes', async () => {
+      for (const method of ['Query', 'Subscribe', 'Count']) {
+        await expect(createPermissionGrants(
+          providerIdentity.did.uri,
+          delegateBearerDid.uri,
+          testHarness.agent,
+          [{
+            interface : 'Records' as any,
+            method    : method as any,
+            protocol  : 'http://profile-protocol.xyz',
+          }]
+        )).rejects.toThrow(`Records.${method} grants are not supported by connect`);
+      }
+    });
+
+    it('should reject delegated protocol configure scopes', async () => {
+      await expect(createPermissionGrants(
+        providerIdentity.did.uri,
+        delegateBearerDid.uri,
+        testHarness.agent,
+        [{
+          interface : 'Protocols' as any,
+          method    : 'Configure' as any,
+          protocol  : 'http://profile-protocol.xyz',
+        }]
+      )).rejects.toThrow('Protocols.Configure cannot be delegated through connect');
+    });
+  });
+
+  describe('createConnectSessionMetadata', () => {
     it('should bound connect session display metadata', () => {
-      const session = EnboxConnectProtocol.createConnectSessionMetadata({
+      const session = createConnectSessionMetadata({
         id             : 's'.repeat(200),
         appName        : 'a'.repeat(200),
         appIcon        : `https://example.com/${'i'.repeat(3000)}`,
@@ -519,453 +439,19 @@ describe('enbox connect', () => {
       expect(session.timezone).toHaveLength(128);
       expect(session.transport).toBe('postMessage');
     });
-
-    it('should reject obsolete read-like record grant scopes', async () => {
-      for (const method of ['Query', 'Subscribe', 'Count']) {
-        await expect(EnboxConnectProtocol.createPermissionGrants(
-          providerIdentity.did.uri,
-          delegateBearerDid.uri,
-          testHarness.agent,
-          [{
-            interface : 'Records' as any,
-            method    : method as any,
-            protocol  : 'http://profile-protocol.xyz',
-          }]
-        )).rejects.toThrow(`Records.${method} grants are not supported by connect`);
-      }
-    });
-
-    it('should reject delegated protocol configure scopes', async () => {
-      await expect(EnboxConnectProtocol.createPermissionGrants(
-        providerIdentity.did.uri,
-        delegateBearerDid.uri,
-        testHarness.agent,
-        [{
-          interface : 'Protocols' as any,
-          method    : 'Configure' as any,
-          protocol  : 'http://profile-protocol.xyz',
-        }]
-      )).rejects.toThrow('Protocols.Configure cannot be delegated through connect');
-    });
-
-    it('should create the connect response which includes the permissionGrants, nonce, private key material', async () => {
-      const options = {
-        providerDid    : providerIdentity.did.uri,
-        delegateDid    : delegateBearerDid.uri,
-        aud            : connectRequest.clientDid,
-        nonce          : connectRequest.nonce,
-        delegateGrants : permissionGrants,
-        delegatePortableDid,
-      };
-      connectResponse = await EnboxConnectProtocol.createConnectResponse(options);
-
-      expect(connectResponse).toEqual(expect.objectContaining(options));
-      expect(typeof connectResponse.iat).toBe('number');
-      expect(typeof connectResponse.exp).toBe('number');
-      expect(connectResponse.exp - connectResponse.iat).toBe(600);
-    });
-
-    it('should sign the connect response with the delegate DID', async () => {
-      connectResponseJwt = await EnboxConnectProtocol.signJwt({
-        did  : delegateBearerDid,
-        data : connectResponse,
-      });
-      expect(typeof connectResponseJwt).toBe('string');
-    });
-
-    it('should derive a valid ECDH private key for both provider and client which is identical', async () => {
-      const providerECDHDerivedPrivateKey = await EnboxConnectProtocol.deriveSharedKey(
-        delegateBearerDid,
-        clientEphemeralBearerDid.document
-      );
-      const clientECDHDerivedPrivateKey = await EnboxConnectProtocol.deriveSharedKey(
-        clientEphemeralBearerDid,
-        delegateBearerDid.document
-      );
-
-      expect(providerECDHDerivedPrivateKey).toBeInstanceOf(Uint8Array);
-      expect(providerECDHDerivedPrivateKey.length).toBeGreaterThan(0);
-
-      expect(clientECDHDerivedPrivateKey).toBeInstanceOf(Uint8Array);
-      expect(clientECDHDerivedPrivateKey.length).toBeGreaterThan(0);
-      expect(
-        Convert.uint8Array(providerECDHDerivedPrivateKey).toHex()
-      ).toBe(Convert.uint8Array(clientECDHDerivedPrivateKey).toHex());
-
-      // doesnt matter client and provider are the same
-      sharedECDHPrivateKey = clientECDHDerivedPrivateKey;
-    });
-
-    it('should encrypt the JWT connect response to pass back to the client', async () => {
-      const randomBytesStub = sinon
-        .stub(CryptoUtils, 'randomBytes')
-        .returns(encryptionNonce);
-      connectResponseJwe = await EnboxConnectProtocol.encryptResponse({
-        jwt                  : connectResponseJwt,
-        encryptionKey        : sharedECDHPrivateKey,
-        pin                  : randomPin,
-        delegatePublicKeyJwk : delegateBearerDid.document.verificationMethod![0].publicKeyJwk!,
-      });
-      expect(typeof connectResponseJwe).toBe('string');
-      expect(randomBytesStub.calledOnce).toBe(true);
-    });
-
-    it('should send the encrypted JWE connect response to the server', async () => {
-      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
-      // Stub per-grant revocation createGrant calls (created inside submitConnectResponse)
-      sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
-        grant   : {} as any,
-        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
-      });
-      sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
-      sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
-
-      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-        baseURL  : 'http://localhost:3000',
-        endpoint : 'callback',
-      });
-      expect(callbackUrl).toBe('http://localhost:3000/callback');
-
-      // Stub agent DWN methods so prepareProtocol (called inside submitAuthResponse)
-      // succeeds without needing a real DWN server or network access.
-      sinon.stub(testHarness.agent, 'processDwnRequest').resolves({
-        messageCid : '',
-        reply      : { status: { code: 200, detail: 'OK' }, entries: [{ descriptor: { interface: 'Protocols', method: 'Configure' } }] },
-      } as any);
-      sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
-        messageCid : '',
-        reply      : { status: { code: 202, detail: 'Accepted' } },
-      } as any);
-
-      // Stub fetch to capture the callback POST without making a real HTTP call.
-      // The body contains a time-dependent JWE (the JWT includes `iat`/`exp`
-      // from Date.now()) so we verify structure rather than exact content.
-      const fetchStub = sinon.stub(globalThis, 'fetch').resolves(new Response());
-
-      const selectedDid = providerIdentity.did.uri;
-      await EnboxConnectProtocol.submitConnectResponse(
-        selectedDid,
-        connectRequest,
-        randomPin,
-        testHarness.agent
-      );
-
-      // Find the call to the callback URL
-      const callbackCall = fetchStub.getCalls().find(
-        call => call.args[0] === callbackUrl
-      );
-      expect(callbackCall).toBeDefined();
-      const options = callbackCall!.args[1] as RequestInit;
-      expect(options.method).toBe('POST');
-      expect(options.headers).toEqual({
-        'Content-Type': 'application/x-www-form-urlencoded',
-      });
-      // Verify the body contains the expected state and an id_token
-      const body = new URLSearchParams(options.body as string);
-      expect(body.get('state')).toBe(connectRequest.state);
-      const idToken = body.get('id_token');
-      expect(typeof idToken).toBe('string');
-      expect(idToken!.length).toBeGreaterThan(0);
-    });
   });
 
-  describe('client PIN entry final phase', () => {
-    it('should get the connect response from server and decrypt the JWE using the PIN', async () => {
-      const result = await EnboxConnectProtocol.decryptResponse(
-        clientEphemeralBearerDid,
-        connectResponseJwe,
-        randomPin
-      );
-      expect(typeof result).toBe('string');
-      expect(result).toBe(connectResponseJwt);
-    });
-
-    it('should fail decrypting the jwe if the wrong pin is entered', async () => {
-      try {
-        await EnboxConnectProtocol.decryptResponse(
-          clientEphemeralBearerDid,
-          connectResponseJwe,
-          '87383837583757835737537734783'
-        );
-      } catch (e: any) {
-        expect(e).toBeInstanceOf(Error);
-        expect(e.message).toContain('invalid tag');
-      }
-    });
-
-    it('should validate the jwt and parse it into an object', async () => {
-      const result = (await EnboxConnectProtocol.verifyJwt({
-        jwt: connectResponseJwt,
-      })) as EnboxConnectResponse;
-      expect(typeof result).toBe('object');
-      expect(result.delegateGrants.length).toBeGreaterThan(0);
-    });
-  });
-
-  // NOTE: `end to end client test` and `initClient — error paths` were moved
-  // to @enbox/auth (wallet-connect-client.spec.ts) since WalletConnect.initClient
-  // now lives in that package.
-
-  describe('JWE privacy — no kid leak (issue #890)', () => {
-    it('should not include kid in the JWE protected header', async () => {
-      const [protectedHeaderB64U] = connectResponseJwe.split('.');
-      const header = Convert.base64Url(protectedHeaderB64U).toObject() as Record<string, unknown>;
-
-      expect(header.kid).toBeUndefined();
-    });
-
-    it('should include an epk (ephemeral public key) in the JWE protected header', async () => {
-      const [protectedHeaderB64U] = connectResponseJwe.split('.');
-      const header = Convert.base64Url(protectedHeaderB64U).toObject() as Record<string, unknown>;
-
-      expect(header.epk).toBeDefined();
-      expect(typeof header.epk).toBe('object');
-    });
-
-    it('should only include minimal key material (kty, crv, x) in epk — no kid or alg', async () => {
-      const [protectedHeaderB64U] = connectResponseJwe.split('.');
-      const header = Convert.base64Url(protectedHeaderB64U).toObject() as Record<string, unknown>;
-      const epk = header.epk as Record<string, unknown>;
-
-      expect(Object.keys(epk).sort()).toEqual(['crv', 'kty', 'x']);
-      expect(epk.kid).toBeUndefined();
-      expect(epk.alg).toBeUndefined();
-    });
-
-    it('should not contain a did: URI anywhere in the relay-visible protected header', async () => {
-      const [protectedHeaderB64U] = connectResponseJwe.split('.');
-      const headerJson = Convert.base64Url(protectedHeaderB64U).toString();
-
-      expect(headerJson).not.toContain('did:');
-    });
-
-    it('should decrypt correctly with epk-based key agreement (round-trip)', async () => {
-      // Encrypt a fresh response with epk, then decrypt — verifies the full round-trip.
-      const freshJwe = await EnboxConnectProtocol.encryptResponse({
-        jwt                  : connectResponseJwt,
-        encryptionKey        : sharedECDHPrivateKey,
-        pin                  : randomPin,
-        delegatePublicKeyJwk : delegateBearerDid.document.verificationMethod![0].publicKeyJwk!,
-      });
-
-      const decrypted = await EnboxConnectProtocol.decryptResponse(
-        clientEphemeralBearerDid,
-        freshJwe,
-        randomPin
-      );
-
-      expect(decrypted).toBe(connectResponseJwt);
-    });
-
-    it('should decrypt correctly without a PIN (local flow)', async () => {
-      const jweNoPin = await EnboxConnectProtocol.encryptResponse({
-        jwt                  : connectResponseJwt,
-        encryptionKey        : sharedECDHPrivateKey,
-        delegatePublicKeyJwk : delegateBearerDid.document.verificationMethod![0].publicKeyJwk!,
-      });
-
-      const decrypted = await EnboxConnectProtocol.decryptResponse(
-        clientEphemeralBearerDid,
-        jweNoPin,
-      );
-
-      expect(decrypted).toBe(connectResponseJwt);
-    });
-
-    it('should throw when epk is missing from the protected header', async () => {
-      const badHeader = { alg: 'dir', cty: 'JWT', enc: 'XC20P', typ: 'JWT' };
-      const badJwe = [
-        Convert.object(badHeader).toBase64Url(),
-        '',
-        Convert.uint8Array(new Uint8Array(24)).toBase64Url(),
-        Convert.uint8Array(new Uint8Array(16)).toBase64Url(),
-        Convert.uint8Array(new Uint8Array(16)).toBase64Url(),
-      ].join('.');
-
-      await expect(
-        EnboxConnectProtocol.decryptResponse(clientEphemeralBearerDid, badJwe, randomPin)
-      ).rejects.toThrow('missing required "epk"');
-    });
-
-    it('should throw when epk is null', async () => {
-      const badHeader = { alg: 'dir', cty: 'JWT', enc: 'XC20P', typ: 'JWT', epk: null };
-      const badJwe = [
-        Convert.object(badHeader).toBase64Url(),
-        '',
-        Convert.uint8Array(new Uint8Array(24)).toBase64Url(),
-        Convert.uint8Array(new Uint8Array(16)).toBase64Url(),
-        Convert.uint8Array(new Uint8Array(16)).toBase64Url(),
-      ].join('.');
-
-      await expect(
-        EnboxConnectProtocol.decryptResponse(clientEphemeralBearerDid, badJwe, randomPin)
-      ).rejects.toThrow('missing required "epk"');
-    });
-
-    it('should throw when epk is a string instead of an object', async () => {
-      const badHeader = { alg: 'dir', cty: 'JWT', enc: 'XC20P', typ: 'JWT', epk: 'did:jwk:abc' };
-      const badJwe = [
-        Convert.object(badHeader).toBase64Url(),
-        '',
-        Convert.uint8Array(new Uint8Array(24)).toBase64Url(),
-        Convert.uint8Array(new Uint8Array(16)).toBase64Url(),
-        Convert.uint8Array(new Uint8Array(16)).toBase64Url(),
-      ].join('.');
-
-      await expect(
-        EnboxConnectProtocol.decryptResponse(clientEphemeralBearerDid, badJwe, randomPin)
-      ).rejects.toThrow('missing required "epk"');
-    });
-
-    it('should throw when epk is a number', async () => {
-      const badHeader = { alg: 'dir', cty: 'JWT', enc: 'XC20P', typ: 'JWT', epk: 42 };
-      const badJwe = [
-        Convert.object(badHeader).toBase64Url(),
-        '',
-        Convert.uint8Array(new Uint8Array(24)).toBase64Url(),
-        Convert.uint8Array(new Uint8Array(16)).toBase64Url(),
-        Convert.uint8Array(new Uint8Array(16)).toBase64Url(),
-      ].join('.');
-
-      await expect(
-        EnboxConnectProtocol.decryptResponse(clientEphemeralBearerDid, badJwe, randomPin)
-      ).rejects.toThrow('missing required "epk"');
-    });
-
-    it('should fail decryption when the epk is tampered with', async () => {
-      // Swap the epk with a completely different key — ECDH will derive
-      // a different shared secret and AEAD decryption will fail.
-      const differentDid = await DidJwk.create();
-      const wrongEpk = differentDid.document.verificationMethod![0].publicKeyJwk!;
-
-      const [, ...rest] = connectResponseJwe.split('.');
-      const tamperedHeader = {
-        alg : 'dir',
-        cty : 'JWT',
-        enc : 'XC20P',
-        typ : 'JWT',
-        epk : { kty: wrongEpk.kty, crv: wrongEpk.crv, x: wrongEpk.x },
-      };
-      const tamperedJwe = [Convert.object(tamperedHeader).toBase64Url(), ...rest].join('.');
-
-      await expect(
-        EnboxConnectProtocol.decryptResponse(clientEphemeralBearerDid, tamperedJwe, randomPin)
-      ).rejects.toThrow();
-    });
-
-    it('should fail decryption when a different client DID is used', async () => {
-      const wrongClientDid = await DidJwk.create();
-
-      await expect(
-        EnboxConnectProtocol.decryptResponse(wrongClientDid, connectResponseJwe, randomPin)
-      ).rejects.toThrow();
-    });
-
-    it('should fail decryption when ciphertext is tampered with', async () => {
-      const parts = connectResponseJwe.split('.');
-      // Flip a byte in the ciphertext segment.
-      const ciphertextBytes = Convert.base64Url(parts[3]).toUint8Array();
-      ciphertextBytes[0] ^= 0xff;
-      parts[3] = Convert.uint8Array(ciphertextBytes).toBase64Url();
-      const tamperedJwe = parts.join('.');
-
-      await expect(
-        EnboxConnectProtocol.decryptResponse(clientEphemeralBearerDid, tamperedJwe, randomPin)
-      ).rejects.toThrow();
-    });
-
-    it('should fail when PIN was used during encryption but omitted during decryption', async () => {
-      // connectResponseJwe was encrypted WITH randomPin — decrypt without it.
-      await expect(
-        EnboxConnectProtocol.decryptResponse(clientEphemeralBearerDid, connectResponseJwe)
-      ).rejects.toThrow();
-    });
-
-    it('should fail when PIN was not used during encryption but provided during decryption', async () => {
-      const jweNoPin = await EnboxConnectProtocol.encryptResponse({
-        jwt                  : connectResponseJwt,
-        encryptionKey        : sharedECDHPrivateKey,
-        delegatePublicKeyJwk : delegateBearerDid.document.verificationMethod![0].publicKeyJwk!,
-      });
-
-      await expect(
-        EnboxConnectProtocol.decryptResponse(clientEphemeralBearerDid, jweNoPin, '1234')
-      ).rejects.toThrow();
-    });
-
-    it('should strip extra JWK fields (kid, alg, d) from the epk in the header', async () => {
-      // Pass a JWK that has extra identifying/private fields.
-      const fullJwk = {
-        ...delegateBearerDid.document.verificationMethod![0].publicKeyJwk!,
-        kid : 'some-identifying-kid',
-        alg : 'EdDSA',
-        d   : 'private-key-material-that-must-not-leak',
-      };
-
-      const jwe = await EnboxConnectProtocol.encryptResponse({
-        jwt                  : connectResponseJwt,
-        encryptionKey        : sharedECDHPrivateKey,
-        delegatePublicKeyJwk : fullJwk,
-        pin                  : randomPin,
-      });
-
-      const [headerB64U] = jwe.split('.');
-      const header = Convert.base64Url(headerB64U).toObject() as Record<string, unknown>;
-      const epk = header.epk as Record<string, unknown>;
-
-      expect(Object.keys(epk).sort()).toEqual(['crv', 'kty', 'x']);
-      expect(epk.kid).toBeUndefined();
-      expect(epk.alg).toBeUndefined();
-      expect(epk.d).toBeUndefined();
-
-      // Should still decrypt correctly since the key material is the same.
-      const decrypted = await EnboxConnectProtocol.decryptResponse(
-        clientEphemeralBearerDid, jwe, randomPin
-      );
-      expect(decrypted).toBe(connectResponseJwt);
-    });
-
-    it('should produce non-correlatable epk values for different delegate DIDs', async () => {
-      const delegate1 = await DidJwk.create();
-      const delegate2 = await DidJwk.create();
-
-      const sharedKey1 = await EnboxConnectProtocol.deriveSharedKey(
-        delegate1, clientEphemeralBearerDid.document
-      );
-      const sharedKey2 = await EnboxConnectProtocol.deriveSharedKey(
-        delegate2, clientEphemeralBearerDid.document
-      );
-
-      const jwe1 = await EnboxConnectProtocol.encryptResponse({
-        jwt                  : connectResponseJwt,
-        encryptionKey        : sharedKey1,
-        delegatePublicKeyJwk : delegate1.document.verificationMethod![0].publicKeyJwk!,
-      });
-      const jwe2 = await EnboxConnectProtocol.encryptResponse({
-        jwt                  : connectResponseJwt,
-        encryptionKey        : sharedKey2,
-        delegatePublicKeyJwk : delegate2.document.verificationMethod![0].publicKeyJwk!,
-      });
-
-      const header1 = Convert.base64Url(jwe1.split('.')[0]).toObject() as Record<string, any>;
-      const header2 = Convert.base64Url(jwe2.split('.')[0]).toObject() as Record<string, any>;
-
-      // The x coordinates must differ — each delegate has a unique key pair.
-      expect(header1.epk.x).not.toBe(header2.epk.x);
-    });
-  });
-
-  describe('submitConnectResponse', () => {
-    type SubmitConnectResponseStubs = {
+  describe('executeConnectApproval', () => {
+    type ApprovalStubs = {
       capturedSessions: Array<{ createdAt: string; expiresAt: string }>;
       capturedDelegateDids: string[];
       revocationGrantStub: sinon.SinonStub;
     };
 
-    function stubSubmitConnectResponseDependencies(): SubmitConnectResponseStubs {
+    function stubApprovalDependencies(): ApprovalStubs {
       const capturedSessions: Array<{ createdAt: string; expiresAt: string }> = [];
       const capturedDelegateDids: string[] = [];
-      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').callsFake(async (
+      sinon.stub(ConnectCeremony, 'createPermissionGrants').callsFake(async (
         _selectedDid,
         delegateDid,
         _agent,
@@ -976,7 +462,7 @@ describe('enbox connect', () => {
         if (options?.connectSession !== undefined) {
           capturedSessions.push(options.connectSession);
         }
-        return permissionGrants as any;
+        return permissionGrants.map((grant: any) => grant.message) as any;
       });
       const revocationGrantStub = sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
         grant   : {} as any,
@@ -988,32 +474,70 @@ describe('enbox connect', () => {
         reply      : { status: { code: 200, detail: 'OK' }, entries: [{ descriptor: { interface: 'Protocols', method: 'Configure' } }] },
       } as any);
       sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget').resolves([]);
-      sinon.stub(globalThis, 'fetch').resolves(new Response());
 
       return { capturedDelegateDids, capturedSessions, revocationGrantStub };
     }
 
-    it('should stamp requested session TTL onto permission and revocation grants', async () => {
-      const requestedSessionTtlSeconds = 30 * 24 * 60 * 60;
-      const { capturedSessions, revocationGrantStub } = stubSubmitConnectResponseDependencies();
-      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-        baseURL  : 'http://localhost:3000',
-        endpoint : 'callback',
-      });
-      const request = await EnboxConnectProtocol.createConnectRequest({
-        appName            : 'Sample App',
-        clientDid          : clientEphemeralPortableDid.uri,
-        permissionRequests : [{ protocolDefinition, permissionScopes }],
-        callbackUrl,
-        requestedSessionTtlSeconds,
+    it('should mint a delegate DID with an appended X25519 key and return the ConnectApproval shape', async () => {
+      const { revocationGrantStub } = stubApprovalDependencies();
+
+      const result = await executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        request     : approvalRequest(),
       });
 
-      await EnboxConnectProtocol.submitConnectResponse(
-        providerIdentity.did.uri,
-        request,
-        randomPin,
-        testHarness.agent,
-      );
+      // Wallet-minted session: the delegate is the response signer and its
+      // portable form carries both the Ed25519 root and the derived X25519 key.
+      expect(result.delegateDid).toBe(delegateBearerDid.uri);
+      expect(result.responseSigner).toBe(delegateBearerDid);
+      expect(result.delegatePortableDid).toBeDefined();
+      expect(result.delegatePortableDid!.uri).toBe(delegateBearerDid.uri);
+      expect(result.delegatePortableDid!.privateKeys?.map((key) => key.crv)).toEqual(['Ed25519', 'X25519']);
+
+      // The delegate grants contain the session grants plus one revocation
+      // grant per session grant, and the revocation mapping references both.
+      const sessionGrantCount = permissionGrants.length;
+      expect(result.delegateGrants).toHaveLength(sessionGrantCount * 2);
+      expect(revocationGrantStub.callCount).toBe(sessionGrantCount);
+      expect(result.sessionRevocations).toEqual([{
+        grantId           : permissionGrants[0].message.recordId,
+        revocationGrantId : 'mock-revocation-grant-id',
+      }]);
+
+      // The approval output never carries in-band decryption keys.
+      expect('delegateDecryptionKeys' in result).toBe(false);
+    });
+
+    it('should create contextId-scoped revocation grants for each session grant', async () => {
+      const { revocationGrantStub } = stubApprovalDependencies();
+
+      await executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        request     : approvalRequest(),
+      });
+
+      expect(revocationGrantStub.callCount).toBe(permissionGrants.length);
+      const revocationParams = revocationGrantStub.firstCall.args[0];
+      expect(revocationParams.delegated).toBe(true);
+      expect(revocationParams.grantedTo).toBe(delegateBearerDid.uri);
+      expect(revocationParams.scope.interface).toBe('Records');
+      expect(revocationParams.scope.method).toBe('Write');
+      expect(revocationParams.scope.protocol).toBe('https://identity.foundation/dwn/permissions');
+      expect(revocationParams.scope.contextId).toBe(permissionGrants[0].message.recordId);
+      expect(revocationParams.author).toBe(providerIdentity.did.uri);
+    });
+
+    it('should stamp requested session TTL onto permission and revocation grants', async () => {
+      const requestedSessionTtlSeconds = 30 * 24 * 60 * 60;
+      const { capturedSessions, revocationGrantStub } = stubApprovalDependencies();
+
+      await executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        request     : approvalRequest({ requestedSessionTtlSeconds }),
+      });
 
       expect(capturedSessions).toHaveLength(1);
       const session = capturedSessions[0];
@@ -1022,25 +546,13 @@ describe('enbox connect', () => {
     });
 
     it('should clamp requested session TTL to the wallet maximum', async () => {
-      const { capturedSessions } = stubSubmitConnectResponseDependencies();
-      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-        baseURL  : 'http://localhost:3000',
-        endpoint : 'callback',
-      });
-      const request = await EnboxConnectProtocol.createConnectRequest({
-        appName                    : 'Sample App',
-        clientDid                  : clientEphemeralPortableDid.uri,
-        permissionRequests         : [{ protocolDefinition, permissionScopes }],
-        callbackUrl,
-        requestedSessionTtlSeconds : CONNECT_SESSION_MAX_TTL_SECONDS + 60,
-      });
+      const { capturedSessions } = stubApprovalDependencies();
 
-      await EnboxConnectProtocol.submitConnectResponse(
-        providerIdentity.did.uri,
-        request,
-        randomPin,
-        testHarness.agent,
-      );
+      await executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        request     : approvalRequest({ requestedSessionTtlSeconds: CONNECT_SESSION_MAX_TTL_SECONDS + 60 }),
+      });
 
       expect(capturedSessions).toHaveLength(1);
       const session = capturedSessions[0];
@@ -1049,39 +561,26 @@ describe('enbox connect', () => {
 
     it('should grant to a pre-supplied delegate DID without returning delegate private material', async () => {
       const preSuppliedDelegateDid = 'did:jwk:requester-delegate';
-      const { capturedDelegateDids, revocationGrantStub } = stubSubmitConnectResponseDependencies();
-      const createConnectResponse = EnboxConnectProtocol.createConnectResponse;
-      const createConnectResponseStub = sinon.stub(EnboxConnectProtocol, 'createConnectResponse')
-        .callsFake((options: any): Promise<EnboxConnectResponse> => createConnectResponse(options));
-      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-        baseURL  : 'http://localhost:3000',
-        endpoint : 'callback',
-      });
-      const request = await EnboxConnectProtocol.createConnectRequest({
-        appName            : 'Sample App',
-        clientDid          : clientEphemeralPortableDid.uri,
-        delegateDid        : preSuppliedDelegateDid,
-        permissionRequests : [{ protocolDefinition, permissionScopes }],
-        callbackUrl,
-      });
+      const { capturedDelegateDids, revocationGrantStub } = stubApprovalDependencies();
 
-      await EnboxConnectProtocol.submitConnectResponse(
-        providerIdentity.did.uri,
-        request,
-        randomPin,
-        testHarness.agent,
-      );
+      const result = await executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        request     : approvalRequest({ delegateDid: preSuppliedDelegateDid }),
+      });
 
       expect(capturedDelegateDids).toEqual([preSuppliedDelegateDid]);
       expect(revocationGrantStub.firstCall.args[0].grantedTo).toBe(preSuppliedDelegateDid);
-      expect(createConnectResponseStub.firstCall.args[0].delegateDid).toBe(preSuppliedDelegateDid);
-      expect(createConnectResponseStub.firstCall.args[0].delegatePortableDid).toBeUndefined();
+      expect(result.delegateDid).toBe(preSuppliedDelegateDid);
+      expect(result.delegatePortableDid).toBeUndefined();
+      // A fresh response DID is minted so the wallet can still sign the response.
+      expect(result.responseSigner).toBe(delegateBearerDid);
     });
 
     it('should create public-key wrapped grantKeys for encrypted read scopes when using a pre-supplied delegate DID', async () => {
       const preSuppliedDelegate = await DidJwk.create();
-      const { capturedDelegateDids } = stubSubmitConnectResponseDependencies();
-      const grantKeyStub = sinon.stub(EnboxConnectProtocol, 'createGrantKeyRecordsForGrants').resolves([]);
+      const { capturedDelegateDids } = stubApprovalDependencies();
+      const grantKeyStub = sinon.stub(ConnectCeremony, 'createGrantKeyRecordsForGrants').resolves([]);
       const encryptedProtocol: DwnProtocolDefinition = {
         protocol  : 'http://pre-supplied-encrypted.xyz',
         published : true,
@@ -1099,24 +598,15 @@ describe('enbox connect', () => {
         method    : 'Read' as any,
         protocol  : encryptedProtocol.protocol,
       }];
-      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-        baseURL  : 'http://localhost:3000',
-        endpoint : 'callback',
-      });
-      const request = await EnboxConnectProtocol.createConnectRequest({
-        appName            : 'Sample App',
-        clientDid          : clientEphemeralPortableDid.uri,
-        delegateDid        : preSuppliedDelegate.uri,
-        permissionRequests : [{ protocolDefinition: encryptedProtocol, permissionScopes: readScopes }],
-        callbackUrl,
-      });
 
-      await EnboxConnectProtocol.submitConnectResponse(
-        providerIdentity.did.uri,
-        request,
-        randomPin,
-        testHarness.agent,
-      );
+      await executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        request     : approvalRequest({
+          delegateDid        : preSuppliedDelegate.uri,
+          permissionRequests : [{ protocolDefinition: encryptedProtocol, permissionScopes: readScopes }],
+        }),
+      });
 
       expect(capturedDelegateDids).toEqual([preSuppliedDelegate.uri]);
       expect(grantKeyStub.calledOnce).toBe(true);
@@ -1128,8 +618,8 @@ describe('enbox connect', () => {
     });
 
     it('should reject unusable pre-supplied delegate encryption keys before creating grants', async () => {
-      const { capturedDelegateDids, revocationGrantStub } = stubSubmitConnectResponseDependencies();
-      const grantKeyStub = sinon.stub(EnboxConnectProtocol, 'createGrantKeyRecordsForGrants').resolves([]);
+      const { capturedDelegateDids, revocationGrantStub } = stubApprovalDependencies();
+      const grantKeyStub = sinon.stub(ConnectCeremony, 'createGrantKeyRecordsForGrants').resolves([]);
       const encryptedProtocol: DwnProtocolDefinition = {
         protocol  : 'http://pre-supplied-invalid-encryption.xyz',
         published : true,
@@ -1147,24 +637,15 @@ describe('enbox connect', () => {
         method    : 'Read' as any,
         protocol  : encryptedProtocol.protocol,
       }];
-      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-        baseURL  : 'http://localhost:3000',
-        endpoint : 'callback',
-      });
-      const request = await EnboxConnectProtocol.createConnectRequest({
-        appName            : 'Sample App',
-        clientDid          : clientEphemeralPortableDid.uri,
-        delegateDid        : 'did:example:delegate',
-        permissionRequests : [{ protocolDefinition: encryptedProtocol, permissionScopes: readScopes }],
-        callbackUrl,
-      });
 
-      await expect(EnboxConnectProtocol.submitConnectResponse(
-        providerIdentity.did.uri,
-        request,
-        randomPin,
-        testHarness.agent,
-      )).rejects.toThrow();
+      await expect(executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        request     : approvalRequest({
+          delegateDid        : 'did:example:delegate',
+          permissionRequests : [{ protocolDefinition: encryptedProtocol, permissionScopes: readScopes }],
+        }),
+      })).rejects.toThrow();
 
       expect(capturedDelegateDids).toEqual([]);
       expect(grantKeyStub.called).toBe(false);
@@ -1173,138 +654,53 @@ describe('enbox connect', () => {
 
     it('should reject malformed pre-supplied delegate DID values before creating a response DID', async () => {
       const delegateCreateStub = sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
-      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-        baseURL  : 'http://localhost:3000',
-        endpoint : 'callback',
-      });
-      const request = await EnboxConnectProtocol.createConnectRequest({
-        appName            : 'Sample App',
-        clientDid          : clientEphemeralPortableDid.uri,
-        delegateDid        : 'wallet.example',
-        permissionRequests : [{ protocolDefinition, permissionScopes }],
-        callbackUrl,
-      });
 
-      await expect(
-        EnboxConnectProtocol.submitConnectResponse(
-          providerIdentity.did.uri,
-          request,
-          randomPin,
-          testHarness.agent,
-        )
-      ).rejects.toThrow('Connect delegateDid must be a valid DID URI.');
+      await expect(executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        request     : approvalRequest({ delegateDid: 'wallet.example' }),
+      })).rejects.toThrow('Connect delegateDid must be a valid DID URI.');
       expect(delegateCreateStub.callCount).toBe(0);
     });
 
     it('should reject invalid requested session TTL before creating a delegate DID', async () => {
       for (const requestedSessionTtlSeconds of [0, 0.5]) {
         const delegateCreateStub = sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
-        const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-          baseURL  : 'http://localhost:3000',
-          endpoint : 'callback',
-        });
-        const request = await EnboxConnectProtocol.createConnectRequest({
-          appName            : 'Sample App',
-          clientDid          : clientEphemeralPortableDid.uri,
-          permissionRequests : [{ protocolDefinition, permissionScopes }],
-          callbackUrl,
-          requestedSessionTtlSeconds,
-        });
 
-        await expect(
-          EnboxConnectProtocol.submitConnectResponse(
-            providerIdentity.did.uri,
-            request,
-            randomPin,
-            testHarness.agent,
-          )
-        ).rejects.toThrow('Connect requestedSessionTtlSeconds must resolve to at least one whole second.');
+        await expect(executeConnectApproval({
+          agent       : testHarness.agent,
+          providerDid : providerIdentity.did.uri,
+          request     : approvalRequest({ requestedSessionTtlSeconds }),
+        })).rejects.toThrow('Connect requestedSessionTtlSeconds must resolve to at least one whole second.');
         expect(delegateCreateStub.callCount).toBe(0);
         delegateCreateStub.restore();
       }
     });
 
-    it('should emit a total perf log when submission fails', async () => {
-      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-        baseURL  : 'http://localhost:3000',
-        endpoint : 'callback',
-      });
-      const request = await EnboxConnectProtocol.createConnectRequest({
-        appName            : 'Sample App',
-        clientDid          : clientEphemeralPortableDid.uri,
-        permissionRequests : [{ protocolDefinition, permissionScopes }],
-        callbackUrl,
-      });
+    it('should emit a total perf log when the approval fails', async () => {
       const logStub = sinon.stub(logger, 'log');
       sinon.stub(DidJwk, 'create').rejects(new Error('delegate failed'));
 
-      await expect(
-        EnboxConnectProtocol.submitConnectResponse(
-          providerIdentity.did.uri,
-          request,
-          randomPin,
-          testHarness.agent,
-        )
-      ).rejects.toThrow('delegate failed');
+      await expect(executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        request     : approvalRequest(),
+      })).rejects.toThrow('delegate failed');
 
       const logMessages = logStub.getCalls().map((call) => call.args[0]);
       expect(logMessages.some(
         (message) => message.includes('[connect.perf] delegateDid.create fail')
       )).toBe(true);
       expect(logMessages.some(
-        (message) => message.includes('[connect.perf] submitConnectResponse.total fail')
-      )).toBe(true);
-    });
-
-    it('should fail and log when callback POST returns a non-2xx response', async () => {
-      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
-      sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
-        grant   : {} as any,
-        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
-      });
-      sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
-      sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
-      sinon.stub(testHarness.agent, 'processDwnRequest').resolves({
-        messageCid : '',
-        reply      : { status: { code: 200, detail: 'OK' }, entries: [{ descriptor: { interface: 'Protocols', method: 'Configure' } }] },
-      } as any);
-      sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget').resolves([]);
-      sinon.stub(globalThis, 'fetch').resolves(new Response('server error', { status: 500 }));
-      const logStub = sinon.stub(logger, 'log');
-      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-        baseURL  : 'http://localhost:3000',
-        endpoint : 'callback',
-      });
-      const request = await EnboxConnectProtocol.createConnectRequest({
-        appName            : 'Sample App',
-        clientDid          : clientEphemeralPortableDid.uri,
-        permissionRequests : [{ protocolDefinition, permissionScopes }],
-        callbackUrl,
-      });
-
-      await expect(
-        EnboxConnectProtocol.submitConnectResponse(
-          providerIdentity.did.uri,
-          request,
-          randomPin,
-          testHarness.agent,
-        )
-      ).rejects.toThrow('Connect: callback POST failed with HTTP 500.');
-
-      const logMessages = logStub.getCalls().map((call) => call.args[0]);
-      expect(logMessages.some(
-        (message) => message.includes('[connect.perf] response.callbackPost fail')
-      )).toBe(true);
-      expect(logMessages.some(
-        (message) => message.includes('[connect.perf] submitConnectResponse.total fail')
+        (message) => message.includes('[connect.perf] executeConnectApproval.total fail')
       )).toBe(true);
     });
 
     it('should skip the redundant remote ProtocolsConfigure when the protocol is already installed locally', async () => {
       // Scenario: the wallet's own `prepareProtocol` (in @enbox/web-wallet) ran
-      // BEFORE `submitConnectResponse` and pushed the protocol to every owner
-      // DWN endpoint. The agent's internal `prepareProtocol` should detect the
-      // protocol is already installed locally and short-circuit — issuing
+      // BEFORE the approval ceremony and pushed the protocol to every owner
+      // DWN endpoint. The ceremony's internal `prepareProtocol` should detect
+      // the protocol is already installed locally and short-circuit — issuing
       // exactly one local `ProtocolsQuery` and zero remote sends.
       //
       // This is the regression-prevention test for the "Authorizing…" hang:
@@ -1312,27 +708,12 @@ describe('enbox connect', () => {
       // the underlying HTTP client's 4×30 s retry budget for any unhealthy
       // endpoint, multiplying user-visible latency by `N protocols × 30 s`.
 
-      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
-      // Stub per-grant revocation createGrant calls
+      sinon.stub(ConnectCeremony, 'createPermissionGrants').resolves(permissionGrants as any);
       sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
         grant   : {} as any,
         message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
       });
-      sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
-
-      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-        baseURL  : 'http://localhost:3000',
-        endpoint : 'callback',
-      });
-
-      const options = {
-        appName            : 'Sample App',
-        clientDid          : clientEphemeralPortableDid.uri,
-        permissionRequests : [{ protocolDefinition, permissionScopes }],
-        callbackUrl        : callbackUrl,
-      };
-      connectRequest = await EnboxConnectProtocol.createConnectRequest(options);
 
       // stub the processDwnRequest method to return a protocol entry
       const protocolMessage = {} as DwnMessage[DwnInterface.ProtocolsConfigure];
@@ -1352,16 +733,11 @@ describe('enbox connect', () => {
         .stub(testHarness.agent, 'processDwnRequest')
         .resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' }, entries: [ protocolMessage ] } });
 
-      // Stub fetch so the relay POST does not escape the test environment.
-      sinon.stub(globalThis, 'fetch').resolves(new Response());
-
-      // call submitAuthResponse
-      await EnboxConnectProtocol.submitConnectResponse(
-        providerIdentity.did.uri,
-        connectRequest,
-        randomPin,
-        testHarness.agent
-      );
+      await executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        request     : approvalRequest(),
+      });
 
       // Exactly one local read — the ProtocolsQuery — and nothing else.
       expect(processDwnRequestStub.callCount).toBe(1);
@@ -1377,7 +753,7 @@ describe('enbox connect', () => {
     });
 
     it('should configure the protocol locally and fan out to all owner DWN endpoints when the protocol is missing locally', async () => {
-      // Scenario: the agent's `prepareProtocol` runs in the safety-fallback
+      // Scenario: the ceremony's `prepareProtocol` runs in the safety-fallback
       // path (caller did not pre-install). It must (a) configure the protocol
       // on the LOCAL DWN via `processDwnRequest` so the agent can sign / encrypt
       // grants for it, and (b) push the configure message to every owner DWN
@@ -1386,27 +762,12 @@ describe('enbox connect', () => {
       // The legacy `agent.sendDwnRequest` path — which iterated owner endpoints
       // sequentially and is the historical bottleneck — must NOT be used.
 
-      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
-      // Stub per-grant revocation createGrant calls
+      sinon.stub(ConnectCeremony, 'createPermissionGrants').resolves(permissionGrants as any);
       sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
         grant   : {} as any,
         message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
       });
-      sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
-
-      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-        baseURL  : 'http://localhost:3000',
-        endpoint : 'callback',
-      });
-
-      const options = {
-        appName            : 'Sample App',
-        clientDid          : clientEphemeralPortableDid.uri,
-        permissionRequests : [{ protocolDefinition, permissionScopes }],
-        callbackUrl        : callbackUrl,
-      };
-      connectRequest = await EnboxConnectProtocol.createConnectRequest(options);
 
       // Spy on both transports — only `agent.rpc.sendDwnRequest` should fire.
       const sendRequestSpy = sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
@@ -1435,15 +796,11 @@ describe('enbox connect', () => {
           message    : { descriptor: { interface: 'Protocols', method: 'Configure' } } as any,
         });
 
-      // Stub fetch so the relay POST does not escape the test environment.
-      sinon.stub(globalThis, 'fetch').resolves(new Response());
-
-      await EnboxConnectProtocol.submitConnectResponse(
-        providerIdentity.did.uri,
-        connectRequest,
-        randomPin,
-        testHarness.agent
-      );
+      await executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        request     : approvalRequest(),
+      });
 
       // processDwnRequest is called twice: ProtocolsQuery, then a LOCAL
       // ProtocolsConfigure (with messageParams + optional encryption).
@@ -1475,26 +832,12 @@ describe('enbox connect', () => {
       // Some local DWN replies omit the `entries` array entirely (empty result).
       // The agent must treat that as "not installed" identically to `entries: []`.
 
-      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(ConnectCeremony, 'createPermissionGrants').resolves(permissionGrants as any);
       sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
         grant   : {} as any,
         message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
       });
-      sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
-
-      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-        baseURL  : 'http://localhost:3000',
-        endpoint : 'callback',
-      });
-
-      const options = {
-        appName            : 'Sample App',
-        clientDid          : clientEphemeralPortableDid.uri,
-        permissionRequests : [{ protocolDefinition, permissionScopes }],
-        callbackUrl        : callbackUrl,
-      };
-      connectRequest = await EnboxConnectProtocol.createConnectRequest(options);
 
       const sendRequestSpy = sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
         messageCid : '',
@@ -1519,14 +862,11 @@ describe('enbox connect', () => {
           message    : { descriptor: { interface: 'Protocols', method: 'Configure' } } as any,
         });
 
-      sinon.stub(globalThis, 'fetch').resolves(new Response());
-
-      await EnboxConnectProtocol.submitConnectResponse(
-        providerIdentity.did.uri,
-        connectRequest,
-        randomPin,
-        testHarness.agent
-      );
+      await executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        request     : approvalRequest(),
+      });
 
       // Treated as missing → local configure attempted.
       expect(processDwnRequestStub.callCount).toBe(2);
@@ -1542,29 +882,15 @@ describe('enbox connect', () => {
     });
 
     it('should fail if local ProtocolsConfigure fails when the protocol is missing locally', async () => {
-      // Scenario: the agent's safety-fallback path attempts to install the
+      // Scenario: the ceremony's safety-fallback path attempts to install the
       // protocol locally before fanning out remotely. If the local install
       // itself fails (non-202/409), the connect flow MUST throw — without
       // a locally installed protocol, the agent cannot sign / encrypt grants.
       // Remote endpoint failures, in contrast, are best-effort (sync delivers
       // missed copies), so they do NOT abort the connect.
 
-      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
-      sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
+      sinon.stub(ConnectCeremony, 'createPermissionGrants').resolves(permissionGrants as any);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
-
-      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-        baseURL  : 'http://localhost:3000',
-        endpoint : 'callback',
-      });
-
-      const options = {
-        appName            : 'Sample App',
-        clientDid          : clientEphemeralPortableDid.uri,
-        permissionRequests : [{ protocolDefinition, permissionScopes }],
-        callbackUrl        : callbackUrl,
-      };
-      connectRequest = await EnboxConnectProtocol.createConnectRequest(options);
 
       const sendRequestSpy = sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
         reply      : { status: { code: 500, detail: 'Internal Server Error' } },
@@ -1580,25 +906,17 @@ describe('enbox connect', () => {
         .onSecondCall()
         .resolves({ messageCid: '', reply: { status: { code: 500, detail: 'Local DWN error' } } });
 
-      sinon.stub(globalThis, 'fetch').resolves(new Response());
+      await expect(executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        request     : approvalRequest(),
+      })).rejects.toThrow('Could not configure protocol locally: Local DWN error');
 
-      try {
-        await EnboxConnectProtocol.submitConnectResponse(
-          providerIdentity.did.uri,
-          connectRequest,
-          randomPin,
-          testHarness.agent
-        );
-
-        throw new Error('should have thrown an error');
-      } catch (error: any) {
-        expect(error.message).toBe('Could not configure protocol locally: Local DWN error');
-        // Local query + local configure = two processDwnRequest calls; no
-        // legacy `agent.sendDwnRequest` calls because the new path uses the
-        // RPC client directly and the failure happens before fan-out.
-        expect(processDwnRequestStub.callCount).toBe(2);
-        expect(sendRequestSpy.callCount).toBe(0);
-      }
+      // Local query + local configure = two processDwnRequest calls; no
+      // legacy `agent.sendDwnRequest` calls because the new path uses the
+      // RPC client directly and the failure happens before fan-out.
+      expect(processDwnRequestStub.callCount).toBe(2);
+      expect(sendRequestSpy.callCount).toBe(0);
     });
 
     it('should NOT throw when remote endpoints are unhealthy after a successful local configure', async () => {
@@ -1608,26 +926,12 @@ describe('enbox connect', () => {
       // This guards the "Authorizing…" hot path against a single bad
       // endpoint dragging the user into an error state.
 
-      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(ConnectCeremony, 'createPermissionGrants').resolves(permissionGrants as any);
       sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
         grant   : {} as any,
         message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
       });
-      sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
-
-      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-        baseURL  : 'http://localhost:3000',
-        endpoint : 'callback',
-      });
-
-      const options = {
-        appName            : 'Sample App',
-        clientDid          : clientEphemeralPortableDid.uri,
-        permissionRequests : [{ protocolDefinition, permissionScopes }],
-        callbackUrl        : callbackUrl,
-      };
-      connectRequest = await EnboxConnectProtocol.createConnectRequest(options);
 
       sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
         messageCid : '',
@@ -1651,15 +955,12 @@ describe('enbox connect', () => {
           message    : { descriptor: { interface: 'Protocols', method: 'Configure' } } as any,
         });
 
-      sinon.stub(globalThis, 'fetch').resolves(new Response());
-
       // Must not throw — best-effort fan-out swallows individual failures.
-      await EnboxConnectProtocol.submitConnectResponse(
-        providerIdentity.did.uri,
-        connectRequest,
-        randomPin,
-        testHarness.agent
-      );
+      await executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        request     : approvalRequest(),
+      });
 
       // The fan-out was attempted on every endpoint despite the failures.
       const configureSends = rpcSendRequestSpy.getCalls().filter(
@@ -1669,22 +970,8 @@ describe('enbox connect', () => {
     });
 
     it('should throw if protocol could not be fetched at all', async () => {
-      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
-      sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
+      sinon.stub(ConnectCeremony, 'createPermissionGrants').resolves(permissionGrants as any);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
-
-      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-        baseURL  : 'http://localhost:3000',
-        endpoint : 'callback',
-      });
-
-      const options = {
-        appName            : 'Sample App',
-        clientDid          : clientEphemeralPortableDid.uri,
-        permissionRequests : [{ protocolDefinition, permissionScopes }],
-        callbackUrl        : callbackUrl,
-      };
-      connectRequest = await EnboxConnectProtocol.createConnectRequest(options);
 
       // spy send request
       const sendRequestSpy = sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
@@ -1692,30 +979,22 @@ describe('enbox connect', () => {
         messageCid : ''
       });
 
-      // mock returning the protocol entry
       const processDwnRequestStub = sinon
         .stub(testHarness.agent, 'processDwnRequest')
         .resolves({ messageCid: '', reply: { status: { code: 500, detail: 'Some Error' }, } });
 
-      try {
-        // call submitAuthResponse
-        await EnboxConnectProtocol.submitConnectResponse(
-          providerIdentity.did.uri,
-          connectRequest,
-          randomPin,
-          testHarness.agent
-        );
+      await expect(executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        request     : approvalRequest(),
+      })).rejects.toThrow('Could not fetch protocol: Some Error');
 
-        throw new Error('should have thrown an error');
-      } catch (error: any) {
-        expect(error.message).toBe('Could not fetch protocol: Some Error');
-        expect(processDwnRequestStub.callCount).toBe(1);
-        expect(sendRequestSpy.callCount).toBe(0);
-      }
+      expect(processDwnRequestStub.callCount).toBe(1);
+      expect(sendRequestSpy.callCount).toBe(0);
     });
 
     it('should pass encryption: true to the LOCAL ProtocolsConfigure when the protocol has encryptionRequired types', async () => {
-      // Scenario: the agent's safety-fallback installs a protocol whose types
+      // Scenario: the ceremony's safety-fallback installs a protocol whose types
       // declare `encryptionRequired: true`. The LOCAL configure (via
       // `processDwnRequest`) must carry `encryption: true` so the local DWN
       // derives and injects `$keyAgreement` keys from the owner's X25519 root.
@@ -1741,27 +1020,12 @@ describe('enbox connect', () => {
         protocol  : 'http://encrypted-protocol.xyz',
       }];
 
-      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
-      // Stub per-grant revocation createGrant calls
+      sinon.stub(ConnectCeremony, 'createPermissionGrants').resolves(permissionGrants as any);
       sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
         grant   : {} as any,
         message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
       });
-      sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
-
-      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-        baseURL  : 'http://localhost:3000',
-        endpoint : 'callback',
-      });
-
-      const options = {
-        appName            : 'Sample App',
-        clientDid          : clientEphemeralPortableDid.uri,
-        permissionRequests : [{ protocolDefinition: encryptedProtocol, permissionScopes: encryptedScopes }],
-        callbackUrl        : callbackUrl,
-      };
-      connectRequest = await EnboxConnectProtocol.createConnectRequest(options);
 
       sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
         messageCid : '',
@@ -1784,14 +1048,13 @@ describe('enbox connect', () => {
           message    : { descriptor: { interface: 'Protocols', method: 'Configure' } } as any,
         });
 
-      sinon.stub(globalThis, 'fetch').resolves(new Response());
-
-      await EnboxConnectProtocol.submitConnectResponse(
-        providerIdentity.did.uri,
-        connectRequest,
-        randomPin,
-        testHarness.agent
-      );
+      await executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        request     : approvalRequest({
+          permissionRequests: [{ protocolDefinition: encryptedProtocol, permissionScopes: encryptedScopes }],
+        }),
+      });
 
       // Verify the LOCAL ProtocolsConfigure carried `encryption: true`.
       const configureCall = processDwnRequestStub.getCalls().find(
@@ -1801,7 +1064,7 @@ describe('enbox connect', () => {
       expect((configureCall!.args[0] as any).encryption).toBe(true);
     });
 
-    it('should use durable grantKey records instead of connect-response decryption keys for mixed encrypted protocols', async () => {
+    it('should use durable grantKey records instead of in-band decryption keys for mixed encrypted protocols', async () => {
       const mixedProtocol: DwnProtocolDefinition = {
         protocol  : 'http://mixed-encrypted.xyz',
         published : true,
@@ -1826,30 +1089,18 @@ describe('enbox connect', () => {
         protocol  : 'http://mixed-encrypted.xyz',
       }];
 
-      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
-      const grantKeyStub = sinon.stub(EnboxConnectProtocol, 'createGrantKeyRecordsForGrants').resolves([]);
+      sinon.stub(ConnectCeremony, 'createPermissionGrants').resolves(permissionGrants as any);
+      const grantKeyStub = sinon.stub(ConnectCeremony, 'createGrantKeyRecordsForGrants').resolves([]);
       sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
         grant   : {} as any,
         message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
       });
-      sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
-
-      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-        baseURL  : 'http://localhost:3000',
-        endpoint : 'callback',
-      });
-      connectRequest = await EnboxConnectProtocol.createConnectRequest({
-        appName            : 'Sample App',
-        clientDid          : clientEphemeralPortableDid.uri,
-        permissionRequests : [{ protocolDefinition: mixedProtocol, permissionScopes: readScopes }],
-        callbackUrl        : callbackUrl,
-      });
-
       sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
         messageCid : '',
         reply      : { status: { code: 202, detail: 'OK' } }
       });
+      sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget').resolves([]);
       const processDwnRequestStub = sinon.stub(testHarness.agent, 'processDwnRequest');
       processDwnRequestStub
         .onFirstCall()
@@ -1861,32 +1112,17 @@ describe('enbox connect', () => {
           },
         });
       processDwnRequestStub.resolves({ messageCid: '', reply: { status: { code: 202, detail: 'OK' } } });
-      const fetchStub = sinon.stub(globalThis, 'fetch').resolves(new Response());
 
-      await EnboxConnectProtocol.submitConnectResponse(
-        providerIdentity.did.uri, connectRequest, randomPin, testHarness.agent,
-      );
-
-      const callbackCall = fetchStub.getCalls().find(
-        call => call.args[0] === callbackUrl
-      );
-      expect(callbackCall).toBeDefined();
-      const options = callbackCall!.args[1] as RequestInit;
-      const body = new URLSearchParams(options.body as string);
-      const idToken = body.get('id_token');
-      expect(typeof idToken).toBe('string');
-
-      const responseJwt = await EnboxConnectProtocol.decryptResponse(
-        clientEphemeralBearerDid,
-        idToken!,
-        randomPin,
-      );
-      const response = (await EnboxConnectProtocol.verifyJwt({
-        jwt: responseJwt,
-      })) as EnboxConnectResponse;
+      const result = await executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        request     : approvalRequest({
+          permissionRequests: [{ protocolDefinition: mixedProtocol, permissionScopes: readScopes }],
+        }),
+      });
 
       expect(grantKeyStub.calledOnce).toBe(true);
-      expect('delegateDecryptionKeys' in response).toBe(false);
+      expect('delegateDecryptionKeys' in result).toBe(false);
     });
 
     it('should deliver one ordered grant batch and map encrypted grants back to their protocol', async () => {
@@ -1920,41 +1156,29 @@ describe('enbox connect', () => {
         recordId,
       }));
 
-      const createGrantsStub = sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(createdGrants as any);
-      const grantKeyStub = sinon.stub(EnboxConnectProtocol, 'createGrantKeyRecordsForGrants').resolves([]);
+      const createGrantsStub = sinon.stub(ConnectCeremony, 'createPermissionGrants').resolves(createdGrants as any);
+      const grantKeyStub = sinon.stub(ConnectCeremony, 'createGrantKeyRecordsForGrants').resolves([]);
       sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
         grant   : {} as any,
         message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
       });
-      sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
       sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget').resolves([]);
       sinon.stub(testHarness.agent, 'processDwnRequest').resolves({
         messageCid : '',
         reply      : { status: { code: 200, detail: 'OK' }, entries: [{} as any] },
       });
-      sinon.stub(globalThis, 'fetch').resolves(new Response());
 
-      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-        baseURL  : 'http://localhost:3000',
-        endpoint : 'callback',
+      await executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        request     : approvalRequest({
+          permissionRequests: [
+            { protocolDefinition, permissionScopes: plainScopes },
+            { protocolDefinition: encryptedProtocol, permissionScopes: encryptedScopes },
+          ],
+        }),
       });
-      connectRequest = await EnboxConnectProtocol.createConnectRequest({
-        appName            : 'Sample App',
-        clientDid          : clientEphemeralPortableDid.uri,
-        permissionRequests : [
-          { protocolDefinition, permissionScopes: plainScopes },
-          { protocolDefinition: encryptedProtocol, permissionScopes: encryptedScopes },
-        ],
-        callbackUrl,
-      });
-
-      await EnboxConnectProtocol.submitConnectResponse(
-        providerIdentity.did.uri,
-        connectRequest,
-        randomPin,
-        testHarness.agent,
-      );
 
       expect(createGrantsStub.calledOnce).toBe(true);
       expect(createGrantsStub.firstCall.args[3]).toEqual([...plainScopes, ...encryptedScopes]);
@@ -1997,25 +1221,13 @@ describe('enbox connect', () => {
       };
       const endpoints = ['https://dwn-a.example/', 'https://dwn-b.example/'];
 
-      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
-      sinon.stub(EnboxConnectProtocol, 'createGrantKeyRecordsForGrants').resolves([grantKeyRecord] as any);
+      sinon.stub(ConnectCeremony, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(ConnectCeremony, 'createGrantKeyRecordsForGrants').resolves([grantKeyRecord] as any);
       sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
         grant   : {} as any,
         message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
       });
-      sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
-
-      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-        baseURL  : 'http://localhost:3000',
-        endpoint : 'callback',
-      });
-      connectRequest = await EnboxConnectProtocol.createConnectRequest({
-        appName            : 'Sample App',
-        clientDid          : clientEphemeralPortableDid.uri,
-        permissionRequests : [{ protocolDefinition: encryptedProtocol, permissionScopes: readScopes }],
-        callbackUrl,
-      });
 
       const endpointStub = sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget');
       endpointStub.onFirstCall().resolves(endpoints);
@@ -2034,27 +1246,30 @@ describe('enbox connect', () => {
       });
       const rpcSendRequestStub = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest')
         .resolves({ status: { code: 202, detail: 'Accepted' } } as any);
-      sinon.stub(globalThis, 'fetch').resolves(new Response());
 
-      await EnboxConnectProtocol.submitConnectResponse(
-        providerIdentity.did.uri, connectRequest, randomPin, testHarness.agent,
-      );
+      await executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        request     : approvalRequest({
+          permissionRequests: [{ protocolDefinition: encryptedProtocol, permissionScopes: readScopes }],
+        }),
+      });
 
       expect(rpcSendRequestStub.callCount).toBe(endpoints.length);
       for (const [index, call] of rpcSendRequestStub.getCalls().entries()) {
-        const request = call.args[0];
-        expect(request.dwnUrl).toBe(endpoints[index]);
-        expect(request.targetDid).toBe(providerIdentity.did.uri);
-        expect((request.message as any).encodedData).toBeUndefined();
-        expect((request.message as any).recordId).toBe(grantKeyRecord.recordId);
-        expect(request.signal).toBeInstanceOf(AbortSignal);
+        const sendRequest = call.args[0];
+        expect(sendRequest.dwnUrl).toBe(endpoints[index]);
+        expect(sendRequest.targetDid).toBe(providerIdentity.did.uri);
+        expect((sendRequest.message as any).encodedData).toBeUndefined();
+        expect((sendRequest.message as any).recordId).toBe(grantKeyRecord.recordId);
+        expect(sendRequest.signal).toBeInstanceOf(AbortSignal);
 
-        const sentBytes = new Uint8Array(await (request.data as Blob).arrayBuffer());
+        const sentBytes = new Uint8Array(await (sendRequest.data as Blob).arrayBuffer());
         expect([...sentBytes]).toEqual([...grantKeyData]);
       }
     });
 
-    it('should stop connect response delivery when durable grantKey fanout fails for every endpoint', async () => {
+    it('should stop the approval when durable grantKey fanout fails for every endpoint', async () => {
       const encryptedProtocol: DwnProtocolDefinition = {
         protocol  : 'http://grantkey-fanout-fail-encrypted.xyz',
         published : true,
@@ -2086,25 +1301,13 @@ describe('enbox connect', () => {
         encodedData: Convert.uint8Array(new Uint8Array([1, 2, 3])).toBase64Url(),
       };
 
-      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
-      sinon.stub(EnboxConnectProtocol, 'createGrantKeyRecordsForGrants').resolves([grantKeyRecord] as any);
-      sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
+      sinon.stub(ConnectCeremony, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(ConnectCeremony, 'createGrantKeyRecordsForGrants').resolves([grantKeyRecord] as any);
+      const revocationGrantStub = sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
         grant   : {} as any,
         message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
       });
-      sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
-
-      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-        baseURL  : 'http://localhost:3000',
-        endpoint : 'callback',
-      });
-      connectRequest = await EnboxConnectProtocol.createConnectRequest({
-        appName            : 'Sample App',
-        clientDid          : clientEphemeralPortableDid.uri,
-        permissionRequests : [{ protocolDefinition: encryptedProtocol, permissionScopes: readScopes }],
-        callbackUrl,
-      });
 
       sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget')
         .resolves(['https://dwn-a.example/', 'https://dwn-b.example/']);
@@ -2121,56 +1324,36 @@ describe('enbox connect', () => {
       });
       sinon.stub(testHarness.agent.rpc, 'sendDwnRequest')
         .resolves({ status: { code: 500, detail: 'nope' } } as any);
-      const fetchStub = sinon.stub(globalThis, 'fetch').resolves(new Response());
 
-      await expect(
-        EnboxConnectProtocol.submitConnectResponse(
-          providerIdentity.did.uri, connectRequest, randomPin, testHarness.agent,
-        )
-      ).rejects.toThrow('Could not send grantKey record to any DWN endpoint.');
+      await expect(executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        request     : approvalRequest({
+          permissionRequests: [{ protocolDefinition: encryptedProtocol, permissionScopes: readScopes }],
+        }),
+      })).rejects.toThrow('Could not send grantKey record to any DWN endpoint.');
 
-      expect(fetchStub.called).toBe(false);
+      // The ceremony aborts before revocation grants are created.
+      expect(revocationGrantStub.called).toBe(false);
     });
 
     it('should throw if a grant that is included in the request does not match the protocol definition', async () => {
-      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
-      sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
+      sinon.stub(ConnectCeremony, 'createPermissionGrants').resolves(permissionGrants as any);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
-      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-        baseURL  : 'http://localhost:3000',
-        endpoint : 'callback',
-      });
-
       // Deep-clone before mutating so this test does not leak state into
-      // subsequent tests in the same describe block (the spread above is a
-      // shallow copy — `mismatchedScopes[0]` IS `permissionScopes[0]`).
+      // subsequent tests in the same describe block (a spread would be a
+      // shallow copy — `mismatchedScopes[0]` would BE `permissionScopes[0]`).
       const mismatchedScopes = permissionScopes.map((s) => ({ ...s }));
       mismatchedScopes[0].protocol = 'http://profile-protocol.xyz/other';
 
-      const options = {
-        appName            : 'Sample App',
-        clientDid          : clientEphemeralPortableDid.uri,
-        // Use the deep-cloned mismatched scopes so the validation actually
-        // fires regardless of whether the prior shallow-copy bug existed.
-        permissionRequests : [{ protocolDefinition, permissionScopes: mismatchedScopes }],
-        callbackUrl        : callbackUrl,
-      };
-      connectRequest = await EnboxConnectProtocol.createConnectRequest(options);
-
-      try {
-        // call submitAuthResponse
-        await EnboxConnectProtocol.submitConnectResponse(
-          providerIdentity.did.uri,
-          connectRequest,
-          randomPin,
-          testHarness.agent
-        );
-
-        throw new Error('should have thrown an error');
-      } catch (error: any) {
-        expect(error.message).toBe('All permission scopes must match the protocol URI they are provided with.');
-      }
+      await expect(executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        request     : approvalRequest({
+          permissionRequests: [{ protocolDefinition, permissionScopes: mismatchedScopes }],
+        }),
+      })).rejects.toThrow('All permission scopes must match the protocol URI they are provided with.');
     });
 
     describe('connect-flow fan-out parallelism (regression: "Authorizing…" hang)', () => {
@@ -2188,25 +1371,12 @@ describe('enbox connect', () => {
         ];
         const PER_SEND_DELAY_MS = 250;
 
-        sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+        sinon.stub(ConnectCeremony, 'createPermissionGrants').resolves(permissionGrants as any);
         sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
           grant   : {} as any,
           message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
         });
-        sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
         sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
-
-        const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-          baseURL  : 'http://localhost:3000',
-          endpoint : 'callback',
-        });
-
-        connectRequest = await EnboxConnectProtocol.createConnectRequest({
-          appName            : 'Sample App',
-          clientDid          : clientEphemeralPortableDid.uri,
-          permissionRequests : [{ protocolDefinition, permissionScopes }],
-          callbackUrl        : callbackUrl,
-        });
 
         sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget').resolves(endpointUrls);
         sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
@@ -2231,20 +1401,17 @@ describe('enbox connect', () => {
             message    : { descriptor: { interface: 'Protocols', method: 'Configure' } } as any,
           });
 
-        sinon.stub(globalThis, 'fetch').resolves(new Response());
-
         const start = Date.now();
-        await EnboxConnectProtocol.submitConnectResponse(
-          providerIdentity.did.uri,
-          connectRequest,
-          randomPin,
-          testHarness.agent,
-        );
+        await executeConnectApproval({
+          agent       : testHarness.agent,
+          providerDid : providerIdentity.did.uri,
+          request     : approvalRequest(),
+        });
         const elapsed = Date.now() - start;
 
         // Sequential lower bound: 4 × 250 ms = 1000 ms. Parallel should be
         // close to 250 ms; we allow generous slack for scheduling, GC, the
-        // surrounding submitConnectResponse work, and CI noise.
+        // surrounding ceremony work, and CI noise.
         expect(elapsed).toBeLessThan(700);
 
         const configureSends = rpcSendRequestStub.getCalls().filter(
@@ -2261,25 +1428,12 @@ describe('enbox connect', () => {
         // This test asserts a signal is present on every send, that it is
         // an AbortSignal, and that it is NOT already aborted at dispatch
         // time (i.e. the budget genuinely starts when the request begins).
-        sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+        sinon.stub(ConnectCeremony, 'createPermissionGrants').resolves(permissionGrants as any);
         sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
           grant   : {} as any,
           message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
         });
-        sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
         sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
-
-        const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-          baseURL  : 'http://localhost:3000',
-          endpoint : 'callback',
-        });
-
-        connectRequest = await EnboxConnectProtocol.createConnectRequest({
-          appName            : 'Sample App',
-          clientDid          : clientEphemeralPortableDid.uri,
-          permissionRequests : [{ protocolDefinition, permissionScopes }],
-          callbackUrl        : callbackUrl,
-        });
 
         sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget')
           .resolves(['https://dwn-a.example/', 'https://dwn-b.example/']);
@@ -2302,14 +1456,11 @@ describe('enbox connect', () => {
             message    : { descriptor: { interface: 'Protocols', method: 'Configure' } } as any,
           });
 
-        sinon.stub(globalThis, 'fetch').resolves(new Response());
-
-        await EnboxConnectProtocol.submitConnectResponse(
-          providerIdentity.did.uri,
-          connectRequest,
-          randomPin,
-          testHarness.agent,
-        );
+        await executeConnectApproval({
+          agent       : testHarness.agent,
+          providerDid : providerIdentity.did.uri,
+          request     : approvalRequest(),
+        });
 
         // EVERY connect-flow send (configure fan-out + permission grants +
         // revocation grants) must carry a non-aborted AbortSignal so the
@@ -2322,7 +1473,7 @@ describe('enbox connect', () => {
         }
       });
 
-      it('should still complete when one endpoint hangs forever \u2014 the abort signal short-circuits the retry budget', async () => {
+      it('should still complete when one endpoint hangs forever — the abort signal short-circuits the retry budget', async () => {
         // Reproduces the original "Authorizing… for minutes" symptom: one
         // unhealthy endpoint that never responds. Without per-request abort
         // plumbing, `AbortSignal.timeout(...)` from the connect flow would
@@ -2330,25 +1481,12 @@ describe('enbox connect', () => {
         // full 4 × 30 s retry budget. We simulate that by giving the second
         // endpoint a fake `sendDwnRequest` that respects the caller's
         // AbortSignal — exactly as the real HttpDwnRpcClient now does.
-        sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+        sinon.stub(ConnectCeremony, 'createPermissionGrants').resolves(permissionGrants as any);
         sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
           grant   : {} as any,
           message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
         });
-        sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
         sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
-
-        const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-          baseURL  : 'http://localhost:3000',
-          endpoint : 'callback',
-        });
-
-        connectRequest = await EnboxConnectProtocol.createConnectRequest({
-          appName            : 'Sample App',
-          clientDid          : clientEphemeralPortableDid.uri,
-          permissionRequests : [{ protocolDefinition, permissionScopes }],
-          callbackUrl        : callbackUrl,
-        });
 
         const healthyUrl = 'https://dwn-healthy.example/';
         const hangingUrl = 'https://dwn-hanging.example/';
@@ -2391,30 +1529,23 @@ describe('enbox connect', () => {
             message    : { descriptor: { interface: 'Protocols', method: 'Configure' } } as any,
           });
 
-        sinon.stub(globalThis, 'fetch').resolves(new Response());
-
         const start = Date.now();
-        await EnboxConnectProtocol.submitConnectResponse(
-          providerIdentity.did.uri,
-          connectRequest,
-          randomPin,
-          testHarness.agent,
-        );
+        await executeConnectApproval({
+          agent       : testHarness.agent,
+          providerDid : providerIdentity.did.uri,
+          request     : approvalRequest(),
+        });
         const elapsed = Date.now() - start;
 
-        // The per-request budget is 10 s. submitConnectResponse runs three
-        // sequential phases that each touch every endpoint (prepareProtocol
-        // fan-out, permission-grant fan-out — stubbed here, and revocation
-        // fan-out), so a fully hung endpoint costs at most one budget per
-        // unstubbed phase. We assert 25 s to leave generous CI slack while
-        // still failing loudly on regressions that bypass the abort signal
+        // The per-request budget is 10 s. The ceremony runs three sequential
+        // phases that each touch every endpoint (prepareProtocol fan-out,
+        // permission-grant fan-out — stubbed here, and revocation fan-out),
+        // so a fully hung endpoint costs at most one budget per unstubbed
+        // phase. We assert 25 s to leave generous CI slack while still
+        // failing loudly on regressions that bypass the abort signal
         // (without this fix, the same scenario takes minutes).
         expect(elapsed).toBeLessThan(25_000);
       }, 60_000); // bun:test per-test timeout, kept above the assertion budget
     });
   });
-
-  // NOTE: `createPermissionRequestForProtocol` tests were moved to
-  // @enbox/auth (wallet-connect-client.spec.ts) since the function
-  // now lives in that package.
 });

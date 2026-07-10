@@ -10,7 +10,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { PlatformAgentTestHarness } from '@enbox/agent/test';
 
 import {
-  AgentPermissionsApi, DwnDateSort, DwnInterface, EnboxConnectProtocol,
+  AgentPermissionsApi, createPermissionGrants, DwnDateSort, DwnInterface,
   EnboxUserAgent, getRecordAuthor,
 } from '@enbox/agent';
 import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, PermissionsProtocol, Poller, Time } from '@enbox/dwn-sdk-js';
@@ -157,7 +157,7 @@ describe('DwnApi', () => {
       const { status: bobNotesProtocolSend } = await bobNotesProtocol.send(bobDid.uri);
       expect(bobNotesProtocolSend.code).toBe(202);
 
-      const grants = await EnboxConnectProtocol.createPermissionGrants(
+      const grants = await createPermissionGrants(
         aliceDid.uri, delegatedBearerDid.uri, testHarness.agent, grantRequest.permissionScopes
       );
 
@@ -709,7 +709,7 @@ describe('DwnApi', () => {
 
         // grant the delegate DID access to query the non-public protocol
         const delegatedBearerDid = await delegateHarness.agent.did.get({ didUri: delegateDid.uri });
-        const grants = await EnboxConnectProtocol.createPermissionGrants(aliceDid.uri, delegatedBearerDid.uri, testHarness.agent, [{
+        const grants = await createPermissionGrants(aliceDid.uri, delegatedBearerDid.uri, testHarness.agent, [{
           interface : DwnInterfaceName.Protocols,
           method    : DwnMethodName.Query,
           protocol  : nonPublicProtocol.protocol

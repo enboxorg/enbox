@@ -8,7 +8,7 @@ Enbox is a **Bun** monorepo for **Decentralized Web Nodes (DWN)**, **DIDs** (`di
 
 - A spec-aligned **DWN engine** (`@enbox/dwn-sdk-js`) and **SQL-backed stores** (`@enbox/dwn-sql-store`).
 - A production-style **DWN server** (`@enbox/dwn-server`) with HTTP/WebSocket APIs, registration, and admin features.
-- **Client libraries**: low-level DWN clients (`@enbox/dwn-clients`), an **agent** with encrypted vault and DWN-backed stores (`@enbox/agent`), **headless auth** (`@enbox/auth`), a **high-level SDK** (`@enbox/api`), **browser helpers** (`@enbox/browser`), and **CLI helpers** (`@enbox/cli`).
+- **Client libraries**: low-level DWN clients (`@enbox/dwn-clients`), an **agent** with encrypted vault and DWN-backed stores (`@enbox/agent`), a shared **connect handshake kernel** (`@enbox/connect`), **headless auth** (`@enbox/auth`), a **high-level SDK** (`@enbox/api`), **browser helpers** (`@enbox/browser`), and **CLI helpers** (`@enbox/cli`).
 - **Shared protocol definitions** (`@enbox/protocols`) and optional **codegen** (`@enbox/protocol-codegen`).
 - **`apps/docs`**: the public documentation site (Fumadocs + Next.js); it uses its own linter (Biome), not the ESLint graph used by packages.
 
@@ -123,11 +123,12 @@ Published / primary packages live under `packages/`. Root `package.json` lists a
 | `@enbox/dwn-sdk-js` | DWN protocol implementation (style reference for TS/ESLint) |
 | `@enbox/dwn-sql-store` | SQL MessageStore/DataStore + **DWN** Kysely migrations |
 | `@enbox/dwn-clients` | DWN JSON-RPC / client transport |
+| `@enbox/connect` | Connect handshake kernel — JWE envelope, JWT, wallet URI, relay transport, client/provider state machines |
 | `@enbox/dwn-server` | Runnable DWN server; **server** Kysely migrations separate from DWN store migrations |
-| `@enbox/agent` | `EnboxUserAgent`, vault, DWN data stores, sync |
+| `@enbox/agent` | `EnboxUserAgent`, vault, DWN data stores, sync, connect approval ceremony |
 | `@enbox/auth` | `AuthManager`, sessions, password/connect flows, storage adapters |
 | `@enbox/api` | App-facing SDK; composes agent + auth |
-| `@enbox/browser` | Browser connect handlers and DWeb wiring (builds on agent, api, auth) |
+| `@enbox/browser` | Browser connect handlers, popup postMessage transports, DWeb wiring (builds on agent, api, auth, connect) |
 | `@enbox/cli` | Terminal connect handlers and CLI entrypoint helpers (builds on agent, api, auth) |
 | `@enbox/protocols` | Reusable protocol definitions for the ecosystem |
 | `@enbox/protocol-codegen` | CLI to generate TS from schemas / protocols |
@@ -145,22 +146,24 @@ Core stack (simplified — follow `workspace:*` in each `package.json` for exact
     @enbox/dids (did:dht, did:jwk, resolution)
       @enbox/dwn-sdk-js (DWN protocol engine, handlers, in-memory stores, JSON Schemas)
         @enbox/dwn-sql-store (Postgres/MySQL/SQLite DWN stores, Kysely migrations)
+        @enbox/connect (connect handshake kernel — envelope, JWT, wallet URI, relay transport, client/provider)
         @enbox/dwn-clients (DWN JSON-RPC / transport clients)
           @enbox/dwn-server (HTTP/WebSocket DWN server, registration, admin API — uses dwn-sdk-js + dwn-sql-store + dwn-clients)
-          @enbox/agent (identity vault, DWN-backed stores, sync — uses dwn-sdk-js + dwn-clients)
+          @enbox/agent (identity vault, DWN-backed stores, sync, connect approval ceremony — uses dwn-sdk-js + dwn-clients + connect)
             @enbox/local-node (local-profile server runtime — uses agent discovery helpers + dwn-server)
-            @enbox/auth (AuthManager, sessions, connect flows — uses agent + dwn-sdk-js + dwn-clients)
+            @enbox/auth (AuthManager, sessions, connect flows — uses agent + connect + dwn-sdk-js + dwn-clients)
               @enbox/api (high-level app SDK — uses agent + auth + dwn-clients)
                 @enbox/protocols (published protocol definitions — uses api + dwn-sdk-js)
-                @enbox/browser (BrowserConnectHandler, DWeb connect UI helpers — uses agent + api + auth + dids)
+                @enbox/browser (BrowserConnectHandler, popup postMessage transports — uses agent + api + auth + connect + dids)
                 @enbox/cli (CliConnectHandler, terminal helpers — uses agent + api + auth)
 ```
 
 Notes on the graph:
 
 - `@enbox/agent` does **not** depend on `@enbox/dwn-sql-store`; only `@enbox/dwn-server` does. The agent talks to a DWN over `@enbox/dwn-clients`.
-- `@enbox/auth` depends directly on `@enbox/agent`, `@enbox/dwn-sdk-js`, and `@enbox/dwn-clients` (plus `common`/`crypto`/`dids`).
-- `@enbox/browser` composes `agent` + `api` + `auth` + `dids`; it does not pull in `dwn-server` or `dwn-sql-store`.
+- `@enbox/auth` depends directly on `@enbox/agent`, `@enbox/connect`, `@enbox/dwn-sdk-js`, and `@enbox/dwn-clients` (plus `common`/`crypto`/`dids`).
+- `@enbox/connect` is the isomorphic connect-handshake kernel: ONE JWE envelope (ECDH-ES/X25519 + XC20P via `@enbox/crypto`, PIN folded into the KDF) and payload schema over per-channel transports. The relay transport lives in the kernel; the popup postMessage transports live in `@enbox/browser`; the wallet-side approval ceremony (`executeConnectApproval` — grants, revocations, grantKey delivery) lives in `@enbox/agent` because it needs agent internals. The relay endpoints on `dwn-server` store opaque ciphertext only.
+- `@enbox/browser` composes `agent` + `api` + `auth` + `connect` + `dids`; it does not pull in `dwn-server` or `dwn-sql-store`.
 - `@enbox/cli` composes `agent` + `api` + `auth` with Node/Bun-only terminal dependencies; it does not expose a browser bundle.
 - `@enbox/local-node` composes `agent` discovery helpers with `dwn-server`; it is shell-agnostic local-node runtime code, not browser code.
 
@@ -176,7 +179,7 @@ Most packages expose a `build:browser` script, but it means different things:
 - **`@enbox/agent`**, **`@enbox/api`**, **`@enbox/auth`**, and **`@enbox/browser`** emit bundled `dist/browser.mjs` artifacts via `build/browser-bundle.js` (esbuild). `agent`, `api`, and `browser` expose those artifacts from their browser-conditioned root exports; `auth` exposes its browser-safe surface from `@enbox/auth/browser` and from the root browser condition.
 - **`@enbox/common`**, **`@enbox/crypto`**, and **`@enbox/dids`** expose `build:browser` for their browser bundle artifacts.
 - **`@enbox/dwn-sdk-js`** emits `dist/browser.mjs` via its `bundle` script, not a `build:browser` script.
-- **`@enbox/cli`**, **`@enbox/dwn-clients`**, **`@enbox/dwn-server`**, **`@enbox/dwn-sql-store`**, **`@enbox/local-node`**, **`@enbox/protocols`**, and **`@enbox/protocol-codegen`** do not define `build:browser`.
+- **`@enbox/cli`**, **`@enbox/connect`**, **`@enbox/dwn-clients`**, **`@enbox/dwn-server`**, **`@enbox/dwn-sql-store`**, **`@enbox/local-node`**, **`@enbox/protocols`**, and **`@enbox/protocol-codegen`** do not define `build:browser`.
 
 Browser storage rule: do not replace the browser Level stack with SQLite or in-memory stores. In browsers, `level` resolves to `browser-level` over IndexedDB, which is required for concurrent writes from tabs, workers, and service workers on the same origin.
 
@@ -195,6 +198,8 @@ Browser storage rule: do not replace the browser Level stack with SQLite or in-m
 | `packages/dwn-sdk-js/src/` | DWN SDK source (gold-standard for style) |
 | `packages/dwn-sdk-js/json-schemas/` | JSON Schema definitions for DWN messages |
 | `packages/dwn-clients/src/` | DWN client transport / JSON-RPC |
+| `packages/connect/src/` | Connect handshake kernel — envelope, JWT, wallet URI, relay transport, `ConnectClient`/`ConnectProvider` |
+| `packages/agent/src/connect-approval.ts` | `executeConnectApproval` — the single wallet-side approval ceremony (grants, revocations, grantKey delivery) |
 | `packages/auth/src/` | `AuthManager`, storage adapters, connect and discovery helpers |
 | `packages/cli/src/` | CLI connect handler and terminal wallet approval helpers |
 | `packages/local-node/src/` | Shell-agnostic local DWN node runtime and headless CLI |
@@ -232,6 +237,7 @@ When changing public APIs, assume **multiple external apps** pin different semve
 | High-level APIs for apps | `packages/api/src/` |
 | CLI wallet connect, terminal QR/link flows | `packages/cli/src/` |
 | Local DWN node runtime, pairing broker, discovery file writer | `packages/local-node/` |
+| Connect handshake (envelope, transports, pairing) | `packages/connect/src/`, `packages/agent/src/connect-approval.ts` |
 | `dwn://` discovery, browser connect | `packages/browser/src/`, `packages/auth/src/discovery.ts` |
 | Shared protocol definitions | `packages/protocols/` |
 | Docs site content | `apps/docs/content/docs/` |
@@ -285,6 +291,7 @@ After `bun run dev:ensure`, just run the suite — the `export DID_DHT_*` lines 
 | `@enbox/cli` | `bun test` | `bun run test:node` |
 | `@enbox/local-node` | `bun test` | `bun run test:node` |
 | `@enbox/dwn-clients` | `bun test` | `bun run test:node` |
+| `@enbox/connect` | `bun test` | `bun run test:node` |
 | `@enbox/protocols` | `bun test` | `bun run test:node` |
 | `@enbox/protocol-codegen` | `bun test` | `bun run test:node` |
 | `@enbox/browser` | Vitest (browser runner) | `bun run test:browser` — **no `test:node` suite**; browser-only via `@vitest/browser-playwright` |

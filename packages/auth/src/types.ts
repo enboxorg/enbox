@@ -4,12 +4,14 @@
  */
 
 import type { PortableDid } from '@enbox/dids';
-import type { AgentSessionIdentity, ConnectClientMetadata, ConnectPermissionRequest, DwnDataEncodedRecordsWriteMessage, DwnProtocolDefinition, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity, SyncDrainOptions, SyncDrainResult } from '@enbox/agent';
+import type { AgentSessionIdentity, DwnProtocolDefinition, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity, SyncDrainOptions, SyncDrainResult } from '@enbox/agent';
+import type { ConnectClientMetadata, ConnectPermissionRequest, ConnectResult } from '@enbox/connect';
 
 import type { PasswordProvider } from './password-provider.js';
 
 // Re-export types that consumers will need
-export type { ConnectClientMetadata, ConnectPermissionRequest, HdIdentityVault, IdentityVaultBackup, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
+export type { ConnectClientMetadata, ConnectPermissionRequest, ConnectResult } from '@enbox/connect';
+export type { HdIdentityVault, IdentityVaultBackup, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
 
 // Re-export EnboxUserAgent so consumers don't need a direct @enbox/agent dep
 export type { EnboxUserAgent } from '@enbox/agent';
@@ -226,26 +228,9 @@ export interface RegistrationOptions {
 
 // ─── Connect Handler ─────────────────────────────────────────────
 
-/**
- * Result of a successful connect handler invocation.
- *
- * Contains the delegated credentials returned by the wallet.
- * All connect handlers (browser popup, relay, CLI, etc.) must
- * return this shape on success.
- */
-export interface ConnectResult {
-  /** The portable delegate DID (includes private keys). */
-  delegatePortableDid: PortableDid;
-
-  /** Permission grants for the requested protocols. */
-  delegateGrants: DwnDataEncodedRecordsWriteMessage[];
-
-  /** The DID of the identity the user approved (the wallet owner's DID). */
-  connectedDid: string;
-
-  /** Per-grant revocation mappings for session-bound self-revocation on disconnect. */
-  sessionRevocations?: { grantId: string; revocationGrantId: string }[];
-}
+// `ConnectResult` — the delegated credentials every connect handler (browser
+// popup, relay, CLI, etc.) returns on success — is canonical in
+// `@enbox/connect` and re-exported above.
 
 /**
  * A connect handler obtains delegated credentials from a wallet.
