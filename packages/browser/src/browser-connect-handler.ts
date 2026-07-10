@@ -7,10 +7,10 @@
  * @module
  */
 
-import type { ConnectPermissionRequest } from '@enbox/agent';
+import type { ConnectPermissionRequest } from '@enbox/connect';
 import type { ConnectHandler, ConnectResult } from '@enbox/auth';
 
-import { DWebConnect } from './dweb-connect-client.js';
+import { connectViaPopup } from './dweb-connect-client.js';
 import { showWalletSelector } from './ui/wallet-selector.js';
 
 /** A wallet entry shown in the wallet selector modal. */
@@ -121,8 +121,8 @@ export function BrowserConnectHandler(
         walletUrl = await showWalletSelector(wallets);
       }
 
-      // 2. Run the DWeb Connect popup flow.
-      return DWebConnect.initClient({
+      // 2. Run the DWeb Connect popup flow over the connect kernel.
+      return connectViaPopup({
         walletUrl,
         permissionRequests: params.permissionRequests,
         timeout,

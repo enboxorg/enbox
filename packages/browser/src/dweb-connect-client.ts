@@ -1,63 +1,333 @@
 /**
- * DWeb Connect client — initiates the popup/postMessage connect flow.
+ * DWeb Connect client — the dapp side of the popup/postMessage connect flow.
  *
- * This is the dapp-side counterpart to the wallet's `/dweb-connect` page.
- * The wallet is opened as a popup window, and communication happens via
- * `window.postMessage`. No relay server, QR codes, or PINs are needed.
+ * {@link PopupClientTransport} implements the `@enbox/connect` kernel's
+ * `ConnectTransport` over a wallet popup:
+ *
+ * 1. The dapp opens `${walletUrl}/dweb-connect` as a popup window.
+ * 2. The wallet emits a `loaded` beacon carrying a fresh ephemeral X25519
+ *    public key and its origin.
+ * 3. The kernel seals the signed connect request to that key (ECDH-ES,
+ *    `apv` bound to the wallet origin) and the transport posts the
+ *    ciphertext to the popup.
+ * 4. The wallet posts back the sealed response JWE (or the deny token),
+ *    which the kernel opens and value-checks.
+ *
+ * Only ciphertext crosses the postMessage channel. Every message is checked
+ * against the wallet origin derived from the configured wallet URL (never
+ * `'*'`), and against the popup window as `event.source`.
  *
  * @module
  */
 
-import type { PortableDid } from '@enbox/dids';
-import type { ConnectClientMetadata, ConnectPermissionRequest, DwnDataEncodedRecordsWriteMessage } from '@enbox/agent';
-import type { ConnectResult, PortableIdentity } from '@enbox/auth';
+import type { Jwk } from '@enbox/crypto';
+import type {
+  ConnectClientMetadata,
+  ConnectPermissionRequest,
+  ConnectRequestProfile,
+  ConnectResult,
+  ConnectTransport,
+} from '@enbox/connect';
 
-import type { EncryptedPostMessagePayload } from './dweb-connect-crypto.js';
-import { decryptPostMessagePayload, generateEphemeralKeyPair } from './dweb-connect-crypto.js';
+import { assertX25519PublicJwk, CONNECT_DENIED_TOKEN, ConnectClient } from '@enbox/connect';
 
-/** Options for initiating a DWeb Connect flow via popup. */
-export interface DWebConnectClientOptions {
-  /** Base URL of the wallet app (e.g. "https://enbox-wallet.pages.dev"). */
+import {
+  DWEB_CONNECT_LOADED_MESSAGE_TYPE,
+  DWEB_CONNECT_PATH,
+  DWEB_CONNECT_REQUEST_MESSAGE_TYPE,
+  DWEB_CONNECT_RESPONSE_MESSAGE_TYPE,
+  getTrustedMessage,
+} from './dweb-connect-messages.js';
+
+/** Default budget for the whole popup handshake (beacon + user consent + response). */
+const DEFAULT_TIMEOUT_MS = 300_000;
+
+/** Interval at which the transport checks whether the user closed the popup. */
+const CLOSED_POLL_INTERVAL_MS = 500;
+
+/** Window name given to the wallet popup. */
+const POPUP_WINDOW_NAME = 'enbox-dweb-connect';
+
+/** Window features given to the wallet popup. */
+const POPUP_WINDOW_FEATURES = 'width=500,height=700,menubar=no,toolbar=no,location=no,status=no';
+
+/** Guards against calling browser-only entry points outside a browser. */
+function assertBrowserEnvironment(): void {
+  if (typeof window === 'undefined') {
+    throw new Error('[@enbox/browser] DWeb Connect is only available in browser environments.');
+  }
+}
+
+/**
+ * Thrown when the user closes the wallet popup before the wallet finished
+ * loading (i.e. before its `loaded` beacon arrived). Callers typically treat
+ * this the same as a user denial.
+ */
+export class PopupWindowClosedError extends Error {
+  constructor() {
+    super('[@enbox/browser] Wallet popup was closed before the wallet finished loading.');
+    this.name = 'PopupWindowClosedError';
+  }
+}
+
+/** Options for constructing a {@link PopupClientTransport}. */
+export type PopupClientTransportOptions = {
+  /** Base URL of the wallet app (e.g. `https://enbox-wallet.pages.dev`). */
   walletUrl: string;
 
-  /** The DID to pre-select in the wallet's identity picker. */
-  did?: string;
+  /**
+   * Total budget in milliseconds for the popup handshake. The popup is closed
+   * and the handshake rejected when the wallet has not responded in time.
+   * @default 300_000 (5 minutes)
+   */
+  timeoutMs?: number;
+};
+
+/**
+ * Popup/postMessage {@link ConnectTransport} for browser dapps.
+ *
+ * Single-use: construct a new transport per handshake. The **constructor**
+ * opens the wallet popup synchronously — so `window.open` runs inside the user
+ * gesture, ahead of the kernel's awaited key generation, and survives strict
+ * popup blockers; `requestProfile()` then awaits the wallet's `loaded` beacon;
+ * `deliverRequest()` posts the sealed request ciphertext; `awaitResponse()`
+ * resolves with the sealed response JWE, or the deny token when the user denies
+ * or closes the popup after the handshake was established.
+ *
+ * Security properties:
+ * - `targetOrigin` of every outbound `postMessage` is pinned to the origin
+ *   derived from `walletUrl` — never `'*'`.
+ * - Inbound messages are dropped unless `event.origin` equals the pinned
+ *   wallet origin AND `event.source` is the popup window this transport opened.
+ * - The beacon's `walletOrigin` field must equal the pinned origin, and its
+ *   `walletEpk` must be a public-only X25519 JWK; a malformed beacon from the
+ *   genuine popup fails the handshake closed.
+ */
+export class PopupClientTransport implements ConnectTransport {
+  /** {@inheritDoc ConnectTransport.requiresPin} */
+  public readonly requiresPin: boolean = false;
+
+  private readonly _walletOrigin: string;
+  private readonly _timeoutMs: number;
+
+  private readonly _popup: Window;
+  private _settled = false;
+  private _walletEpkReceived = false;
+  private _timeoutId?: ReturnType<typeof setTimeout>;
+  private _closedPollId?: ReturnType<typeof setInterval>;
+  private _messageListener?: (event: MessageEvent) => void;
+
+  private readonly _walletEpkPromise: Promise<Jwk>;
+  private _resolveWalletEpk?: (walletEpk: Jwk) => void;
+  private _rejectWalletEpk?: (error: Error) => void;
+
+  private readonly _responsePromise: Promise<string>;
+  private _resolveResponse?: (payload: string) => void;
+  private _rejectResponse?: (error: Error) => void;
+
+  constructor(options: PopupClientTransportOptions) {
+    assertBrowserEnvironment();
+
+    this._walletOrigin = new URL(options.walletUrl).origin;
+    this._timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+
+    // Open the wallet popup SYNCHRONOUSLY, in the user-gesture call stack,
+    // before the kernel's awaited `DidJwk.create()` / `X25519.generateKey()`
+    // run. Strict popup blockers (Safari) reject a `window.open` issued once
+    // the stack has yielded to a prior `await`, so opening it here — instead of
+    // inside the awaited `requestProfile()` — is what keeps the flow usable.
+    const popupUrl = new URL(DWEB_CONNECT_PATH, options.walletUrl).toString();
+    const popup = window.open(popupUrl, POPUP_WINDOW_NAME, POPUP_WINDOW_FEATURES);
+    if (!popup) {
+      throw new Error('[@enbox/browser] Popup blocked. Allow popups for this site to connect to a wallet.');
+    }
+    this._popup = popup;
+
+    this._walletEpkPromise = new Promise<Jwk>((resolve, reject): void => {
+      this._resolveWalletEpk = resolve;
+      this._rejectWalletEpk = reject;
+    });
+
+    // Created up-front so a response (or deny) arriving before
+    // `awaitResponse()` is called is never dropped. The no-op catch marks
+    // early rejections (timeout, popup closed during load) as handled until
+    // the kernel attaches its own handlers via `awaitResponse()`.
+    this._responsePromise = new Promise<string>((resolve, reject): void => {
+      this._resolveResponse = resolve;
+      this._rejectResponse = reject;
+    });
+    this._responsePromise.catch((): undefined => undefined);
+
+    // Listen synchronously, before the wallet page can emit its `loaded`
+    // beacon, so the beacon is never missed while the kernel awaits key
+    // generation ahead of `requestProfile()`.
+    this._messageListener = (event: MessageEvent): void => { this.onMessage(event); };
+    window.addEventListener('message', this._messageListener);
+
+    this._timeoutId = setTimeout((): void => {
+      this.fail(new Error('[@enbox/browser] DWeb Connect timed out waiting for wallet response.'));
+    }, this._timeoutMs);
+
+    this._closedPollId = setInterval((): void => { this.onClosedPoll(); }, CLOSED_POLL_INTERVAL_MS);
+  }
 
   /**
-   * Protocol permission requests to send to the wallet.
-   * Each entry contains a `protocolDefinition` and `permissionScopes`.
+   * Awaits the already-open popup's `loaded` beacon, then returns the popup
+   * channel profile: ECDH-ES encryption to the beacon's ephemeral key with the
+   * pinned wallet origin as the `apv` binding, a `post_message` reply
+   * descriptor, and the client-supplied `state` correlator.
+   *
+   * The popup was opened synchronously at construction, so this method only
+   * awaits the beacon — it never issues the blocker-sensitive `window.open`.
+   *
+   * @param state - The handshake correlator minted by the {@link ConnectClient}.
+   * @throws If the user closes the popup before the beacon arrives
+   *         ({@link PopupWindowClosedError}), the beacon is malformed, or on
+   *         timeout.
    */
+  public async requestProfile(state: string): Promise<ConnectRequestProfile> {
+    const walletEpk = await this._walletEpkPromise;
+
+    return {
+      encryption : { mode: 'ecdh-es', walletEpk, walletOrigin: this._walletOrigin },
+      reply      : { mode: 'post_message' },
+      state,
+    };
+  }
+
+  /**
+   * Posts the sealed request ciphertext to the wallet popup with the
+   * `targetOrigin` pinned to the wallet origin.
+   */
+  public async deliverRequest(jwe: string): Promise<void> {
+    this._popup.postMessage({ type: DWEB_CONNECT_REQUEST_MESSAGE_TYPE, jwe }, this._walletOrigin);
+  }
+
+  /**
+   * Awaits the wallet's response ciphertext: the sealed response JWE, or the
+   * deny token when the user denies in the wallet or closes the popup.
+   * Rejects on timeout.
+   */
+  public async awaitResponse(): Promise<string> {
+    return await this._responsePromise;
+  }
+
+  private onMessage(event: MessageEvent): void {
+    const message = getTrustedMessage(event, this._walletOrigin, this._popup);
+    if (message === undefined) { return; }
+
+    if (message.type === DWEB_CONNECT_LOADED_MESSAGE_TYPE) {
+      this.onLoadedBeacon(message);
+      return;
+    }
+
+    if (message.type === DWEB_CONNECT_RESPONSE_MESSAGE_TYPE) {
+      this.onResponseMessage(message);
+    }
+  }
+
+  private onLoadedBeacon(message: Record<string, unknown>): void {
+    if (this._settled || this._walletEpkReceived) { return; }
+
+    // The beacon passed the origin and source checks, so a malformed payload
+    // is a protocol violation by the genuine popup — fail closed. The X25519
+    // public-JWK shape check is delegated to the connect kernel.
+    let walletEpk: Jwk;
+    try {
+      assertX25519PublicJwk(message.walletEpk);
+      walletEpk = message.walletEpk;
+    } catch {
+      this.fail(new Error('[@enbox/browser] Wallet loaded beacon did not carry a valid X25519 public key.'));
+      return;
+    }
+
+    if (message.walletOrigin !== this._walletOrigin) {
+      this.fail(new Error('[@enbox/browser] Wallet loaded beacon origin does not match the configured wallet origin.'));
+      return;
+    }
+
+    this._walletEpkReceived = true;
+    this._resolveWalletEpk?.(walletEpk);
+  }
+
+  private onResponseMessage(message: Record<string, unknown>): void {
+    if (this._settled) { return; }
+
+    if (typeof message.payload !== 'string') {
+      this.fail(new Error('[@enbox/browser] Wallet response message did not carry a ciphertext payload.'));
+      return;
+    }
+
+    this._settled = true;
+    this.cleanup();
+    // No-op on the normal path; unblocks `requestProfile()` if a response
+    // somehow arrives before the beacon.
+    this._rejectWalletEpk?.(new Error('[@enbox/browser] Wallet responded before the handshake was established.'));
+    this._resolveResponse?.(message.payload);
+  }
+
+  private onClosedPoll(): void {
+    if (this._settled || this._popup.closed !== true) { return; }
+
+    if (!this._walletEpkReceived) {
+      // Closed before the wallet ever loaded — the handshake cannot proceed.
+      this.fail(new PopupWindowClosedError());
+      return;
+    }
+
+    // Closed after the handshake was established — treat as a user denial.
+    this._settled = true;
+    this.cleanup();
+    this._resolveResponse?.(CONNECT_DENIED_TOKEN);
+  }
+
+  private fail(error: Error): void {
+    if (this._settled) { return; }
+    this._settled = true;
+    this.cleanup();
+    try { this._popup.close(); } catch { /* best effort */ }
+    this._rejectWalletEpk?.(error);
+    this._rejectResponse?.(error);
+  }
+
+  private cleanup(): void {
+    clearTimeout(this._timeoutId);
+    clearInterval(this._closedPollId);
+    if (this._messageListener !== undefined) {
+      window.removeEventListener('message', this._messageListener);
+      this._messageListener = undefined;
+    }
+  }
+}
+
+/** Options for a one-shot {@link connectViaPopup} flow. */
+export type PopupConnectOptions = {
+  /** Base URL of the wallet app (e.g. `https://enbox-wallet.pages.dev`). */
+  walletUrl: string;
+
+  /** DWN protocols and permission scopes to request from the wallet. */
   permissionRequests: ConnectPermissionRequest[];
 
   /**
-   * Timeout in milliseconds. The popup is closed and an error thrown
-   * if the wallet doesn't respond within this time.
+   * Timeout in milliseconds for the popup handshake.
    * @default 300_000 (5 minutes)
    */
   timeout?: number;
 
   /**
-   * Display name of the requesting application.
-   * Shown in the wallet's permission consent screen.
+   * Display name of the requesting application, shown in the wallet's
+   * consent screen. Defaults to the dapp's host.
    */
   appName?: string;
 
   /**
-   * Icon URL of the requesting application.
-   * Shown alongside the app name in the wallet's consent screen.
+   * Icon URL of the requesting application, shown alongside the app name in
+   * the wallet's consent screen.
    */
   appIcon?: string;
+};
 
-  /**
-   * A portable identity to transfer to the wallet for import.
-   *
-   * When provided, the wallet imports this identity and creates
-   * delegate grants for the dapp, allowing the dapp to transition
-   * from local-DID mode to delegate mode while keeping the same DID.
-   */
-  portableIdentity?: PortableIdentity;
-}
-
+/** Collects self-reported environment hints for the wallet's session display. */
 function collectBrowserClientMetadata(): ConnectClientMetadata {
   const resolvedOptions = Intl.DateTimeFormat().resolvedOptions();
   const languages = Array.isArray(globalThis.navigator.languages)
@@ -75,228 +345,34 @@ function collectBrowserClientMetadata(): ConnectClientMetadata {
 }
 
 /**
- * Open a wallet popup and run the DWeb Connect postMessage flow.
+ * Runs one DWeb Connect popup handshake end-to-end: opens the wallet popup,
+ * drives the `@enbox/connect` kernel client over a {@link PopupClientTransport},
+ * and returns the delegated credentials.
  *
- * Protocol:
- * 1. Dapp opens `${walletUrl}/dweb-connect` as a popup.
- * 2. Wallet sends `{ type: 'dweb-connect-loaded' }` when ready.
- * 3. Dapp sends `{ type: 'dweb-connect-authorization-request', did, permissions,
- *    appName?, appIcon?, portableIdentity? }`.
- * 4. Wallet shows consent UI, then sends back
- *    `{ type: 'dweb-connect-authorization-response', delegateDid, grants }`.
- * 5. Popup closes.
- *
- * @returns The delegate credentials, or `undefined` if the user denied.
- * @throws If the popup is blocked, times out, or the wallet returns an error.
+ * @returns The delegate credentials, or `undefined` when the user denied the
+ *          request or closed the popup.
+ * @throws If the popup is blocked, the handshake times out, or the wallet
+ *         returns an invalid response.
  */
-async function initClient(options: DWebConnectClientOptions): Promise<ConnectResult | undefined> {
-  const {
-    walletUrl,
-    did,
-    permissionRequests,
-    timeout = 300_000,
-    appName,
-    appIcon,
-    portableIdentity,
-  } = options;
-
-  if (typeof window === 'undefined') {
-    throw new Error(
-      '[@enbox/browser] DWeb Connect is only available in browser environments.'
-    );
-  }
-
-  // Open the wallet's DWeb Connect page as a popup.
-  const popupUrl = new URL('/dweb-connect', walletUrl).toString();
-  const popup = window.open(
-    popupUrl,
-    'enbox-dweb-connect',
-    'width=500,height=700,menubar=no,toolbar=no,location=no,status=no',
-  );
-
-  if (!popup) {
-    throw new Error(
-      '[@enbox/browser] Popup blocked. Allow popups for this site to connect to a wallet.'
-    );
-  }
-
-  // Generate an ephemeral ECDH keypair for this connect session.
-  // The public key is sent to the wallet so it can encrypt the response
-  // containing delegate private keys and decryption material.
-  // Encryption is mandatory — if key generation fails (e.g. non-secure
-  // context where crypto.subtle is unavailable), the connect flow aborts.
-  let dappKeyPair: CryptoKeyPair;
-  let dappPublicKeyBase64url: string;
+export async function connectViaPopup(options: PopupConnectOptions): Promise<ConnectResult | undefined> {
+  const transport = new PopupClientTransport({
+    walletUrl : options.walletUrl,
+    timeoutMs : options.timeout,
+  });
+  const client = new ConnectClient({ transport });
 
   try {
-    const ephemeral = await generateEphemeralKeyPair();
-    dappKeyPair = ephemeral.keyPair;
-    dappPublicKeyBase64url = ephemeral.publicKeyBase64url;
-  } catch {
-    popup.close();
-    throw new Error(
-      '[@enbox/browser] DWeb Connect requires a secure context (HTTPS) for encrypted key exchange. '
-      + 'crypto.subtle is not available in this environment.'
-    );
-  }
-
-  return new Promise<ConnectResult | undefined>((resolve, reject) => {
-    let settled = false;
-
-    const cleanup = (): void => {
-      settled = true;
-      clearTimeout(timeoutId);
-      window.removeEventListener('message', onMessage);
-    };
-
-    // Set up timeout.
-    const timeoutId = setTimeout(() => {
-      if (!settled) {
-        cleanup();
-        try { popup.close(); } catch { /* best effort */ }
-        reject(new Error(
-          '[@enbox/browser] DWeb Connect timed out waiting for wallet response.'
-        ));
-      }
-    }, timeout);
-
-    // Monitor popup closed without response (user closed the window).
-    const pollClosed = setInterval(() => {
-      if (popup.closed && !settled) {
-        clearInterval(pollClosed);
-        cleanup();
-        resolve(undefined);
-      }
-    }, 500);
-
-    const onMessage = (event: MessageEvent): void => {
-      // Validate origin matches the wallet URL.
-      const walletOrigin = new URL(walletUrl).origin;
-      if (event.origin !== walletOrigin) {return;}
-
-      const { type } = event.data ?? {};
-
-      if (type === 'dweb-connect-loaded') {
-        // Wallet is ready — send the authorization request with
-        // ephemeral public key and optional app metadata.
-        popup.postMessage({
-          type               : 'dweb-connect-authorization-request',
-          did,
-          permissions        : permissionRequests,
-          ephemeralPublicKey : dappPublicKeyBase64url,
-          appName,
-          appIcon,
-          clientMetadata     : collectBrowserClientMetadata(),
-          portableIdentity,
-        }, walletOrigin);
-        return;
-      }
-
-      if (type === 'dweb-connect-authorization-response') {
-        clearInterval(pollClosed);
-        cleanup();
-
-        // If the wallet sent an explicit error, treat as denied.
-        if (event.data.error) {
-          resolve(undefined);
-          return;
-        }
-
-        // Require an encrypted response. The dapp always sends an
-        // ephemeralPublicKey, so a plaintext response means either the
-        // wallet is outdated or something intercepted the flow.
-        const encrypted = event.data.encryptedPayload as EncryptedPostMessagePayload | undefined;
-        if (!encrypted) {
-          resolve(undefined);
-          return;
-        }
-
-        decryptPostMessagePayload(encrypted, dappKeyPair).then((payload: Record<string, unknown>) => {
-          const p = payload as any;
-          if (!p.delegateDid || !p.grants) {
-            resolve(undefined);
-            return;
-          }
-          resolve({
-            delegatePortableDid : p.delegateDid as PortableDid,
-            delegateGrants      : p.grants as DwnDataEncodedRecordsWriteMessage[],
-            connectedDid        : p.connectedDid ?? did ?? (p.delegateDid as PortableDid).uri,
-            sessionRevocations  : p.sessionRevocations ?? undefined,
-          });
-        }).catch(() => {
-          // Decryption failed — treat as denied.
-          resolve(undefined);
-        });
-      }
-    };
-
-    window.addEventListener('message', onMessage);
-  });
-}
-
-/**
- * Probe whether a wallet supports a specific DID via a hidden iframe.
- *
- * Sends a `dweb-connect-support-request` message to the wallet and
- * waits for a `dweb-connect-support-response`. Useful for checking
- * multiple wallet URLs to find the one that manages a given DID.
- *
- * @param walletUrl - Base URL of the wallet to probe.
- * @param did - The DID to check.
- * @param timeout - Probe timeout in ms. Default: 5_000 (5 seconds).
- * @returns `true` if the wallet manages the DID, `false` otherwise.
- */
-async function probeWalletSupport(
-  walletUrl: string,
-  did: string,
-  timeout = 5_000,
-): Promise<boolean> {
-  if (typeof window === 'undefined') {return false;}
-
-  return new Promise<boolean>((resolve) => {
-    const iframe = document.createElement('iframe');
-    iframe.style.display = 'none';
-    iframe.src = walletUrl;
-
-    let settled = false;
-
-    const cleanup = (): void => {
-      settled = true;
-      window.removeEventListener('message', onMessage);
-      try { document.body.removeChild(iframe); } catch { /* best effort */ }
-    };
-
-    const timeoutId = setTimeout(() => {
-      if (!settled) {
-        cleanup();
-        resolve(false);
-      }
-    }, timeout);
-
-    const onMessage = (event: MessageEvent): void => {
-      const walletOrigin = new URL(walletUrl).origin;
-      if (event.origin !== walletOrigin) { return; }
-
-      const { type, supported } = event.data ?? {};
-      if (type === 'dweb-connect-support-response') {
-        clearTimeout(timeoutId);
-        cleanup();
-        resolve(!!supported);
-      }
-    };
-
-    window.addEventListener('message', onMessage);
-
-    iframe.addEventListener('load', () => {
-      const walletOrigin = new URL(walletUrl).origin;
-      iframe.contentWindow?.postMessage({
-        type: 'dweb-connect-support-request',
-        did,
-      }, walletOrigin);
+    return await client.connect({
+      appName            : options.appName ?? globalThis.location.host,
+      appIcon            : options.appIcon,
+      clientMetadata     : collectBrowserClientMetadata(),
+      permissionRequests : options.permissionRequests,
     });
-
-    document.body.appendChild(iframe);
-  });
+  } catch (error) {
+    if (error instanceof PopupWindowClosedError) {
+      // The user closed the wallet before it loaded — same as a denial.
+      return undefined;
+    }
+    throw error;
+  }
 }
-
-export const DWebConnect = { initClient, probeWalletSupport };

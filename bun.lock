@@ -53,6 +53,7 @@
       "version": "0.8.15",
       "dependencies": {
         "@enbox/common": "workspace:*",
+        "@enbox/connect": "workspace:*",
         "@enbox/crypto": "workspace:*",
         "@enbox/dids": "workspace:*",
         "@enbox/dwn-clients": "workspace:*",
@@ -112,6 +113,7 @@
       "dependencies": {
         "@enbox/agent": "workspace:*",
         "@enbox/common": "workspace:*",
+        "@enbox/connect": "workspace:*",
         "@enbox/crypto": "workspace:*",
         "@enbox/dids": "workspace:*",
         "@enbox/dwn-clients": "workspace:*",
@@ -133,6 +135,9 @@
         "@enbox/agent": "workspace:*",
         "@enbox/api": "workspace:*",
         "@enbox/auth": "workspace:*",
+        "@enbox/common": "workspace:*",
+        "@enbox/connect": "workspace:*",
+        "@enbox/crypto": "workspace:*",
         "@enbox/dids": "workspace:*",
       },
       "devDependencies": {
@@ -152,6 +157,7 @@
         "@enbox/agent": "workspace:*",
         "@enbox/api": "workspace:*",
         "@enbox/auth": "workspace:*",
+        "@enbox/connect": "workspace:*",
         "qrcode": "1.5.4",
       },
       "devDependencies": {
@@ -193,6 +199,26 @@
         "abstract-level",
         "level",
       ],
+    },
+    "packages/connect": {
+      "name": "@enbox/connect",
+      "version": "0.1.0",
+      "dependencies": {
+        "@enbox/common": "workspace:*",
+        "@enbox/crypto": "workspace:*",
+        "@enbox/dids": "workspace:*",
+        "@enbox/dwn-sdk-js": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "22.19.15",
+        "@types/sinon": "17.0.3",
+        "@typescript-eslint/eslint-plugin": "8.32.1",
+        "@typescript-eslint/parser": "8.32.1",
+        "bun-types": "1.3.14",
+        "eslint": "9.7.0",
+        "sinon": "18.0.0",
+        "typescript": "5.9.3",
+      },
     },
     "packages/crypto": {
       "name": "@enbox/crypto",
@@ -704,6 +730,8 @@
     "@enbox/cli": ["@enbox/cli@workspace:packages/cli"],
 
     "@enbox/common": ["@enbox/common@workspace:packages/common"],
+
+    "@enbox/connect": ["@enbox/connect@workspace:packages/connect"],
 
     "@enbox/crypto": ["@enbox/crypto@workspace:packages/crypto"],
 

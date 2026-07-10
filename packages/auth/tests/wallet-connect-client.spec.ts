@@ -1,185 +1,233 @@
 /**
  * Tests for `WalletConnect.initClient()` and `WalletConnect.createPermissionRequestForProtocol()`.
  *
- * Moved from `@enbox/agent/tests/connect.spec.ts` when the WalletConnect
- * client code was relocated to `@enbox/auth`.
+ * `initClient` rides the `@enbox/connect` kernel (`ConnectClient` over
+ * `RelayClientTransport`), so these tests run the full sealed-envelope
+ * handshake against a stubbed relay: the fetch stub plays the relay's
+ * `par`/`token` routes and the wallet side opens the sealed request and seals
+ * a real response with `ConnectProvider`.
  */
 
 import type { DwnProtocolDefinition } from '@enbox/agent';
+import type { ConnectRequest, ConnectResponse } from '@enbox/connect';
 
 import sinon from 'sinon';
 
 import { afterEach, describe, expect, it } from 'bun:test';
 
+import { DidJwk } from '@enbox/dids';
 import { Ed25519 } from '@enbox/crypto';
-import { EnboxConnectProtocol } from '@enbox/agent';
 import { WalletConnect } from '../src/wallet-connect-client.js';
+import { CONNECT_DENIED_TOKEN, ConnectProvider, parseWalletConnectUri, sealResponse } from '@enbox/connect';
 import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
+
+const providerDid = 'did:dht:provider789';
+const connectServerUrl = 'https://relay.test/connect';
+const walletUri = 'https://wallet.test/connect/app';
+const relayRequestUri = 'https://relay.test/connect/authorize/req-1.jwt';
+const pin = '1234';
+
+const delegateGrants = [{ recordId: 'grant-1' }] as any;
+
+/** Wallet-side behavior: receives the opened request, returns the relay `id_token` body. */
+type WalletBehavior = (request: ConnectRequest) => Promise<string>;
+
+type StubRelay = {
+  /** Sealed request JWEs pushed to the relay `par` route. */
+  parRequests: string[];
+  /** Wallet URIs handed to `onWalletUriReady`. */
+  walletUris: string[];
+  /** Requests the wallet side successfully opened. */
+  openedRequests: ConnectRequest[];
+  /** The `onWalletUriReady` callback wired to the wallet behavior. */
+  onWalletUriReady: (uri: string) => Promise<void>;
+};
+
+/**
+ * Stubs `globalThis.fetch` with an in-memory relay (`par` + `token` routes)
+ * and returns an `onWalletUriReady` callback that runs the wallet side:
+ * parse the fragment, open the sealed request, and post the wallet
+ * behavior's `id_token` for the client's token poll to collect.
+ */
+function stubRelay(wallet: WalletBehavior): StubRelay {
+  const parRequests: string[] = [];
+  const walletUris: string[] = [];
+  const openedRequests: ConnectRequest[] = [];
+  let tokenBody: string | undefined;
+
+  sinon.stub(globalThis, 'fetch').callsFake(async (input: any, init?: any): Promise<Response> => {
+    const url = String(input);
+
+    if (url === `${connectServerUrl}/par` && init?.method === 'POST') {
+      const body = JSON.parse(init.body as string) as { request: string };
+      parRequests.push(body.request);
+      return new Response(
+        JSON.stringify({ request_uri: relayRequestUri, expires_in: 600 }),
+        { status: 201, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+
+    if (url.startsWith(`${connectServerUrl}/token/`)) {
+      if (tokenBody === undefined) {
+        return new Response('pending', { status: 404 });
+      }
+      return new Response(tokenBody, { status: 200 });
+    }
+
+    throw new Error(`unexpected fetch in stubbed relay: ${url}`);
+  });
+
+  const onWalletUriReady = async (uri: string): Promise<void> => {
+    walletUris.push(uri);
+    const parsed = parseWalletConnectUri(uri);
+    if (parsed === undefined) {
+      throw new Error('wallet URI did not carry connect fragment params');
+    }
+
+    const request = await ConnectProvider.openRequest({
+      jwe        : parRequests[parRequests.length - 1],
+      decryption : { mode: 'dir', requestKey: parsed.encryptionKey },
+    });
+    openedRequests.push(request);
+    tokenBody = await wallet(request);
+  };
+
+  return { parRequests, walletUris, openedRequests, onWalletUriReady };
+}
+
+/** Wallet behavior: approve with a wallet-minted delegate DID. */
+function approveWithWalletMintedDelegate(
+  options: { responsePin?: string } = {},
+): { wallet: WalletBehavior; delegateUri: () => string } {
+  let mintedDelegateUri = '';
+
+  const wallet: WalletBehavior = async (request) => {
+    const delegate = await DidJwk.create();
+    mintedDelegateUri = delegate.uri;
+    return await ConnectProvider.sealApprovedResponse({
+      request,
+      providerDid,
+      approval: {
+        delegateDid         : delegate.uri,
+        delegatePortableDid : await delegate.export(),
+        delegateGrants,
+        sessionRevocations  : [{ grantId: 'grant-1', revocationGrantId: 'revoke-1' }],
+      },
+      signer : delegate,
+      pin    : options.responsePin ?? pin,
+    });
+  };
+
+  return { wallet, delegateUri: (): string => mintedDelegateUri };
+}
+
+/** Wallet behavior: approve grants to the request's pre-supplied delegate DID. */
+const approveWithPreSuppliedDelegate: WalletBehavior = async (request) => {
+  return await ConnectProvider.sealApprovedResponse({
+    request,
+    providerDid,
+    approval: {
+      delegateDid        : request.delegateDid!,
+      delegateGrants,
+      sessionRevocations : [],
+    },
+    signer: await DidJwk.create(),
+    pin,
+  });
+};
+
+/** Wallet behavior: seal a hand-built (guard-bypassing) response payload. */
+function sealRawResponse(build: (request: ConnectRequest) => Partial<ConnectResponse>): WalletBehavior {
+  return async (request) => {
+    const iat = Math.floor(Date.now() / 1000);
+    const response: ConnectResponse = {
+      providerDid,
+      delegateDid        : 'did:jwk:wallet-delegate',
+      aud                : request.clientDid,
+      iat,
+      exp                : iat + 600,
+      nonce              : request.nonce,
+      state              : request.state,
+      delegateGrants,
+      sessionRevocations : [],
+      ...build(request),
+    };
+    return await sealResponse({
+      response,
+      signer      : await DidJwk.create(),
+      responseKey : request.responseKey,
+      pin,
+    });
+  };
+}
 
 describe('WalletConnect', () => {
   afterEach(() => {
     sinon.restore();
   });
 
-  describe('initClient — error paths', () => {
-    it('should throw when signJwt returns undefined', async () => {
-      sinon.stub(EnboxConnectProtocol, 'signJwt').resolves(undefined as any);
-
-      await expect(
-        WalletConnect.initClient({
-          displayName        : 'Sample App',
-          walletUri          : 'http://localhost:3000/',
-          connectServerUrl   : 'http://localhost:3000/connect',
-          permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: {} as any }],
-          onWalletUriReady   : () => {},
-          validatePin        : async () => '1234',
-        })
-      ).rejects.toThrow('Unable to sign requestObject');
-    });
-
-    it('should throw when PAR response is not ok', async () => {
-      sinon.stub(EnboxConnectProtocol, 'signJwt').resolves('signed.jwt.value');
-      sinon.stub(EnboxConnectProtocol, 'encryptRequest').resolves('encrypted-jwe');
-      sinon.stub(globalThis, 'fetch').resolves(
-        new Response('Bad Request', { status: 400, statusText: 'Bad Request' })
-      );
-
-      await expect(
-        WalletConnect.initClient({
-          displayName        : 'Sample App',
-          walletUri          : 'http://localhost:3000/',
-          connectServerUrl   : 'http://localhost:3000/connect',
-          permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: {} as any }],
-          onWalletUriReady   : () => {},
-          validatePin        : async () => '1234',
-        })
-      ).rejects.toThrow('400: Bad Request');
-    });
-  });
-
-  describe('initClient — happy path', () => {
+  describe('initClient — relay flow', () => {
     it('should complete the full relay flow and return delegate info', async () => {
-      // Stub EnboxConnectProtocol methods used by initClient.
-      sinon.stub(EnboxConnectProtocol, 'createConnectRequest').callsFake(async (options: any): Promise<any> => ({
-        clientDid                  : 'did:jwk:test',
-        callbackUrl                : 'http://localhost:3000/connect/callback',
-        permissionRequests         : [],
-        appName                    : 'Sample App',
-        requestedSessionTtlSeconds : options.requestedSessionTtlSeconds,
-        nonce                      : 'test-nonce',
-        responseMode               : 'direct_post',
-        state                      : 'test-state',
-        supportedDidMethods        : ['did:dht', 'did:jwk'],
-      }));
-      sinon.stub(EnboxConnectProtocol, 'signJwt').resolves('signed.jwt.value');
-      sinon.stub(EnboxConnectProtocol, 'encryptRequest').resolves('encrypted-jwe');
-      sinon.stub(EnboxConnectProtocol, 'decryptResponse').resolves('decrypted.jwt.value');
-      // Verified-JWT payload must satisfy `assertConnectResponse` in
-      // @enbox/agent. The required fields are providerDid / delegateDid /
-      // aud / iat / exp / delegateGrants / delegatePortableDid.
-      sinon.stub(EnboxConnectProtocol, 'verifyJwt').resolves({
-        providerDid         : 'did:dht:provider789',
-        delegateDid         : 'did:dht:delegate123',
-        aud                 : 'did:jwk:test',
-        iat                 : Math.floor(Date.now() / 1000),
-        exp                 : Math.floor(Date.now() / 1000) + 3600,
-        delegateGrants      : [{ recordId: 'grant1' }],
-        delegatePortableDid : { uri: 'did:dht:delegate123', document: {}, metadata: {} },
-      });
-
-      // Stub fetch: first call = PAR response, second call = poll token response.
-      const fetchStub = sinon.stub(globalThis, 'fetch');
-      fetchStub.onFirstCall().resolves(
-        new Response(JSON.stringify({ request_uri: 'http://localhost:3000/connect/authorize/req.jwt' }), {
-          status  : 200,
-          headers : { 'Content-Type': 'application/json' },
-        })
-      );
-      fetchStub.onSecondCall().resolves(
-        new Response('encrypted-response-jwe', { status: 200 })
-      );
-
-      const walletUris: string[] = [];
+      const minted = approveWithWalletMintedDelegate();
+      const relay = stubRelay(minted.wallet);
+      const pinPrompts: number[] = [];
 
       const result = await WalletConnect.initClient({
         displayName                : 'Sample App',
-        walletUri                  : 'http://localhost:3000/',
-        connectServerUrl           : 'http://localhost:3000/connect',
+        walletUri,
+        connectServerUrl,
         permissionRequests         : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
-        onWalletUriReady           : (uri: string): void => { walletUris.push(uri); },
-        validatePin                : async (): Promise<string> => '1234',
+        onWalletUriReady           : relay.onWalletUriReady,
+        validatePin                : async (): Promise<string> => { pinPrompts.push(1); return pin; },
         requestedSessionTtlSeconds : 2_592_000,
+        pollIntervalMs             : 1,
       });
 
       // Verify result shape.
       expect(result).toBeDefined();
-      expect(result!.connectedDid).toBe('did:dht:provider789');
-      expect(result!.delegatePortableDid.uri).toBe('did:dht:delegate123');
+      expect(result!.connectedDid).toBe(providerDid);
+      expect(result!.delegatePortableDid.uri).toBe(minted.delegateUri());
       expect(result!.delegateGrants).toHaveLength(1);
-      expect((EnboxConnectProtocol.createConnectRequest as sinon.SinonStub).firstCall.args[0].requestedSessionTtlSeconds).toBe(2_592_000);
+      expect(result!.sessionRevocations).toEqual([{ grantId: 'grant-1', revocationGrantId: 'revoke-1' }]);
+      expect(pinPrompts).toHaveLength(1);
 
-      // Verify onWalletUriReady was called with the correct URI. The relay
-      // pointer and encryption key ride in the fragment, never the query string.
-      expect(walletUris).toHaveLength(1);
-      const uri = new URL(walletUris[0]);
+      // The wallet-side request carried the client fields.
+      expect(relay.openedRequests).toHaveLength(1);
+      const request = relay.openedRequests[0];
+      expect(request.appName).toBe('Sample App');
+      expect(request.requestedSessionTtlSeconds).toBe(2_592_000);
+      expect(request.delegateDid).toBeUndefined();
+      expect(request.reply).toEqual({ mode: 'direct_post', callbackUrl: `${connectServerUrl}/callback` });
+      expect(request.responseKey.crv).toBe('X25519');
+
+      // The relay saw ciphertext only: the pushed request is a 5-segment
+      // Compact JWE, and the fragment key never rides in a query string.
+      expect(relay.parRequests[0].split('.')).toHaveLength(5);
+      expect(relay.walletUris).toHaveLength(1);
+      const uri = new URL(relay.walletUris[0]);
       expect(uri.search).toBe('');
-      const parsed = EnboxConnectProtocol.parseWalletConnectUri(walletUris[0]);
-      expect(parsed?.requestUri).toBe('http://localhost:3000/connect/authorize/req.jwt');
-      expect(parsed?.encryptionKeyBase64Url).toBeDefined();
-
-      // Verify fetch was called for PAR and poll.
-      expect(fetchStub.callCount).toBeGreaterThanOrEqual(2);
+      const parsed = parseWalletConnectUri(relay.walletUris[0]);
+      expect(parsed?.requestUri).toBe(relayRequestUri);
+      expect(parsed?.encryptionKey).toHaveLength(32);
     });
 
     it('should request grants to a locally generated delegate DID when pre-supply is enabled', async () => {
-      let requestedDelegateDid = '';
-      sinon.stub(EnboxConnectProtocol, 'createConnectRequest').callsFake(async (options: any): Promise<any> => {
-        requestedDelegateDid = options.delegateDid;
-        return {
-          clientDid           : 'did:jwk:test',
-          callbackUrl         : 'http://localhost:3000/connect/callback',
-          permissionRequests  : [],
-          appName             : 'Sample App',
-          delegateDid         : options.delegateDid,
-          nonce               : 'test-nonce',
-          responseMode        : 'direct_post',
-          state               : 'test-state',
-          supportedDidMethods : ['did:dht', 'did:jwk'],
-        };
-      });
-      sinon.stub(EnboxConnectProtocol, 'signJwt').resolves('signed.jwt.value');
-      sinon.stub(EnboxConnectProtocol, 'encryptRequest').resolves('encrypted-jwe');
-      sinon.stub(EnboxConnectProtocol, 'decryptResponse').resolves('decrypted.jwt.value');
-      sinon.stub(EnboxConnectProtocol, 'verifyJwt').callsFake(async (): Promise<any> => ({
-        providerDid    : 'did:dht:provider789',
-        delegateDid    : requestedDelegateDid,
-        aud            : 'did:jwk:test',
-        iat            : Math.floor(Date.now() / 1000),
-        exp            : Math.floor(Date.now() / 1000) + 3600,
-        delegateGrants : [{ recordId: 'grant1' }],
-      }));
-
-      const fetchStub = sinon.stub(globalThis, 'fetch');
-      fetchStub.onFirstCall().resolves(
-        new Response(JSON.stringify({ request_uri: 'http://localhost:3000/connect/authorize/req.jwt' }), {
-          status  : 200,
-          headers : { 'Content-Type': 'application/json' },
-        })
-      );
-      fetchStub.onSecondCall().resolves(new Response('encrypted-response-jwe', { status: 200 }));
+      const relay = stubRelay(approveWithPreSuppliedDelegate);
 
       const result = await WalletConnect.initClient({
         displayName          : 'Sample App',
-        walletUri            : 'http://localhost:3000/',
-        connectServerUrl     : 'http://localhost:3000/connect',
+        walletUri,
+        connectServerUrl,
         permissionRequests   : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
-        onWalletUriReady     : (): void => {},
-        validatePin          : async (): Promise<string> => '1234',
+        onWalletUriReady     : relay.onWalletUriReady,
+        validatePin          : async (): Promise<string> => pin,
         preSupplyDelegateDid : true,
+        pollIntervalMs       : 1,
       });
 
-      expect(requestedDelegateDid.startsWith('did:jwk:')).toBe(true);
-      expect(result?.delegatePortableDid.uri).toBe(requestedDelegateDid);
+      const requestedDelegateDid = relay.openedRequests[0].delegateDid;
+      expect(requestedDelegateDid?.startsWith('did:jwk:')).toBe(true);
+      expect(result?.delegatePortableDid.uri).toBe(requestedDelegateDid!);
       expect(result?.delegatePortableDid.privateKeys?.some((key) => key.crv === 'X25519')).toBe(true);
     });
 
@@ -193,287 +241,171 @@ describe('WalletConnect', () => {
           { kty: 'OKP', crv: 'Ed25519', d: 'ed-private', x: 'ed-public' },
         ],
       };
-      let requestedDelegateDid = '';
       sinon.stub(Ed25519, 'convertPrivateKeyToX25519').callsFake(async ({ privateKey }: any): Promise<any> => {
         expect(privateKey.crv).toBe('Ed25519');
         return { kty: 'OKP', crv: 'X25519', d: 'x-private', x: 'x-public' };
       });
-      sinon.stub(EnboxConnectProtocol, 'createConnectRequest').callsFake(async (options: any): Promise<any> => {
-        requestedDelegateDid = options.delegateDid;
-        return {
-          clientDid           : 'did:jwk:test',
-          callbackUrl         : 'http://localhost:3000/connect/callback',
-          permissionRequests  : [],
-          appName             : 'Sample App',
-          delegateDid         : options.delegateDid,
-          nonce               : 'test-nonce',
-          responseMode        : 'direct_post',
-          state               : 'test-state',
-          supportedDidMethods : ['did:dht', 'did:jwk'],
-        };
-      });
-      sinon.stub(EnboxConnectProtocol, 'signJwt').resolves('signed.jwt.value');
-      sinon.stub(EnboxConnectProtocol, 'encryptRequest').resolves('encrypted-jwe');
-      sinon.stub(EnboxConnectProtocol, 'decryptResponse').resolves('decrypted.jwt.value');
-      sinon.stub(EnboxConnectProtocol, 'verifyJwt').callsFake(async (): Promise<any> => ({
-        providerDid    : 'did:dht:provider789',
-        delegateDid    : requestedDelegateDid,
-        aud            : 'did:jwk:test',
-        iat            : Math.floor(Date.now() / 1000),
-        exp            : Math.floor(Date.now() / 1000) + 3600,
-        delegateGrants : [{ recordId: 'grant1' }],
-      }));
-
-      const fetchStub = sinon.stub(globalThis, 'fetch');
-      fetchStub.onFirstCall().resolves(
-        new Response(JSON.stringify({ request_uri: 'http://localhost:3000/connect/authorize/req.jwt' }), {
-          status  : 200,
-          headers : { 'Content-Type': 'application/json' },
-        })
-      );
-      fetchStub.onSecondCall().resolves(new Response('encrypted-response-jwe', { status: 200 }));
+      const relay = stubRelay(approveWithPreSuppliedDelegate);
 
       const result = await WalletConnect.initClient({
         displayName        : 'Sample App',
-        walletUri          : 'http://localhost:3000/',
-        connectServerUrl   : 'http://localhost:3000/connect',
+        walletUri,
+        connectServerUrl,
         permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
-        onWalletUriReady   : (): void => {},
-        validatePin        : async (): Promise<string> => '1234',
+        onWalletUriReady   : relay.onWalletUriReady,
+        validatePin        : async (): Promise<string> => pin,
         delegatePortableDid,
+        pollIntervalMs     : 1,
       });
 
-      expect(requestedDelegateDid).toBe('did:jwk:local-delegate');
+      expect(relay.openedRequests[0].delegateDid).toBe('did:jwk:local-delegate');
       expect(result?.delegatePortableDid.privateKeys?.map((key) => key.crv)).toEqual(['P-256', 'Ed25519', 'X25519']);
     });
 
     it('should reject a caller-supplied delegate DID without an Ed25519 private key', async () => {
       await expect(WalletConnect.initClient({
         displayName         : 'Sample App',
-        walletUri           : 'http://localhost:3000/',
-        connectServerUrl    : 'http://localhost:3000/connect',
+        walletUri,
+        connectServerUrl,
         permissionRequests  : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
         onWalletUriReady    : (): void => {},
-        validatePin         : async (): Promise<string> => '1234',
+        validatePin         : async (): Promise<string> => pin,
         delegatePortableDid : {
           uri         : 'did:jwk:local-delegate',
           document    : {},
           metadata    : {},
           privateKeys : [{ kty: 'EC', crv: 'P-256', d: 'p256-private', x: 'p256-x', y: 'p256-y' }],
         },
-      })).rejects.toThrow('WalletConnect: delegatePortableDid must include an Ed25519 private key.');
+      })).rejects.toThrow('Delegate portable DID must include an Ed25519 private key.');
     });
 
     it('should reject a wallet response for a different delegate DID when pre-supply is enabled', async () => {
-      let requestedDelegateDid = '';
-      sinon.stub(EnboxConnectProtocol, 'createConnectRequest').callsFake(async (options: any): Promise<any> => {
-        requestedDelegateDid = options.delegateDid;
-        return {
-          clientDid           : 'did:jwk:test',
-          callbackUrl         : 'http://localhost:3000/connect/callback',
-          permissionRequests  : [],
-          appName             : 'Sample App',
-          delegateDid         : options.delegateDid,
-          nonce               : 'test-nonce',
-          responseMode        : 'direct_post',
-          state               : 'test-state',
-          supportedDidMethods : ['did:dht', 'did:jwk'],
-        };
-      });
-      sinon.stub(EnboxConnectProtocol, 'signJwt').resolves('signed.jwt.value');
-      sinon.stub(EnboxConnectProtocol, 'encryptRequest').resolves('encrypted-jwe');
-      sinon.stub(EnboxConnectProtocol, 'decryptResponse').resolves('decrypted.jwt.value');
-      sinon.stub(EnboxConnectProtocol, 'verifyJwt').resolves({
-        providerDid    : 'did:dht:provider789',
-        delegateDid    : 'did:jwk:other-delegate',
-        aud            : 'did:jwk:test',
-        iat            : Math.floor(Date.now() / 1000),
-        exp            : Math.floor(Date.now() / 1000) + 3600,
-        delegateGrants : [{ recordId: 'grant1' }],
-      });
-
-      const fetchStub = sinon.stub(globalThis, 'fetch');
-      fetchStub.onFirstCall().resolves(
-        new Response(JSON.stringify({ request_uri: 'http://localhost:3000/connect/authorize/req.jwt' }), {
-          status  : 200,
-          headers : { 'Content-Type': 'application/json' },
-        })
-      );
-      fetchStub.onSecondCall().resolves(new Response('encrypted-response-jwe', { status: 200 }));
+      const relay = stubRelay(sealRawResponse(() => ({ delegateDid: 'did:jwk:other-delegate' })));
 
       await expect(WalletConnect.initClient({
         displayName          : 'Sample App',
-        walletUri            : 'http://localhost:3000/',
-        connectServerUrl     : 'http://localhost:3000/connect',
+        walletUri,
+        connectServerUrl,
         permissionRequests   : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
-        onWalletUriReady     : (): void => {},
-        validatePin          : async (): Promise<string> => '1234',
+        onWalletUriReady     : relay.onWalletUriReady,
+        validatePin          : async (): Promise<string> => pin,
         preSupplyDelegateDid : true,
+        pollIntervalMs       : 1,
       })).rejects.toThrow('wallet returned delegate DID \'did:jwk:other-delegate\'');
-      expect(requestedDelegateDid.startsWith('did:jwk:')).toBe(true);
+      expect(relay.openedRequests[0].delegateDid?.startsWith('did:jwk:')).toBe(true);
     });
 
     it('should reject a wallet-minted response that omits delegatePortableDid', async () => {
-      sinon.stub(EnboxConnectProtocol, 'createConnectRequest').resolves({
-        clientDid           : 'did:jwk:test',
-        callbackUrl         : 'http://localhost:3000/connect/callback',
-        permissionRequests  : [],
-        appName             : 'Sample App',
-        nonce               : 'test-nonce',
-        responseMode        : 'direct_post',
-        state               : 'test-state',
-        supportedDidMethods : ['did:dht', 'did:jwk'],
-      } as any);
-      sinon.stub(EnboxConnectProtocol, 'signJwt').resolves('signed.jwt.value');
-      sinon.stub(EnboxConnectProtocol, 'encryptRequest').resolves('encrypted-jwe');
-      sinon.stub(EnboxConnectProtocol, 'decryptResponse').resolves('decrypted.jwt.value');
-      sinon.stub(EnboxConnectProtocol, 'verifyJwt').resolves({
-        providerDid    : 'did:dht:provider789',
-        delegateDid    : 'did:jwk:wallet-delegate',
-        aud            : 'did:jwk:test',
-        iat            : Math.floor(Date.now() / 1000),
-        exp            : Math.floor(Date.now() / 1000) + 3600,
-        delegateGrants : [{ recordId: 'grant1' }],
-      });
-
-      const fetchStub = sinon.stub(globalThis, 'fetch');
-      fetchStub.onFirstCall().resolves(
-        new Response(JSON.stringify({ request_uri: 'http://localhost:3000/connect/authorize/req.jwt' }), {
-          status  : 200,
-          headers : { 'Content-Type': 'application/json' },
-        })
-      );
-      fetchStub.onSecondCall().resolves(new Response('encrypted-response-jwe', { status: 200 }));
+      const relay = stubRelay(sealRawResponse(() => ({})));
 
       await expect(WalletConnect.initClient({
         displayName        : 'Sample App',
-        walletUri          : 'http://localhost:3000/',
-        connectServerUrl   : 'http://localhost:3000/connect',
+        walletUri,
+        connectServerUrl,
         permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
-        onWalletUriReady   : (): void => {},
-        validatePin        : async (): Promise<string> => '1234',
-      })).rejects.toThrow('WalletConnect: wallet response omitted delegatePortableDid.');
+        onWalletUriReady   : relay.onWalletUriReady,
+        validatePin        : async (): Promise<string> => pin,
+        pollIntervalMs     : 1,
+      })).rejects.toThrow('Connect: wallet response omitted `delegatePortableDid`.');
     });
 
-    it('should return undefined when the wallet explicitly denies access', async () => {
-      sinon.stub(EnboxConnectProtocol, 'createConnectRequest').resolves({
-        clientDid           : 'did:jwk:test',
-        callbackUrl         : 'http://localhost:3000/connect/callback',
-        permissionRequests  : [],
-        appName             : 'Sample App',
-        nonce               : 'test-nonce',
-        responseMode        : 'direct_post',
-        state               : 'test-state',
-        supportedDidMethods : ['did:dht', 'did:jwk'],
-      } as any);
-      sinon.stub(EnboxConnectProtocol, 'signJwt').resolves('signed.jwt.value');
-      sinon.stub(EnboxConnectProtocol, 'encryptRequest').resolves('encrypted-jwe');
-      const decryptResponse = sinon.stub(EnboxConnectProtocol, 'decryptResponse').resolves('decrypted.jwt.value');
+    it('should fail closed when the user enters the wrong PIN', async () => {
+      // The response is sealed with the wallet's PIN; a different PIN on the
+      // client derives a different CEK and the AEAD tag check fails — the
+      // PIN itself never transits the relay.
+      const minted = approveWithWalletMintedDelegate({ responsePin: '9999' });
+      const relay = stubRelay(minted.wallet);
 
-      const fetchStub = sinon.stub(globalThis, 'fetch');
-      fetchStub.onFirstCall().resolves(
-        new Response(JSON.stringify({ request_uri: 'http://localhost:3000/connect/authorize/req.jwt' }), {
-          status  : 200,
-          headers : { 'Content-Type': 'application/json' },
-        })
-      );
-      fetchStub.onSecondCall().resolves(
-        new Response('DENIED', { status: 200 })
-      );
+      await expect(WalletConnect.initClient({
+        displayName        : 'Sample App',
+        walletUri,
+        connectServerUrl,
+        permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
+        onWalletUriReady   : relay.onWalletUriReady,
+        validatePin        : async (): Promise<string> => pin,
+        pollIntervalMs     : 1,
+      })).rejects.toThrow();
+    });
+
+    it('should return undefined without prompting for a PIN when the wallet explicitly denies access', async () => {
+      const relay = stubRelay(async (): Promise<string> => CONNECT_DENIED_TOKEN);
+      const validatePin = sinon.stub<[], Promise<string>>().resolves(pin);
 
       const result = await WalletConnect.initClient({
         displayName        : 'Sample App',
-        walletUri          : 'http://localhost:3000/',
-        connectServerUrl   : 'http://localhost:3000/connect',
+        walletUri,
+        connectServerUrl,
         permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
-        onWalletUriReady   : (): void => {},
-        validatePin        : async (): Promise<string> => '1234',
+        onWalletUriReady   : relay.onWalletUriReady,
+        validatePin,
+        pollIntervalMs     : 1,
       });
 
       expect(result).toBeUndefined();
-      expect(decryptResponse.called).toBe(false);
+      expect(validatePin.called).toBe(false);
     });
 
     it('should await wallet URI handling before polling for the response', async () => {
-      sinon.stub(EnboxConnectProtocol, 'createConnectRequest').resolves({
-        clientDid           : 'did:jwk:test',
-        callbackUrl         : 'http://localhost:3000/connect/callback',
-        permissionRequests  : [],
-        appName             : 'Sample App',
-        nonce               : 'test-nonce',
-        responseMode        : 'direct_post',
-        state               : 'test-state',
-        supportedDidMethods : ['did:dht', 'did:jwk'],
-      } as any);
-      sinon.stub(EnboxConnectProtocol, 'signJwt').resolves('signed.jwt.value');
-      sinon.stub(EnboxConnectProtocol, 'encryptRequest').resolves('encrypted-jwe');
-
       let callbackComplete = false;
-      const fetchStub = sinon.stub(globalThis, 'fetch');
-      fetchStub.onFirstCall().resolves(
-        new Response(JSON.stringify({ request_uri: 'http://localhost:3000/connect/authorize/req.jwt' }), {
-          status  : 200,
-          headers : { 'Content-Type': 'application/json' },
-        })
-      );
-      fetchStub.onSecondCall().callsFake(async (): Promise<Response> => {
-        expect(callbackComplete).toBe(true);
-        return new Response('DENIED', { status: 200 });
+      const relay = stubRelay(async (): Promise<string> => {
+        await new Promise((resolve): void => { setTimeout(resolve, 0); });
+        callbackComplete = true;
+        return CONNECT_DENIED_TOKEN;
       });
 
       const result = await WalletConnect.initClient({
         displayName        : 'Sample App',
-        walletUri          : 'http://localhost:3000/',
-        connectServerUrl   : 'http://localhost:3000/connect',
+        walletUri,
+        connectServerUrl,
         permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
-        onWalletUriReady   : async (): Promise<void> => {
-          await new Promise((resolve): void => { setTimeout(resolve, 0); });
-          callbackComplete = true;
-        },
-        validatePin: async (): Promise<string> => '1234',
+        onWalletUriReady   : relay.onWalletUriReady,
+        validatePin        : async (): Promise<string> => pin,
+        pollIntervalMs     : 1,
       });
 
+      // The wallet behavior (running inside `onWalletUriReady`) finished
+      // before the first token poll could observe a response.
+      expect(callbackComplete).toBe(true);
       expect(result).toBeUndefined();
     });
 
-    it('should stop polling after a custom timeout', async () => {
-      sinon.stub(EnboxConnectProtocol, 'createConnectRequest').resolves({
-        clientDid           : 'did:jwk:test',
-        callbackUrl         : 'http://localhost:3000/connect/callback',
-        permissionRequests  : [],
-        appName             : 'Sample App',
-        nonce               : 'test-nonce',
-        responseMode        : 'direct_post',
-        state               : 'test-state',
-        supportedDidMethods : ['did:dht', 'did:jwk'],
-      } as any);
-      sinon.stub(EnboxConnectProtocol, 'signJwt').resolves('signed.jwt.value');
-      sinon.stub(EnboxConnectProtocol, 'encryptRequest').resolves('encrypted-jwe');
-
+    it('should reject when polling exceeds the custom timeout', async () => {
       const fetchStub = sinon.stub(globalThis, 'fetch');
       fetchStub.onFirstCall().resolves(
-        new Response(JSON.stringify({ request_uri: 'http://localhost:3000/connect/authorize/req.jwt' }), {
-          status  : 200,
+        new Response(JSON.stringify({ request_uri: relayRequestUri, expires_in: 600 }), {
+          status  : 201,
           headers : { 'Content-Type': 'application/json' },
         })
       );
       fetchStub.callsFake(async (): Promise<Response> => new Response('Not Found', { status: 404 }));
 
-      const result = await WalletConnect.initClient({
+      await expect(WalletConnect.initClient({
         displayName        : 'Sample App',
-        walletUri          : 'http://localhost:3000/',
-        connectServerUrl   : 'http://localhost:3000/connect',
+        walletUri,
+        connectServerUrl,
         permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
         onWalletUriReady   : (): void => {},
-        validatePin        : async (): Promise<string> => '1234',
+        validatePin        : async (): Promise<string> => pin,
         timeoutMs          : 5,
         pollIntervalMs     : 1,
-      });
-
-      expect(result).toBeUndefined();
+      })).rejects.toThrow('timed out');
       expect(fetchStub.callCount).toBeGreaterThan(1);
     });
 
+    it('should throw when the pushed authorization request is rejected', async () => {
+      sinon.stub(globalThis, 'fetch').resolves(
+        new Response('Bad Request', { status: 400, statusText: 'Bad Request' })
+      );
+
+      await expect(WalletConnect.initClient({
+        displayName        : 'Sample App',
+        walletUri,
+        connectServerUrl,
+        permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
+        onWalletUriReady   : (): void => {},
+        validatePin        : async (): Promise<string> => pin,
+      })).rejects.toThrow('Connect: pushed authorization request failed with HTTP 400.');
+    });
   });
 
   describe('createPermissionRequestForProtocol', () => {

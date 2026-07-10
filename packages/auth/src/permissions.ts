@@ -9,7 +9,8 @@
  * @internal
  */
 
-import type { ConnectPermissionRequest, DwnProtocolDefinition } from '@enbox/agent';
+import type { ConnectPermissionRequest } from '@enbox/connect';
+import type { DwnProtocolDefinition } from '@enbox/agent';
 
 import type { ProtocolRequest } from './types.js';
 

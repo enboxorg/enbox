@@ -1,16 +1,14 @@
 import type { BearerIdentity } from '../src/bearer-identity.js';
 import type { DwnDataEncodedRecordsWriteMessage } from '../src/types/dwn.js';
-import type { EnboxConnectResponse } from '../src/enbox-connect-protocol.js';
 import type { PrivateKeyJwk } from '@enbox/crypto';
 import type { GenericMessage, MessagesQueryReplyEntry, PermissionScope, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { Convert } from '@enbox/common';
 import { createGrantKeyRecordsForGrants } from '../src/dwn-encryption.js';
-import { DidJwk } from '@enbox/dids';
 import { DwnInterface } from '../src/types/dwn.js';
 import { DwnPermissionGrant } from '../src/types/dwn.js';
 import { Ed25519 } from '@enbox/crypto';
-import { EnboxConnectProtocol } from '../src/enbox-connect-protocol.js';
+import { executeConnectApproval } from '../src/connect-approval.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { requireDwnServer } from './utils/require-dwn-server.js';
 import { retryFreshDidResolution } from './utils/remote-dwn-retry.js';
@@ -18,6 +16,14 @@ import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import {
+  ConnectClient,
+  ConnectProvider,
+  fetchRelayRequest,
+  parseWalletConnectUri,
+  postRelayResponse,
+  RelayClientTransport,
+} from '@enbox/connect';
 import { DataStream, DwnInterfaceName, DwnMethodName, ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH, EncryptionProtocol, Time } from '@enbox/dwn-sdk-js';
 
 const testDwnUrls: string[] = [testDwnUrl];
@@ -710,14 +716,6 @@ describe('E2E Multi-Agent Sync', () => {
         { protocol: encryptedProtocol.protocol, interface: DwnInterfaceName.Messages, method: DwnMethodName.Read },
         { protocol: encryptedProtocol.protocol, interface: DwnInterfaceName.Records, method: DwnMethodName.Read },
       ];
-      const clientDid = await DidJwk.create();
-      const callbackUrl = 'http://localhost:3000/connect-callback';
-      const connectRequest = await EnboxConnectProtocol.createConnectRequest({
-        appName            : 'Encrypted Sync E2E',
-        clientDid          : clientDid.uri,
-        permissionRequests : [{ protocolDefinition: encryptedProtocol, permissionScopes: readScopes }],
-        callbackUrl,
-      });
       const remoteReadiness = await retryFreshDidResolution(() => primaryHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
@@ -728,38 +726,62 @@ describe('E2E Multi-Agent Sync', () => {
       const ownerDwnEndpoints = await primaryHarness.agent.dwn.getDwnEndpointUrlsForTarget(alice.did.uri);
       expect(ownerDwnEndpoints).toContain(testDwnUrl);
 
-      let idToken: string | undefined;
-      const originalFetch = globalThis.fetch;
-      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-        if (String(input) !== callbackUrl) {
-          return originalFetch(input, init);
-        }
-        const body = new URLSearchParams(init?.body as string);
-        idToken = body.get('id_token') ?? undefined;
-        expect(body.get('state')).toBe(connectRequest.state);
-        return new Response();
-      }) as typeof fetch;
-      try {
-        await EnboxConnectProtocol.submitConnectResponse(
-          alice.did.uri,
-          connectRequest,
-          '2468',
-          primaryHarness.agent,
-        );
-      } finally {
-        globalThis.fetch = originalFetch;
-      }
-      expect(idToken).toBeDefined();
+      // Full kernel relay handshake against the live dwn-server connect
+      // routes: the app side runs `ConnectClient` over `RelayClientTransport`;
+      // the wallet side (inside `onWalletUriReady`) fetches the sealed request
+      // from the relay, opens it, runs the agent approval ceremony, and posts
+      // the sealed response back through the relay callback.
+      const pin = '2468';
+      const client = new ConnectClient({
+        transport: new RelayClientTransport({
+          connectServerUrl : `${testDwnUrl}/connect`,
+          walletUri        : 'https://wallet.example/connect/app',
+          pollIntervalMs   : 100,
+          timeoutMs        : 30_000,
+        }),
+        requestPin       : async (): Promise<string> => pin,
+        onWalletUriReady : async (handoff): Promise<void> => {
+          const parsed = parseWalletConnectUri(handoff.walletUri);
+          expect(parsed).toBeDefined();
 
-      const responseJwt = await EnboxConnectProtocol.decryptResponse(clientDid, idToken!, '2468');
-      const connectResponse = await EnboxConnectProtocol.verifyJwt({
-        jwt: responseJwt,
-      }) as EnboxConnectResponse;
-      expect(connectResponse.providerDid).toBe(alice.did.uri);
-      expect(connectResponse.delegatePortableDid.uri).toBe(connectResponse.delegateDid);
-      expect('delegateDecryptionKeys' in connectResponse).toBe(false);
+          const requestJwe = await fetchRelayRequest({ requestUri: parsed!.requestUri });
+          const request = await ConnectProvider.openRequest({
+            jwe        : requestJwe,
+            decryption : { mode: 'dir', requestKey: parsed!.encryptionKey },
+          });
+          expect(request.appName).toBe('Encrypted Sync E2E');
+          if (request.reply.mode !== 'direct_post') {
+            throw new Error('expected a direct_post reply descriptor on the relay channel');
+          }
 
-      const recordsReadGrant = connectResponse.delegateGrants.find((grant) => {
+          const approval = await executeConnectApproval({
+            agent       : primaryHarness.agent,
+            providerDid : alice.did.uri,
+            request,
+            transport   : 'relay',
+          });
+          const idToken = await ConnectProvider.sealApprovedResponse({
+            request,
+            providerDid : alice.did.uri,
+            approval,
+            signer      : approval.responseSigner,
+            pin,
+          });
+          await postRelayResponse({ callbackUrl: request.reply.callbackUrl, state: request.state, idToken });
+        },
+      });
+
+      const connectResult = await client.connect({
+        appName            : 'Encrypted Sync E2E',
+        permissionRequests : [{ protocolDefinition: encryptedProtocol, permissionScopes: readScopes }],
+      });
+      expect(connectResult).toBeDefined();
+      const { connectedDid, delegateGrants, delegatePortableDid } = connectResult!;
+      const delegateDid = delegatePortableDid.uri;
+      expect(connectedDid).toBe(alice.did.uri);
+      expect('delegateDecryptionKeys' in connectResult!).toBe(false);
+
+      const recordsReadGrant = delegateGrants.find((grant) => {
         const parsedGrant = DwnPermissionGrant.parse(grant);
         return parsedGrant.scope.interface === DwnInterfaceName.Records &&
           parsedGrant.scope.method === DwnMethodName.Read &&
@@ -768,14 +790,14 @@ describe('E2E Multi-Agent Sync', () => {
       expect(recordsReadGrant).toBeDefined();
 
       await deviceHarness.agent.did.import({
-        portableDid : connectResponse.delegatePortableDid,
+        portableDid : delegatePortableDid,
         tenant      : deviceHarness.agent.agentDid.uri,
       });
       await importConnectGrants(
         deviceHarness,
         alice.did.uri,
-        connectResponse.delegateDid,
-        connectResponse.delegateGrants,
+        delegateDid,
+        delegateGrants,
       );
 
       const installedProtocol = await primaryHarness.agent.dwn.processRequest({
@@ -793,12 +815,12 @@ describe('E2E Multi-Agent Sync', () => {
       expect([202, 409]).toContain(localProtocolConfigure.status.code);
 
       const remoteGrantKeyQuery = await deviceHarness.agent.dwn.sendRequest({
-        author        : connectResponse.delegateDid,
+        author        : delegateDid,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           filter: {
-            recipient    : connectResponse.delegateDid,
+            recipient    : delegateDid,
             protocol     : EncryptionProtocol.uri,
             protocolPath : EncryptionProtocol.grantKeyPath,
             tags         : { protocol: encryptedProtocol.protocol },
@@ -832,19 +854,19 @@ describe('E2E Multi-Agent Sync', () => {
         did     : alice.did.uri,
         options : {
           protocols   : [encryptedProtocol.protocol],
-          delegateDid : connectResponse.delegateDid,
+          delegateDid : delegateDid,
         },
       });
       await deviceHarness.agent.sync.sync('pull');
       expect(await deviceHarness.agent.sync.getFailedMessages(alice.did.uri)).toEqual([]);
 
       const localGrantKeyQuery = await deviceHarness.agent.dwn.processRequest({
-        author        : connectResponse.delegateDid,
+        author        : delegateDid,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           filter: {
-            recipient    : connectResponse.delegateDid,
+            recipient    : delegateDid,
             protocol     : EncryptionProtocol.uri,
             protocolPath : EncryptionProtocol.grantKeyPath,
             tags         : { protocol: encryptedProtocol.protocol },
@@ -854,13 +876,13 @@ describe('E2E Multi-Agent Sync', () => {
       expect(localGrantKeyQuery.reply.status.code).toBe(200);
       expect(localGrantKeyQuery.reply.entries).toHaveLength(1);
 
-      deviceHarness.agent.dwn.clearDelegateDecryptionKeys(connectResponse.delegateDid);
+      deviceHarness.agent.dwn.clearDelegateDecryptionKeys(delegateDid);
       expect(await deviceHarness.agent.did.get({ didUri: alice.did.uri })).toBeUndefined();
 
       const readResult = await deviceHarness.agent.dwn.processRequest({
-        author        : connectResponse.delegateDid,
+        author        : delegateDid,
         target        : alice.did.uri,
-        granteeDid    : connectResponse.delegateDid,
+        granteeDid    : delegateDid,
         messageType   : DwnInterface.RecordsRead,
         messageParams : {
           filter            : { recordId },

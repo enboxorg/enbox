@@ -45,7 +45,7 @@ import {
   AuthManager, MemoryStorage, processConnectedGrants, WalletConnect,
 } from '@enbox/auth';
 import {
-  DwnInterface, EnboxConnectProtocol, EnboxUserAgent, getEncryptionKeyInfo,
+  createGrantKeyRecordsForGrants, createPermissionGrants, DwnInterface, EnboxUserAgent, getEncryptionKeyInfo,
 } from '@enbox/agent';
 import { DwnInterfaceName, DwnMethodName, Encoder, EncryptionProtocol, Jws, WRAPPED_GRANT_KEY_FORMAT } from '@enbox/dwn-sdk-js';
 
@@ -217,7 +217,7 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
       permissions : ['write', 'read', 'delete'],
     });
 
-    const grants = await EnboxConnectProtocol.createPermissionGrants(
+    const grants = await createPermissionGrants(
       walletDid.uri,
       delegatedBearerDid.uri,
       walletHarness.agent,
@@ -558,7 +558,7 @@ class InProcessWalletHandler implements ConnectHandler {
       await walletProtocol!.send(this.ownerDid);
 
       // Create permission grants.
-      const grants = await EnboxConnectProtocol.createPermissionGrants(
+      const grants = await createPermissionGrants(
         this.ownerDid, delegatePortableDid.uri, this.walletAgent, permissionScopes,
       );
       allGrants.push(...grants);
@@ -567,7 +567,7 @@ class InProcessWalletHandler implements ConnectHandler {
         const delegateRootPublicKey = this.options.preSupplyDelegateDid === true
           ? (await getEncryptionKeyInfo(this.walletAgent, delegatePortableDid.uri)).publicKeyJwk
           : undefined;
-        const grantKeyRecords = await EnboxConnectProtocol.createGrantKeyRecordsForGrants({
+        const grantKeyRecords = await createGrantKeyRecordsForGrants({
           agent      : this.walletAgent,
           ownerDid   : this.ownerDid,
           granteeDid : delegatePortableDid.uri,

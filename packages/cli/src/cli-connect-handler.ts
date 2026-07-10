@@ -1,4 +1,4 @@
-import type { ConnectClientMetadata, ConnectPermissionRequest } from '@enbox/agent';
+import type { ConnectClientMetadata, ConnectPermissionRequest } from '@enbox/connect';
 import type { ConnectHandler, ConnectResult, WalletConnectClientOptions } from '@enbox/auth';
 import type { Readable, Writable } from 'node:stream';
 

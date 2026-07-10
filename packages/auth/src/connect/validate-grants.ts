@@ -1,5 +1,6 @@
+import type { ConnectPermissionRequest } from '@enbox/connect';
 import type { ConnectResult } from '../types.js';
-import type { ConnectPermissionRequest, DwnPermissionScope } from '@enbox/agent';
+import type { DwnPermissionScope } from '@enbox/agent';
 
 import { DwnPermissionGrant, DwnPermissionsProtocol } from '@enbox/agent';
 

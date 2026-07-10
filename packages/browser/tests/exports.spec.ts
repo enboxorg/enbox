@@ -87,12 +87,18 @@ describe('@enbox/browser exports', () => {
     expect(wallets[1].description).toBeDefined();
   });
 
-  it('exports DWebConnect with initClient and probeWalletSupport', async () => {
+  it('exports the popup connect flow and transports', async () => {
     const mod = await getBrowserExports();
-    const dw = mod.DWebConnect as Record<string, unknown>;
-    expect(dw).toBeDefined();
-    expect(typeof dw.initClient).toBe('function');
-    expect(typeof dw.probeWalletSupport).toBe('function');
+    expect(typeof mod.connectViaPopup).toBe('function');
+    expect(typeof mod.PopupClientTransport).toBe('function');
+    expect(typeof mod.WalletPostMessageTransport).toBe('function');
+    expect(typeof mod.PopupWindowClosedError).toBe('function');
+  });
+
+  it('re-exports the connect kernel provider surface for wallets', async () => {
+    const mod = await getBrowserExports();
+    expect(typeof mod.ConnectProvider).toBe('function');
+    expect(mod.CONNECT_DENIED_TOKEN).toBe('DENIED');
   });
 
   it('exports showWalletSelector', async () => {
