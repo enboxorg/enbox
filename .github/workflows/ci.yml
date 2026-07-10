@@ -108,6 +108,13 @@ jobs:
               - 'packages/dwn-sdk-js/tsconfig.json'
               - 'packages/dwn-sdk-js/vitest*.config.*'
 
+            connect:
+              - 'packages/connect/src/**'
+              - 'packages/connect/tests/**'
+              - 'packages/connect/package.json'
+              - 'packages/connect/tsconfig.json'
+              - 'packages/connect/vitest*.config.*'
+
             dwn-clients:
               - 'packages/dwn-clients/src/**'
               - 'packages/dwn-clients/tests/**'
@@ -189,6 +196,7 @@ jobs:
           common_crypto="${{ steps.filter.outputs.common-crypto }}"
           dids="${{ steps.filter.outputs.dids }}"
           dwn_sdk="${{ steps.filter.outputs.dwn-sdk }}"
+          connect="${{ steps.filter.outputs.connect }}"
           dwn_clients="${{ steps.filter.outputs.dwn-clients }}"
           dwn_sql_store="${{ steps.filter.outputs.dwn-sql-store }}"
           dwn_server="${{ steps.filter.outputs.dwn-server }}"
@@ -217,15 +225,16 @@ jobs:
           needs_common_crypto=$( [ "$workspace" = "true" ] || [ "$common_crypto" = "true" ] && echo true || echo false )
           needs_dids=$( [ "$needs_common_crypto" = "true" ] || [ "$dids" = "true" ] && echo true || echo false )
           needs_dwn_sdk=$( [ "$needs_dids" = "true" ] || [ "$dwn_sdk" = "true" ] && echo true || echo false )
+          needs_connect=$( [ "$needs_dwn_sdk" = "true" ] || [ "$connect" = "true" ] && echo true || echo false )
           needs_dwn_clients=$( [ "$needs_dwn_sdk" = "true" ] || [ "$dwn_clients" = "true" ] && echo true || echo false )
           needs_dwn_sql_store=$( [ "$needs_dwn_sdk" = "true" ] || [ "$dwn_sql_store" = "true" ] && echo true || echo false )
           needs_dwn_server=$( [ "$needs_dwn_sdk" = "true" ] || [ "$needs_dwn_clients" = "true" ] || [ "$needs_dwn_sql_store" = "true" ] || [ "$dwn_server" = "true" ] && echo true || echo false )
-          needs_agent=$( [ "$needs_dids" = "true" ] || [ "$needs_dwn_sdk" = "true" ] || [ "$needs_dwn_clients" = "true" ] || [ "$agent" = "true" ] && echo true || echo false )
+          needs_agent=$( [ "$needs_dids" = "true" ] || [ "$needs_dwn_sdk" = "true" ] || [ "$needs_connect" = "true" ] || [ "$needs_dwn_clients" = "true" ] || [ "$agent" = "true" ] && echo true || echo false )
           needs_local_node=$( [ "$needs_agent" = "true" ] || [ "$needs_dwn_server" = "true" ] || [ "$local_node" = "true" ] && echo true || echo false )
           needs_auth=$( [ "$needs_agent" = "true" ] || [ "$auth" = "true" ] && echo true || echo false )
           needs_api=$( [ "$needs_agent" = "true" ] || [ "$needs_auth" = "true" ] || [ "$api" = "true" ] && echo true || echo false )
           needs_cli=$( [ "$needs_api" = "true" ] || [ "$cli" = "true" ] && echo true || echo false )
-          needs_lightweight=$( [ "$needs_common_crypto" = "true" ] || [ "$needs_auth" = "true" ] || [ "$protocol_codegen" = "true" ] || [ "$needs_cli" = "true" ] || [ "$needs_local_node" = "true" ] && echo true || echo false )
+          needs_lightweight=$( [ "$needs_common_crypto" = "true" ] || [ "$needs_connect" = "true" ] || [ "$needs_auth" = "true" ] || [ "$protocol_codegen" = "true" ] || [ "$needs_cli" = "true" ] || [ "$needs_local_node" = "true" ] && echo true || echo false )
           needs_agent_api_group=$( [ "$needs_dids" = "true" ] || [ "$needs_agent" = "true" ] || [ "$needs_auth" = "true" ] || [ "$needs_api" = "true" ] || [ "$dwn_clients" = "true" ] || [ "$protocols" = "true" ] && echo true || echo false )
           needs_browser_tests=$( [ "$needs_common_crypto" = "true" ] || [ "$needs_dids" = "true" ] || [ "$needs_dwn_sdk" = "true" ] || [ "$needs_agent" = "true" ] || [ "$needs_api" = "true" ] || [ "$browser_pkg" = "true" ] && echo true || echo false )
           needs_e2e=$( [ "$needs_agent" = "true" ] && echo true || echo false )
@@ -330,11 +339,11 @@ jobs:
           retention-days: 1
 
   # ---------------------------------------------------------------------------
-  # Lightweight packages: common, crypto, auth, protocol-codegen, cli, local-node
+  # Lightweight packages: common, crypto, connect, auth, protocol-codegen, cli, local-node
   # (no external services needed)
   # ---------------------------------------------------------------------------
   test-lightweight:
-    name: 'Test: common / crypto / auth / cli'
+    name: 'Test: common / crypto / connect / auth / cli'
     runs-on: ubuntu-latest
     timeout-minutes: 3
     needs: [build, changes]
@@ -370,6 +379,7 @@ jobs:
         run: |
           bun run --filter @enbox/common  test:node:coverage
           bun run --filter @enbox/crypto  test:node:coverage
+          bun run --filter @enbox/connect test:node:coverage
           bun run --filter @enbox/auth    test:node:coverage
           bun run --filter @enbox/protocol-codegen test:node:coverage
           bun run --filter @enbox/cli     test:node:coverage
@@ -378,9 +388,10 @@ jobs:
       - name: Stage coverage
         if: always()
         run: |
-          mkdir -p coverage-staging/packages/common/coverage coverage-staging/packages/crypto/coverage coverage-staging/packages/auth/coverage coverage-staging/packages/protocol-codegen/coverage coverage-staging/packages/cli/coverage coverage-staging/packages/local-node/coverage
+          mkdir -p coverage-staging/packages/common/coverage coverage-staging/packages/crypto/coverage coverage-staging/packages/connect/coverage coverage-staging/packages/auth/coverage coverage-staging/packages/protocol-codegen/coverage coverage-staging/packages/cli/coverage coverage-staging/packages/local-node/coverage
           cp packages/common/coverage/lcov.info coverage-staging/packages/common/coverage/lcov.info 2>/dev/null || true
           cp packages/crypto/coverage/lcov.info coverage-staging/packages/crypto/coverage/lcov.info 2>/dev/null || true
+          cp packages/connect/coverage/lcov.info coverage-staging/packages/connect/coverage/lcov.info 2>/dev/null || true
           cp packages/auth/coverage/lcov.info coverage-staging/packages/auth/coverage/lcov.info 2>/dev/null || true
           cp packages/protocol-codegen/coverage/lcov.info coverage-staging/packages/protocol-codegen/coverage/lcov.info 2>/dev/null || true
           cp packages/cli/coverage/lcov.info coverage-staging/packages/cli/coverage/lcov.info 2>/dev/null || true
