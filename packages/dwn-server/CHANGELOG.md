@@ -1,5 +1,60 @@
 # @enbox/dwn-server
 
+## 0.1.20
+
+### Patch Changes
+
+- [#1224](https://github.com/enboxorg/enbox/pull/1224) [`7da7893`](https://github.com/enboxorg/enbox/commit/7da789309cafaccc62eadc97bebc6eda20a06944) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: auto-approve configured local-node pairing origins over HTTP
+
+- [#1228](https://github.com/enboxorg/enbox/pull/1228) [`d1bc6e3`](https://github.com/enboxorg/enbox/commit/d1bc6e3be5ae95792c7378aff53824e67fbb952a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Harden local-node ejection with authenticated stable drains, safe outage fallback, persisted consent, native token discovery, and durable local storage.
+
+- [#1222](https://github.com/enboxorg/enbox/pull/1222) [`f2f6252`](https://github.com/enboxorg/enbox/commit/f2f6252411aef80c1a94362eaba1ec713b6f3489) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: require matching origins when polling local-node pairing requests
+
+- [#1220](https://github.com/enboxorg/enbox/pull/1220) [`f504edd`](https://github.com/enboxorg/enbox/commit/f504edd7b113f13f216f608c7d8c95ffa90b5103) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: persist local-node browser pairing sessions across restarts
+
+- [#1211](https://github.com/enboxorg/enbox/pull/1211) [`8da3f92`](https://github.com/enboxorg/enbox/commit/8da3f927e5c22c9f9196294e348135e800f12a46) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: add local-node pairing endpoints and bearer-token enforcement
+
+- [#1208](https://github.com/enboxorg/enbox/pull/1208) [`98f4348`](https://github.com/enboxorg/enbox/commit/98f4348bfbfb7d5ddbc91787f4187958998ba011) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: add the local-node server profile skeleton
+
+- [#1217](https://github.com/enboxorg/enbox/pull/1217) [`1e316ee`](https://github.com/enboxorg/enbox/commit/1e316eeca6a29453364cbc931c9407b36a1282f9) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: add browser local-node probing, pairing persistence, and token-authenticated DWN transports
+
+- [#1221](https://github.com/enboxorg/enbox/pull/1221) [`9012b3a`](https://github.com/enboxorg/enbox/commit/9012b3a10f41797a12854e9d9ab97f9c140d2e9d) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: close local-node WebSocket connections when pairing tokens are revoked
+
+- [#1215](https://github.com/enboxorg/enbox/pull/1215) [`cb7b51c`](https://github.com/enboxorg/enbox/commit/cb7b51c1ad3576fc8851e4ec41e55e46e5cb187f) Thanks [@poindex-bot](https://github.com/poindex-bot)! - fix: resolve SonarCloud maintainability issues (S3863/S6594)
+
+  Behavior-preserving source cleanups:
+
+  - S3863: merge duplicate `import` statements from the same module into a
+    single statement (re-sorting to satisfy the repo's `sort-imports` rule).
+  - S6594: use `RegExp.exec()` instead of `String#match()` for the non-global
+    route/type regexes in the DWN server and `universalTypeOf`.
+
+- [#1209](https://github.com/enboxorg/enbox/pull/1209) [`e6eb37c`](https://github.com/enboxorg/enbox/commit/e6eb37c99aa64844d8257daae45336e0a857a9db) Thanks [@poindex-bot](https://github.com/poindex-bot)! - fix(dwn-server): avoid passing `nestObj` directly to `Array.prototype.reduce`
+
+  Wrap the query-param nesting helper in an explicit two-argument arrow so
+  `reduce`'s extra `index`/`array` arguments can never reach it. Behavior is
+  unchanged; this hardens the protocol-record and records-query handlers against
+  the class of bugs SonarCloud rule S7727 flags.
+
+- [#1212](https://github.com/enboxorg/enbox/pull/1212) [`acd3d4e`](https://github.com/enboxorg/enbox/commit/acd3d4eb54e32cee199759c06db0cbe699780d41) Thanks [@poindex-bot](https://github.com/poindex-bot)! - fix: resolve remaining SonarCloud reliability issues (S7773/S7781/S7758/S6853/S8786)
+
+  Behavior-preserving reliability hardening across packages:
+
+  - Replace global `parseInt`/`isNaN` with `Number.parseInt`/`Number.isNaN` (S7773).
+  - Replace `String#replace(/…/g)` and `split().join()` with `String#replaceAll` (S7781).
+  - Prefer `String.fromCodePoint`/`String#codePointAt` in byte-range encoders (S7758).
+  - Associate admin-UI form labels with their inputs via `for`/`id` (S6853).
+  - Strip trailing slashes in the local-node `/info` handler with a linear loop
+    instead of a backtracking-prone regex (S8786).
+
+- Updated dependencies [[`d1bc6e3`](https://github.com/enboxorg/enbox/commit/d1bc6e3be5ae95792c7378aff53824e67fbb952a), [`98f4348`](https://github.com/enboxorg/enbox/commit/98f4348bfbfb7d5ddbc91787f4187958998ba011), [`1e316ee`](https://github.com/enboxorg/enbox/commit/1e316eeca6a29453364cbc931c9407b36a1282f9), [`cb7b51c`](https://github.com/enboxorg/enbox/commit/cb7b51c1ad3576fc8851e4ec41e55e46e5cb187f), [`acd3d4e`](https://github.com/enboxorg/enbox/commit/acd3d4eb54e32cee199759c06db0cbe699780d41), [`5ac59ff`](https://github.com/enboxorg/enbox/commit/5ac59fff9e1e2804def54b6b63cf49b75199b57c)]:
+  - @enbox/dwn-clients@0.4.15
+  - @enbox/common@0.1.3
+  - @enbox/dids@0.1.4
+  - @enbox/dwn-sdk-js@0.4.9
+  - @enbox/dwn-sql-store@0.0.34
+  - @enbox/crypto@0.1.4
+
 ## 0.1.19
 
 ### Patch Changes

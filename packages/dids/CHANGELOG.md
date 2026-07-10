@@ -1,5 +1,48 @@
 # @enbox/dids
 
+## 0.1.4
+
+### Patch Changes
+
+- [#1215](https://github.com/enboxorg/enbox/pull/1215) [`cb7b51c`](https://github.com/enboxorg/enbox/commit/cb7b51c1ad3576fc8851e4ec41e55e46e5cb187f) Thanks [@poindex-bot](https://github.com/poindex-bot)! - fix: resolve SonarCloud maintainability issues (S3863/S6594)
+
+  Behavior-preserving source cleanups:
+
+  - S3863: merge duplicate `import` statements from the same module into a
+    single statement (re-sorting to satisfy the repo's `sort-imports` rule).
+  - S6594: use `RegExp.exec()` instead of `String#match()` for the non-global
+    route/type regexes in the DWN server and `universalTypeOf`.
+
+- [#1212](https://github.com/enboxorg/enbox/pull/1212) [`acd3d4e`](https://github.com/enboxorg/enbox/commit/acd3d4eb54e32cee199759c06db0cbe699780d41) Thanks [@poindex-bot](https://github.com/poindex-bot)! - fix: resolve remaining SonarCloud reliability issues (S7773/S7781/S7758/S6853/S8786)
+
+  Behavior-preserving reliability hardening across packages:
+
+  - Replace global `parseInt`/`isNaN` with `Number.parseInt`/`Number.isNaN` (S7773).
+  - Replace `String#replace(/…/g)` and `split().join()` with `String#replaceAll` (S7781).
+  - Prefer `String.fromCodePoint`/`String#codePointAt` in byte-range encoders (S7758).
+  - Associate admin-UI form labels with their inputs via `for`/`id` (S6853).
+  - Strip trailing slashes in the local-node `/info` handler with a linear loop
+    instead of a backtracking-prone regex (S8786).
+
+- [#1216](https://github.com/enboxorg/enbox/pull/1216) [`5ac59ff`](https://github.com/enboxorg/enbox/commit/5ac59fff9e1e2804def54b6b63cf49b75199b57c) Thanks [@poindex-bot](https://github.com/poindex-bot)! - fix: resolve SonarCloud redundant-union-type issues (S6571)
+
+  Type-only, behavior-preserving cleanups:
+
+  - JOSE header/key types (`JweHeaderParams` `alg`/`enc`, `JwsHeaderParams` `alg`,
+    `JwkUse`) and DID `@context` fields used `'literal' | … | string`, which
+    TypeScript collapses to plain `string` — silently discarding the literal
+    hints. Switched the trailing `| string` to `| (string & {})` so the
+    registered/spec values provide editor autocomplete while any string is still
+    accepted (required by the JOSE/DID specs). Matches the existing
+    `(string & {})` pattern in `dwn-sdk-js` protocol types.
+  - `ProtocolRuleSetValue` dropped the redundant `ProtocolDeliveryStrategy`
+    constituent, whose `'direct' | 'subscribe'` values are already covered by the
+    union's `string` member.
+
+- Updated dependencies [[`cb7b51c`](https://github.com/enboxorg/enbox/commit/cb7b51c1ad3576fc8851e4ec41e55e46e5cb187f), [`acd3d4e`](https://github.com/enboxorg/enbox/commit/acd3d4eb54e32cee199759c06db0cbe699780d41), [`5ac59ff`](https://github.com/enboxorg/enbox/commit/5ac59fff9e1e2804def54b6b63cf49b75199b57c)]:
+  - @enbox/common@0.1.3
+  - @enbox/crypto@0.1.4
+
 ## 0.1.3
 
 ### Patch Changes

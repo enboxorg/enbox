@@ -1,5 +1,18 @@
 # @enbox/electrobun-dwn
 
+## 0.0.71
+
+### Patch Changes
+
+- Updated dependencies [[`378f3d4`](https://github.com/enboxorg/enbox/commit/378f3d4b07a011e9f56852cfc0a4e9da8cd13bd4), [`7da7893`](https://github.com/enboxorg/enbox/commit/7da789309cafaccc62eadc97bebc6eda20a06944), [`d7f0a87`](https://github.com/enboxorg/enbox/commit/d7f0a87b211c7eb3fb2ee1e048a51b2deab2305a), [`49449ad`](https://github.com/enboxorg/enbox/commit/49449ade45463baa3ac2190c5455b7dba1f1e39b), [`d1bc6e3`](https://github.com/enboxorg/enbox/commit/d1bc6e3be5ae95792c7378aff53824e67fbb952a), [`f2f6252`](https://github.com/enboxorg/enbox/commit/f2f6252411aef80c1a94362eaba1ec713b6f3489), [`f504edd`](https://github.com/enboxorg/enbox/commit/f504edd7b113f13f216f608c7d8c95ffa90b5103), [`8da3f92`](https://github.com/enboxorg/enbox/commit/8da3f927e5c22c9f9196294e348135e800f12a46), [`c12b323`](https://github.com/enboxorg/enbox/commit/c12b3239ce03bf29bcd2b3a37c8c650c7b29ace1), [`98f4348`](https://github.com/enboxorg/enbox/commit/98f4348bfbfb7d5ddbc91787f4187958998ba011), [`1e316ee`](https://github.com/enboxorg/enbox/commit/1e316eeca6a29453364cbc931c9407b36a1282f9), [`9012b3a`](https://github.com/enboxorg/enbox/commit/9012b3a10f41797a12854e9d9ab97f9c140d2e9d), [`55581c7`](https://github.com/enboxorg/enbox/commit/55581c71dc1ea7bc8715f92c56ba71692f7bc33e), [`cb7b51c`](https://github.com/enboxorg/enbox/commit/cb7b51c1ad3576fc8851e4ec41e55e46e5cb187f), [`e6eb37c`](https://github.com/enboxorg/enbox/commit/e6eb37c99aa64844d8257daae45336e0a857a9db), [`acd3d4e`](https://github.com/enboxorg/enbox/commit/acd3d4eb54e32cee199759c06db0cbe699780d41), [`5ac59ff`](https://github.com/enboxorg/enbox/commit/5ac59fff9e1e2804def54b6b63cf49b75199b57c)]:
+  - @enbox/agent@0.8.15
+  - @enbox/dwn-server@0.1.20
+  - @enbox/auth@0.6.61
+  - @enbox/api@0.6.53
+  - @enbox/common@0.1.3
+  - @enbox/dids@0.1.4
+  - @enbox/protocols@0.2.80
+
 ## 0.0.70
 
 ### Patch Changes
