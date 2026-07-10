@@ -339,6 +339,158 @@ describe('enbox connect', () => {
       }
     });
 
+    it('should serialize permission grant writes per endpoint while sending to independent endpoints concurrently', async () => {
+      const endpointUrls = ['https://dwn-a.example', 'https://dwn-b.example'];
+      sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget').resolves(endpointUrls);
+
+      const callsByEndpoint = new Map<string, number>();
+      const releaseFirstCall = new Map<string, () => void>();
+      const sendStub = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').callsFake(async ({ dwnUrl, signal }) => {
+        const callCount = (callsByEndpoint.get(dwnUrl) ?? 0) + 1;
+        callsByEndpoint.set(dwnUrl, callCount);
+
+        expect(signal).toBeInstanceOf(AbortSignal);
+        expect(signal?.aborted).toBe(false);
+        if (callCount === 1) {
+          await new Promise<void>((resolve) => releaseFirstCall.set(dwnUrl, resolve));
+        }
+        return { status: { code: 202, detail: 'Accepted' } } as any;
+      });
+
+      const result = EnboxConnectProtocol.createPermissionGrants(
+        providerIdentity.did.uri,
+        delegateBearerDid.uri,
+        testHarness.agent,
+        permissionScopes,
+      );
+      while (releaseFirstCall.size < endpointUrls.length) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+
+      expect(sendStub.callCount).toBe(endpointUrls.length);
+      releaseFirstCall.get(endpointUrls[0])!();
+      while ((callsByEndpoint.get(endpointUrls[0]) ?? 0) < 2) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+      expect(callsByEndpoint.get(endpointUrls[1])).toBe(1);
+
+      releaseFirstCall.get(endpointUrls[1])!();
+      await result;
+
+      expect(sendStub.callCount).toBe(endpointUrls.length * permissionScopes.length);
+    });
+
+    it('should continue after a request timeout and report the failed grant', async () => {
+      const batchController = new AbortController();
+      const requestController = new AbortController();
+      const timeoutStub = sinon.stub(AbortSignal, 'timeout');
+      timeoutStub.onFirstCall().returns(batchController.signal);
+      timeoutStub.onSecondCall().returns(requestController.signal);
+      timeoutStub.callsFake(() => new AbortController().signal);
+      sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget').resolves(['https://dwn.example']);
+      let rpcCallCount = 0;
+      const sendStub = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').callsFake(async ({ signal }) => {
+        rpcCallCount++;
+        if (rpcCallCount === 1) {
+          return new Promise((_, reject) => {
+            signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+          });
+        }
+        return { status: { code: 202, detail: 'Accepted' } } as any;
+      });
+
+      const result = EnboxConnectProtocol.createPermissionGrants(
+        providerIdentity.did.uri,
+        delegateBearerDid.uri,
+        testHarness.agent,
+        permissionScopes,
+      );
+      while (!sendStub.called) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+      requestController.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+
+      await expect(result).rejects.toThrow(
+        'Could not send permission grant to any DWN endpoint: grant 1 ' +
+        '(Records.Write, protocol http://profile-protocol.xyz); ' +
+        'https://dwn.example failed: permission grant request timed out after 10000ms',
+      );
+      expect(sendStub.callCount).toBe(permissionScopes.length);
+      expect(timeoutStub.firstCall.args[0]).toBe(20_000);
+      expect(timeoutStub.secondCall.args[0]).toBe(10_000);
+    });
+
+    it('should succeed when endpoints have complementary grant failures', async () => {
+      const endpointA = 'https://dwn-a.example';
+      const endpointB = 'https://dwn-b.example';
+      sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget').resolves([endpointA, endpointB]);
+      const callsByEndpoint = new Map<string, number>();
+      const sendStub = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').callsFake(async ({ dwnUrl }) => {
+        const callCount = (callsByEndpoint.get(dwnUrl) ?? 0) + 1;
+        callsByEndpoint.set(dwnUrl, callCount);
+        if ((dwnUrl === endpointA && callCount === 1) || (dwnUrl === endpointB && callCount === 2)) {
+          throw new TypeError('fetch failed');
+        }
+        return { status: { code: 202, detail: 'Accepted' } } as any;
+      });
+
+      const grants = await EnboxConnectProtocol.createPermissionGrants(
+        providerIdentity.did.uri,
+        delegateBearerDid.uri,
+        testHarness.agent,
+        permissionScopes,
+      );
+
+      expect(grants).toHaveLength(permissionScopes.length);
+      expect(sendStub.callCount).toBe(2 * permissionScopes.length);
+      expect(callsByEndpoint.get(endpointA)).toBe(permissionScopes.length);
+      expect(callsByEndpoint.get(endpointB)).toBe(permissionScopes.length);
+    });
+
+    it('should apply one bounded deadline to the complete permission grant batch', async () => {
+      const batchController = new AbortController();
+      const timeoutStub = sinon.stub(AbortSignal, 'timeout');
+      timeoutStub.onFirstCall().returns(batchController.signal);
+      timeoutStub.callsFake(() => new AbortController().signal);
+      sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget').resolves(['https://dwn.example']);
+      const sendStub = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').callsFake(async ({ signal }) =>
+        new Promise((_, reject) => {
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+        })
+      );
+
+      const result = EnboxConnectProtocol.createPermissionGrants(
+        providerIdentity.did.uri,
+        delegateBearerDid.uri,
+        testHarness.agent,
+        permissionScopes,
+      );
+      while (!sendStub.called) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+      batchController.abort(new DOMException('Permission grant batch timed out', 'TimeoutError'));
+
+      await expect(result).rejects.toThrow('permission grant batch timed out after 20000ms');
+      expect(timeoutStub.firstCall.args[0]).toBe(20_000);
+      expect(sendStub.callCount).toBe(1);
+    });
+
+    it('should report when no DWN endpoint is resolved for permission grant delivery', async () => {
+      sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget').resolves([]);
+      const sendStub = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest');
+
+      await expect(EnboxConnectProtocol.createPermissionGrants(
+        providerIdentity.did.uri,
+        delegateBearerDid.uri,
+        testHarness.agent,
+        permissionScopes,
+      )).rejects.toThrow(
+        'Could not send permission grant to any DWN endpoint: grant 1 ' +
+        '(Records.Write, protocol http://profile-protocol.xyz); no DWN endpoints were resolved',
+      );
+      expect(sendStub.callCount).toBe(0);
+    });
+
     it('should bound connect session display metadata', () => {
       const session = EnboxConnectProtocol.createConnectSessionMetadata({
         id             : 's'.repeat(200),
@@ -1735,6 +1887,80 @@ describe('enbox connect', () => {
 
       expect(grantKeyStub.calledOnce).toBe(true);
       expect('delegateDecryptionKeys' in response).toBe(false);
+    });
+
+    it('should deliver one ordered grant batch and map encrypted grants back to their protocol', async () => {
+      const encryptedProtocol: DwnProtocolDefinition = {
+        protocol  : 'http://ordered-encrypted.xyz',
+        published : true,
+        types     : {
+          note: {
+            schema             : 'http://ordered-encrypted.xyz/note',
+            dataFormats        : ['text/plain'],
+            encryptionRequired : true,
+          },
+        },
+        structure: { note: {} },
+      };
+      const plainScopes = [permissionScopes[0]];
+      const encryptedScopes: RecordsPermissionScope[] = [
+        {
+          interface : 'Records' as any,
+          method    : 'Read' as any,
+          protocol  : encryptedProtocol.protocol,
+        },
+        {
+          interface : 'Records' as any,
+          method    : 'Write' as any,
+          protocol  : encryptedProtocol.protocol,
+        },
+      ];
+      const createdGrants = ['plain', 'encrypted-read', 'encrypted-write'].map((recordId) => ({
+        ...permissionGrants[0].message,
+        recordId,
+      }));
+
+      const createGrantsStub = sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(createdGrants as any);
+      const grantKeyStub = sinon.stub(EnboxConnectProtocol, 'createGrantKeyRecordsForGrants').resolves([]);
+      sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
+        grant   : {} as any,
+        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
+      });
+      sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
+      sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
+      sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget').resolves([]);
+      sinon.stub(testHarness.agent, 'processDwnRequest').resolves({
+        messageCid : '',
+        reply      : { status: { code: 200, detail: 'OK' }, entries: [{} as any] },
+      });
+      sinon.stub(globalThis, 'fetch').resolves(new Response());
+
+      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
+        baseURL  : 'http://localhost:3000',
+        endpoint : 'callback',
+      });
+      connectRequest = await EnboxConnectProtocol.createConnectRequest({
+        appName            : 'Sample App',
+        clientDid          : clientEphemeralPortableDid.uri,
+        permissionRequests : [
+          { protocolDefinition, permissionScopes: plainScopes },
+          { protocolDefinition: encryptedProtocol, permissionScopes: encryptedScopes },
+        ],
+        callbackUrl,
+      });
+
+      await EnboxConnectProtocol.submitConnectResponse(
+        providerIdentity.did.uri,
+        connectRequest,
+        randomPin,
+        testHarness.agent,
+      );
+
+      expect(createGrantsStub.calledOnce).toBe(true);
+      expect(createGrantsStub.firstCall.args[3]).toEqual([...plainScopes, ...encryptedScopes]);
+      expect(grantKeyStub.calledOnce).toBe(true);
+      expect(grantKeyStub.firstCall.args[0].grantMessages).toEqual(createdGrants.slice(1));
+      expect(grantKeyStub.firstCall.args[0].protocolDefinitions).toEqual([encryptedProtocol]);
     });
 
     it('should fan out durable grantKey records with their encrypted data during connect', async () => {
