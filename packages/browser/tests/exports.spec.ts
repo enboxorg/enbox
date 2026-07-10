@@ -88,7 +88,7 @@ describe('@enbox/browser exports', () => {
       {
         name        : 'Prism',
         url         : 'https://prism-wallet.pages.dev',
-        description : 'See your digital identity from every angle',
+        description : 'A clear view into your digital identity',
       },
       {
         name        : 'Matcha',
