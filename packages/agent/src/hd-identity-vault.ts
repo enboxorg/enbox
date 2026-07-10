@@ -1,18 +1,17 @@
-import type { Jwk } from '@enbox/crypto';
 import type { KeyValueStore } from '@enbox/common';
+import type { JweHeaderParams, Jwk } from '@enbox/crypto';
 
 import type { DidDhtCreateOptions, PortableDid } from '@enbox/dids';
 
+import { CompactJwe } from '@enbox/crypto';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
 import { BearerDid, DidDht, isPortableDid } from '@enbox/dids';
 import { Convert, MemoryStore } from '@enbox/common';
 import { generateMnemonic, mnemonicToSeed, validateMnemonic } from '@scure/bip39';
 
-import type { JweHeaderParams } from './prototyping/crypto/jose/jwe.js';
 import type { IdentityVault, IdentityVaultBackup, IdentityVaultBackupData, IdentityVaultParams, IdentityVaultStatus } from './types/identity-vault.js';
 
 import { AgentCryptoApi } from './crypto-api.js';
-import { CompactJwe } from './prototyping/crypto/jose/jwe-compact.js';
 import { DeterministicKeyGenerator } from './utils-internal.js';
 import { Ed25519HdKey } from './utils/ed25519-hd-key.js';
 import { LocalKeyManager } from './local-key-manager.js';
@@ -290,9 +289,12 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       ({ plaintext: contentEncryptionKeyBytes, protectedHeader } = await CompactJwe.decrypt({
         jwe        : cekJwe,
         key        : Convert.string(oldPassword).toUint8Array(),
-        crypto     : this.crypto,
         keyManager : new LocalKeyManager(),
-        options    : { minP2cCount: 1 }, // Vault decrypts its own JWEs; no external-input floor needed.
+        options    : {
+          allowedAlgs : ['PBES2-HS512+A256KW'],
+          allowedEncs : ['A256GCM'],
+          minP2cCount : 1, // Vault decrypts its own JWEs; no external-input floor needed.
+        },
       }));
       contentEncryptionKey = Convert.uint8Array(contentEncryptionKeyBytes).toObject() as Jwk;
 
@@ -305,7 +307,6 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       key        : Convert.string(newPassword).toUint8Array(),
       protectedHeader, // Re-use the protected header from the original JWE.
       plaintext  : Convert.object(contentEncryptionKey).toUint8Array(),
-      crypto     : this.crypto,
       keyManager : new LocalKeyManager()
     });
 
@@ -666,9 +667,12 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       const { plaintext: contentEncryptionKeyBytes } = await CompactJwe.decrypt({
         jwe        : cekJwe,
         key        : Convert.string(password).toUint8Array(),
-        crypto     : this.crypto,
         keyManager : new LocalKeyManager(),
-        options    : { minP2cCount: 1 }, // Vault decrypts its own JWEs; no external-input floor needed.
+        options    : {
+          allowedAlgs : ['PBES2-HS512+A256KW'],
+          allowedEncs : ['A256GCM'],
+          minP2cCount : 1, // Vault decrypts its own JWEs; no external-input floor needed.
+        },
       });
       const contentEncryptionKey = Convert.uint8Array(contentEncryptionKeyBytes).toObject() as Jwk;
 
@@ -700,7 +704,6 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       key             : this._contentEncryptionKey,
       plaintext,
       protectedHeader : { alg: 'dir', enc: 'A256GCM' },
-      crypto          : this.crypto,
       keyManager      : new LocalKeyManager(),
     });
   }
@@ -722,9 +725,12 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     const { plaintext } = await CompactJwe.decrypt({
       jwe,
       key        : this._contentEncryptionKey,
-      crypto     : this.crypto,
       keyManager : new LocalKeyManager(),
-      options    : { minP2cCount: 1 },
+      options    : {
+        allowedAlgs : ['dir'],
+        allowedEncs : ['A256GCM'],
+        minP2cCount : 1,
+      },
     });
 
     return plaintext;
@@ -819,7 +825,6 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       key        : Convert.string(password).toUint8Array(),
       protectedHeader,
       plaintext  : Convert.object(contentEncryptionKey).toUint8Array(),
-      crypto     : this.crypto,
       keyManager : new LocalKeyManager(),
     });
   }
@@ -887,7 +892,6 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       key             : contentEncryptionKey,
       plaintext       : Convert.object(portableDid).toUint8Array(),
       protectedHeader : { alg: 'dir', enc: 'A256GCM', cty: 'json' },
-      crypto          : this.crypto,
       keyManager      : new LocalKeyManager(),
     });
   }
@@ -896,9 +900,12 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     const { plaintext: portableDidBytes } = await CompactJwe.decrypt({
       jwe        : await this.getStoredDid(),
       key        : contentEncryptionKey,
-      crypto     : this.crypto,
       keyManager : new LocalKeyManager(),
-      options    : { minP2cCount: 1 },
+      options    : {
+        allowedAlgs : ['dir'],
+        allowedEncs : ['A256GCM'],
+        minP2cCount : 1,
+      },
     });
 
     const portableDid = Convert.uint8Array(portableDidBytes).toObject();

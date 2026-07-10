@@ -1,0 +1,152 @@
+{
+  "description": "Enbox Connect v2 JWE conformance vectors. Deterministic known-answer tests for the @enbox/crypto JOSE JWE engine (RFC 7516 Compact Serialization). Conformance target for rust-core / mobile implementations.",
+  "plaintextUtf8": "Enbox Connect v2 JWE conformance vector.",
+  "vectors": [
+    {
+      "id": "dir-xc20p",
+      "description": "Direct Encryption Mode with XChaCha20-Poly1305 content encryption (relay fragment-key profile).",
+      "protectedHeader": {
+        "alg": "dir",
+        "enc": "XC20P"
+      },
+      "plaintextUtf8": "Enbox Connect v2 JWE conformance vector.",
+      "key": {
+        "kty": "oct",
+        "k": "dYtjTOMBjRHTv1R7vOM9kk9YpcJJa0Q0RIZBLXzCmqk"
+      },
+      "nonceBase64Url": "0P5efAr5cwa8AEgqC7bxZxJ7Sy4Nc6x6",
+      "jweCompact": "eyJhbGciOiJkaXIiLCJlbmMiOiJYQzIwUCJ9..0P5efAr5cwa8AEgqC7bxZxJ7Sy4Nc6x6.0Ao_2RgDPBgn4Zl9fCp3xXDfjU79MBmYZnZsfV5CwU9Smk5N3bO9XQ.3O7u16DVTm6xuZblXvo0lA"
+    },
+    {
+      "id": "ecdh-es-xc20p",
+      "description": "ECDH-ES (X25519) Direct Key Agreement with XChaCha20-Poly1305 content encryption, no PIN.",
+      "protectedHeader": {
+        "alg": "ECDH-ES",
+        "enc": "XC20P"
+      },
+      "plaintextUtf8": "Enbox Connect v2 JWE conformance vector.",
+      "recipientPrivateKeyJwk": {
+        "kty": "OKP",
+        "crv": "X25519",
+        "d": "6MhvD2eS3STS3VuoRnubWBoT64arEN1SAWC3pgFSt9Y",
+        "x": "ZakEQ3d82ak4Vawhuarto4jHVubZwVBUz6fJXP9xIk8"
+      },
+      "recipientPublicKeyJwk": {
+        "kty": "OKP",
+        "crv": "X25519",
+        "x": "ZakEQ3d82ak4Vawhuarto4jHVubZwVBUz6fJXP9xIk8"
+      },
+      "ephemeralPrivateKeyJwk": {
+        "kty": "OKP",
+        "crv": "X25519",
+        "d": "p3dpF94RII9NCBNf_7eFFS5k6LhCTxz-3M0QpcxMSGc",
+        "x": "vxvvbso9-Eo1mJZR_oCc6hIoh72EmWKBc0i_21c5LwQ"
+      },
+      "nonceBase64Url": "DKvidQJ8tr1MuGbC3Xbs5TgEMdQhas8j",
+      "jweCompact": "eyJhbGciOiJFQ0RILUVTIiwiZW5jIjoiWEMyMFAiLCJlcGsiOnsia3R5IjoiT0tQIiwiY3J2IjoiWDI1NTE5IiwieCI6InZ4dnZic285LUVvMW1KWlJfb0NjNmhJb2g3MkVtV0tCYzBpXzIxYzVMd1EifX0..DKvidQJ8tr1MuGbC3Xbs5TgEMdQhas8j.HbSbHDCrwDTBZUOVLlpwOu9Th3BbZNx2av-FAZn2wA-rzidbqWZr0A.MdfF-eV8r8-cLf3mOV1f3Q"
+    },
+    {
+      "id": "ecdh-es-xc20p-pin",
+      "description": "ECDH-ES (X25519) with the PIN KDF wrapper: CEK' = HKDF-SHA256(ikm=CEK, salt=UTF8(pin), info=UTF8('enbox/connect/v2/pin')).",
+      "protectedHeader": {
+        "alg": "ECDH-ES",
+        "enc": "XC20P"
+      },
+      "plaintextUtf8": "Enbox Connect v2 JWE conformance vector.",
+      "pin": "123456",
+      "recipientPrivateKeyJwk": {
+        "kty": "OKP",
+        "crv": "X25519",
+        "d": "6MhvD2eS3STS3VuoRnubWBoT64arEN1SAWC3pgFSt9Y",
+        "x": "ZakEQ3d82ak4Vawhuarto4jHVubZwVBUz6fJXP9xIk8"
+      },
+      "recipientPublicKeyJwk": {
+        "kty": "OKP",
+        "crv": "X25519",
+        "x": "ZakEQ3d82ak4Vawhuarto4jHVubZwVBUz6fJXP9xIk8"
+      },
+      "ephemeralPrivateKeyJwk": {
+        "kty": "OKP",
+        "crv": "X25519",
+        "d": "p3dpF94RII9NCBNf_7eFFS5k6LhCTxz-3M0QpcxMSGc",
+        "x": "vxvvbso9-Eo1mJZR_oCc6hIoh72EmWKBc0i_21c5LwQ"
+      },
+      "nonceBase64Url": "6QGAVmfGUI3pLUQLyGF64JqMAQSRh3nk",
+      "jweCompact": "eyJhbGciOiJFQ0RILUVTIiwiZW5jIjoiWEMyMFAiLCJlcGsiOnsia3R5IjoiT0tQIiwiY3J2IjoiWDI1NTE5IiwieCI6InZ4dnZic285LUVvMW1KWlJfb0NjNmhJb2g3MkVtV0tCYzBpXzIxYzVMd1EifX0..6QGAVmfGUI3pLUQLyGF64JqMAQSRh3nk.KD-8x5o3HLyKy17RK-G_Ln-qKpkR_OxYpqVVDW51PVGD_AwrZpgKFQ.1XZV0B3ZXdi-arX5Yx6q8g"
+    },
+    {
+      "id": "ecdh-es-xc20p-apu-apv",
+      "description": "ECDH-ES (X25519) with \"apu\"/\"apv\" agreement party info bound into the Concat KDF and the AAD, plus the PIN KDF wrapper.",
+      "protectedHeader": {
+        "alg": "ECDH-ES",
+        "enc": "XC20P",
+        "apu": "ZGlkOmV4YW1wbGU6YWxpY2U",
+        "apv": "aHR0cHM6Ly93YWxsZXQuZXhhbXBsZQ"
+      },
+      "plaintextUtf8": "Enbox Connect v2 JWE conformance vector.",
+      "pin": "123456",
+      "apuUtf8": "did:example:alice",
+      "apvUtf8": "https://wallet.example",
+      "recipientPrivateKeyJwk": {
+        "kty": "OKP",
+        "crv": "X25519",
+        "d": "6MhvD2eS3STS3VuoRnubWBoT64arEN1SAWC3pgFSt9Y",
+        "x": "ZakEQ3d82ak4Vawhuarto4jHVubZwVBUz6fJXP9xIk8"
+      },
+      "recipientPublicKeyJwk": {
+        "kty": "OKP",
+        "crv": "X25519",
+        "x": "ZakEQ3d82ak4Vawhuarto4jHVubZwVBUz6fJXP9xIk8"
+      },
+      "ephemeralPrivateKeyJwk": {
+        "kty": "OKP",
+        "crv": "X25519",
+        "d": "p3dpF94RII9NCBNf_7eFFS5k6LhCTxz-3M0QpcxMSGc",
+        "x": "vxvvbso9-Eo1mJZR_oCc6hIoh72EmWKBc0i_21c5LwQ"
+      },
+      "nonceBase64Url": "JFQJvsQLtiooODk1Y88p_9ybyR1JMOTc",
+      "jweCompact": "eyJhbGciOiJFQ0RILUVTIiwiZW5jIjoiWEMyMFAiLCJhcHUiOiJaR2xrT21WNFlXMXdiR1U2WVd4cFkyVSIsImFwdiI6ImFIUjBjSE02THk5M1lXeHNaWFF1WlhoaGJYQnNaUSIsImVwayI6eyJrdHkiOiJPS1AiLCJjcnYiOiJYMjU1MTkiLCJ4Ijoidnh2dmJzbzktRW8xbUpaUl9vQ2M2aElvaDcyRW1XS0JjMGlfMjFjNUx3USJ9fQ..JFQJvsQLtiooODk1Y88p_9ybyR1JMOTc.vFkP81Eaqs3fpsoD-hiFsmTbBKF04a-RvwlvqTw6Rz4szJtnvZ2N8w.a0twCSoJBAeVaFa3Amyn8w"
+    },
+    {
+      "id": "pbes2-hs512-a256kw-a256gcm",
+      "description": "PBES2-HS512+A256KW key wrapping with AES-256-GCM content encryption (HdIdentityVault profile).",
+      "protectedHeader": {
+        "alg": "PBES2-HS512+A256KW",
+        "enc": "A256GCM",
+        "cty": "text/plain",
+        "p2c": 210000,
+        "p2s": "Jd4ttr5BUID0jmUR0cqnfQ"
+      },
+      "plaintextUtf8": "Enbox Connect v2 JWE conformance vector.",
+      "passphraseUtf8": "correct horse battery staple",
+      "cekJwk": {
+        "kty": "oct",
+        "k": "LadCfKgQO578xWeMvZylPR9rqY-Hd45x5qW9nzjguVA",
+        "alg": "A256GCM"
+      },
+      "ivBase64Url": "U8zc8UZxsgnOgeFx",
+      "jweCompact": "eyJhbGciOiJQQkVTMi1IUzUxMitBMjU2S1ciLCJlbmMiOiJBMjU2R0NNIiwiY3R5IjoidGV4dC9wbGFpbiIsInAyYyI6MjEwMDAwLCJwMnMiOiJKZDR0dHI1QlVJRDBqbVVSMGNxbmZRIn0.nIFIg_90GSfBhfHXt_3oOhas4EMQ7FYoO8B3FhkYzfqOAZ687awTRg.U8zc8UZxsgnOgeFx.vzGSSBBYfqmt1ySKje7HY74fBwomgFay-NEAqotLkUB_0LTH1Arkag.-023GgVh_RlWhjMaAUmuXA"
+    }
+  ],
+  "tamperCases": [
+    {
+      "id": "tamper-flipped-tag-byte",
+      "description": "dir+XC20P vector with the first byte of the authentication tag flipped; decryption MUST fail.",
+      "vectorId": "dir-xc20p",
+      "jweCompact": "eyJhbGciOiJkaXIiLCJlbmMiOiJYQzIwUCJ9..0P5efAr5cwa8AEgqC7bxZxJ7Sy4Nc6x6.0Ao_2RgDPBgn4Zl9fCp3xXDfjU79MBmYZnZsfV5CwU9Smk5N3bO9XQ.3e7u16DVTm6xuZblXvo0lA"
+    },
+    {
+      "id": "tamper-altered-apv",
+      "description": "ECDH-ES apu/apv vector with the \"apv\" protected header value altered; the AAD and derived CEK both change so decryption MUST fail.",
+      "vectorId": "ecdh-es-xc20p-apu-apv",
+      "jweCompact": "eyJhbGciOiJFQ0RILUVTIiwiZW5jIjoiWEMyMFAiLCJhcHUiOiJaR2xrT21WNFlXMXdiR1U2WVd4cFkyVSIsImFwdiI6ImFIUjBjSE02THk5bGRtbHNMbVY0WVcxd2JHVSIsImVwayI6eyJrdHkiOiJPS1AiLCJjcnYiOiJYMjU1MTkiLCJ4Ijoidnh2dmJzbzktRW8xbUpaUl9vQ2M2aElvaDcyRW1XS0JjMGlfMjFjNUx3USJ9fQ..JFQJvsQLtiooODk1Y88p_9ybyR1JMOTc.vFkP81Eaqs3fpsoD-hiFsmTbBKF04a-RvwlvqTw6Rz4szJtnvZ2N8w.a0twCSoJBAeVaFa3Amyn8w"
+    },
+    {
+      "id": "tamper-wrong-pin",
+      "description": "ECDH-ES PIN vector decrypted with the wrong PIN; the PIN KDF derives a different CEK so decryption MUST fail.",
+      "vectorId": "ecdh-es-xc20p-pin",
+      "jweCompact": "eyJhbGciOiJFQ0RILUVTIiwiZW5jIjoiWEMyMFAiLCJlcGsiOnsia3R5IjoiT0tQIiwiY3J2IjoiWDI1NTE5IiwieCI6InZ4dnZic285LUVvMW1KWlJfb0NjNmhJb2g3MkVtV0tCYzBpXzIxYzVMd1EifX0..6QGAVmfGUI3pLUQLyGF64JqMAQSRh3nk.KD-8x5o3HLyKy17RK-G_Ln-qKpkR_OxYpqVVDW51PVGD_AwrZpgKFQ.1XZV0B3ZXdi-arX5Yx6q8g",
+      "wrongPin": "654321"
+    }
+  ]
+}

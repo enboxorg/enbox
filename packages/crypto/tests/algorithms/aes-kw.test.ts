@@ -171,4 +171,57 @@ describe('AesKwAlgorithm', () => {
       expect(unwrappedKey.k).toBe(keyToWrap.k);
     });
   });
+
+  describe('known-answer vectors', () => {
+    const unwrappedKeyVector: Jwk = {
+      kty : 'oct',
+      k   : 'hX-1yAAU6aZCwGqViYfAhIiaTyu1PURMswoI4IQmiY4',
+      alg : 'A256GCM',
+      kid : '-TssSnJNgh10-YTwuBtyZTnv0LY6sdT-TQl9WFTSetI',
+    };
+
+    const wrappingKeyVector: Jwk = {
+      kty : 'oct',
+      k   : '47Fn3ZXGbmntoAKErKN5-d7yuwMejCJtOqgAeq_Ojk0',
+      alg : 'A256KW',
+      kid : 'izA6N7g3xmPWStB6Qe6BbGgfrXvrptzuH2eJ1wmdrtk',
+    };
+
+    const wrappedKeyBytesVector = Convert.hex('8c55fb6fc4c7bb0b6b483df65ba52bee7ed6e0f861ac8097b2394f61067d1157901295aba72c514b').toUint8Array();
+
+    it('bytesToPrivateKey() returns the expected JWK given byte array input', async () => {
+      const privateKeyBytes = Convert.hex('dc5ace47f88a59c992f6ad05fa15ccbe').toUint8Array();
+
+      const privateKey = await aesKw.bytesToPrivateKey({ privateKeyBytes });
+
+      const expectedOutput: Jwk = {
+        kty : 'oct',
+        k   : '3FrOR_iKWcmS9q0F-hXMvg',
+        alg : 'A128KW',
+        kid : 'u09ksgd0kCHfNK1BDhzP_N7lOvljazw443nfbO7k6Fo',
+      };
+      expect(privateKey).toEqual(expectedOutput);
+    });
+
+    it('wrapKey() returns the expected wrapped key for given input', async () => {
+      const wrappedKeyBytes = await aesKw.wrapKey({
+        unwrappedKey  : unwrappedKeyVector,
+        encryptionKey : wrappingKeyVector,
+      });
+
+      // 32 bytes for the wrapped private key, 8 bytes for the initialization vector.
+      expect(wrappedKeyBytes.byteLength).toBe(32 + 8);
+      expect(wrappedKeyBytes).toEqual(wrappedKeyBytesVector);
+    });
+
+    it('unwrapKey() returns the expected unwrapped key for given input', async () => {
+      const unwrappedKey = await aesKw.unwrapKey({
+        wrappedKeyBytes     : wrappedKeyBytesVector,
+        wrappedKeyAlgorithm : 'A256GCM',
+        decryptionKey       : wrappingKeyVector,
+      });
+
+      expect(unwrappedKey).toEqual(unwrappedKeyVector);
+    });
+  });
 });

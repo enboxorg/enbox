@@ -1,36 +1,32 @@
-import type { CryptoApi, Jwk, KeyIdentifier, KeyManager } from '@enbox/crypto';
-import type { JweDecryptOptions, JweEncryptOptions, JweHeaderParams } from './jwe.js';
+import type { JweCipher, JweDecryptOptions, JweEncryptOptions, JweHeaderParams } from './header.js';
+import type { JweKeyManagementDecryptKey, JweKeyManagementEncryptKey } from './key-management.js';
 
-import { CryptoError, CryptoErrorCode, LocalKeyManager } from '@enbox/crypto';
-
-import { AgentCryptoApi } from '../../../crypto-api.js';
-import { FlattenedJwe } from './jwe-flattened.js';
-import { isValidJweHeader } from './jwe.js';
+import { FlattenedJwe } from './flattened.js';
+import { isValidJweHeader } from './header.js';
+import { CryptoError, CryptoErrorCode } from '../../crypto-error.js';
 
 /**
  * Parameters required for decrypting a JWE in Compact Serialization format.
- *
- * @typeParam TKeyManager - The Key Manager used to manage cryptographic keys.
- * @typeParam TCrypto - The Crypto API used to perform cryptographic operations.
  */
-export interface CompactJweDecryptParams<TKeyManager, TCrypto> {
+export interface CompactJweDecryptParams {
   /** The JWE string in Compact Serialization format. */
   jwe: string;
 
   /**
    * The decryption key which can be a Key Identifier such as a KMS key URI, a JSON Web Key (JWK),
-   * or raw key material represented as a byte array.
+   * raw key material represented as a byte array, or an ECDH-ES key agreement input.
    */
-  key: KeyIdentifier | Jwk | Uint8Array;
+  key: JweKeyManagementDecryptKey;
 
-  /** Key Manager instanceß responsible for managing cryptographic keys. */
-  keyManager?: TKeyManager;
-
-  /** Crypto API instance that provides the necessary cryptographic operations. */
-  crypto?: TCrypto;
+  /**
+   * Cipher used to decrypt the JWE payload when the Content Encryption Key is referenced by a
+   * Key Identifier (e.g. a KMS URI) rather than provided as a JWK. Required only for
+   * Key Identifier CEKs.
+   */
+  keyManager?: JweCipher;
 
   /** {@inheritDoc JweDecryptOptions} */
-  options?: JweDecryptOptions;
+  options: JweDecryptOptions;
 }
 
 /**
@@ -46,11 +42,8 @@ export interface CompactJweDecryptResult {
 
 /**
  * Parameters required for encrypting data into a JWE in Compact Serialization format.
- *
- * @typeParam TKeyManager - The Key Manager used to manage cryptographic keys.
- * @typeParam TCrypto - The Crypto API used to perform cryptographic operations.
  */
-export interface CompactJweEncryptParams<TKeyManager, TCrypto> {
+export interface CompactJweEncryptParams {
   /** The plaintext data to be encrypted as a byte array. */
   plaintext: Uint8Array;
 
@@ -59,15 +52,16 @@ export interface CompactJweEncryptParams<TKeyManager, TCrypto> {
 
   /**
    * The encryption key which can be a Key Identifier such as a KMS key URI, a JSON Web Key (JWK),
-   * or raw key material represented as a byte array.
+   * raw key material represented as a byte array, or an ECDH-ES key agreement input.
    */
-  key: KeyIdentifier | Jwk | Uint8Array;
+  key: JweKeyManagementEncryptKey;
 
-  /** Key Manager instanceß responsible for managing cryptographic keys. */
-  keyManager?: TKeyManager;
-
-  /** Crypto API instance that provides the necessary cryptographic operations. */
-  crypto?: TCrypto;
+  /**
+   * Cipher used to encrypt the JWE payload when the Content Encryption Key is referenced by a
+   * Key Identifier (e.g. a KMS URI) rather than provided as a JWK. Required only for
+   * Key Identifier CEKs.
+   */
+  keyManager?: JweCipher;
 
   /** {@inheritDoc JweEncryptOptions} */
   options?: JweEncryptOptions;
@@ -112,8 +106,9 @@ export interface CompactJweEncryptParams<TKeyManager, TCrypto> {
  * const jweString = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."; // A JWE in Compact Serialization
  * const decryptionKey = { kty: "oct", k: "your-secret-key" }; // The key must match the one used for encryption
  * const { plaintext, protectedHeader } = await CompactJwe.decrypt({
- *   jwe: jweString,
- *   key: decryptionKey,
+ *   jwe     : jweString,
+ *   key     : decryptionKey,
+ *   options : { allowedAlgs: ['dir'], allowedEncs: ['A256GCM'] },
  * });
  * console.log(new TextDecoder().decode(plaintext)); // Outputs the decrypted message
  * ```
@@ -129,20 +124,12 @@ export class CompactJwe {
    * and integrity.
    *
    * @param params - The decryption parameters including the JWE string, cryptographic key, and
-   *                 optional instances of Key Manager and Crypto API.
+   *                 required decryption options (algorithm allow-lists).
    * @returns A promise resolving to the decrypted content and the JWE Protected Header.
    * @throws {@link CryptoError} if the JWE format is invalid or decryption fails.
    */
-  public static async decrypt<
-    TKeyManager extends KeyManager | undefined = KeyManager,
-    TCrypto extends CryptoApi | undefined = CryptoApi
-  >({
-    jwe,
-    key,
-    keyManager = new LocalKeyManager(),
-    crypto = new AgentCryptoApi(),
-    options = {}
-  }: CompactJweDecryptParams<TKeyManager, TCrypto>
+  public static async decrypt({ jwe, key, keyManager, options }:
+    CompactJweDecryptParams
   ): Promise<CompactJweDecryptResult> {
     if (typeof jwe !== 'string') {
       throw new CryptoError(CryptoErrorCode.InvalidJwe, 'Invalid JWE format. JWE must be a string.');
@@ -163,7 +150,7 @@ export class CompactJwe {
       throw new CryptoError(CryptoErrorCode.InvalidJwe, 'Invalid JWE format. JWE must have 5 parts.');
     }
 
-    // Decrypt the JWE using the provided Key URI.
+    // Decrypt the JWE.
     const flattenedJwe = await FlattenedJwe.decrypt({
       jwe: {
         ciphertext,
@@ -174,7 +161,6 @@ export class CompactJwe {
       },
       key,
       keyManager,
-      crypto,
       options
     });
 
@@ -193,25 +179,16 @@ export class CompactJwe {
    * compact format, which includes concatenating various components like the protected header,
    * encrypted key, initialization vector, ciphertext, and authentication tag.
    *
-   * @param params - The encryption parameters, including plaintext, JWE Protected Header,
-   *                 cryptographic key, and optional Key Manager and Crypto API instances.
+   * @param params - The encryption parameters, including plaintext, JWE Protected Header, and
+   *                 cryptographic key.
    * @returns A promise that resolves to a string representing the JWE in Compact Serialization
    *          format.
    * @throws {@link CryptoError} if encryption fails or the input parameters are invalid.
    */
-  public static async encrypt<
-    TKeyManager extends KeyManager | undefined = KeyManager,
-    TCrypto extends CryptoApi | undefined = CryptoApi
-  >({
-    plaintext,
-    protectedHeader,
-    key,
-    keyManager = new LocalKeyManager(),
-    crypto = new AgentCryptoApi(),
-    options = {}
-  }: CompactJweEncryptParams<TKeyManager, TCrypto>
+  public static async encrypt({ plaintext, protectedHeader, key, keyManager, options }:
+    CompactJweEncryptParams
   ): Promise<string> {
-    const jwe = await FlattenedJwe.encrypt({ plaintext, protectedHeader, key, keyManager, crypto, options });
+    const jwe = await FlattenedJwe.encrypt({ plaintext, protectedHeader, key, keyManager, options });
 
     // Create the Compact Serialization, which is the string BASE64URL(UTF8(JWE Protected Header))
     // || '.' || BASE64URL(JWE Encrypted Key) || '.' || BASE64URL(JWE Initialization Vector)
