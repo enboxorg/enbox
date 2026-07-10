@@ -1,5 +1,23 @@
 # @enbox/dwn-sql-store
 
+## 0.0.34
+
+### Patch Changes
+
+- [#1212](https://github.com/enboxorg/enbox/pull/1212) [`acd3d4e`](https://github.com/enboxorg/enbox/commit/acd3d4eb54e32cee199759c06db0cbe699780d41) Thanks [@poindex-bot](https://github.com/poindex-bot)! - fix: resolve remaining SonarCloud reliability issues (S7773/S7781/S7758/S6853/S8786)
+
+  Behavior-preserving reliability hardening across packages:
+
+  - Replace global `parseInt`/`isNaN` with `Number.parseInt`/`Number.isNaN` (S7773).
+  - Replace `String#replace(/…/g)` and `split().join()` with `String#replaceAll` (S7781).
+  - Prefer `String.fromCodePoint`/`String#codePointAt` in byte-range encoders (S7758).
+  - Associate admin-UI form labels with their inputs via `for`/`id` (S6853).
+  - Strip trailing slashes in the local-node `/info` handler with a linear loop
+    instead of a backtracking-prone regex (S8786).
+
+- Updated dependencies [[`cb7b51c`](https://github.com/enboxorg/enbox/commit/cb7b51c1ad3576fc8851e4ec41e55e46e5cb187f), [`5ac59ff`](https://github.com/enboxorg/enbox/commit/5ac59fff9e1e2804def54b6b63cf49b75199b57c)]:
+  - @enbox/dwn-sdk-js@0.4.9
+
 ## 0.0.33
 
 ### Patch Changes

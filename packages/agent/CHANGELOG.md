@@ -1,5 +1,75 @@
 # @enbox/agent
 
+## 0.8.15
+
+### Patch Changes
+
+- [#1232](https://github.com/enboxorg/enbox/pull/1232) [`378f3d4`](https://github.com/enboxorg/enbox/commit/378f3d4b07a011e9f56852cfc0a4e9da8cd13bd4) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: serialize permission grant delivery per DWN endpoint so same-tenant writes do not time out while queued
+
+- [#1214](https://github.com/enboxorg/enbox/pull/1214) [`d7f0a87`](https://github.com/enboxorg/enbox/commit/d7f0a87b211c7eb3fb2ee1e048a51b2deab2305a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: add local-node runtime core and discovery-file token metadata
+
+- [#1225](https://github.com/enboxorg/enbox/pull/1225) [`49449ad`](https://github.com/enboxorg/enbox/commit/49449ade45463baa3ac2190c5455b7dba1f1e39b) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add a sync drain API that reconciles registered identities to an explicit DWN endpoint and reports convergence progress.
+
+- [#1228](https://github.com/enboxorg/enbox/pull/1228) [`d1bc6e3`](https://github.com/enboxorg/enbox/commit/d1bc6e3be5ae95792c7378aff53824e67fbb952a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Harden local-node ejection with authenticated stable drains, safe outage fallback, persisted consent, native token discovery, and durable local storage.
+
+- [#1205](https://github.com/enboxorg/enbox/pull/1205) [`c12b323`](https://github.com/enboxorg/enbox/commit/c12b3239ce03bf29bcd2b3a37c8c650c7b29ace1) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: harden local DWN remote-mode foundations
+
+- [#1226](https://github.com/enboxorg/enbox/pull/1226) [`55581c7`](https://github.com/enboxorg/enbox/commit/55581c71dc1ea7bc8715f92c56ba71692f7bc33e) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: deliver role-audience keys to DWN-less recipients via a supplied role-path key
+
+  `ProcessDwnRequest` now accepts an optional `recipientRolePublicKey`. When writing a `$role` record with a `recipient`, the agent wraps the `$encryption/delivery` record to that key instead of resolving the recipient's role-path key from the recipient's DWN-hosted protocol definition. A recipient's role-path key is a hardened derivation of its own encryption root — only the recipient can produce it, and a DWN-less participant (e.g. a bare `did:jwk` running in "remote-only" mode) has no DWN to publish it to. The recipient computes it locally and hands it to the owner out of band (e.g. in a signed join request); the delivery record is written to the owner's DWN, so the participant stays DWN-less.
+
+  Delivery is **best-effort**, whether or not a key is supplied. The `$role` write is authorized and accepted on its own; a delivery that cannot be provisioned — a DWN-less recipient with no supplied key, or a supplied key that fails to wrap — is reported on the new `DwnResponse.audienceKeyDelivery` (`{ delivered, recipientDid, reason }`) rather than throwing or unwinding the accepted write. This replaces a previously silent, default-off log: skipped deliveries are now visible and inspectable. A supplied `recipientRolePublicKey` only changes **which** key the delivery is wrapped to (the caller's, skipping recipient DID resolution) — not whether a failure is fatal.
+
+  Because delivery never throws or rolls the record back, a supplied key works identically for an **owner-authored** write and a **grant-authorized** (`permissionGrantId` / `delegatedGrant`) write. The latter is the primary path for a delegated actor — e.g. a dashboard session delegate that authors every write on the owner's behalf via a `delegatedGrant` and never holds the owner key. A caller that treats delivery as required inspects the reported outcome and compensates with the authority it holds (e.g. deleting the just-written `$role` record with its own delete grant) rather than relying on the SDK to roll back — which a write-scoped grant could not authorize anyway.
+
+  Additional validation, all enforced **before** the record is written:
+
+  - **Supplied-key validation.** `recipientRolePublicKey` must be a well-formed AND usable X25519 OKP public key (`kty: 'OKP'`, `crv: 'X25519'`, no private `d`, and an `x` that is the canonical unpadded base64url of exactly 32 bytes). A non-X25519 key (e.g. Ed25519) previously wrapped through the X25519 ECDH without error but produced an undecryptable delivery reported as `delivered: true`; it is now rejected (not converted — the role-path key is a derived X25519 key, not the DID root). A non-canonical `x` (whose key id would not match what the recipient derives) and a low-order point (whose ephemeral ECDH fails key agreement) are also rejected.
+  - **Misuse rejection.** Supplying `recipientRolePublicKey` where no delivery can ever be provisioned is a caller error rejected up front: `sendRequest`, a raw message, a non-`RecordsWrite`, `store: false`, or a target path that is not a `$role` with a `$keyAgreement` audience and a `recipient`.
+  - **`AudienceKeyDeliveryOutcome` is a discriminated union** (`{ delivered: true }` | `{ delivered: false; reason }`) so invalid states no longer type-check. Consumers reading `outcome.reason` must first narrow on `outcome.delivered === false`.
+
+- [#1215](https://github.com/enboxorg/enbox/pull/1215) [`cb7b51c`](https://github.com/enboxorg/enbox/commit/cb7b51c1ad3576fc8851e4ec41e55e46e5cb187f) Thanks [@poindex-bot](https://github.com/poindex-bot)! - fix: resolve SonarCloud maintainability issues (S3863/S6594)
+
+  Behavior-preserving source cleanups:
+
+  - S3863: merge duplicate `import` statements from the same module into a
+    single statement (re-sorting to satisfy the repo's `sort-imports` rule).
+  - S6594: use `RegExp.exec()` instead of `String#match()` for the non-global
+    route/type regexes in the DWN server and `universalTypeOf`.
+
+- [#1212](https://github.com/enboxorg/enbox/pull/1212) [`acd3d4e`](https://github.com/enboxorg/enbox/commit/acd3d4eb54e32cee199759c06db0cbe699780d41) Thanks [@poindex-bot](https://github.com/poindex-bot)! - fix: resolve remaining SonarCloud reliability issues (S7773/S7781/S7758/S6853/S8786)
+
+  Behavior-preserving reliability hardening across packages:
+
+  - Replace global `parseInt`/`isNaN` with `Number.parseInt`/`Number.isNaN` (S7773).
+  - Replace `String#replace(/…/g)` and `split().join()` with `String#replaceAll` (S7781).
+  - Prefer `String.fromCodePoint`/`String#codePointAt` in byte-range encoders (S7758).
+  - Associate admin-UI form labels with their inputs via `for`/`id` (S6853).
+  - Strip trailing slashes in the local-node `/info` handler with a linear loop
+    instead of a backtracking-prone regex (S8786).
+
+- [#1216](https://github.com/enboxorg/enbox/pull/1216) [`5ac59ff`](https://github.com/enboxorg/enbox/commit/5ac59fff9e1e2804def54b6b63cf49b75199b57c) Thanks [@poindex-bot](https://github.com/poindex-bot)! - fix: resolve SonarCloud redundant-union-type issues (S6571)
+
+  Type-only, behavior-preserving cleanups:
+
+  - JOSE header/key types (`JweHeaderParams` `alg`/`enc`, `JwsHeaderParams` `alg`,
+    `JwkUse`) and DID `@context` fields used `'literal' | … | string`, which
+    TypeScript collapses to plain `string` — silently discarding the literal
+    hints. Switched the trailing `| string` to `| (string & {})` so the
+    registered/spec values provide editor autocomplete while any string is still
+    accepted (required by the JOSE/DID specs). Matches the existing
+    `(string & {})` pattern in `dwn-sdk-js` protocol types.
+  - `ProtocolRuleSetValue` dropped the redundant `ProtocolDeliveryStrategy`
+    constituent, whose `'direct' | 'subscribe'` values are already covered by the
+    union's `string` member.
+
+- Updated dependencies [[`d1bc6e3`](https://github.com/enboxorg/enbox/commit/d1bc6e3be5ae95792c7378aff53824e67fbb952a), [`98f4348`](https://github.com/enboxorg/enbox/commit/98f4348bfbfb7d5ddbc91787f4187958998ba011), [`1e316ee`](https://github.com/enboxorg/enbox/commit/1e316eeca6a29453364cbc931c9407b36a1282f9), [`cb7b51c`](https://github.com/enboxorg/enbox/commit/cb7b51c1ad3576fc8851e4ec41e55e46e5cb187f), [`acd3d4e`](https://github.com/enboxorg/enbox/commit/acd3d4eb54e32cee199759c06db0cbe699780d41), [`5ac59ff`](https://github.com/enboxorg/enbox/commit/5ac59fff9e1e2804def54b6b63cf49b75199b57c)]:
+  - @enbox/dwn-clients@0.4.15
+  - @enbox/common@0.1.3
+  - @enbox/dids@0.1.4
+  - @enbox/dwn-sdk-js@0.4.9
+  - @enbox/crypto@0.1.4
+
 ## 0.8.14
 
 ### Patch Changes
