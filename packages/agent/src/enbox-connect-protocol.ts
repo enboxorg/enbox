@@ -98,12 +98,9 @@ import { mapConcurrent, mapConcurrentSettled } from './utils.js';
 // ---------------------------------------------------------------------------
 
 /**
- * Maximum number of in-flight DWN-endpoint sends issued by the connect flow
- * (permission grants + revocation grants). Caps total concurrency across all
- * `(grant, endpoint)` pairs so that a request with many permissions and/or a
- * tenant with many DWN endpoints cannot stampede the network. Tuned to be
- * generous enough to hide endpoint latency while staying well under typical
- * per-host browser connection limits and server-side rate limits.
+ * Maximum fan-out concurrency used by the connect flow. Permission grants use
+ * this as the endpoint concurrency while sending sequentially within each
+ * endpoint; the other fan-outs use it as their total request concurrency.
  */
 const CONNECT_FANOUT_CONCURRENCY = 8;
 
@@ -117,10 +114,19 @@ const CONNECT_FANOUT_CONCURRENCY = 8;
  * the user-visible "Authorizing…" wait bounded even when one of N DWN
  * endpoints is misbehaving.
  *
- * Sync delivers any missed copies eventually, so aborting fast is safe:
- * the connect-flow fan-outs are best-effort and tolerate per-task failure.
+ * Best-effort fan-outs tolerate per-task failure because sync delivers missed
+ * copies eventually. Required permission-grant delivery combines this with a
+ * separate whole-batch deadline and verifies every grant was accepted.
  */
 const CONNECT_REQUEST_TIMEOUT_MS = 10_000;
+
+/**
+ * Whole-batch budget for required permission-grant delivery. Permission
+ * grants are sent sequentially per endpoint because a DWN serializes writes
+ * for the same tenant. This bound prevents a consistently slow endpoint from
+ * extending approval time once individual requests have started succeeding.
+ */
+const CONNECT_PERMISSION_GRANT_BATCH_TIMEOUT_MS = 20_000;
 
 /** Log namespace used for wallet-side connect critical-path timings. */
 const CONNECT_PERF_LOG_PREFIX = '[connect.perf]';
@@ -1059,56 +1065,129 @@ async function createPermissionGrants(
   const dwnEndpointUrls = await agent.dwn.getDwnEndpointUrlsForTarget(selectedDid);
   logger.log(`Sending ${permissionGrants.length} permission grants to ${dwnEndpointUrls.length} DWN endpoint(s)...`);
 
-  // Flatten (grant, endpoint) tuples into a single list of sends so that one
-  // global concurrency cap governs total in-flight requests during the
-  // connect flow — important when either dimension grows large.
-  const sendTasks = permissionGrants.flatMap((grant, grantIndex) => {
-    const { encodedData, ...rawMessage } = grant.message;
-    const data = Convert.base64Url(encodedData).toUint8Array();
-    return dwnEndpointUrls.map((dwnUrl) => ({ grantIndex, dwnUrl, rawMessage, data }));
-  });
-
-  const settled = await mapConcurrentSettled(
-    sendTasks,
+  const batchSignal = AbortSignal.timeout(CONNECT_PERMISSION_GRANT_BATCH_TIMEOUT_MS);
+  const outcomesByEndpoint = await mapConcurrent(
+    dwnEndpointUrls,
     CONNECT_FANOUT_CONCURRENCY,
-    async ({ grantIndex, dwnUrl, rawMessage, data }) => {
-      const reply = await agent.rpc.sendDwnRequest({
-        dwnUrl,
-        targetDid : selectedDid,
-        message   : rawMessage,
-        data      : new Blob([data as BlobPart]),
-        signal    : AbortSignal.timeout(CONNECT_REQUEST_TIMEOUT_MS),
-      });
-      return { grantIndex, dwnUrl, reply };
+    async (dwnUrl) => {
+      const outcomes: PermissionGrantSendOutcome[] = [];
+
+      // SQL-backed DWNs serialize same-tenant writes to assign replication
+      // positions. Keep one active write per endpoint so requests do not
+      // consume their timeout while queued behind sibling grants.
+      for (let grantIndex = 0; grantIndex < permissionGrants.length; grantIndex++) {
+        if (batchSignal.aborted) {
+          appendSkippedGrantOutcomes(outcomes, grantIndex, permissionGrants.length, dwnUrl, 'the grant batch timed out');
+          break;
+        }
+
+        const { encodedData, ...rawMessage } = permissionGrants[grantIndex].message;
+        const data = Convert.base64Url(encodedData).toUint8Array();
+        const requestSignal = AbortSignal.timeout(CONNECT_REQUEST_TIMEOUT_MS);
+        try {
+          const reply = await agent.rpc.sendDwnRequest({
+            dwnUrl,
+            targetDid : selectedDid,
+            message   : rawMessage,
+            data      : new Blob([data as BlobPart]),
+            signal    : AbortSignal.any([batchSignal, requestSignal]),
+          });
+          const accepted = reply.status.code === 202 || reply.status.code === 409;
+          outcomes.push({
+            accepted,
+            detail: `returned ${reply.status.code}: ${reply.status.detail}`,
+            dwnUrl,
+            grantIndex,
+          });
+        } catch (reason) {
+          const detail = batchSignal.aborted
+            ? `permission grant batch timed out after ${CONNECT_PERMISSION_GRANT_BATCH_TIMEOUT_MS}ms`
+            : requestSignal.aborted
+              ? `permission grant request timed out after ${CONNECT_REQUEST_TIMEOUT_MS}ms`
+              : errorDetail(reason);
+          outcomes.push({
+            accepted : false,
+            detail   : `failed: ${detail}`,
+            dwnUrl,
+            grantIndex,
+          });
+        }
+      }
+
+      return outcomes;
     },
   );
+  const outcomes = outcomesByEndpoint.flat();
 
   // Aggregate results back per grant: each grant must have at least one
   // endpoint accept it (status 202 or 409 — already-stored is acceptable).
   const successPerGrant = new Array<boolean>(permissionGrants.length).fill(false);
-  for (let i = 0; i < settled.length; i++) {
-    const result = settled[i];
-    if (result.status === 'rejected') {
-      const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
-      logger.error(`Grant send to ${sendTasks[i].dwnUrl} failed: ${reason}`);
+  for (const outcome of outcomes) {
+    if (outcome.accepted) {
+      successPerGrant[outcome.grantIndex] = true;
       continue;
     }
-    const { grantIndex, dwnUrl, reply } = result.value;
-    if (reply.status.code === 202 || reply.status.code === 409) {
-      successPerGrant[grantIndex] = true;
-    } else {
-      logger.error(`Grant send to ${dwnUrl} returned ${reply.status.code}: ${reply.status.detail}`);
-    }
+    logger.error(`Grant send to ${outcome.dwnUrl} ${outcome.detail}`);
   }
 
   for (let g = 0; g < permissionGrants.length; g++) {
     if (!successPerGrant[g]) {
-      logger.error(`Error during batch-send of permission grants: grant ${g} reached no DWN endpoint.`);
-      throw new Error('Could not send permission grant to any DWN endpoint.');
+      const scope = describePermissionScope(scopes[g]);
+      const failures = outcomes
+        .filter((outcome) => outcome.grantIndex === g && !outcome.accepted)
+        .map((outcome) => `${outcome.dwnUrl} ${outcome.detail}`);
+      const displayedFailures = failures.slice(0, 3).join('; ');
+      const remainingFailureCount = failures.length - 3;
+      const failureSummary = failures.length === 0
+        ? 'no DWN endpoints were resolved'
+        : remainingFailureCount > 0
+          ? `${displayedFailures}; ${remainingFailureCount} more endpoint(s) failed`
+          : displayedFailures;
+      throw new Error(
+        `Could not send permission grant to any DWN endpoint: grant ${g + 1} (${scope}); ${failureSummary}`,
+      );
     }
   }
 
   return permissionGrants.map((g) => g.message);
+}
+
+type PermissionGrantSendOutcome = {
+  accepted : boolean;
+  detail : string;
+  dwnUrl : string;
+  grantIndex : number;
+};
+
+function appendSkippedGrantOutcomes(
+  outcomes: PermissionGrantSendOutcome[],
+  startIndex: number,
+  grantCount: number,
+  dwnUrl: string,
+  reason: string,
+): void {
+  for (let grantIndex = startIndex; grantIndex < grantCount; grantIndex++) {
+    outcomes.push({
+      accepted : false,
+      detail   : `was not attempted because ${reason}`,
+      dwnUrl,
+      grantIndex,
+    });
+  }
+}
+
+function describePermissionScope(scope: DwnPermissionScope): string {
+  const protocol = 'protocol' in scope ? scope.protocol : undefined;
+  const protocolPath = 'protocolPath' in scope ? scope.protocolPath : undefined;
+  return [
+    `${scope.interface}.${scope.method}`,
+    typeof protocol === 'string' ? `protocol ${protocol}` : undefined,
+    typeof protocolPath === 'string' ? `path ${protocolPath}` : undefined,
+  ].filter((part): part is string => part !== undefined).join(', ');
+}
+
+function errorDetail(reason: unknown): string {
+  return reason instanceof Error ? `${reason.name}: ${reason.message}` : String(reason);
 }
 
 async function fanOutDataEncodedRecords(
@@ -1355,49 +1434,58 @@ async function submitConnectResponse(
       transport      : 'relay',
     });
 
-    const durableGrantKeyRecords: DwnDataEncodedRecordsWriteMessage[] = [];
-
-    const delegateGrants = await timed(
+    const grantSetup = await timed(
       `${CONNECT_PERF_LOG_PREFIX} permissionGrants.fanout (protocols=${numProtocols})`,
       async () => {
-        const delegateGrantPromises = connectRequest.permissionRequests.map(
-          async (permissionRequest) => {
-            const { protocolDefinition, permissionScopes } = permissionRequest;
+        await Promise.all(connectRequest.permissionRequests.map(
+          ({ protocolDefinition }) => prepareProtocol(selectedDid, agent, protocolDefinition)
+        ));
 
-            await prepareProtocol(selectedDid, agent, protocolDefinition);
-
-            const hasEncryptedTypes = hasEncryptedProtocolTypes(protocolDefinition);
-            const hasEncryptedReadScopes = hasEncryptedTypes && permissionScopes.some(isConnectReadScope);
-
-            const grants = await EnboxConnectProtocol.createPermissionGrants(
-              selectedDid,
-              grantedDelegateDid,
-              agent,
-              permissionScopes,
-              { connectSession },
-            );
-
-            if (hasEncryptedReadScopes) {
-              const grantKeyRecords = await EnboxConnectProtocol.createGrantKeyRecordsForGrants({
-                agent,
-                ownerDid   : selectedDid,
-                granteeDid : grantedDelegateDid,
-                ...(delegateRootPrivateKey !== undefined
-                  ? { granteeRootPrivateKey: delegateRootPrivateKey }
-                  : { granteeRootPublicKey: preSuppliedDelegateRootPublicKey }),
-                grantMessages       : grants,
-                protocolDefinitions : [protocolDefinition],
-              });
-              durableGrantKeyRecords.push(...grantKeyRecords);
-            }
-
-            return grants;
-          }
+        const permissionScopes = connectRequest.permissionRequests.flatMap((request) => request.permissionScopes);
+        const createdGrants = await EnboxConnectProtocol.createPermissionGrants(
+          selectedDid,
+          grantedDelegateDid,
+          agent,
+          permissionScopes,
+          { connectSession },
         );
 
-        return (await Promise.all(delegateGrantPromises)).flat();
+        let grantOffset = 0;
+        const requestsWithGrants = connectRequest.permissionRequests.map((permissionRequest) => {
+          const nextGrantOffset = grantOffset + permissionRequest.permissionScopes.length;
+          const grants = createdGrants.slice(grantOffset, nextGrantOffset);
+          grantOffset = nextGrantOffset;
+          return { grants, permissionRequest };
+        });
+
+        const durableGrantKeyRecords = (await Promise.all(requestsWithGrants.map(
+          async ({ grants, permissionRequest }) => {
+            const { protocolDefinition, permissionScopes: requestScopes } = permissionRequest;
+            const hasEncryptedTypes = hasEncryptedProtocolTypes(protocolDefinition);
+            const hasEncryptedReadScopes = hasEncryptedTypes && requestScopes.some(isConnectReadScope);
+            if (!hasEncryptedReadScopes) {
+              return [];
+            }
+
+            return EnboxConnectProtocol.createGrantKeyRecordsForGrants({
+              agent,
+              ownerDid   : selectedDid,
+              granteeDid : grantedDelegateDid,
+              ...(delegateRootPrivateKey !== undefined
+                ? { granteeRootPrivateKey: delegateRootPrivateKey }
+                : { granteeRootPublicKey: preSuppliedDelegateRootPublicKey }),
+              grantMessages       : grants,
+              protocolDefinitions : [protocolDefinition],
+            });
+          }
+        ))).flat();
+
+        // Revocation grants are appended later; preserve the grant creator's
+        // returned array as the previous per-protocol flattening did.
+        return { delegateGrants: [...createdGrants], durableGrantKeyRecords };
       },
     );
+    const { delegateGrants, durableGrantKeyRecords } = grantSetup;
 
     await timed(
       `${CONNECT_PERF_LOG_PREFIX} grantKeys.fanout (n=${durableGrantKeyRecords.length})`,
