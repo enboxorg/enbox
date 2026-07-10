@@ -9,10 +9,9 @@ import type {
   WalletUriHandoff,
 } from '../src/types.js';
 
-import { ConnectClient } from '../src/client.js';
 import { ConnectProvider } from '../src/provider.js';
-import { Convert } from '@enbox/common';
 import { DidJwk } from '@enbox/dids';
+import { ConnectClient, randomToken } from '../src/client.js';
 import { CryptoUtils, X25519 } from '@enbox/crypto';
 import { describe, expect, it } from 'bun:test';
 
@@ -48,9 +47,9 @@ class LoopbackTransport implements ConnectTransport {
     this._walletHandler = walletHandler;
   }
 
-  public async requestProfile(): Promise<ConnectRequestProfile> {
+  public async requestProfile(state: string): Promise<ConnectRequestProfile> {
     const profile = await this._profileFactory();
-    return { ...profile, state: Convert.uint8Array(CryptoUtils.randomBytes(16)).toBase64Url() };
+    return { ...profile, state };
   }
 
   public async deliverRequest(jwe: string): Promise<void | WalletUriHandoff> {
@@ -179,6 +178,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
             delegateDid         : delegate.uri,
             delegatePortableDid : await delegate.export(),
             delegateGrants      : TEST_GRANTS,
+            sessionRevocations  : [],
           },
           signer: delegate,
         });
@@ -287,7 +287,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
       return await ConnectProvider.sealApprovedResponse({
         request     : { ...request, delegateDid: rogueDelegate.uri },
         providerDid : provider.uri,
-        approval    : { delegateDid: rogueDelegate.uri, delegateGrants: TEST_GRANTS },
+        approval    : { delegateDid: rogueDelegate.uri, delegateGrants: TEST_GRANTS, sessionRevocations: [] },
         signer      : rogueDelegate,
         pin,
       });
@@ -314,7 +314,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
       return await ConnectProvider.sealApprovedResponse({
         request     : { ...request, delegateDid: delegate.uri },
         providerDid : provider.uri,
-        approval    : { delegateDid: delegate.uri, delegateGrants: TEST_GRANTS },
+        approval    : { delegateDid: delegate.uri, delegateGrants: TEST_GRANTS, sessionRevocations: [] },
         signer      : delegate,
         pin,
       });
@@ -324,6 +324,17 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
 
     await expect(client.connect({ appName: 'Missing Portable App', permissionRequests: [] }))
       .rejects.toThrow('omitted `delegatePortableDid`');
+  });
+
+  describe('randomToken', () => {
+    it('should return distinct 16-byte base64url tokens', () => {
+      const first = randomToken();
+      const second = randomToken();
+
+      expect(first).toMatch(/^[A-Za-z0-9_-]{22}$/);
+      expect(second).toMatch(/^[A-Za-z0-9_-]{22}$/);
+      expect(first).not.toBe(second);
+    });
   });
 
   describe('ConnectProvider approval guards', () => {
@@ -349,7 +360,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
       await expect(ConnectProvider.sealApprovedResponse({
         request,
         providerDid : provider.uri,
-        approval    : { delegateDid: otherDelegate.uri, delegateGrants: [] },
+        approval    : { delegateDid: otherDelegate.uri, delegateGrants: [], sessionRevocations: [] },
         signer      : otherDelegate,
       })).rejects.toThrow('does not match the request-supplied');
 
@@ -360,6 +371,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
           delegateDid         : localDelegate.uri,
           delegatePortableDid : await localDelegate.export(),
           delegateGrants      : [],
+          sessionRevocations  : [],
         },
         signer: otherDelegate,
       })).rejects.toThrow('must not return delegate key material');
@@ -367,7 +379,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
       await expect(ConnectProvider.sealApprovedResponse({
         request     : { ...request, delegateDid: undefined },
         providerDid : provider.uri,
-        approval    : { delegateDid: otherDelegate.uri, delegateGrants: [] },
+        approval    : { delegateDid: otherDelegate.uri, delegateGrants: [], sessionRevocations: [] },
         signer      : otherDelegate,
       })).rejects.toThrow('must include `delegatePortableDid`');
     });

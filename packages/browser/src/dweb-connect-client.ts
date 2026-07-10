@@ -29,16 +29,14 @@ import type {
   ConnectTransport,
 } from '@enbox/connect';
 
-import { Convert } from '@enbox/common';
-import { CryptoUtils } from '@enbox/crypto';
-import { CONNECT_DENIED_TOKEN, ConnectClient } from '@enbox/connect';
+import { assertX25519PublicJwk, CONNECT_DENIED_TOKEN, ConnectClient } from '@enbox/connect';
 
 import {
   DWEB_CONNECT_LOADED_MESSAGE_TYPE,
   DWEB_CONNECT_PATH,
   DWEB_CONNECT_REQUEST_MESSAGE_TYPE,
   DWEB_CONNECT_RESPONSE_MESSAGE_TYPE,
-  parseX25519PublicJwk,
+  getTrustedMessage,
 } from './dweb-connect-messages.js';
 
 /** Default budget for the whole popup handshake (beacon + user consent + response). */
@@ -88,11 +86,13 @@ export type PopupClientTransportOptions = {
 /**
  * Popup/postMessage {@link ConnectTransport} for browser dapps.
  *
- * Single-use: construct a new transport per handshake. `requestProfile()`
- * opens the popup and awaits the wallet's `loaded` beacon; `deliverRequest()`
- * posts the sealed request ciphertext; `awaitResponse()` resolves with the
- * sealed response JWE, or the deny token when the user denies or closes the
- * popup after the handshake was established.
+ * Single-use: construct a new transport per handshake. The **constructor**
+ * opens the wallet popup synchronously — so `window.open` runs inside the user
+ * gesture, ahead of the kernel's awaited key generation, and survives strict
+ * popup blockers; `requestProfile()` then awaits the wallet's `loaded` beacon;
+ * `deliverRequest()` posts the sealed request ciphertext; `awaitResponse()`
+ * resolves with the sealed response JWE, or the deny token when the user denies
+ * or closes the popup after the handshake was established.
  *
  * Security properties:
  * - `targetOrigin` of every outbound `postMessage` is pinned to the origin
@@ -107,55 +107,43 @@ export class PopupClientTransport implements ConnectTransport {
   /** {@inheritDoc ConnectTransport.requiresPin} */
   public readonly requiresPin: boolean = false;
 
-  private readonly _walletUrl: string;
   private readonly _walletOrigin: string;
   private readonly _timeoutMs: number;
 
-  private _popup?: Window;
+  private readonly _popup: Window;
   private _settled = false;
   private _walletEpkReceived = false;
   private _timeoutId?: ReturnType<typeof setTimeout>;
   private _closedPollId?: ReturnType<typeof setInterval>;
   private _messageListener?: (event: MessageEvent) => void;
 
+  private readonly _walletEpkPromise: Promise<Jwk>;
   private _resolveWalletEpk?: (walletEpk: Jwk) => void;
   private _rejectWalletEpk?: (error: Error) => void;
 
-  private _responsePromise?: Promise<string>;
+  private readonly _responsePromise: Promise<string>;
   private _resolveResponse?: (payload: string) => void;
   private _rejectResponse?: (error: Error) => void;
 
   constructor(options: PopupClientTransportOptions) {
-    this._walletUrl = options.walletUrl;
-    this._walletOrigin = new URL(options.walletUrl).origin;
-    this._timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  }
-
-  /**
-   * Opens the wallet popup and awaits its `loaded` beacon, then returns the
-   * popup channel profile: ECDH-ES encryption to the beacon's ephemeral key
-   * with the pinned wallet origin as the `apv` binding, a `post_message`
-   * reply descriptor, and a fresh state correlator.
-   *
-   * @throws If not in a browser, if the popup is blocked, if the user closes
-   *         the popup before the beacon arrives ({@link PopupWindowClosedError}),
-   *         or on timeout.
-   */
-  public async requestProfile(): Promise<ConnectRequestProfile> {
     assertBrowserEnvironment();
 
-    if (this._popup !== undefined) {
-      throw new Error('[@enbox/browser] PopupClientTransport is single-use; construct a new transport per handshake.');
-    }
+    this._walletOrigin = new URL(options.walletUrl).origin;
+    this._timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
-    const popupUrl = new URL(DWEB_CONNECT_PATH, this._walletUrl).toString();
+    // Open the wallet popup SYNCHRONOUSLY, in the user-gesture call stack,
+    // before the kernel's awaited `DidJwk.create()` / `X25519.generateKey()`
+    // run. Strict popup blockers (Safari) reject a `window.open` issued once
+    // the stack has yielded to a prior `await`, so opening it here — instead of
+    // inside the awaited `requestProfile()` — is what keeps the flow usable.
+    const popupUrl = new URL(DWEB_CONNECT_PATH, options.walletUrl).toString();
     const popup = window.open(popupUrl, POPUP_WINDOW_NAME, POPUP_WINDOW_FEATURES);
     if (!popup) {
       throw new Error('[@enbox/browser] Popup blocked. Allow popups for this site to connect to a wallet.');
     }
     this._popup = popup;
 
-    const walletEpkPromise = new Promise<Jwk>((resolve, reject): void => {
+    this._walletEpkPromise = new Promise<Jwk>((resolve, reject): void => {
       this._resolveWalletEpk = resolve;
       this._rejectWalletEpk = reject;
     });
@@ -170,6 +158,9 @@ export class PopupClientTransport implements ConnectTransport {
     });
     this._responsePromise.catch((): undefined => undefined);
 
+    // Listen synchronously, before the wallet page can emit its `loaded`
+    // beacon, so the beacon is never missed while the kernel awaits key
+    // generation ahead of `requestProfile()`.
     this._messageListener = (event: MessageEvent): void => { this.onMessage(event); };
     window.addEventListener('message', this._messageListener);
 
@@ -178,9 +169,24 @@ export class PopupClientTransport implements ConnectTransport {
     }, this._timeoutMs);
 
     this._closedPollId = setInterval((): void => { this.onClosedPoll(); }, CLOSED_POLL_INTERVAL_MS);
+  }
 
-    const walletEpk = await walletEpkPromise;
-    const state = Convert.uint8Array(CryptoUtils.randomBytes(16)).toBase64Url();
+  /**
+   * Awaits the already-open popup's `loaded` beacon, then returns the popup
+   * channel profile: ECDH-ES encryption to the beacon's ephemeral key with the
+   * pinned wallet origin as the `apv` binding, a `post_message` reply
+   * descriptor, and the client-supplied `state` correlator.
+   *
+   * The popup was opened synchronously at construction, so this method only
+   * awaits the beacon — it never issues the blocker-sensitive `window.open`.
+   *
+   * @param state - The handshake correlator minted by the {@link ConnectClient}.
+   * @throws If the user closes the popup before the beacon arrives
+   *         ({@link PopupWindowClosedError}), the beacon is malformed, or on
+   *         timeout.
+   */
+  public async requestProfile(state: string): Promise<ConnectRequestProfile> {
+    const walletEpk = await this._walletEpkPromise;
 
     return {
       encryption : { mode: 'ecdh-es', walletEpk, walletOrigin: this._walletOrigin },
@@ -194,9 +200,6 @@ export class PopupClientTransport implements ConnectTransport {
    * `targetOrigin` pinned to the wallet origin.
    */
   public async deliverRequest(jwe: string): Promise<void> {
-    if (this._popup === undefined) {
-      throw new Error('[@enbox/browser] Call `requestProfile()` before `deliverRequest()`.');
-    }
     this._popup.postMessage({ type: DWEB_CONNECT_REQUEST_MESSAGE_TYPE, jwe }, this._walletOrigin);
   }
 
@@ -206,22 +209,12 @@ export class PopupClientTransport implements ConnectTransport {
    * Rejects on timeout.
    */
   public async awaitResponse(): Promise<string> {
-    if (this._responsePromise === undefined) {
-      throw new Error('[@enbox/browser] Call `requestProfile()` before `awaitResponse()`.');
-    }
     return await this._responsePromise;
   }
 
   private onMessage(event: MessageEvent): void {
-    // Origin pinning: only messages from the configured wallet origin count.
-    if (event.origin !== this._walletOrigin) { return; }
-
-    // Source pinning: the message must come from the popup this transport opened.
-    if (event.source !== this._popup) { return; }
-
-    const data: unknown = event.data;
-    if (typeof data !== 'object' || data === null) { return; }
-    const message = data as Record<string, unknown>;
+    const message = getTrustedMessage(event, this._walletOrigin, this._popup);
+    if (message === undefined) { return; }
 
     if (message.type === DWEB_CONNECT_LOADED_MESSAGE_TYPE) {
       this.onLoadedBeacon(message);
@@ -237,12 +230,17 @@ export class PopupClientTransport implements ConnectTransport {
     if (this._settled || this._walletEpkReceived) { return; }
 
     // The beacon passed the origin and source checks, so a malformed payload
-    // is a protocol violation by the genuine popup — fail closed.
-    const walletEpk = parseX25519PublicJwk(message.walletEpk);
-    if (walletEpk === undefined) {
+    // is a protocol violation by the genuine popup — fail closed. The X25519
+    // public-JWK shape check is delegated to the connect kernel.
+    let walletEpk: Jwk;
+    try {
+      assertX25519PublicJwk(message.walletEpk);
+      walletEpk = message.walletEpk;
+    } catch {
       this.fail(new Error('[@enbox/browser] Wallet loaded beacon did not carry a valid X25519 public key.'));
       return;
     }
+
     if (message.walletOrigin !== this._walletOrigin) {
       this.fail(new Error('[@enbox/browser] Wallet loaded beacon origin does not match the configured wallet origin.'));
       return;
@@ -269,7 +267,7 @@ export class PopupClientTransport implements ConnectTransport {
   }
 
   private onClosedPoll(): void {
-    if (this._settled || this._popup?.closed !== true) { return; }
+    if (this._settled || this._popup.closed !== true) { return; }
 
     if (!this._walletEpkReceived) {
       // Closed before the wallet ever loaded — the handshake cannot proceed.
@@ -287,7 +285,7 @@ export class PopupClientTransport implements ConnectTransport {
     if (this._settled) { return; }
     this._settled = true;
     this.cleanup();
-    try { this._popup?.close(); } catch { /* best effort */ }
+    try { this._popup.close(); } catch { /* best effort */ }
     this._rejectWalletEpk?.(error);
     this._rejectResponse?.(error);
   }
@@ -357,8 +355,6 @@ function collectBrowserClientMetadata(): ConnectClientMetadata {
  *         returns an invalid response.
  */
 export async function connectViaPopup(options: PopupConnectOptions): Promise<ConnectResult | undefined> {
-  assertBrowserEnvironment();
-
   const transport = new PopupClientTransport({
     walletUrl : options.walletUrl,
     timeoutMs : options.timeout,

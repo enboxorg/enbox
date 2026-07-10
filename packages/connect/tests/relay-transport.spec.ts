@@ -10,6 +10,7 @@ import { fetchRelayRequest, postRelayResponse, RelayClientTransport } from '../s
 const CONNECT_SERVER_URL = 'https://relay.example/connect';
 const WALLET_URI = 'https://wallet.example/connect/app';
 const REQUEST_URI = 'https://relay.example/connect/authorize/8b2f.jwt';
+const STATE = 'client-state-correlator';
 
 /** Creates a transport with a no-delay sleep so polling tests run instantly. */
 function createTransport(overrides: Partial<RelayClientTransportOptions> = {}): RelayClientTransport {
@@ -34,12 +35,12 @@ describe('RelayClientTransport', () => {
     ));
 
     const transport = createTransport({});
-    const profile = await transport.requestProfile();
+    const profile = await transport.requestProfile(STATE);
 
     expect(transport.requiresPin).toBe(true);
     expect(profile.reply).toEqual({ mode: 'direct_post', callbackUrl: `${CONNECT_SERVER_URL}/callback` });
     expect(profile.encryption.mode).toBe('dir');
-    expect(profile.state.length).toBeGreaterThan(0);
+    expect(profile.state).toBe(STATE);
 
     const handoff = await transport.deliverRequest('SEALED_REQUEST_JWE');
 
@@ -69,7 +70,7 @@ describe('RelayClientTransport', () => {
     const transport = createTransport({
       sleep: async (ms: number): Promise<void> => { sleeps.push(ms); },
     });
-    const profile = await transport.requestProfile();
+    await transport.requestProfile(STATE);
 
     const response = await transport.awaitResponse();
 
@@ -77,7 +78,7 @@ describe('RelayClientTransport', () => {
     expect(sleeps).toEqual([3000, 3000]);
     expect(fetchStub.callCount).toBe(3);
     const [tokenUrl] = fetchStub.firstCall.args;
-    expect(tokenUrl).toBe(`${CONNECT_SERVER_URL}/token/${profile.state}.jwt`);
+    expect(tokenUrl).toBe(`${CONNECT_SERVER_URL}/token/${STATE}.jwt`);
   });
 
   it('should surface the DENIED token verbatim', async () => {
@@ -85,7 +86,7 @@ describe('RelayClientTransport', () => {
     fetchStub.resolves(new Response('DENIED', { status: 200 }));
 
     const transport = createTransport({});
-    await transport.requestProfile();
+    await transport.requestProfile(STATE);
 
     await expect(transport.awaitResponse()).resolves.toBe('DENIED');
   });
@@ -99,7 +100,7 @@ describe('RelayClientTransport', () => {
       now   : (): number => clock,
       sleep : async (ms: number): Promise<void> => { clock += ms; },
     });
-    await transport.requestProfile();
+    await transport.requestProfile(STATE);
 
     await expect(transport.awaitResponse()).rejects.toThrow('timed out after 300000ms');
     expect(fetchStub.callCount).toBe(100); // 300 s budget / 3 s poll interval
@@ -124,7 +125,7 @@ describe('RelayClientTransport', () => {
     fetchStub.resolves(new Response('Server Error', { status: 500 }));
 
     const transport = createTransport({});
-    await transport.requestProfile();
+    await transport.requestProfile(STATE);
 
     await expect(transport.deliverRequest('SEALED_REQUEST_JWE')).rejects.toThrow('HTTP 500');
   });
@@ -134,7 +135,7 @@ describe('RelayClientTransport', () => {
     fetchStub.resolves(new Response(JSON.stringify({}), { status: 201 }));
 
     const transport = createTransport({});
-    await transport.requestProfile();
+    await transport.requestProfile(STATE);
 
     await expect(transport.deliverRequest('SEALED_REQUEST_JWE'))
       .rejects.toThrow('missing `request_uri` or `expires_in`');

@@ -19,11 +19,12 @@
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PrivateKeyJwk } from '@enbox/crypto';
 import type { BearerDid, PortableDid } from '@enbox/dids';
-import type { ConnectApproval, ConnectClientMetadata, ConnectPermissionRequest, SessionRevocation } from '@enbox/connect';
+import type { ConnectApproval, ConnectClientMetadata, ConnectPermissionRequest, ConnectRequest, SessionRevocation } from '@enbox/connect';
 import type { ConnectSessionMetadata, ConnectSessionTransport, DwnDataEncodedRecordsWriteMessage, DwnPermissionScope, DwnProtocolDefinition, DwnRecordsPermissionScope } from './types/dwn.js';
 
+import { Ed25519 } from '@enbox/crypto';
+import { randomToken } from '@enbox/connect';
 import { Convert, logger, nowMs, timed } from '@enbox/common';
-import { CryptoUtils, Ed25519 } from '@enbox/crypto';
 import { Did, DidJwk } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
 
@@ -110,48 +111,18 @@ export type CreateConnectSessionMetadataOptions = {
   appIcon?: string;
   clientMetadata?: ConnectClientMetadata;
   transport?: ConnectSessionTransport;
-  createdAt?: string;
-  expiresAt?: string;
   ttlSeconds?: number;
-};
-
-/** Options for {@link createPermissionGrants}. */
-export type ConnectPermissionGrantOptions = {
-  /** Grant expiration timestamp. Defaults to the connect session expiration. */
-  dateExpires?: string;
-  /** Session metadata attached to every grant created by the approval. */
-  connectSession?: ConnectSessionMetadata;
 };
 
 /**
  * The approved connect request fields consumed by the ceremony. A kernel
- * `ConnectRequest` (as returned by `ConnectProvider.openRequest`) is
+ * {@link ConnectRequest} (as returned by `ConnectProvider.openRequest`) is
  * assignable to this shape.
  */
-export type ConnectApprovalRequest = {
-  /** Human-readable name of the requesting application. */
-  appName: string;
-
-  /** Optional icon URL for the requesting application. */
-  appIcon?: string;
-
-  /** Optional client/environment metadata for wallet session display. */
-  clientMetadata?: ConnectClientMetadata;
-
-  /** DWN protocols and permission scopes being requested. */
-  permissionRequests: ConnectPermissionRequest[];
-
-  /** Preferred session TTL in seconds; clamped to {@link CONNECT_SESSION_MAX_TTL_SECONDS}. */
-  requestedSessionTtlSeconds?: number;
-
-  /**
-   * Optional delegate DID supplied by the requester.
-   *
-   * When present, the wallet grants permissions to this DID instead of
-   * minting a new delegate DID and returning its private key material.
-   */
-  delegateDid?: string;
-};
+export type ConnectApprovalRequest = Pick<
+  ConnectRequest,
+  'appName' | 'appIcon' | 'clientMetadata' | 'permissionRequests' | 'requestedSessionTtlSeconds' | 'delegateDid'
+>;
 
 /** Parameters for {@link executeConnectApproval}. */
 export type ExecuteConnectApprovalParams = {
@@ -164,11 +135,8 @@ export type ExecuteConnectApprovalParams = {
   /** The approved connect request. */
   request: ConnectApprovalRequest;
 
-  /**
-   * Transport recorded in the grant session metadata.
-   * @default 'relay'
-   */
-  transport?: ConnectSessionTransport;
+  /** Transport recorded in the grant session metadata. */
+  transport: ConnectSessionTransport;
 };
 
 /**
@@ -188,10 +156,6 @@ export type ConnectApprovalResult = ConnectApproval & {
 // ---------------------------------------------------------------------------
 // Session metadata
 // ---------------------------------------------------------------------------
-
-function randomSessionId(): string {
-  return Convert.uint8Array(CryptoUtils.randomBytes(16)).toBase64Url();
-}
 
 function boundedSessionString(value: string | undefined, maxLength: number): string | undefined {
   if (typeof value !== 'string' || value.length === 0) {
@@ -221,8 +185,8 @@ function boundedSessionStringArray(values: string[] | undefined): string[] | und
 export function createConnectSessionMetadata(
   options: CreateConnectSessionMetadataOptions = {},
 ): ConnectSessionMetadata {
-  const createdAt = options.createdAt ?? Time.getCurrentTimestamp();
-  const expiresAt = options.expiresAt ?? Time.createOffsetTimestamp({
+  const createdAt = Time.getCurrentTimestamp();
+  const expiresAt = Time.createOffsetTimestamp({
     seconds: options.ttlSeconds ?? CONNECT_SESSION_DEFAULT_TTL_SECONDS,
   }, createdAt);
   const clientMetadata = options.clientMetadata ?? {};
@@ -236,7 +200,7 @@ export function createConnectSessionMetadata(
   const timezone = boundedSessionString(clientMetadata.timezone, CONNECT_SESSION_METADATA_LIMITS.timezone);
 
   return {
-    id: boundedSessionString(options.id, CONNECT_SESSION_METADATA_LIMITS.id) ?? randomSessionId(),
+    id: boundedSessionString(options.id, CONNECT_SESSION_METADATA_LIMITS.id) ?? randomToken(),
     createdAt,
     expiresAt,
     ...(appName ? { appName } : {}),
@@ -294,10 +258,6 @@ function assertConnectGrantScope(scope: DwnPermissionScope): void {
   }
 }
 
-function shouldUseDelegatePermission(scope: DwnPermissionScope): boolean {
-  return isRecordPermissionScope(scope);
-}
-
 function isConnectReadScope(scope: DwnPermissionScope): scope is DwnRecordsPermissionScope {
   return isRecordPermissionScope(scope) && scope.method === DwnMethodName.Read;
 }
@@ -328,10 +288,6 @@ function resolvePreSuppliedDelegateDid(delegateDid: string | undefined): string 
     return undefined;
   }
 
-  if (delegateDid.trim() === '' || delegateDid.trim() !== delegateDid) {
-    throw new Error('Connect delegateDid must be a non-empty DID URI.');
-  }
-
   const parsedDelegateDid = Did.parse(delegateDid);
   if (parsedDelegateDid === null || parsedDelegateDid.uri !== delegateDid) {
     throw new Error('Connect delegateDid must be a valid DID URI.');
@@ -340,20 +296,45 @@ function resolvePreSuppliedDelegateDid(delegateDid: string | undefined): string 
   return delegateDid;
 }
 
-function resolveConnectPermissionGrantOptions(
-  options?: ConnectPermissionGrantOptions,
-): { dateExpires: string; connectSession: ConnectSessionMetadata } {
-  if (options?.dateExpires && options.connectSession?.expiresAt && options.dateExpires !== options.connectSession.expiresAt) {
-    throw new Error('Connect grant dateExpires must match connectSession.expiresAt.');
+// ---------------------------------------------------------------------------
+// Delegate DID key material
+// ---------------------------------------------------------------------------
+
+/**
+ * Ensures a delegate `did:jwk` PortableDid carries the X25519 private key that
+ * DWN record-level encryption needs for key agreement, deriving it from the
+ * DID's Ed25519 private key when absent.
+ *
+ * `did:jwk` exposes a single verification method, so the derived X25519 key is
+ * appended to `privateKeys` (existing keys and their order are preserved) and
+ * returned alongside the augmented PortableDid. The wallet mint path uses the
+ * returned key as the grantee root private key for grantKey wrapping; auth's
+ * pre-supplied delegate path only needs the augmented PortableDid.
+ *
+ * @throws Error when the PortableDid has no private keys, or none is Ed25519.
+ */
+export async function ensureDelegateX25519PrivateKey(
+  portableDid: PortableDid,
+): Promise<{ portableDid: PortableDid; x25519PrivateKey: PrivateKeyJwk }> {
+  const privateKeys = [...(portableDid.privateKeys ?? [])];
+  if (privateKeys.length === 0) {
+    throw new Error('Delegate portable DID must include private keys.');
   }
 
-  const connectSession = options?.connectSession ?? createConnectSessionMetadata({
-    expiresAt: options?.dateExpires,
-  });
-  return {
-    dateExpires: options?.dateExpires ?? connectSession.expiresAt,
-    connectSession,
-  };
+  const edPrivateKey = privateKeys.find((key) => key.crv === 'Ed25519');
+  if (edPrivateKey === undefined) {
+    throw new Error('Delegate portable DID must include an Ed25519 private key.');
+  }
+
+  let x25519PrivateKey = privateKeys.find((key) => key.crv === 'X25519') as PrivateKeyJwk | undefined;
+  if (x25519PrivateKey === undefined) {
+    x25519PrivateKey = await Ed25519.convertPrivateKeyToX25519({
+      privateKey: edPrivateKey as PrivateKeyJwk,
+    }) as PrivateKeyJwk;
+    privateKeys.push(x25519PrivateKey);
+  }
+
+  return { portableDid: { ...portableDid, privateKeys }, x25519PrivateKey };
 }
 
 // ---------------------------------------------------------------------------
@@ -371,10 +352,11 @@ export async function createPermissionGrants(
   delegateDid: string,
   agent: EnboxPlatformAgent,
   scopes: DwnPermissionScope[],
-  options?: ConnectPermissionGrantOptions,
+  connectSession?: ConnectSessionMetadata,
 ): Promise<DwnDataEncodedRecordsWriteMessage[]> {
   const permissionsApi = new AgentPermissionsApi({ agent });
-  const { dateExpires, connectSession } = resolveConnectPermissionGrantOptions(options);
+  const session = connectSession ?? createConnectSessionMetadata();
+  const dateExpires = session.expiresAt;
 
   logger.log(`Creating permission grants for ${scopes.length} scopes...`);
   for (const scope of scopes) {
@@ -382,19 +364,15 @@ export async function createPermissionGrants(
   }
 
   const permissionGrants = await Promise.all(
-    scopes.map((scope) => {
-      const delegated = shouldUseDelegatePermission(scope);
-
-      return permissionsApi.createGrant({
-        delegated,
-        store     : true,
-        grantedTo : delegateDid,
-        scope,
-        dateExpires,
-        author    : selectedDid,
-        connectSession,
-      });
-    })
+    scopes.map((scope) => permissionsApi.createGrant({
+      delegated      : isRecordPermissionScope(scope),
+      store          : true,
+      grantedTo      : delegateDid,
+      scope,
+      dateExpires,
+      author         : selectedDid,
+      connectSession : session,
+    }))
   );
 
   // Resolve all DWN endpoints for the selected DID.  `sendDwnRequest` only
@@ -497,6 +475,13 @@ type PermissionGrantSendOutcome = {
   detail : string;
   dwnUrl : string;
   grantIndex : number;
+};
+
+/** A single revocation-grant delivery to one owner DWN endpoint. */
+type RevocationSendTask = {
+  revRawMessage : Omit<DwnDataEncodedRecordsWriteMessage, 'encodedData'>;
+  revData : Uint8Array;
+  dwnUrl : string;
 };
 
 function appendSkippedGrantOutcomes(
@@ -752,19 +737,15 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
       responseSigner = await timed(`${CONNECT_PERF_LOG_PREFIX} responseDid.create`, () => DidJwk.create());
     } else {
       const delegateBearerDid = await timed(`${CONNECT_PERF_LOG_PREFIX} delegateDid.create`, () => DidJwk.create());
-      delegatePortableDid = await delegateBearerDid.export();
 
-      // Add X25519 key derived from the delegate's Ed25519 key.
       // did:jwk only supports one verification method, but DWN encryption
-      // requires X25519 for key agreement. Including the derived X25519
-      // private key in the PortableDid ensures the delegate agent's KMS
-      // has both keys after import. The Ed25519→X25519 conversion is a
-      // standard cryptographic operation (RFC 8032 / libsodium).
-      const delegateEdPrivateKey = delegatePortableDid.privateKeys![0];
-      delegateRootPrivateKey = await Ed25519.convertPrivateKeyToX25519({
-        privateKey: delegateEdPrivateKey,
-      }) as PrivateKeyJwk;
-      delegatePortableDid.privateKeys!.push(delegateRootPrivateKey);
+      // requires an X25519 key-agreement key. Appending the derived X25519
+      // private key to the PortableDid ensures the delegate agent's KMS has
+      // both keys after import; the derived key is also used to wrap grantKeys
+      // for encrypted read scopes.
+      const ensured = await ensureDelegateX25519PrivateKey(await delegateBearerDid.export());
+      delegatePortableDid = ensured.portableDid;
+      delegateRootPrivateKey = ensured.x25519PrivateKey;
       responseSigner = delegateBearerDid;
       grantedDelegateDid = delegateBearerDid.uri;
     }
@@ -784,7 +765,7 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
       appIcon        : request.appIcon,
       ttlSeconds     : sessionTtlSeconds,
       clientMetadata : request.clientMetadata,
-      transport      : params.transport ?? 'relay',
+      transport      : params.transport,
     });
 
     const grantSetup = await timed(
@@ -800,7 +781,7 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
           grantedDelegateDid,
           agent,
           permissionScopes,
-          { connectSession },
+          connectSession,
         );
 
         let grantOffset = 0;
@@ -813,10 +794,7 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
 
         const durableGrantKeyRecords = (await Promise.all(requestsWithGrants.map(
           async ({ grants, permissionRequest }) => {
-            const { protocolDefinition, permissionScopes: requestScopes } = permissionRequest;
-            const hasEncryptedTypes = hasEncryptedProtocolTypes(protocolDefinition);
-            const hasEncryptedReadScopes = hasEncryptedTypes && requestScopes.some(isConnectReadScope);
-            if (!hasEncryptedReadScopes) {
+            if (!permissionRequestHasEncryptedReadScopes(permissionRequest)) {
               return [];
             }
 
@@ -828,17 +806,15 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
                 ? { granteeRootPrivateKey: delegateRootPrivateKey }
                 : { granteeRootPublicKey: preSuppliedDelegateRootPublicKey }),
               grantMessages       : grants,
-              protocolDefinitions : [protocolDefinition],
+              protocolDefinitions : [permissionRequest.protocolDefinition],
             });
           }
         ))).flat();
 
-        // Revocation grants are appended later; preserve the grant creator's
-        // returned array as the previous per-protocol flattening did.
-        return { delegateGrants: [...createdGrants], durableGrantKeyRecords };
+        return { createdGrants, durableGrantKeyRecords };
       },
     );
-    const { delegateGrants, durableGrantKeyRecords } = grantSetup;
+    const { createdGrants, durableGrantKeyRecords } = grantSetup;
 
     await timed(
       `${CONNECT_PERF_LOG_PREFIX} grantKeys.fanout (n=${durableGrantKeyRecords.length})`,
@@ -849,7 +825,6 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
     // Each revocation grant authorizes the delegate to write a revocation
     // ONLY for the specific session grant it corresponds to.
     const permissionsApi = new AgentPermissionsApi({ agent });
-    const sessionRevocations: SessionRevocation[] = [];
     let revGrantEndpoints: string[] = [];
     try {
       revGrantEndpoints = await agent.dwn.getDwnEndpointUrlsForTarget(providerDid);
@@ -857,21 +832,19 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
       // Endpoint resolution failure — revocation grants will be local-only until sync.
     }
 
-    // Snapshot the current length — revocation grants are appended to delegateGrants
-    // below, but we must NOT iterate over them (they are meta-grants, not session grants).
-    sessionGrantCount = delegateGrants.length;
+    sessionGrantCount = createdGrants.length;
 
     // Create all revocation grants locally with bounded concurrency.
     // createGrant is local-only (storage + signing) so it's cheap, but we still
-    // cap parallelism to avoid head-of-line blocking when sessionGrantCount is
-    // large (e.g. dapp requesting many scopes at once).
+    // cap parallelism to avoid head-of-line blocking when the session grant
+    // count is large (e.g. dapp requesting many scopes at once).
     // Revocation grants share the same hard expiry but do not duplicate
     // connectSession display metadata; session grouping should use the
     // user-facing permission grants.
     const revGrantResults = await timed(
       `${CONNECT_PERF_LOG_PREFIX} revocationGrants.create (n=${sessionGrantCount})`,
       () => mapConcurrent(
-        delegateGrants.slice(0, sessionGrantCount),
+        createdGrants,
         CONNECT_FANOUT_CONCURRENCY,
         (grantMessage) =>
           permissionsApi.createGrant({
@@ -890,11 +863,11 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
       ),
     );
 
-    // Fan out every revocation grant to every owner DWN endpoint with a single
-    // global concurrency cap so that (grants × endpoints) cannot blow up. This
-    // is best-effort (sync delivers eventually) so individual failures are
-    // tolerated by `mapConcurrentSettled`.
-    const revSendTasks = revGrantResults.flatMap(({ grantMessage, revGrant }) => {
+    // Build the revocation mappings and the per-endpoint send tasks in one
+    // pass. Each revocation grant fans out to every owner DWN endpoint.
+    const sessionRevocations: SessionRevocation[] = [];
+    const revSendTasks: RevocationSendTask[] = [];
+    for (const { grantMessage, revGrant } of revGrantResults) {
       sessionRevocations.push({
         grantId           : grantMessage.recordId,
         revocationGrantId : revGrant.message.recordId,
@@ -902,13 +875,15 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
 
       const { encodedData: revEncoded, ...revRawMessage } = revGrant.message;
       const revData = Uint8Array.from(Convert.base64Url(revEncoded).toUint8Array());
+      for (const dwnUrl of revGrantEndpoints) {
+        revSendTasks.push({ revRawMessage, revData, dwnUrl });
+      }
+    }
 
-      // Include the revocation grant in the delegate grants for distribution.
-      delegateGrants.push(revGrant.message);
-
-      return revGrantEndpoints.map((dwnUrl) => ({ revRawMessage, revData, dwnUrl }));
-    });
-
+    // Fan out every revocation grant to every owner DWN endpoint with a single
+    // global concurrency cap so that (grants × endpoints) cannot blow up. This
+    // is best-effort (sync delivers eventually) so individual failures are
+    // tolerated by `mapConcurrentSettled`.
     if (revSendTasks.length > 0) {
       await timed(
         `${CONNECT_PERF_LOG_PREFIX} revocationGrants.fanout (sends=${revSendTasks.length}, endpoints=${revGrantEndpoints.length})`,
@@ -920,7 +895,7 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
               dwnUrl,
               targetDid : providerDid,
               message   : revRawMessage,
-              data      : new Blob([revData]),
+              data      : new Blob([revData as BlobPart]),
               signal    : AbortSignal.timeout(CONNECT_REQUEST_TIMEOUT_MS),
             }),
         ),
@@ -928,10 +903,10 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
     }
 
     return {
-      delegateDid        : grantedDelegateDid,
+      delegateDid    : grantedDelegateDid,
       delegatePortableDid,
-      delegateGrants,
-      sessionRevocations : sessionRevocations.length > 0 ? sessionRevocations : undefined,
+      delegateGrants : [...createdGrants, ...revGrantResults.map(({ revGrant }) => revGrant.message)],
+      sessionRevocations,
       responseSigner,
     };
   } catch (err) {

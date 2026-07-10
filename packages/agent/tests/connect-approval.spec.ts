@@ -456,11 +456,11 @@ describe('connect approval ceremony', () => {
         delegateDid,
         _agent,
         _scopes,
-        options,
+        connectSession,
       ): Promise<any> => {
         capturedDelegateDids.push(delegateDid);
-        if (options?.connectSession !== undefined) {
-          capturedSessions.push(options.connectSession);
+        if (connectSession !== undefined) {
+          capturedSessions.push(connectSession);
         }
         return permissionGrants.map((grant: any) => grant.message) as any;
       });
@@ -478,12 +478,33 @@ describe('connect approval ceremony', () => {
       return { capturedDelegateDids, capturedSessions, revocationGrantStub };
     }
 
+    /**
+     * Stubs the three grant-construction seams every ceremony test needs: the
+     * permission-grant creator (returns the shared `permissionGrants` message
+     * fixtures unless overridden), the revocation grant creator, and the
+     * delegate DID minter. Returns the stubs callers assert against.
+     */
+    function stubApprovalCeremony(overrides: { permissionGrants?: unknown } = {}): {
+      createGrantsStub: sinon.SinonStub;
+      revocationGrantStub: sinon.SinonStub;
+    } {
+      const createGrantsStub = sinon.stub(ConnectCeremony, 'createPermissionGrants')
+        .resolves((overrides.permissionGrants ?? permissionGrants) as any);
+      const revocationGrantStub = sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
+        grant   : {} as any,
+        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
+      });
+      sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
+      return { createGrantsStub, revocationGrantStub };
+    }
+
     it('should mint a delegate DID with an appended X25519 key and return the ConnectApproval shape', async () => {
       const { revocationGrantStub } = stubApprovalDependencies();
 
       const result = await executeConnectApproval({
         agent       : testHarness.agent,
         providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
         request     : approvalRequest(),
       });
 
@@ -515,6 +536,7 @@ describe('connect approval ceremony', () => {
       await executeConnectApproval({
         agent       : testHarness.agent,
         providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
         request     : approvalRequest(),
       });
 
@@ -536,6 +558,7 @@ describe('connect approval ceremony', () => {
       await executeConnectApproval({
         agent       : testHarness.agent,
         providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
         request     : approvalRequest({ requestedSessionTtlSeconds }),
       });
 
@@ -551,6 +574,7 @@ describe('connect approval ceremony', () => {
       await executeConnectApproval({
         agent       : testHarness.agent,
         providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
         request     : approvalRequest({ requestedSessionTtlSeconds: CONNECT_SESSION_MAX_TTL_SECONDS + 60 }),
       });
 
@@ -566,6 +590,7 @@ describe('connect approval ceremony', () => {
       const result = await executeConnectApproval({
         agent       : testHarness.agent,
         providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
         request     : approvalRequest({ delegateDid: preSuppliedDelegateDid }),
       });
 
@@ -602,6 +627,7 @@ describe('connect approval ceremony', () => {
       await executeConnectApproval({
         agent       : testHarness.agent,
         providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
         request     : approvalRequest({
           delegateDid        : preSuppliedDelegate.uri,
           permissionRequests : [{ protocolDefinition: encryptedProtocol, permissionScopes: readScopes }],
@@ -641,6 +667,7 @@ describe('connect approval ceremony', () => {
       await expect(executeConnectApproval({
         agent       : testHarness.agent,
         providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
         request     : approvalRequest({
           delegateDid        : 'did:example:delegate',
           permissionRequests : [{ protocolDefinition: encryptedProtocol, permissionScopes: readScopes }],
@@ -658,6 +685,7 @@ describe('connect approval ceremony', () => {
       await expect(executeConnectApproval({
         agent       : testHarness.agent,
         providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
         request     : approvalRequest({ delegateDid: 'wallet.example' }),
       })).rejects.toThrow('Connect delegateDid must be a valid DID URI.');
       expect(delegateCreateStub.callCount).toBe(0);
@@ -670,6 +698,7 @@ describe('connect approval ceremony', () => {
         await expect(executeConnectApproval({
           agent       : testHarness.agent,
           providerDid : providerIdentity.did.uri,
+          transport   : 'relay',
           request     : approvalRequest({ requestedSessionTtlSeconds }),
         })).rejects.toThrow('Connect requestedSessionTtlSeconds must resolve to at least one whole second.');
         expect(delegateCreateStub.callCount).toBe(0);
@@ -684,6 +713,7 @@ describe('connect approval ceremony', () => {
       await expect(executeConnectApproval({
         agent       : testHarness.agent,
         providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
         request     : approvalRequest(),
       })).rejects.toThrow('delegate failed');
 
@@ -708,12 +738,7 @@ describe('connect approval ceremony', () => {
       // the underlying HTTP client's 4×30 s retry budget for any unhealthy
       // endpoint, multiplying user-visible latency by `N protocols × 30 s`.
 
-      sinon.stub(ConnectCeremony, 'createPermissionGrants').resolves(permissionGrants as any);
-      sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
-        grant   : {} as any,
-        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
-      });
-      sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
+      stubApprovalCeremony();
 
       // stub the processDwnRequest method to return a protocol entry
       const protocolMessage = {} as DwnMessage[DwnInterface.ProtocolsConfigure];
@@ -736,6 +761,7 @@ describe('connect approval ceremony', () => {
       await executeConnectApproval({
         agent       : testHarness.agent,
         providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
         request     : approvalRequest(),
       });
 
@@ -762,12 +788,7 @@ describe('connect approval ceremony', () => {
       // The legacy `agent.sendDwnRequest` path — which iterated owner endpoints
       // sequentially and is the historical bottleneck — must NOT be used.
 
-      sinon.stub(ConnectCeremony, 'createPermissionGrants').resolves(permissionGrants as any);
-      sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
-        grant   : {} as any,
-        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
-      });
-      sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
+      stubApprovalCeremony();
 
       // Spy on both transports — only `agent.rpc.sendDwnRequest` should fire.
       const sendRequestSpy = sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
@@ -799,6 +820,7 @@ describe('connect approval ceremony', () => {
       await executeConnectApproval({
         agent       : testHarness.agent,
         providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
         request     : approvalRequest(),
       });
 
@@ -832,12 +854,7 @@ describe('connect approval ceremony', () => {
       // Some local DWN replies omit the `entries` array entirely (empty result).
       // The agent must treat that as "not installed" identically to `entries: []`.
 
-      sinon.stub(ConnectCeremony, 'createPermissionGrants').resolves(permissionGrants as any);
-      sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
-        grant   : {} as any,
-        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
-      });
-      sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
+      stubApprovalCeremony();
 
       const sendRequestSpy = sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
         messageCid : '',
@@ -865,6 +882,7 @@ describe('connect approval ceremony', () => {
       await executeConnectApproval({
         agent       : testHarness.agent,
         providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
         request     : approvalRequest(),
       });
 
@@ -909,6 +927,7 @@ describe('connect approval ceremony', () => {
       await expect(executeConnectApproval({
         agent       : testHarness.agent,
         providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
         request     : approvalRequest(),
       })).rejects.toThrow('Could not configure protocol locally: Local DWN error');
 
@@ -926,12 +945,7 @@ describe('connect approval ceremony', () => {
       // This guards the "Authorizing…" hot path against a single bad
       // endpoint dragging the user into an error state.
 
-      sinon.stub(ConnectCeremony, 'createPermissionGrants').resolves(permissionGrants as any);
-      sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
-        grant   : {} as any,
-        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
-      });
-      sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
+      stubApprovalCeremony();
 
       sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
         messageCid : '',
@@ -959,6 +973,7 @@ describe('connect approval ceremony', () => {
       await executeConnectApproval({
         agent       : testHarness.agent,
         providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
         request     : approvalRequest(),
       });
 
@@ -986,6 +1001,7 @@ describe('connect approval ceremony', () => {
       await expect(executeConnectApproval({
         agent       : testHarness.agent,
         providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
         request     : approvalRequest(),
       })).rejects.toThrow('Could not fetch protocol: Some Error');
 
@@ -1020,12 +1036,7 @@ describe('connect approval ceremony', () => {
         protocol  : 'http://encrypted-protocol.xyz',
       }];
 
-      sinon.stub(ConnectCeremony, 'createPermissionGrants').resolves(permissionGrants as any);
-      sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
-        grant   : {} as any,
-        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
-      });
-      sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
+      stubApprovalCeremony();
 
       sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
         messageCid : '',
@@ -1051,6 +1062,7 @@ describe('connect approval ceremony', () => {
       await executeConnectApproval({
         agent       : testHarness.agent,
         providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
         request     : approvalRequest({
           permissionRequests: [{ protocolDefinition: encryptedProtocol, permissionScopes: encryptedScopes }],
         }),
@@ -1089,13 +1101,8 @@ describe('connect approval ceremony', () => {
         protocol  : 'http://mixed-encrypted.xyz',
       }];
 
-      sinon.stub(ConnectCeremony, 'createPermissionGrants').resolves(permissionGrants as any);
+      stubApprovalCeremony();
       const grantKeyStub = sinon.stub(ConnectCeremony, 'createGrantKeyRecordsForGrants').resolves([]);
-      sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
-        grant   : {} as any,
-        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
-      });
-      sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
       sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
         messageCid : '',
         reply      : { status: { code: 202, detail: 'OK' } }
@@ -1116,6 +1123,7 @@ describe('connect approval ceremony', () => {
       const result = await executeConnectApproval({
         agent       : testHarness.agent,
         providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
         request     : approvalRequest({
           permissionRequests: [{ protocolDefinition: mixedProtocol, permissionScopes: readScopes }],
         }),
@@ -1156,13 +1164,8 @@ describe('connect approval ceremony', () => {
         recordId,
       }));
 
-      const createGrantsStub = sinon.stub(ConnectCeremony, 'createPermissionGrants').resolves(createdGrants as any);
+      const { createGrantsStub } = stubApprovalCeremony({ permissionGrants: createdGrants });
       const grantKeyStub = sinon.stub(ConnectCeremony, 'createGrantKeyRecordsForGrants').resolves([]);
-      sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
-        grant   : {} as any,
-        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
-      });
-      sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
       sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget').resolves([]);
       sinon.stub(testHarness.agent, 'processDwnRequest').resolves({
         messageCid : '',
@@ -1172,6 +1175,7 @@ describe('connect approval ceremony', () => {
       await executeConnectApproval({
         agent       : testHarness.agent,
         providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
         request     : approvalRequest({
           permissionRequests: [
             { protocolDefinition, permissionScopes: plainScopes },
@@ -1221,13 +1225,8 @@ describe('connect approval ceremony', () => {
       };
       const endpoints = ['https://dwn-a.example/', 'https://dwn-b.example/'];
 
-      sinon.stub(ConnectCeremony, 'createPermissionGrants').resolves(permissionGrants as any);
+      stubApprovalCeremony();
       sinon.stub(ConnectCeremony, 'createGrantKeyRecordsForGrants').resolves([grantKeyRecord] as any);
-      sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
-        grant   : {} as any,
-        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
-      });
-      sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
       const endpointStub = sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget');
       endpointStub.onFirstCall().resolves(endpoints);
@@ -1250,6 +1249,7 @@ describe('connect approval ceremony', () => {
       await executeConnectApproval({
         agent       : testHarness.agent,
         providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
         request     : approvalRequest({
           permissionRequests: [{ protocolDefinition: encryptedProtocol, permissionScopes: readScopes }],
         }),
@@ -1301,13 +1301,8 @@ describe('connect approval ceremony', () => {
         encodedData: Convert.uint8Array(new Uint8Array([1, 2, 3])).toBase64Url(),
       };
 
-      sinon.stub(ConnectCeremony, 'createPermissionGrants').resolves(permissionGrants as any);
+      const { revocationGrantStub } = stubApprovalCeremony();
       sinon.stub(ConnectCeremony, 'createGrantKeyRecordsForGrants').resolves([grantKeyRecord] as any);
-      const revocationGrantStub = sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
-        grant   : {} as any,
-        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
-      });
-      sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
       sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget')
         .resolves(['https://dwn-a.example/', 'https://dwn-b.example/']);
@@ -1328,6 +1323,7 @@ describe('connect approval ceremony', () => {
       await expect(executeConnectApproval({
         agent       : testHarness.agent,
         providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
         request     : approvalRequest({
           permissionRequests: [{ protocolDefinition: encryptedProtocol, permissionScopes: readScopes }],
         }),
@@ -1350,6 +1346,7 @@ describe('connect approval ceremony', () => {
       await expect(executeConnectApproval({
         agent       : testHarness.agent,
         providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
         request     : approvalRequest({
           permissionRequests: [{ protocolDefinition, permissionScopes: mismatchedScopes }],
         }),
@@ -1371,12 +1368,7 @@ describe('connect approval ceremony', () => {
         ];
         const PER_SEND_DELAY_MS = 250;
 
-        sinon.stub(ConnectCeremony, 'createPermissionGrants').resolves(permissionGrants as any);
-        sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
-          grant   : {} as any,
-          message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
-        });
-        sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
+        stubApprovalCeremony();
 
         sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget').resolves(endpointUrls);
         sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
@@ -1405,6 +1397,7 @@ describe('connect approval ceremony', () => {
         await executeConnectApproval({
           agent       : testHarness.agent,
           providerDid : providerIdentity.did.uri,
+          transport   : 'relay',
           request     : approvalRequest(),
         });
         const elapsed = Date.now() - start;
@@ -1428,12 +1421,7 @@ describe('connect approval ceremony', () => {
         // This test asserts a signal is present on every send, that it is
         // an AbortSignal, and that it is NOT already aborted at dispatch
         // time (i.e. the budget genuinely starts when the request begins).
-        sinon.stub(ConnectCeremony, 'createPermissionGrants').resolves(permissionGrants as any);
-        sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
-          grant   : {} as any,
-          message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
-        });
-        sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
+        stubApprovalCeremony();
 
         sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget')
           .resolves(['https://dwn-a.example/', 'https://dwn-b.example/']);
@@ -1459,6 +1447,7 @@ describe('connect approval ceremony', () => {
         await executeConnectApproval({
           agent       : testHarness.agent,
           providerDid : providerIdentity.did.uri,
+          transport   : 'relay',
           request     : approvalRequest(),
         });
 
@@ -1481,12 +1470,7 @@ describe('connect approval ceremony', () => {
         // full 4 × 30 s retry budget. We simulate that by giving the second
         // endpoint a fake `sendDwnRequest` that respects the caller's
         // AbortSignal — exactly as the real HttpDwnRpcClient now does.
-        sinon.stub(ConnectCeremony, 'createPermissionGrants').resolves(permissionGrants as any);
-        sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
-          grant   : {} as any,
-          message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
-        });
-        sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
+        stubApprovalCeremony();
 
         const healthyUrl = 'https://dwn-healthy.example/';
         const hangingUrl = 'https://dwn-hanging.example/';
@@ -1533,6 +1517,7 @@ describe('connect approval ceremony', () => {
         await executeConnectApproval({
           agent       : testHarness.agent,
           providerDid : providerIdentity.did.uri,
+          transport   : 'relay',
           request     : approvalRequest(),
         });
         const elapsed = Date.now() - start;

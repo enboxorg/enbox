@@ -758,6 +758,7 @@ describe('E2E Multi-Agent Sync', () => {
             agent       : primaryHarness.agent,
             providerDid : alice.did.uri,
             request,
+            transport   : 'relay',
           });
           const idToken = await ConnectProvider.sealApprovedResponse({
             request,

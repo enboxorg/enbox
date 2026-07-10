@@ -82,9 +82,10 @@ export async function signJwt({ did, data }: {
  *         `kid` is missing or not a `did:jwk`, or the signature is invalid.
  */
 export async function verifyJwt({ jwt }: { jwt: string }): Promise<VerifyJwtResult> {
-  const { 0: headerB64U, 1: payloadB64U, 2: signatureB64U, length } = jwt.split('.');
+  const parts = jwt.split('.');
+  const [headerB64U, payloadB64U, signatureB64U] = parts;
 
-  if (length !== 3 || !headerB64U || !payloadB64U || !signatureB64U) {
+  if (parts.length !== 3 || !headerB64U || !payloadB64U || !signatureB64U) {
     throw new Error('Connect: JWT verification failed — JWT must have 3 parts.');
   }
 

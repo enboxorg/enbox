@@ -18,7 +18,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { DidJwk } from '@enbox/dids';
 import { Ed25519 } from '@enbox/crypto';
 import { WalletConnect } from '../src/wallet-connect-client.js';
-import { ConnectProvider, parseWalletConnectUri, sealResponse } from '@enbox/connect';
+import { CONNECT_DENIED_TOKEN, ConnectProvider, parseWalletConnectUri, sealResponse } from '@enbox/connect';
 import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 
 const providerDid = 'did:dht:provider789';
@@ -276,7 +276,7 @@ describe('WalletConnect', () => {
           metadata    : {},
           privateKeys : [{ kty: 'EC', crv: 'P-256', d: 'p256-private', x: 'p256-x', y: 'p256-y' }],
         },
-      })).rejects.toThrow('WalletConnect: delegatePortableDid must include an Ed25519 private key.');
+      })).rejects.toThrow('Delegate portable DID must include an Ed25519 private key.');
     });
 
     it('should reject a wallet response for a different delegate DID when pre-supply is enabled', async () => {
@@ -328,7 +328,7 @@ describe('WalletConnect', () => {
     });
 
     it('should return undefined without prompting for a PIN when the wallet explicitly denies access', async () => {
-      const relay = stubRelay(async (): Promise<string> => ConnectProvider.denyToken());
+      const relay = stubRelay(async (): Promise<string> => CONNECT_DENIED_TOKEN);
       const validatePin = sinon.stub<[], Promise<string>>().resolves(pin);
 
       const result = await WalletConnect.initClient({
@@ -350,7 +350,7 @@ describe('WalletConnect', () => {
       const relay = stubRelay(async (): Promise<string> => {
         await new Promise((resolve): void => { setTimeout(resolve, 0); });
         callbackComplete = true;
-        return ConnectProvider.denyToken();
+        return CONNECT_DENIED_TOKEN;
       });
 
       const result = await WalletConnect.initClient({

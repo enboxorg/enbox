@@ -63,20 +63,29 @@ export type DWebConnectResponseMessage = {
 };
 
 /**
- * Validates an untrusted value as an X25519 **public** JWK and returns a
- * minimal copy (`kty`/`crv`/`x` only). Returns `undefined` when the value is
- * not a plain object, is not an X25519 OKP key, or carries private key
- * material.
+ * Applies the shared inbound-message trust filter for the popup channel:
+ * pins the message to the expected `event.origin`, pins its `event.source` to
+ * the expected window, and requires a non-null object payload.
+ *
+ * Returns the payload cast to a plain record when every check passes, or
+ * `undefined` when the message must be dropped. Both the dapp-side and
+ * wallet-side transports early-return on `undefined` before inspecting any
+ * message field — this is the security-critical filter that keeps hostile
+ * origins and stray windows off the channel.
  */
-export function parseX25519PublicJwk(value: unknown): Jwk | undefined {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return undefined;
-  }
+export function getTrustedMessage(
+  event: MessageEvent,
+  expectedOrigin: string,
+  expectedSource: Window | undefined,
+): Record<string, unknown> | undefined {
+  // Origin pinning: only messages from the expected origin count.
+  if (event.origin !== expectedOrigin) { return undefined; }
 
-  const jwk = value as Jwk;
-  if (jwk.kty !== 'OKP' || jwk.crv !== 'X25519' || typeof jwk.x !== 'string' || jwk.d !== undefined) {
-    return undefined;
-  }
+  // Source pinning: the message must come from the expected window.
+  if (event.source !== expectedSource) { return undefined; }
 
-  return { kty: 'OKP', crv: 'X25519', x: jwk.x };
+  const data: unknown = event.data;
+  if (typeof data !== 'object' || data === null) { return undefined; }
+
+  return data as Record<string, unknown>;
 }

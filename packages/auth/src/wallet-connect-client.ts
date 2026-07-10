@@ -18,12 +18,11 @@
 
 import type { Permission } from './types.js';
 import type { PortableDid } from '@enbox/dids';
-import type { PrivateKeyJwk } from '@enbox/crypto';
 import type { ConnectClientMetadata, ConnectPermissionRequest, ConnectResult } from '@enbox/connect';
 import type { DwnPermissionScope, DwnProtocolDefinition } from '@enbox/agent';
 
 import { DidJwk } from '@enbox/dids';
-import { Ed25519 } from '@enbox/crypto';
+import { ensureDelegateX25519PrivateKey } from '@enbox/agent';
 import { ConnectClient, RelayClientTransport } from '@enbox/connect';
 import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 
@@ -194,28 +193,8 @@ async function createDelegatePortableDid(): Promise<PortableDid> {
  * encryption requires an X25519 key-agreement key on the delegate.
  */
 async function prepareDelegatePortableDid(delegatePortableDid: PortableDid): Promise<PortableDid> {
-  const privateKeys = [...(delegatePortableDid.privateKeys ?? [])];
-  if (privateKeys.length === 0) {
-    throw new Error('WalletConnect: delegatePortableDid must include private keys.');
-  }
-
-  const delegateEdPrivateKey = privateKeys.find((key) => key.crv === 'Ed25519');
-  if (delegateEdPrivateKey === undefined) {
-    throw new Error('WalletConnect: delegatePortableDid must include an Ed25519 private key.');
-  }
-
-  const hasX25519Key = privateKeys.some((key) => key.crv === 'X25519');
-  if (!hasX25519Key) {
-    const delegateX25519PrivateKey = await Ed25519.convertPrivateKeyToX25519({
-      privateKey: delegateEdPrivateKey as PrivateKeyJwk,
-    });
-    privateKeys.push(delegateX25519PrivateKey);
-  }
-
-  return {
-    ...delegatePortableDid,
-    privateKeys,
-  };
+  const { portableDid } = await ensureDelegateX25519PrivateKey(delegatePortableDid);
+  return portableDid;
 }
 
 /**

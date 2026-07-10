@@ -26,7 +26,8 @@ import type { Jwk } from '@enbox/crypto';
 import type { ConnectRequest, ConnectRequestDecryption, ConnectRequestEncryption, ConnectResponse } from './types.js';
 
 import { Convert } from '@enbox/common';
-import { CompactJwe, XChaCha20Poly1305 } from '@enbox/crypto';
+import { isPortableDid } from '@enbox/dids';
+import { CompactJwe, isOkpPublicJwk, XChaCha20Poly1305 } from '@enbox/crypto';
 
 import { signJwt, verifyJwt } from './jwt.js';
 
@@ -37,13 +38,13 @@ export const CONNECT_REQUEST_JWE_TYP = 'enbox-connect-req';
 export const CONNECT_RESPONSE_JWE_TYP = 'enbox-connect-res';
 
 /**
- * Default clock-skew allowance, in seconds, applied when validating the
- * `iat` timestamp of a connect response.
+ * Clock-skew allowance, in seconds, applied when validating the `iat`
+ * timestamp of a connect response.
  */
-export const CONNECT_RESPONSE_MAX_CLOCK_SKEW_SECONDS = 60;
+const CONNECT_RESPONSE_MAX_CLOCK_SKEW_SECONDS = 60;
 
 /** Byte length required of the single-use symmetric request key (XC20P). */
-const REQUEST_KEY_BYTE_LENGTH = 32;
+export const REQUEST_KEY_BYTE_LENGTH = 32;
 
 // ─── Field-level validation helpers ─────────────────────────────────────
 //
@@ -108,17 +109,27 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/** Returns whether `value` is a public (no `d`) X25519 OKP JWK. */
+function isX25519PublicJwk(value: unknown): value is Jwk {
+  return isOkpPublicJwk(value) && value.crv === 'X25519';
+}
+
+/**
+ * Asserts that `value` is a public (no `d`) X25519 OKP JWK.
+ *
+ * Reusable at channel boundaries that receive an ephemeral public key from a
+ * remote party (e.g. parsing a popup wallet's `loaded` beacon).
+ */
+export function assertX25519PublicJwk(value: unknown): asserts value is Jwk {
+  if (!isX25519PublicJwk(value)) {
+    throw new Error('Connect: value must be an X25519 public JWK without private key material.');
+  }
+}
+
 /** Validates the `responseKey` field: a public (no `d`) X25519 OKP JWK. */
 function requireResponseKey(payload: Record<string, unknown>, context: string): void {
-  const value = payload.responseKey;
-  if (!isPlainObject(value)) { fail(context, 'responseKey', 'must be an object'); }
-
-  const jwk = value as Jwk;
-  if (!(jwk.kty === 'OKP' && jwk.crv === 'X25519' && typeof jwk.x === 'string')) {
+  if (!isX25519PublicJwk(payload.responseKey)) {
     fail(context, 'responseKey', 'must be an X25519 public JWK');
-  }
-  if (jwk.d !== undefined) {
-    fail(context, 'responseKey', 'must not contain private key material');
   }
 }
 
@@ -194,7 +205,9 @@ export function assertConnectResponse(payload: Record<string, unknown>): asserts
   requireString(payload, 'nonce', ctx);
   requireString(payload, 'state', ctx);
   requireArray(payload, 'delegateGrants', ctx);
-  requireOptionalObject(payload, 'delegatePortableDid', ctx);
+  if (payload.delegatePortableDid !== undefined && !isPortableDid(payload.delegatePortableDid)) {
+    fail(ctx, 'delegatePortableDid', 'must be a portable DID when present');
+  }
   requireSessionRevocations(payload, ctx);
 }
 
@@ -244,26 +257,23 @@ export async function sealRequest({ request, signer, encryption }: {
   }
 
   const jwt = await signJwt({ did: signer, data: request });
-  const plaintext = Convert.string(jwt).toUint8Array();
 
-  if (encryption.mode === 'dir') {
-    return await CompactJwe.encrypt({
-      plaintext,
-      protectedHeader : { alg: 'dir', cty: 'JWT', enc: 'XC20P', typ: CONNECT_REQUEST_JWE_TYP },
-      key             : await requestKeyToJwk(encryption.requestKey),
-    });
-  }
+  const { alg, key, extraHeader } = encryption.mode === 'dir'
+    ? {
+      alg         : 'dir',
+      key         : await requestKeyToJwk(encryption.requestKey),
+      extraHeader : {},
+    }
+    : {
+      alg         : 'ECDH-ES',
+      key         : { mode: 'ecdh-es' as const, peerPublicKey: encryption.walletEpk },
+      extraHeader : { apv: Convert.string(encryption.walletOrigin).toBase64Url() },
+    };
 
   return await CompactJwe.encrypt({
-    plaintext,
-    protectedHeader: {
-      alg : 'ECDH-ES',
-      apv : Convert.string(encryption.walletOrigin).toBase64Url(),
-      cty : 'JWT',
-      enc : 'XC20P',
-      typ : CONNECT_REQUEST_JWE_TYP,
-    },
-    key: { mode: 'ecdh-es', peerPublicKey: encryption.walletEpk },
+    plaintext       : Convert.string(jwt).toUint8Array(),
+    protectedHeader : { alg, ...extraHeader, cty: 'JWT', enc: 'XC20P', typ: CONNECT_REQUEST_JWE_TYP },
+    key,
   });
 }
 
@@ -285,17 +295,15 @@ export async function openRequest({ jwe, decryption }: {
   jwe: string;
   decryption: ConnectRequestDecryption;
 }): Promise<ConnectRequest> {
-  const { plaintext, protectedHeader } = decryption.mode === 'dir'
-    ? await CompactJwe.decrypt({
-      jwe,
-      key     : await requestKeyToJwk(decryption.requestKey),
-      options : { allowedAlgs: ['dir'], allowedEncs: ['XC20P'] },
-    })
-    : await CompactJwe.decrypt({
-      jwe,
-      key     : { mode: 'ecdh-es', privateKey: decryption.recipientPrivateKey },
-      options : { allowedAlgs: ['ECDH-ES'], allowedEncs: ['XC20P'] },
-    });
+  const { key, allowedAlgs } = decryption.mode === 'dir'
+    ? { key: await requestKeyToJwk(decryption.requestKey), allowedAlgs: ['dir' as const] }
+    : { key: { mode: 'ecdh-es' as const, privateKey: decryption.recipientPrivateKey }, allowedAlgs: ['ECDH-ES' as const] };
+
+  const { plaintext, protectedHeader } = await CompactJwe.decrypt({
+    jwe,
+    key,
+    options: { allowedAlgs, allowedEncs: ['XC20P'] },
+  });
 
   assertEnvelopeHeader(protectedHeader, CONNECT_REQUEST_JWE_TYP);
 
@@ -369,15 +377,13 @@ export async function sealResponse({ response, signer, responseKey, pin }: {
  * @param params.recipientPrivateKey - The client's fresh X25519 private response key.
  * @param params.expected - The request values the response must echo.
  * @param params.pin - The user-entered PIN on relay channels; must match the sealing PIN.
- * @param params.maxClockSkewSeconds - Clock-skew allowance for the `iat` check.
  * @returns A promise resolving to the validated {@link ConnectResponse}.
  */
-export async function openResponse({ jwe, recipientPrivateKey, expected, pin, maxClockSkewSeconds }: {
+export async function openResponse({ jwe, recipientPrivateKey, expected, pin }: {
   jwe: string;
   recipientPrivateKey: Jwk;
   expected: { clientDid: string; nonce: string; state: string };
   pin?: string;
-  maxClockSkewSeconds?: number;
 }): Promise<ConnectResponse> {
   const { plaintext, protectedHeader } = await CompactJwe.decrypt({
     jwe,
@@ -407,11 +413,10 @@ export async function openResponse({ jwe, recipientPrivateKey, expected, pin, ma
   }
 
   const nowSeconds = Math.floor(Date.now() / 1000);
-  const clockSkewSeconds = maxClockSkewSeconds ?? CONNECT_RESPONSE_MAX_CLOCK_SKEW_SECONDS;
   if (payload.exp <= payload.iat) {
     throw new Error('Connect: response `exp` must be later than `iat`.');
   }
-  if (payload.iat > nowSeconds + clockSkewSeconds) {
+  if (payload.iat > nowSeconds + CONNECT_RESPONSE_MAX_CLOCK_SKEW_SECONDS) {
     throw new Error('Connect: response `iat` is in the future.');
   }
   if (nowSeconds >= payload.exp) {

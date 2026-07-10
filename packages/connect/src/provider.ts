@@ -86,7 +86,7 @@ export class ConnectProvider {
       nonce              : request.nonce,
       state              : request.state,
       delegateGrants     : approval.delegateGrants,
-      sessionRevocations : approval.sessionRevocations ?? [],
+      sessionRevocations : approval.sessionRevocations,
       ...(approval.delegatePortableDid !== undefined ? { delegatePortableDid: approval.delegatePortableDid } : {}),
     };
 

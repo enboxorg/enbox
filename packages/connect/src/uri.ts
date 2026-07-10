@@ -12,8 +12,7 @@
 
 import { Convert } from '@enbox/common';
 
-/** Byte length required of the single-use symmetric request key (XC20P). */
-const ENCRYPTION_KEY_BYTE_LENGTH = 32;
+import { REQUEST_KEY_BYTE_LENGTH } from './envelope.js';
 
 /**
  * Builds the wallet URI handed to the user (QR code or deep link) for a
@@ -34,8 +33,8 @@ export function buildWalletConnectUri({ walletUri, requestUri, encryptionKey }: 
   requestUri: string;
   encryptionKey: Uint8Array;
 }): string {
-  if (encryptionKey.length !== ENCRYPTION_KEY_BYTE_LENGTH) {
-    throw new Error(`Connect: wallet URI encryption key must be ${ENCRYPTION_KEY_BYTE_LENGTH} bytes.`);
+  if (encryptionKey.length !== REQUEST_KEY_BYTE_LENGTH) {
+    throw new Error(`Connect: wallet URI encryption key must be ${REQUEST_KEY_BYTE_LENGTH} bytes.`);
   }
 
   const uri = new URL(walletUri);
@@ -70,7 +69,8 @@ export function parseWalletConnectUri(uri: string): {
     return undefined;
   }
 
-  const fragment = parsed.hash.startsWith('#') ? parsed.hash.slice(1) : parsed.hash;
+  // `URL.hash` is either the empty string or `#`-prefixed, so slicing is safe.
+  const fragment = parsed.hash.slice(1);
   const params = new URLSearchParams(fragment);
   const requestUri = params.get('request_uri');
   const encryptionKeyBase64Url = params.get('encryption_key');
@@ -84,7 +84,7 @@ export function parseWalletConnectUri(uri: string): {
   } catch {
     return undefined;
   }
-  if (encryptionKey.length !== ENCRYPTION_KEY_BYTE_LENGTH) {
+  if (encryptionKey.length !== REQUEST_KEY_BYTE_LENGTH) {
     return undefined;
   }
 

@@ -5,8 +5,8 @@ import type { ConnectRequest, ConnectResponse } from '../src/types.js';
 import { Convert } from '@enbox/common';
 import { DidJwk } from '@enbox/dids';
 import { signJwt } from '../src/jwt.js';
-import { CompactJwe, CryptoUtils, X25519 } from '@enbox/crypto';
 import {
+  assertX25519PublicJwk,
   CONNECT_REQUEST_JWE_TYP,
   CONNECT_RESPONSE_JWE_TYP,
   openRequest,
@@ -14,6 +14,7 @@ import {
   sealRequest,
   sealResponse,
 } from '../src/envelope.js';
+import { CompactJwe, CryptoUtils, X25519 } from '@enbox/crypto';
 import { describe, expect, it } from 'bun:test';
 
 const WALLET_ORIGIN = 'https://wallet.example';
@@ -70,6 +71,19 @@ function tamperCiphertext(jwe: string): string {
 }
 
 describe('connect envelope', () => {
+  describe('assertX25519PublicJwk', () => {
+    it('should accept a public X25519 JWK', () => {
+      expect(() => assertX25519PublicJwk({ kty: 'OKP', crv: 'X25519', x: 'abc' })).not.toThrow();
+    });
+
+    it('should reject non-objects, non-X25519 keys, and private key material', () => {
+      expect(() => assertX25519PublicJwk('not-a-jwk')).toThrow('X25519 public JWK');
+      expect(() => assertX25519PublicJwk({ kty: 'OKP', crv: 'Ed25519', x: 'abc' })).toThrow('X25519 public JWK');
+      expect(() => assertX25519PublicJwk({ kty: 'EC', crv: 'X25519', x: 'abc' })).toThrow('X25519 public JWK');
+      expect(() => assertX25519PublicJwk({ kty: 'OKP', crv: 'X25519', x: 'abc', d: 'secret' })).toThrow('X25519 public JWK');
+    });
+  });
+
   describe('sealRequest / openRequest — relay (dir) profile', () => {
     it('should round-trip a request through the dir profile', async () => {
       const { clientDid, request } = await createTestRequest();

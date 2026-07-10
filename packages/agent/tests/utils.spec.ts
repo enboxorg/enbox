@@ -8,7 +8,6 @@ import {
   isRecordsWrite,
   mapConcurrent,
   mapConcurrentSettled,
-  pollWithTtl,
 } from '../src/utils.js';
 
 import { DateSort, DwnInterfaceName, DwnMethodName, Jws, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
@@ -196,44 +195,6 @@ describe('Utils', () => {
   // `concatenateUrl` moved to `@enbox/common`; its tests now live in
   // `packages/common/tests/url.test.ts` (a superset of the cases that
   // were here).
-
-  describe('pollWithTtl', () => {
-    it('should resolve with response when fetch returns ok', async () => {
-      const mockResponse = new Response('ok', { status: 200 });
-      const fetchFn = mock(() => Promise.resolve(mockResponse));
-
-      const result = await pollWithTtl(fetchFn, 100, 5000);
-      expect(result).toBe(mockResponse);
-      expect(fetchFn).toHaveBeenCalledTimes(1);
-    });
-
-    it('should resolve with null when TTL is reached', async () => {
-      const mockResponse = new Response('not ok', { status: 404 });
-      const fetchFn = mock(() => Promise.resolve(mockResponse));
-
-      // Very short TTL so it expires quickly.
-      const result = await pollWithTtl(fetchFn, 50, 1);
-      expect(result).toBeNull();
-    });
-
-    it('should resolve with null when aborted', async () => {
-      const mockResponse = new Response('not ok', { status: 404 });
-      const fetchFn = mock(() => Promise.resolve(mockResponse));
-      const abortController = new AbortController();
-
-      // Abort immediately.
-      setTimeout(() => abortController.abort(), 10);
-
-      const result = await pollWithTtl(fetchFn, 100, 30000, abortController.signal);
-      expect(result).toBeNull();
-    });
-
-    it('should reject when fetch function throws', async () => {
-      const fetchFn = mock(() => Promise.reject(new Error('network error')));
-
-      await expect(pollWithTtl(fetchFn, 100, 5000)).rejects.toThrow('network error');
-    });
-  });
 
   describe('getDwnServiceEndpointUrls', () => {
     it('should return service endpoint URLs from a DID document', async () => {

@@ -21,7 +21,7 @@
 import type { ConnectRequestProfile, ConnectTransport, WalletUriHandoff } from './types.js';
 
 import { CryptoUtils } from '@enbox/crypto';
-import { concatenateUrl, Convert } from '@enbox/common';
+import { concatenateUrl, sleep } from '@enbox/common';
 
 import { buildWalletConnectUri } from './uri.js';
 
@@ -42,10 +42,6 @@ export type FetchFn = (input: string | URL, init?: RequestInit) => Promise<Respo
 
 /** Default {@link FetchFn}: defers to the ambient global `fetch` at call time. */
 const defaultFetch: FetchFn = (input, init): Promise<Response> => globalThis.fetch(input, init);
-
-/** Default sleep implementation used between polling attempts. */
-const defaultSleep = (ms: number): Promise<void> =>
-  new Promise((resolve): void => { setTimeout(resolve, ms); });
 
 /** Options for constructing a {@link RelayClientTransport}. */
 export type RelayClientTransportOptions = {
@@ -86,12 +82,12 @@ export type RelayClientTransportOptions = {
 /**
  * App-side {@link ConnectTransport} over the relay HTTP channel.
  *
- * `requestProfile()` mints the single-use fragment key and the `state`
- * correlator; `deliverRequest()` pushes the sealed request and returns the
- * wallet URI handoff for QR/deep-link display; `awaitResponse()` polls the
- * token route until the wallet responds, the user denies, or the poll budget
- * is exhausted. Relay responses are PIN-strengthened, so `requiresPin` is
- * always `true`.
+ * `requestProfile()` mints the single-use fragment key and records the
+ * client-supplied `state` correlator; `deliverRequest()` pushes the sealed
+ * request and returns the wallet URI handoff for QR/deep-link display;
+ * `awaitResponse()` polls the token route until the wallet responds, the user
+ * denies, or the poll budget is exhausted. Relay responses are
+ * PIN-strengthened, so `requiresPin` is always `true`.
  */
 export class RelayClientTransport implements ConnectTransport {
   /** {@inheritDoc ConnectTransport.requiresPin} */
@@ -115,18 +111,18 @@ export class RelayClientTransport implements ConnectTransport {
     this._timeoutMs = options.timeoutMs ?? RELAY_DEFAULT_TIMEOUT_MS;
     this._fetch = options.fetchFn ?? defaultFetch;
     this._now = options.now ?? ((): number => Date.now());
-    this._sleep = options.sleep ?? defaultSleep;
+    this._sleep = options.sleep ?? sleep;
   }
 
   /** {@inheritDoc ConnectTransport.requestProfile} */
-  public async requestProfile(): Promise<ConnectRequestProfile> {
+  public async requestProfile(state: string): Promise<ConnectRequestProfile> {
     this._requestKey = CryptoUtils.randomBytes(32);
-    this._state = Convert.uint8Array(CryptoUtils.randomBytes(16)).toBase64Url();
+    this._state = state;
 
     return {
       encryption : { mode: 'dir', requestKey: this._requestKey },
       reply      : { mode: 'direct_post', callbackUrl: concatenateUrl(this._connectServerUrl, 'callback') },
-      state      : this._state,
+      state,
     };
   }
 
@@ -184,6 +180,8 @@ export class RelayClientTransport implements ConnectTransport {
       if (response.ok) {
         return await response.text();
       }
+      // Release the unread body so keep-alive sockets are not pinned across polls.
+      await response.body?.cancel().catch((): void => {});
       await this._sleep(this._pollIntervalMs);
     }
 

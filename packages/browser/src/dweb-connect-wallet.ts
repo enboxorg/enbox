@@ -24,13 +24,14 @@
 import type { ConnectRequest } from '@enbox/connect';
 import type { Jwk } from '@enbox/crypto';
 
-import { ConnectProvider } from '@enbox/connect';
 import { X25519 } from '@enbox/crypto';
+import { CONNECT_DENIED_TOKEN, ConnectProvider } from '@enbox/connect';
 
 import {
   DWEB_CONNECT_LOADED_MESSAGE_TYPE,
   DWEB_CONNECT_REQUEST_MESSAGE_TYPE,
   DWEB_CONNECT_RESPONSE_MESSAGE_TYPE,
+  getTrustedMessage,
 } from './dweb-connect-messages.js';
 
 /** Default budget for awaiting the dapp's sealed request. */
@@ -178,7 +179,7 @@ export class WalletPostMessageTransport {
 
   /** Posts the deny token back to the dapp — the user rejected the request. */
   public deny(): void {
-    this.sendResponse(ConnectProvider.denyToken());
+    this.sendResponse(CONNECT_DENIED_TOKEN);
   }
 
   /** Stops listening and releases the session's timers. Idempotent. */
@@ -191,15 +192,8 @@ export class WalletPostMessageTransport {
   }
 
   private onMessage(event: MessageEvent): void {
-    // Origin pinning: only messages from the pinned dapp origin count.
-    if (event.origin !== this._dappOrigin) { return; }
-
-    // Source pinning: the message must come from the dapp window.
-    if (event.source !== this._dappWindow) { return; }
-
-    const data: unknown = event.data;
-    if (typeof data !== 'object' || data === null) { return; }
-    const message = data as Record<string, unknown>;
+    const message = getTrustedMessage(event, this._dappOrigin, this._dappWindow);
+    if (message === undefined) { return; }
 
     if (message.type !== DWEB_CONNECT_REQUEST_MESSAGE_TYPE || this._requestReceived) { return; }
     this._requestReceived = true;

@@ -33,6 +33,16 @@ import { openResponse, sealRequest } from './envelope.js';
 /** DID methods a connect client accepts for the connected identity by default. */
 const DEFAULT_SUPPORTED_DID_METHODS = ['did:dht', 'did:jwk'];
 
+/**
+ * Returns a fresh random token: 16 random bytes, base64url-encoded.
+ *
+ * Used for the protocol-level correlators the client owns (`nonce`, `state`);
+ * consumers can reuse it for other opaque identifiers (e.g. session IDs).
+ */
+export function randomToken(): string {
+  return Convert.uint8Array(CryptoUtils.randomBytes(16)).toBase64Url();
+}
+
 /** Options for constructing a {@link ConnectClient}. */
 export type ConnectClientOptions = {
   /** The channel transport that carries the sealed envelopes. */
@@ -131,8 +141,12 @@ export class ConnectClient {
     const responsePrivateKey = await X25519.generateKey();
     const responsePublicKey: Jwk = { kty: 'OKP', crv: 'X25519', x: responsePrivateKey.x };
 
-    const profile = await this._transport.requestProfile();
-    const nonce = Convert.uint8Array(CryptoUtils.randomBytes(16)).toBase64Url();
+    // Protocol-level correlators owned by the client: the anti-replay nonce
+    // and the request/response state echo (also the response JWE `apu` value).
+    const nonce = randomToken();
+    const state = randomToken();
+
+    const profile = await this._transport.requestProfile(state);
 
     const request: ConnectRequest = {
       clientDid                  : clientDid.uri,
@@ -144,7 +158,7 @@ export class ConnectClient {
       delegateDid                : params.delegatePortableDid?.uri,
       supportedDidMethods        : params.supportedDidMethods ?? [...DEFAULT_SUPPORTED_DID_METHODS],
       nonce,
-      state                      : profile.state,
+      state,
       responseKey                : responsePublicKey,
       reply                      : profile.reply,
     };
@@ -175,7 +189,7 @@ export class ConnectClient {
     const response = await openResponse({
       jwe                 : responseCiphertext,
       recipientPrivateKey : responsePrivateKey,
-      expected            : { clientDid: clientDid.uri, nonce, state: profile.state },
+      expected            : { clientDid: clientDid.uri, nonce, state },
       pin,
     });
 

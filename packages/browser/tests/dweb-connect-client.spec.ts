@@ -131,7 +131,7 @@ describe('DWeb Connect popup flow (kernel loopback)', () => {
   async function approveRequest(transport: WalletPostMessageTransport): Promise<{
     providerDidUri: string;
     delegateDidUri: string;
-    sessionRevocations: NonNullable<ConnectApproval['sessionRevocations']>;
+    sessionRevocations: ConnectApproval['sessionRevocations'];
   }> {
     const request = await transport.awaitRequest();
     const providerDid = await DidJwk.create();
@@ -210,6 +210,41 @@ describe('DWeb Connect popup flow (kernel loopback)', () => {
       walletTransport.deny();
 
       await expect(flow).resolves.toBeUndefined();
+    });
+  });
+
+  // ── Popup open timing (regression) ──────────────────────────
+
+  describe('popup open timing', () => {
+    it('should open the popup synchronously before the kernel awaits key generation', async () => {
+      // Strict popup blockers (Safari) reject a `window.open` issued after the
+      // call stack has yielded to an `await`. The transport must therefore open
+      // the popup in the synchronous user-gesture stack, ahead of the kernel's
+      // awaited `DidJwk.create()` / `X25519.generateKey()`. Spy call-ordering
+      // proves `window.open` ran before either keygen await.
+      const didJwkCreateSpy = spyOn(DidJwk, 'create');
+      const x25519GenerateSpy = spyOn(X25519, 'generateKey');
+
+      try {
+        const { flow } = await startDappFlow();
+
+        // Wait until the kernel has reached (and passed) both awaited keygen
+        // calls while `requestProfile()` is pending on the `loaded` beacon.
+        await waitFor(() => didJwkCreateSpy.mock.calls.length > 0 && x25519GenerateSpy.mock.calls.length > 0);
+
+        const openOrder = windowOpenSpy.mock.invocationCallOrder[0];
+        expect(openOrder).toBeGreaterThan(0);
+        expect(openOrder).toBeLessThan(didJwkCreateSpy.mock.invocationCallOrder[0]);
+        expect(openOrder).toBeLessThan(x25519GenerateSpy.mock.invocationCallOrder[0]);
+
+        // Drive the handshake to completion so no timers or listeners leak.
+        const walletTransport = await createWalletTransport();
+        await approveRequest(walletTransport);
+        await flow;
+      } finally {
+        didJwkCreateSpy.mockRestore();
+        x25519GenerateSpy.mockRestore();
+      }
     });
   });
 
