@@ -19,11 +19,16 @@ export * from './algorithms/x25519.js';
 
 export * from './jose/jwk.js';
 export * from './jose/jws.js';
+export * from './jose/jwe/compact.js';
+export * from './jose/jwe/flattened.js';
+export * from './jose/jwe/header.js';
+export * from './jose/jwe/key-management.js';
 export * from './jose/utils.js';
 
 export * from './primitives/aes-ctr.js';
 export * from './primitives/aes-gcm.js';
 export * from './primitives/aes-kw.js';
+export * from './primitives/concat-kdf.js';
 export * from './primitives/ed25519.js';
 export * from './primitives/hkdf.js';
 export * from './primitives/secp256r1.js';

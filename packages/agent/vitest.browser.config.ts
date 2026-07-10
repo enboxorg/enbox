@@ -49,11 +49,9 @@ export default defineConfig({
   },
   test: {
     // Only include browser-safe tests (no LevelDB, no PlatformAgentTestHarness).
-    // JWE tests excluded: they transitively import `level` via dwn-sdk-js.
     include: [
       'tests/crypto-api.spec.ts',
       'tests/utils-internal.spec.ts',
-      'tests/prototyping/crypto/algorithms/aes-kw.spec.ts',
     ],
     testTimeout : 15_000,
     coverage: {

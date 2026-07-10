@@ -1,36 +1,39 @@
-import type { CryptoApi, Jwk, KeyIdentifier, KeyManager } from '@enbox/crypto';
-import type { JweDecryptOptions, JweEncryptOptions, JweHeaderParams } from './jwe.js';
+import type { Jwk } from '../jwk.js';
+import type { KeyIdentifier } from '../../types/identifier.js';
+import type { JweAlg, JweCipher, JweDecryptOptions, JweEnc, JweEncryptOptions, JweHeaderParams } from './header.js';
+import type { JweKeyManagementDecryptKey, JweKeyManagementEncryptKey } from './key-management.js';
 
 import { Convert } from '@enbox/common';
-import { CryptoError, CryptoErrorCode, CryptoUtils, isCipher, LocalKeyManager } from '@enbox/crypto';
 
-import { AgentCryptoApi } from '../../../crypto-api.js';
-import { isValidJweHeader, JweKeyManagement } from './jwe.js';
+import { AesGcm } from '../../primitives/aes-gcm.js';
+import { CryptoUtils } from '../../utils.js';
+import { isValidJweHeader } from './header.js';
+import { XChaCha20Poly1305 } from '../../primitives/xchacha20-poly1305.js';
+import { CryptoError, CryptoErrorCode } from '../../crypto-error.js';
+import { generateCek, JweKeyManagement } from './key-management.js';
 
 /**
  * Parameters required for decrypting a flattened JWE.
- *
- * @typeParam TKeyManager - The Key Manager used to manage cryptographic keys.
- * @typeParam TCrypto - The Crypto API used to perform cryptographic operations.
  */
-export interface FlattenedJweDecryptParams<TKeyManager, TCrypto> {
+export interface FlattenedJweDecryptParams {
   /** The flattened JWE. */
   jwe: FlattenedJweParams | FlattenedJwe;
 
   /**
    * The decryption key which can be a Key Identifier such as a KMS key URI, a JSON Web Key (JWK),
-   * or raw key material represented as a byte array.
+   * raw key material represented as a byte array, or an ECDH-ES key agreement input.
    */
-  key: KeyIdentifier | Jwk | Uint8Array;
+  key: JweKeyManagementDecryptKey;
 
-  /** Key Manager instanceß responsible for managing cryptographic keys. */
-  keyManager?: TKeyManager;
-
-  /** Crypto API instance that provides the necessary cryptographic operations. */
-  crypto?: TCrypto;
+  /**
+   * Cipher used to decrypt the JWE payload when the Content Encryption Key is referenced by a
+   * Key Identifier (e.g. a KMS URI) rather than provided as a JWK. Required only for
+   * Key Identifier CEKs.
+   */
+  keyManager?: JweCipher;
 
   /** {@inheritDoc JweDecryptOptions} */
-  options?: JweDecryptOptions;
+  options: JweDecryptOptions;
 }
 
 /**
@@ -55,22 +58,20 @@ export interface FlattenedJweDecryptResult {
 
 /**
  * Parameters for encrypting data into a flattened JWE format.
- *
- * @typeParam TKeyManager - The Key Manager used to manage cryptographic keys.
- * @typeParam TCrypto - The Crypto API used to perform cryptographic operations.
  */
-export interface FlattenedJweEncryptParams<TKeyManager, TCrypto> extends FlattenedJweDecryptResult {
+export interface FlattenedJweEncryptParams extends FlattenedJweDecryptResult {
   /**
    * The encryption key which can be a Key Identifier such as a KMS key URI, a JSON Web Key (JWK),
-   * or raw key material represented as a byte array.
+   * raw key material represented as a byte array, or an ECDH-ES key agreement input.
    */
-  key: KeyIdentifier | Jwk | Uint8Array;
+  key: JweKeyManagementEncryptKey;
 
-  /** Key Manager instanceß responsible for managing cryptographic keys. */
-  keyManager?: TKeyManager;
-
-  /** Crypto API instance that provides the necessary cryptographic operations. */
-  crypto?: TCrypto;
+  /**
+   * Cipher used to encrypt the JWE payload when the Content Encryption Key is referenced by a
+   * Key Identifier (e.g. a KMS URI) rather than provided as a JWK. Required only for
+   * Key Identifier CEKs.
+   */
+  keyManager?: JweCipher;
 
   /** {@inheritDoc JweEncryptOptions} */
   options?: JweEncryptOptions;
@@ -133,6 +134,100 @@ function decodeHeaderParam(param: string, value?: string): Uint8Array | undefine
 }
 
 /**
+ * Decrypts the JWE ciphertext with the given Content Encryption Key (CEK) using the content
+ * encryption algorithm specified by the "enc" (Encryption Algorithm) Header Parameter.
+ *
+ * @param params - The content decryption parameters.
+ * @returns A Promise that resolves to the decrypted plaintext as a byte array.
+ * @throws {@link CryptoError} if the "enc" value is unsupported or the JWE Initialization Vector
+ *         is missing.
+ */
+async function decryptContent({ enc, cek, ciphertext, iv, additionalData }: {
+  enc: string;
+  cek: Jwk;
+  ciphertext: Uint8Array;
+  iv?: Uint8Array;
+  additionalData?: Uint8Array;
+}): Promise<Uint8Array> {
+  if (iv === undefined) {
+    throw new CryptoError(CryptoErrorCode.InvalidJwe, `JWE Initialization Vector is required when using "${enc}" content encryption.`);
+  }
+
+  switch (enc) {
+    case 'A128GCM':
+    case 'A192GCM':
+    case 'A256GCM':
+      return await AesGcm.decrypt({ key: cek, data: ciphertext, iv, additionalData });
+
+    case 'XC20P':
+      return await XChaCha20Poly1305.decrypt({ key: cek, data: ciphertext, nonce: iv, additionalData });
+
+    default:
+      throw new CryptoError(
+        CryptoErrorCode.AlgorithmNotSupported,
+        `Unsupported "enc" (Encryption Algorithm) Header Parameter value: ${enc}`
+      );
+  }
+}
+
+/**
+ * Encrypts the plaintext with the given Content Encryption Key (CEK) using the content encryption
+ * algorithm specified by the "enc" (Encryption Algorithm) Header Parameter.
+ *
+ * @param params - The content encryption parameters.
+ * @returns A Promise that resolves to the ciphertext (with the authentication tag appended) as a
+ *          byte array.
+ * @throws {@link CryptoError} if the "enc" value is unsupported.
+ */
+async function encryptContent({ enc, cek, plaintext, iv, additionalData }: {
+  enc: string;
+  cek: Jwk;
+  plaintext: Uint8Array;
+  iv: Uint8Array;
+  additionalData?: Uint8Array;
+}): Promise<Uint8Array> {
+  switch (enc) {
+    case 'A128GCM':
+    case 'A192GCM':
+    case 'A256GCM':
+      return await AesGcm.encrypt({ key: cek, data: plaintext, iv, additionalData });
+
+    case 'XC20P':
+      return await XChaCha20Poly1305.encrypt({ key: cek, data: plaintext, nonce: iv, additionalData });
+
+    default:
+      throw new CryptoError(
+        CryptoErrorCode.AlgorithmNotSupported,
+        `Unsupported "enc" (Encryption Algorithm) Header Parameter value: ${enc}`
+      );
+  }
+}
+
+/**
+ * Generates a random JWE Initialization Vector of the size required by the given "enc"
+ * (Encryption Algorithm) Header Parameter value, or the empty octet sequence if the algorithm
+ * does not use an Initialization Vector.
+ *
+ * @param enc - The JWE "enc" value identifying the content encryption algorithm.
+ * @returns The generated Initialization Vector as a byte array.
+ */
+function generateInitializationVector(enc: string): Uint8Array {
+  switch (enc) {
+    case 'A128GCM':
+    case 'A192GCM':
+    case 'A256GCM':
+      return CryptoUtils.randomBytes(12);
+
+    case 'XC20P':
+      // XChaCha20-Poly1305 uses an extended 192-bit (24-byte) nonce.
+      return CryptoUtils.randomBytes(24);
+
+    default:
+      return new Uint8Array(0);
+  }
+}
+
+/**
  * The `FlattenedJwe` class handles the encryption and decryption of JSON Web Encryption (JWE)
  * objects in the flattened serialization format. This format is a compact, URL-safe means of
  * representing encrypted content, typically used when dealing with a single recipient or when
@@ -160,7 +255,7 @@ function decodeHeaderParam(param: string, value?: string): Uint8Array | undefine
  * const { plaintext, protectedHeader } = await FlattenedJwe.decrypt({
  *   jwe: yourFlattenedJweObject,
  *   key: yourDecryptionKey,
- *   crypto: new YourCryptoApi(),
+ *   options: { allowedAlgs: ['dir'], allowedEncs: ['A256GCM'] },
  * });
  */
 export class FlattenedJwe {
@@ -192,25 +287,9 @@ export class FlattenedJwe {
     Object.assign(this, params);
   }
 
-  public static async decrypt<
-    TKeyManager extends KeyManager | undefined = KeyManager,
-    TCrypto extends CryptoApi | undefined = CryptoApi
-  >({
-    jwe,
-    key,
-    keyManager = new LocalKeyManager(),
-    crypto = new AgentCryptoApi(),
-    options = {}
-  }: FlattenedJweDecryptParams<TKeyManager, TCrypto>): Promise<FlattenedJweDecryptResult> {
-    // Verify that the provided Crypto API supports the decrypt operation before proceeding.
-    if (!isCipher(crypto)) {
-      throw new CryptoError(CryptoErrorCode.OperationNotSupported, 'Crypto API does not support the "encrypt" operation.');
-    }
-    // Verify that the provided Key Manager supports the decrypt operation before proceeding.
-    if (!isCipher(keyManager)) {
-      throw new CryptoError(CryptoErrorCode.OperationNotSupported, 'Key Manager does not support the "decrypt" operation.');
-    }
-
+  public static async decrypt({ jwe, key, keyManager, options }:
+    FlattenedJweDecryptParams
+  ): Promise<FlattenedJweDecryptResult> {
     // Verify that at least one of the JOSE header objects is present.
     if (!jwe.protected && !jwe.header && !jwe.unprotected) {
       throw new CryptoError(CryptoErrorCode.InvalidJwe,
@@ -254,6 +333,21 @@ export class FlattenedJwe {
       throw new Error('JWE Header is missing required "alg" (Algorithm) and/or "enc" (Encryption) Header Parameters');
     }
 
+    // Enforce the caller-supplied algorithm allow-lists before any key management processing to
+    // prevent algorithm-confusion attacks between callers that share the same engine.
+    if (!options.allowedAlgs.includes(joseHeader.alg as JweAlg)) {
+      throw new CryptoError(
+        CryptoErrorCode.AlgorithmNotSupported,
+        `JWE "alg" (Algorithm) Header Parameter value is not allowed by the caller: ${joseHeader.alg}`
+      );
+    }
+    if (!options.allowedEncs.includes(joseHeader.enc as JweEnc)) {
+      throw new CryptoError(
+        CryptoErrorCode.AlgorithmNotSupported,
+        `JWE "enc" (Encryption Algorithm) Header Parameter value is not allowed by the caller: ${joseHeader.enc}`
+      );
+    }
+
     let cek: KeyIdentifier | Jwk;
     try {
       const encryptedKey = jwe.encrypted_key
@@ -261,7 +355,7 @@ export class FlattenedJwe {
         : undefined;
 
       cek = await JweKeyManagement.decrypt(
-        { key, encryptedKey, joseHeader, crypto },
+        { key, encryptedKey, joseHeader },
         { minP2cCount: options.minP2cCount }
       );
 
@@ -281,9 +375,7 @@ export class FlattenedJwe {
       // recommended, in the event of receiving an improperly formatted key, that the recipient
       // substitute a randomly generated CEK and proceed to the next step, to mitigate timing
       // attacks.
-      cek = typeof key === 'string'
-        ? await keyManager.generateKey({ algorithm: joseHeader.enc })
-        : await crypto.generateKey({ algorithm: joseHeader.enc });
+      cek = await generateCek(joseHeader.enc);
     }
 
     // If present, decode the JWE Initialization Vector (IV) and Authentication Tag.
@@ -312,10 +404,16 @@ export class FlattenedJwe {
 
     // Decrypt the JWE using the Content Encryption Key (CEK) with:
     // - Key Manager: If the CEK is a Key Identifier.
-    // - Crypto API: If the CEK is a JWK.
-    const plaintext = typeof cek === 'string'
-      ? await keyManager.decrypt({ keyUri: cek, data: ciphertext, iv, additionalData })
-      : await crypto.decrypt({ key: cek, data: ciphertext, iv, additionalData });
+    // - Content encryption primitives: If the CEK is a JWK.
+    let plaintext: Uint8Array;
+    if (typeof cek === 'string') {
+      if (keyManager === undefined) {
+        throw new CryptoError(CryptoErrorCode.OperationNotSupported, 'A "keyManager" is required to decrypt with a Key Identifier CEK.');
+      }
+      plaintext = await keyManager.decrypt({ keyUri: cek, data: ciphertext, iv, additionalData });
+    } else {
+      plaintext = await decryptContent({ enc: joseHeader.enc, cek, ciphertext, iv, additionalData });
+    }
 
     return {
       plaintext,
@@ -326,28 +424,15 @@ export class FlattenedJwe {
     };
   }
 
-  public static async encrypt<
-    TKeyManager extends KeyManager | undefined = KeyManager,
-    TCrypto extends CryptoApi | undefined = CryptoApi
-  >({
+  public static async encrypt({
     key,
     plaintext,
     additionalAuthenticatedData,
     protectedHeader,
     sharedUnprotectedHeader,
     unprotectedHeader,
-    keyManager = new LocalKeyManager(),
-    crypto = new AgentCryptoApi(),
-  }: FlattenedJweEncryptParams<TKeyManager, TCrypto>): Promise<FlattenedJwe> {
-    // Verify that the provided Crypto API supports the decrypt operation before proceeding.
-    if (!isCipher(crypto)) {
-      throw new CryptoError(CryptoErrorCode.OperationNotSupported, 'Crypto API does not support the "encrypt" operation.');
-    }
-    // Verify that the provided Key Manager supports the decrypt operation before proceeding.
-    if (!isCipher(keyManager)) {
-      throw new CryptoError(CryptoErrorCode.OperationNotSupported, 'Key Manager does not support the "decrypt" operation.');
-    }
-
+    keyManager,
+  }: FlattenedJweEncryptParams): Promise<FlattenedJwe> {
     // Verify that at least one of the JOSE header objects is present.
     if (!protectedHeader && !sharedUnprotectedHeader && !unprotectedHeader) {
       throw new CryptoError(CryptoErrorCode.InvalidJwe,
@@ -381,21 +466,18 @@ export class FlattenedJwe {
       throw new Error('JWE Header is missing required "alg" (Algorithm) and/or "enc" (Encryption) Header Parameters');
     }
 
-    const { cek, encryptedKey } = await JweKeyManagement.encrypt({ key, joseHeader, crypto });
+    const { cek, encryptedKey, headerParams } = await JweKeyManagement.encrypt({ key, joseHeader });
+
+    // Merge any header parameters produced during key management (e.g. the ECDH-ES "epk" value)
+    // into the JWE Protected Header so that they are covered by the Additional Authenticated Data.
+    if (headerParams !== undefined) {
+      protectedHeader = { ...protectedHeader, ...headerParams };
+    }
 
     // If required for the Content Encryption Algorithm, generate a random JWE Initialization
     // Vector (IV) of the correct size; otherwise, let the JWE Initialization Vector be the empty
     // octet sequence.
-    let iv: Uint8Array;
-    switch (joseHeader.enc) {
-      case 'A128GCM':
-      case 'A192GCM':
-      case 'A256GCM':
-        iv = CryptoUtils.randomBytes(12);
-        break;
-      default:
-        iv = new Uint8Array(0);
-    }
+    const iv = generateInitializationVector(joseHeader.enc);
 
     // Compute the Encoded Protected Header value BASE64URL(UTF8(JWE Protected Header)).  If the JWE
     // Protected Header is not present, let this value be the empty string.
@@ -419,9 +501,15 @@ export class FlattenedJwe {
     // Encrypt the plaintext using the CEK, the JWE Initialization Vector, and the Additional
     // Authenticated Data value using the specified content encryption algorithm to create the JWE
     // Ciphertext value and the JWE Authentication Tag.
-    const ciphertextWithTag = typeof cek === 'string'
-      ? await keyManager.encrypt({ keyUri: cek, data: plaintext, iv, additionalData })
-      : await crypto.encrypt({ key: cek, data: plaintext, iv, additionalData });
+    let ciphertextWithTag: Uint8Array;
+    if (typeof cek === 'string') {
+      if (keyManager === undefined) {
+        throw new CryptoError(CryptoErrorCode.OperationNotSupported, 'A "keyManager" is required to encrypt with a Key Identifier CEK.');
+      }
+      ciphertextWithTag = await keyManager.encrypt({ keyUri: cek, data: plaintext, iv, additionalData });
+    } else {
+      ciphertextWithTag = await encryptContent({ enc: joseHeader.enc, cek, plaintext, iv, additionalData });
+    }
     const ciphertext = ciphertextWithTag.slice(0, -16);
     const authenticationTag = ciphertextWithTag.slice(-16);
 
