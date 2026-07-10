@@ -1,5 +1,13 @@
 # @enbox/local-node
 
+## 0.0.2
+
+### Patch Changes
+
+- Updated dependencies [[`998232d`](https://github.com/enboxorg/enbox/commit/998232da2c4124b18bd014ffa6494156fd31cad7), [`1a71f03`](https://github.com/enboxorg/enbox/commit/1a71f03093598f604445910ad1df1fb64e5685f4), [`2501b96`](https://github.com/enboxorg/enbox/commit/2501b96d643124baebe7632ee369e893789c938b)]:
+  - @enbox/agent@0.8.16
+  - @enbox/dwn-server@0.1.21
+
 ## 0.0.1
 
 ### Patch Changes

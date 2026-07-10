@@ -1,5 +1,16 @@
 # @enbox/dwn-server
 
+## 0.1.21
+
+### Patch Changes
+
+- Updated dependencies [[`998232d`](https://github.com/enboxorg/enbox/commit/998232da2c4124b18bd014ffa6494156fd31cad7), [`2501b96`](https://github.com/enboxorg/enbox/commit/2501b96d643124baebe7632ee369e893789c938b)]:
+  - @enbox/crypto@0.1.5
+  - @enbox/dwn-sdk-js@0.4.10
+  - @enbox/dwn-clients@0.4.16
+  - @enbox/dids@0.1.5
+  - @enbox/dwn-sql-store@0.0.35
+
 ## 0.1.20
 
 ### Patch Changes

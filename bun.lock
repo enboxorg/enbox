@@ -50,7 +50,7 @@
     },
     "packages/agent": {
       "name": "@enbox/agent",
-      "version": "0.8.15",
+      "version": "0.8.16",
       "dependencies": {
         "@enbox/common": "workspace:*",
         "@enbox/connect": "workspace:*",
@@ -83,7 +83,7 @@
     },
     "packages/api": {
       "name": "@enbox/api",
-      "version": "0.6.53",
+      "version": "0.6.54",
       "dependencies": {
         "@enbox/agent": "workspace:*",
         "@enbox/auth": "workspace:*",
@@ -109,7 +109,7 @@
     },
     "packages/auth": {
       "name": "@enbox/auth",
-      "version": "0.6.61",
+      "version": "0.6.62",
       "dependencies": {
         "@enbox/agent": "workspace:*",
         "@enbox/common": "workspace:*",
@@ -130,7 +130,7 @@
     },
     "packages/browser": {
       "name": "@enbox/browser",
-      "version": "0.3.39",
+      "version": "0.3.40",
       "dependencies": {
         "@enbox/agent": "workspace:*",
         "@enbox/api": "workspace:*",
@@ -152,7 +152,7 @@
     },
     "packages/cli": {
       "name": "@enbox/cli",
-      "version": "0.1.6",
+      "version": "0.1.7",
       "dependencies": {
         "@enbox/agent": "workspace:*",
         "@enbox/api": "workspace:*",
@@ -202,7 +202,7 @@
     },
     "packages/connect": {
       "name": "@enbox/connect",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@enbox/common": "workspace:*",
         "@enbox/crypto": "workspace:*",
@@ -222,7 +222,7 @@
     },
     "packages/crypto": {
       "name": "@enbox/crypto",
-      "version": "0.1.4",
+      "version": "0.1.5",
       "dependencies": {
         "@enbox/common": "workspace:*",
         "@noble/ciphers": "2.2.0",
@@ -246,7 +246,7 @@
     },
     "packages/dids": {
       "name": "@enbox/dids",
-      "version": "0.1.4",
+      "version": "0.1.5",
       "dependencies": {
         "@dnsquery/dns-packet": "6.1.1",
         "@enbox/common": "workspace:*",
@@ -276,7 +276,7 @@
     },
     "packages/dwn-clients": {
       "name": "@enbox/dwn-clients",
-      "version": "0.4.15",
+      "version": "0.4.16",
       "dependencies": {
         "@enbox/common": "workspace:*",
         "@enbox/crypto": "workspace:*",
@@ -295,7 +295,7 @@
     },
     "packages/dwn-sdk-js": {
       "name": "@enbox/dwn-sdk-js",
-      "version": "0.4.9",
+      "version": "0.4.10",
       "dependencies": {
         "@enbox/common": "workspace:*",
         "@enbox/crypto": "workspace:*",
@@ -350,7 +350,7 @@
     },
     "packages/dwn-server": {
       "name": "@enbox/dwn-server",
-      "version": "0.1.20",
+      "version": "0.1.21",
       "bin": {
         "dwn-server": "./dist/esm/src/main.js",
       },
@@ -423,7 +423,7 @@
     },
     "packages/dwn-sql-store": {
       "name": "@enbox/dwn-sql-store",
-      "version": "0.0.34",
+      "version": "0.0.35",
       "dependencies": {
         "@enbox/dwn-sdk-js": "workspace:*",
         "@ipld/dag-cbor": "10.0.1",
@@ -460,7 +460,7 @@
     },
     "packages/electrobun-dwn": {
       "name": "@enbox/electrobun-dwn",
-      "version": "0.0.71",
+      "version": "0.0.72",
       "dependencies": {
         "@enbox/agent": "workspace:*",
         "@enbox/api": "workspace:*",
@@ -483,7 +483,7 @@
     },
     "packages/local-node": {
       "name": "@enbox/local-node",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "bin": {
         "enbox-local-node": "./dist/esm/src/cli.js",
       },
@@ -520,7 +520,7 @@
     },
     "packages/protocols": {
       "name": "@enbox/protocols",
-      "version": "0.2.80",
+      "version": "0.2.81",
       "dependencies": {
         "@enbox/api": "workspace:*",
         "@enbox/dwn-sdk-js": "workspace:*",
