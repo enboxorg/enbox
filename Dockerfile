@@ -40,6 +40,7 @@ COPY packages/cli/package.json               packages/cli/
 COPY packages/electrobun-dwn/package.json    packages/electrobun-dwn/
 COPY packages/protocols/package.json         packages/protocols/
 COPY packages/protocol-codegen/package.json  packages/protocol-codegen/
+COPY packages/local-node/package.json        packages/local-node/
 COPY apps/docs/package.json                  apps/docs/
 
 RUN bun install --frozen-lockfile --ignore-scripts
@@ -87,6 +88,7 @@ COPY packages/cli/package.json               packages/cli/
 COPY packages/electrobun-dwn/package.json    packages/electrobun-dwn/
 COPY packages/protocols/package.json         packages/protocols/
 COPY packages/protocol-codegen/package.json  packages/protocol-codegen/
+COPY packages/local-node/package.json        packages/local-node/
 COPY apps/docs/package.json                  apps/docs/
 
 # Build packages in dependency order.
