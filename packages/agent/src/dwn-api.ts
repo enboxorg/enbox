@@ -619,18 +619,22 @@ export class AgentDwnApi {
   /**
    * Guards use of `recipientRolePublicKey`, which only drives role-audience key
    * delivery provisioning for an accepted, stored, non-raw RecordsWrite to a
-   * `$role` path with a `recipient`. Runs entirely BEFORE the record is written so
-   * any request that cannot honor the "must deliver" assertion fails fast without
-   * leaving state behind. Rejects:
+   * `$role` path with a `recipient`. Runs BEFORE the record is written so caller
+   * MISUSE fails fast without leaving state behind. Rejects:
    *   - a non-RecordsWrite, a raw/replayed message, or `store: false` (nothing is
-   *     persisted to deliver against), so the assertion is never silently dropped;
-   *   - a grant-authorized write (`permissionGrantId` / `delegatedGrant`), whose
-   *     strict failure could not be rolled back — the write-scoped grant does not
-   *     authorize the compensating delete (see {@link revokeAcceptedRoleRecord});
+   *     persisted to deliver against), so a supplied key is never silently ignored;
    *   - a malformed/unusable key (see {@link assertX25519RolePublicKey}); and
    *   - a target path that is not a `$role` with a `$keyAgreement` audience and a
-   *     `recipient` (see {@link assertRoleRecipientPathDeliverable}), which would
-   *     otherwise be written and then silently skipped by provisioning.
+   *     `recipient` (see {@link assertRoleRecipientPathDeliverable}), which could
+   *     never provision a delivery to wrap the key to.
+   *
+   * It does NOT reject a grant-authorized write. A supplied key drives BEST-EFFORT
+   * delivery whose outcome is reported on `DwnResponse.audienceKeyDelivery`; it never
+   * makes the SDK throw a delivery failure or roll the `$role` record back, so no
+   * delete authorization (which a write-scoped grant lacks) is ever required. A caller
+   * that needs delivery to be fatal inspects the reported outcome and compensates with
+   * the authority it holds (e.g. its own delete grant). This is the primary path for
+   * the dashboard delegate, which authors every write via a `delegatedGrant`.
    */
   private async assertRecipientRolePublicKeyUsable<T extends DwnInterface>(request: ProcessDwnRequest<T>): Promise<void> {
     if (request.recipientRolePublicKey === undefined) {
@@ -643,20 +647,6 @@ export class AgentDwnApi {
         'AgentDwnApi: recipientRolePublicKey is only supported when writing (and storing) a $role ' +
         'record via processRequest (a non-raw, stored RecordsWrite); it is not honored for other ' +
         'message types, raw messages, or store:false, so it must not be supplied there.',
-      );
-    }
-    if (request.messageParams?.permissionGrantId !== undefined ||
-        request.messageParams?.delegatedGrant !== undefined) {
-      // A supplied key makes delivery strict, and a strict failure rolls the grant
-      // back with a compensating RecordsDelete. Grant/delegated-grant authorization is
-      // scoped to RecordsWrite, so that delete would fail (GrantAuthorizationMethod-
-      // Mismatch) and the undeliverable grant would be stranded. Reject "must deliver
-      // but cannot roll back" up front rather than discovering it after the write.
-      throw new Error(
-        'AgentDwnApi: recipientRolePublicKey is not supported on a grant-authorized role write ' +
-        '(permissionGrantId/delegatedGrant): a strict delivery failure cannot be rolled back because the ' +
-        'RecordsWrite-scoped grant does not authorize the compensating RecordsDelete. Author the grant ' +
-        'directly, or omit the key for best-effort delivery.',
       );
     }
     await assertX25519RolePublicKey(request.recipientRolePublicKey);
@@ -724,22 +714,25 @@ export class AgentDwnApi {
   }
 
   /**
-   * Provisions role-audience key delivery for a RecordsWrite reply and turns the
-   * result into a returned outcome or a thrown error.
+   * Provisions role-audience key delivery for a RecordsWrite reply and reports the
+   * outcome — always BEST-EFFORT.
    *
    * Runs ONLY on a fresh 202 accept of a stored, non-raw RecordsWrite. A 409 means
    * the identical record already existed — it was provisioned when first accepted,
    * and `createAudienceDeliveryRecord` mints a fresh DEK/IV per call, so re-running
    * on 409 would pile up duplicate delivery records; 409 is therefore skipped.
-   * `store: false` persists nothing to deliver against and is excluded too (a
-   * supplied key on `store: false` is already rejected up front). `!rawMessage`
-   * keeps this off the sync/replay path.
+   * `store: false` persists nothing to deliver against and is excluded too.
+   * `!rawMessage` keeps this off the sync/replay path.
    *
-   * A supplied `recipientRolePublicKey` asserts delivery MUST succeed; a strict
-   * failure is handled by {@link handleStrictDeliveryFailure} (rollback of an initial
-   * grant, or intact-and-rethrow for an update) and always throws. Without a supplied
-   * key, delivery is best-effort and a failure is reported as
-   * `{ delivered: false, reason }`.
+   * The `$role` write is already accepted and valid, so a delivery that cannot be
+   * provisioned is surfaced on `DwnResponse.audienceKeyDelivery` as
+   * `{ delivered: false, reason }` for the caller to act on — never by throwing or
+   * unwinding the write. That holds whether or not a `recipientRolePublicKey` was
+   * supplied: the supplied key only chooses which key the delivery is wrapped to
+   * (the caller's, skipping recipient DID resolution), not whether a failure is
+   * fatal. A non-role write (nothing to deliver) yields `undefined`; a supplied key
+   * always yields an outcome (delivered, or a reported failure) so the caller can
+   * enforce its own delivery policy with the authority it holds.
    */
   private async provisionAudienceKeyDeliveryForReply<T extends DwnInterface>(
     request: ProcessDwnRequest<T>,
@@ -756,104 +749,34 @@ export class AgentDwnApi {
     const recordsWrite = message as RecordsWriteMessage;
     try {
       const outcome = await this.provisionAudienceKeyForAcceptedRoleRecord(request, recordsWrite);
-      // For a supplied key the preflight already proved the path is a deliverable role
-      // recipient (same resolveDeliverableRoleAudience check), so provisioning delivers
-      // or throws — it cannot skip to `undefined`. Enforce that invariant rather than
-      // trusting it: a silent skip under "must deliver" is the exact failure this
-      // feature removes, and it is one cache expiry + concurrent reconfigure away.
-      if (request.recipientRolePublicKey !== undefined && outcome === undefined) {
-        throw new Error('provisioning skipped delivery for the supplied recipient key');
+      if (outcome !== undefined) {
+        return outcome;
       }
-      return outcome;
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
+      // A non-role (non-deliverable) write has nothing to deliver — no outcome. But a
+      // supplied key targeted a specific recipient and the preflight proved the path
+      // deliverable, so a skip here is an unexpected race (e.g. a concurrent protocol
+      // reconfigure). Report it as a failure rather than dropping it silently.
       if (request.recipientRolePublicKey !== undefined) {
-        return await this.handleStrictDeliveryFailure(request, recordsWrite, error, detail);
+        return {
+          delivered    : false,
+          recipientDid : recordsWrite.descriptor.recipient ?? '',
+          reason       : 'role-audience delivery was skipped for the supplied recipient key ' +
+            '(the path is no longer a deliverable role audience)',
+        };
       }
-      // Best-effort path: no key supplied. A recipient whose role-path key cannot be
-      // resolved (e.g. a DWN-less `did:jwk`) simply cannot receive a delivery, but the
-      // `$role` write itself is valid — report it visibly instead of failing the write.
+      return undefined;
+    } catch (error) {
+      // Delivery is best-effort. A recipient whose delivery cannot be provisioned — a
+      // DWN-less `did:jwk` with no supplied key, or a supplied key that fails to wrap —
+      // is reported here; the already-accepted `$role` write is never unwound. A caller
+      // that treats delivery as required inspects this outcome and compensates with the
+      // authority it holds (e.g. deleting the record with its own delete grant).
+      const detail = error instanceof Error ? error.message : String(error);
       return {
         delivered    : false,
         recipientDid : recordsWrite.descriptor.recipient ?? '',
         reason       : detail,
       };
-    }
-  }
-
-  /**
-   * Turns a strict (supplied-key) provisioning failure into a thrown error, rolling
-   * the grant back first when that is safe. A compensating delete is applied ONLY to
-   * an initial `$role` write: deleting a record tombstones its recordId (no write is
-   * allowed after delete), so rolling back an UPDATE to an already-active grant would
-   * irreversibly revoke the recipient and strand their existing delivery — and an
-   * update needs no rollback anyway (the duplicate-role 400 the rollback avoids blocks
-   * only re-creation, not an update retry). Always throws.
-   */
-  private async handleStrictDeliveryFailure(
-    request: ProcessDwnRequest<DwnInterface.RecordsWrite>,
-    recordsWrite: RecordsWriteMessage,
-    error: unknown,
-    detail: string,
-  ): Promise<never> {
-    const cause = error instanceof Error ? error : undefined;
-    if (!(await RecordsWrite.isInitialWrite(recordsWrite))) {
-      throw new Error(
-        `AgentDwnApi: role record '${recordsWrite.recordId}' was updated, but provisioning its ` +
-        'role-audience key delivery to the supplied recipient key failed; the pre-existing grant was ' +
-        `left intact (an update is never rolled back): ${detail}`,
-        { cause },
-      );
-    }
-    // Initial write: roll the just-created grant back so we neither leave a holder that
-    // can never decrypt nor block a fresh retry (a duplicate role is rejected 400).
-    const rollback = await this.revokeAcceptedRoleRecord(request, recordsWrite);
-    const rollbackNote = rollback.rolledBack
-      ? 'the accepted grant was rolled back'
-      : `WARNING: ${rollback.warning}, so the undeliverable grant may still be present and must be ` +
-        'removed manually';
-    throw new Error(
-      `AgentDwnApi: role record '${recordsWrite.recordId}' was created, but provisioning its ` +
-      `role-audience key delivery to the supplied recipient key failed — ${rollbackNote}: ${detail}`,
-      { cause },
-    );
-  }
-
-  /**
-   * Compensating rollback for a strict role-audience delivery failure: deletes the
-   * just-accepted `$role` record so the failed grant leaves no trace and the caller
-   * can safely retry the whole write (a leftover grant would block retry with a 400
-   * duplicate-role). Reuses {@link processRequest} so the delete follows the same
-   * local/remote routing, carrying the original write's authorization context
-   * (`protocolRole`, `permissionGrantId`, `delegatedGrant`). Returns whether the
-   * grant was confirmed removed; a rollback that does not confirm (non-202 or
-   * throws) reports `warning` for the caller to surface, but never throws itself so
-   * it cannot mask the original delivery failure.
-   */
-  private async revokeAcceptedRoleRecord(
-    request: ProcessDwnRequest<DwnInterface.RecordsWrite>,
-    recordsWrite: RecordsWriteMessage,
-  ): Promise<{ rolledBack: true } | { rolledBack: false; warning: string }> {
-    try {
-      const { reply } = await this.processRequest({
-        author        : request.author,
-        target        : request.target,
-        granteeDid    : request.granteeDid,
-        messageType   : DwnInterface.RecordsDelete,
-        messageParams : {
-          recordId          : recordsWrite.recordId,
-          protocolRole      : request.messageParams?.protocolRole,
-          permissionGrantId : request.messageParams?.permissionGrantId,
-          delegatedGrant    : request.messageParams?.delegatedGrant,
-        },
-      });
-      if (reply.status.code === 202) {
-        return { rolledBack: true };
-      }
-      return { rolledBack: false, warning: `rollback delete returned ${reply.status.code} (${reply.status.detail})` };
-    } catch (revokeError) {
-      const revokeDetail = revokeError instanceof Error ? revokeError.message : String(revokeError);
-      return { rolledBack: false, warning: `rollback delete threw '${revokeDetail}'` };
     }
   }
 
@@ -917,7 +840,8 @@ export class AgentDwnApi {
   ): Promise<DwnResponse<T>> {
     // Role-audience key delivery is provisioned on the owner's LOCAL DWN during
     // processRequest; sendRequest dispatches to a remote target and never provisions.
-    // Reject a supplied key here so a "must deliver" assertion can't be silently lost.
+    // Reject a supplied key here so it can't be silently ignored on a path that would
+    // never wrap a delivery to it.
     if ('recipientRolePublicKey' in request && request.recipientRolePublicKey !== undefined) {
       throw new Error(
         'AgentDwnApi: recipientRolePublicKey is not supported on sendRequest. Role-audience key ' +
@@ -1054,11 +978,11 @@ export class AgentDwnApi {
    * Provisions role-audience key delivery for an accepted `$role` record write.
    *
    * Returns `undefined` when the record is not a deliverable role audience (via the
-   * shared {@link resolveDeliverableRoleAudience} check — the best-effort skip), or
-   * an {@link AudienceKeyDeliveryOutcome} with `delivered: true` on success. It does
-   * NOT decide strict-vs-best-effort: it simply throws if delivery cannot be
-   * provisioned, and the caller ({@link processRequest}) chooses whether to rethrow
-   * (a `recipientRolePublicKey` was supplied → delivery asserted) or record a skip.
+   * shared {@link resolveDeliverableRoleAudience} check — nothing to deliver), or an
+   * {@link AudienceKeyDeliveryOutcome} with `delivered: true` on success. It throws
+   * if delivery cannot be provisioned; the caller
+   * ({@link provisionAudienceKeyDeliveryForReply}) turns that into a best-effort
+   * `{ delivered: false, reason }` outcome and never unwinds the accepted write.
    */
   private async provisionAudienceKeyForAcceptedRoleRecord(
     request: ProcessDwnRequest<DwnInterface.RecordsWrite>,
