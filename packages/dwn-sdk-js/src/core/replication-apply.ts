@@ -52,14 +52,6 @@ export type DependencyRef =
   | { type: 'Role'; protocol: string; protocolPath: string; recipient: string; contextPrefix?: string; messageCid?: string; terminal?: boolean }
   | { type: 'Grant'; permissionGrantId: string; messageCid?: string; terminal?: boolean }
   | {
-      type: 'EncryptionProtocol';
-      protocolPath: 'grantKey';
-      tags?: Record<string, string | number>;
-      recipient?: string;
-      messageCid?: string;
-      terminal?: boolean;
-    }
-  | {
       type: 'EncryptionControl';
       protocol: string;
       protocolPath: EncryptionControlPath;

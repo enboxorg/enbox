@@ -1,3 +1,4 @@
+import type { PublicKeyJwk } from '@enbox/crypto';
 import type {
   DataEncodedRecordsWriteMessage,
   DwnConfig,
@@ -5,7 +6,6 @@ import type {
   EncryptionKeyDeriver,
   EventLog,
   GenericMessage,
-  KeyDecrypter,
   MessageStore,
   ProgressToken,
   ProtocolActionRule,
@@ -17,7 +17,6 @@ import type {
   SourceRoleAudienceKeyEncryptionInput,
 } from '@enbox/dwn-sdk-js';
 import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
-import type { KeyIdentifier, PublicKeyJwk } from '@enbox/crypto';
 
 import {
   Cid,
@@ -86,18 +85,11 @@ import {
   generateAudienceKey as generateAudienceKeyFn,
   getAudienceDecryptionKeyCacheKey,
   getEncryptionKeyDeriver as getEncryptionKeyDeriverFn,
-  getEncryptionKeyInfo as getEncryptionKeyInfoFn,
-  getKeyDecrypter as getKeyDecrypterFn,
   hasAudienceSealCoverage as hasAudienceSealCoverageFn,
   ivLength as ivLengthFn,
   maybeDecryptReply as maybeDecryptReplyFn,
   resolveAudienceDecryptionKey as resolveAudienceDecryptionKeyFn,
 } from './dwn-encryption.js';
-
-// Import extracted protocol utilities
-import {
-  detectNewParticipants as detectNewParticipantsFn,
-} from './protocol-utils.js';
 
 // Import extracted protocol definition fetching functions
 import {
@@ -1936,45 +1928,6 @@ export class AgentDwnApi {
     didUri: string
   ): Promise<EncryptionKeyDeriver> {
     return getEncryptionKeyDeriverFn(this.agent, didUri);
-  }
-
-  /**
-   * Resolves the keyAgreement verification method for the given DID and returns
-   * the key ID, key URI, and public key JWK.
-   *
-   * @param didUri - The DID URI to look up
-   */
-  private async getEncryptionKeyInfo(
-    didUri: string
-  ): Promise<{ keyId: string; keyUri: KeyIdentifier; publicKeyJwk: PublicKeyJwk }> {
-    return getEncryptionKeyInfoFn(this.agent, didUri);
-  }
-
-  /**
-   * Constructs a ProtocolPath KeyDecrypter for the given DID.
-   *
-   * @param didUri - The DID URI to build a decrypter for
-   */
-  private async getKeyDecrypter(
-    didUri: string
-  ): Promise<KeyDecrypter> {
-    return getKeyDecrypterFn(this.agent, didUri);
-  }
-
-  /**
-   * Analyses a record write to determine which DIDs join the readable audience.
-   *
-   * @param params - Parameters for participant detection
-   * @returns Set of DIDs that join the readable audience
-   */
-  public detectNewParticipants(params: {
-    protocolDefinition: ProtocolDefinition;
-    protocolPath: string;
-    recipient?: string;
-    tenantDid: string;
-    authorDid?: string;
-  }): Set<string> {
-    return detectNewParticipantsFn(params);
   }
 
   /**

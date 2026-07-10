@@ -1,7 +1,5 @@
 import type { DerivedPrivateJwk } from './hd-key.js';
-import type { Jwk } from '@enbox/crypto';
 import type { KeyDecrypter } from '../types/encryption-types.js';
-import type { PublicKeyJwk } from '../types/jose-types.js';
 import type { X25519KeyEncryption } from './encryption.js';
 import type { Filter, KeyValues, StartsWithFilter } from '../types/query-types.js';
 import type { GenericMessage, GenericSignaturePayload, MessageSort } from '../types/message-types.js';
@@ -63,30 +61,11 @@ export class Records {
 
   /**
    * Decrypts the encrypted data in a message reply.
-   *
-   * Overload 1 (callback-based): Accepts a KeyDecrypter that performs
-   * X25519-HKDF key agreement + AES Key Unwrap internally.
+   * Accepts a KeyDecrypter that performs X25519-HKDF key agreement + AES Key Unwrap internally.
    */
   public static async decrypt(
     recordsWrite: RecordsWriteMessage,
     keyDecrypter: KeyDecrypter,
-    cipherStream: ReadableStream<Uint8Array>,
-  ): Promise<ReadableStream<Uint8Array>>;
-
-  /**
-   * Overload 2 (raw-key): Takes DerivedPrivateJwk directly.
-   * @param ancestorPrivateKey Any ancestor private key in the key derivation path.
-   */
-  public static async decrypt(
-    recordsWrite: RecordsWriteMessage,
-    ancestorPrivateKey: DerivedPrivateJwk,
-    cipherStream: ReadableStream<Uint8Array>,
-  ): Promise<ReadableStream<Uint8Array>>;
-
-  // Implementation dispatches based on argument type.
-  public static async decrypt(
-    recordsWrite: RecordsWriteMessage,
-    keyOrDecrypter: DerivedPrivateJwk | KeyDecrypter,
     cipherStream: ReadableStream<Uint8Array>,
   ): Promise<ReadableStream<Uint8Array>> {
     const { encryption } = recordsWrite;
@@ -101,27 +80,21 @@ export class Records {
     const actualDataCid = await Cid.computeDagPbCidFromBytes(ciphertext);
     Records.validateEncryptedDataIntegrity(recordsWrite, actualDataCid, ciphertext.byteLength);
 
-    const { fullDerivationPath, leafPrivateKey, matchingKeyEncryption } =
-      await Records.findMatchingKeyEncryption(recordsWrite, keyOrDecrypter);
+    const { fullDerivationPath, matchingKeyEncryption } =
+      await Records.findMatchingKeyEncryption(recordsWrite, keyDecrypter);
 
     if (matchingKeyEncryption === undefined) {
       throw new DwnError(
         DwnErrorCode.RecordsDecryptNoMatchingKeyEncryptedFound,
-        `Unable to find a matching key encryption entry for '${keyOrDecrypter.rootKeyId}' and '${keyOrDecrypter.derivationScheme}'.`
+        `Unable to find a matching key encryption entry for '${keyDecrypter.rootKeyId}' and '${keyDecrypter.derivationScheme}'.`
       );
     }
 
-    let cek: Uint8Array;
-
-    if ('decrypt' in keyOrDecrypter) {
-      cek = await keyOrDecrypter.decrypt(fullDerivationPath, {
-        encryptedKey       : Encoder.base64UrlToBytes(matchingKeyEncryption.encryptedKey),
-        ephemeralPublicKey : matchingKeyEncryption.ephemeralPublicKey,
-        keyEncryption      : matchingKeyEncryption,
-      });
-    } else {
-      cek = await Encryption.unwrapKey(leafPrivateKey!, matchingKeyEncryption);
-    }
+    const cek = await keyDecrypter.decrypt(fullDerivationPath, {
+      encryptedKey       : Encoder.base64UrlToBytes(matchingKeyEncryption.encryptedKey),
+      ephemeralPublicKey : matchingKeyEncryption.ephemeralPublicKey,
+      keyEncryption      : matchingKeyEncryption,
+    });
 
     const iv = Encoder.base64UrlToBytes(encryption.initializationVector);
     const plaintext = await Encryption.decrypt(encryption.algorithm, cek, iv, ciphertext);
@@ -132,33 +105,18 @@ export class Records {
 
   private static async findMatchingKeyEncryption(
     recordsWrite: RecordsWriteMessage,
-    keyOrDecrypter: DerivedPrivateJwk | KeyDecrypter,
-  ): Promise<{ fullDerivationPath: string[]; leafPrivateKey?: Jwk; matchingKeyEncryption?: X25519KeyEncryption }> {
+    keyDecrypter: KeyDecrypter,
+  ): Promise<{ fullDerivationPath: string[]; matchingKeyEncryption?: X25519KeyEncryption }> {
     const { encryption } = recordsWrite;
-    const fullDerivationPath = Records.constructKeyDerivationPath(keyOrDecrypter.derivationScheme, recordsWrite);
+    const fullDerivationPath = Records.constructKeyDerivationPath(keyDecrypter.derivationScheme, recordsWrite);
 
-    if ('decrypt' in keyOrDecrypter) {
-      const publicKey = await keyOrDecrypter.derivePublicKey(fullDerivationPath);
-      const keyId = await Encryption.getKeyId(publicKey);
-      return {
-        fullDerivationPath,
-        matchingKeyEncryption: encryption!.keyEncryption.find((entry): boolean =>
-          entry.derivationScheme === keyOrDecrypter.derivationScheme && entry.keyId === keyId
-        ),
-      };
-    }
-
-    const leafPrivateKeyBytes = await Records.derivePrivateKey(keyOrDecrypter, fullDerivationPath);
-    const leafPrivateKey = await X25519.bytesToPrivateKey({ privateKeyBytes: leafPrivateKeyBytes });
-
-    const publicKey = await X25519.getPublicKey({ key: leafPrivateKey });
-    const keyId = keyOrDecrypter.keyId ?? await Encryption.getKeyId(publicKey as PublicKeyJwk);
+    const publicKey = await keyDecrypter.derivePublicKey(fullDerivationPath);
+    const keyId = await Encryption.getKeyId(publicKey);
 
     return {
       fullDerivationPath,
-      leafPrivateKey,
       matchingKeyEncryption: encryption!.keyEncryption.find((entry): boolean =>
-        entry.derivationScheme === keyOrDecrypter.derivationScheme && entry.keyId === keyId
+        entry.derivationScheme === keyDecrypter.derivationScheme && entry.keyId === keyId
       ),
     };
   }

@@ -5,7 +5,7 @@ import type { ValidationStateReader } from '../types/validation-state-reader.js'
 import type { EncryptionControlAudiencePayload, EncryptionControlDeliveryTags, RoleAudienceKeyId } from '../types/encryption-types.js';
 import type { Filter, PaginationCursor } from '../types/query-types.js';
 import type { ProtocolActionRule, ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
-import type { RecordsCountMessage, RecordsFilter, RecordsQueryMessage, RecordsReadMessage, RecordsSubscribeMessage, RecordsWriteMessage, RecordsWriteTags } from '../types/records-types.js';
+import type { RecordsCountMessage, RecordsFilter, RecordsQueryMessage, RecordsReadMessage, RecordsSubscribeMessage, RecordsWriteMessage } from '../types/records-types.js';
 
 import { checkActor } from './protocol-authorization-action.js';
 import { DwnConstant } from './dwn-constant.js';
@@ -1225,22 +1225,6 @@ export class EncryptionControl {
       throw new DwnError(
         errorCode,
         `${recordType} control records must include string tag '${tag}'.`
-      );
-    }
-
-    return value;
-  }
-
-  private static getOptionalStringTag(tags: RecordsWriteTags | undefined, tag: string): string | undefined {
-    const value = tags?.[tag];
-    if (value === undefined) {
-      return undefined;
-    }
-
-    if (typeof value !== 'string') {
-      throw new DwnError(
-        DwnErrorCode.EncryptionControlValidateDeliveryMissingRequiredTag,
-        `delivery control tag '${tag}' must be a string.`
       );
     }
 

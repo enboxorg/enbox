@@ -56,11 +56,6 @@ export const ENCRYPTION_CONTROL_PATHS = [
 
 export type EncryptionControlPath = typeof ENCRYPTION_CONTROL_PATHS[number];
 
-export enum EncryptionControlRecordType {
-  Audience = 'audience',
-  Delivery = 'delivery',
-}
-
 /**
  * Returns true when the protocol path is one of the exact reserved encryption
  * control paths.
@@ -68,29 +63,4 @@ export enum EncryptionControlRecordType {
 export function isEncryptionControlPath(protocolPath: string | undefined): protocolPath is EncryptionControlPath {
   return protocolPath !== undefined &&
     (ENCRYPTION_CONTROL_PATHS as readonly string[]).includes(protocolPath);
-}
-
-/**
- * Returns the encryption control record type for exact reserved paths.
- */
-export function getEncryptionControlRecordType(protocolPath: EncryptionControlPath): EncryptionControlRecordType {
-  if (protocolPath === ENCRYPTION_CONTROL_AUDIENCE_PATH) {
-    return EncryptionControlRecordType.Audience;
-  }
-
-  return EncryptionControlRecordType.Delivery;
-}
-
-const RECORDS_PRIMARY_PROJECTION_EXCLUDED_PROTOCOLS = new Set<string>([
-  ENCRYPTION_PROTOCOL_URI,
-  PERMISSIONS_PROTOCOL_URI,
-]);
-
-/**
- * Returns true for infrastructure protocols whose records are dependencies or
- * authorization metadata, not primary application records for projection roots.
- */
-export function isRecordsPrimaryProjectionExcludedProtocol(protocol: string | undefined): boolean {
-  return protocol !== undefined &&
-    RECORDS_PRIMARY_PROJECTION_EXCLUDED_PROTOCOLS.has(protocol);
 }

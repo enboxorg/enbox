@@ -7,7 +7,6 @@ export * from './cose/cose-key.js';
 export * from './cose/cose-sign1.js';
 export * from './cose/eat.js';
 
-export * from './algorithms/aes-ctr.js';
 export * from './algorithms/aes-gcm.js';
 export * from './algorithms/aes-kw.js';
 export * from './algorithms/crypto-algorithm.js';
@@ -18,17 +17,13 @@ export * from './algorithms/pbkdf2.js';
 export * from './algorithms/sha-2.js';
 export * from './algorithms/x25519.js';
 
-export * from './jose/jwe.js';
 export * from './jose/jwk.js';
 export * from './jose/jws.js';
-export * from './jose/jwt.js';
 export * from './jose/utils.js';
 
 export * from './primitives/aes-ctr.js';
 export * from './primitives/aes-gcm.js';
 export * from './primitives/aes-kw.js';
-export * from './primitives/concat-kdf.js';
-export * from './primitives/ecies-secp256k1.js';
 export * from './primitives/ed25519.js';
 export * from './primitives/hkdf.js';
 export * from './primitives/secp256r1.js';
@@ -36,7 +31,6 @@ export * from './primitives/pbkdf2.js';
 export * from './primitives/secp256k1.js';
 export * from './primitives/sha256.js';
 export * from './primitives/x25519.js';
-export * from './primitives/xchacha20.js';
 export * from './primitives/xchacha20-poly1305.js';
 
 export type * from './types/cipher.js';

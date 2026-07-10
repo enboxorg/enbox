@@ -1,5 +1,7 @@
 import type { DependencyRef, ProgressToken, ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 
+import { isEncryptionControlPath } from '@enbox/dwn-sdk-js';
+
 import { DwnRpcError } from './dwn-rpc-error.js';
 import { JsonRpcErrorCodes } from './json-rpc.js';
 
@@ -87,8 +89,10 @@ function isDependencyRef(value: unknown): value is DependencyRef {
         isOptionalString(value.contextPrefix);
     case 'Grant':
       return typeof value.permissionGrantId === 'string';
-    case 'EncryptionProtocol':
-      return isEncryptionProtocolPath(value.protocolPath) &&
+    case 'EncryptionControl':
+      return typeof value.protocol === 'string' &&
+        typeof value.protocolPath === 'string' &&
+        isEncryptionControlPath(value.protocolPath) &&
         isOptionalObject(value.tags) &&
         isOptionalString(value.recipient);
     case 'CrossProtocolRef':
@@ -127,8 +131,4 @@ function isOptionalBoolean(value: unknown): value is boolean | undefined {
 
 function isOptionalObject(value: unknown): value is Record<string, unknown> | undefined {
   return value === undefined || isObject(value);
-}
-
-function isEncryptionProtocolPath(value: unknown): value is 'grantKey' {
-  return value === 'grantKey';
 }

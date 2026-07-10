@@ -188,7 +188,7 @@ Browser storage rule: do not replace the browser Level stack with SQLite or in-m
 | `packages/agent/tests/` | Agent tests (bun:test + Sinon) |
 | `packages/agent/src/store-data.ts` | Base `DwnDataStore` class (protocol-backed storage with encryption) |
 | `packages/agent/src/store-key.ts` | `DwnKeyStore` — encrypted private key storage |
-| `packages/agent/src/store-data-protocols.ts` | Protocol definitions (`JwkProtocolDefinition`, `IdentityProtocolDefinition`, `KeyDeliveryProtocolDefinition`) |
+| `packages/agent/src/store-data-protocols.ts` | Protocol definitions (`JwkProtocolDefinition`, `IdentityProtocolDefinition`) |
 | `packages/agent/src/dwn-api.ts` | `AgentDwnApi` — DWN operations, encryption callbacks, participant detection |
 | `packages/agent/src/hd-identity-vault.ts` | `HdIdentityVault` — seed phrase / password vault for agent DID |
 | `packages/agent/src/test-harness.ts` | `PlatformAgentTestHarness` — test infrastructure (exported as public API) |
@@ -627,7 +627,7 @@ await expect(asyncOperation()).rejects.toThrow('error message');
 
 1. **Layer 1 — Vault** (`HdIdentityVault`): 12-word BIP-39 seed phrase derives HD keys. Password encrypts the agent's `PortableDid` as CompactJWE (AES-256-GCM via PBKDF2). Stored in `VAULT_STORE` LevelDB. In production, `HdIdentityVault.initialize()` always creates the agent DID as `did:dht` with both Ed25519 (`#sig`) and X25519 (`#enc`).
 
-2. **Layer 2 — DWN record-level** (`DwnKeyStore`): Records with `encryptionRequired: true` in their protocol type definition are encrypted using JWE (ECDH-ES+A256KW key agreement with the tenant's X25519 `#enc` key, AES-256-GCM or XChaCha20-Poly1305 content encryption). The JWE General JSON Serialization format stores recipients, IV, and authentication tag alongside the encrypted data. The `$encryption` block is derived and injected into the protocol definition at install time — if the tenant DID lacks an X25519 keyAgreement key, installation fails with no plaintext fallback.
+2. **Layer 2 — DWN record-level** (`DwnKeyStore`): Records with `encryptionRequired: true` in their protocol type definition are encrypted through the DWN message `encryption` envelope: record data is encrypted with a random AES-256-CTR data key, which is wrapped (X25519-HKDF-SHA256+A256KW) to the per-protocol-path X25519 public key — plus role-audience keys where the protocol defines `$role` participants. Those per-path public keys are derived from the tenant's X25519 `#enc` key and injected as `$keyAgreement` blocks into the protocol definition at install time — if the tenant DID lacks an X25519 keyAgreement key, installation fails with no plaintext fallback.
 
 Recovery path: seed phrase -> agent DID (deterministic) -> `#enc` key -> decrypt DWN key records.
 

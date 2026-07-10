@@ -25,7 +25,6 @@ export {
   ENCRYPTION_CONTROL_PATHS,
   ENCRYPTION_CONTROL_ROOT_PATH,
   ENCRYPTION_PROTOCOL_URI,
-  EncryptionControlRecordType,
   PERMISSIONS_REVOCATION_PATH,
   isEncryptionControlPath,
 } from './core/constants.js';

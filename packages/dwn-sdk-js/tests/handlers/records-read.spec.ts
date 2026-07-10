@@ -17,7 +17,6 @@ import { authenticate } from '../../src/core/auth.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { Encoder } from '../../src/utils/encoder.js';
 import { EncryptionControlDeliveryRecipientAuthority } from '../../src/types/encryption-types.js';
-import { HdKey } from '../../src/utils/hd-key.js';
 import { KeyDerivationScheme } from '../../src/utils/hd-key.js';
 import { RecordsReadHandler } from '../../src/handlers/records-read.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
@@ -2013,8 +2012,9 @@ export function testRecordsReadHandler(): void {
 
           // Alice configures email protocol with encryption
           const protocolDefinition: ProtocolDefinition = emailProtocolDefinition as ProtocolDefinition;
-          const encryptedProtocolDefinition
-            = await Protocols.deriveAndInjectPublicEncryptionKeys(protocolDefinition, alice.keyId, alice.encryptionKeyPair.privateJwk);
+          const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
+            protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
+          );
           const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
             author             : alice,
             protocolDefinition : encryptedProtocolDefinition
@@ -2095,7 +2095,7 @@ export function testRecordsReadHandler(): void {
           const fetchedRecordsWrite = readReply.entry!.recordsWrite!;
           const cipherStream = readReply.entry!.data!;
 
-          const plaintextDataStream = await Records.decrypt(fetchedRecordsWrite, rootPrivateKey, cipherStream);
+          const plaintextDataStream = await Records.decrypt(fetchedRecordsWrite, TestDataGenerator.createKeyDecrypter(rootPrivateKey), cipherStream);
           const plaintextBytes = await DataStream.toBytes(plaintextDataStream);
           expect(ArrayUtility.byteArraysEqual(plaintextBytes, bobMessageBytes)).toBe(true);
 
@@ -2104,19 +2104,23 @@ export function testRecordsReadHandler(): void {
           expect(readReply2.status.code).toBe(200);
 
           const relativeDescendantDerivationPath = Records.constructKeyDerivationPath(KeyDerivationScheme.ProtocolPath, fetchedRecordsWrite);
-          const derivedPrivateKey: DerivedPrivateJwk = await HdKey.derivePrivateKey(rootPrivateKey, relativeDescendantDerivationPath);
+          const derivedPrivateKey: DerivedPrivateJwk
+            = await TestDataGenerator.deriveDescendantPrivateKey(rootPrivateKey, relativeDescendantDerivationPath);
 
           const fetchedRecordsWrite2 = readReply2.entry!.recordsWrite!;
           const cipherStream2 = readReply2.entry!.data!;
-          const plaintextDataStream2 = await Records.decrypt(fetchedRecordsWrite2, derivedPrivateKey, cipherStream2);
+          const derivedKeyDecrypter = TestDataGenerator.createKeyDecrypter(derivedPrivateKey);
+          const plaintextDataStream2 = await Records.decrypt(fetchedRecordsWrite2, derivedKeyDecrypter, cipherStream2);
           const plaintextBytes2 = await DataStream.toBytes(plaintextDataStream2);
           expect(ArrayUtility.byteArraysEqual(plaintextBytes2, bobMessageBytes)).toBe(true);
 
           // test unable to decrypt the message if derived key has an unexpected path
           const invalidDerivationPath = [KeyDerivationScheme.ProtocolPath, protocolDefinition.protocol, 'invalidContextId'];
-          const inValidDescendantPrivateKey: DerivedPrivateJwk = await HdKey.derivePrivateKey(rootPrivateKey, invalidDerivationPath);
+          const inValidDescendantPrivateKey: DerivedPrivateJwk
+            = await TestDataGenerator.deriveDescendantPrivateKey(rootPrivateKey, invalidDerivationPath);
+          const invalidDescendantKeyDecrypter = TestDataGenerator.createKeyDecrypter(inValidDescendantPrivateKey);
           await expect(
-            Records.decrypt(fetchedRecordsWrite, inValidDescendantPrivateKey, DataStream.fromBytes(bobMessageEncryptedBytes))
+            Records.decrypt(fetchedRecordsWrite, invalidDescendantKeyDecrypter, DataStream.fromBytes(bobMessageEncryptedBytes))
           ).rejects.toThrow(DwnErrorCode.RecordsInvalidAncestorKeyDerivationSegment);
 
           // test unable to decrypt the message if no derivation scheme used by the message matches the scheme used by the given private key
@@ -2125,19 +2129,20 @@ export function testRecordsReadHandler(): void {
             derivationScheme  : 'scheme-that-is-not-protocol-path' as any,
             derivedPrivateKey : alice.encryptionKeyPair.privateJwk
           };
+          const mismatchingSchemeKeyDecrypter = TestDataGenerator.createKeyDecrypter(privateKeyWithMismatchingDerivationScheme);
           await expect(
-            Records.decrypt(fetchedRecordsWrite, privateKeyWithMismatchingDerivationScheme, DataStream.fromBytes(bobMessageEncryptedBytes))
+            Records.decrypt(fetchedRecordsWrite, mismatchingSchemeKeyDecrypter, DataStream.fromBytes(bobMessageEncryptedBytes))
           ).rejects.toThrow(DwnErrorCode.RecordsDecryptUnsupportedKeyDerivationScheme);
 
-          // test unable to decrypt the message if public key ID does not match the derived private key
+          // test unable to decrypt the message if the given private key cannot derive a matching public key ID
           const privateKeyWithMismatchingKeyId: DerivedPrivateJwk = {
-            rootKeyId         : 'mismatchingKeyId',
-            keyId             : 'mismatchingKeyId',
+            rootKeyId         : bob.keyId,
             derivationScheme  : KeyDerivationScheme.ProtocolPath,
-            derivedPrivateKey : alice.encryptionKeyPair.privateJwk
+            derivedPrivateKey : bob.encryptionKeyPair.privateJwk
           };
+          const mismatchingKeyIdDecrypter = TestDataGenerator.createKeyDecrypter(privateKeyWithMismatchingKeyId);
           await expect(
-            Records.decrypt(fetchedRecordsWrite, privateKeyWithMismatchingKeyId, DataStream.fromBytes(bobMessageEncryptedBytes))
+            Records.decrypt(fetchedRecordsWrite, mismatchingKeyIdDecrypter, DataStream.fromBytes(bobMessageEncryptedBytes))
           ).rejects.toThrow(DwnErrorCode.RecordsDecryptNoMatchingKeyEncryptedFound);
         });
       });

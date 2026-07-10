@@ -104,7 +104,7 @@ export function testRecordsWriteHandler(): void {
 
       async function installEncryptedProtocol(author: Persona, protocolDefinition: ProtocolDefinition): Promise<ProtocolDefinition> {
         const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-          protocolDefinition, author.keyId, author.encryptionKeyPair.privateJwk
+          protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(author.keyId, author.encryptionKeyPair.privateJwk)
         );
         const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
           author,
@@ -501,7 +501,7 @@ export function testRecordsWriteHandler(): void {
           },
         };
         const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-          protocolDefinition, alice.keyId, alice.encryptionKeyPair.privateJwk
+          protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
         );
         const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
           author             : alice,
@@ -3701,7 +3701,7 @@ export function testRecordsWriteHandler(): void {
           };
 
           const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-            protocolDefinition, alice.keyId, alice.encryptionKeyPair.privateJwk
+            protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
           );
 
           // Alice installs the protocol
@@ -3745,7 +3745,7 @@ export function testRecordsWriteHandler(): void {
           };
 
           const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-            protocolDefinition, alice.keyId, alice.encryptionKeyPair.privateJwk
+            protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
           );
 
           // Alice installs the protocol
@@ -3812,7 +3812,7 @@ export function testRecordsWriteHandler(): void {
           };
 
           const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-            protocolDefinition, alice.keyId, alice.encryptionKeyPair.privateJwk
+            protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
           );
 
           const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
@@ -3891,7 +3891,7 @@ export function testRecordsWriteHandler(): void {
           };
 
           const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-            protocolDefinition, alice.keyId, alice.encryptionKeyPair.privateJwk
+            protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
           );
 
           const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
@@ -3984,7 +3984,7 @@ export function testRecordsWriteHandler(): void {
           };
 
           const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-            protocolDefinition, alice.keyId, alice.encryptionKeyPair.privateJwk
+            protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
           );
 
           const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
@@ -4239,7 +4239,7 @@ export function testRecordsWriteHandler(): void {
           };
 
           const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-            protocolDefinition, alice.keyId, alice.encryptionKeyPair.privateJwk
+            protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
           );
 
           const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
@@ -4346,7 +4346,7 @@ export function testRecordsWriteHandler(): void {
           };
 
           const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-            protocolDefinition, alice.keyId, alice.encryptionKeyPair.privateJwk
+            protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
           );
 
           const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
@@ -4442,7 +4442,7 @@ export function testRecordsWriteHandler(): void {
           };
 
           const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-            protocolDefinition, alice.keyId, alice.encryptionKeyPair.privateJwk
+            protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
           );
 
           // Alice installs the protocol

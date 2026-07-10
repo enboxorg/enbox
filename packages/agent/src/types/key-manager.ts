@@ -6,13 +6,10 @@ import type {
   KeyIdentifier,
   KeyImporter,
   KeyManager,
-  KeyWrapper,
   KmsCipherParams,
   KmsDeleteKeyParams,
   KmsExportKeyParams,
   KmsImportKeyParams,
-  KmsUriUnwrapKeyParams,
-  KmsUriWrapKeyParams,
   PublicKeyJwk,
 } from '@enbox/crypto';
 
@@ -22,8 +19,7 @@ export interface AgentKeyManager extends KeyManager,
   Cipher<KmsCipherParams, KmsCipherParams>,
   KeyImporter<KmsImportKeyParams, KeyIdentifier>,
   KeyExporter<KmsExportKeyParams, Jwk>,
-  KeyDeleter<KmsDeleteKeyParams>,
-  KeyWrapper<KmsUriWrapKeyParams, KmsUriUnwrapKeyParams> {
+  KeyDeleter<KmsDeleteKeyParams> {
 
   agent: EnboxPlatformAgent;
 

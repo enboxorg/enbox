@@ -25,7 +25,7 @@ export async function installEncryptedProtocol(
   protocolDefinition: ProtocolDefinition,
 ): Promise<ProtocolDefinition> {
   const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-    protocolDefinition, author.keyId, author.encryptionKeyPair.privateJwk
+    protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(author.keyId, author.encryptionKeyPair.privateJwk)
   );
   const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
     author,

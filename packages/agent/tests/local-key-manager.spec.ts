@@ -264,52 +264,6 @@ describe('LocalKeyManager', () => {
         });
       });
 
-      describe('unwrapKey()', () => {
-        it('returns an unwrapped key as a JWK', async () => {
-          const unwrappedKeyInput: Jwk = {
-            kty : 'oct',
-            k   : 'hX-1yAAU6aZCwGqViYfAhIiaTyu1PURMswoI4IQmiY4',
-            alg : 'A256GCM',
-            kid : '-TssSnJNgh10-YTwuBtyZTnv0LY6sdT-TQl9WFTSetI',
-          };
-
-          const encryptionKeyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'A256KW' });
-
-          const wrappedKeyBytes = await testHarness.agent.keyManager.wrapKey({ encryptionKeyUri, unwrappedKey: unwrappedKeyInput });
-
-          const unwrappedKey = await testHarness.agent.keyManager.unwrapKey({ wrappedKeyBytes, wrappedKeyAlgorithm: 'A256GCM', decryptionKeyUri: encryptionKeyUri });
-
-          expect(unwrappedKey).toHaveProperty('k');
-          expect(unwrappedKey).toHaveProperty('kty', 'oct');
-          expect(unwrappedKey).toHaveProperty('kid');
-          expect(unwrappedKey).toHaveProperty('alg', 'A256GCM');
-        });
-
-        it('returns the expected wrapped key for given input', async () => {
-          const wrappedKeyBytes = Convert.hex('8c55fb6fc4c7bb0b6b483df65ba52bee7ed6e0f861ac8097b2394f61067d1157901295aba72c514b').toUint8Array(); // raw format
-
-          const decryptionKey: Jwk = {
-            kty : 'oct',
-            k   : '47Fn3ZXGbmntoAKErKN5-d7yuwMejCJtOqgAeq_Ojk0',
-            alg : 'A256KW',
-            kid : 'izA6N7g3xmPWStB6Qe6BbGgfrXvrptzuH2eJ1wmdrtk',
-          };
-
-          const decryptionKeyUri = await testHarness.agent.keyManager.importKey({ key: decryptionKey });
-
-          const unwrappedKey = await testHarness.agent.keyManager.unwrapKey({ wrappedKeyBytes, wrappedKeyAlgorithm: 'A256GCM', decryptionKeyUri });
-
-          const expectedPrivateKey: Jwk = {
-            kty : 'oct',
-            k   : 'hX-1yAAU6aZCwGqViYfAhIiaTyu1PURMswoI4IQmiY4',
-            alg : 'A256GCM',
-            kid : '-TssSnJNgh10-YTwuBtyZTnv0LY6sdT-TQl9WFTSetI',
-          };
-
-          expect(unwrappedKey).toEqual(expectedPrivateKey);
-        });
-      });
-
       describe('verify()', () => {
         it('returns true for a valid signature', async () => {
           // Setup.
@@ -357,46 +311,6 @@ describe('LocalKeyManager', () => {
             expect(error).toBeInstanceOf(Error);
             expect(error.message).toContain('Algorithm not supported');
           }
-        });
-      });
-
-      describe('wrapKey()', () => {
-        it('returns a wrapped key as a byte array', async () => {
-          const unwrappedKey: Jwk = {
-            kty : 'oct',
-            k   : 'hX-1yAAU6aZCwGqViYfAhIiaTyu1PURMswoI4IQmiY4',
-            alg : 'A256GCM',
-            kid : '-TssSnJNgh10-YTwuBtyZTnv0LY6sdT-TQl9WFTSetI',
-          };
-          const encryptionKeyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'A256KW' });
-
-          const wrappedKeyBytes = await testHarness.agent.keyManager.wrapKey({ unwrappedKey, encryptionKeyUri });
-
-          expect(wrappedKeyBytes).toBeInstanceOf(Uint8Array);
-          expect(wrappedKeyBytes.byteLength).toBe(32 + 8); // 32 bytes for the wrapped private key, 8 bytes for the initialization vector
-        });
-
-        it('returns the expected wrapped key for given input', async () => {
-          const unwrappedKey: Jwk = {
-            kty : 'oct',
-            k   : 'hX-1yAAU6aZCwGqViYfAhIiaTyu1PURMswoI4IQmiY4',
-            alg : 'A256GCM',
-            kid : '-TssSnJNgh10-YTwuBtyZTnv0LY6sdT-TQl9WFTSetI',
-          };
-
-          const encryptionKey: Jwk = {
-            kty : 'oct',
-            k   : '47Fn3ZXGbmntoAKErKN5-d7yuwMejCJtOqgAeq_Ojk0',
-            alg : 'A256KW',
-            kid : 'izA6N7g3xmPWStB6Qe6BbGgfrXvrptzuH2eJ1wmdrtk',
-          };
-
-          const encryptionKeyUri = await testHarness.agent.keyManager.importKey({ key: encryptionKey });
-
-          const wrappedKeyBytes = await testHarness.agent.keyManager.wrapKey({ encryptionKeyUri, unwrappedKey });
-
-          const expectedOutput = Convert.hex('8c55fb6fc4c7bb0b6b483df65ba52bee7ed6e0f861ac8097b2394f61067d1157901295aba72c514b').toUint8Array(); // raw format
-          expect(wrappedKeyBytes).toEqual(expectedOutput);
         });
       });
 

@@ -26,7 +26,6 @@ export * from './dwn-discovery-file.js';
 export * from './dwn-discovery-payload.js';
 export * from './dwn-encryption.js';
 export * from './dwn-type-guards.js';
-export * from './protocol-utils.js';
 export * from './hd-identity-vault.js';
 export * from './identity-api.js';
 export * from './local-dwn.js';
