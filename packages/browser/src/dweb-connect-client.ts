@@ -328,7 +328,7 @@ export type PopupConnectOptions = {
 };
 
 /** Collects self-reported environment hints for the wallet's session display. */
-function collectBrowserClientMetadata(): ConnectClientMetadata {
+export function collectBrowserClientMetadata(): ConnectClientMetadata {
   const resolvedOptions = Intl.DateTimeFormat().resolvedOptions();
   const languages = Array.isArray(globalThis.navigator.languages)
     ? globalThis.navigator.languages.filter((language) => typeof language === 'string' && language.length > 0)

@@ -117,10 +117,10 @@ describe('@enbox/browser exports', () => {
     expect(mod.CONNECT_DENIED_TOKEN).toBe('DENIED');
   });
 
-  it('exports showWalletSelector', async () => {
+  it('exports runConnectModal', async () => {
     const mod = await getBrowserExports();
-    expect(mod.showWalletSelector).toBeDefined();
-    expect(typeof mod.showWalletSelector).toBe('function');
+    expect(mod.runConnectModal).toBeDefined();
+    expect(typeof mod.runConnectModal).toBe('function');
   });
 
   it('exports WalletConnect from @enbox/auth', async () => {
