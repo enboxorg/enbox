@@ -10,8 +10,9 @@
 import type { ConnectPermissionRequest } from '@enbox/connect';
 import type { ConnectHandler, ConnectResult } from '@enbox/auth';
 
-import { connectViaPopup } from './dweb-connect-client.js';
-import { showWalletSelector } from './ui/wallet-selector.js';
+import { runConnectModal } from './ui/connect-modal.js';
+
+import type { ConnectMethod } from './ui/connect-modal.js';
 
 /** A wallet entry shown in the wallet selector modal. */
 export interface WalletOption {
@@ -85,17 +86,44 @@ export interface BrowserConnectHandlerOptions {
    */
   appIcon?: string;
 
+  /**
+   * Preferred connect method on open: `'phone'` (QR / deep link via the
+   * relay) or `'browser'` (wallet popup on this device). Overrides the
+   * remembered choice.
+   * @default 'phone'
+   */
+  preferredMethod?: ConnectMethod;
+
+  /**
+   * Remember the successful method + wallet in localStorage and pre-shape
+   * the next connect session accordingly.
+   * @default true
+   */
+  rememberChoice?: boolean;
+
+  /**
+   * Relay base URL override for the phone path. When omitted, each wallet's
+   * `connectServerUrl` is discovered from its `/.well-known/enbox-connect`
+   * document.
+   */
+  connectServerUrl?: string;
+
+  /**
+   * Path appended to the wallet origin to form the phone path's QR /
+   * deep-link target.
+   * @default '/connect/app'
+   */
+  relayWalletPath?: string;
 }
 
 /**
- * Create a browser-native connect handler using DWeb Connect
- * (popup + postMessage).
+ * Create a browser-native connect handler over the connect modal.
  *
- * This handler:
- * 1. Shows a wallet selector modal (or uses a provided walletUrl).
- * 2. Opens the selected wallet as a popup window.
- * 3. Runs the DWeb Connect postMessage protocol.
- * 4. Returns the delegate credentials on success.
+ * The modal owns the whole session on one surface: the phone path (a QR /
+ * deep link over the relay, with pairing-code entry) is the default, the
+ * in-browser wallet popup is the alternate, and the wallet catalog plus
+ * custom-URL entry live in a disclosure. It resolves with the delegate
+ * credentials on success and `undefined` when the user denies.
  *
  * @example
  * ```ts
@@ -115,29 +143,31 @@ export function BrowserConnectHandler(
 ): ConnectHandler {
   const {
     wallets = DEFAULT_WALLETS,
-    walletUrl: fixedWalletUrl,
+    walletUrl,
     timeout,
     appName,
     appIcon,
+    preferredMethod,
+    rememberChoice,
+    connectServerUrl,
+    relayWalletPath,
   } = options;
 
   return {
     async requestAccess(params: {
       permissionRequests: ConnectPermissionRequest[];
     }): Promise<ConnectResult | undefined> {
-      // 1. Determine wallet URL.
-      let walletUrl = fixedWalletUrl;
-      if (!walletUrl) {
-        walletUrl = await showWalletSelector(wallets);
-      }
-
-      // 2. Run the DWeb Connect popup flow over the connect kernel.
-      return connectViaPopup({
+      return runConnectModal({
+        wallets,
         walletUrl,
-        permissionRequests: params.permissionRequests,
-        timeout,
+        preferredMethod,
+        rememberChoice,
         appName,
-        appIcon,
+        appIcon            : appIcon ?? `${window.location.origin}/favicon.ico`,
+        connectServerUrl,
+        relayWalletPath,
+        timeout,
+        permissionRequests : params.permissionRequests,
       });
     },
   };
