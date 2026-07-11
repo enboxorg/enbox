@@ -58,6 +58,7 @@ type FakeRelayCall = {
   walletUri: string;
   connectServerUrl: string;
   onWalletUriReady: (handoff: WalletUriHandoff) => void;
+  onClaimed?: () => void;
   requestPin: (attempt: number, previousError?: Error) => Promise<string>;
   resolve: (result: ConnectResult | undefined) => void;
   reject: (error: Error) => void;
@@ -72,6 +73,7 @@ function createFakeRelay(): { calls: FakeRelayCall[]; runRelay: ConnectModalDeps
         walletUri        : options.walletUri,
         connectServerUrl : options.connectServerUrl,
         onWalletUriReady : options.onWalletUriReady,
+        onClaimed        : options.onClaimed,
         requestPin       : options.requestPin,
         resolve,
         reject,
@@ -317,5 +319,31 @@ describe('runConnectModal', () => {
 
     expect(relay.calls).toHaveLength(2);
     expect(relay.calls[1].walletUri).toBe('https://wallet-two.example.com/connect/app');
+  });
+
+  it('shows phone-connected progress when the relay reports the claim', async () => {
+    const relay = createFakeRelay();
+    const promise = runConnectModal({
+      wallets            : WALLETS,
+      permissionRequests : PERMISSIONS,
+      deps               : deps({ runRelay: relay.runRelay }),
+    });
+    promise.catch((): undefined => undefined);
+    await flush();
+
+    relay.calls[0].onWalletUriReady(HANDOFF);
+    await flush();
+    expect(stageText()).toContain('Scan with your phone');
+
+    relay.calls[0].onClaimed?.();
+    await flush();
+
+    expect(stageText()).toContain('Phone connected — finish there');
+    expect(stageText()).toContain('Approve the request on your phone');
+
+    // The approval still lands normally after the progress beat.
+    relay.calls[0].resolve(RESULT);
+    await flush();
+    expect(stageText()).toContain('You’re connected');
   });
 });

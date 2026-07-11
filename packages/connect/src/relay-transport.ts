@@ -77,6 +77,16 @@ export type RelayClientTransportOptions = {
 
   /** Sleep override used between polling attempts; defaults to `setTimeout`. */
   sleep?: (ms: number) => Promise<void>;
+
+  /**
+   * Invoked once, from the `awaitResponse()` poll loop, when the relay
+   * reports the pushed request has been claimed (fetched) by a wallet.
+   * Lets the app show live progress ("phone connected") before the
+   * approval lands. Status polling only happens when this is provided;
+   * relays without the status route degrade silently (the callback simply
+   * never fires).
+   */
+  onClaimed?: () => void;
 };
 
 /**
@@ -103,6 +113,8 @@ export class RelayClientTransport implements ConnectTransport {
 
   private _requestKey?: Uint8Array;
   private _state?: string;
+  private _requestUri?: string;
+  private readonly _onClaimed?: () => void;
 
   constructor(options: RelayClientTransportOptions) {
     this._connectServerUrl = options.connectServerUrl;
@@ -112,6 +124,7 @@ export class RelayClientTransport implements ConnectTransport {
     this._fetch = options.fetchFn ?? defaultFetch;
     this._now = options.now ?? ((): number => Date.now());
     this._sleep = options.sleep ?? sleep;
+    this._onClaimed = options.onClaimed;
   }
 
   /** {@inheritDoc ConnectTransport.requestProfile} */
@@ -159,6 +172,8 @@ export class RelayClientTransport implements ConnectTransport {
       encryptionKey : this._requestKey,
     });
 
+    this._requestUri = parData.request_uri;
+
     return { walletUri, requestUri: parData.request_uri, expiresIn: parData.expires_in };
   }
 
@@ -175,6 +190,16 @@ export class RelayClientTransport implements ConnectTransport {
     const tokenUrl = concatenateUrl(this._connectServerUrl, `token/${this._state}.jwt`);
     const deadline = this._now() + this._timeoutMs;
 
+    // Claimed observation is best-effort and only runs when the app asked
+    // for it. The request ID rides in the `request_uri` returned by the PAR.
+    const requestId = this._onClaimed !== undefined && this._requestUri !== undefined
+      ? /\/connect\/authorize\/([^/]+)\.jwt$/.exec(this._requestUri)?.[1]
+      : undefined;
+    const statusUrl = requestId !== undefined
+      ? concatenateUrl(this._connectServerUrl, `status/${requestId}`)
+      : undefined;
+    let claimedNotified = false;
+
     while (this._now() < deadline) {
       const response = await this._fetch(tokenUrl, { signal: AbortSignal.timeout(RELAY_HTTP_TIMEOUT_MS) });
       if (response.ok) {
@@ -182,6 +207,25 @@ export class RelayClientTransport implements ConnectTransport {
       }
       // Release the unread body so keep-alive sockets are not pinned across polls.
       await response.body?.cancel().catch((): void => {});
+
+      if (statusUrl !== undefined && !claimedNotified) {
+        try {
+          const statusResponse = await this._fetch(statusUrl, { signal: AbortSignal.timeout(RELAY_HTTP_TIMEOUT_MS) });
+          if (statusResponse.ok) {
+            const status = await statusResponse.json() as { claimed?: unknown };
+            if (status.claimed === true) {
+              claimedNotified = true;
+              this._onClaimed?.();
+            }
+          } else {
+            await statusResponse.body?.cancel().catch((): void => {});
+          }
+        } catch {
+          // Older relays without the status route (or transient failures)
+          // degrade silently — progress display is optional.
+        }
+      }
+
       await this._sleep(this._pollIntervalMs);
     }
 

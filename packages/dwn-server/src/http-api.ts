@@ -1133,6 +1133,20 @@ export class HttpApi {
       }
     }
 
+    // GET /connect/status/:requestId
+    // Observational progress for the requesting app: whether the wallet has
+    // claimed (fetched) the pushed request. Always 200 so pollers can treat
+    // any non-2xx as transport failure; unknown or expired IDs read as
+    // `claimed: false`.
+    {
+      const match = /^\/connect\/status\/([^/]+)$/.exec(path);
+      if (match && method === 'GET') {
+        const requestId = match[1];
+        const claimed = await this.connectServer.isConnectRequestClaimed(requestId);
+        return Response.json({ claimed }, { status: 200 });
+      }
+    }
+
     // GET /connect/token/:state.jwt
     {
       const match = /^\/connect\/token\/([^/]+)\.jwt$/.exec(path);

@@ -113,6 +113,62 @@ describe('RelayClientTransport', () => {
       .rejects.toThrow('call `requestProfile()` before `deliverRequest()`');
   });
 
+  it('reports claimed once via onClaimed while polling for the response', async () => {
+    const fetchStub = sinon.stub(globalThis, 'fetch');
+    // PAR
+    fetchStub.onCall(0).resolves(new Response(
+      JSON.stringify({ request_uri: REQUEST_URI, expires_in: 600 }),
+      { status: 201 },
+    ));
+    // iter 1: token 404 → status not yet claimed
+    fetchStub.onCall(1).resolves(new Response('Not Found', { status: 404 }));
+    fetchStub.onCall(2).resolves(new Response(JSON.stringify({ claimed: false }), { status: 200 }));
+    // iter 2: token 404 → status claimed
+    fetchStub.onCall(3).resolves(new Response('Not Found', { status: 404 }));
+    fetchStub.onCall(4).resolves(new Response(JSON.stringify({ claimed: true }), { status: 200 }));
+    // iter 3: token 404, no further status polling
+    fetchStub.onCall(5).resolves(new Response('Not Found', { status: 404 }));
+    // iter 4: token 200
+    fetchStub.onCall(6).resolves(new Response('SEALED_RESPONSE_JWE', { status: 200 }));
+
+    const claims: number[] = [];
+    const transport = createTransport({
+      sleep     : async (): Promise<void> => {},
+      onClaimed : (): void => { claims.push(1); },
+    });
+    await transport.requestProfile(STATE);
+    await transport.deliverRequest('SEALED_REQUEST_JWE');
+
+    const response = await transport.awaitResponse();
+
+    expect(response).toBe('SEALED_RESPONSE_JWE');
+    expect(claims).toEqual([1]);
+    expect(fetchStub.callCount).toBe(7);
+    expect(fetchStub.getCall(2).args[0]).toBe(`${CONNECT_SERVER_URL}/status/8b2f`);
+    expect(fetchStub.getCall(4).args[0]).toBe(`${CONNECT_SERVER_URL}/status/8b2f`);
+  });
+
+  it('does not poll the status route when onClaimed is not provided', async () => {
+    const fetchStub = sinon.stub(globalThis, 'fetch');
+    fetchStub.onCall(0).resolves(new Response(
+      JSON.stringify({ request_uri: REQUEST_URI, expires_in: 600 }),
+      { status: 201 },
+    ));
+    fetchStub.onCall(1).resolves(new Response('Not Found', { status: 404 }));
+    fetchStub.onCall(2).resolves(new Response('SEALED_RESPONSE_JWE', { status: 200 }));
+
+    const transport = createTransport({ sleep: async (): Promise<void> => {} });
+    await transport.requestProfile(STATE);
+    await transport.deliverRequest('SEALED_REQUEST_JWE');
+
+    await transport.awaitResponse();
+
+    expect(fetchStub.callCount).toBe(3);
+    for (const call of fetchStub.getCalls().slice(1)) {
+      expect(String(call.args[0])).not.toContain('/status/');
+    }
+  });
+
   it('should throw when awaitResponse is called before requestProfile', async () => {
     const transport = createTransport({});
 
