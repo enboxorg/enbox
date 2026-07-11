@@ -1,5 +1,11 @@
 # @enbox/browser
 
+## 0.3.46
+
+### Patch Changes
+
+- [#1255](https://github.com/enboxorg/enbox/pull/1255) [`427eb8c`](https://github.com/enboxorg/enbox/commit/427eb8c4559fce85f59937384fbd6eb0e538bdba) Thanks [@poindex-bot](https://github.com/poindex-bot)! - Connect modal design pass: the wallet switcher becomes a square tile grid with a search bar past one row, the footer collapses to a single row, and the whole surface tightens vertically. The modal now follows the visitor's system light/dark appearance live, and apps can pass an optional `theme` (forced appearance, brand accent, per-scheme palette tokens). Also repairs a stylesheet nesting slip that left the wallet panel permanently expanded and the phone-connected pulse unstyled.
+
 ## 0.3.45
 
 ### Patch Changes
