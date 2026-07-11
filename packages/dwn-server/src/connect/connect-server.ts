@@ -93,9 +93,25 @@ export class ConnectServer {
     // we would end up deleting it before it is successfully retrieved.
     if (request !== undefined) {
       this.cache.delete(`request:${requestId}`);
+
+      // Record that the wallet has claimed this request so the requesting
+      // app can show live progress ("phone connected") while it waits for
+      // the approval. The marker is observational only — it is keyed by the
+      // request ID the app already holds, reveals nothing about the request
+      // (which is deleted above), and is read non-destructively.
+      this.cache.insert(`claimed:${requestId}`, { claimedAt: Date.now() }, ConnectServer.ttlInSeconds);
     }
 
     return request;
+  }
+
+  /**
+   * Whether the Connect Request with the given ID has been claimed
+   * (retrieved by a wallet). Non-consuming: apps poll this while waiting
+   * for the wallet response.
+   */
+  public async isConnectRequestClaimed(requestId: string): Promise<boolean> {
+    return (await this.cache.get(`claimed:${requestId}`)) !== undefined;
   }
 
   /**

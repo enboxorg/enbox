@@ -132,6 +132,44 @@ describe('Connect scenarios', () => {
     });
   });
 
+  it('reports claimed status to the app while the wallet holds the request', async () => {
+    // 1. App pushes the request and derives the status URL from request_uri.
+    const postResult = await fetch(`${connectBaseUrl}/connect/par`, {
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify({ request: { dummyProperty: 'dummyValue' } }),
+    });
+    expect(postResult.status).toBe(201);
+
+    const rawRequestUrl = (await postResult.json() as any).request_uri;
+    const requestId = /\/connect\/authorize\/([^/]+)\.jwt$/.exec(rawRequestUrl)![1];
+    const statusUrl = `${connectBaseUrl}/connect/status/${requestId}`;
+
+    // 2. Before the wallet fetches the request, the app sees claimed: false.
+    let statusResult = await fetch(statusUrl, { method: 'GET' });
+    expect(statusResult.status).toBe(200);
+    expect(await statusResult.json()).toEqual({ claimed: false });
+
+    // 3. The wallet claims (fetches) the request.
+    const requestUrl = rawRequestUrl.replace(/localhost:\d+/, `localhost:${dwnServer.httpServer.port}`);
+    await Poller.pollUntilSuccessOrTimeout(async () => {
+      const getRequestResult = await fetch(requestUrl, { method: 'GET' });
+      expect(getRequestResult.status).toBe(200);
+    });
+
+    // 4. The app now sees claimed: true, non-destructively (repeatable).
+    for (let i = 0; i < 2; i++) {
+      statusResult = await fetch(statusUrl, { method: 'GET' });
+      expect(statusResult.status).toBe(200);
+      expect(await statusResult.json()).toEqual({ claimed: true });
+    }
+
+    // 5. Unknown request IDs read as unclaimed.
+    const unknownResult = await fetch(`${connectBaseUrl}/connect/status/does-not-exist`, { method: 'GET' });
+    expect(unknownResult.status).toBe(200);
+    expect(await unknownResult.json()).toEqual({ claimed: false });
+  });
+
   it('should clean up objects that are expired', async () => {
     // Scenario:
     // 1. App sends the Connect Request object to the Connect server.

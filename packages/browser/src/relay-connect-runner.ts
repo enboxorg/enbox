@@ -94,12 +94,19 @@ export interface RelayConnectOptions {
    */
   cancelled?: Promise<never> | undefined;
 
+  /**
+   * Invoked once when the relay reports the wallet has claimed (fetched)
+   * the pushed request — the app can show "phone connected" progress.
+   */
+  onClaimed?: () => void;
+
   /** Transport factory override (tests). */
   createTransport?: (options: {
     connectServerUrl: string;
     walletUri: string;
     timeoutMs?: number;
     pollIntervalMs?: number;
+    onClaimed?: () => void;
   }) => Pick<RelayClientTransport, 'requestProfile' | 'deliverRequest' | 'awaitResponse' | 'requiresPin'>;
 }
 
@@ -116,6 +123,7 @@ export async function runRelayConnect(options: RelayConnectOptions): Promise<Con
     walletUri        : options.walletUri,
     timeoutMs        : options.timeoutMs,
     pollIntervalMs   : options.pollIntervalMs,
+    onClaimed        : options.onClaimed,
   });
 
   // Ephemeral client DID for request signing and response addressing, and a

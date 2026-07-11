@@ -372,6 +372,16 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       );
     };
 
+    const renderClaimed = (): void => {
+      const pulse = document.createElement('div');
+      pulse.className = 'claimed-pulse';
+      setStage(
+        pulse,
+        el('p', 'stage-caption', 'Phone connected — finish there'),
+        el('p', 'stage-subline', 'Approve the request on your phone, then come back here.'),
+      );
+    };
+
     const renderPin = (attempt: number, previousError?: Error): Promise<string> => {
       return new Promise<string>((resolvePin) => {
         pinResolve = resolvePin;
@@ -560,6 +570,14 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
             if (session.active && !settled) {
               renderQr(handoff);
               scheduleRemint(handoff.expiresIn);
+            }
+          },
+          onClaimed: (): void => {
+            if (session.active && !settled) {
+              // The phone has the request — stop re-minting (a new pointer
+              // would orphan the approval in progress) and show progress.
+              clearTimeout(remintTimer);
+              renderClaimed();
             }
           },
           requestPin: (attempt, previousError): Promise<string> => {
@@ -1025,7 +1043,23 @@ function buildStyles(isDark: boolean): string {
       height: 216px;
       padding: 12px;
       border-radius: 12px;
-      background: ${isDark ? '#10192e' : '#ffffff'};
+      background: ${isDark ? '#10192e' : '#ffffff'}
+    .claimed-pulse {
+      width: 64px; height: 64px; border-radius: 50%;
+      background: ${accentSoft}; position: relative;
+    }
+    .claimed-pulse::after {
+      content: ''; position: absolute; inset: 18px; border-radius: 50%;
+      background: ${accent};
+      animation: enbox-claimed-pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes enbox-claimed-pulse {
+      0%, 100% { transform: scale(0.85); opacity: 0.7; }
+      50% { transform: scale(1); opacity: 1; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .claimed-pulse::after { animation: none; }
+    };
       border: 1px solid ${border};
     }
     .qr-box svg { width: 100%; height: 100%; display: block; }
