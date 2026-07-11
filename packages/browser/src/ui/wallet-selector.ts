@@ -4,16 +4,72 @@
  * Injected into the DOM as a Shadow DOM element to prevent style conflicts.
  * Inspired by WalletConnect's Web3Modal pattern.
  *
+ * The modal is a single view with three zones:
+ *
+ * 1. **Quick connect** — a one-tap button that connects with the recommended
+ *    (first) wallet without scrolling the grid.
+ * 2. **Wallet grid** — a scrollable grid of wallet tiles with a search filter.
+ *    Each tile renders the wallet's own favicon, falling back to a letter
+ *    badge (never a third-party favicon proxy).
+ * 3. **Custom URL** — paste any wallet URL; it is validated against the
+ *    wallet's `/.well-known/enbox-connect` discovery document before the
+ *    selection resolves.
+ *
  * @module
  */
 
 import type { WalletOption } from '../browser-connect-handler.js';
 
+/** Path of the wallet's connect discovery document, relative to its origin. */
+export const WALLET_WELL_KNOWN_PATH = '/.well-known/enbox-connect';
+
+/** Timeout applied to the well-known validation fetch. */
+const WELL_KNOWN_FETCH_TIMEOUT_MS = 6_000;
+
+/** Options controlling {@link showWalletSelector} behavior. */
+export interface WalletSelectorOptions {
+  /**
+   * Validate a pasted wallet origin before resolving with it.
+   *
+   * Defaults to {@link probeWalletWellKnown}, which fetches the wallet's
+   * `/.well-known/enbox-connect` document. Injectable for testing.
+   */
+  validateWalletUrl?: (origin: string) => Promise<boolean>;
+}
+
+/**
+ * Fetch a wallet's `/.well-known/enbox-connect` discovery document to confirm
+ * the origin hosts an Enbox-compatible wallet.
+ *
+ * Resolves `true` only when the document is reachable and names a
+ * `connectServerUrl`. Unreachable origins, non-2xx responses, CORS failures,
+ * and malformed documents resolve `false`.
+ */
+export async function probeWalletWellKnown(origin: string): Promise<boolean> {
+  try {
+    const wellKnownUrl = new URL(WALLET_WELL_KNOWN_PATH, origin).toString();
+    const response = await fetch(wellKnownUrl, { signal: AbortSignal.timeout(WELL_KNOWN_FETCH_TIMEOUT_MS) });
+    if (!response.ok) {
+      return false;
+    }
+
+    const payload = await response.json() as { connectServerUrl?: unknown } | null;
+    return typeof payload?.connectServerUrl === 'string';
+  } catch {
+    return false;
+  }
+}
+
 /** Shows the wallet selector modal and resolves with the chosen wallet URL. */
-export function showWalletSelector(wallets: WalletOption[]): Promise<string> {
+export function showWalletSelector(
+  wallets: WalletOption[],
+  options: WalletSelectorOptions = {},
+): Promise<string> {
   if (typeof window === 'undefined' || typeof document === 'undefined') {
     throw new Error('[@enbox/browser] Wallet selector is only available in browser environments.');
   }
+
+  const validateWalletUrl = options.validateWalletUrl ?? probeWalletWellKnown;
 
   return new Promise<string>((resolve, reject) => {
     // Create the host element with Shadow DOM isolation.
@@ -31,8 +87,18 @@ export function showWalletSelector(wallets: WalletOption[]): Promise<string> {
       try { document.body.removeChild(host); } catch { /* best effort */ }
     };
 
+    const settleResolve = (url: string): void => {
+      cleanup();
+      resolve(url);
+    };
+
+    const settleReject = (): void => {
+      cleanup();
+      reject(new Error('[@enbox/browser] Wallet selection cancelled.'));
+    };
+
     // Detect dark mode.
-    const isDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches;
+    const isDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
 
     // Build styles.
     const style = document.createElement('style');
@@ -46,139 +112,28 @@ export function showWalletSelector(wallets: WalletOption[]): Promise<string> {
     const modal = document.createElement('div');
     modal.className = 'modal';
 
-    // Header
-    const header = document.createElement('div');
-    header.className = 'header';
+    modal.appendChild(buildHeader(settleReject));
 
-    const title = document.createElement('h2');
-    title.textContent = 'Connect Wallet';
-
-    const closeBtn = document.createElement('button');
-    closeBtn.className = 'close-btn';
-    closeBtn.innerHTML = '&times;';
-    closeBtn.addEventListener('click', () => {
-      cleanup();
-      reject(new Error('[@enbox/browser] Wallet selection cancelled.'));
-    });
-
-    header.appendChild(title);
-    header.appendChild(closeBtn);
-    modal.appendChild(header);
-
-    // Wallet list
-    const list = document.createElement('div');
-    list.className = 'wallet-list';
-
-    for (const wallet of wallets) {
-      const item = document.createElement('button');
-      item.className = 'wallet-item';
-
-      const icon = document.createElement('img');
-      icon.src = wallet.icon ?? faviconUrl(wallet.url);
-      icon.alt = wallet.name;
-      icon.width = 32;
-      icon.height = 32;
-      icon.onerror = (): void => { icon.style.display = 'none'; };
-
-      const textGroup = document.createElement('div');
-      textGroup.className = 'wallet-text';
-
-      const name = document.createElement('span');
-      name.className = 'wallet-name';
-      name.textContent = wallet.name;
-
-      textGroup.appendChild(name);
-
-      if (wallet.description) {
-        const desc = document.createElement('span');
-        desc.className = 'wallet-description';
-        desc.textContent = wallet.description;
-        textGroup.appendChild(desc);
-      }
-
-      const arrow = document.createElement('span');
-      arrow.className = 'arrow';
-      arrow.textContent = '\u203A'; // ›
-
-      item.appendChild(icon);
-      item.appendChild(textGroup);
-      item.appendChild(arrow);
-
-      item.addEventListener('click', () => {
-        cleanup();
-        resolve(wallet.url);
-      });
-
-      list.appendChild(item);
+    const recommended = wallets[0];
+    if (recommended !== undefined) {
+      modal.appendChild(buildQuickConnect(recommended, settleResolve));
     }
 
-    modal.appendChild(list);
-
-    // Separator
-    const sep = document.createElement('div');
-    sep.className = 'separator';
-
-    const sepLine1 = document.createElement('div');
-    sepLine1.className = 'sep-line';
-    const sepText = document.createElement('span');
-    sepText.textContent = 'or';
-    const sepLine2 = document.createElement('div');
-    sepLine2.className = 'sep-line';
-
-    sep.appendChild(sepLine1);
-    sep.appendChild(sepText);
-    sep.appendChild(sepLine2);
-    modal.appendChild(sep);
-
-    // Custom URL input
-    const inputGroup = document.createElement('div');
-    inputGroup.className = 'input-group';
-
-    const input = document.createElement('input');
-    input.type = 'url';
-    input.placeholder = 'Enter wallet URL...';
-    input.className = 'url-input';
-
-    const goBtn = document.createElement('button');
-    goBtn.className = 'go-btn';
-    goBtn.textContent = 'Connect';
-    goBtn.disabled = true;
-
-    input.addEventListener('input', () => {
-      goBtn.disabled = !isValidUrl(input.value);
-    });
-
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && isValidUrl(input.value)) {
-        cleanup();
-        resolve(normalizeUrl(input.value));
-      }
-    });
-
-    goBtn.addEventListener('click', () => {
-      if (isValidUrl(input.value)) {
-        cleanup();
-        resolve(normalizeUrl(input.value));
-      }
-    });
-
-    inputGroup.appendChild(input);
-    inputGroup.appendChild(goBtn);
-    modal.appendChild(inputGroup);
+    modal.appendChild(buildWalletGrid(wallets, settleResolve));
+    modal.appendChild(buildSeparator());
+    modal.appendChild(buildCustomUrl(validateWalletUrl, settleResolve));
 
     // Close on overlay click.
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) {
-        cleanup();
-        reject(new Error('[@enbox/browser] Wallet selection cancelled.'));
+        settleReject();
       }
     });
 
     // Close on Escape.
     onKeydown = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
-        cleanup();
-        reject(new Error('[@enbox/browser] Wallet selection cancelled.'));
+        settleReject();
       }
     };
     document.addEventListener('keydown', onKeydown);
@@ -187,16 +142,274 @@ export function showWalletSelector(wallets: WalletOption[]): Promise<string> {
     shadow.appendChild(overlay);
     document.body.appendChild(host);
 
-    // Focus the input for keyboard-first users.
-    input.focus();
+    // Focus the search box for keyboard-first users.
+    shadow.querySelector<HTMLInputElement>('.wallet-search')?.focus();
   });
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────
+// ─── DOM builders ────────────────────────────────────────────────
 
-function faviconUrl(walletUrl: string): string {
-  return `https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=${walletUrl}&size=128`;
+function buildHeader(onCancel: () => void): HTMLDivElement {
+  const header = document.createElement('div');
+  header.className = 'header';
+
+  const title = document.createElement('h2');
+  title.textContent = 'Connect a wallet';
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'close-btn';
+  closeBtn.setAttribute('aria-label', 'Close');
+  closeBtn.innerHTML = '&times;';
+  closeBtn.addEventListener('click', onCancel);
+
+  header.appendChild(title);
+  header.appendChild(closeBtn);
+  return header;
 }
+
+function buildQuickConnect(recommended: WalletOption, onSelect: (url: string) => void): HTMLButtonElement {
+  const quick = document.createElement('button');
+  quick.className = 'quick-connect';
+
+  const bolt = document.createElement('span');
+  bolt.className = 'quick-bolt';
+  bolt.textContent = '⚡'; // ⚡
+
+  const text = document.createElement('span');
+  text.className = 'quick-text';
+
+  const label = document.createElement('span');
+  label.className = 'quick-label';
+  label.textContent = 'Quick connect';
+
+  const sub = document.createElement('span');
+  sub.className = 'quick-sub';
+  sub.textContent = `Connect with ${recommended.name}`;
+
+  text.appendChild(label);
+  text.appendChild(sub);
+  quick.appendChild(bolt);
+  quick.appendChild(text);
+  quick.addEventListener('click', () => onSelect(recommended.url));
+  return quick;
+}
+
+function buildWalletGrid(wallets: WalletOption[], onSelect: (url: string) => void): HTMLDivElement {
+  const section = document.createElement('div');
+  section.className = 'grid-section';
+
+  const search = document.createElement('input');
+  search.type = 'search';
+  search.className = 'wallet-search';
+  search.placeholder = 'Search wallets…';
+
+  const grid = document.createElement('div');
+  grid.className = 'wallet-grid';
+
+  const empty = document.createElement('div');
+  empty.className = 'grid-empty';
+  empty.textContent = 'No wallets match your search.';
+  empty.style.display = 'none';
+
+  const tiles = wallets.map((wallet) => {
+    const tile = buildWalletTile(wallet, onSelect);
+    grid.appendChild(tile);
+    return { name: wallet.name.toLowerCase(), tile };
+  });
+
+  search.addEventListener('input', () => {
+    const query = search.value.trim().toLowerCase();
+    let visible = 0;
+    for (const { name, tile } of tiles) {
+      const match = name.includes(query);
+      tile.style.display = match ? '' : 'none';
+      if (match) {
+        visible += 1;
+      }
+    }
+    empty.style.display = visible === 0 ? '' : 'none';
+  });
+
+  section.appendChild(search);
+  section.appendChild(grid);
+  section.appendChild(empty);
+  return section;
+}
+
+function buildWalletTile(wallet: WalletOption, onSelect: (url: string) => void): HTMLButtonElement {
+  const tile = document.createElement('button');
+  tile.className = 'wallet-item';
+  tile.title = wallet.description ?? wallet.name;
+
+  tile.appendChild(buildWalletIcon(wallet));
+
+  const name = document.createElement('span');
+  name.className = 'wallet-name';
+  name.textContent = wallet.name;
+  tile.appendChild(name);
+
+  tile.addEventListener('click', () => onSelect(wallet.url));
+  return tile;
+}
+
+/**
+ * Build a wallet icon that prefers the wallet's own favicon and degrades to a
+ * letter badge. We never call a third-party favicon proxy: those 404 for many
+ * origins and leak the wallet URL to the proxy.
+ */
+function buildWalletIcon(wallet: WalletOption): HTMLElement {
+  const wrap = document.createElement('span');
+  wrap.className = 'wallet-icon';
+
+  const badge = document.createElement('span');
+  badge.className = 'wallet-badge';
+  badge.textContent = wallet.name.charAt(0).toUpperCase();
+  wrap.appendChild(badge);
+
+  const sources = iconCandidates(wallet);
+  if (sources.length === 0) {
+    return wrap;
+  }
+
+  const img = document.createElement('img');
+  img.className = 'wallet-img';
+  img.alt = '';
+  img.width = 40;
+  img.height = 40;
+
+  let index = 0;
+  img.addEventListener('error', () => {
+    index += 1;
+    if (index < sources.length) {
+      img.src = sources[index];
+    } else {
+      img.remove(); // fall back to the letter badge
+    }
+  });
+
+  img.src = sources[index];
+  wrap.appendChild(img);
+  return wrap;
+}
+
+/** Ordered favicon URLs to try for a wallet, most specific first. */
+function iconCandidates(wallet: WalletOption): string[] {
+  if (wallet.icon !== undefined) {
+    return [wallet.icon];
+  }
+
+  let origin: string;
+  try {
+    origin = new URL(wallet.url).origin;
+  } catch {
+    return [];
+  }
+
+  return [`${origin}/favicon.svg`, `${origin}/favicon.ico`, `${origin}/favicon.png`];
+}
+
+function buildSeparator(): HTMLDivElement {
+  const sep = document.createElement('div');
+  sep.className = 'separator';
+
+  const line1 = document.createElement('div');
+  line1.className = 'sep-line';
+  const sepText = document.createElement('span');
+  sepText.textContent = 'or';
+  const line2 = document.createElement('div');
+  line2.className = 'sep-line';
+
+  sep.appendChild(line1);
+  sep.appendChild(sepText);
+  sep.appendChild(line2);
+  return sep;
+}
+
+function buildCustomUrl(
+  validateWalletUrl: (origin: string) => Promise<boolean>,
+  onSelect: (url: string) => void,
+): HTMLDivElement {
+  const section = document.createElement('div');
+  section.className = 'custom-section';
+
+  const label = document.createElement('label');
+  label.className = 'custom-label';
+  label.textContent = 'Have a wallet URL?';
+
+  const inputGroup = document.createElement('div');
+  inputGroup.className = 'input-group';
+
+  const input = document.createElement('input');
+  input.type = 'url';
+  input.placeholder = 'https://your-wallet.example';
+  input.className = 'url-input';
+
+  const goBtn = document.createElement('button');
+  goBtn.className = 'go-btn';
+  goBtn.textContent = 'Connect';
+  goBtn.disabled = true;
+
+  const errorLine = document.createElement('div');
+  errorLine.className = 'url-error';
+  errorLine.style.display = 'none';
+
+  // When validation fails we let the user override, since the popup handshake
+  // is the ultimate gate — a valid wallet behind strict CORS should not be
+  // permanently blocked.
+  let allowUnverified = false;
+
+  const resetState = (): void => {
+    allowUnverified = false;
+    goBtn.textContent = 'Connect';
+    errorLine.style.display = 'none';
+    goBtn.disabled = !isValidUrl(input.value);
+  };
+
+  const submit = async (): Promise<void> => {
+    if (!isValidUrl(input.value)) {
+      return;
+    }
+
+    const origin = normalizeUrl(input.value);
+    if (allowUnverified) {
+      onSelect(origin);
+      return;
+    }
+
+    goBtn.disabled = true;
+    goBtn.textContent = 'Verifying…';
+    errorLine.style.display = 'none';
+
+    const valid = await validateWalletUrl(origin);
+    if (valid) {
+      onSelect(origin);
+      return;
+    }
+
+    allowUnverified = true;
+    goBtn.disabled = false;
+    goBtn.textContent = 'Connect anyway';
+    errorLine.textContent = `Couldn't verify an Enbox wallet at ${origin}.`;
+    errorLine.style.display = '';
+  };
+
+  input.addEventListener('input', resetState);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      void submit();
+    }
+  });
+  goBtn.addEventListener('click', () => void submit());
+
+  inputGroup.appendChild(input);
+  inputGroup.appendChild(goBtn);
+  section.appendChild(label);
+  section.appendChild(inputGroup);
+  section.appendChild(errorLine);
+  return section;
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────
 
 function isValidUrl(value: string): boolean {
   try {
@@ -208,12 +421,9 @@ function isValidUrl(value: string): boolean {
 }
 
 function normalizeUrl(value: string): string {
-  if (!value.includes('://')) {
-    value = `https://${value}`;
-  }
-  const url = new URL(value);
+  const withScheme = value.includes('://') ? value : `https://${value}`;
   // Return origin only (strip path/trailing slash).
-  return url.origin;
+  return new URL(withScheme).origin;
 }
 
 function buildStyles(isDark: boolean): string {
@@ -224,6 +434,8 @@ function buildStyles(isDark: boolean): string {
   const itemBg = isDark ? '#16213e' : '#f8f9fa';
   const itemHover = isDark ? '#0f3460' : '#e9ecef';
   const accent = isDark ? '#4a9eff' : '#0066cc';
+  const accentAlt = isDark ? '#7b5cff' : '#5b8def';
+  const danger = isDark ? '#ff6b6b' : '#c0392b';
   const overlayBg = 'rgba(0, 0, 0, 0.5)';
 
   return `
@@ -255,9 +467,9 @@ function buildStyles(isDark: boolean): string {
       background: ${bg};
       color: ${text};
       border-radius: 16px;
-      width: 380px;
-      max-width: 90vw;
-      max-height: 80vh;
+      width: 420px;
+      max-width: 92vw;
+      max-height: 86vh;
       overflow-y: auto;
       padding: 24px;
       box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
@@ -268,13 +480,10 @@ function buildStyles(isDark: boolean): string {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 20px;
+      margin-bottom: 18px;
     }
 
-    h2 {
-      font-size: 18px;
-      font-weight: 600;
-    }
+    h2 { font-size: 18px; font-weight: 600; }
 
     .close-btn {
       background: none;
@@ -288,51 +497,110 @@ function buildStyles(isDark: boolean): string {
     }
     .close-btn:hover { color: ${text}; background: ${itemBg}; }
 
-    .wallet-list {
+    .quick-connect {
       display: flex;
-      flex-direction: column;
-      gap: 8px;
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+      text-align: left;
+      padding: 14px 16px;
+      margin-bottom: 18px;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      color: #fff;
+      background: linear-gradient(135deg, ${accent}, ${accentAlt});
+      transition: filter 0.15s;
+    }
+    .quick-connect:hover { filter: brightness(1.08); }
+    .quick-bolt { font-size: 22px; line-height: 1; }
+    .quick-text { display: flex; flex-direction: column; gap: 2px; }
+    .quick-label { font-weight: 600; font-size: 15px; }
+    .quick-sub { font-size: 12px; opacity: 0.85; }
+
+    .wallet-search {
+      width: 100%;
+      padding: 10px 14px;
+      margin-bottom: 12px;
+      border: 1px solid ${border};
+      border-radius: 10px;
+      font-size: 14px;
+      background: ${itemBg};
+      color: ${text};
+      outline: none;
+    }
+    .wallet-search:focus { border-color: ${accent}; }
+    .wallet-search::placeholder { color: ${muted}; }
+
+    .wallet-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      max-height: 216px;
+      overflow-y: auto;
+      padding: 2px;
     }
 
     .wallet-item {
       display: flex;
+      flex-direction: column;
       align-items: center;
-      gap: 12px;
-      padding: 12px 16px;
+      justify-content: center;
+      gap: 8px;
+      padding: 14px 8px;
       background: ${itemBg};
       border: 1px solid ${border};
       border-radius: 12px;
       cursor: pointer;
-      font-size: 15px;
       color: ${text};
-      transition: background 0.15s;
-      width: 100%;
-      text-align: left;
+      transition: background 0.15s, border-color 0.15s;
     }
-    .wallet-item:hover { background: ${itemHover}; }
+    .wallet-item:hover { background: ${itemHover}; border-color: ${accent}; }
 
-    .wallet-text {
-      flex: 1;
+    .wallet-icon {
+      position: relative;
+      width: 40px;
+      height: 40px;
       display: flex;
-      flex-direction: column;
-      gap: 2px;
-      min-width: 0;
+      align-items: center;
+      justify-content: center;
+    }
+    .wallet-badge {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 10px;
+      background: ${itemHover};
+      color: ${text};
+      font-size: 18px;
+      font-weight: 600;
+    }
+    .wallet-img {
+      position: relative;
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      object-fit: cover;
+      background: ${bg};
     }
 
-    .wallet-name { font-weight: 500; }
-
-    .wallet-description {
-      font-size: 12px;
-      color: ${muted};
-      white-space: nowrap;
+    .wallet-name {
+      font-size: 13px;
+      font-weight: 500;
+      max-width: 100%;
       overflow: hidden;
       text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
-    .arrow {
-      font-size: 20px;
+    .grid-empty {
+      grid-column: 1 / -1;
+      padding: 16px;
+      text-align: center;
       color: ${muted};
-      flex-shrink: 0;
+      font-size: 13px;
     }
 
     .separator {
@@ -345,10 +613,14 @@ function buildStyles(isDark: boolean): string {
     }
     .sep-line { flex: 1; height: 1px; background: ${border}; }
 
-    .input-group {
-      display: flex;
-      gap: 8px;
+    .custom-label {
+      display: block;
+      font-size: 13px;
+      color: ${muted};
+      margin-bottom: 8px;
     }
+
+    .input-group { display: flex; gap: 8px; }
 
     .url-input {
       flex: 1;
@@ -374,10 +646,13 @@ function buildStyles(isDark: boolean): string {
       cursor: pointer;
       white-space: nowrap;
     }
-    .go-btn:disabled {
-      opacity: 0.4;
-      cursor: not-allowed;
-    }
+    .go-btn:disabled { opacity: 0.4; cursor: not-allowed; }
     .go-btn:not(:disabled):hover { filter: brightness(1.1); }
+
+    .url-error {
+      margin-top: 8px;
+      font-size: 12px;
+      color: ${danger};
+    }
   `;
 }
