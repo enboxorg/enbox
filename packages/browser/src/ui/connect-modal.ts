@@ -13,9 +13,10 @@
  * 2. **Stage** — a height-stable region where states crossfade: the QR
  *    (or deep link on phones), the pairing-code input, progress, success,
  *    and error states.
- * 3. **Footer** — one row holding the alternate-method link and the wallet
- *    switcher disclosure (a tile grid with search + custom URL — the
- *    entire legacy selector, demoted to an option).
+ * 3. **Footer** — the wallet identity row ("Connecting with" + the selected
+ *    wallet and the next catalog wallets as tiles, capped so the same wallet
+ *    never appears twice), a More tile that expands the full catalog grid
+ *    with search + custom URL in place, and the alternate-method link.
  *
  * Theming: the stylesheet is static and reads `--ec-*` design tokens.
  * Light/dark follows the visitor's system via `prefers-color-scheme` and
@@ -67,6 +68,9 @@ const PIN_LENGTH = 4;
 
 /** Catalog size beyond which the wallet switcher shows its search bar. */
 const WALLET_SEARCH_THRESHOLD = 4; // one full row of tiles
+
+/** Wallet tiles shown in the collapsed identity row (plus the More tile). */
+const WALLET_ROW_SIZE = 3;
 
 /** Palette overrides for one appearance's design tokens. */
 export interface ConnectModalPalette {
@@ -334,7 +338,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
   }
 
   const deps: ConnectModalDeps = { ...defaultDeps(), ...options.deps };
-  const wallets = options.wallets ?? [];
+  const wallets = dedupeWalletsByUrl(options.wallets ?? []);
   const rememberChoice = options.rememberChoice ?? true;
   const appName = options.appName ?? window.location.host;
   const relayWalletPath = options.relayWalletPath ?? '/connect/app';
@@ -418,6 +422,35 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     let pinResolve: ((pin: string) => void) | undefined;
     const discoveryCache = new Map<string, Promise<string | undefined>>();
 
+    // Collapsed identity row: the selected wallet plus the next catalog
+    // wallets, never repeating one. Slots stay stable across in-row
+    // switches (only the highlight moves); the row recomposes only when a
+    // wallet from outside it — grid pick or custom URL — becomes selected,
+    // which puts that wallet in the first slot.
+    let rowWallets: WalletOption[] = [];
+
+    /** The catalog entry for `url`, or a synthesized option for custom URLs. */
+    const walletByUrl = (url: string): WalletOption =>
+      wallets.find((wallet) => wallet.url === url) ?? { name: hostnameOf(url) ?? url, url };
+
+    const composeWalletRow = (): void => {
+      if (walletUrl === undefined) {
+        rowWallets = wallets.slice(0, WALLET_ROW_SIZE);
+        return;
+      }
+      if (rowWallets.some((wallet) => wallet.url === walletUrl)) {
+        return;
+      }
+      const selected = walletByUrl(walletUrl);
+      rowWallets = [selected, ...wallets.filter((wallet) => wallet.url !== selected.url)].slice(0, WALLET_ROW_SIZE);
+    };
+
+    const selectWallet = (url: string): void => {
+      walletUrl = url;
+      renderFooter();
+      void startMethod();
+    };
+
     const cleanup = (): void => {
       relaySession?.cancel();
       clearTimeout(remintTimer);
@@ -469,14 +502,20 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     };
 
     const renderQr = (handoff: WalletUriHandoff): void => {
+      const wallet = walletUrl !== undefined ? walletByUrl(walletUrl) : undefined;
+      const walletName = wallet?.name ?? 'your wallet';
+
       if (isMobile) {
         const link = document.createElement('a');
         link.className = 'deep-link';
         link.href = handoff.walletUri;
-        link.textContent = 'Continue in your wallet';
+        if (wallet !== undefined) {
+          link.appendChild(buildWalletIcon(wallet));
+        }
+        link.appendChild(el('span', 'deep-link-label', `Continue in ${walletName}`));
         setStage(
           link,
-          el('p', 'stage-caption', 'Your wallet opens to approve this connection.'),
+          el('p', 'stage-caption', `${walletName} opens to approve this connection.`),
           el('p', 'stage-subline', 'Come back here when you’re done.'),
         );
         return;
@@ -492,10 +531,20 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
         quietZone : 2,
       }));
 
+      // The selected wallet's mark sits at the QR centre — the "this is the
+      // wallet you're connecting to" cue. The 44px plate over the ~180px
+      // symbol occludes ~5% of modules, well inside ECC level M's 15%
+      // recovery budget.
+      if (wallet !== undefined) {
+        const logo = el('div', 'qr-logo');
+        logo.appendChild(buildWalletIcon(wallet));
+        qrBox.appendChild(logo);
+      }
+
       setStage(
         qrBox,
         el('p', 'stage-caption', 'Scan with your phone’s camera'),
-        el('p', 'stage-subline', 'Your wallet stays on your phone.'),
+        el('p', 'stage-subline', `${walletName} stays on your phone.`),
       );
     };
 
@@ -809,9 +858,19 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       await startMethod();
     };
 
-    // ── Footer: one row (method link + wallet toggle), panel below ──
+    // ── Footer: identity row (+ catalog panel), method link below ──
     const renderFooter = (): void => {
       footer.replaceChildren();
+
+      if (!lockedWallet) {
+        composeWalletRow();
+        const switcher = buildWalletSwitcher();
+        if (switcher.label !== undefined) {
+          footer.appendChild(switcher.label);
+        }
+        footer.appendChild(switcher.row);
+        footer.appendChild(switcher.panel);
+      }
 
       const row = document.createElement('div');
       row.className = 'footer-row';
@@ -831,31 +890,57 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
         row.appendChild(alt);
       }
 
-      let panel: HTMLElement | undefined;
-      if (!lockedWallet && wallets.length > 0) {
-        const switcher = buildWalletSwitcher();
-        row.appendChild(switcher.toggle);
-        panel = switcher.panel;
-      }
-
       if (row.childElementCount > 0) {
         footer.appendChild(row);
       }
-      if (panel !== undefined) {
-        footer.appendChild(panel);
-      }
     };
 
-    const buildWalletSwitcher = (): { toggle: HTMLButtonElement; panel: HTMLDivElement } => {
-      const current = wallets.find((wallet) => wallet.url === walletUrl);
-      const toggle = document.createElement('button');
-      toggle.className = 'footer-link wallet-toggle';
-      toggle.setAttribute('aria-expanded', 'false');
-      toggle.textContent = `Wallet: ${current?.name ?? hostnameOf(walletUrl) ?? 'Choose'} ▾`;
+    const buildWalletSwitcher = (): { label?: HTMLElement; row: HTMLDivElement; panel: HTMLDivElement } => {
+      // Identity row: selected wallet + the next catalog wallets, then the
+      // More tile expanding the full catalog in place.
+      const row = document.createElement('div');
+      row.className = 'wallet-row';
+      row.setAttribute('role', 'radiogroup');
+      row.setAttribute('aria-label', 'Wallet');
+
+      for (const wallet of rowWallets) {
+        const tile = document.createElement('button');
+        tile.className = 'row-tile';
+        tile.title = wallet.description ?? wallet.name;
+        tile.setAttribute('role', 'radio');
+        const isSelected = wallet.url === walletUrl;
+        tile.setAttribute('aria-checked', isSelected ? 'true' : 'false');
+        if (isSelected) {
+          tile.classList.add('selected');
+        }
+        tile.appendChild(buildWalletIcon(wallet));
+        tile.appendChild(el('span', 'row-tile-name', wallet.name));
+        tile.addEventListener('click', () => {
+          if (wallet.url !== walletUrl) {
+            selectWallet(wallet.url);
+          }
+        });
+        row.appendChild(tile);
+      }
 
       const panel = document.createElement('div');
       panel.className = 'wallet-panel';
       panel.hidden = true;
+
+      const hiddenCount = wallets.filter((wallet) => !rowWallets.some((shown) => shown.url === wallet.url)).length;
+      const more = document.createElement('button');
+      more.className = 'row-tile more-tile';
+      more.title = 'All wallets';
+      more.setAttribute('aria-expanded', 'false');
+      more.appendChild(el('span', 'more-count', hiddenCount > 0 ? `+${hiddenCount}` : '⋯'));
+      more.appendChild(el('span', 'row-tile-name', 'More'));
+      more.addEventListener('click', () => {
+        panel.hidden = !panel.hidden;
+        more.setAttribute('aria-expanded', panel.hidden ? 'false' : 'true');
+      });
+      row.appendChild(more);
+
+      const label = rowWallets.length > 0 ? el('div', 'wallet-row-label', 'Connecting with') : undefined;
 
       // Search filter — appears once the catalog outgrows one grid row.
       const tiles: Array<{ wallet: (typeof wallets)[number]; el: HTMLButtonElement }> = [];
@@ -906,9 +991,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
           tile.setAttribute('aria-pressed', 'true');
         }
         tile.addEventListener('click', () => {
-          walletUrl = wallet.url;
-          renderFooter();
-          void startMethod();
+          selectWallet(wallet.url);
         });
         tiles.push({ wallet, el: tile });
         grid.appendChild(tile);
@@ -936,12 +1019,6 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       // should not be permanently blocked.
       let allowUnverified = false;
 
-      const useWallet = (origin: string): void => {
-        walletUrl = origin;
-        renderFooter();
-        void startMethod();
-      };
-
       const submitCustom = async (): Promise<void> => {
         const value = input.value.trim();
         if (value === '') { return; }
@@ -953,7 +1030,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
           return;
         }
         if (allowUnverified) {
-          useWallet(origin);
+          selectWallet(origin);
           return;
         }
         go.disabled = true;
@@ -963,7 +1040,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
         go.disabled = false;
         if (valid) {
           go.textContent = 'Use';
-          useWallet(origin);
+          selectWallet(origin);
           return;
         }
         allowUnverified = true;
@@ -988,12 +1065,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       panel.appendChild(custom);
       panel.appendChild(urlError);
 
-      toggle.addEventListener('click', () => {
-        panel.hidden = !panel.hidden;
-        toggle.setAttribute('aria-expanded', panel.hidden ? 'false' : 'true');
-      });
-
-      return { toggle, panel };
+      return { label, row, panel };
     };
 
     // ── Global interactions ────────────────────────────────────
@@ -1027,6 +1099,11 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
 
 function walletInCatalog(wallets: WalletOption[], url: string): boolean {
   return wallets.some((wallet) => wallet.url === url);
+}
+
+/** Drops catalog entries that repeat an earlier wallet's URL. */
+function dedupeWalletsByUrl(wallets: WalletOption[]): WalletOption[] {
+  return wallets.filter((wallet, index) => wallets.findIndex((candidate) => candidate.url === wallet.url) === index);
 }
 
 /** Compact display form of a wallet URL for the switcher toggle. */
@@ -1243,6 +1320,7 @@ const MODAL_STYLES = `
     .stage.fade-in > * { animation: stageIn 0.15s ease-out; }
 
     .qr-box {
+      position: relative;
       width: 200px;
       height: 200px;
       padding: 10px;
@@ -1251,6 +1329,25 @@ const MODAL_STYLES = `
       border: 1px solid #e3e4e9;
     }
     .qr-box svg { width: 100%; height: 100%; display: block; }
+
+    /* Selected wallet's mark on the QR centre. Like the card, the plate is
+       theme-invariant white so the logo sits on a scannable ground. */
+    .qr-logo {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 44px;
+      height: 44px;
+      border-radius: 10px;
+      background: #ffffff;
+      border: 1px solid #e3e4e9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .qr-logo .wallet-icon { width: 30px; height: 30px; }
+    .qr-logo .wallet-badge { border-radius: 8px; font-size: 15px; }
 
     .claimed-pulse {
       width: 64px; height: 64px; border-radius: 50%;
@@ -1267,7 +1364,10 @@ const MODAL_STYLES = `
     .stage-error { font-size: 13px; color: var(--ec-danger); }
 
     .deep-link {
-      display: block;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
       width: 100%;
       padding: 13px 16px;
       border-radius: 12px;
@@ -1277,6 +1377,13 @@ const MODAL_STYLES = `
       font-size: 15px;
       text-decoration: none;
     }
+    .deep-link .wallet-icon { width: 24px; height: 24px; }
+    .deep-link .wallet-badge {
+      border-radius: 6px;
+      font-size: 12px;
+      background: var(--ec-accent-contrast);
+    }
+    .deep-link .wallet-img { border-radius: 6px; }
 
     .pin-row { display: flex; gap: 10px; }
     .pin-row.shake { animation: shake 0.4s ease-in-out; }
@@ -1350,7 +1457,54 @@ const MODAL_STYLES = `
     }
     .footer-link:hover { color: var(--ec-text); background: var(--ec-surface); }
     .method-link { color: var(--ec-accent); }
-    .wallet-toggle { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .wallet-row-label { font-size: 12px; color: var(--ec-muted); padding: 2px 2px 0; }
+
+    .wallet-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+    .row-tile {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 10px 6px;
+      min-width: 0;
+      background: var(--ec-surface);
+      border: 1px solid var(--ec-border);
+      border-radius: 12px;
+      color: var(--ec-text);
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .row-tile:hover { border-color: var(--ec-accent); }
+    .row-tile.selected {
+      border-color: var(--ec-accent);
+      background: var(--ec-accent-soft);
+      box-shadow: inset 0 0 0 1px var(--ec-accent);
+    }
+    .row-tile.selected .row-tile-name { font-weight: 600; }
+    .row-tile .wallet-icon { width: 28px; height: 28px; }
+    .row-tile-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .more-tile { color: var(--ec-muted); }
+    .more-tile:hover { color: var(--ec-text); }
+    .more-tile[aria-expanded='true'] { border-color: var(--ec-accent); }
+    .more-count {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 600;
+      background: var(--ec-accent-soft);
+      color: var(--ec-accent);
+    }
 
     .wallet-panel { width: 100%; padding: 4px 0 2px; display: flex; flex-direction: column; gap: 8px; }
     .wallet-search {
