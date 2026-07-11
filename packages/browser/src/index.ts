@@ -106,3 +106,27 @@ export type {
 } from './dweb-connect-messages.js';
 export type { WalletSelectorOptions } from './ui/wallet-selector.js';
 export { probeWalletWellKnown, showWalletSelector, WALLET_WELL_KNOWN_PATH } from './ui/wallet-selector.js';
+
+// ─── Convenience re-exports for dapps ───────────────────────────
+//
+// So that most browser dapps only need `@enbox/browser` (plus
+// `@enbox/protocols` for shared protocol definitions). These surface the
+// symbols dapps most commonly reached into sibling packages for; anything
+// more specialized is still available by importing the underlying package
+// directly.
+
+// Typed record wrapper (from @enbox/api).
+export { TypedRecord } from '@enbox/api';
+
+// Custom storage adapter + DWN registration provider-auth callback shapes
+// (from @enbox/auth).
+export { BrowserStorage } from '@enbox/auth/browser';
+export type { ProviderAuthParams, ProviderAuthResult } from '@enbox/auth/browser';
+
+// DWN interface enum for typing agent requests (from @enbox/agent).
+export { DwnInterface } from '@enbox/agent';
+
+// Common DWN primitives for record queries, permission scopes, and protocol
+// typing (from @enbox/dwn-sdk-js).
+export { DateSort, DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
+export type { ProtocolActionRule, ProtocolDefinition } from '@enbox/dwn-sdk-js';

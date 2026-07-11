@@ -278,6 +278,73 @@ function validatePermissionRequestProtocolUris(permissionRequests: ConnectPermis
   }
 }
 
+/**
+ * Orders protocol preparation so that a protocol's in-batch composition
+ * dependencies are prepared before it.
+ *
+ * A composing protocol declares its dependencies via `uses` (e.g. focus-board
+ * `uses` social-graph for a `social:friend` role). The DWN `ProtocolsConfigure`
+ * handler rejects a configure whose `uses` targets are not yet installed for
+ * the tenant, so preparing every requested protocol in a single flat
+ * concurrent fan-out races a composing protocol against its dependency: on a
+ * fresh identity the dependent's configure can land before its `uses` target
+ * is installed, get rejected, and fail the fail-closed remote convergence
+ * check — aborting the whole connect.
+ *
+ * This returns dependency "levels": every request in a level has all of its
+ * in-batch `uses` targets in an earlier level, and requests within a level are
+ * independent and may be prepared concurrently. Callers prepare one level at a
+ * time, awaiting each before starting the next.
+ *
+ * `uses` targets that are not part of this batch are ignored — installing them
+ * is the caller's responsibility and they must already exist on the owner's
+ * DWNs. Cycles (which the DWN would reject anyway) are broken by emitting the
+ * remaining requests as a final level rather than looping forever, preserving
+ * the previous best-effort behavior for that degenerate case.
+ */
+export function orderPermissionRequestsByUsesDependencies(
+  permissionRequests: ConnectPermissionRequest[],
+): ConnectPermissionRequest[][] {
+  const inBatchProtocolUris = new Set(
+    permissionRequests.map((request) => request.protocolDefinition.protocol),
+  );
+
+  const inBatchDependenciesOf = (request: ConnectPermissionRequest): string[] => {
+    const uses = request.protocolDefinition.uses ?? {};
+    return Object.values(uses).filter(
+      (targetUri): targetUri is string =>
+        typeof targetUri === 'string'
+        && targetUri !== request.protocolDefinition.protocol
+        && inBatchProtocolUris.has(targetUri),
+    );
+  };
+
+  const remaining = new Set(permissionRequests);
+  const preparedProtocolUris = new Set<string>();
+  const levels: ConnectPermissionRequest[][] = [];
+
+  while (remaining.size > 0) {
+    const level = [...remaining].filter((request) =>
+      inBatchDependenciesOf(request).every((targetUri) => preparedProtocolUris.has(targetUri)),
+    );
+
+    if (level.length === 0) {
+      // Unsatisfiable dependency or cycle: emit the rest together and let the
+      // downstream fail-closed verification surface the real conflict.
+      levels.push([...remaining]);
+      break;
+    }
+
+    for (const request of level) {
+      remaining.delete(request);
+      preparedProtocolUris.add(request.protocolDefinition.protocol);
+    }
+    levels.push(level);
+  }
+
+  return levels;
+}
+
 function resolvePreSuppliedDelegateDid(delegateDid: string | undefined): string | undefined {
   if (delegateDid === undefined) {
     return undefined;
@@ -668,9 +735,16 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
     const grantSetup = await timed(
       `${CONNECT_PERF_LOG_PREFIX} permissionGrants.fanout (protocols=${numProtocols})`,
       async () => {
-        await Promise.all(request.permissionRequests.map(
-          ({ protocolDefinition }) => prepareProtocol(providerDid, agent, protocolDefinition)
-        ));
+        // Prepare in `uses`-dependency order: a composing protocol's configure
+        // is rejected by the DWN unless its `uses` targets are already
+        // installed, so dependencies must fully converge (across all endpoints)
+        // before their dependents fan out. Independent protocols within a level
+        // are still prepared concurrently.
+        for (const level of orderPermissionRequestsByUsesDependencies(request.permissionRequests)) {
+          await Promise.all(level.map(
+            ({ protocolDefinition }) => prepareProtocol(providerDid, agent, protocolDefinition)
+          ));
+        }
 
         const permissionScopes = request.permissionRequests.flatMap((permissionRequest) => permissionRequest.permissionScopes);
         const createdGrants = await ConnectCeremony.createPermissionGrants(
