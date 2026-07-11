@@ -1,5 +1,29 @@
 # @enbox/browser
 
+## 0.3.43
+
+### Patch Changes
+
+- [#1249](https://github.com/enboxorg/enbox/pull/1249) [`95ff115`](https://github.com/enboxorg/enbox/commit/95ff11501400dbd0786f14e769d50b833a8a871d) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat(browser): re-export common symbols so dapps need fewer packages
+
+  `@enbox/browser` now re-exports the handful of symbols dapps most commonly
+  reached into sibling packages for, so that in most cases a dapp only needs
+  `@enbox/browser` (plus `@enbox/protocols` for shared protocol definitions):
+
+  - `TypedRecord` (from `@enbox/api`)
+  - `BrowserStorage`, `ProviderAuthParams`, `ProviderAuthResult` (from `@enbox/auth`)
+  - `DwnInterface` (from `@enbox/agent`)
+  - `DateSort`, `DwnInterfaceName`, `DwnMethodName`, `ProtocolDefinition`,
+    `ProtocolActionRule` (from `@enbox/dwn-sdk-js`)
+
+  These are additive re-exports; anything more specialized is still available by
+  importing the underlying package directly.
+
+- Updated dependencies [[`95ff115`](https://github.com/enboxorg/enbox/commit/95ff11501400dbd0786f14e769d50b833a8a871d)]:
+  - @enbox/agent@0.8.18
+  - @enbox/api@0.6.56
+  - @enbox/auth@0.6.64
+
 ## 0.3.42
 
 ### Patch Changes
