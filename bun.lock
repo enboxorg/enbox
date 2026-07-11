@@ -139,6 +139,7 @@
         "@enbox/connect": "workspace:*",
         "@enbox/crypto": "workspace:*",
         "@enbox/dids": "workspace:*",
+        "@enbox/dwn-sdk-js": "workspace:*",
       },
       "devDependencies": {
         "@typescript-eslint/eslint-plugin": "8.32.1",
