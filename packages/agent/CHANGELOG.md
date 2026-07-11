@@ -1,5 +1,26 @@
 # @enbox/agent
 
+## 0.8.18
+
+### Patch Changes
+
+- [#1249](https://github.com/enboxorg/enbox/pull/1249) [`95ff115`](https://github.com/enboxorg/enbox/commit/95ff11501400dbd0786f14e769d50b833a8a871d) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix(connect): install composed protocols in `uses`-dependency order
+
+  The connect approval ceremony prepared every requested protocol in one flat
+  concurrent fan-out. The DWN's `ProtocolsConfigure` handler rejects a configure
+  whose `uses` targets are not yet installed for the tenant, so a composing
+  protocol (e.g. one that `uses` a social-graph protocol for a role) could race
+  its dependency and land first — getting rejected and failing the fail-closed
+  remote convergence check. On a fresh identity, where nothing is pre-installed,
+  this reliably aborted the whole connect with "Could not verify the latest
+  protocol definition on every reachable DWN endpoint".
+
+  `prepareProtocol` is now fanned out in `uses`-dependency order: each protocol's
+  in-batch dependencies fully converge across all endpoints before its dependents
+  are prepared. Independent protocols within a dependency level are still prepared
+  concurrently, and dependency cycles fall back to the previous best-effort
+  concurrent behavior.
+
 ## 0.8.17
 
 ### Patch Changes
