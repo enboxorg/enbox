@@ -1,5 +1,5 @@
 ---
-"@enbox/browser": minor
+"@enbox/browser": patch
 ---
 
 feat(browser): redesign the wallet connect dialog
