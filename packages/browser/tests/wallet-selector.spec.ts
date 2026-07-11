@@ -18,6 +18,9 @@ const WALLETS: WalletOption[] = [
   },
 ];
 
+const ALWAYS_VALID = { validateWalletUrl: async (): Promise<boolean> => true };
+const ALWAYS_INVALID = { validateWalletUrl: async (): Promise<boolean> => false };
+
 function getHost(): HTMLDivElement {
   const host = document.querySelector<HTMLDivElement>('#enbox-wallet-selector');
   if (host === null) {
@@ -45,10 +48,18 @@ function queryRequired<T extends Element>(selector: string): T {
   return element;
 }
 
+function walletItems(): HTMLButtonElement[] {
+  return Array.from(getShadowRoot().querySelectorAll<HTMLButtonElement>('.wallet-item'));
+}
+
 function inputWalletUrl(value: string): void {
   const input = queryRequired<HTMLInputElement>('.url-input');
   input.value = value;
   input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+function flush(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe('showWalletSelector', () => {
@@ -56,30 +67,75 @@ describe('showWalletSelector', () => {
     document.querySelector('#enbox-wallet-selector')?.remove();
   });
 
-  it('should render wallet choices, resolve selected wallet URL, and clean up the modal', async () => {
+  it('should quick-connect with the first (recommended) wallet', async () => {
     const promise = showWalletSelector(WALLETS);
-    const walletItems = Array.from(getShadowRoot().querySelectorAll<HTMLButtonElement>('.wallet-item'));
 
-    expect(walletItems).toHaveLength(2);
-    expect(walletItems[0].querySelector('.wallet-name')?.textContent).toBe('Enbox Wallet');
-    expect(walletItems[0].querySelector('.wallet-description')?.textContent).toBe('Primary test wallet');
-    expect(walletItems[0].querySelector<HTMLImageElement>('img')?.src).toBe(WALLETS[0].icon);
+    const quick = queryRequired<HTMLButtonElement>('.quick-connect');
+    expect(quick.querySelector('.quick-sub')?.textContent).toBe('Connect with Enbox Wallet');
+    quick.click();
 
-    const fallbackIcon = walletItems[1].querySelector<HTMLImageElement>('img');
-    expect(fallbackIcon?.src).toContain('https://t3.gstatic.com/faviconV2');
-    expect(fallbackIcon?.src).toContain(`url=${WALLETS[1].url}`);
+    await expect(promise).resolves.toBe(WALLETS[0].url);
+    expect(document.querySelector('#enbox-wallet-selector')).toBeNull();
+  });
 
-    fallbackIcon?.onerror?.(new Event('error'));
-    expect(fallbackIcon?.style.display).toBe('none');
+  it('should render a wallet tile grid and resolve the clicked wallet URL', async () => {
+    const promise = showWalletSelector(WALLETS);
+    const items = walletItems();
 
-    walletItems[1].click();
+    expect(items).toHaveLength(2);
+    expect(items[0].querySelector('.wallet-name')?.textContent).toBe('Enbox Wallet');
+    expect(items[1].querySelector('.wallet-name')?.textContent).toBe('Fallback Wallet');
+
+    items[1].click();
 
     await expect(promise).resolves.toBe(WALLETS[1].url);
     expect(document.querySelector('#enbox-wallet-selector')).toBeNull();
   });
 
-  it('should enable custom URL submission only for valid URLs and normalize to the origin', async () => {
+  it('should filter the wallet grid by the search query', async () => {
     const promise = showWalletSelector(WALLETS);
+    const search = queryRequired<HTMLInputElement>('.wallet-search');
+
+    search.value = 'fallback';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+
+    const items = walletItems();
+    expect(items[0].style.display).toBe('none');
+    expect(items[1].style.display).toBe('');
+
+    search.value = 'nonexistent-wallet';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(queryRequired<HTMLDivElement>('.grid-empty').style.display).toBe('');
+
+    queryRequired<HTMLButtonElement>('.close-btn').click();
+    await expect(promise).rejects.toThrow('Wallet selection cancelled');
+  });
+
+  it('should use the wallet own-favicon (never a third-party proxy) with a letter-badge fallback', async () => {
+    const promise = showWalletSelector(WALLETS);
+    const items = walletItems();
+
+    // Explicit icon is used as-is.
+    expect(items[0].querySelector<HTMLImageElement>('.wallet-img')?.src).toBe(WALLETS[0].icon);
+
+    // No icon → the wallet's own origin favicon, not a gstatic/Google proxy.
+    const fallbackImg = items[1].querySelector<HTMLImageElement>('.wallet-img');
+    expect(fallbackImg?.src).toBe('https://fallback.example.com/favicon.svg');
+    expect(fallbackImg?.src).not.toContain('gstatic');
+
+    // Every tile carries a letter-badge fallback beneath the image.
+    expect(items[1].querySelector('.wallet-badge')?.textContent).toBe('F');
+
+    // On repeated load errors the image is dropped, leaving the badge.
+    fallbackImg?.dispatchEvent(new Event('error')); // → favicon.ico
+    expect(items[1].querySelector<HTMLImageElement>('.wallet-img')?.src).toBe('https://fallback.example.com/favicon.ico');
+
+    queryRequired<HTMLButtonElement>('.close-btn').click();
+    await expect(promise).rejects.toThrow('Wallet selection cancelled');
+  });
+
+  it('should validate a custom URL, normalize to origin, and resolve when the wallet checks out', async () => {
+    const promise = showWalletSelector(WALLETS, ALWAYS_VALID);
     const goButton = queryRequired<HTMLButtonElement>('.go-btn');
 
     expect(goButton.disabled).toBe(true);
@@ -96,8 +152,23 @@ describe('showWalletSelector', () => {
     expect(document.querySelector('#enbox-wallet-selector')).toBeNull();
   });
 
+  it('should surface a validation failure and allow an explicit override', async () => {
+    const promise = showWalletSelector(WALLETS, ALWAYS_INVALID);
+    const goButton = queryRequired<HTMLButtonElement>('.go-btn');
+
+    inputWalletUrl('https://not-a-wallet.example');
+    goButton.click();
+    await flush();
+
+    expect(queryRequired<HTMLDivElement>('.url-error').style.display).toBe('');
+    expect(goButton.textContent).toBe('Connect anyway');
+
+    goButton.click();
+    await expect(promise).resolves.toBe('https://not-a-wallet.example');
+  });
+
   it('should submit a valid custom URL when Enter is pressed', async () => {
-    const promise = showWalletSelector(WALLETS);
+    const promise = showWalletSelector(WALLETS, ALWAYS_VALID);
 
     inputWalletUrl('http://localhost:3000/wallet');
     queryRequired<HTMLInputElement>('.url-input').dispatchEvent(new KeyboardEvent('keydown', {

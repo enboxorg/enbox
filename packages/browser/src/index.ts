@@ -104,4 +104,5 @@ export type {
   DWebConnectRequestMessage,
   DWebConnectResponseMessage,
 } from './dweb-connect-messages.js';
-export { showWalletSelector } from './ui/wallet-selector.js';
+export type { WalletSelectorOptions } from './ui/wallet-selector.js';
+export { probeWalletWellKnown, showWalletSelector, WALLET_WELL_KNOWN_PATH } from './ui/wallet-selector.js';
