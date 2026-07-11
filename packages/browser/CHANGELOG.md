@@ -1,5 +1,16 @@
 # @enbox/browser
 
+## 0.3.41
+
+### Patch Changes
+
+- [#1243](https://github.com/enboxorg/enbox/pull/1243) [`3e359b8`](https://github.com/enboxorg/enbox/commit/3e359b863ee0e2ae0a2f6723256f470981211b43) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: update the default browser wallet selector to Enbox, Prism, Matcha, and Onyx
+
+- Updated dependencies [[`a61819a`](https://github.com/enboxorg/enbox/commit/a61819abe3e53751782e50df9a1b26e52e65463f)]:
+  - @enbox/agent@0.8.17
+  - @enbox/api@0.6.55
+  - @enbox/auth@0.6.63
+
 ## 0.3.40
 
 ### Patch Changes
