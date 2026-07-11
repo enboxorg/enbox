@@ -312,7 +312,7 @@ describe('runConnectModal', () => {
 
     shadowRoot().querySelector<HTMLButtonElement>('.wallet-toggle')?.click();
     const rows = Array.from(shadowRoot().querySelectorAll<HTMLButtonElement>('.wallet-row'));
-    rows.find((row) => row.textContent === 'Prism')?.click();
+    rows.find((row) => row.querySelector('.wallet-row-name')?.textContent === 'Prism')?.click();
     await flush();
 
     expect(relay.calls).toHaveLength(2);

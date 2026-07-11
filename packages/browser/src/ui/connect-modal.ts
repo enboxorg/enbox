@@ -31,13 +31,14 @@ import type { ConnectPermissionRequest, ConnectResult, WalletUriHandoff } from '
 
 import { ConnectClient } from '@enbox/connect';
 
+import { buildWalletIcon } from './wallet-icon.js';
 import {
   collectBrowserClientMetadata,
   PopupClientTransport,
   PopupWindowClosedError,
 } from '../dweb-connect-client.js';
 import { encodeQr, qrToSvg } from './qr.js';
-import { fetchWalletWellKnown, probeWalletWellKnown } from './wallet-selector.js';
+import { fetchWalletWellKnown, probeWalletWellKnown } from './wallet-well-known.js';
 import { RelayConnectCancelledError, runRelayConnect } from '../relay-connect-runner.js';
 
 /** How the user carries out the approval. */
@@ -358,11 +359,11 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
 
       const qrBox = document.createElement('div');
       qrBox.className = 'qr-box';
-      qrBox.innerHTML = qrToSvg(encodeQr(handoff.walletUri), {
+      qrBox.replaceChildren(qrToSvg(encodeQr(handoff.walletUri), {
         dark      : isDark ? '#e8e8f0' : '#14141f',
         light     : 'transparent',
         quietZone : 2,
-      });
+      }));
 
       setStage(
         qrBox,
@@ -701,10 +702,41 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       panel.className = 'wallet-panel';
       panel.hidden = true;
 
+      // Search filter — only worth the chrome once the catalog grows.
+      const rows: Array<{ wallet: (typeof wallets)[number]; el: HTMLButtonElement }> = [];
+      const empty = document.createElement('div');
+      empty.className = 'wallet-empty';
+      empty.textContent = 'No wallets match your search.';
+      empty.hidden = true;
+
+      if (wallets.length > 5) {
+        const search = document.createElement('input');
+        search.type = 'search';
+        search.className = 'wallet-search';
+        search.placeholder = 'Search wallets…';
+        search.addEventListener('input', () => {
+          const query = search.value.trim().toLowerCase();
+          let visible = 0;
+          for (const { wallet, el } of rows) {
+            const match = query === ''
+              || wallet.name.toLowerCase().includes(query)
+              || wallet.url.toLowerCase().includes(query);
+            el.hidden = !match;
+            if (match) { visible += 1; }
+          }
+          empty.hidden = visible > 0;
+        });
+        panel.appendChild(search);
+      }
+
       for (const wallet of wallets) {
         const row = document.createElement('button');
         row.className = 'wallet-row';
-        row.textContent = wallet.name;
+        row.appendChild(buildWalletIcon(wallet));
+        const rowName = document.createElement('span');
+        rowName.className = 'wallet-row-name';
+        rowName.textContent = wallet.name;
+        row.appendChild(rowName);
         if (wallet.url === walletUrl) {
           row.classList.add('selected');
         }
@@ -713,8 +745,10 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
           renderFooter();
           void startMethod();
         });
+        rows.push({ wallet, el: row });
         panel.appendChild(row);
       }
+      panel.appendChild(empty);
 
       // Custom wallet URL (the power-user path, demoted to the disclosure).
       const custom = document.createElement('div');
@@ -726,33 +760,66 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       const go = document.createElement('button');
       go.className = 'url-go';
       go.textContent = 'Use';
-      go.addEventListener('click', () => {
-        void (async (): Promise<void> => {
-          const value = input.value.trim();
-          if (value === '') { return; }
-          let origin: string;
-          try {
-            origin = new URL(value.includes('://') ? value : `https://${value}`).origin;
-          } catch {
-            return;
-          }
-          go.disabled = true;
-          go.textContent = 'Checking…';
-          const valid = await deps.validateWalletUrl(origin);
-          go.disabled = false;
+      const urlError = document.createElement('div');
+      urlError.className = 'url-error';
+      urlError.hidden = true;
+
+      // When validation fails we let the user override, since the connect
+      // handshake is the ultimate gate — a valid wallet behind strict CORS
+      // should not be permanently blocked.
+      let allowUnverified = false;
+
+      const useWallet = (origin: string): void => {
+        walletUrl = origin;
+        renderFooter();
+        void startMethod();
+      };
+
+      const submitCustom = async (): Promise<void> => {
+        const value = input.value.trim();
+        if (value === '') { return; }
+        let origin: string;
+        try {
+          origin = new URL(value.includes('://') ? value : `https://${value}`).origin;
+        } catch {
+          input.classList.add('invalid');
+          return;
+        }
+        if (allowUnverified) {
+          useWallet(origin);
+          return;
+        }
+        go.disabled = true;
+        go.textContent = 'Checking…';
+        urlError.hidden = true;
+        const valid = await deps.validateWalletUrl(origin);
+        go.disabled = false;
+        if (valid) {
           go.textContent = 'Use';
-          if (valid) {
-            walletUrl = origin;
-            renderFooter();
-            void startMethod();
-          } else {
-            input.classList.add('invalid');
-          }
-        })();
+          useWallet(origin);
+          return;
+        }
+        allowUnverified = true;
+        go.textContent = 'Use anyway';
+        input.classList.add('invalid');
+        urlError.textContent = `Couldn't verify a wallet at ${origin}.`;
+        urlError.hidden = false;
+      };
+
+      input.addEventListener('input', () => {
+        allowUnverified = false;
+        go.textContent = 'Use';
+        input.classList.remove('invalid');
+        urlError.hidden = true;
       });
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { void submitCustom(); }
+      });
+      go.addEventListener('click', () => { void submitCustom(); });
       custom.appendChild(input);
       custom.appendChild(go);
       panel.appendChild(custom);
+      panel.appendChild(urlError);
 
       toggle.addEventListener('click', () => {
         panel.hidden = !panel.hidden;
@@ -847,7 +914,7 @@ function buildHeader(appName: string, appIcon: string | undefined, onCancel: () 
   const closeBtn = document.createElement('button');
   closeBtn.className = 'close-btn';
   closeBtn.setAttribute('aria-label', 'Close');
-  closeBtn.innerHTML = '&times;';
+  closeBtn.textContent = '\u00d7';
   closeBtn.addEventListener('click', onCancel);
 
   header.appendChild(identity);
@@ -886,6 +953,7 @@ function buildStyles(isDark: boolean): string {
   const border = isDark ? '#333' : '#e0e0e0';
   const itemBg = isDark ? '#16213e' : '#f8f9fa';
   const accent = isDark ? '#4a9eff' : '#0066cc';
+  const accentSoft = isDark ? 'rgba(74, 158, 255, 0.16)' : 'rgba(0, 102, 204, 0.1)';
   const danger = isDark ? '#ff6b6b' : '#c0392b';
   const success = isDark ? '#43d17c' : '#1e9e5a';
 
@@ -1057,6 +1125,22 @@ function buildStyles(isDark: boolean): string {
     }
     .wallet-row:hover, .wallet-row.selected { border-color: ${accent}; }
 
+    .wallet-icon { position: relative; width: 28px; height: 28px; flex-shrink: 0; display: inline-flex; }
+    .wallet-badge {
+      width: 28px; height: 28px; border-radius: 8px; display: inline-flex;
+      align-items: center; justify-content: center; font-size: 13px;
+      font-weight: 600; background: ${accentSoft}; color: ${accent};
+    }
+    .wallet-img { position: absolute; inset: 0; width: 28px; height: 28px; border-radius: 8px; object-fit: cover; }
+    .wallet-row-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .wallet-search {
+      width: 100%; box-sizing: border-box; padding: 8px 10px; margin-bottom: 4px;
+      border-radius: 8px; border: 1px solid ${border}; background: transparent;
+      color: inherit; font: inherit;
+    }
+    .wallet-search:focus { outline: none; border-color: ${accent}; }
+    .wallet-empty { padding: 8px 10px; font-size: 12px; opacity: 0.7; }
+    .url-error { padding: 4px 2px 0; font-size: 12px; color: ${danger}; }
     .wallet-custom { display: flex; gap: 6px; margin-top: 4px; }
     .url-input {
       flex: 1;

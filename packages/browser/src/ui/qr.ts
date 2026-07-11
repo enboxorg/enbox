@@ -503,11 +503,18 @@ export interface QrSvgOptions {
   quietZone?: number;
 }
 
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
 /**
- * Renders an encoded symbol as a crisp, scalable SVG string. One `<path>`
- * carries all dark modules so the output stays compact.
+ * Renders an encoded symbol as a crisp, scalable `<svg>` element. One
+ * `<path>` carries all dark modules so the output stays compact.
+ *
+ * Built with `createElementNS`/`setAttribute` rather than markup strings so
+ * caller-supplied colours can never be interpreted as HTML (CodeQL
+ * js/html-constructed-from-input). Append the returned element directly;
+ * never serialize it back through `innerHTML`.
  */
-export function qrToSvg(qr: QrCode, options: QrSvgOptions = {}): string {
+export function qrToSvg(qr: QrCode, options: QrSvgOptions = {}): SVGSVGElement {
   const dark = options.dark ?? '#000000';
   const light = options.light ?? '#ffffff';
   const quietZone = options.quietZone ?? 2;
@@ -522,10 +529,21 @@ export function qrToSvg(qr: QrCode, options: QrSvgOptions = {}): string {
     }
   }
 
-  return (
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${dimension} ${dimension}" shape-rendering="crispEdges" role="img">` +
-    `<rect width="${dimension}" height="${dimension}" fill="${light}"/>` +
-    `<path d="${path}" fill="${dark}"/>` +
-    `</svg>`
-  );
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${dimension} ${dimension}`);
+  svg.setAttribute('shape-rendering', 'crispEdges');
+  svg.setAttribute('role', 'img');
+
+  const rect = document.createElementNS(SVG_NS, 'rect');
+  rect.setAttribute('width', String(dimension));
+  rect.setAttribute('height', String(dimension));
+  rect.setAttribute('fill', light);
+  svg.appendChild(rect);
+
+  const modules = document.createElementNS(SVG_NS, 'path');
+  modules.setAttribute('d', path);
+  modules.setAttribute('fill', dark);
+  svg.appendChild(modules);
+
+  return svg;
 }

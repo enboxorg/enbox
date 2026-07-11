@@ -93,14 +93,24 @@ describe('encodeQr', () => {
 });
 
 describe('qrToSvg', () => {
-  it('renders a crisp standalone SVG with a quiet zone', () => {
+  it('renders a crisp standalone SVG element with a quiet zone', () => {
     const qr = encodeQr('https://enbox.org');
     const svg = qrToSvg(qr, { dark: '#111111', light: 'transparent', quietZone: 2 });
 
-    expect(svg.startsWith('<svg')).toBe(true);
-    expect(svg).toContain('shape-rendering="crispEdges"');
-    expect(svg).toContain(`viewBox="0 0 ${qr.size + 4} ${qr.size + 4}"`);
-    expect(svg).toContain('fill="#111111"');
-    expect(svg).toContain('fill="transparent"');
+    expect(svg instanceof SVGSVGElement).toBe(true);
+    expect(svg.getAttribute('shape-rendering')).toBe('crispEdges');
+    expect(svg.getAttribute('viewBox')).toBe(`0 0 ${qr.size + 4} ${qr.size + 4}`);
+    expect(svg.querySelector('rect')?.getAttribute('fill')).toBe('transparent');
+    expect(svg.querySelector('path')?.getAttribute('fill')).toBe('#111111');
+  });
+
+  it('treats hostile colour options as inert attribute values, never markup', () => {
+    const qr = encodeQr('https://enbox.org');
+    const hostile = '"><img src=x onerror=alert(1)>';
+    const svg = qrToSvg(qr, { dark: hostile });
+
+    // DOM construction means the payload can only ever be an attribute value.
+    expect(svg.querySelector('img')).toBe(null);
+    expect(svg.querySelector('path')?.getAttribute('fill')).toBe(hostile);
   });
 });

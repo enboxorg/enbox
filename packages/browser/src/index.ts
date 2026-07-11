@@ -104,9 +104,8 @@ export type {
   DWebConnectRequestMessage,
   DWebConnectResponseMessage,
 } from './dweb-connect-messages.js';
-export type { WalletSelectorOptions } from './ui/wallet-selector.js';
-export { fetchWalletWellKnown, probeWalletWellKnown, showWalletSelector, WALLET_WELL_KNOWN_PATH } from './ui/wallet-selector.js';
-export type { WalletWellKnownDocument } from './ui/wallet-selector.js';
+export { fetchWalletWellKnown, probeWalletWellKnown, WALLET_WELL_KNOWN_PATH } from './ui/wallet-well-known.js';
+export type { WalletWellKnownDocument } from './ui/wallet-well-known.js';
 export { discoverWalletConnectServerUrl, runConnectModal } from './ui/connect-modal.js';
 export type { ConnectMethod, ConnectModalDeps, ConnectModalOptions } from './ui/connect-modal.js';
 export { MAX_PIN_ATTEMPTS, RelayConnectCancelledError, runRelayConnect } from './relay-connect-runner.js';
