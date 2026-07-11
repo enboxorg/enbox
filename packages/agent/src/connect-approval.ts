@@ -3,11 +3,11 @@
  *
  * The single wallet-side approval ceremony shared by every connect transport
  * (relay/QR/deep-link, popup postMessage): delegate minting or pre-supplied
- * delegate validation, per-protocol preparation (local `ProtocolsConfigure`
- * with encryption derivation plus best-effort endpoint fan-out), permission
- * grant creation with scope guards and session metadata, durable grantKey
- * delivery for encrypted read scopes, and per-grant contextId-scoped
- * revocation grants.
+ * delegate validation, per-protocol preparation (install or encryption
+ * upgrade with fail-closed remote verification — see
+ * `./connect-protocol-preparation.ts`), permission grant creation with scope
+ * guards and session metadata, durable grantKey delivery for encrypted read
+ * scopes, and per-grant contextId-scoped revocation grants.
  *
  * The ceremony is transport-agnostic — no envelope, relay, or postMessage
  * code lives here. {@link executeConnectApproval} returns the
@@ -20,7 +20,7 @@ import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PrivateKeyJwk } from '@enbox/crypto';
 import type { BearerDid, PortableDid } from '@enbox/dids';
 import type { ConnectApproval, ConnectClientMetadata, ConnectPermissionRequest, ConnectRequest, SessionRevocation } from '@enbox/connect';
-import type { ConnectSessionMetadata, ConnectSessionTransport, DwnDataEncodedRecordsWriteMessage, DwnPermissionScope, DwnProtocolDefinition, DwnRecordsPermissionScope } from './types/dwn.js';
+import type { ConnectSessionMetadata, ConnectSessionTransport, DwnDataEncodedRecordsWriteMessage, DwnPermissionScope, DwnRecordsPermissionScope } from './types/dwn.js';
 
 import { Ed25519 } from '@enbox/crypto';
 import { randomToken } from '@enbox/connect';
@@ -29,12 +29,12 @@ import { Did, DidJwk } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
-import { DwnInterface } from './types/dwn.js';
 import { isRecordPermissionScope } from './dwn-api.js';
 import {
   createGrantKeyRecordsForGrants,
   getEncryptionKeyInfo,
 } from './dwn-encryption.js';
+import { hasEncryptedProtocolTypes, prepareProtocol } from './connect-protocol-preparation.js';
 import { mapConcurrent, mapConcurrentSettled } from './utils.js';
 
 // ---------------------------------------------------------------------------
@@ -260,11 +260,6 @@ function assertConnectGrantScope(scope: DwnPermissionScope): void {
 
 function isConnectReadScope(scope: DwnPermissionScope): scope is DwnRecordsPermissionScope {
   return isRecordPermissionScope(scope) && scope.method === DwnMethodName.Read;
-}
-
-function hasEncryptedProtocolTypes(protocolDefinition: DwnProtocolDefinition): boolean {
-  return Object.values(protocolDefinition.types ?? {})
-    .some((type: any) => type?.encryptionRequired === true);
 }
 
 function permissionRequestHasEncryptedReadScopes(permissionRequest: ConnectPermissionRequest): boolean {
@@ -571,106 +566,6 @@ async function fanOutDataEncodedRecords(
 }
 
 // ---------------------------------------------------------------------------
-// Protocol installation
-// ---------------------------------------------------------------------------
-
-/**
- * Ensures the protocol is installed on the provider's local DWN so that the
- * agent can sign and (when applicable) encrypt grants for it during
- * {@link executeConnectApproval}.
- *
- * Remote installation (push to every owner DWN endpoint) is the
- * responsibility of the calling client (the wallet's own `prepareProtocol`
- * runs *before* the approval ceremony and fans out to every endpoint in
- * parallel). When the protocol already exists locally — the common case —
- * this function performs a single local `ProtocolsQuery` and returns: there
- * is no remote send, so a slow/unhealthy DWN endpoint cannot block the
- * "Authorizing…" hot path.
- *
- * When the protocol is *not* installed locally — a safety fallback for
- * callers that did not pre-install — the protocol is configured locally
- * (with `encryption: true` when any type declares `encryptionRequired: true`,
- * so the agent injects `$keyAgreement` keys derived from the owner's X25519
- * root key) and then fanned out to every owner DWN endpoint with bounded
- * concurrency and a short per-request budget. Endpoint failures are
- * non-fatal — sync delivers any missing copies eventually.
- */
-async function prepareProtocol(
-  selectedDid: string,
-  agent: EnboxPlatformAgent,
-  protocolDefinition: DwnProtocolDefinition
-): Promise<void> {
-  const queryMessage = await agent.processDwnRequest({
-    author        : selectedDid,
-    messageType   : DwnInterface.ProtocolsQuery,
-    target        : selectedDid,
-    messageParams : { filter: { protocol: protocolDefinition.protocol } },
-  });
-
-  if (queryMessage.reply.status.code !== 200) {
-    throw new Error(`Could not fetch protocol: ${queryMessage.reply.status.detail}`);
-  }
-
-  const isInstalledLocally = queryMessage.reply.entries !== undefined
-    && queryMessage.reply.entries.length > 0;
-
-  if (isInstalledLocally) {
-    // Already installed locally. The wallet's pre-call `prepareProtocol`
-    // is responsible for fanning the protocol out to every owner DWN
-    // endpoint; sync delivers any missing copies eventually. Skipping the
-    // remote send here turns this hot path into a single local DB read
-    // (~10 ms) instead of a sequential per-endpoint network round-trip
-    // with retries — the latter could take minutes if any endpoint was
-    // slow or unreachable.
-    logger.log(`Protocol already installed locally: ${protocolDefinition.protocol}`);
-    return;
-  }
-
-  // Safety fallback — protocol is missing locally, so the caller did not
-  // pre-install. Configure it locally (with encryption derivation if any
-  // type requires it) so the agent can sign/encrypt grants, then push to
-  // every owner DWN endpoint in parallel with a short per-request budget.
-  logger.log(`Protocol not installed, configuring locally: ${protocolDefinition.protocol}`);
-  const needsEncryption = hasEncryptedProtocolTypes(protocolDefinition);
-
-  const { reply: configureReply, message: configureMessage } = await agent.processDwnRequest({
-    author        : selectedDid,
-    target        : selectedDid,
-    messageType   : DwnInterface.ProtocolsConfigure,
-    messageParams : { definition: protocolDefinition },
-    encryption    : needsEncryption || undefined,
-  });
-
-  if (configureReply.status.code !== 202 && configureReply.status.code !== 409) {
-    throw new Error(`Could not configure protocol locally: ${configureReply.status.detail}`);
-  }
-
-  let dwnEndpointUrls: string[] = [];
-  try {
-    dwnEndpointUrls = await agent.dwn.getDwnEndpointUrlsForTarget(selectedDid);
-  } catch {
-    // Endpoint resolution failure — protocol stays local-only until sync.
-  }
-
-  if (dwnEndpointUrls.length === 0) {
-    return;
-  }
-
-  // Best-effort remote fan-out with bounded concurrency and a per-request
-  // abort signal. Failures are tolerated (sync delivers eventually).
-  await mapConcurrentSettled(
-    dwnEndpointUrls,
-    CONNECT_FANOUT_CONCURRENCY,
-    (dwnUrl) => agent.rpc.sendDwnRequest({
-      dwnUrl,
-      targetDid : selectedDid,
-      message   : configureMessage!,
-      signal    : AbortSignal.timeout(CONNECT_REQUEST_TIMEOUT_MS),
-    }),
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Ceremony collaborators (stubbable seam)
 // ---------------------------------------------------------------------------
 
@@ -694,7 +589,9 @@ export const ConnectCeremony = {
  * 1. Uses a requester-supplied delegate DID, or mints one (did:jwk with the
  *    derived X25519 private key appended) when omitted.
  * 2. Clamps the requested session TTL and builds the session metadata.
- * 3. Prepares each requested protocol on the owner's DWN.
+ * 3. Prepares each requested protocol on the owner's DWNs: install or
+ *    encryption upgrade with fail-closed conflict detection and remote
+ *    convergence verification.
  * 4. Creates permission grants (scope guards enforced) and delivers them to
  *    every owner DWN endpoint.
  * 5. Creates and fans out durable grantKey records for encrypted read scopes.
