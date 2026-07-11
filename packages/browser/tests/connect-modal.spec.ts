@@ -97,6 +97,14 @@ function stageText(): string {
   return shadowRoot().querySelector('.stage')?.textContent ?? '';
 }
 
+function rowTiles(): HTMLButtonElement[] {
+  return Array.from(shadowRoot().querySelectorAll<HTMLButtonElement>('.row-tile:not(.more-tile)'));
+}
+
+function rowNames(): Array<string | undefined> {
+  return rowTiles().map((tile) => tile.querySelector('.row-tile-name')?.textContent ?? undefined);
+}
+
 function deps(overrides: Partial<ConnectModalDeps>): Partial<ConnectModalDeps> {
   return {
     discoverConnectServerUrl : async (): Promise<string> => 'https://relay.example.com/connect',
@@ -224,7 +232,26 @@ describe('runConnectModal', () => {
     const link = shadowRoot().querySelector<HTMLAnchorElement>('.deep-link');
     expect(link).not.toBeNull();
     expect(link?.href).toBe(HANDOFF.walletUri);
+    expect(link?.textContent).toContain('Continue in Enbox');
     expect(shadowRoot().querySelector('.qr-box')).toBeNull();
+  });
+
+  it('centres the selected wallet’s mark on the QR and names it in the caption', async () => {
+    const relay = createFakeRelay();
+    const promise = runConnectModal({
+      wallets            : WALLETS,
+      permissionRequests : PERMISSIONS,
+      deps               : deps({ runRelay: relay.runRelay }),
+    });
+    promise.catch((): undefined => undefined);
+
+    await flush();
+    relay.calls[0].onWalletUriReady(HANDOFF);
+
+    const logo = shadowRoot().querySelector('.qr-logo');
+    expect(logo).not.toBeNull();
+    expect(logo?.querySelector('.wallet-badge')?.textContent).toBe('E');
+    expect(stageText()).toContain('Enbox stays on your phone.');
   });
 
   it('invokes the popup path synchronously from the footer link', async () => {
@@ -300,7 +327,7 @@ describe('runConnectModal', () => {
     expect(stageText()).toContain('can’t connect by phone');
   });
 
-  it('re-mints for the newly selected wallet from the switcher', async () => {
+  it('re-mints for a wallet picked from the identity row without reordering it', async () => {
     const relay = createFakeRelay();
     const promise = runConnectModal({
       wallets            : WALLETS,
@@ -312,13 +339,69 @@ describe('runConnectModal', () => {
     await flush();
     expect(relay.calls).toHaveLength(1);
 
-    shadowRoot().querySelector<HTMLButtonElement>('.wallet-toggle')?.click();
-    const tiles = Array.from(shadowRoot().querySelectorAll<HTMLButtonElement>('.wallet-tile'));
-    tiles.find((tile) => tile.querySelector('.wallet-tile-name')?.textContent === 'Prism')?.click();
+    rowTiles().find((tile) => tile.querySelector('.row-tile-name')?.textContent === 'Prism')?.click();
     await flush();
 
     expect(relay.calls).toHaveLength(2);
     expect(relay.calls[1].walletUri).toBe('https://wallet-two.example.com/connect/app');
+
+    // In-row switch: the slots stay stable, only the highlight moves.
+    expect(rowNames()).toEqual(['Enbox', 'Prism']);
+    expect(rowTiles()[1].getAttribute('aria-checked')).toBe('true');
+    expect(rowTiles()[0].getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('adopts a wallet picked from the expanded grid into the row’s first slot', async () => {
+    const relay = createFakeRelay();
+    const many: WalletOption[] = ['Aurora', 'Basalt', 'Cinder', 'Dune', 'Ember', 'Fjord']
+      .map((name) => ({ name, url: `https://${name.toLowerCase()}.example.com` }));
+    const promise = runConnectModal({
+      wallets            : many,
+      permissionRequests : PERMISSIONS,
+      deps               : deps({ runRelay: relay.runRelay }),
+    });
+    promise.catch((): undefined => undefined);
+    await flush();
+
+    expect(rowNames()).toEqual(['Aurora', 'Basalt', 'Cinder']);
+    expect(shadowRoot().querySelector('.more-count')?.textContent).toBe('+3');
+
+    shadowRoot().querySelector<HTMLButtonElement>('.more-tile')?.click();
+    const tiles = Array.from(shadowRoot().querySelectorAll<HTMLButtonElement>('.wallet-tile'));
+    tiles.find((tile) => tile.querySelector('.wallet-tile-name')?.textContent === 'Fjord')?.click();
+    await flush();
+
+    // Fjord takes the first slot, the rest refill by catalog priority, and
+    // no wallet appears twice; picking collapses the panel and re-mints.
+    expect(rowNames()).toEqual(['Fjord', 'Aurora', 'Basalt']);
+    expect(shadowRoot().querySelector('.row-tile.selected .row-tile-name')?.textContent).toBe('Fjord');
+    expect(shadowRoot().querySelector<HTMLElement>('.wallet-panel')?.hidden).toBe(true);
+    expect(relay.calls).toHaveLength(2);
+    expect(relay.calls[1].walletUri).toBe('https://fjord.example.com/connect/app');
+  });
+
+  it('adopts a validated custom wallet URL into the row and re-mints', async () => {
+    const relay = createFakeRelay();
+    const promise = runConnectModal({
+      wallets            : WALLETS,
+      permissionRequests : PERMISSIONS,
+      deps               : deps({ runRelay: relay.runRelay }),
+    });
+    promise.catch((): undefined => undefined);
+    await flush();
+
+    shadowRoot().querySelector<HTMLButtonElement>('.more-tile')?.click();
+    const input = shadowRoot().querySelector<HTMLInputElement>('.url-input');
+    if (input == null) { throw new Error('expected the custom URL input'); }
+    input.value = 'custom-wallet.example/path';
+    shadowRoot().querySelector<HTMLButtonElement>('.url-go')?.click();
+    await flush();
+    await flush();
+
+    expect(relay.calls).toHaveLength(2);
+    expect(relay.calls[1].walletUri).toBe('https://custom-wallet.example/connect/app');
+    expect(rowNames()).toEqual(['custom-wallet.example', 'Enbox', 'Prism']);
+    expect(shadowRoot().querySelector('.row-tile.selected .row-tile-name')?.textContent).toBe('custom-wallet.example');
   });
 
   it('injects a well-formed stylesheet with the claimed pulse as its own rule', async () => {
@@ -340,7 +423,7 @@ describe('runConnectModal', () => {
     expect(qrRule).toContain('background: #ffffff');
   });
 
-  it('lays the method link and wallet toggle on one footer row of square tiles', async () => {
+  it('shows the identity row with the selected wallet and expands the catalog from the More tile', async () => {
     const relay = createFakeRelay();
     const promise = runConnectModal({
       wallets            : WALLETS,
@@ -350,10 +433,16 @@ describe('runConnectModal', () => {
     promise.catch((): undefined => undefined);
     await flush();
 
-    const row = shadowRoot().querySelector('.footer-row');
-    expect(row).not.toBeNull();
-    expect(row?.querySelector('.method-link')).not.toBeNull();
-    expect(row?.querySelector('.wallet-toggle')).not.toBeNull();
+    // The identity row names the selected wallet and highlights it.
+    expect(shadowRoot().querySelector('.wallet-row-label')?.textContent).toBe('Connecting with');
+    expect(rowNames()).toEqual(['Enbox', 'Prism']);
+    expect(rowTiles()[0].getAttribute('aria-checked')).toBe('true');
+    expect(rowTiles()[0].classList.contains('selected')).toBe(true);
+    expect(rowTiles()[1].getAttribute('aria-checked')).toBe('false');
+
+    // Nothing hidden beyond the row — the More tile still reaches the panel.
+    const more = shadowRoot().querySelector<HTMLButtonElement>('.more-tile');
+    expect(more?.querySelector('.more-count')?.textContent).toBe('⋯');
 
     // The catalog starts collapsed for real: the panel's flex display must
     // not defeat the hidden attribute (it once left the panel always open).
@@ -361,17 +450,20 @@ describe('runConnectModal', () => {
     expect(panel?.hidden).toBe(true);
     expect(panel === null ? '' : getComputedStyle(panel).display).toBe('none');
 
-    shadowRoot().querySelector<HTMLButtonElement>('.wallet-toggle')?.click();
+    more?.click();
+    expect(more?.getAttribute('aria-expanded')).toBe('true');
     expect(panel === null ? '' : getComputedStyle(panel).display).not.toBe('none');
     const grid = shadowRoot().querySelector('.wallet-grid');
     expect(grid).not.toBeNull();
     expect(grid?.querySelectorAll('.wallet-tile')).toHaveLength(2);
     // No search bar for a catalog that fits one row.
     expect(shadowRoot().querySelector('.wallet-search')).toBeNull();
-    // The active wallet reads as selected.
+    // The active wallet reads as selected in the grid too.
     const selected = grid?.querySelector('.wallet-tile.selected');
     expect(selected?.querySelector('.wallet-tile-name')?.textContent).toBe('Enbox');
     expect(selected?.getAttribute('aria-pressed')).toBe('true');
+    // The method link keeps its own row beneath the switcher.
+    expect(shadowRoot().querySelector('.footer-row .method-link')).not.toBeNull();
   });
 
   it('shows the search bar past one row of tiles and filters the catalog', async () => {
@@ -386,7 +478,7 @@ describe('runConnectModal', () => {
     promise.catch((): undefined => undefined);
     await flush();
 
-    shadowRoot().querySelector<HTMLButtonElement>('.wallet-toggle')?.click();
+    shadowRoot().querySelector<HTMLButtonElement>('.more-tile')?.click();
     const search = shadowRoot().querySelector<HTMLInputElement>('.wallet-search');
     expect(search).not.toBeNull();
     if (search == null) { return; }
