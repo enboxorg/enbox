@@ -313,12 +313,144 @@ describe('runConnectModal', () => {
     expect(relay.calls).toHaveLength(1);
 
     shadowRoot().querySelector<HTMLButtonElement>('.wallet-toggle')?.click();
-    const rows = Array.from(shadowRoot().querySelectorAll<HTMLButtonElement>('.wallet-row'));
-    rows.find((row) => row.querySelector('.wallet-row-name')?.textContent === 'Prism')?.click();
+    const tiles = Array.from(shadowRoot().querySelectorAll<HTMLButtonElement>('.wallet-tile'));
+    tiles.find((tile) => tile.querySelector('.wallet-tile-name')?.textContent === 'Prism')?.click();
     await flush();
 
     expect(relay.calls).toHaveLength(2);
     expect(relay.calls[1].walletUri).toBe('https://wallet-two.example.com/connect/app');
+  });
+
+  it('injects a well-formed stylesheet with the claimed pulse as its own rule', async () => {
+    const relay = createFakeRelay();
+    const promise = runConnectModal({
+      wallets            : WALLETS,
+      permissionRequests : PERMISSIONS,
+      deps               : deps({ runRelay: relay.runRelay }),
+    });
+    promise.catch((): undefined => undefined);
+    await flush();
+
+    const css = shadowRoot().querySelector('style')?.textContent ?? '';
+    // Balanced braces — a nesting slip once swallowed whole rules silently.
+    expect((css.match(/\{/g) ?? []).length).toBe((css.match(/\}/g) ?? []).length);
+    expect(css).toMatch(/\}\s*\.claimed-pulse\s*\{/);
+    // The QR card keeps its scannable white ground in both appearances.
+    const qrRule = /\.qr-box\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+    expect(qrRule).toContain('background: #ffffff');
+  });
+
+  it('lays the method link and wallet toggle on one footer row of square tiles', async () => {
+    const relay = createFakeRelay();
+    const promise = runConnectModal({
+      wallets            : WALLETS,
+      permissionRequests : PERMISSIONS,
+      deps               : deps({ runRelay: relay.runRelay }),
+    });
+    promise.catch((): undefined => undefined);
+    await flush();
+
+    const row = shadowRoot().querySelector('.footer-row');
+    expect(row).not.toBeNull();
+    expect(row?.querySelector('.method-link')).not.toBeNull();
+    expect(row?.querySelector('.wallet-toggle')).not.toBeNull();
+
+    // The catalog starts collapsed for real: the panel's flex display must
+    // not defeat the hidden attribute (it once left the panel always open).
+    const panel = shadowRoot().querySelector<HTMLElement>('.wallet-panel');
+    expect(panel?.hidden).toBe(true);
+    expect(panel === null ? '' : getComputedStyle(panel).display).toBe('none');
+
+    shadowRoot().querySelector<HTMLButtonElement>('.wallet-toggle')?.click();
+    expect(panel === null ? '' : getComputedStyle(panel).display).not.toBe('none');
+    const grid = shadowRoot().querySelector('.wallet-grid');
+    expect(grid).not.toBeNull();
+    expect(grid?.querySelectorAll('.wallet-tile')).toHaveLength(2);
+    // No search bar for a catalog that fits one row.
+    expect(shadowRoot().querySelector('.wallet-search')).toBeNull();
+    // The active wallet reads as selected.
+    const selected = grid?.querySelector('.wallet-tile.selected');
+    expect(selected?.querySelector('.wallet-tile-name')?.textContent).toBe('Enbox');
+    expect(selected?.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('shows the search bar past one row of tiles and filters the catalog', async () => {
+    const relay = createFakeRelay();
+    const many: WalletOption[] = ['Aurora', 'Basalt', 'Cinder', 'Dune', 'Ember', 'Fjord']
+      .map((name) => ({ name, url: `https://${name.toLowerCase()}.example.com` }));
+    const promise = runConnectModal({
+      wallets            : many,
+      permissionRequests : PERMISSIONS,
+      deps               : deps({ runRelay: relay.runRelay }),
+    });
+    promise.catch((): undefined => undefined);
+    await flush();
+
+    shadowRoot().querySelector<HTMLButtonElement>('.wallet-toggle')?.click();
+    const search = shadowRoot().querySelector<HTMLInputElement>('.wallet-search');
+    expect(search).not.toBeNull();
+    if (search == null) { return; }
+
+    search.value = 'fjord';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    const tiles = Array.from(shadowRoot().querySelectorAll<HTMLButtonElement>('.wallet-tile'));
+    expect(tiles.filter((tile) => !tile.hidden)).toHaveLength(1);
+    expect(tiles.find((tile) => !tile.hidden)?.textContent).toContain('Fjord');
+    expect(shadowRoot().querySelector<HTMLElement>('.wallet-empty')?.hidden).toBe(true);
+
+    search.value = 'zzz';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(tiles.filter((tile) => !tile.hidden)).toHaveLength(0);
+    expect(shadowRoot().querySelector<HTMLElement>('.wallet-empty')?.hidden).toBe(false);
+
+    search.value = '';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(tiles.filter((tile) => !tile.hidden)).toHaveLength(6);
+  });
+
+  it('forces an appearance and applies the dapp palette as inline tokens', async () => {
+    const relay = createFakeRelay();
+    const promise = runConnectModal({
+      wallets            : WALLETS,
+      permissionRequests : PERMISSIONS,
+      theme              : {
+        appearance : 'dark',
+        accent     : '#ff00aa',
+        dark       : { background: '#101014', textMuted: '#8899aa' },
+      },
+      deps: deps({ runRelay: relay.runRelay }),
+    });
+    promise.catch((): undefined => undefined);
+    await flush();
+
+    const modal = shadowRoot().querySelector<HTMLElement>('.modal');
+    expect(modal?.getAttribute('data-appearance')).toBe('dark');
+    expect(modal?.style.getPropertyValue('--ec-accent')).toBe('#ff00aa');
+    expect(modal?.style.getPropertyValue('--ec-bg')).toBe('#101014');
+    expect(modal?.style.getPropertyValue('--ec-muted')).toBe('#8899aa');
+    // Untouched tokens stay on the stylesheet defaults.
+    expect(modal?.style.getPropertyValue('--ec-text')).toBe('');
+  });
+
+  it('follows the system appearance by default and picks that scheme’s palette', async () => {
+    const relay = createFakeRelay();
+    const promise = runConnectModal({
+      wallets            : WALLETS,
+      permissionRequests : PERMISSIONS,
+      theme              : {
+        light : { accent: '#123456' },
+        dark  : { accent: '#654321' },
+      },
+      deps: deps({ runRelay: relay.runRelay }),
+    });
+    promise.catch((): undefined => undefined);
+    await flush();
+
+    const modal = shadowRoot().querySelector<HTMLElement>('.modal');
+    // No forced appearance — the attribute is absent and CSS follows the OS.
+    expect(modal?.hasAttribute('data-appearance')).toBe(false);
+    // The test environment reports a light scheme, so the light accent wins.
+    expect(modal?.style.getPropertyValue('--ec-accent')).toBe('#123456');
   });
 
   it('shows phone-connected progress when the relay reports the claim', async () => {

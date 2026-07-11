@@ -12,7 +12,7 @@ import type { ConnectHandler, ConnectResult } from '@enbox/auth';
 
 import { runConnectModal } from './ui/connect-modal.js';
 
-import type { ConnectMethod } from './ui/connect-modal.js';
+import type { ConnectMethod, ConnectModalTheme } from './ui/connect-modal.js';
 
 /** A wallet entry shown in the wallet selector modal. */
 export interface WalletOption {
@@ -114,6 +114,14 @@ export interface BrowserConnectHandlerOptions {
    * @default '/connect/app'
    */
   relayWalletPath?: string;
+
+  /**
+   * Color scheme for the connect modal. By default it follows the
+   * visitor's system light/dark appearance; apps can force an appearance
+   * and/or override palette tokens (accent, surfaces, text) per scheme to
+   * match their brand.
+   */
+  theme?: ConnectModalTheme;
 }
 
 /**
@@ -151,6 +159,7 @@ export function BrowserConnectHandler(
     rememberChoice,
     connectServerUrl,
     relayWalletPath,
+    theme,
   } = options;
 
   return {
@@ -167,6 +176,7 @@ export function BrowserConnectHandler(
         connectServerUrl,
         relayWalletPath,
         timeout,
+        theme,
         permissionRequests : params.permissionRequests,
       });
     },
