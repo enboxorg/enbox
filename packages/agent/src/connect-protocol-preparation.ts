@@ -18,9 +18,15 @@
  * 4. Verifies every reachable owner DWN endpoint: a reachable endpoint that
  *    rejects the protocol query, a remote definition/key conflict, or zero
  *    reachable endpoints (when any resolve) abort the approval.
- * 5. Fans the current configure message out to endpoints that are missing or
+ * 5. Propagates out-of-batch `uses` dependencies (from the provider's local
+ *    installs, depth-first) to endpoints that are missing the dependent —
+ *    the DWN rejects a composed `ProtocolsConfigure` when a `uses` target is
+ *    not installed for the tenant.
+ * 6. Fans the current configure message out to endpoints that are missing or
  *    behind, then re-queries each changed endpoint and requires it to
- *    converge to the requested definition.
+ *    converge to the requested definition — attaching the per-endpoint
+ *    failure reasons (rejected sends, non-2xx replies, non-converged states)
+ *    to the error instead of swallowing them.
  *
  * When no remote DWN endpoints resolve for the provider, preparation is
  * local-only — grant delivery enforces the ≥1-endpoint invariant immediately
@@ -430,30 +436,45 @@ export async function prepareProtocol(
     return;
   }
 
-  // Best-effort send: individual failures are tolerated here because the
-  // postcondition below fails closed on any endpoint that did not converge.
-  const sendResults = await mapConcurrentSettled(
+  // Per-endpoint failure reasons accumulated across the dependency sends,
+  // the configure send, and the convergence re-query. The first recorded
+  // reason per endpoint wins (dependency failures precede dependent ones),
+  // and the reasons are attached to the postcondition error so the true
+  // endpoint-side cause is never swallowed.
+  const endpointFailures = new Map<string, string>();
+
+  // A composed protocol's `ProtocolsConfigure` is rejected by the DWN unless
+  // every `uses` target is already installed on that tenant. The connect
+  // batch only orders dependencies the requester also asked for, so
+  // out-of-batch dependencies (installed locally alongside the dependent)
+  // must be propagated to the endpoints that are missing the dependent.
+  await ensureRemoteUsesDependencies(
+    selectedDid,
+    agent,
+    protocolDefinition,
     endpointsNeedingConfigure,
-    PROTOCOL_FANOUT_CONCURRENCY,
-    (dwnUrl) => agent.rpc.sendDwnRequest({
-      dwnUrl,
-      targetDid : selectedDid,
-      message   : configureMessage!,
-      signal    : AbortSignal.timeout(PROTOCOL_REQUEST_TIMEOUT_MS),
-    }),
+    new Set([protocolDefinition.protocol]),
+    endpointFailures,
   );
-  for (const [taskIndex, settled] of sendResults.entries()) {
-    if (settled.status === 'rejected') {
-      logger.error(`prepareProtocol: failed to send configure to ${endpointsNeedingConfigure[taskIndex]}: ${settled.reason}`);
-    }
-  }
+
+  // Best-effort send: individual failures are recorded rather than thrown
+  // because the postcondition below fails closed — with the reasons attached
+  // — on any endpoint that did not converge.
+  await sendConfigureToEndpoints(
+    selectedDid,
+    agent,
+    configureMessage!,
+    endpointsNeedingConfigure,
+    'configure',
+    endpointFailures,
+  );
 
   // Postcondition: every endpoint that was missing or behind must now report
   // the requested definition (with the provider's own encryption keys).
   const verifiedPostconditions = await mapConcurrentSettled(
     endpointsNeedingConfigure,
     PROTOCOL_FANOUT_CONCURRENCY,
-    async (dwnUrl) => {
+    async (dwnUrl): Promise<{ converged: boolean; observed: string }> => {
       const reply = await agent.rpc.sendDwnRequest({
         dwnUrl,
         targetDid : selectedDid,
@@ -461,23 +482,221 @@ export async function prepareProtocol(
         signal    : AbortSignal.timeout(PROTOCOL_REQUEST_TIMEOUT_MS),
       }) as ProtocolQueryReply;
 
-      return reply.status.code === 200
-        && await getVerifiedProtocolSetupStatus(
-          getProtocolDefinitionFromEntry(reply.entries?.[0]),
-          protocolDefinition,
-          selectedDid,
-          agent,
-        ) === 'configured';
+      if (reply.status.code !== 200) {
+        return {
+          converged : false,
+          observed  : `verification re-query rejected (${reply.status.code}): ${reply.status.detail}`,
+        };
+      }
+
+      const verifiedStatus = await getVerifiedProtocolSetupStatus(
+        getProtocolDefinitionFromEntry(reply.entries?.[0]),
+        protocolDefinition,
+        selectedDid,
+        agent,
+      );
+      return {
+        converged : verifiedStatus === 'configured',
+        observed  : `endpoint still reports '${verifiedStatus}' after configure`,
+      };
     },
   );
 
-  const allConverged = verifiedPostconditions.every(
-    (settled) => settled.status === 'fulfilled' && settled.value === true,
-  );
-  if (!allConverged) {
+  const failedEndpoints: string[] = [];
+  for (const [taskIndex, settled] of verifiedPostconditions.entries()) {
+    const dwnUrl = endpointsNeedingConfigure[taskIndex];
+    if (settled.status === 'rejected') {
+      failedEndpoints.push(`${dwnUrl}: ${endpointFailures.get(dwnUrl) ?? `unreachable at verification: ${settled.reason}`}`);
+      continue;
+    }
+    if (!settled.value.converged) {
+      failedEndpoints.push(`${dwnUrl}: ${endpointFailures.get(dwnUrl) ?? settled.value.observed}`);
+    }
+  }
+
+  if (failedEndpoints.length > 0) {
     throw new Error(
-      `Could not verify the latest protocol definition on every reachable DWN endpoint for '${protocolDefinition.protocol}'.`,
+      `Could not verify the latest protocol definition on every reachable DWN endpoint for '${protocolDefinition.protocol}'. `
+      + failedEndpoints.join('; '),
     );
+  }
+}
+
+/**
+ * Records the first failure reason observed for an endpoint. Dependency
+ * failures are recorded before dependent ones, so first-wins keeps the root
+ * cause rather than its knock-on effect.
+ */
+function recordEndpointFailure(
+  endpointFailures: Map<string, string>,
+  dwnUrl: string,
+  reason: string,
+): void {
+  if (!endpointFailures.has(dwnUrl)) {
+    endpointFailures.set(dwnUrl, reason);
+  }
+}
+
+/**
+ * Sends a stored or freshly signed configure message to each endpoint,
+ * recording — never throwing — per-endpoint failures: transport rejections
+ * and non-2xx DWN replies alike. `202` (accepted) and `409` (an identical or
+ * newer configure already exists) both count as delivered; the convergence
+ * postcondition remains the arbiter.
+ */
+async function sendConfigureToEndpoints(
+  selectedDid: string,
+  agent: EnboxPlatformAgent,
+  configureMessage: ProtocolConfigureEntry,
+  dwnUrls: string[],
+  context: string,
+  endpointFailures: Map<string, string>,
+): Promise<void> {
+  const sendResults = await mapConcurrentSettled(
+    dwnUrls,
+    PROTOCOL_FANOUT_CONCURRENCY,
+    async (dwnUrl) => await agent.rpc.sendDwnRequest({
+      dwnUrl,
+      targetDid : selectedDid,
+      message   : configureMessage,
+      signal    : AbortSignal.timeout(PROTOCOL_REQUEST_TIMEOUT_MS),
+    }) as ProtocolQueryReply,
+  );
+
+  for (const [taskIndex, settled] of sendResults.entries()) {
+    const dwnUrl = dwnUrls[taskIndex];
+    if (settled.status === 'rejected') {
+      logger.error(`prepareProtocol: ${context} send to ${dwnUrl} failed: ${settled.reason}`);
+      recordEndpointFailure(endpointFailures, dwnUrl, `${context} send failed: ${settled.reason}`);
+      continue;
+    }
+    const { status } = settled.value;
+    if (status.code !== 202 && status.code !== 409) {
+      logger.error(`prepareProtocol: endpoint ${dwnUrl} rejected ${context} (${status.code}): ${status.detail}`);
+      recordEndpointFailure(endpointFailures, dwnUrl, `${context} rejected (${status.code}): ${status.detail}`);
+    }
+  }
+}
+
+/**
+ * Ensures every `uses` dependency of a composed protocol is installed on the
+ * given endpoints before the dependent's configure is sent: the DWN rejects a
+ * composed `ProtocolsConfigure` when a `uses` target is not installed for the
+ * tenant, and the connect batch only orders dependencies the requester also
+ * asked for. Dependencies are propagated from the provider's locally stored
+ * configure entries, depth-first so transitive dependencies land first; a
+ * dependency that is missing locally is recorded per endpoint and left to the
+ * dependent's own configure/postcondition to report.
+ */
+async function ensureRemoteUsesDependencies(
+  selectedDid: string,
+  agent: EnboxPlatformAgent,
+  protocolDefinition: DwnProtocolDefinition,
+  dwnUrls: string[],
+  visited: Set<string>,
+  endpointFailures: Map<string, string>,
+): Promise<void> {
+  const usesTargets = Object.values(protocolDefinition.uses ?? {}).filter(
+    (targetUri): targetUri is string => typeof targetUri === 'string' && !visited.has(targetUri),
+  );
+
+  for (const targetUri of usesTargets) {
+    visited.add(targetUri);
+
+    const localQuery = await agent.processDwnRequest({
+      author        : selectedDid,
+      messageType   : DwnInterface.ProtocolsQuery,
+      target        : selectedDid,
+      messageParams : { filter: { protocol: targetUri } },
+    });
+
+    if (localQuery.reply.status.code !== 200 || localQuery.message === undefined) {
+      for (const dwnUrl of dwnUrls) {
+        recordEndpointFailure(
+          endpointFailures,
+          dwnUrl,
+          `could not read local uses dependency '${targetUri}': ${localQuery.reply.status.detail}`,
+        );
+      }
+      continue;
+    }
+
+    const dependencyEntry = localQuery.reply.entries?.[0] as ProtocolConfigureEntry | undefined;
+    if (dependencyEntry === undefined) {
+      for (const dwnUrl of dwnUrls) {
+        recordEndpointFailure(
+          endpointFailures,
+          dwnUrl,
+          `uses dependency '${targetUri}' is not installed locally`,
+        );
+      }
+      continue;
+    }
+
+    // Transitive dependencies land before this dependency.
+    const dependencyDefinition = getProtocolDefinitionFromEntry(dependencyEntry);
+    if (dependencyDefinition !== undefined) {
+      await ensureRemoteUsesDependencies(
+        selectedDid,
+        agent,
+        dependencyDefinition,
+        dwnUrls,
+        visited,
+        endpointFailures,
+      );
+    }
+
+    // Find the endpoints missing this dependency…
+    const dependencyQueries = await mapConcurrentSettled(
+      dwnUrls,
+      PROTOCOL_FANOUT_CONCURRENCY,
+      async (dwnUrl) => await agent.rpc.sendDwnRequest({
+        dwnUrl,
+        targetDid : selectedDid,
+        message   : localQuery.message!,
+        signal    : AbortSignal.timeout(PROTOCOL_REQUEST_TIMEOUT_MS),
+      }) as ProtocolQueryReply,
+    );
+
+    const endpointsMissingDependency: string[] = [];
+    for (const [taskIndex, settled] of dependencyQueries.entries()) {
+      const dwnUrl = dwnUrls[taskIndex];
+      if (settled.status === 'rejected') {
+        recordEndpointFailure(
+          endpointFailures,
+          dwnUrl,
+          `could not verify uses dependency '${targetUri}': ${settled.reason}`,
+        );
+        continue;
+      }
+      if (settled.value.status.code !== 200) {
+        recordEndpointFailure(
+          endpointFailures,
+          dwnUrl,
+          `uses dependency '${targetUri}' query rejected (${settled.value.status.code}): ${settled.value.status.detail}`,
+        );
+        continue;
+      }
+      if ((settled.value.entries?.length ?? 0) === 0) {
+        endpointsMissingDependency.push(dwnUrl);
+      }
+    }
+
+    // …and propagate the locally stored configure entry to them.
+    if (endpointsMissingDependency.length > 0) {
+      logger.log(
+        `prepareProtocol: propagating uses dependency '${targetUri}' of '${protocolDefinition.protocol}' `
+        + `to ${endpointsMissingDependency.length} endpoint(s)`,
+      );
+      await sendConfigureToEndpoints(
+        selectedDid,
+        agent,
+        dependencyEntry,
+        endpointsMissingDependency,
+        `uses dependency '${targetUri}' configure`,
+        endpointFailures,
+      );
+    }
   }
 }
 
