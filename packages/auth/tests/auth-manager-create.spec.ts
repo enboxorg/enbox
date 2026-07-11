@@ -1,6 +1,10 @@
 /**
  * Tests for AuthManager.create() and walletConnect() — the two uncovered methods.
  */
+import type { LocalReplicaDrainProof, SyncDrainResult, SyncDrainTargetResult } from '@enbox/agent';
+
+import type { LocalDwnEjectionRecord } from '../src/discovery.js';
+
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import sinon from 'sinon';
@@ -27,10 +31,12 @@ function createInitClientResult(): any {
 }
 
 let initClientStub: sinon.SinonStub;
+let inspectLocalReplicaDrainProofStub: sinon.SinonStub;
 let userAgentCreateStub: sinon.SinonStub;
 
 function setupStubs(): void {
   initClientStub = sinon.stub(WalletConnect, 'initClient').resolves(createInitClientResult());
+  inspectLocalReplicaDrainProofStub = sinon.stub(EnboxUserAgent, 'inspectLocalReplicaDrainProof').resolves({ valid: true });
   userAgentCreateStub = sinon.stub(EnboxUserAgent, 'create').resolves(createMockAgent() as any);
 }
 
@@ -56,6 +62,82 @@ function jsonResponse(body: unknown, status: number = 200): Response {
     headers: { 'content-type': 'application/json' },
     status,
   });
+}
+
+const localFingerprint = 'a'.repeat(64);
+const registrationFingerprint = 'A'.repeat(43);
+const validDrainProof: LocalReplicaDrainProof = {
+  registrationFingerprint,
+  replicaId : 'replica-id',
+  targets   : [{
+    tenantDid         : 'did:dht:alice',
+    scope             : { kind: 'full' },
+    pushCheckpoint    : { epoch: 'epoch-1', position: '1', streamId: 'stream-1' },
+    localFingerprint,
+    remoteFingerprint : localFingerprint,
+  }],
+};
+
+async function createPairedLocalNodeStorage(): Promise<MemoryStorage> {
+  const storage = new MemoryStorage();
+  await persistLocalDwnPairingRecord(storage, {
+    createdAt    : 123,
+    endpoint     : 'http://127.0.0.1:55500',
+    pairedOrigin : 'https://app.example',
+    token        : 'paired-token',
+    version      : 1,
+  });
+  return storage;
+}
+
+async function createEjectedLocalNodeStorage(
+  ejection: LocalDwnEjectionRecord = {
+    completedAt : 456,
+    drainProof  : validDrainProof,
+    endpoint    : 'http://127.0.0.1:55500',
+    version     : 2,
+  },
+): Promise<MemoryStorage> {
+  const storage = await createPairedLocalNodeStorage();
+  await persistLocalDwnEjectionRecord(storage, ejection);
+  return storage;
+}
+
+function stubPairedLocalNodeFetch(): sinon.SinonStub {
+  return sinon.stub(globalThis, 'fetch').callsFake(async (
+    url: string | URL | Request,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    if (url.toString().endsWith('/info')) {
+      return jsonResponse(localNodeInfo());
+    }
+
+    expect((init?.headers as Record<string, string>).authorization).toBe('Bearer paired-token');
+    return jsonResponse({ localNode: true, paired: true });
+  });
+}
+
+function completedDrainResult(
+  endpoint: string,
+  targetOverrides: Partial<SyncDrainTargetResult> = {},
+): SyncDrainResult {
+  return {
+    cancelled       : false,
+    completed       : true,
+    endpoint,
+    topologyChanged : false,
+    targets         : [{
+      cancelled         : false,
+      completed         : true,
+      converged         : true,
+      localFingerprint,
+      remoteEndpoint    : endpoint,
+      remoteFingerprint : localFingerprint,
+      scope             : { kind: 'full' },
+      tenantDid         : 'did:dht:alice',
+      ...targetOverrides,
+    }],
+  };
 }
 
 describe('AuthManager.create()', () => {
@@ -248,30 +330,39 @@ describe('AuthManager.create()', () => {
     });
   });
 
-  test('creates remote-mode agent with a stored local-node pairing after eject', async () => {
-    const storage = new MemoryStorage();
-    await persistLocalDwnPairingRecord(storage, {
-      createdAt    : 123,
+  test('creates a remote-mode agent only after the stored v2 drain proof passes late inspection', async () => {
+    const storage = await createEjectedLocalNodeStorage();
+    stubPairedLocalNodeFetch();
+
+    let capturedOptions: any;
+    userAgentCreateStub.onFirstCall().callsFake((...args: any[]): any => {
+      capturedOptions = args[0];
+      return Promise.resolve(createMockAgent());
+    });
+
+    const manager = await AuthManager.create({ dataPath: '/proof-data', storage });
+
+    expect(inspectLocalReplicaDrainProofStub.calledOnceWithExactly({
+      dataPath : '/proof-data',
+      proof    : validDrainProof,
+    })).toBe(true);
+    expect(capturedOptions.localDwnEndpoint).toBe('http://127.0.0.1:55500');
+    expect(capturedOptions.rpcClient).toBeDefined();
+    expect(manager.localDwnEndpoint).toBe('http://127.0.0.1:55500');
+    expect(manager.localDwnStatus).toEqual({
       endpoint     : 'http://127.0.0.1:55500',
       pairedOrigin : 'https://app.example',
-      token        : 'paired-token',
-      version      : 1,
+      status       : 'paired',
     });
-    await persistLocalDwnEjectionRecord(storage, {
+  });
+
+  test('falls back to local mode for a legacy v1 marker without discarding the pairing', async () => {
+    const storage = await createEjectedLocalNodeStorage({
       completedAt : 456,
       endpoint    : 'http://127.0.0.1:55500',
       version     : 1,
     });
-
-    sinon.stub(globalThis, 'fetch').callsFake(async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
-      const href = url.toString();
-      if (href.endsWith('/info')) {
-        return jsonResponse(localNodeInfo());
-      }
-
-      expect((init?.headers as Record<string, string>).authorization).toBe('Bearer paired-token');
-      return jsonResponse({ localNode: true, paired: true });
-    });
+    stubPairedLocalNodeFetch();
 
     let capturedOptions: any;
     userAgentCreateStub.onFirstCall().callsFake((...args: any[]): any => {
@@ -281,14 +372,86 @@ describe('AuthManager.create()', () => {
 
     const manager = await AuthManager.create({ storage });
 
-    expect(capturedOptions.localDwnEndpoint).toBe('http://127.0.0.1:55500');
-    expect(capturedOptions.rpcClient).toBeDefined();
-    expect(manager.localDwnEndpoint).toBe('http://127.0.0.1:55500');
-    expect(manager.localDwnStatus).toEqual({
+    expect(inspectLocalReplicaDrainProofStub.called).toBe(false);
+    expect(capturedOptions.localDwnEndpoint).toBeUndefined();
+    expect(capturedOptions.rpcClient).toBeUndefined();
+    expect(manager.localDwnEndpoint).toBeUndefined();
+    expect(await readLocalDwnPairingRecord(storage)).toEqual({
+      createdAt    : 123,
       endpoint     : 'http://127.0.0.1:55500',
       pairedOrigin : 'https://app.example',
-      status       : 'paired',
+      token        : 'paired-token',
+      version      : 1,
     });
+    expect(await readLocalDwnEjectionRecord(storage)).toBeUndefined();
+  });
+
+  test('falls back to local mode when late v2 proof inspection fails', async () => {
+    const storage = await createEjectedLocalNodeStorage();
+    stubPairedLocalNodeFetch();
+    inspectLocalReplicaDrainProofStub.resolves({ valid: false, reason: 'replica fingerprint changed' });
+
+    let capturedOptions: any;
+    userAgentCreateStub.onFirstCall().callsFake((...args: any[]): any => {
+      capturedOptions = args[0];
+      return Promise.resolve(createMockAgent());
+    });
+
+    const manager = await AuthManager.create({ storage });
+
+    expect(capturedOptions.localDwnEndpoint).toBeUndefined();
+    expect(capturedOptions.rpcClient).toBeUndefined();
+    expect(manager.localDwnEndpoint).toBeUndefined();
+    expect(await readLocalDwnPairingRecord(storage)).toBeDefined();
+    expect(await readLocalDwnEjectionRecord(storage)).toBeUndefined();
+  });
+
+  test('falls back to local mode when late v2 proof inspection throws', async () => {
+    const storage = await createEjectedLocalNodeStorage();
+    stubPairedLocalNodeFetch();
+    inspectLocalReplicaDrainProofStub.rejects(new Error('proof store unavailable'));
+
+    let capturedOptions: any;
+    userAgentCreateStub.onFirstCall().callsFake((...args: any[]): any => {
+      capturedOptions = args[0];
+      return Promise.resolve(createMockAgent());
+    });
+
+    const manager = await AuthManager.create({ storage });
+
+    expect(capturedOptions.localDwnEndpoint).toBeUndefined();
+    expect(capturedOptions.rpcClient).toBeUndefined();
+    expect(manager.localDwnEndpoint).toBeUndefined();
+    expect(await readLocalDwnPairingRecord(storage)).toBeDefined();
+    expect(await readLocalDwnEjectionRecord(storage)).toBeUndefined();
+  });
+
+  test('bypasses local-node proof resolution for supplied agents and strategy off', async () => {
+    const customAgentStorage = await createEjectedLocalNodeStorage();
+    const customAgent = createMockAgent({ vaultIsInitialized: async () => false });
+
+    const customManager = await AuthManager.create({
+      agent   : customAgent as any,
+      storage : customAgentStorage,
+    });
+
+    expect(customManager.agent).toBe(customAgent);
+    expect(inspectLocalReplicaDrainProofStub.called).toBe(false);
+    expect(await readLocalDwnEjectionRecord(customAgentStorage)).toBeDefined();
+
+    const disabledStorage = await createEjectedLocalNodeStorage();
+    let capturedOptions: any;
+    userAgentCreateStub.onFirstCall().callsFake((...args: any[]): any => {
+      capturedOptions = args[0];
+      return Promise.resolve(createMockAgent());
+    });
+
+    await AuthManager.create({ localDwnStrategy: 'off', storage: disabledStorage });
+
+    expect(inspectLocalReplicaDrainProofStub.called).toBe(false);
+    expect(capturedOptions.localDwnEndpoint).toBeUndefined();
+    expect(capturedOptions.rpcClient).toBeUndefined();
+    expect(await readLocalDwnEjectionRecord(disabledStorage)).toBeDefined();
   });
 
   test('falls back to an in-process agent without discarding an unavailable pairing', async () => {
@@ -505,16 +668,7 @@ describe('AuthManager.create()', () => {
         targetDid : 'did:dht:alice',
       });
 
-      return {
-        completed : true,
-        endpoint,
-        targets   : [{
-          completed      : true,
-          converged      : true,
-          remoteEndpoint : endpoint,
-          tenantDid      : 'did:dht:alice',
-        }],
-      };
+      return completedDrainResult(endpoint);
     };
     userAgentCreateStub.onFirstCall().resolves(agent as any);
 
@@ -530,8 +684,18 @@ describe('AuthManager.create()', () => {
     expect(manager.localDwnEndpoint).toBeUndefined();
     expect(await readLocalDwnEjectionRecord(storage)).toEqual({
       completedAt : expect.any(Number),
-      endpoint    : 'http://127.0.0.1:55500',
-      version     : 1,
+      drainProof  : {
+        registrationFingerprint,
+        replicaId : 'replica-id',
+        targets   : [{
+          localFingerprint,
+          remoteFingerprint : localFingerprint,
+          scope             : { kind: 'full' },
+          tenantDid         : 'did:dht:alice',
+        }],
+      },
+      endpoint : 'http://127.0.0.1:55500',
+      version  : 2,
     });
 
     let capturedOptions: any;
@@ -545,6 +709,143 @@ describe('AuthManager.create()', () => {
     expect(capturedOptions.localDwnEndpoint).toBe('http://127.0.0.1:55500');
     expect(capturedOptions.rpcClient).toBeDefined();
     expect(nextManager.localDwnEndpoint).toBe('http://127.0.0.1:55500');
+    expect(inspectLocalReplicaDrainProofStub.calledOnce).toBe(true);
+  });
+
+  test('ejectToLocalNode rejects a completed drain when the replica snapshot changes', async () => {
+    const storage = await createPairedLocalNodeStorage();
+    stubPairedLocalNodeFetch();
+    let snapshotCalls = 0;
+    const agent = createMockAgent({
+      syncDrainTo             : async (endpoint): Promise<SyncDrainResult> => completedDrainResult(endpoint),
+      syncGetEjectionSnapshot : async () => ({
+        registrationFingerprint : snapshotCalls++ === 0 ? registrationFingerprint : 'B'.repeat(43),
+        replicaId               : 'replica-id',
+      }),
+    });
+    userAgentCreateStub.onFirstCall().resolves(agent as any);
+
+    const manager = await AuthManager.create({ storage });
+    const result = await manager.ejectToLocalNode();
+
+    expect(snapshotCalls).toBe(2);
+    expect(result).toMatchObject({
+      drain: {
+        completed       : false,
+        error           : 'local replica drain proof validation failed after drain completion',
+        topologyChanged : true,
+      },
+      nextSessionRemoteMode : false,
+      status                : 'incomplete',
+    });
+    expect(await readLocalDwnEjectionRecord(storage)).toBeUndefined();
+  });
+
+  test('ejectToLocalNode returns incomplete when the post-drain replica snapshot cannot be read', async () => {
+    const storage = await createPairedLocalNodeStorage();
+    stubPairedLocalNodeFetch();
+    let snapshotCalls = 0;
+    const agent = createMockAgent({
+      syncDrainTo             : async (endpoint): Promise<SyncDrainResult> => completedDrainResult(endpoint),
+      syncGetEjectionSnapshot : async () => {
+        if (snapshotCalls++ === 0) {
+          return { registrationFingerprint, replicaId: 'replica-id' };
+        }
+        throw new Error('snapshot unavailable');
+      },
+    });
+    userAgentCreateStub.onFirstCall().resolves(agent as any);
+
+    const manager = await AuthManager.create({ storage });
+    const result = await manager.ejectToLocalNode();
+
+    expect(result).toMatchObject({
+      drain: {
+        completed       : false,
+        error           : 'unable to verify the local replica snapshot after drain',
+        topologyChanged : true,
+      },
+      nextSessionRemoteMode : false,
+      status                : 'incomplete',
+    });
+    expect(await readLocalDwnEjectionRecord(storage)).toBeUndefined();
+  });
+
+  test('ejectToLocalNode rejects completed drains whose targets cannot form a canonical proof', async () => {
+    const invalidDrains: Array<{ name: string; create: (endpoint: string) => SyncDrainResult }> = [
+      {
+        name   : 'missing scope',
+        create : (endpoint): SyncDrainResult => completedDrainResult(endpoint, { scope: undefined }),
+      },
+      {
+        name   : 'non-canonical fingerprint',
+        create : (endpoint): SyncDrainResult => completedDrainResult(endpoint, {
+          localFingerprint  : 'A'.repeat(64),
+          remoteFingerprint : 'A'.repeat(64),
+        }),
+      },
+      {
+        name   : 'mismatched fingerprints',
+        create : (endpoint): SyncDrainResult => completedDrainResult(endpoint, { remoteFingerprint: 'b'.repeat(64) }),
+      },
+      {
+        name   : 'malformed checkpoint',
+        create : (endpoint): SyncDrainResult => completedDrainResult(endpoint, {
+          pushCheckpoint: { epoch: 'epoch-1', position: '-1', streamId: 'stream-1' },
+        }),
+      },
+      {
+        name   : 'non-canonical full scope',
+        create : (endpoint): SyncDrainResult => completedDrainResult(endpoint, {
+          scope: { kind: 'full', protocols: [] } as any,
+        }),
+      },
+      {
+        name   : 'duplicate logical scope with reordered keys',
+        create : (endpoint): SyncDrainResult => {
+          const drain = completedDrainResult(endpoint, {
+            scope: { kind: 'protocolSet', protocols: ['https://a.example'] },
+          });
+          return {
+            ...drain,
+            targets: [
+              drain.targets[0],
+              {
+                ...drain.targets[0],
+                scope: { protocols: ['https://a.example'], kind: 'protocolSet' } as any,
+              },
+            ],
+          };
+        },
+      },
+      {
+        name   : 'empty target set',
+        create : (endpoint): SyncDrainResult => ({ ...completedDrainResult(endpoint), targets: [] }),
+      },
+      {
+        name   : 'contradictory topology flag',
+        create : (endpoint): SyncDrainResult => ({ ...completedDrainResult(endpoint), topologyChanged: true }),
+      },
+      {
+        name   : 'wrong target endpoint',
+        create : (endpoint): SyncDrainResult => completedDrainResult(endpoint, { remoteEndpoint: 'https://other.example' }),
+      },
+    ];
+    stubPairedLocalNodeFetch();
+
+    for (const [index, invalidDrain] of invalidDrains.entries()) {
+      const storage = await createPairedLocalNodeStorage();
+      userAgentCreateStub.onCall(index).resolves(createMockAgent({
+        syncDrainTo: async (endpoint): Promise<SyncDrainResult> => invalidDrain.create(endpoint),
+      }) as any);
+
+      const manager = await AuthManager.create({ storage });
+      const result = await manager.ejectToLocalNode();
+
+      expect({ name: invalidDrain.name, status: result.status }).toEqual({ name: invalidDrain.name, status: 'incomplete' });
+      expect(result).toMatchObject({ drain: { completed: false, topologyChanged: true } });
+      expect(await readLocalDwnEjectionRecord(storage)).toBeUndefined();
+    }
   });
 
   test('ejectToLocalNode does not persist remote-mode marker when drain is incomplete', async () => {

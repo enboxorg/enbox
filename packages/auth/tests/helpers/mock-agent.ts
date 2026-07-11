@@ -3,7 +3,7 @@
  * @module
  */
 
-import type { EnboxUserAgent } from '@enbox/agent';
+import type { EnboxUserAgent, SyncEjectionSnapshot } from '@enbox/agent';
 
 import { PermissionsProtocol } from '@enbox/dwn-sdk-js';
 import { DwnPermissionGrant, InMemorySecretStore } from '@enbox/agent';
@@ -80,6 +80,7 @@ export interface MockAgentOverrides {
   syncStopSync?: (timeout: number) => Promise<void>;
   syncSync?: (direction: string) => Promise<void>;
   syncDrainTo?: (endpoint: string, options?: any) => Promise<any>;
+  syncGetEjectionSnapshot?: () => Promise<SyncEjectionSnapshot>;
   syncClose?: () => Promise<void>;
   syncHasActiveSubscriptions?: boolean;
   processDwnRequest?: (params: any) => Promise<any>;
@@ -176,13 +177,17 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
     },
 
     sync: {
-      registerIdentity       : overrides.syncRegisterIdentity ?? (async (): Promise<void> => {}),
-      unregisterIdentity     : overrides.syncUnregisterIdentity ?? (async (): Promise<void> => {}),
-      updateIdentityOptions  : overrides.syncUpdateIdentityOptions ?? (async (): Promise<void> => {}),
-      startSync              : overrides.syncStartSync ?? (async (): Promise<void> => {}),
-      stopSync               : overrides.syncStopSync ?? (async (): Promise<void> => {}),
-      sync                   : overrides.syncSync ?? (async (): Promise<void> => {}),
-      drainTo                : overrides.syncDrainTo ?? (async (endpoint: string): Promise<any> => ({ completed: true, endpoint, targets: [] })),
+      registerIdentity      : overrides.syncRegisterIdentity ?? (async (): Promise<void> => {}),
+      unregisterIdentity    : overrides.syncUnregisterIdentity ?? (async (): Promise<void> => {}),
+      updateIdentityOptions : overrides.syncUpdateIdentityOptions ?? (async (): Promise<void> => {}),
+      startSync             : overrides.syncStartSync ?? (async (): Promise<void> => {}),
+      stopSync              : overrides.syncStopSync ?? (async (): Promise<void> => {}),
+      sync                  : overrides.syncSync ?? (async (): Promise<void> => {}),
+      drainTo               : overrides.syncDrainTo ?? (async (endpoint: string): Promise<any> => ({ completed: true, endpoint, targets: [] })),
+      getEjectionSnapshot   : overrides.syncGetEjectionSnapshot ?? (async (): Promise<SyncEjectionSnapshot> => ({
+        registrationFingerprint : 'A'.repeat(43),
+        replicaId               : 'replica-id',
+      })),
       close                  : overrides.syncClose ?? (async (): Promise<void> => {}),
       hasActiveSubscriptions : overrides.syncHasActiveSubscriptions ?? false,
     },

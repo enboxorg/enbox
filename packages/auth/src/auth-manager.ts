@@ -15,7 +15,17 @@
  */
 
 import type { RecordsWriteMessage } from '@enbox/dwn-sdk-js';
-import type { AgentSessionIdentity, BearerIdentity, DwnDataEncodedRecordsWriteMessage, HdIdentityVault, PortableIdentity } from '@enbox/agent';
+import type {
+  AgentSessionIdentity,
+  BearerIdentity,
+  DwnDataEncodedRecordsWriteMessage,
+  HdIdentityVault,
+  LocalReplicaDrainProof,
+  LocalReplicaDrainTargetProof,
+  PortableIdentity,
+  SyncDrainResult,
+  SyncEjectionSnapshot,
+} from '@enbox/agent';
 
 import type { FlowContext } from './connect/lifecycle.js';
 import type { PasswordProvider } from './password-provider.js';
@@ -43,6 +53,7 @@ import type {
   WalletConnectOptions,
 } from './types.js';
 import type {
+  LocalDwnEjectionRecord,
   LocalDwnPairingRecord,
   LocalDwnPairingRequestResult,
   LocalDwnProbeResult,
@@ -174,31 +185,18 @@ export class AuthManager {
   static async create(options: AuthManagerOptions = {}): Promise<AuthManager> {
     const emitter = new AuthEventEmitter();
     const storage = options.storage ?? createDefaultStorage();
+    const dataPath = options.dataPath ?? 'DATA/AGENT';
 
-    // Run local DWN discovery BEFORE creating the agent. Discovery has
-    // zero vault/DWN dependencies — it reads the persisted pairing record
-    // and validates it via GET /info plus authenticated /local/status.
-    //
-    // A stored pairing alone is not enough to change the agent's storage mode:
-    // pairing establishes trust, while the ejection marker proves the local
-    // in-process DWN has drained to the paired node. Only then does the next
-    // session boot in remote mode.
-    let localDwnEndpoint: string | undefined;
-    let localDwnPairing: LocalDwnPairingRecord | undefined;
-    if (!options.agent && options.localDwnStrategy !== 'off') {
-      localDwnPairing = await discoverLocalDwnPairing(storage);
-      if (localDwnPairing !== undefined) {
-        const ejection = await readLocalDwnEjectionRecordForPairing(storage, localDwnPairing);
-        localDwnEndpoint = ejection === undefined ? undefined : localDwnPairing.endpoint;
-      }
-      // NOTE: We intentionally do NOT emit 'local-dwn-available' here
-      // because event listeners aren't attached yet. Consumers should
-      // check `authManager.localDwnEndpoint` after create() returns.
-    }
+    const { localDwnEndpoint, localDwnPairing } = await AuthManager._resolveLocalDwnBootState({
+      agent            : options.agent,
+      dataPath,
+      localDwnStrategy : options.localDwnStrategy,
+      storage,
+    });
 
     // Use a pre-built agent or create one with the given options.
     const userAgent = options.agent ?? await EnboxUserAgent.create({
-      dataPath         : options.dataPath,
+      dataPath,
       agentVault       : options.agentVault,
       localDwnStrategy : options.localDwnStrategy,
       localDwnEndpoint,
@@ -1131,22 +1129,54 @@ export class AuthManager {
     }
 
     this._userAgent.rpc = createLocalDwnRpcClient(pairing, this._userAgent.rpc);
+    const beforeDrain = await this._userAgent.sync.getEjectionSnapshot();
     const drain = await this._userAgent.sync.drainTo(pairing.endpoint, options);
-    if (!drain.completed) {
+    let afterDrain: SyncEjectionSnapshot;
+    try {
+      afterDrain = await this._userAgent.sync.getEjectionSnapshot();
+    } catch {
       await clearLocalDwnEjection(this._storage);
       return {
-        drain,
+        drain: {
+          ...drain,
+          completed       : false,
+          error           : 'unable to verify the local replica snapshot after drain',
+          topologyChanged : true,
+        },
         endpoint              : drain.endpoint,
         nextSessionRemoteMode : false,
         status                : 'incomplete',
       };
     }
 
-    await persistLocalDwnEjectionRecord(this._storage, {
+    const drainProof = drain.endpoint === pairing.endpoint
+      ? AuthManager._createLocalReplicaDrainProof(beforeDrain, afterDrain, drain)
+      : undefined;
+    if (drainProof === undefined) {
+      await clearLocalDwnEjection(this._storage);
+      const incompleteDrain: SyncDrainResult = drain.completed
+        ? {
+          ...drain,
+          completed       : false,
+          error           : 'local replica drain proof validation failed after drain completion',
+          topologyChanged : true,
+        }
+        : drain;
+      return {
+        drain                 : incompleteDrain,
+        endpoint              : incompleteDrain.endpoint,
+        nextSessionRemoteMode : false,
+        status                : 'incomplete',
+      };
+    }
+
+    const ejection: LocalDwnEjectionRecord = {
       completedAt : Date.now(),
+      drainProof,
       endpoint    : drain.endpoint,
-      version     : 1,
-    });
+      version     : 2,
+    };
+    await persistLocalDwnEjectionRecord(this._storage, ejection);
 
     return {
       drain,
@@ -1399,6 +1429,187 @@ export class AuthManager {
     }
 
     await this._registerOrUpdateSyncIdentity(connectedDid, delegateDid, narrowed);
+  }
+
+  /** Resolve whether a persisted local-node pairing can safely authorize remote-mode boot. */
+  private static async _resolveLocalDwnBootState({
+    agent,
+    dataPath,
+    localDwnStrategy,
+    storage,
+  }: {
+    agent: AuthManagerOptions['agent'];
+    dataPath: string;
+    localDwnStrategy: AuthManagerOptions['localDwnStrategy'];
+    storage: StorageAdapter;
+  }): Promise<{
+    localDwnEndpoint?: string;
+    localDwnPairing?: LocalDwnPairingRecord;
+  }> {
+    if (agent || localDwnStrategy === 'off') {
+      return {};
+    }
+
+    // Discovery has no vault/DWN dependency, so it must complete before the
+    // agent is created. Pairing establishes trust; only a valid v2 proof
+    // establishes that the exact in-process replica was safely drained.
+    const localDwnPairing = await discoverLocalDwnPairing(storage);
+    if (localDwnPairing === undefined) {
+      return {};
+    }
+
+    const ejection = await readLocalDwnEjectionRecordForPairing(storage, localDwnPairing);
+    if (
+      ejection?.version === 2
+      && await AuthManager._isLocalReplicaDrainProofValid(dataPath, ejection.drainProof)
+    ) {
+      return { localDwnEndpoint: localDwnPairing.endpoint, localDwnPairing };
+    }
+
+    if (ejection !== undefined) {
+      // Invalid/unreadable v2 proofs and legacy endpoint-only v1 markers can
+      // never authorize remote mode. Preserve the pairing for a future eject.
+      await clearLocalDwnEjection(storage);
+    }
+
+    // NOTE: We intentionally do NOT emit 'local-dwn-available' here because
+    // event listeners are not attached until after create() returns.
+    return { localDwnPairing };
+  }
+
+  private static async _isLocalReplicaDrainProofValid(
+    dataPath: string,
+    proof: LocalReplicaDrainProof,
+  ): Promise<boolean> {
+    try {
+      const inspection = await EnboxUserAgent.inspectLocalReplicaDrainProof({ dataPath, proof });
+      return inspection.valid;
+    } catch {
+      return false;
+    }
+  }
+
+  private static _createLocalReplicaDrainProof(
+    beforeDrain: SyncEjectionSnapshot,
+    afterDrain: SyncEjectionSnapshot,
+    drain: SyncDrainResult,
+  ): LocalReplicaDrainProof | undefined {
+    if (
+      !drain.completed
+      || drain.cancelled
+      || drain.topologyChanged
+      || drain.error !== undefined
+      || !Array.isArray(drain.targets)
+      || typeof beforeDrain.replicaId !== 'string'
+      || beforeDrain.replicaId.length === 0
+      || !AuthManager._isCanonicalRegistrationFingerprint(beforeDrain.registrationFingerprint)
+      || beforeDrain.replicaId !== afterDrain.replicaId
+      || beforeDrain.registrationFingerprint !== afterDrain.registrationFingerprint
+    ) {
+      return undefined;
+    }
+
+    const targets: LocalReplicaDrainTargetProof[] = [];
+    const targetKeys = new Set<string>();
+    for (const target of drain.targets) {
+      if (
+        !target.completed
+        || target.cancelled
+        || !target.converged
+        || target.error !== undefined
+        || target.remoteEndpoint !== drain.endpoint
+        || typeof target.tenantDid !== 'string'
+        || !/^did:[a-z0-9]+:[^\s]+$/.test(target.tenantDid)
+        || !AuthManager._isValidSyncScope(target.scope)
+        || !AuthManager._isCanonicalFingerprint(target.localFingerprint)
+        || target.remoteFingerprint !== target.localFingerprint
+        || !AuthManager._isValidProgressToken(target.pushCheckpoint)
+      ) {
+        return undefined;
+      }
+
+      const proofTarget: LocalReplicaDrainTargetProof = {
+        tenantDid         : target.tenantDid,
+        scope             : target.scope,
+        localFingerprint  : target.localFingerprint,
+        remoteFingerprint : target.remoteFingerprint,
+        ...(target.pushCheckpoint === undefined ? {} : { pushCheckpoint: target.pushCheckpoint }),
+      };
+      const targetKey = AuthManager._localReplicaDrainTargetKey(proofTarget);
+      if (targetKeys.has(targetKey)) {
+        return undefined;
+      }
+      targetKeys.add(targetKey);
+      targets.push(proofTarget);
+    }
+
+    if (targets.length === 0) {
+      return undefined;
+    }
+
+    return {
+      replicaId               : beforeDrain.replicaId,
+      registrationFingerprint : beforeDrain.registrationFingerprint,
+      targets                 : targets as [LocalReplicaDrainTargetProof, ...LocalReplicaDrainTargetProof[]],
+    };
+  }
+
+  private static _isCanonicalFingerprint(value: unknown): value is string {
+    return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+  }
+
+  private static _localReplicaDrainTargetKey(target: LocalReplicaDrainTargetProof): string {
+    return JSON.stringify([
+      target.tenantDid,
+      target.scope.kind,
+      target.scope.kind === 'protocolSet' ? target.scope.protocols : [],
+    ]);
+  }
+
+  private static _isCanonicalRegistrationFingerprint(value: unknown): value is string {
+    return typeof value === 'string' && /^[A-Za-z0-9_-]{43}$/.test(value);
+  }
+
+  private static _isValidProgressToken(token: unknown): boolean {
+    if (typeof token !== 'object' || token === null || Array.isArray(token)) {
+      return token === undefined;
+    }
+
+    const value = token as Record<string, unknown>;
+    return typeof value.streamId === 'string'
+      && value.streamId.length > 0
+      && typeof value.epoch === 'string'
+      && value.epoch.length > 0
+      && typeof value.position === 'string'
+      && /^(?:0|[1-9]\d*)$/.test(value.position)
+      && (value.messageCid === undefined || (typeof value.messageCid === 'string' && value.messageCid.length > 0));
+  }
+
+  private static _isValidSyncScope(scope: unknown): scope is LocalReplicaDrainTargetProof['scope'] {
+    if (typeof scope !== 'object' || scope === null || Array.isArray(scope)) {
+      return false;
+    }
+
+    const value = scope as Record<string, unknown>;
+    if (value.kind === 'full') {
+      return Object.keys(value).length === 1;
+    }
+    if (value.kind !== 'protocolSet' || !Array.isArray(value.protocols) || value.protocols.length === 0) {
+      return false;
+    }
+    const keys = Object.keys(value);
+    if (keys.length !== 2 || keys.some((key): boolean => key !== 'kind' && key !== 'protocols')) {
+      return false;
+    }
+
+    let previous: string | undefined;
+    for (const protocol of value.protocols) {
+      if (typeof protocol !== 'string' || protocol.length === 0 || (previous !== undefined && previous >= protocol)) {
+        return false;
+      }
+      previous = protocol;
+    }
+    return true;
   }
 
   private _setState(state: AuthState): void {

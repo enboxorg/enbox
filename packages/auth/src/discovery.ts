@@ -9,7 +9,6 @@
  * @module
  */
 
-import type { EnboxUserAgent } from '@enbox/agent';
 import type { ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 import type {
   DidRpcRequest,
@@ -21,6 +20,7 @@ import type {
   EnboxRpc,
   ServerInfo,
 } from '@enbox/dwn-clients';
+import type { EnboxUserAgent, LocalReplicaDrainProof } from '@enbox/agent';
 
 import type { AuthEventEmitter } from './events.js';
 import type { StorageAdapter } from './types.js';
@@ -41,11 +41,18 @@ export type LocalDwnPairingRecord = {
   createdAt: number;
 };
 
-export type LocalDwnEjectionRecord = {
-  version: 1;
-  endpoint: string;
-  completedAt: number;
-};
+export type LocalDwnEjectionRecord =
+  | {
+    version: 1;
+    endpoint: string;
+    completedAt: number;
+  }
+  | {
+    version: 2;
+    endpoint: string;
+    completedAt: number;
+    drainProof: LocalReplicaDrainProof;
+  };
 
 export type LocalDwnUnsupportedReason = 'no-fetch' | 'insecure-context' | 'safari';
 
@@ -110,7 +117,6 @@ export type LocalDwnPairingRequestResult =
   | { status: 'timeout'; endpoint: string; requestId: string; pollUrl: string };
 
 const localDwnPairingRecordVersion = 1;
-const localDwnEjectionRecordVersion = 1;
 const defaultPairingTimeoutMs = 5 * 60 * 1000;
 const defaultPairingPollIntervalMs = 1500;
 
@@ -267,7 +273,7 @@ export async function persistLocalDwnEjectionRecord(
   await storage.set(STORAGE_KEYS.LOCAL_DWN_EJECTION, JSON.stringify({
     ...record,
     endpoint : normalizeBaseUrl(record.endpoint),
-    version  : localDwnEjectionRecordVersion,
+    version  : record.version,
   }));
 }
 
@@ -672,24 +678,135 @@ function parseLocalDwnPairingRecord(raw: string): LocalDwnPairingRecord | undefi
 
 function parseLocalDwnEjectionRecord(raw: string): LocalDwnEjectionRecord | undefined {
   try {
-    const value = JSON.parse(raw) as Partial<LocalDwnEjectionRecord>;
+    const value = JSON.parse(raw) as unknown;
     if (
-      value.version !== localDwnEjectionRecordVersion
-      || typeof value.endpoint !== 'string'
+      !isRecord(value)
+      || !isNonEmptyString(value.endpoint)
       || typeof value.completedAt !== 'number'
       || !Number.isFinite(value.completedAt)
     ) {
       return undefined;
     }
 
-    return {
+    const common = {
       completedAt : value.completedAt,
       endpoint    : normalizeBaseUrl(value.endpoint),
-      version     : localDwnEjectionRecordVersion,
     };
+
+    if (value.version === 1) {
+      return { ...common, version: 1 };
+    }
+
+    if (value.version === 2 && isLocalReplicaDrainProof(value.drainProof)) {
+      return {
+        ...common,
+        drainProof : value.drainProof,
+        version    : 2,
+      };
+    }
+
+    return undefined;
   } catch {
     return undefined;
   }
+}
+
+function isLocalReplicaDrainProof(value: unknown): value is LocalReplicaDrainProof {
+  if (
+    !isRecord(value)
+    || !isNonEmptyString(value.replicaId)
+    || !isCanonicalRegistrationFingerprint(value.registrationFingerprint)
+    || !Array.isArray(value.targets)
+    || value.targets.length === 0
+  ) {
+    return false;
+  }
+
+  const targetKeys = new Set<string>();
+  for (const target of value.targets) {
+    if (!isLocalReplicaDrainTargetProof(target)) {
+      return false;
+    }
+
+    const targetKey = localReplicaDrainTargetKey(target);
+    if (targetKeys.has(targetKey)) {
+      return false;
+    }
+    targetKeys.add(targetKey);
+  }
+  return true;
+}
+
+function isLocalReplicaDrainTargetProof(
+  value: unknown,
+): value is LocalReplicaDrainProof['targets'][number] {
+  return isRecord(value)
+    && typeof value.tenantDid === 'string'
+    && /^did:[a-z0-9]+:[^\s]+$/.test(value.tenantDid)
+    && isValidSyncScope(value.scope)
+    && isCanonicalFingerprint(value.localFingerprint)
+    && value.remoteFingerprint === value.localFingerprint
+    && (value.pushCheckpoint === undefined || isValidProgressToken(value.pushCheckpoint));
+}
+
+function localReplicaDrainTargetKey(target: LocalReplicaDrainProof['targets'][number]): string {
+  return JSON.stringify([
+    target.tenantDid,
+    target.scope.kind,
+    target.scope.kind === 'protocolSet' ? target.scope.protocols : [],
+  ]);
+}
+
+function isValidSyncScope(value: unknown): value is LocalReplicaDrainProof['targets'][number]['scope'] {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  if (value.kind === 'full') {
+    return Object.keys(value).length === 1;
+  }
+
+  if (value.kind !== 'protocolSet' || !Array.isArray(value.protocols) || value.protocols.length === 0) {
+    return false;
+  }
+  const keys = Object.keys(value);
+  if (keys.length !== 2 || keys.some((key): boolean => key !== 'kind' && key !== 'protocols')) {
+    return false;
+  }
+
+  let previous: string | undefined;
+  for (const protocol of value.protocols) {
+    if (!isNonEmptyString(protocol) || (previous !== undefined && previous >= protocol)) {
+      return false;
+    }
+    previous = protocol;
+  }
+  return true;
+}
+
+function isValidProgressToken(value: unknown): boolean {
+  return isRecord(value)
+    && isNonEmptyString(value.streamId)
+    && isNonEmptyString(value.epoch)
+    && typeof value.position === 'string'
+    && /^(?:0|[1-9]\d*)$/.test(value.position)
+    && (value.messageCid === undefined || isNonEmptyString(value.messageCid));
+}
+
+function isCanonicalFingerprint(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+}
+
+function isCanonicalRegistrationFingerprint(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{43}$/.test(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
 }
 
 async function validateLocalDwnPairing(
