@@ -14,9 +14,9 @@
  *    (or deep link on phones), the pairing-code input, progress, success,
  *    and error states.
  * 3. **Footer** — the wallet identity row ("Connecting with" + the selected
- *    wallet and the next catalog wallets as tiles, capped so the same wallet
- *    never appears twice), a More tile that expands the full catalog grid
- *    with search + custom URL in place, and the alternate-method link.
+ *    wallet and the next catalog wallets as tiles), a More tile that expands
+ *    the remaining wallets as a matching grid (search + custom URL) in
+ *    place — a wallet is never shown twice — and the alternate-method link.
  *
  * Theming: the stylesheet is static and reads `--ec-*` design tokens.
  * Light/dark follows the visitor's system via `prefers-color-scheme` and
@@ -927,29 +927,35 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       panel.className = 'wallet-panel';
       panel.hidden = true;
 
-      const hiddenCount = wallets.filter((wallet) => !rowWallets.some((shown) => shown.url === wallet.url)).length;
+      // The panel grid holds only the wallets NOT already visible in the
+      // row, so expanding never shows the same wallet twice.
+      const gridWallets = wallets.filter((wallet) => !rowWallets.some((shown) => shown.url === wallet.url));
+
       const more = document.createElement('button');
       more.className = 'row-tile more-tile';
       more.title = 'All wallets';
       more.setAttribute('aria-expanded', 'false');
-      more.appendChild(el('span', 'more-count', hiddenCount > 0 ? `+${hiddenCount}` : '⋯'));
+      more.appendChild(el('span', 'more-count', gridWallets.length > 0 ? `+${gridWallets.length}` : '⋯'));
       more.appendChild(el('span', 'row-tile-name', 'More'));
       more.addEventListener('click', () => {
         panel.hidden = !panel.hidden;
         more.setAttribute('aria-expanded', panel.hidden ? 'false' : 'true');
+        if (!panel.hidden) {
+          updateScrollHint();
+        }
       });
       row.appendChild(more);
 
       const label = rowWallets.length > 0 ? el('div', 'wallet-row-label', 'Connecting with') : undefined;
 
-      // Search filter — appears once the catalog outgrows one grid row.
+      // Search filter — appears once the grid outgrows one row of tiles.
       const tiles: Array<{ wallet: (typeof wallets)[number]; el: HTMLButtonElement }> = [];
       const empty = document.createElement('div');
       empty.className = 'wallet-empty';
-      empty.textContent = 'No wallets match your search.';
+      empty.textContent = 'No other wallets match your search.';
       empty.hidden = true;
 
-      if (wallets.length > WALLET_SEARCH_THRESHOLD) {
+      if (gridWallets.length > WALLET_SEARCH_THRESHOLD) {
         const search = document.createElement('input');
         search.type = 'search';
         search.className = 'wallet-search';
@@ -966,30 +972,37 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
             if (match) { visible += 1; }
           }
           empty.hidden = visible > 0;
+          updateScrollHint();
         });
         panel.appendChild(search);
       }
 
-      // Square tiles, three per row; past two rows the grid scrolls in
-      // place so a large catalog never stretches the modal.
+      // Tiles matching the identity row, four per row; past three rows the
+      // grid scrolls in place, with a bottom fade hinting at more below.
+      const scrollWrap = document.createElement('div');
+      scrollWrap.className = 'wallet-scroll-wrap';
+      scrollWrap.hidden = gridWallets.length === 0;
       const scroll = document.createElement('div');
       scroll.className = 'wallet-scroll';
       const grid = document.createElement('div');
       grid.className = 'wallet-grid';
 
-      for (const wallet of wallets) {
+      const updateScrollHint = (): void => {
+        const overflowing = scroll.scrollHeight - scroll.clientHeight > 1;
+        const atEnd = scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 1;
+        scrollWrap.classList.toggle('scroll-hint', overflowing && !atEnd);
+      };
+      scroll.addEventListener('scroll', updateScrollHint);
+
+      for (const wallet of gridWallets) {
         const tile = document.createElement('button');
         tile.className = 'wallet-tile';
-        tile.title = wallet.name;
+        tile.title = wallet.description ?? wallet.name;
         tile.appendChild(buildWalletIcon(wallet));
         const tileName = document.createElement('span');
         tileName.className = 'wallet-tile-name';
         tileName.textContent = wallet.name;
         tile.appendChild(tileName);
-        if (wallet.url === walletUrl) {
-          tile.classList.add('selected');
-          tile.setAttribute('aria-pressed', 'true');
-        }
         tile.addEventListener('click', () => {
           selectWallet(wallet.url);
         });
@@ -998,7 +1011,8 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       }
       scroll.appendChild(grid);
       scroll.appendChild(empty);
-      panel.appendChild(scroll);
+      scrollWrap.appendChild(scroll);
+      panel.appendChild(scrollWrap);
 
       // Custom wallet URL (the power-user path, demoted to the disclosure).
       const custom = document.createElement('div');
@@ -1465,7 +1479,7 @@ const MODAL_STYLES = `
       grid-template-columns: repeat(4, 1fr);
       gap: 8px;
     }
-    .row-tile {
+    .row-tile, .wallet-tile {
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -1480,15 +1494,15 @@ const MODAL_STYLES = `
       font-size: 11px;
       cursor: pointer;
     }
-    .row-tile:hover { border-color: var(--ec-accent); }
+    .row-tile:hover, .wallet-tile:hover { border-color: var(--ec-accent); }
     .row-tile.selected {
       border-color: var(--ec-accent);
       background: var(--ec-accent-soft);
       box-shadow: inset 0 0 0 1px var(--ec-accent);
     }
     .row-tile.selected .row-tile-name { font-weight: 600; }
-    .row-tile .wallet-icon { width: 28px; height: 28px; }
-    .row-tile-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .row-tile .wallet-icon, .wallet-tile .wallet-icon { width: 28px; height: 28px; }
+    .row-tile-name, .wallet-tile-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     .more-tile { color: var(--ec-muted); }
     .more-tile:hover { color: var(--ec-text); }
@@ -1514,46 +1528,33 @@ const MODAL_STYLES = `
     }
     .wallet-search:focus { outline: none; border-color: var(--ec-accent); }
 
-    .wallet-scroll { max-height: 260px; overflow-y: auto; }
+    /* Cap the grid at three rows of tiles; past that it scrolls in place,
+       and the wrapper's bottom fade hints that more wallets are below. */
+    .wallet-scroll-wrap { position: relative; }
+    .wallet-scroll { max-height: 220px; overflow-y: auto; }
+    .wallet-scroll-wrap.scroll-hint::after {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 28px;
+      background: linear-gradient(to bottom, transparent, var(--ec-bg));
+      pointer-events: none;
+    }
     .wallet-grid {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(4, 1fr);
       gap: 8px;
     }
-    .wallet-tile {
-      aspect-ratio: 1;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      padding: 8px;
-      min-width: 0;
-      background: var(--ec-surface);
-      border: 1px solid var(--ec-border);
-      border-radius: 12px;
-      color: var(--ec-text);
-      font-size: 12px;
-      cursor: pointer;
-    }
-    .wallet-tile:hover { border-color: var(--ec-accent); }
-    .wallet-tile.selected {
-      border-color: var(--ec-accent);
-      background: var(--ec-accent-soft);
-      box-shadow: inset 0 0 0 1px var(--ec-accent);
-    }
-    .wallet-tile-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     .wallet-icon { position: relative; width: 28px; height: 28px; flex-shrink: 0; display: inline-flex; }
-    .wallet-tile .wallet-icon { width: 40px; height: 40px; }
     .wallet-badge {
       width: 100%; height: 100%; border-radius: 8px; display: inline-flex;
       align-items: center; justify-content: center; font-size: 13px;
       font-weight: 600; background: var(--ec-accent-soft); color: var(--ec-accent);
     }
-    .wallet-tile .wallet-badge { border-radius: 10px; font-size: 17px; }
     .wallet-img { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 8px; object-fit: cover; }
-    .wallet-tile .wallet-img { border-radius: 10px; }
 
     .wallet-empty { padding: 10px 4px; font-size: 12px; color: var(--ec-muted); text-align: center; }
 
