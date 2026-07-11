@@ -107,7 +107,7 @@ export type {
 export { fetchWalletWellKnown, probeWalletWellKnown, WALLET_WELL_KNOWN_PATH } from './ui/wallet-well-known.js';
 export type { WalletWellKnownDocument } from './ui/wallet-well-known.js';
 export { discoverWalletConnectServerUrl, runConnectModal } from './ui/connect-modal.js';
-export type { ConnectMethod, ConnectModalDeps, ConnectModalOptions } from './ui/connect-modal.js';
+export type { ConnectMethod, ConnectModalDeps, ConnectModalOptions, ConnectModalPalette, ConnectModalTheme } from './ui/connect-modal.js';
 export { MAX_PIN_ATTEMPTS, RelayConnectCancelledError, runRelayConnect } from './relay-connect-runner.js';
 export type { RelayConnectOptions } from './relay-connect-runner.js';
 export { encodeQr, qrToSvg } from './ui/qr.js';

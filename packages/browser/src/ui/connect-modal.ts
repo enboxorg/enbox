@@ -13,9 +13,18 @@
  * 2. **Stage** — a height-stable region where states crossfade: the QR
  *    (or deep link on phones), the pairing-code input, progress, success,
  *    and error states.
- * 3. **Footer** — the alternate-method link and the wallet switcher
- *    disclosure (catalog + custom URL — the entire legacy selector,
- *    demoted to an option).
+ * 3. **Footer** — one row holding the alternate-method link and the wallet
+ *    switcher disclosure (a tile grid with search + custom URL — the
+ *    entire legacy selector, demoted to an option).
+ *
+ * Theming: the stylesheet is static and reads `--ec-*` design tokens.
+ * Light/dark follows the visitor's system via `prefers-color-scheme` and
+ * updates live; the embedding app can force an appearance or override
+ * palette tokens through {@link ConnectModalOptions.theme}. Overrides are
+ * applied as inline custom properties — never interpolated into the
+ * stylesheet — so a hostile string can't escape its declaration. The QR
+ * card alone is theme-invariant (dark modules on white scan most
+ * reliably).
  *
  * The phone path drives the `@enbox/connect` relay transport via
  * {@link runRelayConnect}; the browser path drives the popup transport via
@@ -55,6 +64,74 @@ const REMINT_MIN_MS = 10_000;
 
 /** Pairing code length (matches the wallet's generated PIN). */
 const PIN_LENGTH = 4;
+
+/** Catalog size beyond which the wallet switcher shows its search bar. */
+const WALLET_SEARCH_THRESHOLD = 4; // one full row of tiles
+
+/** Palette overrides for one appearance's design tokens. */
+export interface ConnectModalPalette {
+  /** Modal surface. */
+  background?: string;
+
+  /** Inset surfaces: tiles, inputs, hover fills. */
+  surface?: string;
+
+  /** Primary text. */
+  text?: string;
+
+  /** Secondary text. */
+  textMuted?: string;
+
+  /** Hairline borders and dividers. */
+  border?: string;
+
+  /** Brand accent: buttons, links, focus rings, selection. */
+  accent?: string;
+
+  /** Text/icon color on accent surfaces. */
+  accentContrast?: string;
+
+  /** Error text and invalid-input borders. */
+  danger?: string;
+
+  /** Success surfaces (the connected check). */
+  success?: string;
+}
+
+/** Optional color scheme provided by the embedding app. */
+export interface ConnectModalTheme {
+  /**
+   * Follow the visitor's system appearance (`'auto'`, live-updating) or
+   * force one.
+   * @default 'auto'
+   */
+  appearance?: 'auto' | 'light' | 'dark';
+
+  /** Brand accent applied in both appearances (per-scheme palettes win). */
+  accent?: string;
+
+  /** Text/icon color on accent surfaces, in both appearances. */
+  accentContrast?: string;
+
+  /** Token overrides applied while the light appearance is active. */
+  light?: ConnectModalPalette;
+
+  /** Token overrides applied while the dark appearance is active. */
+  dark?: ConnectModalPalette;
+}
+
+/** Design-token custom property behind each palette key. */
+const PALETTE_TOKENS: Record<keyof ConnectModalPalette, string> = {
+  background     : '--ec-bg',
+  surface        : '--ec-surface',
+  text           : '--ec-text',
+  textMuted      : '--ec-muted',
+  border         : '--ec-border',
+  accent         : '--ec-accent',
+  accentContrast : '--ec-accent-contrast',
+  danger         : '--ec-danger',
+  success        : '--ec-success',
+};
 
 /** Options for {@link runConnectModal}. */
 export interface ConnectModalOptions {
@@ -98,6 +175,13 @@ export interface ConnectModalOptions {
 
   /** Timeout in milliseconds for either method's handshake. */
   timeout?: number;
+
+  /**
+   * Color scheme. By default the modal follows the visitor's system
+   * light/dark appearance; apps can force an appearance and/or override
+   * palette tokens per scheme to match their brand.
+   */
+  theme?: ConnectModalTheme;
 
   /** DWN protocols and permission scopes being requested. */
   permissionRequests: ConnectPermissionRequest[];
@@ -273,9 +357,8 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     host.id = 'enbox-connect-modal';
     const shadow = host.attachShadow({ mode: 'open' });
 
-    const isDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
     const style = document.createElement('style');
-    style.textContent = buildStyles(isDark);
+    style.textContent = MODAL_STYLES;
     shadow.appendChild(style);
 
     const overlay = document.createElement('div');
@@ -285,6 +368,47 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     modal.setAttribute('role', 'dialog');
     modal.setAttribute('aria-modal', 'true');
     modal.setAttribute('aria-label', `Connect to ${appName}`);
+
+    // ── Theme ──────────────────────────────────────────────────
+    // System light/dark is pure CSS (`prefers-color-scheme`), so it tracks
+    // the visitor live. A forced appearance pins the token block instead.
+    const theme = options.theme ?? {};
+    const appearance = theme.appearance ?? 'auto';
+    if (appearance !== 'auto') {
+      modal.setAttribute('data-appearance', appearance);
+    }
+
+    // Dapp palette overrides land as inline custom properties: setProperty
+    // parses each value as a lone declaration, so a hostile string cannot
+    // escape into the stylesheet.
+    const systemDark = window.matchMedia?.('(prefers-color-scheme: dark)');
+    const hasPaletteOverrides = theme.accent !== undefined || theme.accentContrast !== undefined
+      || theme.light !== undefined || theme.dark !== undefined;
+    const applyPaletteTokens = (): void => {
+      const scheme = appearance === 'auto'
+        ? (systemDark?.matches === true ? 'dark' : 'light')
+        : appearance;
+      const palette: ConnectModalPalette = {
+        accent         : theme.accent,
+        accentContrast : theme.accentContrast,
+        ...theme[scheme],
+      };
+      for (const key of Object.keys(PALETTE_TOKENS) as Array<keyof ConnectModalPalette>) {
+        const value = palette[key];
+        if (typeof value === 'string' && value.trim() !== '') {
+          modal.style.setProperty(PALETTE_TOKENS[key], value);
+        } else {
+          modal.style.removeProperty(PALETTE_TOKENS[key]);
+        }
+      }
+    };
+    const onSchemeChange = (): void => applyPaletteTokens();
+    if (hasPaletteOverrides) {
+      applyPaletteTokens();
+      if (appearance === 'auto') {
+        systemDark?.addEventListener?.('change', onSchemeChange);
+      }
+    }
 
     // ── Session state ──────────────────────────────────────────
     let settled = false;
@@ -298,6 +422,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       relaySession?.cancel();
       clearTimeout(remintTimer);
       document.removeEventListener('keydown', onKeydown);
+      systemDark?.removeEventListener?.('change', onSchemeChange);
       try { document.body.removeChild(host); } catch { /* best effort */ }
     };
 
@@ -359,8 +484,10 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
 
       const qrBox = document.createElement('div');
       qrBox.className = 'qr-box';
+      // Fixed colors on the white card: dark-on-light QRs scan reliably in
+      // both appearances (inverted codes trip up some camera apps).
       qrBox.replaceChildren(qrToSvg(encodeQr(handoff.walletUri), {
-        dark      : isDark ? '#e8e8f0' : '#14141f',
+        dark      : '#14141f',
         light     : 'transparent',
         quietZone : 2,
       }));
@@ -368,7 +495,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       setStage(
         qrBox,
         el('p', 'stage-caption', 'Scan with your phone’s camera'),
-        el('p', 'stage-subline', 'Your wallet stays on your phone, so you can approve things anywhere.'),
+        el('p', 'stage-subline', 'Your wallet stays on your phone.'),
       );
     };
 
@@ -682,64 +809,75 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       await startMethod();
     };
 
-    // ── Footer: method link + wallet switcher ──────────────────
+    // ── Footer: one row (method link + wallet toggle), panel below ──
     const renderFooter = (): void => {
       footer.replaceChildren();
+
+      const row = document.createElement('div');
+      row.className = 'footer-row';
 
       if (method === 'phone') {
         const alt = document.createElement('button');
         alt.className = 'footer-link method-link';
-        alt.textContent = 'No phone handy? Use this browser →';
+        alt.textContent = 'No phone? Use this browser →';
         // startPopup runs synchronously in this click handler.
         alt.addEventListener('click', () => { startPopup(); });
-        footer.appendChild(alt);
+        row.appendChild(alt);
       } else if (!isMobile) {
         const alt = document.createElement('button');
         alt.className = 'footer-link method-link';
         alt.textContent = 'Use your phone instead →';
         alt.addEventListener('click', () => { void switchMethod('phone'); });
-        footer.appendChild(alt);
+        row.appendChild(alt);
       }
 
+      let panel: HTMLElement | undefined;
       if (!lockedWallet && wallets.length > 0) {
-        footer.appendChild(buildWalletSwitcher());
+        const switcher = buildWalletSwitcher();
+        row.appendChild(switcher.toggle);
+        panel = switcher.panel;
+      }
+
+      if (row.childElementCount > 0) {
+        footer.appendChild(row);
+      }
+      if (panel !== undefined) {
+        footer.appendChild(panel);
       }
     };
 
-    const buildWalletSwitcher = (): HTMLElement => {
-      const wrap = document.createElement('div');
-      wrap.className = 'wallet-switcher';
-
+    const buildWalletSwitcher = (): { toggle: HTMLButtonElement; panel: HTMLDivElement } => {
       const current = wallets.find((wallet) => wallet.url === walletUrl);
       const toggle = document.createElement('button');
       toggle.className = 'footer-link wallet-toggle';
       toggle.setAttribute('aria-expanded', 'false');
-      toggle.textContent = `Wallet: ${current?.name ?? walletUrl ?? 'Choose'} ▾`;
+      toggle.textContent = `Wallet: ${current?.name ?? hostnameOf(walletUrl) ?? 'Choose'} ▾`;
 
       const panel = document.createElement('div');
       panel.className = 'wallet-panel';
       panel.hidden = true;
 
-      // Search filter — only worth the chrome once the catalog grows.
-      const rows: Array<{ wallet: (typeof wallets)[number]; el: HTMLButtonElement }> = [];
+      // Search filter — appears once the catalog outgrows one grid row.
+      const tiles: Array<{ wallet: (typeof wallets)[number]; el: HTMLButtonElement }> = [];
       const empty = document.createElement('div');
       empty.className = 'wallet-empty';
       empty.textContent = 'No wallets match your search.';
       empty.hidden = true;
 
-      if (wallets.length > 5) {
+      if (wallets.length > WALLET_SEARCH_THRESHOLD) {
         const search = document.createElement('input');
         search.type = 'search';
         search.className = 'wallet-search';
         search.placeholder = 'Search wallets…';
+        search.setAttribute('aria-label', 'Search wallets');
         search.addEventListener('input', () => {
           const query = search.value.trim().toLowerCase();
           let visible = 0;
-          for (const { wallet, el } of rows) {
+          for (const { wallet, el: tile } of tiles) {
             const match = query === ''
               || wallet.name.toLowerCase().includes(query)
               || wallet.url.toLowerCase().includes(query);
-            el.hidden = !match;
+            tile.hidden = !match;
             if (match) { visible += 1; }
           }
           empty.hidden = visible > 0;
@@ -747,26 +885,37 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
         panel.appendChild(search);
       }
 
+      // Square tiles, three per row; past two rows the grid scrolls in
+      // place so a large catalog never stretches the modal.
+      const scroll = document.createElement('div');
+      scroll.className = 'wallet-scroll';
+      const grid = document.createElement('div');
+      grid.className = 'wallet-grid';
+
       for (const wallet of wallets) {
-        const row = document.createElement('button');
-        row.className = 'wallet-row';
-        row.appendChild(buildWalletIcon(wallet));
-        const rowName = document.createElement('span');
-        rowName.className = 'wallet-row-name';
-        rowName.textContent = wallet.name;
-        row.appendChild(rowName);
+        const tile = document.createElement('button');
+        tile.className = 'wallet-tile';
+        tile.title = wallet.name;
+        tile.appendChild(buildWalletIcon(wallet));
+        const tileName = document.createElement('span');
+        tileName.className = 'wallet-tile-name';
+        tileName.textContent = wallet.name;
+        tile.appendChild(tileName);
         if (wallet.url === walletUrl) {
-          row.classList.add('selected');
+          tile.classList.add('selected');
+          tile.setAttribute('aria-pressed', 'true');
         }
-        row.addEventListener('click', () => {
+        tile.addEventListener('click', () => {
           walletUrl = wallet.url;
           renderFooter();
           void startMethod();
         });
-        rows.push({ wallet, el: row });
-        panel.appendChild(row);
+        tiles.push({ wallet, el: tile });
+        grid.appendChild(tile);
       }
-      panel.appendChild(empty);
+      scroll.appendChild(grid);
+      scroll.appendChild(empty);
+      panel.appendChild(scroll);
 
       // Custom wallet URL (the power-user path, demoted to the disclosure).
       const custom = document.createElement('div');
@@ -844,9 +993,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
         toggle.setAttribute('aria-expanded', panel.hidden ? 'false' : 'true');
       });
 
-      wrap.appendChild(toggle);
-      wrap.appendChild(panel);
-      return wrap;
+      return { toggle, panel };
     };
 
     // ── Global interactions ────────────────────────────────────
@@ -880,6 +1027,18 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
 
 function walletInCatalog(wallets: WalletOption[], url: string): boolean {
   return wallets.some((wallet) => wallet.url === url);
+}
+
+/** Compact display form of a wallet URL for the switcher toggle. */
+function hostnameOf(url: string | undefined): string | undefined {
+  if (url === undefined) {
+    return undefined;
+  }
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
 }
 
 function el(tag: string, className: string, text?: string): HTMLElement {
@@ -963,20 +1122,44 @@ function trapFocus(shadow: ShadowRoot, event: KeyboardEvent): void {
 }
 
 // ─── Styles ──────────────────────────────────────────────────────
+//
+// One static sheet; every color reads a `--ec-*` token. Light values sit on
+// `.modal`, dark values apply under `prefers-color-scheme` (so the system
+// appearance tracks live) and under a forced `data-appearance`. Dapp
+// palette overrides land as inline custom properties, which outrank all of
+// these — nothing user-provided is ever concatenated into this string.
 
-function buildStyles(isDark: boolean): string {
-  const bg = isDark ? '#1a1a2e' : '#ffffff';
-  const text = isDark ? '#e0e0e0' : '#1a1a2e';
-  const muted = isDark ? '#888' : '#666';
-  const border = isDark ? '#333' : '#e0e0e0';
-  const itemBg = isDark ? '#16213e' : '#f8f9fa';
-  const accent = isDark ? '#4a9eff' : '#0066cc';
-  const accentSoft = isDark ? 'rgba(74, 158, 255, 0.16)' : 'rgba(0, 102, 204, 0.1)';
-  const danger = isDark ? '#ff6b6b' : '#c0392b';
-  const success = isDark ? '#43d17c' : '#1e9e5a';
+/** Light-appearance design tokens. */
+const LIGHT_TOKENS = `
+      --ec-bg: #ffffff;
+      --ec-surface: #f5f6f8;
+      --ec-text: #17171f;
+      --ec-muted: #63636e;
+      --ec-border: #e3e4e9;
+      --ec-accent: #0a62d0;
+      --ec-accent-contrast: #ffffff;
+      --ec-danger: #c0392b;
+      --ec-success: #1e9e5a;`;
 
-  return `
+/** Dark-appearance design tokens. */
+const DARK_TOKENS = `
+      --ec-bg: #181822;
+      --ec-surface: #23232f;
+      --ec-text: #e9e9f0;
+      --ec-muted: #9a9aa6;
+      --ec-border: #33333f;
+      --ec-accent: #58a6ff;
+      --ec-accent-contrast: #0b1526;
+      --ec-danger: #ff7a7a;
+      --ec-success: #43d17c;`;
+
+const MODAL_STYLES = `
     * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* Keep the hidden attribute authoritative: author display values (e.g.
+       the panel's flex) would otherwise override the UA's [hidden] rule and
+       leave "collapsed" sections permanently expanded. */
+    [hidden] { display: none !important; }
 
     .overlay {
       position: fixed;
@@ -985,6 +1168,7 @@ function buildStyles(isDark: boolean): string {
       display: flex;
       align-items: center;
       justify-content: center;
+      padding: 16px;
       background: rgba(0, 0, 0, 0.5);
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       animation: fadeIn 0.15s ease-out;
@@ -999,82 +1183,96 @@ function buildStyles(isDark: boolean): string {
       40%, 80% { transform: translateX(6px); }
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes claimedPulse {
+      0%, 100% { transform: scale(0.85); opacity: 0.7; }
+      50% { transform: scale(1); opacity: 1; }
+    }
 
-    .modal {
-      background: ${bg};
-      color: ${text};
+    .modal {${LIGHT_TOKENS}
+      --ec-accent-soft: color-mix(in srgb, var(--ec-accent) 14%, transparent);
+      background: var(--ec-bg);
+      color: var(--ec-text);
       border-radius: 16px;
       width: 400px;
-      max-width: 92vw;
-      max-height: 88vh;
+      max-width: 100%;
+      max-height: calc(100vh - 32px);
       overflow-y: auto;
-      padding: 20px 24px 16px;
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      padding: 16px 20px 12px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
       animation: slideUp 0.2s ease-out;
       display: flex;
       flex-direction: column;
     }
+    @media (prefers-color-scheme: dark) {
+      .modal {${DARK_TOKENS}
+      }
+    }
+    .modal[data-appearance='light'] {${LIGHT_TOKENS}
+    }
+    .modal[data-appearance='dark'] {${DARK_TOKENS}
+    }
 
-    .header { display: flex; justify-content: space-between; align-items: center; }
+    button, input { font-family: inherit; }
+    button:focus-visible, a:focus-visible {
+      outline: 2px solid var(--ec-accent);
+      outline-offset: 2px;
+    }
+
+    .header { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
     .header-identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
-    .header-icon { border-radius: 6px; }
+    .header-icon { border-radius: 6px; flex-shrink: 0; }
     h2 { font-size: 16px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     .close-btn {
       background: none; border: none; font-size: 24px; cursor: pointer;
-      color: ${muted}; padding: 4px 8px; border-radius: 8px; line-height: 1;
+      color: var(--ec-muted); padding: 4px 8px; border-radius: 8px; line-height: 1;
+      flex-shrink: 0;
     }
-    .close-btn:hover { color: ${text}; background: ${itemBg}; }
+    .close-btn:hover { color: var(--ec-text); background: var(--ec-surface); }
 
     .stage {
-      min-height: 300px;
+      min-height: 240px;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 12px;
+      gap: 10px;
       text-align: center;
-      padding: 16px 0;
+      padding: 12px 0 10px;
     }
     .stage.fade-in > * { animation: stageIn 0.15s ease-out; }
 
     .qr-box {
-      width: 216px;
-      height: 216px;
-      padding: 12px;
+      width: 200px;
+      height: 200px;
+      padding: 10px;
       border-radius: 12px;
-      background: ${isDark ? '#10192e' : '#ffffff'}
-    .claimed-pulse {
-      width: 64px; height: 64px; border-radius: 50%;
-      background: ${accentSoft}; position: relative;
-    }
-    .claimed-pulse::after {
-      content: ''; position: absolute; inset: 18px; border-radius: 50%;
-      background: ${accent};
-      animation: enbox-claimed-pulse 1.6s ease-in-out infinite;
-    }
-    @keyframes enbox-claimed-pulse {
-      0%, 100% { transform: scale(0.85); opacity: 0.7; }
-      50% { transform: scale(1); opacity: 1; }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .claimed-pulse::after { animation: none; }
-    };
-      border: 1px solid ${border};
+      background: #ffffff;
+      border: 1px solid #e3e4e9;
     }
     .qr-box svg { width: 100%; height: 100%; display: block; }
 
+    .claimed-pulse {
+      width: 64px; height: 64px; border-radius: 50%;
+      background: var(--ec-accent-soft); position: relative;
+    }
+    .claimed-pulse::after {
+      content: ''; position: absolute; inset: 18px; border-radius: 50%;
+      background: var(--ec-accent);
+      animation: claimedPulse 1.6s ease-in-out infinite;
+    }
+
     .stage-caption { font-size: 15px; font-weight: 600; }
-    .stage-subline { font-size: 13px; color: ${muted}; max-width: 300px; line-height: 1.45; }
-    .stage-error { font-size: 13px; color: ${danger}; }
+    .stage-subline { font-size: 13px; color: var(--ec-muted); max-width: 300px; line-height: 1.45; }
+    .stage-error { font-size: 13px; color: var(--ec-danger); }
 
     .deep-link {
       display: block;
       width: 100%;
-      padding: 14px 16px;
+      padding: 13px 16px;
       border-radius: 12px;
-      background: ${accent};
-      color: #fff;
+      background: var(--ec-accent);
+      color: var(--ec-accent-contrast);
       font-weight: 600;
       font-size: 15px;
       text-decoration: none;
@@ -1083,31 +1281,31 @@ function buildStyles(isDark: boolean): string {
     .pin-row { display: flex; gap: 10px; }
     .pin-row.shake { animation: shake 0.4s ease-in-out; }
     .pin-input {
-      width: 48px; height: 56px;
+      width: 46px; height: 54px;
       text-align: center;
       font-size: 24px; font-weight: 600;
-      color: ${text};
-      background: ${itemBg};
-      border: 1px solid ${border};
+      color: var(--ec-text);
+      background: var(--ec-surface);
+      border: 1px solid var(--ec-border);
       border-radius: 10px;
       outline: none;
     }
-    .pin-input:focus { border-color: ${accent}; }
+    .pin-input:focus { border-color: var(--ec-accent); }
 
     .check {
       width: 56px; height: 56px;
       display: flex; align-items: center; justify-content: center;
       border-radius: 50%;
-      background: ${success};
-      color: #fff;
+      background: var(--ec-success);
+      color: #ffffff;
       font-size: 28px;
     }
 
     .spinner {
       width: 32px; height: 32px;
       border-radius: 50%;
-      border: 3px solid ${border};
-      border-top-color: ${accent};
+      border: 3px solid var(--ec-border);
+      border-top-color: var(--ec-accent);
       animation: spin 0.8s linear infinite;
     }
 
@@ -1115,87 +1313,122 @@ function buildStyles(isDark: boolean): string {
       padding: 10px 20px;
       border: none;
       border-radius: 10px;
-      background: ${accent};
-      color: #fff;
+      background: var(--ec-accent);
+      color: var(--ec-accent-contrast);
       font-size: 14px;
       font-weight: 500;
       cursor: pointer;
     }
-    .stage-btn:hover { filter: brightness(1.1); }
+    .stage-btn:hover { filter: brightness(1.08); }
 
     .footer {
-      border-top: 1px solid ${border};
-      padding-top: 10px;
+      border-top: 1px solid var(--ec-border);
+      padding-top: 8px;
       display: flex;
       flex-direction: column;
       gap: 6px;
-      align-items: center;
     }
+
+    .footer-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 2px 8px;
+    }
+    .footer-row > * { min-width: 0; }
+    .footer-row > :only-child { margin-inline: auto; }
 
     .footer-link {
       background: none;
       border: none;
-      color: ${muted};
+      color: var(--ec-muted);
       font-size: 13px;
       cursor: pointer;
-      padding: 4px 8px;
+      padding: 5px 8px;
       border-radius: 8px;
     }
-    .footer-link:hover { color: ${text}; background: ${itemBg}; }
-    .method-link { color: ${accent}; }
+    .footer-link:hover { color: var(--ec-text); background: var(--ec-surface); }
+    .method-link { color: var(--ec-accent); }
+    .wallet-toggle { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-    .wallet-switcher { width: 100%; display: flex; flex-direction: column; align-items: center; }
-    .wallet-panel { width: 100%; padding: 6px 0; display: flex; flex-direction: column; gap: 4px; }
-    .wallet-row {
-      width: 100%;
-      text-align: left;
-      padding: 8px 12px;
-      background: ${itemBg};
-      border: 1px solid ${border};
-      border-radius: 10px;
-      color: ${text};
-      font-size: 13px;
+    .wallet-panel { width: 100%; padding: 4px 0 2px; display: flex; flex-direction: column; gap: 8px; }
+    .wallet-search {
+      width: 100%; padding: 8px 12px;
+      border-radius: 10px; border: 1px solid var(--ec-border); background: transparent;
+      color: inherit; font: inherit; font-size: 13px;
+    }
+    .wallet-search:focus { outline: none; border-color: var(--ec-accent); }
+
+    .wallet-scroll { max-height: 260px; overflow-y: auto; }
+    .wallet-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+    .wallet-tile {
+      aspect-ratio: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 8px;
+      min-width: 0;
+      background: var(--ec-surface);
+      border: 1px solid var(--ec-border);
+      border-radius: 12px;
+      color: var(--ec-text);
+      font-size: 12px;
       cursor: pointer;
     }
-    .wallet-row:hover, .wallet-row.selected { border-color: ${accent}; }
+    .wallet-tile:hover { border-color: var(--ec-accent); }
+    .wallet-tile.selected {
+      border-color: var(--ec-accent);
+      background: var(--ec-accent-soft);
+      box-shadow: inset 0 0 0 1px var(--ec-accent);
+    }
+    .wallet-tile-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     .wallet-icon { position: relative; width: 28px; height: 28px; flex-shrink: 0; display: inline-flex; }
+    .wallet-tile .wallet-icon { width: 40px; height: 40px; }
     .wallet-badge {
-      width: 28px; height: 28px; border-radius: 8px; display: inline-flex;
+      width: 100%; height: 100%; border-radius: 8px; display: inline-flex;
       align-items: center; justify-content: center; font-size: 13px;
-      font-weight: 600; background: ${accentSoft}; color: ${accent};
+      font-weight: 600; background: var(--ec-accent-soft); color: var(--ec-accent);
     }
-    .wallet-img { position: absolute; inset: 0; width: 28px; height: 28px; border-radius: 8px; object-fit: cover; }
-    .wallet-row-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .wallet-search {
-      width: 100%; box-sizing: border-box; padding: 8px 10px; margin-bottom: 4px;
-      border-radius: 8px; border: 1px solid ${border}; background: transparent;
-      color: inherit; font: inherit;
-    }
-    .wallet-search:focus { outline: none; border-color: ${accent}; }
-    .wallet-empty { padding: 8px 10px; font-size: 12px; opacity: 0.7; }
-    .url-error { padding: 4px 2px 0; font-size: 12px; color: ${danger}; }
-    .wallet-custom { display: flex; gap: 6px; margin-top: 4px; }
+    .wallet-tile .wallet-badge { border-radius: 10px; font-size: 17px; }
+    .wallet-img { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 8px; object-fit: cover; }
+    .wallet-tile .wallet-img { border-radius: 10px; }
+
+    .wallet-empty { padding: 10px 4px; font-size: 12px; color: var(--ec-muted); text-align: center; }
+
+    .wallet-custom { display: flex; gap: 6px; }
     .url-input {
       flex: 1;
       padding: 8px 12px;
-      border: 1px solid ${border};
+      border: 1px solid var(--ec-border);
       border-radius: 10px;
       font-size: 13px;
-      background: ${itemBg};
-      color: ${text};
+      background: var(--ec-surface);
+      color: var(--ec-text);
       outline: none;
     }
-    .url-input:focus { border-color: ${accent}; }
-    .url-input.invalid { border-color: ${danger}; }
+    .url-input:focus { border-color: var(--ec-accent); }
+    .url-input.invalid { border-color: var(--ec-danger); }
     .url-go {
       padding: 8px 14px;
       border: none;
       border-radius: 10px;
-      background: ${accent};
-      color: #fff;
+      background: var(--ec-accent);
+      color: var(--ec-accent-contrast);
       font-size: 13px;
       cursor: pointer;
     }
-  `;
-}
+    .url-error { font-size: 12px; color: var(--ec-danger); }
+
+    @media (prefers-reduced-motion: reduce) {
+      .overlay, .modal, .stage.fade-in > *, .pin-row.shake { animation: none; }
+      .claimed-pulse::after { animation: none; }
+    }
+`;
