@@ -58,8 +58,16 @@ export type ConnectMethod = 'phone' | 'browser';
 /** localStorage key remembering the last successful method + wallet. */
 const LAST_CHOICE_STORAGE_KEY = 'enbox:connect:lastChoice';
 
-/** Safety margin subtracted from the relay pointer TTL before re-minting. */
-const REMINT_SAFETY_MS = 30_000;
+/**
+ * Safety margin subtracted from the relay pointer TTL before re-minting.
+ *
+ * The pointer is single-use and its TTL starts at mint time, but the wallet
+ * only dereferences it after the user scans — and, on a locked wallet, after
+ * they finish the unlock ceremony. A scanned code must therefore carry
+ * enough remaining life to absorb that whole window, so re-mint well before
+ * the deadline rather than just ahead of it.
+ */
+const REMINT_SAFETY_MS = 120_000;
 
 /** Minimum delay before an automatic re-mint. */
 const REMINT_MIN_MS = 10_000;
