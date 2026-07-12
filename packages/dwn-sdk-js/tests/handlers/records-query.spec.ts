@@ -870,36 +870,142 @@ export function testRecordsQueryHandler(): void {
         expect(reply.entries![0].initialWrite).toBeDefined();
         expect(reply.entries![0].initialWrite?.recordId).toBe(write.message.recordId);
         expect(querySpy.getCalls().some((call): boolean =>
-          (call.args[1] as Filter[]).some((filter): boolean => filter.entryId === write.message.recordId)
+          (call.args[1] as Filter[]).some((filter): boolean =>
+            filter.entryId === write.message.recordId ||
+            (Array.isArray(filter.entryId) && filter.entryId.includes(write.message.recordId))
+          )
         )).toBe(true);
       });
 
-      it('should return a controlled error if an updated record has no initial write', async () => {
+      it('should skip an update with no initial write and backfill paginated results', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
-        const write = await TestDataGenerator.generateRecordsWrite({ author: alice, published: false });
+        const schema = 'https://schema.example/incomplete-initial-write-pagination';
+        const timestamps = [1, 2, 3, 4].map(seconds => Time.createOffsetTimestamp({ seconds }));
+        const writes = await Promise.all(timestamps.map(timestamp => TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          schema,
+          dateCreated      : timestamp,
+          messageTimestamp : timestamp,
+        })));
 
-        const writeReply = await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream });
-        expect(writeReply.status.code).toBe(202);
+        for (const write of writes) {
+          const writeReply = await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream });
+          expect(writeReply.status.code).toBe(202);
+        }
 
         const update = await RecordsWrite.createFrom({
-          recordsWriteMessage : write.message,
+          recordsWriteMessage : writes[1].message,
           published           : true,
+          messageTimestamp    : Time.createOffsetTimestamp({ seconds: 10 }),
           signer              : Jws.createSigner(alice),
         });
         const updateReply = await dwn.processMessage(alice.did, update.message);
         expect(updateReply.status.code).toBe(202);
 
-        await messageStore.delete(alice.did, await Message.getCid(write.message));
+        // Leave the latest update indexed, but remove its stable initial-write entry.
+        // In created-ascending order this incomplete record is the second raw result.
+        await messageStore.delete(alice.did, await Message.getCid(writes[1].message));
+        const warningSpy = sinon.stub(console, 'warn');
 
-        const query = await TestDataGenerator.generateRecordsQuery({
-          author : alice,
-          filter : { recordId: write.message.recordId },
+        const firstPageQuery = await TestDataGenerator.generateRecordsQuery({
+          author     : alice,
+          filter     : { schema },
+          dateSort   : DateSort.CreatedAscending,
+          pagination : { limit: 2 },
         });
-        const reply = await dwn.processMessage(alice.did, query.message);
+        const firstPageReply = await dwn.processMessage(alice.did, firstPageQuery.message);
 
-        expect(reply.status.code).toBe(500);
-        expect(reply.status.detail).toContain(DwnErrorCode.RecordsWriteGetInitialWriteNotFound);
+        expect(firstPageReply.status.code).toBe(200);
+        expect(firstPageReply.entries?.map(entry => entry.recordId)).toEqual([
+          writes[0].message.recordId,
+          writes[2].message.recordId,
+        ]);
+        expect(firstPageReply.cursor).toBeDefined();
+
+        const secondPageQuery = await TestDataGenerator.generateRecordsQuery({
+          author     : alice,
+          filter     : { schema },
+          dateSort   : DateSort.CreatedAscending,
+          pagination : { limit: 2, cursor: firstPageReply.cursor },
+        });
+        const secondPageReply = await dwn.processMessage(alice.did, secondPageQuery.message);
+
+        expect(secondPageReply.status.code).toBe(200);
+        expect(secondPageReply.entries?.map(entry => entry.recordId)).toEqual([
+          writes[3].message.recordId,
+        ]);
+        expect(secondPageReply.cursor).toBeUndefined();
+
+        const returnedRecordIds = [
+          ...firstPageReply.entries ?? [],
+          ...secondPageReply.entries ?? [],
+        ].map(entry => entry.recordId);
+        expect(new Set(returnedRecordIds).size).toBe(returnedRecordIds.length);
+        expect(returnedRecordIds).not.toContain(writes[1].message.recordId);
+
+        expect(warningSpy.called).toBe(true);
+        const warnings = warningSpy.getCalls().flatMap(call => call.args).join(' ');
+        expect(warnings).toContain(DwnErrorCode.RecordsWriteGetInitialWriteNotFound);
+        expect(warnings).toContain('RecordsQuery');
+        expect(warnings).toContain(writes[1].message.recordId);
+      });
+
+      it('should preserve logical order and cursor pagination while an update and initial are both latest', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        const schema = 'https://schema.example/two-latest-transition';
+        const createdTimestamp = Time.createOffsetTimestamp({ seconds: -3 });
+        const write = await TestDataGenerator.generateRecordsWrite({
+          author: alice, schema, dateCreated: createdTimestamp, messageTimestamp: createdTimestamp,
+        });
+        const middleTimestamp = Time.createOffsetTimestamp({ seconds: 1 }, createdTimestamp);
+        const middleWrite = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          schema,
+          dateCreated      : middleTimestamp,
+          messageTimestamp : middleTimestamp,
+        });
+        expect((await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream })).status.code).toBe(202);
+        expect((await dwn.processMessage(
+          alice.did,
+          middleWrite.message,
+          { dataStream: middleWrite.dataStream },
+        )).status.code).toBe(202);
+
+        const update = await RecordsWrite.createFrom({
+          recordsWriteMessage : write.message,
+          messageTimestamp    : Time.createOffsetTimestamp({ seconds: 2 }, createdTimestamp),
+          published           : true,
+          signer              : Jws.createSigner(alice),
+        });
+
+        // Simulate the RecordsWrite transition after the update is inserted but
+        // before the retained initial write is demoted from latest base state.
+        await messageStore.put(alice.did, update.message, await update.constructIndexes(true));
+
+        const firstQuery = await TestDataGenerator.generateRecordsQuery({
+          author     : alice,
+          filter     : { schema },
+          dateSort   : DateSort.UpdatedAscending,
+          pagination : { limit: 1 },
+        });
+        const firstReply = await dwn.processMessage(alice.did, firstQuery.message);
+        expect(firstReply.entries?.map(entry => entry.recordId)).toEqual([middleWrite.message.recordId]);
+        expect(firstReply.cursor).toBeDefined();
+
+        const secondQuery = await TestDataGenerator.generateRecordsQuery({
+          author     : alice,
+          filter     : { schema },
+          dateSort   : DateSort.UpdatedAscending,
+          pagination : { limit: 1, cursor: firstReply.cursor },
+        });
+        const secondReply = await dwn.processMessage(alice.did, secondQuery.message);
+        expect(secondReply.status.code).toBe(200);
+        expect(secondReply.entries?.map(entry => entry.recordId)).toEqual([write.message.recordId]);
+        expect(secondReply.entries?.[0].descriptor.messageTimestamp).toBe(update.message.descriptor.messageTimestamp);
+        expect(secondReply.entries?.[0].initialWrite?.recordId).toBe(write.message.recordId);
+        expect(secondReply.cursor).toBeUndefined();
       });
 
       it('should be able to query by attester', async () => {

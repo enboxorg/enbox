@@ -9,12 +9,11 @@ import { DateSort } from '../types/records-types.js';
 import { EncryptionControl } from '../core/encryption-control.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
-import { Messages } from '../utils/messages.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
+import { queryRecordsWithInitialWriteProjection } from '../utils/initial-write-projection.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { RecordsSubscribe } from '../interfaces/records-subscribe.js';
-import { RecordsWrite } from '../interfaces/records-write.js';
 import { SortDirection } from '../types/query-types.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
@@ -144,26 +143,6 @@ export class RecordsSubscribeHandler implements MethodHandler {
       );
       entries = queryResult.messages;
       paginationCursor = queryResult.cursor;
-
-      // attach initialWrite for non-initial writes
-      for (const entry of entries) {
-        if (!await RecordsWrite.isInitialWrite(entry)) {
-          const storedInitialWrite = await RecordsWrite.fetchInitialRecordsWriteMessage(
-            this.deps.messageStore,
-            tenant,
-            entry.recordId,
-          );
-          if (storedInitialWrite === undefined) {
-            throw new DwnError(
-              DwnErrorCode.RecordsWriteGetInitialWriteNotFound,
-              `initial write not found for record ${entry.recordId}`,
-            );
-          }
-
-          const { message: initialWrite } = Messages.detachEncodedData(storedInitialWrite);
-          entry.initialWrite = initialWrite as RecordsQueryReplyEntry;
-        }
-      }
     } catch (error) {
       // if the query fails, close the subscription and return the error
       await subscription.close();
@@ -560,6 +539,30 @@ export class RecordsSubscribeHandler implements MethodHandler {
   }
 
   private async queryRecordsWithVisibleControlFiltering(
+    tenant: string,
+    recordsSubscribe: RecordsSubscribe,
+    requester: string | undefined,
+    filters: Filter[],
+    messageSort: MessageSort,
+    pagination: { cursor?: PaginationCursor; limit?: number } | undefined,
+  ): Promise<{ messages: RecordsQueryReplyEntry[], cursor?: PaginationCursor }> {
+    return queryRecordsWithInitialWriteProjection({
+      messageStore  : this.deps.messageStore,
+      tenant,
+      operationName : 'RecordsSubscribe',
+      pagination,
+      queryPage     : (pagePagination) => this.queryRecordsWithVisibleControlFilteringPage(
+        tenant,
+        recordsSubscribe,
+        requester,
+        filters,
+        messageSort,
+        pagePagination,
+      ),
+    });
+  }
+
+  private async queryRecordsWithVisibleControlFilteringPage(
     tenant: string,
     recordsSubscribe: RecordsSubscribe,
     requester: string | undefined,

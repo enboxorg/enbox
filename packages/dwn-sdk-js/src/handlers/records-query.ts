@@ -8,16 +8,23 @@ import { DateSort } from '../types/records-types.js';
 import { EncryptionControl } from '../core/encryption-control.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
-import { Messages } from '../utils/messages.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
+import { queryRecordsWithInitialWriteProjection } from '../utils/initial-write-projection.js';
 import { queryRecordsWithRecordLimitOccupancy } from '../utils/record-limit-occupancy.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { RecordsQuery } from '../interfaces/records-query.js';
-import { RecordsWrite } from '../interfaces/records-write.js';
 import { SortDirection } from '../types/query-types.js';
-import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
+
+type RecordsQueryProjectionInput = {
+  tenant: string;
+  recordsQuery: RecordsQuery;
+  requester: string | undefined;
+  filters: Filter[];
+  messageSort: MessageSort;
+  pagination?: { cursor?: PaginationCursor; limit?: number };
+};
 
 export class RecordsQueryHandler implements MethodHandler {
 
@@ -63,31 +70,6 @@ export class RecordsQueryHandler implements MethodHandler {
         recordsWrites = results.messages as RecordsQueryReplyEntry[];
         cursor = results.cursor;
       }
-    }
-
-    try {
-      // Attach the initial write by its stable entry ID. Looking it up through
-      // `isLatestBaseState:false` races with the update that demotes it.
-      for (const recordsWrite of recordsWrites) {
-        if (!await RecordsWrite.isInitialWrite(recordsWrite)) {
-          const storedInitialWrite = await RecordsWrite.fetchInitialRecordsWriteMessage(
-            this.deps.messageStore,
-            tenant,
-            recordsWrite.recordId,
-          );
-          if (storedInitialWrite === undefined) {
-            throw new DwnError(
-              DwnErrorCode.RecordsWriteGetInitialWriteNotFound,
-              `initial write not found for record ${recordsWrite.recordId}`,
-            );
-          }
-
-          const { message: initialWrite } = Messages.detachEncodedData(storedInitialWrite);
-          recordsWrite.initialWrite = initialWrite as RecordsQueryReplyEntry;
-        }
-      }
-    } catch (error) {
-      return messageReplyFromError(error, 500);
     }
 
     return {
@@ -258,14 +240,24 @@ export class RecordsQueryHandler implements MethodHandler {
     });
   }
 
-  private async queryRecordsWithVisibleControlFiltering(input: {
-    tenant: string;
-    recordsQuery: RecordsQuery;
-    requester: string | undefined;
-    filters: Filter[];
-    messageSort: MessageSort;
-    pagination?: { cursor?: PaginationCursor; limit?: number };
-  }): Promise<{ messages: RecordsQueryReplyEntry[], cursor?: PaginationCursor }> {
+  private async queryRecordsWithVisibleControlFiltering(
+    input: RecordsQueryProjectionInput
+  ): Promise<{ messages: RecordsQueryReplyEntry[], cursor?: PaginationCursor }> {
+    return queryRecordsWithInitialWriteProjection({
+      messageStore  : this.deps.messageStore,
+      tenant        : input.tenant,
+      operationName : 'RecordsQuery',
+      pagination    : input.pagination,
+      queryPage     : (pagination) => this.queryRecordsWithVisibleControlFilteringPage({
+        ...input,
+        pagination,
+      }),
+    });
+  }
+
+  private async queryRecordsWithVisibleControlFilteringPage(
+    input: RecordsQueryProjectionInput
+  ): Promise<{ messages: RecordsQueryReplyEntry[], cursor?: PaginationCursor }> {
     const {
       tenant, recordsQuery, requester, filters, messageSort, pagination
     } = input;
