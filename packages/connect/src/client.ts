@@ -198,6 +198,11 @@ export class ConnectClient {
       response,
     });
 
+    // Best-effort completion signal so the wallet side can flip its pairing
+    // screen to a confirmed "connected" state. Fire-and-forget: it must
+    // never delay or fail the handshake result.
+    void this._transport.confirmComplete?.().catch((): undefined => undefined);
+
     return {
       delegatePortableDid,
       delegateGrants     : response.delegateGrants,

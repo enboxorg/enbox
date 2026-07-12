@@ -12,7 +12,9 @@
  *    value-checks the `apv` origin binding against this wallet's origin.
  * 3. After the consent ceremony, the wallet posts the sealed response JWE via
  *    `sendResponse()` — or the deny token via `deny()` — back to the opener,
- *    again with a pinned `targetOrigin`.
+ *    again with a pinned `targetOrigin`. `sendResponseAwaitingAck()` does the
+ *    same but stays alive briefly for the dapp's completion ack, so the
+ *    wallet can show a confirmed "connected" state before closing itself.
  *
  * The dapp origin is never assumed: it is taken from an explicit option or
  * derived from `document.referrer`, and `create()` fails when neither is
@@ -28,6 +30,7 @@ import { X25519 } from '@enbox/crypto';
 import { CONNECT_DENIED_TOKEN, ConnectProvider } from '@enbox/connect';
 
 import {
+  DWEB_CONNECT_ACK_MESSAGE_TYPE,
   DWEB_CONNECT_LOADED_MESSAGE_TYPE,
   DWEB_CONNECT_REQUEST_MESSAGE_TYPE,
   DWEB_CONNECT_RESPONSE_MESSAGE_TYPE,
@@ -36,6 +39,9 @@ import {
 
 /** Default budget for awaiting the dapp's sealed request. */
 const DEFAULT_REQUEST_TIMEOUT_MS = 300_000;
+
+/** Default budget for awaiting the dapp's completion ack after a response. */
+const DEFAULT_ACK_TIMEOUT_MS = 5_000;
 
 /** Options for creating a {@link WalletPostMessageTransport}. */
 export type WalletPostMessageTransportOptions = {
@@ -79,6 +85,7 @@ export class WalletPostMessageTransport {
   private _requestReceived = false;
   private _timeoutId?: ReturnType<typeof setTimeout>;
   private _messageListener?: (event: MessageEvent) => void;
+  private _resolveAck?: (acked: boolean) => void;
 
   private readonly _requestPromise: Promise<ConnectRequest>;
   private _resolveRequest?: (request: ConnectRequest) => void;
@@ -177,6 +184,43 @@ export class WalletPostMessageTransport {
     this.close();
   }
 
+  /**
+   * Posts the sealed response JWE back to the dapp like
+   * {@link sendResponse}, then keeps the channel open briefly for the dapp's
+   * completion ack — the signal that it opened the response successfully —
+   * before closing the transport.
+   *
+   * Lets the wallet's connect page show a confirmed "connected" state (and
+   * close itself with confidence) instead of asking the user to dismiss the
+   * screen blind. Dapps predating the ack simply never send one, so the
+   * wallet should keep a manual dismiss affordance for the `false` case.
+   *
+   * @param idToken - The sealed response JWE.
+   * @param options - The awaiting options.
+   * @param options.timeoutMs - Ack budget in milliseconds; defaults to 5 s.
+   * @returns Whether the dapp acknowledged completion within the budget.
+   */
+  public async sendResponseAwaitingAck(idToken: string, options: { timeoutMs?: number } = {}): Promise<boolean> {
+    const ackPromise = new Promise<boolean>((resolve): void => {
+      this._resolveAck = resolve;
+    });
+
+    this._dappWindow.postMessage({
+      type    : DWEB_CONNECT_RESPONSE_MESSAGE_TYPE,
+      payload : idToken,
+    }, this._dappOrigin);
+
+    const ackTimeoutId = setTimeout((): void => {
+      this._resolveAck?.(false);
+    }, options.timeoutMs ?? DEFAULT_ACK_TIMEOUT_MS);
+
+    const acked = await ackPromise;
+    clearTimeout(ackTimeoutId);
+    this._resolveAck = undefined;
+    this.close();
+    return acked;
+  }
+
   /** Posts the deny token back to the dapp — the user rejected the request. */
   public deny(): void {
     this.sendResponse(CONNECT_DENIED_TOKEN);
@@ -194,6 +238,11 @@ export class WalletPostMessageTransport {
   private onMessage(event: MessageEvent): void {
     const message = getTrustedMessage(event, this._dappOrigin, this._dappWindow);
     if (message === undefined) { return; }
+
+    if (message.type === DWEB_CONNECT_ACK_MESSAGE_TYPE) {
+      this._resolveAck?.(true);
+      return;
+    }
 
     if (message.type !== DWEB_CONNECT_REQUEST_MESSAGE_TYPE || this._requestReceived) { return; }
     this._requestReceived = true;

@@ -33,6 +33,9 @@ const TEST_REVOCATIONS = [
 class LoopbackTransport implements ConnectTransport {
   public readonly requiresPin: boolean;
 
+  /** Number of best-effort completion signals received from the client. */
+  public confirmCompleteCalls = 0;
+
   private readonly _profileFactory: () => Promise<Omit<ConnectRequestProfile, 'state'>>;
   private readonly _walletHandler: (jwe: string) => Promise<string>;
   private _responsePromise?: Promise<string>;
@@ -61,6 +64,10 @@ class LoopbackTransport implements ConnectTransport {
       throw new Error('LoopbackTransport: no request delivered.');
     }
     return await this._responsePromise;
+  }
+
+  public async confirmComplete(): Promise<void> {
+    this.confirmCompleteCalls += 1;
   }
 }
 
@@ -149,6 +156,9 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
     expect(result!.delegatePortableDid.uri).toBe(mintedDelegateDid!);
     expect(result!.delegateGrants).toEqual(TEST_GRANTS);
     expect(result!.sessionRevocations).toEqual(TEST_REVOCATIONS);
+
+    // The best-effort completion signal fired exactly once after the open.
+    expect(transport.confirmCompleteCalls).toBe(1);
   });
 
   it('should complete a popup-profile handshake without a PIN', async () => {
@@ -240,6 +250,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
     const result = await client.connect({ appName: 'Denied App', permissionRequests: [] });
 
     expect(result).toBeUndefined();
+    expect(transport.confirmCompleteCalls).toBe(0);
   });
 
   it('should fail closed end-to-end when the user enters the wrong PIN', async () => {
@@ -258,6 +269,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
     const client = new ConnectClient({ transport, requestPin: async (): Promise<string> => '000000' });
 
     await expect(client.connect({ appName: 'Wrong PIN App', permissionRequests: [] })).rejects.toThrow();
+    expect(transport.confirmCompleteCalls).toBe(0);
   });
 
   it('should reject when the transport requires a PIN but no requestPin callback exists', async () => {

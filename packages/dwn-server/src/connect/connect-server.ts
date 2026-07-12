@@ -72,8 +72,10 @@ export class ConnectServer {
     const requestId = CryptoUtils.randomUuid();
     const request_uri = `${this.baseUrl}/connect/authorize/${requestId}.jwt`;
 
-    // Store the Request Object.
-    this.cache.insert(`request:${requestId}`, request, ConnectServer.ttlInSeconds);
+    // Store the Request Object. Awaited so the returned `request_uri` is a
+    // durability barrier: the wallet may dereference the pointer the moment
+    // the PAR response lands, and an in-flight insert would read as 404.
+    await this.cache.insert(`request:${requestId}`, request, ConnectServer.ttlInSeconds);
 
     return {
       request_uri,
@@ -92,14 +94,16 @@ export class ConnectServer {
     // where the object does not exist in this call but becomes available immediately after,
     // we would end up deleting it before it is successfully retrieved.
     if (request !== undefined) {
-      this.cache.delete(`request:${requestId}`);
+      // Awaited so the single-use guarantee holds: an unawaited delete
+      // leaves a window where a concurrent fetch reads the pointer twice.
+      await this.cache.delete(`request:${requestId}`);
 
       // Record that the wallet has claimed this request so the requesting
       // app can show live progress ("phone connected") while it waits for
       // the approval. The marker is observational only — it is keyed by the
       // request ID the app already holds, reveals nothing about the request
       // (which is deleted above), and is read non-destructively.
-      this.cache.insert(`claimed:${requestId}`, { claimedAt: Date.now() }, ConnectServer.ttlInSeconds);
+      await this.cache.insert(`claimed:${requestId}`, { claimedAt: Date.now() }, ConnectServer.ttlInSeconds);
     }
 
     return request;
@@ -118,7 +122,29 @@ export class ConnectServer {
    * Sets the Connect Response object.
    */
   public async setConnectResponse(state: string, response: ConnectResponse): Promise<any> {
-    this.cache.insert(`response:${state}`, response, ConnectServer.ttlInSeconds);
+    // Awaited so the callback's 201 means the app's next token poll can see
+    // the response.
+    await this.cache.insert(`response:${state}`, response, ConnectServer.ttlInSeconds);
+  }
+
+  /**
+   * Records the requesting app's completion signal for `state`: it fetched
+   * and successfully opened the wallet's response. Observational only — the
+   * marker is keyed by the same opaque `state` correlator as the token
+   * route, reveals nothing about the session (whose objects are already
+   * consumed by this point), and is read non-destructively so the wallet can
+   * flip its pairing screen to a confirmed "connected" state.
+   */
+  public async setConnectComplete(state: string): Promise<void> {
+    await this.cache.insert(`complete:${state}`, { completedAt: Date.now() }, ConnectServer.ttlInSeconds);
+  }
+
+  /**
+   * Whether the requesting app has signalled completion for `state`.
+   * Non-consuming: wallets poll this after posting their response.
+   */
+  public async isConnectComplete(state: string): Promise<boolean> {
+    return (await this.cache.get(`complete:${state}`)) !== undefined;
   }
 
   /**
@@ -132,7 +158,7 @@ export class ConnectServer {
     // where the object does not exist in this call but becomes available immediately after,
     // we would end up deleting it before it is successfully retrieved.
     if (response !== undefined) {
-      this.cache.delete(`response:${state}`);
+      await this.cache.delete(`response:${state}`);
     }
 
     return response;
