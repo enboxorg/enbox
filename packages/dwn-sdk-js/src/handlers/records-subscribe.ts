@@ -9,6 +9,7 @@ import { DateSort } from '../types/records-types.js';
 import { EncryptionControl } from '../core/encryption-control.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
+import { Messages } from '../utils/messages.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
@@ -147,13 +148,20 @@ export class RecordsSubscribeHandler implements MethodHandler {
       // attach initialWrite for non-initial writes
       for (const entry of entries) {
         if (!await RecordsWrite.isInitialWrite(entry)) {
-          const initialWriteResult = await this.deps.messageStore.query(
+          const storedInitialWrite = await RecordsWrite.fetchInitialRecordsWriteMessage(
+            this.deps.messageStore,
             tenant,
-            [{ recordId: entry.recordId, isLatestBaseState: false, method: DwnMethodName.Write }]
+            entry.recordId,
           );
-          const initialWrite = initialWriteResult.messages[0] as RecordsQueryReplyEntry;
-          delete initialWrite.encodedData;
-          entry.initialWrite = initialWrite;
+          if (storedInitialWrite === undefined) {
+            throw new DwnError(
+              DwnErrorCode.RecordsWriteGetInitialWriteNotFound,
+              `initial write not found for record ${entry.recordId}`,
+            );
+          }
+
+          const { message: initialWrite } = Messages.detachEncodedData(storedInitialWrite);
+          entry.initialWrite = initialWrite as RecordsQueryReplyEntry;
         }
       }
     } catch (error) {

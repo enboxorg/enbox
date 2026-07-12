@@ -9,6 +9,7 @@ import { EncryptionControl } from '../core/encryption-control.js';
 import { isRecordLimitOccupant } from '../utils/record-limit-occupancy.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
+import { Messages } from '../utils/messages.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
@@ -114,15 +115,27 @@ export class RecordsReadHandler implements MethodHandler {
       }
     };
 
-    // attach initial write if latest RecordsWrite is not initial write
-    if (!await RecordsWrite.isInitialWrite(matchedRecordsWrite)) {
-      const initialWriteQueryResult = await this.deps.messageStore.query(
-        tenant,
-        [{ recordId: matchedRecordsWrite.recordId, isLatestBaseState: false, method: DwnMethodName.Write }]
-      );
-      const initialWrite = initialWriteQueryResult.messages[0] as RecordsQueryReplyEntry;
-      delete initialWrite.encodedData; // just defensive because technically should already be deleted when a later RecordsWrite is written
-      recordsReadReply.entry!.initialWrite = initialWrite;
+    try {
+      // Attach the initial write by its stable entry ID. Looking it up through
+      // `isLatestBaseState:false` races with the update that demotes it.
+      if (!await RecordsWrite.isInitialWrite(matchedRecordsWrite)) {
+        const storedInitialWrite = await RecordsWrite.fetchInitialRecordsWriteMessage(
+          this.deps.messageStore,
+          tenant,
+          matchedRecordsWrite.recordId,
+        );
+        if (storedInitialWrite === undefined) {
+          throw new DwnError(
+            DwnErrorCode.RecordsWriteGetInitialWriteNotFound,
+            `initial write not found for record ${matchedRecordsWrite.recordId}`,
+          );
+        }
+
+        const { message: initialWrite } = Messages.detachEncodedData(storedInitialWrite);
+        recordsReadReply.entry!.initialWrite = initialWrite as RecordsQueryReplyEntry;
+      }
+    } catch (error) {
+      return messageReplyFromError(error, 500);
     }
 
     return recordsReadReply;

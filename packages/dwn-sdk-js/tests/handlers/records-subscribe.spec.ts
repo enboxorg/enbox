@@ -220,6 +220,7 @@ export function testRecordsSubscribeHandler(): void {
           author : alice,
           filter : { schema: 'http://update-test' },
         });
+        const querySpy = sinon.spy(messageStore, 'query');
         const subReply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler: () => {} });
         expect(subReply.status.code).toBe(200);
         expect(subReply.entries).toBeDefined();
@@ -229,6 +230,39 @@ export function testRecordsSubscribeHandler(): void {
         expect(subReply.entries![0].recordId).toBe(write.message.recordId);
         expect(subReply.entries![0].initialWrite).toBeDefined();
         expect(subReply.entries![0].initialWrite!.descriptor.dateCreated).toBe(write.message.descriptor.dateCreated);
+        expect(querySpy.getCalls().some((call): boolean =>
+          (call.args[1] as Array<{ entryId?: string }>).some((filter): boolean => filter.entryId === write.message.recordId)
+        )).toBe(true);
+      });
+
+      it('should return a controlled error if an updated record has no initial write', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        const write = await TestDataGenerator.generateRecordsWrite({
+          author : alice,
+          schema : 'http://missing-initial-write',
+        });
+        const writeReply = await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream });
+        expect(writeReply.status.code).toBe(202);
+
+        const update = await TestDataGenerator.generateFromRecordsWrite({
+          author        : alice,
+          existingWrite : write.recordsWrite,
+        });
+        const updateReply = await dwn.processMessage(alice.did, update.message, { dataStream: update.dataStream });
+        expect(updateReply.status.code).toBe(202);
+
+        await messageStore.delete(alice.did, await Message.getCid(write.message));
+
+        const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
+          author : alice,
+          filter : { schema: 'http://missing-initial-write' },
+        });
+        const subReply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler: () => {} });
+
+        expect(subReply.status.code).toBe(500);
+        expect(subReply.status.detail).toContain(DwnErrorCode.RecordsWriteGetInitialWriteNotFound);
       });
 
       it('should still receive live events after initial entries', async () => {

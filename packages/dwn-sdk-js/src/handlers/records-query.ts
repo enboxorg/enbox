@@ -8,6 +8,7 @@ import { DateSort } from '../types/records-types.js';
 import { EncryptionControl } from '../core/encryption-control.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
+import { Messages } from '../utils/messages.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
 import { queryRecordsWithRecordLimitOccupancy } from '../utils/record-limit-occupancy.js';
 import { Records } from '../utils/records.js';
@@ -15,6 +16,7 @@ import { RecordsGrantAuthorization } from '../core/records-grant-authorization.j
 import { RecordsQuery } from '../interfaces/records-query.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
 import { SortDirection } from '../types/query-types.js';
+import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
 export class RecordsQueryHandler implements MethodHandler {
@@ -63,17 +65,29 @@ export class RecordsQueryHandler implements MethodHandler {
       }
     }
 
-    // attach initial write if returned RecordsWrite is not initial write
-    for (const recordsWrite of recordsWrites) {
-      if (!await RecordsWrite.isInitialWrite(recordsWrite)) {
-        const initialWriteQueryResult = await this.deps.messageStore.query(
-          tenant,
-          [{ recordId: recordsWrite.recordId, isLatestBaseState: false, method: DwnMethodName.Write }]
-        );
-        const initialWrite = initialWriteQueryResult.messages[0] as RecordsQueryReplyEntry;
-        delete initialWrite.encodedData; // defensive measure but technically optional because we do this when an update RecordsWrite takes place
-        recordsWrite.initialWrite = initialWrite;
+    try {
+      // Attach the initial write by its stable entry ID. Looking it up through
+      // `isLatestBaseState:false` races with the update that demotes it.
+      for (const recordsWrite of recordsWrites) {
+        if (!await RecordsWrite.isInitialWrite(recordsWrite)) {
+          const storedInitialWrite = await RecordsWrite.fetchInitialRecordsWriteMessage(
+            this.deps.messageStore,
+            tenant,
+            recordsWrite.recordId,
+          );
+          if (storedInitialWrite === undefined) {
+            throw new DwnError(
+              DwnErrorCode.RecordsWriteGetInitialWriteNotFound,
+              `initial write not found for record ${recordsWrite.recordId}`,
+            );
+          }
+
+          const { message: initialWrite } = Messages.detachEncodedData(storedInitialWrite);
+          recordsWrite.initialWrite = initialWrite as RecordsQueryReplyEntry;
+        }
       }
+    } catch (error) {
+      return messageReplyFromError(error, 500);
     }
 
     return {

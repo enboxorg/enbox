@@ -1,5 +1,6 @@
 import type { AudienceControlWrite } from '../utils/encryption-control-test-utils.js';
 import type { DidResolver } from '@enbox/dids';
+import type { Filter } from '../../src/types/query-types.js';
 import type { DataEncodedRecordsWriteMessage, DataStore, EventLog, GenericMessage, MessageStore, Persona, ProtocolDefinition, ProtocolRuleSet, RecordsWriteMessage, ResumableTaskStore } from '../../src/index.js';
 import type { RecordsQueryReply, RecordsQueryReplyEntry, RecordsWriteDescriptor } from '../../src/types/records-types.js';
 
@@ -860,6 +861,7 @@ export function testRecordsQueryHandler(): void {
         expect(write2Reply.status.code).toBe(202);
 
         // make sure result returned now has `initialWrite` property
+        const querySpy = sinon.spy(messageStore, 'query');
         const messageData = await TestDataGenerator.generateRecordsQuery({ author: alice, filter: { recordId: write.message.recordId } });
         const reply = await dwn.processMessage(alice.did, messageData.message);
 
@@ -867,7 +869,37 @@ export function testRecordsQueryHandler(): void {
         expect(reply.entries).toHaveLength(1);
         expect(reply.entries![0].initialWrite).toBeDefined();
         expect(reply.entries![0].initialWrite?.recordId).toBe(write.message.recordId);
+        expect(querySpy.getCalls().some((call): boolean =>
+          (call.args[1] as Filter[]).some((filter): boolean => filter.entryId === write.message.recordId)
+        )).toBe(true);
+      });
 
+      it('should return a controlled error if an updated record has no initial write', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        const write = await TestDataGenerator.generateRecordsWrite({ author: alice, published: false });
+
+        const writeReply = await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream });
+        expect(writeReply.status.code).toBe(202);
+
+        const update = await RecordsWrite.createFrom({
+          recordsWriteMessage : write.message,
+          published           : true,
+          signer              : Jws.createSigner(alice),
+        });
+        const updateReply = await dwn.processMessage(alice.did, update.message);
+        expect(updateReply.status.code).toBe(202);
+
+        await messageStore.delete(alice.did, await Message.getCid(write.message));
+
+        const query = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : { recordId: write.message.recordId },
+        });
+        const reply = await dwn.processMessage(alice.did, query.message);
+
+        expect(reply.status.code).toBe(500);
+        expect(reply.status.detail).toContain(DwnErrorCode.RecordsWriteGetInitialWriteNotFound);
       });
 
       it('should be able to query by attester', async () => {
