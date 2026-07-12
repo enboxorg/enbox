@@ -1,5 +1,19 @@
 # @enbox/browser
 
+## 0.3.49
+
+### Patch Changes
+
+- [#1261](https://github.com/enboxorg/enbox/pull/1261) [`74f1e9b`](https://github.com/enboxorg/enbox/commit/74f1e9ba2fe6fccdbbc7990e9b830dd94f067541) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat(browser): dedupe the expanded wallet grid, unify tile sizing, cap grid height; add Taffy + Astoria
+
+  The connect modal's expanded panel now lists only the wallets not already
+  visible in the identity row, so a wallet is never shown twice and the More
+  tile's +N count equals the grid size exactly. Grid tiles share the identity
+  row's tile recipe on a matching four-column grid, the grid caps at three rows
+  and scrolls in place with a bottom-fade hint that clears at the end of the
+  list, and the search threshold applies to the grid subset. Taffy and Astoria
+  join the default wallet catalog.
+
 ## 0.3.48
 
 ### Patch Changes
