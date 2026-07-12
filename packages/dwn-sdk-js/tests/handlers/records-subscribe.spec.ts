@@ -238,7 +238,7 @@ export function testRecordsSubscribeHandler(): void {
         )).toBe(true);
       });
 
-      it('should omit an updated record with no initial write and backfill the page', async () => {
+      it('should omit an updated record with no initial write from the initial snapshot', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
@@ -260,6 +260,9 @@ export function testRecordsSubscribeHandler(): void {
         const updateReply = await dwn.processMessage(alice.did, update.message, { dataStream: update.dataStream });
         expect(updateReply.status.code).toBe(202);
 
+        // Simulate store corruption: leave the latest update indexed but remove its retained
+        // initial-write row (the write path commits both atomically, so only corruption or
+        // partial deletion can produce this state).
         await messageStore.delete(alice.did, await Message.getCid(write.message));
 
         const healthyWrite1 = await TestDataGenerator.generateRecordsWrite({
@@ -278,17 +281,15 @@ export function testRecordsSubscribeHandler(): void {
         expect((await dwn.processMessage(alice.did, healthyWrite2.message, { dataStream: healthyWrite2.dataStream })).status.code).toBe(202);
 
         const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
-          author     : alice,
-          filter     : { schema },
-          dateSort   : DateSort.CreatedAscending,
-          pagination : { limit: 2 },
+          author   : alice,
+          filter   : { schema },
+          dateSort : DateSort.CreatedAscending,
         });
         const warnSpy = sinon.stub(console, 'warn');
         const subReply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler: () => {} });
 
         expect(subReply.status.code).toBe(200);
         expect(subReply.subscription).toBeDefined();
-        expect(subReply.entries).toHaveLength(2);
         expect(subReply.entries!.map(entry => entry.recordId)).toEqual([
           healthyWrite1.message.recordId,
           healthyWrite2.message.recordId,
@@ -299,35 +300,6 @@ export function testRecordsSubscribeHandler(): void {
           String(call.args[0]).includes('RecordsSubscribe') &&
           String(call.args[0]).includes(write.message.recordId)
         )).toBe(true);
-
-        await subReply.subscription!.close();
-      });
-
-      it('should return one logical entry while an initial write and update are both marked latest', async () => {
-        const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
-
-        const schema = 'http://two-latest-writes-subscribe.example';
-        const initialWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, schema });
-        expect((await dwn.processMessage(
-          alice.did,
-          initialWrite.message,
-          { dataStream: initialWrite.dataStream },
-        )).status.code).toBe(202);
-
-        const update = await TestDataGenerator.generateFromRecordsWrite({
-          author        : alice,
-          existingWrite : initialWrite.recordsWrite,
-        });
-        await messageStore.put(alice.did, update.message, await update.recordsWrite.constructIndexes(true));
-
-        const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({ author: alice, filter: { schema } });
-        const subReply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler: () => {} });
-
-        expect(subReply.status.code).toBe(200);
-        expect(subReply.entries).toHaveLength(1);
-        expect(subReply.entries?.[0].descriptor.messageTimestamp).toBe(update.message.descriptor.messageTimestamp);
-        expect(subReply.entries?.[0].initialWrite?.recordId).toBe(initialWrite.message.recordId);
 
         await subReply.subscription!.close();
       });

@@ -4,13 +4,13 @@ import type { Filter, PaginationCursor } from '../types/query-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { RecordsQueryReplyEntry, RecordsSubscribeMessage, RecordsSubscribeReply } from '../types/records-types.js';
 
+import { attachInitialWrites } from '../utils/initial-write-attachment.js';
 import { authenticate } from '../core/auth.js';
 import { DateSort } from '../types/records-types.js';
 import { EncryptionControl } from '../core/encryption-control.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
-import { queryRecordsWithInitialWriteProjection } from '../utils/initial-write-projection.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { RecordsSubscribe } from '../interfaces/records-subscribe.js';
@@ -141,7 +141,14 @@ export class RecordsSubscribeHandler implements MethodHandler {
         messageSort,
         pagination,
       );
-      entries = queryResult.messages;
+
+      // attach the retained initial write to every entry that is not itself an initial write
+      entries = await attachInitialWrites({
+        messageStore  : this.deps.messageStore,
+        tenant,
+        recordsWrites : queryResult.messages,
+        operationName : 'RecordsSubscribe',
+      });
       paginationCursor = queryResult.cursor;
     } catch (error) {
       // if the query fails, close the subscription and return the error
@@ -539,30 +546,6 @@ export class RecordsSubscribeHandler implements MethodHandler {
   }
 
   private async queryRecordsWithVisibleControlFiltering(
-    tenant: string,
-    recordsSubscribe: RecordsSubscribe,
-    requester: string | undefined,
-    filters: Filter[],
-    messageSort: MessageSort,
-    pagination: { cursor?: PaginationCursor; limit?: number } | undefined,
-  ): Promise<{ messages: RecordsQueryReplyEntry[], cursor?: PaginationCursor }> {
-    return queryRecordsWithInitialWriteProjection({
-      messageStore  : this.deps.messageStore,
-      tenant,
-      operationName : 'RecordsSubscribe',
-      pagination,
-      queryPage     : (pagePagination) => this.queryRecordsWithVisibleControlFilteringPage(
-        tenant,
-        recordsSubscribe,
-        requester,
-        filters,
-        messageSort,
-        pagePagination,
-      ),
-    });
-  }
-
-  private async queryRecordsWithVisibleControlFilteringPage(
     tenant: string,
     recordsSubscribe: RecordsSubscribe,
     requester: string | undefined,

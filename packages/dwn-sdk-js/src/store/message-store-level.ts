@@ -13,7 +13,7 @@ import type {
 import type { Filter, KeyValues, PaginationCursor, QueryOptions } from '../types/query-types.js';
 import type { GenericMessage, MessageSort, Pagination } from '../types/message-types.js';
 import type { LevelDatabase, LevelWrapperBatchOperation } from './level-wrapper.js';
-import type { MessageStore, MessageStoreOptions, MessageStorePutResult } from '../types/message-store.js';
+import type { MessageStore, MessageStoreLatestStateTransition, MessageStoreOptions, MessageStorePutResult } from '../types/message-store.js';
 
 import * as block from 'multiformats/block';
 import * as cbor from '@ipld/dag-cbor';
@@ -432,6 +432,140 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
       await partitions.root.batch(operations);
 
       // Store-owned wake, post-commit, for `inserted` only.
+      this.publishWake(tenant, seq);
+
+      return {
+        status   : 'inserted' as const,
+        position : await this.buildToken(tenant, seq, messageCid),
+      };
+    });
+  }
+
+  async commitLatestState(
+    tenant: string,
+    transition: MessageStoreLatestStateTransition,
+    options?: MessageStoreOptions
+  ): Promise<MessageStorePutResult> {
+    options?.signal?.throwIfAborted();
+
+    const partitions = await executeUnlessAborted(this.partitions(), options?.signal);
+    const index = await executeUnlessAborted(this.index(), options?.signal);
+
+    const { message, indexes } = transition.put;
+    const encodedMessageBlock = await executeUnlessAborted(block.encode({ value: message, codec: cbor, hasher: sha256 }), options?.signal);
+    const messageCid = Cid.parseCid(await Message.getCid(message)).toString();
+
+    // Validate and encode the retained replacements before entering the write lock.
+    const retains: { messageCid: string, message: GenericMessage, indexes: KeyValues, blockBytes: Uint8Array }[] = [];
+    for (const retain of transition.retains ?? []) {
+      const computedMessageCid = Cid.parseCid(await Message.getCid(retain.message)).toString();
+      const normalizedMessageCid = Cid.parseCid(retain.messageCid).toString();
+      if (computedMessageCid !== normalizedMessageCid) {
+        throw new DwnError(
+          DwnErrorCode.MessageStoreUpdateMessageAndIndexesCidMismatch,
+          `replacement message CID ${computedMessageCid} does not match target CID ${normalizedMessageCid}`
+        );
+      }
+
+      const encodedRetainBlock = await executeUnlessAborted(block.encode({ value: retain.message, codec: cbor, hasher: sha256 }), options?.signal);
+      retains.push({
+        messageCid : normalizedMessageCid,
+        message    : retain.message,
+        indexes    : retain.indexes,
+        blockBytes : encodedRetainBlock.bytes,
+      });
+    }
+    const deleteCids = (transition.deletes ?? []).map((cidString): string => CID.parse(cidString).toString());
+
+    return this.withTenantWriteLock(tenant, async () => {
+      options?.signal?.throwIfAborted();
+
+      const tenantBlocks = await partitions.blocks.partition(tenant);
+      const tenantLog = await partitions.log.partition(tenant);
+      const tenantCidToSeq = await partitions.cidToSeq.partition(tenant);
+
+      const operations: LevelWrapperBatchOperation<string>[] = [];
+      const fingerprintFolds: { messageCid: string, scopes: string[] }[] = [];
+
+      // The new message insert. A duplicate inserts nothing but still applies the retains and
+      // deletes below, so replaying a transition heals one that previously stopped mid-plan.
+      const existingSeq = await tenantCidToSeq.get(messageCid, options);
+      const inserted = existingSeq === undefined;
+      let seq = 0n;
+      if (inserted) {
+        const head = await this.getHead(partitions, tenant);
+        seq = head + 1n;
+        const fingerprintScopes = Replication.computeFingerprintScopes(message, indexes);
+
+        const logEntry: LogEntryValue = {
+          seq: seq.toString(),
+          messageCid,
+          indexes,
+          fingerprintScopes,
+        };
+
+        operations.push(
+          tenantBlocks.createOperation({ type: 'put', key: messageCid, value: encodedMessageBlock.bytes }) as unknown as LevelWrapperBatchOperation<string>,
+          ...await index.createPutOperations(tenant, messageCid, indexes),
+          tenantLog.createOperation({ type: 'put', key: Replication.encodePositionKey(seq), value: JSON.stringify(logEntry) }),
+          tenantCidToSeq.createOperation({ type: 'put', key: messageCid, value: seq.toString() }),
+          partitions.heads.createOperation({ type: 'put', key: tenant, value: seq.toString() }),
+        );
+        fingerprintFolds.push({ messageCid, scopes: fingerprintScopes });
+      }
+
+      // Retained displaced writes: same-CID in-place replacement, exactly as `updateMessageAndIndexes`.
+      for (const retain of retains) {
+        const { entry, positionKey } = await this.getLogEntryForMutation(
+          partitions, tenant, retain.messageCid, DwnErrorCode.MessageStoreUpdateMessageAndIndexesMessageNotFound
+        );
+        Replication.assertFingerprintScopesUntouched(entry.fingerprintScopes, retain.message, retain.messageCid, retain.indexes);
+
+        const updatedEntry: LogEntryValue = { ...entry, indexes: retain.indexes };
+        operations.push(
+          tenantBlocks.createOperation({ type: 'put', key: retain.messageCid, value: retain.blockBytes }) as unknown as LevelWrapperBatchOperation<string>,
+          ...await index.createDeleteOperations(tenant, retain.messageCid),
+          ...await index.createPutOperations(tenant, retain.messageCid, retain.indexes),
+          tenantLog.createOperation({ type: 'put', key: positionKey, value: JSON.stringify(updatedEntry) }),
+        );
+      }
+
+      // Non-retained displaced rows: full removal, exactly as `delete`. Absent rows are no-ops.
+      for (const deleteCid of deleteCids) {
+        const seqString = await tenantCidToSeq.get(deleteCid, options);
+        if (seqString === undefined) {
+          continue;
+        }
+
+        const positionKey = Replication.encodePositionKey(BigInt(seqString));
+        const serializedEntry = await tenantLog.get(positionKey);
+        if (serializedEntry === undefined) {
+          throw new DwnError(
+            DwnErrorCode.MessageStoreDeleteLogEntryMissing,
+            `cid index for tenant ${tenant} points to missing log entry at seq ${seqString} (CID ${deleteCid})`
+          );
+        }
+
+        const entry = JSON.parse(serializedEntry) as LogEntryValue;
+        operations.push(
+          tenantBlocks.createOperation({ type: 'del', key: deleteCid }) as unknown as LevelWrapperBatchOperation<string>,
+          ...await index.createDeleteOperations(tenant, deleteCid),
+          tenantLog.createOperation({ type: 'del', key: positionKey }),
+          tenantCidToSeq.createOperation({ type: 'del', key: deleteCid }),
+        );
+        fingerprintFolds.push({ messageCid: deleteCid, scopes: entry.fingerprintScopes });
+      }
+
+      operations.push(...await this.createFingerprintFoldOperationsForMessages(partitions, tenant, fingerprintFolds));
+
+      if (operations.length > 0) {
+        await partitions.root.batch(operations);
+      }
+
+      if (!inserted) {
+        return { status: 'duplicate' as const };
+      }
+
       this.publishWake(tenant, seq);
 
       return {
@@ -907,12 +1041,33 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     messageCid: string,
     scopes: string[],
   ): Promise<LevelWrapperBatchOperation<string>[]> {
-    const contribution = await Replication.hashMessageCid(messageCid);
-    const tenantFingerprints = await partitions.fingerprints.partition(tenant);
+    return this.createFingerprintFoldOperationsForMessages(partitions, tenant, [{ messageCid, scopes }]);
+  }
 
+  /**
+   * Creates the batch operations that fold multiple messages' contributions into their fingerprint
+   * domains. Contributions targeting the same domain are XOR-combined before the single
+   * read-fold-write per domain — concatenating per-message fold operations into one batch would
+   * let the last write to a shared domain silently discard the earlier folds.
+   */
+  private async createFingerprintFoldOperationsForMessages(
+    partitions: StorePartitions,
+    tenant: string,
+    folds: { messageCid: string, scopes: string[] }[],
+  ): Promise<LevelWrapperBatchOperation<string>[]> {
+    const combinedContributionByKey = new Map<string, Uint8Array>();
+    for (const { messageCid, scopes } of folds) {
+      const contribution = await Replication.hashMessageCid(messageCid);
+      for (const scope of scopes) {
+        const key = MessageStoreLevel.fingerprintKey(scope);
+        const combined = combinedContributionByKey.get(key);
+        combinedContributionByKey.set(key, combined === undefined ? contribution : Replication.xorFingerprint(combined, contribution));
+      }
+    }
+
+    const tenantFingerprints = await partitions.fingerprints.partition(tenant);
     const operations: LevelWrapperBatchOperation<string>[] = [];
-    for (const scope of scopes) {
-      const key = MessageStoreLevel.fingerprintKey(scope);
+    for (const [key, contribution] of combinedContributionByKey) {
       const storedHex = await tenantFingerprints.get(key);
       const current = storedHex === undefined ? Replication.emptyFingerprint() : Replication.hexToFingerprint(storedHex);
       const folded = Replication.xorFingerprint(current, contribution);

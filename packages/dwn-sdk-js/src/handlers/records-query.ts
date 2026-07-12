@@ -3,13 +3,13 @@ import type { GenericMessage, MessageSort } from '../types/message-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { RecordsQueryMessage, RecordsQueryReply, RecordsQueryReplyEntry } from '../types/records-types.js';
 
+import { attachInitialWrites } from '../utils/initial-write-attachment.js';
 import { authenticate } from '../core/auth.js';
 import { DateSort } from '../types/records-types.js';
 import { EncryptionControl } from '../core/encryption-control.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
-import { queryRecordsWithInitialWriteProjection } from '../utils/initial-write-projection.js';
 import { queryRecordsWithRecordLimitOccupancy } from '../utils/record-limit-occupancy.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
@@ -72,9 +72,17 @@ export class RecordsQueryHandler implements MethodHandler {
       }
     }
 
+    // attach the retained initial write to every entry that is not itself an initial write
+    const completeRecordsWrites = await attachInitialWrites({
+      messageStore  : this.deps.messageStore,
+      tenant,
+      recordsWrites,
+      operationName : 'RecordsQuery',
+    });
+
     return {
       status  : { code: 200, detail: 'OK' },
-      entries : recordsWrites,
+      entries : completeRecordsWrites,
       cursor
     };
   }
@@ -241,21 +249,6 @@ export class RecordsQueryHandler implements MethodHandler {
   }
 
   private async queryRecordsWithVisibleControlFiltering(
-    input: RecordsQueryProjectionInput
-  ): Promise<{ messages: RecordsQueryReplyEntry[], cursor?: PaginationCursor }> {
-    return queryRecordsWithInitialWriteProjection({
-      messageStore  : this.deps.messageStore,
-      tenant        : input.tenant,
-      operationName : 'RecordsQuery',
-      pagination    : input.pagination,
-      queryPage     : (pagination) => this.queryRecordsWithVisibleControlFilteringPage({
-        ...input,
-        pagination,
-      }),
-    });
-  }
-
-  private async queryRecordsWithVisibleControlFilteringPage(
     input: RecordsQueryProjectionInput
   ): Promise<{ messages: RecordsQueryReplyEntry[], cursor?: PaginationCursor }> {
     const {

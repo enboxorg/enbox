@@ -1,17 +1,16 @@
 import type { Filter } from '../types/query-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
-import type { RecordsCountMessage, RecordsCountReply, RecordsQueryReplyEntry } from '../types/records-types.js';
+import type { RecordsCountMessage, RecordsCountReply } from '../types/records-types.js';
 
-import { attachInitialWritesAndFilterIncompleteRecords } from '../utils/initial-write-projection.js';
 import { authenticate } from '../core/auth.js';
 import { EncryptionControl } from '../core/encryption-control.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
-import { queryRecordsWithRecordLimitOccupancy } from '../utils/record-limit-occupancy.js';
 import { Records } from '../utils/records.js';
 import { RecordsCount } from '../interfaces/records-count.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
+import { countRecordsWithRecordLimitOccupancy, queryRecordsWithRecordLimitOccupancy } from '../utils/record-limit-occupancy.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
 export class RecordsCountHandler implements MethodHandler {
@@ -144,14 +143,33 @@ export class RecordsCountHandler implements MethodHandler {
   }
 
   private async countProjectedRecords(tenant: string, recordsCount: RecordsCount, filters: Filter[]): Promise<number> {
-    const projectedMessages = await this.queryProjectedRecords(tenant, recordsCount, filters);
-    const completeMessages = await attachInitialWritesAndFilterIncompleteRecords({
-      messageStore  : this.deps.messageStore,
+    const totalCount = await countRecordsWithRecordLimitOccupancy({
+      messageStore          : this.deps.messageStore,
+      validationStateReader : this.deps.validationStateReader,
       tenant,
-      recordsWrites : projectedMessages,
-      operationName : 'RecordsCount',
+      filters,
+      messageTimestamp      : recordsCount.message.descriptor.messageTimestamp,
     });
-    return completeMessages.length;
+
+    const audienceFilters = EncryptionControl.buildAudienceRecordFilters(filters);
+    if (audienceFilters.length === 0) {
+      return totalCount;
+    }
+
+    const storedAudienceCount = await this.deps.messageStore.count(tenant, audienceFilters);
+    if (storedAudienceCount === 0) {
+      return totalCount;
+    }
+
+    const { messages } = await this.deps.messageStore.query(tenant, audienceFilters);
+    const projectedAudienceMessages = await EncryptionControl.projectCurrentAudienceRecords({
+      messageStore         : this.deps.messageStore,
+      tenant,
+      recordsWriteMessages : messages.filter(Records.isRecordsWrite),
+      bypassFilters        : audienceFilters,
+    });
+
+    return totalCount - storedAudienceCount + projectedAudienceMessages.length;
   }
 
   private async countProjectedRecordsForRequester(
@@ -160,7 +178,30 @@ export class RecordsCountHandler implements MethodHandler {
     requester: string | undefined,
     filters: Filter[],
   ): Promise<number> {
-    const projectedMessages = await this.queryProjectedRecords(tenant, recordsCount, filters);
+    const controlFilters = Records.buildControlRecordsFilters(filters);
+    if (controlFilters.length === 0) {
+      return this.countProjectedRecords(tenant, recordsCount, filters);
+    }
+
+    const totalCount = await this.countProjectedRecords(tenant, recordsCount, filters);
+    const controlCount = await this.countProjectedRecords(tenant, recordsCount, controlFilters);
+    if (controlCount === 0) {
+      return totalCount;
+    }
+
+    const { messages } = await queryRecordsWithRecordLimitOccupancy({
+      messageStore          : this.deps.messageStore,
+      validationStateReader : this.deps.validationStateReader,
+      tenant,
+      filters               : controlFilters,
+      messageTimestamp      : recordsCount.message.descriptor.messageTimestamp,
+    });
+    const projectedMessages = await EncryptionControl.projectCurrentAudienceRecords({
+      messageStore         : this.deps.messageStore,
+      tenant,
+      recordsWriteMessages : messages,
+      bypassFilters        : controlFilters,
+    });
     const visibleMessages = await EncryptionControl.filterVisibleControlRecords({
       tenant,
       incomingMessage       : recordsCount.message,
@@ -168,33 +209,7 @@ export class RecordsCountHandler implements MethodHandler {
       recordsWriteMessages  : projectedMessages,
       validationStateReader : this.deps.validationStateReader,
     });
-    const completeVisibleMessages = await attachInitialWritesAndFilterIncompleteRecords({
-      messageStore  : this.deps.messageStore,
-      tenant,
-      recordsWrites : visibleMessages,
-      operationName : 'RecordsCount',
-    });
-    return completeVisibleMessages.length;
-  }
-
-  private async queryProjectedRecords(
-    tenant: string,
-    recordsCount: RecordsCount,
-    filters: Filter[],
-  ): Promise<RecordsQueryReplyEntry[]> {
-    const { messages } = await queryRecordsWithRecordLimitOccupancy({
-      messageStore          : this.deps.messageStore,
-      validationStateReader : this.deps.validationStateReader,
-      tenant,
-      filters,
-      messageTimestamp      : recordsCount.message.descriptor.messageTimestamp,
-    });
-    return EncryptionControl.projectCurrentAudienceRecords({
-      messageStore         : this.deps.messageStore,
-      tenant,
-      recordsWriteMessages : messages,
-      bypassFilters        : filters,
-    });
+    return totalCount - controlCount + visibleMessages.length;
   }
 
   private static buildPublishedRecordsFilter(recordsCount: RecordsCount): Filter {

@@ -24,6 +24,28 @@ export type MessageStorePutResult = {
   position?: ProgressToken;
 };
 
+/**
+ * A latest-state transition applied by {@link MessageStore.commitLatestState}: the insert of a new
+ * message together with the displacement of the messages it supersedes.
+ */
+export type MessageStoreLatestStateTransition = {
+  /**
+   * The new message to insert, with its insert-time indexes.
+   */
+  put: { message: GenericMessage; indexes: KeyValues };
+
+  /**
+   * Displaced writes retained as non-latest state: same-CID in-place replacements
+   * (same row, same log sequence) applied with the insert.
+   */
+  retains?: { messageCid: string; message: GenericMessage; indexes: KeyValues }[];
+
+  /**
+   * Message CIDs of displaced messages that are not retained, deleted with the insert.
+   */
+  deletes?: string[];
+};
+
 export interface MessageStore {
   /**
    * opens a connection to the underlying store
@@ -43,6 +65,21 @@ export interface MessageStore {
     tenant: string,
     message: GenericMessage,
     indexes: KeyValues,
+    options?: MessageStoreOptions
+  ): Promise<MessageStorePutResult>;
+
+  /**
+   * Atomically inserts a new message and displaces the messages it supersedes: retained writes are
+   * replaced in place with their demoted state, and the remaining displaced rows are deleted, all
+   * in one commit. Readers can never observe an intermediate state where both the new message and
+   * a displaced message carry latest-state indexes.
+   *
+   * When the new message already exists, returns `duplicate` and still applies the retains and
+   * deletes, so replaying a transition heals one that was only partially planned before a crash.
+   */
+  commitLatestState(
+    tenant: string,
+    transition: MessageStoreLatestStateTransition,
     options?: MessageStoreOptions
   ): Promise<MessageStorePutResult>;
 

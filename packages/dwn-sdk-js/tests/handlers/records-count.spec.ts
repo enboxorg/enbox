@@ -11,7 +11,6 @@ import { Encoder } from '../../src/utils/encoder.js';
 import { EncryptionControlDeliveryRecipientAuthority } from '../../src/types/encryption-types.js';
 import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
 import { Jws } from '../../src/utils/jws.js';
-import { Message } from '../../src/core/message.js';
 import { PermissionsProtocol } from '../../src/protocols/permissions.js';
 import { RecordsCount } from '../../src/interfaces/records-count.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
@@ -102,69 +101,7 @@ export function testRecordsCountHandler(): void {
         expect(reply.count).toBe(3);
       });
 
-      it('should omit an updated record with no initial write from Count just as Query does', async () => {
-        const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
-
-        const schema = 'http://missing-initial-write-count.example';
-        const healthyWrite1 = await TestDataGenerator.generateRecordsWrite({ author: alice, schema });
-        expect((await dwn.processMessage(alice.did, healthyWrite1.message, { dataStream: healthyWrite1.dataStream })).status.code).toBe(202);
-
-        const incompleteWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, schema });
-        expect((await dwn.processMessage(alice.did, incompleteWrite.message, { dataStream: incompleteWrite.dataStream })).status.code).toBe(202);
-        const incompleteUpdate = await TestDataGenerator.generateFromRecordsWrite({
-          author        : alice,
-          existingWrite : incompleteWrite.recordsWrite,
-        });
-        expect((await dwn.processMessage(alice.did, incompleteUpdate.message, { dataStream: incompleteUpdate.dataStream })).status.code).toBe(202);
-        await messageStore.delete(alice.did, await Message.getCid(incompleteWrite.message));
-
-        const healthyWrite2 = await TestDataGenerator.generateRecordsWrite({ author: alice, schema });
-        expect((await dwn.processMessage(alice.did, healthyWrite2.message, { dataStream: healthyWrite2.dataStream })).status.code).toBe(202);
-
-        const warnSpy = sinon.stub(console, 'warn');
-        const count = await TestDataGenerator.generateRecordsCount({ author: alice, filter: { schema } });
-        const countReply = await dwn.processMessage(alice.did, count.message);
-        const query = await TestDataGenerator.generateRecordsQuery({ author: alice, filter: { schema } });
-        const queryReply = await dwn.processMessage(alice.did, query.message);
-
-        expect(countReply.status.code).toBe(200);
-        expect(queryReply.status.code).toBe(200);
-        expect(queryReply.entries!.map(entry => entry.recordId).sort()).toEqual([
-          healthyWrite1.message.recordId,
-          healthyWrite2.message.recordId,
-        ].sort());
-        expect(countReply.count).toBe(queryReply.entries!.length);
-        expect(countReply.count).toBe(2);
-        expect(warnSpy.getCalls().some(call =>
-          String(call.args[0]).includes(DwnErrorCode.RecordsWriteGetInitialWriteNotFound) &&
-          String(call.args[0]).includes('RecordsCount') &&
-          String(call.args[0]).includes(incompleteWrite.message.recordId)
-        )).toBe(true);
-      });
-
-      it('should count one logical record while its initial write and update are both marked latest', async () => {
-        const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
-
-        const schema = 'http://two-latest-writes-count.example';
-        const initialWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, schema });
-        expect((await dwn.processMessage(alice.did, initialWrite.message, { dataStream: initialWrite.dataStream })).status.code).toBe(202);
-
-        const update = await TestDataGenerator.generateFromRecordsWrite({
-          author        : alice,
-          existingWrite : initialWrite.recordsWrite,
-        });
-        await messageStore.put(alice.did, update.message, await update.recordsWrite.constructIndexes(true));
-
-        const count = await TestDataGenerator.generateRecordsCount({ author: alice, filter: { schema } });
-        const reply = await dwn.processMessage(alice.did, count.message);
-
-        expect(reply.status.code).toBe(200);
-        expect(reply.count).toBe(1);
-      });
-
-      it('should keep broad protocol counts correct when no audience records exist', async () => {
+      it('should keep broad protocol counts on the indexed count path when no audience records exist', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const protocolDefinition: ProtocolDefinition = {
           protocol  : 'http://encryption-control-count-indexed-broad.xyz',
@@ -193,6 +130,7 @@ export function testRecordsCountHandler(): void {
         });
         expect((await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream })).status.code).toBe(202);
 
+        const querySpy = sinon.spy(messageStore, 'query');
         const count = await RecordsCount.create({
           filter : { protocol: protocolDefinition.protocol },
           signer : Jws.createSigner(alice),
@@ -201,6 +139,7 @@ export function testRecordsCountHandler(): void {
 
         expect(reply.status.code).toBe(200);
         expect(reply.count).toBe(1);
+        expect(querySpy.called).toBe(false);
       });
 
       it('should allow anonymous count of published records', async () => {
