@@ -255,6 +255,36 @@ describe('DWeb Connect popup flow (kernel loopback)', () => {
     });
   });
 
+  // ── Popup window placement ──────────────────────────────────
+
+  describe('popup window placement', () => {
+    it('should centre the popup over the opener window', async () => {
+      const { flow } = await startDappFlow();
+
+      const features = windowOpenSpy.mock.calls[0][2] as string;
+      expect(features).toContain('width=500');
+      expect(features).toContain('height=700');
+
+      // Placement mirrors the implementation's inputs: opener metrics with
+      // a screen fallback. Only a host reporting neither omits left/top.
+      const openerWidth = window.outerWidth > 0 ? window.outerWidth : (window.screen?.availWidth ?? 0);
+      const openerHeight = window.outerHeight > 0 ? window.outerHeight : (window.screen?.availHeight ?? 0);
+      if (openerWidth > 0 && openerHeight > 0) {
+        const left = Math.max(0, Math.round((window.screenX ?? 0) + (openerWidth - 500) / 2));
+        const top = Math.max(0, Math.round((window.screenY ?? 0) + (openerHeight - 700) / 2));
+        expect(features).toContain(`left=${left}`);
+        expect(features).toContain(`top=${top}`);
+      } else {
+        expect(features).not.toContain('left=');
+      }
+
+      // Drive the handshake to completion so no timers or listeners leak.
+      const walletTransport = await createWalletTransport();
+      await approveRequest(walletTransport);
+      await flow;
+    });
+  });
+
   // ── Popup open timing (regression) ──────────────────────────
 
   describe('popup open timing', () => {

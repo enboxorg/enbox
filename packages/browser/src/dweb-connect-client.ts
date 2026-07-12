@@ -55,8 +55,33 @@ const CLOSED_RESPONSE_GRACE_MS = 1_500;
 /** Window name given to the wallet popup. */
 const POPUP_WINDOW_NAME = 'enbox-dweb-connect';
 
-/** Window features given to the wallet popup. */
-const POPUP_WINDOW_FEATURES = 'width=500,height=700,menubar=no,toolbar=no,location=no,status=no';
+/** Outer size of the wallet popup window. */
+const POPUP_WIDTH = 500;
+const POPUP_HEIGHT = 700;
+
+/**
+ * Builds the wallet popup's window features, centring it over the opener
+ * window — without `left`/`top` browsers park the popup wherever they like
+ * (usually offset into a corner). Falls back to centring on the screen when
+ * the opener's metrics are unavailable, and lets the browser clamp
+ * off-screen coordinates. Mobile browsers ignore the features entirely and
+ * open a tab.
+ */
+function popupWindowFeatures(): string {
+  const base = `width=${POPUP_WIDTH},height=${POPUP_HEIGHT},menubar=no,toolbar=no,location=no,status=no`;
+
+  // `screenX`/`outerWidth` describe the opener window; `screen.avail*`
+  // describe its monitor — so the popup lands on the same display.
+  const openerWidth = window.outerWidth > 0 ? window.outerWidth : (window.screen?.availWidth ?? 0);
+  const openerHeight = window.outerHeight > 0 ? window.outerHeight : (window.screen?.availHeight ?? 0);
+  if (openerWidth === 0 || openerHeight === 0) {
+    return base;
+  }
+
+  const left = Math.max(0, Math.round((window.screenX ?? 0) + (openerWidth - POPUP_WIDTH) / 2));
+  const top = Math.max(0, Math.round((window.screenY ?? 0) + (openerHeight - POPUP_HEIGHT) / 2));
+  return `${base},left=${left},top=${top}`;
+}
 
 /** Guards against calling browser-only entry points outside a browser. */
 function assertBrowserEnvironment(): void {
@@ -144,7 +169,7 @@ export class PopupClientTransport implements ConnectTransport {
     // the stack has yielded to a prior `await`, so opening it here — instead of
     // inside the awaited `requestProfile()` — is what keeps the flow usable.
     const popupUrl = new URL(DWEB_CONNECT_PATH, options.walletUrl).toString();
-    const popup = window.open(popupUrl, POPUP_WINDOW_NAME, POPUP_WINDOW_FEATURES);
+    const popup = window.open(popupUrl, POPUP_WINDOW_NAME, popupWindowFeatures());
     if (!popup) {
       throw new Error('[@enbox/browser] Popup blocked. Allow popups for this site to connect to a wallet.');
     }
