@@ -1,5 +1,13 @@
 # @enbox/auth
 
+## 0.6.67
+
+### Patch Changes
+
+- Updated dependencies [[`fbbad6f`](https://github.com/enboxorg/enbox/commit/fbbad6f735e4cebba3671fe42b989c381b553919)]:
+  - @enbox/connect@0.1.3
+  - @enbox/agent@0.8.21
+
 ## 0.6.66
 
 ### Patch Changes
