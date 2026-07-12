@@ -128,6 +128,9 @@ export async function fetchInitialRecordsWriteMessage(
   tenant: string,
   recordId: string
 ): Promise<RecordsWriteMessage | undefined> {
+  // `entryId === recordId` identifies the initial write. Do not also filter on
+  // `isLatestBaseState:false`: that mutable index is updated after a newer
+  // write is inserted, so it can still be `true` during the update transition.
   const query = { entryId: recordId };
   const { messages } = await messageStore.query(tenant, [query]);
 
