@@ -44,6 +44,15 @@ export type MessageStoreLatestStateTransition = {
    * Message CIDs of displaced messages that are not retained, deleted with the insert.
    */
   deletes?: string[];
+
+  /**
+   * Conflict guard evaluated inside the commit's lock/transaction: the store re-queries `filter`
+   * and rejects the whole transition with `MessageStoreCommitLatestStateConflict` when any
+   * returned message CID is not in `expectedMessageCids` (the put message's CID is always
+   * implicitly expected). This detects a plan built from state a concurrent commit has since
+   * changed; the caller re-reads, re-validates, and re-plans on conflict.
+   */
+  guard?: { filter: Filter; expectedMessageCids: string[] };
 };
 
 export interface MessageStore {
@@ -71,11 +80,16 @@ export interface MessageStore {
   /**
    * Atomically inserts a new message and displaces the messages it supersedes: retained writes are
    * replaced in place with their demoted state, and the remaining displaced rows are deleted, all
-   * in one commit. Readers can never observe an intermediate state where both the new message and
-   * a displaced message carry latest-state indexes.
+   * in one commit. Within one store process, readers can never observe an intermediate state where
+   * both the new message and a displaced message carry latest-state indexes.
+   *
+   * When the transition carries a `guard`, the store validates inside its lock/transaction that
+   * the guarded scope contains only the messages the plan accounts for, and rejects the whole
+   * transition with `MessageStoreCommitLatestStateConflict` otherwise — the caller re-reads,
+   * re-validates, and re-plans.
    *
    * When the new message already exists, returns `duplicate` and still applies the retains and
-   * deletes, so replaying a transition heals one that was only partially planned before a crash.
+   * deletes, so replaying a transition heals one that was only partially applied before a crash.
    */
   commitLatestState(
     tenant: string,

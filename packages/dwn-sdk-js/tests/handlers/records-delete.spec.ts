@@ -4,6 +4,7 @@ import { ResumableTaskManager } from '../../src/core/resumable-task-manager.js';
 import type {
   DataStore,
   MessageStore,
+  MessageStorePutResult,
   ProtocolDefinition,
   ProtocolRuleSet,
   RecordsDeleteMessage,
@@ -203,6 +204,67 @@ export function testRecordsDeleteHandler(): void {
 
         const bobDataFetched = await DataStream.toBytes(bobRead1Reply.entry!.data!);
         expect(ArrayUtility.byteArraysEqual(bobDataFetched, data)).toBe(true);
+      });
+
+      it('should replan and let the tombstone win when a concurrent update lands between plan read and commit', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        const initialTimestamp = Time.createOffsetTimestamp({ seconds: -10 });
+        const initial = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          dateCreated      : initialTimestamp,
+          messageTimestamp : initialTimestamp,
+        });
+        expect((await dwn.processMessage(alice.did, initial.message, { dataStream: initial.dataStream })).status.code).toBe(202);
+
+        const initialCid = await Message.getCid(initial.message);
+        const initialRetainedIndexes = await initial.recordsWrite.constructIndexes(false);
+
+        // the concurrent update is even newer than the tombstone — delete-wins must still displace it
+        const concurrentUpdate = await RecordsWrite.createFrom({
+          recordsWriteMessage : initial.message,
+          messageTimestamp    : Time.createOffsetTimestamp({ seconds: 3 }, initialTimestamp),
+          published           : true,
+          signer              : Jws.createSigner(alice),
+        });
+        const recordsDelete = await RecordsDelete.create({
+          recordId         : initial.message.recordId,
+          messageTimestamp : Time.createOffsetTimestamp({ seconds: 2 }, initialTimestamp),
+          signer           : Jws.createSigner(alice),
+        });
+
+        const realCommitLatestState = messageStore.commitLatestState.bind(messageStore);
+        let concurrentCommitted = false;
+        const commitSpy = sinon.stub(messageStore, 'commitLatestState').callsFake(async (tenant, transition, options): Promise<MessageStorePutResult> => {
+          if (!concurrentCommitted) {
+            concurrentCommitted = true;
+            await realCommitLatestState(alice.did, {
+              put     : { message: concurrentUpdate.message, indexes: await concurrentUpdate.constructIndexes(true) },
+              retains : [{ messageCid: initialCid, message: initial.message, indexes: initialRetainedIndexes }],
+            });
+          }
+          return realCommitLatestState(tenant, transition, options);
+        });
+
+        const deleteReply = await dwn.processMessage(alice.did, recordsDelete.message);
+        expect(deleteReply.status.code).toBe(202);
+        expect(commitSpy.callCount).toBe(2); // first commit conflicted on the guard, replan committed
+
+        // the tombstone is the record's only latest state; the concurrent update is retained as non-latest
+        const { messages: latestMessages } = await messageStore.query(
+          alice.did,
+          [{ interface: DwnInterfaceName.Records, recordId: initial.message.recordId, isLatestBaseState: true }]
+        );
+        expect(latestMessages).toHaveLength(1);
+        expect(latestMessages[0].descriptor.method).toBe(DwnMethodName.Delete);
+
+        const read = await RecordsRead.create({
+          filter : { recordId: initial.message.recordId },
+          signer : Jws.createSigner(alice),
+        });
+        const readReply = await dwn.processMessage(alice.did, read.message);
+        expect(readReply.status.code).toBe(404);
       });
 
       it('should return 404 if deleting a non-existent record', async () => {

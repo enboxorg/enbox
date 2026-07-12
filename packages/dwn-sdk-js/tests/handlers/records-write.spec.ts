@@ -3,7 +3,7 @@ import type { EncryptionInput } from '../../src/interfaces/records-write.js';
 import type { EventLog } from '../../src/types/subscriptions.js';
 import type { Persona } from '../utils/test-data-generator.js';
 import type { DataEncodedRecordsWriteMessage, RecordsQueryReplyEntry } from '../../src/types/records-types.js';
-import type { DataStore, MessageStore, ResumableTaskStore } from '../../src/index.js';
+import type { DataStore, MessageStore, MessageStorePutResult, ResumableTaskStore } from '../../src/index.js';
 import type { GenerateFromRecordsWriteOut, GenerateRecordsWriteOutput } from '../utils/test-data-generator.js';
 import type { ProtocolDefinition, ProtocolRuleSet } from '../../src/types/protocols-types.js';
 
@@ -1161,6 +1161,119 @@ export function testRecordsWriteHandler(): void {
         expect(thirdRecordsQueryReply.status.code).toBe(200);
         expect(thirdRecordsQueryReply.entries).toHaveLength(1);
         expect(thirdRecordsQueryReply.entries![0].encodedData).toBe(newDataEncoded);
+      });
+
+      it('should replan and commit when a concurrent update lands between plan read and commit', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        const initialTimestamp = Time.createOffsetTimestamp({ seconds: -10 });
+        const initial = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          dateCreated      : initialTimestamp,
+          messageTimestamp : initialTimestamp,
+        });
+        expect((await dwn.processMessage(alice.did, initial.message, { dataStream: initial.dataStream })).status.code).toBe(202);
+
+        const initialCid = await Message.getCid(initial.message);
+        const initialRetainedIndexes = await initial.recordsWrite.constructIndexes(false);
+
+        const concurrentUpdate = await RecordsWrite.createFrom({
+          recordsWriteMessage : initial.message,
+          messageTimestamp    : Time.createOffsetTimestamp({ seconds: 1 }, initialTimestamp),
+          published           : true,
+          signer              : Jws.createSigner(alice),
+        });
+        const incomingUpdate = await RecordsWrite.createFrom({
+          recordsWriteMessage : initial.message,
+          messageTimestamp    : Time.createOffsetTimestamp({ seconds: 2 }, initialTimestamp),
+          published           : true,
+          signer              : Jws.createSigner(alice),
+        });
+
+        // Land the concurrent update between the handler's plan read and its commit: the
+        // handler's first commit then carries a stale plan and must trip the store's guard.
+        const realCommitLatestState = messageStore.commitLatestState.bind(messageStore);
+        let concurrentCommitted = false;
+        const commitSpy = sinon.stub(messageStore, 'commitLatestState').callsFake(async (tenant, transition, options): Promise<MessageStorePutResult> => {
+          if (!concurrentCommitted) {
+            concurrentCommitted = true;
+            await realCommitLatestState(alice.did, {
+              put     : { message: concurrentUpdate.message, indexes: await concurrentUpdate.constructIndexes(true) },
+              retains : [{ messageCid: initialCid, message: initial.message, indexes: initialRetainedIndexes }],
+            });
+          }
+          return realCommitLatestState(tenant, transition, options);
+        });
+
+        const reply = await dwn.processMessage(alice.did, incomingUpdate.message);
+        expect(reply.status.code).toBe(202);
+        expect(commitSpy.callCount).toBe(2); // first commit conflicted on the guard, replan committed
+
+        // the incoming update is the record's only latest state, with the initial write attached
+        const query = await TestDataGenerator.generateRecordsQuery({ author: alice, filter: { recordId: initial.message.recordId } });
+        const queryReply = await dwn.processMessage(alice.did, query.message);
+        expect(queryReply.status.code).toBe(200);
+        expect(queryReply.entries).toHaveLength(1);
+        expect(queryReply.entries![0].descriptor.messageTimestamp).toBe(incomingUpdate.message.descriptor.messageTimestamp);
+        expect(queryReply.entries![0].initialWrite?.recordId).toBe(initial.message.recordId);
+
+        // the displaced concurrent update was deleted by the replanned commit
+        expect(await messageStore.get(alice.did, await Message.getCid(concurrentUpdate.message))).toBeUndefined();
+      });
+
+      it('should return 409 when the replan after a commit conflict finds a newer concurrent winner', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        const initialTimestamp = Time.createOffsetTimestamp({ seconds: -10 });
+        const initial = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          dateCreated      : initialTimestamp,
+          messageTimestamp : initialTimestamp,
+        });
+        expect((await dwn.processMessage(alice.did, initial.message, { dataStream: initial.dataStream })).status.code).toBe(202);
+
+        const initialCid = await Message.getCid(initial.message);
+        const initialRetainedIndexes = await initial.recordsWrite.constructIndexes(false);
+
+        const incomingUpdate = await RecordsWrite.createFrom({
+          recordsWriteMessage : initial.message,
+          messageTimestamp    : Time.createOffsetTimestamp({ seconds: 2 }, initialTimestamp),
+          published           : true,
+          signer              : Jws.createSigner(alice),
+        });
+        const newerConcurrentUpdate = await RecordsWrite.createFrom({
+          recordsWriteMessage : initial.message,
+          messageTimestamp    : Time.createOffsetTimestamp({ seconds: 3 }, initialTimestamp),
+          published           : true,
+          signer              : Jws.createSigner(alice),
+        });
+
+        const realCommitLatestState = messageStore.commitLatestState.bind(messageStore);
+        let concurrentCommitted = false;
+        const commitSpy = sinon.stub(messageStore, 'commitLatestState').callsFake(async (tenant, transition, options): Promise<MessageStorePutResult> => {
+          if (!concurrentCommitted) {
+            concurrentCommitted = true;
+            await realCommitLatestState(alice.did, {
+              put     : { message: newerConcurrentUpdate.message, indexes: await newerConcurrentUpdate.constructIndexes(true) },
+              retains : [{ messageCid: initialCid, message: initial.message, indexes: initialRetainedIndexes }],
+            });
+          }
+          return realCommitLatestState(tenant, transition, options);
+        });
+
+        const reply = await dwn.processMessage(alice.did, incomingUpdate.message);
+        expect(reply.status.code).toBe(409);
+        expect(commitSpy.callCount).toBe(1); // the replan detected the newer winner before recommitting
+
+        // the concurrent winner remains the record's only latest state; the beaten update was never stored
+        const query = await TestDataGenerator.generateRecordsQuery({ author: alice, filter: { recordId: initial.message.recordId } });
+        const queryReply = await dwn.processMessage(alice.did, query.message);
+        expect(queryReply.status.code).toBe(200);
+        expect(queryReply.entries).toHaveLength(1);
+        expect(queryReply.entries![0].descriptor.messageTimestamp).toBe(newerConcurrentUpdate.message.descriptor.messageTimestamp);
+        expect(await messageStore.get(alice.did, await Message.getCid(incomingUpdate.message))).toBeUndefined();
       });
 
       it('should return 409 for an exact duplicate initial RecordsWrite with large data', async () => {

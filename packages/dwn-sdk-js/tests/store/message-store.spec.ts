@@ -724,6 +724,7 @@ export function testMessageStore(): void {
           put     : { message: update2.message, indexes: await update2.recordsWrite.constructIndexes(true) },
           retains : [{ messageCid: initialCid, message: initial.message, indexes: await initial.recordsWrite.constructIndexes(false) }],
           deletes : [update1Cid],
+          guard   : { filter: { recordId: initial.message.recordId }, expectedMessageCids: [initialCid, update1Cid] },
         });
 
         expect(result.status).toBe('inserted');
@@ -832,6 +833,64 @@ export function testMessageStore(): void {
         const scopes = Replication.computeFingerprintScopes(update2.message, update2Indexes);
         const feedReader = messageStore as unknown as ReplicationFeedReader;
         expect(await feedReader.fingerprint(alice.did, scopes)).toBe(await feedReader.fingerprint(bob.did, scopes));
+      });
+
+      it('should reject a transition whose guard does not account for a concurrently committed message', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const initial = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        await messageStore.put(alice.did, initial.message, await initial.recordsWrite.constructIndexes(true));
+
+        const initialCid = await Message.getCid(initial.message);
+        const initialRetainedIndexes = await initial.recordsWrite.constructIndexes(false);
+
+        // a concurrent update commits after this plan's state was read
+        const concurrentUpdate = await TestDataGenerator.generateFromRecordsWrite({ author: alice, existingWrite: initial.recordsWrite });
+        await messageStore.commitLatestState(alice.did, {
+          put     : { message: concurrentUpdate.message, indexes: await concurrentUpdate.recordsWrite.constructIndexes(true) },
+          retains : [{ messageCid: initialCid, message: initial.message, indexes: initialRetainedIndexes }],
+        });
+
+        // the stale plan only accounts for the initial write
+        const staleUpdate = await TestDataGenerator.generateFromRecordsWrite({ author: alice, existingWrite: initial.recordsWrite });
+        const stalePromise = messageStore.commitLatestState(alice.did, {
+          put     : { message: staleUpdate.message, indexes: await staleUpdate.recordsWrite.constructIndexes(true) },
+          retains : [{ messageCid: initialCid, message: initial.message, indexes: initialRetainedIndexes }],
+          guard   : { filter: { recordId: initial.message.recordId }, expectedMessageCids: [initialCid] },
+        });
+        await expect(stalePromise).rejects.toThrow(DwnErrorCode.MessageStoreCommitLatestStateConflict);
+
+        // nothing from the stale plan was applied
+        expect(await messageStore.get(alice.did, await Message.getCid(staleUpdate.message))).toBeUndefined();
+        const { messages: latestMessages } = await messageStore.query(
+          alice.did,
+          [{ recordId: initial.message.recordId, isLatestBaseState: true }]
+        );
+        expect(latestMessages).toHaveLength(1);
+        expect(await Message.getCid(latestMessages[0])).toBe(await Message.getCid(concurrentUpdate.message));
+      });
+
+      it('should reject overlapping or duplicate CID sets without applying anything', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const initial = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        await messageStore.put(alice.did, initial.message, await initial.recordsWrite.constructIndexes(true));
+
+        const update1 = await TestDataGenerator.generateFromRecordsWrite({ author: alice, existingWrite: initial.recordsWrite });
+        await messageStore.put(alice.did, update1.message, await update1.recordsWrite.constructIndexes(true));
+
+        const update2 = await TestDataGenerator.generateFromRecordsWrite({ author: alice, existingWrite: update1.recordsWrite });
+        const update1Cid = await Message.getCid(update1.message);
+
+        // a CID deleted twice would XOR-fold its fingerprint contribution back in
+        const duplicateDeletePromise = messageStore.commitLatestState(alice.did, {
+          put     : { message: update2.message, indexes: await update2.recordsWrite.constructIndexes(true) },
+          deletes : [update1Cid, update1Cid],
+        });
+        await expect(duplicateDeletePromise).rejects.toThrow(DwnErrorCode.MessageStoreCommitLatestStateOverlappingCids);
+
+        expect(await messageStore.get(alice.did, await Message.getCid(update2.message))).toBeUndefined();
+        expect(await messageStore.get(alice.did, update1Cid)).toBeDefined();
       });
     });
   });
