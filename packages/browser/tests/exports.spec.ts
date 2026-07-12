@@ -100,6 +100,16 @@ describe('@enbox/browser exports', () => {
         url         : 'https://onyx-wallet.pages.dev',
         description : 'A refined home for your digital identity',
       },
+      {
+        name        : 'Taffy',
+        url         : 'https://taffy-wallet.pages.dev',
+        description : 'A playful take on your digital identity',
+      },
+      {
+        name        : 'Astoria',
+        url         : 'https://astoria-wallet.pages.dev',
+        description : 'A grand home for your digital identity',
+      },
     ]);
   });
 

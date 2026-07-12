@@ -366,7 +366,14 @@ describe('runConnectModal', () => {
     expect(rowNames()).toEqual(['Aurora', 'Basalt', 'Cinder']);
     expect(shadowRoot().querySelector('.more-count')?.textContent).toBe('+3');
 
+    const gridNames = (): Array<string | null> => Array.from(
+      shadowRoot().querySelectorAll('.wallet-tile .wallet-tile-name'),
+    ).map((name) => name.textContent);
+
+    // The expanded grid holds only the wallets not already in the row.
     shadowRoot().querySelector<HTMLButtonElement>('.more-tile')?.click();
+    expect(gridNames()).toEqual(['Dune', 'Ember', 'Fjord']);
+
     const tiles = Array.from(shadowRoot().querySelectorAll<HTMLButtonElement>('.wallet-tile'));
     tiles.find((tile) => tile.querySelector('.wallet-tile-name')?.textContent === 'Fjord')?.click();
     await flush();
@@ -378,6 +385,10 @@ describe('runConnectModal', () => {
     expect(shadowRoot().querySelector<HTMLElement>('.wallet-panel')?.hidden).toBe(true);
     expect(relay.calls).toHaveLength(2);
     expect(relay.calls[1].walletUri).toBe('https://fjord.example.com/connect/app');
+
+    // Re-expanding still shows only the wallets outside the recomposed row.
+    shadowRoot().querySelector<HTMLButtonElement>('.more-tile')?.click();
+    expect(gridNames()).toEqual(['Cinder', 'Dune', 'Ember']);
   });
 
   it('adopts a validated custom wallet URL into the row and re-mints', async () => {
@@ -453,22 +464,19 @@ describe('runConnectModal', () => {
     more?.click();
     expect(more?.getAttribute('aria-expanded')).toBe('true');
     expect(panel === null ? '' : getComputedStyle(panel).display).not.toBe('none');
-    const grid = shadowRoot().querySelector('.wallet-grid');
-    expect(grid).not.toBeNull();
-    expect(grid?.querySelectorAll('.wallet-tile')).toHaveLength(2);
-    // No search bar for a catalog that fits one row.
+    // Both wallets already sit in the row, so the panel repeats neither —
+    // it offers only the custom URL entry.
+    expect(shadowRoot().querySelectorAll('.wallet-tile')).toHaveLength(0);
+    expect(shadowRoot().querySelector<HTMLElement>('.wallet-scroll-wrap')?.hidden).toBe(true);
     expect(shadowRoot().querySelector('.wallet-search')).toBeNull();
-    // The active wallet reads as selected in the grid too.
-    const selected = grid?.querySelector('.wallet-tile.selected');
-    expect(selected?.querySelector('.wallet-tile-name')?.textContent).toBe('Enbox');
-    expect(selected?.getAttribute('aria-pressed')).toBe('true');
+    expect(shadowRoot().querySelector('.url-input')).not.toBeNull();
     // The method link keeps its own row beneath the switcher.
     expect(shadowRoot().querySelector('.footer-row .method-link')).not.toBeNull();
   });
 
-  it('shows the search bar past one row of tiles and filters the catalog', async () => {
+  it('shows the search bar past one row of grid tiles and filters the remainder', async () => {
     const relay = createFakeRelay();
-    const many: WalletOption[] = ['Aurora', 'Basalt', 'Cinder', 'Dune', 'Ember', 'Fjord']
+    const many: WalletOption[] = ['Aurora', 'Basalt', 'Cinder', 'Dune', 'Ember', 'Fjord', 'Grove', 'Hazel', 'Iris']
       .map((name) => ({ name, url: `https://${name.toLowerCase()}.example.com` }));
     const promise = runConnectModal({
       wallets            : many,
@@ -483,9 +491,12 @@ describe('runConnectModal', () => {
     expect(search).not.toBeNull();
     if (search == null) { return; }
 
+    // The grid holds only the six wallets not shown in the row.
+    const tiles = Array.from(shadowRoot().querySelectorAll<HTMLButtonElement>('.wallet-tile'));
+    expect(tiles).toHaveLength(6);
+
     search.value = 'fjord';
     search.dispatchEvent(new Event('input', { bubbles: true }));
-    const tiles = Array.from(shadowRoot().querySelectorAll<HTMLButtonElement>('.wallet-tile'));
     expect(tiles.filter((tile) => !tile.hidden)).toHaveLength(1);
     expect(tiles.find((tile) => !tile.hidden)?.textContent).toContain('Fjord');
     expect(shadowRoot().querySelector<HTMLElement>('.wallet-empty')?.hidden).toBe(true);
@@ -498,6 +509,35 @@ describe('runConnectModal', () => {
     search.value = '';
     search.dispatchEvent(new Event('input', { bubbles: true }));
     expect(tiles.filter((tile) => !tile.hidden)).toHaveLength(6);
+  });
+
+  it('caps the grid height and fades its bottom edge until the user scrolls to the end', async () => {
+    const relay = createFakeRelay();
+    const many: WalletOption[] = Array.from({ length: 19 }, (_, i) => ({
+      name : `Wallet ${String(i + 1).padStart(2, '0')}`,
+      url  : `https://wallet-${i + 1}.example.com`,
+    }));
+    const promise = runConnectModal({
+      wallets            : many,
+      permissionRequests : PERMISSIONS,
+      deps               : deps({ runRelay: relay.runRelay }),
+    });
+    promise.catch((): undefined => undefined);
+    await flush();
+
+    shadowRoot().querySelector<HTMLButtonElement>('.more-tile')?.click();
+
+    // 16 grid tiles at 4 per row overflow the three-row cap, so the fade
+    // hint shows; scrolling to the end clears it.
+    const wrap = shadowRoot().querySelector<HTMLElement>('.wallet-scroll-wrap');
+    const scroll = shadowRoot().querySelector<HTMLElement>('.wallet-scroll');
+    if (wrap == null || scroll == null) { throw new Error('expected the wallet grid scroller'); }
+    expect(scroll.scrollHeight).toBeGreaterThan(scroll.clientHeight);
+    expect(wrap.classList.contains('scroll-hint')).toBe(true);
+
+    scroll.scrollTop = scroll.scrollHeight;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(wrap.classList.contains('scroll-hint')).toBe(false);
   });
 
   it('forces an appearance and applies the dapp palette as inline tokens', async () => {
