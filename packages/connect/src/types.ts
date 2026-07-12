@@ -322,4 +322,15 @@ export interface ConnectTransport {
    * denied the request. Rejects on channel timeout.
    */
   awaitResponse(): Promise<string>;
+
+  /**
+   * Best-effort completion signal back to the wallet side: the client
+   * fetched the response and opened it successfully, so the wallet UI can
+   * flip its pairing screen to a confirmed "connected" state instead of
+   * asking the user to dismiss it blind. Observational only — it carries no
+   * payload, proves nothing beyond liveness, and callers must swallow
+   * failures (channels and relays without completion support simply never
+   * deliver it).
+   */
+  confirmComplete?(): Promise<void>;
 }

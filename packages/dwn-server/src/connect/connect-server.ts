@@ -122,6 +122,26 @@ export class ConnectServer {
   }
 
   /**
+   * Records the requesting app's completion signal for `state`: it fetched
+   * and successfully opened the wallet's response. Observational only — the
+   * marker is keyed by the same opaque `state` correlator as the token
+   * route, reveals nothing about the session (whose objects are already
+   * consumed by this point), and is read non-destructively so the wallet can
+   * flip its pairing screen to a confirmed "connected" state.
+   */
+  public async setConnectComplete(state: string): Promise<void> {
+    this.cache.insert(`complete:${state}`, { completedAt: Date.now() }, ConnectServer.ttlInSeconds);
+  }
+
+  /**
+   * Whether the requesting app has signalled completion for `state`.
+   * Non-consuming: wallets poll this after posting their response.
+   */
+  public async isConnectComplete(state: string): Promise<boolean> {
+    return (await this.cache.get(`complete:${state}`)) !== undefined;
+  }
+
+  /**
    * Gets the Connect Response object. The `state` string can only be used once.
    */
   public async getConnectResponse(state: string): Promise<ConnectResponse | undefined> {

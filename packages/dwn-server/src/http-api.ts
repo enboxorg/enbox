@@ -1147,6 +1147,41 @@ export class HttpApi {
       }
     }
 
+    // POST /connect/complete
+    // Observational completion signal from the requesting app: it fetched
+    // and successfully opened the wallet's response. Keyed by the same
+    // opaque `state` correlator as the token route; the wallet polls the
+    // matching GET to flip its pairing screen to "connected" instead of
+    // asking the user to dismiss it blind.
+    if (method === 'POST' && path === '/connect/complete') {
+      const body = await req.json().catch((): undefined => undefined) as { state?: unknown } | undefined;
+      const state = body?.state;
+      if (typeof state !== 'string' || state === '') {
+        return Response.json({
+          ok     : false,
+          status : { code: 400, message: 'Bad Request: Missing \'state\' parameter' },
+        }, { status: 400 });
+      }
+
+      await this.connectServer.setConnectComplete(state);
+      return Response.json({
+        ok     : true,
+        status : { code: 201, message: 'Created' },
+      }, { status: 201 });
+    }
+
+    // GET /connect/complete/:state
+    // Always 200 so pollers can treat any non-2xx as transport failure;
+    // unknown or expired states read as `completed: false`.
+    {
+      const match = /^\/connect\/complete\/([^/]+)$/.exec(path);
+      if (match && method === 'GET') {
+        const state = decodeURIComponent(match[1]);
+        const completed = await this.connectServer.isConnectComplete(state);
+        return Response.json({ completed }, { status: 200 });
+      }
+    }
+
     // GET /connect/token/:state.jwt
     {
       const match = /^\/connect\/token\/([^/]+)\.jwt$/.exec(path);

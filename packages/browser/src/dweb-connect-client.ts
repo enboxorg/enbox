@@ -32,6 +32,7 @@ import type {
 import { assertX25519PublicJwk, CONNECT_DENIED_TOKEN, ConnectClient } from '@enbox/connect';
 
 import {
+  DWEB_CONNECT_ACK_MESSAGE_TYPE,
   DWEB_CONNECT_LOADED_MESSAGE_TYPE,
   DWEB_CONNECT_PATH,
   DWEB_CONNECT_REQUEST_MESSAGE_TYPE,
@@ -44,6 +45,12 @@ const DEFAULT_TIMEOUT_MS = 300_000;
 
 /** Interval at which the transport checks whether the user closed the popup. */
 const CLOSED_POLL_INTERVAL_MS = 500;
+
+/**
+ * Grace period after the popup is seen closed for an already-posted response
+ * to finish delivery before the close is treated as a denial.
+ */
+const CLOSED_RESPONSE_GRACE_MS = 1_500;
 
 /** Window name given to the wallet popup. */
 const POPUP_WINDOW_NAME = 'enbox-dweb-connect';
@@ -212,6 +219,19 @@ export class PopupClientTransport implements ConnectTransport {
     return await this._responsePromise;
   }
 
+  /**
+   * {@inheritDoc ConnectTransport.confirmComplete}
+   *
+   * Posts the payload-less ack to the wallet popup (pinned `targetOrigin`)
+   * so a wallet still holding its "finishing up" screen can flip to a
+   * confirmed "connected" state before closing itself. A popup the user
+   * already closed is skipped silently.
+   */
+  public async confirmComplete(): Promise<void> {
+    if (this._popup.closed === true) { return; }
+    this._popup.postMessage({ type: DWEB_CONNECT_ACK_MESSAGE_TYPE }, this._walletOrigin);
+  }
+
   private onMessage(event: MessageEvent): void {
     const message = getTrustedMessage(event, this._walletOrigin, this._popup);
     if (message === undefined) { return; }
@@ -275,10 +295,19 @@ export class PopupClientTransport implements ConnectTransport {
       return;
     }
 
-    // Closed after the handshake was established — treat as a user denial.
-    this._settled = true;
-    this.cleanup();
-    this._resolveResponse?.(CONNECT_DENIED_TOKEN);
+    // Closed after the handshake was established. A wallet that posts its
+    // response and immediately closes itself can lose the race between that
+    // final message and this poll — especially when this page was
+    // backgrounded (mobile tabs) and both signals arrive together on
+    // resume — so give a queued response a grace window before treating the
+    // close as a user denial.
+    clearInterval(this._closedPollId);
+    setTimeout((): void => {
+      if (this._settled) { return; }
+      this._settled = true;
+      this.cleanup();
+      this._resolveResponse?.(CONNECT_DENIED_TOKEN);
+    }, CLOSED_RESPONSE_GRACE_MS);
   }
 
   private fail(error: Error): void {

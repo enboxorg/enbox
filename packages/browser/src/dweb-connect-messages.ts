@@ -1,7 +1,7 @@
 /**
  * Wire shapes for the DWeb Connect popup/postMessage channel.
  *
- * The dapp and the wallet exchange exactly three message kinds over
+ * The dapp and the wallet exchange exactly four message kinds over
  * `window.postMessage`:
  *
  * 1. `loaded` beacon (wallet → dapp): announces the wallet page is ready and
@@ -11,6 +11,10 @@
  *    bound into the JWE `apv` header.
  * 3. `response` (wallet → dapp): the sealed connect response JWE, or the
  *    literal deny token — again ciphertext only.
+ * 4. `ack` (dapp → wallet): payload-less completion signal — the dapp opened
+ *    the response successfully, so the wallet can flip to a confirmed
+ *    "connected" state before closing itself. Optional and observational;
+ *    wallets unaware of it simply ignore the message.
  *
  * Plaintext never crosses the channel, and both sides pin `targetOrigin`
  * and verify `event.origin` / `event.source` on every message.
@@ -31,6 +35,9 @@ export const DWEB_CONNECT_REQUEST_MESSAGE_TYPE = 'enbox-connect-request';
 
 /** Message type carrying the sealed connect response JWE or deny token (wallet → dapp). */
 export const DWEB_CONNECT_RESPONSE_MESSAGE_TYPE = 'enbox-connect-response';
+
+/** Message type of the dapp's completion acknowledgement (dapp → wallet). */
+export const DWEB_CONNECT_ACK_MESSAGE_TYPE = 'enbox-connect-ack';
 
 /**
  * The wallet's readiness beacon. Emitted to `window.opener` once the wallet's
@@ -60,6 +67,14 @@ export type DWebConnectResponseMessage = {
 
   /** The sealed connect response JWE, or the literal `CONNECT_DENIED_TOKEN`. */
   payload: string;
+};
+
+/**
+ * The dapp's completion acknowledgement: it opened the wallet's response
+ * successfully. Carries no payload by design.
+ */
+export type DWebConnectAckMessage = {
+  type: typeof DWEB_CONNECT_ACK_MESSAGE_TYPE;
 };
 
 /**

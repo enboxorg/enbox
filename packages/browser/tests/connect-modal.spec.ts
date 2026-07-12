@@ -4,6 +4,7 @@ import type { ConnectPermissionRequest, ConnectResult, WalletUriHandoff } from '
 
 import { afterEach, describe, expect, it } from 'bun:test';
 
+import { PopupWindowClosedError } from '../src/dweb-connect-client.js';
 import { runConnectModal } from '../src/ui/connect-modal.js';
 
 const WALLETS: WalletOption[] = [
@@ -139,6 +140,13 @@ describe('runConnectModal', () => {
     expect(shadowRoot().querySelector('.qr-box svg')).not.toBeNull();
     expect(stageText()).toContain('Scan with your phone');
 
+    // The QR card is itself a same-device handoff link into a new tab.
+    const qr = shadowRoot().querySelector<HTMLAnchorElement>('a.qr-box');
+    expect(qr?.href).toBe(HANDOFF.walletUri);
+    expect(qr?.target).toBe('_blank');
+    expect(qr?.rel).toContain('noopener');
+    expect(stageText()).toContain('or click the code to open it here');
+
     shadowRoot().querySelector<HTMLButtonElement>('.close-btn')?.click();
     await expect(promise).rejects.toThrow(/cancelled/i);
   });
@@ -160,7 +168,7 @@ describe('runConnectModal', () => {
     const pinPromise = relay.calls[0].requestPin(1);
     const inputs = Array.from(shadowRoot().querySelectorAll<HTMLInputElement>('.pin-input'));
     expect(inputs).toHaveLength(4);
-    expect(stageText()).toContain('Enter the code shown on your phone');
+    expect(stageText()).toContain('Enter the code shown in Enbox');
 
     ['1', '2', '3', '4'].forEach((digit, index) => {
       inputs[index].value = digit;
@@ -217,7 +225,7 @@ describe('runConnectModal', () => {
     await expect(promise).resolves.toBeUndefined();
   });
 
-  it('renders a deep link instead of a QR on mobile', async () => {
+  it('renders a new-tab deep link alongside a clickable compact QR on mobile', async () => {
     const relay = createFakeRelay();
     const promise = runConnectModal({
       wallets            : WALLETS,
@@ -229,11 +237,84 @@ describe('runConnectModal', () => {
     await flush();
     relay.calls[0].onWalletUriReady(HANDOFF);
 
+    // The primary action opens the wallet in a NEW tab: the modal — and the
+    // relay session under it — stays alive for the pairing-code entry.
     const link = shadowRoot().querySelector<HTMLAnchorElement>('.deep-link');
     expect(link).not.toBeNull();
     expect(link?.href).toBe(HANDOFF.walletUri);
+    expect(link?.target).toBe('_blank');
+    expect(link?.rel).toContain('noopener');
     expect(link?.textContent).toContain('Continue in Enbox');
-    expect(shadowRoot().querySelector('.qr-box')).toBeNull();
+
+    // The QR stays for cross-device auth, compact and itself a handoff link.
+    const qr = shadowRoot().querySelector<HTMLAnchorElement>('a.qr-box');
+    expect(qr).not.toBeNull();
+    expect(qr?.classList.contains('compact')).toBe(true);
+    expect(qr?.href).toBe(HANDOFF.walletUri);
+    expect(qr?.target).toBe('_blank');
+    expect(qr?.querySelector('svg')).not.toBeNull();
+    expect(stageText()).toContain('or scan with another phone');
+  });
+
+  it('morphs to the away stage when a handoff link is followed and recovers via Start over', async () => {
+    const relay = createFakeRelay();
+    const promise = runConnectModal({
+      wallets            : WALLETS,
+      permissionRequests : PERMISSIONS,
+      deps               : deps({ runRelay: relay.runRelay }),
+    });
+    promise.catch((): undefined => undefined);
+
+    await flush();
+    relay.calls[0].onWalletUriReady(HANDOFF);
+
+    const qr = shadowRoot().querySelector<HTMLAnchorElement>('a.qr-box');
+    if (qr == null) { throw new Error('expected the QR handoff link'); }
+    // Keep the test tab put — the modal's own listener still runs.
+    qr.addEventListener('click', (event) => { event.preventDefault(); });
+    qr.click();
+    await flush();
+
+    expect(stageText()).toContain('Finish in Enbox');
+    expect(stageText()).toContain('come back here for your code');
+
+    // Start over mints a fresh pointer — the one the wallet tab carried away
+    // is single-use.
+    Array.from(shadowRoot().querySelectorAll<HTMLButtonElement>('.stage .footer-link'))
+      .find((button) => button.textContent === 'Start over')
+      ?.click();
+    await flush();
+    expect(relay.calls).toHaveLength(2);
+  });
+
+  it('routes an interrupted mobile popup back to the code path', async () => {
+    const relay = createFakeRelay();
+    const promise = runConnectModal({
+      wallets            : WALLETS,
+      permissionRequests : PERMISSIONS,
+      deps               : deps({
+        runRelay : relay.runRelay,
+        isMobile : (): boolean => true,
+        runPopup : (): Promise<ConnectResult | undefined> => Promise.reject(new PopupWindowClosedError()),
+      }),
+    });
+    promise.catch((): undefined => undefined);
+    await flush();
+
+    // On a phone the popup alternative is pitched as skipping the code.
+    const methodLink = shadowRoot().querySelector<HTMLButtonElement>('.method-link');
+    expect(methodLink?.textContent).toContain('without a code');
+    methodLink?.click();
+    await flush();
+
+    expect(stageText()).toContain('The wallet tab was closed.');
+    const back = Array.from(shadowRoot().querySelectorAll<HTMLButtonElement>('.stage .footer-link'))
+      .find((button) => button.textContent === 'Use a code instead');
+    expect(back).toBeDefined();
+    back?.click();
+    await flush();
+
+    expect(relay.calls).toHaveLength(2);
   });
 
   it('centres the selected wallet’s mark on the QR and names it in the caption', async () => {
@@ -251,7 +332,7 @@ describe('runConnectModal', () => {
     const logo = shadowRoot().querySelector('.qr-logo');
     expect(logo).not.toBeNull();
     expect(logo?.querySelector('.wallet-badge')?.textContent).toBe('E');
-    expect(stageText()).toContain('Enbox stays on your phone.');
+    expect(stageText()).toContain('Enbox stays on your phone');
   });
 
   it('invokes the popup path synchronously from the footer link', async () => {
@@ -585,7 +666,7 @@ describe('runConnectModal', () => {
     expect(modal?.style.getPropertyValue('--ec-accent')).toBe('#123456');
   });
 
-  it('shows phone-connected progress when the relay reports the claim', async () => {
+  it('shows approval progress when the relay reports the claim', async () => {
     const relay = createFakeRelay();
     const promise = runConnectModal({
       wallets            : WALLETS,
@@ -602,8 +683,8 @@ describe('runConnectModal', () => {
     relay.calls[0].onClaimed?.();
     await flush();
 
-    expect(stageText()).toContain('Phone connected — finish there');
-    expect(stageText()).toContain('Approve the request on your phone');
+    expect(stageText()).toContain('Request received — approve in Enbox');
+    expect(stageText()).toContain('you’ll get a code to enter here');
 
     // The approval still lands normally after the progress beat.
     relay.calls[0].resolve(RESULT);

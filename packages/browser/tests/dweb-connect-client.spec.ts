@@ -9,6 +9,7 @@ import { X25519 } from '@enbox/crypto';
 import { connectViaPopup } from '../src/dweb-connect-client.js';
 import { WalletPostMessageTransport } from '../src/dweb-connect-wallet.js';
 import {
+  DWEB_CONNECT_ACK_MESSAGE_TYPE,
   DWEB_CONNECT_LOADED_MESSAGE_TYPE,
   DWEB_CONNECT_RESPONSE_MESSAGE_TYPE,
 } from '../src/dweb-connect-messages.js';
@@ -185,11 +186,15 @@ describe('DWeb Connect popup flow (kernel loopback)', () => {
       await approveRequest(walletTransport);
       await flow;
 
-      // Dapp → wallet: exactly one message, carrying only a Compact JWE.
-      expect(dappToWallet).toHaveLength(1);
-      expect(Object.keys(dappToWallet[0].data).sort()).toEqual(['jwe', 'type']);
-      expect((dappToWallet[0].data.jwe as string).split('.')).toHaveLength(5);
-      expect(dappToWallet[0].targetOrigin).toBe(WALLET_ORIGIN);
+      // Dapp → wallet: the sealed request (a Compact JWE) followed by the
+      // payload-less completion ack — never any plaintext session data.
+      expect(dappToWallet).toHaveLength(2);
+      const [request, ack] = dappToWallet;
+      expect(Object.keys(request.data).sort()).toEqual(['jwe', 'type']);
+      expect((request.data.jwe as string).split('.')).toHaveLength(5);
+      expect(request.targetOrigin).toBe(WALLET_ORIGIN);
+      expect(ack.data).toEqual({ type: DWEB_CONNECT_ACK_MESSAGE_TYPE });
+      expect(ack.targetOrigin).toBe(WALLET_ORIGIN);
 
       // Wallet → dapp: the loaded beacon (public key only) and the sealed response.
       expect(walletToDapp).toHaveLength(2);
@@ -210,6 +215,43 @@ describe('DWeb Connect popup flow (kernel loopback)', () => {
       walletTransport.deny();
 
       await expect(flow).resolves.toBeUndefined();
+      // A denial is never acknowledged as a completed connection.
+      expect(dappToWallet.filter((message) => message.data.type === DWEB_CONNECT_ACK_MESSAGE_TYPE)).toHaveLength(0);
+    });
+
+    it('should confirm completion to a wallet awaiting the ack', async () => {
+      const { flow } = await startDappFlow();
+      const walletTransport = await createWalletTransport();
+
+      const request = await walletTransport.awaitRequest();
+      const providerDid = await DidJwk.create();
+      const delegateDid = await DidJwk.create();
+      const idToken = await ConnectProvider.sealApprovedResponse({
+        request,
+        providerDid : providerDid.uri,
+        approval    : {
+          delegateDid         : delegateDid.uri,
+          delegatePortableDid : await delegateDid.export(),
+          delegateGrants      : [],
+          sessionRevocations  : [],
+        },
+        signer: delegateDid,
+      });
+
+      // The wallet holds its "finishing up" screen until the dapp confirms.
+      const acked = walletTransport.sendResponseAwaitingAck(idToken);
+
+      const result = await flow;
+      expect(result).toBeDefined();
+      await expect(acked).resolves.toBe(true);
+    });
+
+    it('should resolve false from sendResponseAwaitingAck when no dapp acknowledges', async () => {
+      const walletTransport = await createWalletTransport();
+
+      const acked = await walletTransport.sendResponseAwaitingAck('SEALED_RESPONSE_JWE', { timeoutMs: 200 });
+
+      expect(acked).toBe(false);
     });
   });
 
@@ -413,6 +455,25 @@ describe('DWeb Connect popup flow (kernel loopback)', () => {
       fakePopup.closed = true;
 
       await expect(flow).resolves.toBeUndefined();
+    });
+
+    it('should deliver a response that lands during the close grace window', async () => {
+      const { flow } = await startDappFlow();
+      const walletTransport = await createWalletTransport();
+      await walletTransport.awaitRequest();
+
+      // A wallet that responds and immediately closes itself can be seen
+      // closed before its final message is delivered — typical when a
+      // backgrounded mobile dapp tab wakes to both signals at once. The
+      // close must not race the queued response into a false denial.
+      fakePopup.closed = true;
+      await new Promise((resolve) => setTimeout(resolve, 700));
+
+      const { delegateDidUri } = await approveRequest(walletTransport);
+
+      const result = await flow;
+      expect(result).toBeDefined();
+      expect(result!.delegatePortableDid.uri).toBe(delegateDidUri);
     });
 
     it('should reject on timeout when the wallet never responds', async () => {

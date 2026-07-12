@@ -5,7 +5,7 @@ import sinon from 'sinon';
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import { parseWalletConnectUri } from '../src/uri.js';
-import { fetchRelayRequest, postRelayResponse, RelayClientTransport } from '../src/relay-transport.js';
+import { fetchRelayRequest, pollRelayComplete, postRelayResponse, RelayClientTransport } from '../src/relay-transport.js';
 
 const CONNECT_SERVER_URL = 'https://relay.example/connect';
 const WALLET_URI = 'https://wallet.example/connect/app';
@@ -169,6 +169,49 @@ describe('RelayClientTransport', () => {
     }
   });
 
+  it('should POST the completion marker keyed by state via confirmComplete', async () => {
+    const fetchStub = sinon.stub(globalThis, 'fetch');
+    // PAR
+    fetchStub.onCall(0).resolves(new Response(
+      JSON.stringify({ request_uri: REQUEST_URI, expires_in: 600 }),
+      { status: 201 },
+    ));
+    // Completion marker
+    fetchStub.onCall(1).resolves(new Response(
+      JSON.stringify({ ok: true, status: { code: 201, message: 'Created' } }),
+      { status: 201 },
+    ));
+
+    const transport = createTransport({});
+    await transport.requestProfile(STATE);
+    await transport.deliverRequest('SEALED_REQUEST_JWE');
+
+    await transport.confirmComplete();
+
+    const [completeUrl, completeInit] = fetchStub.secondCall.args;
+    expect(completeUrl).toBe(`${CONNECT_SERVER_URL}/complete`);
+    expect(completeInit?.method).toBe('POST');
+    expect(completeInit?.keepalive).toBe(true);
+    expect(JSON.parse(completeInit?.body as string)).toEqual({ state: STATE });
+  });
+
+  it('should throw from confirmComplete when the relay lacks the completion route', async () => {
+    const fetchStub = sinon.stub(globalThis, 'fetch');
+    fetchStub.resolves(new Response('Not Found', { status: 404 }));
+
+    const transport = createTransport({});
+    await transport.requestProfile(STATE);
+
+    await expect(transport.confirmComplete()).rejects.toThrow('completion signal failed with HTTP 404');
+  });
+
+  it('should throw when confirmComplete is called before requestProfile', async () => {
+    const transport = createTransport({});
+
+    await expect(transport.confirmComplete())
+      .rejects.toThrow('call `requestProfile()` before `confirmComplete()`');
+  });
+
   it('should throw when awaitResponse is called before requestProfile', async () => {
     const transport = createTransport({});
 
@@ -234,6 +277,55 @@ describe('RelayClientTransport', () => {
       const params = new URLSearchParams(init?.body as string);
       expect(params.get('id_token')).toBe('SEALED_RESPONSE_JWE');
       expect(params.get('state')).toBe('abc123');
+    });
+
+    it('pollRelayComplete should poll the marker derived from the callback URL until completed', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+      fetchStub.onCall(0).resolves(new Response(JSON.stringify({ completed: false }), { status: 200 }));
+      fetchStub.onCall(1).resolves(new Response(JSON.stringify({ completed: true }), { status: 200 }));
+
+      const sleeps: number[] = [];
+      const completed = await pollRelayComplete({
+        callbackUrl : `${CONNECT_SERVER_URL}/callback`,
+        state       : STATE,
+        sleep       : async (ms: number): Promise<void> => { sleeps.push(ms); },
+      });
+
+      expect(completed).toBe(true);
+      expect(sleeps).toEqual([1000]);
+      const [completeUrl] = fetchStub.firstCall.args;
+      expect(completeUrl).toBe(`${CONNECT_SERVER_URL}/complete/${STATE}`);
+    });
+
+    it('pollRelayComplete should short-circuit to false on relays without the route', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+      fetchStub.resolves(new Response('Not Found', { status: 404 }));
+
+      const completed = await pollRelayComplete({
+        callbackUrl : `${CONNECT_SERVER_URL}/callback`,
+        state       : STATE,
+        sleep       : async (): Promise<void> => { throw new Error('test: must not poll again after a 404'); },
+      });
+
+      expect(completed).toBe(false);
+      expect(fetchStub.callCount).toBe(1);
+    });
+
+    it('pollRelayComplete should return false when the budget lapses without the marker', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+      fetchStub.resolves(new Response(JSON.stringify({ completed: false }), { status: 200 }));
+
+      let clock = 0;
+      const completed = await pollRelayComplete({
+        callbackUrl : `${CONNECT_SERVER_URL}/callback`,
+        state       : STATE,
+        timeoutMs   : 3_000,
+        now         : (): number => clock,
+        sleep       : async (ms: number): Promise<void> => { clock += ms; },
+      });
+
+      expect(completed).toBe(false);
+      expect(fetchStub.callCount).toBe(3); // 3 s budget / 1 s poll interval
     });
 
     it('postRelayResponse should throw on a non-OK status', async () => {

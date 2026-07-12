@@ -11,6 +11,10 @@
  * - `POST /connect/callback` — the wallet posts the sealed response (or the
  *   literal `DENIED` token) keyed by the request `state`.
  * - `GET /connect/token/{state}.jwt` — the app polls for the response.
+ * - `POST /connect/complete` / `GET /connect/complete/{state}` — the app
+ *   signals that it opened the response successfully; the wallet polls the
+ *   marker to auto-confirm its pairing screen. Observational only, and
+ *   absent on older relays (both sides degrade silently).
  *
  * The single-use request encryption key travels only in the wallet URI
  * fragment (see the uri module) — never in query strings or logs.
@@ -27,6 +31,12 @@ import { buildWalletConnectUri } from './uri.js';
 
 /** Per-request abort budget applied to every relay HTTP call. */
 const RELAY_HTTP_TIMEOUT_MS = 30_000;
+
+/** Default interval between completion-marker polling attempts. */
+const RELAY_COMPLETE_POLL_INTERVAL_MS = 1_000;
+
+/** Default total budget for awaiting the client's completion signal. */
+const RELAY_COMPLETE_TIMEOUT_MS = 60_000;
 
 /** Default interval between response polling attempts. */
 const RELAY_DEFAULT_POLL_INTERVAL_MS = 3_000;
@@ -231,6 +241,34 @@ export class RelayClientTransport implements ConnectTransport {
 
     throw new Error(`Connect: timed out after ${this._timeoutMs}ms waiting for the wallet response.`);
   }
+
+  /**
+   * {@inheritDoc ConnectTransport.confirmComplete}
+   *
+   * Posts the completion marker (`POST /connect/complete`) keyed by this
+   * handshake's `state`. `keepalive` keeps the beacon deliverable even when
+   * the app navigates away right after connecting. Throws on relays without
+   * the route — callers treat the signal as best-effort and swallow.
+   */
+  public async confirmComplete(): Promise<void> {
+    if (this._state === undefined) {
+      throw new Error('Connect: call `requestProfile()` before `confirmComplete()`.');
+    }
+
+    const completeUrl = concatenateUrl(this._connectServerUrl, 'complete');
+    const response = await this._fetch(completeUrl, {
+      body      : JSON.stringify({ state: this._state }),
+      method    : 'POST',
+      headers   : { 'Content-Type': 'application/json' },
+      keepalive : true,
+      signal    : AbortSignal.timeout(RELAY_HTTP_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      await response.body?.cancel().catch((): void => {});
+      throw new Error(`Connect: completion signal failed with HTTP ${response.status}.`);
+    }
+  }
 }
 
 /**
@@ -293,4 +331,70 @@ export async function postRelayResponse({ callbackUrl, state, idToken, fetchFn, 
   if (!response.ok) {
     throw new Error(`Connect: callback POST failed with HTTP ${response.status}.`);
   }
+}
+
+/**
+ * Wallet-side helper: polls the relay's completion marker
+ * (`GET /connect/complete/{state}`) after the response has been posted, so
+ * the wallet UI can flip its pairing screen to a confirmed "connected" state
+ * the moment the app opens the response — instead of asking the user to
+ * dismiss the screen blind.
+ *
+ * The completion URL is derived from the same `callbackUrl` the response was
+ * posted to. Resolves `true` when the relay reports completion within
+ * `timeoutMs`, and `false` on budget exhaustion or on relays that predate
+ * the completion route (a 404 short-circuits the poll) — keep a manual
+ * dismiss affordance for the `false` case.
+ *
+ * @param params - The poll parameters.
+ * @param params.callbackUrl - The `callbackUrl` from the request's reply descriptor.
+ * @param params.state - The request `state` correlator.
+ * @param params.timeoutMs - Total poll budget; defaults to 60 s.
+ * @param params.pollIntervalMs - Interval between polls; defaults to 1 s.
+ * @param params.fetchFn - Fetch implementation override.
+ * @param params.sleep - Sleep override used between polling attempts.
+ * @param params.now - Clock override used by the polling deadline.
+ * @returns Whether the app signalled completion within the budget.
+ */
+export async function pollRelayComplete({ callbackUrl, state, timeoutMs, pollIntervalMs, fetchFn, sleep: sleepFn, now }: {
+  callbackUrl: string;
+  state: string;
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+  fetchFn?: FetchFn;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+}): Promise<boolean> {
+  const doFetch = fetchFn ?? defaultFetch;
+  const doSleep = sleepFn ?? sleep;
+  const doNow = now ?? ((): number => Date.now());
+
+  // Relative URL resolution replaces the callback's last path segment, so
+  // `.../connect/callback` becomes `.../connect/complete/{state}`.
+  const completeUrl = new URL(`complete/${encodeURIComponent(state)}`, callbackUrl).toString();
+  const deadline = doNow() + (timeoutMs ?? RELAY_COMPLETE_TIMEOUT_MS);
+
+  while (doNow() < deadline) {
+    try {
+      const response = await doFetch(completeUrl, { signal: AbortSignal.timeout(RELAY_HTTP_TIMEOUT_MS) });
+      if (response.ok) {
+        const status = await response.json() as { completed?: unknown };
+        if (status.completed === true) {
+          return true;
+        }
+      } else {
+        await response.body?.cancel().catch((): void => {});
+        if (response.status === 404) {
+          // The route always answers 200 when it exists — a 404 means this
+          // relay predates the completion marker; polling cannot succeed.
+          return false;
+        }
+      }
+    } catch {
+      // Transient failures degrade to the manual dismiss affordance.
+    }
+    await doSleep(pollIntervalMs ?? RELAY_COMPLETE_POLL_INTERVAL_MS);
+  }
+
+  return false;
 }

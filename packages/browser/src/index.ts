@@ -94,12 +94,14 @@ export type { PopupClientTransportOptions, PopupConnectOptions } from './dweb-co
 export { WalletPostMessageTransport } from './dweb-connect-wallet.js';
 export type { WalletPostMessageTransportOptions } from './dweb-connect-wallet.js';
 export {
+  DWEB_CONNECT_ACK_MESSAGE_TYPE,
   DWEB_CONNECT_LOADED_MESSAGE_TYPE,
   DWEB_CONNECT_PATH,
   DWEB_CONNECT_REQUEST_MESSAGE_TYPE,
   DWEB_CONNECT_RESPONSE_MESSAGE_TYPE,
 } from './dweb-connect-messages.js';
 export type {
+  DWebConnectAckMessage,
   DWebConnectLoadedMessage,
   DWebConnectRequestMessage,
   DWebConnectResponseMessage,

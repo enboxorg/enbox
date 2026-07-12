@@ -170,6 +170,39 @@ describe('Connect scenarios', () => {
     expect(await unknownResult.json()).toEqual({ claimed: false });
   });
 
+  it('records the app completion signal for the wallet to poll', async () => {
+    const state = `dummyState-${randomUUID()}`;
+    const completeStatusUrl = `${connectBaseUrl}/connect/complete/${state}`;
+
+    // 1. Before the app signals completion, the wallet reads completed: false.
+    let statusResult = await fetch(completeStatusUrl, { method: 'GET' });
+    expect(statusResult.status).toBe(200);
+    expect(await statusResult.json()).toEqual({ completed: false });
+
+    // 2. A completion signal without a state is rejected.
+    const missingStateResult = await fetch(`${connectBaseUrl}/connect/complete`, {
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify({}),
+    });
+    expect(missingStateResult.status).toBe(400);
+
+    // 3. The app signals that it opened the wallet's response.
+    const completeResult = await fetch(`${connectBaseUrl}/connect/complete`, {
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify({ state }),
+    });
+    expect(completeResult.status).toBe(201);
+
+    // 4. The wallet now reads completed: true, non-destructively (repeatable).
+    for (let i = 0; i < 2; i++) {
+      statusResult = await fetch(completeStatusUrl, { method: 'GET' });
+      expect(statusResult.status).toBe(200);
+      expect(await statusResult.json()).toEqual({ completed: true });
+    }
+  });
+
   it('should clean up objects that are expired', async () => {
     // Scenario:
     // 1. App sends the Connect Request object to the Connect server.

@@ -107,7 +107,39 @@ export interface RelayConnectOptions {
     timeoutMs?: number;
     pollIntervalMs?: number;
     onClaimed?: () => void;
-  }) => Pick<RelayClientTransport, 'requestProfile' | 'deliverRequest' | 'awaitResponse' | 'requiresPin'>;
+  }) => Pick<RelayClientTransport, 'requestProfile' | 'deliverRequest' | 'awaitResponse' | 'requiresPin'>
+    & Partial<Pick<RelayClientTransport, 'confirmComplete'>>;
+}
+
+/**
+ * Sleep used between relay polls that ends early when the page returns to
+ * the foreground. Browsers throttle — and mobile browsers freeze — timers in
+ * background tabs, so a plain interval sleep can leave the user staring at a
+ * stale stage after approving in the wallet tab; cutting the sleep short on
+ * `visibilitychange` makes the next poll (and with it the pairing-code
+ * prompt) land the moment they switch back. Falls back to a plain sleep
+ * outside DOM environments.
+ */
+export function visibilityAwareSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof document === 'undefined') {
+      setTimeout(resolve, ms);
+      return;
+    }
+
+    const finish = (): void => {
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      resolve();
+    };
+    const onVisibilityChange = (): void => {
+      if (document.visibilityState === 'visible') {
+        finish();
+      }
+    };
+    const timer = setTimeout(finish, ms);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+  });
 }
 
 /**
@@ -116,7 +148,10 @@ export interface RelayConnectOptions {
  */
 export async function runRelayConnect(options: RelayConnectOptions): Promise<ConnectResult | undefined> {
   const createTransport = options.createTransport
-    ?? ((transportOptions): RelayClientTransport => new RelayClientTransport(transportOptions));
+    ?? ((transportOptions): RelayClientTransport => new RelayClientTransport({
+      ...transportOptions,
+      sleep: visibilityAwareSleep,
+    }));
 
   const transport = createTransport({
     connectServerUrl : options.connectServerUrl,
@@ -188,6 +223,11 @@ export async function runRelayConnect(options: RelayConnectOptions): Promise<Con
       if (response.delegatePortableDid === undefined) {
         throw new Error('Connect: wallet response omitted `delegatePortableDid`.');
       }
+
+      // Best-effort completion signal so the wallet can flip its pairing
+      // screen to a confirmed "connected" state instead of leaving the user
+      // to dismiss it blind. Fire-and-forget — mirrors the kernel client.
+      void transport.confirmComplete?.().catch((): undefined => undefined);
 
       return {
         delegatePortableDid : response.delegatePortableDid,

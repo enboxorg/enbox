@@ -18,6 +18,7 @@ import {
   MAX_PIN_ATTEMPTS,
   RelayConnectCancelledError,
   runRelayConnect,
+  visibilityAwareSleep,
 } from '../src/relay-connect-runner.js';
 
 const PERMISSIONS: ConnectPermissionRequest[] = [
@@ -35,9 +36,11 @@ const PERMISSIONS: ConnectPermissionRequest[] = [
  */
 type LoopbackTransport = {
   requiresPin: boolean;
+  confirmCompleteCalls: number;
   requestProfile(state: string): Promise<ConnectRequestProfile>;
   deliverRequest(jwe: string): Promise<WalletUriHandoff>;
   awaitResponse(): Promise<string>;
+  confirmComplete(): Promise<void>;
 };
 
 function createLoopbackTransport(walletPin: string | undefined, respond: 'approve' | 'deny'): LoopbackTransport {
@@ -45,7 +48,12 @@ function createLoopbackTransport(walletPin: string | undefined, respond: 'approv
   let deliveredJwe: string | undefined;
 
   return {
-    requiresPin: true,
+    requiresPin          : true,
+    confirmCompleteCalls : 0,
+
+    async confirmComplete(): Promise<void> {
+      this.confirmCompleteCalls += 1;
+    },
 
     async requestProfile(state: string): Promise<ConnectRequestProfile> {
       return {
@@ -141,6 +149,8 @@ describe('runRelayConnect', () => {
     expect(result?.connectedDid).toBe('did:dht:provider');
     expect(result?.delegatePortableDid.uri.startsWith('did:jwk:')).toBe(true);
     expect(result?.delegateGrants).toEqual([]);
+    // The wallet-facing completion signal fired exactly once after the open.
+    expect(transport.confirmCompleteCalls).toBe(1);
   });
 
   it('retries a mistyped pairing code against the same response', async () => {
@@ -174,6 +184,7 @@ describe('runRelayConnect', () => {
       requestPin: async (): Promise<string> => { attempts++; return '0000'; },
     })).rejects.toThrow(/did not match after/);
     expect(attempts).toBe(MAX_PIN_ATTEMPTS);
+    expect(transport.confirmCompleteCalls).toBe(0);
   });
 
   it('resolves undefined when the wallet denies', async () => {
@@ -186,6 +197,7 @@ describe('runRelayConnect', () => {
     });
 
     expect(result).toBeUndefined();
+    expect(transport.confirmCompleteCalls).toBe(0);
   });
 
   it('rejects with the cancellation error when the UI cancels mid-poll', async () => {
@@ -208,5 +220,22 @@ describe('runRelayConnect', () => {
 
     cancel();
     await expect(flow).rejects.toBeInstanceOf(RelayConnectCancelledError);
+  });
+});
+
+describe('visibilityAwareSleep', () => {
+  it('resolves after the requested delay with no visibility change', async () => {
+    const started = Date.now();
+    await visibilityAwareSleep(50);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(40);
+  });
+
+  it('ends early when the page returns to the foreground', async () => {
+    // A 60s sleep must be cut short by the visibility signal (the test page
+    // is visible, so dispatching the event stands in for a tab return) —
+    // well inside the test timeout proves the short-circuit.
+    const sleeping = visibilityAwareSleep(60_000);
+    document.dispatchEvent(new Event('visibilitychange'));
+    await sleeping;
   });
 });
