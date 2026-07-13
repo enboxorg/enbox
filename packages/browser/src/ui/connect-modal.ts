@@ -760,6 +760,24 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       );
     };
 
+    const renderPopupFailure = (error: unknown): void => {
+      if (settled) { return; }
+
+      const failure = error instanceof Error ? error : new Error(String(error));
+      const popupBlocked = /popup blocked/i.test(failure.message);
+      if (error instanceof PopupWindowClosedError || popupBlocked) {
+        renderPopupInterrupted(popupBlocked);
+        return;
+      }
+
+      renderError(
+        /timed out/i.test(failure.message)
+          ? 'That took too long, so we stopped for safety.'
+          : 'Something went wrong while connecting.',
+        failure,
+      );
+    };
+
     // ── Method drivers ─────────────────────────────────────────
     const resolveConnectServerUrl = async (origin: string): Promise<string | undefined> => {
       if (options.connectServerUrl !== undefined) {
@@ -883,48 +901,31 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       method = 'browser';
       renderFooter();
 
-      let flow: Promise<ConnectResult | undefined>;
+      popupBusy = true;
+      renderPopupWaiting();
+
       try {
-        flow = deps.runPopup({
+        deps.runPopup({
           walletUrl,
           permissionRequests : options.permissionRequests,
           appName,
           appIcon            : options.appIcon,
           timeoutMs          : options.timeout,
-        });
+        })
+          .then((result) => {
+            if (settled) { return; }
+            if (result === undefined) {
+              renderDenied();
+            } else {
+              succeed(result);
+            }
+          })
+          .catch(renderPopupFailure)
+          .finally(() => { popupBusy = false; });
       } catch (error) {
-        const blocked = error instanceof Error && /popup blocked/i.test(error.message);
-        renderPopupInterrupted(blocked);
-        return;
+        popupBusy = false;
+        renderPopupFailure(error);
       }
-
-      popupBusy = true;
-      renderPopupWaiting();
-
-      flow
-        .then((result) => {
-          if (settled) { return; }
-          if (result === undefined) {
-            renderDenied();
-          } else {
-            succeed(result);
-          }
-        })
-        .catch((error: unknown) => {
-          if (settled) { return; }
-          if (error instanceof PopupWindowClosedError) {
-            renderPopupInterrupted(false);
-            return;
-          }
-          const failure = error instanceof Error ? error : new Error(String(error));
-          renderError(
-            /timed out/i.test(failure.message)
-              ? 'That took too long, so we stopped for safety.'
-              : 'Something went wrong while connecting.',
-            failure,
-          );
-        })
-        .finally(() => { popupBusy = false; });
     };
 
     const startMethod = async (): Promise<void> => {

@@ -317,6 +317,28 @@ describe('runConnectModal', () => {
     expect(relay.calls).toHaveLength(2);
   });
 
+  it('offers popup recovery when the browser rejects the popup open', async () => {
+    const relay = createFakeRelay();
+    const promise = runConnectModal({
+      wallets            : WALLETS,
+      permissionRequests : PERMISSIONS,
+      deps               : deps({
+        runRelay : relay.runRelay,
+        runPopup : (): Promise<ConnectResult | undefined> => Promise.reject(new Error('Popup blocked by browser')),
+      }),
+    });
+    promise.catch((): undefined => undefined);
+    await flush();
+
+    shadowRoot().querySelector<HTMLButtonElement>('.method-link')?.click();
+    await flush();
+
+    expect(stageText()).toContain('Your browser blocked the wallet window.');
+    const retry = Array.from(shadowRoot().querySelectorAll<HTMLButtonElement>('.stage button'))
+      .find((button) => button.textContent === 'Open it now');
+    expect(retry).toBeDefined();
+  });
+
   it('centres the selected wallet’s mark on the QR and names it in the caption', async () => {
     const relay = createFakeRelay();
     const promise = runConnectModal({
