@@ -1,6 +1,6 @@
 {
   "name": "@enbox/dwn-sdk-js",
-  "version": "0.4.11",
+  "version": "0.4.12",
   "description": "A reference implementation of https://identity.foundation/decentralized-web-node/spec/",
   "repository": {
     "type": "git",
