@@ -929,6 +929,48 @@ export function testRecordsQueryHandler(): void {
         expect(warnings).toContain(writes[1].message.recordId);
       });
 
+      it('should not throw across Query, Read, and Subscribe while a record has two latest-state rows', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        const schema = 'https://schema.example/two-latest-residue';
+        const write = await TestDataGenerator.generateRecordsWrite({ author: alice, schema });
+        expect((await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream })).status.code).toBe(202);
+
+        // Manufacture the residue the legacy two-step write path left behind when it crashed
+        // between inserting the update and demoting the initial write: an update marked latest
+        // while the initial write's latest-state row was never demoted. The atomic commit makes
+        // this state unreachable going forward, but stores that ran the old code can still hold
+        // it, and readers must tolerate it rather than crash (the failure that aborted sync).
+        const update = await TestDataGenerator.generateFromRecordsWrite({ author: alice, existingWrite: write.recordsWrite });
+        const updateWithEncodedData = { ...update.message, encodedData: Encoder.bytesToBase64Url(update.dataBytes) };
+        await messageStore.put(alice.did, updateWithEncodedData, await update.recordsWrite.constructIndexes(true));
+
+        // Query returns both versions (the accepted transient duplicate) with the update's
+        // initial write attached via its stable entry ID.
+        const query = await TestDataGenerator.generateRecordsQuery({ author: alice, filter: { schema } });
+        const queryReply = await dwn.processMessage(alice.did, query.message);
+        expect(queryReply.status.code).toBe(200);
+        expect(queryReply.entries).toHaveLength(2);
+        const updateEntry = queryReply.entries!.find(
+          (entry): boolean => entry.descriptor.messageTimestamp === update.message.descriptor.messageTimestamp
+        );
+        expect(updateEntry?.initialWrite?.recordId).toBe(write.message.recordId);
+
+        // Read returns one of the two versions without throwing.
+        const read = await RecordsRead.create({ filter: { recordId: write.message.recordId }, signer: Jws.createSigner(alice) });
+        const readReply = await dwn.processMessage(alice.did, read.message);
+        expect(readReply.status.code).toBe(200);
+        expect(readReply.entry!.recordsWrite!.recordId).toBe(write.message.recordId);
+
+        // Subscribe's initial snapshot also tolerates the state.
+        const subscribe = await TestDataGenerator.generateRecordsSubscribe({ author: alice, filter: { schema } });
+        const subReply = await dwn.processMessage(alice.did, subscribe.message, { subscriptionHandler: (): void => {} });
+        expect(subReply.status.code).toBe(200);
+        expect(subReply.entries!.length).toBeGreaterThanOrEqual(1);
+        await subReply.subscription!.close();
+      });
+
       it('should be able to query by attester', async () => {
       // scenario: 2 records authored by alice, 1st attested by alice, 2nd attested by bob
         const alice = await TestDataGenerator.generateDidKeyPersona();
