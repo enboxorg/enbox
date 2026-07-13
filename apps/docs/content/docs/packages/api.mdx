@@ -39,6 +39,8 @@ The `Enbox` instance exposes:
 | `enbox.did` | DID API — create and resolve DIDs |
 | `enbox.vc` | Verifiable Credentials API |
 | `enbox.agent` | The underlying `EnboxAgent` |
+| `enbox.getConnectionStatus()` | Reports active, expiring, expired, or revoked delegated grants |
+| `enbox.refresh({ protocols })` | Requests fresh grants for the same delegate on instances returned by `Enbox.connect()` |
 | `enbox.disconnect()` | Stops sync and clears cached instances |
 
 There is **no public `dwn` property** on the `Enbox` instance. All DWN access goes through `enbox.using(protocol)`.

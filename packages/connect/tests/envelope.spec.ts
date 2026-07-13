@@ -6,6 +6,7 @@ import { Convert } from '@enbox/common';
 import { DidJwk } from '@enbox/dids';
 import { signJwt } from '../src/jwt.js';
 import {
+  assertConnectRequest,
   assertX25519PublicJwk,
   CONNECT_REQUEST_JWE_TYP,
   CONNECT_RESPONSE_JWE_TYP,
@@ -99,6 +100,35 @@ describe('connect envelope', () => {
 
       const opened = await openRequest({ jwe, decryption: { mode: 'dir', requestKey } });
       expect(opened).toEqual(request);
+      expect(opened.requestType).toBeUndefined();
+    });
+
+    it('should round-trip a refresh request through the dir profile', async () => {
+      const { clientDid, request } = await createTestRequest({
+        delegateDid : 'did:example:existing-delegate',
+        requestType : 'refresh',
+      });
+      const requestKey = CryptoUtils.randomBytes(32);
+
+      const jwe = await sealRequest({ request, signer: clientDid, encryption: { mode: 'dir', requestKey } });
+      const opened = await openRequest({ jwe, decryption: { mode: 'dir', requestKey } });
+
+      expect(opened.requestType).toBe('refresh');
+      expect(opened.delegateDid).toBe('did:example:existing-delegate');
+    });
+
+    it('should reject an unsupported request type', async () => {
+      const { request } = await createTestRequest();
+
+      expect(() => assertConnectRequest({ ...request, requestType: 'replace' }))
+        .toThrow('`requestType` must be "connect" or "refresh"');
+    });
+
+    it('should reject a refresh request without an existing delegate', async () => {
+      const { request } = await createTestRequest();
+
+      expect(() => assertConnectRequest({ ...request, requestType: 'refresh' }))
+        .toThrow('`delegateDid` is required');
     });
 
     it('should reject sealing when the signer does not match clientDid', async () => {

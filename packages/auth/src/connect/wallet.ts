@@ -15,7 +15,7 @@ import { DEFAULT_DWN_ENDPOINTS } from '../types.js';
 import { registerWithDwnEndpoints } from '../registration.js';
 import { validateConnectResultGrants } from './validate-grants.js';
 import { WalletConnect } from '../wallet-connect-client.js';
-import { ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, resolvePassword } from './lifecycle.js';
+import { assertFlowActive, commitFlowSession, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, resolvePassword, runFlowMutation } from './lifecycle.js';
 
 // Re-export for backward compatibility — processConnectedGrants moved to lifecycle.ts.
 export { processConnectedGrants } from './lifecycle.js';
@@ -33,11 +33,17 @@ export async function walletConnect(
 ): Promise<AuthSession> {
   const { userAgent, emitter, storage } = ctx;
   const sync = options.sync ?? ctx.defaultSync;
+  assertFlowActive(ctx);
 
   // Ensure the agent is initialized and started before the relay flow.
   const isFirstLaunch = await userAgent.firstLaunch();
+  assertFlowActive(ctx);
   const password = await resolvePassword(ctx, undefined, isFirstLaunch);
-  await ensureVaultReady({ userAgent, emitter, password, isFirstLaunch });
+  assertFlowActive(ctx);
+  const prepareAgent = (): Promise<string | undefined> => ensureVaultReady({
+    userAgent, emitter, password, isFirstLaunch,
+  });
+  await runFlowMutation(ctx, prepareAgent);
 
   // Run the Enbox Connect relay flow.
   const result = await WalletConnect.initClient({
@@ -60,45 +66,51 @@ export async function walletConnect(
     throw new Error('[@enbox/auth] Connection was denied by the wallet.');
   }
 
-  // Validate the returned grants against the request before importing
-  // anything — grantee must be the delegate DID and every scope must have
-  // been requested.
-  validateConnectResultGrants(result, options.permissionRequests);
+  assertFlowActive(ctx);
 
-  // Import delegate DID, process grants, and set up sync.
+  // Validate the returned grants before any local or provider-side mutation.
+  validateConnectResultGrants(result, options.permissionRequests);
   const {
     delegatePortableDid, connectedDid, delegateGrants, sessionRevocations,
   } = result;
-  const identity = await importDelegateAndSetupSync({
-    userAgent, delegatePortableDid, connectedDid, delegateGrants,
-    flowName: 'Wallet connect',
-  });
 
-  // Register with DWN endpoints (if registration options are provided).
+  // Provider authentication may wait on application UI, so keep it outside
+  // the lifecycle mutex and re-check teardown before importing the delegate.
   if (ctx.registration) {
     const dwnEndpoints = ctx.defaultDwnEndpoints ?? DEFAULT_DWN_ENDPOINTS;
     await registerWithDwnEndpoints(
       {
         userAgent,
         dwnEndpoints,
-        agentDid    : userAgent.agentDid.uri,
+        agentDid     : userAgent.agentDid.uri,
         connectedDid,
-        secretStore : userAgent.secrets,
-        storage,
+        secretStore  : userAgent.secrets,
+        storage      : storage,
+        assertActive : ctx.assertActive,
+        runMutation  : ctx.runMutation,
       },
       ctx.registration,
     );
+    assertFlowActive(ctx);
   }
 
-  // Finalize session. Pass the transient delegate state explicitly so
-  // `persistOrClearDelegateSecrets` doesn't have to read it back off
-  // the identity object (which was the old `(identity as any)._foo`
-  // smuggling pattern).
-  return finalizeDelegateSession({
-    userAgent, emitter, storage, identity,
-    connectedDid, delegateDid   : delegatePortableDid.uri, sync,
-    delegateState : {
-      sessionRevocations,
-    },
+  return commitFlowSession(ctx, async (): Promise<AuthSession> => {
+    // Import delegate DID, process grants, and set up sync.
+    const identity = await importDelegateAndSetupSync({
+      userAgent, delegatePortableDid, connectedDid, delegateGrants,
+      flowName: 'Wallet connect',
+    });
+
+    // Finalize session. Pass the transient delegate state explicitly so
+    // `persistOrClearDelegateSecrets` doesn't have to read it back off
+    // the identity object (which was the old `(identity as any)._foo`
+    // smuggling pattern).
+    return finalizeDelegateSession({
+      userAgent, emitter, storage, identity,
+      connectedDid, delegateDid   : delegatePortableDid.uri, sync,
+      delegateState : {
+        sessionRevocations,
+      },
+    });
   });
 }

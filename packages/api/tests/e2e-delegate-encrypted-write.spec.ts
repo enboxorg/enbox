@@ -31,7 +31,7 @@
 import type { PrivateKeyJwk } from '@enbox/crypto';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type { BearerDid, PortableDid } from '@enbox/dids';
-import type { ConnectHandler, ConnectResult } from '@enbox/auth';
+import type { ConnectHandler, ConnectRequestType, ConnectResult } from '@enbox/auth';
 import type { DwnDataEncodedRecordsWriteMessage, DwnProtocolDefinition, EnboxPlatformAgent } from '@enbox/agent';
 
 import sinon from 'sinon';
@@ -527,12 +527,20 @@ class InProcessWalletHandler implements ConnectHandler {
 
   async requestAccess(params: {
     permissionRequests: any[];
+    delegatePortableDid?: PortableDid;
+    requestType?: ConnectRequestType;
   }): Promise<ConnectResult | undefined> {
-    const delegatePortableDid = this.options.preSupplyDelegateDid === true
-      ? await createClientDelegatePortableDid()
-      : await createWalletMintedDelegatePortableDid(this.walletAgent);
+    const delegatePortableDid = params.requestType === 'refresh'
+      ? params.delegatePortableDid
+      : this.options.preSupplyDelegateDid === true
+        ? await createClientDelegatePortableDid()
+        : await createWalletMintedDelegatePortableDid(this.walletAgent);
+    if (delegatePortableDid === undefined) {
+      throw new Error('refresh requests must supply the existing delegate DID.');
+    }
+    const reusesDelegate = params.requestType === 'refresh' || this.options.preSupplyDelegateDid === true;
     const delegateRootPrivateKey = delegatePortableDid.privateKeys!.find((key) => key.crv === 'X25519') as PrivateKeyJwk | undefined;
-    if (delegateRootPrivateKey === undefined) {
+    if (!reusesDelegate && delegateRootPrivateKey === undefined) {
       throw new Error('test delegate DID must include an X25519 private key.');
     }
 
@@ -564,7 +572,7 @@ class InProcessWalletHandler implements ConnectHandler {
       allGrants.push(...grants);
 
       if (permissionRequestHasEncryptedReadScopes(permissionRequest)) {
-        const delegateRootPublicKey = this.options.preSupplyDelegateDid === true
+        const delegateRootPublicKey = reusesDelegate
           ? (await getEncryptionKeyInfo(this.walletAgent, delegatePortableDid.uri)).publicKeyJwk
           : undefined;
         const grantKeyRecords = await createGrantKeyRecordsForGrants({
@@ -572,7 +580,7 @@ class InProcessWalletHandler implements ConnectHandler {
           ownerDid   : this.ownerDid,
           granteeDid : delegatePortableDid.uri,
           ...(delegateRootPublicKey === undefined
-            ? { granteeRootPrivateKey: delegateRootPrivateKey }
+            ? { granteeRootPrivateKey: delegateRootPrivateKey! }
             : { granteeRootPublicKey: delegateRootPublicKey }),
           grantMessages       : grants,
           protocolDefinitions : [protocolDefinition],
@@ -819,6 +827,50 @@ describe('E2E: AuthManager.connect() with encrypted protocol', () => {
       );
       expect(signer).toBe(session.delegateDid);
     }
+  });
+
+  it('should refresh real grants for the existing delegate and continue encrypted writes', async () => {
+    sinon.stub(console, 'warn');
+
+    const protocolUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
+    const protocolDef = createEncryptedProtocol(protocolUri);
+    const EncTestProtocol = defineProtocol(
+      protocolDef as ProtocolDefinition,
+      {} as EncryptedSchemaMap,
+    );
+
+    const auth = await AuthManager.create({
+      agent          : dappAgent,
+      password       : 'test-password',
+      storage        : new MemoryStorage(),
+      connectHandler : new InProcessWalletHandler(
+        walletHarness.agent, walletDid.uri,
+      ),
+    });
+
+    const initialSession = await auth.connect({ protocols: [protocolDef] });
+    const initialStatus = await auth.getConnectionStatus();
+    expect(initialStatus.state).toBe('active');
+    expect(initialStatus.connectSessionId).toBeDefined();
+
+    const refreshedSession = await auth.refresh({ protocols: [protocolDef] });
+    const refreshedStatus = await auth.getConnectionStatus();
+    expect(refreshedSession.did).toBe(initialSession.did);
+    expect(refreshedSession.delegateDid).toBe(initialSession.delegateDid);
+    expect(refreshedStatus.state).toBe('active');
+    expect(refreshedStatus.connectSessionId).toBeDefined();
+    expect(refreshedStatus.connectSessionId).not.toBe(initialStatus.connectSessionId);
+
+    const typed = Enbox.fromSession(refreshedSession).using(EncTestProtocol);
+    const { status, record } = await typed.records.create('transaction', {
+      data: { type: 'receive', amount: 900 },
+    });
+    expect(status.code).toBe(202);
+    expect(record).toBeDefined();
+    expect((record!.rawMessage as any).encryption).toBeDefined();
+    expect(Jws.getSignerDid(
+      record!.rawMessage.authorization.signature.signatures[0],
+    )).toBe(initialSession.delegateDid);
   });
 
   it('should hydrate wrapped grantKeys for a pre-supplied delegate DID through auth.connect()', async () => {

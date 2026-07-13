@@ -105,6 +105,13 @@ function requireOptionalObject(payload: Record<string, unknown>, field: string, 
   }
 }
 
+function requireOptionalConnectRequestType(payload: Record<string, unknown>, context: string): void {
+  const value = payload.requestType;
+  if (value !== undefined && value !== 'connect' && value !== 'refresh') {
+    fail(context, 'requestType', 'must be "connect" or "refresh" when present');
+  }
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -183,6 +190,10 @@ export function assertConnectRequest(payload: Record<string, unknown>): asserts 
   requireArray(payload, 'permissionRequests', ctx);
   requireOptionalNumber(payload, 'requestedSessionTtlSeconds', ctx);
   requireOptionalString(payload, 'delegateDid', ctx);
+  requireOptionalConnectRequestType(payload, ctx);
+  if (payload.requestType === 'refresh' && payload.delegateDid === undefined) {
+    fail(ctx, 'delegateDid', 'is required when `requestType` is "refresh"');
+  }
   requireStringArray(payload, 'supportedDidMethods', ctx);
   requireString(payload, 'nonce', ctx);
   requireString(payload, 'state', ctx);

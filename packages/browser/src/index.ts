@@ -49,6 +49,11 @@ export type {
 export {
   AuthManager,
   AuthSession,
+  SESSION_EXPIRED_ERROR_CODE,
+  SESSION_REVOKED_ERROR_CODE,
+  computeConnectionStatus,
+  isSessionExpiredError,
+  isSessionInvalidError,
   normalizeProtocolRequests,
   WalletConnect,
 } from '@enbox/auth/browser';
@@ -58,16 +63,23 @@ export type {
   AuthEventHandler,
   AuthManagerOptions,
   AuthState,
+  ComputeConnectionStatusOptions,
+  ConnectionMonitorOptions,
+  ConnectionState,
+  ConnectionStatus,
+  ConnectionStatusGrant,
   ConnectHandler,
   ConnectOptions,
   ConnectResult,
   DisconnectOptions,
+  GetConnectionStatusOptions,
   HandlerConnectOptions,
   ImportFromPortableOptions,
   VaultConnectOptions,
   Permission,
   PortableIdentity,
   ProtocolRequest,
+  RefreshOptions,
   RegistrationOptions,
   StorageAdapter,
   SyncOption,
@@ -80,7 +92,7 @@ export type {
 // transports: opening/sealing envelopes and the deny token.
 
 export { CONNECT_DENIED_TOKEN, ConnectProvider } from '@enbox/connect';
-export type { ConnectApproval, ConnectPermissionRequest, ConnectRequest } from '@enbox/connect';
+export type { ConnectApproval, ConnectPermissionRequest, ConnectRequest, ConnectRequestType } from '@enbox/connect';
 
 // ─── Browser-specific exports ───────────────────────────────────
 //

@@ -7,8 +7,9 @@
  * @module
  */
 
-import type { ConnectPermissionRequest } from '@enbox/connect';
+import type { PortableDid } from '@enbox/dids';
 import type { ConnectHandler, ConnectResult } from '@enbox/auth';
+import type { ConnectPermissionRequest, ConnectRequestType } from '@enbox/connect';
 
 import { runConnectModal } from './ui/connect-modal.js';
 
@@ -175,6 +176,8 @@ export function BrowserConnectHandler(
   return {
     async requestAccess(params: {
       permissionRequests: ConnectPermissionRequest[];
+      delegatePortableDid?: PortableDid;
+      requestType?: ConnectRequestType;
     }): Promise<ConnectResult | undefined> {
       return runConnectModal({
         wallets,
@@ -182,12 +185,14 @@ export function BrowserConnectHandler(
         preferredMethod,
         rememberChoice,
         appName,
-        appIcon            : appIcon ?? `${window.location.origin}/favicon.ico`,
+        appIcon             : appIcon ?? `${window.location.origin}/favicon.ico`,
         connectServerUrl,
         relayWalletPath,
         timeout,
         theme,
-        permissionRequests : params.permissionRequests,
+        mode                : params.requestType,
+        delegatePortableDid : params.delegatePortableDid,
+        permissionRequests  : params.permissionRequests,
       });
     },
   };

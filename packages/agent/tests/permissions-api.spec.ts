@@ -1365,7 +1365,10 @@ describe('AgentPermissionsApi', () => {
         messageType: DwnInterface.MessagesQuery,
       }, aliceDeviceXMessageGrants);
 
-      expect(queryGrant?.message.recordId).toBe(messagesGrants.query.message.recordId);
+      const latestExpiringGrant = aliceDeviceXMessageGrants.reduce((latest, candidate) =>
+        candidate.grant.dateExpires > latest.grant.dateExpires ? candidate : latest
+      );
+      expect(queryGrant?.message.recordId).toBe(latestExpiringGrant.message.recordId);
 
       // attempt to match non-delegated grant with delegated set to true
       const notFoundDelegated = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {

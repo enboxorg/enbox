@@ -36,7 +36,7 @@ function buildTestGrant(protocol: string, grantId: string): any {
       dataSize     : 100,
     },
     authorization: {
-      signature: { signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:dht:owner#sig' })) }] },
+      signature: { signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:dht:connected456#sig' })) }] },
     },
   };
 }
@@ -65,7 +65,7 @@ function buildTestGrantNonMessages(grantId: string): any {
       dataSize     : 100,
     },
     authorization: {
-      signature: { signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:dht:owner#sig' })) }] },
+      signature: { signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:dht:connected456#sig' })) }] },
     },
   };
 }
@@ -105,7 +105,7 @@ function setupStubs(): void {
     } catch { /* fallback to empty scope */ }
     return {
       id          : message.recordId,
-      grantor     : 'did:dht:owner',
+      grantor     : 'did:dht:connected456',
       grantee     : message.descriptor?.recipient ?? 'did:jwk:delegate1',
       dateGranted : message.descriptor?.dateCreated,
       scope,

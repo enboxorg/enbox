@@ -1,6 +1,7 @@
 import type { AddressInfo } from 'node:net';
 import type { ConnectPermissionRequest } from '@enbox/connect';
 import type { DwnPermissionScope } from '@enbox/agent';
+import type { PortableDid } from '@enbox/dids';
 import type { ConnectResult, WalletConnectClientOptions } from '@enbox/auth';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 
@@ -79,6 +80,50 @@ describe('CliConnectHandler', () => {
     expect(authUrls).toEqual(['https://wallet.example/connect/app#request_uri=urn:test&encryption_key=test']);
     expect(output.text()).toContain('[qr]');
     expect(output.text()).toContain('Waiting for approval...');
+  });
+
+  it('should preserve the existing delegate and request type during refresh', async () => {
+    let capturedOptions: WalletConnectClientOptions | undefined;
+    sinon.stub(WalletConnect, 'initClient').callsFake(async (options: WalletConnectClientOptions): Promise<ConnectResult | undefined> => {
+      capturedOptions = options;
+      return createConnectResult([createGrant({ scope: requestedScope })]);
+    });
+    const existingDelegate = {
+      uri         : delegateDid,
+      document    : {},
+      metadata    : {},
+      privateKeys : [],
+    } as PortableDid;
+    const handler = CliConnectHandler({
+      walletUrl        : 'https://wallet.example',
+      connectServerUrl : 'https://relay.example/connect',
+      pinPrompt        : async (): Promise<string> => '428113',
+      qrRenderer       : async (): Promise<string> => '[qr]',
+    });
+
+    await handler.requestAccess({
+      permissionRequests,
+      delegatePortableDid : existingDelegate,
+      requestType         : 'refresh',
+    });
+
+    expect(capturedOptions?.delegatePortableDid).toBe(existingDelegate);
+    expect(capturedOptions?.requestType).toBe('refresh');
+  });
+
+  it('should reject refresh before starting WalletConnect when the existing delegate is missing', async () => {
+    const initClient = sinon.stub(WalletConnect, 'initClient');
+    const handler = CliConnectHandler({
+      walletUrl        : 'https://wallet.example',
+      connectServerUrl : 'https://relay.example/connect',
+    });
+
+    await expect(handler.requestAccess({
+      permissionRequests,
+      requestType: 'refresh',
+    })).rejects.toThrow('refresh requests require an existing `delegatePortableDid`');
+
+    expect(initClient.called).toBe(false);
   });
 
   it('should complete through an encrypted relay stub and consume relay artifacts once', async () => {

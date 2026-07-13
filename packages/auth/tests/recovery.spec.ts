@@ -149,6 +149,43 @@ describe('recoverIdentitiesFromRemote', () => {
     expect(registrationSucceeded).toBe(true);
   });
 
+  test('keeps registration callbacks outside the lifecycle mutation runner', async () => {
+    const identity = createMockIdentity();
+    let pullCount = 0;
+    let mutationDepth = 0;
+    let registrationMutationDepth: number | undefined;
+
+    const agent = createMockAgent({
+      identityList     : async () => (pullCount > 0 ? [identity] : []),
+      syncSync         : async () => { pullCount++; },
+      rpcGetServerInfo : async () => ({
+        registrationRequirements : [],
+        maxFileSize              : 10_000_000,
+      }),
+    });
+
+    await recoverIdentitiesFromRemote({
+      userAgent    : agent,
+      dwnEndpoints : ['https://dwn.example.com'],
+      registration : {
+        onSuccess : () => { registrationMutationDepth = mutationDepth; },
+        onFailure : () => {},
+      },
+      storage     : new MemoryStorage(),
+      runMutation : async <T>(operation: () => Promise<T>): Promise<T> => {
+        mutationDepth++;
+        try {
+          return await operation();
+        } finally {
+          mutationDepth--;
+        }
+      },
+    });
+
+    expect(registrationMutationDepth).toBe(0);
+    expect(mutationDepth).toBe(0);
+  });
+
   test('continues recovery when DWN tenant registration fails', async () => {
     const identity = createMockIdentity();
     let pullCount = 0;

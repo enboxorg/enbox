@@ -17,6 +17,7 @@ import type {
   ConnectClientMetadata,
   ConnectPermissionRequest,
   ConnectRequest,
+  ConnectRequestType,
   ConnectResponse,
   ConnectResult,
   ConnectTransport,
@@ -88,6 +89,12 @@ export type ConnectClientConnectParams = {
   delegatePortableDid?: PortableDid;
 
   /**
+   * User-facing request purpose. Absent means a normal connect; `refresh`
+   * tells the wallet to render a re-grant screen for `delegatePortableDid`.
+   */
+  requestType?: ConnectRequestType;
+
+  /**
    * Supported DID methods for the connected identity.
    * @default ['did:dht', 'did:jwk']
    */
@@ -132,6 +139,10 @@ export class ConnectClient {
    *          the request in the wallet.
    */
   public async connect(params: ConnectClientConnectParams): Promise<ConnectResult | undefined> {
+    if (params.requestType === 'refresh' && params.delegatePortableDid === undefined) {
+      throw new Error('Connect: refresh requests require an existing `delegatePortableDid`.');
+    }
+
     // Ephemeral client DID (did:jwk) for request signing and response addressing.
     const clientDid = await DidJwk.create();
 
@@ -156,6 +167,7 @@ export class ConnectClient {
       permissionRequests         : params.permissionRequests,
       requestedSessionTtlSeconds : params.requestedSessionTtlSeconds,
       delegateDid                : params.delegatePortableDid?.uri,
+      requestType                : params.requestType,
       supportedDidMethods        : params.supportedDidMethods ?? [...DEFAULT_SUPPORTED_DID_METHODS],
       nonce,
       state,
@@ -217,7 +229,7 @@ export class ConnectClient {
  * supplied one (which the wallet must have granted to) or the wallet-minted
  * one carried in the response.
  */
-function resolveDelegatePortableDid({ localDelegatePortableDid, response }: {
+export function resolveDelegatePortableDid({ localDelegatePortableDid, response }: {
   localDelegatePortableDid?: PortableDid;
   response: ConnectResponse;
 }): PortableDid {

@@ -37,8 +37,9 @@
  * @module
  */
 
+import type { PortableDid } from '@enbox/dids';
 import type { WalletOption } from '../browser-connect-handler.js';
-import type { ConnectPermissionRequest, ConnectResult, WalletUriHandoff } from '@enbox/connect';
+import type { ConnectPermissionRequest, ConnectRequestType, ConnectResult, WalletUriHandoff } from '@enbox/connect';
 
 import { ConnectClient } from '@enbox/connect';
 
@@ -157,6 +158,12 @@ export interface ConnectModalOptions {
    */
   walletUrl?: string;
 
+  /** User-facing mode. Absent means a normal connect. */
+  mode?: ConnectRequestType;
+
+  /** Existing delegate credentials reused by a refresh request. */
+  delegatePortableDid?: PortableDid;
+
   /** Preferred method on open; overrides the remembered choice. */
   preferredMethod?: ConnectMethod;
 
@@ -215,6 +222,8 @@ export interface ConnectModalDeps {
     appName: string;
     appIcon?: string;
     timeoutMs?: number;
+    delegatePortableDid?: PortableDid;
+    requestType?: ConnectRequestType;
   }) => Promise<ConnectResult | undefined>;
 
   /** Resolves a wallet origin to its relay `connectServerUrl` (or undefined). */
@@ -246,6 +255,8 @@ async function runPopupConnect(options: {
   appName: string;
   appIcon?: string;
   timeoutMs?: number;
+  delegatePortableDid?: PortableDid;
+  requestType?: ConnectRequestType;
 }): Promise<ConnectResult | undefined> {
   // The transport constructor calls `window.open` synchronously — callers
   // must invoke this inside the user-gesture call stack.
@@ -256,10 +267,12 @@ async function runPopupConnect(options: {
   const client = new ConnectClient({ transport });
 
   return await client.connect({
-    appName            : options.appName,
-    appIcon            : options.appIcon,
-    clientMetadata     : collectBrowserClientMetadata(),
-    permissionRequests : options.permissionRequests,
+    appName             : options.appName,
+    appIcon             : options.appIcon,
+    clientMetadata      : collectBrowserClientMetadata(),
+    permissionRequests  : options.permissionRequests,
+    delegatePortableDid : options.delegatePortableDid,
+    requestType         : options.requestType,
   });
 }
 
@@ -295,7 +308,7 @@ function readLastChoice(storage: ConnectModalDeps['storage']): LastChoice | unde
       return undefined;
     }
     const parsed = JSON.parse(raw) as Partial<LastChoice>;
-    if ((parsed.method === 'phone' || parsed.method === 'browser') && typeof parsed.walletUrl === 'string') {
+    if ((parsed.method === 'phone' || parsed.method === 'browser') && isValidRememberedWalletUrl(parsed.walletUrl)) {
       return { method: parsed.method, walletUrl: parsed.walletUrl };
     }
   } catch { /* unreadable storage — behave as first visit */ }
@@ -345,6 +358,9 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
   if (typeof window === 'undefined' || typeof document === 'undefined') {
     throw new Error('[@enbox/browser] The connect modal is only available in browser environments.');
   }
+  if (options.mode === 'refresh' && options.delegatePortableDid === undefined) {
+    throw new Error('Connect: refresh requests require an existing `delegatePortableDid`.');
+  }
 
   const deps: ConnectModalDeps = { ...defaultDeps(), ...options.deps };
   const wallets = dedupeWalletsByUrl(options.wallets ?? []);
@@ -352,13 +368,18 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
   const appName = options.appName ?? window.location.host;
   const relayWalletPath = options.relayWalletPath ?? '/connect/app';
   const isMobile = deps.isMobile();
+  const refreshing = options.mode === 'refresh';
 
   const lastChoice = rememberChoice ? readLastChoice(deps.storage) : undefined;
 
   // Wallet resolution order: explicit option → remembered → catalog head.
-  const lockedWallet = options.walletUrl !== undefined;
+  const rememberedWalletUrl = lastChoice !== undefined
+    && (refreshing || walletInCatalog(wallets, lastChoice.walletUrl))
+    ? lastChoice.walletUrl
+    : undefined;
+  const lockedWallet = options.walletUrl !== undefined || (refreshing && rememberedWalletUrl !== undefined);
   let walletUrl = options.walletUrl
-    ?? (lastChoice !== undefined && (lockedWallet || walletInCatalog(wallets, lastChoice.walletUrl)) ? lastChoice.walletUrl : undefined)
+    ?? rememberedWalletUrl
     ?? wallets[0]?.url;
 
   // Method resolution order: explicit option → remembered → phone.
@@ -380,7 +401,8 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     modal.className = 'modal';
     modal.setAttribute('role', 'dialog');
     modal.setAttribute('aria-modal', 'true');
-    modal.setAttribute('aria-label', `Connect to ${appName}`);
+    const title = refreshing ? `Reconnect to ${appName}` : `Connect to ${appName}`;
+    modal.setAttribute('aria-label', title);
 
     // ── Theme ──────────────────────────────────────────────────
     // System light/dark is pure CSS (`prefers-color-scheme`), so it tracks
@@ -489,7 +511,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     const cancelModal = (): void => settle(() => reject(new Error('[@enbox/browser] Connect cancelled.')));
 
     // ── Zones ──────────────────────────────────────────────────
-    modal.appendChild(buildHeader(appName, options.appIcon, cancelModal));
+    modal.appendChild(buildHeader(title, options.appIcon, cancelModal));
 
     const stage = document.createElement('div');
     stage.className = 'stage';
@@ -839,14 +861,16 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       try {
         const result = await deps.runRelay({
           connectServerUrl,
-          walletUri          : new URL(relayWalletPath, origin).toString(),
+          walletUri           : new URL(relayWalletPath, origin).toString(),
           appName,
-          appIcon            : options.appIcon,
-          clientMetadata     : collectBrowserClientMetadata(),
-          permissionRequests : options.permissionRequests,
-          timeoutMs          : options.timeout,
-          cancelled          : session.cancelled,
-          onWalletUriReady   : (handoff): void => {
+          appIcon             : options.appIcon,
+          clientMetadata      : collectBrowserClientMetadata(),
+          permissionRequests  : options.permissionRequests,
+          delegatePortableDid : options.delegatePortableDid,
+          requestType         : options.mode,
+          timeoutMs           : options.timeout,
+          cancelled           : session.cancelled,
+          onWalletUriReady    : (handoff): void => {
             if (session.active && !settled) {
               renderQr(handoff);
               scheduleRemint(handoff.expiresIn);
@@ -907,10 +931,12 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       try {
         deps.runPopup({
           walletUrl,
-          permissionRequests : options.permissionRequests,
+          permissionRequests  : options.permissionRequests,
           appName,
-          appIcon            : options.appIcon,
-          timeoutMs          : options.timeout,
+          appIcon             : options.appIcon,
+          timeoutMs           : options.timeout,
+          delegatePortableDid : options.delegatePortableDid,
+          requestType         : options.mode,
         })
           .then((result) => {
             if (settled) { return; }
@@ -1226,6 +1252,19 @@ function walletInCatalog(wallets: WalletOption[], url: string): boolean {
   return wallets.some((wallet) => wallet.url === url);
 }
 
+function isValidRememberedWalletUrl(value: unknown): value is string {
+  if (typeof value !== 'string' || value.trim() === '') {
+    return false;
+  }
+
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 /** Drops catalog entries that repeat an earlier wallet's URL. */
 function dedupeWalletsByUrl(wallets: WalletOption[]): WalletOption[] {
   return wallets.filter((wallet, index) => wallets.findIndex((candidate) => candidate.url === wallet.url) === index);
@@ -1268,7 +1307,7 @@ function stageLinkButton(label: string, onClick: () => void): HTMLButtonElement 
   return button;
 }
 
-function buildHeader(appName: string, appIcon: string | undefined, onCancel: () => void): HTMLDivElement {
+function buildHeader(titleText: string, appIcon: string | undefined, onCancel: () => void): HTMLDivElement {
   const header = document.createElement('div');
   header.className = 'header';
 
@@ -1287,7 +1326,7 @@ function buildHeader(appName: string, appIcon: string | undefined, onCancel: () 
   }
 
   const title = document.createElement('h2');
-  title.textContent = `Connect to ${appName}`;
+  title.textContent = titleText;
   identity.appendChild(title);
 
   const closeBtn = document.createElement('button');

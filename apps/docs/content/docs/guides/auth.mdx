@@ -63,14 +63,67 @@ const walletAuth = await AuthManager.create({
 const session = await walletAuth.connect({ protocols: [NotesProtocol] });
 ```
 
-### 4. Disconnect
+### 4. Grant expiry and refresh
+
+Wallet connections use delegated grants with a fixed expiry. Inspect the
+newest complete approval before an operation, or recognize an expired/revoked
+grant after a DWN request fails:
+
+```ts
+import { isSessionInvalidError } from '@enbox/auth/browser';
+
+const status = await walletAuth.getConnectionStatus();
+
+if (status.state === 'expiring-soon' || status.state === 'expired') {
+  await walletAuth.refresh({ protocols: [NotesProtocol] });
+}
+
+try {
+  await writeNote();
+} catch (error) {
+  if (isSessionInvalidError(error)) {
+    await walletAuth.refresh({ protocols: [NotesProtocol] });
+  } else {
+    throw error;
+  }
+}
+```
+
+`refresh()` opens the configured connect handler for fresh consent and grants
+to the same delegate DID; it does not replace the delegate's local keys. Pass
+the protocols your app still needs. Revocation status is best-effort and
+reflects revocations that have reached the local agent.
+
+For proactive UX, opt in to polling. Automatic refresh can prompt for consent
+when a session is expiring or expired, but never for a revoked session:
+
+```ts
+const stopMonitoring = walletAuth.startConnectionMonitor({
+  intervalMs: 5 * 60 * 1000,
+  autoRefresh: { protocols: [NotesProtocol] },
+  onError: error => reportConnectionError(error),
+});
+
+walletAuth.on('connection-expiring', ({ status }) => {
+  showRenewalNotice(status.expiresAt);
+});
+
+walletAuth.on('connection-expired', ({ status }) => {
+  showDisconnectedNotice(status.state);
+});
+
+// Call when this UI no longer needs connection monitoring.
+stopMonitoring();
+```
+
+### 5. Disconnect
 
 ```ts
 await auth.disconnect();
 console.log(auth.state); // 'unlocked'
 ```
 
-### 5. Lock / Unlock
+### 6. Lock / Unlock
 
 ```ts
 await auth.lock();

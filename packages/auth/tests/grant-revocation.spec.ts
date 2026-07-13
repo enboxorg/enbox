@@ -31,6 +31,12 @@ function createTestManager(
   manager._storage = storage;
   manager._session = undefined;
   manager._state = 'unlocked';
+  manager._isConnecting = false;
+  manager._isShutDown = false;
+  manager._isShuttingDown = false;
+  manager._lifecycleGeneration = 0;
+  manager._lifecycleCommitTail = Promise.resolve();
+  manager._shutdownPromise = undefined;
   return manager as AuthManager;
 }
 

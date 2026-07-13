@@ -6,7 +6,17 @@
 
 import type { EnboxPlatformAgent } from '@enbox/agent';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { AuthManagerOptions, ConnectOptions, HandlerConnectOptions, VaultConnectOptions } from '@enbox/auth';
+import type {
+  AuthManagerOptions,
+  AuthSession,
+  ConnectionStatus,
+  ConnectionStatusGrant,
+  ConnectOptions,
+  GetConnectionStatusOptions,
+  HandlerConnectOptions,
+  RefreshOptions,
+  VaultConnectOptions,
+} from '@enbox/auth';
 
 import type {
   EnboxAnonymousApi,
@@ -22,6 +32,7 @@ import { AnonymousDwnApi } from '@enbox/agent';
 import { AuthManager } from '@enbox/auth/auth-manager';
 import { EnboxRpcClient } from '@enbox/dwn-clients';
 import { omitUndefined } from '@enbox/common';
+import { computeConnectionStatus, reconcileConnectionStatusGrants } from '@enbox/auth';
 import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
 
 import { DidApi } from './did-api.js';
@@ -83,6 +94,12 @@ export class Enbox {
   /** Internal DWN API instance. Use {@link Enbox.using} for protocol-scoped access. */
   private readonly _dwn: DwnApi;
 
+  /** Connected owner DID used by delegated-session status checks. */
+  private readonly _connectedDid: string;
+
+  /** Delegate DID used by this instance, when operating under delegated grants. */
+  private readonly _delegateDid?: string;
+
   /**
    * Cache of {@link TypedEnbox} instances keyed by protocol URI.
    *
@@ -103,6 +120,9 @@ export class Enbox {
    */
   private _ownedAuth?: AuthManager;
 
+  /** Auth manager backing instances created by {@link Enbox.connect}. */
+  private _auth?: AuthManager;
+
   /**
    * Memoized teardown promise. Two parallel `enbox.disconnect()` calls
    * share the same promise so `agent.sync.stopSync()` (and the optional
@@ -114,8 +134,90 @@ export class Enbox {
   constructor({ agent, connectedDid, delegateDid }: EnboxParams) {
     this.agent = agent;
     this.did = new DidApi({ agent, connectedDid });
-    this._dwn = new DwnApi({ agent, connectedDid, delegateDid });
+    this._dwn = new DwnApi({ agent, connectedDid, delegateDid, permissionsApi: agent.permissions });
+    this._connectedDid = connectedDid;
+    this._delegateDid = delegateDid;
     this.vc = new VcApi({ agent, connectedDid });
+  }
+
+  /**
+   * Returns the lifecycle state of the newest delegated connect approval.
+   *
+   * Expiry is computed from the grants stored locally for the current owner
+   * and delegate. Revocation detection is best-effort and reflects revocation
+   * records that have reached the local agent.
+   */
+  public async getConnectionStatus(options: GetConnectionStatusOptions = {}): Promise<ConnectionStatus> {
+    const auth = this._auth;
+    const authSession = auth?.session;
+    if (authSession?.did === this._connectedDid && authSession.delegateDid === this._delegateDid) {
+      return auth.getConnectionStatus(options);
+    }
+    if (this._delegateDid === undefined) {
+      return { state: 'none' };
+    }
+
+    const query = {
+      author  : this._delegateDid,
+      grantor : this._connectedDid,
+      grantee : this._delegateDid,
+    };
+    const [ownerGrantEntries, activeOwnerGrantEntries, delegateGrantEntries] = await Promise.all([
+      this.agent.permissions.fetchGrants({ ...query, target: this._connectedDid }),
+      options.checkRevoked === false
+        ? Promise.resolve(undefined)
+        : this.agent.permissions.fetchGrants({
+          ...query,
+          target       : this._connectedDid,
+          checkRevoked : true,
+        }),
+      this.agent.permissions.fetchGrants({ ...query, target: this._delegateDid }),
+    ]);
+    const activeOwnerGrantIds = activeOwnerGrantEntries === undefined
+      ? undefined
+      : new Set<string>(activeOwnerGrantEntries.map(({ grant }) => grant.id as string));
+    const toStatusGrant = ({ grant }: typeof ownerGrantEntries[number]): ConnectionStatusGrant => ({
+      id             : grant.id,
+      grantor        : grant.grantor,
+      grantee        : grant.grantee,
+      dateExpires    : grant.dateExpires,
+      connectSession : grant.connectSession,
+    });
+    const grants = reconcileConnectionStatusGrants({
+      ownerGrants    : ownerGrantEntries.map(toStatusGrant),
+      delegateGrants : delegateGrantEntries.map(toStatusGrant),
+      activeOwnerGrantIds,
+    });
+
+    return computeConnectionStatus(grants, {
+      expiringSoonThresholdSeconds: options.expiringSoonThresholdSeconds,
+    });
+  }
+
+  /**
+   * Re-grants the current delegated session to the same delegate DID.
+   *
+   * This convenience method is available on instances returned by
+   * {@link Enbox.connect}. Instances created with the constructor or
+   * {@link Enbox.fromSession} should call `refresh()` on their owning
+   * `AuthManager` instead.
+   */
+  public async refresh(options: RefreshOptions): Promise<AuthSession> {
+    const auth = this._auth;
+    if (auth === undefined) {
+      throw new Error(
+        '[@enbox/api] Enbox.refresh() requires the AuthManager used to create this session. ' +
+        'Call auth.refresh(...) on the owning AuthManager.'
+      );
+    }
+    const authSession = auth.session;
+    if (authSession?.did !== this._connectedDid || authSession.delegateDid !== this._delegateDid) {
+      throw new Error(
+        '[@enbox/api] Enbox.refresh() cannot use an AuthManager whose active session no longer matches this Enbox instance.'
+      );
+    }
+
+    return auth.refresh(options);
   }
 
   /**
@@ -230,6 +332,7 @@ export class Enbox {
 
     // Clear cached TypedEnbox instances so they are not accidentally reused.
     this._typedInstances.clear();
+    this._auth = undefined;
 
     // If this Enbox owns the AuthManager (created via Enbox.connect), the
     // sign-out + resource-teardown both fall on us:
@@ -395,6 +498,7 @@ export class Enbox {
       try {
         const session = await auth.connect(Enbox.toAuthConnectOptions(options));
         const enbox = Enbox.fromSession(session);
+        enbox._auth = auth;
         // Take AuthManager ownership ONLY when we built the agent
         // ourselves — `auth.shutdown()` will lock that agent's vault
         // and close its sync engine. If the caller supplied

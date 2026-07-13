@@ -68,6 +68,7 @@ export interface MockAgentOverrides {
   identityDelete?: (params: any) => Promise<void>;
   identityExport?: (params: any) => Promise<any>;
   identityConnectedIdentity?: () => Promise<MockIdentity | undefined>;
+  didExport?: (params: any) => Promise<any>;
   didDelete?: (params: any) => Promise<void>;
   dwnSetCachedLocalDwnEndpoint?: (endpoint: string) => Promise<boolean>;
   dwnProcessRawMessage?: (tenant: string, message: any, options?: any) => Promise<any>;
@@ -83,7 +84,9 @@ export interface MockAgentOverrides {
   syncClose?: () => Promise<void>;
   syncHasActiveSubscriptions?: boolean;
   processDwnRequest?: (params: any) => Promise<any>;
+  permissionsClear?: () => Promise<void>;
   permissionsFetchGrants?: (params: any) => Promise<any[]>;
+  permissionsIsGrantRevoked?: (params: any) => Promise<boolean>;
   rpcGetServerInfo?: (url: string) => Promise<any>;
   vaultIsInitialized?: () => Promise<boolean>;
   vaultIsLocked?: () => boolean;
@@ -172,6 +175,11 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
     },
 
     did: {
+      export: overrides.didExport ?? (async (params: any): Promise<any> => ({
+        uri      : params.didUri,
+        document : { id: params.didUri },
+        metadata : {},
+      })),
       delete: overrides.didDelete ?? (async (): Promise<void> => {}),
     },
 
@@ -200,7 +208,9 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
     processDwnRequest,
 
     permissions: {
-      fetchGrants: permissionsFetchGrants,
+      clear          : overrides.permissionsClear ?? (async (): Promise<void> => {}),
+      fetchGrants    : permissionsFetchGrants,
+      isGrantRevoked : overrides.permissionsIsGrantRevoked ?? (async (): Promise<boolean> => false),
     },
 
     rpc: {

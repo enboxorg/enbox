@@ -10,6 +10,14 @@ export { AuthEventEmitter } from './events.js';
 export { RecoveryPhraseMismatchError, isRecoveryPhraseMismatchError } from './errors.js';
 
 export { processConnectedGrants } from './connect/wallet.js';
+export {
+  SESSION_EXPIRED_ERROR_CODE,
+  SESSION_REVOKED_ERROR_CODE,
+  computeConnectionStatus,
+  isSessionExpiredError,
+  isSessionInvalidError,
+  reconcileConnectionStatusGrants,
+} from './connect/status.js';
 export { normalizeProtocolRequests } from './permissions.js';
 export { WalletConnect } from './wallet-connect-client.js';
 export type { ProtocolPermissionOptions, WalletConnectClientOptions } from './wallet-connect-client.js';
@@ -65,7 +73,13 @@ export type {
   ConnectHandler,
   ConnectOptions,
   ConnectPermissionRequest,
+  ConnectRequestType,
   ConnectResult,
+  ComputeConnectionStatusOptions,
+  ConnectionMonitorOptions,
+  ConnectionState,
+  ConnectionStatus,
+  ConnectionStatusGrant,
   DisconnectOptions,
   HandlerConnectOptions,
   HeadlessConnectOptions,
@@ -82,6 +96,8 @@ export type {
   ProviderAuthResult,
   RegistrationOptions,
   RegistrationTokenData,
+  RefreshOptions,
+  GetConnectionStatusOptions,
   RestoreFromPhraseOptions,
   RestoreSessionOptions,
   ShutdownOptions,

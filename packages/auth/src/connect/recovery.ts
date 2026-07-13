@@ -17,6 +17,24 @@ import { IdentityProtocolDefinition, JwkProtocolDefinition } from '@enbox/agent'
 
 import { registerWithDwnEndpoints } from '../registration.js';
 
+type RecoveryLifecycle = {
+  /** Throws when teardown invalidated the recovery flow. */
+  assertActive?: () => void;
+  /** Serializes agent mutations against session teardown. */
+  runMutation?: <T>(operation: () => Promise<T>) => Promise<T>;
+};
+
+function assertRecoveryActive(lifecycle: RecoveryLifecycle): void {
+  lifecycle.assertActive?.();
+}
+
+async function runRecoveryMutation<T>(
+  lifecycle: RecoveryLifecycle,
+  operation: () => Promise<T>,
+): Promise<T> {
+  return lifecycle.runMutation === undefined ? operation() : lifecycle.runMutation(operation);
+}
+
 /**
  * Internal protocols that store recovery-critical data in the agent DID's DWN.
  * Syncing these ensures that seed phrase recovery can pull identity metadata,
@@ -66,8 +84,8 @@ async function registerRecoveredIdentityTenant(params: {
   connectedDid: string;
   registration?: RegistrationOptions;
   storage: StorageAdapter;
-}): Promise<void> {
-  const { userAgent, dwnEndpoints, agentDid, connectedDid, registration, storage } = params;
+} & RecoveryLifecycle): Promise<void> {
+  const { userAgent, dwnEndpoints, agentDid, connectedDid, registration, storage, assertActive, runMutation } = params;
 
   if (registration === undefined) {
     return;
@@ -75,7 +93,16 @@ async function registerRecoveredIdentityTenant(params: {
 
   try {
     await registerWithDwnEndpoints(
-      { userAgent, dwnEndpoints, agentDid, connectedDid, secretStore: userAgent.secrets, storage },
+      {
+        userAgent,
+        dwnEndpoints,
+        agentDid,
+        connectedDid,
+        secretStore: userAgent.secrets,
+        storage,
+        assertActive,
+        runMutation,
+      },
       registration,
     );
   } catch {
@@ -129,14 +156,15 @@ export async function recoverIdentitiesFromRemote(params: {
   identitySyncProtocols?: IdentitySyncProtocols;
   registration?: RegistrationOptions;
   storage: StorageAdapter;
-}): Promise<BearerIdentity[]> {
+} & RecoveryLifecycle): Promise<BearerIdentity[]> {
   const { userAgent, dwnEndpoints, identitySyncProtocols, registration, storage } = params;
   const agentDid = userAgent.agentDid.uri;
 
   // Phase 1: pull identity metadata + encrypted DID keys.
-  await userAgent.sync.sync('pull');
-
-  const identities = await userAgent.identity.list();
+  const identities = await runRecoveryMutation(params, async (): Promise<BearerIdentity[]> => {
+    await userAgent.sync.sync('pull');
+    return userAgent.identity.list();
+  });
   if (identities.length === 0) {
     return [];
   }
@@ -149,14 +177,32 @@ export async function recoverIdentitiesFromRemote(params: {
   for (const identity of identities) {
     const did = identity.metadata.connectedDid ?? identity.did.uri;
 
-    await registerRecoveredIdentityTenant({ userAgent, dwnEndpoints, agentDid, connectedDid: did, registration, storage });
-    registeredIdentityForSync = await registerRecoveredIdentityForSync({ userAgent, did, identitySyncProtocols }) || registeredIdentityForSync;
+    // Registration may wait on app-owned provider-auth UI, so it must remain
+    // outside the lifecycle mutation mutex. Re-check the flow before making
+    // any further local agent mutations.
+    await registerRecoveredIdentityTenant({
+      userAgent,
+      dwnEndpoints,
+      agentDid,
+      connectedDid : did,
+      registration,
+      storage,
+      assertActive : params.assertActive,
+      runMutation  : params.runMutation,
+    });
+    assertRecoveryActive(params);
+    registeredIdentityForSync = await runRecoveryMutation(
+      params,
+      () => registerRecoveredIdentityForSync({ userAgent, did, identitySyncProtocols }),
+    ) || registeredIdentityForSync;
   }
 
-  if (registeredIdentityForSync) {
-    // Phase 2: pull explicitly scoped protocol configurations and records.
-    await userAgent.sync.sync('pull');
-  }
+  return runRecoveryMutation(params, async (): Promise<BearerIdentity[]> => {
+    if (registeredIdentityForSync) {
+      // Phase 2: pull explicitly scoped protocol configurations and records.
+      await userAgent.sync.sync('pull');
+    }
 
-  return userAgent.identity.list();
+    return userAgent.identity.list();
+  });
 }

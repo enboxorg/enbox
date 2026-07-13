@@ -213,6 +213,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
     const transport = createRelayLoopback(async (jwe, requestKey): Promise<string> => {
       const request = await ConnectProvider.openRequest({ jwe, decryption: { mode: 'dir', requestKey } });
       expect(request.delegateDid).toBe(localDelegate.uri);
+      expect(request.requestType).toBe('refresh');
 
       const responseSigner = await DidJwk.create();
       return await ConnectProvider.sealApprovedResponse({
@@ -233,11 +234,23 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
       appName             : 'Pre-supplied App',
       permissionRequests  : [],
       delegatePortableDid : localPortableDid,
+      requestType         : 'refresh',
     });
 
     expect(result).toBeDefined();
     expect(result!.delegatePortableDid).toBe(localPortableDid);
     expect(result!.connectedDid).toBe(provider.uri);
+  });
+
+  it('should reject a refresh request without a pre-supplied delegate', async () => {
+    const transport = createRelayLoopback(async (): Promise<string> => ConnectProvider.denyToken());
+    const client = new ConnectClient({ transport });
+
+    await expect(client.connect({
+      appName            : 'Invalid Refresh App',
+      permissionRequests : [],
+      requestType        : 'refresh',
+    })).rejects.toThrow('refresh requests require an existing `delegatePortableDid`');
   });
 
   it('should resolve undefined when the wallet denies the request', async () => {

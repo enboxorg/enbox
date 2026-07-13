@@ -68,6 +68,9 @@ export type ConnectClientMetadata = {
   timezone?: string;
 };
 
+/** Identifies the user-facing purpose of a connect request. */
+export type ConnectRequestType = 'connect' | 'refresh';
+
 /**
  * Describes how the wallet must deliver its sealed response back to the app.
  *
@@ -112,6 +115,12 @@ export type ConnectRequest = {
    * minting a new delegate DID and returning its private key material.
    */
   delegateDid?: string;
+
+  /**
+   * User-facing request purpose. Absent means a normal connect;
+   * `refresh` asks the wallet to re-grant access to the existing `delegateDid`.
+   */
+  requestType?: ConnectRequestType;
 
   /** Supported DID methods for the connected identity. */
   supportedDidMethods: string[];
