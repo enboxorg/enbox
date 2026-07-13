@@ -339,6 +339,44 @@ describe('runConnectModal', () => {
     expect(retry).toBeDefined();
   });
 
+  it('shows the timeout message when popup connection times out', async () => {
+    const relay = createFakeRelay();
+    const promise = runConnectModal({
+      wallets            : WALLETS,
+      permissionRequests : PERMISSIONS,
+      deps               : deps({
+        runRelay : relay.runRelay,
+        runPopup : (): Promise<ConnectResult | undefined> => Promise.reject(new Error('Popup connection timed out')),
+      }),
+    });
+    promise.catch((): undefined => undefined);
+    await flush();
+
+    shadowRoot().querySelector<HTMLButtonElement>('.method-link')?.click();
+    await flush();
+
+    expect(stageText()).toContain('That took too long, so we stopped for safety.');
+  });
+
+  it('shows the generic error when popup launch throws synchronously', async () => {
+    const relay = createFakeRelay();
+    const promise = runConnectModal({
+      wallets            : WALLETS,
+      permissionRequests : PERMISSIONS,
+      deps               : deps({
+        runRelay : relay.runRelay,
+        runPopup : (): Promise<ConnectResult | undefined> => { throw new Error('Popup launch failed'); },
+      }),
+    });
+    promise.catch((): undefined => undefined);
+    await flush();
+
+    shadowRoot().querySelector<HTMLButtonElement>('.method-link')?.click();
+    await flush();
+
+    expect(stageText()).toContain('Something went wrong while connecting.');
+  });
+
   it('centres the selected wallet’s mark on the QR and names it in the caption', async () => {
     const relay = createFakeRelay();
     const promise = runConnectModal({
