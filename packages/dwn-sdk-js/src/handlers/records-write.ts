@@ -100,16 +100,10 @@ export class RecordsWriteHandler implements MethodHandler {
 
     const newestExistingMessage = await Message.getNewestMessage(existingMessages);
 
-    let incomingMessageIsNewest = false;
-    let newestMessage; // keep reference of newest message for pruning later
-    if (newestExistingMessage === undefined || await Message.isNewer(message, newestExistingMessage)) {
-      incomingMessageIsNewest = true;
-      newestMessage = message;
-    } else { // existing message is the same age or newer than the incoming message
-      newestMessage = newestExistingMessage;
-    }
-
+    const incomingMessageIsNewest =
+      newestExistingMessage === undefined || await Message.isNewer(message, newestExistingMessage);
     if (!incomingMessageIsNewest) {
+      // existing message is the same age or newer than the incoming message
       return {
         status: { code: 409, detail: 'Conflict' }
       };
@@ -170,7 +164,18 @@ export class RecordsWriteHandler implements MethodHandler {
       }
 
       const indexes = await recordsWrite.constructIndexes(isLatestBaseState);
-      const putResult = await this.deps.messageStore.put(tenant, messageWithOptionalEncodedData, indexes);
+
+      // store the new message and displace every other message for this record in one atomic
+      // commit, retaining only the initial write as non-latest state — readers can never observe
+      // two latest-state rows for the record
+      const putResult = await StorageController.commitLatestStateTransition(
+        tenant,
+        existingMessages,
+        { message: messageWithOptionalEncodedData, indexes },
+        [],
+        this.deps.messageStore,
+        this.deps.dataStore!,
+      );
       position = putResult.position;
     } catch (error) {
       if (error instanceof DwnError) {
@@ -199,11 +204,6 @@ export class RecordsWriteHandler implements MethodHandler {
         { code: 202, detail: 'Accepted' },
       position,
     };
-
-    // displace every other message for this record, retaining only the initial write as non-latest state
-    await StorageController.deleteDisplacedMessagesAndRetainWrites(
-      tenant, existingMessages, newestMessage, this.deps.messageStore, this.deps.dataStore!, []
-    );
 
     // Squash processing: if the incoming write is a squash, delete all older sibling records
     // at the same protocol path and parent context. Uses the resumable task system for crash safety.

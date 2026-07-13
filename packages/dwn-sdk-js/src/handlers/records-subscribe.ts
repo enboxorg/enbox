@@ -4,6 +4,7 @@ import type { Filter, PaginationCursor } from '../types/query-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { RecordsQueryReplyEntry, RecordsSubscribeMessage, RecordsSubscribeReply } from '../types/records-types.js';
 
+import { attachInitialWrites } from '../utils/initial-write-attachment.js';
 import { authenticate } from '../core/auth.js';
 import { DateSort } from '../types/records-types.js';
 import { EncryptionControl } from '../core/encryption-control.js';
@@ -13,7 +14,6 @@ import { ProtocolAuthorization } from '../core/protocol-authorization.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { RecordsSubscribe } from '../interfaces/records-subscribe.js';
-import { RecordsWrite } from '../interfaces/records-write.js';
 import { SortDirection } from '../types/query-types.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
@@ -141,21 +141,15 @@ export class RecordsSubscribeHandler implements MethodHandler {
         messageSort,
         pagination,
       );
-      entries = queryResult.messages;
-      paginationCursor = queryResult.cursor;
 
-      // attach initialWrite for non-initial writes
-      for (const entry of entries) {
-        if (!await RecordsWrite.isInitialWrite(entry)) {
-          const initialWriteResult = await this.deps.messageStore.query(
-            tenant,
-            [{ recordId: entry.recordId, isLatestBaseState: false, method: DwnMethodName.Write }]
-          );
-          const initialWrite = initialWriteResult.messages[0] as RecordsQueryReplyEntry;
-          delete initialWrite.encodedData;
-          entry.initialWrite = initialWrite;
-        }
-      }
+      // attach the retained initial write to every entry that is not itself an initial write
+      entries = await attachInitialWrites({
+        messageStore  : this.deps.messageStore,
+        tenant,
+        recordsWrites : queryResult.messages,
+        operationName : 'RecordsSubscribe',
+      });
+      paginationCursor = queryResult.cursor;
     } catch (error) {
       // if the query fails, close the subscription and return the error
       await subscription.close();

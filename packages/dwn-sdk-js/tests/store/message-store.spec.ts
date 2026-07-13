@@ -1,5 +1,6 @@
 import type { PaginationCursor } from '../../src/types/query-types.js';
 import type { RecordsWriteMessage } from '../../src/types/records-types.js';
+import type { ReplicationFeedReader } from '../../src/types/subscriptions.js';
 import type { KeyValues, MessageStore } from '../../src/index.js';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -7,6 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { lexicographicalCompare } from '../../src/utils/string.js';
 import { Message } from '../../src/core/message.js';
+import { Replication } from '../../src/utils/replication.js';
 import { SortDirection } from '../../src/types/query-types.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestStores } from '../test-stores.js';
@@ -687,6 +689,149 @@ export function testMessageStore(): void {
 
         const count = await messageStore.count(alice.did, [{ schema: schema1 }, { schema: schema2 }]);
         expect(count).toBe(7);
+      });
+    });
+
+    describe('commitLatestState', () => {
+      beforeAll(async () => {
+        const stores = TestStores.get();
+        messageStore = stores.messageStore;
+        await messageStore.open();
+      });
+
+      beforeEach(async () => {
+        await messageStore.clear();
+      });
+
+      afterAll(async () => {
+        await messageStore.close();
+      });
+
+      it('should insert the new message, demote retained writes, and delete displaced rows in one commit', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const initial = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        await messageStore.put(alice.did, initial.message, await initial.recordsWrite.constructIndexes(true));
+
+        const update1 = await TestDataGenerator.generateFromRecordsWrite({ author: alice, existingWrite: initial.recordsWrite });
+        await messageStore.put(alice.did, update1.message, await update1.recordsWrite.constructIndexes(true));
+
+        const update2 = await TestDataGenerator.generateFromRecordsWrite({ author: alice, existingWrite: update1.recordsWrite });
+        const initialCid = await Message.getCid(initial.message);
+        const update1Cid = await Message.getCid(update1.message);
+
+        const result = await messageStore.commitLatestState(alice.did, {
+          put     : { message: update2.message, indexes: await update2.recordsWrite.constructIndexes(true) },
+          retains : [{ messageCid: initialCid, message: initial.message, indexes: await initial.recordsWrite.constructIndexes(false) }],
+          deletes : [update1Cid],
+        });
+
+        expect(result.status).toBe('inserted');
+        expect(result.position).toBeDefined();
+
+        // only the new message carries latest state
+        const { messages: latestMessages } = await messageStore.query(
+          alice.did,
+          [{ recordId: initial.message.recordId, isLatestBaseState: true }]
+        );
+        expect(latestMessages).toHaveLength(1);
+        expect(await Message.getCid(latestMessages[0])).toBe(await Message.getCid(update2.message));
+
+        // the initial write is retained as non-latest state
+        const { messages: retainedMessages } = await messageStore.query(
+          alice.did,
+          [{ recordId: initial.message.recordId, isLatestBaseState: false }]
+        );
+        expect(retainedMessages).toHaveLength(1);
+        expect(await Message.getCid(retainedMessages[0])).toBe(initialCid);
+
+        // the displaced non-retained update is gone
+        expect(await messageStore.get(alice.did, update1Cid)).toBeUndefined();
+      });
+
+      it('should apply retains and deletes even when the new message is a duplicate', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const initial = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        await messageStore.put(alice.did, initial.message, await initial.recordsWrite.constructIndexes(true));
+
+        const update = await TestDataGenerator.generateFromRecordsWrite({ author: alice, existingWrite: initial.recordsWrite });
+        await messageStore.put(alice.did, update.message, await update.recordsWrite.constructIndexes(true));
+
+        // both rows now carry latest state — the residue a crash between a two-step insert and
+        // demotion would leave behind; replaying the transition must heal it
+        const initialCid = await Message.getCid(initial.message);
+        const result = await messageStore.commitLatestState(alice.did, {
+          put     : { message: update.message, indexes: await update.recordsWrite.constructIndexes(true) },
+          retains : [{ messageCid: initialCid, message: initial.message, indexes: await initial.recordsWrite.constructIndexes(false) }],
+          deletes : [],
+        });
+
+        expect(result.status).toBe('duplicate');
+
+        const { messages: latestMessages } = await messageStore.query(
+          alice.did,
+          [{ recordId: initial.message.recordId, isLatestBaseState: true }]
+        );
+        expect(latestMessages).toHaveLength(1);
+        expect(await Message.getCid(latestMessages[0])).toBe(await Message.getCid(update.message));
+      });
+
+      it('should reject a retain whose replacement message does not match its target CID without applying the insert', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const initial = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        await messageStore.put(alice.did, initial.message, await initial.recordsWrite.constructIndexes(true));
+
+        const update = await TestDataGenerator.generateFromRecordsWrite({ author: alice, existingWrite: initial.recordsWrite });
+        const initialCid = await Message.getCid(initial.message);
+        const updateCid = await Message.getCid(update.message);
+
+        await expect(messageStore.commitLatestState(alice.did, {
+          put     : { message: update.message, indexes: await update.recordsWrite.constructIndexes(true) },
+          retains : [{ messageCid: initialCid, message: update.message, indexes: await initial.recordsWrite.constructIndexes(false) }],
+        })).rejects.toThrow(DwnErrorCode.MessageStoreUpdateMessageAndIndexesCidMismatch);
+
+        expect(await messageStore.get(alice.did, updateCid)).toBeUndefined();
+      });
+
+      it('should fold the insert and delete fingerprint contributions of a shared domain without losing either', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        // the same message set lands on both tenants; alice through one atomic commit whose
+        // insert and delete share fingerprint domains, bob through sequential single mutations
+        const initial = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        const update1 = await TestDataGenerator.generateFromRecordsWrite({ author: alice, existingWrite: initial.recordsWrite });
+        const update2 = await TestDataGenerator.generateFromRecordsWrite({ author: alice, existingWrite: update1.recordsWrite });
+
+        const initialCid = await Message.getCid(initial.message);
+        const update1Cid = await Message.getCid(update1.message);
+        const initialLatestIndexes = await initial.recordsWrite.constructIndexes(true);
+        const initialRetainedIndexes = await initial.recordsWrite.constructIndexes(false);
+        const update1Indexes = await update1.recordsWrite.constructIndexes(true);
+        const update2Indexes = await update2.recordsWrite.constructIndexes(true);
+
+        for (const tenant of [alice.did, bob.did]) {
+          await messageStore.put(tenant, initial.message, initialLatestIndexes);
+          await messageStore.put(tenant, update1.message, update1Indexes);
+        }
+
+        await messageStore.commitLatestState(alice.did, {
+          put     : { message: update2.message, indexes: update2Indexes },
+          retains : [{ messageCid: initialCid, message: initial.message, indexes: initialRetainedIndexes }],
+          deletes : [update1Cid],
+        });
+
+        await messageStore.put(bob.did, update2.message, update2Indexes);
+        await messageStore.updateMessageAndIndexes(bob.did, initialCid, initial.message, initialRetainedIndexes);
+        await messageStore.delete(bob.did, update1Cid);
+
+        // fingerprint contributions are tenant-independent hashes of message CIDs, so identical
+        // message sets must produce identical domain fingerprints across the two tenants
+        const scopes = Replication.computeFingerprintScopes(update2.message, update2Indexes);
+        const feedReader = messageStore as unknown as ReplicationFeedReader;
+        expect(await feedReader.fingerprint(alice.did, scopes)).toBe(await feedReader.fingerprint(bob.did, scopes));
       });
     });
   });

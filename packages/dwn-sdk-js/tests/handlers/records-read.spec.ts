@@ -18,6 +18,7 @@ import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { Encoder } from '../../src/utils/encoder.js';
 import { EncryptionControlDeliveryRecipientAuthority } from '../../src/types/encryption-types.js';
 import { KeyDerivationScheme } from '../../src/utils/hd-key.js';
+import { Message } from '../../src/core/message.js';
 import { RecordsReadHandler } from '../../src/handlers/records-read.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
@@ -525,13 +526,44 @@ export function testRecordsReadHandler(): void {
         expect(write2Reply.status.code).toBe(202);
 
         // make sure result returned now has `initialWrite` property
+        const querySpy = sinon.spy(messageStore, 'query');
         const messageData = await RecordsRead.create({ filter: { recordId: write.message.recordId }, signer: Jws.createSigner(alice) });
         const reply = await dwn.processMessage(alice.did, messageData.message);
 
         expect(reply.status.code).toBe(200);
         expect(reply.entry!.initialWrite).toBeDefined();
         expect(reply.entry!.initialWrite?.recordId).toBe(write.message.recordId);
+        expect(querySpy.getCalls().some((call): boolean =>
+          (call.args[1] as Array<{ entryId?: string }>).some((filter): boolean => filter.entryId === write.message.recordId)
+        )).toBe(true);
+      });
 
+      it('should return a controlled error if an updated record has no initial write', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        const write = await TestDataGenerator.generateRecordsWrite({ author: alice, published: false });
+
+        const writeReply = await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream });
+        expect(writeReply.status.code).toBe(202);
+
+        const update = await RecordsWrite.createFrom({
+          recordsWriteMessage : write.message,
+          published           : true,
+          signer              : Jws.createSigner(alice),
+        });
+        const updateReply = await dwn.processMessage(alice.did, update.message);
+        expect(updateReply.status.code).toBe(202);
+
+        await messageStore.delete(alice.did, await Message.getCid(write.message));
+
+        const read = await RecordsRead.create({
+          filter : { recordId: write.message.recordId },
+          signer : Jws.createSigner(alice),
+        });
+        const reply = await dwn.processMessage(alice.did, read.message);
+
+        expect(reply.status.code).toBe(500);
+        expect(reply.status.detail).toContain(DwnErrorCode.RecordsWriteGetInitialWriteNotFound);
       });
 
       describe('protocol based reads', () => {

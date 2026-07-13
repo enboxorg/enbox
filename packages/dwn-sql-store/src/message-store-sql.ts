@@ -8,6 +8,7 @@ import type {
   GenericMessage,
   MessageSort,
   MessageStore,
+  MessageStoreLatestStateTransition,
   MessageStoreOptions,
   MessageStorePutResult,
   Pagination,
@@ -166,41 +167,104 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
     try {
       const position = await executeWithTransaction(db, async (tx) => {
         await this.#dialect.lockReplicationCounter(tx, tenant);
+        return this.insertMessageInTx(tx, { tenant, message, messageCid, encodedMessageBytes, encodedData, indexes });
+      });
 
-        const existing = await tx
-          .selectFrom('messageStoreMessages')
-          .select('id')
-          .where('tenant', '=', tenant)
-          .where('messageCid', '=', messageCid)
-          .executeTakeFirst();
+      if (position === undefined) {
+        return { status: 'duplicate' };
+      }
 
-        if (existing !== undefined) {
-          return undefined;
-        }
+      this.publishWake(tenant, position);
+      return {
+        status   : 'inserted',
+        position : await this.buildToken(tenant, position, messageCid),
+      };
+    } catch (error: unknown) {
+      if (isMessageCidDuplicateKeyError(error) && await this.hasMessage(tenant, messageCid)) {
+        return { status: 'duplicate' };
+      }
+      throw error;
+    }
+  }
 
-        const seq = await this.#dialect.incrementReplicationCounter(tx, tenant);
-        const fingerprintScopes = Replication.computeFingerprintScopes(message, indexes);
-        const { indexes: putIndexes, tags } = extractTagsAndSanitizeIndexes(indexes);
+  public async commitLatestState(
+    tenant: string,
+    transition: MessageStoreLatestStateTransition,
+    options?: MessageStoreOptions
+  ): Promise<MessageStorePutResult> {
+    const db = this.requireDb('commitLatestState');
+    options?.signal?.throwIfAborted();
 
-        const messageIndexValues: InsertObject<DwnDatabaseType, 'messageStoreMessages'> = {
+    const { messageToStore, encodedData } = MessageStoreSql.detachInlineData(transition.put.message);
+    const encodedMessageBlock = await executeUnlessAborted(
+      block.encode({ value: messageToStore, codec: cbor, hasher: sha256 }),
+      options?.signal
+    );
+    const messageCid = encodedMessageBlock.cid.toString();
+    const encodedMessageBytes = Buffer.from(encodedMessageBlock.bytes);
+
+    // Validate and encode the retained replacements before entering the transaction.
+    const retains: Array<{
+      messageCid: string;
+      message: GenericMessage;
+      indexes: KeyValues;
+      encodedMessageBytes: Buffer;
+      encodedData: string | null;
+    }> = [];
+    for (const retain of transition.retains ?? []) {
+      const computedMessageCid = await Message.getCid(retain.message);
+      if (computedMessageCid !== retain.messageCid) {
+        throw new DwnError(
+          DwnErrorCode.MessageStoreUpdateMessageAndIndexesCidMismatch,
+          `replacement message CID ${computedMessageCid} does not match target CID ${retain.messageCid}`
+        );
+      }
+
+      const { messageToStore: retainMessageToStore, encodedData: retainEncodedData } = MessageStoreSql.detachInlineData(retain.message);
+      const encodedRetainBlock = await executeUnlessAborted(
+        block.encode({ value: retainMessageToStore, codec: cbor, hasher: sha256 }),
+        options?.signal
+      );
+      retains.push({
+        messageCid          : retain.messageCid,
+        message             : retain.message,
+        indexes             : retain.indexes,
+        encodedMessageBytes : Buffer.from(encodedRetainBlock.bytes),
+        encodedData         : retainEncodedData,
+      });
+    }
+
+    try {
+      const position = await executeWithTransaction(db, async (tx) => {
+        await this.#dialect.lockReplicationCounter(tx, tenant);
+
+        // A duplicate inserts nothing but still applies the retains and deletes below, so
+        // replaying a transition heals one that previously stopped mid-plan.
+        const seq = await this.insertMessageInTx(tx, {
           tenant,
+          message : transition.put.message,
           messageCid,
           encodedMessageBytes,
           encodedData,
-          seq               : seq.toString(),
-          fingerprintScopes : JSON.stringify(fingerprintScopes),
-          ...putIndexes,
-        };
+          indexes : transition.put.indexes,
+        });
 
-        const result = await this.#dialect
-          .insertThenReturnId(tx, 'messageStoreMessages', messageIndexValues, 'id as insertId')
-          .executeTakeFirstOrThrow();
-
-        if (Object.keys(tags).length > 0) {
-          await this.#tags.executeTagsInsert(result.insertId, tags, tx);
+        for (const retain of retains) {
+          await this.replaceRowIndexesInTx(tx, {
+            tenant,
+            messageCid           : retain.messageCid,
+            indexes              : retain.indexes,
+            messageForScopeCheck : retain.message,
+            encodedMessageBytes  : retain.encodedMessageBytes,
+            encodedData          : retain.encodedData,
+            notFoundErrorCode    : DwnErrorCode.MessageStoreUpdateMessageAndIndexesMessageNotFound,
+          });
         }
 
-        await this.foldFingerprints(tx, tenant, messageCid, fingerprintScopes);
+        for (const deleteCid of transition.deletes ?? []) {
+          await this.deleteRowInTx(tx, tenant, deleteCid);
+        }
+
         return seq;
       });
 
@@ -219,6 +283,58 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
       }
       throw error;
     }
+  }
+
+  /**
+   * Inserts a message row inside the caller's transaction. The caller must already hold the
+   * tenant's replication-counter lock. Returns the new row's seq, or `undefined` when a row for
+   * the same CID already exists.
+   */
+  private async insertMessageInTx(tx: Transaction<DwnDatabaseType>, input: {
+    tenant: string;
+    message: GenericMessage;
+    messageCid: string;
+    encodedMessageBytes: Buffer;
+    encodedData: string | null;
+    indexes: KeyValues;
+  }): Promise<bigint | undefined> {
+    const { tenant, message, messageCid, encodedMessageBytes, encodedData, indexes } = input;
+
+    const existing = await tx
+      .selectFrom('messageStoreMessages')
+      .select('id')
+      .where('tenant', '=', tenant)
+      .where('messageCid', '=', messageCid)
+      .executeTakeFirst();
+
+    if (existing !== undefined) {
+      return undefined;
+    }
+
+    const seq = await this.#dialect.incrementReplicationCounter(tx, tenant);
+    const fingerprintScopes = Replication.computeFingerprintScopes(message, indexes);
+    const { indexes: putIndexes, tags } = extractTagsAndSanitizeIndexes(indexes);
+
+    const messageIndexValues: InsertObject<DwnDatabaseType, 'messageStoreMessages'> = {
+      tenant,
+      messageCid,
+      encodedMessageBytes,
+      encodedData,
+      seq               : seq.toString(),
+      fingerprintScopes : JSON.stringify(fingerprintScopes),
+      ...putIndexes,
+    };
+
+    const result = await this.#dialect
+      .insertThenReturnId(tx, 'messageStoreMessages', messageIndexValues, 'id as insertId')
+      .executeTakeFirstOrThrow();
+
+    if (Object.keys(tags).length > 0) {
+      await this.#tags.executeTagsInsert(result.insertId, tags, tx);
+    }
+
+    await this.foldFingerprints(tx, tenant, messageCid, fingerprintScopes);
+    return seq;
   }
 
   public async get(
@@ -385,27 +501,34 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
     await executeUnlessAborted(
       executeWithTransaction(db, async (tx) => {
         await this.#dialect.lockReplicationCounter(tx, tenant);
-
-        const row = await tx
-          .selectFrom('messageStoreMessages')
-          .select(['id', 'messageCid', 'fingerprintScopes'])
-          .where('tenant', '=', tenant)
-          .where('messageCid', '=', cid)
-          .executeTakeFirst();
-
-        if (row === undefined) {
-          return;
-        }
-
-        await tx
-          .deleteFrom('messageStoreMessages')
-          .where('id', '=', row.id)
-          .execute();
-
-        await this.foldFingerprints(tx, tenant, row.messageCid, MessageStoreSql.parseFingerprintScopes(row.fingerprintScopes, row.messageCid));
+        await this.deleteRowInTx(tx, tenant, cid);
       }),
       options?.signal
     );
+  }
+
+  /**
+   * Deletes a message row inside the caller's transaction. The caller must already hold the
+   * tenant's replication-counter lock. Absent rows are no-ops.
+   */
+  private async deleteRowInTx(tx: Transaction<DwnDatabaseType>, tenant: string, cid: string): Promise<void> {
+    const row = await tx
+      .selectFrom('messageStoreMessages')
+      .select(['id', 'messageCid', 'fingerprintScopes'])
+      .where('tenant', '=', tenant)
+      .where('messageCid', '=', cid)
+      .executeTakeFirst();
+
+    if (row === undefined) {
+      return;
+    }
+
+    await tx
+      .deleteFrom('messageStoreMessages')
+      .where('id', '=', row.id)
+      .execute();
+
+    await this.foldFingerprints(tx, tenant, row.messageCid, MessageStoreSql.parseFingerprintScopes(row.fingerprintScopes, row.messageCid));
   }
 
   /**
@@ -532,54 +655,70 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
     messageForScopeCheck?: GenericMessage;
     notFoundErrorCode: DwnErrorCode;
   }): Promise<void> {
-    const { tenant, messageCid, indexes, encodedMessageBytes, encodedData, messageForScopeCheck, notFoundErrorCode } = input;
     const db = this.requireDb('replaceRowIndexes');
-    const { indexes: replacementIndexes, tags } = extractTagsAndSanitizeIndexes(indexes);
 
     await executeWithTransaction(db, async (tx) => {
-      await this.#dialect.lockReplicationCounter(tx, tenant);
-
-      const existingRow = await tx
-        .selectFrom('messageStoreMessages')
-        .selectAll()
-        .where('tenant', '=', tenant)
-        .where('messageCid', '=', messageCid)
-        .executeTakeFirst();
-
-      if (existingRow === undefined) {
-        throw new DwnError(notFoundErrorCode, `no message found for tenant ${tenant} with CID ${messageCid}`);
-      }
-
-      const message = messageForScopeCheck ?? await this.parseEncodedMessage(existingRow.encodedMessageBytes, existingRow.encodedData);
-      Replication.assertFingerprintScopesUntouched(
-        MessageStoreSql.parseFingerprintScopes(existingRow.fingerprintScopes, messageCid),
-        message,
-        messageCid,
-        indexes
-      );
-
-      const replacementColumns = {
-        ...NULLED_INDEX_COLUMNS,
-        ...replacementIndexes,
-        ...(encodedMessageBytes !== undefined && { encodedMessageBytes }),
-        ...(encodedData !== undefined && { encodedData }),
-      };
-
-      await tx
-        .updateTable('messageStoreMessages')
-        .set(replacementColumns as UpdateObject<DwnDatabaseType, 'messageStoreMessages'>)
-        .where('id', '=', existingRow.id)
-        .execute();
-
-      await tx
-        .deleteFrom('messageStoreRecordsTags')
-        .where('messageInsertId', '=', existingRow.id)
-        .execute();
-
-      if (Object.keys(tags).length > 0) {
-        await this.#tags.executeTagsInsert(existingRow.id, tags, tx);
-      }
+      await this.#dialect.lockReplicationCounter(tx, input.tenant);
+      await this.replaceRowIndexesInTx(tx, input);
     });
+  }
+
+  /**
+   * Replaces a message row's indexes (and optionally its stored payload) inside the caller's
+   * transaction. The caller must already hold the tenant's replication-counter lock.
+   */
+  private async replaceRowIndexesInTx(tx: Transaction<DwnDatabaseType>, input: {
+    tenant: string;
+    messageCid: string;
+    indexes: KeyValues;
+    encodedMessageBytes?: Buffer;
+    encodedData?: string | null;
+    messageForScopeCheck?: GenericMessage;
+    notFoundErrorCode: DwnErrorCode;
+  }): Promise<void> {
+    const { tenant, messageCid, indexes, encodedMessageBytes, encodedData, messageForScopeCheck, notFoundErrorCode } = input;
+    const { indexes: replacementIndexes, tags } = extractTagsAndSanitizeIndexes(indexes);
+
+    const existingRow = await tx
+      .selectFrom('messageStoreMessages')
+      .selectAll()
+      .where('tenant', '=', tenant)
+      .where('messageCid', '=', messageCid)
+      .executeTakeFirst();
+
+    if (existingRow === undefined) {
+      throw new DwnError(notFoundErrorCode, `no message found for tenant ${tenant} with CID ${messageCid}`);
+    }
+
+    const message = messageForScopeCheck ?? await this.parseEncodedMessage(existingRow.encodedMessageBytes, existingRow.encodedData);
+    Replication.assertFingerprintScopesUntouched(
+      MessageStoreSql.parseFingerprintScopes(existingRow.fingerprintScopes, messageCid),
+      message,
+      messageCid,
+      indexes
+    );
+
+    const replacementColumns = {
+      ...NULLED_INDEX_COLUMNS,
+      ...replacementIndexes,
+      ...(encodedMessageBytes !== undefined && { encodedMessageBytes }),
+      ...(encodedData !== undefined && { encodedData }),
+    };
+
+    await tx
+      .updateTable('messageStoreMessages')
+      .set(replacementColumns as UpdateObject<DwnDatabaseType, 'messageStoreMessages'>)
+      .where('id', '=', existingRow.id)
+      .execute();
+
+    await tx
+      .deleteFrom('messageStoreRecordsTags')
+      .where('messageInsertId', '=', existingRow.id)
+      .execute();
+
+    if (Object.keys(tags).length > 0) {
+      await this.#tags.executeTagsInsert(existingRow.id, tags, tx);
+    }
   }
 
   private async selectLogRows(

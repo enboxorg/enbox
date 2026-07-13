@@ -3,6 +3,7 @@ import type { GenericMessage, MessageSort } from '../types/message-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { RecordsQueryMessage, RecordsQueryReply, RecordsQueryReplyEntry } from '../types/records-types.js';
 
+import { attachInitialWrites } from '../utils/initial-write-attachment.js';
 import { authenticate } from '../core/auth.js';
 import { DateSort } from '../types/records-types.js';
 import { EncryptionControl } from '../core/encryption-control.js';
@@ -13,9 +14,17 @@ import { queryRecordsWithRecordLimitOccupancy } from '../utils/record-limit-occu
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { RecordsQuery } from '../interfaces/records-query.js';
-import { RecordsWrite } from '../interfaces/records-write.js';
 import { SortDirection } from '../types/query-types.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
+
+type RecordsQueryProjectionInput = {
+  tenant: string;
+  recordsQuery: RecordsQuery;
+  requester: string | undefined;
+  filters: Filter[];
+  messageSort: MessageSort;
+  pagination?: { cursor?: PaginationCursor; limit?: number };
+};
 
 export class RecordsQueryHandler implements MethodHandler {
 
@@ -63,22 +72,17 @@ export class RecordsQueryHandler implements MethodHandler {
       }
     }
 
-    // attach initial write if returned RecordsWrite is not initial write
-    for (const recordsWrite of recordsWrites) {
-      if (!await RecordsWrite.isInitialWrite(recordsWrite)) {
-        const initialWriteQueryResult = await this.deps.messageStore.query(
-          tenant,
-          [{ recordId: recordsWrite.recordId, isLatestBaseState: false, method: DwnMethodName.Write }]
-        );
-        const initialWrite = initialWriteQueryResult.messages[0] as RecordsQueryReplyEntry;
-        delete initialWrite.encodedData; // defensive measure but technically optional because we do this when an update RecordsWrite takes place
-        recordsWrite.initialWrite = initialWrite;
-      }
-    }
+    // attach the retained initial write to every entry that is not itself an initial write
+    const completeRecordsWrites = await attachInitialWrites({
+      messageStore  : this.deps.messageStore,
+      tenant,
+      recordsWrites,
+      operationName : 'RecordsQuery',
+    });
 
     return {
       status  : { code: 200, detail: 'OK' },
-      entries : recordsWrites,
+      entries : completeRecordsWrites,
       cursor
     };
   }
@@ -244,14 +248,9 @@ export class RecordsQueryHandler implements MethodHandler {
     });
   }
 
-  private async queryRecordsWithVisibleControlFiltering(input: {
-    tenant: string;
-    recordsQuery: RecordsQuery;
-    requester: string | undefined;
-    filters: Filter[];
-    messageSort: MessageSort;
-    pagination?: { cursor?: PaginationCursor; limit?: number };
-  }): Promise<{ messages: RecordsQueryReplyEntry[], cursor?: PaginationCursor }> {
+  private async queryRecordsWithVisibleControlFiltering(
+    input: RecordsQueryProjectionInput
+  ): Promise<{ messages: RecordsQueryReplyEntry[], cursor?: PaginationCursor }> {
     const {
       tenant, recordsQuery, requester, filters, messageSort, pagination
     } = input;

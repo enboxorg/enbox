@@ -26,8 +26,8 @@ import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
+import { DateSort, DurableEventLog, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Time } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
-import { DurableEventLog, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Time } from '../../src/index.js';
 import { ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH } from '../../src/core/constants.js';
 
 import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
@@ -220,6 +220,7 @@ export function testRecordsSubscribeHandler(): void {
           author : alice,
           filter : { schema: 'http://update-test' },
         });
+        const querySpy = sinon.spy(messageStore, 'query');
         const subReply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler: () => {} });
         expect(subReply.status.code).toBe(200);
         expect(subReply.entries).toBeDefined();
@@ -229,6 +230,78 @@ export function testRecordsSubscribeHandler(): void {
         expect(subReply.entries![0].recordId).toBe(write.message.recordId);
         expect(subReply.entries![0].initialWrite).toBeDefined();
         expect(subReply.entries![0].initialWrite!.descriptor.dateCreated).toBe(write.message.descriptor.dateCreated);
+        expect(querySpy.getCalls().some((call): boolean =>
+          (call.args[1] as Array<{ entryId?: string | string[] }>).some((filter): boolean =>
+            filter.entryId === write.message.recordId ||
+            (Array.isArray(filter.entryId) && filter.entryId.includes(write.message.recordId))
+          )
+        )).toBe(true);
+      });
+
+      it('should omit an updated record with no initial write from the initial snapshot', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        const schema = 'http://missing-initial-write';
+        const initialDateCreated = Time.createOffsetTimestamp({ seconds: -10 });
+        const write = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          schema,
+          dateCreated      : initialDateCreated,
+          messageTimestamp : initialDateCreated,
+        });
+        const writeReply = await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream });
+        expect(writeReply.status.code).toBe(202);
+
+        const update = await TestDataGenerator.generateFromRecordsWrite({
+          author        : alice,
+          existingWrite : write.recordsWrite,
+        });
+        const updateReply = await dwn.processMessage(alice.did, update.message, { dataStream: update.dataStream });
+        expect(updateReply.status.code).toBe(202);
+
+        // Simulate store corruption: leave the latest update indexed but remove its retained
+        // initial-write row (the write path commits both atomically, so only corruption or
+        // partial deletion can produce this state).
+        await messageStore.delete(alice.did, await Message.getCid(write.message));
+
+        const healthyWrite1 = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          schema,
+          dateCreated      : Time.createOffsetTimestamp({ seconds: 1 }, initialDateCreated),
+          messageTimestamp : Time.createOffsetTimestamp({ seconds: 1 }, initialDateCreated),
+        });
+        const healthyWrite2 = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          schema,
+          dateCreated      : Time.createOffsetTimestamp({ seconds: 2 }, initialDateCreated),
+          messageTimestamp : Time.createOffsetTimestamp({ seconds: 2 }, initialDateCreated),
+        });
+        expect((await dwn.processMessage(alice.did, healthyWrite1.message, { dataStream: healthyWrite1.dataStream })).status.code).toBe(202);
+        expect((await dwn.processMessage(alice.did, healthyWrite2.message, { dataStream: healthyWrite2.dataStream })).status.code).toBe(202);
+
+        const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
+          author   : alice,
+          filter   : { schema },
+          dateSort : DateSort.CreatedAscending,
+        });
+        const warnSpy = sinon.stub(console, 'warn');
+        const subReply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler: () => {} });
+
+        expect(subReply.status.code).toBe(200);
+        expect(subReply.subscription).toBeDefined();
+        expect(subReply.entries!.map(entry => entry.recordId)).toEqual([
+          healthyWrite1.message.recordId,
+          healthyWrite2.message.recordId,
+        ]);
+        expect(subReply.entries!.some(entry => entry.recordId === write.message.recordId)).toBe(false);
+        expect(warnSpy.getCalls().some(call =>
+          String(call.args[0]).includes(DwnErrorCode.RecordsWriteGetInitialWriteNotFound) &&
+          String(call.args[0]).includes('RecordsSubscribe') &&
+          String(call.args[0]).includes(write.message.recordId)
+        )).toBe(true);
+
+        await subReply.subscription!.close();
       });
 
       it('should still receive live events after initial entries', async () => {

@@ -1,8 +1,8 @@
 import type { DataStore } from '../types/data-store.js';
-import type { Filter } from '../types/query-types.js';
 import type { GenericMessage } from '../types/message-types.js';
-import type { MessageStore } from '../types/message-store.js';
 import type { ProgressToken } from '../types/subscriptions.js';
+import type { Filter, KeyValues } from '../types/query-types.js';
+import type { MessageStore, MessageStorePutResult } from '../types/message-store.js';
 import type { RecordsDeleteMessage, RecordsWriteMessage } from '../types/records-types.js';
 
 import { DwnConstant } from '../core/dwn-constant.js';
@@ -80,7 +80,12 @@ export class StorageController {
     // tombstones carry no visibility facts in their descriptors, so the retained write is the
     // durable source of truth for later prune/replay/replication index reconstruction.
     const indexes = recordsDelete.constructIndexes(initialWrite, newestPreDeleteWrite);
-    const { position } = await this.messageStore.put(tenant, message, indexes);
+
+    // store the tombstone and displace every other message for this record in one atomic commit,
+    // retaining the writes needed for replay and future tombstone visibility
+    const { position } = await StorageController.commitLatestStateTransition(
+      tenant, existingMessages, { message, indexes }, [newestPreDeleteWrite], this.messageStore, this.dataStore
+    );
 
     if (message.descriptor.prune) {
       // purge/hard-delete all descendant records. Cascade is intentionally protocol-agnostic:
@@ -91,11 +96,6 @@ export class StorageController {
         tenant, message.descriptor.recordId, this.messageStore, this.dataStore
       );
     }
-
-    // displace every other message for this record, retaining the writes needed for replay and future tombstone visibility
-    await StorageController.deleteDisplacedMessagesAndRetainWrites(
-      tenant, existingMessages, message, this.messageStore, this.dataStore, [newestPreDeleteWrite]
-    );
 
     return { position };
   }
@@ -285,56 +285,70 @@ export class StorageController {
   }
 
   /**
-   * Deletes all messages in `existingMessages` that the `retainedMessage` displaces, while keeping
-   * the initial write and the caller-supplied writes as non-latest state for future replay and
-   * tombstone visibility reconstruction. Displacement is deliberately NOT a timestamp comparison:
-   * a RecordsDelete displaces even a newer RecordsWrite (delete-wins convergence), and on
-   * resumable-task replay the retained message itself is back in `existingMessages` and must
-   * survive — so membership is decided by CID.
+   * Stores the new latest message and displaces every other message in `existingMessages` as ONE
+   * atomic message-store commit: the initial write and the caller-supplied writes are retained as
+   * non-latest state for future replay and tombstone visibility reconstruction, and the remaining
+   * displaced messages are deleted. Readers can never observe an intermediate state where both the
+   * new message and a displaced message carry latest-state indexes.
+   *
+   * Displacement is deliberately NOT a timestamp comparison: a RecordsDelete displaces even a
+   * newer RecordsWrite (delete-wins convergence), and on resumable-task replay the new message
+   * itself is back in `existingMessages` and must survive — so membership is decided by CID.
+   *
+   * Displaced messages' unreferenced data is deleted from the data store only AFTER the commit:
+   * a crash in between leaves at most an orphaned data blob, never a live row whose data is gone.
    */
-  public static async deleteDisplacedMessagesAndRetainWrites(
+  public static async commitLatestStateTransition(
     tenant: string,
     existingMessages: GenericMessage[],
-    retainedMessage: GenericMessage,
+    newMessage: { message: GenericMessage, indexes: KeyValues },
+    additionalRetainedRecordsWrites: RecordsWriteMessage[],
     messageStore: MessageStore,
     dataStore: DataStore,
-    additionalRetainedRecordsWrites: RecordsWriteMessage[],
-  ): Promise<void> {
-    const retainedMessageCid = await Message.getCid(retainedMessage);
+  ): Promise<MessageStorePutResult> {
+    const newMessageCid = await Message.getCid(newMessage.message);
     const additionalRetainedRecordsWriteCids = new Set<string>();
     for (const retainedRecordsWrite of additionalRetainedRecordsWrites) {
       additionalRetainedRecordsWriteCids.add(await Message.getCid(retainedRecordsWrite));
     }
 
     // NOTE: under normal operation, there should only be at most two existing records per `recordId` (initial + a potential subsequent write/delete),
-    // but the DWN may crash before `delete()` is called below, so we use a loop as a tactic to clean up lingering data as needed
+    // but the plan-then-commit shape below heals any lingering rows a previous partial application left behind.
+    const retains: { messageCid: string, message: GenericMessage, indexes: KeyValues }[] = [];
+    const deletes: string[] = [];
+    const displacedMessages: GenericMessage[] = [];
     for (const message of existingMessages) {
       const messageCid = await Message.getCid(message);
-      const messageIsDisplaced = messageCid !== retainedMessageCid;
-      if (messageIsDisplaced) {
-        // the easiest implementation here is delete each old messages
-        // and re-create it with the right index (isLatestBaseState = 'false') if the message is a retained write,
-        // but there is room for better/more efficient implementation here
+      const messageIsDisplaced = messageCid !== newMessageCid;
+      if (!messageIsDisplaced) {
+        continue;
+      }
 
-        await StorageController.deleteFromDataStoreIfNeeded(dataStore, tenant, message, retainedMessage);
+      displacedMessages.push(message);
 
-        // Retained writes must stay in the message store and state index so future deletes and
-        // replicas can reconstruct tombstone visibility, but they must no longer be latest state.
-        const shouldKeepAsNonLatestWrite =
-          await RecordsWrite.isInitialWrite(message) ||
-          additionalRetainedRecordsWriteCids.has(messageCid);
-        if (shouldKeepAsNonLatestWrite) {
-          const retainedRecordsWriteMessage = StorageController.stripInlineData(message as RecordsWriteMessage);
-          const existingRecordsWrite = await RecordsWrite.parse(retainedRecordsWriteMessage);
-          const isLatestBaseState = false;
-          const indexes = await existingRecordsWrite.constructIndexes(isLatestBaseState);
-          await messageStore.updateMessageAndIndexes(tenant, messageCid, retainedRecordsWriteMessage, indexes);
-        } else {
-          // delete message from message store
-          await messageStore.delete(tenant, messageCid);
-        }
+      // Retained writes must stay in the message store and state index so future deletes and
+      // replicas can reconstruct tombstone visibility, but they must no longer be latest state.
+      const shouldKeepAsNonLatestWrite =
+        await RecordsWrite.isInitialWrite(message) ||
+        additionalRetainedRecordsWriteCids.has(messageCid);
+      if (shouldKeepAsNonLatestWrite) {
+        const retainedRecordsWriteMessage = StorageController.stripInlineData(message as RecordsWriteMessage);
+        const existingRecordsWrite = await RecordsWrite.parse(retainedRecordsWriteMessage);
+        const isLatestBaseState = false;
+        const indexes = await existingRecordsWrite.constructIndexes(isLatestBaseState);
+        retains.push({ messageCid, message: retainedRecordsWriteMessage, indexes });
+      } else {
+        deletes.push(messageCid);
       }
     }
+
+    const putResult = await messageStore.commitLatestState(tenant, { put: newMessage, retains, deletes });
+
+    for (const message of displacedMessages) {
+      await StorageController.deleteFromDataStoreIfNeeded(dataStore, tenant, message, newMessage.message);
+    }
+
+    return putResult;
   }
 
   private static stripInlineData(message: RecordsWriteMessage): RecordsWriteMessage {
