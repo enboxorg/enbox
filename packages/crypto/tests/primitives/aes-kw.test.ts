@@ -1,10 +1,10 @@
 import type { Jwk } from '../../src/jose/jwk.js';
 
 import { Convert } from '@enbox/common';
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
 
-import { AesKw } from '../../src/primitives/aes-kw.js';
 import { isChrome } from '../utils/runtimes.js';
+import { _resetWebCryptoAesKwDetection, AesKw } from '../../src/primitives/aes-kw.js';
 
 describe('AesKw', () => {
   describe('bytesToPrivateKey()', () => {
@@ -325,5 +325,130 @@ describe('AesKw', () => {
       const expectedOutput = Convert.hex('8c55fb6fc4c7bb0b6b483df65ba52bee7ed6e0f861ac8097b2394f61067d1157901295aba72c514b').toUint8Array(); // raw format
       expect(wrappedKeyBytes).toEqual(expectedOutput);
     });
+  });
+});
+
+describe('AesKw WebCrypto fallback (hosts without AES-KW, e.g. Electron/BoringSSL)', () => {
+  // Force the noble/RFC 3394 fallback by making the capability probe fail:
+  // the probe imports a key with { name: 'AES-KW' }, so rejecting that import
+  // is exactly what a BoringSSL-built WebCrypto does.
+  const subtle = globalThis.crypto.subtle as SubtleCrypto & {
+    importKey: SubtleCrypto['importKey'];
+  };
+  const originalImportKey = subtle.importKey;
+
+  function disableWebCryptoAesKw(): void {
+    // @ts-expect-error - deliberately shadowing the instance method.
+    subtle.importKey = function (format, keyData, algorithm, extractable, keyUsages): Promise<CryptoKey> {
+      const name = typeof algorithm === 'string' ? algorithm : algorithm?.name;
+      if (name === 'AES-KW') {
+        throw new DOMException('Unrecognized algorithm name', 'NotSupportedError');
+      }
+      return originalImportKey.call(this, format, keyData, algorithm, extractable, keyUsages);
+    };
+    _resetWebCryptoAesKwDetection();
+  }
+
+  afterEach(() => {
+    // @ts-expect-error - remove the shadowing instance property.
+    delete subtle.importKey;
+    _resetWebCryptoAesKwDetection();
+  });
+
+  const unwrappedKey: Jwk = {
+    kty : 'oct',
+    k   : 'hX-1yAAU6aZCwGqViYfAhIiaTyu1PURMswoI4IQmiY4',
+    alg : 'A256GCM',
+    kid : '-TssSnJNgh10-YTwuBtyZTnv0LY6sdT-TQl9WFTSetI',
+  };
+
+  const encryptionKey: Jwk = {
+    kty : 'oct',
+    k   : '47Fn3ZXGbmntoAKErKN5-d7yuwMejCJtOqgAeq_Ojk0',
+    alg : 'A256KW',
+    kid : 'izA6N7g3xmPWStB6Qe6BbGgfrXvrptzuH2eJ1wmdrtk',
+  };
+
+  // Same fixture as the native known-answer test above — the fallback must be
+  // byte-identical to WebCrypto output.
+  const expectedWrappedHex = '8c55fb6fc4c7bb0b6b483df65ba52bee7ed6e0f861ac8097b2394f61067d1157901295aba72c514b';
+
+  it('wrapKey() produces byte-identical output to native WebCrypto', async () => {
+    disableWebCryptoAesKw();
+
+    const wrappedKeyBytes = await AesKw.wrapKey({ unwrappedKey, encryptionKey });
+
+    expect(wrappedKeyBytes).toEqual(Convert.hex(expectedWrappedHex).toUint8Array());
+  });
+
+  it('unwrapKey() decrypts native-WebCrypto-wrapped bytes', async () => {
+    disableWebCryptoAesKw();
+
+    const unwrapped = await AesKw.unwrapKey({
+      wrappedKeyBytes     : Convert.hex(expectedWrappedHex).toUint8Array(),
+      wrappedKeyAlgorithm : 'A256GCM',
+      decryptionKey       : encryptionKey,
+    });
+
+    expect(unwrapped.k).toEqual(unwrappedKey.k);
+    expect(unwrapped.kty).toEqual('oct');
+    expect(unwrapped.alg).toEqual('A256GCM');
+    expect(unwrapped.kid).toEqual(unwrappedKey.kid);
+  });
+
+  it('round-trips wrap → unwrap under the fallback', async () => {
+    disableWebCryptoAesKw();
+
+    const wrappedKeyBytes = await AesKw.wrapKey({ unwrappedKey, encryptionKey });
+    const unwrapped = await AesKw.unwrapKey({
+      wrappedKeyBytes,
+      wrappedKeyAlgorithm : 'A256GCM',
+      decryptionKey       : encryptionKey,
+    });
+
+    expect(unwrapped.k).toEqual(unwrappedKey.k);
+  });
+
+  it('generateKey() returns a well-formed JWK under the fallback', async () => {
+    disableWebCryptoAesKw();
+
+    const privateKey = await AesKw.generateKey({ length: 256 });
+
+    expect(privateKey).toHaveProperty('k');
+    expect(privateKey).toHaveProperty('kid');
+    expect(privateKey).toHaveProperty('kty', 'oct');
+    expect(privateKey).toHaveProperty('alg', 'A256KW');
+    expect(Convert.base64Url(privateKey.k!).toUint8Array().byteLength).toEqual(32);
+  });
+
+  it('unwrapKey() rejects tampered ciphertext under the fallback', async () => {
+    disableWebCryptoAesKw();
+
+    const tampered = Convert.hex(expectedWrappedHex).toUint8Array();
+    tampered[0] ^= 0xff;
+
+    await expect(AesKw.unwrapKey({
+      wrappedKeyBytes     : tampered,
+      wrappedKeyAlgorithm : 'A256GCM',
+      decryptionKey       : encryptionKey,
+    })).rejects.toThrow();
+  });
+
+  it('keys wrapped under the fallback unwrap with native WebCrypto', async () => {
+    disableWebCryptoAesKw();
+    const wrappedKeyBytes = await AesKw.wrapKey({ unwrappedKey, encryptionKey });
+
+    // Restore native AES-KW and re-detect.
+    // @ts-expect-error - remove the shadowing instance property.
+    delete subtle.importKey;
+    _resetWebCryptoAesKwDetection();
+
+    const unwrapped = await AesKw.unwrapKey({
+      wrappedKeyBytes,
+      wrappedKeyAlgorithm : 'A256GCM',
+      decryptionKey       : encryptionKey,
+    });
+
+    expect(unwrapped.k).toEqual(unwrappedKey.k);
   });
 });
