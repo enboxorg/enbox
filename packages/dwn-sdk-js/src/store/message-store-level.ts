@@ -477,32 +477,8 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     }
     const deleteCids = (transition.deletes ?? []).map((cidString): string => CID.parse(cidString).toString());
 
-    // The put, retain, and delete CID sets must be unique and pairwise disjoint: the batched
-    // fingerprint folds and index mutations below assume each row is touched exactly once —
-    // a CID deleted twice, for example, would XOR-fold its contribution back in.
-    MessageStoreLevel.assertDisjointTransitionCids(messageCid, retains.map((retain): string => retain.messageCid), deleteCids);
-
-    const expectedMessageCids = transition.guard === undefined
-      ? undefined
-      : new Set([messageCid, ...transition.guard.expectedMessageCids.map((cidString): string => CID.parse(cidString).toString())]);
-
     return this.withTenantWriteLock(tenant, async () => {
       options?.signal?.throwIfAborted();
-
-      // Conflict guard: the plan was built outside this lock, so reject it if the guarded scope
-      // now contains any message the plan does not account for (a concurrent commit won).
-      if (transition.guard !== undefined && expectedMessageCids !== undefined) {
-        const { messages: guardedMessages } = await this.query(tenant, [transition.guard.filter], undefined, undefined, options);
-        for (const guardedMessage of guardedMessages) {
-          const guardedMessageCid = Cid.parseCid(await Message.getCid(guardedMessage)).toString();
-          if (!expectedMessageCids.has(guardedMessageCid)) {
-            throw new DwnError(
-              DwnErrorCode.MessageStoreCommitLatestStateConflict,
-              `transition plan is stale: unexpected message ${guardedMessageCid} in guarded scope for tenant ${tenant}`
-            );
-          }
-        }
-      }
 
       const tenantBlocks = await partitions.blocks.partition(tenant);
       const tenantLog = await partitions.log.partition(tenant);
@@ -1107,23 +1083,6 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
    */
   private static fingerprintKey(scope: string): string {
     return `d${scope}`;
-  }
-
-  /**
-   * Asserts that a latest-state transition's put, retain, and delete CID sets are unique and
-   * pairwise disjoint. All CIDs must already be normalized.
-   */
-  private static assertDisjointTransitionCids(putCid: string, retainCids: string[], deleteCids: string[]): void {
-    const seenCids = new Set<string>([putCid]);
-    for (const cid of [...retainCids, ...deleteCids]) {
-      if (seenCids.has(cid)) {
-        throw new DwnError(
-          DwnErrorCode.MessageStoreCommitLatestStateOverlappingCids,
-          `transition put, retain, and delete CID sets must be unique and disjoint; ${cid} appears more than once`
-        );
-      }
-      seenCids.add(cid);
-    }
   }
 
   private async buildToken(tenant: string, position: bigint, messageCid?: string): Promise<ProgressToken> {

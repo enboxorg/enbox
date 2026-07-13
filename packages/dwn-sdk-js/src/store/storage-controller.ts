@@ -11,7 +11,6 @@ import { Message } from '../core/message.js';
 import { Records } from '../utils/records.js';
 import { RecordsDelete } from '../interfaces/records-delete.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
-import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
 
@@ -46,7 +45,7 @@ export class StorageController {
     this.dataStore = dataStore;
   }
 
-  public async performRecordsDelete({ tenant, message }: ResumableRecordsDeleteData, attempt: number = 1): Promise<RecordsDeleteTaskResult> {
+  public async performRecordsDelete({ tenant, message }: ResumableRecordsDeleteData): Promise<RecordsDeleteTaskResult> {
     // get existing records matching the `recordId`
     const query = {
       interface : DwnInterfaceName.Records,
@@ -84,20 +83,9 @@ export class StorageController {
 
     // store the tombstone and displace every other message for this record in one atomic commit,
     // retaining the writes needed for replay and future tombstone visibility
-    let position;
-    try {
-      ({ position } = await StorageController.commitLatestStateTransition(
-        tenant, query, existingMessages, { message, indexes }, [newestPreDeleteWrite], this.messageStore, this.dataStore
-      ));
-    } catch (error) {
-      // A concurrent commit changed the record between the read above and the commit. This whole
-      // method re-derives its plan and gates (tombstone lattice, newest write) from a fresh read,
-      // so re-entering it is the replan.
-      if (error instanceof DwnError && error.code === DwnErrorCode.MessageStoreCommitLatestStateConflict && attempt < 3) {
-        return this.performRecordsDelete({ tenant, message }, attempt + 1);
-      }
-      throw error;
-    }
+    const { position } = await StorageController.commitLatestStateTransition(
+      tenant, existingMessages, { message, indexes }, [newestPreDeleteWrite], this.messageStore, this.dataStore
+    );
 
     if (message.descriptor.prune) {
       // purge/hard-delete all descendant records. Cascade is intentionally protocol-agnostic:
@@ -300,14 +288,8 @@ export class StorageController {
    * Stores the new latest message and displaces every other message in `existingMessages` as ONE
    * atomic message-store commit: the initial write and the caller-supplied writes are retained as
    * non-latest state for future replay and tombstone visibility reconstruction, and the remaining
-   * displaced messages are deleted. Within one store process, readers can never observe an
-   * intermediate state where both the new message and a displaced message carry latest-state
-   * indexes.
-   *
-   * The commit is guarded by `recordFilter` — the same filter the caller used to read
-   * `existingMessages`. If a concurrent commit changed the record between that read and this
-   * commit, the store rejects the plan with `MessageStoreCommitLatestStateConflict` and the
-   * caller must re-read, re-validate, and re-plan.
+   * displaced messages are deleted. Readers can never observe an intermediate state where both the
+   * new message and a displaced message carry latest-state indexes.
    *
    * Displacement is deliberately NOT a timestamp comparison: a RecordsDelete displaces even a
    * newer RecordsWrite (delete-wins convergence), and on resumable-task replay the new message
@@ -318,7 +300,6 @@ export class StorageController {
    */
   public static async commitLatestStateTransition(
     tenant: string,
-    recordFilter: Filter,
     existingMessages: GenericMessage[],
     newMessage: { message: GenericMessage, indexes: KeyValues },
     additionalRetainedRecordsWrites: RecordsWriteMessage[],
@@ -336,10 +317,8 @@ export class StorageController {
     const retains: { messageCid: string, message: GenericMessage, indexes: KeyValues }[] = [];
     const deletes: string[] = [];
     const displacedMessages: GenericMessage[] = [];
-    const expectedMessageCids: string[] = [];
     for (const message of existingMessages) {
       const messageCid = await Message.getCid(message);
-      expectedMessageCids.push(messageCid);
       const messageIsDisplaced = messageCid !== newMessageCid;
       if (!messageIsDisplaced) {
         continue;
@@ -363,12 +342,7 @@ export class StorageController {
       }
     }
 
-    const putResult = await messageStore.commitLatestState(tenant, {
-      put   : newMessage,
-      retains,
-      deletes,
-      guard : { filter: recordFilter, expectedMessageCids },
-    });
+    const putResult = await messageStore.commitLatestState(tenant, { put: newMessage, retains, deletes });
 
     for (const message of displacedMessages) {
       await StorageController.deleteFromDataStoreIfNeeded(dataStore, tenant, message, newMessage.message);

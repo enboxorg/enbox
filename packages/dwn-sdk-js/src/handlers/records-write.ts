@@ -166,51 +166,17 @@ export class RecordsWriteHandler implements MethodHandler {
       const indexes = await recordsWrite.constructIndexes(isLatestBaseState);
 
       // store the new message and displace every other message for this record in one atomic
-      // commit, retaining only the initial write as non-latest state — within this process,
-      // readers can never observe two latest-state rows for the record
-      let planExistingMessages = existingMessages;
-      for (let attempt = 1; ; attempt++) {
-        try {
-          const putResult = await StorageController.commitLatestStateTransition(
-            tenant,
-            query,
-            planExistingMessages,
-            { message: messageWithOptionalEncodedData, indexes },
-            [],
-            this.deps.messageStore,
-            this.deps.dataStore!,
-          );
-          position = putResult.position;
-          break;
-        } catch (error) {
-          const isStalePlanConflict = error instanceof DwnError && error.code === DwnErrorCode.MessageStoreCommitLatestStateConflict;
-          if (!isStalePlanConflict || attempt >= 3) {
-            throw error;
-          }
-        }
-
-        // A concurrent commit changed the record between our read and the commit: re-read and
-        // re-run the winner-selection gates before re-planning against the fresh state.
-        // The already-materialized message and indexes stay valid — both derive only from the
-        // immutable incoming message and its content-addressed data.
-        ({ messages: planExistingMessages } = await this.deps.messageStore.query(tenant, [ query ]));
-        for (const planExistingMessage of planExistingMessages) {
-          if (await Message.getCid(planExistingMessage) === incomingCid) {
-            return { status: { code: 409, detail: 'Conflict' } };
-          }
-        }
-
-        const freshNewestMessage = await Message.getNewestMessage(planExistingMessages);
-        if (freshNewestMessage !== undefined && !await Message.isNewer(message, freshNewestMessage)) {
-          return { status: { code: 409, detail: 'Conflict' } };
-        }
-        if (freshNewestMessage?.descriptor.method === DwnMethodName.Delete) {
-          throw new DwnError(
-            DwnErrorCode.RecordsWriteNotAllowedAfterDelete,
-            'RecordsWrite is not allowed after a RecordsDelete.'
-          );
-        }
-      }
+      // commit, retaining only the initial write as non-latest state — readers can never observe
+      // two latest-state rows for the record
+      const putResult = await StorageController.commitLatestStateTransition(
+        tenant,
+        existingMessages,
+        { message: messageWithOptionalEncodedData, indexes },
+        [],
+        this.deps.messageStore,
+        this.deps.dataStore!,
+      );
+      position = putResult.position;
     } catch (error) {
       if (error instanceof DwnError) {
         if (error.code === DwnErrorCode.RecordsWriteMissingEncodedDataInPrevious ||

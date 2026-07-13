@@ -234,38 +234,9 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
       });
     }
 
-    // The put, retain, and delete CID sets must be unique and pairwise disjoint: the row and
-    // fingerprint mutations below assume each row is touched exactly once.
-    MessageStoreSql.assertDisjointTransitionCids(messageCid, retains.map((retain): string => retain.messageCid), transition.deletes ?? []);
-
-    const expectedMessageCids = transition.guard === undefined
-      ? undefined
-      : new Set([messageCid, ...transition.guard.expectedMessageCids]);
-
     try {
       const position = await executeWithTransaction(db, async (tx) => {
         await this.#dialect.lockReplicationCounter(tx, tenant);
-
-        // Conflict guard: the plan was built outside this transaction, so reject it if the
-        // guarded scope now contains any message the plan does not account for (a concurrent
-        // commit won). The counter lock above serializes commits per tenant, so this read
-        // observes every previously committed transition.
-        if (transition.guard !== undefined && expectedMessageCids !== undefined) {
-          let guardQuery = tx
-            .selectFrom('messageStoreMessages')
-            .select('messageCid')
-            .where('tenant', '=', tenant);
-          guardQuery = filterSelectQuery([transition.guard.filter], guardQuery);
-          const guardedRows = await guardQuery.execute();
-          for (const guardedRow of guardedRows) {
-            if (!expectedMessageCids.has(guardedRow.messageCid)) {
-              throw new DwnError(
-                DwnErrorCode.MessageStoreCommitLatestStateConflict,
-                `transition plan is stale: unexpected message ${guardedRow.messageCid} in guarded scope for tenant ${tenant}`
-              );
-            }
-          }
-        }
 
         // A duplicate inserts nothing but still applies the retains and deletes below, so
         // replaying a transition heals one that previously stopped mid-plan.
@@ -1129,23 +1100,6 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
     }
 
     return this.#db;
-  }
-
-  /**
-   * Asserts that a latest-state transition's put, retain, and delete CID sets are unique and
-   * pairwise disjoint.
-   */
-  private static assertDisjointTransitionCids(putCid: string, retainCids: string[], deleteCids: string[]): void {
-    const seenCids = new Set<string>([putCid]);
-    for (const cid of [...retainCids, ...deleteCids]) {
-      if (seenCids.has(cid)) {
-        throw new DwnError(
-          DwnErrorCode.MessageStoreCommitLatestStateOverlappingCids,
-          `transition put, retain, and delete CID sets must be unique and disjoint; ${cid} appears more than once`
-        );
-      }
-      seenCids.add(cid);
-    }
   }
 
   private static detachInlineData(message: GenericMessage): {
