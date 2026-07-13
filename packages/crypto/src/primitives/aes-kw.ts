@@ -1,10 +1,12 @@
 import type { Jwk } from '../jose/jwk.js';
 import type { UnwrapKeyParams, WrapKeyParams } from '../types/params-direct.js';
 
+import { aeskw } from '@noble/ciphers/aes.js';
 import { Convert } from '@enbox/common';
-import { getWebcryptoSubtle } from './webcrypto.js';
+
 import { computeJwkThumbprint, isOctPrivateJwk } from '../jose/jwk.js';
 import { CryptoError, CryptoErrorCode } from '../crypto-error.js';
+import { getWebcrypto, getWebcryptoSubtle } from './webcrypto.js';
 
 /**
  * Constant defining the AES key length values in bits.
@@ -20,6 +22,41 @@ import { CryptoError, CryptoErrorCode } from '../crypto-error.js';
  * @see {@link https://doi.org/10.6028/NIST.FIPS.197-upd1 | NIST FIPS 197}
  */
 const AES_KEY_LENGTHS = [128, 192, 256] as const;
+
+/**
+ * Cached result of the one-time probe for Web Crypto 'AES-KW' support.
+ *
+ * Most runtimes support AES-KW, but Electron compiles Node against BoringSSL,
+ * whose WebCrypto build drops AES key wrapping ("Unrecognized algorithm
+ * name"). When unsupported, {@link AesKw} transparently falls back to
+ * `@noble/ciphers`' RFC 3394 implementation. Every wrap/unwrap input and
+ * output of this class is a plain 'oct' JWK (raw bytes in `k`), and RFC 3394
+ * output is implementation-independent, so the fallback is byte-compatible
+ * with native WebCrypto in both directions.
+ */
+let webCryptoAesKwSupport: Promise<boolean> | undefined;
+
+function hasWebCryptoAesKw(): Promise<boolean> {
+  webCryptoAesKwSupport ??= (async (): Promise<boolean> => {
+    try {
+      const webCrypto = getWebcryptoSubtle() as unknown as SubtleCrypto;
+      await webCrypto.importKey('raw', new Uint8Array(16), { name: 'AES-KW' }, false, ['wrapKey']);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  return webCryptoAesKwSupport;
+}
+
+/**
+ * Resets the cached AES-KW capability probe so the next operation re-detects.
+ *
+ * @internal For tests only.
+ */
+export function _resetWebCryptoAesKwDetection(): void {
+  webCryptoAesKwSupport = undefined;
+}
 
 export class AesKw {
   /**
@@ -102,6 +139,14 @@ export class AesKw {
       throw new RangeError(`The key length is invalid: Must be ${AES_KEY_LENGTHS.join(', ')} bits`);
     }
 
+    // BoringSSL hosts (e.g. Electron) lack Web Crypto AES-KW: generate the
+    // key material directly; bytesToPrivateKey builds the identical JWK shape.
+    if (!(await hasWebCryptoAesKw())) {
+      const privateKeyBytes = new Uint8Array(length / 8);
+      getWebcrypto().getRandomValues(privateKeyBytes);
+      return AesKw.bytesToPrivateKey({ privateKeyBytes });
+    }
+
     // Get the Web Crypto API interface.
     const webCrypto = getWebcryptoSubtle() as unknown as SubtleCrypto;
 
@@ -163,6 +208,36 @@ export class AesKw {
       throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `The 'decryptionKey' algorithm is not supported: ${decryptionKey.alg}`);
     }
 
+    // Map the private key's JOSE algorithm name to the Web Crypto API algorithm identifier.
+    const webCryptoAlgorithm = {
+      A128KW  : 'AES-KW', A192KW  : 'AES-KW', A256KW  : 'AES-KW',
+      A128CTR : 'AES-CTR', A192CTR : 'AES-CTR', A256CTR : 'AES-CTR',
+      A128GCM : 'AES-GCM', A192GCM : 'AES-GCM', A256GCM : 'AES-GCM',
+    }[wrappedKeyAlgorithm];
+
+    if (!webCryptoAlgorithm) {
+      throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `The 'wrappedKeyAlgorithm' is not supported: ${wrappedKeyAlgorithm}`);
+    }
+
+    // BoringSSL hosts (e.g. Electron) lack Web Crypto AES-KW: unwrap via the
+    // RFC 3394 fallback. The result mirrors the native path's exported JWK —
+    // kty/k plus an alg named for the actual key size and algorithm family,
+    // and a kid thumbprint.
+    if (!(await hasWebCryptoAesKw())) {
+      const decryptionKeyBytes = await AesKw.privateKeyToBytes({ privateKey: decryptionKey });
+      const unwrappedKeyBytes = aeskw(decryptionKeyBytes).decrypt(wrappedKeyBytes);
+
+      const algorithmFamily = wrappedKeyAlgorithm.replace(/^A\d{3}/, '');
+      const unwrappedKey: Jwk = {
+        k   : Convert.uint8Array(unwrappedKeyBytes).toBase64Url(),
+        kty : 'oct',
+        alg : `A${unwrappedKeyBytes.length * 8}${algorithmFamily}`,
+      };
+      unwrappedKey.kid = await computeJwkThumbprint({ jwk: unwrappedKey });
+
+      return unwrappedKey;
+    }
+
     // Get the Web Crypto API interface.
     const webCrypto = getWebcryptoSubtle() as unknown as SubtleCrypto;
 
@@ -174,17 +249,6 @@ export class AesKw {
       true, // key is extractable
       ['unwrapKey'] // key usages
     );
-
-    // Map the private key's JOSE algorithm name to the Web Crypto API algorithm identifier.
-    const webCryptoAlgorithm = {
-      A128KW  : 'AES-KW', A192KW  : 'AES-KW', A256KW  : 'AES-KW',
-      A128CTR : 'AES-CTR', A192CTR : 'AES-CTR', A256CTR : 'AES-CTR',
-      A128GCM : 'AES-GCM', A192GCM : 'AES-GCM', A256GCM : 'AES-GCM',
-    }[wrappedKeyAlgorithm];
-
-    if (!webCryptoAlgorithm) {
-      throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `The 'wrappedKeyAlgorithm' is not supported: ${wrappedKeyAlgorithm}`);
-    }
 
     // Unwrap the key using the Web Crypto API.
     const unwrappedCryptoKey = await webCrypto.unwrapKey(
@@ -222,6 +286,26 @@ export class AesKw {
       throw new CryptoError(CryptoErrorCode.InvalidJwk, `The private key to wrap is missing the 'alg' property.`);
     }
 
+    // Map the private key's JOSE algorithm name to the Web Crypto API algorithm identifier.
+    const webCryptoAlgorithm = {
+      A128KW  : 'AES-KW', A192KW  : 'AES-KW', A256KW  : 'AES-KW',
+      A128CTR : 'AES-CTR', A192CTR : 'AES-CTR', A256CTR : 'AES-CTR',
+      A128GCM : 'AES-GCM', A192GCM : 'AES-GCM', A256GCM : 'AES-GCM',
+    }[unwrappedKey.alg];
+
+    if (!webCryptoAlgorithm) {
+      throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `The 'unwrappedKey' algorithm is not supported: ${unwrappedKey.alg}`);
+    }
+
+    // BoringSSL hosts (e.g. Electron) lack Web Crypto AES-KW: wrap via the
+    // RFC 3394 fallback — the output is byte-identical to native WebCrypto.
+    if (!(await hasWebCryptoAesKw())) {
+      const encryptionKeyBytes = await AesKw.privateKeyToBytes({ privateKey: encryptionKey });
+      const unwrappedKeyBytes = await AesKw.privateKeyToBytes({ privateKey: unwrappedKey });
+
+      return aeskw(encryptionKeyBytes).encrypt(unwrappedKeyBytes);
+    }
+
     // Get the Web Crypto API interface.
     const webCrypto = getWebcryptoSubtle() as unknown as SubtleCrypto;
 
@@ -233,17 +317,6 @@ export class AesKw {
       true, // key is extractable
       ['wrapKey'] // key usages
     );
-
-    // Map the private key's JOSE algorithm name to the Web Crypto API algorithm identifier.
-    const webCryptoAlgorithm = {
-      A128KW  : 'AES-KW', A192KW  : 'AES-KW', A256KW  : 'AES-KW',
-      A128CTR : 'AES-CTR', A192CTR : 'AES-CTR', A256CTR : 'AES-CTR',
-      A128GCM : 'AES-GCM', A192GCM : 'AES-GCM', A256GCM : 'AES-GCM',
-    }[unwrappedKey.alg];
-
-    if (!webCryptoAlgorithm) {
-      throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `The 'unwrappedKey' algorithm is not supported: ${unwrappedKey.alg}`);
-    }
 
     // Import the private key to wrap for use with the Web Crypto API.
     const unwrappedCryptoKey = await webCrypto.importKey(
