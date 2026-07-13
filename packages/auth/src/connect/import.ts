@@ -11,7 +11,7 @@ import type { ImportFromPortableOptions } from '../types.js';
 
 import { DEFAULT_DWN_ENDPOINTS } from '../types.js';
 import { registerWithDwnEndpoints } from '../registration.js';
-import { finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, startSyncIfEnabled } from './lifecycle.js';
+import { assertFlowActive, commitFlowSession, finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, runFlowMutation, startSyncIfEnabled } from './lifecycle.js';
 
 /**
  * Import an identity from a PortableIdentity JSON object.
@@ -26,10 +26,11 @@ export async function importFromPortable(
   const { userAgent, emitter, storage } = ctx;
   const sync = options.sync ?? ctx.defaultSync;
   const identitySyncProtocols = options.identitySyncProtocols ?? ctx.defaultIdentitySyncProtocols;
+  assertFlowActive(ctx);
 
-  const identity = await userAgent.identity.import({
+  const identity = await runFlowMutation(ctx, () => userAgent.identity.import({
     portableIdentity: options.portableIdentity,
-  });
+  }));
 
   const { connectedDid, delegateDid } = resolveIdentityDids(identity);
 
@@ -39,34 +40,39 @@ export async function importFromPortable(
     const dwnEndpoints = ctx.defaultDwnEndpoints ?? DEFAULT_DWN_ENDPOINTS;
     await registerWithDwnEndpoints(
       {
-        userAgent   : userAgent,
+        userAgent    : userAgent,
         dwnEndpoints,
-        agentDid    : userAgent.agentDid.uri,
+        agentDid     : userAgent.agentDid.uri,
         connectedDid,
-        secretStore : userAgent.secrets,
-        storage     : storage,
+        secretStore  : userAgent.secrets,
+        storage      : storage,
+        assertActive : ctx.assertActive,
+        runMutation  : ctx.runMutation,
       },
       ctx.registration,
     );
+    assertFlowActive(ctx);
   }
 
-  // Register sync. For delegates, derive scope from grants (not 'all').
-  if (delegateDid) {
-    await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid });
-  } else if (sync !== 'off') {
-    await registerSyncScopeForIdentity({ userAgent, connectedDid, identitySyncProtocols });
-  }
+  return commitFlowSession(ctx, async (): Promise<AuthSession> => {
+    // Register sync. For delegates, derive scope from grants (not 'all').
+    if (delegateDid) {
+      await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid });
+    } else if (sync !== 'off') {
+      await registerSyncScopeForIdentity({ userAgent, connectedDid, identitySyncProtocols });
+    }
 
-  await startSyncIfEnabled(userAgent, sync);
+    await startSyncIfEnabled(userAgent, sync);
 
-  // Persist session info, build AuthSession, and emit lifecycle events.
-  return finalizeSession({
-    userAgent,
-    emitter,
-    storage,
-    connectedDid,
-    delegateDid,
-    identityName         : identity.metadata.name,
-    identityConnectedDid : identity.metadata.connectedDid,
+    // Persist session info, build AuthSession, and emit lifecycle events.
+    return finalizeSession({
+      userAgent,
+      emitter,
+      storage,
+      connectedDid,
+      delegateDid,
+      identityName         : identity.metadata.name,
+      identityConnectedDid : identity.metadata.connectedDid,
+    });
   });
 }

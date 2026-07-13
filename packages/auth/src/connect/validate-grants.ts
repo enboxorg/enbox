@@ -5,15 +5,15 @@ import type { DwnPermissionScope } from '@enbox/agent';
 import { DwnPermissionGrant, DwnPermissionsProtocol } from '@enbox/agent';
 
 /**
- * Validates that a wallet's connect result grants exactly what was requested.
+ * Validates that a wallet's connect result grants within what was requested.
  *
- * Every returned grant must target the delegate DID, and every grant scope —
- * session-revocation grants excluded via the `sessionRevocations` mapping —
- * must be a subset of a requested permission scope. A wallet that returns a
- * grant for a different grantee or a broader scope than requested fails the
- * connect, with an instruction to revoke the just-approved session (grants
- * are written to the owner's DWN at approve time, before the client can
- * check anything).
+ * Every returned grant must be issued by the connected DID to the delegate
+ * DID, and every grant scope — session-revocation grants excluded via the
+ * `sessionRevocations` mapping — must be a subset of a requested permission
+ * scope. A non-empty request must receive at least one non-revocation grant.
+ * A wallet that violates any invariant fails the connect, with an instruction
+ * to revoke the just-approved session (grants are written to the owner's DWN
+ * at approve time, before the client can check anything).
  *
  * Runs for every connect transport: the handler flow (browser popup, CLI
  * relay) and the direct relay flow alike.
@@ -24,6 +24,7 @@ export function validateConnectResultGrants(
 ): void {
   const delegateDid = result.delegatePortableDid.uri;
   const revocationGrantIds = new Map<string, string>();
+  let hasRequestedGrant = false;
 
   for (const revocation of result.sessionRevocations ?? []) {
     revocationGrantIds.set(revocation.revocationGrantId, revocation.grantId);
@@ -31,6 +32,13 @@ export function validateConnectResultGrants(
 
   for (const grantMessage of result.delegateGrants) {
     const grant = DwnPermissionGrant.parse(grantMessage);
+
+    if (grant.grantor !== result.connectedDid) {
+      throw new Error(
+        `[@enbox/auth] Wallet returned a grant from '${grant.grantor}', but the connected DID is '${result.connectedDid}'. ` +
+        'Revoke the approved session in your wallet.'
+      );
+    }
 
     if (grant.grantee !== delegateDid) {
       throw new Error(
@@ -46,6 +54,15 @@ export function validateConnectResultGrants(
     if (!isRequestedScope(grant.scope, permissionRequests)) {
       throw new Error('[@enbox/auth] Wallet returned a grant outside the requested permission scope. Revoke the approved session in your wallet.');
     }
+
+    hasRequestedGrant = true;
+  }
+
+  if (permissionRequests.length > 0 && !hasRequestedGrant) {
+    throw new Error(
+      '[@enbox/auth] Wallet returned no grants for the requested permission scope. ' +
+      'Revoke the approved session in your wallet.'
+    );
   }
 }
 

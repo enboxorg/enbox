@@ -55,6 +55,23 @@ export interface RegistrationContext {
    *             callers that have not yet migrated.
    */
   storage?: StorageAdapter;
+
+  /** Throws when session teardown invalidated this registration attempt. */
+  assertActive?: () => void;
+
+  /** Serializes token and tenant mutations against session teardown. */
+  runMutation?: <T>(operation: () => Promise<T>) => Promise<T>;
+}
+
+function assertRegistrationActive(ctx: RegistrationContext): void {
+  ctx.assertActive?.();
+}
+
+async function runRegistrationMutation<T>(
+  ctx: RegistrationContext,
+  operation: () => Promise<T>,
+): Promise<T> {
+  return ctx.runMutation === undefined ? operation() : ctx.runMutation(operation);
 }
 
 /**
@@ -75,28 +92,34 @@ export async function registerWithDwnEndpoints(
 ): Promise<void> {
   const { userAgent, dwnEndpoints, agentDid, connectedDid, secretStore, storage } = ctx;
 
-  // Load initial tokens: when persistTokens is enabled, try the
-  // vault-backed SecretStore first, then fall back to the legacy plaintext
-  // StorageAdapter.  This ensures upgraded clients that already have tokens
-  // in localStorage can still read them (and migrate them on the next save).
-  let seedTokens: Record<string, RegistrationTokenData> = {};
-
-  if (registration.persistTokens) {
-    if (secretStore) {
-      seedTokens = await loadTokensFromSecretStore(secretStore);
-    }
-    if (Object.keys(seedTokens).length === 0 && storage) {
-      seedTokens = await loadTokensFromStorage(storage);
-    }
-  } else {
-    seedTokens = registration.registrationTokens ?? {};
-  }
-
-  const updatedTokens: Record<string, RegistrationTokenData> = { ...seedTokens };
-
   try {
+    // Load initial tokens: when persistTokens is enabled, try the
+    // vault-backed SecretStore first, then fall back to the legacy plaintext
+    // StorageAdapter. This ensures upgraded clients that already have tokens
+    // in localStorage can still read them (and migrate them on the next save).
+    let seedTokens: Record<string, RegistrationTokenData> = {};
+
+    if (registration.persistTokens) {
+      seedTokens = await runRegistrationMutation(ctx, async (): Promise<Record<string, RegistrationTokenData>> => {
+        let storedTokens: Record<string, RegistrationTokenData> = {};
+        if (secretStore) {
+          storedTokens = await loadTokensFromSecretStore(secretStore);
+        }
+        if (Object.keys(storedTokens).length === 0 && storage) {
+          storedTokens = await loadTokensFromStorage(storage);
+        }
+        return storedTokens;
+      });
+    } else {
+      seedTokens = registration.registrationTokens ?? {};
+    }
+
+    const updatedTokens: Record<string, RegistrationTokenData> = { ...seedTokens };
+
     for (const dwnEndpoint of dwnEndpoints) {
+      assertRegistrationActive(ctx);
       const serverInfo = await userAgent.rpc.getServerInfo(dwnEndpoint);
+      assertRegistrationActive(ctx);
 
       if (serverInfo.registrationRequirements.length === 0) {
         continue;
@@ -117,17 +140,20 @@ export async function registerWithDwnEndpoints(
         // Refresh expired tokens.
         if (tokenData?.expiresAt !== undefined && tokenData.expiresAt < Date.now()) {
           if (tokenData.refreshUrl && tokenData.refreshToken) {
-            const refreshed = await DwnRegistrar.refreshRegistrationToken(
-              tokenData.refreshUrl, tokenData.refreshToken,
-            );
-            tokenData = {
-              registrationToken : refreshed.registrationToken,
-              refreshToken      : refreshed.refreshToken,
-              expiresAt         : refreshed.expiresIn === undefined
-                ? undefined : Date.now() + (refreshed.expiresIn * 1000),
-              tokenUrl   : tokenData.tokenUrl,
-              refreshUrl : tokenData.refreshUrl,
-            };
+            const expiredToken = tokenData;
+            tokenData = await runRegistrationMutation(ctx, async (): Promise<RegistrationTokenData> => {
+              const refreshed = await DwnRegistrar.refreshRegistrationToken(
+                expiredToken.refreshUrl!, expiredToken.refreshToken!,
+              );
+              return {
+                registrationToken : refreshed.registrationToken,
+                refreshToken      : refreshed.refreshToken,
+                expiresAt         : refreshed.expiresIn === undefined
+                  ? undefined : Date.now() + (refreshed.expiresIn * 1000),
+                tokenUrl   : expiredToken.tokenUrl,
+                refreshUrl : expiredToken.refreshUrl,
+              };
+            });
             updatedTokens[dwnEndpoint] = tokenData;
           } else {
             tokenData = undefined;
@@ -148,37 +174,43 @@ export async function registerWithDwnEndpoints(
             dwnEndpoint,
             state,
           });
+          assertRegistrationActive(ctx);
 
           if (authResult.state !== state) {
             throw new Error('Provider auth state mismatch \u2014 possible CSRF attack.');
           }
 
-          const tokenResponse = await DwnRegistrar.exchangeAuthCode(
-            providerAuth.tokenUrl, authResult.code, dwnEndpoint,
-          );
-
-          tokenData = {
-            registrationToken : tokenResponse.registrationToken,
-            refreshToken      : tokenResponse.refreshToken,
-            expiresAt         : tokenResponse.expiresIn === undefined
-              ? undefined : Date.now() + (tokenResponse.expiresIn * 1000),
-            tokenUrl   : providerAuth.tokenUrl,
-            refreshUrl : providerAuth.refreshUrl,
-          };
+          tokenData = await runRegistrationMutation(ctx, async (): Promise<RegistrationTokenData> => {
+            const tokenResponse = await DwnRegistrar.exchangeAuthCode(
+              providerAuth.tokenUrl, authResult.code, dwnEndpoint,
+            );
+            return {
+              registrationToken : tokenResponse.registrationToken,
+              refreshToken      : tokenResponse.refreshToken,
+              expiresAt         : tokenResponse.expiresIn === undefined
+                ? undefined : Date.now() + (tokenResponse.expiresIn * 1000),
+              tokenUrl   : providerAuth.tokenUrl,
+              refreshUrl : providerAuth.refreshUrl,
+            };
+          });
           updatedTokens[dwnEndpoint] = tokenData;
         }
 
         // Register each DID using the provider auth token.
-        for (const did of didsToRegister) {
-          await DwnRegistrar.registerTenantWithToken(
-            dwnEndpoint, did, tokenData.registrationToken,
-          );
-        }
+        await runRegistrationMutation(ctx, async (): Promise<void> => {
+          for (const did of didsToRegister) {
+            await DwnRegistrar.registerTenantWithToken(
+              dwnEndpoint, did, tokenData.registrationToken,
+            );
+          }
+        });
       } else {
         // --- Default Path (PoW / general registration) ---
-        for (const did of didsToRegister) {
-          await DwnRegistrar.registerTenant(dwnEndpoint, did);
-        }
+        await runRegistrationMutation(ctx, async (): Promise<void> => {
+          for (const did of didsToRegister) {
+            await DwnRegistrar.registerTenant(dwnEndpoint, did);
+          }
+        });
       }
     }
 
@@ -186,18 +218,22 @@ export async function registerWithDwnEndpoints(
     // When migrating to SecretStore, also clear the legacy plaintext copy so
     // bearer tokens no longer sit in localStorage.
     if (registration.persistTokens) {
-      if (secretStore) {
-        await saveTokensToSecretStore(secretStore, updatedTokens);
-        // Best-effort cleanup: remove the legacy plaintext copy so bearer
-        // tokens no longer sit in localStorage.  A failure here must not
-        // turn a successful registration into an error.
-        if (storage) {
-          try { await storage.remove(STORAGE_KEYS.REGISTRATION_TOKENS); } catch { /* best-effort */ }
+      await runRegistrationMutation(ctx, async (): Promise<void> => {
+        if (secretStore) {
+          await saveTokensToSecretStore(secretStore, updatedTokens);
+          // Best-effort cleanup: remove the legacy plaintext copy so bearer
+          // tokens no longer sit in localStorage. A failure here must not
+          // turn a successful registration into an error.
+          if (storage) {
+            try { await storage.remove(STORAGE_KEYS.REGISTRATION_TOKENS); } catch { /* best-effort */ }
+          }
+        } else if (storage) {
+          await saveTokensToStorage(storage, updatedTokens);
         }
-      } else if (storage) {
-        await saveTokensToStorage(storage, updatedTokens);
-      }
+      });
     }
+
+    assertRegistrationActive(ctx);
 
     // Notify app of updated tokens (always, even when auto-persisting).
     if (registration.onRegistrationTokens) {
@@ -206,6 +242,9 @@ export async function registerWithDwnEndpoints(
 
     registration.onSuccess();
   } catch (error: unknown) {
+    // Lifecycle invalidation is a cancellation signal, not a registration
+    // failure callback. Re-throw it before invoking app-owned code.
+    assertRegistrationActive(ctx);
     registration.onFailure(error);
   }
 }

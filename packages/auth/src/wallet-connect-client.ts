@@ -18,7 +18,7 @@
 
 import type { Permission } from './types.js';
 import type { PortableDid } from '@enbox/dids';
-import type { ConnectClientMetadata, ConnectPermissionRequest, ConnectResult } from '@enbox/connect';
+import type { ConnectClientMetadata, ConnectPermissionRequest, ConnectRequestType, ConnectResult } from '@enbox/connect';
 import type { DwnPermissionScope, DwnProtocolDefinition } from '@enbox/agent';
 
 import { DidJwk } from '@enbox/dids';
@@ -59,6 +59,9 @@ export type WalletConnectClientOptions = {
    * `preSupplyDelegateDid` and must include private keys so auth can import it.
    */
   delegatePortableDid?: PortableDid;
+
+  /** Explicit wallet UI signal. Omitted for an initial connect. */
+  requestType?: ConnectRequestType;
 
   /** The URL of the connect server which relays messages between the app and wallet. */
   connectServerUrl: string;
@@ -130,6 +133,7 @@ async function initClient({
   requestedSessionTtlSeconds,
   preSupplyDelegateDid,
   delegatePortableDid,
+  requestType,
   connectServerUrl,
   walletUri,
   permissionRequests,
@@ -138,6 +142,10 @@ async function initClient({
   timeoutMs,
   pollIntervalMs,
 }: WalletConnectClientOptions): Promise<ConnectResult | undefined> {
+  if (requestType === 'refresh' && delegatePortableDid === undefined) {
+    throw new Error('Connect: refresh requests require an existing `delegatePortableDid`.');
+  }
+
   const localDelegatePortableDid = await resolveLocalDelegatePortableDid({
     delegatePortableDid,
     preSupplyDelegateDid,
@@ -161,6 +169,7 @@ async function initClient({
     permissionRequests,
     requestedSessionTtlSeconds,
     delegatePortableDid : localDelegatePortableDid,
+    requestType,
   });
 }
 

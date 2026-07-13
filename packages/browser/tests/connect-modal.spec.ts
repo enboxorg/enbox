@@ -1,6 +1,7 @@
 import type { ConnectModalDeps } from '../src/ui/connect-modal.js';
+import type { PortableDid } from '@enbox/dids';
 import type { WalletOption } from '../src/browser-connect-handler.js';
-import type { ConnectPermissionRequest, ConnectResult, WalletUriHandoff } from '@enbox/connect';
+import type { ConnectPermissionRequest, ConnectRequestType, ConnectResult, WalletUriHandoff } from '@enbox/connect';
 
 import { afterEach, describe, expect, it } from 'bun:test';
 
@@ -25,8 +26,10 @@ const HANDOFF: WalletUriHandoff = {
   expiresIn  : 600,
 };
 
+const DELEGATE_PORTABLE_DID = { uri: 'did:jwk:delegate' } as unknown as PortableDid;
+
 const RESULT = {
-  delegatePortableDid : { uri: 'did:jwk:delegate' },
+  delegatePortableDid : DELEGATE_PORTABLE_DID,
   delegateGrants      : [],
   connectedDid        : 'did:dht:provider',
   sessionRevocations  : [],
@@ -61,6 +64,8 @@ type FakeRelayCall = {
   onWalletUriReady: (handoff: WalletUriHandoff) => void;
   onClaimed?: () => void;
   requestPin: (attempt: number, previousError?: Error) => Promise<string>;
+  delegatePortableDid?: PortableDid;
+  requestType?: ConnectRequestType;
   resolve: (result: ConnectResult | undefined) => void;
   reject: (error: Error) => void;
 };
@@ -71,11 +76,13 @@ function createFakeRelay(): { calls: FakeRelayCall[]; runRelay: ConnectModalDeps
   const runRelay: ConnectModalDeps['runRelay'] = (options) => {
     return new Promise<ConnectResult | undefined>((resolve, reject) => {
       calls.push({
-        walletUri        : options.walletUri,
-        connectServerUrl : options.connectServerUrl,
-        onWalletUriReady : options.onWalletUriReady,
-        onClaimed        : options.onClaimed,
-        requestPin       : options.requestPin,
+        walletUri           : options.walletUri,
+        connectServerUrl    : options.connectServerUrl,
+        onWalletUriReady    : options.onWalletUriReady,
+        onClaimed           : options.onClaimed,
+        requestPin          : options.requestPin,
+        delegatePortableDid : options.delegatePortableDid,
+        requestType         : options.requestType,
         resolve,
         reject,
       });
@@ -135,6 +142,8 @@ describe('runConnectModal', () => {
     expect(relay.calls).toHaveLength(1);
     expect(relay.calls[0].walletUri).toBe('https://wallet-one.example.com/connect/app');
     expect(relay.calls[0].connectServerUrl).toBe('https://relay.example.com/connect');
+    expect(relay.calls[0].delegatePortableDid).toBeUndefined();
+    expect(relay.calls[0].requestType).toBeUndefined();
 
     relay.calls[0].onWalletUriReady(HANDOFF);
     expect(shadowRoot().querySelector('.qr-box svg')).not.toBeNull();
@@ -149,6 +158,104 @@ describe('runConnectModal', () => {
 
     shadowRoot().querySelector<HTMLButtonElement>('.close-btn')?.click();
     await expect(promise).rejects.toThrow(/cancelled/i);
+  });
+
+  it('locks a refresh to the remembered wallet and threads the relay request', async () => {
+    const relay = createFakeRelay();
+    const storage = createFakeStorage({
+      'enbox:connect:lastChoice': JSON.stringify({ method: 'phone', walletUrl: WALLETS[1].url }),
+    });
+    const promise = runConnectModal({
+      wallets             : WALLETS,
+      appName             : 'Test Dapp',
+      mode                : 'refresh',
+      delegatePortableDid : DELEGATE_PORTABLE_DID,
+      permissionRequests  : PERMISSIONS,
+      deps                : deps({ runRelay: relay.runRelay, storage }),
+    });
+    promise.catch((): undefined => undefined);
+
+    await flush();
+
+    expect(shadowRoot().querySelector('.header h2')?.textContent).toBe('Reconnect to Test Dapp');
+    expect(shadowRoot().querySelector('.modal')?.getAttribute('aria-label')).toBe('Reconnect to Test Dapp');
+    expect(shadowRoot().querySelector('.wallet-row')).toBeNull();
+    expect(relay.calls).toHaveLength(1);
+    expect(relay.calls[0].walletUri).toBe('https://wallet-two.example.com/connect/app');
+    expect(relay.calls[0].delegatePortableDid).toBe(DELEGATE_PORTABLE_DID);
+    expect(relay.calls[0].requestType).toBe('refresh');
+
+    shadowRoot().querySelector<HTMLButtonElement>('.close-btn')?.click();
+    await expect(promise).rejects.toThrow(/cancelled/i);
+  });
+
+  it('threads a refresh through the remembered popup wallet after a user gesture', async () => {
+    const relay = createFakeRelay();
+    const storage = createFakeStorage({
+      'enbox:connect:lastChoice': JSON.stringify({ method: 'browser', walletUrl: WALLETS[1].url }),
+    });
+    const popupCalls: Parameters<ConnectModalDeps['runPopup']>[0][] = [];
+    const promise = runConnectModal({
+      wallets             : WALLETS,
+      appName             : 'Test Dapp',
+      mode                : 'refresh',
+      delegatePortableDid : DELEGATE_PORTABLE_DID,
+      permissionRequests  : PERMISSIONS,
+      deps                : deps({
+        runRelay : relay.runRelay,
+        runPopup : (options): Promise<ConnectResult | undefined> => {
+          popupCalls.push(options);
+          return new Promise<ConnectResult | undefined>(() => { /* pending */ });
+        },
+        storage,
+      }),
+    });
+    promise.catch((): undefined => undefined);
+
+    await flush();
+    expect(popupCalls).toHaveLength(0);
+    expect(shadowRoot().querySelector('.wallet-row')).toBeNull();
+
+    shadowRoot().querySelector<HTMLButtonElement>('.stage-btn')?.click();
+
+    expect(popupCalls).toHaveLength(1);
+    expect(popupCalls[0].walletUrl).toBe(WALLETS[1].url);
+    expect(popupCalls[0].delegatePortableDid).toBe(DELEGATE_PORTABLE_DID);
+    expect(popupCalls[0].requestType).toBe('refresh');
+
+    shadowRoot().querySelector<HTMLButtonElement>('.close-btn')?.click();
+    await expect(promise).rejects.toThrow(/cancelled/i);
+  });
+
+  it('keeps the wallet switcher available when a remembered refresh wallet is invalid', async () => {
+    const relay = createFakeRelay();
+    const storage = createFakeStorage({
+      'enbox:connect:lastChoice': JSON.stringify({ method: 'phone', walletUrl: 'not a wallet URL' }),
+    });
+    const promise = runConnectModal({
+      wallets             : WALLETS,
+      mode                : 'refresh',
+      delegatePortableDid : DELEGATE_PORTABLE_DID,
+      permissionRequests  : PERMISSIONS,
+      deps                : deps({ runRelay: relay.runRelay, storage }),
+    });
+    promise.catch((): undefined => undefined);
+
+    await flush();
+
+    expect(shadowRoot().querySelector('.wallet-row')).not.toBeNull();
+    expect(relay.calls[0].walletUri).toBe('https://wallet-one.example.com/connect/app');
+
+    shadowRoot().querySelector<HTMLButtonElement>('.close-btn')?.click();
+    await expect(promise).rejects.toThrow(/cancelled/i);
+  });
+
+  it('rejects refresh mode without an existing delegate', () => {
+    expect(() => runConnectModal({
+      wallets            : WALLETS,
+      mode               : 'refresh',
+      permissionRequests : PERMISSIONS,
+    })).toThrow('refresh requests require an existing `delegatePortableDid`');
   });
 
   it('walks pairing-code entry through to success and remembers the choice', async () => {

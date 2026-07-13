@@ -256,11 +256,16 @@ export class DwnApi {
   /** Holds the instance of {@link AgentPermissionsApi} that helps when dealing with permissions protocol records */
   private readonly permissionsApi: AgentPermissionsApi;
 
-  constructor(options: { agent: EnboxAgent, connectedDid: string, delegateDid?: string }) {
+  constructor(options: {
+    agent: EnboxAgent;
+    connectedDid: string;
+    delegateDid?: string;
+    permissionsApi?: AgentPermissionsApi;
+  }) {
     this.agent = options.agent;
     this._connectedDid = options.connectedDid;
     this.delegateDid = options.delegateDid;
-    this.permissionsApi = new AgentPermissionsApi({ agent: this.agent });
+    this.permissionsApi = options.permissionsApi ?? new AgentPermissionsApi({ agent: this.agent });
   }
 
   /** Whether this DWN API instance is operating as a delegate. */

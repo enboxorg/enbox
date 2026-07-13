@@ -67,6 +67,7 @@ describe('Enbox API', () => {
         expect(enbox).toHaveProperty('did');
         expect(enbox).toHaveProperty('vc');
         expect(enbox).toHaveProperty('using');
+        expect((enbox as any)._dwn.permissionsApi).toBe(testHarness.agent.permissions);
       });
 
       it('should support a single agent with multiple Enbox instances and different DIDs', async () => {
@@ -361,6 +362,114 @@ describe('Enbox API', () => {
       expect(enbox.agent).toBe(testHarness.agent);
     });
 
+    it('reports no delegated connection for an owner session', async () => {
+      const identity = await testHarness.agent.identity.create({
+        metadata  : { name: 'Owner status' },
+        didMethod : 'jwk',
+      });
+      const fetchGrants = sinon.spy(testHarness.agent.permissions, 'fetchGrants');
+      const enbox = new Enbox({
+        agent        : testHarness.agent,
+        connectedDid : identity.did.uri,
+      });
+
+      expect(await enbox.getConnectionStatus()).toEqual({ state: 'none' });
+      expect(fetchGrants.called).toBe(false);
+    });
+
+    it('computes delegated connection status from reconciled owner and delegate partitions', async () => {
+      const connectedDid = 'did:dht:status-owner';
+      const delegateDid = 'did:jwk:status-delegate';
+      const grantEntry = {
+        grant: {
+          id             : 'grant-1',
+          grantor        : connectedDid,
+          grantee        : delegateDid,
+          dateExpires    : '2040-01-01T00:00:00.000000Z',
+          connectSession : {
+            id        : 'session-1',
+            createdAt : '2026-01-01T00:00:00.000000Z',
+            expiresAt : '2040-01-01T00:00:00.000000Z',
+          },
+        },
+        message: { recordId: 'grant-1' },
+      };
+      const fetchGrants = sinon.stub(testHarness.agent.permissions, 'fetchGrants').resolves([grantEntry] as any);
+      const enbox = new Enbox({ agent: testHarness.agent, connectedDid, delegateDid });
+
+      const status = await enbox.getConnectionStatus();
+
+      expect(status.state).toBe('active');
+      expect(status.connectSessionId).toBe('session-1');
+      expect(status.connectedDid).toBe(connectedDid);
+      expect(status.delegateDid).toBe(delegateDid);
+      expect(fetchGrants.callCount).toBe(3);
+      expect(fetchGrants.firstCall.args[0]).toEqual({
+        author  : delegateDid,
+        target  : connectedDid,
+        grantor : connectedDid,
+        grantee : delegateDid,
+      });
+      expect(fetchGrants.secondCall.args[0]).toEqual({
+        author       : delegateDid,
+        target       : connectedDid,
+        grantor      : connectedDid,
+        grantee      : delegateDid,
+        checkRevoked : true,
+      });
+      expect(fetchGrants.thirdCall.args[0]).toEqual({
+        author  : delegateDid,
+        target  : delegateDid,
+        grantor : connectedDid,
+        grantee : delegateDid,
+      });
+    });
+
+    it('requires the owning AuthManager for refresh on raw instances', async () => {
+      const enbox = new Enbox({
+        agent        : testHarness.agent,
+        connectedDid : 'did:dht:owner',
+        delegateDid  : 'did:jwk:delegate',
+      });
+
+      await expect(enbox.refresh({
+        protocols: [{
+          protocol  : 'https://example.com/refresh',
+          published : true,
+          types     : {},
+          structure : {},
+        }],
+      })).rejects.toThrow('Call auth.refresh');
+    });
+
+    it('does not inspect or refresh a different session after its retained AuthManager moves', async () => {
+      const connectedDid = 'did:dht:original-owner';
+      const delegateDid = 'did:jwk:original-delegate';
+      const getConnectionStatus = sinon.stub().resolves({ state: 'active' });
+      const refresh = sinon.stub().resolves(undefined);
+      const enbox = new Enbox({ agent: testHarness.agent, connectedDid, delegateDid });
+      (enbox as any)._auth = {
+        session: {
+          did         : 'did:dht:different-owner',
+          delegateDid : 'did:jwk:different-delegate',
+        },
+        getConnectionStatus,
+        refresh,
+      };
+      sinon.stub(testHarness.agent.permissions, 'fetchGrants').resolves([]);
+      const protocols = [{
+        protocol  : 'https://example.com/refresh',
+        published : true,
+        types     : {},
+        structure : {},
+      }];
+
+      await expect(enbox.getConnectionStatus()).resolves.toEqual({ state: 'none' });
+      await expect(enbox.refresh({ protocols })).rejects.toThrow('no longer matches');
+      expect(getConnectionStatus.called).toBe(false);
+      expect(refresh.called).toBe(false);
+    });
+
     it('Enbox.fromSession() accepts a minimal { agent, did } shape', async () => {
       const identity = await testHarness.agent.identity.create({
         metadata  : { name: 'Session' },
@@ -458,6 +567,43 @@ describe('Enbox API', () => {
         identitySyncProtocols : identitySyncProtocols,
         createIdentity        : true,
       });
+    });
+
+    it('retains the AuthManager for high-level refresh without taking ownership of a supplied agent', async () => {
+      const identity = await testHarness.agent.identity.create({
+        metadata  : { name: 'Refresh owner' },
+        didMethod : 'jwk',
+      });
+      const session = {
+        agent       : testHarness.agent,
+        did         : identity.did.uri,
+        delegateDid : 'did:jwk:refresh-delegate',
+        identity    : { didUri: identity.did.uri, name: 'Refresh owner' },
+      };
+      const refreshed = { ...session };
+      let activeSession: typeof session | undefined;
+      const connect = sinon.stub().callsFake(async (): Promise<typeof session> => {
+        activeSession = session;
+        return session;
+      });
+      const refresh = sinon.stub().resolves(refreshed);
+      sinon.stub(AuthManager, 'create').resolves({
+        connect,
+        refresh,
+        get session(): typeof session | undefined { return activeSession; },
+      } as any);
+      const protocols = [{
+        protocol  : 'https://example.com/refresh',
+        published : true,
+        types     : {},
+        structure : {},
+      }] as const;
+
+      const { enbox } = await Enbox.connect({ agent: testHarness.agent });
+      const result = await enbox.refresh({ protocols: [...protocols] });
+
+      expect(result).toBe(refreshed);
+      expect(refresh.calledOnceWithExactly({ protocols: [...protocols] })).toBe(true);
     });
 
     it('should preserve handler connect when local defaults are also provided', async () => {

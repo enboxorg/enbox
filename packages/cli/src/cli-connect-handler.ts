@@ -1,4 +1,5 @@
-import type { ConnectClientMetadata, ConnectPermissionRequest } from '@enbox/connect';
+import type { PortableDid } from '@enbox/dids';
+import type { ConnectClientMetadata, ConnectPermissionRequest, ConnectRequestType } from '@enbox/connect';
 import type { ConnectHandler, ConnectResult, WalletConnectClientOptions } from '@enbox/auth';
 import type { Readable, Writable } from 'node:stream';
 
@@ -112,7 +113,13 @@ export function CliConnectHandler(options: CliConnectHandlerOptions = {}): Conne
   return {
     async requestAccess(params: {
       permissionRequests: ConnectPermissionRequest[];
+      delegatePortableDid?: PortableDid;
+      requestType?: ConnectRequestType;
     }): Promise<ConnectResult | undefined> {
+      if (params.requestType === 'refresh' && params.delegatePortableDid === undefined) {
+        throw new Error('Connect: refresh requests require an existing `delegatePortableDid`.');
+      }
+
       const walletUrl = await resolveWalletUrl(options, walletUrlState);
       const connectServerUrl = await resolveConnectServerUrl(options, walletUrl);
       const walletUri = buildWalletUri(walletUrl);
@@ -122,6 +129,8 @@ export function CliConnectHandler(options: CliConnectHandlerOptions = {}): Conne
         clientMetadata             : options.clientMetadata,
         requestedSessionTtlSeconds : options.requestedSessionTtlSeconds ?? DEFAULT_CLI_SESSION_TTL_SECONDS,
         preSupplyDelegateDid       : options.preSupplyDelegateDid ?? true,
+        delegatePortableDid        : params.delegatePortableDid,
+        requestType                : params.requestType,
         connectServerUrl,
         walletUri,
         permissionRequests         : params.permissionRequests,
@@ -313,4 +322,3 @@ function writeLine(options: CliConnectHandlerOptions, line: string): void {
   const output = options.output ?? process.stdout;
   output.write(`${line}\n`);
 }
-

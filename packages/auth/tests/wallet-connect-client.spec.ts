@@ -231,6 +231,23 @@ describe('WalletConnect', () => {
       expect(result?.delegatePortableDid.privateKeys?.some((key) => key.crv === 'X25519')).toBe(true);
     });
 
+    it('should reject refresh before generating a new delegate DID', async () => {
+      const createDelegate = sinon.stub(DidJwk, 'create');
+
+      await expect(WalletConnect.initClient({
+        displayName          : 'Sample App',
+        walletUri,
+        connectServerUrl,
+        permissionRequests   : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
+        onWalletUriReady     : (): void => {},
+        validatePin          : async (): Promise<string> => pin,
+        preSupplyDelegateDid : true,
+        requestType          : 'refresh',
+      })).rejects.toThrow('refresh requests require an existing `delegatePortableDid`');
+
+      expect(createDelegate.called).toBe(false);
+    });
+
     it('should derive X25519 from the Ed25519 key in a caller-supplied delegate DID regardless of key order', async () => {
       const delegatePortableDid = {
         uri         : 'did:jwk:local-delegate',
@@ -255,10 +272,12 @@ describe('WalletConnect', () => {
         onWalletUriReady   : relay.onWalletUriReady,
         validatePin        : async (): Promise<string> => pin,
         delegatePortableDid,
+        requestType        : 'refresh',
         pollIntervalMs     : 1,
       });
 
       expect(relay.openedRequests[0].delegateDid).toBe('did:jwk:local-delegate');
+      expect(relay.openedRequests[0].requestType).toBe('refresh');
       expect(result?.delegatePortableDid.privateKeys?.map((key) => key.crv)).toEqual(['P-256', 'Ed25519', 'X25519']);
     });
 

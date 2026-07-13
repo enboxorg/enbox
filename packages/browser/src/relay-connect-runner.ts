@@ -20,10 +20,12 @@
  */
 
 import type { Jwk } from '@enbox/crypto';
+import type { PortableDid } from '@enbox/dids';
 import type {
   ConnectClientMetadata,
   ConnectPermissionRequest,
   ConnectRequest,
+  ConnectRequestType,
   ConnectResult,
   WalletUriHandoff,
 } from '@enbox/connect';
@@ -35,6 +37,7 @@ import {
   openResponse,
   randomToken,
   RelayClientTransport,
+  resolveDelegatePortableDid,
   sealRequest,
 } from '@enbox/connect';
 
@@ -68,6 +71,12 @@ export interface RelayConnectOptions {
 
   /** DWN protocols and permission scopes being requested. */
   permissionRequests: ConnectPermissionRequest[];
+
+  /** Existing delegate credentials reused by a refresh request. */
+  delegatePortableDid?: PortableDid;
+
+  /** User-facing request purpose. Absent means a normal connect. */
+  requestType?: ConnectRequestType;
 
   /** Total milliseconds to poll the relay for a wallet response. */
   timeoutMs?: number;
@@ -147,6 +156,10 @@ export function visibilityAwareSleep(ms: number): Promise<void> {
  * delegated credentials, or `undefined` when the user denied in the wallet.
  */
 export async function runRelayConnect(options: RelayConnectOptions): Promise<ConnectResult | undefined> {
+  if (options.requestType === 'refresh' && options.delegatePortableDid === undefined) {
+    throw new Error('Connect: refresh requests require an existing `delegatePortableDid`.');
+  }
+
   const createTransport = options.createTransport
     ?? ((transportOptions): RelayClientTransport => new RelayClientTransport({
       ...transportOptions,
@@ -179,6 +192,8 @@ export async function runRelayConnect(options: RelayConnectOptions): Promise<Con
     appIcon             : options.appIcon,
     clientMetadata      : options.clientMetadata,
     permissionRequests  : options.permissionRequests,
+    delegateDid         : options.delegatePortableDid?.uri,
+    requestType         : options.requestType,
     supportedDidMethods : ['did:dht', 'did:jwk'],
     nonce,
     state,
@@ -220,9 +235,10 @@ export async function runRelayConnect(options: RelayConnectOptions): Promise<Con
         pin,
       });
 
-      if (response.delegatePortableDid === undefined) {
-        throw new Error('Connect: wallet response omitted `delegatePortableDid`.');
-      }
+      const delegatePortableDid = resolveDelegatePortableDid({
+        localDelegatePortableDid: options.delegatePortableDid,
+        response,
+      });
 
       // Best-effort completion signal so the wallet can flip its pairing
       // screen to a confirmed "connected" state instead of leaving the user
@@ -230,10 +246,10 @@ export async function runRelayConnect(options: RelayConnectOptions): Promise<Con
       void transport.confirmComplete?.().catch((): undefined => undefined);
 
       return {
-        delegatePortableDid : response.delegatePortableDid,
-        delegateGrants      : response.delegateGrants,
-        connectedDid        : response.providerDid,
-        sessionRevocations  : response.sessionRevocations,
+        delegatePortableDid,
+        delegateGrants     : response.delegateGrants,
+        connectedDid       : response.providerDid,
+        sessionRevocations : response.sessionRevocations,
       };
     } catch (error) {
       const failure = error instanceof Error ? error : new Error(String(error));

@@ -52,6 +52,30 @@ export interface FlowContext {
   defaultIdentitySyncProtocols?: IdentitySyncProtocols;
   defaultDwnEndpoints?: string[];
   registration?: RegistrationOptions;
+  /** Throws when teardown invalidated this manager-owned flow. */
+  assertActive?: () => void;
+  /** Serializes a local mutation against session teardown. */
+  runMutation?: <T>(operation: () => Promise<T>) => Promise<T>;
+  /** Serializes terminal finalization and installs the returned session. */
+  commitSession?: (operation: () => Promise<AuthSession>) => Promise<AuthSession>;
+}
+
+/** Assert that a manager-owned flow is still active. Direct flow calls are unrestricted. */
+export function assertFlowActive(ctx: FlowContext): void {
+  ctx.assertActive?.();
+}
+
+/** Run a local mutation through the manager lifecycle mutex when one is present. */
+export async function runFlowMutation<T>(ctx: FlowContext, operation: () => Promise<T>): Promise<T> {
+  return ctx.runMutation === undefined ? operation() : ctx.runMutation(operation);
+}
+
+/** Commit a finalized session through the manager lifecycle mutex when one is present. */
+export async function commitFlowSession(
+  ctx: FlowContext,
+  operation: () => Promise<AuthSession>,
+): Promise<AuthSession> {
+  return ctx.commitSession === undefined ? operation() : ctx.commitSession(operation);
 }
 
 // ─── resolvePassword ─────────────────────────────────────────────
@@ -603,42 +627,12 @@ export async function importDelegateAndSetupSync(params: {
       },
     });
 
-    const connectedProtocols = await processConnectedGrants({
-      agent       : userAgent,
+    await processDelegateGrantsForExistingIdentity({
+      userAgent,
       connectedDid,
-      delegateDid : delegatePortableDid.uri,
-      grants      : delegateGrants,
+      delegateDid: delegatePortableDid.uri,
+      delegateGrants,
     });
-
-    // Register (or update) the identity for protocol-scoped sync.
-    // If the identity is already registered from a prior session, update
-    // the protocol list so it matches the new grants — otherwise a stale
-    // registration would remain.
-    const narrowedProtocols = toSyncIdentityProtocols(connectedProtocols);
-    if (narrowedProtocols !== undefined) {
-      const syncOptions = {
-        delegateDid : delegatePortableDid.uri,
-        protocols   : narrowedProtocols,
-      };
-      try {
-        await userAgent.sync.registerIdentity({ did: connectedDid, options: syncOptions });
-      } catch (error: unknown) {
-        const msg = error instanceof Error ? error.message : '';
-        if (msg.includes('already registered')) {
-          await userAgent.sync.updateIdentityOptions({ did: connectedDid, options: syncOptions });
-        } else {
-          throw error;
-        }
-      }
-    } else {
-      // Zero grants — remove any stale sync registration so revoked protocols stop syncing.
-      try {
-        await userAgent.sync.unregisterIdentity(connectedDid);
-      } catch (error: unknown) {
-        const msg = error instanceof Error ? error.message : '';
-        if (!msg.includes('is not registered')) { throw error; }
-      }
-    }
 
     // No explicit sync('pull') here — startSyncIfEnabled() in the caller
     // runs an immediate sync cycle (both pull and push) when it starts.
@@ -671,6 +665,54 @@ export async function importDelegateAndSetupSync(params: {
   }
 }
 
+/**
+ * Process a new grant bundle and repair sync for a delegate identity that is
+ * already stored locally.
+ *
+ * Unlike {@link importDelegateAndSetupSync}, this helper never imports or
+ * deletes identity/key material. A failed refresh must leave the active
+ * delegate identity usable by its previous grants.
+ *
+ * @internal
+ */
+export async function processDelegateGrantsForExistingIdentity(params: {
+  userAgent: EnboxUserAgent;
+  connectedDid: string;
+  delegateDid: string;
+  delegateGrants: DwnDataEncodedRecordsWriteMessage[];
+}): Promise<void> {
+  const { userAgent, connectedDid, delegateDid, delegateGrants } = params;
+  const connectedProtocols = await processConnectedGrants({
+    agent: userAgent, connectedDid, delegateDid, grants: delegateGrants,
+  });
+
+  // Register (or update) the identity for protocol-scoped sync. If the
+  // identity is already registered from a prior session, update its protocol
+  // list so it matches the replacement grant bundle.
+  const narrowedProtocols = toSyncIdentityProtocols(connectedProtocols);
+  if (narrowedProtocols !== undefined) {
+    const syncOptions = { delegateDid, protocols: narrowedProtocols };
+    try {
+      await userAgent.sync.registerIdentity({ did: connectedDid, options: syncOptions });
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : '';
+      if (msg.includes('already registered')) {
+        await userAgent.sync.updateIdentityOptions({ did: connectedDid, options: syncOptions });
+      } else {
+        throw error;
+      }
+    }
+  } else {
+    // Zero grants — remove any stale sync registration so revoked protocols stop syncing.
+    try {
+      await userAgent.sync.unregisterIdentity(connectedDid);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : '';
+      if (!msg.includes('is not registered')) { throw error; }
+    }
+  }
+}
+
 // ─── finalizeDelegateSession ────────────────────────────────────
 
 /**
@@ -687,8 +729,8 @@ export type DelegateSessionState = {
 
 /**
  * Build an `AuthSession` for a delegated connect flow (DWeb Connect or
- * relay WalletConnect). Starts sync and persists delegate/connected DID
- * markers.
+ * relay WalletConnect). Optionally starts sync and persists delegate/connected
+ * DID markers.
  *
  * @internal
  */
@@ -701,13 +743,21 @@ export async function finalizeDelegateSession(params: {
   delegateDid: string;
   sync: SyncOption | undefined;
   delegateState?: DelegateSessionState;
+  /** Whether to start sync as part of finalization. Defaults to `true`. */
+  startSync?: boolean;
+  /** Whether to emit `identity-added`. Defaults to `true`. */
+  emitIdentityAdded?: boolean;
+  /** Whether to emit `session-start`. Defaults to `true`. */
+  emitSessionStart?: boolean;
 }): Promise<AuthSession> {
   const {
     userAgent, emitter, storage, identity, connectedDid, delegateDid, sync,
-    delegateState = {},
+    delegateState = {}, startSync = true, emitIdentityAdded = true, emitSessionStart = true,
   } = params;
 
-  await startSyncIfEnabled(userAgent, sync);
+  if (startSync) {
+    await startSyncIfEnabled(userAgent, sync);
+  }
 
   // Persist protocol path keys alongside the delegate session markers
   // so they survive agent restarts.  Delegate keys are stored in the
@@ -731,6 +781,8 @@ export async function finalizeDelegateSession(params: {
     delegateDid,
     identityName         : identity.metadata.name,
     identityConnectedDid : identity.metadata.connectedDid,
+    emitIdentityAdded,
+    emitSessionStart,
     extraStorageKeys,
   });
 }
@@ -751,6 +803,7 @@ export async function finalizeDelegateSession(params: {
  *
  * @param params.emitIdentityAdded - Whether to emit `identity-added`. Defaults to `true`.
  *   Set to `false` for session-restore (identity was already added in the original flow).
+ * @param params.emitSessionStart - Whether to emit `session-start`. Defaults to `true`.
  * @param params.extraStorageKeys  - Additional key-value pairs to persist (e.g. delegate/connected DIDs
  *   for wallet-connect flows).
  *
@@ -766,6 +819,7 @@ export async function finalizeSession(params: {
   identityName?: string;
   identityConnectedDid?: string;
   emitIdentityAdded?: boolean;
+  emitSessionStart?: boolean;
   extraStorageKeys?: Record<string, string>;
 }): Promise<AuthSession> {
   const {
@@ -778,6 +832,7 @@ export async function finalizeSession(params: {
     identityName,
     identityConnectedDid,
     emitIdentityAdded = true,
+    emitSessionStart = true,
     extraStorageKeys,
   } = params;
 
@@ -813,9 +868,11 @@ export async function finalizeSession(params: {
     emitter.emit('identity-added', { identity: identityInfo });
   }
 
-  emitter.emit('session-start', {
-    session: { did: connectedDid, delegateDid, identity: identityInfo },
-  });
+  if (emitSessionStart) {
+    emitter.emit('session-start', {
+      session: { did: connectedDid, delegateDid, identity: identityInfo },
+    });
+  }
 
   return session;
 }

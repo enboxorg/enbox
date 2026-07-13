@@ -5,12 +5,12 @@
 
 import type { PortableDid } from '@enbox/dids';
 import type { AgentSessionIdentity, DwnProtocolDefinition, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity, SyncDrainOptions, SyncDrainResult } from '@enbox/agent';
-import type { ConnectClientMetadata, ConnectPermissionRequest, ConnectResult } from '@enbox/connect';
+import type { ConnectClientMetadata, ConnectPermissionRequest, ConnectRequestType, ConnectResult, ConnectSessionMetadata } from '@enbox/connect';
 
 import type { PasswordProvider } from './password-provider.js';
 
 // Re-export types that consumers will need
-export type { ConnectClientMetadata, ConnectPermissionRequest, ConnectResult } from '@enbox/connect';
+export type { ConnectClientMetadata, ConnectPermissionRequest, ConnectRequestType, ConnectResult } from '@enbox/connect';
 export type { HdIdentityVault, IdentityVaultBackup, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
 
 // Re-export EnboxUserAgent so consumers don't need a direct @enbox/agent dep
@@ -67,7 +67,9 @@ export type AuthEvent =
   | 'vault-locked'
   | 'vault-unlocked'
   | 'local-dwn-available'
-  | 'local-dwn-unavailable';
+  | 'local-dwn-unavailable'
+  | 'connection-expiring'
+  | 'connection-expired';
 
 /** Payload type for each event, keyed by event name. */
 export interface AuthEventMap {
@@ -82,6 +84,10 @@ export interface AuthEventMap {
   'local-dwn-available': { endpoint: string; paired?: boolean };
   /** Emitted when no local DWN server could be discovered or a previously known one is no longer reachable. */
   'local-dwn-unavailable': Record<string, never>;
+  /** Emitted when the newest delegated connect session enters `expiring-soon`. */
+  'connection-expiring': { status: ConnectionStatus };
+  /** Emitted when the newest delegated connect session becomes expired or revoked. */
+  'connection-expired': { status: ConnectionStatus };
 }
 
 /** A type-safe event handler for a specific event. */
@@ -258,6 +264,10 @@ export interface ConnectHandler {
    */
   requestAccess(params: {
     permissionRequests: ConnectPermissionRequest[];
+    /** Existing delegate credentials to re-grant during a refresh flow. */
+    delegatePortableDid?: PortableDid;
+    /** Explicit wallet UI signal. Omitted for an initial connect. */
+    requestType?: ConnectRequestType;
   }): Promise<ConnectResult | undefined>;
 }
 
@@ -523,6 +533,69 @@ export interface HandlerConnectOptions {
   /** Override manager default sync interval. */
   sync?: SyncOption;
 }
+
+// ─── Delegated connection status + refresh ───────────────────────
+
+/** Lifecycle state of the newest delegated connect approval. */
+export type ConnectionState =
+  | 'active'
+  | 'expiring-soon'
+  | 'expired'
+  | 'revoked'
+  | 'none';
+
+/** Status of the current delegated connect approval. */
+export type ConnectionStatus = {
+  state: ConnectionState;
+  connectSessionId?: string;
+  connectedDid?: string;
+  delegateDid?: string;
+  /** Earliest enforcing `dateExpires` among the session's grants. */
+  expiresAt?: string;
+  secondsUntilExpiry?: number;
+};
+
+/** Minimal grant shape consumed by {@link computeConnectionStatus}. */
+export type ConnectionStatusGrant = {
+  id: string;
+  grantor: string;
+  grantee: string;
+  dateExpires: string;
+  connectSession?: ConnectSessionMetadata;
+  revoked?: boolean;
+};
+
+/** Options for the pure connection-status computation. */
+export type ComputeConnectionStatusOptions = {
+  /** Seconds before expiry at which the state becomes `expiring-soon`. Defaults to 3600. */
+  expiringSoonThresholdSeconds?: number;
+  /** DWN timestamp used as the clock. Defaults to the current time. */
+  now?: string;
+};
+
+/** Options for {@link AuthManager.getConnectionStatus}. */
+export type GetConnectionStatusOptions = Omit<ComputeConnectionStatusOptions, 'now'> & {
+  /** Check revocations visible in the connected identity's local partition. Defaults to `true`. */
+  checkRevoked?: boolean;
+};
+
+/** Options for adding fresh grants to an existing delegated session. */
+export type RefreshOptions = {
+  /** Non-empty protocol list. Pass the same protocol requests used for the initial connect. */
+  protocols: ProtocolRequest[];
+  /** Per-call handler override. Defaults to the manager's configured handler. */
+  connectHandler?: ConnectHandler;
+};
+
+/** Options for the opt-in delegated connection monitor. */
+export type ConnectionMonitorOptions = GetConnectionStatusOptions & {
+  /** Poll interval in milliseconds. Defaults to five minutes. */
+  intervalMs?: number;
+  /** Automatically refresh expiring or expired grants. Revoked grants are never auto-refreshed. */
+  autoRefresh?: RefreshOptions;
+  /** Receives polling or automatic-refresh failures. */
+  onError?: (error: unknown) => void;
+};
 
 /**
  * Unified options for {@link AuthManager.connect}.

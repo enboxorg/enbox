@@ -7,13 +7,15 @@ import { isRecordsType } from './dwn-api.js';
 import { mapConcurrent } from './utils.js';
 import { Convert, TtlCache } from '@enbox/common';
 import { DwnInterface, DwnPermissionGrant, DwnPermissionRequest } from './types/dwn.js';
-import { DwnInterfaceName, DwnMethodName, PermissionScopeMatcher, PermissionsProtocol } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, PermissionScopeMatcher, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
 
 const REVOCATION_CHECK_CONCURRENCY = 8;
 
 type GrantMatchRank = {
   exactMessageType: boolean;
   specificity: number;
+  dateExpires: string;
+  dateGranted: string;
 };
 
 export class AgentPermissionsApi implements PermissionsApi {
@@ -49,10 +51,14 @@ export class AgentPermissionsApi implements PermissionsApi {
     contextId,
     cached = false
   }: GetPermissionParams): Promise<PermissionGrantEntry> {
-    const cacheKey = JSON.stringify([ connectedDid, delegateDid, messageType, protocol, protocolPath, contextId ]);
+    const cacheKey = JSON.stringify([ connectedDid, delegateDid, delegate, messageType, protocol, protocolPath, contextId ]);
     const cachedGrant = cached ? this._cachedPermissions.get(cacheKey) : undefined;
-    if (cachedGrant) {
+    const now = Time.getCurrentTimestamp();
+    if (cachedGrant && AgentPermissionsApi.isGrantActive(cachedGrant.grant, now)) {
       return cachedGrant;
+    }
+    if (cachedGrant) {
+      this._cachedPermissions.delete(cacheKey);
     }
 
     const permissionGrants = await this.fetchGrants({
@@ -412,9 +418,13 @@ export class AgentPermissionsApi implements PermissionsApi {
   ): Promise<PermissionGrantEntry | undefined> {
     let bestEntry: PermissionGrantEntry | undefined;
     let bestRank: GrantMatchRank | undefined;
+    const now = Time.getCurrentTimestamp();
 
     for (const entry of grants) {
       const { grant, message } = entry;
+      if (!this.isGrantActive(grant, now)) {
+        continue;
+      }
       if (delegated === true && grant.delegated !== true) {
         continue;
       }
@@ -437,6 +447,8 @@ export class AgentPermissionsApi implements PermissionsApi {
     return {
       exactMessageType : scopeMessageType === messageType,
       specificity      : AgentPermissionsApi.getScopeSpecificity(grant),
+      dateExpires      : grant.dateExpires,
+      dateGranted      : grant.dateGranted,
     };
   }
 
@@ -459,7 +471,19 @@ export class AgentPermissionsApi implements PermissionsApi {
       return candidate.exactMessageType;
     }
 
-    return candidate.specificity > current.specificity;
+    if (candidate.specificity !== current.specificity) {
+      return candidate.specificity > current.specificity;
+    }
+
+    if (candidate.dateExpires !== current.dateExpires) {
+      return candidate.dateExpires > current.dateExpires;
+    }
+
+    return candidate.dateGranted > current.dateGranted;
+  }
+
+  private static isGrantActive(grant: PermissionGrant, now: string): boolean {
+    return grant.dateGranted <= now && now < grant.dateExpires;
   }
 
   private static matchScopeFromGrant<T extends DwnInterface>(

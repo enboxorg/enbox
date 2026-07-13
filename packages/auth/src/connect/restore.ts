@@ -19,7 +19,7 @@ import { DwnInterface, DwnPermissionGrant } from '@enbox/agent';
 
 import { applyLocalDwnDiscovery } from '../discovery.js';
 import { STORAGE_KEYS } from '../types.js';
-import { ensureVaultReady, finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './lifecycle.js';
+import { assertFlowActive, commitFlowSession, ensureVaultReady, finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, resolvePassword, runFlowMutation, startSyncIfEnabled } from './lifecycle.js';
 
 /**
  * Attempt to restore a previous session.
@@ -37,6 +37,7 @@ export async function restoreSession(
   options: RestoreSessionOptions = {},
 ): Promise<AuthSession | undefined> {
   const { userAgent, emitter, storage } = ctx;
+  assertFlowActive(ctx);
 
   // Two independent concerns:
   // 1. PREVIOUSLY_CONNECTED — normal session restore
@@ -44,6 +45,7 @@ export async function restoreSession(
   // If neither is set, nothing to do.
   const previouslyConnected = await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
   const retryContextJson = await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
+  assertFlowActive(ctx);
   if (previouslyConnected !== 'true' && !retryContextJson) {
     return undefined;
   }
@@ -51,30 +53,36 @@ export async function restoreSession(
   // Resolve password.
   let explicitPassword = options.password;
   if (!explicitPassword && !ctx.defaultPassword && options.onPasswordRequired) {
+    assertFlowActive(ctx);
     explicitPassword = await options.onPasswordRequired();
+    assertFlowActive(ctx);
   }
 
   // Check for stale session marker.
   const isFirstLaunch = await userAgent.firstLaunch();
+  assertFlowActive(ctx);
   if (isFirstLaunch) {
-    await storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
-    await storage.remove(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
+    await runFlowMutation(ctx, async (): Promise<void> => {
+      await storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
+      await storage.remove(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
+    });
     return undefined;
   }
 
   const password = await resolvePassword(ctx, explicitPassword, false);
+  assertFlowActive(ctx);
 
   // Start the agent (vault is known to exist).
-  await ensureVaultReady({
+  await runFlowMutation(ctx, () => ensureVaultReady({
     userAgent,
     emitter,
     password,
     isFirstLaunch: false,
-  });
+  }));
 
   // Apply local DWN discovery.
   if (!userAgent.dwn.isRemoteMode) {
-    await applyLocalDwnDiscovery(userAgent, storage, emitter);
+    await runFlowMutation(ctx, () => applyLocalDwnDiscovery(userAgent, storage, emitter));
   }
 
   // --- Retry maintenance (independent from session restore) ---
@@ -82,17 +90,20 @@ export async function restoreSession(
   // then stop. Failures here must NOT break a legitimate restore path.
   if (retryContextJson) {
     try {
-      await startSyncIfEnabled(userAgent, ctx.defaultSync);
-      try {
-        await retryOrphanedRevocations(userAgent, storage);
-      } finally {
-        await userAgent.sync.stopSync(2000);
-      }
+      await runFlowMutation(ctx, async (): Promise<void> => {
+        await startSyncIfEnabled(userAgent, ctx.defaultSync);
+        try {
+          await retryOrphanedRevocations(userAgent, storage);
+        } finally {
+          await userAgent.sync.stopSync(2000);
+        }
+      });
     } catch {
       // Retry maintenance is best-effort. If sync startup or retry
       // fails, the retry context remains in storage for next attempt.
       // Do NOT let this block normal session restore below.
     }
+    assertFlowActive(ctx);
   }
 
   // --- Normal session restore ---
@@ -137,84 +148,78 @@ export async function restoreSession(
 
     if (!isAgentOnlySession) {
       // Truly stale session data — clean up and bail.
-      await storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
-      await storage.remove(STORAGE_KEYS.ACTIVE_IDENTITY);
-      await storage.remove(STORAGE_KEYS.DELEGATE_DID);
-      await storage.remove(STORAGE_KEYS.CONNECTED_DID);
-      await storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
-      await storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS);
-      await storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS);
-      try { await userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS); } catch { /* best-effort */ }
+      await runFlowMutation(ctx, async (): Promise<void> => {
+        await storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
+        await storage.remove(STORAGE_KEYS.ACTIVE_IDENTITY);
+        await storage.remove(STORAGE_KEYS.DELEGATE_DID);
+        await storage.remove(STORAGE_KEYS.CONNECTED_DID);
+        await storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
+        await storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS);
+        await storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS);
+        try { await userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS); } catch { /* best-effort */ }
+      });
       // Do NOT remove REVOCATION_RETRY_CONTEXT here — it has its own
       // lifecycle managed by the retry maintenance path. Stale session
       // cleanup must not silently drop pending revocations.
       return undefined;
     }
 
-    return finalizeSession({
+    return commitFlowSession(ctx, () => finalizeSession({
       userAgent,
       emitter,
       storage,
       connectedDid      : userAgent.agentDid.uri,
       emitIdentityAdded : false,
-    });
+    }));
   }
 
   const { connectedDid, delegateDid } = resolveIdentityDids(
     identity, storedDelegateDid ?? undefined,
   );
 
-  // Ensure the sync registration is scoped explicitly. Delegate sessions derive
-  // scope from grants; local sessions are updated only when the caller provides
-  // an explicit identity sync scope.
-  // Previous versions registered delegates with protocols: [] (global sync),
-  // which causes the sync engine to attempt reading permission feed entries
-  // outside the delegate's grant scope.
-  // Always repair regardless of sync state — a stale registration persists
-  // on disk and would take effect if sync is later enabled.
-  let syncRepairFailed = false;
-  try {
-    if (delegateDid) {
-      await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid });
-    } else {
-      await registerSyncScopeForIdentity({
-        userAgent,
-        connectedDid,
-        identitySyncProtocols: ctx.defaultIdentitySyncProtocols,
-      });
+  return commitFlowSession(ctx, async (): Promise<AuthSession> => {
+    // Ensure the sync registration is scoped explicitly. Delegate sessions derive
+    // scope from grants; local sessions are updated only when the caller provides
+    // an explicit identity sync scope.
+    let syncRepairFailed = false;
+    try {
+      if (delegateDid) {
+        await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid });
+      } else {
+        await registerSyncScopeForIdentity({
+          userAgent,
+          connectedDid,
+          identitySyncProtocols: ctx.defaultIdentitySyncProtocols,
+        });
+      }
+    } catch {
+      // Grant query or registration repair failed — don't block restore,
+      // but don't let a stale registration remain usable.
+      syncRepairFailed = true;
+      try { await userAgent.sync.unregisterIdentity(connectedDid); } catch { /* already gone or store error */ }
     }
-  } catch {
-    // Grant query or registration repair failed — don't block restore,
-    // but don't let a stale registration remain usable.
-    syncRepairFailed = true;
-    // Best-effort: remove any existing registration so a later manual
-    // startSync() cannot use stale scope for this connected DID.
-    try { await userAgent.sync.unregisterIdentity(connectedDid); } catch { /* already gone or store error */ }
-  }
 
-  if (delegateDid && connectedDid) {
-    await storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS).catch(() => {});
-    await userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).catch(() => {});
-    await storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).catch(() => {});
-  }
+    if (delegateDid && connectedDid) {
+      await storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS).catch(() => {});
+      await userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).catch(() => {});
+      await storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).catch(() => {});
+    }
 
-  // Start sync only if the registration repair succeeded (or was not needed).
-  // If repair failed, don't start sync with potentially stale scope.
-  if (!syncRepairFailed) {
-    await startSyncIfEnabled(userAgent, ctx.defaultSync);
-  }
+    if (!syncRepairFailed) {
+      await startSyncIfEnabled(userAgent, ctx.defaultSync);
+    }
 
-  // Persist session info, build AuthSession, and emit lifecycle events.
-  // Session restore does not emit `identity-added` (identity was already added in the original flow).
-  return finalizeSession({
-    userAgent,
-    emitter,
-    storage,
-    connectedDid,
-    delegateDid,
-    identityName         : identity.metadata.name,
-    identityConnectedDid : identity.metadata.connectedDid,
-    emitIdentityAdded    : false,
+    // Session restore does not emit `identity-added` (identity was already added in the original flow).
+    return finalizeSession({
+      userAgent,
+      emitter,
+      storage,
+      connectedDid,
+      delegateDid,
+      identityName         : identity.metadata.name,
+      identityConnectedDid : identity.metadata.connectedDid,
+      emitIdentityAdded    : false,
+    });
   });
 }
 

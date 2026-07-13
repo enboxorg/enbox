@@ -43,7 +43,10 @@ type LoopbackTransport = {
   confirmComplete(): Promise<void>;
 };
 
-function createLoopbackTransport(walletPin: string | undefined, respond: 'approve' | 'deny'): LoopbackTransport {
+function createLoopbackTransport(walletPin: string | undefined, respond: 'approve' | 'deny', options: {
+  onRequest?: (request: ConnectRequest) => void;
+  responseDelegateDid?: string;
+} = {}): LoopbackTransport {
   const requestKey = CryptoUtils.randomBytes(32);
   let deliveredJwe: string | undefined;
 
@@ -89,16 +92,18 @@ function createLoopbackTransport(walletPin: string | undefined, respond: 'approv
       });
       const jwt = Convert.uint8Array(plaintext).toString();
       const request = JSON.parse(Convert.base64Url(jwt.split('.')[1]).toString()) as ConnectRequest;
+      options.onRequest?.(request);
 
       const walletDid = await DidJwk.create();
       const delegateDid = await DidJwk.create();
       const delegatePortableDid: PortableDid = await delegateDid.export();
+      const responseDelegateDid = options.responseDelegateDid ?? request.delegateDid ?? delegateDid.uri;
 
       const nowSeconds = Math.floor(Date.now() / 1000);
       return await sealResponse({
         response: {
           providerDid        : 'did:dht:provider',
-          delegateDid        : delegateDid.uri,
+          delegateDid        : responseDelegateDid,
           aud                : request.clientDid,
           iat                : nowSeconds,
           exp                : nowSeconds + 600,
@@ -106,7 +111,7 @@ function createLoopbackTransport(walletPin: string | undefined, respond: 'approv
           state              : request.state,
           delegateGrants     : [],
           sessionRevocations : [],
-          delegatePortableDid,
+          ...(request.delegateDid === undefined ? { delegatePortableDid } : {}),
         },
         signer      : walletDid,
         responseKey : request.responseKey,
@@ -151,6 +156,58 @@ describe('runRelayConnect', () => {
     expect(result?.delegateGrants).toEqual([]);
     // The wallet-facing completion signal fired exactly once after the open.
     expect(transport.confirmCompleteCalls).toBe(1);
+  });
+
+  it('reuses a pre-supplied delegate for a refresh request', async () => {
+    let observedRequest: ConnectRequest | undefined;
+    const transport = createLoopbackTransport('1234', 'approve', {
+      onRequest: (request): void => { observedRequest = request; },
+    });
+    const { options } = baseOptions(transport);
+    const delegate = await DidJwk.create();
+    const delegatePortableDid = await delegate.export();
+
+    const result = await runRelayConnect({
+      ...options,
+      delegatePortableDid,
+      requestType : 'refresh',
+      requestPin  : async (): Promise<string> => '1234',
+    });
+
+    expect(observedRequest?.delegateDid).toBe(delegate.uri);
+    expect(observedRequest?.requestType).toBe('refresh');
+    expect(result?.delegatePortableDid).toBe(delegatePortableDid);
+    expect(transport.confirmCompleteCalls).toBe(1);
+  });
+
+  it('rejects a refresh request without a pre-supplied delegate', async () => {
+    const transport = createLoopbackTransport('1234', 'approve');
+    const { options } = baseOptions(transport);
+
+    await expect(runRelayConnect({
+      ...options,
+      requestType : 'refresh',
+      requestPin  : async (): Promise<string> => '1234',
+    })).rejects.toThrow('refresh requests require an existing `delegatePortableDid`');
+  });
+
+  it('fails a refresh when the wallet responds for a different delegate', async () => {
+    const rogueDelegate = await DidJwk.create();
+    const transport = createLoopbackTransport('1234', 'approve', {
+      responseDelegateDid: rogueDelegate.uri,
+    });
+    const { options } = baseOptions(transport);
+    const delegate = await DidJwk.create();
+    let pinAttempts = 0;
+
+    await expect(runRelayConnect({
+      ...options,
+      delegatePortableDid : await delegate.export(),
+      requestType         : 'refresh',
+      requestPin          : async (): Promise<string> => { pinAttempts++; return '1234'; },
+    })).rejects.toThrow('Revoke the just-approved session');
+    expect(pinAttempts).toBe(1);
+    expect(transport.confirmCompleteCalls).toBe(0);
   });
 
   it('retries a mistyped pairing code against the same response', async () => {
