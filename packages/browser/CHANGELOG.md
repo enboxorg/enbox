@@ -1,5 +1,11 @@
 # @enbox/browser
 
+## 0.3.52
+
+### Patch Changes
+
+- [#1269](https://github.com/enboxorg/enbox/pull/1269) [`b54b98c`](https://github.com/enboxorg/enbox/commit/b54b98c91f1ca26bc402f5163e739eb1f830a10c) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: show popup recovery when browsers reject a blocked wallet popup
+
 ## 0.3.51
 
 ### Patch Changes
