@@ -1,5 +1,16 @@
 # @enbox/api
 
+## 0.6.61
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @enbox/agent@0.8.23
+  - @enbox/auth@0.6.69
+  - @enbox/dids@0.1.6
+  - @enbox/dwn-clients@0.4.18
+  - @enbox/dwn-sdk-js@0.4.12
+
 ## 0.6.60
 
 ### Patch Changes

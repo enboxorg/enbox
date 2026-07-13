@@ -1,5 +1,11 @@
 # @enbox/crypto
 
+## 0.1.6
+
+### Patch Changes
+
+- [#1272](https://github.com/enboxorg/enbox/pull/1272) [`1341db0`](https://github.com/enboxorg/enbox/commit/1341db0976494bd0ec572fc61de3e480dfbbd081) Thanks [@poindex-bot](https://github.com/poindex-bot)! - fix: fall back to @noble/ciphers' RFC 3394 AES-KW implementation when the runtime's WebCrypto lacks the AES-KW algorithm (Electron/BoringSSL-built Node), instead of failing with "Unrecognized algorithm name". RFC 3394 is deterministic, so fallback output is byte-identical to native WebCrypto in both directions; on every runtime where WebCrypto supports AES-KW, the native path is unchanged. (Changeset for #1270, which merged without one.)
+
 ## 0.1.5
 
 ### Patch Changes

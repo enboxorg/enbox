@@ -1,5 +1,17 @@
 # @enbox/auth
 
+## 0.6.69
+
+### Patch Changes
+
+- Updated dependencies [[`1341db0`](https://github.com/enboxorg/enbox/commit/1341db0976494bd0ec572fc61de3e480dfbbd081)]:
+  - @enbox/crypto@0.1.6
+  - @enbox/agent@0.8.23
+  - @enbox/connect@0.1.5
+  - @enbox/dids@0.1.6
+  - @enbox/dwn-clients@0.4.18
+  - @enbox/dwn-sdk-js@0.4.12
+
 ## 0.6.68
 
 ### Patch Changes
