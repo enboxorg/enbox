@@ -1,5 +1,23 @@
 # @enbox/browser
 
+## 0.3.51
+
+### Patch Changes
+
+- [#1265](https://github.com/enboxorg/enbox/pull/1265) [`ea9f6cd`](https://github.com/enboxorg/enbox/commit/ea9f6cdb00ae265ac11f1b6e70c8dbe8bca7491e) Thanks [@poindex-bot](https://github.com/poindex-bot)! - fix(connect): widen the QR re-mint safety margin to 120s so a scanned code survives the wallet unlock ceremony
+
+  The relay pointer is single-use with a TTL that starts at mint time, but a
+  returning-but-locked wallet only dereferences it after the user unlocks. A
+  30s margin left codes on screen that could die between the scan and the
+  post-unlock fetch, surfacing as a dead-end 404 in the wallet.
+
+- Updated dependencies [[`48e3db8`](https://github.com/enboxorg/enbox/commit/48e3db8764e67e8e719cb0557fa7bf739768d9ca)]:
+  - @enbox/dwn-sdk-js@0.4.11
+  - @enbox/agent@0.8.22
+  - @enbox/api@0.6.60
+  - @enbox/auth@0.6.68
+  - @enbox/connect@0.1.4
+
 ## 0.3.50
 
 ### Patch Changes

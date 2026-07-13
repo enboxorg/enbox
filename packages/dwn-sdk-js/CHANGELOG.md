@@ -1,5 +1,13 @@
 # @enbox/dwn-sdk-js
 
+## 0.4.11
+
+### Patch Changes
+
+- [#1267](https://github.com/enboxorg/enbox/pull/1267) [`48e3db8`](https://github.com/enboxorg/enbox/commit/48e3db8764e67e8e719cb0557fa7bf739768d9ca) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: commit latest-state transitions atomically in the message store and resolve retained initial writes by stable entry ID
+
+  `RecordsWrite` and `RecordsDelete` previously stored the new latest message and demoted the retained initial write as two separate store mutations, so concurrent Query/Read/Subscribe could observe two latest-state rows for one record and crashed resolving the initial write through the mutable `isLatestBaseState:false` index — aborting sync. The message store now exposes `commitLatestState`, which applies the insert, retained demotions, and displaced deletions as one atomic commit (a single Level batch / SQL transaction), making the intermediate state unobservable. Readers resolve retained initial writes by the stable identity `entryId === recordId` in one batched lookup; an update whose initial write is genuinely missing (store corruption) is omitted from Query/Subscribe snapshots with a warning, and RecordsRead returns a typed 500.
+
 ## 0.4.10
 
 ### Patch Changes
