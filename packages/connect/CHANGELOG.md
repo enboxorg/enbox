@@ -1,5 +1,11 @@
 # @enbox/connect
 
+## 0.1.7
+
+### Patch Changes
+
+- [#1276](https://github.com/enboxorg/enbox/pull/1276) [`0a5cc42`](https://github.com/enboxorg/enbox/commit/0a5cc42c1d8920e6ba9326d6331b3b119c9e7892) Thanks [@poindex-bot](https://github.com/poindex-bot)! - fix: abort abandoned relay polling when browser connect sessions are superseded or dismissed
+
 ## 0.1.6
 
 ### Patch Changes

@@ -1,5 +1,13 @@
 # @enbox/api
 
+## 0.6.63
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @enbox/agent@0.8.25
+  - @enbox/auth@0.6.71
+
 ## 0.6.62
 
 ### Patch Changes
