@@ -106,6 +106,51 @@ describe('RelayClientTransport', () => {
     expect(fetchStub.callCount).toBe(100); // 300 s budget / 3 s poll interval
   });
 
+  it('should stop polling while sleeping when the session is aborted', async () => {
+    const fetchStub = sinon.stub(globalThis, 'fetch');
+    fetchStub.resolves(new Response('Not Found', { status: 404 }));
+
+    let sleepStarted!: () => void;
+    const sleeping = new Promise<void>((resolve): void => { sleepStarted = resolve; });
+    const controller = new AbortController();
+    const transport = createTransport({
+      signal : controller.signal,
+      sleep  : async (): Promise<void> => {
+        sleepStarted();
+        await new Promise<void>(() => { /* pending until cancellation */ });
+      },
+    });
+    await transport.requestProfile(STATE);
+
+    const response = transport.awaitResponse();
+    await sleeping;
+    controller.abort();
+
+    await expect(response).rejects.toHaveProperty('name', 'AbortError');
+    expect(fetchStub.callCount).toBe(1);
+  });
+
+  it('should abort an in-flight relay request with the session signal', async () => {
+    const controller = new AbortController();
+    let requestStarted!: () => void;
+    const started = new Promise<void>((resolve): void => { requestStarted = resolve; });
+    const fetchFn = sinon.stub().callsFake(async (_input: string | URL, init?: RequestInit): Promise<Response> => {
+      requestStarted();
+      return await new Promise<Response>((_resolve, reject): void => {
+        init?.signal?.addEventListener('abort', (): void => { reject(init.signal?.reason); }, { once: true });
+      });
+    });
+    const transport = createTransport({ fetchFn, signal: controller.signal });
+    await transport.requestProfile(STATE);
+
+    const response = transport.awaitResponse();
+    await started;
+    controller.abort();
+
+    await expect(response).rejects.toHaveProperty('name', 'AbortError');
+    expect(fetchFn.callCount).toBe(1);
+  });
+
   it('should throw when deliverRequest is called before requestProfile', async () => {
     const transport = createTransport({});
 
