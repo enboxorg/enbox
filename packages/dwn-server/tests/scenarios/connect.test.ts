@@ -53,7 +53,7 @@ describe('Connect scenarios', () => {
     // 4. Identity Provider (wallet) should receive 400 if sending an incomplete response.
     // 5. Identity Provider (wallet) sends the Connect Response object to the Connect server.
     // 6. App fetches the Connect Response object from the Connect server.
-    // 7. Should receive 404 if fetching the same Connect Response object again.
+    // 7. Should receive 204 (not ready / already consumed) if fetching the same Connect Response object again.
 
     // 1. App sends the Connect Request object to the Connect server.
     const requestBody = { request: { dummyProperty: 'dummyValue' } };
@@ -125,11 +125,24 @@ describe('Connect scenarios', () => {
     const fetchedResponse = await getConnectResponseResult.json();
     expect(fetchedResponse).toEqual(connectResponseBody.id_token);
 
-    // 7. Should receive 404 if fetching the same Connect Response object again.
+    // 7. Should receive 204 if fetching the same Connect Response object again.
+    // The token is single-use; once consumed the route reads the same as "not
+    // posted yet" — a clean 204 No Content, never a 404.
     await Poller.pollUntilSuccessOrTimeout(async () => {
       const getConnectResponseResult2 = await fetch(connectResponseUrl, { method: 'GET' });
-      expect(getConnectResponseResult2.status).toBe(404);
+      expect(getConnectResponseResult2.status).toBe(204);
     });
+  });
+
+  it('returns 204 (not 404) while the app polls for a response the wallet has not posted', async () => {
+    // The requesting app long-polls GET /connect/token/{state}.jwt. Until the
+    // wallet posts its sealed response, "not ready yet" is the steady state of
+    // that loop — so the relay answers 204 No Content (empty body) rather than a
+    // 404 that browsers surface as console noise.
+    const pendingUrl = `${connectBaseUrl}/connect/token/never-posted-${randomUUID()}.jwt`;
+    const result = await fetch(pendingUrl, { method: 'GET' });
+    expect(result.status).toBe(204);
+    expect(await result.text()).toBe('');
   });
 
   it('reports claimed status to the app while the wallet holds the request', async () => {

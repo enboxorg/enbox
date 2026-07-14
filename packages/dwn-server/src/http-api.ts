@@ -1183,6 +1183,13 @@ export class HttpApi {
     }
 
     // GET /connect/token/:state.jwt
+    // The requesting app long-polls this route for the wallet's sealed
+    // response. Until the wallet posts it, "not ready yet" is the steady state
+    // of that loop, not an error — answer with 204 No Content (empty body) so
+    // pollers get a clean signal instead of a 404 that browsers surface as
+    // console noise. Mirrors the always-2xx contract of the /connect/status
+    // and /connect/complete observation routes above. Unknown or expired
+    // states are indistinguishable from "not ready" and read the same way.
     {
       const match = /^\/connect\/token\/([^/]+)\.jwt$/.exec(path);
       if (match && method === 'GET') {
@@ -1196,10 +1203,7 @@ export class HttpApi {
             headers: { 'content-type': 'application/jwt' },
           });
         } else {
-          return Response.json({
-            ok     : false,
-            status : { code: 404, message: 'Not Found' },
-          }, { status: 404 });
+          return new Response(null, { status: 204 });
         }
       }
     }
