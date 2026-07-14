@@ -89,6 +89,13 @@ export type RelayClientTransportOptions = {
   sleep?: (ms: number) => Promise<void>;
 
   /**
+   * Cancels relay requests and the response polling loop. Callers that
+   * supersede or dismiss a connect session should abort this signal so the
+   * abandoned transport cannot continue polling in the background.
+   */
+  signal?: AbortSignal;
+
+  /**
    * Invoked once, from the `awaitResponse()` poll loop, when the relay
    * reports the pushed request has been claimed (fetched) by a wallet.
    * Lets the app show live progress ("phone connected") before the
@@ -120,6 +127,7 @@ export class RelayClientTransport implements ConnectTransport {
   private readonly _fetch: FetchFn;
   private readonly _now: () => number;
   private readonly _sleep: (ms: number) => Promise<void>;
+  private readonly _signal?: AbortSignal;
 
   private _requestKey?: Uint8Array;
   private _state?: string;
@@ -134,6 +142,7 @@ export class RelayClientTransport implements ConnectTransport {
     this._fetch = options.fetchFn ?? defaultFetch;
     this._now = options.now ?? ((): number => Date.now());
     this._sleep = options.sleep ?? sleep;
+    this._signal = options.signal;
     this._onClaimed = options.onClaimed;
   }
 
@@ -164,7 +173,7 @@ export class RelayClientTransport implements ConnectTransport {
       body    : JSON.stringify({ request: jwe }),
       method  : 'POST',
       headers : { 'Content-Type': 'application/json' },
-      signal  : AbortSignal.timeout(RELAY_HTTP_TIMEOUT_MS),
+      signal  : this.requestSignal(),
     });
 
     if (!response.ok) {
@@ -211,7 +220,8 @@ export class RelayClientTransport implements ConnectTransport {
     let claimedNotified = false;
 
     while (this._now() < deadline) {
-      const response = await this._fetch(tokenUrl, { signal: AbortSignal.timeout(RELAY_HTTP_TIMEOUT_MS) });
+      this._signal?.throwIfAborted();
+      const response = await this._fetch(tokenUrl, { signal: this.requestSignal() });
       if (response.ok) {
         return await response.text();
       }
@@ -220,7 +230,7 @@ export class RelayClientTransport implements ConnectTransport {
 
       if (statusUrl !== undefined && !claimedNotified) {
         try {
-          const statusResponse = await this._fetch(statusUrl, { signal: AbortSignal.timeout(RELAY_HTTP_TIMEOUT_MS) });
+          const statusResponse = await this._fetch(statusUrl, { signal: this.requestSignal() });
           if (statusResponse.ok) {
             const status = await statusResponse.json() as { claimed?: unknown };
             if (status.claimed === true) {
@@ -236,7 +246,7 @@ export class RelayClientTransport implements ConnectTransport {
         }
       }
 
-      await this._sleep(this._pollIntervalMs);
+      await this.sleepUntilNextPoll();
     }
 
     throw new Error(`Connect: timed out after ${this._timeoutMs}ms waiting for the wallet response.`);
@@ -261,13 +271,55 @@ export class RelayClientTransport implements ConnectTransport {
       method    : 'POST',
       headers   : { 'Content-Type': 'application/json' },
       keepalive : true,
-      signal    : AbortSignal.timeout(RELAY_HTTP_TIMEOUT_MS),
+      signal    : this.requestSignal(),
     });
 
     if (!response.ok) {
       await response.body?.cancel().catch((): void => {});
       throw new Error(`Connect: completion signal failed with HTTP ${response.status}.`);
     }
+  }
+
+  /** Combines the caller's session cancellation with the per-request timeout. */
+  private requestSignal(): AbortSignal {
+    const timeoutSignal = AbortSignal.timeout(RELAY_HTTP_TIMEOUT_MS);
+    return this._signal === undefined
+      ? timeoutSignal
+      : AbortSignal.any([this._signal, timeoutSignal]);
+  }
+
+  /** Sleeps between polls while remaining immediately responsive to cancellation. */
+  private async sleepUntilNextPoll(): Promise<void> {
+    if (this._signal === undefined) {
+      await this._sleep(this._pollIntervalMs);
+      return;
+    }
+
+    this._signal.throwIfAborted();
+    const signal = this._signal;
+
+    await new Promise<void>((resolve, reject): void => {
+      const onAbort = (): void => {
+        signal.removeEventListener('abort', onAbort);
+        reject(signal.reason);
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+
+      void this._sleep(this._pollIntervalMs).then(
+        (): void => {
+          signal.removeEventListener('abort', onAbort);
+          resolve();
+        },
+        (error: unknown): void => {
+          signal.removeEventListener('abort', onAbort);
+          reject(error);
+        },
+      );
+    });
   }
 }
 

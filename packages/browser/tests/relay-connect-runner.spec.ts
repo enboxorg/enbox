@@ -262,6 +262,7 @@ describe('runRelayConnect', () => {
     // Poll never resolves; cancellation must win the race.
     transport.awaitResponse = (): Promise<string> => new Promise<string>(() => { /* pending */ });
     const { options } = baseOptions(transport);
+    let observedSignal: AbortSignal | undefined;
 
     let cancel!: () => void;
     const cancelled = new Promise<never>((_, reject) => {
@@ -272,11 +273,17 @@ describe('runRelayConnect', () => {
     const flow = runRelayConnect({
       ...options,
       cancelled,
+      createTransport: (transportOptions) => {
+        observedSignal = transportOptions.signal;
+        return transport;
+      },
       requestPin: async (): Promise<string> => '1234',
     });
 
+    expect(observedSignal?.aborted).toBe(false);
     cancel();
     await expect(flow).rejects.toBeInstanceOf(RelayConnectCancelledError);
+    expect(observedSignal?.aborted).toBe(true);
   });
 });
 

@@ -116,6 +116,7 @@ export interface RelayConnectOptions {
     timeoutMs?: number;
     pollIntervalMs?: number;
     onClaimed?: () => void;
+    signal?: AbortSignal;
   }) => Pick<RelayClientTransport, 'requestProfile' | 'deliverRequest' | 'awaitResponse' | 'requiresPin'>
     & Partial<Pick<RelayClientTransport, 'confirmComplete'>>;
 }
@@ -166,12 +167,14 @@ export async function runRelayConnect(options: RelayConnectOptions): Promise<Con
       sleep: visibilityAwareSleep,
     }));
 
+  const cancellationController = options.cancelled === undefined ? undefined : new AbortController();
   const transport = createTransport({
     connectServerUrl : options.connectServerUrl,
     walletUri        : options.walletUri,
     timeoutMs        : options.timeoutMs,
     pollIntervalMs   : options.pollIntervalMs,
     onClaimed        : options.onClaimed,
+    signal           : cancellationController?.signal,
   });
 
   // Ephemeral client DID for request signing and response addressing, and a
@@ -212,7 +215,13 @@ export async function runRelayConnect(options: RelayConnectOptions): Promise<Con
     ? transport.awaitResponse()
     : Promise.race([transport.awaitResponse(), options.cancelled]);
 
-  const responseCiphertext = await race;
+  let responseCiphertext: string;
+  try {
+    responseCiphertext = await race;
+  } catch (error) {
+    cancellationController?.abort();
+    throw error;
+  }
   if (responseCiphertext === CONNECT_DENIED_TOKEN) {
     return undefined;
   }
