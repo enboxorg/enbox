@@ -1196,10 +1196,7 @@ export class HttpApi {
             headers: { 'content-type': 'application/jwt' },
           });
         } else {
-          return Response.json({
-            ok     : false,
-            status : { code: 404, message: 'Not Found' },
-          }, { status: 404 });
+          return new Response(null, { status: 204 }); // Not ready or already consumed: a clean 204, never a 404 (the app long-polls this).
         }
       }
     }

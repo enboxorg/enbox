@@ -10,7 +10,9 @@
  *   request; the pointer is single-use and expires server-side.
  * - `POST /connect/callback` — the wallet posts the sealed response (or the
  *   literal `DENIED` token) keyed by the request `state`.
- * - `GET /connect/token/{state}.jwt` — the app polls for the response.
+ * - `GET /connect/token/{state}.jwt` — the app polls for the response. The
+ *   relay answers 204 No Content (an empty body) until the wallet has posted,
+ *   so the poll loop never sees a 404 in its expected "not ready yet" state.
  * - `POST /connect/complete` / `GET /connect/complete/{state}` — the app
  *   signals that it opened the response successfully; the wallet polls the
  *   marker to auto-confirm its pairing screen. Observational only, and
@@ -222,11 +224,20 @@ export class RelayClientTransport implements ConnectTransport {
     while (this._now() < deadline) {
       this._signal?.throwIfAborted();
       const response = await this._fetch(tokenUrl, { signal: this.requestSignal() });
+      // The relay serves the sealed response (or the literal DENIED token) as a
+      // non-empty body once the wallet has answered. Until then it reports "not
+      // ready" — 204 No Content on current relays, 404 on older ones — and both
+      // are steady poll states, never a failure. Only a non-empty 2xx body ends
+      // the wait; an empty 2xx (204) falls through to the next poll.
       if (response.ok) {
-        return await response.text();
+        const body = await response.text();
+        if (body.length > 0) {
+          return body;
+        }
+      } else {
+        // Release the unread body so keep-alive sockets are not pinned across polls.
+        await response.body?.cancel().catch((): void => {});
       }
-      // Release the unread body so keep-alive sockets are not pinned across polls.
-      await response.body?.cancel().catch((): void => {});
 
       if (statusUrl !== undefined && !claimedNotified) {
         try {

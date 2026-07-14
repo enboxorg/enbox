@@ -81,6 +81,28 @@ describe('RelayClientTransport', () => {
     expect(tokenUrl).toBe(`${CONNECT_SERVER_URL}/token/${STATE}.jwt`);
   });
 
+  it('should treat a 204 No Content (empty body) as "not ready" and keep polling', async () => {
+    // Current relays answer the token poll with 204 (empty body) until the
+    // wallet responds — a clean signal, not the 404 they used to return. An
+    // empty 2xx must never resolve the wait; only a non-empty body does.
+    const fetchStub = sinon.stub(globalThis, 'fetch');
+    fetchStub.onCall(0).resolves(new Response(null, { status: 204 }));
+    fetchStub.onCall(1).resolves(new Response(null, { status: 204 }));
+    fetchStub.onCall(2).resolves(new Response('SEALED_RESPONSE_JWE', { status: 200 }));
+
+    const sleeps: number[] = [];
+    const transport = createTransport({
+      sleep: async (ms: number): Promise<void> => { sleeps.push(ms); },
+    });
+    await transport.requestProfile(STATE);
+
+    const response = await transport.awaitResponse();
+
+    expect(response).toBe('SEALED_RESPONSE_JWE');
+    expect(sleeps).toEqual([3000, 3000]);
+    expect(fetchStub.callCount).toBe(3);
+  });
+
   it('should surface the DENIED token verbatim', async () => {
     const fetchStub = sinon.stub(globalThis, 'fetch');
     fetchStub.resolves(new Response('DENIED', { status: 200 }));
