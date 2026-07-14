@@ -134,15 +134,40 @@ describe('Connect scenarios', () => {
     });
   });
 
-  it('returns 204 (not 404) while the app polls for a response the wallet has not posted', async () => {
-    // The requesting app long-polls GET /connect/token/{state}.jwt. Until the
-    // wallet posts its sealed response, "not ready yet" is the steady state of
-    // that loop — so the relay answers 204 No Content (empty body) rather than a
-    // 404 that browsers surface as console noise.
-    const pendingUrl = `${connectBaseUrl}/connect/token/never-posted-${randomUUID()}.jwt`;
-    const result = await fetch(pendingUrl, { method: 'GET' });
-    expect(result.status).toBe(204);
-    expect(await result.text()).toBe('');
+  it('serves the token route as 204→200→204 across the response lifecycle (never 404)', async () => {
+    // The requesting app long-polls GET /connect/token/{state}.jwt. Across the
+    // whole lifecycle it must never see a 404: "not ready yet" and "already
+    // consumed" both read as a clean 204 No Content (empty body), and only the
+    // window where the wallet's response is posted returns 200 with the token.
+    const state = `lifecycle-${randomUUID()}`;
+    const tokenUrl = `${connectBaseUrl}/connect/token/${state}.jwt`;
+
+    // 1. Pending — the wallet has not posted anything yet: 204, empty body.
+    const pending = await fetch(tokenUrl, { method: 'GET' });
+    expect(pending.status).toBe(204);
+    expect(await pending.text()).toBe('');
+
+    // 2. Wallet posts the response.
+    const idToken = { dummyToken: 'dummyToken' };
+    const postResult = await fetch(`${connectBaseUrl}/connect/callback`, {
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify({ id_token: idToken, state }),
+    });
+    expect(postResult.status).toBe(201);
+
+    // 3. Ready — the app fetches the posted token: 200 with the token body.
+    let ready;
+    await Poller.pollUntilSuccessOrTimeout(async () => {
+      ready = await fetch(tokenUrl, { method: 'GET' });
+      expect(ready.status).toBe(200);
+    });
+    expect(await ready.json()).toEqual(idToken);
+
+    // 4. Consumed — the single-use token is gone: 204 again, never a 404.
+    const consumed = await fetch(tokenUrl, { method: 'GET' });
+    expect(consumed.status).toBe(204);
+    expect(await consumed.text()).toBe('');
   });
 
   it('reports claimed status to the app while the wallet holds the request', async () => {
