@@ -96,7 +96,18 @@ describe('RPC Clients', () => {
         const authorizationHeaders: Array<string | null> = [];
         client.setDwnEndpointBearerToken(`${localEndpoint}/`, 'native-local-node-token');
 
-        sinon.stub(globalThis, 'fetch').callsFake(async (_url, init): Promise<Response> => {
+        sinon.stub(globalThis, 'fetch').callsFake(async (url, init): Promise<Response> => {
+          if (new URL(String(url)).pathname.endsWith('/info')) {
+            return Response.json({
+              maxFileSize              : 100_000_000,
+              registrationRequirements : [],
+              server                   : '@enbox/dwn-server',
+              sdkVersion               : 'test',
+              url                      : String(url),
+              version                  : 'test',
+              webSocketSupport         : true,
+            });
+          }
           authorizationHeaders.push(new Headers(init?.headers).get('authorization'));
           return new Response(JSON.stringify({
             id      : 'test',

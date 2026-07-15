@@ -1,4 +1,4 @@
-import type { JsonRpcRequest, ServerInfo } from '@enbox/dwn-clients';
+import type { JsonRpcId, JsonRpcRequest, ServerInfo } from '@enbox/dwn-clients';
 import type { Server, ServerWebSocket } from 'bun';
 
 import type { Dialect } from '@enbox/dwn-sql-store';
@@ -24,9 +24,13 @@ import { Convert } from '@enbox/common';
 import { register } from 'prom-client';
 import {
   createJsonRpcErrorResponse,
+  HTTP_DWN_RPC_BODY_V1,
+  isHttpDwnRpcBodyV1ContentType,
+  isHttpDwnRpcContentType,
   JsonRpcErrorCodes,
   maxWsJsonRpcPayloadBytes,
   normalizeReadableStream,
+  parseHttpDwnRpcRequestBody,
 } from '@enbox/dwn-clients';
 import { DateSort, type Dwn, ProtocolsQuery, RecordsQuery, RecordsRead, type RecordsReadReply } from '@enbox/dwn-sdk-js';
 import { existsSync, readFileSync } from 'fs';
@@ -62,6 +66,19 @@ export type LocalNodeWebSocketSession = {
 export interface WsData {
   connection: SocketConnection | null;
   localNodeSession? : LocalNodeWebSocketSession;
+}
+
+/** A JSON-RPC POST decoded from its wire framing, or the 400 that rejected it. */
+type DecodedJsonRpcPost =
+  | { dwnRpcRequest: JsonRpcRequest; requestDataStream?: ReadableStream<Uint8Array> }
+  | { errorResponse: Response };
+
+/** Builds a JSON-RPC bad-request response. Falls back to a fresh id when the request had none. */
+function badRequest(message: string, id: JsonRpcId = crypto.randomUUID()): Response {
+  return Response.json(
+    createJsonRpcErrorResponse(id, JsonRpcErrorCodes.BadRequest, message),
+    { status: 400 },
+  );
 }
 
 export class HttpApi {
@@ -572,6 +589,7 @@ export class HttpApi {
     }
 
     const serverInfo: ServerInfo = {
+      httpRpcFraming           : [HTTP_DWN_RPC_BODY_V1],
       maxFileSize              : this.#config.maxRecordDataSize,
       maxInFlight              : this.#config.maxInFlight,
       registrationRequirements : registrationRequirements,
@@ -775,38 +793,62 @@ export class HttpApi {
     });
   }
 
-  async #handleJsonRpcPost(req: Request): Promise<Response> {
-    const dwnRpcRequestString = req.headers.get('dwn-request');
+  /**
+   * Decodes a JSON-RPC POST from either the negotiated `body-v1` framing or the
+   * legacy `dwn-request` header, so the caller stays transport-agnostic.
+   */
+  async #decodeJsonRpcPost(req: Request): Promise<DecodedJsonRpcPost> {
+    const contentType = req.headers.get('content-type');
 
+    if (isHttpDwnRpcBodyV1ContentType(contentType)) {
+      if (req.body === null) {
+        return { errorResponse: badRequest('request payload required.') };
+      }
+
+      try {
+        const decoded = await parseHttpDwnRpcRequestBody(normalizeReadableStream(req.body));
+        return { dwnRpcRequest: decoded.jsonRpcRequest, requestDataStream: decoded.dataStream };
+      } catch (error) {
+        return { errorResponse: badRequest((error as Error).message) };
+      }
+    }
+
+    if (isHttpDwnRpcContentType(contentType)) {
+      return { errorResponse: badRequest('unsupported HTTP DWN RPC body framing version.') };
+    }
+
+    const dwnRpcRequestString = req.headers.get('dwn-request');
     if (!dwnRpcRequestString) {
-      const reply = createJsonRpcErrorResponse(
-        crypto.randomUUID(), JsonRpcErrorCodes.BadRequest, 'request payload required.'
-      );
-      return Response.json(reply, { status: 400 });
+      return { errorResponse: badRequest('request payload required.') };
     }
 
     let dwnRpcRequest: JsonRpcRequest;
     try {
       dwnRpcRequest = JSON.parse(dwnRpcRequestString);
     } catch (e) {
-      const reply = createJsonRpcErrorResponse(
-        crypto.randomUUID(), JsonRpcErrorCodes.BadRequest, (e as Error).message
-      );
-      return Response.json(reply, { status: 400 });
+      return { errorResponse: badRequest((e as Error).message) };
     }
 
     const contentLength = req.headers.get('content-length');
     const transferEncoding = req.headers.get('transfer-encoding');
-    let requestDataStream: ReadableStream<Uint8Array> | undefined;
     if (Number.parseInt(contentLength ?? '0') > 0 || transferEncoding !== null) {
       if (req.body === null) {
-        const reply = createJsonRpcErrorResponse(
-          dwnRpcRequest.id, JsonRpcErrorCodes.BadRequest, 'request advertised a body but none was provided.'
-        );
-        return Response.json(reply, { status: 400 });
+        return {
+          errorResponse: badRequest('request advertised a body but none was provided.', dwnRpcRequest.id),
+        };
       }
-      requestDataStream = normalizeReadableStream(req.body);
+      return { dwnRpcRequest, requestDataStream: normalizeReadableStream(req.body) };
     }
+
+    return { dwnRpcRequest };
+  }
+
+  async #handleJsonRpcPost(req: Request): Promise<Response> {
+    const decoded = await this.#decodeJsonRpcPost(req);
+    if ('errorResponse' in decoded) {
+      return decoded.errorResponse;
+    }
+    const { dwnRpcRequest, requestDataStream } = decoded;
 
     const requestContext: RequestContext = {
       dwn                   : this.dwn,
@@ -819,8 +861,18 @@ export class HttpApi {
       tenantRateLimiter     : this.#tenantRateLimiter,
       messageProcessedHooks : this.#messageProcessedHooks,
     };
-    const { jsonRpcResponse, dataStream: responseDataStream } =
-      await jsonRpcRouter.handle(dwnRpcRequest, requestContext);
+    let routerResult: Awaited<ReturnType<typeof jsonRpcRouter.handle>>;
+    try {
+      routerResult = await jsonRpcRouter.handle(dwnRpcRequest, requestContext);
+    } finally {
+      // A handler may reject a request before reading its record data. Cancel
+      // any unread tail so framed request readers and network resources are
+      // released promptly. Cancellation after full consumption is a no-op.
+      await requestDataStream?.cancel().catch((): void => {
+        // A handler may still hold a reader lock; it owns cleanup in that case.
+      });
+    }
+    const { jsonRpcResponse, dataStream: responseDataStream } = routerResult;
 
     if (jsonRpcResponse.error) {
       requestCounter.inc({ method: dwnRpcRequest.method, error: 1 });
