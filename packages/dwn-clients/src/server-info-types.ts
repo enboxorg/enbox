@@ -28,6 +28,8 @@ export type LocalNodePairingInfo = {
 };
 
 export type ServerInfo = {
+  /** HTTP request-body framing capabilities accepted by this server. */
+  httpRpcFraming?: string[],
   /**
    * Indicates that this DWN is a localhost local-node profile, not a cloud DWN.
    * Absent on ordinary DWN server deployments.

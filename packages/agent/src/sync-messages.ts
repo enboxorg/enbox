@@ -471,6 +471,7 @@ class RemoteApplyPushContext {
   private readonly entriesByCid = new Map<string, SyncMessageEntry>();
   private readonly fetchedDependencyEntries = new Map<string, SyncMessageEntry[]>();
   private readonly fetchedRefs = new Set<string>();
+  private readonly acknowledgedCids = new Set<string>();
 
   public constructor(private readonly deps: {
     did: string;
@@ -547,7 +548,7 @@ class RemoteApplyPushContext {
       ? { kind: 'succeeded', cid: rootCid }
       : {
         kind    : 'failed',
-        failure : { cid: rootCid, detail: 'remote dependency apply pass budget exhausted' },
+        failure : { cid: rootCid, kind: 'Incomplete', detail: 'remote dependency apply pass budget exhausted' },
       };
   }
 
@@ -600,6 +601,7 @@ class RemoteApplyPushContext {
       case 'Applied':
       case 'Duplicate':
       case 'Superseded':
+        this.acknowledgedCids.add(cid);
         return { kind: 'applied', cid };
       case 'Deferred':
         return {
@@ -642,11 +644,31 @@ class RemoteApplyPushContext {
     if (dependencies.entries.length === 0) {
       return {
         kind    : 'failed',
-        failure : this.retryableFailure(rootCid, cid, missingDependencyDetail(missing)),
+        failure : this.retryableFailure(rootCid, cid, missingDependencyDetail(missing), { kind: 'Incomplete', missing }),
       };
     }
 
-    return { kind: 'retry', entries: [...dependencies.entries, entry] };
+    const unacknowledgedDependencies: SyncMessageEntry[] = [];
+    for (const dependency of dependencies.entries) {
+      const dependencyCid = await this.rememberEntry(dependency);
+      if (!this.acknowledgedCids.has(dependencyCid)) {
+        unacknowledgedDependencies.push(dependency);
+      }
+    }
+
+    if (unacknowledgedDependencies.length === 0) {
+      return {
+        kind    : 'failed',
+        failure : this.retryableFailure(
+          rootCid,
+          cid,
+          `remote still reports acknowledged dependencies as missing: ${missingDependencyDetail(missing)}`,
+          { kind: 'Incomplete', missing },
+        ),
+      };
+    }
+
+    return { kind: 'retry', entries: [...unacknowledgedDependencies, entry] };
   }
 
   private terminalFailure(
@@ -667,13 +689,14 @@ class RemoteApplyPushContext {
     rootCid: string,
     cid: string,
     detail: string,
-    result?: Extract<ReplicationApplyResult, { kind: 'Deferred' }>,
+    result?: Extract<ReplicationApplyResult, { kind: 'Deferred' | 'Incomplete' }>,
   ): PushFailure {
     return {
       cid    : rootCid,
       ...(cid === rootCid ? {} : { dependencyCid: cid }),
-      ...(result === undefined ? {} : { kind: result.kind, reason: result.reason }),
-      ...(result?.reason === 'tenant-inactive' ? { tenantInactive: true } : {}),
+      ...(result === undefined ? {} : { kind: result.kind }),
+      ...(result?.kind === 'Deferred' ? { reason: result.reason } : {}),
+      ...(result?.kind === 'Deferred' && result.reason === 'tenant-inactive' ? { tenantInactive: true } : {}),
       detail : cid === rootCid ? detail : `dependency ${cid} failed before root push: ${detail}`,
     };
   }

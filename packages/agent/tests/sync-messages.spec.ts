@@ -1256,7 +1256,7 @@ describe('sync-messages', () => {
       expect(processRequestStub.withArgs(sinon.match({ messageType: DwnInterface.ProtocolsQuery })).calledOnce).toBe(true);
     });
 
-    it('should exhaust the pass budget for repeated non-empty dependency loops', async () => {
+    it('should stop when the remote still reports an acknowledged dependency as missing', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const protocol = 'https://example.com/repeated-non-empty-incomplete';
       const protocolDefinition: ProtocolDefinition = {
@@ -1279,7 +1279,7 @@ describe('sync-messages', () => {
           const cid = await Message.getCid(message);
           return cid === rootCid
             ? { kind: 'Incomplete', missing: [{ type: 'Protocol', protocol }] }
-            : { kind: 'Applied' };
+            : { kind: 'Duplicate' };
         },
       });
 
@@ -1293,9 +1293,10 @@ describe('sync-messages', () => {
       expect(result.succeeded).toEqual([]);
       expect(result.failed).toHaveLength(1);
       expect(result.failed[0].cid).toBe(rootCid);
+      expect(result.failed[0].kind).toBe('Incomplete');
       expect(result.failed[0].terminal).toBeUndefined();
-      expect(result.failed[0].detail).toBe('remote dependency apply pass budget exhausted');
-      expect(applyStub.callCount).toBe(255);
+      expect(result.failed[0].detail).toContain('remote still reports acknowledged dependencies as missing');
+      expect(applyStub.callCount).toBe(3);
       expect(processRequestStub.withArgs(sinon.match({ messageType: DwnInterface.ProtocolsQuery })).calledOnce).toBe(true);
     });
   });

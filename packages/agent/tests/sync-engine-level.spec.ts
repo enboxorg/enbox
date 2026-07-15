@@ -90,6 +90,32 @@ describe('SyncEngineLevel', () => {
     });
   });
 
+  describe('push retry scheduling', () => {
+    it('should bypass hot retries and delay reconciliation for retryable Incomplete failures', async () => {
+      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      const linkKey = 'did:example:alice^https://dwn.example^projection^epoch';
+      const link = { status: 'live' } as any;
+      syncEngine['_activeLinks'].set(linkKey, link);
+
+      const scheduleReconcile = sinon.stub(syncEngine as any, 'scheduleLinkReconcileIfActive');
+      const schedulePushRetry = sinon.stub(syncEngine as any, 'schedulePushRetry');
+
+      await syncEngine['requeueOrReconcile'](linkKey, {
+        did     : 'did:example:alice',
+        dwnUrl  : 'https://dwn.example',
+        entries : [{
+          cid         : 'root-cid',
+          lastFailure : { cid: 'root-cid', kind: 'Incomplete', detail: 'dependency remains unavailable' },
+        }],
+        retryCount: 1,
+      });
+
+      expect(schedulePushRetry.called).toBe(false);
+      expect(scheduleReconcile.calledOnceWithExactly(linkKey, link, 'push-incomplete', 30_000)).toBe(true);
+      expect(syncEngine['_pushRuntimes'].has(linkKey)).toBe(false);
+    });
+  });
+
   describe('delegated permission grant bootstrap', () => {
     it('uses delegate-local grant entries without probing the owner signer', async () => {
       const ownerDid = 'did:example:owner';

@@ -113,7 +113,9 @@ Two independent size boundaries are in play. Don't conflate them:
 
 ### HTTP
 
-Over HTTP, the message travels in the `dwn-request` header and the record data travels in the request **body** as `application/octet-stream`. The body may be a `Blob`/`Uint8Array` (replayable across retries) or a one-shot `ReadableStream` (`duplex: 'half'`, not retried after a failed attempt). Large uploads are therefore streamable; the per-attempt timeout is raised to 5 minutes for messages whose `dataSize > 1 MiB` so large sync uploads are not aborted by the normal 30-second budget. (`packages/dwn-clients/src/http-dwn-rpc-client.ts`)
+HTTP servers advertise supported request framing through `httpRpcFraming` in `GET /info`. When `body-v1` is advertised, the request body contains a one-byte flags field, a four-byte big-endian JSON length, the UTF-8 JSON-RPC envelope, and then the raw record data. This keeps both the signed envelope and an optional large payload in the streaming body instead of placing an unbounded envelope in an HTTP header. The envelope length is capped at 1 MiB before allocation.
+
+Clients negotiate this capability and retain the legacy `dwn-request` header plus `application/octet-stream` body for servers that do not advertise it. A body backed by a `Blob`/`Uint8Array` remains replayable across transport retries; a one-shot `ReadableStream` uses `duplex: 'half'` and is not replayed after a failed attempt. Large uploads therefore remain streamable without base64 expansion, and the per-attempt timeout is raised to 5 minutes for messages whose `dataSize > 1 MiB` so large sync uploads are not aborted by the normal 30-second budget. (`packages/dwn-clients/src/http-dwn-rpc-client.ts`, `packages/dwn-clients/src/http-dwn-rpc-framing.ts`)
 
 On the server side, an HTTP request body arrives as `context.dataStream` and is capped at the message's declared `descriptor.dataSize` before being handed to the engine. (`packages/dwn-server/src/json-rpc-handlers/dwn/apply-replicated-message.ts`)
 
@@ -157,7 +159,7 @@ The agent's pull path is `admitClosure()` (`packages/agent/src/sync-admit-closur
    - `Incomplete` → if any ref is `terminal`, fail; otherwise fetch every missing dependency and re-queue `[...dependencies, entry]` so the dependencies apply first, then the original message retries.
 3. Repeat until nothing is pending or the pass budget is exhausted.
 
-`fetchMissingDependencies()` maps each `DependencyRef` to a fetch (`fetchDependency()`), caching by ref so the same dependency is fetched at most once per closure:
+`fetchMissingDependencies()` maps each `DependencyRef` to a fetch (`fetchDependency()`), caching by ref so the same dependency is fetched at most once per closure. The push path also remembers dependency CIDs the remote has already acknowledged as `Applied`, `Duplicate`, or `Superseded`. If the remote continues to report only those acknowledged dependencies as missing, the root is deferred to delayed reconciliation instead of replaying the same closure through the pass budget:
 
 | Ref `type` | Fetch strategy |
 |---|---|
@@ -172,7 +174,7 @@ The agent's pull path is `admitClosure()` (`packages/agent/src/sync-admit-closur
 
 ### Pass budget
 
-Both loops cap at **`MAX_ADMISSION_PASSES = 128`** (`MAX_PUSH_ADMISSION_PASSES` on the push side). Because `applyReplicatedMessage()` reports the full missing-ancestor set in a single `Incomplete`, a well-formed closure converges in a handful of passes; the high cap is a safety bound against malformed or adversarial remotes and against dependencies that only become fetchable across passes. Exhausting the budget defers the closure rather than failing it.
+Both loops cap at **`MAX_ADMISSION_PASSES = 128`** (`MAX_PUSH_ADMISSION_PASSES` on the push side). Because `applyReplicatedMessage()` reports the full missing-ancestor set in a single `Incomplete`, a well-formed closure converges in a handful of passes; the high cap is a final safety bound against malformed or adversarial remotes and against dependencies that only become fetchable across passes. Exhausting the budget defers the closure rather than failing it.
 
 ```ts
 const result = await agent.dwn.applyReplicatedMessage(tenantDid, message, { dataStream });

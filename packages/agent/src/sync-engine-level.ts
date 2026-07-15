@@ -3382,6 +3382,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Push retry backoff schedule: immediate, 250ms, 1s, 2s, then give up. */
   private static readonly PUSH_RETRY_BACKOFF_MS = [0, 250, 1000, 2000];
+  private static readonly INCOMPLETE_RECONCILE_DELAY_MS = 30_000;
   private static readonly TENANT_INACTIVE_RECONCILE_DELAY_MS = 30_000;
 
   private async recordTerminalSyncPushFailures(
@@ -3430,6 +3431,17 @@ export class SyncEngineLevel implements SyncEngine {
     if (pending.entries.length === 0) {
       this.stopPushRuntime(targetKey, pushRuntime);
       this.scheduleLinkReconcileIfActive(targetKey, link, 'push-terminal');
+      return;
+    }
+
+    if (pending.entries.some(entry => entry.lastFailure?.kind === 'Incomplete')) {
+      this.stopPushRuntime(targetKey, pushRuntime);
+      this.scheduleLinkReconcileIfActive(
+        targetKey,
+        link,
+        'push-incomplete',
+        SyncEngineLevel.INCOMPLETE_RECONCILE_DELAY_MS,
+      );
       return;
     }
 

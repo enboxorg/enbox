@@ -1,6 +1,6 @@
 import type { Dialect } from '@enbox/dwn-sql-store';
 import type { DwnServerConfig } from '../src/config.js';
-import type { Dwn, Persona, ProtocolsConfigureMessage, RecordsQueryReply } from '@enbox/dwn-sdk-js';
+import type { Dwn, GenericMessage, Persona, ProtocolsConfigureMessage, RecordsQueryReply } from '@enbox/dwn-sdk-js';
 import type { JsonRpcErrorResponse, JsonRpcResponse, ServerInfo } from '@enbox/dwn-clients';
 
 import { connect } from 'net';
@@ -24,7 +24,14 @@ import { HttpApi } from '../src/http-api.js';
 import { LocalNodePairingManager } from '../src/local-node-pairing.js';
 import { RegistrationManager } from '../src/registration/registration-manager.js';
 import { runServerMigrationsIfNeeded } from '../src/storage.js';
-import { createJsonRpcRequest, JsonRpcErrorCodes } from '@enbox/dwn-clients';
+import {
+  createHttpDwnRpcRequestBody,
+  createJsonRpcRequest,
+  HTTP_DWN_RPC_BODY_V1,
+  HTTP_DWN_RPC_BODY_V1_CONTENT_TYPE,
+  HTTP_DWN_RPC_MEDIA_TYPE,
+  JsonRpcErrorCodes,
+} from '@enbox/dwn-clients';
 import {
   createRecordsWriteMessage,
   getDwnResponse,
@@ -113,6 +120,7 @@ describe('http api', function () {
       });
 
       expect(response.status).toBe(400);
+      expect(response.headers.get('access-control-allow-origin')).toBe('*');
 
       const body = (await response.json()) as JsonRpcErrorResponse;
       expect(body.error.code).toBe(JsonRpcErrorCodes.BadRequest);
@@ -130,6 +138,125 @@ describe('http api', function () {
       const body = (await response.json()) as JsonRpcErrorResponse;
       expect(body.error.code).toBe(JsonRpcErrorCodes.BadRequest);
       expect(body.error.message).toContain('JSON');
+    });
+
+    it('responds with a structured 400 for malformed body-v1 framing', async function () {
+      const response = await fetch(baseUrl, {
+        body    : new Uint8Array([1, 0, 0, 0, 16, 123]),
+        headers : { 'content-type': HTTP_DWN_RPC_BODY_V1_CONTENT_TYPE },
+        method  : 'POST',
+      });
+
+      expect(response.status).toBe(400);
+
+      const body = (await response.json()) as JsonRpcErrorResponse;
+      expect(body.error.code).toBe(JsonRpcErrorCodes.BadRequest);
+      expect(body.error.message.length).toBeGreaterThan(0);
+    });
+
+    it('rejects unsupported DWN RPC body framing instead of treating it as legacy data', async function () {
+      const legacyRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.processMessage', {
+        message : {},
+        target  : alice.did,
+      });
+      const response = await fetch(baseUrl, {
+        body    : new Uint8Array([0]),
+        headers : {
+          'content-type' : `${HTTP_DWN_RPC_MEDIA_TYPE}; version=2`,
+          'dwn-request'  : JSON.stringify(legacyRequest),
+        },
+        method: 'POST',
+      });
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as JsonRpcErrorResponse;
+      expect(body.error.code).toBe(JsonRpcErrorCodes.BadRequest);
+      expect(body.error.message).toContain('unsupported HTTP DWN RPC body framing version');
+    });
+
+    it('processes a body-v1 request without a data tail', async function () {
+      const { message } = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : { schema: 'https://example.com/body-v1' },
+      });
+      const requestId = crypto.randomUUID();
+      const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
+        message,
+        target: alice.did,
+      });
+      const framedRequest = createHttpDwnRpcRequestBody(dwnRequest);
+
+      const response = await fetch(baseUrl, {
+        body    : framedRequest.body,
+        headers : { 'content-type': HTTP_DWN_RPC_BODY_V1_CONTENT_TYPE },
+        method  : 'POST',
+      });
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as JsonRpcResponse;
+      expect(body.id).toBe(requestId);
+      expect(body.result.reply.status.code).toBe(200);
+    });
+
+    it('accepts a large body-v1 envelope while streaming record data', async function () {
+      const data = new Uint8Array(2_600_000);
+      data.fill(7);
+      data[0] = 1;
+      data[data.length - 1] = 2;
+
+      const message = {
+        authorization: {
+          signature: {
+            payload    : 'x'.repeat(20_000),
+            signatures : [],
+          },
+        },
+        descriptor: {
+          dataCid          : 'bafkreibodyv1',
+          dataSize         : data.byteLength,
+          interface        : 'Records',
+          messageTimestamp : new Date().toISOString(),
+          method           : 'Write',
+        },
+        recordId: 'body-v1-record',
+      } as unknown as GenericMessage;
+      const requestId = crypto.randomUUID();
+      const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
+        message,
+        target: alice.did,
+      });
+      expect(new TextEncoder().encode(JSON.stringify(dwnRequest)).byteLength).toBeGreaterThan(16_384);
+
+      const applyStub = sinon.stub(dwn, 'applyReplicatedMessage').callsFake(async (_target, _message, options) => {
+        const receivedData = await DataStream.toBytes(options!.dataStream!);
+        expect(receivedData).toEqual(data);
+        return { kind: 'Applied' };
+      });
+      const requestData = new ReadableStream<Uint8Array>({
+        start(controller): void {
+          controller.enqueue(data.subarray(0, 1_300_000));
+          controller.enqueue(data.subarray(1_300_000));
+          controller.close();
+        },
+      });
+      const framedRequest = createHttpDwnRpcRequestBody(dwnRequest, requestData);
+      const requestInit: RequestInit & { duplex?: 'half' } = {
+        body    : framedRequest.body,
+        headers : { 'content-type': HTTP_DWN_RPC_BODY_V1_CONTENT_TYPE },
+        method  : 'POST',
+      };
+      if (framedRequest.body instanceof ReadableStream) {
+        requestInit.duplex = 'half';
+      }
+      expect(requestInit.duplex).toBe('half');
+
+      const response = await fetch(baseUrl, requestInit);
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as JsonRpcResponse;
+      expect(body.id).toBe(requestId);
+      expect(body.error).toBeUndefined();
+      expect(body.result.result).toEqual({ kind: 'Applied' });
+      expect(applyStub.callCount).toBe(1);
     });
 
     it('responds with a 2XX HTTP status if JSON RPC handler returns 4XX/5XX DWN status code', async function () {
@@ -1090,6 +1217,7 @@ describe('http api', function () {
       // verify that `sdkVersion` and `version` exist.
       expect(info['sdkVersion']).toBeDefined();
       expect(info['version']).toBeDefined();
+      expect(info['httpRpcFraming']).toEqual([HTTP_DWN_RPC_BODY_V1]);
 
       // restore server name config
       config.serverName = serverName;
