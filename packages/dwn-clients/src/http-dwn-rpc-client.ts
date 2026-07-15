@@ -140,54 +140,43 @@ function getRetryDelayMs(attempt: number, baseDelayMs: number, maxDelayMs: numbe
   return retryAfterMs === undefined ? backoffMs : Math.max(retryAfterMs, backoffMs);
 }
 
+/**
+ * Rejects with the signal's abort reason if `signal` aborts before `promise`
+ * settles. The underlying operation is not cancelled — only the caller's wait.
+ */
 async function waitForPromiseWithSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (signal === undefined) {
     return promise;
   }
-  if (signal.aborted) {
-    throw signal.reason ?? new DOMException('The operation was aborted', 'AbortError');
-  }
+  signal.throwIfAborted();
 
-  return new Promise<T>((resolve, reject) => {
-    const handleAbort = (): void => {
-      signal.removeEventListener('abort', handleAbort);
-      reject(signal.reason ?? new DOMException('The operation was aborted', 'AbortError'));
-    };
-    signal.addEventListener('abort', handleAbort, { once: true });
-
-    promise.then(
-      (value): void => {
-        signal.removeEventListener('abort', handleAbort);
-        resolve(value);
-      },
-      (error): void => {
-        signal.removeEventListener('abort', handleAbort);
-        reject(error);
-      },
-    );
-  });
-}
-
-function isAbortSignalAborted(signal?: AbortSignal): boolean {
-  return signal?.aborted === true;
+  return Promise.race([
+    promise,
+    new Promise<never>((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    }),
+  ]);
 }
 
 /**
- * Mutates the request options and headers with an octet-stream body.
- * Returns whether the body is replayable for transport-level retries.
+ * Mutates the request options with a body, setting `duplex` as the Fetch standard
+ * requires for streams. Returns whether the body is replayable for transport-level
+ * retries: a stream is one-shot, so retries must not replay it after a failed attempt.
  */
-function attachDataRequestBody(fetchOpts: RequestInit, requestHeaders: Record<string, string>, requestBody: BodyInit): boolean {
-  requestHeaders['content-type'] = 'application/octet-stream';
-  fetchOpts.body = requestBody;
+function attachRequestBody(fetchOpts: RequestInit, body: BodyInit): boolean {
+  fetchOpts.body = body;
 
-  if (requestBody instanceof ReadableStream) {
-    // Required by the Fetch standard for streaming request bodies. The stream is one-shot,
-    // so transport-level retries must not replay the same body after a failed attempt.
+  if (body instanceof ReadableStream) {
     (fetchOpts as RequestInit & { duplex: 'half' }).duplex = 'half';
     return false;
   }
 
   return true;
+}
+
+/** Returns whether a server advertises the version-one HTTP request body framing. */
+function advertisesHttpRpcBodyV1(serverInfo: ServerInfo): boolean {
+  return serverInfo.httpRpcFraming?.includes(HTTP_DWN_RPC_BODY_V1) === true;
 }
 
 /**
@@ -198,7 +187,7 @@ function attachDataRequestBody(fetchOpts: RequestInit, requestHeaders: Record<st
  * Respects the `Retry-After` response header when present.
  */
 export class HttpDwnRpcClient implements DwnRpc {
-  private readonly bodyV1DiscoveryRetryAfter = new Map<string, number>();
+  private readonly serverInfoDiscoveryRetryAfter = new Map<string, number>();
   private readonly serverInfoCache: DwnServerInfoCache;
   private readonly serverInfoRequests = new Map<string, Promise<ServerInfo>>();
   private readonly _retryOptions: Required<HttpRetryOptions>;
@@ -376,32 +365,36 @@ export class HttpDwnRpcClient implements DwnRpc {
     };
 
     if (await this.supportsHttpRpcBodyV1(dwnUrl, signal)) {
-      const framed = createHttpDwnRpcRequestBody(jsonRpcRequest, data);
       requestHeaders['content-type'] = HTTP_DWN_RPC_BODY_V1_CONTENT_TYPE;
-      fetchOpts.body = framed.body;
-      if (framed.body instanceof ReadableStream) {
-        (fetchOpts as RequestInit & { duplex: 'half' }).duplex = 'half';
-      }
-      return { fetchOpts, isRequestBodyReplayable: framed.replayable };
+      const body = createHttpDwnRpcRequestBody(jsonRpcRequest, data);
+      return { fetchOpts, isRequestBodyReplayable: attachRequestBody(fetchOpts, body) };
     }
 
     requestHeaders['dwn-request'] = JSON.stringify(jsonRpcRequest);
-    const isRequestBodyReplayable = data === undefined
-      ? true
-      : attachDataRequestBody(fetchOpts, requestHeaders, data);
-    return { fetchOpts, isRequestBodyReplayable };
+    if (data === undefined) {
+      return { fetchOpts, isRequestBodyReplayable: true };
+    }
+
+    requestHeaders['content-type'] = 'application/octet-stream';
+    return { fetchOpts, isRequestBodyReplayable: attachRequestBody(fetchOpts, data) };
   }
 
   private async supportsHttpRpcBodyV1(dwnUrl: string, signal?: AbortSignal): Promise<boolean> {
-    if (isAbortSignalAborted(signal)) {
-      throw signal?.reason ?? new DOMException('The operation was aborted', 'AbortError');
+    signal?.throwIfAborted();
+
+    // Fast path: a cached `/info` answers the capability question with no I/O, so
+    // skip building the discovery timeout and its listeners on every request.
+    const cached = await this.serverInfoCache.get(dwnUrl);
+    if (cached !== undefined) {
+      return advertisesHttpRpcBodyV1(cached);
     }
-    const retryAfter = this.bodyV1DiscoveryRetryAfter.get(dwnUrl);
+
+    const retryAfter = this.serverInfoDiscoveryRetryAfter.get(dwnUrl);
     if (retryAfter !== undefined) {
       if (retryAfter > Date.now()) {
         return false;
       }
-      this.bodyV1DiscoveryRetryAfter.delete(dwnUrl);
+      this.serverInfoDiscoveryRetryAfter.delete(dwnUrl);
     }
 
     try {
@@ -409,14 +402,13 @@ export class HttpDwnRpcClient implements DwnRpc {
       const discoverySignal = signal === undefined
         ? discoveryTimeout
         : AbortSignal.any([signal, discoveryTimeout]);
-      const serverInfo = await waitForPromiseWithSignal(this.getServerInfo(dwnUrl), discoverySignal);
-      return serverInfo.httpRpcFraming?.includes(HTTP_DWN_RPC_BODY_V1) === true;
+      return advertisesHttpRpcBodyV1(await waitForPromiseWithSignal(this.getServerInfo(dwnUrl), discoverySignal));
     } catch (error) {
-      if (isAbortSignalAborted(signal)) {
+      if (signal?.aborted === true) {
         throw error;
       }
       // Capability discovery must not break requests to legacy DWN servers.
-      this.bodyV1DiscoveryRetryAfter.set(dwnUrl, Date.now() + CAPABILITY_DISCOVERY_FAILURE_BACKOFF_MS);
+      this.serverInfoDiscoveryRetryAfter.set(dwnUrl, Date.now() + CAPABILITY_DISCOVERY_FAILURE_BACKOFF_MS);
       return false;
     }
   }
@@ -451,7 +443,7 @@ export class HttpDwnRpcClient implements DwnRpc {
           webSocketSupport         : results.webSocketSupport,
         };
         await this.serverInfoCache.set(dwnUrl, serverInfo);
-        this.bodyV1DiscoveryRetryAfter.delete(dwnUrl);
+        this.serverInfoDiscoveryRetryAfter.delete(dwnUrl);
 
         return serverInfo;
       } else {

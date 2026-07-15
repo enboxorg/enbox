@@ -469,6 +469,7 @@ async function readLocalMessage({ author, delegateDid, permissionGrantIds, messa
 
 class RemoteApplyPushContext {
   private readonly entriesByCid = new Map<string, SyncMessageEntry>();
+  private readonly entryCids = new WeakMap<SyncMessageEntry, string>();
   private readonly fetchedDependencyEntries = new Map<string, SyncMessageEntry[]>();
   private readonly fetchedRefs = new Set<string>();
   private readonly acknowledgedCids = new Set<string>();
@@ -691,12 +692,13 @@ class RemoteApplyPushContext {
     detail: string,
     result?: Extract<ReplicationApplyResult, { kind: 'Deferred' | 'Incomplete' }>,
   ): PushFailure {
+    const deferred = result?.kind === 'Deferred' ? result : undefined;
     return {
       cid    : rootCid,
       ...(cid === rootCid ? {} : { dependencyCid: cid }),
       ...(result === undefined ? {} : { kind: result.kind }),
-      ...(result?.kind === 'Deferred' ? { reason: result.reason } : {}),
-      ...(result?.kind === 'Deferred' && result.reason === 'tenant-inactive' ? { tenantInactive: true } : {}),
+      ...(deferred === undefined ? {} : { reason: deferred.reason }),
+      ...(deferred?.reason === 'tenant-inactive' ? { tenantInactive: true } : {}),
       detail : cid === rootCid ? detail : `dependency ${cid} failed before root push: ${detail}`,
     };
   }
@@ -1017,8 +1019,19 @@ class RemoteApplyPushContext {
     }
   }
 
+  /**
+   * Records an entry under its message CID. Memoized per entry: `Message.getCid()`
+   * re-encodes and hashes the message, and every entry is remembered again on each
+   * admission pass and by each producer that already remembered it.
+   */
   private async rememberEntry(entry: SyncMessageEntry): Promise<string> {
+    const memoized = this.entryCids.get(entry);
+    if (memoized !== undefined) {
+      return memoized;
+    }
+
     const cid = await Message.getCid(entry.message);
+    this.entryCids.set(entry, cid);
     this.entriesByCid.set(cid, entry);
     return cid;
   }

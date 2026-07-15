@@ -15,14 +15,18 @@ export const HTTP_DWN_RPC_BODY_V1_MAX_ENVELOPE_BYTES = 1_048_576;
 const BODY_V1_DATA_FOLLOWS_FLAG = 0x01;
 const BODY_V1_HEADER_BYTES = 5;
 
-export type HttpDwnRpcRequestBody = {
-  body: BodyInit;
-  replayable: boolean;
-};
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder('utf-8', { fatal: true });
 
 export type ParsedHttpDwnRpcRequestBody = {
   jsonRpcRequest: JsonRpcRequest;
   dataStream?: ReadableStream<Uint8Array>;
+};
+
+/** A Content-Type value split into its lower-cased media type and parameters. */
+type ParsedContentType = {
+  mediaType: string;
+  parameters: Array<[string, string]>;
 };
 
 /**
@@ -31,12 +35,15 @@ export type ParsedHttpDwnRpcRequestBody = {
  * The first byte contains flags, the next four bytes contain the unsigned
  * big-endian JSON envelope length, and the remaining bytes contain the UTF-8
  * JSON envelope followed by the optional raw data stream.
+ *
+ * Returns a `ReadableStream` exactly when the body is one-shot, so callers can
+ * derive both `duplex` and replayability from the returned body's type.
  */
 export function createHttpDwnRpcRequestBody(
   jsonRpcRequest: JsonRpcRequest,
   data?: BodyInit,
-): HttpDwnRpcRequestBody {
-  const envelopeBytes = new TextEncoder().encode(JSON.stringify(jsonRpcRequest));
+): BodyInit {
+  const envelopeBytes = textEncoder.encode(JSON.stringify(jsonRpcRequest));
   if (envelopeBytes.byteLength > HTTP_DWN_RPC_BODY_V1_MAX_ENVELOPE_BYTES) {
     throw new Error(
       `HTTP DWN RPC envelope exceeds the ${HTTP_DWN_RPC_BODY_V1_MAX_ENVELOPE_BYTES}-byte body-v1 limit`,
@@ -49,10 +56,7 @@ export function createHttpDwnRpcRequestBody(
   prefix.set(envelopeBytes, BODY_V1_HEADER_BYTES);
 
   if (data instanceof ReadableStream) {
-    return {
-      body       : prependBytesToStream(prefix, data as ReadableStream<Uint8Array>),
-      replayable : false,
-    };
+    return readerToStream((data as ReadableStream<Uint8Array>).getReader(), prefix);
   }
 
   if (data !== undefined && !isReplayableBlobPart(data)) {
@@ -60,17 +64,10 @@ export function createHttpDwnRpcRequestBody(
     if (dataStream === null) {
       throw new Error('HTTP DWN RPC record data could not be converted to a byte stream');
     }
-    return {
-      body       : prependBytesToStream(prefix, dataStream),
-      replayable : false,
-    };
+    return readerToStream(dataStream.getReader(), prefix);
   }
 
-  const parts: BlobPart[] = data === undefined ? [prefix] : [prefix, data];
-  return {
-    body       : new Blob(parts),
-    replayable : true,
-  };
+  return new Blob(data === undefined ? [prefix] : [prefix, data]);
 }
 
 function isReplayableBlobPart(data: BodyInit): data is BlobPart {
@@ -80,30 +77,46 @@ function isReplayableBlobPart(data: BodyInit): data is BlobPart {
     ArrayBuffer.isView(data);
 }
 
+/**
+ * Splits a Content-Type value into its lower-cased media type and parameters.
+ * Parameter names are lower-cased and values are unquoted; a value that is not
+ * consistently quoted is left as-is so callers reject it.
+ */
+function parseContentType(value: string | null): ParsedContentType | undefined {
+  if (value === null) {
+    return undefined;
+  }
+
+  const [mediaType, ...rest] = value.split(';').map(part => part.trim());
+  const parameters = rest.map((parameter): [string, string] => {
+    const separator = parameter.indexOf('=');
+    if (separator === -1) {
+      return [parameter.toLowerCase(), ''];
+    }
+    return [
+      parameter.slice(0, separator).trim().toLowerCase(),
+      parameter.slice(separator + 1).trim().replace(/^"(.*)"$/, '$1'),
+    ];
+  });
+
+  return { mediaType: mediaType.toLowerCase(), parameters };
+}
+
 /** Returns whether a Content-Type value selects version-one DWN RPC body framing. */
 export function isHttpDwnRpcBodyV1ContentType(value: string | null): boolean {
-  if (!isHttpDwnRpcContentType(value)) {
+  const parsed = parseContentType(value);
+  if (parsed?.mediaType !== HTTP_DWN_RPC_MEDIA_TYPE) {
     return false;
   }
 
-  const [, ...parameters] = value!.split(';').map(part => part.trim());
-  const versions = parameters.filter(parameter => {
-    const separator = parameter.indexOf('=');
-    const name = separator === -1 ? parameter : parameter.slice(0, separator);
-    return name.trim().toLowerCase() === 'version';
-  });
-
-  return versions.length === 1 && /^version\s*=\s*(?:1|"1")$/i.test(versions[0]);
+  // A repeated `version` parameter is ambiguous, so require exactly one.
+  const versions = parsed.parameters.filter(([name]) => name === 'version');
+  return versions.length === 1 && versions[0][1] === '1';
 }
 
 /** Returns whether a Content-Type value uses the vendor DWN RPC media type, regardless of version. */
 export function isHttpDwnRpcContentType(value: string | null): boolean {
-  if (value === null) {
-    return false;
-  }
-
-  const [mediaType] = value.split(';').map(part => part.trim());
-  return mediaType.toLowerCase() === HTTP_DWN_RPC_MEDIA_TYPE;
+  return parseContentType(value)?.mediaType === HTTP_DWN_RPC_MEDIA_TYPE;
 }
 
 /**
@@ -157,8 +170,7 @@ export async function parseHttpDwnRpcRequestBody(
     }
 
     const envelopeBytes = await readExactly(envelopeLength);
-    const envelopeJson = new TextDecoder('utf-8', { fatal: true }).decode(envelopeBytes);
-    const jsonRpcRequest = JSON.parse(envelopeJson) as JsonRpcRequest;
+    const jsonRpcRequest = JSON.parse(textDecoder.decode(envelopeBytes)) as JsonRpcRequest;
 
     if ((flags & BODY_V1_DATA_FOLLOWS_FLAG) === 0) {
       if (remainder !== undefined && remainder.byteLength > 0) {
@@ -177,7 +189,7 @@ export async function parseHttpDwnRpcRequestBody(
 
     return {
       jsonRpcRequest,
-      dataStream: streamReaderRemainder(reader, remainder),
+      dataStream: readerToStream(reader, remainder),
     };
   } catch (error) {
     await reader.cancel().catch((): void => {
@@ -188,11 +200,15 @@ export async function parseHttpDwnRpcRequestBody(
   }
 }
 
-function prependBytesToStream(
-  prefix: Uint8Array,
-  stream: ReadableStream<Uint8Array>,
+/**
+ * Adapts a reader back into a stream, optionally emitting `prefix` ahead of the
+ * reader's remaining bytes. Cancellation and its reason propagate to the
+ * underlying source, and the reader's lock is released exactly once.
+ */
+function readerToStream(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  prefix?: Uint8Array,
 ): ReadableStream<Uint8Array> {
-  const reader = stream.getReader();
   let released = false;
 
   const releaseReader = (): void => {
@@ -204,54 +220,11 @@ function prependBytesToStream(
 
   return new ReadableStream<Uint8Array>({
     start(controller): void {
-      controller.enqueue(prefix);
+      if (prefix !== undefined && prefix.byteLength > 0) {
+        controller.enqueue(prefix);
+      }
     },
     async pull(controller): Promise<void> {
-      try {
-        const next = await reader.read();
-        if (next.done) {
-          releaseReader();
-          controller.close();
-          return;
-        }
-        controller.enqueue(next.value);
-      } catch (error) {
-        releaseReader();
-        controller.error(error);
-      }
-    },
-    async cancel(reason): Promise<void> {
-      try {
-        await reader.cancel(reason);
-      } finally {
-        releaseReader();
-      }
-    },
-  });
-}
-
-function streamReaderRemainder(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-  initialRemainder: Uint8Array | undefined,
-): ReadableStream<Uint8Array> {
-  let remainder = initialRemainder;
-  let released = false;
-
-  const releaseReader = (): void => {
-    if (!released) {
-      released = true;
-      reader.releaseLock();
-    }
-  };
-
-  return new ReadableStream<Uint8Array>({
-    async pull(controller): Promise<void> {
-      if (remainder !== undefined && remainder.byteLength > 0) {
-        controller.enqueue(remainder);
-        remainder = undefined;
-        return;
-      }
-
       try {
         const next = await reader.read();
         if (next.done) {

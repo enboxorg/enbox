@@ -1310,12 +1310,6 @@ describe('HttpDwnRpcClient', () => {
 });
 
 function requestBodyStream(body: BodyInit): ReadableStream<Uint8Array> {
-  if (body instanceof ReadableStream) {
-    return body as ReadableStream<Uint8Array>;
-  }
-  if (body instanceof Blob) {
-    return body.stream();
-  }
   return new Response(body).body!;
 }
 

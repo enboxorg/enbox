@@ -184,10 +184,10 @@ describe('http api', function () {
         message,
         target: alice.did,
       });
-      const framedRequest = createHttpDwnRpcRequestBody(dwnRequest);
+      const framedBody = createHttpDwnRpcRequestBody(dwnRequest);
 
       const response = await fetch(baseUrl, {
-        body    : framedRequest.body,
+        body    : framedBody,
         headers : { 'content-type': HTTP_DWN_RPC_BODY_V1_CONTENT_TYPE },
         method  : 'POST',
       });
@@ -239,13 +239,13 @@ describe('http api', function () {
           controller.close();
         },
       });
-      const framedRequest = createHttpDwnRpcRequestBody(dwnRequest, requestData);
+      const framedBody = createHttpDwnRpcRequestBody(dwnRequest, requestData);
       const requestInit: RequestInit & { duplex?: 'half' } = {
-        body    : framedRequest.body,
+        body    : framedBody,
         headers : { 'content-type': HTTP_DWN_RPC_BODY_V1_CONTENT_TYPE },
         method  : 'POST',
       };
-      if (framedRequest.body instanceof ReadableStream) {
+      if (framedBody instanceof ReadableStream) {
         requestInit.duplex = 'half';
       }
       expect(requestInit.duplex).toBe('half');

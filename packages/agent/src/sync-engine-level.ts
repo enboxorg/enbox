@@ -43,7 +43,7 @@ import { DwnInterface } from './types/dwn.js';
 import { getProtocolClosureEdges } from './sync-scope-closure.js';
 import { isRecordsWrite } from './utils.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
-import { computeAuthorizationEpoch, computeProjectionId, isTenantInactivePushFailure, isTerminalPushFailure, lexicographicalCompare, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
+import { computeAuthorizationEpoch, computeProjectionId, isTerminalPushFailure, lexicographicalCompare, protocolsForSyncScope, pushBatchReconcileReason, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
 import { fetchRemoteMessages, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, SyncPullAbortedError } from './sync-messages.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, resolveMessagesScopes, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds, toSyncAuthorizationGrants } from './sync-permission-grants.js';
 
@@ -3382,8 +3382,8 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Push retry backoff schedule: immediate, 250ms, 1s, 2s, then give up. */
   private static readonly PUSH_RETRY_BACKOFF_MS = [0, 250, 1000, 2000];
-  private static readonly INCOMPLETE_RECONCILE_DELAY_MS = 30_000;
-  private static readonly TENANT_INACTIVE_RECONCILE_DELAY_MS = 30_000;
+  /** Reconcile delay for push failures the hot retry ladder cannot resolve. */
+  private static readonly DEFERRED_PUSH_RECONCILE_DELAY_MS = 30_000;
 
   private async recordTerminalSyncPushFailures(
     target: SyncReconcileTarget,
@@ -3434,24 +3434,14 @@ export class SyncEngineLevel implements SyncEngine {
       return;
     }
 
-    if (pending.entries.some(entry => entry.lastFailure?.kind === 'Incomplete')) {
+    const reconcileReason = pushBatchReconcileReason(pending.entries);
+    if (reconcileReason !== undefined) {
       this.stopPushRuntime(targetKey, pushRuntime);
       this.scheduleLinkReconcileIfActive(
         targetKey,
         link,
-        'push-incomplete',
-        SyncEngineLevel.INCOMPLETE_RECONCILE_DELAY_MS,
-      );
-      return;
-    }
-
-    if (pending.entries.some(entry => entry.lastFailure !== undefined && isTenantInactivePushFailure(entry.lastFailure))) {
-      this.stopPushRuntime(targetKey, pushRuntime);
-      this.scheduleLinkReconcileIfActive(
-        targetKey,
-        link,
-        'push-tenant-inactive',
-        SyncEngineLevel.TENANT_INACTIVE_RECONCILE_DELAY_MS,
+        reconcileReason,
+        SyncEngineLevel.DEFERRED_PUSH_RECONCILE_DELAY_MS,
       );
       return;
     }

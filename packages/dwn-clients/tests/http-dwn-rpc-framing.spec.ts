@@ -16,10 +16,10 @@ import { describe, expect, it } from 'bun:test';
 describe('HTTP DWN RPC request body framing', () => {
   it('should round-trip a JSON-RPC request without record data', async () => {
     const request = testJsonRpcRequest();
-    const framed = createHttpDwnRpcRequestBody(request);
+    const body = createHttpDwnRpcRequestBody(request);
 
-    expect(framed.replayable).toBe(true);
-    const parsed = await parseHttpDwnRpcRequestBody(bodyStream(framed.body));
+    expect(body).toBeInstanceOf(Blob);
+    const parsed = await parseHttpDwnRpcRequestBody(bodyStream(body));
     expect(parsed.jsonRpcRequest).toEqual(request);
     expect(parsed.dataStream).toBeUndefined();
   });
@@ -27,10 +27,10 @@ describe('HTTP DWN RPC request body framing', () => {
   it('should preserve replayable record data as raw bytes', async () => {
     const request = testJsonRpcRequest();
     const data = new Uint8Array([0, 1, 2, 127, 128, 255]);
-    const framed = createHttpDwnRpcRequestBody(request, data);
+    const body = createHttpDwnRpcRequestBody(request, data);
 
-    expect(framed.replayable).toBe(true);
-    const parsed = await parseHttpDwnRpcRequestBody(bodyStream(framed.body));
+    expect(body).toBeInstanceOf(Blob);
+    const parsed = await parseHttpDwnRpcRequestBody(bodyStream(body));
     expect(parsed.jsonRpcRequest).toEqual(request);
     expect(await DataStream.toBytes(parsed.dataStream!)).toEqual(data);
   });
@@ -38,11 +38,10 @@ describe('HTTP DWN RPC request body framing', () => {
   it('should stream ReadableStream record data without marking the request replayable', async () => {
     const request = testJsonRpcRequest();
     const data = new Uint8Array([3, 5, 8, 13]);
-    const framed = createHttpDwnRpcRequestBody(request, streamFromChunks([data.subarray(0, 2), data.subarray(2)]));
+    const body = createHttpDwnRpcRequestBody(request, DataStream.fromAsyncIterable([data.subarray(0, 2), data.subarray(2)]));
 
-    expect(framed.replayable).toBe(false);
-    expect(framed.body).toBeInstanceOf(ReadableStream);
-    const parsed = await parseHttpDwnRpcRequestBody(framed.body as ReadableStream<Uint8Array>);
+    expect(body).toBeInstanceOf(ReadableStream);
+    const parsed = await parseHttpDwnRpcRequestBody(body as ReadableStream<Uint8Array>);
     expect(parsed.jsonRpcRequest).toEqual(request);
     expect(await DataStream.toBytes(parsed.dataStream!)).toEqual(data);
   });
@@ -50,22 +49,21 @@ describe('HTTP DWN RPC request body framing', () => {
   it('should stream BodyInit values that cannot be safely replayed as Blob parts', async () => {
     const request = testJsonRpcRequest();
     const data = new URLSearchParams({ alpha: 'one', beta: 'two words' });
-    const framed = createHttpDwnRpcRequestBody(request, data);
+    const body = createHttpDwnRpcRequestBody(request, data);
 
-    expect(framed.replayable).toBe(false);
-    expect(framed.body).toBeInstanceOf(ReadableStream);
-    const parsed = await parseHttpDwnRpcRequestBody(framed.body as ReadableStream<Uint8Array>);
+    expect(body).toBeInstanceOf(ReadableStream);
+    const parsed = await parseHttpDwnRpcRequestBody(body as ReadableStream<Uint8Array>);
     expect(new TextDecoder().decode(await DataStream.toBytes(parsed.dataStream!))).toBe(data.toString());
   });
 
   it('should parse a framing prefix and envelope split across arbitrary chunks', async () => {
     const request = testJsonRpcRequest();
     const data = new Uint8Array([21, 34]);
-    const framed = createHttpDwnRpcRequestBody(request, data);
-    const bytes = await bodyBytes(framed.body);
+    const body = createHttpDwnRpcRequestBody(request, data);
+    const bytes = await bodyBytes(body);
     const oneByteChunks = Array.from(bytes, byte => new Uint8Array([byte]));
 
-    const parsed = await parseHttpDwnRpcRequestBody(streamFromChunks(oneByteChunks));
+    const parsed = await parseHttpDwnRpcRequestBody(DataStream.fromAsyncIterable(oneByteChunks));
     expect(parsed.jsonRpcRequest).toEqual(request);
     expect(await DataStream.toBytes(parsed.dataStream!)).toEqual(data);
   });
@@ -80,28 +78,28 @@ describe('HTTP DWN RPC request body framing', () => {
 
   it('should reject malformed, unsupported, and truncated frames', async () => {
     const oversizedLength = new Uint8Array([0, 0, 16, 0, 1]);
-    await expect(parseHttpDwnRpcRequestBody(streamFromChunks([oversizedLength]))).rejects.toThrow('body-v1 limit');
+    await expect(parseHttpDwnRpcRequestBody(DataStream.fromAsyncIterable([oversizedLength]))).rejects.toThrow('body-v1 limit');
 
     const unsupportedFlags = new Uint8Array([2, 0, 0, 0, 0]);
-    await expect(parseHttpDwnRpcRequestBody(streamFromChunks([unsupportedFlags]))).rejects.toThrow('unsupported flags');
+    await expect(parseHttpDwnRpcRequestBody(DataStream.fromAsyncIterable([unsupportedFlags]))).rejects.toThrow('unsupported flags');
 
     const truncatedEnvelope = new Uint8Array([0, 0, 0, 0, 4, 123]);
-    await expect(parseHttpDwnRpcRequestBody(streamFromChunks([truncatedEnvelope]))).rejects.toThrow('ended before');
+    await expect(parseHttpDwnRpcRequestBody(DataStream.fromAsyncIterable([truncatedEnvelope]))).rejects.toThrow('ended before');
   });
 
   it('should reject raw data when the data-follows flag is absent', async () => {
-    const framed = createHttpDwnRpcRequestBody(testJsonRpcRequest());
-    const bytes = await bodyBytes(framed.body);
+    const body = createHttpDwnRpcRequestBody(testJsonRpcRequest());
+    const bytes = await bodyBytes(body);
     const withUnexpectedData = new Uint8Array(bytes.byteLength + 1);
     withUnexpectedData.set(bytes);
     withUnexpectedData[bytes.byteLength] = 42;
 
-    await expect(parseHttpDwnRpcRequestBody(streamFromChunks([withUnexpectedData]))).rejects.toThrow('data-follows flag');
+    await expect(parseHttpDwnRpcRequestBody(DataStream.fromAsyncIterable([withUnexpectedData]))).rejects.toThrow('data-follows flag');
   });
 
   it('should not wait for EOF after a no-data envelope', async () => {
-    const framed = createHttpDwnRpcRequestBody(testJsonRpcRequest());
-    const bytes = await bodyBytes(framed.body);
+    const body = createHttpDwnRpcRequestBody(testJsonRpcRequest());
+    const bytes = await bodyBytes(body);
     let cancelled = false;
     let controller!: ReadableStreamDefaultController<Uint8Array>;
     const neverEndingBody = new ReadableStream<Uint8Array>({
@@ -135,8 +133,8 @@ describe('HTTP DWN RPC request body framing', () => {
   });
 
   it('should propagate parsed data stream cancellation to the underlying request body', async () => {
-    const framed = createHttpDwnRpcRequestBody(testJsonRpcRequest(), new Uint8Array([1, 2, 3]));
-    const bytes = await bodyBytes(framed.body);
+    const body = createHttpDwnRpcRequestBody(testJsonRpcRequest(), new Uint8Array([1, 2, 3]));
+    const bytes = await bodyBytes(body);
     let cancellationReason: unknown;
     const requestBody = new ReadableStream<Uint8Array>({
       start(controller): void {
@@ -168,31 +166,11 @@ describe('HTTP DWN RPC request body framing', () => {
 });
 
 function bodyStream(body: BodyInit): ReadableStream<Uint8Array> {
-  if (body instanceof ReadableStream) {
-    return body as ReadableStream<Uint8Array>;
-  }
-  if (body instanceof Blob) {
-    return body.stream();
-  }
-  return new Blob([body as BlobPart]).stream();
+  return new Response(body).body!;
 }
 
 async function bodyBytes(body: BodyInit): Promise<Uint8Array> {
-  if (body instanceof Blob) {
-    return new Uint8Array(await body.arrayBuffer());
-  }
   return DataStream.toBytes(bodyStream(body));
-}
-
-function streamFromChunks(chunks: Uint8Array[]): ReadableStream<Uint8Array> {
-  return new ReadableStream<Uint8Array>({
-    start(controller): void {
-      for (const chunk of chunks) {
-        controller.enqueue(chunk);
-      }
-      controller.close();
-    },
-  });
 }
 
 function testJsonRpcRequest(): JsonRpcRequest {

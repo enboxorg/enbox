@@ -1,4 +1,4 @@
-import type { JsonRpcRequest, ServerInfo } from '@enbox/dwn-clients';
+import type { JsonRpcId, JsonRpcRequest, ServerInfo } from '@enbox/dwn-clients';
 import type { Server, ServerWebSocket } from 'bun';
 
 import type { Dialect } from '@enbox/dwn-sql-store';
@@ -66,6 +66,19 @@ export type LocalNodeWebSocketSession = {
 export interface WsData {
   connection: SocketConnection | null;
   localNodeSession? : LocalNodeWebSocketSession;
+}
+
+/** A JSON-RPC POST decoded from its wire framing, or the 400 that rejected it. */
+type DecodedJsonRpcPost =
+  | { dwnRpcRequest: JsonRpcRequest; requestDataStream?: ReadableStream<Uint8Array> }
+  | { errorResponse: Response };
+
+/** Builds a JSON-RPC bad-request response. Falls back to a fresh id when the request had none. */
+function badRequest(message: string, id: JsonRpcId = crypto.randomUUID()): Response {
+  return Response.json(
+    createJsonRpcErrorResponse(id, JsonRpcErrorCodes.BadRequest, message),
+    { status: 400 },
+  );
 }
 
 export class HttpApi {
@@ -780,65 +793,62 @@ export class HttpApi {
     });
   }
 
-  async #handleJsonRpcPost(req: Request): Promise<Response> {
-    let dwnRpcRequest: JsonRpcRequest;
-    let requestDataStream: ReadableStream<Uint8Array> | undefined;
+  /**
+   * Decodes a JSON-RPC POST from either the negotiated `body-v1` framing or the
+   * legacy `dwn-request` header, so the caller stays transport-agnostic.
+   */
+  async #decodeJsonRpcPost(req: Request): Promise<DecodedJsonRpcPost> {
     const contentType = req.headers.get('content-type');
 
     if (isHttpDwnRpcBodyV1ContentType(contentType)) {
       if (req.body === null) {
-        const reply = createJsonRpcErrorResponse(
-          crypto.randomUUID(), JsonRpcErrorCodes.BadRequest, 'request payload required.'
-        );
-        return Response.json(reply, { status: 400 });
+        return { errorResponse: badRequest('request payload required.') };
       }
 
       try {
-        const decodedRequest = await parseHttpDwnRpcRequestBody(normalizeReadableStream(req.body));
-        dwnRpcRequest = decodedRequest.jsonRpcRequest;
-        requestDataStream = decodedRequest.dataStream;
+        const decoded = await parseHttpDwnRpcRequestBody(normalizeReadableStream(req.body));
+        return { dwnRpcRequest: decoded.jsonRpcRequest, requestDataStream: decoded.dataStream };
       } catch (error) {
-        const reply = createJsonRpcErrorResponse(
-          crypto.randomUUID(), JsonRpcErrorCodes.BadRequest, (error as Error).message
-        );
-        return Response.json(reply, { status: 400 });
-      }
-    } else if (isHttpDwnRpcContentType(contentType)) {
-      const reply = createJsonRpcErrorResponse(
-        crypto.randomUUID(), JsonRpcErrorCodes.BadRequest, 'unsupported HTTP DWN RPC body framing version.'
-      );
-      return Response.json(reply, { status: 400 });
-    } else {
-      const dwnRpcRequestString = req.headers.get('dwn-request');
-
-      if (!dwnRpcRequestString) {
-        const reply = createJsonRpcErrorResponse(
-          crypto.randomUUID(), JsonRpcErrorCodes.BadRequest, 'request payload required.'
-        );
-        return Response.json(reply, { status: 400 });
-      }
-
-      try {
-        dwnRpcRequest = JSON.parse(dwnRpcRequestString);
-      } catch (e) {
-        const reply = createJsonRpcErrorResponse(
-          crypto.randomUUID(), JsonRpcErrorCodes.BadRequest, (e as Error).message
-        );
-        return Response.json(reply, { status: 400 });
-      }
-
-      const contentLength = req.headers.get('content-length');
-      const transferEncoding = req.headers.get('transfer-encoding');
-      if (Number.parseInt(contentLength ?? '0') > 0 || transferEncoding !== null) {
-        if (req.body === null) {
-          const reply = createJsonRpcErrorResponse(
-            dwnRpcRequest.id, JsonRpcErrorCodes.BadRequest, 'request advertised a body but none was provided.'
-          );
-          return Response.json(reply, { status: 400 });
-        }
-        requestDataStream = normalizeReadableStream(req.body);
+        return { errorResponse: badRequest((error as Error).message) };
       }
     }
+
+    if (isHttpDwnRpcContentType(contentType)) {
+      return { errorResponse: badRequest('unsupported HTTP DWN RPC body framing version.') };
+    }
+
+    const dwnRpcRequestString = req.headers.get('dwn-request');
+    if (!dwnRpcRequestString) {
+      return { errorResponse: badRequest('request payload required.') };
+    }
+
+    let dwnRpcRequest: JsonRpcRequest;
+    try {
+      dwnRpcRequest = JSON.parse(dwnRpcRequestString);
+    } catch (e) {
+      return { errorResponse: badRequest((e as Error).message) };
+    }
+
+    const contentLength = req.headers.get('content-length');
+    const transferEncoding = req.headers.get('transfer-encoding');
+    if (Number.parseInt(contentLength ?? '0') > 0 || transferEncoding !== null) {
+      if (req.body === null) {
+        return {
+          errorResponse: badRequest('request advertised a body but none was provided.', dwnRpcRequest.id),
+        };
+      }
+      return { dwnRpcRequest, requestDataStream: normalizeReadableStream(req.body) };
+    }
+
+    return { dwnRpcRequest };
+  }
+
+  async #handleJsonRpcPost(req: Request): Promise<Response> {
+    const decoded = await this.#decodeJsonRpcPost(req);
+    if ('errorResponse' in decoded) {
+      return decoded.errorResponse;
+    }
+    const { dwnRpcRequest, requestDataStream } = decoded;
 
     const requestContext: RequestContext = {
       dwn                   : this.dwn,
