@@ -325,11 +325,11 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     await seedQuotaBlock({ cid: 'due-cid', nextProbeAt: new Date(0).toISOString() });
     await seedQuotaBlock({ cid: 'future-cid', nextProbeAt: future });
     const internal = syncEngine as unknown as {
-      getLocalQuotaProbeEntry(): Promise<undefined>;
+      getLocalMessageForTarget(): Promise<undefined>;
       probeQuotaBlocksForTarget(target: unknown): Promise<void>;
       pushMessages(params: { messageCids: string[] }): Promise<PushResult>;
     };
-    sinon.stub(internal, 'getLocalQuotaProbeEntry').resolves(undefined);
+    sinon.stub(internal, 'getLocalMessageForTarget').resolves(undefined);
     const pushStub = sinon.stub(internal, 'pushMessages').callsFake(async ({ messageCids }): Promise<PushResult> => ({
       succeeded : [],
       failed    : [{
@@ -363,7 +363,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
   it('does not directly stage a positive-size RecordsWrite after its local data was superseded', async () => {
     await seedQuotaBlock({ cid: 'dataless-cid', nextProbeAt: new Date(0).toISOString() });
     const internal = syncEngine as any;
-    sinon.stub(internal, 'getLocalQuotaProbeEntry').resolves({
+    sinon.stub(internal, 'getLocalMessageForTarget').resolves({
       message: {
         recordId   : 'record-1',
         descriptor : {
