@@ -112,4 +112,96 @@ describe('SyncEngineLevel quota-block observability', () => {
     // Untouched: still due in the future.
     expect(Date.parse(status.nextProbeAt!)).toBeGreaterThan(Date.now());
   });
+
+  it('reports dead-lettered failures per remote (state stays healthy)', async () => {
+    await syncEngine.recordDeadLetter({
+      category       : 'admit-failed',
+      errorCode      : 'Invalid',
+      errorDetail    : 'terminal',
+      messageCid     : 'dl-1',
+      remoteEndpoint : REMOTE,
+      tenantDid      : TENANT,
+    });
+
+    const [status] = await syncEngine.getRemoteSyncStatus(TENANT);
+
+    expect(status).toMatchObject({
+      remoteEndpoint           : REMOTE,
+      state                    : 'healthy',
+      failedMessageCount       : 1,
+      quotaBlockedMessageCount : 0,
+    });
+  });
+
+  // The record/clear/backoff internals are private (they are only reached through
+  // the reconcile push path); exercise them directly here rather than standing up
+  // a full identity + replication link + mocked RPC.
+  const target = {
+    did                : TENANT,
+    dwnUrl             : REMOTE,
+    scope              : { kind: 'full' as const },
+    authorization      : { kind: 'owner' as const },
+    authorizationEpoch : '',
+  };
+
+  it('records a quota block and extends its backoff on repeat', async () => {
+    const internal = syncEngine as unknown as {
+      recordQuotaBlockedPushFailures(t: unknown, f: unknown[]): Promise<unknown[]>;
+      isQuotaBlockedNotDue(tenant: string, remote: string, cid: string): Promise<boolean>;
+      getQuotaBlockState(tenant: string, remote: string, cid: string): Promise<{ attempts: number; nextProbeAt: string } | undefined>;
+    };
+    const failure = { cid: 'cid-1', quotaBlocked: true, kind: 'Deferred', reason: 'storage', detail: 'over quota', protocol: 'https://p' };
+
+    const remaining = await internal.recordQuotaBlockedPushFailures(target, [failure]);
+    expect(remaining).toEqual([]); // an all-quota batch leaves nothing for terminal handling
+
+    expect(await internal.isQuotaBlockedNotDue(TENANT, REMOTE, 'cid-1')).toBe(true);
+    const first = await internal.getQuotaBlockState(TENANT, REMOTE, 'cid-1');
+    expect(first?.attempts).toBe(1);
+
+    await internal.recordQuotaBlockedPushFailures(target, [failure]);
+    const second = await internal.getQuotaBlockState(TENANT, REMOTE, 'cid-1');
+    expect(second?.attempts).toBe(2);
+    expect(Date.parse(second!.nextProbeAt)).toBeGreaterThan(Date.parse(first!.nextProbeAt));
+  });
+
+  it('passes non-quota failures through for normal handling', async () => {
+    const internal = syncEngine as unknown as {
+      recordQuotaBlockedPushFailures(t: unknown, f: unknown[]): Promise<unknown[]>;
+    };
+    const remaining = await internal.recordQuotaBlockedPushFailures(target, [
+      { cid: 'q', quotaBlocked: true },
+      { cid: 't', terminal: true, kind: 'Invalid' },
+    ]);
+    expect(remaining).toEqual([{ cid: 't', terminal: true, kind: 'Invalid' }]);
+  });
+
+  it('emits push:quota-blocked then push:quota-cleared and clears the block on success', async () => {
+    const internal = syncEngine as unknown as {
+      recordQuotaBlockedPushFailures(t: unknown, f: unknown[]): Promise<unknown[]>;
+      clearQuotaBlocksForSucceeded(t: unknown, cids: string[]): Promise<void>;
+      getQuotaBlockState(tenant: string, remote: string, cid: string): Promise<unknown>;
+    };
+    const events: { type: string; messageCid?: string }[] = [];
+    const off = syncEngine.on((event) => events.push(event));
+
+    await internal.recordQuotaBlockedPushFailures(target, [{ cid: 'cid-1', quotaBlocked: true, detail: 'x' }]);
+    // 'cid-1' clears (and emits); 'never-blocked' is a no-op (no event).
+    await internal.clearQuotaBlocksForSucceeded(target, ['cid-1', 'never-blocked']);
+    off();
+
+    expect(events.map((e) => e.type)).toEqual(['push:quota-blocked', 'push:quota-cleared']);
+    expect(events[0]).toMatchObject({ tenantDid: TENANT, remoteEndpoint: REMOTE, messageCid: 'cid-1' });
+    expect(events[1]).toMatchObject({ messageCid: 'cid-1' });
+    expect(await internal.getQuotaBlockState(TENANT, REMOTE, 'cid-1')).toBeUndefined();
+  });
+
+  it('isQuotaBlockedNotDue is false when unblocked or already due', async () => {
+    const internal = syncEngine as unknown as {
+      isQuotaBlockedNotDue(tenant: string, remote: string, cid: string): Promise<boolean>;
+    };
+    expect(await internal.isQuotaBlockedNotDue(TENANT, REMOTE, 'unknown')).toBe(false);
+    await seedQuotaBlock('due', new Date(0).toISOString());
+    expect(await internal.isQuotaBlockedNotDue(TENANT, REMOTE, 'due')).toBe(false);
+  });
 });
