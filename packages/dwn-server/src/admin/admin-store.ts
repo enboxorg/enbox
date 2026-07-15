@@ -162,15 +162,16 @@ export class AdminStore {
   /**
    * Returns the total data storage in bytes for a tenant.
    *
-   * Uses `messageStoreMessages.dataSize` rather than `dataRefs.dataSize` so that
-   * **all** data is accounted for — including small payloads (<=30 KB) that the
-   * DWN SDK stores inline as `encodedData` and never writes to the data store.
+   * Uses the latest base-state rows in `messageStoreMessages` rather than
+   * `dataRefs` so both inline and external data are counted, while retained
+   * metadata-only history is excluded.
    */
   public async getTenantStorageSize(did: string): Promise<number> {
     const result = await this.db
       .selectFrom('messageStoreMessages')
       .select(this.db.fn.sum<number>('dataSize').as('totalBytes'))
       .where('tenant', '=', did)
+      .where('isLatestBaseState', '=', true)
       .executeTakeFirstOrThrow();
 
     return Number(result.totalBytes) || 0;
@@ -218,6 +219,7 @@ export class AdminStore {
       this.db
         .selectFrom('messageStoreMessages')
         .select(this.db.fn.sum<number>('dataSize').as('totalBytes'))
+        .where('isLatestBaseState', '=', true)
         .executeTakeFirstOrThrow(),
       this.db
         .selectFrom('messageStoreMessages')
@@ -475,6 +477,7 @@ interface MessageStoreMessages {
   dataFormat : string | null;
   dataCid : string | null;
   dataSize : number | null;
+  isLatestBaseState : boolean | null;
   encodedMessageBytes : Uint8Array;
 }
 

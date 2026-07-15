@@ -43,11 +43,11 @@ export function isTerminalJsonRpcErrorCode(code: JsonRpcErrorCodes, message = ''
 
 /**
  * True when a JSON-RPC error envelope represents a tenant quota rejection
- * (storage or message count). These are *not* terminal — they self-heal once
- * the tenant's remote quota grows or the offending record is deleted/shrunk —
- * but they are also not blindly retryable: a caller that keeps re-pushing the
- * same over-quota message hot-loops. Sync uses this to route quota rejections
- * into a backed-off, self-healing re-probe path instead of the generic retry.
+ * (storage or message count). These are *not* terminal — a later attempt can
+ * succeed after quota grows or another writer delivers the same CID — but they
+ * are also not blindly retryable: a caller that keeps re-pushing the same
+ * over-quota message hot-loops. Sync uses this to route quota rejections into
+ * a backed-off re-probe path instead of the generic retry.
  */
 export function isQuotaExceededError(message: string, data: unknown): boolean {
   const code = typeof data === 'object' && data !== null && 'code' in data

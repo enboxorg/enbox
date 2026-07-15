@@ -15,6 +15,10 @@ type InboundDwnMessageParams = {
   allowRecordsWriteOverNonHttp?: boolean;
 };
 
+type QuotaOptions = {
+  storageBytesToAdd?: number;
+};
+
 export function validateInboundDwnMessageTransport(params: InboundDwnMessageParams): HandlerResponse | undefined {
   const { allowRecordsWriteOverNonHttp, context, hasEncodedData, message, requestId } = params;
 
@@ -89,6 +93,7 @@ export async function enforceQuota(
   target: string,
   message: GenericMessage,
   context: Parameters<JsonRpcHandler>[1],
+  options: QuotaOptions = {},
 ): Promise<HandlerResponse | undefined> {
   const { config, adminStore, registrationStore } = context;
   const requestId = (message as { recordId?: string }).recordId ?? crypto.randomUUID();
@@ -127,7 +132,7 @@ export async function enforceQuota(
 
   // Check storage size quota.
   if (maxStorageBytes > 0) {
-    const dataSize = (message.descriptor as { dataSize?: number }).dataSize ?? 0;
+    const dataSize = options.storageBytesToAdd ?? (message.descriptor as { dataSize?: number }).dataSize ?? 0;
     const currentStorage = await adminStore!.getTenantStorageSize(target);
     if (currentStorage + dataSize > maxStorageBytes) {
       return {

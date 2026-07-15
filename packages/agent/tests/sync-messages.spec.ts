@@ -11,6 +11,7 @@ import {
   fetchRemoteMessages,
   getLocalMessage,
   getMessageCid,
+  pushMessageEntries,
   pushMessages,
   queryLocalMessageFeed,
   queryRemoteMessageFeed,
@@ -507,7 +508,11 @@ describe('sync-messages', () => {
         agent,
       });
 
-      expect(result).toEqual({ succeeded: [messageCid], failed: [] });
+      expect(result).toEqual({
+        succeeded    : [messageCid],
+        acknowledged : [{ cid: messageCid, resolution: 'applied' }],
+        failed       : [],
+      });
       expect(applyStub.calledOnce).toBe(true);
       expect(applyStub.firstCall.args[0].message).toEqual(message);
     });
@@ -534,6 +539,28 @@ describe('sync-messages', () => {
 
       expect(result.failed).toEqual([]);
       expect(result.succeeded.sort()).toEqual([firstCid, secondCid].sort());
+      expect(result.acknowledged).toEqual([
+        { cid: firstCid, resolution: 'applied' },
+        { cid: secondCid, resolution: 'superseded' },
+      ]);
+    });
+
+    it('should deduplicate acknowledgements and preserve Superseded over Applied for the same CID', async () => {
+      const { message } = await TestDataGenerator.generateRecordsWrite();
+      const messageCid = await Message.getCid(message);
+      const { agent } = createLocalAgentFixture({
+        messagesByCid : new Map(),
+        applyResults  : [{ kind: 'Applied' }, { kind: 'Superseded' }],
+      });
+
+      const result = await pushMessageEntries({
+        did     : 'did:example:alice',
+        dwnUrl  : 'https://dwn.example.com',
+        entries : [{ message }, { message }],
+        agent,
+      });
+
+      expect(result.acknowledged).toEqual([{ cid: messageCid, resolution: 'superseded' }]);
     });
 
     it('should report transport failures in PushResult.failed instead of throwing', async () => {
@@ -613,7 +640,27 @@ describe('sync-messages', () => {
       expect(result.succeeded).toEqual([]);
       expect(result.failed).toHaveLength(1);
       expect(result.failed[0].cid).toBe('cid-missing');
+      expect(result.failed[0].localMissing).toBe(true);
+      expect(result.acknowledged).toEqual([]);
       expect(applyStub.called).toBe(false);
+    });
+
+    it('should not classify non-404 local read failures as locally missing', async () => {
+      const { agent, processRequestStub } = createLocalAgentFixture({
+        messagesByCid : new Map(),
+        applyResults  : [],
+      });
+      processRequestStub.resolves({ reply: { status: { code: 500, detail: 'storage unavailable' } } });
+
+      const result = await pushMessages({
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : ['cid-unavailable'],
+        agent,
+      });
+
+      expect(result.failed).toHaveLength(1);
+      expect(result.failed[0].localMissing).toBeUndefined();
     });
 
     it('should send small RecordsWrite data as a replayable Blob', async () => {
@@ -764,7 +811,7 @@ describe('sync-messages', () => {
         agent,
       });
 
-      expect(result).toEqual({ succeeded: [childCid], failed: [] });
+      expect(result).toMatchObject({ succeeded: [childCid], failed: [] });
       expect(await Promise.all(applyStub.getCalls().map(async (call): Promise<string> =>
         Message.getCid(call.args[0].message)))).toEqual([childCid, protocolCid, childCid, parentCid, childCid]);
     });
@@ -784,8 +831,8 @@ describe('sync-messages', () => {
         recordsByRecordId : new Map([[initial.message.recordId, [initial.message, update.message]]]),
         applyResults      : [
           { kind: 'Incomplete', missing: [{ type: 'InitialWrite', recordId: initial.message.recordId }] },
-          { kind: 'Applied' },
-          { kind: 'Applied' },
+          { kind: 'Superseded' },
+          { kind: 'Duplicate' },
         ],
       });
 
@@ -796,7 +843,14 @@ describe('sync-messages', () => {
         agent,
       });
 
-      expect(result).toEqual({ succeeded: [updateCid], failed: [] });
+      expect(result).toEqual({
+        succeeded    : [updateCid],
+        acknowledged : [
+          { cid: initialCid, resolution: 'superseded' },
+          { cid: updateCid, resolution: 'applied' },
+        ],
+        failed: [],
+      });
       expect(await Promise.all(applyStub.getCalls().map(async (call): Promise<string> =>
         Message.getCid(call.args[0].message)))).toEqual([updateCid, initialCid, updateCid]);
     });
@@ -826,7 +880,7 @@ describe('sync-messages', () => {
         agent,
       });
 
-      expect(result).toEqual({ succeeded: [deleteCid], failed: [] });
+      expect(result).toMatchObject({ succeeded: [deleteCid], failed: [] });
       expect(await Promise.all(applyStub.getCalls().map(async (call): Promise<string> =>
         Message.getCid(call.args[0].message)))).toEqual([deleteCid, initialCid, deleteCid]);
     });
@@ -853,7 +907,7 @@ describe('sync-messages', () => {
         agent,
       });
 
-      expect(result).toEqual({ succeeded: [rootCid], failed: [] });
+      expect(result).toMatchObject({ succeeded: [rootCid], failed: [] });
       expect(await Promise.all(applyStub.getCalls().map(async (call): Promise<string> =>
         Message.getCid(call.args[0].message)))).toEqual([rootCid, grantCid, rootCid]);
     });
@@ -906,7 +960,7 @@ describe('sync-messages', () => {
         agent,
       });
 
-      expect(result).toEqual({ succeeded: [rootCid], failed: [] });
+      expect(result).toMatchObject({ succeeded: [rootCid], failed: [] });
       expect(processRequestStub.withArgs(sinon.match({
         messageParams : sinon.match({ filters: [{ protocol, protocolPathPrefix: ENCRYPTION_CONTROL_AUDIENCE_PATH }] }),
         messageType   : DwnInterface.MessagesQuery,
@@ -952,7 +1006,7 @@ describe('sync-messages', () => {
         agent,
       });
 
-      expect(result).toEqual({ succeeded: [rootCid], failed: [] });
+      expect(result).toMatchObject({ succeeded: [rootCid], failed: [] });
       expect(processRequestStub.withArgs(sinon.match({
         messageParams : sinon.match({ filter: roleFilter }),
         messageType   : DwnInterface.RecordsQuery,
@@ -985,7 +1039,7 @@ describe('sync-messages', () => {
         agent,
       });
 
-      expect(result).toEqual({ succeeded: [rootCid], failed: [] });
+      expect(result).toMatchObject({ succeeded: [rootCid], failed: [] });
       expect(processRequestStub.withArgs(sinon.match({
         messageParams : sinon.match({ filter: { recordId: referenced.message.recordId, protocol: referencedProtocol } }),
         messageType   : DwnInterface.RecordsQuery,
@@ -1030,7 +1084,7 @@ describe('sync-messages', () => {
         agent,
       });
 
-      expect(result).toEqual({ succeeded: [rootCid], failed: [] });
+      expect(result).toMatchObject({ succeeded: [rootCid], failed: [] });
       expect(await Promise.all(applyStub.getCalls().map(async (call): Promise<string> =>
         Message.getCid(call.args[0].message)))).toEqual([rootCid, dependencyCid, rootCid]);
       const dependencyData = applyStub.secondCall.args[0].data as Blob;
@@ -1113,7 +1167,7 @@ describe('sync-messages', () => {
         agent,
       });
 
-      expect(result).toEqual({ succeeded: [rootCid], failed: [] });
+      expect(result).toMatchObject({ succeeded: [rootCid], failed: [] });
       expect(dependencyCalls).toBe(2);
       expect(recordReadCount).toBe(2);
     });

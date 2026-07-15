@@ -11,8 +11,8 @@ import {
   ResumableTaskStoreSql,
   runDwnStoreMigrations,
 } from '@enbox/dwn-sql-store';
+import { DataStream, Dwn, Jws, RecordsDelete, RecordsWrite, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
-import { Dwn, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { mkdtempSync, rmSync } from 'fs';
 
 import { AdminStore } from '../../src/admin/admin-store.js';
@@ -24,7 +24,7 @@ import { runServerMigrations } from '../../src/server-migration-runner.js';
  * Minimal Kysely type for direct SQL verification queries.
  */
 interface TestDatabase {
-  messageStoreMessages: { tenant: string; dataSize: number | null };
+  messageStoreMessages: { tenant: string; dataSize: number | null; isLatestBaseState: boolean | null };
   dataRefs: { tenant: string; recordId: string; dataCid: string; dataSize: number };
   dataBlocks: { rootDataCid: string; blockCid: string; data: Uint8Array };
   replicationCounters: { tenant: string; seq: number | string | bigint };
@@ -516,6 +516,41 @@ describe('AdminStore', () => {
       expect(storageSize).toBe(data.length);
     });
 
+    it('should exclude retained non-latest write history after an update and delete', async () => {
+      const persona = await TestDataGenerator.generateDidKeyPersona();
+      await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
+
+      const initialData = TestDataGenerator.randomBytes(SMALL_DATA_SIZE);
+      const initial = await TestDataGenerator.generateRecordsWrite({ author: persona, data: initialData });
+      const initialReply = await dwn.processMessage(persona.did, initial.recordsWrite.message, {
+        dataStream: initial.dataStream,
+      });
+      expect(initialReply.status.code).toBe(202);
+      expect(await adminStore.getTenantStorageSize(persona.did)).toBe(initialData.length);
+
+      await Time.minimalSleep();
+      const updateData = TestDataGenerator.randomBytes(100);
+      const update = await RecordsWrite.createFrom({
+        recordsWriteMessage : initial.recordsWrite.message,
+        data                : updateData,
+        signer              : Jws.createSigner(persona),
+      });
+      const updateReply = await dwn.processMessage(persona.did, update.message, {
+        dataStream: DataStream.fromBytes(updateData),
+      });
+      expect(updateReply.status.code).toBe(202);
+      expect(await adminStore.getTenantStorageSize(persona.did)).toBe(updateData.length);
+
+      await Time.minimalSleep();
+      const recordsDelete = await RecordsDelete.create({
+        recordId : initial.recordsWrite.message.recordId,
+        signer   : Jws.createSigner(persona),
+      });
+      const deleteReply = await dwn.processMessage(persona.did, recordsDelete.message);
+      expect(deleteReply.status.code).toBe(202);
+      expect(await adminStore.getTenantStorageSize(persona.did)).toBe(0);
+    });
+
     it('should return 0 for a tenant with no data records', async () => {
       const storageSize = await adminStore.getTenantStorageSize('did:key:no-data-at-all');
       expect(storageSize).toBe(0);
@@ -626,11 +661,12 @@ describe('AdminStore', () => {
     });
 
     it('should return correct totalDataBytes from messageStoreMessages', async () => {
-      // Sum all dataSize values from messageStoreMessages as ground truth
+      // Sum current dataSize values from messageStoreMessages as ground truth
       // (includes both inline and data-store-backed records).
       const groundTruth = await rawDb
         .selectFrom('messageStoreMessages')
         .select(rawDb.fn.sum<number>('dataSize').as('total'))
+        .where('isLatestBaseState', '=', true)
         .executeTakeFirstOrThrow();
 
       const stats = await adminStore.getGlobalStats({ refresh: true });

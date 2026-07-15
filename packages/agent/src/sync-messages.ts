@@ -15,7 +15,12 @@ import type {
 
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
-import type { PushFailure, PushResult } from './types/sync.js';
+import type {
+  PushAcknowledgement,
+  PushFailure,
+  PushResult,
+  PushSuccessResolution,
+} from './types/sync.js';
 
 import {
   DwnInterfaceName,
@@ -73,10 +78,10 @@ type FetchLocalMessageResult =
 
 type FetchDependencyResult =
   | { kind: 'fetched'; entries: SyncMessageEntry[] }
-  | { kind: 'failed'; detail: string };
+  | { kind: 'failed'; detail: string; localMissing?: boolean };
 
 type PushEntryResult =
-  | { kind: 'applied'; cid: string }
+  | { kind: 'applied'; cid: string; resolution: PushSuccessResolution }
   | { kind: 'retry'; entries: SyncMessageEntry[] }
   | { kind: 'failed'; failure: PushFailure };
 
@@ -472,7 +477,7 @@ class RemoteApplyPushContext {
   private readonly entryCids = new WeakMap<SyncMessageEntry, string>();
   private readonly fetchedDependencyEntries = new Map<string, SyncMessageEntry[]>();
   private readonly fetchedRefs = new Set<string>();
-  private readonly acknowledgedCids = new Set<string>();
+  private readonly acknowledgementsByCid = new Map<string, PushSuccessResolution>();
 
   public constructor(private readonly deps: {
     did: string;
@@ -492,6 +497,7 @@ class RemoteApplyPushContext {
       if (root.kind === 'failed') {
         failedByRoot.set(rootCid, {
           cid    : rootCid,
+          ...(root.localMissing === true ? { localMissing: true } : {}),
           detail : root.detail,
         });
         continue;
@@ -523,17 +529,24 @@ class RemoteApplyPushContext {
       }
     }
 
-    return { succeeded, failed: [...failedByRoot.values()] };
+    const acknowledged: PushAcknowledgement[] = [...this.acknowledgementsByCid]
+      .map(([cid, resolution]) => ({ cid, resolution }));
+
+    return { succeeded, acknowledged, failed: [...failedByRoot.values()] };
   }
 
   private async pushRoot(rootCid: string, rootEntry: SyncMessageEntry): Promise<PushRootOutcome> {
     let pending = [rootEntry];
+    let rootResolution: PushSuccessResolution | undefined;
     for (let pass = 0; pass < MAX_PUSH_ADMISSION_PASSES && pending.length > 0; pass++) {
       const retry: SyncMessageEntry[] = [];
       for (const entry of orderMessagesForAdmission(pending)) {
         const result = await this.pushEntry(rootCid, entry);
         switch (result.kind) {
           case 'applied':
+            if (result.cid === rootCid) {
+              rootResolution = result.resolution;
+            }
             break;
           case 'retry':
             retry.push(...result.entries);
@@ -545,12 +558,19 @@ class RemoteApplyPushContext {
       pending = await dedupeEntries(retry);
     }
 
-    return pending.length === 0
-      ? { kind: 'succeeded', cid: rootCid }
-      : {
+    if (pending.length > 0) {
+      return {
         kind    : 'failed',
         failure : { cid: rootCid, kind: 'Incomplete', detail: 'remote dependency apply pass budget exhausted' },
       };
+    }
+
+    return rootResolution === undefined
+      ? {
+        kind    : 'failed',
+        failure : { cid: rootCid, kind: 'Incomplete', detail: 'remote did not acknowledge the pushed root message' },
+      }
+      : { kind: 'succeeded', cid: rootCid };
   }
 
   private async pushEntry(rootCid: string, entry: SyncMessageEntry): Promise<PushEntryResult> {
@@ -587,7 +607,7 @@ class RemoteApplyPushContext {
         // Quota rejection: retryable but NOT hot-loopable. The remote is out of
         // storage for this tenant; re-pushing the same message every tick would
         // flood. Classify it so the engine defers + backed-off re-probes instead
-        // (self-heals when quota grows or the record is deleted/shrunk). No log —
+        // (self-heals when quota grows or another device delivers the CID). No log —
         // this is an expected, surfaced condition, not an error.
         return { kind: 'failed', failure: this.quotaBlockedFailure(rootCid, cid, detail) };
       }
@@ -610,9 +630,9 @@ class RemoteApplyPushContext {
     switch (result.kind) {
       case 'Applied':
       case 'Duplicate':
+        return { kind: 'applied', cid, resolution: this.recordAcknowledgement(cid, 'applied') };
       case 'Superseded':
-        this.acknowledgedCids.add(cid);
-        return { kind: 'applied', cid };
+        return { kind: 'applied', cid, resolution: this.recordAcknowledgement(cid, 'superseded') };
       case 'Deferred':
         return {
           kind    : 'failed',
@@ -661,7 +681,7 @@ class RemoteApplyPushContext {
     const unacknowledgedDependencies: SyncMessageEntry[] = [];
     for (const dependency of dependencies.entries) {
       const dependencyCid = await this.rememberEntry(dependency);
-      if (!this.acknowledgedCids.has(dependencyCid)) {
+      if (!this.acknowledgementsByCid.has(dependencyCid)) {
         unacknowledgedDependencies.push(dependency);
       }
     }
@@ -679,6 +699,13 @@ class RemoteApplyPushContext {
     }
 
     return { kind: 'retry', entries: [...unacknowledgedDependencies, entry] };
+  }
+
+  private recordAcknowledgement(cid: string, resolution: PushSuccessResolution): PushSuccessResolution {
+    const existing = this.acknowledgementsByCid.get(cid);
+    const resolved = existing === 'superseded' || resolution === 'superseded' ? 'superseded' : 'applied';
+    this.acknowledgementsByCid.set(cid, resolved);
+    return resolved;
   }
 
   private terminalFailure(
@@ -716,7 +743,8 @@ class RemoteApplyPushContext {
    * A push rejected because the remote is out of storage/message quota for this
    * tenant. Retryable but not hot-loopable: the engine records it as
    * quota-blocked and re-probes on an exponential backoff, self-healing when
-   * quota grows or the record is deleted/shrunk. Modeled as a `Deferred`/
+   * quota grows, another device delivers the CID, or local history retires it.
+   * Modeled as a `Deferred`/
    * `storage` failure (so existing reason-based reporting keeps working) with
    * the distinguishing `quotaBlocked` flag.
    */
@@ -791,6 +819,7 @@ class RemoteApplyPushContext {
     if (result.kind === 'missing') {
       return {
         kind   : 'failed',
+        ...(result.localStatusCode === 404 ? { localMissing: true } : {}),
         detail : `local dependency message ${messageCid} not found (${result.localStatusCode ?? 'unknown'} ${result.detail ?? ''})`,
       };
     }
@@ -810,7 +839,6 @@ class RemoteApplyPushContext {
         ...(permissionGrantId === undefined ? {} : { permissionGrantId }),
       },
       messageType : DwnInterface.ProtocolsQuery,
-      store       : false,
       target      : this.deps.did,
     });
 
@@ -841,7 +869,6 @@ class RemoteApplyPushContext {
         ...(permissionGrantId === undefined ? {} : { permissionGrantId }),
       },
       messageType : DwnInterface.RecordsQuery,
-      store       : false,
       target      : this.deps.did,
     });
 
@@ -873,7 +900,6 @@ class RemoteApplyPushContext {
         ...(permissionGrantId === undefined ? {} : { permissionGrantId }),
       },
       messageType : DwnInterface.RecordsQuery,
-      store       : false,
       target      : this.deps.did,
     });
 
@@ -938,7 +964,6 @@ class RemoteApplyPushContext {
         ...(permissionGrantId === undefined ? {} : { permissionGrantId }),
       },
       messageType : DwnInterface.RecordsRead,
-      store       : false,
       target      : this.deps.did,
     });
 

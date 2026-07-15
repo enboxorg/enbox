@@ -46,7 +46,7 @@ import { getProtocolClosureEdges } from './sync-scope-closure.js';
 import { isRecordsWrite } from './utils.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
 import { computeAuthorizationEpoch, computeProjectionId, isQuotaBlockedPushFailure, isTerminalPushFailure, lexicographicalCompare, protocolsForSyncScope, pushBatchReconcileReason, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
-import { fetchRemoteMessages, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, SyncPullAbortedError } from './sync-messages.js';
+import { fetchRemoteMessages, getLocalMessage, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, SyncPullAbortedError } from './sync-messages.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, resolveMessagesScopes, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds, toSyncAuthorizationGrants } from './sync-permission-grants.js';
 
 export type SyncEngineLevelParams = {
@@ -94,6 +94,7 @@ type SyncTarget = {
   did: string;
   dwnUrl: string;
   delegateDid?: string;
+  projectionId: string;
   scope: SyncScope;
   authorization: SyncAuthorization;
   authorizationEpoch: string;
@@ -119,18 +120,11 @@ type LinkInitializationResult =
   | { status: LinkInitializationStatus.Active; durableLinkIdentityKey: string }
   | { status: LinkInitializationStatus.Failed };
 
-type SyncReconcileTarget = {
-  did: string;
-  dwnUrl: string;
-  delegateDid?: string;
-  scope: SyncScope;
-  authorization: SyncAuthorization;
-};
-
 type SyncDirection = 'push' | 'pull';
 
 type SyncReconcileOptions = {
   direction?: SyncDirection;
+  forceQuotaProbe?: boolean;
   verifyConvergence?: boolean;
 };
 
@@ -161,6 +155,7 @@ type SyncReconcileResult = {
   hasActionableDiffs?: boolean;
   localFingerprint?: string;
   pushFailures?: PushFailure[];
+  quotaBlocked?: boolean;
   remoteFingerprint?: string;
 };
 
@@ -189,17 +184,36 @@ type DeferredPullState = {
 
 /**
  * Durable state for a push message the remote rejected for tenant quota. Keyed
- * by `(tenantDid, messageCid, remoteEndpoint)`. The message is skipped in the
- * feed push until `nextProbeAt`, then attempted once; a still-quota result
- * extends the backoff, a success clears the entry.
+ * by the complete replication-link identity plus message CID. The message is
+ * skipped in that link's feed push until `nextProbeAt`, then attempted once; a
+ * still-quota result extends the backoff. An applied acknowledgement or local
+ * retirement clears the entry; a successor/Superseded acknowledgement retains
+ * a resolved omission solely to explain intentional inventory differences.
  */
 type QuotaBlockState = {
   attempts: number;
+  authorizationEpoch: string;
+  blockedCid?: string;
   detail?: string;
+  linkKey: string;
+  messageCid: string;
   protocol?: string;
+  projectionId: string;
+  remoteEndpoint: string;
+  source?: 'feed' | 'permission-grant';
+  /** Retained only to explain an intentional per-link feed omission. Never probed or surfaced as blocked. */
+  supersededAt?: string;
+  tenantDid: string;
   firstBlockedAt: string;
   lastBlockedAt: string;
   nextProbeAt: string;
+};
+
+type PushResultTransition = {
+  quotaBlocked: boolean;
+  retryableFailures: PushFailure[];
+  terminalFailures: PushFailure[];
+  nextQuotaProbeAt?: string;
 };
 
 type FeedPageAdmissionResult =
@@ -216,6 +230,7 @@ type FeedCursorAdvanceResult =
   | { cursor: ProgressToken; drained: false };
 
 type FeedPushEntryResult =
+  | { kind: 'aborted' }
   | { kind: 'pushed' }
   | { kind: 'skipped' }
   | { kind: 'failed'; failures: PushFailure[] };
@@ -227,7 +242,7 @@ type FeedPagePushResult =
 
 type PermissionGrantBootstrapResult =
   | { kind: 'aborted' }
-  | { kind: 'processed'; failures: PushFailure[]; hasActionableDiffs: boolean };
+  | { kind: 'processed'; failures: PushFailure[]; hasActionableDiffs: boolean; quotaBlocked: boolean };
 
 // ---------------------------------------------------------------------------
 // Per-link in-memory delivery-order tracking (not persisted to ledger)
@@ -299,10 +314,9 @@ type PullDelivery = {
   ordinal: number;
 };
 
-type LivePullProcessResult = {
-  messageCid: string;
-  admitted: boolean;
-};
+type LivePullProcessResult =
+  | { messageCid: string; admitted: false }
+  | { messageCid: string; admitted: true; appliedCids: string[] };
 
 type LivePullDataStreamFactory = () => Promise<ReadableStream<Uint8Array> | undefined>;
 
@@ -345,6 +359,8 @@ export class SyncEngineLevel implements SyncEngine {
   private readonly _db: AbstractLevel<string | Buffer | Uint8Array>;
   private _syncIntervalId?: ReturnType<typeof setInterval>;
   private _syncLock = false;
+  private _syncLockCompletion: Promise<void> = Promise.resolve();
+  private _releaseSyncLockCompletion?: () => void;
 
   /**
    * Durable replication ledger — persists per-link checkpoint state.
@@ -397,6 +413,15 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Per-link push runtime: queue, debounce timer, retry state. */
   private readonly _pushRuntimes: Map<string, PushRuntimeState> = new Map();
+
+  /** In-flight quota probes, keyed by tenant + remote + CID, to deduplicate concurrent retry paths. */
+  private readonly _quotaProbeInFlight: Map<string, Promise<void>> = new Map();
+
+  /** Serializes durable-feed checkpoint reads and writes for each complete replication link. */
+  private readonly _durableFeedRuns: Map<string, Promise<void>> = new Map();
+
+  /** Serializes public Retry-now operations with each other before they acquire the sync lock. */
+  private _retryRemoteQueue: Promise<void> = Promise.resolve();
 
   /**
    * CIDs recently received via pull subscription, keyed by `cid|dwnUrl` to
@@ -673,11 +698,12 @@ export class SyncEngineLevel implements SyncEngine {
     const requestedScope = syncScopeFromProtocols(options.protocols);
     const resolutions = await this.buildSyncTargetResolutions(did, requestedScope, options);
 
-    return resolutions.map(resolution => ({
+    return Promise.all(resolutions.map(async (resolution) => ({
       did,
       dwnUrl,
+      projectionId: await computeProjectionId(did, resolution.scope),
       ...resolution,
-    }));
+    })));
   }
 
   private async buildSyncTargetResolutions(did: string, requestedScope: SyncScope, options: SyncIdentityOptions): Promise<SyncTargetResolution[]> {
@@ -732,6 +758,9 @@ export class SyncEngineLevel implements SyncEngine {
     targets: SyncTarget[];
     timestamp: number;
   };
+
+  /** True only when the most recent uncached target resolution covered every registration. */
+  private _syncTargetsLastResolutionComplete = false;
 
   /**
    * Monotonic generation counter for sync target cache invalidation.
@@ -831,6 +860,7 @@ export class SyncEngineLevel implements SyncEngine {
     // DID resolver / endpoint lookup — invalidate so the next sync
     // tick re-resolves through the new agent.
     this._syncTargetsCache = undefined;
+    this._syncTargetsLastResolutionComplete = false;
     this._syncTargetsCacheGeneration++;
   }
 
@@ -887,6 +917,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   public async clear(): Promise<void> {
     this._syncTargetsCache = undefined;
+    this._syncTargetsLastResolutionComplete = false;
     this._syncTargetsCacheGeneration++;
     await this.teardownLiveSync();
     this._syncMode = undefined;
@@ -896,6 +927,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   public async close(): Promise<void> {
     this._syncTargetsCache = undefined;
+    this._syncTargetsLastResolutionComplete = false;
     this._syncTargetsCacheGeneration++;
     await this.teardownLiveSync();
     await this._db.close();
@@ -914,6 +946,7 @@ export class SyncEngineLevel implements SyncEngine {
     await this.validateSyncScopeClosure(did, options);
     await registeredIdentities.put(did, JSON.stringify(options));
     this._syncTargetsCache = undefined;
+    this._syncTargetsLastResolutionComplete = false;
     this._syncTargetsCacheGeneration++;
 
     // If live sync is active, hot-add subscriptions for this identity.
@@ -941,7 +974,9 @@ export class SyncEngineLevel implements SyncEngine {
 
     await registeredIdentities.del(did);
     this._syncTargetsCache = undefined;
+    this._syncTargetsLastResolutionComplete = false;
     this._syncTargetsCacheGeneration++;
+    await this.clearQuotaBlocksForTenant(did);
     await this.pruneSupersededDurableLinksForIdentity(did, new Set());
   }
 
@@ -975,7 +1010,12 @@ export class SyncEngineLevel implements SyncEngine {
     await this.validateSyncScopeClosure(did, options);
     await registeredIdentities.put(did, JSON.stringify(options));
     this._syncTargetsCache = undefined;
+    this._syncTargetsLastResolutionComplete = false;
     this._syncTargetsCacheGeneration++;
+    // Scope/delegate changes define different replication links. A block from
+    // the previous authorization must not suppress the replacement link's
+    // first delivery attempt.
+    await this.clearQuotaBlocksForTenant(did);
 
     // If live sync is active, tear down and rebuild subscriptions with
     // the new options. Delegate/scope changes derive a new authorization
@@ -996,18 +1036,17 @@ export class SyncEngineLevel implements SyncEngine {
   // ---------------------------------------------------------------------------
 
   public async sync(direction?: SyncDirection, options?: SyncRunOptions): Promise<void> {
-    if (this._syncLock) {
+    if (!this.tryAcquireSyncLock()) {
       throw new Error('SyncEngineLevel: Sync operation is already in progress.');
     }
 
-    this._syncLock = true;
     try {
       const syncTargets = await this.getSyncTargets();
       const groupSummary = await this.syncTargetGroups(syncTargets, direction, options);
       this.updateConnectivityAfterSync(syncTargets.length, groupSummary);
       SyncEngineLevel.assertSyncTargetGroupsSucceeded(groupSummary);
     } finally {
-      this._syncLock = false;
+      this.releaseSyncLock();
     }
   }
 
@@ -1028,7 +1067,9 @@ export class SyncEngineLevel implements SyncEngine {
       };
     }
 
-    this._syncLock = true;
+    if (!this.tryAcquireSyncLock()) {
+      throw new Error('SyncEngineLevel: Sync operation is already in progress.');
+    }
     try {
       await this.registerSupplementalDwnEndpoint(normalizedEndpoint);
       const topologyGeneration = this._syncTargetsCacheGeneration;
@@ -1065,8 +1106,31 @@ export class SyncEngineLevel implements SyncEngine {
         ...(error !== undefined ? { error } : {}),
       };
     } finally {
-      this._syncLock = false;
+      this.releaseSyncLock();
     }
+  }
+
+  private tryAcquireSyncLock(): boolean {
+    if (this._syncLock) { return false; }
+
+    this._syncLock = true;
+    this._syncLockCompletion = new Promise<void>((resolve) => {
+      this._releaseSyncLockCompletion = resolve;
+    });
+    return true;
+  }
+
+  private async waitForAndAcquireSyncLock(): Promise<void> {
+    while (!this.tryAcquireSyncLock()) {
+      await this._syncLockCompletion;
+    }
+  }
+
+  private releaseSyncLock(): void {
+    this._syncLock = false;
+    const release = this._releaseSyncLockCompletion;
+    this._releaseSyncLockCompletion = undefined;
+    release?.();
   }
 
   private async buildSyncDrainPlan(remoteEndpoint: string): Promise<SyncDrainPlan> {
@@ -1146,7 +1210,11 @@ export class SyncEngineLevel implements SyncEngine {
 
     try {
       const shouldContinue = (): boolean => getStopReason() === undefined;
-      const result = await this.syncTargetWithDurableFeeds(target, { verifyConvergence: true }, shouldContinue);
+      const result = await this.syncTargetWithDurableFeeds(
+        target,
+        { forceQuotaProbe: true, verifyConvergence: true },
+        shouldContinue,
+      );
       if (result.admittedCids !== undefined && result.admittedCids.length > 0) {
         this.emitReconcileApplied(target, result.admittedCids);
       }
@@ -1174,15 +1242,23 @@ export class SyncEngineLevel implements SyncEngine {
         result.remoteFingerprint = stability.remoteFingerprint ?? result.remoteFingerprint;
       }
 
+      let divergenceExplained = false;
       if (getStopReason() === undefined) {
         if (result.converged === false && !feedHeadChanged) {
-          await this.handleVerifiedFeedDivergence(target, result);
+          divergenceExplained = await this.handleVerifiedFeedDivergence(target, result);
         } else if (result.converged === true) {
           await this.clearFeedConvergenceFailure(target);
         }
       }
 
       const stopReason = getStopReason();
+      const quotaBlocked = (await this.getQuotaBlocksForTarget(target)).length > 0;
+      if (divergenceExplained && !quotaBlocked) {
+        // Resolved per-link omissions are logical convergence: the remote has
+        // acknowledged newer state and the intentionally absent history will
+        // never be probed again, even though raw fingerprints differ.
+        result.converged = true;
+      }
       const error = SyncEngineLevel.drainError(result, pushFailures, link.status === 'paused', feedHeadChanged, stopReason);
 
       return {
@@ -1192,6 +1268,7 @@ export class SyncEngineLevel implements SyncEngine {
         completed         : error === undefined,
         cancelled         : stopReason === 'cancelled',
         converged         : SyncEngineLevel.drainConverged(result, link.status === 'paused', feedHeadChanged, stopReason),
+        ...(quotaBlocked ? { quotaBlocked: true } : {}),
         pushCheckpoint    : link.push.contiguousAppliedToken,
         localFingerprint  : result.localFingerprint,
         remoteFingerprint : result.remoteFingerprint,
@@ -1220,7 +1297,7 @@ export class SyncEngineLevel implements SyncEngine {
       return;
     }
 
-    if (targets.some((target): boolean => target.completed)) {
+    if (targets.some((target): boolean => target.completed || target.quotaBlocked === true)) {
       this.recordSyncSuccess();
       return;
     }
@@ -1331,6 +1408,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     await metadata.put('supplementalDwnEndpoint', endpoint);
     this._syncTargetsCache = undefined;
+    this._syncTargetsLastResolutionComplete = false;
     this._syncTargetsCacheGeneration++;
   }
 
@@ -1619,6 +1697,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     this._syncTargetsCache = undefined;
+    this._syncTargetsLastResolutionComplete = false;
     this._syncTargetsCacheGeneration++;
     await this.teardownLiveSync();
     this._syncMode = undefined;
@@ -1853,6 +1932,7 @@ export class SyncEngineLevel implements SyncEngine {
     if (reconcileTimer) {
       clearTimeout(reconcileTimer);
       this._reconcileTimers.delete(linkKey);
+      this._reconcileTimerDueAt.delete(linkKey);
     }
     const pushRuntime = this._pushRuntimes.get(linkKey);
     if (pushRuntime?.timer) {
@@ -1992,6 +2072,7 @@ export class SyncEngineLevel implements SyncEngine {
         did,
         dwnUrl,
         delegateDid,
+        projectionId       : link.projectionId,
         scope,
         authorization,
         authorizationEpoch : link.authorizationEpoch,
@@ -2027,6 +2108,7 @@ export class SyncEngineLevel implements SyncEngine {
         did,
         dwnUrl,
         delegateDid,
+        projectionId       : link.projectionId,
         scope,
         authorization,
         authorizationEpoch : link.authorizationEpoch,
@@ -2287,6 +2369,7 @@ export class SyncEngineLevel implements SyncEngine {
       clearTimeout(timer);
     }
     this._reconcileTimers.clear();
+    this._reconcileTimerDueAt.clear();
     this._reconcileInFlight.clear();
 
     this._recentlyPulledCids.clear();
@@ -2368,6 +2451,10 @@ export class SyncEngineLevel implements SyncEngine {
       to             : 'live'
     });
     await this.ledger.setStatus(link, 'live');
+    const nextProbeAt = await this.getNextQuotaProbeAtForTarget(target);
+    if (nextProbeAt !== undefined) {
+      this.scheduleQuotaProbeForActiveLink(this.getReplicationLinkKey(target, link), link, nextProbeAt);
+    }
   }
 
   private async markLinkPolling(target: SyncTarget, link: ReplicationLinkState): Promise<void> {
@@ -2531,7 +2618,11 @@ export class SyncEngineLevel implements SyncEngine {
       if (this.isLinkKeyForDid(key, did)) { clearTimeout(timer); this._repairRetryTimers.delete(key); }
     }
     for (const [key, timer] of this._reconcileTimers) {
-      if (this.isLinkKeyForDid(key, did)) { clearTimeout(timer); this._reconcileTimers.delete(key); }
+      if (this.isLinkKeyForDid(key, did)) {
+        clearTimeout(timer);
+        this._reconcileTimers.delete(key);
+        this._reconcileTimerDueAt.delete(key);
+      }
     }
     for (const key of this._reconcileInFlight.keys()) {
       if (this.isLinkKeyForDid(key, did)) { this._reconcileInFlight.delete(key); }
@@ -2850,8 +2941,12 @@ export class SyncEngineLevel implements SyncEngine {
       if (!result) { return; }
 
       if (result.admitted) {
-        this.trackRecentlyPulledMessage(result.messageCid, context.dwnUrl);
-        this.clearFailedMessage(result.messageCid, context.dwnUrl).catch(() => { /* teardown race */ });
+        if (context.link === undefined) {
+          this.trackRecentlyPulledMessage(result.messageCid, context.dwnUrl);
+          await this.clearFailedMessage(result.messageCid, context.dwnUrl);
+        } else {
+          await this.trackRemoteFeedAppliedCids(result.appliedCids, this.syncTargetFromLink(context.link));
+        }
       }
       await this.commitPullDelivery(context, subMessage.cursor, delivery);
     } catch (error: any) {
@@ -2952,7 +3047,7 @@ export class SyncEngineLevel implements SyncEngine {
     if (context.isStale()) { return undefined; }
 
     if (outcome.kind === 'admitted') {
-      return { messageCid: rootCid, admitted: true };
+      return { messageCid: rootCid, admitted: true, appliedCids: outcome.appliedCids };
     }
 
     if (outcome.kind === 'failed') {
@@ -3326,20 +3421,47 @@ export class SyncEngineLevel implements SyncEngine {
   ): Promise<void> {
     if (batch.isStale()) { return; }
 
-    this.clearSucceededPushFailures(result.succeeded, batch.pushRuntime.dwnUrl);
+    const link = this._activeLinks.get(linkKey);
+    if (link === undefined) { return; }
+    const target = this.syncTargetFromLink(link);
+    const transition = await this.transitionPushResult(target, result, {
+      protocol : batch.pushRuntime.protocol,
+      source   : 'feed',
+    });
 
-    if (result.failed.length > 0) {
-      await this.requeueFailedPushes(linkKey, batch, result.failed);
+    if (transition.nextQuotaProbeAt !== undefined) {
+      this.scheduleQuotaProbeForActiveLink(linkKey, link, transition.nextQuotaProbeAt);
+    }
+
+    if (transition.retryableFailures.length > 0) {
+      await this.requeueFailedPushes(linkKey, batch, transition.retryableFailures);
       return;
     }
 
     this.cleanupSuccessfulPushRuntime(linkKey, batch.pushRuntime);
   }
 
-  private clearSucceededPushFailures(cids: string[], dwnUrl: string): void {
-    for (const cid of cids) {
-      this.clearFailedMessage(cid, dwnUrl).catch(() => { /* teardown race */ });
-    }
+  private syncTargetFromLink(link: ReplicationLinkState): SyncTarget {
+    return {
+      did                : link.tenantDid,
+      dwnUrl             : link.remoteEndpoint,
+      delegateDid        : link.delegateDid,
+      projectionId       : link.projectionId,
+      scope              : link.scope,
+      authorization      : link.authorization,
+      authorizationEpoch : link.authorizationEpoch,
+      permissionGrantIds : this.getAuthorizationGrantIds(link.authorization),
+    };
+  }
+
+  private scheduleQuotaProbeForActiveLink(
+    linkKey: string,
+    link: ReplicationLinkState,
+    nextProbeAt: string,
+  ): void {
+    const parsed = Date.parse(nextProbeAt);
+    const delay = Number.isFinite(parsed) ? Math.max(0, parsed - Date.now()) : 0;
+    this.scheduleLinkReconcile(linkKey, link, 'push-quota-probe', delay);
   }
 
   private async requeueFailedPushes(linkKey: string, batch: PushFlushBatch, failed: PushFailure[]): Promise<void> {
@@ -3409,7 +3531,7 @@ export class SyncEngineLevel implements SyncEngine {
   private static readonly DEFERRED_PUSH_RECONCILE_DELAY_MS = 30_000;
 
   private async recordTerminalSyncPushFailures(
-    target: SyncReconcileTarget,
+    target: SyncTarget,
     failures: PushFailure[],
   ): Promise<number> {
     let retryableFailures = 0;
@@ -3419,6 +3541,7 @@ export class SyncEngineLevel implements SyncEngine {
         continue;
       }
 
+      await this.clearQuotaBlock(target, failure.cid);
       await this.recordDeadLetter({
         messageCid     : failure.cid,
         tenantDid      : target.did,
@@ -3449,7 +3572,7 @@ export class SyncEngineLevel implements SyncEngine {
     const link = this._activeLinks.get(targetKey);
     pending = {
       ...pending,
-      entries: await this.recordImmediateTerminalPushFailures(pending),
+      entries: await this.recordImmediateTerminalPushFailures(targetKey, pending),
     };
     if (pending.entries.length === 0) {
       this.stopPushRuntime(targetKey, pushRuntime);
@@ -3478,7 +3601,7 @@ export class SyncEngineLevel implements SyncEngine {
     this.schedulePushRetry(targetKey, pushRuntime, pending);
   }
 
-  private async recordImmediateTerminalPushFailures(pending: {
+  private async recordImmediateTerminalPushFailures(targetKey: string, pending: {
     did: string;
     dwnUrl: string;
     protocol?: string;
@@ -3493,6 +3616,7 @@ export class SyncEngineLevel implements SyncEngine {
         continue;
       }
 
+      await this.clearQuotaBlockByLinkKey(pending.did, targetKey, entry.cid);
       await this.recordDeadLetter({
         messageCid     : entry.cid,
         tenantDid      : pending.did,
@@ -3509,9 +3633,24 @@ export class SyncEngineLevel implements SyncEngine {
   private async handleVerifiedFeedDivergence(target: SyncTarget, result: SyncReconcileResult, active?: {
     link: ReplicationLinkState;
     linkKey: string;
-  }): Promise<void> {
+  }): Promise<boolean> {
+    if (await this.isFeedDivergenceExplainedByQuotaBlocks(target, result)) {
+      await this.clearFeedConvergenceFailure(target, active);
+      const nextProbeAt = await this.getNextQuotaProbeAtForTarget(target);
+      if (nextProbeAt !== undefined) {
+        const ledgerLink = active?.link ?? await this.getOrCreateReplicationLink(target);
+        const linkKey = active?.linkKey ?? this.getReplicationLinkKey(target, ledgerLink);
+        const liveLink = this._activeLinks.get(linkKey);
+        if (liveLink?.status === 'live') {
+          this.scheduleQuotaProbeForActiveLink(linkKey, liveLink, nextProbeAt);
+        }
+      }
+      return true;
+    }
+
     const deadLetterCids = await this.getAdmissionDeadLetterCidsForTarget(target);
     await this.handleRepeatedFeedConvergenceMismatch(target, result, deadLetterCids, active);
+    return false;
   }
 
   private async clearFeedConvergenceFailure(target: SyncTarget, active?: {
@@ -3677,6 +3816,33 @@ export class SyncEngineLevel implements SyncEngine {
     options?: SyncReconcileOptions,
     shouldContinue?: () => boolean,
   ): Promise<SyncReconcileResult> {
+    const { linkKey } = this.quotaBlockIdentity(target);
+    const previous = this._durableFeedRuns.get(linkKey) ?? Promise.resolve();
+    const run = previous.catch((): void => {
+      // A failed predecessor must not poison this link's queue.
+    }).then(async (): Promise<SyncReconcileResult> => {
+      if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
+        return { ...SyncEngineLevel.emptySyncReconcileResult(options), aborted: true };
+      }
+      return this.doSyncTargetWithDurableFeeds(target, options, shouldContinue);
+    });
+    const settled = run.then((): void => {}, (): void => {});
+    this._durableFeedRuns.set(linkKey, settled);
+
+    try {
+      return await run;
+    } finally {
+      if (this._durableFeedRuns.get(linkKey) === settled) {
+        this._durableFeedRuns.delete(linkKey);
+      }
+    }
+  }
+
+  private async doSyncTargetWithDurableFeeds(
+    target: SyncTarget,
+    options?: SyncReconcileOptions,
+    shouldContinue?: () => boolean,
+  ): Promise<SyncReconcileResult> {
     const result = SyncEngineLevel.emptySyncReconcileResult(options);
     const link = await this.getOrCreateReplicationLink(target);
     if (link.status === 'paused') {
@@ -3726,10 +3892,14 @@ export class SyncEngineLevel implements SyncEngine {
     target.admittedCids?.push(...(source.admittedCids ?? []));
     target.pushFailures?.push(...(source.pushFailures ?? []));
     target.hasActionableDiffs ||= source.hasActionableDiffs === true;
+    target.quotaBlocked ||= source.quotaBlocked === true;
     target.localFingerprint = source.localFingerprint ?? target.localFingerprint;
     target.remoteFingerprint = source.remoteFingerprint ?? target.remoteFingerprint;
 
-    if (options?.verifyConvergence === true && (source.converged === false || (source.pushFailures?.length ?? 0) > 0)) {
+    if (
+      options?.verifyConvergence === true &&
+      (source.converged === false || source.quotaBlocked === true || (source.pushFailures?.length ?? 0) > 0)
+    ) {
       target.converged = false;
     }
   }
@@ -3787,14 +3957,21 @@ export class SyncEngineLevel implements SyncEngine {
       remoteFingerprint : remoteReply.fingerprint,
       pushFailures      : [],
     };
-    return { ...result, converged: SyncEngineLevel.feedFingerprintsConverged(result) };
+    const converged = SyncEngineLevel.feedFingerprintsConverged(result);
+    if (converged) {
+      // Exact equality means every locally retained resolved CID is now present
+      // remotely (or has retired from both feeds), so its explanatory row is no
+      // longer needed.
+      await this.clearResolvedQuotaOmissionsForTarget(target);
+    }
+    return { ...result, converged };
   }
 
   private static shouldStopAfterFeedResult(
     accumulator: SyncReconcileResult,
     latest: SyncReconcileResult,
   ): boolean {
-    return latest.aborted === true || (accumulator.pushFailures?.length ?? 0) > 0;
+    return latest.aborted === true || latest.quotaBlocked === true || (accumulator.pushFailures?.length ?? 0) > 0;
   }
 
   private async pullRemoteFeedForSyncTarget(
@@ -3932,17 +4109,42 @@ export class SyncEngineLevel implements SyncEngine {
       return {};
     }
 
+    const forceQuotaProbe = options?.forceQuotaProbe === true;
+    const forceProbeCids = forceQuotaProbe
+      ? new Set((await this.getQuotaBlocksForTarget(target)).map(({ messageCid }) => messageCid))
+      : undefined;
     const link = await this.getOrCreateReplicationLink(target);
-    return this.pushLocalFeedPages(target, link, shouldContinue);
+    const result = await this.pushLocalFeedPages(
+      target,
+      link,
+      shouldContinue,
+      forceQuotaProbe,
+    );
+
+    // Feed checkpoints intentionally advance past quota-blocked roots so one
+    // oversized record cannot hold newer records (or other remotes) behind it.
+    // Process later feed state first: an update/delete may replay a retained
+    // dataless ancestor as its dependency. Only then probe remaining roots
+    // independently of the advanced checkpoint.
+    if (
+      result.aborted !== true &&
+      result.quotaBlocked !== true &&
+      (result.pushFailures?.length ?? 0) === 0
+    ) {
+      await this.probeQuotaBlocksForTarget(target, forceQuotaProbe, forceProbeCids, shouldContinue);
+    }
+
+    return result;
   }
 
   private async pushLocalFeedPages(
     target: SyncTarget,
     link: ReplicationLinkState,
     shouldContinue?: () => boolean,
+    forceQuotaProbe = false,
   ): Promise<SyncReconcileResult> {
     if (link.push.contiguousAppliedToken === undefined) {
-      return this.pushLocalFeedDiffWithRemoteInventory(target, link, shouldContinue);
+      return this.pushLocalFeedDiffWithRemoteInventory(target, link, shouldContinue, forceQuotaProbe);
     }
 
     let hasActionableDiffs = false;
@@ -3964,7 +4166,7 @@ export class SyncEngineLevel implements SyncEngine {
       });
 
       if (await this.resetFeedPushAfterProgressGap(reply, link, false)) {
-        return this.pushLocalFeedDiffWithRemoteInventory(target, link, shouldContinue);
+        return this.pushLocalFeedDiffWithRemoteInventory(target, link, shouldContinue, forceQuotaProbe);
       }
 
       SyncEngineLevel.assertFeedPushSucceeded(reply, target);
@@ -4007,10 +4209,14 @@ export class SyncEngineLevel implements SyncEngine {
     target: SyncTarget,
     link: ReplicationLinkState,
     shouldContinue?: () => boolean,
+    forceQuotaProbe = false,
   ): Promise<SyncReconcileResult> {
-    const grantBootstrap = await this.bootstrapRemotePermissionGrants(target, shouldContinue);
+    const grantBootstrap = await this.bootstrapRemotePermissionGrants(target, shouldContinue, forceQuotaProbe);
     if (grantBootstrap.kind === 'aborted') {
       return { aborted: true };
+    }
+    if (grantBootstrap.quotaBlocked) {
+      return { hasActionableDiffs: grantBootstrap.hasActionableDiffs, pushFailures: [], quotaBlocked: true };
     }
     if (grantBootstrap.failures.length > 0) {
       return { hasActionableDiffs: grantBootstrap.hasActionableDiffs, pushFailures: grantBootstrap.failures };
@@ -4079,9 +4285,10 @@ export class SyncEngineLevel implements SyncEngine {
   private async bootstrapRemotePermissionGrants(
     target: SyncTarget,
     shouldContinue?: () => boolean,
+    forceQuotaProbe = false,
   ): Promise<PermissionGrantBootstrapResult> {
     if (target.permissionGrantIds === undefined) {
-      return { kind: 'processed', failures: [], hasActionableDiffs: false };
+      return { kind: 'processed', failures: [], hasActionableDiffs: false, quotaBlocked: false };
     }
 
     const grantEntries = await this.localPermissionGrantBootstrapEntries(target, shouldContinue);
@@ -4089,7 +4296,17 @@ export class SyncEngineLevel implements SyncEngine {
       return { kind: 'aborted' };
     }
     if (grantEntries.failures.length > 0 || grantEntries.entries.length === 0) {
-      return { kind: 'processed', failures: grantEntries.failures, hasActionableDiffs: false };
+      return { kind: 'processed', failures: grantEntries.failures, hasActionableDiffs: false, quotaBlocked: false };
+    }
+
+    for (const entry of grantEntries.entries) {
+      const messageCid = await Message.getCid(entry.message);
+      const state = await this.getQuotaBlockState(target, messageCid);
+      if (state?.source !== 'permission-grant') { continue; }
+      const nextProbeAt = Date.parse(state.nextProbeAt);
+      if (!forceQuotaProbe && Number.isFinite(nextProbeAt) && Date.now() < nextProbeAt) {
+        return { kind: 'processed', failures: [], hasActionableDiffs: false, quotaBlocked: true };
+      }
     }
 
     const result = await this.pushMessageEntries({
@@ -4099,10 +4316,15 @@ export class SyncEngineLevel implements SyncEngine {
       permissionGrantIds : target.permissionGrantIds,
       entries            : grantEntries.entries,
     });
+    if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
+      return { kind: 'aborted' };
+    }
+    const transition = await this.transitionPushResult(target, result, { source: 'permission-grant' });
     return {
       kind               : 'processed',
-      failures           : result.failed,
+      failures           : [...transition.retryableFailures, ...transition.terminalFailures],
       hasActionableDiffs : result.succeeded.length > 0,
+      quotaBlocked       : transition.quotaBlocked,
     };
   }
 
@@ -4354,7 +4576,10 @@ export class SyncEngineLevel implements SyncEngine {
         return { kind: 'aborted' };
       }
 
-      const result = await this.pushLocalFeedEntry(target, entry);
+      const result = await this.pushLocalFeedEntry(target, entry, shouldContinue);
+      if (result.kind === 'aborted') {
+        return { kind: 'aborted' };
+      }
       if (result.kind === 'failed') {
         return { kind: 'failed', failures: result.failures, hasActionableDiffs };
       }
@@ -4369,15 +4594,16 @@ export class SyncEngineLevel implements SyncEngine {
   private async pushLocalFeedEntry(
     target: SyncTarget,
     entry: MessagesQueryReplyEntry,
+    shouldContinue?: () => boolean,
   ): Promise<FeedPushEntryResult> {
     if (await this.hasAdmissionDeadLetter(target.did, target.dwnUrl, entry.messageCid)) {
       return { kind: 'skipped' };
     }
 
-    // Quota-blocked and not yet due for a re-probe: skip so we neither re-hammer
-    // the remote (the console-error flood) nor stall newer, smaller records
-    // behind this one (a `failed` return would halt the whole feed page).
-    if (await this.isQuotaBlockedNotDue(target.did, target.dwnUrl, entry.messageCid)) {
+    // Every durable quota block is skipped in the ordinary feed. Due probes
+    // are driven independently at the start of target push, because this feed
+    // checkpoint is allowed to advance past the omitted CID.
+    if (await this.getQuotaBlockState(target, entry.messageCid) !== undefined) {
       return { kind: 'skipped' };
     }
 
@@ -4385,37 +4611,150 @@ export class SyncEngineLevel implements SyncEngine {
       return { kind: 'skipped' };
     }
 
+    const quotaBlockedInitialCids = await this.getQuotaBlockedInitialCidsForFeedEntry(target, entry);
     const result = await this.pushMessages({
       did                : target.did,
       dwnUrl             : target.dwnUrl,
       delegateDid        : target.delegateDid,
       permissionGrantIds : target.permissionGrantIds,
-      messageCids        : [entry.messageCid],
+      messageCids        : [...quotaBlockedInitialCids, entry.messageCid],
     });
-    this.clearSucceededPushFailures(result.succeeded, target.dwnUrl);
-    // Self-heal: a message that was quota-blocked and now applied or was
-    // superseded (quota grew, or the record was deleted/shrunk locally).
-    await this.clearQuotaBlocksForSucceeded(target, result.succeeded);
-    const failed = result.failed.map((failure): PushFailure => ({
-      ...failure,
-      protocol: failure.protocol ?? entry.protocol,
-    }));
+    if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
+      return { kind: 'aborted' };
+    }
+    const attributedResult = SyncEngineLevel.attributeBlockedFeedDependency(
+      result,
+      entry.messageCid,
+      quotaBlockedInitialCids,
+    );
+    const transition = await this.transitionPushResult(target, attributedResult, {
+      protocol : entry.protocol,
+      source   : 'feed',
+    });
 
-    if (failed.length === 0) {
+    if (attributedResult.failed.length === 0) {
       return { kind: 'pushed' };
     }
 
-    // Peel off quota-blocked failures: record/extend their backoff, emit an
-    // event, and do NOT let them halt the page — newer records must still push.
-    const nonQuotaFailures = await this.recordQuotaBlockedPushFailures(target, failed);
-    if (nonQuotaFailures.length === 0) {
+    if (transition.retryableFailures.length === 0) {
       return { kind: 'skipped' };
     }
 
-    const retryableFailures = await this.recordTerminalSyncPushFailures(target, nonQuotaFailures);
-    return retryableFailures > 0
-      ? { kind: 'failed', failures: nonQuotaFailures }
-      : { kind: 'skipped' };
+    return { kind: 'failed', failures: transition.retryableFailures };
+  }
+
+  /**
+   * A deleted record's missing-initial response identifies the dependency by
+   * recordId, which can no longer be queried after deletion. If the exact
+   * retained initial CID staged ahead of that tombstone was quota-rejected,
+   * attribute the root omission to that CID so the cursor can advance and a
+   * later direct probe can replay the same ancestry deterministically.
+   */
+  private static attributeBlockedFeedDependency(
+    result: PushResult,
+    rootCid: string,
+    stagedDependencyCids: string[],
+  ): PushResult {
+    const blockedDependency = result.failed.find(
+      (failure): boolean => failure.quotaBlocked === true && stagedDependencyCids.includes(failure.cid),
+    );
+    if (blockedDependency === undefined) { return result; }
+
+    return {
+      ...result,
+      failed: result.failed.map((failure): PushFailure => {
+        if (failure.cid !== rootCid || failure.quotaBlocked === true || failure.terminal === true) {
+          return failure;
+        }
+
+        return {
+          ...failure,
+          dependencyCid : blockedDependency.cid,
+          kind          : 'Deferred',
+          reason        : 'storage',
+          quotaBlocked  : true,
+          detail        : blockedDependency.detail,
+        };
+      }),
+    };
+  }
+
+  /**
+   * A later update or delete is a useful signal that a quota-blocked initial
+   * write may now be retained without its old payload. Replay that exact
+   * ancestor in the same batch without stripping data from a still-current
+   * record or waiting for the probe timer.
+   */
+  private async getQuotaBlockedInitialCidsForFeedEntry(
+    target: SyncTarget,
+    entry: MessagesQueryReplyEntry,
+  ): Promise<string[]> {
+    const recordId = SyncEngineLevel.recordIdForRecordsFeedEntry(entry);
+    if (recordId === undefined) { return []; }
+
+    const initialCids: string[] = [];
+    for (const { messageCid, state } of await this.getQuotaBlocksForTarget(target)) {
+      if (state.source === 'permission-grant') { continue; }
+      const blockedCid = state.blockedCid ?? messageCid;
+      if (blockedCid === entry.messageCid || initialCids.includes(blockedCid)) { continue; }
+      const local = await getLocalMessage({
+        author             : target.did,
+        delegateDid        : target.delegateDid,
+        permissionGrantIds : target.permissionGrantIds,
+        messageCid         : blockedCid,
+        agent              : this.agent,
+      });
+      if (
+        local !== undefined &&
+        local.dataStream === undefined &&
+        SyncEngineLevel.isInitialWriteForRecord(local.message, recordId)
+      ) {
+        initialCids.push(blockedCid);
+      }
+    }
+    return initialCids;
+  }
+
+  private static recordIdForRecordsFeedEntry(entry: MessagesQueryReplyEntry): string | undefined {
+    return SyncEngineLevel.recordIdForRecordsMessage(entry.message);
+  }
+
+  private static recordIdForRecordsMessage(message: GenericMessage | undefined): string | undefined {
+    if (
+      message?.descriptor.interface !== DwnInterfaceName.Records ||
+      (
+        message.descriptor.method !== DwnMethodName.Write &&
+        message.descriptor.method !== DwnMethodName.Delete
+      )
+    ) {
+      return undefined;
+    }
+
+    const recordId = (message as { recordId?: unknown }).recordId ??
+      (message.descriptor as { recordId?: unknown }).recordId;
+    return typeof recordId === 'string' ? recordId : undefined;
+  }
+
+  private static isInitialWriteForRecord(message: GenericMessage, recordId: string): boolean {
+    if (!SyncEngineLevel.isRecordsWriteForRecord(message, recordId)) {
+      return false;
+    }
+
+    const recordsWrite = message as GenericMessage & {
+      descriptor: GenericMessage['descriptor'] & { dateCreated?: string };
+    };
+    return recordsWrite.descriptor.dateCreated === recordsWrite.descriptor.messageTimestamp;
+  }
+
+  private static isRecordsWriteForRecord(message: GenericMessage, recordId: string): boolean {
+    if (
+      message.descriptor.interface !== DwnInterfaceName.Records ||
+      message.descriptor.method !== DwnMethodName.Write
+    ) {
+      return false;
+    }
+
+    return (message as GenericMessage & { recordId?: string }).recordId === recordId;
   }
 
   private async resetFeedPullAfterProgressGap(
@@ -4488,18 +4827,24 @@ export class SyncEngineLevel implements SyncEngine {
       hasActionableDiffs = true;
       if (outcome.kind === 'admitted') {
         admittedCids.push(...outcome.appliedCids);
-        this.trackRemoteFeedAppliedCids(outcome.appliedCids, target);
+        await this.trackRemoteFeedAppliedCids(outcome.appliedCids, target);
       }
     }
 
     return { kind: 'processed', admittedCids, hasActionableDiffs };
   }
 
-  private trackRemoteFeedAppliedCids(messageCids: string[], target: SyncTarget): void {
+  private async trackRemoteFeedAppliedCids(messageCids: string[], target: SyncTarget): Promise<void> {
     for (const cid of messageCids) {
       this.trackRecentlyPulledMessage(cid, target.dwnUrl);
-      void this.clearFailedMessage(cid, target.dwnUrl).catch(() => { /* teardown race */ });
-      void this.clearDeferredPull(target.did, target.dwnUrl, cid).catch(() => { /* teardown race */ });
+      await this.clearFailedMessage(cid, target.dwnUrl);
+      await this.clearDeferredPull(target.did, target.dwnUrl, cid);
+      // A pull admission only proves that the signed message exists remotely.
+      // The remote may retain a RecordsWrite CID as dataless ancestry, while
+      // the local admission reports Duplicate because it already has the full
+      // record. Only a push acknowledgement can prove that the remote has the
+      // payload and clear an exact-CID quota block.
+      await this.resolveQuotaBlocksSupersededByAcknowledgement(target, cid);
     }
   }
 
@@ -4568,23 +4913,29 @@ export class SyncEngineLevel implements SyncEngine {
    */
   private static readonly QUOTA_BLOCK_BACKOFF_MS = [30_000, 60_000, 300_000, 900_000, 1_800_000];
 
-  private async getQuotaBlockState(tenantDid: string, dwnUrl: string, messageCid: string): Promise<QuotaBlockState | undefined> {
-    const key = SyncEngineLevel.deadLetterKey(tenantDid, messageCid, dwnUrl);
+  private static quotaBlockKey(tenantDid: string, messageCid: string, linkKey: string): string {
+    return `${tenantDid}|${messageCid}|${encodeURIComponent(linkKey)}`;
+  }
+
+  private quotaBlockIdentity(target: SyncTarget): { keyFor: (messageCid: string) => string; linkKey: string; projectionId: string } {
+    const projectionId = target.projectionId;
+    const linkKey = this.buildLinkKey(target.did, target.dwnUrl, projectionId, target.authorizationEpoch);
+    return {
+      keyFor: (messageCid: string): string => SyncEngineLevel.quotaBlockKey(target.did, messageCid, linkKey),
+      linkKey,
+      projectionId,
+    };
+  }
+
+  private async getQuotaBlockState(target: SyncTarget, messageCid: string): Promise<QuotaBlockState | undefined> {
+    const { keyFor } = this.quotaBlockIdentity(target);
     try {
-      return JSON.parse(await this._quotaBlocks.get(key)) as QuotaBlockState;
+      return JSON.parse(await this._quotaBlocks.get(keyFor(messageCid))) as QuotaBlockState;
     } catch (error) {
       const e = error as { code?: string };
       if (e.code === 'LEVEL_NOT_FOUND') { return undefined; }
       throw error;
     }
-  }
-
-  /** True when a message is quota-blocked and its next re-probe is not yet due. */
-  private async isQuotaBlockedNotDue(tenantDid: string, dwnUrl: string, messageCid: string): Promise<boolean> {
-    const state = await this.getQuotaBlockState(tenantDid, dwnUrl, messageCid);
-    if (state === undefined) { return false; }
-    const nextProbeAt = Date.parse(state.nextProbeAt);
-    return Number.isFinite(nextProbeAt) && Date.now() < nextProbeAt;
   }
 
   /** Record a fresh quota block or extend an existing one's backoff. Returns the persisted state. */
@@ -4593,36 +4944,57 @@ export class SyncEngineLevel implements SyncEngine {
     messageCid: string,
     protocol: string | undefined,
     detail: string | undefined,
+    source: QuotaBlockState['source'] = 'feed',
+    blockedCid = messageCid,
   ): Promise<QuotaBlockState> {
-    const key = SyncEngineLevel.deadLetterKey(target.did, messageCid, target.dwnUrl);
-    const previous = await this.getQuotaBlockState(target.did, target.dwnUrl, messageCid);
+    const identity = this.quotaBlockIdentity(target);
+    const key = identity.keyFor(messageCid);
+    const previous = await this.getQuotaBlockState(target, messageCid);
+    // A newer same-record acknowledgement permanently resolved this omission.
+    // A stale in-flight quota response must not reactivate it.
+    if (previous?.supersededAt !== undefined) {
+      return previous;
+    }
     const now = Date.now();
     const attempts = (previous?.attempts ?? 0) + 1;
     const backoff = SyncEngineLevel.QUOTA_BLOCK_BACKOFF_MS;
     const delay = backoff[Math.min(attempts - 1, backoff.length - 1)];
     const state: QuotaBlockState = {
       attempts,
+      authorizationEpoch : target.authorizationEpoch,
+      blockedCid,
       detail,
-      protocol       : protocol ?? previous?.protocol,
-      firstBlockedAt : previous?.firstBlockedAt ?? new Date(now).toISOString(),
-      lastBlockedAt  : new Date(now).toISOString(),
-      nextProbeAt    : new Date(now + delay).toISOString(),
+      linkKey            : identity.linkKey,
+      messageCid,
+      protocol           : protocol ?? previous?.protocol,
+      projectionId       : identity.projectionId,
+      remoteEndpoint     : target.dwnUrl,
+      source             : source ?? previous?.source,
+      tenantDid          : target.did,
+      firstBlockedAt     : previous?.firstBlockedAt ?? new Date(now).toISOString(),
+      lastBlockedAt      : new Date(now).toISOString(),
+      nextProbeAt        : new Date(now + delay).toISOString(),
     };
-    try {
-      await this._quotaBlocks.put(key, JSON.stringify(state));
-    } catch (error) {
-      const e = error as { code?: string };
-      if (e.code !== 'LEVEL_DATABASE_NOT_OPEN') { throw error; }
-    }
+    await this._quotaBlocks.put(key, JSON.stringify(state));
     return state;
   }
 
-  private async clearQuotaBlock(tenantDid: string, dwnUrl: string, messageCid: string): Promise<boolean> {
-    if (await this.getQuotaBlockState(tenantDid, dwnUrl, messageCid) === undefined) {
-      return false;
+  private async clearQuotaBlock(target: SyncTarget, messageCid: string): Promise<boolean> {
+    const { linkKey } = this.quotaBlockIdentity(target);
+    return this.clearQuotaBlockByLinkKey(target.did, linkKey, messageCid);
+  }
+
+  private async clearQuotaBlockByLinkKey(tenantDid: string, linkKey: string, messageCid: string): Promise<boolean> {
+    const key = SyncEngineLevel.quotaBlockKey(tenantDid, messageCid, linkKey);
+    try {
+      await this._quotaBlocks.get(key);
+    } catch (error) {
+      const e = error as { code?: string };
+      if (e.code === 'LEVEL_NOT_FOUND') { return false; }
+      throw error;
     }
     try {
-      await this._quotaBlocks.del(SyncEngineLevel.deadLetterKey(tenantDid, messageCid, dwnUrl));
+      await this._quotaBlocks.del(key);
     } catch (error) {
       const e = error as { code?: string };
       if (e.code !== 'LEVEL_NOT_FOUND') { throw error; }
@@ -4630,45 +5002,561 @@ export class SyncEngineLevel implements SyncEngine {
     return true;
   }
 
-  /**
-   * Records/extends the backoff for quota-blocked failures and emits a
-   * `push:quota-blocked` event for each, returning the remaining (non-quota)
-   * failures for normal terminal/retryable handling.
-   */
-  private async recordQuotaBlockedPushFailures(target: SyncTarget, failures: PushFailure[]): Promise<PushFailure[]> {
-    const remaining: PushFailure[] = [];
-    for (const failure of failures) {
-      if (!isQuotaBlockedPushFailure(failure)) {
-        remaining.push(failure);
-        continue;
-      }
-      const state = await this.recordQuotaBlock(target, failure.cid, failure.protocol, failure.detail);
-      this.emitEvent({
-        type           : 'push:quota-blocked',
-        tenantDid      : target.did,
-        remoteEndpoint : target.dwnUrl,
-        ...syncEventScope(target.scope),
-        messageCid     : failure.cid,
-        ...(failure.detail === undefined ? {} : { detail: failure.detail }),
-        nextProbeAt    : state.nextProbeAt,
-      });
+  private async clearQuotaBlockWithResolution(
+    target: SyncTarget,
+    messageCid: string,
+    resolution: 'applied' | 'superseded',
+    preserveSupersededOmission = false,
+  ): Promise<void> {
+    const state = await this.getQuotaBlockState(target, messageCid);
+    if (
+      preserveSupersededOmission &&
+      resolution === 'superseded' &&
+      state !== undefined &&
+      state.source !== 'permission-grant'
+    ) {
+      await this.markQuotaBlockAsSupersededOmission(target, messageCid, state);
+      return;
     }
-    return remaining;
+    if (!await this.clearQuotaBlock(target, messageCid)) {
+      return;
+    }
+    if (state?.supersededAt !== undefined) {
+      return;
+    }
+
+    this.emitEvent({
+      type           : 'push:quota-cleared',
+      tenantDid      : target.did,
+      remoteEndpoint : target.dwnUrl,
+      ...syncEventScope(target.scope),
+      messageCid,
+      resolution,
+    });
   }
 
-  /** Clears quota blocks for CIDs that just succeeded, emitting a resume event for each. */
-  private async clearQuotaBlocksForSucceeded(target: SyncTarget, succeededCids: string[]): Promise<void> {
-    for (const cid of succeededCids) {
-      if (await this.clearQuotaBlock(target.did, target.dwnUrl, cid)) {
+  /**
+   * Preserve an intentionally omitted historical write after the remote has
+   * acknowledged a newer state for the same record. The row remains durable so
+   * exact inventory checks can explain the missing CID, but it is no longer an
+   * active quota block and will never be probed again.
+   */
+  private async resolveQuotaBlocksSupersededByAcknowledgement(
+    target: SyncTarget,
+    acknowledgedCid: string,
+  ): Promise<void> {
+    const activeBlocks = await this.getQuotaBlocksForTarget(target);
+    if (activeBlocks.length === 0) { return; }
+
+    const acknowledged = await getLocalMessage({
+      author             : target.did,
+      delegateDid        : target.delegateDid,
+      permissionGrantIds : target.permissionGrantIds,
+      messageCid         : acknowledgedCid,
+      agent              : this.agent,
+    });
+    if (acknowledged === undefined) { return; }
+
+    for (const { messageCid, state } of activeBlocks) {
+      if (messageCid === acknowledgedCid || state.source === 'permission-grant') { continue; }
+      const blockedRoot = await getLocalMessage({
+        author             : target.did,
+        delegateDid        : target.delegateDid,
+        permissionGrantIds : target.permissionGrantIds,
+        messageCid,
+        agent              : this.agent,
+      });
+      if (
+        blockedRoot === undefined ||
+        !await SyncEngineLevel.acknowledgementSupersedesBlockedWrite(
+          acknowledged.message,
+          blockedRoot.message,
+        )
+      ) {
+        continue;
+      }
+
+      await this.markQuotaBlockAsSupersededOmission(target, messageCid, state);
+    }
+  }
+
+  /** Delete-wins supersession plus normal RecordsWrite ordering for one record. */
+  private static async acknowledgementSupersedesBlockedWrite(
+    acknowledgement: GenericMessage,
+    blocked: GenericMessage,
+  ): Promise<boolean> {
+    const recordId = SyncEngineLevel.recordIdForRecordsMessage(acknowledgement);
+    if (recordId === undefined || !SyncEngineLevel.isRecordsWriteForRecord(blocked, recordId)) {
+      return false;
+    }
+
+    if (acknowledgement.descriptor.method === DwnMethodName.Delete) {
+      return true;
+    }
+
+    return acknowledgement.descriptor.method === DwnMethodName.Write &&
+      !SyncEngineLevel.isInitialWriteForRecord(acknowledgement, recordId) &&
+      await Message.isNewer(acknowledgement, blocked);
+  }
+
+  private async markQuotaBlockAsSupersededOmission(
+    target: SyncTarget,
+    messageCid: string,
+    expected: QuotaBlockState,
+  ): Promise<void> {
+    const current = await this.getQuotaBlockState(target, messageCid);
+    if (
+      current === undefined ||
+      current.supersededAt !== undefined ||
+      current.attempts !== expected.attempts ||
+      current.lastBlockedAt !== expected.lastBlockedAt
+    ) {
+      return;
+    }
+
+    const supersededAt = new Date().toISOString();
+    const { keyFor } = this.quotaBlockIdentity(target);
+    await this._quotaBlocks.put(keyFor(messageCid), JSON.stringify({ ...current, supersededAt }));
+    this.emitEvent({
+      type           : 'push:quota-cleared',
+      tenantDid      : target.did,
+      remoteEndpoint : target.dwnUrl,
+      ...syncEventScope(target.scope),
+      messageCid,
+      resolution     : 'superseded',
+    });
+  }
+
+  /** Apply push outcomes consistently for feed, live, bootstrap, and direct quota-probe paths. */
+  private async transitionPushResult(
+    target: SyncTarget,
+    result: PushResult,
+    options?: { protocol?: string; source?: QuotaBlockState['source'] },
+  ): Promise<PushResultTransition> {
+    const transition: PushResultTransition = { quotaBlocked: false, retryableFailures: [], terminalFailures: [] };
+    const acknowledgementsByCid = new Map(
+      (result.acknowledged ?? []).map((acknowledgement) => [acknowledgement.cid, acknowledgement] as const),
+    );
+    for (const cid of result.succeeded) {
+      if (!acknowledgementsByCid.has(cid)) {
+        acknowledgementsByCid.set(cid, { cid, resolution: 'applied' });
+      }
+    }
+
+    for (const acknowledgement of acknowledgementsByCid.values()) {
+      await this.clearFailedMessage(acknowledgement.cid, target.dwnUrl);
+      await this.clearQuotaBlockWithResolution(
+        target,
+        acknowledgement.cid,
+        acknowledgement.resolution,
+        acknowledgement.resolution === 'superseded',
+      );
+      await this.resolveQuotaBlocksSupersededByAcknowledgement(target, acknowledgement.cid);
+    }
+
+    for (const originalFailure of result.failed) {
+      if (acknowledgementsByCid.has(originalFailure.cid)) {
+        continue;
+      }
+      const failure: PushFailure = {
+        ...originalFailure,
+        protocol: originalFailure.protocol ?? options?.protocol,
+      };
+
+      if (isQuotaBlockedPushFailure(failure)) {
+        const state = await this.recordQuotaBlock(
+          target,
+          failure.cid,
+          failure.protocol,
+          failure.detail,
+          options?.source,
+          failure.dependencyCid,
+        );
+        if (state.supersededAt !== undefined) { continue; }
+        transition.quotaBlocked = true;
+        transition.nextQuotaProbeAt = SyncEngineLevel.earliestTimestamp(transition.nextQuotaProbeAt, state.nextProbeAt);
         this.emitEvent({
-          type           : 'push:quota-cleared',
+          type           : 'push:quota-blocked',
           tenantDid      : target.did,
           remoteEndpoint : target.dwnUrl,
           ...syncEventScope(target.scope),
-          messageCid     : cid,
+          messageCid     : failure.cid,
+          ...(failure.detail === undefined ? {} : { detail: failure.detail }),
+          nextProbeAt    : state.nextProbeAt,
         });
+        continue;
+      }
+
+      const previousBlock = await this.getQuotaBlockState(target, failure.cid);
+      if (previousBlock?.supersededAt !== undefined) {
+        // Resolved omissions are never pushed again. Any failure still arriving
+        // for this CID belongs to an older in-flight request and cannot undo the
+        // successor acknowledgement that resolved it.
+        continue;
+      }
+      if (failure.localMissing === true && previousBlock !== undefined) {
+        await this.clearQuotaBlockWithResolution(target, failure.cid, 'superseded');
+        continue;
+      }
+
+      if (isTerminalPushFailure(failure)) {
+        await this.clearQuotaBlock(target, failure.cid);
+        await this.recordDeadLetter({
+          messageCid     : failure.cid,
+          tenantDid      : target.did,
+          remoteEndpoint : target.dwnUrl,
+          protocol       : failure.protocol ?? singleProtocolForSyncScope(target.scope),
+          category       : 'admit-failed',
+          errorCode      : failure.kind ?? 'Invalid',
+          errorDetail    : failure.detail ?? 'push rejected during sync reconciliation',
+        });
+        transition.terminalFailures.push(failure);
+        continue;
+      }
+
+      if (previousBlock !== undefined) {
+        const state = await this.recordQuotaBlock(
+          target,
+          failure.cid,
+          failure.protocol,
+          failure.detail ?? previousBlock.detail,
+          previousBlock.source,
+          previousBlock.blockedCid,
+        );
+        if (state.supersededAt !== undefined) { continue; }
+        transition.quotaBlocked = true;
+        transition.nextQuotaProbeAt = SyncEngineLevel.earliestTimestamp(transition.nextQuotaProbeAt, state.nextProbeAt);
+        continue;
+      }
+
+      transition.retryableFailures.push(failure);
+    }
+
+    return transition;
+  }
+
+  private static earliestTimestamp(current: string | undefined, candidate: string): string {
+    return current === undefined || lexicographicalCompare(candidate, current) < 0 ? candidate : current;
+  }
+
+  private static latestTimestamp(current: string | undefined, candidate: string): string {
+    return current === undefined || lexicographicalCompare(candidate, current) > 0 ? candidate : current;
+  }
+
+  /** Re-probe due feed roots independently of the feed checkpoint that advanced past them. */
+  private async probeQuotaBlocksForTarget(
+    target: SyncTarget,
+    force = false,
+    forceProbeCids?: Set<string>,
+    shouldContinue?: () => boolean,
+  ): Promise<void> {
+    const dueCids: string[] = [];
+    for (const { messageCid, state } of await this.getQuotaBlocksForTarget(target)) {
+      if (state.source === 'permission-grant') { continue; }
+      const nextProbeAt = Date.parse(state.nextProbeAt);
+      const isForced = force && (forceProbeCids === undefined || forceProbeCids.has(messageCid));
+      if (isForced || !Number.isFinite(nextProbeAt) || Date.now() >= nextProbeAt) {
+        dueCids.push(messageCid);
       }
     }
+
+    for (const messageCid of dueCids) {
+      if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
+        return;
+      }
+      await this.probeQuotaBlock(
+        target,
+        messageCid,
+        force && (forceProbeCids === undefined || forceProbeCids.has(messageCid)),
+        shouldContinue,
+      );
+    }
+  }
+
+  private async probeQuotaBlock(
+    target: SyncTarget,
+    messageCid: string,
+    force: boolean,
+    shouldContinue?: () => boolean,
+  ): Promise<void> {
+    const { keyFor } = this.quotaBlockIdentity(target);
+    const key = keyFor(messageCid);
+    const existing = this._quotaProbeInFlight.get(key);
+    if (existing !== undefined) {
+      await existing;
+      return;
+    }
+
+    const probe = this.doProbeQuotaBlock(target, messageCid, force, shouldContinue).finally((): void => {
+      if (this._quotaProbeInFlight.get(key) === probe) {
+        this._quotaProbeInFlight.delete(key);
+      }
+    });
+    this._quotaProbeInFlight.set(key, probe);
+    await probe;
+  }
+
+  private async doProbeQuotaBlock(
+    target: SyncTarget,
+    messageCid: string,
+    force: boolean,
+    shouldContinue?: () => boolean,
+  ): Promise<void> {
+    const generation = this._engineGeneration;
+    if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) { return; }
+    const state = await this.getQuotaBlockState(target, messageCid);
+    if (state === undefined || state.source === 'permission-grant' || state.supersededAt !== undefined) { return; }
+    const nextProbeAt = Date.parse(state.nextProbeAt);
+    if (!force && Number.isFinite(nextProbeAt) && Date.now() < nextProbeAt) { return; }
+
+    const localEntry = await this.getLocalQuotaProbeEntry({
+      author             : target.did,
+      delegateDid        : target.delegateDid,
+      permissionGrantIds : target.permissionGrantIds,
+      messageCid,
+    });
+    if (this._engineGeneration !== generation) { return; }
+    if (localEntry !== undefined && SyncEngineLevel.hasUnmaterializedRecordsWriteData(localEntry)) {
+      await this.deferUnmaterializedQuotaProbe(target, messageCid, state);
+      return;
+    }
+
+    const blockedDependencyEntry =
+      localEntry !== undefined && state.blockedCid !== undefined && state.blockedCid !== messageCid
+        ? await this.getLocalQuotaProbeEntry({
+          author             : target.did,
+          delegateDid        : target.delegateDid,
+          permissionGrantIds : target.permissionGrantIds,
+          messageCid         : state.blockedCid,
+        })
+        : undefined;
+    if (this._engineGeneration !== generation) { return; }
+
+    const result = localEntry === undefined
+      ? await this.pushMessages({
+        did                : target.did,
+        dwnUrl             : target.dwnUrl,
+        delegateDid        : target.delegateDid,
+        permissionGrantIds : target.permissionGrantIds,
+        messageCids        : [messageCid],
+      })
+      : await this.pushMessageEntries({
+        did                : target.did,
+        dwnUrl             : target.dwnUrl,
+        delegateDid        : target.delegateDid,
+        permissionGrantIds : target.permissionGrantIds,
+        entries            : [
+          ...(blockedDependencyEntry === undefined ? [] : [blockedDependencyEntry]),
+          localEntry,
+        ],
+      });
+    if (
+      this._engineGeneration !== generation ||
+      SyncEngineLevel.shouldAbortReconcile(shouldContinue)
+    ) {
+      return;
+    }
+    const currentState = await this.getQuotaBlockState(target, messageCid);
+    if (
+      currentState === undefined ||
+      currentState.supersededAt !== undefined ||
+      currentState.attempts !== state.attempts ||
+      currentState.lastBlockedAt !== state.lastBlockedAt
+    ) {
+      // A later remote acknowledgement, local retirement, or link lifecycle
+      // transition won the race while this request was in flight. Its newer
+      // state is authoritative; do not recreate/overwrite it with a stale
+      // probe result.
+      return;
+    }
+    await this.transitionPushResult(target, result, { protocol: state.protocol, source: state.source });
+  }
+
+  private async getLocalQuotaProbeEntry(params: {
+    author: string;
+    delegateDid?: string;
+    permissionGrantIds?: NonEmptyStringArray;
+    messageCid: string;
+  }): Promise<SyncMessageEntry | undefined> {
+    return getLocalMessage({ ...params, agent: this.agent });
+  }
+
+  /**
+   * A positive-size RecordsWrite with no local data is retained ancestry, not a
+   * standalone record to expose remotely. Its later update/delete is responsible
+   * for replaying that metadata dependency, so keep the omission durable and
+   * move its direct probe into the next backoff window.
+   */
+  private async deferUnmaterializedQuotaProbe(
+    target: SyncTarget,
+    messageCid: string,
+    state: QuotaBlockState,
+  ): Promise<void> {
+    const currentState = await this.getQuotaBlockState(target, messageCid);
+    if (
+      currentState === undefined ||
+      currentState.supersededAt !== undefined ||
+      currentState.attempts !== state.attempts ||
+      currentState.lastBlockedAt !== state.lastBlockedAt
+    ) {
+      return;
+    }
+
+    const delayIndex = Math.min(state.attempts, SyncEngineLevel.QUOTA_BLOCK_BACKOFF_MS.length - 1);
+    const nextProbeAt = new Date(Date.now() + SyncEngineLevel.QUOTA_BLOCK_BACKOFF_MS[delayIndex]).toISOString();
+    const { keyFor } = this.quotaBlockIdentity(target);
+    await this._quotaBlocks.put(keyFor(messageCid), JSON.stringify({ ...state, nextProbeAt }));
+  }
+
+  private async clearQuotaBlocksForTenant(tenantDid: string): Promise<void> {
+    const batch: { type: 'del'; key: string }[] = [];
+    for await (const [key] of this._quotaBlocks.iterator(SyncEngineLevel.deadLetterTenantRange(tenantDid))) {
+      batch.push({ type: 'del', key });
+    }
+    if (batch.length > 0) {
+      await this._quotaBlocks.batch(batch);
+    }
+  }
+
+  private async pruneQuotaBlocksForCurrentTargets(targets: SyncTarget[], expectedGeneration: number): Promise<void> {
+    const currentLinkKeys = new Set(targets.map((target) => this.quotaBlockIdentity(target).linkKey));
+    const registeredTenants = new Set(targets.map((target) => target.did));
+    const batch: { type: 'del'; key: string }[] = [];
+    for await (const [key, value] of this._quotaBlocks.iterator()) {
+      const state = JSON.parse(value) as QuotaBlockState;
+      if (registeredTenants.has(state.tenantDid) && !currentLinkKeys.has(state.linkKey)) {
+        batch.push({ type: 'del', key });
+      }
+    }
+    if (this._syncTargetsCacheGeneration !== expectedGeneration) {
+      return;
+    }
+    if (batch.length > 0) {
+      await this._quotaBlocks.batch(batch);
+    }
+  }
+
+  private async getQuotaBlocksForTarget(
+    target: SyncTarget,
+  ): Promise<Array<{ messageCid: string; state: QuotaBlockState }>> {
+    return (await this.getQuotaStatesForTarget(target))
+      .filter(({ state }) => state.supersededAt === undefined);
+  }
+
+  /** Includes resolved omissions retained solely for exact feed-divergence accounting. */
+  private async getQuotaStatesForTarget(
+    target: SyncTarget,
+  ): Promise<Array<{ messageCid: string; state: QuotaBlockState }>> {
+    const blocks: Array<{ messageCid: string; state: QuotaBlockState }> = [];
+    const { linkKey } = this.quotaBlockIdentity(target);
+    const targetProtocols = protocolsForSyncScope(target.scope);
+    for await (const [, value] of this._quotaBlocks.iterator(SyncEngineLevel.deadLetterTenantRange(target.did))) {
+      const state = JSON.parse(value) as QuotaBlockState;
+      if (state.linkKey !== linkKey) { continue; }
+      if (targetProtocols !== undefined && state.protocol !== undefined && !targetProtocols.includes(state.protocol)) {
+        continue;
+      }
+      blocks.push({ messageCid: state.messageCid, state });
+    }
+    return blocks;
+  }
+
+  private async clearResolvedQuotaOmissionsForTarget(target: SyncTarget): Promise<void> {
+    for (const { messageCid, state } of await this.getQuotaStatesForTarget(target)) {
+      if (state.supersededAt !== undefined) {
+        await this.clearQuotaBlock(target, messageCid);
+      }
+    }
+  }
+
+  private async getNextQuotaProbeAtForTarget(target: SyncTarget): Promise<string | undefined> {
+    let nextFeedProbeAt: string | undefined;
+    let grantBundleProbeAt: string | undefined;
+    for (const block of await this.getQuotaBlocksForTarget(target)) {
+      if (block.state.source === 'permission-grant') {
+        // A delegated target's grant set is one authorization bundle. Wait for
+        // every blocked grant to become due before replaying the bundle, or a
+        // past-due sibling can continuously schedule zero-delay reconciles.
+        grantBundleProbeAt = SyncEngineLevel.latestTimestamp(grantBundleProbeAt, block.state.nextProbeAt);
+      } else {
+        nextFeedProbeAt = SyncEngineLevel.earliestTimestamp(nextFeedProbeAt, block.state.nextProbeAt);
+      }
+    }
+    if (grantBundleProbeAt === undefined) { return nextFeedProbeAt; }
+    if (nextFeedProbeAt === undefined) { return grantBundleProbeAt; }
+    return SyncEngineLevel.earliestTimestamp(nextFeedProbeAt, grantBundleProbeAt);
+  }
+
+  /**
+   * Exact quota-divergence check. A block only suppresses pause/reset when the
+   * remote has no unexplained extra CIDs and every local-only CID is one of
+   * this link's durable omissions. This avoids masking unrelated corruption.
+   */
+  private async isFeedDivergenceExplainedByQuotaBlocks(
+    target: SyncTarget,
+    result: SyncReconcileResult,
+  ): Promise<boolean> {
+    let blocks = await this.getQuotaStatesForTarget(target);
+    if (blocks.length === 0) { return false; }
+
+    // A quota-blocked permission grant prevents an authorized remote inventory
+    // query. The bootstrap result itself is the complete explanation until its
+    // independently scheduled grant probe succeeds.
+    if (result.quotaBlocked === true && blocks.some(({ state }) => state.source === 'permission-grant')) {
+      return true;
+    }
+
+    const [localCids, remoteCids] = await Promise.all([
+      this.collectLocalFeedCids(target),
+      this.collectRemoteFeedCids(target),
+    ]);
+    if (localCids === undefined || remoteCids === undefined) { return false; }
+
+    // Local feed retirement is authoritative. Remote CID presence alone is not
+    // enough to clear an active root: a replicated initial write may exist only
+    // as dataless ancestry. A resolved row can be collected only after every
+    // local-only CID it explains (root and distinct blocked dependency) is gone.
+    for (const block of blocks) {
+      const blockedCid = block.state.blockedCid;
+      const blockedDependencyIsLocalOnly = blockedCid !== undefined &&
+        blockedCid !== block.messageCid &&
+        localCids.has(blockedCid) &&
+        !remoteCids.has(blockedCid);
+
+      if (block.state.supersededAt !== undefined) {
+        const rootIsLocalOnly = localCids.has(block.messageCid) && !remoteCids.has(block.messageCid);
+        if (!rootIsLocalOnly && !blockedDependencyIsLocalOnly) {
+          await this.clearQuotaBlock(target, block.messageCid);
+        }
+        continue;
+      }
+
+      if (!localCids.has(block.messageCid) && blockedDependencyIsLocalOnly) {
+        await this.markQuotaBlockAsSupersededOmission(target, block.messageCid, block.state);
+      } else if (!localCids.has(block.messageCid)) {
+        await this.clearQuotaBlockWithResolution(target, block.messageCid, 'superseded');
+      }
+    }
+
+    blocks = await this.getQuotaStatesForTarget(target);
+    if (blocks.length === 0) {
+      return localCids.size === remoteCids.size &&
+        [...localCids].every((cid) => remoteCids.has(cid));
+    }
+    const omittedCids = new Set<string>();
+    for (const { messageCid, state } of blocks) {
+      if (state.source === 'permission-grant') { continue; }
+      omittedCids.add(messageCid);
+      if (state.blockedCid !== undefined && localCids.has(state.blockedCid)) {
+        omittedCids.add(state.blockedCid);
+      }
+    }
+    const localOnly = [...localCids].filter((cid) => !remoteCids.has(cid));
+    const remoteOnly = [...remoteCids].filter((cid) => !localCids.has(cid));
+
+    return remoteOnly.length === 0 &&
+      localOnly.length > 0 &&
+      localOnly.every((cid) => omittedCids.has(cid));
   }
 
   private async advanceFeedPullCursor(
@@ -4873,6 +5761,23 @@ export class SyncEngineLevel implements SyncEngine {
       typeof descriptor.dataCid === 'string';
   }
 
+  private static hasUnmaterializedRecordsWriteData(entry: SyncMessageEntry): boolean {
+    const { descriptor } = entry.message;
+    const dataSize = (descriptor as { dataSize?: unknown }).dataSize;
+    if (
+      descriptor.interface !== DwnInterfaceName.Records ||
+      descriptor.method !== DwnMethodName.Write ||
+      typeof dataSize !== 'number' ||
+      dataSize <= 0
+    ) {
+      return false;
+    }
+
+    return entry.dataStream === undefined &&
+      entry.bufferedData === undefined &&
+      typeof (entry.message as { encodedData?: unknown }).encodedData !== 'string';
+  }
+
   private static shouldAbortReconcile(shouldContinue?: () => boolean): boolean {
     return shouldContinue?.() === false;
   }
@@ -4884,6 +5789,9 @@ export class SyncEngineLevel implements SyncEngine {
   /** Active reconcile timers, keyed by link key. */
   private readonly _reconcileTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
+  /** Scheduled wall-clock time for each reconcile timer, so earlier work can preempt a quota timer. */
+  private readonly _reconcileTimerDueAt: Map<string, number> = new Map();
+
   /** Active reconcile operations, keyed by link key (dedup). */
   private readonly _reconcileInFlight: Map<string, Promise<void>> = new Map();
 
@@ -4892,12 +5800,25 @@ export class SyncEngineLevel implements SyncEngine {
    * repeated requests for the same link.
    */
   private scheduleReconcile(linkKey: string, delayMs: number = 1500): boolean {
-    if (this._reconcileTimers.has(linkKey)) { return false; }
     if (this._activeRepairs.has(linkKey)) { return false; }
+
+    const normalizedDelay = Math.max(0, delayMs);
+    const dueAt = Date.now() + normalizedDelay;
+    const existingTimer = this._reconcileTimers.get(linkKey);
+    if (existingTimer !== undefined) {
+      const existingDueAt = this._reconcileTimerDueAt.get(linkKey);
+      if (existingDueAt !== undefined && existingDueAt <= dueAt) {
+        return false;
+      }
+      clearTimeout(existingTimer);
+      this._reconcileTimers.delete(linkKey);
+      this._reconcileTimerDueAt.delete(linkKey);
+    }
 
     const generation = this._engineGeneration;
     const timer = setTimeout((): void => {
       this._reconcileTimers.delete(linkKey);
+      this._reconcileTimerDueAt.delete(linkKey);
       if (this._engineGeneration !== generation) { return; }
       // Guard: bail if this link was hot-removed since the timer was
       // scheduled. Without this, a stale timer could restart reconcile
@@ -4907,8 +5828,9 @@ export class SyncEngineLevel implements SyncEngine {
         // Errors are already logged inside doReconcileLink; swallow here
         // to prevent unhandled-rejection flakes in the test runner.
       });
-    }, delayMs);
+    }, normalizedDelay);
     this._reconcileTimers.set(linkKey, timer);
+    this._reconcileTimerDueAt.set(linkKey, dueAt);
     return true;
   }
 
@@ -4963,6 +5885,7 @@ export class SyncEngineLevel implements SyncEngine {
       did,
       dwnUrl,
       delegateDid,
+      projectionId       : link.projectionId,
       scope,
       authorization,
       authorizationEpoch : link.authorizationEpoch,
@@ -5232,10 +6155,14 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
 
+    const currentQuotaLinkKeys = await this.getCurrentQuotaLinkKeys();
     let quotaBlockedMessageCount = 0;
-    for await (const entry of this._quotaBlocks.iterator()) {
-      void entry;
-      quotaBlockedMessageCount++;
+    for await (const [, value] of this._quotaBlocks.iterator()) {
+      const state = JSON.parse(value) as QuotaBlockState;
+      if (state.supersededAt !== undefined) { continue; }
+      if (currentQuotaLinkKeys === undefined || currentQuotaLinkKeys.has(state.linkKey)) {
+        quotaBlockedMessageCount++;
+      }
     }
 
     // Superseded authorization epochs can leave durable link state behind. Only
@@ -5257,7 +6184,7 @@ export class SyncEngineLevel implements SyncEngine {
       admissionFailureCount    : admissionFailureCount,
       degradedLinkCount        : degradedLinkCount,
       quotaBlockedMessageCount : quotaBlockedMessageCount,
-      syncHealthy              : failedMessageCount === 0 && degradedLinkCount === 0,
+      syncHealthy              : failedMessageCount === 0 && degradedLinkCount === 0 && quotaBlockedMessageCount === 0,
     };
   }
 
@@ -5271,7 +6198,9 @@ export class SyncEngineLevel implements SyncEngine {
       degraded: boolean;
       nextProbeAt?: string;
       lastError?: string;
+      lastErrorAt?: string;
       lastBlockedAt?: string;
+      lastActivityAt?: string;
     };
     const rows = new Map<string, Accumulator>();
     const rowKey = (did: string, remote: string): string => `${did}|${remote}`;
@@ -5288,6 +6217,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     // Durable links seed connectivity + degraded state per (tenant, remote).
     const currentLinkIdentityKeys = await this.getCurrentDurableLinkIdentityKeys();
+    const currentQuotaLinkKeys = await this.getCurrentQuotaLinkKeys();
     for (const link of await this.ledger.getAllLinks()) {
       if (!matchesTenant(link.tenantDid)) { continue; }
       const isCurrentLink = currentLinkIdentityKeys === undefined || currentLinkIdentityKeys.has(this.getDurableLinkIdentityKey(link));
@@ -5296,20 +6226,28 @@ export class SyncEngineLevel implements SyncEngine {
       if (link.connectivity === 'offline') { row.connectivity = 'offline'; }
       else if (row.connectivity !== 'offline' && link.connectivity === 'online') { row.connectivity = 'online'; }
       if (SyncEngineLevel.isUnhealthyLinkStatus(link.status)) { row.degraded = true; }
+      if (
+        link.lastActivityAt !== undefined &&
+        (row.lastActivityAt === undefined || lexicographicalCompare(link.lastActivityAt, row.lastActivityAt) > 0)
+      ) {
+        row.lastActivityAt = link.lastActivityAt;
+      }
     }
 
     // Quota blocks: count, soonest next probe, latest detail.
-    for await (const [key, value] of this._quotaBlocks.iterator()) {
+    for await (const [, value] of this._quotaBlocks.iterator()) {
       const state = JSON.parse(value) as QuotaBlockState;
-      const { tenant, remote } = SyncEngineLevel.parseDeadLetterKey(key);
-      if (!matchesTenant(tenant)) { continue; }
-      const row = rowFor(tenant, remote);
+      if (!matchesTenant(state.tenantDid)) { continue; }
+      if (currentQuotaLinkKeys !== undefined && !currentQuotaLinkKeys.has(state.linkKey)) { continue; }
+      if (state.supersededAt !== undefined) { continue; }
+      const row = rowFor(state.tenantDid, state.remoteEndpoint);
       row.quotaBlockedMessageCount++;
       if (row.nextProbeAt === undefined || lexicographicalCompare(state.nextProbeAt, row.nextProbeAt) < 0) {
         row.nextProbeAt = state.nextProbeAt;
       }
       if (row.lastBlockedAt === undefined || lexicographicalCompare(state.lastBlockedAt, row.lastBlockedAt) > 0) {
         row.lastBlockedAt = state.lastBlockedAt;
+        row.lastErrorAt = state.lastBlockedAt;
         row.lastError = state.detail;
       }
     }
@@ -5318,7 +6256,13 @@ export class SyncEngineLevel implements SyncEngine {
     for await (const [, value] of this._deadLetters.iterator()) {
       const entry = JSON.parse(value) as DeadLetterEntry;
       if (!matchesTenant(entry.tenantDid) || entry.remoteEndpoint === undefined) { continue; }
-      rowFor(entry.tenantDid, entry.remoteEndpoint).failedMessageCount++;
+      const row = rowFor(entry.tenantDid, entry.remoteEndpoint);
+      row.failedMessageCount++;
+      row.degraded = true;
+      if (row.lastErrorAt === undefined || lexicographicalCompare(entry.failedAt, row.lastErrorAt) > 0) {
+        row.lastErrorAt = entry.failedAt;
+        row.lastError = entry.errorDetail;
+      }
     }
 
     return [...rows.values()]
@@ -5331,33 +6275,95 @@ export class SyncEngineLevel implements SyncEngine {
         failedMessageCount       : row.failedMessageCount,
         ...(row.nextProbeAt === undefined ? {} : { nextProbeAt: row.nextProbeAt }),
         ...(row.lastError === undefined ? {} : { lastError: row.lastError }),
+        ...(row.lastActivityAt === undefined ? {} : { lastActivityAt: row.lastActivityAt }),
       }))
       .sort((a, b) => lexicographicalCompare(rowKey(a.tenantDid, a.remoteEndpoint), rowKey(b.tenantDid, b.remoteEndpoint)));
   }
 
   private static rollUpRemoteState(
-    row: { connectivity: SyncConnectivityState; quotaBlockedMessageCount: number; degraded: boolean },
+    row: { connectivity: SyncConnectivityState; quotaBlockedMessageCount: number; failedMessageCount: number; degraded: boolean },
   ): RemoteSyncState {
     if (row.connectivity === 'offline') { return 'offline'; }
     if (row.quotaBlockedMessageCount > 0) { return 'quota-blocked'; }
-    if (row.degraded) { return 'degraded'; }
+    if (row.degraded || row.failedMessageCount > 0) { return 'degraded'; }
     return 'healthy';
   }
 
   public async retryRemoteNow(tenantDid: string, remoteEndpoint: string): Promise<void> {
-    // Mark every quota block for this (tenant, remote) due immediately.
-    const now = new Date().toISOString();
-    const batch: { type: 'put'; key: string; value: string }[] = [];
-    for await (const [key, value] of this._quotaBlocks.iterator()) {
-      const parsed = SyncEngineLevel.parseDeadLetterKey(key);
-      if (parsed.tenant !== tenantDid || parsed.remote !== remoteEndpoint) { continue; }
-      const state = JSON.parse(value) as QuotaBlockState;
-      batch.push({ type: 'put', key, value: JSON.stringify({ ...state, nextProbeAt: now }) });
+    const generation = this._engineGeneration;
+    const retry = this._retryRemoteQueue.then(async (): Promise<void> => {
+      await this.doRetryRemoteNow(tenantDid, remoteEndpoint, generation);
+    });
+    this._retryRemoteQueue = retry.catch((): void => {
+      // Keep the queue usable after surfacing the original operation failure.
+    });
+    await retry;
+  }
+
+  private async doRetryRemoteNow(tenantDid: string, remoteEndpoint: string, generation: number): Promise<void> {
+    // A normal sync/drain already owns the feed checkpoints. Let that operation
+    // finish, then preserve the explicit retry request rather than racing its
+    // checkpoint writes or silently dropping a UI Retry-now action.
+    await this.waitForAndAcquireSyncLock();
+
+    try {
+      if (this._engineGeneration !== generation) {
+        return;
+      }
+      const topologyGeneration = this._syncTargetsCacheGeneration;
+      const targets = (await this.getSyncTargets()).filter(
+        (target) => target.did === tenantDid && target.dwnUrl === remoteEndpoint,
+      );
+
+      await Promise.all(targets.map(async (target) => {
+        await this.retryQuotaBlocksForTarget(target, generation, topologyGeneration);
+      }));
+    } finally {
+      this.releaseSyncLock();
     }
-    if (batch.length === 0) { return; }
-    await this._quotaBlocks.batch(batch);
-    // Kick a reconcile so the now-due messages are re-probed without waiting.
-    await this.sync('push').catch(() => { /* best-effort resume; next poll retries */ });
+  }
+
+  private async retryQuotaBlocksForTarget(
+    target: SyncTarget,
+    generation: number,
+    topologyGeneration: number,
+  ): Promise<void> {
+    const { linkKey } = this.quotaBlockIdentity(target);
+    const key = `${linkKey}|__retry-target__`;
+    const existing = this._quotaProbeInFlight.get(key);
+    if (existing !== undefined) {
+      await existing;
+      return;
+    }
+
+    const retry = (async (): Promise<void> => {
+      const blocks = await this.getQuotaBlocksForTarget(target);
+      if (
+        blocks.length === 0 ||
+        this._engineGeneration !== generation ||
+        this._syncTargetsCacheGeneration !== topologyGeneration
+      ) {
+        return;
+      }
+
+      // Reconcile this exact projection/authorization link before forcing any
+      // remaining direct probes. A later delete/update can therefore replay a
+      // retained dataless ancestor as its dependency instead of exposing that
+      // ancestor as standalone remote state.
+      await this.syncTargetWithDurableFeeds(
+        target,
+        { direction: 'push', forceQuotaProbe: true },
+        (): boolean =>
+          this._engineGeneration === generation &&
+          this._syncTargetsCacheGeneration === topologyGeneration,
+      );
+    })().finally((): void => {
+      if (this._quotaProbeInFlight.get(key) === retry) {
+        this._quotaProbeInFlight.delete(key);
+      }
+    });
+    this._quotaProbeInFlight.set(key, retry);
+    await retry;
   }
 
   private async getCurrentDurableLinkIdentityKeys(): Promise<Set<string> | undefined> {
@@ -5382,6 +6388,20 @@ export class SyncEngineLevel implements SyncEngine {
       return identityKeys;
     } catch (error: unknown) {
       console.warn('SyncEngineLevel: Failed to resolve current durable link identity keys for health; falling back to all durable links', error);
+      return undefined;
+    }
+  }
+
+  private async getCurrentQuotaLinkKeys(): Promise<Set<string> | undefined> {
+    try {
+      const targets = await this.getSyncTargets();
+      if (!this._syncTargetsLastResolutionComplete || targets.length === 0) {
+        return undefined;
+      }
+
+      return new Set(targets.map((target) => this.quotaBlockIdentity(target).linkKey));
+    } catch (error: unknown) {
+      console.warn('SyncEngineLevel: Failed to resolve current quota link keys for health; falling back to all quota blocks', error);
       return undefined;
     }
   }
@@ -5413,6 +6433,7 @@ export class SyncEngineLevel implements SyncEngine {
     // Return cached targets if still valid.
     if (this._syncTargetsCache
         && (Date.now() - this._syncTargetsCache.timestamp) < SyncEngineLevel.SYNC_TARGETS_CACHE_TTL_MS) {
+      this._syncTargetsLastResolutionComplete = true;
       return this._syncTargetsCache.targets;
     }
 
@@ -5424,6 +6445,7 @@ export class SyncEngineLevel implements SyncEngine {
     const targets: SyncTarget[] = [];
     let hasRegisteredIdentities = false;
     let anyTargetUnavailable = false;
+    this._syncTargetsLastResolutionComplete = false;
 
     for await (const [did, options] of this._db.sublevel('registeredIdentities').iterator()) {
       hasRegisteredIdentities = true;
@@ -5431,6 +6453,7 @@ export class SyncEngineLevel implements SyncEngine {
       try {
         parsed = JSON.parse(options) as SyncIdentityOptions;
       } catch (error: unknown) {
+        anyTargetUnavailable = true;
         console.warn(`SyncEngineLevel: Corrupt sync options for ${did}, skipping identity:`, error);
         continue;
       }
@@ -5458,9 +6481,16 @@ export class SyncEngineLevel implements SyncEngine {
     //   caching would suppress retries for that identity for the full TTL).
     // - The generation hasn't changed (a concurrent register/unregister
     //   invalidated the cache while we were awaiting).
-    const isComplete = hasRegisteredIdentities && !anyTargetUnavailable;
+    const generationIsCurrent = this._syncTargetsCacheGeneration === generationAtStart;
+    this._syncTargetsLastResolutionComplete = !anyTargetUnavailable && generationIsCurrent;
+    const isComplete = hasRegisteredIdentities && this._syncTargetsLastResolutionComplete;
     if (targets.length > 0 && isComplete && this._syncTargetsCacheGeneration === generationAtStart) {
-      this._syncTargetsCache = { targets, timestamp: Date.now() };
+      await this.pruneQuotaBlocksForCurrentTargets(targets, generationAtStart);
+      if (this._syncTargetsCacheGeneration === generationAtStart) {
+        this._syncTargetsCache = { targets, timestamp: Date.now() };
+      } else {
+        this._syncTargetsLastResolutionComplete = false;
+      }
     }
     return targets;
   }
