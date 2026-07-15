@@ -316,6 +316,14 @@ export type PushFailure = {
   terminal?: boolean;
   /** True when the remote tenant is inactive and retrying the same message would hot-loop. */
   tenantInactive?: boolean;
+  /**
+   * True when the remote rejected the push for tenant storage/message quota.
+   * Like {@link tenantInactive}, retrying the same message immediately would
+   * hot-loop — but unlike it, the block self-heals once the remote quota grows
+   * or the record is deleted/shrunk, so the engine defers + backed-off re-probes
+   * instead of dead-lettering.
+   */
+  quotaBlocked?: boolean;
   /** Human-readable diagnostic detail. */
   detail?: string;
 };
@@ -329,6 +337,11 @@ export type PushResult = {
 
 export function isTerminalPushFailure(failure: PushFailure): boolean {
   return failure.terminal === true;
+}
+
+/** A push rejected because the remote is out of tenant storage/message quota. */
+export function isQuotaBlockedPushFailure(failure: PushFailure): boolean {
+  return failure.quotaBlocked === true;
 }
 
 /**
@@ -345,6 +358,9 @@ export function pushBatchReconcileReason(entries: Array<{ lastFailure?: PushFail
 
   if (failures.some(failure => failure.kind === 'Incomplete')) {
     return 'push-incomplete';
+  }
+  if (failures.some(failure => failure.quotaBlocked === true)) {
+    return 'push-quota-blocked';
   }
   if (failures.some(failure => failure.tenantInactive === true)) {
     return 'push-tenant-inactive';
@@ -455,7 +471,11 @@ export type SyncEvent =
   | SyncEventBase & { type: 'repair:started'; attempt: number }
   | SyncEventBase & { type: 'repair:completed' }
   | SyncEventBase & { type: 'repair:failed'; attempt: number; error: string }
-  | SyncEventBase & { type: 'gap:detected'; reason: string };
+  | SyncEventBase & { type: 'gap:detected'; reason: string }
+  /** A push was rejected because the remote is out of storage/message quota for this tenant. Re-probing is deferred until `nextProbeAt`. */
+  | SyncEventBase & { type: 'push:quota-blocked'; messageCid: string; detail?: string; nextProbeAt: string }
+  /** A previously quota-blocked push succeeded (quota grew, or the record was deleted/shrunk), so this remote resumed accepting writes. */
+  | SyncEventBase & { type: 'push:quota-cleared'; messageCid: string };
 
 export type SyncEventListener = (event: SyncEvent) => void;
 
@@ -509,8 +529,43 @@ export type SyncHealthSummary = {
   admissionFailureCount: number;
   /** Number of current sync links in `repairing` or `paused` status. */
   degradedLinkCount: number;
+  /**
+   * Number of messages currently deferred because a remote rejected the push
+   * for tenant storage/message quota. These are re-probed on a backoff and
+   * self-heal when quota grows or the record is deleted/shrunk — they are a
+   * transient, user-actionable condition, not a hard failure.
+   */
+  quotaBlockedMessageCount: number;
   /** True only when there are no failed messages or degraded links. */
   syncHealthy: boolean;
+};
+
+/**
+ * Coarse per-remote sync state for UI. Precedence when several apply:
+ * `offline` > `quota-blocked` > `degraded` > `healthy`.
+ */
+export type RemoteSyncState = 'healthy' | 'quota-blocked' | 'degraded' | 'offline';
+
+/**
+ * Per-`(tenantDid, remoteEndpoint)` sync status snapshot. Returned by
+ * {@link SyncEngine.getRemoteSyncStatus} so a frontend can render each remote's
+ * health, alert when one stops accepting writes, and trigger a resume.
+ */
+export type RemoteSyncStatus = {
+  tenantDid: string;
+  remoteEndpoint: string;
+  /** Rolled-up state for a status badge. */
+  state: RemoteSyncState;
+  /** Per-link connectivity as observed by the engine. */
+  connectivity: SyncConnectivityState;
+  /** Messages currently deferred against this remote for quota. */
+  quotaBlockedMessageCount: number;
+  /** Dead-lettered (terminal) messages for this remote. */
+  failedMessageCount: number;
+  /** ISO-8601 time of the soonest quota re-probe across this remote's blocked messages, if any. */
+  nextProbeAt?: string;
+  /** Human-readable detail of the most recent quota block, if any. */
+  lastError?: string;
 };
 
 export interface SyncEngine {
@@ -645,4 +700,21 @@ export interface SyncEngine {
    * and degraded link count.
    */
   getSyncHealth(): Promise<SyncHealthSummary>;
+
+  /**
+   * Returns a per-`(tenantDid, remoteEndpoint)` sync status snapshot, optionally
+   * filtered by tenant. Lets a frontend render each remote's health (healthy /
+   * quota-blocked / degraded / offline), show when a quota-blocked remote will
+   * next be re-probed, and surface the latest error. Rows are derived from
+   * current durable link state plus live quota-block and dead-letter records.
+   */
+  getRemoteSyncStatus(tenantDid?: string): Promise<RemoteSyncStatus[]>;
+
+  /**
+   * Immediately re-probe a remote's quota-blocked messages instead of waiting
+   * for the backoff. Marks every quota block for `(tenantDid, remoteEndpoint)`
+   * due now and kicks a reconcile, so a UI "Retry now" button (or a freshly
+   * purchased quota) resumes without delay. No-op when nothing is blocked.
+   */
+  retryRemoteNow(tenantDid: string, remoteEndpoint: string): Promise<void>;
 }

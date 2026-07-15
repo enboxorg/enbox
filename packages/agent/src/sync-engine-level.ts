@@ -17,6 +17,8 @@ import type {
   NonEmptyStringArray,
   PushFailure,
   PushResult,
+  RemoteSyncState,
+  RemoteSyncStatus,
   ReplicationLinkState,
   StartSyncParams,
   SyncAuthorization,
@@ -43,7 +45,7 @@ import { DwnInterface } from './types/dwn.js';
 import { getProtocolClosureEdges } from './sync-scope-closure.js';
 import { isRecordsWrite } from './utils.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
-import { computeAuthorizationEpoch, computeProjectionId, isTerminalPushFailure, lexicographicalCompare, protocolsForSyncScope, pushBatchReconcileReason, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
+import { computeAuthorizationEpoch, computeProjectionId, isQuotaBlockedPushFailure, isTerminalPushFailure, lexicographicalCompare, protocolsForSyncScope, pushBatchReconcileReason, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
 import { fetchRemoteMessages, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, SyncPullAbortedError } from './sync-messages.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, resolveMessagesScopes, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds, toSyncAuthorizationGrants } from './sync-permission-grants.js';
 
@@ -183,6 +185,21 @@ type DeferredPullState = {
   detail?: string;
   firstDeferredAt: string;
   lastDeferredAt: string;
+};
+
+/**
+ * Durable state for a push message the remote rejected for tenant quota. Keyed
+ * by `(tenantDid, messageCid, remoteEndpoint)`. The message is skipped in the
+ * feed push until `nextProbeAt`, then attempted once; a still-quota result
+ * extends the backoff, a success clears the entry.
+ */
+type QuotaBlockState = {
+  attempts: number;
+  detail?: string;
+  protocol?: string;
+  firstBlockedAt: string;
+  lastBlockedAt: string;
+  nextProbeAt: string;
 };
 
 type FeedPageAdmissionResult =
@@ -772,10 +789,16 @@ export class SyncEngineLevel implements SyncEngine {
     return this._db.sublevel('deferredPulls') as unknown as AbstractLevel<string | Buffer | Uint8Array, string, string>;
   }
 
+  /** LevelDB sublevel for push messages deferred because the remote is out of quota. */
+  private get _quotaBlocks(): AbstractLevel<string | Buffer | Uint8Array, string, string> {
+    return this._db.sublevel('quotaBlocks') as unknown as AbstractLevel<string | Buffer | Uint8Array, string, string>;
+  }
+
   private async clearSyncDb(): Promise<void> {
     const sublevelNames = [
       'deadLetters',
       'deferredPulls',
+      'quotaBlocks',
       'registeredIdentities',
       'replicationLinks',
       'syncMetadata',
@@ -4351,6 +4374,13 @@ export class SyncEngineLevel implements SyncEngine {
       return { kind: 'skipped' };
     }
 
+    // Quota-blocked and not yet due for a re-probe: skip so we neither re-hammer
+    // the remote (the console-error flood) nor stall newer, smaller records
+    // behind this one (a `failed` return would halt the whole feed page).
+    if (await this.isQuotaBlockedNotDue(target.did, target.dwnUrl, entry.messageCid)) {
+      return { kind: 'skipped' };
+    }
+
     if (this.isRecentlyPulled(entry.messageCid, target.dwnUrl)) {
       return { kind: 'skipped' };
     }
@@ -4363,6 +4393,9 @@ export class SyncEngineLevel implements SyncEngine {
       messageCids        : [entry.messageCid],
     });
     this.clearSucceededPushFailures(result.succeeded, target.dwnUrl);
+    // Self-heal: a message that was quota-blocked and now applied or was
+    // superseded (quota grew, or the record was deleted/shrunk locally).
+    await this.clearQuotaBlocksForSucceeded(target, result.succeeded);
     const failed = result.failed.map((failure): PushFailure => ({
       ...failure,
       protocol: failure.protocol ?? entry.protocol,
@@ -4372,9 +4405,16 @@ export class SyncEngineLevel implements SyncEngine {
       return { kind: 'pushed' };
     }
 
-    const retryableFailures = await this.recordTerminalSyncPushFailures(target, failed);
+    // Peel off quota-blocked failures: record/extend their backoff, emit an
+    // event, and do NOT let them halt the page — newer records must still push.
+    const nonQuotaFailures = await this.recordQuotaBlockedPushFailures(target, failed);
+    if (nonQuotaFailures.length === 0) {
+      return { kind: 'skipped' };
+    }
+
+    const retryableFailures = await this.recordTerminalSyncPushFailures(target, nonQuotaFailures);
     return retryableFailures > 0
-      ? { kind: 'failed', failures: failed }
+      ? { kind: 'failed', failures: nonQuotaFailures }
       : { kind: 'skipped' };
   }
 
@@ -4517,6 +4557,116 @@ export class SyncEngineLevel implements SyncEngine {
       const e = error as { code?: string };
       if (e.code !== 'LEVEL_NOT_FOUND') {
         throw error;
+      }
+    }
+  }
+
+  /**
+   * Quota-block re-probe backoff: 30s, 1m, 5m, 15m, then 30m (clamped). The
+   * poll/reconcile cadence drives the probes; `nextProbeAt` throttles how often
+   * a blocked message is actually re-attempted so the remote is not hammered.
+   */
+  private static readonly QUOTA_BLOCK_BACKOFF_MS = [30_000, 60_000, 300_000, 900_000, 1_800_000];
+
+  private async getQuotaBlockState(tenantDid: string, dwnUrl: string, messageCid: string): Promise<QuotaBlockState | undefined> {
+    const key = SyncEngineLevel.deadLetterKey(tenantDid, messageCid, dwnUrl);
+    try {
+      return JSON.parse(await this._quotaBlocks.get(key)) as QuotaBlockState;
+    } catch (error) {
+      const e = error as { code?: string };
+      if (e.code === 'LEVEL_NOT_FOUND') { return undefined; }
+      throw error;
+    }
+  }
+
+  /** True when a message is quota-blocked and its next re-probe is not yet due. */
+  private async isQuotaBlockedNotDue(tenantDid: string, dwnUrl: string, messageCid: string): Promise<boolean> {
+    const state = await this.getQuotaBlockState(tenantDid, dwnUrl, messageCid);
+    if (state === undefined) { return false; }
+    const nextProbeAt = Date.parse(state.nextProbeAt);
+    return Number.isFinite(nextProbeAt) && Date.now() < nextProbeAt;
+  }
+
+  /** Record a fresh quota block or extend an existing one's backoff. Returns the persisted state. */
+  private async recordQuotaBlock(
+    target: SyncTarget,
+    messageCid: string,
+    protocol: string | undefined,
+    detail: string | undefined,
+  ): Promise<QuotaBlockState> {
+    const key = SyncEngineLevel.deadLetterKey(target.did, messageCid, target.dwnUrl);
+    const previous = await this.getQuotaBlockState(target.did, target.dwnUrl, messageCid);
+    const now = Date.now();
+    const attempts = (previous?.attempts ?? 0) + 1;
+    const backoff = SyncEngineLevel.QUOTA_BLOCK_BACKOFF_MS;
+    const delay = backoff[Math.min(attempts - 1, backoff.length - 1)];
+    const state: QuotaBlockState = {
+      attempts,
+      detail,
+      protocol       : protocol ?? previous?.protocol,
+      firstBlockedAt : previous?.firstBlockedAt ?? new Date(now).toISOString(),
+      lastBlockedAt  : new Date(now).toISOString(),
+      nextProbeAt    : new Date(now + delay).toISOString(),
+    };
+    try {
+      await this._quotaBlocks.put(key, JSON.stringify(state));
+    } catch (error) {
+      const e = error as { code?: string };
+      if (e.code !== 'LEVEL_DATABASE_NOT_OPEN') { throw error; }
+    }
+    return state;
+  }
+
+  private async clearQuotaBlock(tenantDid: string, dwnUrl: string, messageCid: string): Promise<boolean> {
+    if (await this.getQuotaBlockState(tenantDid, dwnUrl, messageCid) === undefined) {
+      return false;
+    }
+    try {
+      await this._quotaBlocks.del(SyncEngineLevel.deadLetterKey(tenantDid, messageCid, dwnUrl));
+    } catch (error) {
+      const e = error as { code?: string };
+      if (e.code !== 'LEVEL_NOT_FOUND') { throw error; }
+    }
+    return true;
+  }
+
+  /**
+   * Records/extends the backoff for quota-blocked failures and emits a
+   * `push:quota-blocked` event for each, returning the remaining (non-quota)
+   * failures for normal terminal/retryable handling.
+   */
+  private async recordQuotaBlockedPushFailures(target: SyncTarget, failures: PushFailure[]): Promise<PushFailure[]> {
+    const remaining: PushFailure[] = [];
+    for (const failure of failures) {
+      if (!isQuotaBlockedPushFailure(failure)) {
+        remaining.push(failure);
+        continue;
+      }
+      const state = await this.recordQuotaBlock(target, failure.cid, failure.protocol, failure.detail);
+      this.emitEvent({
+        type           : 'push:quota-blocked',
+        tenantDid      : target.did,
+        remoteEndpoint : target.dwnUrl,
+        ...syncEventScope(target.scope),
+        messageCid     : failure.cid,
+        ...(failure.detail === undefined ? {} : { detail: failure.detail }),
+        nextProbeAt    : state.nextProbeAt,
+      });
+    }
+    return remaining;
+  }
+
+  /** Clears quota blocks for CIDs that just succeeded, emitting a resume event for each. */
+  private async clearQuotaBlocksForSucceeded(target: SyncTarget, succeededCids: string[]): Promise<void> {
+    for (const cid of succeededCids) {
+      if (await this.clearQuotaBlock(target.did, target.dwnUrl, cid)) {
+        this.emitEvent({
+          type           : 'push:quota-cleared',
+          tenantDid      : target.did,
+          remoteEndpoint : target.dwnUrl,
+          ...syncEventScope(target.scope),
+          messageCid     : cid,
+        });
       }
     }
   }
@@ -4969,6 +5119,16 @@ export class SyncEngineLevel implements SyncEngine {
     return `${tenantDid}|${messageCid}|${remoteEndpoint ?? ''}`;
   }
 
+  /**
+   * Inverse of {@link deadLetterKey}. `tenantDid` (a DID) and `messageCid` (a
+   * CID) never contain `|`; the remote endpoint is the remainder, so a `|` in a
+   * URL survives the round trip.
+   */
+  private static parseDeadLetterKey(key: string): { tenant: string; messageCid: string; remote: string } {
+    const parts = key.split('|');
+    return { tenant: parts[0] ?? '', messageCid: parts[1] ?? '', remote: parts.slice(2).join('|') };
+  }
+
   public async recordDeadLetter(params: {
     messageCid : string;
     tenantDid : string;
@@ -5072,6 +5232,12 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
 
+    let quotaBlockedMessageCount = 0;
+    for await (const entry of this._quotaBlocks.iterator()) {
+      void entry;
+      quotaBlockedMessageCount++;
+    }
+
     // Superseded authorization epochs can leave durable link state behind. Only
     // links that still belong to the current registered projection/epoch should
     // affect health. Endpoint-level orphan cleanup is a separate GC concern.
@@ -5086,12 +5252,112 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     return {
-      connectivity          : this.connectivityState,
-      failedMessageCount    : failedMessageCount,
-      admissionFailureCount : admissionFailureCount,
-      degradedLinkCount     : degradedLinkCount,
-      syncHealthy           : failedMessageCount === 0 && degradedLinkCount === 0,
+      connectivity             : this.connectivityState,
+      failedMessageCount       : failedMessageCount,
+      admissionFailureCount    : admissionFailureCount,
+      degradedLinkCount        : degradedLinkCount,
+      quotaBlockedMessageCount : quotaBlockedMessageCount,
+      syncHealthy              : failedMessageCount === 0 && degradedLinkCount === 0,
     };
+  }
+
+  public async getRemoteSyncStatus(tenantDid?: string): Promise<RemoteSyncStatus[]> {
+    type Accumulator = {
+      tenantDid: string;
+      remoteEndpoint: string;
+      connectivity: SyncConnectivityState;
+      quotaBlockedMessageCount: number;
+      failedMessageCount: number;
+      degraded: boolean;
+      nextProbeAt?: string;
+      lastError?: string;
+      lastBlockedAt?: string;
+    };
+    const rows = new Map<string, Accumulator>();
+    const rowKey = (did: string, remote: string): string => `${did}|${remote}`;
+    const rowFor = (did: string, remote: string): Accumulator => {
+      const key = rowKey(did, remote);
+      let row = rows.get(key);
+      if (row === undefined) {
+        row = { tenantDid: did, remoteEndpoint: remote, connectivity: 'unknown', quotaBlockedMessageCount: 0, failedMessageCount: 0, degraded: false };
+        rows.set(key, row);
+      }
+      return row;
+    };
+    const matchesTenant = (did: string): boolean => tenantDid === undefined || did === tenantDid;
+
+    // Durable links seed connectivity + degraded state per (tenant, remote).
+    const currentLinkIdentityKeys = await this.getCurrentDurableLinkIdentityKeys();
+    for (const link of await this.ledger.getAllLinks()) {
+      if (!matchesTenant(link.tenantDid)) { continue; }
+      const isCurrentLink = currentLinkIdentityKeys === undefined || currentLinkIdentityKeys.has(this.getDurableLinkIdentityKey(link));
+      if (!isCurrentLink) { continue; }
+      const row = rowFor(link.tenantDid, link.remoteEndpoint);
+      if (link.connectivity === 'offline') { row.connectivity = 'offline'; }
+      else if (row.connectivity !== 'offline' && link.connectivity === 'online') { row.connectivity = 'online'; }
+      if (SyncEngineLevel.isUnhealthyLinkStatus(link.status)) { row.degraded = true; }
+    }
+
+    // Quota blocks: count, soonest next probe, latest detail.
+    for await (const [key, value] of this._quotaBlocks.iterator()) {
+      const state = JSON.parse(value) as QuotaBlockState;
+      const { tenant, remote } = SyncEngineLevel.parseDeadLetterKey(key);
+      if (!matchesTenant(tenant)) { continue; }
+      const row = rowFor(tenant, remote);
+      row.quotaBlockedMessageCount++;
+      if (row.nextProbeAt === undefined || lexicographicalCompare(state.nextProbeAt, row.nextProbeAt) < 0) {
+        row.nextProbeAt = state.nextProbeAt;
+      }
+      if (row.lastBlockedAt === undefined || lexicographicalCompare(state.lastBlockedAt, row.lastBlockedAt) > 0) {
+        row.lastBlockedAt = state.lastBlockedAt;
+        row.lastError = state.detail;
+      }
+    }
+
+    // Dead letters: terminal failure counts per (tenant, remote).
+    for await (const [, value] of this._deadLetters.iterator()) {
+      const entry = JSON.parse(value) as DeadLetterEntry;
+      if (!matchesTenant(entry.tenantDid) || entry.remoteEndpoint === undefined) { continue; }
+      rowFor(entry.tenantDid, entry.remoteEndpoint).failedMessageCount++;
+    }
+
+    return [...rows.values()]
+      .map((row): RemoteSyncStatus => ({
+        tenantDid                : row.tenantDid,
+        remoteEndpoint           : row.remoteEndpoint,
+        state                    : SyncEngineLevel.rollUpRemoteState(row),
+        connectivity             : row.connectivity,
+        quotaBlockedMessageCount : row.quotaBlockedMessageCount,
+        failedMessageCount       : row.failedMessageCount,
+        ...(row.nextProbeAt === undefined ? {} : { nextProbeAt: row.nextProbeAt }),
+        ...(row.lastError === undefined ? {} : { lastError: row.lastError }),
+      }))
+      .sort((a, b) => lexicographicalCompare(rowKey(a.tenantDid, a.remoteEndpoint), rowKey(b.tenantDid, b.remoteEndpoint)));
+  }
+
+  private static rollUpRemoteState(
+    row: { connectivity: SyncConnectivityState; quotaBlockedMessageCount: number; degraded: boolean },
+  ): RemoteSyncState {
+    if (row.connectivity === 'offline') { return 'offline'; }
+    if (row.quotaBlockedMessageCount > 0) { return 'quota-blocked'; }
+    if (row.degraded) { return 'degraded'; }
+    return 'healthy';
+  }
+
+  public async retryRemoteNow(tenantDid: string, remoteEndpoint: string): Promise<void> {
+    // Mark every quota block for this (tenant, remote) due immediately.
+    const now = new Date().toISOString();
+    const batch: { type: 'put'; key: string; value: string }[] = [];
+    for await (const [key, value] of this._quotaBlocks.iterator()) {
+      const parsed = SyncEngineLevel.parseDeadLetterKey(key);
+      if (parsed.tenant !== tenantDid || parsed.remote !== remoteEndpoint) { continue; }
+      const state = JSON.parse(value) as QuotaBlockState;
+      batch.push({ type: 'put', key, value: JSON.stringify({ ...state, nextProbeAt: now }) });
+    }
+    if (batch.length === 0) { return; }
+    await this._quotaBlocks.batch(batch);
+    // Kick a reconcile so the now-due messages are re-probed without waiting.
+    await this.sync('push').catch(() => { /* best-effort resume; next poll retries */ });
   }
 
   private async getCurrentDurableLinkIdentityKeys(): Promise<Set<string> | undefined> {

@@ -25,7 +25,6 @@ import {
 } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from './types/dwn.js';
-import { DwnRpcError } from '@enbox/dwn-clients';
 import { isRecordsWrite } from './utils.js';
 import { toMessagesPermissionGrantIds } from './sync-permission-grants.js';
 import {
@@ -37,6 +36,7 @@ import {
   newestProtocolConfig,
   resolveDelegatePermissionGrantId,
 } from './sync-fetch-helpers.js';
+import { DwnRpcError, isQuotaExceededError } from '@enbox/dwn-clients';
 import { getRoleKey, orderMessagesForAdmission } from './sync-admission-order.js';
 
 /** Maximum data size (in bytes) to buffer in memory for retry. Larger payloads are re-fetched. */
@@ -579,10 +579,19 @@ class RemoteApplyPushContext {
       });
     } catch (error: any) {
       const detail = error.message ?? String(error);
-      console.error(`SyncEngineLevel: push error for ${cid}: ${detail}`);
       if (error instanceof SyncDataSizeLimitExceededError) {
+        console.error(`SyncEngineLevel: push error for ${cid}: ${detail}`);
         return { kind: 'failed', failure: this.terminalFailure(rootCid, cid, detail, { kind: 'Invalid', reason: detail }) };
       }
+      if (error instanceof DwnRpcError && isQuotaExceededError(error.message, error.data)) {
+        // Quota rejection: retryable but NOT hot-loopable. The remote is out of
+        // storage for this tenant; re-pushing the same message every tick would
+        // flood. Classify it so the engine defers + backed-off re-probes instead
+        // (self-heals when quota grows or the record is deleted/shrunk). No log —
+        // this is an expected, surfaced condition, not an error.
+        return { kind: 'failed', failure: this.quotaBlockedFailure(rootCid, cid, detail) };
+      }
+      console.error(`SyncEngineLevel: push error for ${cid}: ${detail}`);
       if (error instanceof DwnRpcError && error.terminal) {
         return { kind: 'failed', failure: this.terminalFailure(rootCid, cid, detail, { kind: 'Invalid', reason: detail }) };
       }
@@ -700,6 +709,25 @@ class RemoteApplyPushContext {
       ...(deferred === undefined ? {} : { reason: deferred.reason }),
       ...(deferred?.reason === 'tenant-inactive' ? { tenantInactive: true } : {}),
       detail : cid === rootCid ? detail : `dependency ${cid} failed before root push: ${detail}`,
+    };
+  }
+
+  /**
+   * A push rejected because the remote is out of storage/message quota for this
+   * tenant. Retryable but not hot-loopable: the engine records it as
+   * quota-blocked and re-probes on an exponential backoff, self-healing when
+   * quota grows or the record is deleted/shrunk. Modeled as a `Deferred`/
+   * `storage` failure (so existing reason-based reporting keeps working) with
+   * the distinguishing `quotaBlocked` flag.
+   */
+  private quotaBlockedFailure(rootCid: string, cid: string, detail: string): PushFailure {
+    return {
+      cid          : rootCid,
+      ...(cid === rootCid ? {} : { dependencyCid: cid }),
+      kind         : 'Deferred',
+      reason       : 'storage',
+      quotaBlocked : true,
+      detail       : cid === rootCid ? detail : `dependency ${cid} failed before root push: ${detail}`,
     };
   }
 

@@ -559,6 +559,44 @@ describe('sync-messages', () => {
       expect(consoleStub.called).toBe(true);
     });
 
+    it('should classify a tenant-quota rejection as quota-blocked and not flood the console', async () => {
+      const consoleStub = sinon.stub(console, 'error');
+      const { message } = await TestDataGenerator.generateRecordsWrite();
+      const messageCid = await Message.getCid(message);
+      const { agent } = createLocalAgentFixture({
+        messagesByCid : new Map([[messageCid, { message }]]),
+        applyResults  : async () => {
+          throw new DwnRpcError(
+            JsonRpcErrorCodes.InvalidRequest,
+            'TenantStorageQuotaExceeded: tenant would exceed storage limit of 1 bytes',
+            { code: 'TenantStorageQuotaExceeded' },
+          );
+        },
+      });
+
+      const result = await pushMessages({
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : [messageCid],
+        agent,
+      });
+
+      expect(result.succeeded).toHaveLength(0);
+      expect(result.failed).toHaveLength(1);
+      expect(result.failed[0]).toMatchObject({
+        cid          : messageCid,
+        kind         : 'Deferred',
+        reason       : 'storage',
+        quotaBlocked : true,
+      });
+      // Not terminal (won't dead-letter) and not tenant-inactive.
+      expect(result.failed[0].terminal).toBeUndefined();
+      expect(result.failed[0].tenantInactive).toBeUndefined();
+      // Quota is a surfaced, self-healing condition — it must NOT log an error
+      // on every attempt (that was the reported console flood).
+      expect(consoleStub.called).toBe(false);
+    });
+
     it('should skip messages that are not found locally', async () => {
       const { agent, applyStub } = createLocalAgentFixture({
         messagesByCid : new Map(),
