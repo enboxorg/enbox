@@ -4689,12 +4689,15 @@ export class SyncEngineLevel implements SyncEngine {
     target: SyncTarget,
     entry: MessagesQueryReplyEntry,
   ): Promise<string[]> {
-    const recordId = SyncEngineLevel.recordIdForRecordsFeedEntry(entry);
+    const dataBlocks = (await this.getQuotaBlocksForTarget(target))
+      .filter(({ state }) => state.source !== 'permission-grant');
+    if (dataBlocks.length === 0) { return []; }
+
+    const recordId = await this.resolveRecordIdForFeedEntry(target, entry);
     if (recordId === undefined) { return []; }
 
     const initialCids: string[] = [];
-    for (const { messageCid, state } of await this.getQuotaBlocksForTarget(target)) {
-      if (state.source === 'permission-grant') { continue; }
+    for (const { messageCid, state } of dataBlocks) {
       const blockedCid = state.blockedCid ?? messageCid;
       if (blockedCid === entry.messageCid || initialCids.includes(blockedCid)) { continue; }
       const local = await getLocalMessage({
@@ -4715,8 +4718,29 @@ export class SyncEngineLevel implements SyncEngine {
     return initialCids;
   }
 
-  private static recordIdForRecordsFeedEntry(entry: MessagesQueryReplyEntry): string | undefined {
-    return SyncEngineLevel.recordIdForRecordsMessage(entry.message);
+  /**
+   * The diff push path enumerates the local feed with `cidsOnly`, so
+   * `entry.message` is absent there. Resolve the record id from the entry when
+   * present, otherwise load the message from the local store by cid so blocked
+   * initial-write dependency replay behaves identically on the incremental and
+   * diff push paths (a tombstone enumerated without its message would otherwise
+   * never stage its retained dataless ancestor and could never converge).
+   */
+  private async resolveRecordIdForFeedEntry(
+    target: SyncTarget,
+    entry: MessagesQueryReplyEntry,
+  ): Promise<string | undefined> {
+    const fromEntry = SyncEngineLevel.recordIdForRecordsMessage(entry.message);
+    if (fromEntry !== undefined) { return fromEntry; }
+
+    const local = await getLocalMessage({
+      author             : target.did,
+      delegateDid        : target.delegateDid,
+      permissionGrantIds : target.permissionGrantIds,
+      messageCid         : entry.messageCid,
+      agent              : this.agent,
+    });
+    return SyncEngineLevel.recordIdForRecordsMessage(local?.message);
   }
 
   private static recordIdForRecordsMessage(message: GenericMessage | undefined): string | undefined {

@@ -503,6 +503,52 @@ describe('SyncEngineLevel durable feed convergence', () => {
     expect(status.quotaBlockedMessageCount).toBe(0);
   });
 
+  it('recovers a blocked-then-deleted record through the cidsOnly diff push path after a checkpoint reset', async () => {
+    await configureLocalProtocol(feedHarnessProtocolV1);
+    const blockedWrite = await writeLocalRecord({
+      data         : 'initial data rejected while over quota, then deleted before recovery',
+      protocolPath : 'note',
+      schema       : feedHarnessProtocolV1.types.note.schema,
+    });
+    const blockedCid = await Message.getCid(blockedWrite.message);
+    const gate = installRemoteApplyGate(blockedCid);
+
+    await syncEngine.registerIdentity({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.sync('push');
+    expect(gate.attempts()).toBe(1);
+    expect((await expectQuotaBlockedStatus()).quotaBlockedMessageCount).toBe(1);
+
+    // Delete the blocked record so its initial write is retained locally as
+    // dataless ancestry, then clear the push checkpoint to simulate a
+    // 410/history-compaction progress-gap reset. The next push must re-enumerate
+    // through the cidsOnly diff path (message-less feed entries) rather than the
+    // incremental, message-bearing path exercised by the other recovery tests.
+    await deleteLocalRecord(blockedWrite.message.recordId);
+    const internal = syncEngine as unknown as {
+      getSyncTargets(): Promise<any[]>;
+      getOrCreateReplicationLink(target: any): Promise<any>;
+      ledger: { saveLink(link: any): Promise<void> };
+    };
+    const [target] = await internal.getSyncTargets();
+    const link = await internal.getOrCreateReplicationLink(target);
+    link.push.contiguousAppliedToken = undefined;
+    link.push.receivedToken = undefined;
+    await internal.ledger.saveLink(link);
+
+    // Quota is now available. Even though the diff enumeration omits the message,
+    // the tombstone must still stage its retained dataless initial ancestor so
+    // both entries apply together and the record converges — otherwise the page
+    // halts on the tombstone's unresolvable missing-initial dependency and every
+    // newer record behind it is head-of-line blocked forever.
+    gate.allow();
+    await syncEngine.sync('push', { verifyConvergence: true });
+
+    await expectRemoteRecordCount(blockedWrite.message.recordId, 0);
+    expect(await remoteHarnessFingerprint()).toBe(await harnessFingerprint());
+    const [status] = await syncEngine.getRemoteSyncStatus(tenantDid);
+    expect(status).toMatchObject({ quotaBlockedMessageCount: 0, state: 'healthy' });
+  });
+
   it('uses a blocked dependency CID to recover a tombstone when only the update root was persisted', async () => {
     await configureLocalProtocol(feedHarnessProtocolV1);
     const initial = await writeLocalRecord({
