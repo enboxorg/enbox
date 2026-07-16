@@ -191,7 +191,10 @@ function normalizeDwnError(input: unknown): NormalizedDwnError | undefined {
 }
 
 function normalizeErrorText(text: string): NormalizedDwnError {
-  const statusPrefix = /^\s*(\d{3})(?:(?:\s*[:-]\s*)|\s+)([^]*)$/.exec(text);
+  // Separator alternation is first-character-disjoint (`[:-]…` vs `\s…`) so the
+  // engine never backtracks between overlapping whitespace-matching branches —
+  // avoids the super-linear runtime of `(?:\s*[:-]\s*)|\s+` (Sonar S8786).
+  const statusPrefix = /^\s*(\d{3})(?:[:-]\s*|\s+(?:[:-]\s*)?)([^]*)$/.exec(text);
   if (statusPrefix === null) {
     return { detail: text.trim() };
   }
