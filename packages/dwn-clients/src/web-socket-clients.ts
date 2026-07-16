@@ -22,6 +22,7 @@ import { DwnRpcError } from './dwn-rpc-error.js';
 import { HttpDwnRpcClient } from './http-dwn-rpc-client.js';
 import { JsonRpcSocket } from './json-rpc-socket.js';
 import { parseReplicationApplyResult } from './replication-apply-result.js';
+import { RateLimitError } from './rate-limit-error.js';
 import { withLocalNodeTokenQuery } from './rpc-auth.js';
 import { createJsonRpcAck, createJsonRpcRequest, createJsonRpcSubscriptionRequest, JsonRpcErrorCodes } from './json-rpc.js';
 import { DataStream, Encoder } from '@enbox/dwn-sdk-js';
@@ -367,7 +368,13 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
     const { error, result } = response;
     if (error) {
-      throw new Error(`could not subscribe via jsonrpc socket: ${error.message}`);
+      // Preserve the rate-limit signal so callers (e.g. the sync engine) can
+      // honor Retry-After, mirroring the HTTP transport. A dropped 429 here
+      // would surface as a generic subscribe failure with no recovery hint.
+      if (error.code === JsonRpcErrorCodes.TooManyRequests) {
+        throw new RateLimitError(error.data?.retryAfterSec ?? 1);
+      }
+      throw new DwnRpcError(error.code, error.message, error.data);
     }
 
     const { reply } = result as { reply: UnionMessageReply };

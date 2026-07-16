@@ -4,6 +4,7 @@ import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clie
 import type { GenericMessage, MessageEvent, MessagesFilter, MessagesQueryReply, MessagesQueryReplyEntry, MessagesSubscribeReply, ProgressToken, ProtocolDefinition, RecordsQueryReply, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
 import { Level } from 'level';
+import { RateLimitError } from '@enbox/dwn-clients';
 import { DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Message } from '@enbox/dwn-sdk-js';
 import { parseDurationInMilliseconds, sleep } from '@enbox/common';
 
@@ -1806,6 +1807,7 @@ export class SyncEngineLevel implements SyncEngine {
       this._activeRepairs.size > 0 ||
       this._repairRetryTimers.size > 0 ||
       this._reconcileTimers.size > 0 ||
+      this._linkInitRetryTimers.size > 0 ||
       this._reconcileInFlight.size > 0;
   }
 
@@ -2566,6 +2568,12 @@ export class SyncEngineLevel implements SyncEngine {
     this._reconcileTimerDueAt.clear();
     this._reconcileInFlight.clear();
 
+    // Clear pending rate-limit link-init retries.
+    for (const timer of this._linkInitRetryTimers.values()) {
+      clearTimeout(timer);
+    }
+    this._linkInitRetryTimers.clear();
+
     this._recentlyPulledCids.clear();
     this._recentlyPushedCids.clear();
 
@@ -2671,6 +2679,22 @@ export class SyncEngineLevel implements SyncEngine {
       return this.createActiveLinkInitializationResult(link);
     }
 
+    if (this.isRateLimitError(error) && link) {
+      const linkKey = this.getReplicationLinkKey(target, link);
+      const retryAfterSec = error.retryAfterSec > 0 ? error.retryAfterSec : 1;
+      console.warn(
+        `SyncEngineLevel: Rate limited opening live subscription for ${target.did} -> ${target.dwnUrl}, ` +
+        `retrying in ${retryAfterSec}s`,
+      );
+      // Drop the half-open link and re-attempt initialization after the
+      // server-provided Retry-After window instead of failing permanently.
+      // Durable feed reconciliation still runs via the periodic settle check,
+      // so no data is lost while the live subscription is deferred.
+      this.cleanupFailedLinkInitialization(linkKey);
+      this.scheduleLinkInitRetry(target, linkKey, retryAfterSec * 1000);
+      return { status: LinkInitializationStatus.Failed };
+    }
+
     console.error(`SyncEngineLevel: Failed to open live subscription for ${target.did} -> ${target.dwnUrl}`, error);
     if (link) {
       this.cleanupFailedLinkInitialization(this.getReplicationLinkKey(target, link));
@@ -2695,6 +2719,41 @@ export class SyncEngineLevel implements SyncEngine {
     if (this._liveSubscriptions.length === 0) {
       this._connectivityState = 'unknown';
     }
+  }
+
+  /** Pending link-initialization retries scheduled after a rate-limit (429), keyed by link key. */
+  private readonly _linkInitRetryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+
+  private isRateLimitError(error: unknown): error is RateLimitError {
+    return error instanceof RateLimitError;
+  }
+
+  /**
+   * Re-attempt live-subscription initialization for a rate-limited link after
+   * the server-provided Retry-After window. Coalesces repeated requests for the
+   * same link so a burst of 429s schedules a single pending retry. A repeated
+   * rate limit on the retry reschedules again via
+   * {@link handleInitializeLinkTargetError}.
+   */
+  private scheduleLinkInitRetry(target: SyncTarget, linkKey: string, delayMs: number): void {
+    const existing = this._linkInitRetryTimers.get(linkKey);
+    if (existing) {
+      clearTimeout(existing);
+    }
+
+    const generation = this._engineGeneration;
+    const timer = setTimeout((): void => {
+      this._linkInitRetryTimers.delete(linkKey);
+      if (this._engineGeneration !== generation) {
+        return;
+      }
+      void this.initializeLinkTarget(target).catch((): void => {
+        // Errors are handled inside initializeLinkTarget's catch block, which
+        // reschedules another retry on a repeat rate limit; swallow here to
+        // avoid unhandled-rejection noise in the test runner.
+      });
+    }, delayMs);
+    this._linkInitRetryTimers.set(linkKey, timer);
   }
 
   /**
@@ -2814,6 +2873,12 @@ export class SyncEngineLevel implements SyncEngine {
         clearTimeout(timer);
         this._reconcileTimers.delete(key);
         this._reconcileTimerDueAt.delete(key);
+      }
+    }
+    for (const [key, timer] of this._linkInitRetryTimers) {
+      if (this.isLinkKeyForDid(key, did)) {
+        clearTimeout(timer);
+        this._linkInitRetryTimers.delete(key);
       }
     }
   }

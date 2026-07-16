@@ -1,6 +1,7 @@
 import sinon from 'sinon';
 
 import { Level } from 'level';
+import { RateLimitError } from '@enbox/dwn-clients';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
@@ -820,6 +821,90 @@ describe('SyncEngineLevel — identity management', () => {
       expect(pullCloseSpy.calledOnce).toBe(true);
       expect((engine as any)._liveSubscriptions).toHaveLength(0);
       expect([...((engine as any)._activeLinks.keys())].some((key: string) => key.startsWith('did:example:pushfail^https://dwn.example.com^projection-1^'))).toBe(false);
+    });
+
+    it('addIdentityToLiveSync should schedule a Retry-After reattempt instead of failing permanently on a rate-limit', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const mockAgent = {
+        dwn: { getRemoteDwnEndpointUrls: sinon.stub().resolves(['https://dwn.example.com']) },
+      };
+      (engine as any)._agent = mockAgent;
+
+      sinon.stub(engine as any, 'ledger').get(() => ({
+        getOrCreateLink: sinon.stub().callsFake(async (params: any) => ({
+          tenantDid          : 'did:example:ratelimited',
+          remoteEndpoint     : 'https://dwn.example.com',
+          projectionId       : 'projection-1',
+          authorizationEpoch : params.authorizationEpoch,
+          authorization      : params.authorization,
+          scope              : { kind: 'full' },
+          status             : 'initializing',
+          pull               : {},
+          connectivity       : 'unknown',
+        })),
+        saveLink  : sinon.stub().resolves(),
+        setStatus : sinon.stub().resolves(),
+      }));
+
+      // The remote DWN rate-limits the MessagesSubscribe with a long Retry-After
+      // so the reattempt does not fire during the assertions.
+      const openPullStub = sinon.stub(engine as any, 'openLivePullSubscription').rejects(new RateLimitError(60));
+      sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
+
+      await (engine as any).addIdentityToLiveSync('did:example:ratelimited', { protocols: 'all' });
+
+      // The half-open link is dropped, not left live...
+      expect((engine as any)._liveSubscriptions).toHaveLength(0);
+      expect((engine as any)._activeLinks.size).toBe(0);
+      // ...and exactly one Retry-After reattempt is scheduled.
+      expect((engine as any)._linkInitRetryTimers.size).toBe(1);
+      expect(openPullStub.calledOnce).toBe(true);
+
+      // Cancel the pending timer so it does not fire against a torn-down engine.
+      for (const timer of (engine as any)._linkInitRetryTimers.values()) {
+        clearTimeout(timer);
+      }
+      (engine as any)._linkInitRetryTimers.clear();
+    });
+
+    it('addIdentityToLiveSync should establish live sync when the reattempt succeeds after the Retry-After window', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const mockAgent = {
+        dwn: { getRemoteDwnEndpointUrls: sinon.stub().resolves(['https://dwn.example.com']) },
+      };
+      (engine as any)._agent = mockAgent;
+
+      sinon.stub(engine as any, 'ledger').get(() => ({
+        getOrCreateLink: sinon.stub().callsFake(async (params: any) => ({
+          tenantDid          : 'did:example:ratelimited-recover',
+          remoteEndpoint     : 'https://dwn.example.com',
+          projectionId       : 'projection-1',
+          authorizationEpoch : params.authorizationEpoch,
+          authorization      : params.authorization,
+          scope              : { kind: 'full' },
+          status             : 'initializing',
+          pull               : {},
+          connectivity       : 'unknown',
+        })),
+        saveLink  : sinon.stub().resolves(),
+        setStatus : sinon.stub().resolves(),
+      }));
+
+      // Rate-limited on the first attempt, succeeds on the scheduled reattempt.
+      const openPullStub = sinon.stub(engine as any, 'openLivePullSubscription');
+      openPullStub.onFirstCall().rejects(new RateLimitError(1));
+      openPullStub.onSecondCall().resolves();
+      sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
+
+      await (engine as any).addIdentityToLiveSync('did:example:ratelimited-recover', { protocols: 'all' });
+      expect((engine as any)._activeLinks.size).toBe(0);
+
+      // Wait for the 1s Retry-After timer to fire and re-establish the link.
+      await new Promise(resolve => setTimeout(resolve, 1400));
+
+      expect(openPullStub.callCount).toBe(2);
+      expect((engine as any)._activeLinks.size).toBe(1);
+      expect((engine as any)._linkInitRetryTimers.size).toBe(0);
     });
   });
 
