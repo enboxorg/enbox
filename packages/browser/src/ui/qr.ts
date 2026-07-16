@@ -92,8 +92,10 @@ export function encodeQr(text: string, forcedMask?: number): QrCode {
   pushBits(0, (8 - (bits.length % 8)) % 8); // byte align
 
   const padBytes = [0xEC, 0x11];
-  for (let i = 0; bits.length < capacityBits; i++) {
-    pushBits(padBytes[i % 2], 8);
+  let padIndex = 0;
+  while (bits.length < capacityBits) {
+    pushBits(padBytes[padIndex], 8);
+    padIndex ^= 1; // alternate the two pad bytes
   }
 
   const codewords = new Uint8Array(capacityBits / 8);
@@ -357,13 +359,15 @@ function drawCodewords(modules: boolean[][], isFunction: boolean[][], codewords:
   let bitIndex = 0;
 
   for (let right = size - 1; right >= 1; right -= 2) {
-    if (right === 6) {
-      right = 5;
-    }
+    // Visit columns in right-to-left pairs, shifting one column left of the
+    // vertical timing column (index 6) so it is skipped — without mutating the
+    // loop counter (Sonar S2310). `size` is always odd, so `right` is always
+    // even and `right - 1` maps 6→5, 4→3, 2→1, matching the original traversal.
+    const rightCol = right <= 6 ? right - 1 : right;
     for (let vertical = 0; vertical < size; vertical++) {
       for (let j = 0; j < 2; j++) {
-        const x = right - j;
-        const upward = ((right + 1) & 2) === 0;
+        const x = rightCol - j;
+        const upward = ((rightCol + 1) & 2) === 0;
         const y = upward ? size - 1 - vertical : vertical;
         if (!isFunction[y][x] && bitIndex < codewords.length * 8) {
           modules[y][x] = ((codewords[bitIndex >> 3] >>> (7 - (bitIndex & 7))) & 1) !== 0;

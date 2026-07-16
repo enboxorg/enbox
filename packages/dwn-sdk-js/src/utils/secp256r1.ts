@@ -85,7 +85,7 @@ export class Secp256r1 {
     const hashedContent = await sha256.encode(content);
     const privateKeyBytes = Secp256r1.privateJwkToBytes(privateJwk);
 
-    return Promise.resolve(p256.sign(hashedContent, privateKeyBytes, { prehash: false }));
+    return p256.sign(hashedContent, privateKeyBytes, { prehash: false });
   }
 
   /**
