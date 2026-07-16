@@ -122,9 +122,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
 
   afterEach(async () => {
     sinon.restore();
-    (syncEngine as any)._syncTargetsCache = undefined;
-    (syncEngine as any)._syncTargetsLastResolutionComplete = false;
-    (syncEngine as any)._syncTargetsCacheGeneration++;
+    (syncEngine as any)._targetPlanner.invalidate();
     if ((syncEngine as any)._syncLock) {
       (syncEngine as any).releaseSyncLock();
     }
@@ -253,7 +251,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
       authorization      : { kind: 'owner' },
       authorizationEpoch : 'new-epoch',
       projectionId,
-    }], (syncEngine as any)._syncTargetsCacheGeneration);
+    }], (syncEngine as any)._targetPlanner.generation);
 
     const [status] = await syncEngine.getRemoteSyncStatus(TENANT);
     expect(status.quotaBlockedMessageCount).toBe(1);
@@ -453,9 +451,9 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
   it('aborts an exact-target retry when registration topology changes in flight', async () => {
     const internal = syncEngine as any;
     const generation = internal._engineGeneration as number;
-    const topologyGeneration = internal._syncTargetsCacheGeneration as number;
+    const topologyGeneration = internal._targetPlanner.generation as number;
     sinon.stub(internal, 'getQuotaBlocksForTarget').callsFake(async () => {
-      internal._syncTargetsCacheGeneration++;
+      internal._targetPlanner.invalidate();
       return [{
         messageCid : 'blocked-cid',
         state      : { source: 'feed' },

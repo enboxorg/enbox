@@ -52,6 +52,7 @@ import { isRecordsWrite } from './utils.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
 import { SyncEndpointStoreLevel } from './sync-endpoint-store-level.js';
 import { SyncIdentityStoreLevel } from './sync-identity-store-level.js';
+import { SyncTargetPlanner } from './sync-target-planner.js';
 import { SyncTaskGroup } from './sync-task-group.js';
 import { computeProjectionId, isQuotaBlockedPushFailure, isTerminalPushFailure, lexicographicalCompare, protocolsForSyncScope, pushBatchReconcileReason, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
 import { fetchRemoteMessages, getLocalMessage, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, SyncPullAbortedError } from './sync-messages.js';
@@ -357,6 +358,7 @@ export class SyncEngineLevel implements SyncEngine {
   private readonly _db: AbstractLevel<string | Buffer | Uint8Array>;
   private readonly _endpointStore: SyncEndpointStore;
   private readonly _identityStore: SyncIdentityStore;
+  private readonly _targetPlanner: SyncTargetPlanner;
   private _targetResolver?: SyncTargetResolver;
   private _syncIntervalId?: ReturnType<typeof setInterval>;
   private _syncLock = false;
@@ -714,31 +716,6 @@ export class SyncEngineLevel implements SyncEngine {
       .join(', ');
   }
 
-  /**
-   * Cached sync targets result from the last {@link getSyncTargets} call.
-   * Invalidated on identity registration/unregistration/update.
-   * TTL-based: cleared after 30 seconds to pick up DID document changes.
-   */
-  private _syncTargetsCache?: {
-    targets: SyncTarget[];
-    timestamp: number;
-  };
-
-  /** True only when the most recent uncached target resolution covered every registration. */
-  private _syncTargetsLastResolutionComplete = false;
-
-  /**
-   * Monotonic generation counter for sync target cache invalidation.
-   * Bumped on every invalidation (register/unregister/update/clear/close/stopSync).
-   * An in-flight `getSyncTargets()` captures the generation before awaiting
-   * and only writes to the cache if it hasn't changed, preventing a
-   * concurrent mutation from being masked by stale data.
-   */
-  private _syncTargetsCacheGeneration = 0;
-
-  /** TTL for the sync targets cache (30 seconds). */
-  private static readonly SYNC_TARGETS_CACHE_TTL_MS = 30_000;
-
   /** Backoff schedule for recently published did:dht records. */
   private static readonly DID_RESOLUTION_RETRY_BACKOFF_MS = [2000, 4000, 8000];
 
@@ -765,6 +742,11 @@ export class SyncEngineLevel implements SyncEngine {
     this._db = (db) ? db : new Level<string, string>(dataPath ?? 'DATA/AGENT/SYNC_STORE');
     this._endpointStore = new SyncEndpointStoreLevel(this._db);
     this._identityStore = new SyncIdentityStoreLevel(this._db);
+    this._targetPlanner = new SyncTargetPlanner({
+      getTargetResolver : (): SyncTargetResolver => this.targetResolver,
+      identityStore     : this._identityStore,
+      warn              : (message, error): void => { console.warn(message, error); },
+    });
   }
 
   /** Lazy accessor for the replication ledger. */
@@ -841,9 +823,7 @@ export class SyncEngineLevel implements SyncEngine {
    * cannot drift across the many call sites that mutate sync configuration.
    */
   private invalidateSyncTargetsCache(): void {
-    this._syncTargetsCache = undefined;
-    this._syncTargetsLastResolutionComplete = false;
-    this._syncTargetsCacheGeneration++;
+    this._targetPlanner.invalidate();
   }
 
   get hasActiveSubscriptions(): boolean {
@@ -1055,12 +1035,12 @@ export class SyncEngineLevel implements SyncEngine {
     }
     try {
       await this.registerSupplementalDwnEndpoint(normalizedEndpoint);
-      const topologyGeneration = this._syncTargetsCacheGeneration;
+      const topologyGeneration = this._targetPlanner.generation;
       const getStopReason = (): SyncDrainStopReason | undefined => {
         if (options.signal?.aborted === true) {
           return 'cancelled';
         }
-        if (this._syncTargetsCacheGeneration !== topologyGeneration) {
+        if (this._targetPlanner.generation !== topologyGeneration) {
           return 'topology-changed';
         }
       };
@@ -5598,7 +5578,7 @@ export class SyncEngineLevel implements SyncEngine {
         batch.push({ type: 'del', key });
       }
     }
-    if (this._syncTargetsCacheGeneration !== expectedGeneration) {
+    if (this._targetPlanner.generation !== expectedGeneration) {
       return;
     }
     if (batch.length > 0) {
@@ -6525,7 +6505,7 @@ export class SyncEngineLevel implements SyncEngine {
       if (this._engineGeneration !== generation) {
         return;
       }
-      const topologyGeneration = this._syncTargetsCacheGeneration;
+      const topologyGeneration = this._targetPlanner.generation;
       const targets = (await this.getSyncTargets()).filter(
         (target) => target.did === tenantDid && target.dwnUrl === remoteEndpoint,
       );
@@ -6556,7 +6536,7 @@ export class SyncEngineLevel implements SyncEngine {
       if (
         blocks.length === 0 ||
         this._engineGeneration !== generation ||
-        this._syncTargetsCacheGeneration !== topologyGeneration
+        this._targetPlanner.generation !== topologyGeneration
       ) {
         return;
       }
@@ -6570,7 +6550,7 @@ export class SyncEngineLevel implements SyncEngine {
         { direction: 'push', forceQuotaProbe: true },
         (): boolean =>
           this._engineGeneration === generation &&
-          this._syncTargetsCacheGeneration === topologyGeneration,
+          this._targetPlanner.generation === topologyGeneration,
       );
     })().finally((): void => {
       if (this._quotaProbeInFlight.get(key) === retry) {
@@ -6607,7 +6587,7 @@ export class SyncEngineLevel implements SyncEngine {
   private async getCurrentQuotaLinkKeys(): Promise<Set<string> | undefined> {
     try {
       const targets = await this.getSyncTargets();
-      if (!this._syncTargetsLastResolutionComplete || targets.length === 0) {
+      if (!this._targetPlanner.lastResolutionComplete || targets.length === 0) {
         return undefined;
       }
 
@@ -6634,94 +6614,12 @@ export class SyncEngineLevel implements SyncEngine {
   // Sync targets
   // ---------------------------------------------------------------------------
 
-  /**
-   * Returns the list of sync targets: one canonical projection target per
-   * registered DID and resolved DWN endpoint.
-   * Results are cached for up to 30 seconds to avoid redundant DID resolution
-   * on every sync tick. The cache is invalidated when identities are registered,
-   * unregistered, or updated.
-   */
-  private async getSyncTargets(): Promise<SyncTarget[]> {
-    // Return cached targets if still valid.
-    if (this._syncTargetsCache
-        && (Date.now() - this._syncTargetsCache.timestamp) < SyncEngineLevel.SYNC_TARGETS_CACHE_TTL_MS) {
-      this._syncTargetsLastResolutionComplete = true;
-      return this._syncTargetsCache.targets;
-    }
-
-    // Capture the generation before any async work so we can detect
-    // concurrent invalidations (register/unregister/update) that would
-    // make our result stale.
-    const generationAtStart = this._syncTargetsCacheGeneration;
-
-    const targets: SyncTarget[] = [];
-    let hasRegisteredIdentities = false;
-    let anyTargetUnavailable = false;
-    this._syncTargetsLastResolutionComplete = false;
-
-    for await (const entry of this._identityStore.entries()) {
-      hasRegisteredIdentities = true;
-      if (entry.status === 'corrupt') {
-        console.warn(`SyncEngineLevel: Corrupt sync options for ${entry.did}, skipping identity:`, entry.error);
-        anyTargetUnavailable = true;
-        continue;
-      }
-
-      const resolved = await this.resolveTargetsForRegisteredIdentity(entry.did, entry.options);
-      targets.push(...resolved.targets);
-      anyTargetUnavailable ||= resolved.unavailable;
-    }
-
-    await this.maybeCacheSyncTargets(targets, generationAtStart, anyTargetUnavailable, hasRegisteredIdentities);
-    return targets;
-  }
-
-  /** Resolve every sync target for one registered identity; reports whether any endpoint resolution failed transiently. */
-  private async resolveTargetsForRegisteredIdentity(
-    did: string,
-    options: SyncIdentityOptions,
-  ): Promise<{ targets: SyncTarget[]; unavailable: boolean }> {
-    const dwnEndpointUrls = await this.targetResolver.getEndpointUrls(did);
-    if (dwnEndpointUrls.length === 0) {
-      return { targets: [], unavailable: true };
-    }
-
-    const targets: SyncTarget[] = [];
-    let unavailable = false;
-    for (const dwnUrl of dwnEndpointUrls) {
-      try {
-        targets.push(...await this.targetResolver.buildTargetsForEndpoint(did, dwnUrl, options));
-      } catch (error: unknown) {
-        unavailable = true;
-        console.warn(`SyncEngineLevel: Unable to resolve sync targets for ${did} at ${dwnUrl}, skipping identity endpoint:`, error);
-      }
-    }
-    return { targets, unavailable };
-  }
-
-  /**
-   * Cache the resolved targets, but only when the result is non-empty, every
-   * registered identity resolved cleanly, and no concurrent register/unregister
-   * bumped the generation while we were awaiting (any of which would make a
-   * cached snapshot suppress retries for the full TTL).
-   */
-  private async maybeCacheSyncTargets(
-    targets: SyncTarget[],
-    generationAtStart: number,
-    anyTargetUnavailable: boolean,
-    hasRegisteredIdentities: boolean,
-  ): Promise<void> {
-    const generationIsCurrent = this._syncTargetsCacheGeneration === generationAtStart;
-    this._syncTargetsLastResolutionComplete = !anyTargetUnavailable && generationIsCurrent;
-    const isComplete = hasRegisteredIdentities && this._syncTargetsLastResolutionComplete;
-    if (targets.length > 0 && isComplete && this._syncTargetsCacheGeneration === generationAtStart) {
-      await this.pruneQuotaBlocksForCurrentTargets(targets, generationAtStart);
-      if (this._syncTargetsCacheGeneration === generationAtStart) {
-        this._syncTargetsCache = { targets, timestamp: Date.now() };
-      } else {
-        this._syncTargetsLastResolutionComplete = false;
-      }
-    }
+  /** Return the cached or freshly planned canonical targets for every registration. */
+  private getSyncTargets(): Promise<SyncTarget[]> {
+    return this._targetPlanner.getTargets({
+      beforeCache: (targets, generation): Promise<void> =>
+        this.pruneQuotaBlocksForCurrentTargets(targets, generation),
+    });
   }
 
 }

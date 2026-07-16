@@ -410,13 +410,12 @@ describe('SyncEngineLevel', () => {
 
       const resolution = internal.getSyncTargets();
       await iteratorStarted;
-      internal._syncTargetsCacheGeneration++;
+      internal._targetPlanner.invalidate();
       resumeIterator();
       await resolution;
 
       expect(batch.called).toBe(false);
-      expect(internal._syncTargetsCache).toBeUndefined();
-      expect(internal._syncTargetsLastResolutionComplete).toBe(false);
+      expect(internal._targetPlanner.lastResolutionComplete).toBe(false);
     });
 
     it('abandons a Retry-now request queued across an engine lifecycle change', async () => {
@@ -1151,7 +1150,7 @@ describe('SyncEngineLevel', () => {
         };
         sinon.stub(syncEngine as any, 'buildSyncDrainPlan').resolves({ failures: [], targets: [target] });
         sinon.stub(syncEngine as any, 'syncTargetWithDurableFeeds').callsFake(async (): Promise<any> => {
-          syncEngine['_syncTargetsCacheGeneration']++;
+          (syncEngine as any)._targetPlanner.invalidate();
           return {
             converged         : true,
             localFingerprint  : 'fingerprint',
