@@ -2,22 +2,24 @@ import type { AbstractLevel } from 'abstract-level';
 
 import type { SyncEndpointStore } from './sync-endpoint-store.js';
 
+type LevelKey = string | Buffer | Uint8Array;
+
 const SUPPLEMENTAL_ENDPOINT_KEY = 'supplementalDwnEndpoint';
 
 /** Level-backed persistence for the supplemental sync endpoint. */
 export class SyncEndpointStoreLevel implements SyncEndpointStore {
-  private readonly _db: AbstractLevel<string | Buffer | Uint8Array>;
+  private readonly _db: AbstractLevel<LevelKey>;
 
-  constructor(db: AbstractLevel<string | Buffer | Uint8Array>) {
+  constructor(db: AbstractLevel<LevelKey>) {
     this._db = db;
   }
 
-  private get metadata(): AbstractLevel<string | Buffer | Uint8Array, string, string> {
+  private get metadata(): AbstractLevel<LevelKey, string, string> {
     return this._db.sublevel('syncMetadata');
   }
 
   public async clear(): Promise<void> {
-    await this.metadata.clear();
+    await this.metadata.del(SUPPLEMENTAL_ENDPOINT_KEY);
   }
 
   public async get(): Promise<string | undefined> {
