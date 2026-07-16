@@ -52,8 +52,8 @@ import { isRecordsWrite } from './utils.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
 import { SyncEndpointStoreLevel } from './sync-endpoint-store-level.js';
 import { SyncIdentityStoreLevel } from './sync-identity-store-level.js';
+import { SyncLifecycleCoordinator } from './sync-lifecycle-coordinator.js';
 import { SyncTargetPlanner } from './sync-target-planner.js';
-import { SyncTaskGroup } from './sync-task-group.js';
 import { computeProjectionId, isQuotaBlockedPushFailure, isTerminalPushFailure, lexicographicalCompare, protocolsForSyncScope, pushBatchReconcileReason, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
 import { fetchRemoteMessages, getLocalMessage, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, SyncPullAbortedError } from './sync-messages.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
@@ -358,21 +358,10 @@ export class SyncEngineLevel implements SyncEngine {
   private readonly _db: AbstractLevel<string | Buffer | Uint8Array>;
   private readonly _endpointStore: SyncEndpointStore;
   private readonly _identityStore: SyncIdentityStore;
+  private readonly _lifecycle = new SyncLifecycleCoordinator();
   private readonly _targetPlanner: SyncTargetPlanner;
   private _targetResolver?: SyncTargetResolver;
   private _syncIntervalId?: ReturnType<typeof setInterval>;
-  private _syncLock = false;
-  private _syncLockCompletion: Promise<void> = Promise.resolve();
-  private _releaseSyncLockCompletion?: () => void;
-
-  /** Serializes start/stop/clear/close transitions without delaying the first caller. */
-  private _lifecycleTransition?: Promise<void>;
-
-  /** Owns async work launched by timers, subscriptions, and repair/reconcile scheduling. */
-  private readonly _backgroundTasks = new SyncTaskGroup();
-
-  /** Per-identity task ownership lets hot-remove drain one DID without stopping every link. */
-  private readonly _identityTaskGroups: Map<string, SyncTaskGroup> = new Map();
 
   /**
    * Durable replication ledger — persists per-link checkpoint state.
@@ -878,7 +867,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public clear(): Promise<void> {
-    return this.runLifecycleTransition(async (): Promise<void> => {
+    return this._lifecycle.runTransition(async (): Promise<void> => {
       await this.stopSyncRuntime();
       await this._permissionsApi.clear();
       await this.clearSyncDb();
@@ -886,14 +875,14 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public close(): Promise<void> {
-    return this.runLifecycleTransition(async (): Promise<void> => {
+    return this._lifecycle.runTransition(async (): Promise<void> => {
       await this.stopSyncRuntime();
       await this._db.close();
     });
   }
 
   public registerIdentity(params: { did: string; options: SyncIdentityOptions }): Promise<void> {
-    return this.runIdentityMutation(async (): Promise<void> => {
+    return this._lifecycle.runIdentityMutation(async (): Promise<void> => {
       await this.doRegisterIdentity(params);
     });
   }
@@ -922,7 +911,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public unregisterIdentity(did: string): Promise<void> {
-    return this.runIdentityMutation(async (): Promise<void> => {
+    return this._lifecycle.runIdentityMutation(async (): Promise<void> => {
       await this.doUnregisterIdentity(did);
     });
   }
@@ -954,7 +943,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public updateIdentityOptions(params: { did: string, options: SyncIdentityOptions }): Promise<void> {
-    return this.runIdentityMutation(async (): Promise<void> => {
+    return this._lifecycle.runIdentityMutation(async (): Promise<void> => {
       await this.doUpdateIdentityOptions(params);
     });
   }
@@ -999,7 +988,7 @@ export class SyncEngineLevel implements SyncEngine {
   // ---------------------------------------------------------------------------
 
   public async sync(direction?: SyncDirection, options?: SyncRunOptions): Promise<void> {
-    if (!this.tryAcquireSyncLock()) {
+    if (!this._lifecycle.tryAcquireSync()) {
       throw new Error('SyncEngineLevel: Sync operation is already in progress.');
     }
 
@@ -1009,12 +998,12 @@ export class SyncEngineLevel implements SyncEngine {
       this.updateConnectivityAfterSync(groupSummary);
       SyncEngineLevel.assertSyncTargetGroupsSucceeded(groupSummary);
     } finally {
-      this.releaseSyncLock();
+      this._lifecycle.releaseSync();
     }
   }
 
   public async drainTo(endpoint: string, options: SyncDrainOptions = {}): Promise<SyncDrainResult> {
-    if (this._syncLock) {
+    if (this._lifecycle.isSyncInProgress) {
       throw new Error('SyncEngineLevel: Sync operation is already in progress.');
     }
 
@@ -1030,7 +1019,7 @@ export class SyncEngineLevel implements SyncEngine {
       };
     }
 
-    if (!this.tryAcquireSyncLock()) {
+    if (!this._lifecycle.tryAcquireSync()) {
       throw new Error('SyncEngineLevel: Sync operation is already in progress.');
     }
     try {
@@ -1069,31 +1058,8 @@ export class SyncEngineLevel implements SyncEngine {
         ...(error !== undefined ? { error } : {}),
       };
     } finally {
-      this.releaseSyncLock();
+      this._lifecycle.releaseSync();
     }
-  }
-
-  private tryAcquireSyncLock(): boolean {
-    if (this._syncLock) { return false; }
-
-    this._syncLock = true;
-    this._syncLockCompletion = new Promise<void>((resolve) => {
-      this._releaseSyncLockCompletion = resolve;
-    });
-    return true;
-  }
-
-  private async waitForAndAcquireSyncLock(): Promise<void> {
-    while (!this.tryAcquireSyncLock()) {
-      await this._syncLockCompletion;
-    }
-  }
-
-  private releaseSyncLock(): void {
-    this._syncLock = false;
-    const release = this._releaseSyncLockCompletion;
-    this._releaseSyncLockCompletion = undefined;
-    release?.();
   }
 
   private async buildSyncDrainPlan(remoteEndpoint: string): Promise<SyncDrainPlan> {
@@ -1555,7 +1521,7 @@ export class SyncEngineLevel implements SyncEngine {
   // ---------------------------------------------------------------------------
 
   public startSync(params: StartSyncParams): Promise<void> {
-    return this.runLifecycleTransition(async (): Promise<void> => {
+    return this._lifecycle.runTransition(async (): Promise<void> => {
       await this.startSyncRuntime(params);
     });
   }
@@ -1570,14 +1536,14 @@ export class SyncEngineLevel implements SyncEngine {
     if (hadLiveRuntime) {
       await this.teardownLiveSync();
     }
-    if (this._syncLock) {
+    if (this._lifecycle.isSyncInProgress) {
       await this.waitForSyncCompletion();
     }
-    if (this._backgroundTasks.size > 0) {
+    if (this._lifecycle.backgroundTaskCount > 0) {
       await this.waitForBackgroundTasks();
     }
-    this._identityTaskGroups.clear();
-    this._backgroundTasks.resume();
+    this._lifecycle.clearIdentityTaskGroups();
+    this._lifecycle.resumeTaskAdmission();
 
     this._syncMode = mode;
 
@@ -1598,59 +1564,9 @@ export class SyncEngineLevel implements SyncEngine {
    *   condition.
    */
   public stopSync(timeout: number = 2000): Promise<void> {
-    return this.runLifecycleTransition(async (): Promise<void> => {
+    return this._lifecycle.runTransition(async (): Promise<void> => {
       await this.stopSyncRuntime(timeout);
     });
-  }
-
-  private runLifecycleTransition(operation: () => Promise<void>): Promise<void> {
-    const previous = this._lifecycleTransition;
-    const transition = previous === undefined ? operation() : previous.then(operation);
-    const completion = transition.then(
-      (): void => {
-        if (this._lifecycleTransition === completion) {
-          this._lifecycleTransition = undefined;
-        }
-      },
-      (): void => {
-        if (this._lifecycleTransition === completion) {
-          this._lifecycleTransition = undefined;
-        }
-      },
-    );
-    this._lifecycleTransition = completion;
-    return transition;
-  }
-
-  /** Serializes identity topology changes and excludes lock-owning sync work while they mutate storage and live links. */
-  private runIdentityMutation(operation: () => Promise<void>): Promise<void> {
-    return this.runLifecycleTransition(async (): Promise<void> => {
-      await this.waitForAndAcquireSyncLock();
-      try {
-        await operation();
-      } finally {
-        this.releaseSyncLock();
-      }
-    });
-  }
-
-  private getIdentityTaskGroup(did: string): SyncTaskGroup {
-    let taskGroup = this._identityTaskGroups.get(did);
-    if (taskGroup === undefined) {
-      taskGroup = new SyncTaskGroup();
-      this._identityTaskGroups.set(did, taskGroup);
-    }
-    return taskGroup;
-  }
-
-  private runIdentityBackgroundTask(taskGroup: SyncTaskGroup, operation: () => Promise<void>): Promise<void> {
-    return this._backgroundTasks.run(() => taskGroup.run(operation));
-  }
-
-  private pauseIdentityTaskGroups(): void {
-    for (const taskGroup of this._identityTaskGroups.values()) {
-      taskGroup.pause();
-    }
   }
 
   private hasLiveSyncRuntime(): boolean {
@@ -1669,8 +1585,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   private prepareForSyncRuntimeTransition(): void {
     this._engineGeneration++;
-    this._backgroundTasks.pause();
-    this.pauseIdentityTaskGroups();
+    this._lifecycle.pauseTaskAdmission();
     if (this._syncIntervalId) {
       clearInterval(this._syncIntervalId);
       this._syncIntervalId = undefined;
@@ -1700,7 +1615,7 @@ export class SyncEngineLevel implements SyncEngine {
       this.waitForBackgroundTasks(safeTimeout),
     ]);
     if (backgroundCompletion.status === 'fulfilled') {
-      this._identityTaskGroups.clear();
+      this._lifecycle.clearIdentityTaskGroups();
     }
     // A scheduled sync interval is itself a supervised task, so both waits can
     // time out together. Preserve the established lock-timeout error as the
@@ -1714,23 +1629,13 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async waitForSyncCompletion(timeout?: number): Promise<void> {
-    let elapsedTimeout = 0;
-
-    while (this._syncLock) {
-      if (timeout !== undefined && elapsedTimeout >= timeout) {
-        throw new Error(`SyncEngineLevel: Existing sync operation did not complete within ${timeout} milliseconds.`);
-      }
-
-      const waitDuration = timeout === undefined
-        ? 100
-        : Math.min(Math.max(timeout - elapsedTimeout, 0), 100);
-      elapsedTimeout += waitDuration;
-      await Promise.race([this._syncLockCompletion, sleep(waitDuration)]);
+    if (!await this._lifecycle.waitForSyncCompletion(timeout)) {
+      throw new Error(`SyncEngineLevel: Existing sync operation did not complete within ${timeout} milliseconds.`);
     }
   }
 
   private async waitForBackgroundTasks(timeout?: number): Promise<void> {
-    if (!await this._backgroundTasks.settle(timeout)) {
+    if (!await this._lifecycle.waitForBackgroundTasks(timeout)) {
       throw new Error(`SyncEngineLevel: Background sync operations did not complete within ${timeout} milliseconds.`);
     }
   }
@@ -1743,7 +1648,7 @@ export class SyncEngineLevel implements SyncEngine {
     const generation = this._engineGeneration;
     const intervalSync = async (): Promise<void> => {
       if (this._engineGeneration !== generation) { return; }
-      if (this._syncLock) {
+      if (this._lifecycle.isSyncInProgress) {
         return;
       }
 
@@ -1778,7 +1683,7 @@ export class SyncEngineLevel implements SyncEngine {
     this._syncIntervalId = this.scheduleSyncInterval(intervalSync, intervalMilliseconds);
 
     // Initiate an immediate sync.
-    if (!this._syncLock) {
+    if (!this._lifecycle.isSyncInProgress) {
       try {
         await this.sync(undefined, { verifyConvergence: true });
       } catch (error) {
@@ -1789,7 +1694,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   private scheduleSyncInterval(operation: () => Promise<void>, intervalMilliseconds: number): ReturnType<typeof setInterval> {
     return setInterval((): void => {
-      void this._backgroundTasks.run(operation);
+      void this._lifecycle.runBackgroundTask(operation);
     }, intervalMilliseconds);
   }
 
@@ -1830,7 +1735,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async runLiveIntegrityCheck(generation: number): Promise<void> {
-    if (this._engineGeneration !== generation || this._syncLock) {
+    if (this._engineGeneration !== generation || this._lifecycle.isSyncInProgress) {
       return;
     }
 
@@ -1946,8 +1851,8 @@ export class SyncEngineLevel implements SyncEngine {
     this.clearLinkRuntimeInflight(linkKey);
 
     // Kick off repair with retry scheduling on failure.
-    const taskGroup = this.getIdentityTaskGroup(link.tenantDid);
-    void this.runIdentityBackgroundTask(taskGroup, async (): Promise<void> => {
+    const taskGroup = this._lifecycle.getIdentityTaskGroup(link.tenantDid);
+    void this._lifecycle.runIdentityTask(taskGroup, async (): Promise<void> => {
       try {
         await this.repairLink(linkKey);
       } catch {
@@ -2028,7 +1933,7 @@ export class SyncEngineLevel implements SyncEngine {
     const attempts = this._repairAttempts.get(linkKey) ?? 1;
     const backoff = SyncEngineLevel.REPAIR_BACKOFF_MS;
     const delayMs = backoff[Math.min(attempts - 1, backoff.length - 1)];
-    const taskGroup = this.getIdentityTaskGroup(link.tenantDid);
+    const taskGroup = this._lifecycle.getIdentityTaskGroup(link.tenantDid);
 
     const timerGeneration = this._engineGeneration;
     const timer = setTimeout((): void => {
@@ -2041,7 +1946,7 @@ export class SyncEngineLevel implements SyncEngine {
       const currentLink = this._activeLinks.get(linkKey);
       if (currentLink?.status !== 'repairing') { return; }
 
-      void this.runIdentityBackgroundTask(taskGroup, async (): Promise<void> => {
+      void this._lifecycle.runIdentityTask(taskGroup, async (): Promise<void> => {
         try {
           await this.repairLink(linkKey);
         } catch {
@@ -2290,8 +2195,8 @@ export class SyncEngineLevel implements SyncEngine {
       // sync below. The public getter uses per-link aggregation.
 
       // Kick off an immediate durable feed reconcile to catch up after being offline.
-      if (!this._syncLock) {
-        void this._backgroundTasks.run(async (): Promise<void> => {
+      if (!this._lifecycle.isSyncInProgress) {
+        void this._lifecycle.runBackgroundTask(async (): Promise<void> => {
           try {
             await this.sync(undefined, { verifyConvergence: true });
           } catch (error: unknown) {
@@ -2335,8 +2240,8 @@ export class SyncEngineLevel implements SyncEngine {
 
       // The device may have slept and WebSockets may be dead. An immediate
       // sync via durable feed reconciliation detects and repairs any divergence.
-      if (!this._syncLock) {
-        void this._backgroundTasks.run(async (): Promise<void> => {
+      if (!this._lifecycle.isSyncInProgress) {
+        void this._lifecycle.runBackgroundTask(async (): Promise<void> => {
           try {
             await this.sync(undefined, { verifyConvergence: true });
           } catch (error: unknown) {
@@ -2684,7 +2589,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Hot-remove a single identity from the active live sync session. */
   private async removeIdentityFromLiveSync(did: string): Promise<void> {
-    const taskGroup = this.getIdentityTaskGroup(did);
+    const taskGroup = this._lifecycle.getIdentityTaskGroup(did);
     taskGroup.pause();
 
     for (const sub of this._liveSubscriptions.filter(s => s.did === did)) {
@@ -2707,9 +2612,7 @@ export class SyncEngineLevel implements SyncEngine {
     this.cancelIdentityRuntimeTimers(did);
     this.clearIdentityRuntimeState(did);
 
-    if (this._identityTaskGroups.get(did) === taskGroup) {
-      this._identityTaskGroups.delete(did);
-    }
+    this._lifecycle.deleteIdentityTaskGroup(did, taskGroup);
   }
 
   private cancelIdentityRuntimeTimers(did: string): void {
@@ -2834,10 +2737,10 @@ export class SyncEngineLevel implements SyncEngine {
       permissionGrantIds : target.permissionGrantIds,
       isStale,
     };
-    const taskGroup = this.getIdentityTaskGroup(did);
+    const taskGroup = this._lifecycle.getIdentityTaskGroup(did);
 
     const subscriptionHandler = (subMessage: SubscriptionMessage): Promise<void> =>
-      this.runIdentityBackgroundTask(taskGroup, () => this.handleLivePullMessage(pullContext, subMessage));
+      this._lifecycle.runIdentityTask(taskGroup, () => this.handleLivePullMessage(pullContext, subMessage));
 
     // Construct the subscribe message and send it directly to the specific
     // dwnUrl via WebSocket.  We do NOT use agent.dwn.sendRequest() because
@@ -3370,11 +3273,11 @@ export class SyncEngineLevel implements SyncEngine {
       this._engineGeneration !== handlerGeneration ||
       !this._activeLinks.has(target.linkKey) ||
       (capturedPushLink !== undefined && this._activeLinks.get(target.linkKey) !== capturedPushLink);
-    const taskGroup = this.getIdentityTaskGroup(did);
+    const taskGroup = this._lifecycle.getIdentityTaskGroup(did);
 
     // Subscribe to the local DWN's EventLog.
     const subscriptionHandler = (subMessage: SubscriptionMessage): Promise<void> =>
-      this.runIdentityBackgroundTask(taskGroup, async (): Promise<void> => {
+      this._lifecycle.runIdentityTask(taskGroup, async (): Promise<void> => {
         if (isPushStale()) {
           return;
         }
@@ -3426,7 +3329,7 @@ export class SyncEngineLevel implements SyncEngine {
         // pending, push immediately. Otherwise, the pending batch timer
         // or the post-flush drain will pick up the new entry.
         if (!pushRuntime.flushing && !pushRuntime.timer) {
-          void this.runIdentityBackgroundTask(taskGroup, () => this.flushPendingPushesForLink(targetKey));
+          void this._lifecycle.runIdentityTask(taskGroup, () => this.flushPendingPushesForLink(targetKey));
         }
       });
 
@@ -3644,10 +3547,10 @@ export class SyncEngineLevel implements SyncEngine {
     // writes while keeping single-write latency low.
     const rt = this._pushRuntimes.get(linkKey);
     if (rt && rt.entries.length > 0 && !rt.timer) {
-      const taskGroup = this.getIdentityTaskGroup(rt.did);
+      const taskGroup = this._lifecycle.getIdentityTaskGroup(rt.did);
       rt.timer = setTimeout((): void => {
         rt.timer = undefined;
-        void this.runIdentityBackgroundTask(taskGroup, () => this.flushPendingPushesForLink(linkKey));
+        void this._lifecycle.runIdentityTask(taskGroup, () => this.flushPendingPushesForLink(linkKey));
       }, PUSH_DEBOUNCE_MS);
     }
   }
@@ -3918,10 +3821,10 @@ export class SyncEngineLevel implements SyncEngine {
     if (pushRuntime.timer) {
       clearTimeout(pushRuntime.timer);
     }
-    const taskGroup = this.getIdentityTaskGroup(pushRuntime.did);
+    const taskGroup = this._lifecycle.getIdentityTaskGroup(pushRuntime.did);
     pushRuntime.timer = setTimeout((): void => {
       pushRuntime.timer = undefined;
-      void this.runIdentityBackgroundTask(taskGroup, () => this.flushPendingPushesForLink(targetKey));
+      void this._lifecycle.runIdentityTask(taskGroup, () => this.flushPendingPushesForLink(targetKey));
     }, delayMs);
   }
 
@@ -5971,7 +5874,7 @@ export class SyncEngineLevel implements SyncEngine {
       this._reconcileTimerDueAt.delete(linkKey);
     }
 
-    const taskGroup = this.getIdentityTaskGroup(link.tenantDid);
+    const taskGroup = this._lifecycle.getIdentityTaskGroup(link.tenantDid);
     const generation = this._engineGeneration;
     const timer = setTimeout((): void => {
       this._reconcileTimers.delete(linkKey);
@@ -5981,7 +5884,7 @@ export class SyncEngineLevel implements SyncEngine {
       // scheduled. Without this, a stale timer could restart reconcile
       // work for a DID that is no longer active.
       if (!this._activeLinks.has(linkKey)) { return; }
-      void this.runIdentityBackgroundTask(taskGroup, async (): Promise<void> => {
+      void this._lifecycle.runIdentityTask(taskGroup, async (): Promise<void> => {
         try {
           await this.reconcileLink(linkKey);
         } catch {
@@ -6499,7 +6402,7 @@ export class SyncEngineLevel implements SyncEngine {
     // A normal sync/drain already owns the feed checkpoints. Let that operation
     // finish, then preserve the explicit retry request rather than racing its
     // checkpoint writes or silently dropping a UI Retry-now action.
-    await this.waitForAndAcquireSyncLock();
+    await this._lifecycle.acquireSync();
 
     try {
       if (this._engineGeneration !== generation) {
@@ -6514,7 +6417,7 @@ export class SyncEngineLevel implements SyncEngine {
         await this.retryQuotaBlocksForTarget(target, generation, topologyGeneration);
       }));
     } finally {
-      this.releaseSyncLock();
+      this._lifecycle.releaseSync();
     }
   }
 

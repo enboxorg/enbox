@@ -123,8 +123,8 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
   afterEach(async () => {
     sinon.restore();
     (syncEngine as any)._targetPlanner.invalidate();
-    if ((syncEngine as any)._syncLock) {
-      (syncEngine as any).releaseSyncLock();
+    if ((syncEngine as any)._lifecycle.isSyncInProgress) {
+      (syncEngine as any)._lifecycle.releaseSync();
     }
     await db.sublevel('quotaBlocks').clear();
     await db.sublevel('deadLetters').clear();
@@ -397,13 +397,13 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
   it('waits to preserve Retry now while another operation owns the sync lock', async () => {
     const internal = syncEngine as any;
     const targets = sinon.stub(internal, 'getSyncTargets').resolves([]);
-    expect(internal.tryAcquireSyncLock()).toBe(true);
+    expect(internal._lifecycle.tryAcquireSync()).toBe(true);
 
     const retry = syncEngine.retryRemoteNow(TENANT, REMOTE);
     await Promise.resolve();
 
     expect(targets.called).toBe(false);
-    internal.releaseSyncLock();
+    internal._lifecycle.releaseSync();
     await retry;
 
     expect(targets.calledOnce).toBe(true);

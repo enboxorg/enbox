@@ -422,7 +422,7 @@ describe('SyncEngineLevel', () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
       const internal = syncEngine as any;
       const getSyncTargets = sinon.stub(internal, 'getSyncTargets').resolves([]);
-      expect(internal.tryAcquireSyncLock()).toBe(true);
+      expect(internal._lifecycle.tryAcquireSync()).toBe(true);
 
       try {
         const retry = syncEngine.retryRemoteNow('did:example:alice', 'https://a.example');
@@ -430,14 +430,14 @@ describe('SyncEngineLevel', () => {
         expect(getSyncTargets.called).toBe(false);
 
         internal._engineGeneration++;
-        internal.releaseSyncLock();
+        internal._lifecycle.releaseSync();
         await retry;
 
         expect(getSyncTargets.called).toBe(false);
-        expect(internal._syncLock).toBe(false);
+        expect(internal._lifecycle.isSyncInProgress).toBe(false);
       } finally {
-        if (internal._syncLock) {
-          internal.releaseSyncLock();
+        if (internal._lifecycle.isSyncInProgress) {
+          internal._lifecycle.releaseSync();
         }
       }
     });
@@ -649,7 +649,9 @@ describe('SyncEngineLevel', () => {
 
       // Reset the sync lock in case a previous test timed out while sync was in progress.
       // Without this, all subsequent tests would fail with "Sync operation is already in progress."
-      syncEngine['_syncLock'] = false;
+      if (syncEngine['_lifecycle'].isSyncInProgress) {
+        syncEngine['_lifecycle'].releaseSync();
+      }
 
       await syncEngine.clear();
       await testHarness.syncStore.clear();
@@ -3839,7 +3841,7 @@ describe('SyncEngineLevel', () => {
           syncEngine['_repairAttempts'].set(linkKey, 1);
           // beforeEach clears the engine, which intentionally pauses background
           // task admission. This white-box scheduler test models an active runtime.
-          syncEngine['_backgroundTasks'].resume();
+          syncEngine['_lifecycle'].resumeTaskAdmission();
 
           const repairStub = sinon.stub(syncEngine as any, 'repairLink').rejects(new Error('still broken'));
 
