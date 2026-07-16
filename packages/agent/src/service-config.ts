@@ -138,16 +138,11 @@ async function fanOutServiceConfigRecord(
   ownerDid: string,
   message: unknown,
   dataBytes: Uint8Array,
+  endpoints: string[],
 ): Promise<void> {
-  let endpoints: string[] = [];
-  try {
-    endpoints = await agent.dwn.getRemoteDwnEndpointUrls(ownerDid);
-  } catch {
-    // No resolvable remote endpoints — the local write plus sync is the only
-    // delivery path. Nothing to fan out to.
-    return;
-  }
-
+  // The owner's remote DWN endpoints were already resolved by the caller. An
+  // empty set means there is nothing to fan out to — the local write plus sync
+  // is the only delivery path.
   await Promise.allSettled(endpoints.map(async (dwnUrl) => {
     try {
       await agent.rpc.sendDwnRequest({
@@ -192,27 +187,19 @@ export async function publishServiceConfig(
 
   const existing = await getExistingServiceConfigRecord(agent, ownerDid);
 
-  const messageParams: {
-    protocol: string;
-    protocolPath: string;
-    schema: string;
-    dataFormat: string;
-    recordId?: string;
-    dateCreated?: string;
-  } = {
+  // `$recordLimit: { max: 1 }` rejects a second create — update the existing
+  // record in place (same recordId, preserving the immutable dateCreated). A
+  // `RecordsQuery` entry carries the RecordsWrite fields at the top level.
+  const messageParams = {
     protocol     : SERVICE_CONFIG_PROTOCOL_URI,
     protocolPath : SERVICE_CONFIG_PROTOCOL_PATH,
     schema       : SERVICE_CONFIG_SCHEMA_URI,
     dataFormat   : 'application/json',
+    ...(existing === undefined ? {} : {
+      recordId    : existing.recordId,
+      dateCreated : existing.descriptor.dateCreated,
+    }),
   };
-
-  // `$recordLimit: { max: 1 }` rejects a second create — update the existing
-  // record in place (same recordId, preserving the immutable dateCreated). A
-  // `RecordsQuery` entry carries the RecordsWrite fields at the top level.
-  if (existing !== undefined) {
-    messageParams.recordId = existing.recordId;
-    messageParams.dateCreated = existing.descriptor.dateCreated;
-  }
 
   const dataBytes = Convert.object(config).toUint8Array();
   const { message, reply: { status } } = await agent.dwn.processRequest({
@@ -227,7 +214,7 @@ export async function publishServiceConfig(
     throw new Error(`Failed to write service-config record: ${status.code} - ${status.detail}`);
   }
 
-  await fanOutServiceConfigRecord(agent, ownerDid, message, dataBytes);
+  await fanOutServiceConfigRecord(agent, ownerDid, message, dataBytes, dwnEndpoints);
 
   return config;
 }
