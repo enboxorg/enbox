@@ -777,13 +777,12 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Lazy accessor bound to the current agent and permissions context. */
   private get targetResolver(): SyncTargetResolver {
-    if (!this._targetResolver) {
-      this._targetResolver = new SyncTargetResolver({
-        endpointStore        : this._endpointStore,
-        getEndpointDiscovery : (): SyncEndpointDiscovery => this.agent.dwn,
-        permissionsApi       : this._permissionsApi,
-      });
-    }
+    this._targetResolver ??= new SyncTargetResolver({
+      endpointStore        : this._endpointStore,
+      getEndpointDiscovery : (): SyncEndpointDiscovery => this.agent.dwn,
+      permissionsApi       : this._permissionsApi,
+    });
+
     return this._targetResolver;
   }
 
