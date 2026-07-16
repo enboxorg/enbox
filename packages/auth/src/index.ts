@@ -36,3 +36,13 @@ export type { PasswordContext } from './password-provider.js';
 // Re-export agent classes so consumers can construct custom agents/vaults
 // without a direct @enbox/agent dependency.
 export { EnboxUserAgent, HdIdentityVault } from '@enbox/agent';
+
+// Re-export the service-config announcement protocol so apps can add it to a
+// connect request (see `serviceConfigProtocolRequest`) and inspect announcements
+// without a direct @enbox/agent dependency.
+export {
+  ServiceConfigProtocolDefinition,
+  SERVICE_CONFIG_PROTOCOL_URI,
+  SERVICE_CONFIG_PROTOCOL_PATH,
+} from '@enbox/agent';
+export type { ServiceConfig } from '@enbox/agent';

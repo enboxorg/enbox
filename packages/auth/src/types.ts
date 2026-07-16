@@ -69,7 +69,8 @@ export type AuthEvent =
   | 'local-dwn-available'
   | 'local-dwn-unavailable'
   | 'connection-expiring'
-  | 'connection-expired';
+  | 'connection-expired'
+  | 'connection-endpoints-changed';
 
 /** Payload type for each event, keyed by event name. */
 export interface AuthEventMap {
@@ -88,6 +89,18 @@ export interface AuthEventMap {
   'connection-expiring': { status: ConnectionStatus };
   /** Emitted when the newest delegated connect session becomes expired or revoked. */
   'connection-expired': { status: ConnectionStatus };
+  /**
+   * Emitted when the connected identity's DWN service endpoints change after a
+   * fresh resolution of its DID document — the wallet owner added or removed a
+   * DWN. `added`/`removed` are the deltas relative to the previously-known set;
+   * `endpoints` is the full new set the agent will now target.
+   */
+  'connection-endpoints-changed': {
+    connectedDid: string;
+    endpoints: string[];
+    added: string[];
+    removed: string[];
+  };
 }
 
 /** A type-safe event handler for a specific event. */

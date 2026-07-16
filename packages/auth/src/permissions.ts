@@ -14,8 +14,30 @@ import type { DwnProtocolDefinition } from '@enbox/agent';
 
 import type { ProtocolRequest } from './types.js';
 
+import { ServiceConfigProtocolDefinition } from '@enbox/agent';
+
 import { DEFAULT_PERMISSIONS } from './types.js';
 import { WalletConnect } from './wallet-connect-client.js';
+
+/**
+ * The connect permission request for the DWN service-config announcement
+ * protocol.
+ *
+ * Add this to a connect `protocols` list to opt an app into the endpoint-change
+ * trigger. Requesting the protocol yields the standard `Messages.Read` grant, so
+ * the wallet owner's announcement records replicate into the app's local DWN via
+ * sync — which is what {@link import('./auth-manager.js').AuthManager.startServiceConfigWatch}
+ * subscribes to. Read-only: the wallet owner is the sole writer of these records.
+ *
+ * @example
+ * ```ts
+ * await auth.connect({ protocols: [NotebookDefinition, serviceConfigProtocolRequest()] });
+ * const stop = await auth.startServiceConfigWatch();
+ * ```
+ */
+export function serviceConfigProtocolRequest(): ProtocolRequest {
+  return { definition: ServiceConfigProtocolDefinition, permissions: ['read'] };
+}
 
 /**
  * Normalize simplified `ProtocolRequest[]` into agent-level

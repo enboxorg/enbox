@@ -372,9 +372,11 @@ describe('AgentIdentityApi', () => {
           sinon.stub(testHarness.agent.did, 'get').resolves(new BearerDid({ ...testPortableDid, keyManager: testHarness.agent.keyManager }));
           const updateSpy = sinon.stub(testHarness.agent.did, 'update').resolves();
 
-          // set new endpoints
+          // set new endpoints. `announce: false` isolates the DID-document
+          // update under test from the (separately-tested) service-config
+          // announcement side-effect.
           const newEndpoints = ['https://example.com/dwn2'];
-          await testHarness.agent.identity.setDwnEndpoints({ didUri: testPortableDid.uri, endpoints: newEndpoints });
+          await testHarness.agent.identity.setDwnEndpoints({ didUri: testPortableDid.uri, endpoints: newEndpoints, announce: false });
 
           expect(updateSpy.calledOnce).toBe(true);
           // expect the updated DID to have the new DWN service
@@ -422,9 +424,9 @@ describe('AgentIdentityApi', () => {
             expect(error.message).toContain('Failed to dereference');
           }
 
-          // set new endpoints
+          // set new endpoints (`announce: false` — see note above)
           const newEndpoints = ['https://example.com/dwn2'];
-          await testHarness.agent.identity.setDwnEndpoints({ didUri: testPortableDid.uri, endpoints: newEndpoints });
+          await testHarness.agent.identity.setDwnEndpoints({ didUri: testPortableDid.uri, endpoints: newEndpoints, announce: false });
 
           expect(updateSpy.calledOnce).toBe(true);
 
@@ -451,9 +453,13 @@ describe('AgentIdentityApi', () => {
             expect(error.message).toContain('Failed to dereference');
           }
 
-          // set new endpoints
+          // set new endpoints (`announce: false` — see note above)
           const newEndpoints = ['https://example.com/dwn2'];
-          await testHarness.agent.identity.setDwnEndpoints({ didUri: testPortableDidWithDifferentService.uri, endpoints: newEndpoints });
+          await testHarness.agent.identity.setDwnEndpoints({
+            didUri    : testPortableDidWithDifferentService.uri,
+            endpoints : newEndpoints,
+            announce  : false,
+          });
 
           // expect the updated DID to have the new DWN service as well as the existing service
           expect(updateSpy.calledOnce).toBe(true);

@@ -644,6 +644,14 @@ export interface SyncEngine {
    */
   updateIdentityOptions(params: { did: string, options: SyncIdentityOptions }): Promise<void>;
   /**
+   * Invalidate the memoized sync-target endpoint list so the next sync tick
+   * re-resolves each registered identity's DWN endpoints from its DID
+   * document. Use after a registered identity's DWN service endpoints change
+   * out of band (its DID document was re-resolved) to apply the change without
+   * waiting out the internal cache TTL.
+   */
+  invalidateSyncTargets(): void;
+  /**
    * Preforms a one-shot sync operation. If no direction is provided, it will perform both push and pull.
    * @param direction which direction you'd like to perform the sync operation.
    *

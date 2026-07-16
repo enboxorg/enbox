@@ -7,9 +7,11 @@ import type { EnboxPlatformAgent } from './types/agent.js';
 import type { IdentityMetadata, PortableIdentity } from './types/identity.js';
 
 import { isPortableDid } from '@enbox/dids';
+import { logger } from '@enbox/common';
 
 import { BearerIdentity } from './bearer-identity.js';
 import { InMemoryIdentityStore } from './store-identity.js';
+import { publishServiceConfig } from './service-config.js';
 
 export interface IdentityApiParams<TKeyManager extends AgentKeyManager> {
   agent?: EnboxPlatformAgent<TKeyManager>;
@@ -231,11 +233,23 @@ export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyMana
   /**
    * Sets the DWN endpoints for the given DID.
    *
+   * When `announce` is not `false` (the default), a service-config
+   * announcement record is published after the DID document is updated, so
+   * connected apps observing this identity learn of the endpoint change
+   * promptly instead of waiting out their resolver-cache TTL (see
+   * {@link publishServiceConfig}). The announcement is best-effort — a failure
+   * to publish it never fails the endpoint update itself.
+   *
    * @param didUri - The DID URI to set the DWN endpoints for.
    * @param endpoints - The array of DWN endpoints to set.
+   * @param announce - Whether to publish a service-config announcement. Defaults to `true`.
    * @throws An error if the DID is not found, or if an update cannot be performed.
    */
-  public async setDwnEndpoints({ didUri, endpoints }: { didUri: string; endpoints: string[] }): Promise<void> {
+  public async setDwnEndpoints({ didUri, endpoints, announce = true }: {
+    didUri: string;
+    endpoints: string[];
+    announce?: boolean;
+  }): Promise<void> {
     const bearerDid = await this.agent.did.get({ didUri });
     if (!bearerDid) {
       throw new Error(`AgentIdentityApi: Failed to set DWN endpoints due to DID not found: ${didUri}`);
@@ -266,6 +280,66 @@ export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyMana
     }
 
     await this.agent.did.update({ portableDid, tenant: this.agent.agentDid.uri });
+
+    // `did.update` refreshes the resolver cache with the new document, but the
+    // sync engine memoizes resolved endpoints separately (a short-TTL sync
+    // targets cache). Invalidate it so an added/removed DWN endpoint takes
+    // effect on the next sync tick instead of waiting out that TTL.
+    this.agent.sync.invalidateSyncTargets();
+
+    if (announce) {
+      // Publish the change so connected apps re-resolve now rather than on
+      // resolver-cache expiry. Best-effort: the DID document is already the
+      // authoritative record, and sync reconciles the announcement later, so a
+      // publish failure must not fail the endpoint update.
+      try {
+        await this.publishServiceConfig({ didUri });
+      } catch (error: unknown) {
+        const detail = error instanceof Error ? error.message : String(error);
+        logger.error(`AgentIdentityApi: Failed to publish service-config announcement for ${didUri}: ${detail}`);
+      }
+    }
+  }
+
+  /**
+   * Publishes a service-config announcement record for the given identity from
+   * its current DWN endpoint set.
+   *
+   * This is the wallet-side half of the endpoint-change trigger: it installs
+   * the service-config protocol on the identity's DWN (idempotent), writes or
+   * updates the single announcement record, and best-effort delivers it to the
+   * identity's remote DWN endpoints. Connected apps that requested the
+   * service-config protocol replicate the record via sync and re-resolve this
+   * DID's endpoints in response.
+   *
+   * The DID document remains authoritative; the announcement is only a prompt
+   * signal. Callers that change endpoints via {@link setDwnEndpoints} get this
+   * automatically unless they pass `announce: false`.
+   *
+   * @param didUri - The identity DID to publish a service-config record for.
+   */
+  public async publishServiceConfig({ didUri }: { didUri: string }): Promise<void> {
+    await publishServiceConfig(this.agent, didUri);
+  }
+
+  /**
+   * Forces the agent to re-resolve a DID's DWN service endpoints from its DID
+   * document, bypassing the resolver cache, and invalidates the sync engine's
+   * memoized endpoint list.
+   *
+   * Use this on a connected identity whose DWN endpoints may have changed out
+   * of band (for example, the wallet owner added or removed a DWN): the agent
+   * would otherwise keep using the cached endpoint set until the resolver TTL
+   * expires. After this resolves, subsequent DWN operations and the next sync
+   * tick target the freshly resolved endpoints.
+   *
+   * @param didUri - The DID URI whose DWN endpoints should be re-resolved.
+   * @returns The freshly resolved DWN endpoint URLs.
+   */
+  public async refreshDwnEndpoints({ didUri }: { didUri: string }): Promise<string[]> {
+    await this.agent.did.refreshResolution(didUri);
+    this.agent.sync.invalidateSyncTargets();
+    return this.getDwnEndpoints({ didUri });
   }
 
   /**

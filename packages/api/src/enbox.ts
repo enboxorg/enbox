@@ -221,6 +221,40 @@ export class Enbox {
   }
 
   /**
+   * Re-resolve the connected identity's DID document and apply any change to
+   * its DWN service endpoints — without a disconnect/reconnect.
+   *
+   * Forces a fresh resolution of the connected DID (bypassing the resolver
+   * cache), invalidates the sync engine's memoized endpoint list, and — when
+   * the endpoint set changed — causes the owning `AuthManager` to emit
+   * `connection-endpoints-changed`. Unlike {@link Enbox.refresh}, no grants are
+   * re-issued and there is no wallet round-trip.
+   *
+   * Available on instances returned by {@link Enbox.connect}. Instances created
+   * with the constructor or {@link Enbox.fromSession} should call
+   * `refreshConnection()` on their owning `AuthManager` instead.
+   *
+   * @returns The freshly resolved DWN endpoint set for the connected identity.
+   */
+  public async refreshConnection(): Promise<string[]> {
+    const auth = this._auth;
+    if (auth === undefined) {
+      throw new Error(
+        '[@enbox/api] Enbox.refreshConnection() requires the AuthManager used to create this session. ' +
+        'Call auth.refreshConnection() on the owning AuthManager.'
+      );
+    }
+    const authSession = auth.session;
+    if (authSession?.did !== this._connectedDid || authSession.delegateDid !== this._delegateDid) {
+      throw new Error(
+        '[@enbox/api] Enbox.refreshConnection() cannot use an AuthManager whose active session no longer matches this Enbox instance.'
+      );
+    }
+
+    return auth.refreshConnection();
+  }
+
+  /**
    * Returns a {@link TypedEnbox} instance scoped to the given protocol.
    *
    * This is the **primary developer interface** for interacting with

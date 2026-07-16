@@ -15,7 +15,7 @@
  */
 
 import type { RecordsWriteMessage } from '@enbox/dwn-sdk-js';
-import type { AgentSessionIdentity, BearerIdentity, DwnDataEncodedRecordsWriteMessage, HdIdentityVault, PortableIdentity } from '@enbox/agent';
+import type { AgentSessionIdentity, BearerIdentity, DwnDataEncodedRecordsWriteMessage, DwnMessageSubscription, DwnSubscriptionMessage, HdIdentityVault, PortableIdentity } from '@enbox/agent';
 
 import type { FlowContext } from './connect/lifecycle.js';
 import type { PasswordProvider } from './password-provider.js';
@@ -54,7 +54,7 @@ import type {
 
 import { Convert } from '@enbox/common';
 import { DataStream } from '@enbox/dwn-sdk-js';
-import { DwnInterface, DwnPermissionGrant, EnboxUserAgent } from '@enbox/agent';
+import { DwnInterface, DwnPermissionGrant, EnboxUserAgent, SERVICE_CONFIG_PROTOCOL_PATH, SERVICE_CONFIG_PROTOCOL_URI } from '@enbox/agent';
 
 import { AuthEventEmitter } from './events.js';
 import { AuthSession } from './identity-session.js';
@@ -84,6 +84,18 @@ type ConnectionMonitorState = {
   timer?: ReturnType<typeof setInterval>;
   isPolling: boolean;
   autoRefreshAttempts: Set<string>;
+};
+
+/** Internal state for an active service-config announcement watch. */
+type ServiceConfigWatchState = {
+  /** The underlying DWN subscription handle, set once the subscribe reply lands. */
+  subscription?: DwnMessageSubscription;
+  /** Set when the watch is torn down so late events are ignored. */
+  stopped: boolean;
+  /** Whether a `refreshConnection()` triggered by this watch is in flight. */
+  refreshInFlight: boolean;
+  /** Whether another event arrived while a refresh was in flight (coalesced). */
+  refreshQueued: boolean;
 };
 
 type ConnectionAttemptGuard = {
@@ -134,6 +146,7 @@ export class AuthManager {
   private _isShutDown = false;
   private _isShuttingDown = false;
   private _connectionMonitor?: ConnectionMonitorState;
+  private _serviceConfigWatch?: ServiceConfigWatchState;
   private _lifecycleGeneration = 0;
   private _lifecycleCommitTail: Promise<void> = Promise.resolve();
   private _shutdownPromise?: Promise<void>;
@@ -472,6 +485,60 @@ export class AuthManager {
   }
 
   /**
+   * Re-resolve the connected identity's DID document and apply any change to
+   * its DWN service endpoints — without a disconnect/reconnect.
+   *
+   * A live session normally serves a cached DID resolution (and cached sync
+   * targets), so a wallet-side endpoint add/remove is invisible until those
+   * caches turn over. This forces a fresh resolution of the connected DID,
+   * invalidates the sync engine's memoized endpoint list, and — when the set
+   * changed — emits `connection-endpoints-changed` with the delta.
+   *
+   * Unlike {@link refresh}, this re-grants nothing and involves no wallet
+   * round-trip: it only reconciles the agent with the DID document as it now
+   * exists on the network. Safe to call repeatedly; a no-op returns the
+   * current endpoints and emits no event.
+   *
+   * @returns The freshly resolved DWN endpoint set for the connected identity.
+   * @throws when there is no active session, or the connected DID cannot be resolved.
+   */
+  async refreshConnection(): Promise<string[]> {
+    this._guardShutdown();
+
+    const connectedDid = this._session?.did;
+    if (connectedDid === undefined) {
+      throw new Error('[@enbox/auth] refreshConnection() requires an active session.');
+    }
+
+    // Snapshot the currently-targeted endpoints (served from cache) before
+    // forcing a fresh resolution, so we can compute the delta. A resolution
+    // failure here is non-fatal — treat it as "no previously-known set".
+    const before = await this._userAgent.identity
+      .getDwnEndpoints({ didUri: connectedDid })
+      .catch((): string[] => []);
+
+    // Force a fresh resolution (bypassing the resolver cache) and invalidate
+    // the sync targets cache so the new endpoint set takes effect immediately.
+    const after = await this._userAgent.identity.refreshDwnEndpoints({ didUri: connectedDid });
+
+    const beforeSet = new Set(before);
+    const afterSet = new Set(after);
+    const added = after.filter((endpoint) => !beforeSet.has(endpoint));
+    const removed = before.filter((endpoint) => !afterSet.has(endpoint));
+
+    if (added.length > 0 || removed.length > 0) {
+      this._emitter.emit('connection-endpoints-changed', {
+        connectedDid,
+        endpoints: after,
+        added,
+        removed,
+      });
+    }
+
+    return after;
+  }
+
+  /**
    * Start opt-in polling for delegated connection expiry and revocation.
    *
    * Events are emitted only when the newest session enters a new state.
@@ -514,6 +581,118 @@ export class AuthManager {
       clearInterval(this._connectionMonitor.timer);
     }
     this._connectionMonitor = undefined;
+  }
+
+  /**
+   * Start watching the connected identity's DWN service-config announcements.
+   *
+   * Subscribes to the service-config protocol on the connected identity's DWN
+   * (replicated into the local DWN via sync). When the wallet owner changes its
+   * DWN endpoints and publishes an announcement, the subscription fires and this
+   * triggers {@link refreshConnection} — re-resolving the DID document and
+   * emitting `connection-endpoints-changed` if the endpoint set changed. This is
+   * the dapp-side half of the endpoint-change trigger: it removes the need for a
+   * disconnect/reconnect to pick up an added or removed DWN.
+   *
+   * Requires an active delegated session whose grants include the service-config
+   * protocol — request it at connect time (see `serviceConfigProtocolRequest()`),
+   * otherwise the announcement records never replicate and the watch stays
+   * inert. Rapid announcements are coalesced into a single refresh.
+   *
+   * @returns A function that stops this watch.
+   * @throws when there is no active delegated session, or the subscription cannot be opened.
+   */
+  async startServiceConfigWatch(): Promise<() => void> {
+    this._guardShutdown();
+
+    const connectedDid = this._session?.did;
+    const delegateDid = this._session?.delegateDid;
+    if (connectedDid === undefined || delegateDid === undefined) {
+      throw new Error('[@enbox/auth] startServiceConfigWatch() requires an active delegated session.');
+    }
+
+    this.stopServiceConfigWatch();
+
+    const watch: ServiceConfigWatchState = {
+      stopped         : false,
+      refreshInFlight : false,
+      refreshQueued   : false,
+    };
+
+    const scheduleRefresh = (): void => {
+      if (watch.stopped) { return; }
+      if (watch.refreshInFlight) {
+        watch.refreshQueued = true;
+        return;
+      }
+      watch.refreshInFlight = true;
+      void (async (): Promise<void> => {
+        try {
+          // Drain coalesced events: a burst of announcements collapses into a
+          // single refresh, then one more if another arrived mid-flight.
+          do {
+            watch.refreshQueued = false;
+            if (watch.stopped) { break; }
+            await this.refreshConnection();
+          } while (watch.refreshQueued);
+        } catch (error: unknown) {
+          console.error('[@enbox/auth] Service-config watch refresh failed:', error);
+        } finally {
+          watch.refreshInFlight = false;
+        }
+      })();
+    };
+
+    const { reply } = await this._userAgent.dwn.processRequest({
+      // The service-config protocol is `published: true`, so authoring the
+      // subscription as the delegate is authorized to read the owner's public
+      // records — connect never issues Records.Subscribe grants.
+      author        : delegateDid,
+      target        : connectedDid,
+      messageType   : DwnInterface.RecordsSubscribe,
+      messageParams : {
+        filter: {
+          protocol     : SERVICE_CONFIG_PROTOCOL_URI,
+          protocolPath : SERVICE_CONFIG_PROTOCOL_PATH,
+        },
+      },
+      subscriptionHandler: (message: DwnSubscriptionMessage): void => {
+        // React only to record events. Transport lifecycle frames and the
+        // end-of-stored-events marker are not endpoint changes.
+        const type = (message as { type?: string }).type;
+        if (
+          type === 'eose' || type === 'error' || type === 'disconnected' ||
+          type === 'reconnected' || type === 'reconnecting'
+        ) {
+          return;
+        }
+        scheduleRefresh();
+      },
+    });
+
+    if (reply.status.code !== 200 || reply.subscription === undefined) {
+      throw new Error(
+        `[@enbox/auth] Failed to start service-config watch: ${reply.status.code} - ${reply.status.detail}`
+      );
+    }
+
+    watch.subscription = reply.subscription;
+    this._serviceConfigWatch = watch;
+
+    return (): void => {
+      if (this._serviceConfigWatch === watch) {
+        this.stopServiceConfigWatch();
+      }
+    };
+  }
+
+  /** Stop the active service-config watch, if any. */
+  stopServiceConfigWatch(): void {
+    const watch = this._serviceConfigWatch;
+    if (watch === undefined) { return; }
+    watch.stopped = true;
+    this._serviceConfigWatch = undefined;
+    void Promise.resolve(watch.subscription?.close()).catch(() => { /* best-effort */ });
   }
 
   /**
@@ -623,6 +802,7 @@ export class AuthManager {
 
     this._invalidateConnectionAttempts();
     this.stopConnectionMonitor();
+    this.stopServiceConfigWatch();
     const releaseCommit = await this._acquireLifecycleCommit();
     try {
       await this._lock(options);
@@ -670,6 +850,7 @@ export class AuthManager {
 
     this._invalidateConnectionAttempts();
     this.stopConnectionMonitor();
+    this.stopServiceConfigWatch();
     const releaseCommit = await this._acquireLifecycleCommit();
     try {
       await this._disconnect(options);
@@ -994,6 +1175,7 @@ export class AuthManager {
     this._isShuttingDown = true;
     this._invalidateConnectionAttempts();
     this.stopConnectionMonitor();
+    this.stopServiceConfigWatch();
     this._shutdownPromise = this._runShutdown(options);
     return this._shutdownPromise;
   }

@@ -1063,6 +1063,19 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
+  public invalidateSyncTargets(): void {
+    // Drop the memoized sync targets and bump the generation counter so any
+    // in-flight `getSyncTargets()` discards its result instead of caching a
+    // stale endpoint list. The next sync tick re-resolves each registered
+    // identity's DWN endpoints from its (now refreshed) DID document.
+    //
+    // Callers use this when a registered identity's DWN service endpoints
+    // change out of band — the DID document was re-resolved — so the change
+    // takes effect on the next sync without waiting out the cache TTL.
+    this._syncTargetsCache = undefined;
+    this._syncTargetsCacheGeneration++;
+  }
+
   // ---------------------------------------------------------------------------
   // One-shot sync (durable feed reconciliation)
   // ---------------------------------------------------------------------------

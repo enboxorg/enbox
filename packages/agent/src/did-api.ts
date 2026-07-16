@@ -256,6 +256,31 @@ export class AgentDidApi<TKeyManager extends AgentKeyManager = AgentKeyManager> 
     return verificationMethod;
   }
 
+  /**
+   * Forces a fresh resolution of the given DID by evicting any cached
+   * resolution result and re-resolving through the DID method.
+   *
+   * The agent's resolver cache otherwise serves a previously-resolved
+   * document until its TTL expires — and, for agent-managed DIDs, the
+   * `AgentDidResolverCache` keeps serving the stale copy until a later
+   * background resolution succeeds. Callers that must observe an
+   * out-of-band DID document change promptly (for example, a connected
+   * identity that added or removed a DWN service endpoint) use this to
+   * bypass the cache for a single re-resolution.
+   *
+   * @param didUri - The DID URI to re-resolve.
+   * @returns The freshly resolved DID resolution result.
+   */
+  public async refreshResolution(didUri: string): Promise<DidResolutionResult> {
+    // Evict the cached entry so the next `resolve` misses the cache and
+    // re-resolves from the network / DID method rather than returning the
+    // stale document. A subsequent successful resolution re-populates the
+    // cache via `DidResolverCache.set`.
+    await this.cache.delete(didUri);
+
+    return this.resolve(didUri);
+  }
+
   public async update({ tenant, portableDid, publish = true }: {
     tenant?: string;
     portableDid: PortableDid;

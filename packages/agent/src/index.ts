@@ -32,6 +32,7 @@ export * from './local-dwn.js';
 export * from './local-key-manager.js';
 export * from './permissions-api.js';
 export * from './secret-store.js';
+export * from './service-config.js';
 export * from './store-data.js';
 export * from './store-did.js';
 export * from './store-identity.js';
