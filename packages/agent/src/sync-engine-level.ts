@@ -98,7 +98,6 @@ type LinkSyncTarget = SyncTarget & { linkKey: string };
 
 enum LinkSubscriptionOpenResult {
   ReadyForLive = 'readyForLive',
-  Polling = 'polling',
   Repairing = 'repairing',
 }
 
@@ -2174,7 +2173,7 @@ export class SyncEngineLevel implements SyncEngine {
    */
   private async closeLinkSubscriptions(link: ReplicationLinkState): Promise<void> {
     const { tenantDid: did, remoteEndpoint: dwnUrl } = link;
-    const linkKey = this.buildLinkKey(did, dwnUrl, link.projectionId, link.authorizationEpoch);
+    const linkKey = buildLinkId(did, dwnUrl, link.projectionId, link.authorizationEpoch);
 
     await this.closeLiveSubscription(linkKey);
     await this.closeLocalSubscription(linkKey);
@@ -2381,8 +2380,6 @@ export class SyncEngineLevel implements SyncEngine {
       const subscriptionResult = await this.openLinkSubscriptions({ ...target, linkKey });
       if (subscriptionResult === LinkSubscriptionOpenResult.ReadyForLive) {
         await this.markLinkLive(target, link);
-      } else if (subscriptionResult === LinkSubscriptionOpenResult.Polling) {
-        await this.markLinkPolling(target, link);
       }
       return this.createActiveLinkInitializationResult(link);
     } catch (error: any) {
@@ -2402,7 +2399,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private getReplicationLinkKey(target: SyncTarget, link: ReplicationLinkState): string {
-    return this.buildLinkKey(target.did, target.dwnUrl, link.projectionId, link.authorizationEpoch);
+    return buildLinkId(target.did, target.dwnUrl, link.projectionId, link.authorizationEpoch);
   }
 
   private async openLinkSubscriptions(target: LinkSyncTarget): Promise<LinkSubscriptionOpenResult> {
@@ -2436,18 +2433,6 @@ export class SyncEngineLevel implements SyncEngine {
     if (nextProbeAt !== undefined) {
       this.scheduleQuotaProbeForActiveLink(this.getReplicationLinkKey(target, link), link, nextProbeAt);
     }
-  }
-
-  private async markLinkPolling(target: SyncTarget, link: ReplicationLinkState): Promise<void> {
-    this.emitEvent({
-      type           : 'link:status-change',
-      tenantDid      : target.did,
-      remoteEndpoint : target.dwnUrl,
-      ...syncEventScope(target.scope),
-      from           : 'initializing',
-      to             : 'polling'
-    });
-    await this.ledger.setStatus(link, 'polling');
   }
 
   private async handleInitializeLinkTargetError(
@@ -4877,7 +4862,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   private quotaBlockIdentity(target: SyncTarget): { keyFor: (messageCid: string) => string; linkKey: string; projectionId: string } {
     const projectionId = target.projectionId;
-    const linkKey = this.buildLinkKey(target.did, target.dwnUrl, projectionId, target.authorizationEpoch);
+    const linkKey = buildLinkId(target.did, target.dwnUrl, projectionId, target.authorizationEpoch);
     return {
       keyFor: (messageCid: string): string => SyncEngineLevel.quotaBlockKey(target.did, messageCid, linkKey),
       linkKey,
@@ -5879,19 +5864,6 @@ export class SyncEngineLevel implements SyncEngine {
   // Cursor persistence
   // ---------------------------------------------------------------------------
 
-  /**
-   * Build the runtime key for a replication link.
-   *
-   * Live-mode subscription methods (`openLivePullSubscription`,
-   * `openLocalPushSubscription`) receive `linkKey` directly and never
-   * call this. The remaining callers are poll-mode `sync()` and the
-   * live-mode startup/error paths that already have a projection ID and
-   * authorization epoch.
-   */
-  private buildLinkKey(did: string, dwnUrl: string, projectionId: string, authorizationEpoch: string): string {
-    return buildLinkId(did, dwnUrl, projectionId, authorizationEpoch);
-  }
-
   // ---------------------------------------------------------------------------
   // Echo-loop suppression
   // ---------------------------------------------------------------------------
@@ -6023,23 +5995,28 @@ export class SyncEngineLevel implements SyncEngine {
     return entries;
   }
 
-  public async clearFailedMessage(messageCid: string, remoteEndpoint?: string): Promise<boolean> {
-    // Clear all matching entries. The durable key includes tenant, but this
-    // API intentionally clears by message CID and optional remote regardless
-    // of tenant, matching the previous public contract.
-    let found = false;
+  /** Delete every dead-letter entry matching `match`; returns how many were removed. */
+  private async deleteDeadLettersWhere(match: (entry: DeadLetterEntry) => boolean): Promise<number> {
     const batch: { type: 'del'; key: string }[] = [];
     for await (const [key, value] of this._deadLetters.iterator()) {
-      const entry = JSON.parse(value) as DeadLetterEntry;
-      if (entry.messageCid === messageCid && (remoteEndpoint === undefined || entry.remoteEndpoint === remoteEndpoint)) {
+      if (match(JSON.parse(value) as DeadLetterEntry)) {
         batch.push({ type: 'del', key });
-        found = true;
       }
     }
     if (batch.length > 0) {
       await this._deadLetters.batch(batch);
     }
-    return found;
+    return batch.length;
+  }
+
+  public async clearFailedMessage(messageCid: string, remoteEndpoint?: string): Promise<boolean> {
+    // The durable key includes tenant, but this API intentionally clears by
+    // message CID and optional remote regardless of tenant, matching the
+    // previous public contract.
+    const deleted = await this.deleteDeadLettersWhere(
+      (entry) => entry.messageCid === messageCid && (remoteEndpoint === undefined || entry.remoteEndpoint === remoteEndpoint),
+    );
+    return deleted > 0;
   }
 
   public async clearAllFailedMessages(tenantDid?: string): Promise<void> {
@@ -6048,16 +6025,7 @@ export class SyncEngineLevel implements SyncEngine {
       return;
     }
 
-    const batch: { type: 'del'; key: string }[] = [];
-    for await (const [key, value] of this._deadLetters.iterator()) {
-      const entry = JSON.parse(value) as DeadLetterEntry;
-      if (entry.tenantDid === tenantDid) {
-        batch.push({ type: 'del', key });
-      }
-    }
-    if (batch.length > 0) {
-      await this._deadLetters.batch(batch);
-    }
+    await this.deleteDeadLettersWhere((entry) => entry.tenantDid === tenantDid);
   }
 
   public async getSyncHealth(): Promise<SyncHealthSummary> {
