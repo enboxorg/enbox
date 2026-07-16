@@ -396,8 +396,9 @@ describe('SyncEngineLevel — identity management', () => {
       try {
         const engine = new SyncEngineLevel({ db });
         (engine as any)._syncLock = true;
+        (engine as any)._syncLockCompletion = new Promise<void>(() => {});
 
-        // Start stopSync but don't await — it will poll until timeout.
+        // Start stopSync but don't await — it will wait until timeout.
         let caught: Error | undefined;
         const promise = engine.stopSync(200).catch((err: Error): void => { caught = err; });
 

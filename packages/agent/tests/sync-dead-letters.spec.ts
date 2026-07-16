@@ -1,3 +1,5 @@
+import sinon from 'sinon';
+
 import { Level } from 'level';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
@@ -66,6 +68,23 @@ describe('SyncEngineLevel dead letter tracking', () => {
     expect(await syncEngine.getFailedMessages('did:example:bob')).toMatchObject([
       { messageCid: 'cid-shared', remoteEndpoint },
     ]);
+  });
+
+  it('should suppress only the expected database-close race during internal cleanup', async () => {
+    const del = sinon.stub();
+    const internal = new SyncEngineLevel({
+      db: {
+        sublevel: (): { del: typeof del } => ({ del }),
+      } as never,
+    }) as unknown as {
+      clearFailedMessageForTenant(tenantDid: string, messageCid: string, remoteEndpoint: string): Promise<void>;
+    };
+
+    del.rejects(Object.assign(new Error('database closed'), { code: 'LEVEL_DATABASE_NOT_OPEN' }));
+    await expect(internal.clearFailedMessageForTenant('did:example:alice', 'cid', 'https://dwn.example')).resolves.toBeUndefined();
+
+    del.rejects(Object.assign(new Error('write failed'), { code: 'LEVEL_IO_ERROR' }));
+    await expect(internal.clearFailedMessageForTenant('did:example:alice', 'cid', 'https://dwn.example')).rejects.toThrow('write failed');
   });
 
   it('should clear all failed messages for one tenant', async () => {
