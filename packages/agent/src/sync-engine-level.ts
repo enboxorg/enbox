@@ -3129,7 +3129,7 @@ export class SyncEngineLevel implements SyncEngine {
     const drained = this.drainCommittedPull(linkKey);
     if (drained > 0) {
       await this.ledger.saveLink(link);
-      this.emitPullCheckpointAdvance(link);
+      this.emitCheckpointAdvance(link, 'pull');
     }
 
     if (delivery.runtime.inflight.size > MAX_IN_FLIGHT_PULL_DELIVERIES) {
@@ -3138,49 +3138,26 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  private emitPullCheckpointAdvance(link: ReplicationLinkState): void {
-    const token = link.pull.contiguousAppliedToken;
+  private emitCheckpointAdvance(link: ReplicationLinkState, direction: 'pull' | 'push'): void {
+    const token = link[direction].contiguousAppliedToken;
     if (token === undefined) {
       return;
     }
-
-    const event: SyncEvent = {
-      type           : 'checkpoint:pull-advance',
-      tenantDid      : link.tenantDid,
-      remoteEndpoint : link.remoteEndpoint,
-      ...syncEventScope(link.scope),
-      position       : token.position,
-    };
 
     // Emit after durable save — "advanced" means persisted.
-    if (token.messageCid === undefined) {
-      this.emitEvent(event);
-      return;
-    }
-
-    this.emitEvent({ ...event, messageCid: token.messageCid });
-  }
-
-  private emitPushCheckpointAdvance(link: ReplicationLinkState): void {
-    const token = link.push.contiguousAppliedToken;
-    if (token === undefined) {
-      return;
-    }
-
-    const event: SyncEvent = {
-      type           : 'checkpoint:push-advance',
+    const base = {
       tenantDid      : link.tenantDid,
       remoteEndpoint : link.remoteEndpoint,
       ...syncEventScope(link.scope),
       position       : token.position,
+      ...(token.messageCid === undefined ? {} : { messageCid: token.messageCid }),
     };
 
-    if (token.messageCid === undefined) {
-      this.emitEvent(event);
-      return;
-    }
-
-    this.emitEvent({ ...event, messageCid: token.messageCid });
+    this.emitEvent(
+      direction === 'pull'
+        ? { type: 'checkpoint:pull-advance', ...base }
+        : { type: 'checkpoint:push-advance', ...base },
+    );
   }
 
   private async handleLivePullProcessingError(
@@ -3936,8 +3913,8 @@ export class SyncEngineLevel implements SyncEngine {
       return { aborted: true };
     }
 
-    SyncEngineLevel.assertFeedPushSucceeded(localReply, target);
-    SyncEngineLevel.assertFeedPullSucceeded(remoteReply, target);
+    SyncEngineLevel.assertFeedQuerySucceeded(localReply, target, 'push');
+    SyncEngineLevel.assertFeedQuerySucceeded(remoteReply, target, 'pull');
 
     const result: SyncReconcileResult = {
       localFingerprint  : localReply.fingerprint,
@@ -4007,7 +3984,7 @@ export class SyncEngineLevel implements SyncEngine {
         agent              : this.agent,
       });
 
-      if (await this.resetFeedPullAfterProgressGap(reply, link, resetAfterProgressGap)) {
+      if (await this.resetFeedAfterProgressGap(reply, link, 'pull', resetAfterProgressGap)) {
         resetAfterProgressGap = true;
         cursor = undefined;
         const result = await this.pullRemoteFeedDiffWhenUseful(target, link, shouldContinue);
@@ -4017,7 +3994,7 @@ export class SyncEngineLevel implements SyncEngine {
         continue;
       }
 
-      SyncEngineLevel.assertFeedPullSucceeded(reply, target);
+      SyncEngineLevel.assertFeedQuerySucceeded(reply, target, 'pull');
       const pageResult = await this.admitRemoteFeedPageAndTrack({
         target         : target,
         entries        : reply.entries ?? [],
@@ -4030,7 +4007,7 @@ export class SyncEngineLevel implements SyncEngine {
 
       hasActionableDiffs ||= pageResult.hasActionableDiffs;
 
-      const cursorAdvance = await this.advanceFeedPullCursor(link, cursor, reply, target);
+      const cursorAdvance = await this.advanceFeedCursor(link, 'pull', cursor, reply, target);
       if (cursorAdvance.drained) {
         return { admittedCids, hasActionableDiffs, remoteFingerprint: reply.fingerprint };
       }
@@ -4057,13 +4034,13 @@ export class SyncEngineLevel implements SyncEngine {
 
       const reply = await this.queryFeedCidsPage(target, 'remote', cursor);
 
-      if (await this.resetFeedPullAfterProgressGap(reply, link, resetAfterProgressGap)) {
+      if (await this.resetFeedAfterProgressGap(reply, link, 'pull', resetAfterProgressGap)) {
         resetAfterProgressGap = true;
         cursor = undefined;
         continue;
       }
 
-      SyncEngineLevel.assertFeedPullSucceeded(reply, target);
+      SyncEngineLevel.assertFeedQuerySucceeded(reply, target, 'pull');
       const missingEntries = SyncEngineLevel.feedEntriesMissingFrom(localCids, reply.entries ?? []);
       const pageResult = await this.admitRemoteFeedPageAndTrack({
         target         : target,
@@ -4078,7 +4055,7 @@ export class SyncEngineLevel implements SyncEngine {
 
       hasActionableDiffs ||= pageResult.hasActionableDiffs;
 
-      const cursorAdvance = await this.advanceFeedPullCursor(link, cursor, reply, target);
+      const cursorAdvance = await this.advanceFeedCursor(link, 'pull', cursor, reply, target);
       if (cursorAdvance.drained) {
         return { admittedCids, hasActionableDiffs, remoteFingerprint: reply.fingerprint };
       }
@@ -4152,11 +4129,11 @@ export class SyncEngineLevel implements SyncEngine {
         agent              : this.agent,
       });
 
-      if (await this.resetFeedPushAfterProgressGap(reply, link, false)) {
+      if (await this.resetFeedAfterProgressGap(reply, link, 'push', false)) {
         return this.pushLocalFeedDiffWithRemoteInventory(target, link, shouldContinue, forceQuotaProbe);
       }
 
-      SyncEngineLevel.assertFeedPushSucceeded(reply, target);
+      SyncEngineLevel.assertFeedQuerySucceeded(reply, target, 'push');
       const pageResult = await this.pushLocalFeedPage(target, reply.entries ?? [], shouldContinue);
       if (pageResult.kind === 'aborted') {
         return { aborted: true };
@@ -4167,7 +4144,7 @@ export class SyncEngineLevel implements SyncEngine {
         return { hasActionableDiffs, pushFailures: pageResult.failures };
       }
 
-      const cursorAdvance = await this.advanceFeedPushCursor(link, cursor, reply, target);
+      const cursorAdvance = await this.advanceFeedCursor(link, 'push', cursor, reply, target);
       if (cursorAdvance.drained) {
         return { hasActionableDiffs, localFingerprint: reply.fingerprint, pushFailures: [] };
       }
@@ -4239,13 +4216,13 @@ export class SyncEngineLevel implements SyncEngine {
 
       const reply = await this.queryFeedCidsPage(target, 'local', cursor);
 
-      if (await this.resetFeedPushAfterProgressGap(reply, link, resetAfterProgressGap)) {
+      if (await this.resetFeedAfterProgressGap(reply, link, 'push', resetAfterProgressGap)) {
         resetAfterProgressGap = true;
         cursor = undefined;
         continue;
       }
 
-      SyncEngineLevel.assertFeedPushSucceeded(reply, target);
+      SyncEngineLevel.assertFeedQuerySucceeded(reply, target, 'push');
       const missingEntries = SyncEngineLevel.feedEntriesMissingFrom(remoteCids, reply.entries ?? []);
       const pageResult = await this.pushLocalFeedPage(target, missingEntries, shouldContinue);
       if (pageResult.kind === 'aborted') {
@@ -4260,7 +4237,7 @@ export class SyncEngineLevel implements SyncEngine {
         remoteCids.add(entry.messageCid);
       }
 
-      const cursorAdvance = await this.advanceFeedPushCursor(link, cursor, reply, target);
+      const cursorAdvance = await this.advanceFeedCursor(link, 'push', cursor, reply, target);
       if (cursorAdvance.drained) {
         return { hasActionableDiffs, localFingerprint: reply.fingerprint, pushFailures: [] };
       }
@@ -4456,9 +4433,9 @@ export class SyncEngineLevel implements SyncEngine {
 
       const reply = await this.queryFeedCidsPage(target, source, cursor);
       if (source === 'local') {
-        SyncEngineLevel.assertFeedPushSucceeded(reply, target);
+        SyncEngineLevel.assertFeedQuerySucceeded(reply, target, 'push');
       } else {
-        SyncEngineLevel.assertFeedPullSucceeded(reply, target);
+        SyncEngineLevel.assertFeedQuerySucceeded(reply, target, 'pull');
       }
       for (const entry of reply.entries ?? []) {
         cids.add(entry.messageCid);
@@ -4756,44 +4733,26 @@ export class SyncEngineLevel implements SyncEngine {
     return (message as GenericMessage & { recordId?: string }).recordId === recordId;
   }
 
-  private async resetFeedPullAfterProgressGap(
+  private async resetFeedAfterProgressGap(
     reply: MessagesQueryReply,
     link: ReplicationLinkState,
+    direction: 'pull' | 'push',
     alreadyReset: boolean,
   ): Promise<boolean> {
     if (reply.status.code !== 410 || alreadyReset) {
       return false;
     }
 
-    ReplicationLedger.resetCheckpoint(link.pull);
+    ReplicationLedger.resetCheckpoint(link[direction]);
     await this.ledger.saveLink(link);
     return true;
   }
 
-  private async resetFeedPushAfterProgressGap(
-    reply: MessagesQueryReply,
-    link: ReplicationLinkState,
-    alreadyReset: boolean,
-  ): Promise<boolean> {
-    if (reply.status.code !== 410 || alreadyReset) {
-      return false;
-    }
-
-    ReplicationLedger.resetCheckpoint(link.push);
-    await this.ledger.saveLink(link);
-    return true;
-  }
-
-  private static assertFeedPullSucceeded(reply: MessagesQueryReply, target: SyncTarget): void {
+  private static assertFeedQuerySucceeded(reply: MessagesQueryReply, target: SyncTarget, direction: 'pull' | 'push'): void {
     if (reply.status.code !== 200) {
-      throw new Error(`SyncEngineLevel: MessagesQuery failed for ${target.did} -> ${target.dwnUrl}: ${reply.status.code} ${reply.status.detail}`);
-    }
-  }
-
-  private static assertFeedPushSucceeded(reply: MessagesQueryReply, target: SyncTarget): void {
-    if (reply.status.code !== 200) {
-      const detail = `${reply.status.code} ${reply.status.detail}`;
-      throw new Error(`SyncEngineLevel: local MessagesQuery failed for ${target.did} -> ${target.dwnUrl}: ${detail}`);
+      // The local feed query is labelled distinctly from the remote one.
+      const label = direction === 'push' ? 'local MessagesQuery' : 'MessagesQuery';
+      throw new Error(`SyncEngineLevel: ${label} failed for ${target.did} -> ${target.dwnUrl}: ${reply.status.code} ${reply.status.detail}`);
     }
   }
 
@@ -5545,48 +5504,29 @@ export class SyncEngineLevel implements SyncEngine {
       localOnly.every((cid) => omittedCids.has(cid));
   }
 
-  private async advanceFeedPullCursor(
+  private async advanceFeedCursor(
     link: ReplicationLinkState,
+    direction: 'pull' | 'push',
     previousCursor: ProgressToken | undefined,
     reply: MessagesQueryReply,
     target: SyncTarget,
   ): Promise<FeedCursorAdvanceResult> {
+    const checkpoint = link[direction];
     const drained = reply.drained === true;
     if (reply.cursor === undefined) {
       if (drained) {
         return { drained: true };
       }
-      throw new Error(`SyncEngineLevel: MessagesQuery for ${target.did} -> ${target.dwnUrl} returned no cursor before drain`);
+      // The local feed query is labelled distinctly from the remote one.
+      const label = direction === 'push' ? 'local MessagesQuery' : 'MessagesQuery';
+      throw new Error(`SyncEngineLevel: ${label} for ${target.did} -> ${target.dwnUrl} returned no cursor before drain`);
     }
 
-    this.assertFeedCursorProgress(link, link.pull, previousCursor, reply.cursor, drained, target.dwnUrl, 'pull');
-    ReplicationLedger.setReceivedToken(link.pull, reply.cursor);
-    ReplicationLedger.commitContiguousToken(link.pull, reply.cursor);
+    this.assertFeedCursorProgress(link, checkpoint, previousCursor, reply.cursor, drained, target.dwnUrl, direction);
+    ReplicationLedger.setReceivedToken(checkpoint, reply.cursor);
+    ReplicationLedger.commitContiguousToken(checkpoint, reply.cursor);
     await this.ledger.saveLink(link);
-    this.emitPullCheckpointAdvance(link);
-
-    return drained ? { drained: true } : { cursor: reply.cursor, drained: false };
-  }
-
-  private async advanceFeedPushCursor(
-    link: ReplicationLinkState,
-    previousCursor: ProgressToken | undefined,
-    reply: MessagesQueryReply,
-    target: SyncTarget,
-  ): Promise<FeedCursorAdvanceResult> {
-    const drained = reply.drained === true;
-    if (reply.cursor === undefined) {
-      if (drained) {
-        return { drained: true };
-      }
-      throw new Error(`SyncEngineLevel: local MessagesQuery for ${target.did} -> ${target.dwnUrl} returned no cursor before drain`);
-    }
-
-    this.assertFeedCursorProgress(link, link.push, previousCursor, reply.cursor, drained, target.dwnUrl, 'push');
-    ReplicationLedger.setReceivedToken(link.push, reply.cursor);
-    ReplicationLedger.commitContiguousToken(link.push, reply.cursor);
-    await this.ledger.saveLink(link);
-    this.emitPushCheckpointAdvance(link);
+    this.emitCheckpointAdvance(link, direction);
 
     return drained ? { drained: true } : { cursor: reply.cursor, drained: false };
   }
