@@ -383,7 +383,16 @@ export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, permission
  * on the first failure. Callers use failures to retry transient push problems,
  * dead-letter `Invalid` remote rejections, or mark links for reconciliation.
  */
-export async function pushMessages({ did, dwnUrl, delegateDid, permissionGrantIds, messageCids, agent, permissionsApi }: {
+export async function pushMessages({
+  did,
+  dwnUrl,
+  delegateDid,
+  permissionGrantIds,
+  messageCids,
+  agent,
+  permissionsApi,
+  onBeforeApply,
+}: {
   did: string;
   dwnUrl: string;
   delegateDid?: string;
@@ -391,6 +400,7 @@ export async function pushMessages({ did, dwnUrl, delegateDid, permissionGrantId
   messageCids: string[];
   agent: EnboxPlatformAgent;
   permissionsApi?: PermissionsApi;
+  onBeforeApply?: (messageCid: string) => void;
 }): Promise<PushResult> {
   const context = new RemoteApplyPushContext({
     did,
@@ -399,11 +409,21 @@ export async function pushMessages({ did, dwnUrl, delegateDid, permissionGrantId
     permissionGrantIds,
     agent,
     permissionsApi,
+    onBeforeApply,
   });
   return context.push([...new Set(messageCids)]);
 }
 
-export async function pushMessageEntries({ did, dwnUrl, delegateDid, permissionGrantIds, entries, agent, permissionsApi }: {
+export async function pushMessageEntries({
+  did,
+  dwnUrl,
+  delegateDid,
+  permissionGrantIds,
+  entries,
+  agent,
+  permissionsApi,
+  onBeforeApply,
+}: {
   did: string;
   dwnUrl: string;
   delegateDid?: string;
@@ -411,6 +431,7 @@ export async function pushMessageEntries({ did, dwnUrl, delegateDid, permissionG
   entries: SyncMessageEntry[];
   agent: EnboxPlatformAgent;
   permissionsApi?: PermissionsApi;
+  onBeforeApply?: (messageCid: string) => void;
 }): Promise<PushResult> {
   const context = new RemoteApplyPushContext({
     did,
@@ -419,6 +440,7 @@ export async function pushMessageEntries({ did, dwnUrl, delegateDid, permissionG
     permissionGrantIds,
     agent,
     permissionsApi,
+    onBeforeApply,
   });
   return context.pushEntries(entries);
 }
@@ -486,6 +508,7 @@ class RemoteApplyPushContext {
     permissionGrantIds?: string[];
     agent: EnboxPlatformAgent;
     permissionsApi?: PermissionsApi;
+    onBeforeApply?: (messageCid: string) => void;
   }) {}
 
   public async push(rootCids: string[]): Promise<PushResult> {
@@ -591,10 +614,12 @@ class RemoteApplyPushContext {
 
     let result: ReplicationApplyResult;
     try {
+      const data = await pushData(entry);
+      this.deps.onBeforeApply?.(cid);
       result = await this.deps.agent.rpc.applyReplicatedMessage({
         dwnUrl    : this.deps.dwnUrl,
         targetDid : this.deps.did,
-        data      : await pushData(entry),
+        data,
         message   : entry.message,
       });
     } catch (error: any) {

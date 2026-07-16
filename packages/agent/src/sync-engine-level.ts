@@ -427,12 +427,22 @@ export class SyncEngineLevel implements SyncEngine {
   private _retryRemoteQueue: Promise<void> = Promise.resolve();
 
   /**
-   * CIDs recently received via pull subscription, keyed by `cid|dwnUrl` to
-   * scope suppression per remote endpoint. A message pulled from Provider A
-   * is only suppressed for push back to Provider A — it still fans out to
-   * Provider B and C. TTL: 60 seconds. Cap: 10,000 entries.
+   * CIDs recently received via pull subscription, keyed by
+   * `cid|tenantDid|dwnUrl`. A message pulled for one tenant from Provider A is
+   * only suppressed for push back to that tenant at A — it still fans out to
+   * Provider B and C and cannot suppress another managed identity. TTL: 60
+   * seconds. Cap: 10,000 entries.
    */
   private readonly _recentlyPulledCids: Map<string, number> = new Map();
+
+  /**
+   * CIDs about to be pushed to a remote endpoint, keyed by
+   * `cid|tenantDid|dwnUrl`. Remote subscriptions announce successful local
+   * pushes back to the sender; these entries let the matching tenant's pull
+   * path commit that delivery without re-reading and re-applying data which is
+   * already present locally.
+   */
+  private readonly _recentlyPushedCids: Map<string, number> = new Map();
 
   /** TTL for echo-loop suppression entries (60 seconds). */
   private static readonly ECHO_SUPPRESS_TTL_MS = 60_000;
@@ -2402,6 +2412,7 @@ export class SyncEngineLevel implements SyncEngine {
     this._reconcileInFlight.clear();
 
     this._recentlyPulledCids.clear();
+    this._recentlyPushedCids.clear();
 
     // Clear the in-memory link and runtime state.
     this._activeLinks.clear();
@@ -2952,12 +2963,18 @@ export class SyncEngineLevel implements SyncEngine {
 
     const delivery = this.startPullDelivery(context, subMessage.cursor);
     try {
-      const result = await this.processLivePullEvent(context, subMessage);
+      const messageCid = await Message.getCid(subMessage.event.message);
+      if (this.isRecentlyPushed(context.did, messageCid, context.dwnUrl)) {
+        await this.commitPullDelivery(context, subMessage.cursor, delivery);
+        return;
+      }
+
+      const result = await this.processLivePullEvent(context, subMessage, messageCid);
       if (!result) { return; }
 
       if (result.admitted) {
         if (context.link === undefined) {
-          this.trackRecentlyPulledMessage(result.messageCid, context.dwnUrl);
+          this.trackRecentlyPulledMessage(context.did, result.messageCid, context.dwnUrl);
           await this.clearFailedMessage(result.messageCid, context.dwnUrl);
         } else {
           await this.trackRemoteFeedAppliedCids(result.appliedCids, this.syncTargetFromLink(context.link));
@@ -3034,10 +3051,10 @@ export class SyncEngineLevel implements SyncEngine {
   private async processLivePullEvent(
     context: LivePullContext,
     subMessage: Extract<SubscriptionMessage, { type: 'event' }>,
+    rootCid: string,
   ): Promise<LivePullProcessResult | undefined> {
     const event = subMessage.event;
     const dataStreamFactory = await this.createLivePullDataStreamFactory(context, event);
-    const rootCid = await Message.getCid(event.message);
     const prefetched: SyncMessageEntry[] = [{
       message           : event.message,
       dataStreamFactory : dataStreamFactory,
@@ -3140,9 +3157,12 @@ export class SyncEngineLevel implements SyncEngine {
     });
   }
 
-  private trackRecentlyPulledMessage(messageCid: string, dwnUrl: string): void {
-    this._recentlyPulledCids.set(`${messageCid}|${dwnUrl}`, Date.now() + SyncEngineLevel.ECHO_SUPPRESS_TTL_MS);
-    this.evictExpiredEchoEntries();
+  private trackRecentlyPulledMessage(tenantDid: string, messageCid: string, dwnUrl: string): void {
+    this._recentlyPulledCids.set(
+      SyncEngineLevel.echoCacheKey(tenantDid, messageCid, dwnUrl),
+      Date.now() + SyncEngineLevel.ECHO_SUPPRESS_TTL_MS,
+    );
+    this.evictExpiredEchoEntries(this._recentlyPulledCids);
   }
 
   private async commitPullDelivery(
@@ -3152,7 +3172,14 @@ export class SyncEngineLevel implements SyncEngine {
   ): Promise<void> {
     // Guard: if the link transitioned to repairing while this handler was
     // in-flight, skip all state mutations — the repair process owns progression.
-    if (!link || !delivery.runtime || link.status !== 'live' || isStale()) {
+    // A remote subscription can deliver while the link is still initializing;
+    // those events are accepted above and must not strand an uncommitted ordinal.
+    if (
+      !link ||
+      !delivery.runtime ||
+      (link.status !== 'live' && link.status !== 'initializing') ||
+      isStale()
+    ) {
       return;
     }
 
@@ -3272,7 +3299,7 @@ export class SyncEngineLevel implements SyncEngine {
       // Echo-loop suppression: skip CIDs that were recently pulled from this
       // specific remote. A message pulled from Provider A is only suppressed
       // for push to A — it still fans out to Provider B and C.
-      if (this.isRecentlyPulled(cid, dwnUrl)) {
+      if (this.isRecentlyPulled(did, cid, dwnUrl)) {
         return;
       }
 
@@ -3338,14 +3365,12 @@ export class SyncEngineLevel implements SyncEngine {
     const { did, dwnUrl, delegateDid, protocol, scope, permissionGrantIds, retryCount } = pushRuntime;
 
     try {
-      const result = await pushMessages({
+      const result = await this.pushMessages({
         did,
         dwnUrl,
         delegateDid,
         permissionGrantIds,
-        messageCids    : pushEntries.map((entry) => entry.cid),
-        agent          : this.agent,
-        permissionsApi : this._permissionsApi,
+        messageCids: pushEntries.map((entry) => entry.cid),
       });
 
       await this.handlePushBatchResult(linkKey, batch, result);
@@ -4313,6 +4338,10 @@ export class SyncEngineLevel implements SyncEngine {
       delegateDid        : target.delegateDid,
       permissionGrantIds : target.permissionGrantIds,
       entries            : grantEntries.entries,
+      // A canonicalized delegate-local grant may not exist in the owner's local
+      // tenant yet. Let its remote echo follow the normal pull path so that it
+      // materializes locally instead of being mistaken for an already-local push.
+      suppressRemoteEcho : false,
     });
     if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
       return { kind: 'aborted' };
@@ -4430,17 +4459,28 @@ export class SyncEngineLevel implements SyncEngine {
     return { ...message, authorization: remainingAuthorization } as GenericMessage;
   }
 
-  private async pushMessageEntries({ did, dwnUrl, delegateDid, permissionGrantIds, entries }: {
+  private async pushMessageEntries({
+    did,
+    dwnUrl,
+    delegateDid,
+    permissionGrantIds,
+    entries,
+    suppressRemoteEcho = true,
+  }: {
     did: string;
     dwnUrl: string;
     delegateDid?: string;
     permissionGrantIds?: string[];
     entries: SyncMessageEntry[];
+    suppressRemoteEcho?: boolean;
   }): Promise<PushResult> {
     return pushMessageEntries({
       did, dwnUrl, delegateDid, permissionGrantIds, entries,
       agent          : this.agent,
       permissionsApi : this._permissionsApi,
+      onBeforeApply  : suppressRemoteEcho
+        ? (messageCid): void => { this.trackRecentlyPushedMessage(did, messageCid, dwnUrl); }
+        : undefined,
     });
   }
 
@@ -4605,7 +4645,7 @@ export class SyncEngineLevel implements SyncEngine {
       return { kind: 'skipped' };
     }
 
-    if (this.isRecentlyPulled(entry.messageCid, target.dwnUrl)) {
+    if (this.isRecentlyPulled(target.did, entry.messageCid, target.dwnUrl)) {
       return { kind: 'skipped' };
     }
 
@@ -4828,7 +4868,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   private async trackRemoteFeedAppliedCids(messageCids: string[], target: SyncTarget): Promise<void> {
     for (const cid of messageCids) {
-      this.trackRecentlyPulledMessage(cid, target.dwnUrl);
+      this.trackRecentlyPulledMessage(target.did, cid, target.dwnUrl);
       await this.clearFailedMessage(cid, target.dwnUrl);
       await this.clearDeferredPull(target.did, target.dwnUrl, cid);
       // A pull admission only proves that the signed message exists remotely.
@@ -5964,39 +6004,65 @@ export class SyncEngineLevel implements SyncEngine {
    * Evicts expired entries from the echo-loop suppression cache.
    * Also enforces the size cap by evicting oldest entries first.
    */
-  private evictExpiredEchoEntries(): void {
+  private evictExpiredEchoEntries(cache: Map<string, number>): void {
     const now = Date.now();
 
     // Evict expired entries.
-    for (const [cid, expiry] of this._recentlyPulledCids) {
+    for (const [cid, expiry] of cache) {
       if (now >= expiry) {
-        this._recentlyPulledCids.delete(cid);
+        cache.delete(cid);
       }
     }
 
     // Enforce size cap by evicting oldest entries.
-    if (this._recentlyPulledCids.size > SyncEngineLevel.ECHO_SUPPRESS_MAX_ENTRIES) {
-      const excess = this._recentlyPulledCids.size - SyncEngineLevel.ECHO_SUPPRESS_MAX_ENTRIES;
+    if (cache.size > SyncEngineLevel.ECHO_SUPPRESS_MAX_ENTRIES) {
+      const excess = cache.size - SyncEngineLevel.ECHO_SUPPRESS_MAX_ENTRIES;
       let evicted = 0;
-      for (const key of this._recentlyPulledCids.keys()) {
+      for (const key of cache.keys()) {
         if (evicted >= excess) { break; }
-        this._recentlyPulledCids.delete(key);
+        cache.delete(key);
         evicted++;
       }
     }
   }
 
+  private static echoCacheKey(tenantDid: string, cid: string, dwnUrl: string): string {
+    return `${cid}|${tenantDid}|${dwnUrl}`;
+  }
+
   /**
-   * Checks whether a CID was recently pulled from a specific remote endpoint
-   * and should not be pushed back to that same endpoint (echo-loop suppression).
-   * Does not suppress pushes to other endpoints — multi-provider fan-out works.
+   * Checks whether this tenant recently pulled a CID from a specific endpoint
+   * and should not push it back there. Other tenants and endpoints remain
+   * independent, preserving multi-identity and multi-provider fan-out.
    */
-  private isRecentlyPulled(cid: string, dwnUrl: string): boolean {
-    const key = `${cid}|${dwnUrl}`;
-    const expiry = this._recentlyPulledCids.get(key);
+  private isRecentlyPulled(tenantDid: string, cid: string, dwnUrl: string): boolean {
+    return this.hasUnexpiredEchoEntry(this._recentlyPulledCids, tenantDid, cid, dwnUrl);
+  }
+
+  private trackRecentlyPushedMessage(tenantDid: string, messageCid: string, dwnUrl: string): void {
+    this._recentlyPushedCids.set(
+      SyncEngineLevel.echoCacheKey(tenantDid, messageCid, dwnUrl),
+      Date.now() + SyncEngineLevel.ECHO_SUPPRESS_TTL_MS,
+    );
+    this.evictExpiredEchoEntries(this._recentlyPushedCids);
+  }
+
+  /** Returns whether a local push to this endpoint makes the pull event an echo. */
+  private isRecentlyPushed(tenantDid: string, cid: string, dwnUrl: string): boolean {
+    return this.hasUnexpiredEchoEntry(this._recentlyPushedCids, tenantDid, cid, dwnUrl);
+  }
+
+  private hasUnexpiredEchoEntry(
+    cache: Map<string, number>,
+    tenantDid: string,
+    cid: string,
+    dwnUrl: string,
+  ): boolean {
+    const key = SyncEngineLevel.echoCacheKey(tenantDid, cid, dwnUrl);
+    const expiry = cache.get(key);
     if (expiry === undefined) { return false; }
     if (Date.now() >= expiry) {
-      this._recentlyPulledCids.delete(key);
+      cache.delete(key);
       return false;
     }
     return true;
@@ -6017,6 +6083,7 @@ export class SyncEngineLevel implements SyncEngine {
       did, dwnUrl, delegateDid, permissionGrantIds, messageCids,
       agent          : this.agent,
       permissionsApi : this._permissionsApi,
+      onBeforeApply  : (messageCid): void => { this.trackRecentlyPushedMessage(did, messageCid, dwnUrl); },
     });
   }
 

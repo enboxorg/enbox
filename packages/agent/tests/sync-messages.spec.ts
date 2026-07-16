@@ -500,11 +500,13 @@ describe('sync-messages', () => {
         messagesByCid : new Map([[messageCid, { message }]]),
         applyResults  : [{ kind: 'Applied' }],
       });
+      const onBeforeApply = sinon.spy();
 
       const result = await pushMessages({
         did         : 'did:example:alice',
         dwnUrl      : 'https://dwn.example.com',
         messageCids : [messageCid],
+        onBeforeApply,
         agent,
       });
 
@@ -515,6 +517,8 @@ describe('sync-messages', () => {
       });
       expect(applyStub.calledOnce).toBe(true);
       expect(applyStub.firstCall.args[0].message).toEqual(message);
+      expect(onBeforeApply.calledOnceWithExactly(messageCid)).toBe(true);
+      expect(onBeforeApply.calledBefore(applyStub)).toBe(true);
     });
 
     it('should count Duplicate and Superseded as successful push outcomes', async () => {
@@ -552,15 +556,19 @@ describe('sync-messages', () => {
         messagesByCid : new Map(),
         applyResults  : [{ kind: 'Applied' }, { kind: 'Superseded' }],
       });
+      const onBeforeApply = sinon.spy();
 
       const result = await pushMessageEntries({
         did     : 'did:example:alice',
         dwnUrl  : 'https://dwn.example.com',
         entries : [{ message }, { message }],
+        onBeforeApply,
         agent,
       });
 
       expect(result.acknowledged).toEqual([{ cid: messageCid, resolution: 'superseded' }]);
+      expect(onBeforeApply.callCount).toBe(2);
+      expect(onBeforeApply.alwaysCalledWithExactly(messageCid)).toBe(true);
     });
 
     it('should report transport failures in PushResult.failed instead of throwing', async () => {
@@ -733,12 +741,14 @@ describe('sync-messages', () => {
         messagesByCid : new Map([[messageCid, { message: write.message, data: streamFromBytes(payload) }]]),
         applyResults  : [{ kind: 'Applied' }],
       });
+      const onBeforeApply = sinon.spy();
       sinon.stub(console, 'error');
 
       const result = await pushMessages({
         did         : write.author.did,
         dwnUrl      : 'https://dwn.example.com',
         messageCids : [messageCid],
+        onBeforeApply,
         agent,
       });
 
@@ -748,6 +758,7 @@ describe('sync-messages', () => {
       expect(result.failed[0].kind).toBe('Invalid');
       expect(result.failed[0].terminal).toBe(true);
       expect(result.failed[0].detail).toContain('RecordsWrite data exceeded descriptor dataSize');
+      expect(onBeforeApply.called).toBe(false);
       expect(applyStub.called).toBe(false);
     });
 

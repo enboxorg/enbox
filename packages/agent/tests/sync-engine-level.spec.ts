@@ -1,6 +1,6 @@
 import type { BearerIdentity } from '../src/bearer-identity.js';
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type { SyncIdentityOptions } from '../src/index.js';
+import type { GenericMessage, ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
@@ -139,6 +139,136 @@ describe('SyncEngineLevel', () => {
       expect(resolveSuperseded.firstCall.args[1]).toBe('dependency-cid');
       expect(resolveSuperseded.secondCall.args[1]).toBe('successor-cid');
       expect(commitPullDelivery.calledOnce).toBe(true);
+    });
+  });
+
+  describe('live push echo suppression', () => {
+    it('commits a pushed echo without fetching or reapplying it', async () => {
+      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      const internal = syncEngine as any;
+      const dwnUrl = 'https://dwn.example';
+      const message = {
+        descriptor: {
+          interface        : DwnInterfaceName.Protocols,
+          method           : DwnMethodName.Configure,
+          messageTimestamp : '2026-07-16T00:00:00.000000Z',
+        },
+      } as GenericMessage;
+      const messageCid = await Message.getCid(message);
+      const cursor = { epoch: 'epoch', messageCid, position: '1', streamId: 'stream' };
+      const context = {
+        did        : 'did:example:alice',
+        dwnUrl,
+        eventScope : {},
+        isStale    : (): boolean => false,
+        linkKey    : 'link-key',
+      };
+      const delivery = { ordinal: -1 };
+
+      internal.trackRecentlyPushedMessage(context.did, messageCid, dwnUrl);
+      sinon.stub(internal, 'shouldSkipLivePullEvent').resolves(false);
+      sinon.stub(internal, 'startPullDelivery').returns(delivery);
+      const processLivePullEvent = sinon.stub(internal, 'processLivePullEvent');
+      const commitPullDelivery = sinon.stub(internal, 'commitPullDelivery').resolves();
+
+      await internal.handleLivePullEvent(context, {
+        cursor,
+        event : { message },
+        type  : 'event',
+      });
+
+      expect(processLivePullEvent.called).toBe(false);
+      expect(commitPullDelivery.calledOnceWithExactly(context, cursor, delivery)).toBe(true);
+    });
+
+    it('durably commits a pushed echo delivered while the link is initializing', async () => {
+      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      const internal = syncEngine as any;
+      const dwnUrl = 'https://dwn.example';
+      const linkKey = 'link-key';
+      const message = {
+        descriptor: {
+          interface        : DwnInterfaceName.Protocols,
+          method           : DwnMethodName.Configure,
+          messageTimestamp : '2026-07-16T00:00:00.000000Z',
+        },
+      } as GenericMessage;
+      const messageCid = await Message.getCid(message);
+      const cursor = { epoch: 'epoch', messageCid, position: '1', streamId: 'stream' };
+      const link = {
+        authorization      : { kind: 'owner' },
+        authorizationEpoch : 'owner-epoch',
+        connectivity       : 'online',
+        projectionId       : 'projection-id',
+        pull               : {},
+        push               : {},
+        remoteEndpoint     : dwnUrl,
+        scope              : { kind: 'full' },
+        status             : 'initializing',
+        tenantDid          : 'did:example:alice',
+      };
+      const context = {
+        did        : link.tenantDid,
+        dwnUrl,
+        eventScope : {},
+        isStale    : (): boolean => false,
+        link,
+        linkKey,
+      };
+      const saveLink = sinon.stub().resolves();
+      const events: unknown[] = [];
+      const unsubscribe = syncEngine.on((event) => events.push(event));
+
+      internal._activeLinks.set(linkKey, link);
+      internal._ledger = { saveLink };
+      internal.trackRecentlyPushedMessage(context.did, messageCid, dwnUrl);
+      sinon.stub(internal, 'shouldSkipLivePullEvent').resolves(false);
+      const processLivePullEvent = sinon.stub(internal, 'processLivePullEvent');
+
+      try {
+        await internal.handleLivePullEvent(context, {
+          cursor,
+          event : { message },
+          type  : 'event',
+        });
+      } finally {
+        unsubscribe();
+      }
+
+      expect(processLivePullEvent.called).toBe(false);
+      expect(saveLink.calledOnceWithExactly(link)).toBe(true);
+      expect(link.pull.contiguousAppliedToken).toEqual(cursor);
+      expect(internal._linkRuntimes.get(linkKey)?.inflight.size).toBe(0);
+      expect(events).toContainEqual(expect.objectContaining({
+        type           : 'checkpoint:pull-advance',
+        messageCid,
+        position       : cursor.position,
+        remoteEndpoint : dwnUrl,
+      }));
+    });
+
+    it('scopes echo caches per tenant and endpoint and expires stale pushed entries', () => {
+      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      const internal = syncEngine as any;
+      const messageCid = 'bafy-pushed-message';
+      const firstTenant = 'did:example:alice';
+      const firstRemote = 'https://first.example';
+
+      internal.trackRecentlyPushedMessage(firstTenant, messageCid, firstRemote);
+
+      expect(internal.isRecentlyPushed(firstTenant, messageCid, firstRemote)).toBe(true);
+      expect(internal.isRecentlyPushed('did:example:bob', messageCid, firstRemote)).toBe(false);
+      expect(internal.isRecentlyPushed(firstTenant, messageCid, 'https://second.example')).toBe(false);
+
+      internal.trackRecentlyPulledMessage(firstTenant, messageCid, firstRemote);
+      expect(internal.isRecentlyPulled(firstTenant, messageCid, firstRemote)).toBe(true);
+      expect(internal.isRecentlyPulled('did:example:bob', messageCid, firstRemote)).toBe(false);
+      expect(internal.isRecentlyPulled(firstTenant, messageCid, 'https://second.example')).toBe(false);
+
+      const key = `${messageCid}|${firstTenant}|${firstRemote}`;
+      internal._recentlyPushedCids.set(key, Date.now() - 1);
+      expect(internal.isRecentlyPushed(firstTenant, messageCid, firstRemote)).toBe(false);
+      expect(internal._recentlyPushedCids.has(key)).toBe(false);
     });
   });
 
@@ -394,7 +524,7 @@ describe('SyncEngineLevel', () => {
   });
 
   describe('delegated permission grant bootstrap', () => {
-    it('uses delegate-local grant entries without probing the owner signer', async () => {
+    it('uses delegate-local grant entries without probing the owner signer or suppressing their pull echo', async () => {
       const ownerDid = 'did:example:owner';
       const delegateDid = 'did:example:delegate';
       const permissionGrantId = 'grant-record-id';
@@ -468,6 +598,7 @@ describe('SyncEngineLevel', () => {
       expect(pushEntries.firstCall.args[0].permissionGrantIds).toEqual([permissionGrantId]);
       expect(pushEntries.firstCall.args[0].entries).toHaveLength(1);
       expect(pushEntries.firstCall.args[0].entries[0].bufferedData).toBeInstanceOf(Uint8Array);
+      expect(pushEntries.firstCall.args[0].suppressRemoteEcho).toBe(false);
       expect(transition.calledOnce).toBe(true);
       expect(transition.firstCall.args[2]).toEqual({ source: 'permission-grant' });
     });
