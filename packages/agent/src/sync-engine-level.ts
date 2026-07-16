@@ -365,6 +365,9 @@ export class SyncEngineLevel implements SyncEngine {
   private _syncLockCompletion: Promise<void> = Promise.resolve();
   private _releaseSyncLockCompletion?: () => void;
 
+  /** Serializes start/stop/clear/close transitions without delaying the first caller. */
+  private _lifecycleTransition?: Promise<void>;
+
   /**
    * Durable replication ledger — persists per-link checkpoint state.
    * Used by live sync to track pull progression per link.
@@ -937,18 +940,19 @@ export class SyncEngineLevel implements SyncEngine {
     });
   }
 
-  public async clear(): Promise<void> {
-    this.invalidateSyncTargetsCache();
-    await this.teardownLiveSync();
-    this._syncMode = undefined;
-    await this._permissionsApi.clear();
-    await this.clearSyncDb();
+  public clear(): Promise<void> {
+    return this.runLifecycleTransition(async (): Promise<void> => {
+      await this.stopSyncRuntime();
+      await this._permissionsApi.clear();
+      await this.clearSyncDb();
+    });
   }
 
-  public async close(): Promise<void> {
-    this.invalidateSyncTargetsCache();
-    await this.teardownLiveSync();
-    await this._db.close();
+  public close(): Promise<void> {
+    return this.runLifecycleTransition(async (): Promise<void> => {
+      await this.stopSyncRuntime();
+      await this._db.close();
+    });
   }
 
   public async registerIdentity({ did, options }: { did: string; options: SyncIdentityOptions }): Promise<void> {
@@ -1681,18 +1685,24 @@ export class SyncEngineLevel implements SyncEngine {
   // startSync / stopSync
   // ---------------------------------------------------------------------------
 
-  public async startSync(params: StartSyncParams): Promise<void> {
+  public startSync(params: StartSyncParams): Promise<void> {
+    return this.runLifecycleTransition(async (): Promise<void> => {
+      await this.startSyncRuntime(params);
+    });
+  }
+
+  private async startSyncRuntime(params: StartSyncParams): Promise<void> {
     const mode = params.mode ?? 'poll';
     const intervalStr = params.interval ?? (mode === 'live' ? '5m' : '2m');
     const intervalMilliseconds = parseDurationInMilliseconds(intervalStr);
 
-    // Tear down previous mode if there are active live resources.
-    if (this._liveSubscriptions.length > 0 || this._localSubscriptions.length > 0) {
+    const hadLiveRuntime = this.hasLiveSyncRuntime();
+    this.prepareForSyncRuntimeTransition();
+    if (hadLiveRuntime) {
       await this.teardownLiveSync();
     }
-    if (this._syncIntervalId) {
-      clearInterval(this._syncIntervalId);
-      this._syncIntervalId = undefined;
+    if (this._syncLock) {
+      await this.waitForSyncCompletion();
     }
 
     this._syncMode = mode;
@@ -1705,42 +1715,79 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /**
-   * stopSync awaits the completion of the current sync operation before stopping the sync interval
-   * and tearing down any live subscriptions.
+   * stopSync invalidates scheduled work and closes live subscriptions, then
+   * waits for the current lock-owning sync operation to finish.
    *
    * @param timeout - Maximum milliseconds to wait for an in-progress
    *   sync cycle to finish. Non-finite values (`NaN`, `Infinity`) are
    *   coerced to the default to avoid a tight poll loop or never-exit
    *   condition.
    */
-  public async stopSync(timeout: number = 2000): Promise<void> {
-    // Coerce non-finite timeouts (NaN, Infinity) to the default. NaN
-    // comparisons are always false, so `elapsedTimeout >= NaN` would
-    // never trip the timeout exit; `Math.min(NaN, 100)` is NaN and
-    // `setTimeout(_, NaN)` clamps to 0, spinning the poll loop. Both
-    // are footguns for callers passing a computed timeout that
-    // accidentally evaluates to NaN.
-    const safeTimeout = Number.isFinite(timeout) ? timeout : 2000;
-    this._engineGeneration++;
-    let elapsedTimeout = 0;
+  public stopSync(timeout: number = 2000): Promise<void> {
+    return this.runLifecycleTransition(async (): Promise<void> => {
+      await this.stopSyncRuntime(timeout);
+    });
+  }
 
-    while (this._syncLock) {
-      if (elapsedTimeout >= safeTimeout) {
-        throw new Error(`SyncEngineLevel: Existing sync operation did not complete within ${safeTimeout} milliseconds.`);
+  private runLifecycleTransition(operation: () => Promise<void>): Promise<void> {
+    const previous = this._lifecycleTransition;
+    const transition = previous === undefined ? operation() : previous.then(operation);
+    const completion = transition.then((): void => {}, (): void => {});
+    this._lifecycleTransition = completion;
+    void completion.then((): void => {
+      if (this._lifecycleTransition === completion) {
+        this._lifecycleTransition = undefined;
       }
+    });
+    return transition;
+  }
 
-      elapsedTimeout += 100;
-      await sleep(Math.min(safeTimeout, 100));
-    }
+  private hasLiveSyncRuntime(): boolean {
+    return this._syncMode === 'live' ||
+      this._liveSubscriptions.length > 0 ||
+      this._localSubscriptions.length > 0 ||
+      this._activeLinks.size > 0 ||
+      this._linkRuntimes.size > 0 ||
+      this._pushRuntimes.size > 0 ||
+      this._activeRepairs.size > 0 ||
+      this._repairRetryTimers.size > 0 ||
+      this._reconcileTimers.size > 0 ||
+      this._reconcileInFlight.size > 0;
+  }
 
+  private prepareForSyncRuntimeTransition(): void {
+    this._engineGeneration++;
     if (this._syncIntervalId) {
       clearInterval(this._syncIntervalId);
       this._syncIntervalId = undefined;
     }
-
     this.invalidateSyncTargetsCache();
-    await this.teardownLiveSync();
     this._syncMode = undefined;
+  }
+
+  private async stopSyncRuntime(timeout?: number): Promise<void> {
+    this.prepareForSyncRuntimeTransition();
+    await this.teardownLiveSync();
+    await this.waitForSyncCompletion(timeout);
+  }
+
+  private async waitForSyncCompletion(timeout?: number): Promise<void> {
+    const safeTimeout = timeout === undefined
+      ? undefined
+      : Number.isFinite(timeout) ? timeout : 2000;
+    let elapsedTimeout = 0;
+
+    while (this._syncLock) {
+      if (safeTimeout !== undefined && elapsedTimeout >= safeTimeout) {
+        throw new Error(`SyncEngineLevel: Existing sync operation did not complete within ${safeTimeout} milliseconds.`);
+      }
+
+      const waitDuration = safeTimeout === undefined
+        ? 100
+        : Math.min(Math.max(safeTimeout - elapsedTimeout, 0), 100);
+      elapsedTimeout += waitDuration;
+      await Promise.race([this._syncLockCompletion, sleep(waitDuration)]);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1807,6 +1854,8 @@ export class SyncEngineLevel implements SyncEngine {
    * 4. Schedules an infrequent durable feed settle check at `interval`.
    */
   private async startLiveSync(intervalMilliseconds: number): Promise<void> {
+    const generation = this._engineGeneration;
+
     // Step 0: Register browser connectivity listeners for instant recovery
     // on network switch, sleep/wake, or tab foregrounding. No-op in Node.
     this.startBrowserConnectivityListeners();
@@ -1824,19 +1873,21 @@ export class SyncEngineLevel implements SyncEngine {
     await Promise.allSettled(syncTargets.map(t => this.initializeLinkTarget(t)));
 
     // Step 3: Schedule infrequent durable feed settle check.
-    const integrityCheck = async (): Promise<void> => {
-      if (this._syncLock) {
-        return;
-      }
-
-      try {
-        await this.sync(undefined, { verifyConvergence: true });
-      } catch (error) {
-        console.error('SyncEngineLevel: Error during durable feed settle check', error);
-      }
-    };
+    const integrityCheck = async (): Promise<void> => this.runLiveIntegrityCheck(generation);
 
     this._syncIntervalId = setInterval(integrityCheck, intervalMilliseconds);
+  }
+
+  private async runLiveIntegrityCheck(generation: number): Promise<void> {
+    if (this._engineGeneration !== generation || this._syncLock) {
+      return;
+    }
+
+    try {
+      await this.sync(undefined, { verifyConvergence: true });
+    } catch (error) {
+      console.error('SyncEngineLevel: Error during durable feed settle check', error);
+    }
   }
 
   /**
@@ -2359,11 +2410,6 @@ export class SyncEngineLevel implements SyncEngine {
   private async teardownLiveSync(): Promise<void> {
     // Remove browser connectivity listeners before tearing down.
     this.stopBrowserConnectivityListeners();
-
-    // Increment generation to invalidate all in-flight async operations
-    // (repairs, retry timers). Any async work that
-    // captured the previous generation will bail on its next checkpoint.
-    this._engineGeneration++;
 
     // Clear per-link push runtime state.
     for (const pushRuntime of this._pushRuntimes.values()) {
@@ -6117,8 +6163,7 @@ export class SyncEngineLevel implements SyncEngine {
       await this._deadLetters.put(key, JSON.stringify(entry));
     } catch (error) {
       // Suppress only the expected teardown race — any other error surfaces.
-      const e = error as { code?: string };
-      if (e.code !== 'LEVEL_DATABASE_NOT_OPEN') {
+      if (!SyncEngineLevel.isDatabaseNotOpenError(error)) {
         throw error;
       }
     }
@@ -6170,7 +6215,20 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Clear the exact dead letter resolved by an internal tenant sync outcome. */
   private async clearFailedMessageForTenant(tenantDid: string, messageCid: string, remoteEndpoint: string): Promise<void> {
-    await this._deadLetters.del(SyncEngineLevel.deadLetterKey(tenantDid, messageCid, remoteEndpoint));
+    try {
+      await this._deadLetters.del(SyncEngineLevel.deadLetterKey(tenantDid, messageCid, remoteEndpoint));
+    } catch (error) {
+      // A late live callback may race orderly storage teardown.
+      if (!SyncEngineLevel.isDatabaseNotOpenError(error)) {
+        throw error;
+      }
+    }
+  }
+
+  private static isDatabaseNotOpenError(error: unknown): boolean {
+    return typeof error === 'object' &&
+      error !== null &&
+      (error as { code?: string }).code === 'LEVEL_DATABASE_NOT_OPEN';
   }
 
   public async clearFailedMessage(messageCid: string, remoteEndpoint?: string): Promise<boolean> {
