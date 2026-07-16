@@ -122,7 +122,7 @@ describe('SyncEngineLevel', () => {
         appliedCids,
         messageCid : 'successor-cid',
       });
-      sinon.stub(syncEngine as any, 'clearFailedMessage').resolves();
+      sinon.stub(syncEngine as any, 'clearFailedMessageForTenant').resolves();
       sinon.stub(syncEngine as any, 'clearDeferredPull').resolves();
       const clearQuotaBlock = sinon.stub(syncEngine as any, 'clearQuotaBlockWithResolution').resolves();
       const resolveSuperseded = sinon.stub(syncEngine as any, 'resolveQuotaBlocksSupersededByAcknowledgement').resolves();

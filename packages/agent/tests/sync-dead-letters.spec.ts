@@ -45,6 +45,29 @@ describe('SyncEngineLevel dead letter tracking', () => {
     ]);
   });
 
+  it('should clear an internally resolved failure without affecting another tenant', async () => {
+    const remoteEndpoint = 'https://shared.example';
+    await recordDeadLetter({ messageCid: 'cid-shared', remoteEndpoint, tenantDid: 'did:example:alice' });
+    await recordDeadLetter({ messageCid: 'cid-shared', remoteEndpoint, tenantDid: 'did:example:bob' });
+
+    const internal = syncEngine as unknown as {
+      trackRemoteFeedAppliedCids(messageCids: string[], target: unknown): Promise<void>;
+    };
+    await internal.trackRemoteFeedAppliedCids(['cid-shared'], {
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'owner',
+      did                : 'did:example:alice',
+      dwnUrl             : remoteEndpoint,
+      projectionId       : 'projection',
+      scope              : { kind: 'full' },
+    });
+
+    expect(await syncEngine.getFailedMessages('did:example:alice')).toHaveLength(0);
+    expect(await syncEngine.getFailedMessages('did:example:bob')).toMatchObject([
+      { messageCid: 'cid-shared', remoteEndpoint },
+    ]);
+  });
+
   it('should clear all failed messages for one tenant', async () => {
     await recordDeadLetter({ messageCid: 'cid-1', tenantDid: 'did:example:alice' });
     await recordDeadLetter({ messageCid: 'cid-2', tenantDid: 'did:example:bob' });

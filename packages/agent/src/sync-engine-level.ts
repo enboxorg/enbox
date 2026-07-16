@@ -2975,7 +2975,7 @@ export class SyncEngineLevel implements SyncEngine {
       if (result.admitted) {
         if (context.link === undefined) {
           this.trackRecentlyPulledMessage(context.did, result.messageCid, context.dwnUrl);
-          await this.clearFailedMessage(result.messageCid, context.dwnUrl);
+          await this.clearFailedMessageForTenant(context.did, result.messageCid, context.dwnUrl);
         } else {
           await this.trackRemoteFeedAppliedCids(result.appliedCids, this.syncTargetFromLink(context.link));
         }
@@ -4869,7 +4869,7 @@ export class SyncEngineLevel implements SyncEngine {
   private async trackRemoteFeedAppliedCids(messageCids: string[], target: SyncTarget): Promise<void> {
     for (const cid of messageCids) {
       this.trackRecentlyPulledMessage(target.did, cid, target.dwnUrl);
-      await this.clearFailedMessage(cid, target.dwnUrl);
+      await this.clearFailedMessageForTenant(target.did, cid, target.dwnUrl);
       await this.clearDeferredPull(target.did, target.dwnUrl, cid);
       // A pull admission only proves that the signed message exists remotely.
       // The remote may retain a RecordsWrite CID as dataless ancestry, while
@@ -5201,7 +5201,7 @@ export class SyncEngineLevel implements SyncEngine {
     // (acknowledgements only clear blocks, so an empty set stays empty).
     const hasActiveQuotaBlocks = (await this.getQuotaBlocksForTarget(target)).length > 0;
     for (const acknowledgement of acknowledgementsByCid.values()) {
-      await this.clearFailedMessage(acknowledgement.cid, target.dwnUrl);
+      await this.clearFailedMessageForTenant(target.did, acknowledgement.cid, target.dwnUrl);
       await this.clearQuotaBlockWithResolution(
         target,
         acknowledgement.cid,
@@ -6166,6 +6166,11 @@ export class SyncEngineLevel implements SyncEngine {
       await this._deadLetters.batch(batch);
     }
     return batch.length;
+  }
+
+  /** Clear the exact dead letter resolved by an internal tenant sync outcome. */
+  private async clearFailedMessageForTenant(tenantDid: string, messageCid: string, remoteEndpoint: string): Promise<void> {
+    await this._deadLetters.del(SyncEngineLevel.deadLetterKey(tenantDid, messageCid, remoteEndpoint));
   }
 
   public async clearFailedMessage(messageCid: string, remoteEndpoint?: string): Promise<boolean> {
