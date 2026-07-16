@@ -827,6 +827,80 @@ describe('sync-messages', () => {
         Message.getCid(call.args[0].message)))).toEqual([childCid, protocolCid, childCid, parentCid, childCid]);
     });
 
+    it('fetches local push dependencies with an executable query, not a store:false short-circuit', async () => {
+      // Regression: these local dependency queries once passed `store: false`,
+      // which makes `AgentDwnApi.processRequest` return a synthetic 202 with no
+      // entries instead of running the query — so every dependency fetch from
+      // the local DWN silently failed. Assert the ProtocolsQuery / RecordsQuery
+      // / RecordsRead dependency helpers execute against the local DWN.
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const protocolDefinition: ProtocolDefinition = {
+        protocol  : 'https://example.com/sync-push-store-false',
+        published : false,
+        types     : {
+          parent : {},
+          child  : {},
+        },
+        structure: {
+          parent: {
+            child: {},
+          },
+        },
+      };
+      const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
+        author: alice,
+        protocolDefinition,
+      });
+      const parent = await TestDataGenerator.generateRecordsWrite({
+        author       : alice,
+        protocol     : protocolDefinition.protocol,
+        protocolPath : 'parent',
+      });
+      const child = await TestDataGenerator.generateRecordsWrite({
+        author          : alice,
+        protocol        : protocolDefinition.protocol,
+        protocolPath    : 'parent/child',
+        parentContextId : parent.message.contextId,
+      });
+      const protocolCid = await Message.getCid(protocolsConfigure.message);
+      const parentCid = await Message.getCid(parent.message);
+      const childCid = await Message.getCid(child.message);
+      const appliedCids: string[] = [];
+      const { agent, processRequestStub } = createLocalAgentFixture({
+        messagesByCid     : new Map([[childCid, { message: child.message, data: child.dataStream }]]),
+        protocols         : [protocolsConfigure.message],
+        recordsByRecordId : new Map([
+          [parent.message.recordId, [parent.message]],
+        ]),
+        applyResults: async (message: any): Promise<ReplicationApplyResult> => {
+          const cid = await Message.getCid(message);
+          appliedCids.push(cid);
+          if (cid === childCid && !appliedCids.includes(protocolCid)) {
+            return { kind: 'Incomplete', missing: [{ type: 'Protocol', protocol: protocolDefinition.protocol }] };
+          }
+          if (cid === childCid && !appliedCids.includes(parentCid)) {
+            return { kind: 'Incomplete', missing: [{ type: 'Parent', recordId: parent.message.recordId, protocol: protocolDefinition.protocol }] };
+          }
+          return { kind: 'Applied' };
+        },
+      });
+
+      const result = await pushMessages({
+        did         : alice.did,
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : [childCid],
+        agent,
+      });
+
+      expect(result).toMatchObject({ succeeded: [childCid], failed: [] });
+      const localDependencyReads = processRequestStub.getCalls().filter((call): boolean =>
+        [DwnInterface.ProtocolsQuery, DwnInterface.RecordsQuery, DwnInterface.RecordsRead].includes(call.args[0].messageType));
+      expect(localDependencyReads.length).toBeGreaterThan(0);
+      for (const call of localDependencyReads) {
+        expect(call.args[0].store).not.toBe(false);
+      }
+    });
+
     it('should fetch an initial write requested by remote Incomplete before retrying an update', async () => {
       const initial = await TestDataGenerator.generateRecordsWrite();
       const update = await TestDataGenerator.generateRecordsWrite({

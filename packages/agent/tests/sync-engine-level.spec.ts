@@ -270,6 +270,29 @@ describe('SyncEngineLevel', () => {
       expect(internal.isRecentlyPushed(firstTenant, messageCid, firstRemote)).toBe(false);
       expect(internal._recentlyPushedCids.has(key)).toBe(false);
     });
+
+    it('bounds the pushed-echo cache at its max size, evicting the oldest entries first', () => {
+      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      const internal = syncEngine as any;
+      const cap = (SyncEngineLevel as any).ECHO_SUPPRESS_MAX_ENTRIES as number;
+      const farFuture = Date.now() + 10 * 60_000;
+      const keyFor = (index: number): string => `cid-${index}|did:example:alice|https://dwn.example`;
+
+      // Seed past the cap with unexpired entries so only the size bound — not
+      // the TTL sweep — can trim them.
+      for (let index = 0; index < cap + 5; index++) {
+        internal._recentlyPushedCids.set(keyFor(index), farFuture);
+      }
+      expect(internal._recentlyPushedCids.size).toBe(cap + 5);
+
+      internal.evictExpiredEchoEntries(internal._recentlyPushedCids);
+
+      expect(internal._recentlyPushedCids.size).toBe(cap);
+      // Oldest-inserted keys are evicted first; the most recent survive.
+      expect(internal._recentlyPushedCids.has(keyFor(0))).toBe(false);
+      expect(internal._recentlyPushedCids.has(keyFor(4))).toBe(false);
+      expect(internal._recentlyPushedCids.has(keyFor(cap + 4))).toBe(true);
+    });
   });
 
   describe('durable feed coordination', () => {
