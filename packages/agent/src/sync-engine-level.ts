@@ -1774,10 +1774,20 @@ export class SyncEngineLevel implements SyncEngine {
     this._syncMode = undefined;
   }
 
+  /**
+   * Coerce a caller-supplied stop timeout: `undefined` waits without a bound,
+   * while a non-finite value (`NaN`, `Infinity`) falls back to the default so
+   * the wait can neither spin nor never exit.
+   */
+  private static coerceStopSyncTimeout(timeout: number | undefined): number | undefined {
+    if (timeout === undefined) {
+      return undefined;
+    }
+    return Number.isFinite(timeout) ? timeout : 2000;
+  }
+
   private async stopSyncRuntime(timeout?: number): Promise<void> {
-    const safeTimeout = timeout === undefined
-      ? undefined
-      : Number.isFinite(timeout) ? timeout : 2000;
+    const safeTimeout = SyncEngineLevel.coerceStopSyncTimeout(timeout);
     this.prepareForSyncRuntimeTransition();
     await this.teardownLiveSync();
     const [syncCompletion, backgroundCompletion] = await Promise.allSettled([

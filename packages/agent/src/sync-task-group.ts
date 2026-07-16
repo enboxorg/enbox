@@ -29,12 +29,11 @@ export class SyncTaskGroup {
       return Promise.resolve();
     }
 
-    let task: Promise<void>;
-    try {
-      task = operation();
-    } catch (error: unknown) {
-      task = Promise.reject(error);
-    }
+    // Start the thunk inside a promise chain so a synchronous throw surfaces as
+    // a rejection rather than escaping run(); a try/catch here could not observe
+    // an async rejection anyway. The completion tracker below keeps an ignored
+    // task from becoming an unhandled rejection.
+    const task = Promise.resolve().then(operation);
 
     const completion = task.then((): void => {}, (): void => {});
     this._tasks.add(completion);
