@@ -359,11 +359,15 @@ describe('SyncEngineLevel — identity management', () => {
   });
 
   describe('agent setter', () => {
-    it('should set the agent and update permissionsApi', () => {
+    it('should set the agent and rebuild agent-bound target resolution', () => {
       const engine = new SyncEngineLevel({ db });
+      const initialResolver = (engine as any).targetResolver;
       const mockAgent = { agentDid: 'did:example:agent' } as any;
+
       engine.agent = mockAgent;
+
       expect(engine.agent).toBe(mockAgent);
+      expect((engine as any).targetResolver).not.toBe(initialResolver);
     });
   });
 

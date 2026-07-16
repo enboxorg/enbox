@@ -277,8 +277,8 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     });
 
     const internal = syncEngine as any;
-    sinon.stub(internal, 'getSyncEndpointUrls').resolves([currentRemote]);
-    sinon.stub(internal, 'buildSyncTargetResolutions').resolves([{
+    sinon.stub(internal.targetResolver, 'getEndpointUrls').resolves([currentRemote]);
+    sinon.stub(internal.targetResolver, 'buildTargetResolutions').resolves([{
       scope              : { kind: 'full' },
       authorization      : { kind: 'owner' },
       authorizationEpoch : currentEpoch,
