@@ -10,6 +10,7 @@ import { parseDurationInMilliseconds, sleep } from '@enbox/common';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
+import type { SyncEndpointStore } from './sync-endpoint-store.js';
 import type { SyncIdentityStore } from './sync-identity-store.js';
 import type { SyncMessageEntry } from './sync-messages.js';
 import type {
@@ -48,6 +49,7 @@ import { DwnInterface } from './types/dwn.js';
 import { getProtocolClosureEdges } from './sync-scope-closure.js';
 import { isRecordsWrite } from './utils.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
+import { SyncEndpointStoreLevel } from './sync-endpoint-store-level.js';
 import { SyncIdentityStoreLevel } from './sync-identity-store-level.js';
 import { SyncTaskGroup } from './sync-task-group.js';
 import { computeAuthorizationEpoch, computeProjectionId, isQuotaBlockedPushFailure, isTerminalPushFailure, lexicographicalCompare, protocolsForSyncScope, pushBatchReconcileReason, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
@@ -364,6 +366,7 @@ export class SyncEngineLevel implements SyncEngine {
   private _permissionsApi: PermissionsApi;
 
   private readonly _db: AbstractLevel<string | Buffer | Uint8Array>;
+  private readonly _endpointStore: SyncEndpointStore;
   private readonly _identityStore: SyncIdentityStore;
   private _syncIntervalId?: ReturnType<typeof setInterval>;
   private _syncLock = false;
@@ -825,6 +828,7 @@ export class SyncEngineLevel implements SyncEngine {
     this._agent = agent;
     this._permissionsApi = new AgentPermissionsApi({ agent });
     this._db = (db) ? db : new Level<string, string>(dataPath ?? 'DATA/AGENT/SYNC_STORE');
+    this._endpointStore = new SyncEndpointStoreLevel(this._db);
     this._identityStore = new SyncIdentityStoreLevel(this._db);
   }
 
@@ -857,7 +861,7 @@ export class SyncEngineLevel implements SyncEngine {
     await this._quotaBlocks.clear();
     await this._identityStore.clear();
     await this._db.sublevel('replicationLinks').clear();
-    await this._db.sublevel('syncMetadata').clear();
+    await this._endpointStore.clear();
     await this._db.clear();
   }
 
@@ -1465,29 +1469,17 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async registerSupplementalDwnEndpoint(endpoint: string): Promise<void> {
-    const metadata = this._db.sublevel('syncMetadata');
-    const existing = await this.getSupplementalDwnEndpoint();
+    const existing = await this._endpointStore.get();
     if (existing === endpoint) {
       return;
     }
 
-    await metadata.put('supplementalDwnEndpoint', endpoint);
+    await this._endpointStore.set(endpoint);
     this.invalidateSyncTargetsCache();
   }
 
-  private async getSupplementalDwnEndpoint(): Promise<string | undefined> {
-    try {
-      return await this._db.sublevel('syncMetadata').get('supplementalDwnEndpoint') as string;
-    } catch (error: unknown) {
-      if ((error as { code?: string }).code === 'LEVEL_NOT_FOUND') {
-        return;
-      }
-      throw error;
-    }
-  }
-
   private async getSyncEndpointUrls(did: string): Promise<string[]> {
-    let supplementalEndpoint = await this.getSupplementalDwnEndpoint();
+    let supplementalEndpoint = await this._endpointStore.get();
     const activeLocalEndpoint = this.agent.dwn.localDwnEndpoint;
     if (
       supplementalEndpoint !== undefined

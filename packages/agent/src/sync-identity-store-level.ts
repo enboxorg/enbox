@@ -3,15 +3,17 @@ import type { AbstractLevel } from 'abstract-level';
 import type { SyncIdentityOptions } from './types/sync.js';
 import type { SyncIdentityStore, SyncIdentityStoreEntry } from './sync-identity-store.js';
 
+type LevelKey = string | Buffer | Uint8Array;
+
 /** Level-backed persistence for sync identity registrations. */
 export class SyncIdentityStoreLevel implements SyncIdentityStore {
-  private readonly _db: AbstractLevel<string | Buffer | Uint8Array>;
+  private readonly _db: AbstractLevel<LevelKey>;
 
-  constructor(db: AbstractLevel<string | Buffer | Uint8Array>) {
+  constructor(db: AbstractLevel<LevelKey>) {
     this._db = db;
   }
 
-  private get identities(): AbstractLevel<string | Buffer | Uint8Array, string, string> {
+  private get identities(): AbstractLevel<LevelKey, string, string> {
     return this._db.sublevel('registeredIdentities');
   }
 
