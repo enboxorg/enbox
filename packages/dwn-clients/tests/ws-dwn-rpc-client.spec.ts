@@ -7,6 +7,7 @@ import sinon from 'sinon';
 import { DwnRpcError } from '../src/dwn-rpc-error.js';
 import { HttpDwnRpcClient } from '../src/http-dwn-rpc-client.js';
 import { JsonRpcSocket } from '../src/json-rpc-socket.js';
+import { RateLimitError } from '../src/rate-limit-error.js';
 import { WebSocketDwnRpcClient } from '../src/web-socket-clients.js';
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { createJsonRpcErrorResponse, createJsonRpcRequest, JsonRpcErrorCodes } from '../src/json-rpc.js';
@@ -584,7 +585,75 @@ describe('WebSocketDwnRpcClient', () => {
           await WebSocketDwnRpcClient['subscriptionRequest'](connection, alice.did, message, () => {});
           throw new Error('Expected an error to be thrown');
         } catch (error: any) {
-          expect(error.message).toBe('could not subscribe via jsonrpc socket: some error');
+          expect(error).toBeInstanceOf(DwnRpcError);
+          expect(error.code).toBe(JsonRpcErrorCodes.BadRequest);
+          expect(error.message).toContain('some error');
+        }
+      });
+
+      it('translates a TooManyRequests subscribe error into a RateLimitError with retryAfterSec', async () => {
+        const { message } = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : {
+            schema: 'foo/bar'
+          }
+        });
+
+        const socket = await JsonRpcSocket.connect(socketDwnUrl);
+        const connection = {
+          subscriptions: new Map(),
+          socket,
+        };
+
+        spyOn(socket, 'subscribe').mockResolvedValue({
+          response: {
+            jsonrpc : '2.0',
+            id      : 'id',
+            error   : {
+              message : 'RateLimitExceeded: tenant rate limit exceeded, retry after 7s',
+              code    : JsonRpcErrorCodes.TooManyRequests,
+              data    : { retryAfterSec: 7 }
+            }
+          }
+        });
+
+        try {
+          await WebSocketDwnRpcClient['subscriptionRequest'](connection, alice.did, message, () => {});
+          throw new Error('Expected an error to be thrown');
+        } catch (error: any) {
+          expect(error).toBeInstanceOf(RateLimitError);
+          expect(error.retryAfterSec).toBe(7);
+        }
+      });
+
+      it('defaults retryAfterSec to 1 when a TooManyRequests subscribe error omits it', async () => {
+        const { message } = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : {
+            schema: 'foo/bar'
+          }
+        });
+
+        const socket = await JsonRpcSocket.connect(socketDwnUrl);
+        const connection = {
+          subscriptions: new Map(),
+          socket,
+        };
+
+        spyOn(socket, 'subscribe').mockResolvedValue({
+          response: {
+            jsonrpc : '2.0',
+            id      : 'id',
+            error   : { message: 'too many requests', code: JsonRpcErrorCodes.TooManyRequests }
+          }
+        });
+
+        try {
+          await WebSocketDwnRpcClient['subscriptionRequest'](connection, alice.did, message, () => {});
+          throw new Error('Expected an error to be thrown');
+        } catch (error: any) {
+          expect(error).toBeInstanceOf(RateLimitError);
+          expect(error.retryAfterSec).toBe(1);
         }
       });
 
