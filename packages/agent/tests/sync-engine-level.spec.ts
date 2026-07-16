@@ -1,6 +1,6 @@
 import type { BearerIdentity } from '../src/bearer-identity.js';
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type { SyncIdentityOptions } from '../src/index.js';
+import type { GenericMessage, ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
@@ -90,6 +90,436 @@ describe('SyncEngineLevel', () => {
     });
   });
 
+  describe('live pull quota transitions', () => {
+    it('uses admitted CIDs only to resolve older same-record quota blocks', async () => {
+      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      const appliedCids = ['dependency-cid', 'successor-cid'];
+      const link = {
+        authorization      : { kind: 'owner' as const },
+        authorizationEpoch : 'owner-epoch',
+        connectivity       : 'online',
+        projectionId       : 'projection-id',
+        pull               : {},
+        push               : {},
+        remoteEndpoint     : 'https://dwn.example',
+        scope              : { kind: 'full' as const },
+        status             : 'live',
+        tenantDid          : 'did:example:alice',
+      };
+      const context = {
+        did        : link.tenantDid,
+        dwnUrl     : link.remoteEndpoint,
+        eventScope : {},
+        isStale    : (): boolean => false,
+        link,
+        linkKey    : 'link-key',
+      };
+
+      sinon.stub(syncEngine as any, 'shouldSkipLivePullEvent').resolves(false);
+      sinon.stub(syncEngine as any, 'startPullDelivery').returns({ ordinal: -1 });
+      sinon.stub(syncEngine as any, 'processLivePullEvent').resolves({
+        admitted   : true,
+        appliedCids,
+        messageCid : 'successor-cid',
+      });
+      sinon.stub(syncEngine as any, 'clearFailedMessageForTenant').resolves();
+      sinon.stub(syncEngine as any, 'clearDeferredPull').resolves();
+      const clearQuotaBlock = sinon.stub(syncEngine as any, 'clearQuotaBlockWithResolution').resolves();
+      const resolveSuperseded = sinon.stub(syncEngine as any, 'resolveQuotaBlocksSupersededByAcknowledgement').resolves();
+      const commitPullDelivery = sinon.stub(syncEngine as any, 'commitPullDelivery').resolves();
+
+      await (syncEngine as any).handleLivePullEvent(context, {
+        cursor : { epoch: 'epoch', position: '1', streamId: 'stream' },
+        event  : {},
+        type   : 'event',
+      });
+
+      expect(clearQuotaBlock.called).toBe(false);
+      expect(resolveSuperseded.callCount).toBe(2);
+      expect(resolveSuperseded.firstCall.args[1]).toBe('dependency-cid');
+      expect(resolveSuperseded.secondCall.args[1]).toBe('successor-cid');
+      expect(commitPullDelivery.calledOnce).toBe(true);
+    });
+  });
+
+  describe('live push echo suppression', () => {
+    it('commits a pushed echo without fetching or reapplying it', async () => {
+      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      const internal = syncEngine as any;
+      const dwnUrl = 'https://dwn.example';
+      const message = {
+        descriptor: {
+          interface        : DwnInterfaceName.Protocols,
+          method           : DwnMethodName.Configure,
+          messageTimestamp : '2026-07-16T00:00:00.000000Z',
+        },
+      } as GenericMessage;
+      const messageCid = await Message.getCid(message);
+      const cursor = { epoch: 'epoch', messageCid, position: '1', streamId: 'stream' };
+      const context = {
+        did        : 'did:example:alice',
+        dwnUrl,
+        eventScope : {},
+        isStale    : (): boolean => false,
+        linkKey    : 'link-key',
+      };
+      const delivery = { ordinal: -1 };
+
+      internal.trackRecentlyPushedMessage(context.did, messageCid, dwnUrl);
+      sinon.stub(internal, 'shouldSkipLivePullEvent').resolves(false);
+      sinon.stub(internal, 'startPullDelivery').returns(delivery);
+      const processLivePullEvent = sinon.stub(internal, 'processLivePullEvent');
+      const commitPullDelivery = sinon.stub(internal, 'commitPullDelivery').resolves();
+
+      await internal.handleLivePullEvent(context, {
+        cursor,
+        event : { message },
+        type  : 'event',
+      });
+
+      expect(processLivePullEvent.called).toBe(false);
+      expect(commitPullDelivery.calledOnceWithExactly(context, cursor, delivery)).toBe(true);
+    });
+
+    it('durably commits a pushed echo delivered while the link is initializing', async () => {
+      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      const internal = syncEngine as any;
+      const dwnUrl = 'https://dwn.example';
+      const linkKey = 'link-key';
+      const message = {
+        descriptor: {
+          interface        : DwnInterfaceName.Protocols,
+          method           : DwnMethodName.Configure,
+          messageTimestamp : '2026-07-16T00:00:00.000000Z',
+        },
+      } as GenericMessage;
+      const messageCid = await Message.getCid(message);
+      const cursor = { epoch: 'epoch', messageCid, position: '1', streamId: 'stream' };
+      const link = {
+        authorization      : { kind: 'owner' },
+        authorizationEpoch : 'owner-epoch',
+        connectivity       : 'online',
+        projectionId       : 'projection-id',
+        pull               : {},
+        push               : {},
+        remoteEndpoint     : dwnUrl,
+        scope              : { kind: 'full' },
+        status             : 'initializing',
+        tenantDid          : 'did:example:alice',
+      };
+      const context = {
+        did        : link.tenantDid,
+        dwnUrl,
+        eventScope : {},
+        isStale    : (): boolean => false,
+        link,
+        linkKey,
+      };
+      const saveLink = sinon.stub().resolves();
+      const events: unknown[] = [];
+      const unsubscribe = syncEngine.on((event) => events.push(event));
+
+      internal._activeLinks.set(linkKey, link);
+      internal._ledger = { saveLink };
+      internal.trackRecentlyPushedMessage(context.did, messageCid, dwnUrl);
+      sinon.stub(internal, 'shouldSkipLivePullEvent').resolves(false);
+      const processLivePullEvent = sinon.stub(internal, 'processLivePullEvent');
+
+      try {
+        await internal.handleLivePullEvent(context, {
+          cursor,
+          event : { message },
+          type  : 'event',
+        });
+      } finally {
+        unsubscribe();
+      }
+
+      expect(processLivePullEvent.called).toBe(false);
+      expect(saveLink.calledOnceWithExactly(link)).toBe(true);
+      expect(link.pull.contiguousAppliedToken).toEqual(cursor);
+      expect(internal._linkRuntimes.get(linkKey)?.inflight.size).toBe(0);
+      expect(events).toContainEqual(expect.objectContaining({
+        type           : 'checkpoint:pull-advance',
+        messageCid,
+        position       : cursor.position,
+        remoteEndpoint : dwnUrl,
+      }));
+    });
+
+    it('scopes echo caches per tenant and endpoint and expires stale pushed entries', () => {
+      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      const internal = syncEngine as any;
+      const messageCid = 'bafy-pushed-message';
+      const firstTenant = 'did:example:alice';
+      const firstRemote = 'https://first.example';
+
+      internal.trackRecentlyPushedMessage(firstTenant, messageCid, firstRemote);
+
+      expect(internal.isRecentlyPushed(firstTenant, messageCid, firstRemote)).toBe(true);
+      expect(internal.isRecentlyPushed('did:example:bob', messageCid, firstRemote)).toBe(false);
+      expect(internal.isRecentlyPushed(firstTenant, messageCid, 'https://second.example')).toBe(false);
+
+      internal.trackRecentlyPulledMessage(firstTenant, messageCid, firstRemote);
+      expect(internal.isRecentlyPulled(firstTenant, messageCid, firstRemote)).toBe(true);
+      expect(internal.isRecentlyPulled('did:example:bob', messageCid, firstRemote)).toBe(false);
+      expect(internal.isRecentlyPulled(firstTenant, messageCid, 'https://second.example')).toBe(false);
+
+      const key = `${messageCid}|${firstTenant}|${firstRemote}`;
+      internal._recentlyPushedCids.set(key, Date.now() - 1);
+      expect(internal.isRecentlyPushed(firstTenant, messageCid, firstRemote)).toBe(false);
+      expect(internal._recentlyPushedCids.has(key)).toBe(false);
+    });
+
+    it('bounds the pushed-echo cache at its max size, evicting the oldest entries first', () => {
+      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      const internal = syncEngine as any;
+      const cap = (SyncEngineLevel as any).ECHO_SUPPRESS_MAX_ENTRIES as number;
+      const farFuture = Date.now() + 10 * 60_000;
+      const keyFor = (index: number): string => `cid-${index}|did:example:alice|https://dwn.example`;
+
+      // Seed past the cap with unexpired entries so only the size bound — not
+      // the TTL sweep — can trim them.
+      for (let index = 0; index < cap + 5; index++) {
+        internal._recentlyPushedCids.set(keyFor(index), farFuture);
+      }
+      expect(internal._recentlyPushedCids.size).toBe(cap + 5);
+
+      internal.evictExpiredEchoEntries(internal._recentlyPushedCids);
+
+      expect(internal._recentlyPushedCids.size).toBe(cap);
+      // Oldest-inserted keys are evicted first; the most recent survive.
+      expect(internal._recentlyPushedCids.has(keyFor(0))).toBe(false);
+      expect(internal._recentlyPushedCids.has(keyFor(4))).toBe(false);
+      expect(internal._recentlyPushedCids.has(keyFor(cap + 4))).toBe(true);
+    });
+  });
+
+  describe('durable feed coordination', () => {
+    const target = (remote: string, projectionId = 'projection-a'): any => ({
+      authorization      : { kind: 'owner' as const },
+      authorizationEpoch : 'owner-epoch',
+      did                : 'did:example:alice',
+      dwnUrl             : remote,
+      projectionId,
+      scope              : { kind: 'full' as const },
+    });
+
+    it('serializes durable feed runs per link without blocking a different link', async () => {
+      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      const internal = syncEngine as any;
+      const activeByRemote = new Map<string, number>();
+      const maxActiveByRemote = new Map<string, number>();
+      const releases: Array<() => void> = [];
+      let totalActive = 0;
+      let maxTotalActive = 0;
+      let resolveFirstA!: () => void;
+      let resolveSecondA!: () => void;
+      let resolveFirstB!: () => void;
+      const firstAEntered = new Promise<void>((resolve) => { resolveFirstA = resolve; });
+      const secondAEntered = new Promise<void>((resolve) => { resolveSecondA = resolve; });
+      const firstBEntered = new Promise<void>((resolve) => { resolveFirstB = resolve; });
+
+      sinon.stub(internal, 'doSyncTargetWithDurableFeeds').callsFake(async (runTarget: { dwnUrl: string }): Promise<any> => {
+        const active = (activeByRemote.get(runTarget.dwnUrl) ?? 0) + 1;
+        activeByRemote.set(runTarget.dwnUrl, active);
+        maxActiveByRemote.set(runTarget.dwnUrl, Math.max(maxActiveByRemote.get(runTarget.dwnUrl) ?? 0, active));
+        totalActive++;
+        maxTotalActive = Math.max(maxTotalActive, totalActive);
+
+        if (runTarget.dwnUrl === 'https://a.example') {
+          if (activeByRemote.get(`${runTarget.dwnUrl}:entered`) === undefined) {
+            activeByRemote.set(`${runTarget.dwnUrl}:entered`, 1);
+            resolveFirstA();
+          } else {
+            resolveSecondA();
+          }
+        } else {
+          resolveFirstB();
+        }
+
+        await new Promise<void>((resolve) => { releases.push(resolve); });
+        activeByRemote.set(runTarget.dwnUrl, active - 1);
+        totalActive--;
+        return { admittedCids: [], hasActionableDiffs: false, pushFailures: [] };
+      });
+
+      const firstA = internal.syncTargetWithDurableFeeds(target('https://a.example'));
+      await firstAEntered;
+      const secondA = internal.syncTargetWithDurableFeeds(target('https://a.example'));
+      const firstB = internal.syncTargetWithDurableFeeds(target('https://b.example', 'projection-b'));
+
+      try {
+        await firstBEntered;
+        expect(internal.doSyncTargetWithDurableFeeds.callCount).toBe(2);
+        expect(maxActiveByRemote.get('https://a.example')).toBe(1);
+        expect(maxActiveByRemote.get('https://b.example')).toBe(1);
+        expect(maxTotalActive).toBe(2);
+
+        releases.shift()?.();
+        await secondAEntered;
+        expect(maxActiveByRemote.get('https://a.example')).toBe(1);
+
+        for (const release of releases.splice(0)) {
+          release();
+        }
+        await Promise.all([firstA, secondA, firstB]);
+        expect(internal._durableFeedRuns.size).toBe(0);
+      } finally {
+        for (const release of releases.splice(0)) {
+          release();
+        }
+      }
+    });
+
+    it('does not prune or cache targets invalidated while quota pruning is awaiting storage', async () => {
+      const tenantDid = 'did:example:alice';
+      const registeredIdentities = {
+        async *iterator(): AsyncGenerator<[string, string]> {
+          yield [tenantDid, JSON.stringify({ protocols: 'all' })];
+        },
+      };
+      const db = {
+        sublevel(name: string): unknown {
+          if (name === 'registeredIdentities') { return registeredIdentities; }
+          throw new Error(`unexpected sublevel ${name}`);
+        },
+      };
+      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: db as any });
+      const internal = syncEngine as any;
+      const currentTarget = target('https://a.example');
+      sinon.stub(internal, 'getSyncEndpointUrls').resolves([currentTarget.dwnUrl]);
+      sinon.stub(internal, 'buildSyncTargetsForEndpoint').resolves([currentTarget]);
+
+      let resolveIteratorStarted!: () => void;
+      let resumeIterator!: () => void;
+      const iteratorStarted = new Promise<void>((resolve) => { resolveIteratorStarted = resolve; });
+      const iteratorGate = new Promise<void>((resolve) => { resumeIterator = resolve; });
+      const batch = sinon.stub().resolves();
+      sinon.stub(internal, '_quotaBlocks').get(() => ({
+        batch,
+        async *iterator(): AsyncGenerator<[string, string]> {
+          resolveIteratorStarted();
+          await iteratorGate;
+          yield ['stale-key', JSON.stringify({
+            linkKey: 'stale-link',
+            tenantDid,
+          })];
+        },
+      }));
+
+      const resolution = internal.getSyncTargets();
+      await iteratorStarted;
+      internal._syncTargetsCacheGeneration++;
+      resumeIterator();
+      await resolution;
+
+      expect(batch.called).toBe(false);
+      expect(internal._syncTargetsCache).toBeUndefined();
+      expect(internal._syncTargetsLastResolutionComplete).toBe(false);
+    });
+
+    it('abandons a Retry-now request queued across an engine lifecycle change', async () => {
+      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      const internal = syncEngine as any;
+      const getSyncTargets = sinon.stub(internal, 'getSyncTargets').resolves([]);
+      expect(internal.tryAcquireSyncLock()).toBe(true);
+
+      try {
+        const retry = syncEngine.retryRemoteNow('did:example:alice', 'https://a.example');
+        await Promise.resolve();
+        expect(getSyncTargets.called).toBe(false);
+
+        internal._engineGeneration++;
+        internal.releaseSyncLock();
+        await retry;
+
+        expect(getSyncTargets.called).toBe(false);
+        expect(internal._syncLock).toBe(false);
+      } finally {
+        if (internal._syncLock) {
+          internal.releaseSyncLock();
+        }
+      }
+    });
+  });
+
+  describe('stale durable feed responses', () => {
+    const target = {
+      authorization      : { kind: 'owner' as const },
+      authorizationEpoch : 'owner-epoch',
+      did                : 'did:example:alice',
+      dwnUrl             : 'https://dwn.example',
+      projectionId       : 'projection-id',
+      scope              : { kind: 'full' as const },
+    };
+
+    it('does not transition a feed push after its link becomes stale in flight', async () => {
+      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      const internal = syncEngine as any;
+      let current = true;
+      let releasePush!: () => void;
+      let resolvePushStarted!: () => void;
+      const pushGate = new Promise<void>((resolve) => { releasePush = resolve; });
+      const pushStarted = new Promise<void>((resolve) => { resolvePushStarted = resolve; });
+
+      sinon.stub(internal, 'hasAdmissionDeadLetter').resolves(false);
+      sinon.stub(internal, 'getQuotaBlockState').resolves(undefined);
+      sinon.stub(internal, 'getQuotaBlockedInitialCidsForFeedEntry').resolves([]);
+      sinon.stub(internal, 'pushMessages').callsFake(async () => {
+        resolvePushStarted();
+        await pushGate;
+        return {
+          succeeded : [],
+          failed    : [{ cid: 'cid-1', kind: 'Deferred', quotaBlocked: true, reason: 'storage' }],
+        };
+      });
+      const transition = sinon.stub(internal, 'transitionPushResult');
+
+      const result = internal.pushLocalFeedPage(target, [{ messageCid: 'cid-1' }], (): boolean => current);
+      await pushStarted;
+      current = false;
+      releasePush();
+
+      expect(await result).toEqual({ kind: 'aborted' });
+      expect(transition.called).toBe(false);
+    });
+
+    it('does not transition a permission-grant response after its link becomes stale in flight', async () => {
+      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      const internal = syncEngine as any;
+      let current = true;
+      let releasePush!: () => void;
+      let resolvePushStarted!: () => void;
+      const pushGate = new Promise<void>((resolve) => { releasePush = resolve; });
+      const pushStarted = new Promise<void>((resolve) => { resolvePushStarted = resolve; });
+      const grantTarget = { ...target, permissionGrantIds: ['grant-cid'] };
+
+      sinon.stub(internal, 'localPermissionGrantBootstrapEntries').resolves({
+        entries  : [{ message: {}, messageCid: 'grant-cid' }],
+        failures : [],
+      });
+      sinon.stub(internal, 'getQuotaBlockState').resolves(undefined);
+      sinon.stub(internal, 'pushMessageEntries').callsFake(async () => {
+        resolvePushStarted();
+        await pushGate;
+        return {
+          succeeded : [],
+          failed    : [{ cid: 'grant-cid', kind: 'Deferred', quotaBlocked: true, reason: 'messages' }],
+        };
+      });
+      const transition = sinon.stub(internal, 'transitionPushResult');
+
+      const result = internal.bootstrapRemotePermissionGrants(grantTarget, (): boolean => current, true);
+      await pushStarted;
+      current = false;
+      releasePush();
+
+      expect(await result).toEqual({ kind: 'aborted' });
+      expect(transition.called).toBe(false);
+    });
+  });
+
   describe('push retry scheduling', () => {
     it('should bypass hot retries and delay reconciliation for retryable Incomplete failures', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
@@ -117,7 +547,7 @@ describe('SyncEngineLevel', () => {
   });
 
   describe('delegated permission grant bootstrap', () => {
-    it('uses delegate-local grant entries without probing the owner signer', async () => {
+    it('uses delegate-local grant entries without probing the owner signer or suppressing their pull echo', async () => {
       const ownerDid = 'did:example:owner';
       const delegateDid = 'did:example:delegate';
       const permissionGrantId = 'grant-record-id';
@@ -152,6 +582,12 @@ describe('SyncEngineLevel', () => {
         agent : { dwn: { processRequest } } as any,
         db    : {} as any,
       });
+      sinon.stub(syncEngine as any, 'getQuotaBlockState').resolves(undefined);
+      const transition = sinon.stub(syncEngine as any, 'transitionPushResult').resolves({
+        quotaBlocked      : false,
+        retryableFailures : [],
+        terminalFailures  : [],
+      });
       const pushEntries = sinon.stub(syncEngine as any, 'pushMessageEntries').resolves({
         failed    : [],
         succeeded : ['grant-cid'],
@@ -175,6 +611,7 @@ describe('SyncEngineLevel', () => {
         failures           : [],
         hasActionableDiffs : true,
         kind               : 'processed',
+        quotaBlocked       : false,
       });
       expect(processRequest.calledOnce).toBe(true);
       expect(pushEntries.calledOnce).toBe(true);
@@ -184,6 +621,9 @@ describe('SyncEngineLevel', () => {
       expect(pushEntries.firstCall.args[0].permissionGrantIds).toEqual([permissionGrantId]);
       expect(pushEntries.firstCall.args[0].entries).toHaveLength(1);
       expect(pushEntries.firstCall.args[0].entries[0].bufferedData).toBeInstanceOf(Uint8Array);
+      expect(pushEntries.firstCall.args[0].suppressRemoteEcho).toBe(false);
+      expect(transition.calledOnce).toBe(true);
+      expect(transition.firstCall.args[2]).toEqual({ source: 'permission-grant' });
     });
   });
 
@@ -3398,6 +3838,9 @@ describe('SyncEngineLevel', () => {
           link.status = 'repairing';
           syncEngine['_activeLinks'].set(linkKey, link);
           syncEngine['_repairAttempts'].set(linkKey, 1);
+          // beforeEach clears the engine, which intentionally pauses background
+          // task admission. This white-box scheduler test models an active runtime.
+          syncEngine['_backgroundTasks'].resume();
 
           const repairStub = sinon.stub(syncEngine as any, 'repairLink').rejects(new Error('still broken'));
 

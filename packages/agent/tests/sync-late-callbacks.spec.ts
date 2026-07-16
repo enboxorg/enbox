@@ -7,11 +7,24 @@ import { SyncEngineLevel } from '../src/sync-engine-level.js';
 
 type CapturedSubscriptionHandler = ((message: unknown) => Promise<void>) | undefined;
 
+type Deferred = {
+  promise: Promise<void>;
+  resolve: () => void;
+};
+
 type LiveMockAgent = {
   agent: unknown;
   getLocalHandler: () => CapturedSubscriptionHandler;
   getRemoteHandler: () => CapturedSubscriptionHandler;
 };
+
+function createDeferred(): Deferred {
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
 
 function createLiveMockAgent(): LiveMockAgent {
   let localHandler: CapturedSubscriptionHandler;
@@ -126,6 +139,53 @@ describe('SyncEngineLevel late subscription callbacks', () => {
 
     expect(saveLinkStub.callCount).toBe(savesBeforeStop);
     expect(engine['_connectivityState']).not.toBe('online');
+  });
+
+  it('should wait for an in-flight pull callback before stopSync() completes', async () => {
+    const { agent, getRemoteHandler } = createLiveMockAgent();
+    const engine = new SyncEngineLevel({ db, agent });
+    const link = makeLink();
+    const handlerStarted = createDeferred();
+    const releaseHandler = createDeferred();
+
+    sinon.stub(engine, 'sync').resolves();
+    sinon.stub(engine as never, 'getSyncTargets').resolves([target]);
+    sinon.stub(engine as never, 'openLocalPushSubscription').resolves();
+    sinon.stub(engine as never, 'handleLivePullMessage').callsFake(async (): Promise<void> => {
+      handlerStarted.resolve();
+      await releaseHandler.promise;
+    });
+    Object.assign(engine, {
+      _ledger: {
+        getOrCreateLink : sinon.stub().resolves(link),
+        saveLink        : sinon.stub().resolves(),
+        setStatus       : sinon.stub().callsFake(async (linkState: Record<string, unknown>, status: string): Promise<void> => {
+          linkState.status = status;
+        }),
+      },
+    });
+
+    await engine.startSync({ mode: 'live', interval: '30s' });
+
+    const handler = getRemoteHandler();
+    expect(handler).toBeDefined();
+    const handlerPromise = handler!({
+      type   : 'eose',
+      cursor : { streamId: 's1', epoch: 'e1', position: '1', messageCid: 'cid-1' },
+    });
+    await handlerStarted.promise;
+
+    let stopCompleted = false;
+    const stopPromise = engine.stopSync().then((): void => { stopCompleted = true; });
+    await Promise.resolve();
+
+    expect(stopCompleted).toBe(false);
+    expect(db.status).toBe('open');
+
+    releaseHandler.resolve();
+    await Promise.all([handlerPromise, stopPromise]);
+
+    expect(stopCompleted).toBe(true);
   });
 
   it('should not enqueue push work when a late local callback fires after stopSync()', async () => {

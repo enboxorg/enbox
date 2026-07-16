@@ -11,6 +11,7 @@ import {
   fetchRemoteMessages,
   getLocalMessage,
   getMessageCid,
+  pushMessageEntries,
   pushMessages,
   queryLocalMessageFeed,
   queryRemoteMessageFeed,
@@ -499,17 +500,25 @@ describe('sync-messages', () => {
         messagesByCid : new Map([[messageCid, { message }]]),
         applyResults  : [{ kind: 'Applied' }],
       });
+      const onBeforeApply = sinon.spy();
 
       const result = await pushMessages({
         did         : 'did:example:alice',
         dwnUrl      : 'https://dwn.example.com',
         messageCids : [messageCid],
+        onBeforeApply,
         agent,
       });
 
-      expect(result).toEqual({ succeeded: [messageCid], failed: [] });
+      expect(result).toEqual({
+        succeeded    : [messageCid],
+        acknowledged : [{ cid: messageCid, resolution: 'applied' }],
+        failed       : [],
+      });
       expect(applyStub.calledOnce).toBe(true);
       expect(applyStub.firstCall.args[0].message).toEqual(message);
+      expect(onBeforeApply.calledOnceWithExactly(messageCid)).toBe(true);
+      expect(onBeforeApply.calledBefore(applyStub)).toBe(true);
     });
 
     it('should count Duplicate and Superseded as successful push outcomes', async () => {
@@ -534,6 +543,32 @@ describe('sync-messages', () => {
 
       expect(result.failed).toEqual([]);
       expect(result.succeeded.sort()).toEqual([firstCid, secondCid].sort());
+      expect(result.acknowledged).toEqual([
+        { cid: firstCid, resolution: 'applied' },
+        { cid: secondCid, resolution: 'superseded' },
+      ]);
+    });
+
+    it('should deduplicate acknowledgements and preserve Superseded over Applied for the same CID', async () => {
+      const { message } = await TestDataGenerator.generateRecordsWrite();
+      const messageCid = await Message.getCid(message);
+      const { agent } = createLocalAgentFixture({
+        messagesByCid : new Map(),
+        applyResults  : [{ kind: 'Applied' }, { kind: 'Superseded' }],
+      });
+      const onBeforeApply = sinon.spy();
+
+      const result = await pushMessageEntries({
+        did     : 'did:example:alice',
+        dwnUrl  : 'https://dwn.example.com',
+        entries : [{ message }, { message }],
+        onBeforeApply,
+        agent,
+      });
+
+      expect(result.acknowledged).toEqual([{ cid: messageCid, resolution: 'superseded' }]);
+      expect(onBeforeApply.callCount).toBe(2);
+      expect(onBeforeApply.alwaysCalledWithExactly(messageCid)).toBe(true);
     });
 
     it('should report transport failures in PushResult.failed instead of throwing', async () => {
@@ -559,6 +594,44 @@ describe('sync-messages', () => {
       expect(consoleStub.called).toBe(true);
     });
 
+    it('should classify a tenant-quota rejection as quota-blocked and not flood the console', async () => {
+      const consoleStub = sinon.stub(console, 'error');
+      const { message } = await TestDataGenerator.generateRecordsWrite();
+      const messageCid = await Message.getCid(message);
+      const { agent } = createLocalAgentFixture({
+        messagesByCid : new Map([[messageCid, { message }]]),
+        applyResults  : async () => {
+          throw new DwnRpcError(
+            JsonRpcErrorCodes.InvalidRequest,
+            'TenantStorageQuotaExceeded: tenant would exceed storage limit of 1 bytes',
+            { code: 'TenantStorageQuotaExceeded' },
+          );
+        },
+      });
+
+      const result = await pushMessages({
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : [messageCid],
+        agent,
+      });
+
+      expect(result.succeeded).toHaveLength(0);
+      expect(result.failed).toHaveLength(1);
+      expect(result.failed[0]).toMatchObject({
+        cid          : messageCid,
+        kind         : 'Deferred',
+        reason       : 'storage',
+        quotaBlocked : true,
+      });
+      // Not terminal (won't dead-letter) and not tenant-inactive.
+      expect(result.failed[0].terminal).toBeUndefined();
+      expect(result.failed[0].tenantInactive).toBeUndefined();
+      // Quota is a surfaced, self-healing condition — it must NOT log an error
+      // on every attempt (that was the reported console flood).
+      expect(consoleStub.called).toBe(false);
+    });
+
     it('should skip messages that are not found locally', async () => {
       const { agent, applyStub } = createLocalAgentFixture({
         messagesByCid : new Map(),
@@ -575,7 +648,27 @@ describe('sync-messages', () => {
       expect(result.succeeded).toEqual([]);
       expect(result.failed).toHaveLength(1);
       expect(result.failed[0].cid).toBe('cid-missing');
+      expect(result.failed[0].localMissing).toBe(true);
+      expect(result.acknowledged).toEqual([]);
       expect(applyStub.called).toBe(false);
+    });
+
+    it('should not classify non-404 local read failures as locally missing', async () => {
+      const { agent, processRequestStub } = createLocalAgentFixture({
+        messagesByCid : new Map(),
+        applyResults  : [],
+      });
+      processRequestStub.resolves({ reply: { status: { code: 500, detail: 'storage unavailable' } } });
+
+      const result = await pushMessages({
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : ['cid-unavailable'],
+        agent,
+      });
+
+      expect(result.failed).toHaveLength(1);
+      expect(result.failed[0].localMissing).toBeUndefined();
     });
 
     it('should send small RecordsWrite data as a replayable Blob', async () => {
@@ -648,12 +741,14 @@ describe('sync-messages', () => {
         messagesByCid : new Map([[messageCid, { message: write.message, data: streamFromBytes(payload) }]]),
         applyResults  : [{ kind: 'Applied' }],
       });
+      const onBeforeApply = sinon.spy();
       sinon.stub(console, 'error');
 
       const result = await pushMessages({
         did         : write.author.did,
         dwnUrl      : 'https://dwn.example.com',
         messageCids : [messageCid],
+        onBeforeApply,
         agent,
       });
 
@@ -663,6 +758,7 @@ describe('sync-messages', () => {
       expect(result.failed[0].kind).toBe('Invalid');
       expect(result.failed[0].terminal).toBe(true);
       expect(result.failed[0].detail).toContain('RecordsWrite data exceeded descriptor dataSize');
+      expect(onBeforeApply.called).toBe(false);
       expect(applyStub.called).toBe(false);
     });
 
@@ -726,9 +822,83 @@ describe('sync-messages', () => {
         agent,
       });
 
-      expect(result).toEqual({ succeeded: [childCid], failed: [] });
+      expect(result).toMatchObject({ succeeded: [childCid], failed: [] });
       expect(await Promise.all(applyStub.getCalls().map(async (call): Promise<string> =>
         Message.getCid(call.args[0].message)))).toEqual([childCid, protocolCid, childCid, parentCid, childCid]);
+    });
+
+    it('fetches local push dependencies with an executable query, not a store:false short-circuit', async () => {
+      // Regression: these local dependency queries once passed `store: false`,
+      // which makes `AgentDwnApi.processRequest` return a synthetic 202 with no
+      // entries instead of running the query — so every dependency fetch from
+      // the local DWN silently failed. Assert the ProtocolsQuery / RecordsQuery
+      // / RecordsRead dependency helpers execute against the local DWN.
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const protocolDefinition: ProtocolDefinition = {
+        protocol  : 'https://example.com/sync-push-store-false',
+        published : false,
+        types     : {
+          parent : {},
+          child  : {},
+        },
+        structure: {
+          parent: {
+            child: {},
+          },
+        },
+      };
+      const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
+        author: alice,
+        protocolDefinition,
+      });
+      const parent = await TestDataGenerator.generateRecordsWrite({
+        author       : alice,
+        protocol     : protocolDefinition.protocol,
+        protocolPath : 'parent',
+      });
+      const child = await TestDataGenerator.generateRecordsWrite({
+        author          : alice,
+        protocol        : protocolDefinition.protocol,
+        protocolPath    : 'parent/child',
+        parentContextId : parent.message.contextId,
+      });
+      const protocolCid = await Message.getCid(protocolsConfigure.message);
+      const parentCid = await Message.getCid(parent.message);
+      const childCid = await Message.getCid(child.message);
+      const appliedCids: string[] = [];
+      const { agent, processRequestStub } = createLocalAgentFixture({
+        messagesByCid     : new Map([[childCid, { message: child.message, data: child.dataStream }]]),
+        protocols         : [protocolsConfigure.message],
+        recordsByRecordId : new Map([
+          [parent.message.recordId, [parent.message]],
+        ]),
+        applyResults: async (message: any): Promise<ReplicationApplyResult> => {
+          const cid = await Message.getCid(message);
+          appliedCids.push(cid);
+          if (cid === childCid && !appliedCids.includes(protocolCid)) {
+            return { kind: 'Incomplete', missing: [{ type: 'Protocol', protocol: protocolDefinition.protocol }] };
+          }
+          if (cid === childCid && !appliedCids.includes(parentCid)) {
+            return { kind: 'Incomplete', missing: [{ type: 'Parent', recordId: parent.message.recordId, protocol: protocolDefinition.protocol }] };
+          }
+          return { kind: 'Applied' };
+        },
+      });
+
+      const result = await pushMessages({
+        did         : alice.did,
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : [childCid],
+        agent,
+      });
+
+      expect(result).toMatchObject({ succeeded: [childCid], failed: [] });
+      const localDependencyReads = processRequestStub.getCalls().filter((call): boolean =>
+        [DwnInterface.ProtocolsQuery, DwnInterface.RecordsQuery, DwnInterface.RecordsRead].includes(call.args[0].messageType));
+      expect(localDependencyReads.length).toBeGreaterThan(0);
+      for (const call of localDependencyReads) {
+        expect(call.args[0].store).not.toBe(false);
+      }
     });
 
     it('should fetch an initial write requested by remote Incomplete before retrying an update', async () => {
@@ -746,8 +916,8 @@ describe('sync-messages', () => {
         recordsByRecordId : new Map([[initial.message.recordId, [initial.message, update.message]]]),
         applyResults      : [
           { kind: 'Incomplete', missing: [{ type: 'InitialWrite', recordId: initial.message.recordId }] },
-          { kind: 'Applied' },
-          { kind: 'Applied' },
+          { kind: 'Superseded' },
+          { kind: 'Duplicate' },
         ],
       });
 
@@ -758,7 +928,14 @@ describe('sync-messages', () => {
         agent,
       });
 
-      expect(result).toEqual({ succeeded: [updateCid], failed: [] });
+      expect(result).toEqual({
+        succeeded    : [updateCid],
+        acknowledged : [
+          { cid: initialCid, resolution: 'superseded' },
+          { cid: updateCid, resolution: 'applied' },
+        ],
+        failed: [],
+      });
       expect(await Promise.all(applyStub.getCalls().map(async (call): Promise<string> =>
         Message.getCid(call.args[0].message)))).toEqual([updateCid, initialCid, updateCid]);
     });
@@ -788,7 +965,7 @@ describe('sync-messages', () => {
         agent,
       });
 
-      expect(result).toEqual({ succeeded: [deleteCid], failed: [] });
+      expect(result).toMatchObject({ succeeded: [deleteCid], failed: [] });
       expect(await Promise.all(applyStub.getCalls().map(async (call): Promise<string> =>
         Message.getCid(call.args[0].message)))).toEqual([deleteCid, initialCid, deleteCid]);
     });
@@ -815,7 +992,7 @@ describe('sync-messages', () => {
         agent,
       });
 
-      expect(result).toEqual({ succeeded: [rootCid], failed: [] });
+      expect(result).toMatchObject({ succeeded: [rootCid], failed: [] });
       expect(await Promise.all(applyStub.getCalls().map(async (call): Promise<string> =>
         Message.getCid(call.args[0].message)))).toEqual([rootCid, grantCid, rootCid]);
     });
@@ -868,7 +1045,7 @@ describe('sync-messages', () => {
         agent,
       });
 
-      expect(result).toEqual({ succeeded: [rootCid], failed: [] });
+      expect(result).toMatchObject({ succeeded: [rootCid], failed: [] });
       expect(processRequestStub.withArgs(sinon.match({
         messageParams : sinon.match({ filters: [{ protocol, protocolPathPrefix: ENCRYPTION_CONTROL_AUDIENCE_PATH }] }),
         messageType   : DwnInterface.MessagesQuery,
@@ -914,7 +1091,7 @@ describe('sync-messages', () => {
         agent,
       });
 
-      expect(result).toEqual({ succeeded: [rootCid], failed: [] });
+      expect(result).toMatchObject({ succeeded: [rootCid], failed: [] });
       expect(processRequestStub.withArgs(sinon.match({
         messageParams : sinon.match({ filter: roleFilter }),
         messageType   : DwnInterface.RecordsQuery,
@@ -947,7 +1124,7 @@ describe('sync-messages', () => {
         agent,
       });
 
-      expect(result).toEqual({ succeeded: [rootCid], failed: [] });
+      expect(result).toMatchObject({ succeeded: [rootCid], failed: [] });
       expect(processRequestStub.withArgs(sinon.match({
         messageParams : sinon.match({ filter: { recordId: referenced.message.recordId, protocol: referencedProtocol } }),
         messageType   : DwnInterface.RecordsQuery,
@@ -992,7 +1169,7 @@ describe('sync-messages', () => {
         agent,
       });
 
-      expect(result).toEqual({ succeeded: [rootCid], failed: [] });
+      expect(result).toMatchObject({ succeeded: [rootCid], failed: [] });
       expect(await Promise.all(applyStub.getCalls().map(async (call): Promise<string> =>
         Message.getCid(call.args[0].message)))).toEqual([rootCid, dependencyCid, rootCid]);
       const dependencyData = applyStub.secondCall.args[0].data as Blob;
@@ -1075,7 +1252,7 @@ describe('sync-messages', () => {
         agent,
       });
 
-      expect(result).toEqual({ succeeded: [rootCid], failed: [] });
+      expect(result).toMatchObject({ succeeded: [rootCid], failed: [] });
       expect(dependencyCalls).toBe(2);
       expect(recordReadCount).toBe(2);
     });

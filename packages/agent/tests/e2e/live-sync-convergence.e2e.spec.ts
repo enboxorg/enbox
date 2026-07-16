@@ -11,11 +11,12 @@
  * Requires: DWN server running on localhost:3000 (or TEST_DWN_URL),
  *           Pkarr relay on localhost:7527 (or DID_DHT_GATEWAY_URI).
  */
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { SyncEngineLevel } from '../../src/sync-engine-level.js';
+import type { GenericMessage, ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 import { Convert } from '@enbox/common';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { DataStream, DwnConstant } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnConstant, DwnInterfaceName, DwnMethodName, Message } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from '../../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../../src/test-harness.js';
@@ -25,6 +26,17 @@ import { testDwnUrl } from '../utils/test-config.js';
 
 const testDwnUrls = [testDwnUrl];
 const largeDataSize = DwnConstant.maxDataSizeAllowedToBeEncoded + 1_000;
+
+type PushEchoProbe = {
+  localApplyCount: (messageCid: string) => number;
+  remoteMessagesReadCount: (messageCid: string) => number;
+  restore: () => void;
+};
+
+type ObservableSyncEngine = {
+  _activeLinks: Map<string, { pull: { contiguousAppliedToken?: { messageCid?: string; position?: string } } }>;
+  _recentlyPushedCids: Map<string, number>;
+};
 
 const chatProtocol: ProtocolDefinition = {
   published : true,
@@ -61,6 +73,70 @@ describe('E2E: live sync convergence', () => {
   let harness: PlatformAgentTestHarness;
   let aliceDid: string;
   let recordId: string;
+
+  function installPushEchoProbe(): PushEchoProbe {
+    const remoteReads = new Map<string, number>();
+    const localApplies = new Map<string, number>();
+    const rpc = harness.agent.rpc;
+    const localDwn = harness.agent.dwn;
+    const originalSendDwnRequest = rpc.sendDwnRequest;
+    const originalApplyReplicatedMessage = localDwn.applyReplicatedMessage;
+
+    rpc.sendDwnRequest = async (
+      request: Parameters<typeof originalSendDwnRequest>[0],
+    ): Promise<Awaited<ReturnType<typeof originalSendDwnRequest>>> => {
+      const descriptor = (request.message as GenericMessage).descriptor as
+        GenericMessage['descriptor'] & { messageCid?: string };
+      if (
+        descriptor.interface === DwnInterfaceName.Messages &&
+        descriptor.method === DwnMethodName.Read &&
+        descriptor.messageCid !== undefined
+      ) {
+        remoteReads.set(descriptor.messageCid, (remoteReads.get(descriptor.messageCid) ?? 0) + 1);
+      }
+      return originalSendDwnRequest.call(rpc, request);
+    };
+
+    localDwn.applyReplicatedMessage = async (
+      ...args: Parameters<typeof originalApplyReplicatedMessage>
+    ): Promise<Awaited<ReturnType<typeof originalApplyReplicatedMessage>>> => {
+      const messageCid = await Message.getCid(args[1] as GenericMessage);
+      localApplies.set(messageCid, (localApplies.get(messageCid) ?? 0) + 1);
+      return originalApplyReplicatedMessage.call(localDwn, ...args);
+    };
+
+    return {
+      localApplyCount         : (messageCid): number => localApplies.get(messageCid) ?? 0,
+      remoteMessagesReadCount : (messageCid): number => remoteReads.get(messageCid) ?? 0,
+      restore                 : (): void => {
+        rpc.sendDwnRequest = originalSendDwnRequest;
+        localDwn.applyReplicatedMessage = originalApplyReplicatedMessage;
+      },
+    };
+  }
+
+  function pullCheckpointPosition(): string | undefined {
+    const syncEngine = harness.agent.sync as SyncEngineLevel;
+    const observable = syncEngine as unknown as ObservableSyncEngine;
+    return [...observable._activeLinks.values()][0]?.pull.contiguousAppliedToken?.position;
+  }
+
+  async function expectPushEchoSuppressed(
+    messageCid: string,
+    previousPullPosition: string | undefined,
+    probe: PushEchoProbe,
+  ): Promise<void> {
+    const syncEngine = harness.agent.sync as SyncEngineLevel;
+    const observable = syncEngine as unknown as ObservableSyncEngine;
+    await waitFor(() => {
+      const token = [...observable._activeLinks.values()][0]?.pull.contiguousAppliedToken;
+      return token?.messageCid === messageCid && token.position !== previousPullPosition;
+    }, 10_000, 100);
+
+    expect([...observable._recentlyPushedCids.keys()].some((key): boolean => key.startsWith(`${messageCid}|`))).toBe(true);
+    expect(probe.remoteMessagesReadCount(messageCid)).toBe(0);
+    expect(probe.localApplyCount(messageCid)).toBe(0);
+  }
 
   beforeAll(async () => {
     harness = await PlatformAgentTestHarness.setup({
@@ -105,35 +181,43 @@ describe('E2E: live sync convergence', () => {
     await harness?.closeStorage();
   });
 
-  it('should push a locally written record to the remote DWN via live sync', async () => {
-    // Write a record locally.
-    const dataBytes = Convert.string('e2e convergence test').toUint8Array();
-    const writeResult = await harness.agent.dwn.processRequest({
-      author        : aliceDid,
-      target        : aliceDid,
-      messageType   : DwnInterface.RecordsWrite,
-      messageParams : {
-        protocol     : chatProtocol.protocol,
-        protocolPath : 'message',
-        schema       : chatProtocol.types.message.schema,
-        dataFormat   : 'text/plain',
-      },
-      dataStream: new Blob([dataBytes]),
-    });
-    expect(writeResult.reply.status.code).toBe(202);
-    recordId = writeResult.message!.recordId;
-
-    await waitFor(async () => {
-      const remoteResult = await harness.agent.dwn.sendRequest({
+  it('should push a local record without reading or applying its remote subscription echo', async () => {
+    const probe = installPushEchoProbe();
+    const previousPullPosition = pullCheckpointPosition();
+    try {
+      // Write a record locally.
+      const dataBytes = Convert.string('e2e convergence test').toUint8Array();
+      const writeResult = await harness.agent.dwn.processRequest({
         author        : aliceDid,
         target        : aliceDid,
-        messageType   : DwnInterface.RecordsQuery,
+        messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          filter: { protocol: chatProtocol.protocol, recordId },
+          protocol     : chatProtocol.protocol,
+          protocolPath : 'message',
+          schema       : chatProtocol.types.message.schema,
+          dataFormat   : 'text/plain',
         },
+        dataStream: new Blob([dataBytes]),
       });
-      return remoteResult.reply.status.code === 200 && (remoteResult.reply.entries?.length ?? 0) > 0;
-    }, 10_000);
+      expect(writeResult.reply.status.code).toBe(202);
+      recordId = writeResult.message!.recordId;
+      const messageCid = await Message.getCid(writeResult.message!);
+
+      await waitFor(async () => {
+        const remoteResult = await harness.agent.dwn.sendRequest({
+          author        : aliceDid,
+          target        : aliceDid,
+          messageType   : DwnInterface.RecordsQuery,
+          messageParams : {
+            filter: { protocol: chatProtocol.protocol, recordId },
+          },
+        });
+        return remoteResult.reply.status.code === 200 && (remoteResult.reply.entries?.length ?? 0) > 0;
+      }, 10_000);
+      await expectPushEchoSuppressed(messageCid, previousPullPosition, probe);
+    } finally {
+      probe.restore();
+    }
   }, 20_000);
 
   it('should pull a remote-only record to local via live sync', async () => {
@@ -176,23 +260,30 @@ describe('E2E: live sync convergence', () => {
     }, 10_000);
   }, 20_000);
 
-  it('should push a large locally written record to the remote DWN via live sync', async () => {
-    const dataBytes = largePayloadBytes(0x61);
-    const writeResult = await harness.agent.dwn.processRequest({
-      author        : aliceDid,
-      target        : aliceDid,
-      messageType   : DwnInterface.RecordsWrite,
-      messageParams : {
-        protocol     : chatProtocol.protocol,
-        protocolPath : 'message',
-        schema       : chatProtocol.types.message.schema,
-        dataFormat   : 'text/plain',
-      },
-      dataStream: new Blob([dataBytes]),
-    });
-    expect(writeResult.reply.status.code).toBe(202);
+  it('should push a large local record without reading or applying its remote subscription echo', async () => {
+    const probe = installPushEchoProbe();
+    const previousPullPosition = pullCheckpointPosition();
+    try {
+      const dataBytes = largePayloadBytes(0x61);
+      const writeResult = await harness.agent.dwn.processRequest({
+        author        : aliceDid,
+        target        : aliceDid,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : chatProtocol.protocol,
+          protocolPath : 'message',
+          schema       : chatProtocol.types.message.schema,
+          dataFormat   : 'text/plain',
+        },
+        dataStream: new Blob([dataBytes]),
+      });
+      expect(writeResult.reply.status.code).toBe(202);
 
-    await expectLargeRecordData('remote', writeResult.message!.recordId, dataBytes);
+      await expectLargeRecordData('remote', writeResult.message!.recordId, dataBytes);
+      await expectPushEchoSuppressed(await Message.getCid(writeResult.message!), previousPullPosition, probe);
+    } finally {
+      probe.restore();
+    }
   }, 30_000);
 
   it('should pull a large remote-only record to local via live sync', async () => {

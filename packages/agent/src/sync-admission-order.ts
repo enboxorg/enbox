@@ -145,17 +145,17 @@ function getSourceAudienceKeyFromTags(tags: SourceAudienceTags): string {
 }
 
 function getSourceAudienceKey(message: GenericMessage): string | undefined {
-  const tags = getSourceAudienceTags(message);
+  const tags = getSourceEncryptionControlTags(message, ENCRYPTION_CONTROL_AUDIENCE_PATH);
   return tags === undefined ? undefined : getSourceAudienceKeyFromTags(tags);
 }
 
 function getSourceAudienceKeyFromDelivery(message: GenericMessage): string | undefined {
-  const tags = getSourceDeliveryTags(message);
+  const tags = getSourceEncryptionControlTags(message, ENCRYPTION_CONTROL_DELIVERY_PATH);
   return tags === undefined ? undefined : getSourceAudienceKeyFromTags(tags);
 }
 
 function getSourceDeliveryRoleKey(message: GenericMessage): string | undefined {
-  const tags = getSourceDeliveryTags(message);
+  const tags = getSourceEncryptionControlTags(message, ENCRYPTION_CONTROL_DELIVERY_PATH);
   const recipient = (message.descriptor as RecordsDescriptor).recipient;
   if (tags === undefined || recipient === undefined) {
     return undefined;
@@ -164,33 +164,12 @@ function getSourceDeliveryRoleKey(message: GenericMessage): string | undefined {
   return getRoleKey(tags.protocol, tags.rolePath, recipient, tags.contextId === '' ? undefined : tags.contextId);
 }
 
-function getSourceAudienceTags(message: GenericMessage): SourceAudienceTags | undefined {
+function getSourceEncryptionControlTags(
+  message: GenericMessage,
+  protocolPath: string,
+): SourceAudienceTags | undefined {
   const { descriptor } = message;
-  if (!isRecordsWriteDescriptor(descriptor) || descriptor.protocolPath !== ENCRYPTION_CONTROL_AUDIENCE_PATH) {
-    return undefined;
-  }
-
-  const tags = descriptor.tags;
-  if (!isRecordObject(tags)) {
-    return undefined;
-  }
-
-  const { protocol, contextId, rolePath, keyId } = tags;
-  if (
-    typeof protocol !== 'string' ||
-    typeof contextId !== 'string' ||
-    typeof rolePath !== 'string' ||
-    typeof keyId !== 'string'
-  ) {
-    return undefined;
-  }
-
-  return { protocol, contextId, rolePath, keyId };
-}
-
-function getSourceDeliveryTags(message: GenericMessage): SourceAudienceTags | undefined {
-  const { descriptor } = message;
-  if (!isRecordsWriteDescriptor(descriptor) || descriptor.protocolPath !== ENCRYPTION_CONTROL_DELIVERY_PATH) {
+  if (!isRecordsWriteDescriptor(descriptor) || descriptor.protocolPath !== protocolPath) {
     return undefined;
   }
 

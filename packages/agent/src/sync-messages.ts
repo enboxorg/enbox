@@ -15,7 +15,12 @@ import type {
 
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
-import type { PushFailure, PushResult } from './types/sync.js';
+import type {
+  PushAcknowledgement,
+  PushFailure,
+  PushResult,
+  PushSuccessResolution,
+} from './types/sync.js';
 
 import {
   DwnInterfaceName,
@@ -25,7 +30,6 @@ import {
 } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from './types/dwn.js';
-import { DwnRpcError } from '@enbox/dwn-clients';
 import { isRecordsWrite } from './utils.js';
 import { toMessagesPermissionGrantIds } from './sync-permission-grants.js';
 import {
@@ -37,6 +41,7 @@ import {
   newestProtocolConfig,
   resolveDelegatePermissionGrantId,
 } from './sync-fetch-helpers.js';
+import { DwnRpcError, isQuotaExceededError } from '@enbox/dwn-clients';
 import { getRoleKey, orderMessagesForAdmission } from './sync-admission-order.js';
 
 /** Maximum data size (in bytes) to buffer in memory for retry. Larger payloads are re-fetched. */
@@ -73,10 +78,10 @@ type FetchLocalMessageResult =
 
 type FetchDependencyResult =
   | { kind: 'fetched'; entries: SyncMessageEntry[] }
-  | { kind: 'failed'; detail: string };
+  | { kind: 'failed'; detail: string; localMissing?: boolean };
 
 type PushEntryResult =
-  | { kind: 'applied'; cid: string }
+  | { kind: 'applied'; cid: string; resolution: PushSuccessResolution }
   | { kind: 'retry'; entries: SyncMessageEntry[] }
   | { kind: 'failed'; failure: PushFailure };
 
@@ -378,7 +383,16 @@ export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, permission
  * on the first failure. Callers use failures to retry transient push problems,
  * dead-letter `Invalid` remote rejections, or mark links for reconciliation.
  */
-export async function pushMessages({ did, dwnUrl, delegateDid, permissionGrantIds, messageCids, agent, permissionsApi }: {
+export async function pushMessages({
+  did,
+  dwnUrl,
+  delegateDid,
+  permissionGrantIds,
+  messageCids,
+  agent,
+  permissionsApi,
+  onBeforeApply,
+}: {
   did: string;
   dwnUrl: string;
   delegateDid?: string;
@@ -386,6 +400,7 @@ export async function pushMessages({ did, dwnUrl, delegateDid, permissionGrantId
   messageCids: string[];
   agent: EnboxPlatformAgent;
   permissionsApi?: PermissionsApi;
+  onBeforeApply?: (messageCid: string) => void;
 }): Promise<PushResult> {
   const context = new RemoteApplyPushContext({
     did,
@@ -394,11 +409,21 @@ export async function pushMessages({ did, dwnUrl, delegateDid, permissionGrantId
     permissionGrantIds,
     agent,
     permissionsApi,
+    onBeforeApply,
   });
   return context.push([...new Set(messageCids)]);
 }
 
-export async function pushMessageEntries({ did, dwnUrl, delegateDid, permissionGrantIds, entries, agent, permissionsApi }: {
+export async function pushMessageEntries({
+  did,
+  dwnUrl,
+  delegateDid,
+  permissionGrantIds,
+  entries,
+  agent,
+  permissionsApi,
+  onBeforeApply,
+}: {
   did: string;
   dwnUrl: string;
   delegateDid?: string;
@@ -406,6 +431,7 @@ export async function pushMessageEntries({ did, dwnUrl, delegateDid, permissionG
   entries: SyncMessageEntry[];
   agent: EnboxPlatformAgent;
   permissionsApi?: PermissionsApi;
+  onBeforeApply?: (messageCid: string) => void;
 }): Promise<PushResult> {
   const context = new RemoteApplyPushContext({
     did,
@@ -414,6 +440,7 @@ export async function pushMessageEntries({ did, dwnUrl, delegateDid, permissionG
     permissionGrantIds,
     agent,
     permissionsApi,
+    onBeforeApply,
   });
   return context.pushEntries(entries);
 }
@@ -472,7 +499,7 @@ class RemoteApplyPushContext {
   private readonly entryCids = new WeakMap<SyncMessageEntry, string>();
   private readonly fetchedDependencyEntries = new Map<string, SyncMessageEntry[]>();
   private readonly fetchedRefs = new Set<string>();
-  private readonly acknowledgedCids = new Set<string>();
+  private readonly acknowledgementsByCid = new Map<string, PushSuccessResolution>();
 
   public constructor(private readonly deps: {
     did: string;
@@ -481,6 +508,7 @@ class RemoteApplyPushContext {
     permissionGrantIds?: string[];
     agent: EnboxPlatformAgent;
     permissionsApi?: PermissionsApi;
+    onBeforeApply?: (messageCid: string) => void;
   }) {}
 
   public async push(rootCids: string[]): Promise<PushResult> {
@@ -492,6 +520,7 @@ class RemoteApplyPushContext {
       if (root.kind === 'failed') {
         failedByRoot.set(rootCid, {
           cid    : rootCid,
+          ...(root.localMissing === true ? { localMissing: true } : {}),
           detail : root.detail,
         });
         continue;
@@ -523,17 +552,24 @@ class RemoteApplyPushContext {
       }
     }
 
-    return { succeeded, failed: [...failedByRoot.values()] };
+    const acknowledged: PushAcknowledgement[] = [...this.acknowledgementsByCid]
+      .map(([cid, resolution]) => ({ cid, resolution }));
+
+    return { succeeded, acknowledged, failed: [...failedByRoot.values()] };
   }
 
   private async pushRoot(rootCid: string, rootEntry: SyncMessageEntry): Promise<PushRootOutcome> {
     let pending = [rootEntry];
+    let rootResolution: PushSuccessResolution | undefined;
     for (let pass = 0; pass < MAX_PUSH_ADMISSION_PASSES && pending.length > 0; pass++) {
       const retry: SyncMessageEntry[] = [];
       for (const entry of orderMessagesForAdmission(pending)) {
         const result = await this.pushEntry(rootCid, entry);
         switch (result.kind) {
           case 'applied':
+            if (result.cid === rootCid) {
+              rootResolution = result.resolution;
+            }
             break;
           case 'retry':
             retry.push(...result.entries);
@@ -545,12 +581,19 @@ class RemoteApplyPushContext {
       pending = await dedupeEntries(retry);
     }
 
-    return pending.length === 0
-      ? { kind: 'succeeded', cid: rootCid }
-      : {
+    if (pending.length > 0) {
+      return {
         kind    : 'failed',
         failure : { cid: rootCid, kind: 'Incomplete', detail: 'remote dependency apply pass budget exhausted' },
       };
+    }
+
+    return rootResolution === undefined
+      ? {
+        kind    : 'failed',
+        failure : { cid: rootCid, kind: 'Incomplete', detail: 'remote did not acknowledge the pushed root message' },
+      }
+      : { kind: 'succeeded', cid: rootCid };
   }
 
   private async pushEntry(rootCid: string, entry: SyncMessageEntry): Promise<PushEntryResult> {
@@ -571,18 +614,29 @@ class RemoteApplyPushContext {
 
     let result: ReplicationApplyResult;
     try {
+      const data = await pushData(entry);
+      this.deps.onBeforeApply?.(cid);
       result = await this.deps.agent.rpc.applyReplicatedMessage({
         dwnUrl    : this.deps.dwnUrl,
         targetDid : this.deps.did,
-        data      : await pushData(entry),
+        data,
         message   : entry.message,
       });
     } catch (error: any) {
       const detail = error.message ?? String(error);
-      console.error(`SyncEngineLevel: push error for ${cid}: ${detail}`);
       if (error instanceof SyncDataSizeLimitExceededError) {
+        console.error(`SyncEngineLevel: push error for ${cid}: ${detail}`);
         return { kind: 'failed', failure: this.terminalFailure(rootCid, cid, detail, { kind: 'Invalid', reason: detail }) };
       }
+      if (error instanceof DwnRpcError && isQuotaExceededError(error.message, error.data)) {
+        // Quota rejection: retryable but NOT hot-loopable. The remote is out of
+        // storage for this tenant; re-pushing the same message every tick would
+        // flood. Classify it so the engine defers + backed-off re-probes instead
+        // (self-heals when quota grows or another device delivers the CID). No log —
+        // this is an expected, surfaced condition, not an error.
+        return { kind: 'failed', failure: this.quotaBlockedFailure(rootCid, cid, detail) };
+      }
+      console.error(`SyncEngineLevel: push error for ${cid}: ${detail}`);
       if (error instanceof DwnRpcError && error.terminal) {
         return { kind: 'failed', failure: this.terminalFailure(rootCid, cid, detail, { kind: 'Invalid', reason: detail }) };
       }
@@ -601,9 +655,9 @@ class RemoteApplyPushContext {
     switch (result.kind) {
       case 'Applied':
       case 'Duplicate':
+        return { kind: 'applied', cid, resolution: this.recordAcknowledgement(cid, 'applied') };
       case 'Superseded':
-        this.acknowledgedCids.add(cid);
-        return { kind: 'applied', cid };
+        return { kind: 'applied', cid, resolution: this.recordAcknowledgement(cid, 'superseded') };
       case 'Deferred':
         return {
           kind    : 'failed',
@@ -652,7 +706,7 @@ class RemoteApplyPushContext {
     const unacknowledgedDependencies: SyncMessageEntry[] = [];
     for (const dependency of dependencies.entries) {
       const dependencyCid = await this.rememberEntry(dependency);
-      if (!this.acknowledgedCids.has(dependencyCid)) {
+      if (!this.acknowledgementsByCid.has(dependencyCid)) {
         unacknowledgedDependencies.push(dependency);
       }
     }
@@ -670,6 +724,13 @@ class RemoteApplyPushContext {
     }
 
     return { kind: 'retry', entries: [...unacknowledgedDependencies, entry] };
+  }
+
+  private recordAcknowledgement(cid: string, resolution: PushSuccessResolution): PushSuccessResolution {
+    const existing = this.acknowledgementsByCid.get(cid);
+    const resolved = existing === 'superseded' || resolution === 'superseded' ? 'superseded' : 'applied';
+    this.acknowledgementsByCid.set(cid, resolved);
+    return resolved;
   }
 
   private terminalFailure(
@@ -700,6 +761,26 @@ class RemoteApplyPushContext {
       ...(deferred === undefined ? {} : { reason: deferred.reason }),
       ...(deferred?.reason === 'tenant-inactive' ? { tenantInactive: true } : {}),
       detail : cid === rootCid ? detail : `dependency ${cid} failed before root push: ${detail}`,
+    };
+  }
+
+  /**
+   * A push rejected because the remote is out of storage/message quota for this
+   * tenant. Retryable but not hot-loopable: the engine records it as
+   * quota-blocked and re-probes on an exponential backoff, self-healing when
+   * quota grows, another device delivers the CID, or local history retires it.
+   * Modeled as a `Deferred`/
+   * `storage` failure (so existing reason-based reporting keeps working) with
+   * the distinguishing `quotaBlocked` flag.
+   */
+  private quotaBlockedFailure(rootCid: string, cid: string, detail: string): PushFailure {
+    return {
+      cid          : rootCid,
+      ...(cid === rootCid ? {} : { dependencyCid: cid }),
+      kind         : 'Deferred',
+      reason       : 'storage',
+      quotaBlocked : true,
+      detail       : cid === rootCid ? detail : `dependency ${cid} failed before root push: ${detail}`,
     };
   }
 
@@ -763,6 +844,7 @@ class RemoteApplyPushContext {
     if (result.kind === 'missing') {
       return {
         kind   : 'failed',
+        ...(result.localStatusCode === 404 ? { localMissing: true } : {}),
         detail : `local dependency message ${messageCid} not found (${result.localStatusCode ?? 'unknown'} ${result.detail ?? ''})`,
       };
     }
@@ -782,7 +864,6 @@ class RemoteApplyPushContext {
         ...(permissionGrantId === undefined ? {} : { permissionGrantId }),
       },
       messageType : DwnInterface.ProtocolsQuery,
-      store       : false,
       target      : this.deps.did,
     });
 
@@ -813,7 +894,6 @@ class RemoteApplyPushContext {
         ...(permissionGrantId === undefined ? {} : { permissionGrantId }),
       },
       messageType : DwnInterface.RecordsQuery,
-      store       : false,
       target      : this.deps.did,
     });
 
@@ -845,7 +925,6 @@ class RemoteApplyPushContext {
         ...(permissionGrantId === undefined ? {} : { permissionGrantId }),
       },
       messageType : DwnInterface.RecordsQuery,
-      store       : false,
       target      : this.deps.did,
     });
 
@@ -910,7 +989,6 @@ class RemoteApplyPushContext {
         ...(permissionGrantId === undefined ? {} : { permissionGrantId }),
       },
       messageType : DwnInterface.RecordsRead,
-      store       : false,
       target      : this.deps.did,
     });
 

@@ -316,19 +316,51 @@ export type PushFailure = {
   terminal?: boolean;
   /** True when the remote tenant is inactive and retrying the same message would hot-loop. */
   tenantInactive?: boolean;
+  /**
+   * True when the remote rejected the push for tenant storage/message quota.
+   * Like {@link tenantInactive}, retrying the same message immediately would
+   * hot-loop — but unlike it, the block can self-heal once the remote quota
+   * grows, another device delivers the CID, or local history retires it. The
+   * engine therefore defers + re-probes instead of dead-lettering.
+   */
+  quotaBlocked?: boolean;
+  /** True when the requested root CID was definitively absent from the local DWN. */
+  localMissing?: boolean;
   /** Human-readable diagnostic detail. */
   detail?: string;
+};
+
+/** How a remote DWN acknowledged a successfully pushed message. */
+export type PushSuccessResolution = 'applied' | 'superseded';
+
+/** Successful push outcome reported by the remote DWN for a root or dependency. */
+export type PushAcknowledgement = {
+  /** CID acknowledged by the remote DWN. */
+  cid: string;
+  /** Whether the remote applied the message or already held newer state. */
+  resolution: PushSuccessResolution;
 };
 
 export type PushResult = {
   /** Requested root messageCids that reached Applied, Duplicate, or Superseded. */
   succeeded: string[];
+  /**
+   * Deduplicated acknowledgement metadata for successful roots and dependencies.
+   * Optional so existing PushResult producers remain source-compatible; consumers
+   * may treat an omitted root entry as `applied` when its CID is in `succeeded`.
+   */
+  acknowledged?: PushAcknowledgement[];
   /** Requested root messageCids that failed and should be retried or reconciled. */
   failed: PushFailure[];
 };
 
 export function isTerminalPushFailure(failure: PushFailure): boolean {
   return failure.terminal === true;
+}
+
+/** A push rejected because the remote is out of tenant storage/message quota. */
+export function isQuotaBlockedPushFailure(failure: PushFailure): boolean {
+  return failure.quotaBlocked === true;
 }
 
 /**
@@ -345,6 +377,9 @@ export function pushBatchReconcileReason(entries: Array<{ lastFailure?: PushFail
 
   if (failures.some(failure => failure.kind === 'Incomplete')) {
     return 'push-incomplete';
+  }
+  if (failures.some(failure => failure.quotaBlocked === true)) {
+    return 'push-quota-blocked';
   }
   if (failures.some(failure => failure.tenantInactive === true)) {
     return 'push-tenant-inactive';
@@ -401,6 +436,8 @@ export type SyncDrainTargetResult = {
   /** True only when this target stopped because the caller's abort signal fired. */
   cancelled: boolean;
   converged: boolean;
+  /** True when the target was reachable but intentionally remains incomplete because of durable quota omissions. */
+  quotaBlocked?: boolean;
   pushCheckpoint?: ProgressToken;
   localFingerprint?: string;
   remoteFingerprint?: string;
@@ -455,7 +492,11 @@ export type SyncEvent =
   | SyncEventBase & { type: 'repair:started'; attempt: number }
   | SyncEventBase & { type: 'repair:completed' }
   | SyncEventBase & { type: 'repair:failed'; attempt: number; error: string }
-  | SyncEventBase & { type: 'gap:detected'; reason: string };
+  | SyncEventBase & { type: 'gap:detected'; reason: string }
+  /** A push was rejected because the remote is out of storage/message quota for this tenant. Re-probing is deferred until `nextProbeAt`. */
+  | SyncEventBase & { type: 'push:quota-blocked'; messageCid: string; detail?: string; nextProbeAt: string }
+  /** A previously quota-blocked push was acknowledged or retired because it no longer exists locally. */
+  | SyncEventBase & { type: 'push:quota-cleared'; messageCid: string; resolution: PushSuccessResolution };
 
 export type SyncEventListener = (event: SyncEvent) => void;
 
@@ -509,8 +550,45 @@ export type SyncHealthSummary = {
   admissionFailureCount: number;
   /** Number of current sync links in `repairing` or `paused` status. */
   degradedLinkCount: number;
-  /** True only when there are no failed messages or degraded links. */
+  /**
+   * Number of messages currently deferred because a remote rejected the push
+   * for tenant storage/message quota. These are re-probed on a backoff and
+   * self-heal when quota grows, another device delivers the CID, or local
+   * history retires it. They are user-actionable state, not a dead letter.
+   */
+  quotaBlockedMessageCount: number;
+  /** True only when there are no failed messages, quota blocks, or degraded links. */
   syncHealthy: boolean;
+};
+
+/**
+ * Coarse per-remote sync state for UI. Precedence when several apply:
+ * `offline` > `quota-blocked` > `degraded` > `healthy`.
+ */
+export type RemoteSyncState = 'healthy' | 'quota-blocked' | 'degraded' | 'offline';
+
+/**
+ * Per-`(tenantDid, remoteEndpoint)` sync status snapshot. Returned by
+ * {@link SyncEngine.getRemoteSyncStatus} so a frontend can render each remote's
+ * health, alert when one stops accepting writes, and trigger a resume.
+ */
+export type RemoteSyncStatus = {
+  tenantDid: string;
+  remoteEndpoint: string;
+  /** Rolled-up state for a status badge. */
+  state: RemoteSyncState;
+  /** Per-link connectivity as observed by the engine. */
+  connectivity: SyncConnectivityState;
+  /** Messages currently deferred against this remote for quota. */
+  quotaBlockedMessageCount: number;
+  /** Dead-lettered (terminal) messages for this remote. */
+  failedMessageCount: number;
+  /** ISO-8601 time of the soonest quota re-probe across this remote's blocked messages, if any. */
+  nextProbeAt?: string;
+  /** Human-readable detail of the most recent quota block, if any. */
+  lastError?: string;
+  /** ISO-8601 timestamp of the latest successful activity across current links for this remote. */
+  lastActivityAt?: string;
 };
 
 export interface SyncEngine {
@@ -645,4 +723,22 @@ export interface SyncEngine {
    * and degraded link count.
    */
   getSyncHealth(): Promise<SyncHealthSummary>;
+
+  /**
+   * Returns a per-`(tenantDid, remoteEndpoint)` sync status snapshot, optionally
+   * filtered by tenant. Lets a frontend render each remote's health (healthy /
+   * quota-blocked / degraded / offline), show when a quota-blocked remote will
+   * next be re-probed, and surface the latest error/activity. Rows are derived from
+   * current durable link state plus live quota-block and dead-letter records.
+   */
+  getRemoteSyncStatus(tenantDid?: string): Promise<RemoteSyncStatus[]>;
+
+  /**
+   * Immediately re-probe a remote's quota-blocked messages instead of waiting
+   * for the backoff. Runs targeted, per-link probes for
+   * `(tenantDid, remoteEndpoint)`, so a UI "Retry now" button (or a freshly
+   * purchased quota) resumes without touching unrelated remotes. No-op when
+   * nothing is blocked.
+   */
+  retryRemoteNow(tenantDid: string, remoteEndpoint: string): Promise<void>;
 }

@@ -146,6 +146,23 @@ export type { ProviderAuthParams, ProviderAuthResult } from '@enbox/auth/browser
 // DWN interface enum for typing agent requests (from @enbox/agent).
 export { DwnInterface } from '@enbox/agent';
 
+// Sync-status observability for dapp "remotes" panels (from @enbox/agent).
+// Subscribe with `agent.sync.on(event => …)` and snapshot per-remote health
+// (healthy / quota-blocked / degraded / offline), including when a
+// quota-blocked remote will next be re-probed, via
+// `agent.sync.getRemoteSyncStatus()`; resume immediately with
+// `agent.sync.retryRemoteNow(tenantDid, remoteEndpoint)`.
+export type {
+  DeadLetterEntry,
+  RemoteSyncState,
+  RemoteSyncStatus,
+  SyncConnectivityState,
+  SyncEngine,
+  SyncEvent,
+  SyncEventListener,
+  SyncHealthSummary,
+} from '@enbox/agent';
+
 // Common DWN primitives for record queries, permission scopes, and protocol
 // typing (from @enbox/dwn-sdk-js).
 export { DateSort, DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
