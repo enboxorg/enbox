@@ -235,6 +235,9 @@ export type DirectionCheckpoint = {
   contiguousAppliedToken?: ProgressToken;
 };
 
+/** Direction of replication relative to the local DWN. */
+export type SyncDirection = 'push' | 'pull';
+
 /**
  * Status of a replication link.
  *
@@ -649,7 +652,7 @@ export interface SyncEngine {
    *
    * @throws {Error} if a sync is already in progress or the sync operation fails.
    */
-  sync(direction?: 'push' | 'pull'): Promise<void>;
+  sync(direction?: SyncDirection): Promise<void>;
   /**
    * Drains every registered sync identity to the given DWN endpoint.
    *

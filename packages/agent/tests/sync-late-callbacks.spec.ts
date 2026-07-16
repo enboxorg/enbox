@@ -106,7 +106,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
 
     const link = makeLink();
 
-    const saveLinkStub = sinon.stub().resolves();
+    const persistCheckpointStub = sinon.stub().resolves();
     const setStatusStub = sinon.stub().callsFake(async (linkState: Record<string, unknown>, status: string): Promise<void> => {
       linkState.status = status;
     });
@@ -116,9 +116,9 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     sinon.stub(engine as never, 'openLocalPushSubscription').resolves();
     Object.assign(engine, {
       _ledger: {
-        getOrCreateLink : sinon.stub().resolves(link),
-        saveLink        : saveLinkStub,
-        setStatus       : setStatusStub,
+        getOrCreateLink   : sinon.stub().resolves(link),
+        persistCheckpoint : persistCheckpointStub,
+        setStatus         : setStatusStub,
       },
     });
 
@@ -127,7 +127,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     const handler = getRemoteHandler();
     expect(handler).toBeDefined();
 
-    const savesBeforeStop = saveLinkStub.callCount;
+    const savesBeforeStop = persistCheckpointStub.callCount;
     await engine.stopSync();
 
     expect(engine['_activeLinks'].size).toBe(0);
@@ -137,7 +137,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
       cursor : { streamId: 's1', epoch: 'e1', position: '1', messageCid: 'cid-1' },
     });
 
-    expect(saveLinkStub.callCount).toBe(savesBeforeStop);
+    expect(persistCheckpointStub.callCount).toBe(savesBeforeStop);
     expect(engine['_connectivityState']).not.toBe('online');
   });
 
@@ -157,9 +157,9 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     });
     Object.assign(engine, {
       _ledger: {
-        getOrCreateLink : sinon.stub().resolves(link),
-        saveLink        : sinon.stub().resolves(),
-        setStatus       : sinon.stub().callsFake(async (linkState: Record<string, unknown>, status: string): Promise<void> => {
+        getOrCreateLink   : sinon.stub().resolves(link),
+        persistCheckpoint : sinon.stub().resolves(),
+        setStatus         : sinon.stub().callsFake(async (linkState: Record<string, unknown>, status: string): Promise<void> => {
           linkState.status = status;
         }),
       },
@@ -199,9 +199,9 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     sinon.stub(engine as never, 'openLivePullSubscription').resolves();
     Object.assign(engine, {
       _ledger: {
-        getOrCreateLink : sinon.stub().resolves(link),
-        saveLink        : sinon.stub().resolves(),
-        setStatus       : sinon.stub().callsFake(async (linkState: Record<string, unknown>, status: string): Promise<void> => {
+        getOrCreateLink   : sinon.stub().resolves(link),
+        persistCheckpoint : sinon.stub().resolves(),
+        setStatus         : sinon.stub().callsFake(async (linkState: Record<string, unknown>, status: string): Promise<void> => {
           linkState.status = status;
         }),
       },

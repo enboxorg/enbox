@@ -226,6 +226,45 @@ describe('Agent remote mode integration', () => {
     expect(link.pull.contiguousAppliedToken).toBeDefined();
     expect(link.pull.contiguousAppliedToken.messageCid).toBeDefined();
   });
+
+  it('persists both checkpoints across live pull and durable push activity', async () => {
+    context = await setupRemoteModeContext('concurrent-checkpoints');
+    const { alice, remoteServer, testHarness } = context;
+    const syncEngine = testHarness.agent.sync as any;
+
+    await configureLocalProtocol(testHarness.agent, alice.did.uri, notesProtocol);
+    await testHarness.agent.sync.registerIdentity({
+      did     : alice.did.uri,
+      options : { protocols: [notesProtocol.protocol] },
+    });
+    await testHarness.agent.sync.startSync({ mode: 'live', interval: '30s' });
+
+    const beforeLinks = await syncEngine.ledger.getLinksForTenant(alice.did.uri);
+    const before = beforeLinks.find((candidate: any): boolean => candidate.remoteEndpoint === remoteServer.httpUrl);
+    expect(before).toBeDefined();
+    const beforePullPosition = BigInt(before.pull.contiguousAppliedToken?.position ?? '-1');
+    const beforePushPosition = BigInt(before.push.contiguousAppliedToken?.position ?? '-1');
+    const localWrite = await writeLocalRecord(testHarness.agent, alice.did.uri, 'concurrent local body');
+
+    const [, remoteWrite] = await Promise.all([
+      testHarness.agent.sync.sync('push'),
+      writeRecordToServer(testHarness.agent, remoteServer.httpUrl, alice.did, 'concurrent remote body'),
+    ]);
+
+    await waitFor(async () =>
+      await readLocalRecordText(testHarness.agent, alice.did.uri, remoteWrite.recordId) === 'concurrent remote body'
+    );
+    await waitFor(async () =>
+      await readRecordTextFromServer(testHarness.agent, remoteServer.httpUrl, alice.did, localWrite.recordId) === 'concurrent local body'
+    );
+    await waitFor(async () => {
+      const links = await syncEngine.ledger.getLinksForTenant(alice.did.uri);
+      const link = links.find((candidate: any): boolean => candidate.remoteEndpoint === remoteServer.httpUrl);
+      return link !== undefined &&
+        BigInt(link.pull.contiguousAppliedToken?.position ?? '-1') > beforePullPosition &&
+        BigInt(link.push.contiguousAppliedToken?.position ?? '-1') > beforePushPosition;
+    });
+  });
 });
 
 async function setupRemoteModeContext(name: string): Promise<RemoteModeContext> {

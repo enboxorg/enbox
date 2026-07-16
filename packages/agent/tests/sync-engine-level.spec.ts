@@ -215,12 +215,12 @@ describe('SyncEngineLevel', () => {
         link,
         linkKey,
       };
-      const saveLink = sinon.stub().resolves();
+      const persistCheckpoint = sinon.stub().resolves();
       const events: unknown[] = [];
       const unsubscribe = syncEngine.on((event) => events.push(event));
 
       internal._activeLinks.set(linkKey, link);
-      internal._ledger = { saveLink };
+      internal._ledger = { persistCheckpoint };
       internal.trackRecentlyPushedMessage(context.did, messageCid, dwnUrl);
       sinon.stub(internal, 'shouldSkipLivePullEvent').resolves(false);
       const processLivePullEvent = sinon.stub(internal, 'processLivePullEvent');
@@ -236,7 +236,7 @@ describe('SyncEngineLevel', () => {
       }
 
       expect(processLivePullEvent.called).toBe(false);
-      expect(saveLink.calledOnceWithExactly(link)).toBe(true);
+      expect(persistCheckpoint.calledOnceWithExactly(link, 'pull')).toBe(true);
       expect(link.pull.contiguousAppliedToken).toEqual(cursor);
       expect(internal._linkRuntimes.get(linkKey)?.inflight.size).toBe(0);
       expect(events).toContainEqual(expect.objectContaining({
