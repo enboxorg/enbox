@@ -1229,14 +1229,7 @@ export class SyncEngineLevel implements SyncEngine {
       const link = await this.getOrCreateReplicationLink(target);
       const feedHeadChanged = await this.verifyDrainConvergenceStability(target, result, link, pushFailures, getStopReason);
 
-      let divergenceExplained = false;
-      if (getStopReason() === undefined) {
-        if (result.converged === false && !feedHeadChanged) {
-          divergenceExplained = await this.handleVerifiedFeedDivergence(target, result);
-        } else if (result.converged === true) {
-          await this.clearFeedConvergenceFailure(target);
-        }
-      }
+      const divergenceExplained = await this.resolveDrainDivergence(target, result, feedHeadChanged, getStopReason);
 
       const stopReason = getStopReason();
       const quotaBlocked = (await this.getQuotaBlocksForTarget(target)).length > 0;
@@ -1312,6 +1305,29 @@ export class SyncEngineLevel implements SyncEngine {
     result.localFingerprint = stability.localFingerprint ?? result.localFingerprint;
     result.remoteFingerprint = stability.remoteFingerprint ?? result.remoteFingerprint;
     return feedHeadChanged;
+  }
+
+  /**
+   * After a drain run, either record a genuine unexplained divergence for repair
+   * or clear a prior convergence failure. Returns whether the divergence is fully
+   * explained by resolved per-link quota omissions. No-op when a stop was requested.
+   */
+  private async resolveDrainDivergence(
+    target: SyncTarget,
+    result: SyncReconcileResult,
+    feedHeadChanged: boolean,
+    getStopReason: () => SyncDrainStopReason | undefined,
+  ): Promise<boolean> {
+    if (getStopReason() !== undefined) {
+      return false;
+    }
+    if (result.converged === false && !feedHeadChanged) {
+      return this.handleVerifiedFeedDivergence(target, result);
+    }
+    if (result.converged === true) {
+      await this.clearFeedConvergenceFailure(target);
+    }
+    return false;
   }
 
   private updateConnectivityAfterDrain(targets: SyncDrainTargetResult[]): void {
