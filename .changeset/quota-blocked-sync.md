@@ -1,7 +1,7 @@
 ---
-"@enbox/agent": minor
-"@enbox/dwn-clients": minor
-"@enbox/browser": minor
+"@enbox/agent": patch
+"@enbox/dwn-clients": patch
+"@enbox/browser": patch
 "@enbox/dwn-server": patch
 ---
 
