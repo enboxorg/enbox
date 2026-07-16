@@ -88,22 +88,21 @@ export const PreferencesDefinition = {
       dataFormats : ['application/json'],
     },
   },
+  // NOTE: no `$actions` anywhere — this protocol is owner-only, and the DWN
+  // rejects `$actions: []` (`minItems: 1`). Omitting the directive is how a
+  // rule set grants no actions to other actors.
   structure: {
     theme: {
-      $recordLimit : { max: 1, strategy: 'reject' },
-      $actions     : [],
+      $recordLimit: { max: 1, strategy: 'reject' },
     },
     locale: {
-      $recordLimit : { max: 1, strategy: 'reject' },
-      $actions     : [],
+      $recordLimit: { max: 1, strategy: 'reject' },
     },
     privacy: {
-      $recordLimit : { max: 1, strategy: 'reject' },
-      $actions     : [],
+      $recordLimit: { max: 1, strategy: 'reject' },
     },
     notification: {
-      $actions : [],
-      $tags    : {
+      $tags: {
         $requiredTags       : ['channel'],
         $allowUndefinedTags : false,
         channel             : { type: 'string' },

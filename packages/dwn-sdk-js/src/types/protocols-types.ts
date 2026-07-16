@@ -248,6 +248,21 @@ export type ProtocolRuleSet = {
    * Key agreement setting for records at this protocol path.
    */
   $keyAgreement?: ProtocolKeyAgreement;
+  /**
+   * Rules defining which actors may access records at this protocol path.
+   *
+   * **Must not be empty.** The `ProtocolRuleSet` JSON schema declares
+   * `minItems: 1`, so `$actions: []` is rejected by `ProtocolsConfigure` at
+   * runtime with `/$actions: must NOT have fewer than 1 items`. To grant no
+   * actions at all (owner-only access), omit `$actions` entirely rather than
+   * passing an empty array.
+   *
+   * This constraint is documented rather than encoded as a non-empty tuple
+   * (`[ProtocolActionRule, ...ProtocolActionRule[]]`) because protocol
+   * definitions are commonly loaded from JSON. TypeScript widens JSON-module
+   * arrays to `T[]`, which is not assignable to a tuple, so a tuple type would
+   * reject valid definitions imported from `.json` files. See issue #557.
+   */
   $actions?: ProtocolActionRule[];
 
   /**

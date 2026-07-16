@@ -261,4 +261,42 @@ describe('@enbox/protocols', () => {
       expect(ConnectProtocol.definition).toBe(ConnectDefinition);
     });
   });
+
+  describe('$actions well-formedness', () => {
+    // The `ProtocolRuleSet` schema declares `minItems: 1` for `$actions`, so a rule
+    // set carrying `$actions: []` is rejected by the DWN at `protocols.configure()`
+    // time with `/$actions: must NOT have fewer than 1 items`. A protocol that
+    // grants no actions must omit the directive instead. See issue #557.
+    const definitions = {
+      ConnectDefinition,
+      ListsDefinition,
+      PreferencesDefinition,
+      ProfileDefinition,
+      SocialGraphDefinition,
+      StatusDefinition,
+    };
+
+    /** Collects `protocolPath -> $actions` for every rule set in a structure. */
+    const collectActions = (node: object, path: string[] = []): [string, unknown][] => {
+      const found: [string, unknown][] = [];
+      for (const [key, value] of Object.entries(node)) {
+        if (key === '$actions') {
+          found.push([path.join('/'), value]);
+        } else if (!key.startsWith('$') && typeof value === 'object' && value !== null) {
+          found.push(...collectActions(value, [...path, key]));
+        }
+      }
+      return found;
+    };
+
+    for (const [name, definition] of Object.entries(definitions)) {
+      it(`should not declare an empty $actions array in ${name}`, () => {
+        const emptyPaths = collectActions(definition.structure)
+          .filter(([, actions]) => Array.isArray(actions) && actions.length === 0)
+          .map(([path]) => path);
+
+        expect(emptyPaths).toEqual([]);
+      });
+    }
+  });
 });

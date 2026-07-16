@@ -233,5 +233,19 @@ describe('ProtocolsConfigure schema definition', () => {
         }).toThrow('/$actions/0');
       }
     });
+
+    it('#557 - should throw if `$actions` is an empty array', async () => {
+      expect(() => {
+        validateJsonSchema('ProtocolRuleSet', { $actions: [] });
+      }).toThrow('must NOT have fewer than 1 items');
+    });
+
+    it('#557 - should accept a rule set that omits `$actions` entirely', async () => {
+      // Omitting `$actions` is the supported way to grant no actions to other
+      // actors (owner-only access); `$actions: []` is not.
+      expect(() => {
+        validateJsonSchema('ProtocolRuleSet', { $recordLimit: { max: 1, strategy: 'reject' } });
+      }).not.toThrow();
+    });
   });
 });
