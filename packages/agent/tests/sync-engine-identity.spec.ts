@@ -6,6 +6,21 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 
+function activateTestLink(engine: SyncEngineLevel, linkKey: string, did: string, remoteEndpoint = 'https://dwn.example.com'): any {
+  return (engine as any).activateLink(linkKey, {
+    authorization      : { kind: 'owner' },
+    authorizationEpoch : 'owner-epoch',
+    connectivity       : 'online',
+    projectionId       : 'projection-id',
+    pull               : {},
+    push               : {},
+    remoteEndpoint,
+    scope              : { kind: 'full' },
+    status             : 'live',
+    tenantDid          : did,
+  });
+}
+
 describe('SyncEngineLevel — identity management', () => {
   let db: Level<string, string>;
   const messagesGrantEntry = (id: string, grantor: string, grantee: string, scope: Record<string, unknown>): any => ({
@@ -434,7 +449,6 @@ describe('SyncEngineLevel — identity management', () => {
     it('should call addIdentityToLiveSync when registering during active live sync', async () => {
       const engine = new SyncEngineLevel({ db });
       (engine as any)._syncMode = 'live';
-      (engine as any)._liveSubscriptions = [{ linkKey: 'existing', did: 'did:example:existing', dwnUrl: 'https://dwn.example.com', close: sinon.stub() }];
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
@@ -448,7 +462,6 @@ describe('SyncEngineLevel — identity management', () => {
     it('should pass options to addIdentityToLiveSync when protocols is all', async () => {
       const engine = new SyncEngineLevel({ db });
       (engine as any)._syncMode = 'live';
-      (engine as any)._liveSubscriptions = [{ linkKey: 'existing', did: 'did:example:existing', dwnUrl: 'https://dwn.example.com', close: sinon.stub() }];
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
@@ -461,7 +474,6 @@ describe('SyncEngineLevel — identity management', () => {
     it('should not call addIdentityToLiveSync when sync mode is poll', async () => {
       const engine = new SyncEngineLevel({ db });
       (engine as any)._syncMode = 'poll';
-      (engine as any)._liveSubscriptions = [];
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
@@ -473,7 +485,6 @@ describe('SyncEngineLevel — identity management', () => {
     it('should call addIdentityToLiveSync when live mode has no active subscriptions (e.g. after last identity removed)', async () => {
       const engine = new SyncEngineLevel({ db });
       (engine as any)._syncMode = 'live';
-      (engine as any)._liveSubscriptions = [];
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
@@ -488,7 +499,6 @@ describe('SyncEngineLevel — identity management', () => {
     it('should still persist identity even if addIdentityToLiveSync throws', async () => {
       const engine = new SyncEngineLevel({ db });
       (engine as any)._syncMode = 'live';
-      (engine as any)._liveSubscriptions = [{ linkKey: 'existing', did: 'did:example:existing', dwnUrl: 'https://dwn.example.com', close: sinon.stub() }];
 
       sinon.stub(engine as any, 'addIdentityToLiveSync').rejects(new Error('hot-add boom'));
 
@@ -509,7 +519,6 @@ describe('SyncEngineLevel — identity management', () => {
       await engine.registerIdentity({ did: 'did:example:hotrem1', options: { protocols: 'all' } });
 
       (engine as any)._syncMode = 'live';
-      (engine as any)._liveSubscriptions = [{ linkKey: 'existing', did: 'did:example:existing', dwnUrl: 'https://dwn.example.com', close: sinon.stub() }];
 
       const hotRemoveStub = sinon.stub(engine as any, 'removeIdentityFromLiveSync').resolves();
 
@@ -524,7 +533,6 @@ describe('SyncEngineLevel — identity management', () => {
       await engine.registerIdentity({ did: 'did:example:nohotrem-poll', options: { protocols: 'all' } });
 
       (engine as any)._syncMode = 'poll';
-      (engine as any)._liveSubscriptions = [];
 
       const hotRemoveStub = sinon.stub(engine as any, 'removeIdentityFromLiveSync').resolves();
 
@@ -536,7 +544,6 @@ describe('SyncEngineLevel — identity management', () => {
     it('should still throw when unregistering a non-registered identity during live sync', async () => {
       const engine = new SyncEngineLevel({ db });
       (engine as any)._syncMode = 'live';
-      (engine as any)._liveSubscriptions = [{ linkKey: 'existing', did: 'did:example:existing', close: sinon.stub() }];
 
       await expect(
         engine.unregisterIdentity('did:example:never-registered-live')
@@ -550,112 +557,93 @@ describe('SyncEngineLevel — identity management', () => {
 
       const closeAlice = sinon.stub().resolves();
       const closeBob = sinon.stub().resolves();
-
-      (engine as any)._liveSubscriptions = [
-        { linkKey: 'did:example:alice^https://dwn.example.com', did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', close: closeAlice },
-        { linkKey: 'did:example:bob^https://dwn.example.com', did: 'did:example:bob', dwnUrl: 'https://dwn.example.com', close: closeBob },
-      ];
-      (engine as any)._localSubscriptions = [
-        { linkKey: 'did:example:alice^https://dwn.example.com', did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', close: closeAlice },
-        { linkKey: 'did:example:bob^https://dwn.example.com', did: 'did:example:bob', dwnUrl: 'https://dwn.example.com', close: closeBob },
-      ];
-
-      (engine as any)._activeLinks.set('did:example:alice^https://dwn.example.com', { tenantDid: 'did:example:alice' });
-      (engine as any)._activeLinks.set('did:example:bob^https://dwn.example.com', { tenantDid: 'did:example:bob' });
-      (engine as any)._linkRuntimes.set('did:example:alice^https://dwn.example.com', { nextDeliveryOrdinal: 0, nextCommitOrdinal: 0, inflight: new Map() });
+      const aliceKey = 'did:example:alice^https://dwn.example.com';
+      const bobKey = 'did:example:bob^https://dwn.example.com';
+      const aliceController = activateTestLink(engine, aliceKey, 'did:example:alice');
+      const bobController = activateTestLink(engine, bobKey, 'did:example:bob');
+      aliceController.setLiveSubscription({ close: closeAlice });
+      aliceController.setLocalSubscription({ close: closeAlice });
+      bobController.setLiveSubscription({ close: closeBob });
+      bobController.setLocalSubscription({ close: closeBob });
 
       await (engine as any).removeIdentityFromLiveSync('did:example:alice');
 
       expect(closeAlice.callCount).toBe(2);
       expect(closeBob.called).toBe(false);
-      expect((engine as any)._liveSubscriptions).toHaveLength(1);
-      expect((engine as any)._liveSubscriptions[0].did).toBe('did:example:bob');
-      expect((engine as any)._localSubscriptions).toHaveLength(1);
-      expect((engine as any)._localSubscriptions[0].did).toBe('did:example:bob');
-      expect((engine as any)._activeLinks.has('did:example:alice^https://dwn.example.com')).toBe(false);
-      expect((engine as any)._linkRuntimes.has('did:example:alice^https://dwn.example.com')).toBe(false);
-      expect((engine as any)._activeLinks.has('did:example:bob^https://dwn.example.com')).toBe(true);
+      expect(bobController.hasLiveSubscription).toBe(true);
+      expect(bobController.hasLocalSubscription).toBe(true);
+      expect((engine as any)._linkControllers.has(aliceKey)).toBe(false);
+      expect((engine as any)._linkControllers.has(bobKey)).toBe(true);
     });
 
     it('removeIdentityFromLiveSync should cancel push timers for the target DID only', async () => {
       const engine = new SyncEngineLevel({ db });
-      (engine as any)._liveSubscriptions = [];
-      (engine as any)._localSubscriptions = [];
-
       const aliceTimer = setTimeout(() => {}, 60_000);
       const bobTimer = setTimeout(() => {}, 60_000);
-      (engine as any)._pushRuntimes.set('did:example:alice^https://dwn.example.com', {
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', entries: [], retryCount: 0, timer: aliceTimer,
-      });
-      (engine as any)._pushRuntimes.set('did:example:bob^https://dwn.example.com', {
-        did: 'did:example:bob', dwnUrl: 'https://dwn.example.com', entries: [], retryCount: 0, timer: bobTimer,
-      });
+      const aliceController = activateTestLink(engine, 'did:example:alice^https://dwn.example.com', 'did:example:alice');
+      const bobController = activateTestLink(engine, 'did:example:bob^https://dwn.example.com', 'did:example:bob');
+      aliceController.getOrCreatePushRuntime({ did: 'did:example:alice', dwnUrl: 'https://dwn.example.com' }).timer = aliceTimer;
+      bobController.getOrCreatePushRuntime({ did: 'did:example:bob', dwnUrl: 'https://dwn.example.com' }).timer = bobTimer;
 
       await (engine as any).removeIdentityFromLiveSync('did:example:alice');
 
-      expect((engine as any)._pushRuntimes.has('did:example:alice^https://dwn.example.com')).toBe(false);
-      expect((engine as any)._pushRuntimes.has('did:example:bob^https://dwn.example.com')).toBe(true);
+      expect(aliceController.pushRuntime).toBeUndefined();
+      expect(bobController.pushRuntime).toBeDefined();
 
       clearTimeout(bobTimer);
     });
 
     it('removeIdentityFromLiveSync should clear repair attempts and retry timers for the target DID', async () => {
       const engine = new SyncEngineLevel({ db });
-      (engine as any)._liveSubscriptions = [];
-      (engine as any)._localSubscriptions = [];
-
-      (engine as any)._repairAttempts.set('did:example:alice^https://dwn.example.com^scope1', 2);
-      (engine as any)._repairAttempts.set('did:example:bob^https://dwn.example.com^scope1', 1);
-
       const aliceRetryTimer = setTimeout(() => {}, 60_000);
       const bobRetryTimer = setTimeout(() => {}, 60_000);
-      (engine as any)._repairRetryTimers.set('did:example:alice^https://dwn.example.com^scope1', aliceRetryTimer);
-      (engine as any)._repairRetryTimers.set('did:example:bob^https://dwn.example.com^scope1', bobRetryTimer);
+      const aliceController = activateTestLink(engine, 'did:example:alice^https://dwn.example.com^scope1', 'did:example:alice');
+      const bobController = activateTestLink(engine, 'did:example:bob^https://dwn.example.com^scope1', 'did:example:bob');
+      aliceController.incrementRepairAttempts();
+      aliceController.incrementRepairAttempts();
+      bobController.incrementRepairAttempts();
+      aliceController.setRepairRetryTimer(aliceRetryTimer);
+      bobController.setRepairRetryTimer(bobRetryTimer);
 
       await (engine as any).removeIdentityFromLiveSync('did:example:alice');
 
-      expect((engine as any)._repairAttempts.has('did:example:alice^https://dwn.example.com^scope1')).toBe(false);
-      expect((engine as any)._repairAttempts.has('did:example:bob^https://dwn.example.com^scope1')).toBe(true);
-      expect((engine as any)._repairRetryTimers.has('did:example:alice^https://dwn.example.com^scope1')).toBe(false);
-      expect((engine as any)._repairRetryTimers.has('did:example:bob^https://dwn.example.com^scope1')).toBe(true);
+      expect(aliceController.isActive).toBe(false);
+      expect(bobController.repairAttempts).toBe(1);
+      expect(aliceController.repairRetryTimer).toBeUndefined();
+      expect(bobController.repairRetryTimer).toBeDefined();
 
       clearTimeout(bobRetryTimer);
     });
 
     it('removeIdentityFromLiveSync should clear reconcile timers and in-flight ops for the target DID', async () => {
       const engine = new SyncEngineLevel({ db });
-      (engine as any)._liveSubscriptions = [];
-      (engine as any)._localSubscriptions = [];
-
       const aliceReconcileTimer = setTimeout(() => {}, 60_000);
       const bobReconcileTimer = setTimeout(() => {}, 60_000);
-      (engine as any)._reconcileTimers.set('did:example:alice^https://dwn.example.com^scope1', aliceReconcileTimer);
-      (engine as any)._reconcileTimers.set('did:example:bob^https://dwn.example.com^scope1', bobReconcileTimer);
-      (engine as any)._reconcileInFlight.set('did:example:alice^https://dwn.example.com^scope1', Promise.resolve());
+      const aliceController = activateTestLink(engine, 'did:example:alice^https://dwn.example.com^scope1', 'did:example:alice');
+      const bobController = activateTestLink(engine, 'did:example:bob^https://dwn.example.com^scope1', 'did:example:bob');
+      aliceController.setReconcileTimer(aliceReconcileTimer, Date.now() + 60_000);
+      bobController.setReconcileTimer(bobReconcileTimer, Date.now() + 60_000);
+      aliceController.setReconcileInFlight(Promise.resolve());
 
       await (engine as any).removeIdentityFromLiveSync('did:example:alice');
 
-      expect((engine as any)._reconcileTimers.has('did:example:alice^https://dwn.example.com^scope1')).toBe(false);
-      expect((engine as any)._reconcileTimers.has('did:example:bob^https://dwn.example.com^scope1')).toBe(true);
-      expect((engine as any)._reconcileInFlight.has('did:example:alice^https://dwn.example.com^scope1')).toBe(false);
+      expect(aliceController.reconcileTimer).toBeUndefined();
+      expect(bobController.reconcileTimer).toBeDefined();
+      expect((engine as any)._linkControllers.has(aliceController.linkKey)).toBe(false);
 
       clearTimeout(bobReconcileTimer);
     });
 
     it('removeIdentityFromLiveSync should be a safe no-op for a DID with no subscriptions or state', async () => {
       const engine = new SyncEngineLevel({ db });
-
-      (engine as any)._liveSubscriptions = [
-        { linkKey: 'did:example:bob^https://dwn.example.com', did: 'did:example:bob', dwnUrl: 'https://dwn.example.com', close: sinon.stub() },
-      ];
-      (engine as any)._localSubscriptions = [
-        { linkKey: 'did:example:bob^https://dwn.example.com', did: 'did:example:bob', dwnUrl: 'https://dwn.example.com', close: sinon.stub() },
-      ];
+      const bobController = activateTestLink(engine, 'did:example:bob^https://dwn.example.com', 'did:example:bob');
+      bobController.setLiveSubscription({ close: sinon.stub() });
+      bobController.setLocalSubscription({ close: sinon.stub() });
 
       await (engine as any).removeIdentityFromLiveSync('did:example:alice');
 
-      expect((engine as any)._liveSubscriptions).toHaveLength(1);
-      expect((engine as any)._localSubscriptions).toHaveLength(1);
+      expect(bobController.hasLiveSubscription).toBe(true);
+      expect(bobController.hasLocalSubscription).toBe(true);
     });
 
     it('removeIdentityFromLiveSync should continue even if subscription close throws', async () => {
@@ -663,18 +651,16 @@ describe('SyncEngineLevel — identity management', () => {
 
       const closeThrows = sinon.stub().rejects(new Error('close boom'));
       const closeOk = sinon.stub().resolves();
-
-      (engine as any)._liveSubscriptions = [
-        { linkKey: 'did:example:alice^https://dwn1.example.com', did: 'did:example:alice', dwnUrl: 'https://dwn1.example.com', close: closeThrows },
-        { linkKey: 'did:example:alice^https://dwn2.example.com', did: 'did:example:alice', dwnUrl: 'https://dwn2.example.com', close: closeOk },
-      ];
-      (engine as any)._localSubscriptions = [];
+      const first = activateTestLink(engine, 'did:example:alice^https://dwn1.example.com', 'did:example:alice', 'https://dwn1.example.com');
+      const second = activateTestLink(engine, 'did:example:alice^https://dwn2.example.com', 'did:example:alice', 'https://dwn2.example.com');
+      first.setLiveSubscription({ close: closeThrows });
+      second.setLiveSubscription({ close: closeOk });
 
       await (engine as any).removeIdentityFromLiveSync('did:example:alice');
 
       expect(closeThrows.calledOnce).toBe(true);
       expect(closeOk.calledOnce).toBe(true);
-      expect((engine as any)._liveSubscriptions).toHaveLength(0);
+      expect((engine as any)._linkControllers.size).toBe(0);
     });
 
     it('removeIdentityFromLiveSync should remove all links for an identity with multiple endpoints', async () => {
@@ -682,25 +668,18 @@ describe('SyncEngineLevel — identity management', () => {
 
       const close1 = sinon.stub().resolves();
       const close2 = sinon.stub().resolves();
-
-      (engine as any)._liveSubscriptions = [
-        { linkKey: 'did:example:alice^https://dwn1.example.com', did: 'did:example:alice', dwnUrl: 'https://dwn1.example.com', close: close1 },
-        { linkKey: 'did:example:alice^https://dwn2.example.com', did: 'did:example:alice', dwnUrl: 'https://dwn2.example.com', close: close2 },
-      ];
-      (engine as any)._localSubscriptions = [
-        { linkKey: 'did:example:alice^https://dwn1.example.com', did: 'did:example:alice', dwnUrl: 'https://dwn1.example.com', close: close1 },
-        { linkKey: 'did:example:alice^https://dwn2.example.com', did: 'did:example:alice', dwnUrl: 'https://dwn2.example.com', close: close2 },
-      ];
-      (engine as any)._activeLinks.set('did:example:alice^https://dwn1.example.com', { tenantDid: 'did:example:alice' });
-      (engine as any)._activeLinks.set('did:example:alice^https://dwn2.example.com', { tenantDid: 'did:example:alice' });
+      const first = activateTestLink(engine, 'did:example:alice^https://dwn1.example.com', 'did:example:alice', 'https://dwn1.example.com');
+      const second = activateTestLink(engine, 'did:example:alice^https://dwn2.example.com', 'did:example:alice', 'https://dwn2.example.com');
+      first.setLiveSubscription({ close: close1 });
+      first.setLocalSubscription({ close: close1 });
+      second.setLiveSubscription({ close: close2 });
+      second.setLocalSubscription({ close: close2 });
 
       await (engine as any).removeIdentityFromLiveSync('did:example:alice');
 
       expect(close1.callCount).toBe(2);
       expect(close2.callCount).toBe(2);
-      expect((engine as any)._liveSubscriptions).toHaveLength(0);
-      expect((engine as any)._localSubscriptions).toHaveLength(0);
-      expect((engine as any)._activeLinks.size).toBe(0);
+      expect((engine as any)._linkControllers.size).toBe(0);
     });
 
     // --- addIdentityToLiveSync ---
@@ -813,17 +792,16 @@ describe('SyncEngineLevel — identity management', () => {
 
       const pullCloseSpy = sinon.stub().resolves();
       sinon.stub(engine as any, 'openLivePullSubscription').callsFake(async (target: any) => {
-        (engine as any)._liveSubscriptions.push({
-          linkKey: target.linkKey, did: target.did, dwnUrl: target.dwnUrl, close: pullCloseSpy,
-        });
+        (engine as any).getLinkController(target.linkKey).setLiveSubscription({ close: pullCloseSpy });
       });
       sinon.stub(engine as any, 'openLocalPushSubscription').rejects(new Error('push subscription boom'));
 
       await (engine as any).addIdentityToLiveSync('did:example:pushfail', { protocols: 'all' });
 
       expect(pullCloseSpy.calledOnce).toBe(true);
-      expect((engine as any)._liveSubscriptions).toHaveLength(0);
-      expect([...((engine as any)._activeLinks.keys())].some((key: string) => key.startsWith('did:example:pushfail^https://dwn.example.com^projection-1^'))).toBe(false);
+      expect([...((engine as any)._linkControllers.keys())].some(
+        (key: string) => key.startsWith('did:example:pushfail^https://dwn.example.com^projection-1^')
+      )).toBe(false);
     });
 
     it('addIdentityToLiveSync should schedule a Retry-After reattempt instead of failing permanently on a rate-limit', async () => {
@@ -856,8 +834,8 @@ describe('SyncEngineLevel — identity management', () => {
       await (engine as any).addIdentityToLiveSync('did:example:ratelimited', { protocols: 'all' });
 
       // The half-open link is dropped, not left live...
-      expect((engine as any)._liveSubscriptions).toHaveLength(0);
-      expect((engine as any)._activeLinks.size).toBe(0);
+      expect(engine.hasActiveSubscriptions).toBe(false);
+      expect((engine as any)._linkControllers.size).toBe(0);
       // ...and exactly one Retry-After reattempt is scheduled.
       expect((engine as any)._linkInitRetryTimers.size).toBe(1);
       expect(openPullStub.calledOnce).toBe(true);
@@ -898,13 +876,13 @@ describe('SyncEngineLevel — identity management', () => {
       sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
 
       await (engine as any).addIdentityToLiveSync('did:example:ratelimited-recover', { protocols: 'all' });
-      expect((engine as any)._activeLinks.size).toBe(0);
+      expect((engine as any)._linkControllers.size).toBe(0);
 
       // Wait for the 1s Retry-After timer to fire and re-establish the link.
       await new Promise(resolve => setTimeout(resolve, 1400));
 
       expect(openPullStub.callCount).toBe(2);
-      expect((engine as any)._activeLinks.size).toBe(1);
+      expect((engine as any)._linkControllers.size).toBe(1);
       expect((engine as any)._linkInitRetryTimers.size).toBe(0);
     });
   });
@@ -921,9 +899,9 @@ describe('SyncEngineLevel — identity management', () => {
 
     it('should return true when live pull subscriptions are open', () => {
       const engine = new SyncEngineLevel({ db });
-      (engine as any)._liveSubscriptions = [{ linkKey: 'k', did: 'did:example:a', close: sinon.stub() }];
+      const controller = activateTestLink(engine, 'k', 'did:example:a');
+      controller.setLiveSubscription({ close: sinon.stub() });
       expect(engine.hasActiveSubscriptions).toBe(true);
-      (engine as any)._liveSubscriptions = [];
     });
 
     it('should return false when only the integrity timer is active', () => {
@@ -936,23 +914,20 @@ describe('SyncEngineLevel — identity management', () => {
 
     it('should return true when local push subscriptions are open', () => {
       const engine = new SyncEngineLevel({ db });
-      (engine as any)._localSubscriptions = [{ linkKey: 'k', did: 'did:example:a', close: sinon.stub() }];
+      const controller = activateTestLink(engine, 'k', 'did:example:a');
+      controller.setLocalSubscription({ close: sinon.stub() });
       expect(engine.hasActiveSubscriptions).toBe(true);
-      (engine as any)._localSubscriptions = [];
     });
 
     it('should return false after all subscriptions are removed', () => {
       const engine = new SyncEngineLevel({ db });
-      (engine as any)._liveSubscriptions = [];
-      (engine as any)._localSubscriptions = [];
       expect(engine.hasActiveSubscriptions).toBe(false);
     });
 
     it('should return false when only active links exist but no subscriptions', () => {
       const engine = new SyncEngineLevel({ db });
-      (engine as any)._activeLinks.set('some-key', { tenantDid: 'did:example:a' });
+      activateTestLink(engine, 'some-key', 'did:example:a');
       expect(engine.hasActiveSubscriptions).toBe(false);
-      (engine as any)._activeLinks.clear();
     });
   });
 
@@ -966,7 +941,7 @@ describe('SyncEngineLevel — identity management', () => {
       await engine.registerIdentity({ did: 'did:example:update1', options: { protocols: 'all' } });
 
       (engine as any)._syncMode = 'live';
-      (engine as any)._activeLinks.set('did:example:update1^https://dwn.example.com', { tenantDid: 'did:example:update1' });
+      activateTestLink(engine, 'did:example:update1^https://dwn.example.com', 'did:example:update1');
 
       const hotRemoveStub = sinon.stub(engine as any, 'removeIdentityFromLiveSync').resolves();
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
@@ -1033,10 +1008,6 @@ describe('SyncEngineLevel — identity management', () => {
       const engine = new SyncEngineLevel({ db });
       (engine as any)._syncMode = 'live';
 
-      // Simulate: identity A was syncing, then removed (no subscriptions left).
-      (engine as any)._liveSubscriptions = [];
-      (engine as any)._localSubscriptions = [];
-
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
       await engine.registerIdentity({ did: 'did:example:after-last-removed', options: { protocols: 'all' } });
@@ -1049,8 +1020,6 @@ describe('SyncEngineLevel — identity management', () => {
       const engine = new SyncEngineLevel({ db });
       // Timer left over from live mode, but no subscriptions.
       (engine as any)._syncIntervalId = setInterval(() => {}, 60_000);
-      (engine as any)._liveSubscriptions = [];
-      (engine as any)._localSubscriptions = [];
 
       expect(engine.hasActiveSubscriptions).toBe(false);
 
@@ -1098,32 +1067,36 @@ describe('SyncEngineLevel — identity management', () => {
   // ---------------------------------------------------------------------------
 
   describe('removeIdentityFromLiveSync — in-flight repair cleanup', () => {
-    it('should clear _activeRepairs for the target DID', async () => {
+    it('should discard the target DID controller with its in-flight repair', async () => {
       const engine = new SyncEngineLevel({ db });
-      (engine as any)._liveSubscriptions = [];
-      (engine as any)._localSubscriptions = [];
-
-      (engine as any)._activeRepairs.set('did:example:alice^https://dwn.example.com^scope1', Promise.resolve());
-      (engine as any)._activeRepairs.set('did:example:bob^https://dwn.example.com^scope1', Promise.resolve());
+      const aliceKey = 'did:example:alice^https://dwn.example.com^scope1';
+      const bobKey = 'did:example:bob^https://dwn.example.com^scope1';
+      const aliceController = activateTestLink(engine, aliceKey, 'did:example:alice');
+      const bobController = activateTestLink(engine, bobKey, 'did:example:bob');
+      aliceController.setRepairInFlight(Promise.resolve());
+      const bobRepair = Promise.resolve();
+      bobController.setRepairInFlight(bobRepair);
 
       await (engine as any).removeIdentityFromLiveSync('did:example:alice');
 
-      expect((engine as any)._activeRepairs.has('did:example:alice^https://dwn.example.com^scope1')).toBe(false);
-      expect((engine as any)._activeRepairs.has('did:example:bob^https://dwn.example.com^scope1')).toBe(true);
+      expect((engine as any)._linkControllers.has(aliceKey)).toBe(false);
+      expect((engine as any)._linkControllers.get(bobKey)?.repairInFlight).toBe(bobRepair);
     });
 
-    it('should clear _repairContext for the target DID', async () => {
+    it('should discard the target DID controller with its repair context', async () => {
       const engine = new SyncEngineLevel({ db });
-      (engine as any)._liveSubscriptions = [];
-      (engine as any)._localSubscriptions = [];
-
-      (engine as any)._repairContext.set('did:example:alice^https://dwn.example.com^scope1', { resumeToken: 'tok1' });
-      (engine as any)._repairContext.set('did:example:bob^https://dwn.example.com^scope1', { resumeToken: 'tok2' });
+      const aliceKey = 'did:example:alice^https://dwn.example.com^scope1';
+      const bobKey = 'did:example:bob^https://dwn.example.com^scope1';
+      const aliceController = activateTestLink(engine, aliceKey, 'did:example:alice');
+      const bobController = activateTestLink(engine, bobKey, 'did:example:bob');
+      aliceController.setRepairResumeToken({ epoch: 'epoch', position: '1', streamId: 'stream' });
+      const bobToken = { epoch: 'epoch', position: '2', streamId: 'stream' };
+      bobController.setRepairResumeToken(bobToken);
 
       await (engine as any).removeIdentityFromLiveSync('did:example:alice');
 
-      expect((engine as any)._repairContext.has('did:example:alice^https://dwn.example.com^scope1')).toBe(false);
-      expect((engine as any)._repairContext.has('did:example:bob^https://dwn.example.com^scope1')).toBe(true);
+      expect((engine as any)._linkControllers.has(aliceKey)).toBe(false);
+      expect((engine as any)._linkControllers.get(bobKey)?.repairResumeToken).toEqual(bobToken);
     });
   });
 });

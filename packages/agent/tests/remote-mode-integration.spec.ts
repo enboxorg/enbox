@@ -215,8 +215,8 @@ describe('Agent remote mode integration', () => {
       await readLocalRecordText(testHarness.agent, alice.did.uri, remoteWrite.recordId) === 'live pull body'
     );
 
-    const activeLinks = [...syncEngine._activeLinks.values()];
-    const link = activeLinks.find((candidate: any): boolean =>
+    const controllers = [...syncEngine._linkControllers.values()];
+    const link = controllers.map((controller: any): any => controller.link).find((candidate: any): boolean =>
       candidate.tenantDid === alice.did.uri &&
       candidate.remoteEndpoint === remoteServer.httpUrl
     );

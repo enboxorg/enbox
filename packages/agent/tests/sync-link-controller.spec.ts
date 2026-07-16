@@ -1,0 +1,202 @@
+import type { ProgressToken } from '@enbox/dwn-sdk-js';
+
+import sinon from 'sinon';
+
+import { afterEach, describe, expect, it } from 'bun:test';
+
+import type { ReplicationLinkState } from '../src/types/sync.js';
+
+import { SyncLinkController } from '../src/sync-link-controller.js';
+
+type SyncLinkTimer = Parameters<SyncLinkController['setRepairRetryTimer']>[0];
+
+function createLink(): ReplicationLinkState {
+  return {
+    authorization      : { kind: 'owner' },
+    authorizationEpoch : 'owner-epoch',
+    connectivity       : 'unknown',
+    projectionId       : 'projection-id',
+    pull               : {},
+    push               : {},
+    remoteEndpoint     : 'https://dwn.example.com',
+    scope              : { kind: 'full' },
+    status             : 'live',
+    tenantDid          : 'did:example:alice',
+  };
+}
+
+function token(position: number): ProgressToken {
+  return {
+    epoch      : 'epoch',
+    messageCid : `cid-${position}`,
+    position   : String(position),
+    streamId   : 'stream',
+  };
+}
+
+describe('SyncLinkController', () => {
+  afterEach(() => {
+    sinon.restore();
+  });
+
+  it('should commit concurrently delivered pull events only in delivery order', () => {
+    const link = createLink();
+    const controller = new SyncLinkController('link-key', link);
+    const first = controller.startPullDelivery(token(1));
+    const second = controller.startPullDelivery(token(2));
+
+    expect(controller.commitPullDelivery(second, token(2))).toBe(0);
+    expect(link.pull.contiguousAppliedToken).toBeUndefined();
+    expect(controller.pullInflightCount).toBe(2);
+
+    expect(controller.commitPullDelivery(first, token(1))).toBe(2);
+    expect(link.pull.contiguousAppliedToken).toEqual(token(2));
+    expect(controller.pullInflightCount).toBe(0);
+  });
+
+  it('should discard interrupted pull deliveries without blocking later work', () => {
+    const link = createLink();
+    const controller = new SyncLinkController('link-key', link);
+    controller.startPullDelivery(token(1));
+
+    controller.clearPullInflight();
+    const next = controller.startPullDelivery(token(2));
+
+    expect(controller.commitPullDelivery(next, token(2))).toBe(1);
+    expect(link.pull.contiguousAppliedToken).toEqual(token(2));
+  });
+
+  it('should not let an old push batch clear or consume a replacement queue', () => {
+    const controller = new SyncLinkController('link-key', createLink());
+    const first = controller.getOrCreatePushRuntime({
+      did    : 'did:example:alice',
+      dwnUrl : 'https://dwn.example.com',
+    });
+    const firstTimer = setTimeout(() => {}, 60_000);
+    controller.setPushTimer(first, firstTimer);
+    controller.clearPushRuntime(first);
+    const replacement = controller.getOrCreatePushRuntime({
+      did    : 'did:example:alice',
+      dwnUrl : 'https://dwn.example.com',
+    });
+    const replacementTimer = setTimeout(() => {}, 60_000);
+    controller.setPushTimer(replacement, replacementTimer);
+
+    controller.clearPushRuntime(first);
+
+    expect(controller.pushRuntime).toBe(replacement);
+    expect(controller.consumePushTimer(first, firstTimer)).toBe(false);
+    expect(controller.pushRuntime?.timer).toBe(replacementTimer);
+
+    controller.clearPushRuntime(replacement);
+  });
+
+  it('should own and close both link subscriptions even when one close fails', async () => {
+    const controller = new SyncLinkController('link-key', createLink());
+    const closeLive = sinon.stub().rejects(new Error('already closed'));
+    const closeLocal = sinon.stub().resolves();
+    controller.setLiveSubscription({ close: closeLive });
+    controller.setLocalSubscription({ close: closeLocal });
+
+    await controller.closeSubscriptions();
+
+    expect(closeLive.calledOnce).toBe(true);
+    expect(closeLocal.calledOnce).toBe(true);
+    expect(controller.hasLiveSubscription).toBe(false);
+    expect(controller.hasLocalSubscription).toBe(false);
+  });
+
+  it('should reject duplicate or post-deactivation subscription ownership', async () => {
+    const controller = new SyncLinkController('link-key', createLink());
+    const closeOwned = sinon.stub().resolves();
+
+    expect(controller.setLiveSubscription({ close: closeOwned })).toBe(true);
+    expect(controller.setLiveSubscription({ close: sinon.stub().resolves() })).toBe(false);
+
+    controller.deactivate();
+    expect(controller.setLocalSubscription({ close: sinon.stub().resolves() })).toBe(false);
+
+    await controller.closeSubscriptions();
+    expect(closeOwned.calledOnce).toBe(true);
+  });
+
+  it('should consume only the currently owned repair and reconcile timers', () => {
+    const controller = new SyncLinkController('link-key', createLink());
+    const firstRepair = setTimeout(() => {}, 60_000);
+    const currentRepair = setTimeout(() => {}, 60_000);
+    const firstReconcile = setTimeout(() => {}, 60_000);
+    const currentReconcile = setTimeout(() => {}, 60_000);
+
+    controller.setRepairRetryTimer(firstRepair);
+    controller.setRepairRetryTimer(currentRepair);
+    controller.setReconcileTimer(firstReconcile, 1);
+    controller.setReconcileTimer(currentReconcile, 2);
+
+    expect(controller.consumeRepairRetryTimer(firstRepair)).toBe(false);
+    expect(controller.repairRetryTimer).toBe(currentRepair);
+    expect(controller.consumeReconcileTimer(firstReconcile)).toBe(false);
+    expect(controller.reconcileTimer).toBe(currentReconcile);
+
+    expect(controller.consumeRepairRetryTimer(currentRepair)).toBe(true);
+    expect(controller.consumeReconcileTimer(currentReconcile)).toBe(true);
+    expect(controller.repairRetryTimer).toBeUndefined();
+    expect(controller.reconcileTimer).toBeUndefined();
+
+    clearTimeout(currentRepair);
+    clearTimeout(currentReconcile);
+  });
+
+  it('should invalidate callbacks and cancel every queued timer on deactivation', async () => {
+    const clock = sinon.useFakeTimers();
+    const controller = new SyncLinkController('link-key', createLink());
+    const fired = sinon.stub();
+    const pushRuntime = controller.getOrCreatePushRuntime({
+      did    : 'did:example:alice',
+      dwnUrl : 'https://dwn.example.com',
+    });
+    const pushTimer = setTimeout(fired, 10) as unknown as SyncLinkTimer;
+    const repairTimer = setTimeout(fired, 10) as unknown as SyncLinkTimer;
+    const reconcileTimer = setTimeout(fired, 10) as unknown as SyncLinkTimer;
+    controller.setPushTimer(pushRuntime, pushTimer);
+    controller.setRepairRetryTimer(repairTimer);
+    controller.setReconcileTimer(reconcileTimer, Date.now() + 10);
+    controller.incrementRepairAttempts();
+    controller.setRepairResumeToken(token(1));
+    controller.setRepairInFlight(Promise.resolve());
+    controller.setReconcileInFlight(Promise.resolve());
+
+    controller.deactivate();
+    await clock.tickAsync(10);
+
+    expect(controller.isActive).toBe(false);
+    expect(controller.pushRuntime).toBeUndefined();
+    expect(controller.repairRetryTimer).toBeUndefined();
+    expect(controller.reconcileTimer).toBeUndefined();
+    expect(controller.repairAttempts).toBe(0);
+    expect(controller.repairResumeToken).toBeUndefined();
+    expect(controller.repairInFlight).toBeUndefined();
+    expect(controller.reconcileInFlight).toBeUndefined();
+    expect(fired.called).toBe(false);
+  });
+
+  it('should clear only the matching in-flight operation', async () => {
+    const controller = new SyncLinkController('link-key', createLink());
+    const firstRepair = Promise.resolve();
+    const secondRepair = Promise.resolve();
+    const firstReconcile = Promise.resolve();
+    const secondReconcile = Promise.resolve();
+
+    controller.setRepairInFlight(firstRepair);
+    controller.clearRepairInFlight(secondRepair);
+    controller.setReconcileInFlight(firstReconcile);
+    controller.clearReconcileInFlight(secondReconcile);
+
+    expect(controller.repairInFlight).toBe(firstRepair);
+    expect(controller.reconcileInFlight).toBe(firstReconcile);
+
+    controller.clearRepairInFlight(firstRepair);
+    controller.clearReconcileInFlight(firstReconcile);
+    expect(controller.repairInFlight).toBeUndefined();
+    expect(controller.reconcileInFlight).toBeUndefined();
+  });
+});

@@ -115,7 +115,7 @@ describe('SyncEngineLevel lifecycle', () => {
     });
     target.projectionId = link.projectionId;
     await engine['ledger'].setStatus(link, 'live');
-    engine['_activeLinks'].set('active-link', link);
+    engine['activateLink']('active-link', link);
 
     const internal = engine as unknown as {
       pushLocalFeedEntry(
@@ -163,7 +163,7 @@ describe('SyncEngineLevel lifecycle', () => {
     await Promise.resolve();
 
     try {
-      expect(engine['_activeLinks'].size).toBe(0);
+      expect(engine['_linkControllers'].size).toBe(0);
       expect(transitionPushResult.called).toBe(false);
       expect(closeCompleted).toBe(false);
       expect(db.status).toBe('open');
@@ -194,7 +194,7 @@ describe('SyncEngineLevel lifecycle', () => {
       tenantDid          : 'did:example:alice',
     };
 
-    engine['_activeLinks'].set(linkKey, link as never);
+    engine['activateLink'](linkKey, link as never);
     sinon.stub(engine as never, 'setLinkOfflineStatus').callsFake(async (): Promise<void> => {
       link.status = 'repairing';
     });
@@ -239,7 +239,7 @@ describe('SyncEngineLevel lifecycle', () => {
       tenantDid          : 'did:example:alice',
     };
 
-    engine['_activeLinks'].set(linkKey, link as never);
+    engine['activateLink'](linkKey, link as never);
     sinon.stub(engine as never, 'doReconcileLink').callsFake(async (): Promise<void> => {
       reconcileStarted.resolve();
       await releaseReconcile.promise;
@@ -269,14 +269,23 @@ describe('SyncEngineLevel lifecycle', () => {
     const pushStarted = createDeferred();
     const releasePush = createDeferred();
     const linkKey = 'did:example:alice^https://dwn.example.com^projection-1^authorization-1';
-    const pushRuntime = {
-      did        : 'did:example:alice',
-      dwnUrl     : 'https://dwn.example.com',
-      entries    : [],
-      retryCount : 0,
-    };
+    const controller = engine['activateLink'](linkKey, {
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'authorization-1',
+      connectivity       : 'online',
+      projectionId       : 'projection-1',
+      pull               : {},
+      push               : {},
+      remoteEndpoint     : 'https://dwn.example.com',
+      scope              : { kind: 'full' },
+      status             : 'live',
+      tenantDid          : 'did:example:alice',
+    });
+    const pushRuntime = controller.getOrCreatePushRuntime({
+      did    : 'did:example:alice',
+      dwnUrl : 'https://dwn.example.com',
+    });
 
-    engine['_pushRuntimes'].set(linkKey, pushRuntime as never);
     sinon.stub(engine as never, 'flushPendingPushesForLink').callsFake(async (): Promise<void> => {
       pushStarted.resolve();
       await releasePush.promise;
@@ -284,11 +293,11 @@ describe('SyncEngineLevel lifecycle', () => {
 
     (engine as unknown as {
       schedulePushRetry(
-        targetKey: string,
+        linkController: typeof controller,
         runtime: unknown,
         pending: { entries: Array<{ cid: string }>; retryCount: number },
       ): void;
-    }).schedulePushRetry(linkKey, pushRuntime, { entries: [{ cid: 'cid-1' }], retryCount: 0 });
+    }).schedulePushRetry(controller, pushRuntime, { entries: [{ cid: 'cid-1' }], retryCount: 0 });
     await pushStarted.promise;
 
     let closeCompleted = false;
@@ -302,6 +311,53 @@ describe('SyncEngineLevel lifecycle', () => {
     await closePromise;
 
     expect(db.status).toBe('closed');
+  });
+
+  it('should wait for an in-flight link retry without letting it reactivate after close starts', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const retryStarted = createDeferred();
+    const releaseRetry = createDeferred();
+    const target = {
+      authorization      : { kind: 'owner' as const },
+      authorizationEpoch : 'authorization-1',
+      did                : 'did:example:alice',
+      dwnUrl             : 'https://dwn.example.com',
+      scope              : { kind: 'full' as const },
+    };
+    sinon.stub(engine as never, 'getOrCreateReplicationLink').callsFake(async () => {
+      retryStarted.resolve();
+      await releaseRetry.promise;
+      return {
+        authorization      : target.authorization,
+        authorizationEpoch : target.authorizationEpoch,
+        connectivity       : 'unknown',
+        projectionId       : 'projection-1',
+        pull               : {},
+        push               : {},
+        remoteEndpoint     : target.dwnUrl,
+        scope              : target.scope,
+        status             : 'initializing',
+        tenantDid          : target.did,
+      };
+    });
+
+    (engine as unknown as {
+      scheduleLinkInitRetry(retryTarget: typeof target, linkKey: string, delayMs: number): void;
+    }).scheduleLinkInitRetry(target, `${target.did}^${target.dwnUrl}^projection-1^authorization-1`, 0);
+    await retryStarted.promise;
+
+    let closeCompleted = false;
+    const closePromise = engine.close().then((): void => { closeCompleted = true; });
+    await Promise.resolve();
+
+    expect(closeCompleted).toBe(false);
+    expect(db.status).toBe('open');
+
+    releaseRetry.resolve();
+    await closePromise;
+
+    expect(db.status).toBe('closed');
+    expect(engine['_linkControllers'].size).toBe(0);
   });
 
   it('should serialize competing registrations for the same identity', async () => {
@@ -401,7 +457,7 @@ describe('SyncEngineLevel lifecycle', () => {
 
     await engine.registerIdentity({ did, options: { protocols: 'all' } });
     engine['_syncMode'] = 'live';
-    engine['_activeLinks'].set(linkKey, link as never);
+    engine['activateLink'](linkKey, link as never);
     sinon.stub(engine as never, 'setLinkOfflineStatus').callsFake(async (): Promise<void> => {
       link.status = 'repairing';
     });
@@ -425,14 +481,14 @@ describe('SyncEngineLevel lifecycle', () => {
     await removeStarted.promise;
 
     try {
-      expect(engine['_activeLinks'].has(linkKey)).toBe(true);
+      expect(engine['_linkControllers'].has(linkKey)).toBe(true);
       expect(await engine.getIdentityOptions(did)).toBeDefined();
     } finally {
       releaseRepair.resolve();
       await unregisterPromise;
     }
 
-    expect(engine['_activeLinks'].has(linkKey)).toBe(false);
+    expect(engine['_linkControllers'].has(linkKey)).toBe(false);
     expect(await engine.getIdentityOptions(did)).toBeUndefined();
   });
 
@@ -457,8 +513,8 @@ describe('SyncEngineLevel lifecycle', () => {
     };
     const bobLink = { ...aliceLink, tenantDid: bobDid, status: 'initializing' };
 
-    engine['_activeLinks'].set(aliceLinkKey, aliceLink as never);
-    engine['_activeLinks'].set(bobLinkKey, bobLink as never);
+    engine['activateLink'](aliceLinkKey, aliceLink as never);
+    engine['activateLink'](bobLinkKey, bobLink as never);
     sinon.stub(engine as never, 'setLinkOfflineStatus').callsFake(async (): Promise<void> => {
       bobLink.status = 'repairing';
     });
@@ -482,8 +538,8 @@ describe('SyncEngineLevel lifecycle', () => {
 
     try {
       expect(removalState).toBe('removed');
-      expect(engine['_activeLinks'].has(aliceLinkKey)).toBe(false);
-      expect(engine['_activeLinks'].has(bobLinkKey)).toBe(true);
+      expect(engine['_linkControllers'].has(aliceLinkKey)).toBe(false);
+      expect(engine['_linkControllers'].has(bobLinkKey)).toBe(true);
     } finally {
       releaseRepair.resolve();
       await removal;
@@ -512,7 +568,7 @@ describe('SyncEngineLevel lifecycle', () => {
 
     await engine.registerIdentity({ did, options: { protocols: 'all' } });
     engine['_syncMode'] = 'live';
-    engine['_activeLinks'].set(linkKey, link as never);
+    engine['activateLink'](linkKey, link as never);
     sinon.stub(engine as never, 'doReconcileLink').callsFake(async (): Promise<void> => {
       reconcileStarted.resolve();
       await releaseReconcile.promise;
@@ -537,7 +593,7 @@ describe('SyncEngineLevel lifecycle', () => {
     await removeStarted.promise;
 
     try {
-      expect(engine['_activeLinks'].has(linkKey)).toBe(true);
+      expect(engine['_linkControllers'].has(linkKey)).toBe(true);
       expect(clearQuotaBlocks.called).toBe(false);
       expect(addIdentity.called).toBe(false);
     } finally {
@@ -545,7 +601,7 @@ describe('SyncEngineLevel lifecycle', () => {
       await updatePromise;
     }
 
-    expect(engine['_activeLinks'].has(linkKey)).toBe(false);
+    expect(engine['_linkControllers'].has(linkKey)).toBe(false);
     expect(clearQuotaBlocks.calledOnce).toBe(true);
     expect(addIdentity.calledOnce).toBe(true);
     expect(await engine.getIdentityOptions(did)).toEqual(updatedOptions);
@@ -558,16 +614,25 @@ describe('SyncEngineLevel lifecycle', () => {
     const removeStarted = createDeferred();
     const did = 'did:example:alice';
     const linkKey = `${did}^https://dwn.example.com^projection-1^authorization-1`;
-    const pushRuntime = {
+    const controller = engine['activateLink'](linkKey, {
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'authorization-1',
+      connectivity       : 'online',
+      projectionId       : 'projection-1',
+      pull               : {},
+      push               : {},
+      remoteEndpoint     : 'https://dwn.example.com',
+      scope              : { kind: 'full' },
+      status             : 'live',
+      tenantDid          : did,
+    });
+    const pushRuntime = controller.getOrCreatePushRuntime({
       did,
-      dwnUrl     : 'https://dwn.example.com',
-      entries    : [],
-      retryCount : 0,
-    };
+      dwnUrl: 'https://dwn.example.com',
+    });
 
     await engine.registerIdentity({ did, options: { protocols: 'all' } });
     engine['_syncMode'] = 'live';
-    engine['_pushRuntimes'].set(linkKey, pushRuntime as never);
     sinon.stub(engine as never, 'flushPendingPushesForLink').callsFake(async (): Promise<void> => {
       pushStarted.resolve();
       await releasePush.promise;
@@ -581,25 +646,25 @@ describe('SyncEngineLevel lifecycle', () => {
 
     (engine as unknown as {
       schedulePushRetry(
-        targetKey: string,
+        linkController: typeof controller,
         runtime: unknown,
         pending: { entries: Array<{ cid: string }>; retryCount: number },
       ): void;
-    }).schedulePushRetry(linkKey, pushRuntime, { entries: [{ cid: 'cid-1' }], retryCount: 0 });
+    }).schedulePushRetry(controller, pushRuntime, { entries: [{ cid: 'cid-1' }], retryCount: 0 });
     await pushStarted.promise;
 
     const unregisterPromise = engine.unregisterIdentity(did);
     await removeStarted.promise;
 
     try {
-      expect(engine['_pushRuntimes'].has(linkKey)).toBe(true);
+      expect(engine['_linkControllers'].get(linkKey)?.pushRuntime).toBe(pushRuntime);
       expect(await engine.getIdentityOptions(did)).toBeDefined();
     } finally {
       releasePush.resolve();
       await unregisterPromise;
     }
 
-    expect(engine['_pushRuntimes'].has(linkKey)).toBe(false);
+    expect(engine['_linkControllers'].has(linkKey)).toBe(false);
     expect(await engine.getIdentityOptions(did)).toBeUndefined();
   });
 
