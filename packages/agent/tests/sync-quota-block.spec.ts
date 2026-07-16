@@ -774,4 +774,89 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     expect(await internal.getQuotaStatesForTarget(target)).toHaveLength(0);
     expect(await db.sublevel('quotaBlocks').values().all()).toHaveLength(0);
   });
+
+  it('emits push:quota-blocked with the CID, detail, and next probe time on a fresh block', async () => {
+    const events: SyncEvent[] = [];
+    const unsubscribe = syncEngine.on((event) => events.push(event));
+    const internal = syncEngine as unknown as {
+      transitionPushResult(target: unknown, result: PushResult): Promise<{ quotaBlocked: boolean; nextQuotaProbeAt?: string }>;
+    };
+    const target = {
+      did                : TENANT,
+      dwnUrl             : REMOTE,
+      scope              : { kind: 'full' },
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'owner',
+      projectionId,
+    };
+
+    const before = Date.now();
+    const transition = await internal.transitionPushResult(target, {
+      succeeded : [],
+      failed    : [{
+        cid          : 'cid-1',
+        detail       : 'tenant over storage quota',
+        kind         : 'Deferred',
+        quotaBlocked : true,
+        reason       : 'storage',
+      }],
+    });
+    unsubscribe();
+
+    expect(transition.quotaBlocked).toBe(true);
+    const blocked = events.filter(
+      (event): event is Extract<SyncEvent, { type: 'push:quota-blocked' }> => event.type === 'push:quota-blocked',
+    );
+    expect(blocked).toHaveLength(1);
+    expect(blocked[0]).toMatchObject({
+      type           : 'push:quota-blocked',
+      tenantDid      : TENANT,
+      remoteEndpoint : REMOTE,
+      messageCid     : 'cid-1',
+      detail         : 'tenant over storage quota',
+    });
+    // The first block schedules the soonest (30s) re-probe, and the event
+    // carries the same durable nextProbeAt the transition reports to the caller.
+    const probeDelay = Date.parse(blocked[0].nextProbeAt) - before;
+    expect(probeDelay).toBeGreaterThanOrEqual(30_000);
+    expect(probeDelay).toBeLessThan(60_000);
+    expect(transition.nextQuotaProbeAt).toBe(blocked[0].nextProbeAt);
+  });
+
+  it('extends the re-probe backoff along the 30s/1m/5m/15m/30m ladder and clamps at 30m', async () => {
+    const internal = syncEngine as unknown as {
+      transitionPushResult(target: unknown, result: PushResult): Promise<unknown>;
+      getQuotaStatesForTarget(target: unknown): Promise<Array<{ state: { lastBlockedAt: string; nextProbeAt: string } }>>;
+    };
+    const target = {
+      did                : TENANT,
+      dwnUrl             : REMOTE,
+      scope              : { kind: 'full' },
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'owner',
+      projectionId,
+    };
+
+    const ladder = [30_000, 60_000, 300_000, 900_000, 1_800_000];
+    const observed: number[] = [];
+    // One extra block past the ladder must clamp at the final 30m rung.
+    for (let attempt = 0; attempt < ladder.length + 1; attempt++) {
+      await internal.transitionPushResult(target, {
+        succeeded : [],
+        failed    : [{
+          cid          : 'cid-1',
+          detail       : 'still over quota',
+          kind         : 'Deferred',
+          quotaBlocked : true,
+          reason       : 'storage',
+        }],
+      });
+      const [{ state }] = await internal.getQuotaStatesForTarget(target);
+      // nextProbeAt and lastBlockedAt derive from the same instant, so their
+      // delta is exactly the backoff delay recorded for that attempt.
+      observed.push(Date.parse(state.nextProbeAt) - Date.parse(state.lastBlockedAt));
+    }
+
+    expect(observed).toEqual([...ladder, 1_800_000]);
+  });
 });
