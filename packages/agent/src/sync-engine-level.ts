@@ -9,6 +9,7 @@ import { parseDurationInMilliseconds, sleep } from '@enbox/common';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
+import type { SyncIdentityStore } from './sync-identity-store.js';
 import type { SyncMessageEntry } from './sync-messages.js';
 import type {
   DeadLetterCategory,
@@ -46,6 +47,7 @@ import { DwnInterface } from './types/dwn.js';
 import { getProtocolClosureEdges } from './sync-scope-closure.js';
 import { isRecordsWrite } from './utils.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
+import { SyncIdentityStoreLevel } from './sync-identity-store-level.js';
 import { SyncTaskGroup } from './sync-task-group.js';
 import { computeAuthorizationEpoch, computeProjectionId, isQuotaBlockedPushFailure, isTerminalPushFailure, lexicographicalCompare, protocolsForSyncScope, pushBatchReconcileReason, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
 import { fetchRemoteMessages, getLocalMessage, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, SyncPullAbortedError } from './sync-messages.js';
@@ -361,6 +363,7 @@ export class SyncEngineLevel implements SyncEngine {
   private _permissionsApi: PermissionsApi;
 
   private readonly _db: AbstractLevel<string | Buffer | Uint8Array>;
+  private readonly _identityStore: SyncIdentityStore;
   private _syncIntervalId?: ReturnType<typeof setInterval>;
   private _syncLock = false;
   private _syncLockCompletion: Promise<void> = Promise.resolve();
@@ -821,6 +824,7 @@ export class SyncEngineLevel implements SyncEngine {
     this._agent = agent;
     this._permissionsApi = new AgentPermissionsApi({ agent });
     this._db = (db) ? db : new Level<string, string>(dataPath ?? 'DATA/AGENT/SYNC_STORE');
+    this._identityStore = new SyncIdentityStoreLevel(this._db);
   }
 
   /** Lazy accessor for the replication ledger. */
@@ -847,18 +851,12 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async clearSyncDb(): Promise<void> {
-    const sublevelNames = [
-      'deadLetters',
-      'deferredPulls',
-      'quotaBlocks',
-      'registeredIdentities',
-      'replicationLinks',
-      'syncMetadata',
-    ];
-
-    for (const sublevelName of sublevelNames) {
-      await this._db.sublevel(sublevelName).clear();
-    }
+    await this._deadLetters.clear();
+    await this._deferredPulls.clear();
+    await this._quotaBlocks.clear();
+    await this._identityStore.clear();
+    await this._db.sublevel('replicationLinks').clear();
+    await this._db.sublevel('syncMetadata').clear();
     await this._db.clear();
   }
 
@@ -971,15 +969,13 @@ export class SyncEngineLevel implements SyncEngine {
   private async doRegisterIdentity({ did, options }: { did: string; options: SyncIdentityOptions }): Promise<void> {
     SyncEngineLevel.validateSyncIdentityOptions(options);
 
-    const registeredIdentities = this._db.sublevel('registeredIdentities');
-
     const existing = await this.getIdentityOptions(did);
     if (existing) {
       throw new Error(`SyncEngineLevel: Identity with DID ${did} is already registered.`);
     }
 
     await this.validateSyncScopeClosure(did, options);
-    await registeredIdentities.put(did, JSON.stringify(options));
+    await this._identityStore.set(did, options);
     this.invalidateSyncTargetsCache();
 
     // If live sync is active, hot-add subscriptions for this identity.
@@ -1000,7 +996,6 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async doUnregisterIdentity(did: string): Promise<void> {
-    const registeredIdentities = this._db.sublevel('registeredIdentities');
     const existing = await this.getIdentityOptions(did);
     if (!existing) {
       throw new Error(`SyncEngineLevel: Identity with DID ${did} is not registered.`);
@@ -1011,27 +1006,18 @@ export class SyncEngineLevel implements SyncEngine {
       await this.removeIdentityFromLiveSync(did);
     }
 
-    await registeredIdentities.del(did);
+    await this._identityStore.delete(did);
     this.invalidateSyncTargetsCache();
     await this.clearQuotaBlocksForTenant(did);
     await this.pruneSupersededDurableLinksForIdentity(did, new Set());
   }
 
   public async getIdentityOptions(did: string): Promise<SyncIdentityOptions | undefined> {
-    const registeredIdentities = this._db.sublevel('registeredIdentities');
     try {
-      const options = await registeredIdentities.get(did);
-      if (options) {
-        return JSON.parse(options) as SyncIdentityOptions;
-      }
-    } catch (error) {
-      const e = error as { code: string };
-      // `Level` throws an error if the key is not present. Return `undefined` in this case.
-      if (e.code === 'LEVEL_NOT_FOUND') {
-        return;
-      } else {
-        throw new Error(`SyncEngineLevel: Error reading level: ${e.code}.`);
-      }
+      return await this._identityStore.get(did);
+    } catch (error: unknown) {
+      const code = (error as { code?: string }).code;
+      throw new Error(`SyncEngineLevel: Error reading level: ${code}.`);
     }
   }
 
@@ -1044,14 +1030,13 @@ export class SyncEngineLevel implements SyncEngine {
   private async doUpdateIdentityOptions({ did, options }: { did: string, options: SyncIdentityOptions }): Promise<void> {
     SyncEngineLevel.validateSyncIdentityOptions(options);
 
-    const registeredIdentities = this._db.sublevel('registeredIdentities');
     const existingOptions = await this.getIdentityOptions(did);
     if (!existingOptions) {
       throw new Error(`SyncEngineLevel: Identity with DID ${did} is not registered.`);
     }
 
     await this.validateSyncScopeClosure(did, options);
-    await registeredIdentities.put(did, JSON.stringify(options));
+    await this._identityStore.set(did, options);
     this.invalidateSyncTargetsCache();
 
     const rebuildLiveLinks = this._syncMode === 'live' && this.hasActiveLinksForDid(did);
@@ -1185,29 +1170,26 @@ export class SyncEngineLevel implements SyncEngine {
       targets  : [],
     };
 
-    for await (const [did, options] of this._db.sublevel('registeredIdentities').iterator()) {
-      let parsed: SyncIdentityOptions;
-      try {
-        parsed = JSON.parse(options) as SyncIdentityOptions;
-      } catch (error: unknown) {
+    for await (const entry of this._identityStore.entries()) {
+      if (entry.status === 'corrupt') {
         plan.failures.push({
-          tenantDid : did,
+          tenantDid : entry.did,
           remoteEndpoint,
           completed : false,
           cancelled : false,
           converged : false,
-          error     : `corrupt sync options: ${SyncEngineLevel.errorMessage(error)}`,
+          error     : `corrupt sync options: ${SyncEngineLevel.errorMessage(entry.error)}`,
         });
         continue;
       }
 
       try {
-        plan.targets.push(...await this.buildSyncTargetsForEndpoint(did, remoteEndpoint, parsed));
+        plan.targets.push(...await this.buildSyncTargetsForEndpoint(entry.did, remoteEndpoint, entry.options));
       } catch (error: unknown) {
         plan.failures.push({
-          tenantDid : did,
+          tenantDid : entry.did,
           remoteEndpoint,
-          scope     : SyncEngineLevel.syncScopeForDrainFailure(parsed),
+          scope     : SyncEngineLevel.syncScopeForDrainFailure(entry.options),
           completed : false,
           cancelled : false,
           converged : false,
@@ -6661,20 +6643,17 @@ export class SyncEngineLevel implements SyncEngine {
   private async getCurrentDurableLinkIdentityKeys(): Promise<Set<string> | undefined> {
     try {
       const identityKeys = new Set<string>();
-      for await (const [did, options] of this._db.sublevel('registeredIdentities').iterator()) {
-        let parsed: SyncIdentityOptions;
-        try {
-          parsed = JSON.parse(options) as SyncIdentityOptions;
-        } catch (error: unknown) {
-          console.warn(`SyncEngineLevel: Corrupt sync options for ${did}, skipping health target:`, error);
+      for await (const entry of this._identityStore.entries()) {
+        if (entry.status === 'corrupt') {
+          console.warn(`SyncEngineLevel: Corrupt sync options for ${entry.did}, skipping health target:`, entry.error);
           continue;
         }
 
-        const scope = syncScopeFromProtocols(parsed.protocols);
-        const resolutions = await this.buildSyncTargetResolutions(did, scope, parsed);
+        const scope = syncScopeFromProtocols(entry.options.protocols);
+        const resolutions = await this.buildSyncTargetResolutions(entry.did, scope, entry.options);
         for (const resolution of resolutions) {
-          const projectionId = await computeProjectionId(did, resolution.scope);
-          identityKeys.add(SyncEngineLevel.durableLinkIdentityKey(did, projectionId, resolution.authorizationEpoch));
+          const projectionId = await computeProjectionId(entry.did, resolution.scope);
+          identityKeys.add(SyncEngineLevel.durableLinkIdentityKey(entry.did, projectionId, resolution.authorizationEpoch));
         }
       }
       return identityKeys;
@@ -6739,9 +6718,15 @@ export class SyncEngineLevel implements SyncEngine {
     let anyTargetUnavailable = false;
     this._syncTargetsLastResolutionComplete = false;
 
-    for await (const [did, options] of this._db.sublevel('registeredIdentities').iterator()) {
+    for await (const entry of this._identityStore.entries()) {
       hasRegisteredIdentities = true;
-      const resolved = await this.resolveTargetsForRegisteredIdentity(did, options);
+      if (entry.status === 'corrupt') {
+        console.warn(`SyncEngineLevel: Corrupt sync options for ${entry.did}, skipping identity:`, entry.error);
+        anyTargetUnavailable = true;
+        continue;
+      }
+
+      const resolved = await this.resolveTargetsForRegisteredIdentity(entry.did, entry.options);
       targets.push(...resolved.targets);
       anyTargetUnavailable ||= resolved.unavailable;
     }
@@ -6753,16 +6738,8 @@ export class SyncEngineLevel implements SyncEngine {
   /** Resolve every sync target for one registered identity; reports whether any endpoint resolution failed transiently. */
   private async resolveTargetsForRegisteredIdentity(
     did: string,
-    options: string,
+    options: SyncIdentityOptions,
   ): Promise<{ targets: SyncTarget[]; unavailable: boolean }> {
-    let parsed: SyncIdentityOptions;
-    try {
-      parsed = JSON.parse(options) as SyncIdentityOptions;
-    } catch (error: unknown) {
-      console.warn(`SyncEngineLevel: Corrupt sync options for ${did}, skipping identity:`, error);
-      return { targets: [], unavailable: true };
-    }
-
     const dwnEndpointUrls = await this.getSyncEndpointUrls(did);
     if (dwnEndpointUrls.length === 0) {
       return { targets: [], unavailable: true };
@@ -6772,7 +6749,7 @@ export class SyncEngineLevel implements SyncEngine {
     let unavailable = false;
     for (const dwnUrl of dwnEndpointUrls) {
       try {
-        targets.push(...await this.buildSyncTargetsForEndpoint(did, dwnUrl, parsed));
+        targets.push(...await this.buildSyncTargetsForEndpoint(did, dwnUrl, options));
       } catch (error: unknown) {
         unavailable = true;
         console.warn(`SyncEngineLevel: Unable to resolve sync targets for ${did} at ${dwnUrl}, skipping identity endpoint:`, error);
