@@ -46,6 +46,7 @@ import { DwnInterface } from './types/dwn.js';
 import { getProtocolClosureEdges } from './sync-scope-closure.js';
 import { isRecordsWrite } from './utils.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
+import { SyncTaskGroup } from './sync-task-group.js';
 import { computeAuthorizationEpoch, computeProjectionId, isQuotaBlockedPushFailure, isTerminalPushFailure, lexicographicalCompare, protocolsForSyncScope, pushBatchReconcileReason, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
 import { fetchRemoteMessages, getLocalMessage, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, SyncPullAbortedError } from './sync-messages.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, resolveMessagesScopes, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds, toSyncAuthorizationGrants } from './sync-permission-grants.js';
@@ -367,6 +368,9 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Serializes start/stop/clear/close transitions without delaying the first caller. */
   private _lifecycleTransition?: Promise<void>;
+
+  /** Owns async work launched by timers, subscriptions, and repair/reconcile scheduling. */
+  private readonly _backgroundTasks = new SyncTaskGroup();
 
   /**
    * Durable replication ledger — persists per-link checkpoint state.
@@ -1704,6 +1708,10 @@ export class SyncEngineLevel implements SyncEngine {
     if (this._syncLock) {
       await this.waitForSyncCompletion();
     }
+    if (this._backgroundTasks.size > 0) {
+      await this.waitForBackgroundTasks();
+    }
+    this._backgroundTasks.resume();
 
     this._syncMode = mode;
 
@@ -1716,10 +1724,10 @@ export class SyncEngineLevel implements SyncEngine {
 
   /**
    * stopSync invalidates scheduled work and closes live subscriptions, then
-   * waits for the current lock-owning sync operation to finish.
+   * waits for current lock-owning and background sync operations to finish.
    *
-   * @param timeout - Maximum milliseconds to wait for an in-progress
-   *   sync cycle to finish. Non-finite values (`NaN`, `Infinity`) are
+   * @param timeout - Maximum milliseconds to wait for in-progress sync work
+   *   to finish. Non-finite values (`NaN`, `Infinity`) are
    *   coerced to the default to avoid a tight poll loop or never-exit
    *   condition.
    */
@@ -1757,6 +1765,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   private prepareForSyncRuntimeTransition(): void {
     this._engineGeneration++;
+    this._backgroundTasks.pause();
     if (this._syncIntervalId) {
       clearInterval(this._syncIntervalId);
       this._syncIntervalId = undefined;
@@ -1766,27 +1775,45 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async stopSyncRuntime(timeout?: number): Promise<void> {
-    this.prepareForSyncRuntimeTransition();
-    await this.teardownLiveSync();
-    await this.waitForSyncCompletion(timeout);
-  }
-
-  private async waitForSyncCompletion(timeout?: number): Promise<void> {
     const safeTimeout = timeout === undefined
       ? undefined
       : Number.isFinite(timeout) ? timeout : 2000;
+    this.prepareForSyncRuntimeTransition();
+    await this.teardownLiveSync();
+    const [syncCompletion, backgroundCompletion] = await Promise.allSettled([
+      this.waitForSyncCompletion(safeTimeout),
+      this.waitForBackgroundTasks(safeTimeout),
+    ]);
+    // A scheduled sync interval is itself a supervised task, so both waits can
+    // time out together. Preserve the established lock-timeout error as the
+    // primary failure in that case.
+    if (syncCompletion.status === 'rejected') {
+      throw syncCompletion.reason;
+    }
+    if (backgroundCompletion.status === 'rejected') {
+      throw backgroundCompletion.reason;
+    }
+  }
+
+  private async waitForSyncCompletion(timeout?: number): Promise<void> {
     let elapsedTimeout = 0;
 
     while (this._syncLock) {
-      if (safeTimeout !== undefined && elapsedTimeout >= safeTimeout) {
-        throw new Error(`SyncEngineLevel: Existing sync operation did not complete within ${safeTimeout} milliseconds.`);
+      if (timeout !== undefined && elapsedTimeout >= timeout) {
+        throw new Error(`SyncEngineLevel: Existing sync operation did not complete within ${timeout} milliseconds.`);
       }
 
-      const waitDuration = safeTimeout === undefined
+      const waitDuration = timeout === undefined
         ? 100
-        : Math.min(Math.max(safeTimeout - elapsedTimeout, 0), 100);
+        : Math.min(Math.max(timeout - elapsedTimeout, 0), 100);
       elapsedTimeout += waitDuration;
       await Promise.race([this._syncLockCompletion, sleep(waitDuration)]);
+    }
+  }
+
+  private async waitForBackgroundTasks(timeout?: number): Promise<void> {
+    if (!await this._backgroundTasks.settle(timeout)) {
+      throw new Error(`SyncEngineLevel: Background sync operations did not complete within ${timeout} milliseconds.`);
     }
   }
 
@@ -1822,7 +1849,7 @@ export class SyncEngineLevel implements SyncEngine {
 
       if (this._engineGeneration !== generation) { return; }
       if (!this._syncIntervalId) {
-        this._syncIntervalId = setInterval(intervalSync, effectiveInterval);
+        this._syncIntervalId = this.scheduleSyncInterval(intervalSync, effectiveInterval);
       }
     };
 
@@ -1830,7 +1857,7 @@ export class SyncEngineLevel implements SyncEngine {
       clearInterval(this._syncIntervalId);
     }
 
-    this._syncIntervalId = setInterval(intervalSync, intervalMilliseconds);
+    this._syncIntervalId = this.scheduleSyncInterval(intervalSync, intervalMilliseconds);
 
     // Initiate an immediate sync.
     if (!this._syncLock) {
@@ -1840,6 +1867,12 @@ export class SyncEngineLevel implements SyncEngine {
         console.error('SyncEngineLevel: Error during initial poll sync', error);
       }
     }
+  }
+
+  private scheduleSyncInterval(operation: () => Promise<void>, intervalMilliseconds: number): ReturnType<typeof setInterval> {
+    return setInterval((): void => {
+      void this._backgroundTasks.run(operation);
+    }, intervalMilliseconds);
   }
 
   // ---------------------------------------------------------------------------
@@ -1875,7 +1908,7 @@ export class SyncEngineLevel implements SyncEngine {
     // Step 3: Schedule infrequent durable feed settle check.
     const integrityCheck = async (): Promise<void> => this.runLiveIntegrityCheck(generation);
 
-    this._syncIntervalId = setInterval(integrityCheck, intervalMilliseconds);
+    this._syncIntervalId = this.scheduleSyncInterval(integrityCheck, intervalMilliseconds);
   }
 
   private async runLiveIntegrityCheck(generation: number): Promise<void> {
@@ -1995,8 +2028,12 @@ export class SyncEngineLevel implements SyncEngine {
     this.clearLinkRuntimeInflight(linkKey);
 
     // Kick off repair with retry scheduling on failure.
-    void this.repairLink(linkKey).catch(() => {
-      this.scheduleRepairRetry(linkKey);
+    void this._backgroundTasks.run(async (): Promise<void> => {
+      try {
+        await this.repairLink(linkKey);
+      } catch {
+        this.scheduleRepairRetry(linkKey);
+      }
     });
   }
 
@@ -2074,7 +2111,7 @@ export class SyncEngineLevel implements SyncEngine {
     const delayMs = backoff[Math.min(attempts - 1, backoff.length - 1)];
 
     const timerGeneration = this._engineGeneration;
-    const timer = setTimeout(async (): Promise<void> => {
+    const timer = setTimeout((): void => {
       this._repairRetryTimers.delete(linkKey);
 
       // Bail if teardown occurred since this timer was scheduled.
@@ -2084,15 +2121,17 @@ export class SyncEngineLevel implements SyncEngine {
       const currentLink = this._activeLinks.get(linkKey);
       if (currentLink?.status !== 'repairing') { return; }
 
-      try {
-        await this.repairLink(linkKey);
-      } catch {
-        // repairLink handles max attempts by pausing the link internally.
-        // If still below max, schedule another retry.
-        if (currentLink.status === 'repairing') {
-          this.scheduleRepairRetry(linkKey);
+      void this._backgroundTasks.run(async (): Promise<void> => {
+        try {
+          await this.repairLink(linkKey);
+        } catch {
+          // repairLink handles max attempts by pausing the link internally.
+          // If still below max, schedule another retry.
+          if (currentLink.status === 'repairing') {
+            this.scheduleRepairRetry(linkKey);
+          }
         }
-      }
+      });
     }, delayMs);
 
     this._repairRetryTimers.set(linkKey, timer);
@@ -2332,8 +2371,12 @@ export class SyncEngineLevel implements SyncEngine {
 
       // Kick off an immediate durable feed reconcile to catch up after being offline.
       if (!this._syncLock) {
-        this.sync(undefined, { verifyConvergence: true }).catch((err) => {
-          console.error('SyncEngineLevel: post-online sync failed', err);
+        void this._backgroundTasks.run(async (): Promise<void> => {
+          try {
+            await this.sync(undefined, { verifyConvergence: true });
+          } catch (error: unknown) {
+            console.error('SyncEngineLevel: post-online sync failed', error);
+          }
         });
       }
     };
@@ -2373,8 +2416,12 @@ export class SyncEngineLevel implements SyncEngine {
       // The device may have slept and WebSockets may be dead. An immediate
       // sync via durable feed reconciliation detects and repairs any divergence.
       if (!this._syncLock) {
-        this.sync(undefined, { verifyConvergence: true }).catch((err) => {
-          console.error('SyncEngineLevel: post-visibility sync failed', err);
+        void this._backgroundTasks.run(async (): Promise<void> => {
+          try {
+            await this.sync(undefined, { verifyConvergence: true });
+          } catch (error: unknown) {
+            console.error('SyncEngineLevel: post-visibility sync failed', error);
+          }
         });
       }
     };
@@ -2774,9 +2821,8 @@ export class SyncEngineLevel implements SyncEngine {
       isStale,
     };
 
-    const subscriptionHandler = async (subMessage: SubscriptionMessage): Promise<void> => {
-      await this.handleLivePullMessage(pullContext, subMessage);
-    };
+    const subscriptionHandler = (subMessage: SubscriptionMessage): Promise<void> =>
+      this._backgroundTasks.run(() => this.handleLivePullMessage(pullContext, subMessage));
 
     // Construct the subscribe message and send it directly to the specific
     // dwnUrl via WebSocket.  We do NOT use agent.dwn.sendRequest() because
@@ -3311,61 +3357,62 @@ export class SyncEngineLevel implements SyncEngine {
       (capturedPushLink !== undefined && this._activeLinks.get(target.linkKey) !== capturedPushLink);
 
     // Subscribe to the local DWN's EventLog.
-    const subscriptionHandler = async (subMessage: SubscriptionMessage): Promise<void> => {
-      if (isPushStale()) {
-        return;
-      }
-
-      if (subMessage.type !== 'event') {
-        return;
-      }
-
-      // Subset scope filtering: only push events that match the link scope.
-      // Events outside the scope are not this link's responsibility.
-      const pushLinkKey = target.linkKey;
-      const pushLink = this._activeLinks.get(pushLinkKey);
-      if (pushLink) {
-        const scopeClassification = classifySyncEventScope(subMessage.event, pushLink.scope);
-        if (scopeClassification === 'out-of-scope') {
+    const subscriptionHandler = (subMessage: SubscriptionMessage): Promise<void> =>
+      this._backgroundTasks.run(async (): Promise<void> => {
+        if (isPushStale()) {
           return;
         }
-        if (scopeClassification === 'unknown') {
-          this.scheduleLinkReconcile(pushLinkKey, pushLink, 'push-scope-unclassified');
+
+        if (subMessage.type !== 'event') {
           return;
         }
-      }
 
-      // Accumulate the message CID for a debounced push.
-      const targetKey = pushLinkKey;
-      const cid = await Message.getCid(subMessage.event.message);
-      if (cid === undefined || isPushStale()) {
-        return;
-      }
+        // Subset scope filtering: only push events that match the link scope.
+        // Events outside the scope are not this link's responsibility.
+        const pushLinkKey = target.linkKey;
+        const pushLink = this._activeLinks.get(pushLinkKey);
+        if (pushLink) {
+          const scopeClassification = classifySyncEventScope(subMessage.event, pushLink.scope);
+          if (scopeClassification === 'out-of-scope') {
+            return;
+          }
+          if (scopeClassification === 'unknown') {
+            this.scheduleLinkReconcile(pushLinkKey, pushLink, 'push-scope-unclassified');
+            return;
+          }
+        }
 
-      // Echo-loop suppression: skip CIDs that were recently pulled from this
-      // specific remote. A message pulled from Provider A is only suppressed
-      // for push to A — it still fans out to Provider B and C.
-      if (this.isRecentlyPulled(did, cid, dwnUrl)) {
-        return;
-      }
+        // Accumulate the message CID for a debounced push.
+        const targetKey = pushLinkKey;
+        const cid = await Message.getCid(subMessage.event.message);
+        if (cid === undefined || isPushStale()) {
+          return;
+        }
 
-      const pushRuntime = this.getOrCreatePushRuntime(targetKey, {
-        did,
-        dwnUrl,
-        delegateDid,
-        protocol,
-        scope              : target.scope,
-        permissionGrantIds : target.permissionGrantIds,
+        // Echo-loop suppression: skip CIDs that were recently pulled from this
+        // specific remote. A message pulled from Provider A is only suppressed
+        // for push to A — it still fans out to Provider B and C.
+        if (this.isRecentlyPulled(did, cid, dwnUrl)) {
+          return;
+        }
+
+        const pushRuntime = this.getOrCreatePushRuntime(targetKey, {
+          did,
+          dwnUrl,
+          delegateDid,
+          protocol,
+          scope              : target.scope,
+          permissionGrantIds : target.permissionGrantIds,
+        });
+        pushRuntime.entries.push({ cid });
+
+        // Immediate-first: if no push is in flight and no batch timer is
+        // pending, push immediately. Otherwise, the pending batch timer
+        // or the post-flush drain will pick up the new entry.
+        if (!pushRuntime.flushing && !pushRuntime.timer) {
+          void this._backgroundTasks.run(() => this.flushPendingPushesForLink(targetKey));
+        }
       });
-      pushRuntime.entries.push({ cid });
-
-      // Immediate-first: if no push is in flight and no batch timer is
-      // pending, push immediately. Otherwise, the pending batch timer
-      // or the post-flush drain will pick up the new entry.
-      if (!pushRuntime.flushing && !pushRuntime.timer) {
-        void this.flushPendingPushesForLink(targetKey);
-      }
-    };
 
     // Subscribe to the local DWN EventLog from "now" — opportunistic push
     // does not replay from a stored cursor. Any writes missed during outages
@@ -3583,7 +3630,7 @@ export class SyncEngineLevel implements SyncEngine {
     if (rt && rt.entries.length > 0 && !rt.timer) {
       rt.timer = setTimeout((): void => {
         rt.timer = undefined;
-        void this.flushPendingPushesForLink(linkKey);
+        void this._backgroundTasks.run(() => this.flushPendingPushesForLink(linkKey));
       }, PUSH_DEBOUNCE_MS);
     }
   }
@@ -3856,7 +3903,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
     pushRuntime.timer = setTimeout((): void => {
       pushRuntime.timer = undefined;
-      void this.flushPendingPushesForLink(targetKey);
+      void this._backgroundTasks.run(() => this.flushPendingPushesForLink(targetKey));
     }, delayMs);
   }
 
@@ -5913,9 +5960,13 @@ export class SyncEngineLevel implements SyncEngine {
       // scheduled. Without this, a stale timer could restart reconcile
       // work for a DID that is no longer active.
       if (!this._activeLinks.has(linkKey)) { return; }
-      void this.reconcileLink(linkKey).catch((): void => {
-        // Errors are already logged inside doReconcileLink; swallow here
-        // to prevent unhandled-rejection flakes in the test runner.
+      void this._backgroundTasks.run(async (): Promise<void> => {
+        try {
+          await this.reconcileLink(linkKey);
+        } catch {
+          // Errors are already logged inside doReconcileLink; swallow here
+          // to prevent unhandled-rejection flakes in the test runner.
+        }
       });
     }, normalizedDelay);
     this._reconcileTimers.set(linkKey, timer);

@@ -3838,6 +3838,9 @@ describe('SyncEngineLevel', () => {
           link.status = 'repairing';
           syncEngine['_activeLinks'].set(linkKey, link);
           syncEngine['_repairAttempts'].set(linkKey, 1);
+          // beforeEach clears the engine, which intentionally pauses background
+          // task admission. This white-box scheduler test models an active runtime.
+          syncEngine['_backgroundTasks'].resume();
 
           const repairStub = sinon.stub(syncEngine as any, 'repairLink').rejects(new Error('still broken'));
 
