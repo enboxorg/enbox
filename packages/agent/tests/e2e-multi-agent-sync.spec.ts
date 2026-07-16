@@ -1,7 +1,10 @@
 import type { BearerIdentity } from '../src/bearer-identity.js';
 import type { DwnDataEncodedRecordsWriteMessage } from '../src/types/dwn.js';
 import type { PrivateKeyJwk } from '@enbox/crypto';
+import type { PushResult } from '../src/types/sync.js';
 import type { GenericMessage, MessagesQueryReplyEntry, PermissionScope, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+
+import sinon from 'sinon';
 
 import { Convert } from '@enbox/common';
 import { createGrantKeyRecordsForGrants } from '../src/dwn-encryption.js';
@@ -28,9 +31,22 @@ import { DataStream, DwnInterfaceName, DwnMethodName, ENCRYPTION_CONTROL_AUDIENC
 
 const testDwnUrls: string[] = [testDwnUrl];
 
+type Deferred = {
+  promise: Promise<void>;
+  resolve: () => void;
+};
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function createDeferred(): Deferred {
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
 
 /**
  * Polls the target agent's local DWN until a record matching `recordId`
@@ -1378,6 +1394,75 @@ describe('E2E Multi-Agent Sync', () => {
       await primaryHarness.agent.sync.stopSync();
       await deviceHarness.agent.sync.stopSync();
     });
+
+    it('should drain an in-flight live push before unregistering its identity', async () => {
+      await primaryHarness.agent.sync.registerIdentity({ did: alice.did.uri, options: { protocols: 'all' } });
+      await primaryHarness.agent.sync.startSync({ mode: 'live', interval: '60s' });
+      await new Promise<void>((resolve) => { setTimeout(resolve, 500); });
+
+      const pushStarted = createDeferred();
+      const releasePush = createDeferred();
+      const syncEngine = primaryHarness.agent.sync as unknown as {
+        pushMessages(params: {
+          did: string;
+          dwnUrl: string;
+          delegateDid?: string;
+          permissionGrantIds?: string[];
+          messageCids: string[];
+        }): Promise<PushResult>;
+      };
+      const pushMessages = syncEngine.pushMessages.bind(syncEngine);
+      const pushStub = sinon.stub(syncEngine, 'pushMessages').callsFake(async (params): Promise<PushResult> => {
+        pushStarted.resolve();
+        await releasePush.promise;
+        return pushMessages(params);
+      });
+      let unregisterPromise: Promise<void> | undefined;
+
+      try {
+        const writeResult = await primaryHarness.agent.dwn.processRequest({
+          author        : alice.did.uri,
+          target        : alice.did.uri,
+          messageType   : DwnInterface.RecordsWrite,
+          messageParams : {
+            dataFormat   : 'text/plain',
+            protocol     : protocolNotes.protocol,
+            protocolPath : 'note',
+            schema       : protocolNotes.types.note.schema,
+          },
+          dataStream: new Blob(['Unregister race note']),
+        });
+        expect(writeResult.reply.status.code).toBe(202);
+        await pushStarted.promise;
+
+        unregisterPromise = primaryHarness.agent.sync.unregisterIdentity(alice.did.uri);
+        const unregisterState = await Promise.race([
+          unregisterPromise.then((): 'completed' => 'completed'),
+          new Promise<'pending'>((resolve) => { setTimeout((): void => { resolve('pending'); }, 50); }),
+        ]);
+
+        expect(unregisterState).toBe('pending');
+        expect(await primaryHarness.agent.sync.getIdentityOptions(alice.did.uri)).toBeDefined();
+
+        releasePush.resolve();
+        await unregisterPromise;
+
+        const remoteQuery = await primaryHarness.agent.dwn.sendRequest({
+          author        : alice.did.uri,
+          target        : alice.did.uri,
+          messageType   : DwnInterface.RecordsQuery,
+          messageParams : { filter: { recordId: writeResult.message!.recordId } },
+        });
+        expect(remoteQuery.reply.status.code).toBe(200);
+        expect(remoteQuery.reply.entries?.map(entry => entry.recordId)).toContain(writeResult.message!.recordId);
+        expect(await primaryHarness.agent.sync.getIdentityOptions(alice.did.uri)).toBeUndefined();
+      } finally {
+        releasePush.resolve();
+        await unregisterPromise?.catch((): void => {});
+        pushStub.restore();
+        await primaryHarness.agent.sync.stopSync();
+      }
+    }, 20_000);
 
     it('should only deliver protocol-scoped records in live mode', async () => {
       // Register primary with full sync, device with only notes protocol.
