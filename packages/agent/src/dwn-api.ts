@@ -1584,7 +1584,7 @@ export class AgentDwnApi {
         } else if (request.dataStream instanceof ReadableStream) {
           plaintextBytes = await DataStream.toBytes(request.dataStream);
         } else {
-          throw new Error('AgentDwnApi: Data must be provided for encrypted records.');
+          throw new TypeError('AgentDwnApi: Data must be provided for encrypted records.');
         }
 
         // 4. Generate random DEK and IV.

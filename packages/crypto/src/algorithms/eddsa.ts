@@ -59,18 +59,13 @@ export class EdDsaAlgorithm extends CryptoAlgorithm
   public async bytesToPrivateKey({ algorithm, privateKeyBytes }:
     BytesToPrivateKeyParams & { algorithm: 'Ed25519' }
   ): Promise<Jwk> {
-    switch (algorithm) {
-
-      case 'Ed25519': {
-        const privateKey = await Ed25519.bytesToPrivateKey({ privateKeyBytes });
-        privateKey.alg = 'EdDSA';
-        return privateKey;
-      }
-
-      default: {
-        throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `Algorithm not supported: ${algorithm}`);
-      }
+    if (algorithm === 'Ed25519') {
+      const privateKey = await Ed25519.bytesToPrivateKey({ privateKeyBytes });
+      privateKey.alg = 'EdDSA';
+      return privateKey;
     }
+
+    throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `Algorithm not supported: ${algorithm}`);
   }
 
   /**
@@ -86,18 +81,13 @@ export class EdDsaAlgorithm extends CryptoAlgorithm
   public async bytesToPublicKey({ algorithm, publicKeyBytes }:
     BytesToPublicKeyParams & { algorithm: 'Ed25519' }
   ): Promise<Jwk> {
-    switch (algorithm) {
-
-      case 'Ed25519': {
-        const publicKey = await Ed25519.bytesToPublicKey({ publicKeyBytes });
-        publicKey.alg = 'EdDSA';
-        return publicKey;
-      }
-
-      default: {
-        throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `Algorithm not supported: ${algorithm}`);
-      }
+    if (algorithm === 'Ed25519') {
+      const publicKey = await Ed25519.bytesToPublicKey({ publicKeyBytes });
+      publicKey.alg = 'EdDSA';
+      return publicKey;
     }
+
+    throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `Algorithm not supported: ${algorithm}`);
   }
 
   /**
@@ -125,18 +115,13 @@ export class EdDsaAlgorithm extends CryptoAlgorithm
   ): Promise<Jwk> {
     if (!isOkpPrivateJwk(key)) {throw new TypeError('Invalid key provided. Must be an octet key pair (OKP) private key.');}
 
-    switch (key.crv) {
-
-      case 'Ed25519': {
-        const publicKey = await Ed25519.computePublicKey({ key });
-        publicKey.alg = 'EdDSA';
-        return publicKey;
-      }
-
-      default: {
-        throw new Error(`Unsupported curve: ${key.crv}`);
-      }
+    if (key.crv === 'Ed25519') {
+      const publicKey = await Ed25519.computePublicKey({ key });
+      publicKey.alg = 'EdDSA';
+      return publicKey;
     }
+
+    throw new Error(`Unsupported curve: ${key.crv}`);
   }
 
   /**
@@ -156,14 +141,13 @@ export class EdDsaAlgorithm extends CryptoAlgorithm
   async generateKey({ algorithm }:
     EdDsaGenerateKeyParams
   ): Promise<Jwk> {
-    switch (algorithm) {
-
-      case 'Ed25519': {
-        const privateKey = await Ed25519.generateKey();
-        privateKey.alg = 'EdDSA';
-        return privateKey;
-      }
+    if (algorithm === 'Ed25519') {
+      const privateKey = await Ed25519.generateKey();
+      privateKey.alg = 'EdDSA';
+      return privateKey;
     }
+
+    throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `Algorithm not supported: ${algorithm}`);
   }
 
   /**
@@ -197,18 +181,13 @@ export class EdDsaAlgorithm extends CryptoAlgorithm
   ): Promise<Jwk> {
     if (!isOkpPrivateJwk(key)) {throw new TypeError('Invalid key provided. Must be an octet key pair (OKP) private key.');}
 
-    switch (key.crv) {
-
-      case 'Ed25519': {
-        const publicKey = await Ed25519.getPublicKey({ key });
-        publicKey.alg = 'EdDSA';
-        return publicKey;
-      }
-
-      default: {
-        throw new Error(`Unsupported curve: ${key.crv}`);
-      }
+    if (key.crv === 'Ed25519') {
+      const publicKey = await Ed25519.getPublicKey({ key });
+      publicKey.alg = 'EdDSA';
+      return publicKey;
     }
+
+    throw new Error(`Unsupported curve: ${key.crv}`);
   }
 
   /**
@@ -244,16 +223,11 @@ export class EdDsaAlgorithm extends CryptoAlgorithm
   ): Promise<Uint8Array> {
     if (!isOkpPrivateJwk(key)) {throw new TypeError('Invalid key provided. Must be an octet key pair (OKP) private key.');}
 
-    switch (key.crv) {
-
-      case 'Ed25519': {
-        return await Ed25519.sign({ key, data });
-      }
-
-      default: {
-        throw new Error(`Unsupported curve: ${key.crv}`);
-      }
+    if (key.crv === 'Ed25519') {
+      return await Ed25519.sign({ key, data });
     }
+
+    throw new Error(`Unsupported curve: ${key.crv}`);
   }
 
   /**
@@ -290,16 +264,11 @@ export class EdDsaAlgorithm extends CryptoAlgorithm
   ): Promise<boolean> {
     if (!isOkpPublicJwk(key)) {throw new TypeError('Invalid key provided. Must be an octet key pair (OKP) public key.');}
 
-    switch (key.crv) {
-
-      case 'Ed25519': {
-        return await Ed25519.verify({ key, signature, data });
-      }
-
-      default: {
-        throw new Error(`Unsupported curve: ${key.crv}`);
-      }
+    if (key.crv === 'Ed25519') {
+      return await Ed25519.verify({ key, signature, data });
     }
+
+    throw new Error(`Unsupported curve: ${key.crv}`);
   }
 
   /**
@@ -313,16 +282,11 @@ export class EdDsaAlgorithm extends CryptoAlgorithm
   public async privateKeyToBytes({ privateKey }:
     PrivateKeyToBytesParams
   ): Promise<Uint8Array> {
-    switch (privateKey.crv) {
-
-      case 'Ed25519': {
-        return await Ed25519.privateKeyToBytes({ privateKey });
-      }
-
-      default: {
-        throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `Curve not supported: ${privateKey.crv}`);
-      }
+    if (privateKey.crv === 'Ed25519') {
+      return await Ed25519.privateKeyToBytes({ privateKey });
     }
+
+    throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `Curve not supported: ${privateKey.crv}`);
   }
 
   /**
@@ -336,15 +300,10 @@ export class EdDsaAlgorithm extends CryptoAlgorithm
   public async publicKeyToBytes({ publicKey }:
     PublicKeyToBytesParams
   ): Promise<Uint8Array> {
-    switch (publicKey.crv) {
-
-      case 'Ed25519': {
-        return await Ed25519.publicKeyToBytes({ publicKey });
-      }
-
-      default: {
-        throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `Curve not supported: ${publicKey.crv}`);
-      }
+    if (publicKey.crv === 'Ed25519') {
+      return await Ed25519.publicKeyToBytes({ publicKey });
     }
+
+    throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `Curve not supported: ${publicKey.crv}`);
   }
 }

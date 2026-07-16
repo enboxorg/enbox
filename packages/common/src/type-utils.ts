@@ -133,7 +133,7 @@ export function isAsyncIterable(obj: any): obj is AsyncIterable<any> {
  * @returns true if the variable is neither `null` nor `undefined`
  */
 export function isDefined<T>(arg: T): arg is Exclude<T, null | undefined> {
-  return arg !== null && typeof arg !== 'undefined';
+  return arg !== null && arg !== undefined;
 }
 
 /**

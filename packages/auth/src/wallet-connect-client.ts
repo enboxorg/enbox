@@ -217,20 +217,21 @@ async function prepareDelegatePortableDid(delegatePortableDid: PortableDid): Pro
 function createPermissionRequestForProtocol({ definition, permissions }: ProtocolPermissionOptions): ConnectPermissionRequest {
   const requests: DwnPermissionScope[] = [];
 
-  // Add the ability to query for the specific protocol
-  requests.push({
-    protocol  : definition.protocol,
-    interface : DwnInterfaceName.Protocols,
-    method    : DwnMethodName.Query,
-  });
-
-  // A Messages.Read grant is a unified scope for protocol message feeds and
-  // real-time subscriptions.
-  requests.push({
-    protocol  : definition.protocol,
-    interface : DwnInterfaceName.Messages,
-    method    : DwnMethodName.Read,
-  });
+  requests.push(
+    // Add the ability to query for the specific protocol
+    {
+      protocol  : definition.protocol,
+      interface : DwnInterfaceName.Protocols,
+      method    : DwnMethodName.Query,
+    },
+    // A Messages.Read grant is a unified scope for protocol message feeds and
+    // real-time subscriptions.
+    {
+      protocol  : definition.protocol,
+      interface : DwnInterfaceName.Messages,
+      method    : DwnMethodName.Read,
+    },
+  );
 
   // We also request any additional permissions the user has requested for this protocol
   for (const permission of permissions) {

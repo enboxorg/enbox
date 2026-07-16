@@ -128,7 +128,7 @@ export class LevelStorage implements StorageAdapter {
  * - Otherwise → `LevelStorage` (persistent on disk via LevelDB)
  */
 export function createDefaultStorage(): StorageAdapter {
-  if (typeof globalThis.localStorage !== 'undefined') {
+  if (globalThis.localStorage !== undefined) {
     return new BrowserStorage();
   }
 

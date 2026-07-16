@@ -208,7 +208,7 @@ export async function fromDnsPacket({ didUri, dnsPacket }: {
 
         // Determine the Verification Method ID: '0' for the identity key,
         // the id from the TXT Data Object, or the JWK thumbprint if an explicity Verification Method ID not defined.
-        const vmId = dnsRecordId === 'k0' ? '0' : id === undefined ? await computeJwkThumbprint({ jwk: publicKey }) : id;
+        const vmId = dnsRecordId === 'k0' ? '0' : id ?? await computeJwkThumbprint({ jwk: publicKey });
 
         // Initialize the `verificationMethod` array if it does not already exist.
         didDocument.verificationMethod ??= [];
@@ -266,7 +266,7 @@ export async function fromDnsPacket({ didUri, dnsPacket }: {
         const { id: types } = parseTxtDataToObject(answer.data);
 
         // Add the DID DHT Registered DID Types represented as numbers to DID metadata.
-        didDocumentMetadata.types = types.split(VALUE_SEPARATOR).map((typeInteger: string): number => Number(typeInteger));
+        didDocumentMetadata.types = types.split(VALUE_SEPARATOR).map(Number);
 
         break;
       }

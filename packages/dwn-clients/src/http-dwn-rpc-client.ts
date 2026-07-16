@@ -110,7 +110,7 @@ function parseRetryAfterMs(response: Response): number | undefined {
   const date = new Date(retryAfter);
   if (!Number.isNaN(date.getTime())) {
     const delayMs = date.getTime() - Date.now();
-    return delayMs > 0 ? delayMs : 0;
+    return Math.max(delayMs, 0);
   }
 
   return undefined;
@@ -417,7 +417,11 @@ export class HttpDwnRpcClient implements DwnRpc {
     const url = new URL(dwnUrl);
 
     // add `/info` to the dwn server url path
-    url.pathname.endsWith('/') ? url.pathname += 'info' : url.pathname += '/info';
+    if (url.pathname.endsWith('/')) {
+      url.pathname += 'info';
+    } else {
+      url.pathname += '/info';
+    }
 
     try {
       const response = await this.fetchWithRetry(url.toString());

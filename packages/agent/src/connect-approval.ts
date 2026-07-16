@@ -480,11 +480,12 @@ export async function createPermissionGrants(
             grantIndex,
           });
         } catch (reason) {
+          const requestTimeoutDetail = requestSignal.aborted
+            ? `permission grant request timed out after ${CONNECT_REQUEST_TIMEOUT_MS}ms`
+            : errorDetail(reason);
           const detail = batchSignal.aborted
             ? `permission grant batch timed out after ${CONNECT_PERMISSION_GRANT_BATCH_TIMEOUT_MS}ms`
-            : requestSignal.aborted
-              ? `permission grant request timed out after ${CONNECT_REQUEST_TIMEOUT_MS}ms`
-              : errorDetail(reason);
+            : requestTimeoutDetail;
           outcomes.push({
             accepted : false,
             detail   : `failed: ${detail}`,
@@ -518,11 +519,12 @@ export async function createPermissionGrants(
         .map((outcome) => `${outcome.dwnUrl} ${outcome.detail}`);
       const displayedFailures = failures.slice(0, 3).join('; ');
       const remainingFailureCount = failures.length - 3;
+      const remainingFailureSummary = remainingFailureCount > 0
+        ? `${displayedFailures}; ${remainingFailureCount} more endpoint(s) failed`
+        : displayedFailures;
       const failureSummary = failures.length === 0
         ? 'no DWN endpoints were resolved'
-        : remainingFailureCount > 0
-          ? `${displayedFailures}; ${remainingFailureCount} more endpoint(s) failed`
-          : displayedFailures;
+        : remainingFailureSummary;
       throw new Error(
         `Could not send permission grant to any DWN endpoint: grant ${g + 1} (${scope}); ${failureSummary}`,
       );
@@ -625,8 +627,8 @@ async function fanOutDataEncodedRecords(
     }
   }
 
-  for (let i = 0; i < successPerRecord.length; i++) {
-    if (!successPerRecord[i]) {
+  for (const success of successPerRecord) {
+    if (!success) {
       throw new Error('Could not send grantKey record to any DWN endpoint.');
     }
   }

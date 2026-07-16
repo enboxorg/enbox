@@ -84,18 +84,14 @@ export class FilterUtility {
         if (this.matchOneOf(filterValue, indexValue)) {
           return true;
         }
-      } else {
+      } else if (this.matchRange(filterValue, indexValue as RangeValue)) {
         // `filterValue` is a `RangeFilter`
         // range filters cannot range over booleans
-        if (this.matchRange(filterValue, indexValue as RangeValue)) {
-          return true;
-        }
-      }
-    } else {
-      // filterValue is an EqualFilter, meaning it is a non-object primitive type
-      if (indexValue === filterValue) {
         return true;
       }
+    } else if (indexValue === filterValue) {
+      // filterValue is an EqualFilter, meaning it is a non-object primitive type
+      return true;
     }
 
     return false;

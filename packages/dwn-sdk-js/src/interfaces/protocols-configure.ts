@@ -464,14 +464,12 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
               `More than one action rule per role ${actionRule.role} not allowed within a rule set: ${JSON.stringify(actionRule)}`
             );
           }
-        } else {
-          if (actionRule.who === otherActionRule.who && actionRule.of === otherActionRule.of) {
-            throw new DwnError(
-              DwnErrorCode.ProtocolsConfigureDuplicateActorInRuleSet,
-              `More than one action rule per actor ${actionRule.who} of ${actionRule.of} ` +
-              `not allowed within a rule set: ${JSON.stringify(actionRule)}`
-            );
-          }
+        } else if (actionRule.who === otherActionRule.who && actionRule.of === otherActionRule.of) {
+          throw new DwnError(
+            DwnErrorCode.ProtocolsConfigureDuplicateActorInRuleSet,
+            `More than one action rule per actor ${actionRule.who} of ${actionRule.of} ` +
+            `not allowed within a rule set: ${JSON.stringify(actionRule)}`
+          );
         }
       }
     }

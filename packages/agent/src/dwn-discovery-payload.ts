@@ -273,8 +273,8 @@ function stringToBase64Url(input: string): string {
   // Build a binary string from the UTF-8 byte array so `btoa` can
   // consume it (btoa only accepts Latin-1 / code points ≤ U+00FF).
   let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCodePoint(bytes[i]);
+  for (const byte of bytes) {
+    binary += String.fromCodePoint(byte);
   }
   const result = btoa(binary).replaceAll('+', '-').replaceAll('/', '_');
   // Strip trailing '=' padding without regex quantifiers (avoids ReDoS scanners).

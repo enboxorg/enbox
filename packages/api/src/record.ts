@@ -242,19 +242,19 @@ export class Record implements RecordModel {
     const messageType = this._descriptor.interface + this._descriptor.method;
     let message: DwnMessage[DwnInterface.RecordsWrite] | DwnMessage[DwnInterface.RecordsDelete];
     if (messageType === DwnInterface.RecordsWrite) {
-      message = JSON.parse(JSON.stringify({
+      message = structuredClone({
         contextId     : this._contextId,
         recordId      : this._recordId,
         descriptor    : this._descriptor,
         attestation   : this._attestation,
         authorization : this._authorization,
         encryption    : this._encryption,
-      }));
+      }) as DwnMessage[DwnInterface.RecordsWrite];
     } else {
-      message = JSON.parse(JSON.stringify({
+      message = structuredClone({
         descriptor    : this._descriptor,
         authorization : this._authorization,
-      }));
+      }) as DwnMessage[DwnInterface.RecordsDelete];
     }
 
     removeUndefinedProperties(message);

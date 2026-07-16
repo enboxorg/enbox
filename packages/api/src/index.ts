@@ -45,6 +45,5 @@ export * from './typed-live-query.js';
 export * from './typed-record.js';
 export * from './vc-api.js';
 
-import * as utils from './utils.js';
-export { utils };
+export * as utils from './utils.js';
 export { isOk } from './utils.js';

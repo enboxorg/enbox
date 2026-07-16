@@ -86,7 +86,7 @@ function popupWindowFeatures(): string {
 /** Guards against calling browser-only entry points outside a browser. */
 function assertBrowserEnvironment(): void {
   if (typeof window === 'undefined') {
-    throw new Error('[@enbox/browser] DWeb Connect is only available in browser environments.');
+    throw new TypeError('[@enbox/browser] DWeb Connect is only available in browser environments.');
   }
 }
 

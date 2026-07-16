@@ -2,7 +2,7 @@ import type { ProviderAuthPlugin } from './provider-auth-plugin.js';
 import type { ActiveTenantCheckResult, TenantGate } from '@enbox/dwn-sdk-js';
 import type { ProofOfWorkChallengeModel, RegistrationRequest } from '@enbox/dwn-clients';
 
-import { readFileSync } from 'fs';
+import { readFileSync } from 'node:fs';
 
 import { getDialectFromUrl } from '../storage.js';
 import { ProofOfWork } from './proof-of-work.js';

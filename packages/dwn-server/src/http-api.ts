@@ -33,8 +33,8 @@ import {
   parseHttpDwnRpcRequestBody,
 } from '@enbox/dwn-clients';
 import { DateSort, type Dwn, ProtocolsQuery, RecordsQuery, RecordsRead, type RecordsReadReply } from '@enbox/dwn-sdk-js';
-import { existsSync, readFileSync } from 'fs';
-import { join, resolve } from 'path';
+import { existsSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 
 import { ConnectServer } from './connect/connect-server.js';
 import { getDialectFromUrl } from './storage.js';

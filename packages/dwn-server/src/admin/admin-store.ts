@@ -375,7 +375,7 @@ export class AdminStore {
     let cursor: number | undefined;
     if (messages.length > limit) {
       messages.pop();
-      cursor = messages[messages.length - 1]._id;
+      cursor = messages.at(-1)!._id;
     }
 
     // Strip internal _id before returning.

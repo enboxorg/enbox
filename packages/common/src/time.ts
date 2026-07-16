@@ -84,7 +84,7 @@ export function parseDurationInMilliseconds(duration: string): number {
 
   const durationInMilliseconds = Number(match[1]) * multiplier;
   if (!Number.isFinite(durationInMilliseconds)) {
-    throw new Error(`Invalid duration: '${duration}'`);
+    throw new TypeError(`Invalid duration: '${duration}'`);
   }
 
   return durationInMilliseconds;

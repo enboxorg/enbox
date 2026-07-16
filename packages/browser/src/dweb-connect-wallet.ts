@@ -123,7 +123,7 @@ export class WalletPostMessageTransport {
    */
   public static async create(options: WalletPostMessageTransportOptions = {}): Promise<WalletPostMessageTransport> {
     if (typeof window === 'undefined') {
-      throw new Error('[@enbox/browser] WalletPostMessageTransport is only available in browser environments.');
+      throw new TypeError('[@enbox/browser] WalletPostMessageTransport is only available in browser environments.');
     }
 
     const dappWindow = options.dappWindow ?? window.opener as Window | null;

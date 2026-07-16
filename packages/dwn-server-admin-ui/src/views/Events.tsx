@@ -71,6 +71,41 @@ export function Events({ path }: { path?: string }) {
     ? events
     : events.filter((e) => e.transport === transportFilter);
 
+  const eventsContent = filtered.length === 0 ? (
+    <div class="empty-state">No events to display.</div>
+  ) : (
+    <div class="card">
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Timestamp</th>
+              <th>Tenant</th>
+              <th>Interface</th>
+              <th>Method</th>
+              <th>Status</th>
+              <th>Transport</th>
+              <th>Data Size</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((evt, i) => (
+              <tr key={`${evt.timestamp}-${i}`}>
+                <td style="white-space:nowrap">{formatTimestamp(evt.timestamp)}</td>
+                <td class="mono" title={evt.tenant}>{truncateDid(evt.tenant, 30)}</td>
+                <td>{evt.interface}</td>
+                <td>{evt.method}</td>
+                <td><span class={statusBadgeClass(evt.status)}>{evt.status}</span></td>
+                <td><span class={transportBadgeClass(evt.transport)}>{evt.transport.toUpperCase()}</span></td>
+                <td>{evt.dataSize === undefined ? '\u2014' : formatBytes(evt.dataSize)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
   return (
     <div>
       <div class="page-header">
@@ -97,40 +132,7 @@ export function Events({ path }: { path?: string }) {
 
       {loading ? (
         <div class="loading">Loading events...</div>
-      ) : filtered.length === 0 ? (
-        <div class="empty-state">No events to display.</div>
-      ) : (
-        <div class="card">
-          <div class="table-container">
-            <table>
-              <thead>
-                <tr>
-                  <th>Timestamp</th>
-                  <th>Tenant</th>
-                  <th>Interface</th>
-                  <th>Method</th>
-                  <th>Status</th>
-                  <th>Transport</th>
-                  <th>Data Size</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((evt, i) => (
-                  <tr key={`${evt.timestamp}-${i}`}>
-                    <td style="white-space:nowrap">{formatTimestamp(evt.timestamp)}</td>
-                    <td class="mono" title={evt.tenant}>{truncateDid(evt.tenant, 30)}</td>
-                    <td>{evt.interface}</td>
-                    <td>{evt.method}</td>
-                    <td><span class={statusBadgeClass(evt.status)}>{evt.status}</span></td>
-                    <td><span class={transportBadgeClass(evt.transport)}>{evt.transport.toUpperCase()}</span></td>
-                    <td>{evt.dataSize === undefined ? '\u2014' : formatBytes(evt.dataSize)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+      ) : eventsContent}
     </div>
   );
 }

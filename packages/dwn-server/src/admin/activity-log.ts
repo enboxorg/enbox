@@ -72,7 +72,7 @@ export class ActivityLog {
     }
 
     const events = this.#buffer.slice(startIdx, startIdx + limit);
-    const cursor = events.length > 0 ? events[events.length - 1].id : undefined;
+    const cursor = events.length > 0 ? events.at(-1)!.id : undefined;
 
     return { events, cursor };
   }

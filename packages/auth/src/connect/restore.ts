@@ -247,11 +247,12 @@ async function loadRetryEntries(
     const parsed = JSON.parse(json);
 
     // Handle legacy single-object format: wrap in array.
+    const legacyEntries = (parsed?.delegateDid && parsed?.connectedDid && Array.isArray(parsed?.revocations))
+      ? [parsed]
+      : [];
     const entries = Array.isArray(parsed)
       ? parsed
-      : (parsed?.delegateDid && parsed?.connectedDid && Array.isArray(parsed?.revocations))
-        ? [parsed]
-        : [];
+      : legacyEntries;
 
     if (entries.length === 0 && !Array.isArray(parsed)) {
       // Truly malformed (not a valid legacy object either).
@@ -436,7 +437,7 @@ export async function retryOrphanedRevocations(
     return;
   }
 
-  for (const entry of [...entries]) {
+  for (const entry of entries) {
     let remoteDwnUrls: string[] = [];
     try {
       remoteDwnUrls = await userAgent.dwn.getRemoteDwnEndpointUrls(entry.connectedDid);

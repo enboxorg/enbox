@@ -83,6 +83,72 @@ export function AuditLog({ path }: { path?: string }) {
     setExpandedId((prev) => (prev === id ? null : id));
   };
 
+  const auditContent = entries.length === 0 ? (
+    <div class="empty-state">No audit entries found.</div>
+  ) : (
+    <div class="card">
+      {total !== undefined && (
+        <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:12px">
+          Total entries: {total}
+        </div>
+      )}
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Timestamp</th>
+              <th>Actor</th>
+              <th>Action</th>
+              <th>Target</th>
+              <th>Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.map((entry) => (
+              <tr key={entry.id}>
+                <td class="mono">{entry.id}</td>
+                <td style="white-space:nowrap">{formatTimestamp(entry.timestamp)}</td>
+                <td>{entry.actor}</td>
+                <td class="mono">{entry.action}</td>
+                <td class="mono" title={entry.target}>{truncateDid(entry.target, 30)}</td>
+                <td>
+                  {entry.detail && entry.detail.length > 60 ? (
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => toggleDetail(entry.id)}
+                      onKeyDown={(e: KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleDetail(entry.id); } }}
+                      style="cursor:pointer;color:var(--color-primary)"
+                      title={expandedId === entry.id ? 'Click to collapse' : 'Click to expand'}
+                    >
+                      {expandedId === entry.id
+                        ? entry.detail
+                        : entry.detail.slice(0, 60) + '...'}
+                    </span>
+                  ) : (
+                    <span>{entry.detail || '\u2014'}</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {cursor !== undefined && (
+        <div class="pagination">
+          <span class="info">
+            Showing {entries.length} entries{total === undefined ? '' : ` of ${total}`}
+          </span>
+          <button class="btn" onClick={() => fetchAudit(true)} disabled={loadingMore}>
+            {loadingMore ? 'Loading...' : 'Load More'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div>
       <div class="page-header">
@@ -137,71 +203,7 @@ export function AuditLog({ path }: { path?: string }) {
 
       {loading ? (
         <div class="loading">Loading audit log...</div>
-      ) : entries.length === 0 ? (
-        <div class="empty-state">No audit entries found.</div>
-      ) : (
-        <div class="card">
-          {total !== undefined && (
-            <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:12px">
-              Total entries: {total}
-            </div>
-          )}
-          <div class="table-container">
-            <table>
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Timestamp</th>
-                  <th>Actor</th>
-                  <th>Action</th>
-                  <th>Target</th>
-                  <th>Detail</th>
-                </tr>
-              </thead>
-              <tbody>
-                {entries.map((entry) => (
-                  <tr key={entry.id}>
-                    <td class="mono">{entry.id}</td>
-                    <td style="white-space:nowrap">{formatTimestamp(entry.timestamp)}</td>
-                    <td>{entry.actor}</td>
-                    <td class="mono">{entry.action}</td>
-                    <td class="mono" title={entry.target}>{truncateDid(entry.target, 30)}</td>
-                    <td>
-                      {entry.detail && entry.detail.length > 60 ? (
-                        <span
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => toggleDetail(entry.id)}
-                          onKeyDown={(e: KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleDetail(entry.id); } }}
-                          style="cursor:pointer;color:var(--color-primary)"
-                          title={expandedId === entry.id ? 'Click to collapse' : 'Click to expand'}
-                        >
-                          {expandedId === entry.id
-                            ? entry.detail
-                            : entry.detail.slice(0, 60) + '...'}
-                        </span>
-                      ) : (
-                        <span>{entry.detail || '\u2014'}</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {cursor !== undefined && (
-            <div class="pagination">
-              <span class="info">
-                Showing {entries.length} entries{total === undefined ? '' : ` of ${total}`}
-              </span>
-              <button class="btn" onClick={() => fetchAudit(true)} disabled={loadingMore}>
-                {loadingMore ? 'Loading...' : 'Load More'}
-              </button>
-            </div>
-          )}
-        </div>
-      )}
+      ) : auditContent}
     </div>
   );
 }

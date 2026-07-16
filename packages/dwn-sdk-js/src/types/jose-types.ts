@@ -1,6 +1,7 @@
-import type { Jwk, PrivateKeyJwk, PublicKeyJwk } from '@enbox/crypto';
+import type { PrivateKeyJwk, PublicKeyJwk } from '@enbox/crypto';
 
-export type { Jwk, PrivateKeyJwk, PublicKeyJwk };
+export type { Jwk } from '@enbox/crypto';
+export type { PrivateKeyJwk, PublicKeyJwk };
 
 /**
  * Contains a public-private key pair and the associated key ID.

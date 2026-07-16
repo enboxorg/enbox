@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 import { DwnServerError, DwnServerErrorCode } from '../dwn-error.js';
 

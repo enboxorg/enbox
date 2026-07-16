@@ -253,7 +253,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
    */
   public static async parse(recordsWriteMessage: RecordsWriteMessage): Promise<RecordsWrite> {
     // Make a copy so that the stored copy is not subject to external, unexpected modification.
-    const message = JSON.parse(JSON.stringify(recordsWriteMessage)) as RecordsWriteMessage;
+    const message = structuredClone(recordsWriteMessage);
 
     // Validate the message against the JSON schema.
     // We strip internal properties that the MessageStore may attach to stored messages
@@ -438,16 +438,14 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     // if given explicitly published dated
     if (options.datePublished) {
       datePublished = options.datePublished;
-    } else {
+    } else if (published) {
       // if this RecordsWrite will publish the record
-      if (published) {
-        // the parent was already published, inherit the same published date
-        if (sourceMessage.descriptor.published) {
-          datePublished = sourceMessage.descriptor.datePublished;
-        } else {
-          // this is a toggle from unpublished to published, use current time
-          datePublished = currentTime;
-        }
+      // the parent was already published, inherit the same published date
+      if (sourceMessage.descriptor.published) {
+        datePublished = sourceMessage.descriptor.datePublished;
+      } else {
+        // this is a toggle from unpublished to published, use current time
+        datePublished = currentTime;
       }
     }
 

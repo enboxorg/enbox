@@ -892,9 +892,11 @@ async function persistOrClearDelegateSecrets(
 
   // Clear legacy key caches that are no longer populated by connect.
   const secretWrites: Promise<void>[] = [];
-  secretWrites.push(userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).then(() => {}).catch(() => {}));
-  secretWrites.push(storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).catch(() => {}));
-  secretWrites.push(storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS).catch(() => {}));
+  secretWrites.push(
+    userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).then(() => {}).catch(() => {}),
+    storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).catch(() => {}),
+    storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS).catch(() => {}),
+  );
   await Promise.all(secretWrites);
 
   if (sessionRevocations?.length) {

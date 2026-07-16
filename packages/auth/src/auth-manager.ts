@@ -847,10 +847,10 @@ export class AuthManager {
       ]);
 
       // Also clear non-prefixed localStorage and IndexedDB (browser).
-      if (typeof globalThis.localStorage !== 'undefined') {
+      if (globalThis.localStorage !== undefined) {
         globalThis.localStorage.clear();
       }
-      if (typeof globalThis.indexedDB !== 'undefined') {
+      if (globalThis.indexedDB !== undefined) {
         try {
           const databases = await globalThis.indexedDB.databases();
           for (const db of databases) {
