@@ -304,6 +304,305 @@ describe('SyncEngineLevel lifecycle', () => {
     expect(db.status).toBe('closed');
   });
 
+  it('should serialize competing registrations for the same identity', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const validationStarted = createDeferred();
+    const releaseValidation = createDeferred();
+    const validateScope = sinon.stub(engine as never, 'validateSyncScopeClosure');
+    const readIdentityOptions = engine.getIdentityOptions.bind(engine);
+    let firstRegistrationReleased = false;
+    let identityOptionsReads = 0;
+    sinon.stub(engine, 'getIdentityOptions').callsFake(async (did: string) => {
+      identityOptionsReads++;
+      // Before the fix, the competing call reaches this read while the first
+      // registration is still validating and observes the identity as absent.
+      if (identityOptionsReads > 1 && !firstRegistrationReleased) {
+        return undefined;
+      }
+      return readIdentityOptions(did);
+    });
+    validateScope.onFirstCall().callsFake(async (): Promise<void> => {
+      validationStarted.resolve();
+      await releaseValidation.promise;
+    });
+    validateScope.onSecondCall().resolves();
+
+    const firstRegistration = engine.registerIdentity({
+      did     : 'did:example:alice',
+      options : { protocols: 'all' },
+    });
+    await validationStarted.promise;
+
+    const competingRegistration = engine.registerIdentity({
+      did     : 'did:example:alice',
+      options : { protocols: 'all' },
+    });
+    const competingOutcome = competingRegistration.then(
+      (): Error | undefined => undefined,
+      (error: Error): Error => error,
+    );
+    await Promise.resolve();
+
+    firstRegistrationReleased = true;
+    releaseValidation.resolve();
+    await firstRegistration;
+    expect((await competingOutcome)?.message).toContain('is already registered');
+  });
+
+  it('should wait for a lock-owning sync before starting an identity mutation', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const syncStarted = createDeferred();
+    const releaseSync = createDeferred();
+    sinon.stub(engine as never, 'getSyncTargets').callsFake(async (): Promise<[]> => {
+      syncStarted.resolve();
+      await releaseSync.promise;
+      return [];
+    });
+    sinon.stub(engine, 'getIdentityOptions').resolves(undefined);
+    const validateScope = sinon.spy(engine as never, 'validateSyncScopeClosure');
+
+    const syncPromise = engine.sync();
+    await syncStarted.promise;
+    const registrationPromise = engine.registerIdentity({
+      did     : 'did:example:alice',
+      options : { protocols: 'all' },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    try {
+      expect(validateScope.called).toBe(false);
+    } finally {
+      releaseSync.resolve();
+      await Promise.all([syncPromise, registrationPromise]);
+    }
+
+    expect(validateScope.calledOnce).toBe(true);
+  });
+
+  it('should keep link state until an in-flight repair drains during unregister', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const repairStarted = createDeferred();
+    const releaseRepair = createDeferred();
+    const removeStarted = createDeferred();
+    const did = 'did:example:alice';
+    const linkKey = `${did}^https://dwn.example.com^projection-1^authorization-1`;
+    const link = {
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'authorization-1',
+      connectivity       : 'unknown',
+      projectionId       : 'projection-1',
+      pull               : {},
+      remoteEndpoint     : 'https://dwn.example.com',
+      scope              : { kind: 'full' },
+      status             : 'initializing',
+      tenantDid          : did,
+    };
+
+    await engine.registerIdentity({ did, options: { protocols: 'all' } });
+    engine['_syncMode'] = 'live';
+    engine['_activeLinks'].set(linkKey, link as never);
+    sinon.stub(engine as never, 'setLinkOfflineStatus').callsFake(async (): Promise<void> => {
+      link.status = 'repairing';
+    });
+    sinon.stub(engine as never, 'doRepairLink').callsFake(async (): Promise<void> => {
+      repairStarted.resolve();
+      await releaseRepair.promise;
+    });
+    const removeIdentity = engine['removeIdentityFromLiveSync'].bind(engine);
+    sinon.stub(engine as never, 'removeIdentityFromLiveSync').callsFake(async (identityDid: string): Promise<void> => {
+      const removal = removeIdentity(identityDid);
+      removeStarted.resolve();
+      await removal;
+    });
+
+    await (engine as unknown as {
+      transitionToRepairing(linkIdentity: string, linkState: unknown): Promise<void>;
+    }).transitionToRepairing(linkKey, link);
+    await repairStarted.promise;
+
+    const unregisterPromise = engine.unregisterIdentity(did);
+    await removeStarted.promise;
+
+    try {
+      expect(engine['_activeLinks'].has(linkKey)).toBe(true);
+      expect(await engine.getIdentityOptions(did)).toBeDefined();
+    } finally {
+      releaseRepair.resolve();
+      await unregisterPromise;
+    }
+
+    expect(engine['_activeLinks'].has(linkKey)).toBe(false);
+    expect(await engine.getIdentityOptions(did)).toBeUndefined();
+  });
+
+  it('should not wait for another identity\'s in-flight work during hot-remove', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const repairStarted = createDeferred();
+    const releaseRepair = createDeferred();
+    const aliceDid = 'did:example:alice';
+    const bobDid = 'did:example:bob';
+    const aliceLinkKey = `${aliceDid}^https://dwn.example.com^projection-1^authorization-1`;
+    const bobLinkKey = `${bobDid}^https://dwn.example.com^projection-1^authorization-1`;
+    const aliceLink = {
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'authorization-1',
+      connectivity       : 'online',
+      projectionId       : 'projection-1',
+      pull               : {},
+      remoteEndpoint     : 'https://dwn.example.com',
+      scope              : { kind: 'full' },
+      status             : 'live',
+      tenantDid          : aliceDid,
+    };
+    const bobLink = { ...aliceLink, tenantDid: bobDid, status: 'initializing' };
+
+    engine['_activeLinks'].set(aliceLinkKey, aliceLink as never);
+    engine['_activeLinks'].set(bobLinkKey, bobLink as never);
+    sinon.stub(engine as never, 'setLinkOfflineStatus').callsFake(async (): Promise<void> => {
+      bobLink.status = 'repairing';
+    });
+    sinon.stub(engine as never, 'doRepairLink').callsFake(async (): Promise<void> => {
+      repairStarted.resolve();
+      await releaseRepair.promise;
+    });
+
+    await (engine as unknown as {
+      transitionToRepairing(linkIdentity: string, linkState: unknown): Promise<void>;
+    }).transitionToRepairing(bobLinkKey, bobLink);
+    await repairStarted.promise;
+
+    const removal = (engine as unknown as {
+      removeIdentityFromLiveSync(identityDid: string): Promise<void>;
+    }).removeIdentityFromLiveSync(aliceDid);
+    const removalState = await Promise.race([
+      removal.then((): 'removed' => 'removed'),
+      new Promise<'blocked'>((resolve) => { setTimeout((): void => { resolve('blocked'); }, 50); }),
+    ]);
+
+    try {
+      expect(removalState).toBe('removed');
+      expect(engine['_activeLinks'].has(aliceLinkKey)).toBe(false);
+      expect(engine['_activeLinks'].has(bobLinkKey)).toBe(true);
+    } finally {
+      releaseRepair.resolve();
+      await removal;
+      await engine.stopSync();
+    }
+  });
+
+  it('should defer replacement links until an in-flight reconcile drains during update', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const reconcileStarted = createDeferred();
+    const releaseReconcile = createDeferred();
+    const removeStarted = createDeferred();
+    const did = 'did:example:alice';
+    const linkKey = `${did}^https://dwn.example.com^projection-1^authorization-1`;
+    const link = {
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'authorization-1',
+      connectivity       : 'online',
+      projectionId       : 'projection-1',
+      pull               : {},
+      remoteEndpoint     : 'https://dwn.example.com',
+      scope              : { kind: 'full' },
+      status             : 'live',
+      tenantDid          : did,
+    };
+
+    await engine.registerIdentity({ did, options: { protocols: 'all' } });
+    engine['_syncMode'] = 'live';
+    engine['_activeLinks'].set(linkKey, link as never);
+    sinon.stub(engine as never, 'doReconcileLink').callsFake(async (): Promise<void> => {
+      reconcileStarted.resolve();
+      await releaseReconcile.promise;
+    });
+    const clearQuotaBlocks = sinon.stub(engine as never, 'clearQuotaBlocksForTenant').resolves();
+    const addIdentity = sinon.stub(engine as never, 'addIdentityToLiveSync').resolves(new Set());
+    const removeIdentity = engine['removeIdentityFromLiveSync'].bind(engine);
+    sinon.stub(engine as never, 'removeIdentityFromLiveSync').callsFake(async (identityDid: string): Promise<void> => {
+      const removal = removeIdentity(identityDid);
+      removeStarted.resolve();
+      await removal;
+    });
+
+    const scheduled = (engine as unknown as {
+      scheduleReconcile(linkIdentity: string, delay: number): boolean;
+    }).scheduleReconcile(linkKey, 0);
+    expect(scheduled).toBe(true);
+    await reconcileStarted.promise;
+
+    const updatedOptions = { protocols: 'all' as const, delegateDid: 'did:example:delegate' };
+    const updatePromise = engine.updateIdentityOptions({ did, options: updatedOptions });
+    await removeStarted.promise;
+
+    try {
+      expect(engine['_activeLinks'].has(linkKey)).toBe(true);
+      expect(clearQuotaBlocks.called).toBe(false);
+      expect(addIdentity.called).toBe(false);
+    } finally {
+      releaseReconcile.resolve();
+      await updatePromise;
+    }
+
+    expect(engine['_activeLinks'].has(linkKey)).toBe(false);
+    expect(clearQuotaBlocks.calledOnce).toBe(true);
+    expect(addIdentity.calledOnce).toBe(true);
+    expect(await engine.getIdentityOptions(did)).toEqual(updatedOptions);
+  });
+
+  it('should keep push runtime state until an in-flight flush drains during unregister', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const pushStarted = createDeferred();
+    const releasePush = createDeferred();
+    const removeStarted = createDeferred();
+    const did = 'did:example:alice';
+    const linkKey = `${did}^https://dwn.example.com^projection-1^authorization-1`;
+    const pushRuntime = {
+      did,
+      dwnUrl     : 'https://dwn.example.com',
+      entries    : [],
+      retryCount : 0,
+    };
+
+    await engine.registerIdentity({ did, options: { protocols: 'all' } });
+    engine['_syncMode'] = 'live';
+    engine['_pushRuntimes'].set(linkKey, pushRuntime as never);
+    sinon.stub(engine as never, 'flushPendingPushesForLink').callsFake(async (): Promise<void> => {
+      pushStarted.resolve();
+      await releasePush.promise;
+    });
+    const removeIdentity = engine['removeIdentityFromLiveSync'].bind(engine);
+    sinon.stub(engine as never, 'removeIdentityFromLiveSync').callsFake(async (identityDid: string): Promise<void> => {
+      const removal = removeIdentity(identityDid);
+      removeStarted.resolve();
+      await removal;
+    });
+
+    (engine as unknown as {
+      schedulePushRetry(
+        targetKey: string,
+        runtime: unknown,
+        pending: { entries: Array<{ cid: string }>; retryCount: number },
+      ): void;
+    }).schedulePushRetry(linkKey, pushRuntime, { entries: [{ cid: 'cid-1' }], retryCount: 0 });
+    await pushStarted.promise;
+
+    const unregisterPromise = engine.unregisterIdentity(did);
+    await removeStarted.promise;
+
+    try {
+      expect(engine['_pushRuntimes'].has(linkKey)).toBe(true);
+      expect(await engine.getIdentityOptions(did)).toBeDefined();
+    } finally {
+      releasePush.resolve();
+      await unregisterPromise;
+    }
+
+    expect(engine['_pushRuntimes'].has(linkKey)).toBe(false);
+    expect(await engine.getIdentityOptions(did)).toBeUndefined();
+  });
+
   it('should serialize stop behind an in-progress start transition', async () => {
     const engine = new SyncEngineLevel({ db });
     const startEntered = createDeferred();

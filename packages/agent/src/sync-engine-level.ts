@@ -372,6 +372,9 @@ export class SyncEngineLevel implements SyncEngine {
   /** Owns async work launched by timers, subscriptions, and repair/reconcile scheduling. */
   private readonly _backgroundTasks = new SyncTaskGroup();
 
+  /** Per-identity task ownership lets hot-remove drain one DID without stopping every link. */
+  private readonly _identityTaskGroups: Map<string, SyncTaskGroup> = new Map();
+
   /**
    * Durable replication ledger — persists per-link checkpoint state.
    * Used by live sync to track pull progression per link.
@@ -959,7 +962,13 @@ export class SyncEngineLevel implements SyncEngine {
     });
   }
 
-  public async registerIdentity({ did, options }: { did: string; options: SyncIdentityOptions }): Promise<void> {
+  public registerIdentity(params: { did: string; options: SyncIdentityOptions }): Promise<void> {
+    return this.runIdentityMutation(async (): Promise<void> => {
+      await this.doRegisterIdentity(params);
+    });
+  }
+
+  private async doRegisterIdentity({ did, options }: { did: string; options: SyncIdentityOptions }): Promise<void> {
     SyncEngineLevel.validateSyncIdentityOptions(options);
 
     const registeredIdentities = this._db.sublevel('registeredIdentities');
@@ -984,7 +993,13 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  public async unregisterIdentity(did: string): Promise<void> {
+  public unregisterIdentity(did: string): Promise<void> {
+    return this.runIdentityMutation(async (): Promise<void> => {
+      await this.doUnregisterIdentity(did);
+    });
+  }
+
+  private async doUnregisterIdentity(did: string): Promise<void> {
     const registeredIdentities = this._db.sublevel('registeredIdentities');
     const existing = await this.getIdentityOptions(did);
     if (!existing) {
@@ -1020,7 +1035,13 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  public async updateIdentityOptions({ did, options }: { did: string, options: SyncIdentityOptions }): Promise<void> {
+  public updateIdentityOptions(params: { did: string, options: SyncIdentityOptions }): Promise<void> {
+    return this.runIdentityMutation(async (): Promise<void> => {
+      await this.doUpdateIdentityOptions(params);
+    });
+  }
+
+  private async doUpdateIdentityOptions({ did, options }: { did: string, options: SyncIdentityOptions }): Promise<void> {
     SyncEngineLevel.validateSyncIdentityOptions(options);
 
     const registeredIdentities = this._db.sublevel('registeredIdentities');
@@ -1032,16 +1053,21 @@ export class SyncEngineLevel implements SyncEngine {
     await this.validateSyncScopeClosure(did, options);
     await registeredIdentities.put(did, JSON.stringify(options));
     this.invalidateSyncTargetsCache();
+
+    const rebuildLiveLinks = this._syncMode === 'live' && this.hasActiveLinksForDid(did);
+    if (rebuildLiveLinks) {
+      await this.removeIdentityFromLiveSync(did);
+    }
+
     // Scope/delegate changes define different replication links. A block from
     // the previous authorization must not suppress the replacement link's
-    // first delivery attempt.
+    // first delivery attempt. Clear only after old link work has drained so it
+    // cannot recreate stale state behind this cleanup.
     await this.clearQuotaBlocksForTenant(did);
 
-    // If live sync is active, tear down and rebuild subscriptions with
-    // the new options. Delegate/scope changes derive a new authorization
-    // epoch, so existing durable links are not mutated in place.
-    if (this._syncMode === 'live' && this.hasActiveLinksForDid(did)) {
-      await this.removeIdentityFromLiveSync(did);
+    // Rebuild live subscriptions with the new options. Delegate/scope changes
+    // derive a new authorization epoch, so durable links are not mutated in place.
+    if (rebuildLiveLinks) {
       const currentIdentityKeys = await this.addIdentityToLiveSync(did, options);
       if (currentIdentityKeys.size > 0) {
         await this.pruneSupersededDurableLinksForIdentity(did, currentIdentityKeys);
@@ -1711,6 +1737,7 @@ export class SyncEngineLevel implements SyncEngine {
     if (this._backgroundTasks.size > 0) {
       await this.waitForBackgroundTasks();
     }
+    this._identityTaskGroups.clear();
     this._backgroundTasks.resume();
 
     this._syncMode = mode;
@@ -1740,14 +1767,51 @@ export class SyncEngineLevel implements SyncEngine {
   private runLifecycleTransition(operation: () => Promise<void>): Promise<void> {
     const previous = this._lifecycleTransition;
     const transition = previous === undefined ? operation() : previous.then(operation);
-    const completion = transition.then((): void => {}, (): void => {});
+    const completion = transition.then(
+      (): void => {
+        if (this._lifecycleTransition === completion) {
+          this._lifecycleTransition = undefined;
+        }
+      },
+      (): void => {
+        if (this._lifecycleTransition === completion) {
+          this._lifecycleTransition = undefined;
+        }
+      },
+    );
     this._lifecycleTransition = completion;
-    void completion.then((): void => {
-      if (this._lifecycleTransition === completion) {
-        this._lifecycleTransition = undefined;
+    return transition;
+  }
+
+  /** Serializes identity topology changes and excludes lock-owning sync work while they mutate storage and live links. */
+  private runIdentityMutation(operation: () => Promise<void>): Promise<void> {
+    return this.runLifecycleTransition(async (): Promise<void> => {
+      await this.waitForAndAcquireSyncLock();
+      try {
+        await operation();
+      } finally {
+        this.releaseSyncLock();
       }
     });
-    return transition;
+  }
+
+  private getIdentityTaskGroup(did: string): SyncTaskGroup {
+    let taskGroup = this._identityTaskGroups.get(did);
+    if (taskGroup === undefined) {
+      taskGroup = new SyncTaskGroup();
+      this._identityTaskGroups.set(did, taskGroup);
+    }
+    return taskGroup;
+  }
+
+  private runIdentityBackgroundTask(taskGroup: SyncTaskGroup, operation: () => Promise<void>): Promise<void> {
+    return this._backgroundTasks.run(() => taskGroup.run(operation));
+  }
+
+  private pauseIdentityTaskGroups(): void {
+    for (const taskGroup of this._identityTaskGroups.values()) {
+      taskGroup.pause();
+    }
   }
 
   private hasLiveSyncRuntime(): boolean {
@@ -1766,6 +1830,7 @@ export class SyncEngineLevel implements SyncEngine {
   private prepareForSyncRuntimeTransition(): void {
     this._engineGeneration++;
     this._backgroundTasks.pause();
+    this.pauseIdentityTaskGroups();
     if (this._syncIntervalId) {
       clearInterval(this._syncIntervalId);
       this._syncIntervalId = undefined;
@@ -1794,6 +1859,9 @@ export class SyncEngineLevel implements SyncEngine {
       this.waitForSyncCompletion(safeTimeout),
       this.waitForBackgroundTasks(safeTimeout),
     ]);
+    if (backgroundCompletion.status === 'fulfilled') {
+      this._identityTaskGroups.clear();
+    }
     // A scheduled sync interval is itself a supervised task, so both waits can
     // time out together. Preserve the established lock-timeout error as the
     // primary failure in that case.
@@ -2038,7 +2106,8 @@ export class SyncEngineLevel implements SyncEngine {
     this.clearLinkRuntimeInflight(linkKey);
 
     // Kick off repair with retry scheduling on failure.
-    void this._backgroundTasks.run(async (): Promise<void> => {
+    const taskGroup = this.getIdentityTaskGroup(link.tenantDid);
+    void this.runIdentityBackgroundTask(taskGroup, async (): Promise<void> => {
       try {
         await this.repairLink(linkKey);
       } catch {
@@ -2119,6 +2188,7 @@ export class SyncEngineLevel implements SyncEngine {
     const attempts = this._repairAttempts.get(linkKey) ?? 1;
     const backoff = SyncEngineLevel.REPAIR_BACKOFF_MS;
     const delayMs = backoff[Math.min(attempts - 1, backoff.length - 1)];
+    const taskGroup = this.getIdentityTaskGroup(link.tenantDid);
 
     const timerGeneration = this._engineGeneration;
     const timer = setTimeout((): void => {
@@ -2131,7 +2201,7 @@ export class SyncEngineLevel implements SyncEngine {
       const currentLink = this._activeLinks.get(linkKey);
       if (currentLink?.status !== 'repairing') { return; }
 
-      void this._backgroundTasks.run(async (): Promise<void> => {
+      void this.runIdentityBackgroundTask(taskGroup, async (): Promise<void> => {
         try {
           await this.repairLink(linkKey);
         } catch {
@@ -2717,6 +2787,9 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Hot-remove a single identity from the active live sync session. */
   private async removeIdentityFromLiveSync(did: string): Promise<void> {
+    const taskGroup = this.getIdentityTaskGroup(did);
+    taskGroup.pause();
+
     for (const sub of this._liveSubscriptions.filter(s => s.did === did)) {
       try { await sub.close(); } catch { /* best effort */ }
     }
@@ -2727,9 +2800,45 @@ export class SyncEngineLevel implements SyncEngine {
     }
     this._localSubscriptions = this._localSubscriptions.filter(s => s.did !== did);
 
+    // Stop queued work first, but retain its runtime state until callbacks that
+    // are already in flight finish using it.
+    this.cancelIdentityRuntimeTimers(did);
+    await taskGroup.settle();
+
+    // A running task may have armed a follow-up timer before observing the
+    // paused group. Cancel that timer before discarding the link state.
+    this.cancelIdentityRuntimeTimers(did);
+    this.clearIdentityRuntimeState(did);
+
+    if (this._identityTaskGroups.get(did) === taskGroup) {
+      this._identityTaskGroups.delete(did);
+    }
+  }
+
+  private cancelIdentityRuntimeTimers(did: string): void {
+    for (const runtime of this._pushRuntimes.values()) {
+      if (runtime.did === did && runtime.timer) {
+        clearTimeout(runtime.timer);
+      }
+    }
+    for (const [key, timer] of this._repairRetryTimers) {
+      if (this.isLinkKeyForDid(key, did)) {
+        clearTimeout(timer);
+        this._repairRetryTimers.delete(key);
+      }
+    }
+    for (const [key, timer] of this._reconcileTimers) {
+      if (this.isLinkKeyForDid(key, did)) {
+        clearTimeout(timer);
+        this._reconcileTimers.delete(key);
+        this._reconcileTimerDueAt.delete(key);
+      }
+    }
+  }
+
+  private clearIdentityRuntimeState(did: string): void {
     for (const [key, runtime] of this._pushRuntimes) {
       if (runtime.did === did) {
-        if (runtime.timer) { clearTimeout(runtime.timer); }
         this._pushRuntimes.delete(key);
       }
     }
@@ -2743,21 +2852,20 @@ export class SyncEngineLevel implements SyncEngine {
     for (const key of this._repairContext.keys()) {
       if (this.isLinkKeyForDid(key, did)) { this._repairContext.delete(key); }
     }
-    for (const [key, timer] of this._repairRetryTimers) {
-      if (this.isLinkKeyForDid(key, did)) { clearTimeout(timer); this._repairRetryTimers.delete(key); }
-    }
-    for (const [key, timer] of this._reconcileTimers) {
-      if (this.isLinkKeyForDid(key, did)) {
-        clearTimeout(timer);
-        this._reconcileTimers.delete(key);
-        this._reconcileTimerDueAt.delete(key);
-      }
+    for (const key of this._feedConvergenceFailures.keys()) {
+      if (this.isLinkKeyForDid(key, did)) { this._feedConvergenceFailures.delete(key); }
     }
     for (const key of this._reconcileInFlight.keys()) {
       if (this.isLinkKeyForDid(key, did)) { this._reconcileInFlight.delete(key); }
     }
+    for (const key of this._reconcileTimerDueAt.keys()) {
+      if (this.isLinkKeyForDid(key, did)) { this._reconcileTimerDueAt.delete(key); }
+    }
     for (const key of this._activeLinks.keys()) {
-      if (this.isLinkKeyForDid(key, did)) { this._activeLinks.delete(key); this._linkRuntimes.delete(key); }
+      if (this.isLinkKeyForDid(key, did)) { this._activeLinks.delete(key); }
+    }
+    for (const key of this._linkRuntimes.keys()) {
+      if (this.isLinkKeyForDid(key, did)) { this._linkRuntimes.delete(key); }
     }
   }
 
@@ -2830,9 +2938,10 @@ export class SyncEngineLevel implements SyncEngine {
       permissionGrantIds : target.permissionGrantIds,
       isStale,
     };
+    const taskGroup = this.getIdentityTaskGroup(did);
 
     const subscriptionHandler = (subMessage: SubscriptionMessage): Promise<void> =>
-      this._backgroundTasks.run(() => this.handleLivePullMessage(pullContext, subMessage));
+      this.runIdentityBackgroundTask(taskGroup, () => this.handleLivePullMessage(pullContext, subMessage));
 
     // Construct the subscribe message and send it directly to the specific
     // dwnUrl via WebSocket.  We do NOT use agent.dwn.sendRequest() because
@@ -3365,10 +3474,11 @@ export class SyncEngineLevel implements SyncEngine {
       this._engineGeneration !== handlerGeneration ||
       !this._activeLinks.has(target.linkKey) ||
       (capturedPushLink !== undefined && this._activeLinks.get(target.linkKey) !== capturedPushLink);
+    const taskGroup = this.getIdentityTaskGroup(did);
 
     // Subscribe to the local DWN's EventLog.
     const subscriptionHandler = (subMessage: SubscriptionMessage): Promise<void> =>
-      this._backgroundTasks.run(async (): Promise<void> => {
+      this.runIdentityBackgroundTask(taskGroup, async (): Promise<void> => {
         if (isPushStale()) {
           return;
         }
@@ -3420,7 +3530,7 @@ export class SyncEngineLevel implements SyncEngine {
         // pending, push immediately. Otherwise, the pending batch timer
         // or the post-flush drain will pick up the new entry.
         if (!pushRuntime.flushing && !pushRuntime.timer) {
-          void this._backgroundTasks.run(() => this.flushPendingPushesForLink(targetKey));
+          void this.runIdentityBackgroundTask(taskGroup, () => this.flushPendingPushesForLink(targetKey));
         }
       });
 
@@ -3638,9 +3748,10 @@ export class SyncEngineLevel implements SyncEngine {
     // writes while keeping single-write latency low.
     const rt = this._pushRuntimes.get(linkKey);
     if (rt && rt.entries.length > 0 && !rt.timer) {
+      const taskGroup = this.getIdentityTaskGroup(rt.did);
       rt.timer = setTimeout((): void => {
         rt.timer = undefined;
-        void this._backgroundTasks.run(() => this.flushPendingPushesForLink(linkKey));
+        void this.runIdentityBackgroundTask(taskGroup, () => this.flushPendingPushesForLink(linkKey));
       }, PUSH_DEBOUNCE_MS);
     }
   }
@@ -3911,9 +4022,10 @@ export class SyncEngineLevel implements SyncEngine {
     if (pushRuntime.timer) {
       clearTimeout(pushRuntime.timer);
     }
+    const taskGroup = this.getIdentityTaskGroup(pushRuntime.did);
     pushRuntime.timer = setTimeout((): void => {
       pushRuntime.timer = undefined;
-      void this._backgroundTasks.run(() => this.flushPendingPushesForLink(targetKey));
+      void this.runIdentityBackgroundTask(taskGroup, () => this.flushPendingPushesForLink(targetKey));
     }, delayMs);
   }
 
@@ -5947,6 +6059,8 @@ export class SyncEngineLevel implements SyncEngine {
    */
   private scheduleReconcile(linkKey: string, delayMs: number = 1500): boolean {
     if (this._activeRepairs.has(linkKey)) { return false; }
+    const link = this._activeLinks.get(linkKey);
+    if (link === undefined) { return false; }
 
     const normalizedDelay = Math.max(0, delayMs);
     const dueAt = Date.now() + normalizedDelay;
@@ -5961,6 +6075,7 @@ export class SyncEngineLevel implements SyncEngine {
       this._reconcileTimerDueAt.delete(linkKey);
     }
 
+    const taskGroup = this.getIdentityTaskGroup(link.tenantDid);
     const generation = this._engineGeneration;
     const timer = setTimeout((): void => {
       this._reconcileTimers.delete(linkKey);
@@ -5970,7 +6085,7 @@ export class SyncEngineLevel implements SyncEngine {
       // scheduled. Without this, a stale timer could restart reconcile
       // work for a DID that is no longer active.
       if (!this._activeLinks.has(linkKey)) { return; }
-      void this._backgroundTasks.run(async (): Promise<void> => {
+      void this.runIdentityBackgroundTask(taskGroup, async (): Promise<void> => {
         try {
           await this.reconcileLink(linkKey);
         } catch {
