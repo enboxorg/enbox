@@ -381,14 +381,13 @@ describe('SyncEngineLevel — identity management', () => {
         did      : { dereference: sinon.stub() },
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const lifecycle = (engine as any)._lifecycle;
 
-      // Manually set the lock to simulate a sync in progress.
-      (engine as any)._syncLock = true;
+      expect(lifecycle.tryAcquireSync()).toBe(true);
 
       await expect(engine.sync()).rejects.toThrow('Sync operation is already in progress');
 
-      // Reset the lock.
-      (engine as any)._syncLock = false;
+      lifecycle.releaseSync();
     });
   });
 
@@ -403,8 +402,8 @@ describe('SyncEngineLevel — identity management', () => {
       const clock = sinon.useFakeTimers();
       try {
         const engine = new SyncEngineLevel({ db });
-        (engine as any)._syncLock = true;
-        (engine as any)._syncLockCompletion = new Promise<void>(() => {});
+        const lifecycle = (engine as any)._lifecycle;
+        expect(lifecycle.tryAcquireSync()).toBe(true);
 
         // Start stopSync but don't await — it will wait until timeout.
         let caught: Error | undefined;
@@ -417,7 +416,7 @@ describe('SyncEngineLevel — identity management', () => {
         expect(caught).toBeDefined();
         expect(caught!.message).toContain('did not complete within');
 
-        (engine as any)._syncLock = false;
+        lifecycle.releaseSync();
       } finally {
         clock.restore();
       }
