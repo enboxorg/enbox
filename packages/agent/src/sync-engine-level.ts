@@ -72,17 +72,8 @@ const MAX_IN_FLIGHT_PULL_DELIVERIES = 100;
 /** Page size for local retained ProtocolsConfigure history scans. */
 const PROTOCOL_HISTORY_PAGE_LIMIT = 500;
 
-/** Tracks a live subscription to a remote DWN for one sync target. */
-type LiveSubscription = {
-  linkKey: string;
-  did: string;
-  dwnUrl: string;
-  delegateDid?: string;
-  close: () => Promise<void>;
-};
-
-/** Tracks a local EventLog subscription for push-on-write. */
-type LocalSubscription = {
+/** Tracks a closable per-link subscription (live remote pull or local push). */
+type SubscriptionHandle = {
   linkKey: string;
   did: string;
   dwnUrl: string;
@@ -255,8 +246,6 @@ type PermissionGrantBootstrapResult =
  * can complete before event A even though A was delivered first.
  */
 type InFlightCommit = {
-  /** Monotonic delivery ordinal for this link. */
-  ordinal: number;
   /** The token associated with this delivery. */
   token: ProgressToken;
   /** Whether replicated admission has completed successfully. */
@@ -400,10 +389,10 @@ export class SyncEngineLevel implements SyncEngine {
   private _engineGeneration = 0;
 
   /** Active live pull subscriptions (remote -> local via MessagesSubscribe). */
-  private _liveSubscriptions: LiveSubscription[] = [];
+  private _liveSubscriptions: SubscriptionHandle[] = [];
 
   /** Active local EventLog subscriptions for push-on-write (local -> remote). */
-  private _localSubscriptions: LocalSubscription[] = [];
+  private _localSubscriptions: SubscriptionHandle[] = [];
 
   /** Connectivity state derived from subscription health. */
   private _connectivityState: SyncConnectivityState = 'unknown';
@@ -1042,7 +1031,7 @@ export class SyncEngineLevel implements SyncEngine {
     try {
       const syncTargets = await this.getSyncTargets();
       const groupSummary = await this.syncTargetGroups(syncTargets, direction, options);
-      this.updateConnectivityAfterSync(syncTargets.length, groupSummary);
+      this.updateConnectivityAfterSync(groupSummary);
       SyncEngineLevel.assertSyncTargetGroupsSucceeded(groupSummary);
     } finally {
       this.releaseSyncLock();
@@ -1284,7 +1273,9 @@ export class SyncEngineLevel implements SyncEngine {
         remoteEndpoint : target.dwnUrl,
         scope          : target.scope,
         completed      : false,
-        cancelled      : getStopReason() === 'cancelled',
+        // Reached only when getStopReason() is undefined (the stop branch above
+        // returns first), so this drain ended on a genuine error, not a stop.
+        cancelled      : false,
         converged      : false,
         error          : SyncEngineLevel.errorMessage(error),
       };
@@ -1542,8 +1533,10 @@ export class SyncEngineLevel implements SyncEngine {
     summary.failedUrls.push(result.value.dwnUrl);
   }
 
-  private updateConnectivityAfterSync(syncTargetCount: number, summary: SyncTargetGroupSummary): void {
+  private updateConnectivityAfterSync(summary: SyncTargetGroupSummary): void {
     // If at least one group succeeded, stay online — partial reachability is still online.
+    // Every group is counted as exactly one of succeeded/failed, so when there are no
+    // groups (no targets) neither fires and connectivity is left unchanged.
     if (summary.groupsSucceeded > 0) {
       this.recordSyncSuccess();
       return;
@@ -1551,12 +1544,6 @@ export class SyncEngineLevel implements SyncEngine {
 
     if (summary.groupsFailed > 0) {
       this.recordSyncFailure();
-      return;
-    }
-
-    // No target required work.
-    if (syncTargetCount > 0) {
-      this.recordSyncSuccess();
     }
   }
 
@@ -1868,7 +1855,7 @@ export class SyncEngineLevel implements SyncEngine {
    * the post-repair checkpoint so the reopened subscription replays from
    * a valid boundary instead of starting live-only.
    */
-  private readonly _repairContext: Map<string, { resumeToken?: ProgressToken }> = new Map();
+  private readonly _repairContext: Map<string, ProgressToken> = new Map();
 
   /**
    * Central helper for transitioning a link to `repairing`. Encapsulates:
@@ -1891,7 +1878,7 @@ export class SyncEngineLevel implements SyncEngine {
     await this.setLinkOfflineStatus(link, 'repairing');
 
     if (options?.resumeToken) {
-      this._repairContext.set(linkKey, { resumeToken: options.resumeToken });
+      this._repairContext.set(linkKey, options.resumeToken);
     }
 
     // Clear runtime ordinals immediately — stale state must not linger
@@ -2092,8 +2079,7 @@ export class SyncEngineLevel implements SyncEngine {
       //   from a valid boundary, closing the race window between feed catch-up and resubscribe.
       // - Otherwise, use the existing contiguousAppliedToken if still valid.
       // The push checkpoint is independent of the pull resume token and remains intact.
-      const repairCtx = this._repairContext.get(linkKey);
-      const resumeToken = repairCtx?.resumeToken ?? link.pull.contiguousAppliedToken;
+      const resumeToken = this._repairContext.get(linkKey) ?? link.pull.contiguousAppliedToken;
       ReplicationLedger.resetCheckpoint(link.pull, resumeToken);
       await this.ledger.saveLink(link);
       if (this._engineGeneration !== generation || isStaleLink()) { return; }
@@ -3006,7 +2992,7 @@ export class SyncEngineLevel implements SyncEngine {
     const runtime = link ? this.getOrCreateRuntime(linkKey) : undefined;
     const ordinal = runtime ? runtime.nextDeliveryOrdinal++ : -1;
     if (runtime) {
-      runtime.inflight.set(ordinal, { ordinal, token: cursor, committed: false });
+      runtime.inflight.set(ordinal, { token: cursor, committed: false });
     }
     return { runtime, ordinal };
   }
@@ -4982,7 +4968,7 @@ export class SyncEngineLevel implements SyncEngine {
       protocol           : protocol ?? previous?.protocol,
       projectionId       : identity.projectionId,
       remoteEndpoint     : target.dwnUrl,
-      source             : source ?? previous?.source,
+      source,
       tenantDid          : target.did,
       firstBlockedAt     : previous?.firstBlockedAt ?? new Date(now).toISOString(),
       lastBlockedAt      : new Date(now).toISOString(),
@@ -6189,7 +6175,6 @@ export class SyncEngineLevel implements SyncEngine {
       nextProbeAt?: string;
       lastError?: string;
       lastErrorAt?: string;
-      lastBlockedAt?: string;
       lastActivityAt?: string;
     };
     const rows = new Map<string, Accumulator>();
@@ -6230,8 +6215,9 @@ export class SyncEngineLevel implements SyncEngine {
       const row = rowFor(state.tenantDid, state.remoteEndpoint);
       row.quotaBlockedMessageCount++;
       row.nextProbeAt = SyncEngineLevel.earliestTimestamp(row.nextProbeAt, state.nextProbeAt);
-      if (row.lastBlockedAt === undefined || lexicographicalCompare(state.lastBlockedAt, row.lastBlockedAt) > 0) {
-        row.lastBlockedAt = state.lastBlockedAt;
+      // Quota blocks feed lastErrorAt directly; blocked-at and error-at coincide here
+      // and only diverge once the dead-letter loop below records a later failure.
+      if (row.lastErrorAt === undefined || lexicographicalCompare(state.lastBlockedAt, row.lastErrorAt) > 0) {
         row.lastErrorAt = state.lastBlockedAt;
         row.lastError = state.detail;
       }
