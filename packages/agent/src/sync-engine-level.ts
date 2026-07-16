@@ -39,6 +39,7 @@ import type {
   SyncMode,
   SyncScope,
 } from './types/sync.js';
+import type { SyncEndpointDiscovery, SyncTarget } from './sync-target-resolver.js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 
@@ -52,9 +53,10 @@ import { ReplicationLedger } from './sync-replication-ledger.js';
 import { SyncEndpointStoreLevel } from './sync-endpoint-store-level.js';
 import { SyncIdentityStoreLevel } from './sync-identity-store-level.js';
 import { SyncTaskGroup } from './sync-task-group.js';
-import { computeAuthorizationEpoch, computeProjectionId, isQuotaBlockedPushFailure, isTerminalPushFailure, lexicographicalCompare, protocolsForSyncScope, pushBatchReconcileReason, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
+import { computeProjectionId, isQuotaBlockedPushFailure, isTerminalPushFailure, lexicographicalCompare, protocolsForSyncScope, pushBatchReconcileReason, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
 import { fetchRemoteMessages, getLocalMessage, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, SyncPullAbortedError } from './sync-messages.js';
-import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, resolveMessagesScopes, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds, toSyncAuthorizationGrants } from './sync-permission-grants.js';
+import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
+import { normalizeDwnEndpoint, SyncTargetResolver } from './sync-target-resolver.js';
 
 export type SyncEngineLevelParams = {
   agent?: EnboxPlatformAgent;
@@ -87,19 +89,6 @@ type SubscriptionHandle = {
   delegateDid?: string;
   close: () => Promise<void>;
 };
-
-type SyncTarget = {
-  did: string;
-  dwnUrl: string;
-  delegateDid?: string;
-  projectionId: string;
-  scope: SyncScope;
-  authorization: SyncAuthorization;
-  authorizationEpoch: string;
-  permissionGrantIds?: NonEmptyStringArray;
-};
-
-type SyncTargetResolution = Pick<SyncTarget, 'authorization' | 'authorizationEpoch' | 'delegateDid' | 'permissionGrantIds' | 'scope'>;
 
 type LinkSyncTarget = SyncTarget & { linkKey: string };
 
@@ -368,6 +357,7 @@ export class SyncEngineLevel implements SyncEngine {
   private readonly _db: AbstractLevel<string | Buffer | Uint8Array>;
   private readonly _endpointStore: SyncEndpointStore;
   private readonly _identityStore: SyncIdentityStore;
+  private _targetResolver?: SyncTargetResolver;
   private _syncIntervalId?: ReturnType<typeof setInterval>;
   private _syncLock = false;
   private _syncLockCompletion: Promise<void> = Promise.resolve();
@@ -724,61 +714,6 @@ export class SyncEngineLevel implements SyncEngine {
       .join(', ');
   }
 
-  private async buildSyncTargetsForEndpoint(did: string, dwnUrl: string, options: SyncIdentityOptions): Promise<SyncTarget[]> {
-    const requestedScope = syncScopeFromProtocols(options.protocols);
-    const resolutions = await this.buildSyncTargetResolutions(did, requestedScope, options);
-
-    return Promise.all(resolutions.map(async (resolution) => ({
-      did,
-      dwnUrl,
-      projectionId: await computeProjectionId(did, resolution.scope),
-      ...resolution,
-    })));
-  }
-
-  private async buildSyncTargetResolutions(did: string, requestedScope: SyncScope, options: SyncIdentityOptions): Promise<SyncTargetResolution[]> {
-    const { delegateDid } = options;
-
-    if (delegateDid === undefined) {
-      return [{
-        scope              : requestedScope,
-        authorization      : { kind: 'owner' },
-        authorizationEpoch : await computeAuthorizationEpoch({ kind: 'owner' }),
-      }];
-    }
-
-    const resolvedScopes = await resolveMessagesScopes({
-      did,
-      delegateDid,
-      requestedScope,
-      messageType    : DwnInterface.MessagesQuery,
-      permissionsApi : this._permissionsApi,
-    });
-
-    return Promise.all(resolvedScopes.map(async ({ scope, permissionGrants }) => {
-      const permissionGrantIds = permissionGrantIdsFromEntries(permissionGrants);
-      if (permissionGrantIds === undefined) {
-        throw new Error(`SyncEngineLevel: delegate ${delegateDid} has no active sync grants for ${did}.`);
-      }
-
-      return {
-        scope,
-        delegateDid,
-        authorization: {
-          kind: 'delegate' as const,
-          delegateDid,
-          permissionGrantIds,
-        },
-        authorizationEpoch: await computeAuthorizationEpoch({
-          kind   : 'delegate' as const,
-          delegateDid,
-          grants : toSyncAuthorizationGrants(permissionGrants),
-        }),
-        permissionGrantIds,
-      };
-    }));
-  }
-
   /**
    * Cached sync targets result from the last {@link getSyncTargets} call.
    * Invalidated on identity registration/unregistration/update.
@@ -840,6 +775,17 @@ export class SyncEngineLevel implements SyncEngine {
     return this._ledger;
   }
 
+  /** Lazy accessor bound to the current agent and permissions context. */
+  private get targetResolver(): SyncTargetResolver {
+    this._targetResolver ??= new SyncTargetResolver({
+      endpointStore        : this._endpointStore,
+      getEndpointDiscovery : (): SyncEndpointDiscovery => this.agent.dwn,
+      permissionsApi       : this._permissionsApi,
+    });
+
+    return this._targetResolver;
+  }
+
   /** LevelDB sublevel for permanently failed messages (dead letters). */
   private get _deadLetters(): AbstractLevel<string | Buffer | Uint8Array, string, string> {
     return this._db.sublevel('deadLetters') as unknown as AbstractLevel<string | Buffer | Uint8Array, string, string>;
@@ -882,6 +828,7 @@ export class SyncEngineLevel implements SyncEngine {
   set agent(agent: EnboxPlatformAgent) {
     this._agent = agent;
     this._permissionsApi = new AgentPermissionsApi({ agent });
+    this._targetResolver = undefined;
     // Cached sync targets were resolved through the previous agent's
     // DID resolver / endpoint lookup — invalidate so the next sync
     // tick re-resolves through the new agent.
@@ -1091,7 +1038,7 @@ export class SyncEngineLevel implements SyncEngine {
       throw new Error('SyncEngineLevel: Sync operation is already in progress.');
     }
 
-    const normalizedEndpoint = SyncEngineLevel.normalizeDwnEndpoint(endpoint);
+    const normalizedEndpoint = normalizeDwnEndpoint(endpoint);
     if (options.signal?.aborted === true) {
       return {
         endpoint        : normalizedEndpoint,
@@ -1189,7 +1136,7 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       try {
-        plan.targets.push(...await this.buildSyncTargetsForEndpoint(entry.did, remoteEndpoint, entry.options));
+        plan.targets.push(...await this.targetResolver.buildTargetsForEndpoint(entry.did, remoteEndpoint, entry.options));
       } catch (error: unknown) {
         plan.failures.push({
           tenantDid : entry.did,
@@ -1450,24 +1397,6 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  private static normalizeDwnEndpoint(endpoint: string): string {
-    let url: URL;
-    try {
-      url = new URL(endpoint);
-    } catch {
-      throw new Error('SyncEngineLevel: drain endpoint must be a valid URL.');
-    }
-
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-      throw new Error('SyncEngineLevel: drain endpoint must use http or https.');
-    }
-
-    url.hash = '';
-    url.search = '';
-    const normalized = url.toString();
-    return normalized.endsWith('/') ? normalized.slice(0, -1) : normalized;
-  }
-
   private async registerSupplementalDwnEndpoint(endpoint: string): Promise<void> {
     const existing = await this._endpointStore.get();
     if (existing === endpoint) {
@@ -1476,51 +1405,6 @@ export class SyncEngineLevel implements SyncEngine {
 
     await this._endpointStore.set(endpoint);
     this.invalidateSyncTargetsCache();
-  }
-
-  private async getSyncEndpointUrls(did: string): Promise<string[]> {
-    let supplementalEndpoint = await this._endpointStore.get();
-    const activeLocalEndpoint = this.agent.dwn.localDwnEndpoint;
-    if (
-      supplementalEndpoint !== undefined
-      && this.agent.dwn.isRemoteMode
-      && (activeLocalEndpoint === undefined ||
-        SyncEngineLevel.normalizeDwnEndpoint(activeLocalEndpoint) === SyncEngineLevel.normalizeDwnEndpoint(supplementalEndpoint))
-    ) {
-      // After the session-boundary flip, the persisted handoff endpoint is
-      // the agent's local side. It must never also be scheduled as a remote
-      // replication target, regardless of the configured discovery strategy.
-      supplementalEndpoint = undefined;
-    }
-    let resolvedEndpoints: string[];
-    try {
-      resolvedEndpoints = await this.agent.dwn.getRemoteDwnEndpointUrls(did);
-    } catch (error: unknown) {
-      if (supplementalEndpoint === undefined) {
-        throw error;
-      }
-      resolvedEndpoints = [];
-    }
-
-    const endpointsByKey = new Map<string, string>();
-    for (const endpoint of [supplementalEndpoint, ...resolvedEndpoints]) {
-      if (endpoint === undefined) {
-        continue;
-      }
-
-      let key = endpoint;
-      try {
-        key = SyncEngineLevel.normalizeDwnEndpoint(endpoint);
-      } catch {
-        // Endpoint validation still occurs at the transport boundary. This key
-        // is only used to avoid duplicating an equivalent supplemental URL.
-      }
-      if (!endpointsByKey.has(key)) {
-        endpointsByKey.set(key, endpoint);
-      }
-    }
-
-    return [...endpointsByKey.values()];
   }
 
   private static errorMessage(error: unknown): string {
@@ -2800,12 +2684,12 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Hot-add a single identity to the active live sync session. */
   private async addIdentityToLiveSync(did: string, options: SyncIdentityOptions): Promise<Set<string>> {
-    const dwnEndpointUrls = await this.getSyncEndpointUrls(did);
+    const dwnEndpointUrls = await this.targetResolver.getEndpointUrls(did);
     if (dwnEndpointUrls.length === 0) { return new Set(); }
 
     const targets: SyncTarget[] = [];
     for (const dwnUrl of dwnEndpointUrls) {
-      targets.push(...await this.buildSyncTargetsForEndpoint(did, dwnUrl, options));
+      targets.push(...await this.targetResolver.buildTargetsForEndpoint(did, dwnUrl, options));
     }
 
     const results = await Promise.allSettled(targets.map(t => this.initializeLinkTargetWithRetry(t)));
@@ -2912,7 +2796,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   private async getDurableLinkIdentityKeysForRegisteredIdentity(did: string, options: SyncIdentityOptions): Promise<Set<string>> {
     const scope = syncScopeFromProtocols(options.protocols);
-    const resolutions = await this.buildSyncTargetResolutions(did, scope, options);
+    const resolutions = await this.targetResolver.buildTargetResolutions(did, scope, options);
     const keys = new Set<string>();
     for (const resolution of resolutions) {
       const projectionId = await computeProjectionId(did, resolution.scope);
@@ -6707,7 +6591,7 @@ export class SyncEngineLevel implements SyncEngine {
         }
 
         const scope = syncScopeFromProtocols(entry.options.protocols);
-        const resolutions = await this.buildSyncTargetResolutions(entry.did, scope, entry.options);
+        const resolutions = await this.targetResolver.buildTargetResolutions(entry.did, scope, entry.options);
         for (const resolution of resolutions) {
           const projectionId = await computeProjectionId(entry.did, resolution.scope);
           identityKeys.add(SyncEngineLevel.durableLinkIdentityKey(entry.did, projectionId, resolution.authorizationEpoch));
@@ -6797,7 +6681,7 @@ export class SyncEngineLevel implements SyncEngine {
     did: string,
     options: SyncIdentityOptions,
   ): Promise<{ targets: SyncTarget[]; unavailable: boolean }> {
-    const dwnEndpointUrls = await this.getSyncEndpointUrls(did);
+    const dwnEndpointUrls = await this.targetResolver.getEndpointUrls(did);
     if (dwnEndpointUrls.length === 0) {
       return { targets: [], unavailable: true };
     }
@@ -6806,7 +6690,7 @@ export class SyncEngineLevel implements SyncEngine {
     let unavailable = false;
     for (const dwnUrl of dwnEndpointUrls) {
       try {
-        targets.push(...await this.buildSyncTargetsForEndpoint(did, dwnUrl, options));
+        targets.push(...await this.targetResolver.buildTargetsForEndpoint(did, dwnUrl, options));
       } catch (error: unknown) {
         unavailable = true;
         console.warn(`SyncEngineLevel: Unable to resolve sync targets for ${did} at ${dwnUrl}, skipping identity endpoint:`, error);

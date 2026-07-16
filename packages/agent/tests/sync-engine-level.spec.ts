@@ -388,8 +388,8 @@ describe('SyncEngineLevel', () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: db as any });
       const internal = syncEngine as any;
       const currentTarget = target('https://a.example');
-      sinon.stub(internal, 'getSyncEndpointUrls').resolves([currentTarget.dwnUrl]);
-      sinon.stub(internal, 'buildSyncTargetsForEndpoint').resolves([currentTarget]);
+      sinon.stub(internal.targetResolver, 'getEndpointUrls').resolves([currentTarget.dwnUrl]);
+      sinon.stub(internal.targetResolver, 'buildTargetsForEndpoint').resolves([currentTarget]);
 
       let resolveIteratorStarted!: () => void;
       let resumeIterator!: () => void;
