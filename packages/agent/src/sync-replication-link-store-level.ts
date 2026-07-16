@@ -159,11 +159,11 @@ export class SyncReplicationLinkStoreLevel implements SyncReplicationLinkStore {
   }
 
   private static cloneCheckpoint(checkpoint: DirectionCheckpoint): DirectionCheckpoint {
-    return JSON.parse(JSON.stringify(checkpoint)) as DirectionCheckpoint;
+    return structuredClone(checkpoint);
   }
 
   private static cloneLink(link: ReplicationLinkState): ReplicationLinkState {
-    return JSON.parse(JSON.stringify(link)) as ReplicationLinkState;
+    return structuredClone(link);
   }
 
   private async getLink(key: string): Promise<ReplicationLinkState | undefined> {

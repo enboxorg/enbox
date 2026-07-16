@@ -741,7 +741,6 @@ describe('SyncEngineLevel — identity management', () => {
       }));
       sinon.stub(engine as any, 'ledger').get(() => ({
         getOrCreateLink : ledgerStub,
-        saveLink        : sinon.stub().resolves(),
         setStatus       : sinon.stub().resolves(),
       }));
       sinon.stub(engine as any, 'openLivePullSubscription').resolves();
@@ -779,7 +778,6 @@ describe('SyncEngineLevel — identity management', () => {
       }));
       sinon.stub(engine as any, 'ledger').get(() => ({
         getOrCreateLink : ledgerStub,
-        saveLink        : sinon.stub().resolves(),
         setStatus       : sinon.stub().resolves(),
       }));
       sinon.stub(engine as any, 'openLivePullSubscription').resolves();
@@ -810,8 +808,7 @@ describe('SyncEngineLevel — identity management', () => {
           pull               : {},
           connectivity       : 'unknown',
         })),
-        saveLink  : sinon.stub().resolves(),
-        setStatus : sinon.stub().resolves(),
+        setStatus: sinon.stub().resolves(),
       }));
 
       const pullCloseSpy = sinon.stub().resolves();
@@ -848,8 +845,7 @@ describe('SyncEngineLevel — identity management', () => {
           pull               : {},
           connectivity       : 'unknown',
         })),
-        saveLink  : sinon.stub().resolves(),
-        setStatus : sinon.stub().resolves(),
+        setStatus: sinon.stub().resolves(),
       }));
 
       // The remote DWN rate-limits the MessagesSubscribe with a long Retry-After
@@ -892,8 +888,7 @@ describe('SyncEngineLevel — identity management', () => {
           pull               : {},
           connectivity       : 'unknown',
         })),
-        saveLink  : sinon.stub().resolves(),
-        setStatus : sinon.stub().resolves(),
+        setStatus: sinon.stub().resolves(),
       }));
 
       // Rate-limited on the first attempt, succeeds on the scheduled reattempt.

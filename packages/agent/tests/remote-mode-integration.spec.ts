@@ -227,7 +227,7 @@ describe('Agent remote mode integration', () => {
     expect(link.pull.contiguousAppliedToken.messageCid).toBeDefined();
   });
 
-  it('preserves both checkpoints when live pull overlaps a durable push', async () => {
+  it('persists both checkpoints across live pull and durable push activity', async () => {
     context = await setupRemoteModeContext('concurrent-checkpoints');
     const { alice, remoteServer, testHarness } = context;
     const syncEngine = testHarness.agent.sync as any;

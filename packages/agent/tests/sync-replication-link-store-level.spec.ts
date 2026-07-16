@@ -175,6 +175,59 @@ describe('SyncReplicationLinkStoreLevel', () => {
     expect(persisted.push).toEqual(pushLink.push);
   });
 
+  it('should allow different-link mutations to proceed independently', async () => {
+    const firstLink = makeLink();
+    const secondLink = { ...makeLink(), remoteEndpoint: 'https://other-dwn.example.com' };
+    firstLink.pull = { contiguousAppliedToken: token(1), receivedToken: token(1) };
+    secondLink.push = { contiguousAppliedToken: token(2), receivedToken: token(2) };
+    const firstKey = `${firstLink.tenantDid}^${firstLink.remoteEndpoint}^${firstLink.projectionId}^${firstLink.authorizationEpoch}`;
+    const secondKey = `${secondLink.tenantDid}^${secondLink.remoteEndpoint}^${secondLink.projectionId}^${secondLink.authorizationEpoch}`;
+    const storedValues = new Map<string, string>([
+      [firstKey, JSON.stringify(makeLink())],
+      [secondKey, JSON.stringify({ ...makeLink(), remoteEndpoint: secondLink.remoteEndpoint })],
+    ]);
+    const firstPutStarted = createDeferred();
+    const releaseFirstPut = createDeferred();
+    let firstPutCompleted = false;
+    const links = {
+      get: async (key: string): Promise<string> => {
+        const value = storedValues.get(key);
+        if (value === undefined) {
+          throw new Error(`Unexpected key: ${key}`);
+        }
+        return value;
+      },
+      put: async (key: string, value: string): Promise<void> => {
+        if (key === firstKey) {
+          firstPutStarted.resolve();
+          await releaseFirstPut.promise;
+          firstPutCompleted = true;
+        }
+        storedValues.set(key, value);
+      },
+    };
+    const fakeDb = {
+      sublevel: (): typeof links => links,
+    } as unknown as AbstractLevel<string | Buffer | Uint8Array>;
+    const independentStore = new SyncReplicationLinkStoreLevel(fakeDb);
+
+    const firstPersistence = independentStore.persistCheckpoint(firstLink, 'pull');
+    await firstPutStarted.promise;
+
+    try {
+      await independentStore.persistCheckpoint(secondLink, 'push');
+      expect(firstPutCompleted).toBe(false);
+      const storedSecondLink = storedValues.get(secondKey);
+      if (storedSecondLink === undefined) {
+        throw new Error('The independent mutation did not persist its link.');
+      }
+      expect(JSON.parse(storedSecondLink)).toMatchObject({ push: secondLink.push });
+    } finally {
+      releaseFirstPut.resolve();
+      await firstPersistence;
+    }
+  });
+
   it('should surface a failed mutation without poisoning later same-link work', async () => {
     const expectedError = new Error('write failed');
     const link = makeLink();
@@ -206,7 +259,43 @@ describe('SyncReplicationLinkStoreLevel', () => {
     expect(persisted.push).toEqual(link.push);
   });
 
-  it('should reset one direction without replacing the other direction', async () => {
+  it('should use the active link when its stored record disappears before a mutation', async () => {
+    const link = makeLink();
+    link.pull = { contiguousAppliedToken: token(1), receivedToken: token(2) };
+    link.push = { contiguousAppliedToken: token(3), receivedToken: token(4) };
+    link.connectivity = 'offline';
+    let storedValue: string | undefined;
+    const links = {
+      get: async (): Promise<string> => {
+        throw Object.assign(new Error('Link not found'), { code: 'LEVEL_NOT_FOUND' });
+      },
+      put: async (_key: string, value: string): Promise<void> => {
+        storedValue = value;
+      },
+    };
+    const fakeDb = {
+      sublevel: (): typeof links => links,
+    } as unknown as AbstractLevel<string | Buffer | Uint8Array>;
+    const fallbackStore = new SyncReplicationLinkStoreLevel(fakeDb);
+
+    await fallbackStore.persistCheckpoint(link, 'pull');
+
+    if (storedValue === undefined) {
+      throw new Error('The fallback mutation did not persist the active link.');
+    }
+    const persisted = JSON.parse(storedValue) as ReplicationLinkState;
+    expect(persisted).toMatchObject({
+      connectivity   : 'offline',
+      projectionId   : link.projectionId,
+      pull           : link.pull,
+      push           : link.push,
+      remoteEndpoint : link.remoteEndpoint,
+      status         : link.status,
+      tenantDid      : link.tenantDid,
+    });
+  });
+
+  it('should reset one direction while retaining the other checkpoint', async () => {
     const link = await store.getOrCreateLink({
       tenantDid      : 'did:example:alice',
       remoteEndpoint : 'https://dwn.example.com',
@@ -218,17 +307,49 @@ describe('SyncReplicationLinkStoreLevel', () => {
     await store.persistCheckpoint(link, 'pull');
     await store.persistCheckpoint(link, 'push');
 
-    const staleLink = await store.getOrCreateLink({
+    const linkToReset = await store.getOrCreateLink({
       tenantDid      : 'did:example:alice',
       remoteEndpoint : 'https://dwn.example.com',
       scope          : { kind: 'full' },
       ...ownerAuthorization,
     });
-    await store.resetCheckpoint(staleLink, 'pull');
+    await store.resetCheckpoint(linkToReset, 'pull');
 
     const [persisted] = await store.getAllLinks();
     expect(persisted.pull).toEqual({});
     expect(persisted.push).toEqual(link.push);
+  });
+
+  it('should reset both checkpoints without replacing current link status', async () => {
+    const link = await store.getOrCreateLink({
+      tenantDid      : 'did:example:alice',
+      remoteEndpoint : 'https://dwn.example.com',
+      scope          : { kind: 'full' },
+      ...ownerAuthorization,
+    });
+    link.pull = { contiguousAppliedToken: token(10), receivedToken: token(11) };
+    link.push = { contiguousAppliedToken: token(20), receivedToken: token(21) };
+    await store.persistCheckpoint(link, 'pull');
+    await store.persistCheckpoint(link, 'push');
+
+    const statusLink = await store.getOrCreateLink({
+      tenantDid      : 'did:example:alice',
+      remoteEndpoint : 'https://dwn.example.com',
+      scope          : { kind: 'full' },
+      ...ownerAuthorization,
+    });
+    statusLink.connectivity = 'offline';
+    await store.setStatus(statusLink, 'repairing');
+
+    await store.resetCheckpoints(link);
+
+    expect(link.pull).toEqual({});
+    expect(link.push).toEqual({});
+    const [persisted] = await store.getAllLinks();
+    expect(persisted.pull).toEqual({});
+    expect(persisted.push).toEqual({});
+    expect(persisted.status).toBe('repairing');
+    expect(persisted.connectivity).toBe('offline');
   });
 
   it('should reload both directional checkpoints after storage restart', async () => {
