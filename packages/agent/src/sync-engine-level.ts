@@ -2843,29 +2843,22 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
 
-    for (const key of this._repairAttempts.keys()) {
-      if (this.isLinkKeyForDid(key, did)) { this._repairAttempts.delete(key); }
-    }
-    for (const key of this._activeRepairs.keys()) {
-      if (this.isLinkKeyForDid(key, did)) { this._activeRepairs.delete(key); }
-    }
-    for (const key of this._repairContext.keys()) {
-      if (this.isLinkKeyForDid(key, did)) { this._repairContext.delete(key); }
-    }
-    for (const key of this._feedConvergenceFailures.keys()) {
-      if (this.isLinkKeyForDid(key, did)) { this._feedConvergenceFailures.delete(key); }
-    }
-    for (const key of this._reconcileInFlight.keys()) {
-      if (this.isLinkKeyForDid(key, did)) { this._reconcileInFlight.delete(key); }
-    }
-    for (const key of this._reconcileTimerDueAt.keys()) {
-      if (this.isLinkKeyForDid(key, did)) { this._reconcileTimerDueAt.delete(key); }
-    }
-    for (const key of this._activeLinks.keys()) {
-      if (this.isLinkKeyForDid(key, did)) { this._activeLinks.delete(key); }
-    }
-    for (const key of this._linkRuntimes.keys()) {
-      if (this.isLinkKeyForDid(key, did)) { this._linkRuntimes.delete(key); }
+    this.deleteLinkKeyedEntriesForDid(this._repairAttempts, did);
+    this.deleteLinkKeyedEntriesForDid(this._activeRepairs, did);
+    this.deleteLinkKeyedEntriesForDid(this._repairContext, did);
+    this.deleteLinkKeyedEntriesForDid(this._feedConvergenceFailures, did);
+    this.deleteLinkKeyedEntriesForDid(this._reconcileInFlight, did);
+    this.deleteLinkKeyedEntriesForDid(this._reconcileTimerDueAt, did);
+    this.deleteLinkKeyedEntriesForDid(this._activeLinks, did);
+    this.deleteLinkKeyedEntriesForDid(this._linkRuntimes, did);
+  }
+
+  /** Delete every entry whose link key belongs to `did` from a link-keyed map. */
+  private deleteLinkKeyedEntriesForDid<V>(map: Map<string, V>, did: string): void {
+    for (const key of map.keys()) {
+      if (this.isLinkKeyForDid(key, did)) {
+        map.delete(key);
+      }
     }
   }
 
