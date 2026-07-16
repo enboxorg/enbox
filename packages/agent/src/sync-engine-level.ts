@@ -13,6 +13,7 @@ import type { PermissionsApi } from './types/permissions.js';
 import type { SyncEndpointStore } from './sync-endpoint-store.js';
 import type { SyncIdentityStore } from './sync-identity-store.js';
 import type { SyncMessageEntry } from './sync-messages.js';
+import type { SyncReplicationLinkStore } from './sync-replication-link-store.js';
 import type {
   DeadLetterCategory,
   DeadLetterEntry,
@@ -27,6 +28,7 @@ import type {
   StartSyncParams,
   SyncAuthorization,
   SyncConnectivityState,
+  SyncDirection,
   SyncDrainOptions,
   SyncDrainResult,
   SyncDrainTargetResult,
@@ -49,10 +51,11 @@ import { classifySyncEventScope } from './sync-scope-acceptance.js';
 import { DwnInterface } from './types/dwn.js';
 import { getProtocolClosureEdges } from './sync-scope-closure.js';
 import { isRecordsWrite } from './utils.js';
-import { ReplicationLedger } from './sync-replication-ledger.js';
+import { SyncCheckpoint } from './sync-checkpoint.js';
 import { SyncEndpointStoreLevel } from './sync-endpoint-store-level.js';
 import { SyncIdentityStoreLevel } from './sync-identity-store-level.js';
 import { SyncLifecycleCoordinator } from './sync-lifecycle-coordinator.js';
+import { SyncReplicationLinkStoreLevel } from './sync-replication-link-store-level.js';
 import { SyncTargetPlanner } from './sync-target-planner.js';
 import { computeProjectionId, isQuotaBlockedPushFailure, isTerminalPushFailure, lexicographicalCompare, protocolsForSyncScope, pushBatchReconcileReason, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
 import { fetchRemoteMessages, getLocalMessage, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, SyncPullAbortedError } from './sync-messages.js';
@@ -106,8 +109,6 @@ enum LinkInitializationStatus {
 type LinkInitializationResult =
   | { status: LinkInitializationStatus.Active; durableLinkIdentityKey: string }
   | { status: LinkInitializationStatus.Failed };
-
-type SyncDirection = 'push' | 'pull';
 
 type SyncReconcileOptions = {
   direction?: SyncDirection;
@@ -368,7 +369,7 @@ export class SyncEngineLevel implements SyncEngine {
    * Used by live sync to track pull progression per link.
    * Lazily initialized on first use to avoid sublevel() calls on mock dbs.
    */
-  private _ledger?: ReplicationLedger;
+  private _ledger?: SyncReplicationLinkStore;
 
   /**
    * In-memory cache of active links, keyed by `{did}^{dwnUrl}^{protocol}`.
@@ -739,9 +740,9 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /** Lazy accessor for the replication ledger. */
-  private get ledger(): ReplicationLedger {
+  private get ledger(): SyncReplicationLinkStore {
     if (!this._ledger) {
-      this._ledger = new ReplicationLedger(this._db);
+      this._ledger = new SyncReplicationLinkStoreLevel(this._db);
     }
     return this._ledger;
   }
@@ -777,7 +778,7 @@ export class SyncEngineLevel implements SyncEngine {
     await this._deferredPulls.clear();
     await this._quotaBlocks.clear();
     await this._identityStore.clear();
-    await this._db.sublevel('replicationLinks').clear();
+    await this.ledger.clear();
     await this._endpointStore.clear();
     await this._db.clear();
   }
@@ -1774,12 +1775,12 @@ export class SyncEngineLevel implements SyncEngine {
       if (!entry?.committed) { break; }
 
       // This ordinal is committed — advance the durable checkpoint.
-      ReplicationLedger.commitContiguousToken(link.pull, entry.token);
-      ReplicationLedger.setReceivedToken(link.pull, entry.token);
+      SyncCheckpoint.commitContiguousToken(link.pull, entry.token);
+      SyncCheckpoint.setReceivedToken(link.pull, entry.token);
       rt.inflight.delete(rt.nextCommitOrdinal);
       rt.nextCommitOrdinal++;
       drained++;
-      // Note: checkpoint:pull-advance event is emitted AFTER saveLink succeeds
+      // Note: checkpoint:pull-advance is emitted after checkpoint persistence
       // in the caller, not here. "Advanced" means durably persisted.
     }
 
@@ -2053,8 +2054,7 @@ export class SyncEngineLevel implements SyncEngine {
       // - Otherwise, use the existing contiguousAppliedToken if still valid.
       // The push checkpoint is independent of the pull resume token and remains intact.
       const resumeToken = this._repairContext.get(linkKey) ?? link.pull.contiguousAppliedToken;
-      ReplicationLedger.resetCheckpoint(link.pull, resumeToken);
-      await this.ledger.saveLink(link);
+      await this.ledger.resetCheckpoint(link, 'pull', resumeToken);
       if (this._engineGeneration !== generation || isStaleLink()) { return; }
 
       // Step 5: Reopen subscriptions.
@@ -2074,8 +2074,7 @@ export class SyncEngineLevel implements SyncEngine {
       } catch (pullErr: any) {
         if (pullErr.isProgressGap) {
           console.warn(`SyncEngineLevel: Stale pull resume token for ${did} -> ${dwnUrl}, resetting to start fresh`);
-          ReplicationLedger.resetCheckpoint(link.pull);
-          await this.ledger.saveLink(link);
+          await this.ledger.resetCheckpoint(link, 'pull');
           if (this._engineGeneration !== generation || isStaleLink()) { return; }
           await this.openLivePullSubscription(target);
         } else {
@@ -2846,8 +2845,7 @@ export class SyncEngineLevel implements SyncEngine {
     // MessagesSubscribe JSON schema validation (minLength: 1). Discard and
     // start from the beginning rather than crash the subscription.
     console.warn(`SyncEngineLevel: Discarding stored cursor with empty field(s) for ${did} -> ${dwnUrl}`);
-    ReplicationLedger.resetCheckpoint(link.pull);
-    await this.ledger.saveLink(link);
+    await this.ledger.resetCheckpoint(link, 'pull');
     return undefined;
   }
 
@@ -2897,15 +2895,15 @@ export class SyncEngineLevel implements SyncEngine {
         return;
       }
 
-      if (!ReplicationLedger.validateTokenDomain(link.pull, subMessage.cursor)) {
+      if (!SyncCheckpoint.validateTokenDomain(link.pull, subMessage.cursor)) {
         console.warn(`SyncEngineLevel: Token domain mismatch on EOSE for ${did} -> ${dwnUrl}, transitioning to repairing`);
         if (!isStale()) { await this.transitionToRepairing(linkKey, link); }
         return;
       }
-      ReplicationLedger.setReceivedToken(link.pull, subMessage.cursor);
+      SyncCheckpoint.setReceivedToken(link.pull, subMessage.cursor);
       this.drainCommittedPull(linkKey);
       if (isStale()) { return; }
-      await this.ledger.saveLink(link);
+      await this.ledger.persistCheckpoint(link, 'pull');
     }
 
     this.markPullLinkOnline({ did, dwnUrl, eventScope, link });
@@ -3009,7 +3007,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     // Domain validation: reject tokens from a different stream/epoch.
-    if (link && !ReplicationLedger.validateTokenDomain(link.pull, subMessage.cursor)) {
+    if (link && !SyncCheckpoint.validateTokenDomain(link.pull, subMessage.cursor)) {
       console.warn(`SyncEngineLevel: Token domain mismatch for ${did} -> ${dwnUrl}, transitioning to repairing`);
       if (!isStale()) { await this.transitionToRepairing(linkKey, link); }
       return true;
@@ -3042,9 +3040,9 @@ export class SyncEngineLevel implements SyncEngine {
     // this scope and doesn't need processing.
     if (isStale()) { return; }
 
-    ReplicationLedger.setReceivedToken(link.pull, cursor);
-    ReplicationLedger.commitContiguousToken(link.pull, cursor);
-    await this.ledger.saveLink(link);
+    SyncCheckpoint.setReceivedToken(link.pull, cursor);
+    SyncCheckpoint.commitContiguousToken(link.pull, cursor);
+    await this.ledger.persistCheckpoint(link, 'pull');
   }
 
   private startPullDelivery({ linkKey, link }: LivePullContext, cursor: ProgressToken): PullDelivery {
@@ -3196,10 +3194,10 @@ export class SyncEngineLevel implements SyncEngine {
     const entry = delivery.runtime.inflight.get(delivery.ordinal);
     if (entry) { entry.committed = true; }
 
-    ReplicationLedger.setReceivedToken(link.pull, cursor);
+    SyncCheckpoint.setReceivedToken(link.pull, cursor);
     const drained = this.drainCommittedPull(linkKey);
     if (drained > 0) {
-      await this.ledger.saveLink(link);
+      await this.ledger.persistCheckpoint(link, 'pull');
       this.emitCheckpointAdvance(link, 'pull');
     }
 
@@ -3209,7 +3207,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  private emitCheckpointAdvance(link: ReplicationLinkState, direction: 'pull' | 'push'): void {
+  private emitCheckpointAdvance(link: ReplicationLinkState, direction: SyncDirection): void {
     const token = link[direction].contiguousAppliedToken;
     if (token === undefined) {
       return;
@@ -3782,9 +3780,7 @@ export class SyncEngineLevel implements SyncEngine {
     const activeLink = this._activeLinks.get(linkKey);
     const link = activeLink ?? ledgerLink;
 
-    ReplicationLedger.resetCheckpoint(link.pull);
-    ReplicationLedger.resetCheckpoint(link.push);
-    await this.ledger.saveLink(link);
+    await this.ledger.resetCheckpoints(link);
 
     if (activeLink?.status === 'live') {
       this.scheduleLinkReconcile(linkKey, activeLink, reason, 0);
@@ -4824,19 +4820,18 @@ export class SyncEngineLevel implements SyncEngine {
   private async resetFeedAfterProgressGap(
     reply: MessagesQueryReply,
     link: ReplicationLinkState,
-    direction: 'pull' | 'push',
+    direction: SyncDirection,
     alreadyReset: boolean,
   ): Promise<boolean> {
     if (reply.status.code !== 410 || alreadyReset) {
       return false;
     }
 
-    ReplicationLedger.resetCheckpoint(link[direction]);
-    await this.ledger.saveLink(link);
+    await this.ledger.resetCheckpoint(link, direction);
     return true;
   }
 
-  private static assertFeedQuerySucceeded(reply: MessagesQueryReply, target: SyncTarget, direction: 'pull' | 'push'): void {
+  private static assertFeedQuerySucceeded(reply: MessagesQueryReply, target: SyncTarget, direction: SyncDirection): void {
     if (reply.status.code !== 200) {
       // The local feed query is labelled distinctly from the remote one.
       const label = direction === 'push' ? 'local MessagesQuery' : 'MessagesQuery';
@@ -5637,7 +5632,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   private async advanceFeedCursor(
     link: ReplicationLinkState,
-    direction: 'pull' | 'push',
+    direction: SyncDirection,
     previousCursor: ProgressToken | undefined,
     reply: MessagesQueryReply,
     target: SyncTarget,
@@ -5654,9 +5649,9 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     this.assertFeedCursorProgress(link, checkpoint, previousCursor, reply.cursor, drained, target.dwnUrl, direction);
-    ReplicationLedger.setReceivedToken(checkpoint, reply.cursor);
-    ReplicationLedger.commitContiguousToken(checkpoint, reply.cursor);
-    await this.ledger.saveLink(link);
+    SyncCheckpoint.setReceivedToken(checkpoint, reply.cursor);
+    SyncCheckpoint.commitContiguousToken(checkpoint, reply.cursor);
+    await this.ledger.persistCheckpoint(link, direction);
     this.emitCheckpointAdvance(link, direction);
 
     return drained ? { drained: true } : { cursor: reply.cursor, drained: false };
@@ -5669,13 +5664,13 @@ export class SyncEngineLevel implements SyncEngine {
     nextCursor: ProgressToken,
     drained: boolean,
     dwnUrl: string,
-    direction: 'pull' | 'push',
+    direction: SyncDirection,
   ): void {
     if (!this.isValidProgressToken(nextCursor)) {
       throw new Error(`SyncEngineLevel: ${direction} MessagesQuery returned an invalid cursor for ${link.tenantDid} -> ${dwnUrl}`);
     }
 
-    if (!ReplicationLedger.validateTokenDomain(checkpoint, nextCursor)) {
+    if (!SyncCheckpoint.validateTokenDomain(checkpoint, nextCursor)) {
       throw new Error(`SyncEngineLevel: ${direction} MessagesQuery token domain mismatch for ${link.tenantDid} -> ${dwnUrl}`);
     }
 
@@ -5683,7 +5678,7 @@ export class SyncEngineLevel implements SyncEngine {
       return;
     }
 
-    const comparison = ReplicationLedger.comparePosition(nextCursor, previousCursor);
+    const comparison = SyncCheckpoint.comparePosition(nextCursor, previousCursor);
     if (comparison < 0 || (comparison === 0 && !drained)) {
       throw new Error(`SyncEngineLevel: ${direction} MessagesQuery cursor did not advance for ${link.tenantDid} -> ${dwnUrl}`);
     }

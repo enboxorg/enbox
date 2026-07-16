@@ -527,13 +527,13 @@ describe('SyncEngineLevel durable feed convergence', () => {
     const internal = syncEngine as unknown as {
       getSyncTargets(): Promise<any[]>;
       getOrCreateReplicationLink(target: any): Promise<any>;
-      ledger: { saveLink(link: any): Promise<void> };
+      ledger: { persistCheckpoint(link: any, direction: 'push'): Promise<void> };
     };
     const [target] = await internal.getSyncTargets();
     const link = await internal.getOrCreateReplicationLink(target);
     link.push.contiguousAppliedToken = undefined;
     link.push.receivedToken = undefined;
-    await internal.ledger.saveLink(link);
+    await internal.ledger.persistCheckpoint(link, 'push');
 
     // Quota is now available. Even though the diff enumeration omits the message,
     // the tombstone must still stage its retained dataless initial ancestor so
@@ -566,7 +566,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
       getOrCreateReplicationLink(target: any): Promise<any>;
       getQuotaBlocksForTarget(target: any): Promise<Array<{ messageCid: string }>>;
       getQuotaStatesForTarget(target: any): Promise<Array<{ messageCid: string; state: { supersededAt?: string } }>>;
-      ledger: { saveLink(link: any): Promise<void> };
+      ledger: { persistCheckpoint(link: any, direction: 'push'): Promise<void> };
       recordQuotaBlock(
         target: any,
         messageCid: string,
@@ -588,7 +588,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     const link = await internal.getOrCreateReplicationLink(target);
     link.push.receivedToken = localHead.cursor;
     link.push.contiguousAppliedToken = localHead.cursor;
-    await internal.ledger.saveLink(link);
+    await internal.ledger.persistCheckpoint(link, 'push');
     await internal.recordQuotaBlock(
       target,
       updateCid,
