@@ -357,6 +357,34 @@ export class EncryptionControl {
     }
   }
 
+  /**
+   * Validates a stored encryption control record against the tenant's newest protocol definition.
+   *
+   * Control records are admitted through control-domain validation rather than the app
+   * definition's structure (see `validateReferentialIntegrity()`), so a config-history change
+   * can invalidate them only by removing the role path they provision keys for. The role's
+   * continued existence is the sole retention criterion: this deliberately avoids live
+   * dependency checks (audience lookups, parent chains) and does not require `$keyAgreement` —
+   * a definition missing it is recoverable by a later config and must not destroy sealed key
+   * material. Used by destructive config-history repair, where uncertainty must never purge.
+   */
+  public static async validateStoredControlRecord(
+    tenant: string,
+    message: RecordsWriteMessage,
+    validationStateReader: ValidationStateReader,
+  ): Promise<void> {
+    const recordType = EncryptionControl.getRecordType(message);
+    const tags = EncryptionControl.getRoleAudienceKeyId(message, recordType);
+    const protocolDefinition = await validationStateReader.fetchProtocolDefinition(tenant, tags.protocol);
+    const ruleSet = getRuleSetAtPath(tags.rolePath, protocolDefinition.structure);
+    if (ruleSet?.$role !== true) {
+      throw new DwnError(
+        DwnErrorCode.EncryptionControlValidateAudienceRolePathInvalid,
+        `role audience path '${tags.rolePath}' no longer exists as a role in protocol '${tags.protocol}'.`
+      );
+    }
+  }
+
   public static async preProcessWrite(
     tenant: string,
     message: RecordsWriteMessage,

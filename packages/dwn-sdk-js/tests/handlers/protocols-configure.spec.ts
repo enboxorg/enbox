@@ -5,6 +5,7 @@ import type {
   DataStore,
   MessageStore,
   ProtocolDefinition,
+  ProtocolRuleSet,
   ProtocolsConfigureDescriptor,
   ResumableTaskStore,
 } from '../../src/index.js';
@@ -13,6 +14,7 @@ import dexProtocolDefinition from '../vectors/protocol-definitions/dex.json' wit
 import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' with { type: 'json' };
 import sinon from 'sinon';
 
+import { EncryptionControlDeliveryRecipientAuthority } from '../../src/types/encryption-types.js';
 import { GeneralJwsBuilder } from '../../src/jose/jws/general/builder.js';
 import { lexicographicalCompare } from '../../src/utils/string.js';
 import { Message } from '../../src/core/message.js';
@@ -24,7 +26,8 @@ import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { Time } from '../../src/utils/time.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { DataStream, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Jws, PermissionGrant, PermissionsProtocol, RecordsDelete, RecordsRead, RecordsWrite } from '../../src/index.js';
+import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
+import { DataStream, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Jws, PermissionGrant, PermissionsProtocol, Protocols, RecordsDelete, RecordsRead, RecordsWrite } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
 export function testProtocolsConfigureHandler(): void {
@@ -697,6 +700,272 @@ export function testProtocolsConfigureHandler(): void {
           recordId  : comment.message.recordId
         }]);
         expect(commentMessages.messages.length).toBeGreaterThan(0);
+      });
+
+      it('should preserve encryption control records on a same-protocol config upgrade', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocol = 'http://config-validity.example/control-record-upgrade';
+        const initialDefinition: ProtocolDefinition = {
+          protocol,
+          published : true,
+          types     : {
+            member : { schema: 'http://member-schema', dataFormats: ['application/json'] },
+            post   : { schema: 'post', dataFormats: ['application/json'] }
+          },
+          structure: {
+            member : { $role: true },
+            post   : {
+              $actions: [{ who: 'anyone', can: [ProtocolAction.Create, ProtocolAction.Read] }]
+            }
+          }
+        };
+
+        const encryptedDefinition = await installEncryptedProtocol(dwn, alice, initialDefinition);
+        const roleRuleSet = encryptedDefinition.structure.member as ProtocolRuleSet;
+
+        // provision the role-audience key and its delivery to bob, the reserved-path records
+        // the config-history sweep must never judge against the app definition's structure
+        const audience = await createAudienceControlWrite({
+          author   : alice,
+          protocol,
+          rolePath : 'member',
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, audience);
+
+        const roleRecord = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          data         : Encoder.stringToBytes('bob is a member'),
+          dataFormat   : 'application/json',
+          protocol,
+          protocolPath : 'member',
+          recipient    : bob.did,
+          schema       : 'http://member-schema',
+        });
+        expect((await dwn.processMessage(alice.did, roleRecord.message, { dataStream: roleRecord.dataStream })).status.code).toBe(202);
+
+        const delivery = await createDeliveryControlWrite({
+          author             : alice,
+          keyId              : audience.keyId,
+          protocol,
+          recipient          : bob.did,
+          recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
+          rolePath           : 'member',
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, delivery);
+
+        // a routine policy tightening on the same protocol URI
+        const upgradedDefinition: ProtocolDefinition = {
+          ...initialDefinition,
+          structure: {
+            member : { $role: true },
+            post   : {
+              $actions: [{ who: 'anyone', can: [ProtocolAction.Read] }]
+            }
+          }
+        };
+        await installEncryptedProtocol(dwn, alice, upgradedDefinition);
+
+        const audienceMessages = await messageStore.query(alice.did, [{
+          interface : DwnInterfaceName.Records,
+          recordId  : audience.recordsWrite.message.recordId
+        }]);
+        expect(audienceMessages.messages.length).toBeGreaterThan(0);
+
+        const deliveryMessages = await messageStore.query(alice.did, [{
+          interface : DwnInterfaceName.Records,
+          recordId  : delivery.recordsWrite.message.recordId
+        }]);
+        expect(deliveryMessages.messages.length).toBeGreaterThan(0);
+      });
+
+      it('should preserve encryption control records while purging records invalidated by a newly learned config', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocol = 'http://config-validity.example/control-record-reconcile';
+        const openDefinition: ProtocolDefinition = {
+          protocol,
+          published : true,
+          types     : {
+            member : { schema: 'http://member-schema', dataFormats: ['application/json'] },
+            post   : { schema: 'post', dataFormats: ['application/json'] }
+          },
+          structure: {
+            member : { $role: true },
+            post   : {
+              $actions: [{ who: 'anyone', can: [ProtocolAction.Create, ProtocolAction.Read] }]
+            }
+          }
+        };
+        const stricterDefinition: ProtocolDefinition = {
+          ...openDefinition,
+          structure: {
+            member : { $role: true },
+            post   : {}
+          }
+        };
+
+        const keyDeriver = TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk);
+        const encryptedOpenDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(openDefinition, keyDeriver);
+        const openConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : encryptedOpenDefinition,
+          messageTimestamp   : '2025-01-01T00:00:00.000000Z'
+        });
+        expect((await dwn.processMessage(alice.did, openConfig.message)).status.code).toBe(202);
+
+        const roleRuleSet = encryptedOpenDefinition.structure.member as ProtocolRuleSet;
+        const audience = await createAudienceControlWrite({
+          author   : alice,
+          protocol,
+          rolePath : 'member',
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, audience);
+
+        const roleRecord = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          data         : Encoder.stringToBytes('bob is a member'),
+          dataFormat   : 'application/json',
+          protocol,
+          protocolPath : 'member',
+          recipient    : bob.did,
+          schema       : 'http://member-schema',
+        });
+        expect((await dwn.processMessage(alice.did, roleRecord.message, { dataStream: roleRecord.dataStream })).status.code).toBe(202);
+
+        const delivery = await createDeliveryControlWrite({
+          author             : alice,
+          keyId              : audience.keyId,
+          protocol,
+          recipient          : bob.did,
+          recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
+          rolePath           : 'member',
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, delivery);
+
+        // valid under the open config known at admission time; invalidated once the
+        // back-dated stricter config is learned
+        const invalidBobRecord = await TestDataGenerator.generateRecordsWrite({
+          author           : bob,
+          protocol,
+          protocolPath     : 'post',
+          schema           : 'post',
+          dataFormat       : 'application/json',
+          dateCreated      : '2025-01-03T00:00:00.000000Z',
+          messageTimestamp : '2025-01-03T00:00:00.000000Z'
+        });
+        expect((await dwn.processMessage(alice.did, invalidBobRecord.message, { dataStream: invalidBobRecord.dataStream })).status.code).toBe(202);
+
+        const encryptedStricterDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(stricterDefinition, keyDeriver);
+        const stricterConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : encryptedStricterDefinition,
+          messageTimestamp   : '2025-01-02T00:00:00.000000Z'
+        });
+        expect((await dwn.processMessage(alice.did, stricterConfig.message)).status.code).toBe(202);
+
+        const invalidBobMessages = await messageStore.query(alice.did, [{
+          interface : DwnInterfaceName.Records,
+          recordId  : invalidBobRecord.message.recordId
+        }]);
+        expect(invalidBobMessages.messages).toHaveLength(0);
+
+        const audienceMessages = await messageStore.query(alice.did, [{
+          interface : DwnInterfaceName.Records,
+          recordId  : audience.recordsWrite.message.recordId
+        }]);
+        expect(audienceMessages.messages.length).toBeGreaterThan(0);
+
+        const deliveryMessages = await messageStore.query(alice.did, [{
+          interface : DwnInterfaceName.Records,
+          recordId  : delivery.recordsWrite.message.recordId
+        }]);
+        expect(deliveryMessages.messages.length).toBeGreaterThan(0);
+      });
+
+      it('should purge encryption control records whose role path is removed by a config upgrade', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocol = 'http://config-validity.example/control-record-role-removed';
+        const initialDefinition: ProtocolDefinition = {
+          protocol,
+          published : true,
+          types     : {
+            member : { schema: 'http://member-schema', dataFormats: ['application/json'] },
+            post   : { schema: 'post', dataFormats: ['application/json'] }
+          },
+          structure: {
+            member : { $role: true },
+            post   : {
+              $actions: [{ who: 'anyone', can: [ProtocolAction.Create, ProtocolAction.Read] }]
+            }
+          }
+        };
+
+        const encryptedDefinition = await installEncryptedProtocol(dwn, alice, initialDefinition);
+        const roleRuleSet = encryptedDefinition.structure.member as ProtocolRuleSet;
+
+        const audience = await createAudienceControlWrite({
+          author   : alice,
+          protocol,
+          rolePath : 'member',
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, audience);
+
+        const roleRecord = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          data         : Encoder.stringToBytes('bob is a member'),
+          dataFormat   : 'application/json',
+          protocol,
+          protocolPath : 'member',
+          recipient    : bob.did,
+          schema       : 'http://member-schema',
+        });
+        expect((await dwn.processMessage(alice.did, roleRecord.message, { dataStream: roleRecord.dataStream })).status.code).toBe(202);
+
+        const delivery = await createDeliveryControlWrite({
+          author             : alice,
+          keyId              : audience.keyId,
+          protocol,
+          recipient          : bob.did,
+          recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
+          rolePath           : 'member',
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, delivery);
+
+        // the upgrade removes the `member` role entirely — the control records it anchored
+        // are stale key material with nothing left to provision
+        const roleRemovedDefinition: ProtocolDefinition = {
+          ...initialDefinition,
+          structure: {
+            member : {},
+            post   : {
+              $actions: [{ who: 'anyone', can: [ProtocolAction.Create, ProtocolAction.Read] }]
+            }
+          }
+        };
+        await installEncryptedProtocol(dwn, alice, roleRemovedDefinition);
+
+        const audienceMessages = await messageStore.query(alice.did, [{
+          interface : DwnInterfaceName.Records,
+          recordId  : audience.recordsWrite.message.recordId
+        }]);
+        expect(audienceMessages.messages).toHaveLength(0);
+
+        const deliveryMessages = await messageStore.query(alice.did, [{
+          interface : DwnInterfaceName.Records,
+          recordId  : delivery.recordsWrite.message.recordId
+        }]);
+        expect(deliveryMessages.messages).toHaveLength(0);
       });
 
       it('should return 400 if protocol is not normalized', async () => {

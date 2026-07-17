@@ -466,7 +466,13 @@ describe('AgentDwnApi sealed audience keys', () => {
   });
 
   it('fails closed when a delegated writer without seal coverage needs to mint an audience', async () => {
-    await installProtocol(ownerDid, definition());
+    // dedicated URI: the fails-closed premise is that no audience exists yet, so the shared
+    // URI's audience records from earlier tests must not be in scope
+    const mintDefinition: ProtocolDefinition = {
+      ...definition(),
+      protocol: 'https://example.org/protocols/sealed-audience-mint-test',
+    };
+    await installProtocol(ownerDid, mintDefinition);
     const delegate = await testHarness.createIdentity({ name: 'Audience Delegate', testDwnUrls });
     const writeGrant = await testHarness.agent.permissions.createGrant({
       author      : ownerDid,
@@ -476,7 +482,7 @@ describe('AgentDwnApi sealed audience keys', () => {
       scope       : {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Write,
-        protocol  : PROTOCOL_URI,
+        protocol  : mintDefinition.protocol,
       },
       store: true,
     });
@@ -488,7 +494,7 @@ describe('AgentDwnApi sealed audience keys', () => {
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
         delegatedGrant : writeGrant.message,
-        protocol       : PROTOCOL_URI,
+        protocol       : mintDefinition.protocol,
         protocolPath   : 'note',
         dataFormat     : 'text/plain',
         data           : new TextEncoder().encode('delegate sealed note'),
