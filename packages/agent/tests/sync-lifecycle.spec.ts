@@ -129,8 +129,9 @@ describe('SyncEngineLevel lifecycle', () => {
         | { kind: 'skipped' }
       >;
     };
+    const durableFeedReconciler = engine['_durableFeedReconciler'];
     sinon.stub(engine as never, 'getSyncTargets').resolves([target]);
-    sinon.stub(engine as never, 'pullRemoteFeedForSyncTarget').resolves({});
+    sinon.stub(durableFeedReconciler, 'pull').resolves({});
     sinon.stub(engine as never, 'hasAdmissionDeadLetter').resolves(false);
     sinon.stub(engine as never, 'getQuotaBlockState').resolves(undefined);
     sinon.stub(engine as never, 'getQuotaBlockedInitialCidsForFeedEntry').resolves([]);
@@ -139,7 +140,7 @@ describe('SyncEngineLevel lifecycle', () => {
       await releasePush.promise;
       return { failed: [], succeeded: ['cid-1'] };
     });
-    sinon.stub(engine as never, 'pushLocalFeedForSyncTarget').callsFake(async (
+    sinon.stub(durableFeedReconciler, 'push').callsFake(async (
       runTarget: typeof target,
       _options: unknown,
       shouldContinue?: () => boolean,
