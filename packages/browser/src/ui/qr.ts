@@ -452,11 +452,10 @@ function applyMask(modules: boolean[][], isFunction: boolean[][], mask: number):
 
 // ── Mask penalty scoring (rules N1–N4) ──────────────────────────
 
-function computePenalty(modules: boolean[][]): number {
-  const size = modules.length;
+/** N1: runs of ≥5 same-colour modules in a row/column. */
+function penaltyAdjacentRuns(modules: boolean[][], size: number): number {
   let penalty = 0;
 
-  // N1: runs of ≥5 same-colour modules in a row/column.
   for (let y = 0; y < size; y++) {
     let runColor = false;
     let runLength = 0;
@@ -492,7 +491,13 @@ function computePenalty(modules: boolean[][]): number {
     }
   }
 
-  // N2: 2×2 blocks of the same colour.
+  return penalty;
+}
+
+/** N2: 2×2 blocks of the same colour. */
+function penaltyBlocks(modules: boolean[][], size: number): number {
+  let penalty = 0;
+
   for (let y = 0; y < size - 1; y++) {
     for (let x = 0; x < size - 1; x++) {
       const c = modules[y][x];
@@ -502,17 +507,24 @@ function computePenalty(modules: boolean[][]): number {
     }
   }
 
-  // N3: finder-like 1:1:3:1:1 patterns with 4-module light flank.
-  const hasFinderPattern = (line: boolean[], start: number): number => {
-    const core = [true, false, true, true, true, false, true];
-    const matchesCore = core.every((value, index) => line[start + index] === value);
-    if (!matchesCore) {
-      return 0;
-    }
-    const lightBefore = start >= 4 && line.slice(start - 4, start).every((v) => !v);
-    const lightAfter = start + 11 <= line.length && line.slice(start + 7, start + 11).every((v) => !v);
-    return (lightBefore ? 40 : 0) + (lightAfter ? 40 : 0);
-  };
+  return penalty;
+}
+
+/** Checks `line` for a 1:1:3:1:1 finder-like core starting at `start`, scoring a 4-module light flank on either side. */
+function hasFinderPattern(line: boolean[], start: number): number {
+  const core = [true, false, true, true, true, false, true];
+  const matchesCore = core.every((value, index) => line[start + index] === value);
+  if (!matchesCore) {
+    return 0;
+  }
+  const lightBefore = start >= 4 && line.slice(start - 4, start).every((v) => !v);
+  const lightAfter = start + 11 <= line.length && line.slice(start + 7, start + 11).every((v) => !v);
+  return (lightBefore ? 40 : 0) + (lightAfter ? 40 : 0);
+}
+
+/** N3: finder-like 1:1:3:1:1 patterns with 4-module light flank. */
+function penaltyFinderPatterns(modules: boolean[][], size: number): number {
+  let penalty = 0;
 
   for (let y = 0; y < size; y++) {
     const row = modules[y];
@@ -523,7 +535,11 @@ function computePenalty(modules: boolean[][]): number {
     }
   }
 
-  // N4: dark-module proportion deviation from 50%, in 5% steps.
+  return penalty;
+}
+
+/** N4: dark-module proportion deviation from 50%, in 5% steps. */
+function penaltyDarkRatio(modules: boolean[][], size: number): number {
   let dark = 0;
   for (const row of modules) {
     for (const module of row) {
@@ -534,7 +550,17 @@ function computePenalty(modules: boolean[][]): number {
   }
   const total = size * size;
   const k = Math.ceil(Math.abs(dark * 20 - total * 10) / total) - 1;
-  penalty += k * 10;
+  return k * 10;
+}
+
+function computePenalty(modules: boolean[][]): number {
+  const size = modules.length;
+  let penalty = 0;
+
+  penalty += penaltyAdjacentRuns(modules, size);
+  penalty += penaltyBlocks(modules, size);
+  penalty += penaltyFinderPatterns(modules, size);
+  penalty += penaltyDarkRatio(modules, size);
 
   return penalty;
 }
