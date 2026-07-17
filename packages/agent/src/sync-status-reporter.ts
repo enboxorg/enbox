@@ -133,7 +133,11 @@ export class SyncStatusReporter {
     ));
   }
 
-  /** Project a durable link into its public, mutation-safe snapshot shape. */
+  /**
+   * Project a durable link into its public, mutation-safe snapshot shape.
+   * `scope` is shared by reference — safe because `getLinks()` deserializes
+   * fresh link objects per call, so no engine-held state is exposed.
+   */
   private static linkSnapshotFrom(link: ReplicationLinkState): ReplicationLinkSnapshot {
     const pullPosition = link.pull.contiguousAppliedToken?.position;
     const pushPosition = link.push.contiguousAppliedToken?.position;

@@ -117,7 +117,7 @@ function createFixture(maxInFlightDeliveries?: number): PullFixture {
     transitionToRepairing : sinon.stub().resolves(),
     warn                  : sinon.stub(),
   };
-  const admit = sinon.stub().resolves({ kind: 'admitted', appliedCids: ['root-cid'], freshCids: ['root-cid'] });
+  const admit = sinon.stub().resolves({ kind: 'admitted', appliedCids: ['root-cid'], freshEntries: [] });
   const fetchMessages = sinon.stub().resolves([]);
   const echoSuppressor = new SyncEchoSuppressor();
   return {
@@ -142,7 +142,7 @@ describe('SyncLivePullProcessor', () => {
     const rootCid = await Message.getCid(message);
 
     // Fresh apply → one delivery:applied carrying the routing descriptor.
-    admit.resolves({ kind: 'admitted', appliedCids: [rootCid], freshCids: [rootCid] });
+    admit.resolves({ kind: 'admitted', appliedCids: [rootCid], freshEntries: [{ messageCid: rootCid, message }] });
     await processor.handleEvent(contextFor(), event(token('1'), message));
 
     const deliveries = operations.emitEvent.getCalls()
@@ -162,13 +162,39 @@ describe('SyncLivePullProcessor', () => {
 
     // Duplicate apply (an echo of a message the store already held) → silent.
     operations.emitEvent.resetHistory();
-    admit.resolves({ kind: 'admitted', appliedCids: [rootCid], freshCids: [] });
+    admit.resolves({ kind: 'admitted', appliedCids: [rootCid], freshEntries: [] });
     await processor.handleEvent(contextFor(), event(token('2'), message));
 
     const echoes = operations.emitEvent.getCalls()
       .map(call => call.args[0])
       .filter(emitted => emitted.type === 'delivery:applied');
     expect(echoes).toHaveLength(0);
+  });
+
+  it('emits delivery:applied for a freshly admitted dependency even when the root is a duplicate', async () => {
+    const { admit, operations, processor } = createFixture();
+    const rootMessage = protocolMessage('https://protocol.example/root');
+    const dependencyMessage = protocolMessage('https://protocol.example/dependency');
+    const rootCid = await Message.getCid(rootMessage);
+    const dependencyCid = await Message.getCid(dependencyMessage);
+
+    // The closure backfilled a missing dependency (freshly applied) while the
+    // delivered root itself was already known (Duplicate — not in freshEntries).
+    admit.resolves({
+      kind         : 'admitted',
+      appliedCids  : [dependencyCid, rootCid],
+      freshEntries : [{ messageCid: dependencyCid, message: dependencyMessage }],
+    });
+    await processor.handleEvent(contextFor(), event(token('1'), rootMessage));
+
+    const deliveries = operations.emitEvent.getCalls()
+      .map(call => call.args[0])
+      .filter(emitted => emitted.type === 'delivery:applied');
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]).toMatchObject({
+      messageCid : dependencyCid,
+      descriptor : { protocol: 'https://protocol.example/dependency' },
+    });
   });
 
   it('ignores stale deliveries and routes terminal versus retryable subscription errors', async () => {
@@ -274,7 +300,7 @@ describe('SyncLivePullProcessor', () => {
     const { admit, operations, processor } = createFixture();
     const state = link();
     const context = contextFor(state);
-    admit.resolves({ kind: 'admitted', appliedCids: ['dependency-cid', 'root-cid'], freshCids: ['dependency-cid', 'root-cid'] });
+    admit.resolves({ kind: 'admitted', appliedCids: ['dependency-cid', 'root-cid'], freshEntries: [] });
 
     await processor.handleEvent(context, event());
 
@@ -344,9 +370,9 @@ describe('SyncLivePullProcessor', () => {
     admit.onFirstCall().callsFake(async () => {
       firstStarted.resolve();
       await releaseFirst.promise;
-      return { kind: 'admitted', appliedCids: ['first'], freshCids: ['first'] };
+      return { kind: 'admitted', appliedCids: ['first'], freshEntries: [] };
     });
-    admit.onSecondCall().resolves({ kind: 'admitted', appliedCids: ['second'], freshCids: ['second'] });
+    admit.onSecondCall().resolves({ kind: 'admitted', appliedCids: ['second'], freshEntries: [] });
 
     const first = processor.handleEvent(context, event(token('1'), protocolMessage('https://protocol.example/first')));
     await firstStarted.promise;
@@ -371,9 +397,9 @@ describe('SyncLivePullProcessor', () => {
     admit.onFirstCall().callsFake(async () => {
       firstStarted.resolve();
       await releaseFirst.promise;
-      return { kind: 'admitted', appliedCids: ['first'], freshCids: ['first'] };
+      return { kind: 'admitted', appliedCids: ['first'], freshEntries: [] };
     });
-    admit.onSecondCall().resolves({ kind: 'admitted', appliedCids: ['second'], freshCids: ['second'] });
+    admit.onSecondCall().resolves({ kind: 'admitted', appliedCids: ['second'], freshEntries: [] });
 
     const first = processor.handleEvent(context, event(token('1'), protocolMessage('https://protocol.example/first')));
     await firstStarted.promise;
@@ -394,7 +420,7 @@ describe('SyncLivePullProcessor', () => {
     let inlineFactory: (() => Promise<ReadableStream<Uint8Array> | undefined>) | undefined;
     admit.callsFake(async (_rootCid, deps) => {
       inlineFactory = deps.prefetched?.[0].dataStreamFactory;
-      return { kind: 'admitted', appliedCids: ['inline'], freshCids: ['inline'] };
+      return { kind: 'admitted', appliedCids: ['inline'], freshEntries: [] };
     });
 
     await processor.handleEvent(context, event(token('1'), inline));
@@ -411,7 +437,7 @@ describe('SyncLivePullProcessor', () => {
     let largeFactory: (() => Promise<ReadableStream<Uint8Array> | undefined>) | undefined;
     admit.callsFake(async (_rootCid, deps) => {
       largeFactory = deps.prefetched?.[0].dataStreamFactory;
-      return { kind: 'admitted', appliedCids: ['large'], freshCids: ['large'] };
+      return { kind: 'admitted', appliedCids: ['large'], freshEntries: [] };
     });
 
     await processor.handleEvent(context, event(token('2'), large));

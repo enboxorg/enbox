@@ -4,6 +4,13 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { DwnErrorCode, Encoder, ENCRYPTION_CONTROL_AUDIENCE_PATH, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { admitClosure } from '../src/sync-admit-closure.js';
+
+import type { AdmitOutcome } from '../src/sync-admit-closure.js';
+
+/** CIDs of freshly-applied entries, in admission order ([] for non-admitted outcomes). */
+function freshCidsOf(outcome: AdmitOutcome): string[] {
+  return outcome.kind === 'admitted' ? outcome.freshEntries.map(entry => entry.messageCid) : [];
+}
 import { DwnInterface } from '../src/types/dwn.js';
 
 describe('admitClosure', () => {
@@ -84,7 +91,8 @@ describe('admitClosure', () => {
     });
 
     const initialCid = await Message.getCid(initial.message);
-    expect(outcome).toEqual({ kind: 'admitted', appliedCids: [initialCid, rootCid], freshCids: [initialCid, rootCid] });
+    expect(outcome).toMatchObject({ kind: 'admitted', appliedCids: [initialCid, rootCid] });
+    expect(freshCidsOf(outcome)).toEqual([initialCid, rootCid]);
     expect(agent.dwn.applyReplicatedMessage.callCount).toBe(3);
     expect(agent.dwn.applyReplicatedMessage.secondCall.args[1]).toEqual(initial.message);
     expect(agent.dwn.applyReplicatedMessage.thirdCall.args[1]).toEqual(update.message);
@@ -103,7 +111,8 @@ describe('admitClosure', () => {
       prefetched : [{ message: write.message }],
     });
 
-    expect(outcome).toEqual({ kind: 'admitted', appliedCids: [rootCid], freshCids: [] });
+    expect(outcome).toMatchObject({ kind: 'admitted', appliedCids: [rootCid] });
+    expect(freshCidsOf(outcome)).toEqual([]);
   });
 
   it('splits RecordsQuery initialWrite hints into separately admissible entries', async () => {
@@ -284,7 +293,8 @@ describe('admitClosure', () => {
       prefetched         : [{ message: root.message }],
     });
 
-    expect(outcome).toEqual({ kind: 'admitted', appliedCids: [dependencyCid, rootCid], freshCids: [dependencyCid, rootCid] });
+    expect(outcome).toMatchObject({ kind: 'admitted', appliedCids: [dependencyCid, rootCid] });
+    expect(freshCidsOf(outcome)).toEqual([dependencyCid, rootCid]);
     expect(agent.processDwnRequest.firstCall.args[0].messageParams).toEqual({
       messageCid         : dependencyCid,
       permissionGrantIds : ['messages-read-grant'],
@@ -334,7 +344,8 @@ describe('admitClosure', () => {
       prefetched  : [{ message: root.message }],
     });
 
-    expect(outcome).toEqual({ kind: 'admitted', appliedCids: [roleCid, rootCid], freshCids: [roleCid, rootCid] });
+    expect(outcome).toMatchObject({ kind: 'admitted', appliedCids: [roleCid, rootCid] });
+    expect(freshCidsOf(outcome)).toEqual([roleCid, rootCid]);
     expect(permissionsApi.getPermissionForRequest.firstCall.args[0]).toEqual({
       cached       : true,
       connectedDid : 'did:example:alice',
@@ -442,7 +453,8 @@ describe('admitClosure', () => {
       prefetched : [{ message: root.message }],
     });
 
-    expect(outcome).toEqual({ kind: 'admitted', appliedCids: [referencedCid, rootCid], freshCids: [referencedCid, rootCid] });
+    expect(outcome).toMatchObject({ kind: 'admitted', appliedCids: [referencedCid, rootCid] });
+    expect(freshCidsOf(outcome)).toEqual([referencedCid, rootCid]);
     expect(agent.dwn.processRequest.firstCall.args[0]).toMatchObject({
       author        : 'did:example:alice',
       messageType   : DwnInterface.RecordsQuery,
@@ -521,7 +533,8 @@ describe('admitClosure', () => {
       prefetched         : [{ message: root.message }],
     });
 
-    expect(outcome).toEqual({ kind: 'admitted', appliedCids: [audienceCid, rootCid], freshCids: [audienceCid, rootCid] });
+    expect(outcome).toMatchObject({ kind: 'admitted', appliedCids: [audienceCid, rootCid] });
+    expect(freshCidsOf(outcome)).toEqual([audienceCid, rootCid]);
     expect(agent.processDwnRequest.firstCall.args[0]).toMatchObject({
       author        : 'did:example:alice',
       granteeDid    : 'did:example:delegate',
@@ -571,7 +584,8 @@ describe('admitClosure', () => {
       prefetched : [{ message: root.message }],
     });
 
-    expect(outcome).toEqual({ kind: 'admitted', appliedCids: [dataRecordCid, rootCid], freshCids: [dataRecordCid, rootCid] });
+    expect(outcome).toMatchObject({ kind: 'admitted', appliedCids: [dataRecordCid, rootCid] });
+    expect(freshCidsOf(outcome)).toEqual([dataRecordCid, rootCid]);
     expect(agent.dwn.processRequest.firstCall.args[0]).toMatchObject({
       messageType   : DwnInterface.RecordsRead,
       messageParams : {
@@ -702,7 +716,8 @@ describe('admitClosure', () => {
       prefetched : [{ message: root.message }],
     });
 
-    expect(outcome).toEqual({ kind: 'admitted', appliedCids: [newerCid, rootCid], freshCids: [newerCid, rootCid] });
+    expect(outcome).toMatchObject({ kind: 'admitted', appliedCids: [newerCid, rootCid] });
+    expect(freshCidsOf(outcome)).toEqual([newerCid, rootCid]);
     expect(agent.dwn.processRequest.firstCall.args[0]).toMatchObject({
       author        : older.author.did,
       messageType   : DwnInterface.ProtocolsQuery,

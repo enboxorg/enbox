@@ -82,6 +82,7 @@ import { SyncLivePushCoordinator } from './sync-live-push-coordinator.js';
 import { SyncQuotaManager } from './sync-quota-manager.js';
 import { SyncQuotaStoreLevel } from './sync-quota-store-level.js';
 import { SyncReplicationLinkStoreLevel } from './sync-replication-link-store-level.js';
+import { SyncRunCancelledError } from './sync-runtime-errors.js';
 import { SyncRunCoordinator } from './sync-run-coordinator.js';
 import { SyncScopeClosureValidator } from './sync-scope-closure-validator.js';
 import { SyncStatusReporter } from './sync-status-reporter.js';
@@ -824,6 +825,11 @@ export class SyncEngineLevel implements SyncEngine {
    * follow-up covers every joiner (differing directions widen to both,
    * differing identity scopes widen to unscoped, convergence verification
    * ORs). A caller joining after the follow-up has started gets a fresh one.
+   *
+   * Fairness note: `releaseSync()` wakes every `acquireSync()` waiter, so an
+   * identity mutation or retry can take the lock ahead of the queued
+   * follow-up. Progress is guaranteed (the follow-up re-waits), joiners just
+   * observe the extra latency.
    */
   private joinPendingSyncRun(direction?: SyncDirection, options?: SyncRunOptions): Promise<void> {
     const pending = this._pendingSyncRun;
@@ -840,10 +846,12 @@ export class SyncEngineLevel implements SyncEngine {
       verifyConvergence : options?.verifyConvergence === true,
     };
 
+    // The placeholder promise is replaced synchronously below, before any
+    // caller can observe it.
     const followUp: PendingSyncRun = {
       merged,
       generation : this._engineGeneration,
-      promise    : undefined as unknown as Promise<void>,
+      promise    : Promise.resolve(),
     };
     followUp.promise = (async (): Promise<void> => {
       await this._lifecycle.acquireSync();
@@ -853,10 +861,13 @@ export class SyncEngineLevel implements SyncEngine {
       }
       try {
         // A runtime transition (stopSync/clear/close/mode switch) invalidated
-        // this queued run while it waited for the lock — bail without running,
-        // matching the engine's generation-guard convention for stale work.
+        // this queued run while it waited for the lock. Reject rather than
+        // resolve: a resolved sync() must always mean a run covering the
+        // request completed (callers like recovery read state right after).
         if (this._engineGeneration !== followUp.generation) {
-          return;
+          throw new SyncRunCancelledError(
+            'SyncEngineLevel: queued sync run was cancelled by an engine runtime transition.',
+          );
         }
         await this._runCoordinator.run(
           merged.directionConflict ? undefined : merged.direction,

@@ -193,6 +193,16 @@ export async function ensureVaultReady(params: {
 let bareIntervalSyncWarned = false;
 
 /**
+ * Re-arms the one-time bare-interval deprecation warning.
+ *
+ * @internal Test-only — lets the warning assertion run deterministically
+ * regardless of which suite consumed the process-wide latch first.
+ */
+export function __resetSyncOptionDeprecationWarning(): void {
+  bareIntervalSyncWarned = false;
+}
+
+/**
  * Resolve a {@link SyncOption} into explicit `startSync` parameters.
  *
  * - `undefined` / `'live'` → live mode (engine default integrity interval).

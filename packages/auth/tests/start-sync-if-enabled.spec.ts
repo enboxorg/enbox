@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import { createMockAgent } from './helpers/mock-agent.js';
-import { resolveSyncOption, startSyncIfEnabled } from '../src/connect/lifecycle.js';
+import { __resetSyncOptionDeprecationWarning, resolveSyncOption, startSyncIfEnabled } from '../src/connect/lifecycle.js';
 
 describe('resolveSyncOption', () => {
   test('should resolve undefined and "live" to live mode with the default interval', () => {
@@ -16,18 +16,19 @@ describe('resolveSyncOption', () => {
     expect(resolveSyncOption({ mode: 'poll', interval: '45s' })).toEqual({ mode: 'poll', interval: '45s' });
   });
 
-  test('should keep the deprecated bare-interval form on poll mode and warn at most once', () => {
+  test('should keep the deprecated bare-interval form on poll mode and warn exactly once', () => {
     const originalWarn = console.warn;
     const warnings: string[] = [];
     console.warn = (...args: unknown[]): void => { warnings.push(String(args[0])); };
+    __resetSyncOptionDeprecationWarning();
     try {
       expect(resolveSyncOption('30s')).toEqual({ mode: 'poll', interval: '30s' });
-      const warningsAfterFirst = warnings.length;
-      expect(warningsAfterFirst).toBeLessThanOrEqual(1);
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain('deprecated');
 
       expect(resolveSyncOption('10s')).toEqual({ mode: 'poll', interval: '10s' });
       // The deprecation warning is latched process-wide — never repeated.
-      expect(warnings.length).toBe(warningsAfterFirst);
+      expect(warnings).toHaveLength(1);
     } finally {
       console.warn = originalWarn;
     }

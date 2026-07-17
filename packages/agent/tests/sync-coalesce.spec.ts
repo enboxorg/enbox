@@ -5,6 +5,7 @@ import sinon from 'sinon';
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
+import { SyncRunCancelledError } from '../src/sync-runtime-errors.js';
 
 type Deferred = {
   promise: Promise<void>;
@@ -96,7 +97,7 @@ describe('SyncEngineLevel sync() coalescing', () => {
     expect(run.secondCall.args[1]).toEqual({});
   });
 
-  it('should cancel a queued follow-up when a runtime transition intervenes', async () => {
+  it('should reject a queued follow-up with SyncRunCancelledError when a runtime transition intervenes', async () => {
     const { engine, run } = createEngine();
     const lifecycle = (engine as any)._lifecycle;
 
@@ -106,12 +107,12 @@ describe('SyncEngineLevel sync() coalescing', () => {
     expect(run.notCalled).toBe(true);
 
     // stopSync/clear/close funnel through this transition: it bumps the
-    // engine generation and drops the queued join point.
+    // engine generation and drops the queued join point. The joiner must
+    // reject — a resolved sync() always means a covering run completed.
     (engine as any).prepareForSyncRuntimeTransition();
     lifecycle.releaseSync();
 
-    await queued;
-
+    await expect(queued).rejects.toThrow(SyncRunCancelledError);
     expect(run.notCalled).toBe(true);
   });
 

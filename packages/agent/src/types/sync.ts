@@ -531,12 +531,15 @@ export type SyncEvent =
   | SyncEventBase & { type: 'checkpoint:pull-advance'; position: string; messageCid?: string }
   | SyncEventBase & { type: 'checkpoint:push-advance'; position: string; messageCid?: string }
   /**
-   * Emitted once per remote message admitted through a live pull
-   * subscription, with the message described so consumers can react to the
-   * specific change (protocol path, record, author) without querying.
-   * Live-path only: messages admitted by durable-feed reconciliation are
-   * reported through `reconcile:applied` (cids-only) instead — that split is
-   * the origin signal (`delivery:applied` = pushed to us in real time;
+   * Emitted once per FRESHLY applied message a live pull delivery admits —
+   * the delivered root and any fetched dependency (parent, role record,
+   * initial write) admitted alongside it — with each message described so
+   * consumers can react to the specific change (protocol path, record,
+   * author) without querying. `Duplicate`/`Superseded` applies (echoes of
+   * messages this store already held) are silent. Live-path only: messages
+   * admitted by durable-feed reconciliation are reported through
+   * `reconcile:applied` (cids-only) instead — that split is the origin
+   * signal (`delivery:applied` = pushed to us in real time;
    * `reconcile:applied` = found by a reconciliation pass, including one-shot
    * `sync()` runs this agent initiated itself).
    */
@@ -739,8 +742,9 @@ export interface SyncEngine {
    * merged (differing directions widen to both; differing scopes widen to
    * unscoped) so the follow-up covers every joined request. A runtime
    * transition (`stopSync`/`clear`/`close`/mode switch) while the follow-up
-   * is still queued cancels it — joined callers resolve without a run, the
-   * engine's convention for work invalidated by teardown.
+   * is still queued cancels it — joined callers reject with
+   * `SyncRunCancelledError`, keeping "resolved ⇒ a covering run completed"
+   * true for every caller.
    *
    * @param direction which direction you'd like to perform the sync operation.
    * @param options optional scoping — `did` restricts the run to one

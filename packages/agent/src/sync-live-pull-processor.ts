@@ -6,7 +6,7 @@ import type { SyncEchoSuppressor } from './sync-echo-suppressor.js';
 import type { SyncLinkController } from './sync-link-controller.js';
 import type { SyncMessageEntry } from './sync-messages.js';
 import type { SyncTarget } from './sync-target-resolver.js';
-import type { AdmitClosureDeps, AdmitOutcome } from './sync-admit-closure.js';
+import type { AdmitClosureDeps, AdmitOutcome, SyncFreshEntry } from './sync-admit-closure.js';
 import type {
   DeadLetterEntry,
   NonEmptyStringArray,
@@ -72,7 +72,7 @@ type PullDelivery = {
 
 type LivePullProcessResult =
   | { admitted: false; messageCid: string }
-  | { admitted: true; appliedCids: string[]; messageCid: string; fresh: boolean };
+  | { admitted: true; appliedCids: string[]; messageCid: string; freshEntries: SyncFreshEntry[] };
 
 type LivePullDataStreamFactory = () => Promise<ReadableStream<Uint8Array> | undefined>;
 
@@ -220,8 +220,11 @@ export class SyncLivePullProcessor {
         // Fresh only: a Duplicate/Superseded apply (an echo of a message this
         // store already held, e.g. our own push looping back via another
         // endpoint) is not a remote change and must not signal consumers.
-        if (result.fresh) {
-          this.emitDeliveryApplied(context, message.event, result.messageCid);
+        // Every freshly-applied message announces — the delivered root AND
+        // any fetched dependency (parent, role record, initial write) the
+        // closure admitted alongside it, each with its own descriptor.
+        for (const freshEntry of result.freshEntries) {
+          this.emitDeliveryApplied(context, freshEntry.message, freshEntry.messageCid);
         }
       }
       await this.commitDelivery(context, message.cursor, delivery);
@@ -230,10 +233,10 @@ export class SyncLivePullProcessor {
     }
   }
 
-  /** Announce one freshly-admitted live delivery with its routing descriptor. */
+  /** Announce one freshly-admitted applied message with its routing descriptor. */
   private emitDeliveryApplied(
     { did, dwnUrl, eventScope }: SyncLivePullContext,
-    event: MessageEvent,
+    message: GenericMessage,
     messageCid: string,
   ): void {
     this._operations.emitEvent({
@@ -242,7 +245,7 @@ export class SyncLivePullProcessor {
       remoteEndpoint : dwnUrl,
       ...eventScope,
       messageCid,
-      descriptor     : syncMessageDescriptor(event.message),
+      descriptor     : syncMessageDescriptor(message),
     });
   }
 
@@ -355,10 +358,10 @@ export class SyncLivePullProcessor {
 
     if (outcome.kind === 'admitted') {
       return {
-        admitted    : true,
-        appliedCids : outcome.appliedCids,
-        messageCid  : rootCid,
-        fresh       : outcome.freshCids.includes(rootCid),
+        admitted     : true,
+        appliedCids  : outcome.appliedCids,
+        messageCid   : rootCid,
+        freshEntries : outcome.freshEntries,
       };
     }
     if (outcome.kind === 'failed') {
