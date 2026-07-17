@@ -139,7 +139,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     });
 
     expect(persistCheckpointStub.callCount).toBe(savesBeforeStop);
-    expect(engine['_connectivityState']).not.toBe('online');
+    expect(engine.connectivityState).not.toBe('online');
   });
 
   it('should wait for an in-flight pull callback before stopSync() completes', async () => {

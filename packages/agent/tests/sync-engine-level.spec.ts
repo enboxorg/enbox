@@ -55,6 +55,42 @@ describe('SyncEngineLevel', () => {
     });
   });
 
+  describe('connectivity coordination', () => {
+    it('marks active links offline and emits only changed connectivity states', () => {
+      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      const link = (tenantDid: string, connectivity: 'offline' | 'online'): any => ({
+        authorization      : { kind: 'owner' },
+        authorizationEpoch : 'owner-epoch',
+        connectivity,
+        projectionId       : 'projection-id',
+        pull               : {},
+        push               : {},
+        remoteEndpoint     : 'https://dwn.example',
+        scope              : { kind: 'full' },
+        status             : 'live',
+        tenantDid,
+      });
+      const onlineLink = link('did:example:alice', 'online');
+      const offlineLink = link('did:example:bob', 'offline');
+      syncEngine['activateLink']('alice-link', onlineLink);
+      syncEngine['activateLink']('bob-link', offlineLink);
+      const events: unknown[] = [];
+      syncEngine.on((event) => { events.push(event); });
+
+      syncEngine['markActiveLinksOffline']();
+
+      expect(onlineLink.connectivity).toBe('offline');
+      expect(offlineLink.connectivity).toBe('offline');
+      expect(events).toEqual([expect.objectContaining({
+        type           : 'link:connectivity-change',
+        tenantDid      : onlineLink.tenantDid,
+        remoteEndpoint : onlineLink.remoteEndpoint,
+        from           : 'online',
+        to             : 'offline',
+      })]);
+    });
+  });
+
   describe('terminal authorization failures', () => {
     const isTerminal = (detail: string | undefined): boolean =>
       (SyncEngineLevel as any).isTerminalAuthorizationFailure(detail);
@@ -3558,7 +3594,7 @@ describe('SyncEngineLevel', () => {
     describe('connectivity state transitions', () => {
       it('should transition to online after a successful sync with registered targets', async () => {
         // Reset connectivity state (shared syncEngine may have been set to 'online' by prior tests).
-        syncEngine['_connectivityState'] = 'unknown';
+        syncEngine['_connectivityManager'].setState('unknown');
         expect(syncEngine.connectivityState).toBe('unknown');
 
         // Register Alice's DID to be synchronized.
@@ -3573,7 +3609,7 @@ describe('SyncEngineLevel', () => {
       });
 
       it('should transition to offline after a sync failure', async () => {
-        syncEngine['_connectivityState'] = 'unknown';
+        syncEngine['_connectivityManager'].setState('unknown');
 
         // Register Alice's DID.
         await testHarness.agent.sync.registerIdentity({
@@ -3599,7 +3635,7 @@ describe('SyncEngineLevel', () => {
       });
 
       it('should transition back to online after recovery from failures', async () => {
-        syncEngine['_connectivityState'] = 'unknown';
+        syncEngine['_connectivityManager'].setState('unknown');
 
         // Register Alice's DID.
         await testHarness.agent.sync.registerIdentity({
@@ -3626,7 +3662,7 @@ describe('SyncEngineLevel', () => {
 
       it('should remain unknown when there are no sync targets', async () => {
         // Reset connectivity state by reconstructing.
-        syncEngine['_connectivityState'] = 'unknown';
+        syncEngine['_connectivityManager'].setState('unknown');
 
         // No identities registered (stores already cleared in beforeEach).
         await syncEngine.sync();
