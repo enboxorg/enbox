@@ -307,73 +307,6 @@ describe('SyncEngineLevel', () => {
       scope              : { kind: 'full' as const },
     });
 
-    it('serializes durable feed runs per link without blocking a different link', async () => {
-      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
-      const internal = syncEngine as any;
-      const activeByRemote = new Map<string, number>();
-      const maxActiveByRemote = new Map<string, number>();
-      const releases: Array<() => void> = [];
-      let totalActive = 0;
-      let maxTotalActive = 0;
-      let resolveFirstA!: () => void;
-      let resolveSecondA!: () => void;
-      let resolveFirstB!: () => void;
-      const firstAEntered = new Promise<void>((resolve) => { resolveFirstA = resolve; });
-      const secondAEntered = new Promise<void>((resolve) => { resolveSecondA = resolve; });
-      const firstBEntered = new Promise<void>((resolve) => { resolveFirstB = resolve; });
-
-      sinon.stub(internal, 'doSyncTargetWithDurableFeeds').callsFake(async (runTarget: { dwnUrl: string }): Promise<any> => {
-        const active = (activeByRemote.get(runTarget.dwnUrl) ?? 0) + 1;
-        activeByRemote.set(runTarget.dwnUrl, active);
-        maxActiveByRemote.set(runTarget.dwnUrl, Math.max(maxActiveByRemote.get(runTarget.dwnUrl) ?? 0, active));
-        totalActive++;
-        maxTotalActive = Math.max(maxTotalActive, totalActive);
-
-        if (runTarget.dwnUrl === 'https://a.example') {
-          if (activeByRemote.get(`${runTarget.dwnUrl}:entered`) === undefined) {
-            activeByRemote.set(`${runTarget.dwnUrl}:entered`, 1);
-            resolveFirstA();
-          } else {
-            resolveSecondA();
-          }
-        } else {
-          resolveFirstB();
-        }
-
-        await new Promise<void>((resolve) => { releases.push(resolve); });
-        activeByRemote.set(runTarget.dwnUrl, active - 1);
-        totalActive--;
-        return { admittedCids: [], hasActionableDiffs: false, pushFailures: [] };
-      });
-
-      const firstA = internal.syncTargetWithDurableFeeds(target('https://a.example'));
-      await firstAEntered;
-      const secondA = internal.syncTargetWithDurableFeeds(target('https://a.example'));
-      const firstB = internal.syncTargetWithDurableFeeds(target('https://b.example', 'projection-b'));
-
-      try {
-        await firstBEntered;
-        expect(internal.doSyncTargetWithDurableFeeds.callCount).toBe(2);
-        expect(maxActiveByRemote.get('https://a.example')).toBe(1);
-        expect(maxActiveByRemote.get('https://b.example')).toBe(1);
-        expect(maxTotalActive).toBe(2);
-
-        releases.shift()?.();
-        await secondAEntered;
-        expect(maxActiveByRemote.get('https://a.example')).toBe(1);
-
-        for (const release of releases.splice(0)) {
-          release();
-        }
-        await Promise.all([firstA, secondA, firstB]);
-        expect(internal._durableFeedRuns.size).toBe(0);
-      } finally {
-        for (const release of releases.splice(0)) {
-          release();
-        }
-      }
-    });
-
     it('does not prune or cache targets invalidated while quota pruning is awaiting storage', async () => {
       const tenantDid = 'did:example:alice';
       const registeredIdentities = {
@@ -2540,7 +2473,8 @@ describe('SyncEngineLevel', () => {
 
         // Stub a feed phase so the real sync() manages _syncLock, while the first
         // sync remains pending until the test explicitly releases it.
-        const pullRemoteFeedStub = sinon.stub(SyncEngineLevel.prototype as any, 'pullRemoteFeedForSyncTarget');
+        const durableFeedReconciler = (testHarness.agent.sync as any)._durableFeedReconciler;
+        const pullRemoteFeedStub = sinon.stub(durableFeedReconciler, 'pull');
         pullRemoteFeedStub.onFirstCall().returns(firstPull);
         pullRemoteFeedStub.resolves({});
 
@@ -2553,10 +2487,10 @@ describe('SyncEngineLevel', () => {
           authorizationEpoch : 'test-owner-epoch',
         }]);
 
-        const pushLocalFeedStub = sinon.stub(SyncEngineLevel.prototype as any, 'pushLocalFeedForSyncTarget');
+        const pushLocalFeedStub = sinon.stub(durableFeedReconciler, 'push');
         pushLocalFeedStub.resolves({});
 
-        const verifyFeedConvergenceStub = sinon.stub(SyncEngineLevel.prototype as any, 'verifyFeedConvergence');
+        const verifyFeedConvergenceStub = sinon.stub(durableFeedReconciler, 'verifyConvergence');
         verifyFeedConvergenceStub.resolves({ converged: true });
 
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
@@ -3687,7 +3621,7 @@ describe('SyncEngineLevel', () => {
         expect(syncEngine.connectivityState).toBe('online');
 
         // Now stub feed pull to throw, simulating a failure.
-        const pullRemoteFeedStub = sinon.stub(syncEngine as any, 'pullRemoteFeedForSyncTarget').rejects(new Error('simulated failure'));
+        const pullRemoteFeedStub = sinon.stub(syncEngine['_durableFeedReconciler'], 'pull').rejects(new Error('simulated failure'));
 
         // Suppress console.error for the expected error.
         const consoleErrorStub = sinon.stub(console, 'error');
@@ -3713,7 +3647,7 @@ describe('SyncEngineLevel', () => {
         expect(syncEngine.connectivityState).toBe('online');
 
         // Failing sync -> offline.
-        const pullRemoteFeedStub = sinon.stub(syncEngine as any, 'pullRemoteFeedForSyncTarget').rejects(new Error('simulated failure'));
+        const pullRemoteFeedStub = sinon.stub(syncEngine['_durableFeedReconciler'], 'pull').rejects(new Error('simulated failure'));
         const consoleErrorStub = sinon.stub(console, 'error');
         await expect(syncEngine.sync()).rejects.toThrow('Sync operation failed');
         expect(syncEngine.connectivityState).toBe('offline');
@@ -3747,7 +3681,7 @@ describe('SyncEngineLevel', () => {
 
         // Stub feed pull to fail for the first target.
         const consoleErrorStub = sinon.stub(console, 'error');
-        const pullRemoteFeedStub = sinon.stub(syncEngine as any, 'pullRemoteFeedForSyncTarget');
+        const pullRemoteFeedStub = sinon.stub(syncEngine['_durableFeedReconciler'], 'pull');
         pullRemoteFeedStub.onFirstCall().rejects(new Error('DWN unreachable'));
         pullRemoteFeedStub.onSecondCall().resolves({});
 

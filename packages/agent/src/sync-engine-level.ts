@@ -17,7 +17,6 @@ import type { SyncReplicationLinkStore } from './sync-replication-link-store.js'
 import type {
   DeadLetterCategory,
   DeadLetterEntry,
-  DirectionCheckpoint,
   NonEmptyStringArray,
   PushAcknowledgement,
   PushFailure,
@@ -41,6 +40,14 @@ import type {
   SyncMode,
   SyncScope,
 } from './types/sync.js';
+import type {
+  SyncDurableFeedPageAdmissionResult as FeedPageAdmissionResult,
+  SyncDurableFeedPagePushResult as FeedPagePushResult,
+  SyncDurableFeedPermissionGrantBootstrapResult as PermissionGrantBootstrapResult,
+  SyncDurableFeedQuery,
+  SyncDurableFeedReconcileOptions as SyncReconcileOptions,
+  SyncDurableFeedReconcileResult as SyncReconcileResult,
+} from './sync-durable-feed-reconciler.js';
 import type { SyncEndpointDiscovery, SyncTarget } from './sync-target-resolver.js';
 import type { SyncPushRuntimeEntry, SyncPushRuntimeState } from './sync-link-controller.js';
 
@@ -53,6 +60,7 @@ import { DwnInterface } from './types/dwn.js';
 import { getProtocolClosureEdges } from './sync-scope-closure.js';
 import { isRecordsWrite } from './utils.js';
 import { SyncCheckpoint } from './sync-checkpoint.js';
+import { SyncDurableFeedReconciler } from './sync-durable-feed-reconciler.js';
 import { SyncEndpointStoreLevel } from './sync-endpoint-store-level.js';
 import { SyncIdentityStoreLevel } from './sync-identity-store-level.js';
 import { SyncLifecycleCoordinator } from './sync-lifecycle-coordinator.js';
@@ -78,9 +86,6 @@ export type SyncEngineLevelParams = {
  */
 const PUSH_DEBOUNCE_MS = 100;
 
-/** Default durable-feed page size for engine replay. */
-const FEED_PAGE_LIMIT = 100;
-
 /** Maximum concurrent live-pull deliveries waiting for earlier ordinals to commit. */
 const MAX_IN_FLIGHT_PULL_DELIVERIES = 100;
 
@@ -104,12 +109,6 @@ type LinkInitializationResult =
   | { status: LinkInitializationStatus.Active; durableLinkIdentityKey: string }
   | { status: LinkInitializationStatus.Failed };
 
-type SyncReconcileOptions = {
-  direction?: SyncDirection;
-  forceQuotaProbe?: boolean;
-  verifyConvergence?: boolean;
-};
-
 type SyncRunOptions = {
   verifyConvergence?: boolean;
 };
@@ -128,17 +127,6 @@ type SyncScopeClosureValidationState = {
   missingGrantProtocols: Set<string>;
   nonScopedUsesProtocols: Set<string>;
   splitDependencyEdges: Map<string, Set<string>>;
-};
-
-type SyncReconcileResult = {
-  aborted?: boolean;
-  admittedCids?: string[];
-  converged?: boolean;
-  hasActionableDiffs?: boolean;
-  localFingerprint?: string;
-  pushFailures?: PushFailure[];
-  quotaBlocked?: boolean;
-  remoteFingerprint?: string;
 };
 
 type SyncTargetGroupRunResult = {
@@ -212,33 +200,11 @@ type RemoteStatusAccumulator = {
   lastActivityAt?: string;
 };
 
-type FeedPageAdmissionResult =
-  | { kind: 'aborted' }
-  | { kind: 'deferred'; admittedCids: string[]; detail?: string; hasActionableDiffs: boolean; messageCid: string }
-  | { kind: 'processed'; admittedCids: string[]; hasActionableDiffs: boolean };
-
-type TrackedFeedPageAdmissionResult =
-  | { kind: 'aborted' }
-  | { kind: 'processed'; hasActionableDiffs: boolean };
-
-type FeedCursorAdvanceResult =
-  | { drained: true }
-  | { cursor: ProgressToken; drained: false };
-
 type FeedPushEntryResult =
   | { kind: 'aborted' }
   | { kind: 'pushed' }
   | { kind: 'skipped' }
   | { kind: 'failed'; failures: PushFailure[] };
-
-type FeedPagePushResult =
-  | { kind: 'aborted' }
-  | { kind: 'failed'; failures: PushFailure[]; hasActionableDiffs: boolean }
-  | { kind: 'processed'; hasActionableDiffs: boolean };
-
-type PermissionGrantBootstrapResult =
-  | { kind: 'aborted' }
-  | { kind: 'processed'; failures: PushFailure[]; hasActionableDiffs: boolean; quotaBlocked: boolean };
 
 type PushFlushBatch = {
   controller: SyncLinkController;
@@ -308,6 +274,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   private readonly _db: AbstractLevel<string | Buffer | Uint8Array>;
   private readonly _endpointStore: SyncEndpointStore;
+  private readonly _durableFeedReconciler: SyncDurableFeedReconciler;
   private readonly _identityStore: SyncIdentityStore;
   private readonly _lifecycle = new SyncLifecycleCoordinator();
   private readonly _targetPlanner: SyncTargetPlanner;
@@ -347,9 +314,6 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** In-flight quota probes, keyed by tenant + remote + CID, to deduplicate concurrent retry paths. */
   private readonly _quotaProbeInFlight: Map<string, Promise<void>> = new Map();
-
-  /** Serializes durable-feed checkpoint reads and writes for each complete replication link. */
-  private readonly _durableFeedRuns: Map<string, Promise<void>> = new Map();
 
   /** Serializes public Retry-now operations with each other before they acquire the sync lock. */
   private _retryRemoteQueue: Promise<void> = Promise.resolve();
@@ -661,6 +625,30 @@ export class SyncEngineLevel implements SyncEngine {
     this._db = db ?? new Level<string, string>(dataPath ?? 'DATA/AGENT/SYNC_STORE');
     this._endpointStore = new SyncEndpointStoreLevel(this._db);
     this._identityStore = new SyncIdentityStoreLevel(this._db);
+    this._durableFeedReconciler = new SyncDurableFeedReconciler({
+      admitRemotePage: (target, entries, shouldContinue): Promise<FeedPageAdmissionResult> =>
+        this.admitRemoteFeedPage(target, entries, shouldContinue),
+      bootstrapRemotePermissionGrants: (
+        target,
+        shouldContinue,
+        forceQuotaProbe,
+      ): Promise<PermissionGrantBootstrapResult> =>
+        this.bootstrapRemotePermissionGrants(target, shouldContinue, forceQuotaProbe),
+      clearResolvedQuotaOmissions: (target): Promise<void> =>
+        this.clearResolvedQuotaOmissionsForTarget(target),
+      getLinkStore    : (): SyncReplicationLinkStore => this.ledger,
+      getOrCreateLink : (target): Promise<ReplicationLinkState> =>
+        this.getOrCreateReplicationLink(target),
+      getQuotaBlockCids: async (target): Promise<string[]> =>
+        (await this.getQuotaBlocksForTarget(target)).map(({ messageCid }) => messageCid),
+      onCheckpointAdvanced : (link, direction): void => { this.emitCheckpointAdvance(link, direction); },
+      onReconcileApplied   : (target, messageCids): void => { this.emitReconcileApplied(target, messageCids); },
+      probeQuotaBlocks     : (target, force, forceProbeCids, shouldContinue): Promise<void> =>
+        this.probeQuotaBlocksForTarget(target, force, forceProbeCids, shouldContinue),
+      pushLocalPage: (target, entries, shouldContinue): Promise<FeedPagePushResult> =>
+        this.pushLocalFeedPage(target, entries, shouldContinue),
+      queryFeed: (query): Promise<MessagesQueryReply> => this.queryDurableFeed(query),
+    });
     this._targetPlanner = new SyncTargetPlanner({
       getTargetResolver : (): SyncTargetResolver => this.targetResolver,
       identityStore     : this._identityStore,
@@ -3775,475 +3763,42 @@ export class SyncEngineLevel implements SyncEngine {
     return authorization.kind === 'delegate' ? authorization.permissionGrantIds : undefined;
   }
 
-  private async syncTargetWithDurableFeeds(
+  private syncTargetWithDurableFeeds(
     target: SyncTarget,
     options?: SyncReconcileOptions,
     shouldContinue?: () => boolean,
   ): Promise<SyncReconcileResult> {
-    const { linkKey } = this.quotaBlockIdentity(target);
-    const previous = this._durableFeedRuns.get(linkKey) ?? Promise.resolve();
-    const run = previous.catch((): void => {
-      // A failed predecessor must not poison this link's queue.
-    }).then(async (): Promise<SyncReconcileResult> => {
-      if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
-        return { ...SyncEngineLevel.emptySyncReconcileResult(options), aborted: true };
-      }
-      return this.doSyncTargetWithDurableFeeds(target, options, shouldContinue);
-    });
-    const settled = run.then((): void => {}, (): void => {});
-    this._durableFeedRuns.set(linkKey, settled);
-
-    try {
-      return await run;
-    } finally {
-      if (this._durableFeedRuns.get(linkKey) === settled) {
-        this._durableFeedRuns.delete(linkKey);
-      }
-    }
+    return this._durableFeedReconciler.reconcile(target, options, shouldContinue);
   }
 
-  private async doSyncTargetWithDurableFeeds(
+  private verifyFeedConvergence(
     target: SyncTarget,
-    options?: SyncReconcileOptions,
     shouldContinue?: () => boolean,
   ): Promise<SyncReconcileResult> {
-    const result = SyncEngineLevel.emptySyncReconcileResult(options);
-    const link = await this.getOrCreateReplicationLink(target);
-    if (link.status === 'paused') {
-      return result;
-    }
-
-    const feedPullResult = await this.pullRemoteFeedForSyncTarget(target, options, shouldContinue);
-    SyncEngineLevel.mergeSyncReconcileResult(result, feedPullResult, options);
-    if (SyncEngineLevel.shouldStopAfterFeedResult(result, feedPullResult)) {
-      return result;
-    }
-    if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
-      return { ...result, aborted: true };
-    }
-
-    const feedPushResult = await this.pushLocalFeedForSyncTarget(target, options, shouldContinue);
-    SyncEngineLevel.mergeSyncReconcileResult(result, feedPushResult, options);
-    if (SyncEngineLevel.shouldStopAfterFeedResult(result, feedPushResult)) {
-      return result;
-    }
-    if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
-      return { ...result, aborted: true };
-    }
-
-    if (options?.verifyConvergence === true) {
-      const convergence = await this.verifyFeedConvergence(target, shouldContinue);
-      SyncEngineLevel.mergeSyncReconcileResult(result, convergence, options);
-    }
-    return result;
+    return this._durableFeedReconciler.verifyConvergence(target, shouldContinue);
   }
 
-  private static emptySyncReconcileResult(options?: SyncReconcileOptions): SyncReconcileResult {
-    return {
-      admittedCids       : [],
-      ...(options?.verifyConvergence === true ? { converged: true } : {}),
-      hasActionableDiffs : false,
-      pushFailures       : [],
+  private queryDurableFeed({
+    cidsOnly,
+    cursor,
+    limit,
+    source,
+    target,
+  }: SyncDurableFeedQuery): Promise<MessagesQueryReply> {
+    const params = {
+      did                : target.did,
+      delegateDid        : target.delegateDid,
+      permissionGrantIds : target.permissionGrantIds,
+      filters            : SyncEngineLevel.messageFeedFiltersForScope(target.scope),
+      cursor,
+      cidsOnly,
+      limit,
+      agent              : this.agent,
     };
-  }
 
-  private static mergeSyncReconcileResult(
-    target: SyncReconcileResult,
-    source: SyncReconcileResult,
-    options?: SyncReconcileOptions,
-  ): void {
-    target.aborted ||= source.aborted;
-    target.admittedCids?.push(...(source.admittedCids ?? []));
-    target.pushFailures?.push(...(source.pushFailures ?? []));
-    target.hasActionableDiffs ||= source.hasActionableDiffs === true;
-    target.quotaBlocked ||= source.quotaBlocked === true;
-    target.localFingerprint = source.localFingerprint ?? target.localFingerprint;
-    target.remoteFingerprint = source.remoteFingerprint ?? target.remoteFingerprint;
-
-    if (
-      options?.verifyConvergence === true &&
-      (source.converged === false || source.quotaBlocked === true || (source.pushFailures?.length ?? 0) > 0)
-    ) {
-      target.converged = false;
-    }
-  }
-
-  private static feedFingerprintsConverged(result: SyncReconcileResult): boolean {
-    if ((result.pushFailures?.length ?? 0) > 0) {
-      return false;
-    }
-
-    return result.localFingerprint !== undefined &&
-      result.remoteFingerprint !== undefined &&
-      result.localFingerprint === result.remoteFingerprint;
-  }
-
-  private async verifyFeedConvergence(
-    target: SyncTarget,
-    shouldContinue?: () => boolean,
-  ): Promise<SyncReconcileResult> {
-    if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
-      return { aborted: true };
-    }
-
-    const filters = SyncEngineLevel.messageFeedFiltersForScope(target.scope);
-    const [localReply, remoteReply] = await Promise.all([
-      queryLocalMessageFeed({
-        did                : target.did,
-        delegateDid        : target.delegateDid,
-        permissionGrantIds : target.permissionGrantIds,
-        filters,
-        cidsOnly           : true,
-        limit              : 1,
-        agent              : this.agent,
-      }),
-      queryRemoteMessageFeed({
-        did                : target.did,
-        dwnUrl             : target.dwnUrl,
-        delegateDid        : target.delegateDid,
-        permissionGrantIds : target.permissionGrantIds,
-        filters,
-        cidsOnly           : true,
-        limit              : 1,
-        agent              : this.agent,
-      }),
-    ]);
-
-    if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
-      return { aborted: true };
-    }
-
-    SyncEngineLevel.assertFeedQuerySucceeded(localReply, target, 'push');
-    SyncEngineLevel.assertFeedQuerySucceeded(remoteReply, target, 'pull');
-
-    const result: SyncReconcileResult = {
-      localFingerprint  : localReply.fingerprint,
-      remoteFingerprint : remoteReply.fingerprint,
-      pushFailures      : [],
-    };
-    const converged = SyncEngineLevel.feedFingerprintsConverged(result);
-    if (converged) {
-      // Exact equality means every locally retained resolved CID is now present
-      // remotely (or has retired from both feeds), so its explanatory row is no
-      // longer needed.
-      await this.clearResolvedQuotaOmissionsForTarget(target);
-    }
-    return { ...result, converged };
-  }
-
-  private static shouldStopAfterFeedResult(
-    accumulator: SyncReconcileResult,
-    latest: SyncReconcileResult,
-  ): boolean {
-    return latest.aborted === true || latest.quotaBlocked === true || (accumulator.pushFailures?.length ?? 0) > 0;
-  }
-
-  private async pullRemoteFeedForSyncTarget(
-    target: SyncTarget,
-    options?: SyncReconcileOptions,
-    shouldContinue?: () => boolean,
-  ): Promise<SyncReconcileResult> {
-    if (options?.direction === 'push') {
-      return {};
-    }
-
-    const link = await this.getOrCreateReplicationLink(target);
-    return this.pullRemoteFeedPages(target, link, shouldContinue);
-  }
-
-  private async pullRemoteFeedPages(
-    target: SyncTarget,
-    link: ReplicationLinkState,
-    shouldContinue?: () => boolean,
-  ): Promise<SyncReconcileResult> {
-    if (link.pull.contiguousAppliedToken === undefined) {
-      const result = await this.pullRemoteFeedDiffWhenUseful(target, link, shouldContinue);
-      if (result !== undefined) {
-        return result;
-      }
-    }
-
-    const admittedCids: string[] = [];
-    let hasActionableDiffs = false;
-    let cursor: ProgressToken | undefined = link.pull.contiguousAppliedToken;
-    let resetAfterProgressGap = false;
-
-    while (true) {
-      if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
-        return { aborted: true };
-      }
-
-      const reply = await queryRemoteMessageFeed({
-        did                : target.did,
-        dwnUrl             : target.dwnUrl,
-        delegateDid        : target.delegateDid,
-        permissionGrantIds : target.permissionGrantIds,
-        filters            : SyncEngineLevel.messageFeedFiltersForScope(target.scope),
-        cursor,
-        limit              : FEED_PAGE_LIMIT,
-        agent              : this.agent,
-      });
-
-      if (await this.resetFeedAfterProgressGap(reply, link, 'pull', resetAfterProgressGap)) {
-        resetAfterProgressGap = true;
-        cursor = undefined;
-        const result = await this.pullRemoteFeedDiffWhenUseful(target, link, shouldContinue);
-        if (result !== undefined) {
-          return result;
-        }
-        continue;
-      }
-
-      SyncEngineLevel.assertFeedQuerySucceeded(reply, target, 'pull');
-      const pageResult = await this.admitRemoteFeedPageAndTrack({
-        target         : target,
-        entries        : reply.entries ?? [],
-        admittedCids   : admittedCids,
-        shouldContinue : shouldContinue,
-      });
-      if (pageResult.kind === 'aborted') {
-        return { aborted: true };
-      }
-
-      hasActionableDiffs ||= pageResult.hasActionableDiffs;
-
-      const cursorAdvance = await this.advanceFeedCursor(link, 'pull', cursor, reply, target);
-      if (cursorAdvance.drained) {
-        return { admittedCids, hasActionableDiffs, remoteFingerprint: reply.fingerprint };
-      }
-
-      cursor = cursorAdvance.cursor;
-    }
-  }
-
-  private async pullRemoteFeedDiffPages(
-    target: SyncTarget,
-    link: ReplicationLinkState,
-    localCids: Set<string>,
-    shouldContinue?: () => boolean,
-  ): Promise<SyncReconcileResult> {
-    const admittedCids: string[] = [];
-    let hasActionableDiffs = false;
-    let cursor: ProgressToken | undefined;
-    let resetAfterProgressGap = false;
-
-    while (true) {
-      if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
-        return { aborted: true };
-      }
-
-      const reply = await this.queryFeedCidsPage(target, 'remote', cursor);
-
-      if (await this.resetFeedAfterProgressGap(reply, link, 'pull', resetAfterProgressGap)) {
-        resetAfterProgressGap = true;
-        cursor = undefined;
-        continue;
-      }
-
-      SyncEngineLevel.assertFeedQuerySucceeded(reply, target, 'pull');
-      const missingEntries = SyncEngineLevel.feedEntriesMissingFrom(localCids, reply.entries ?? []);
-      const pageResult = await this.admitRemoteFeedPageAndTrack({
-        target         : target,
-        entries        : missingEntries,
-        admittedCids   : admittedCids,
-        knownCids      : localCids,
-        shouldContinue : shouldContinue,
-      });
-      if (pageResult.kind === 'aborted') {
-        return { aborted: true };
-      }
-
-      hasActionableDiffs ||= pageResult.hasActionableDiffs;
-
-      const cursorAdvance = await this.advanceFeedCursor(link, 'pull', cursor, reply, target);
-      if (cursorAdvance.drained) {
-        return { admittedCids, hasActionableDiffs, remoteFingerprint: reply.fingerprint };
-      }
-
-      cursor = cursorAdvance.cursor;
-    }
-  }
-
-  private async pushLocalFeedForSyncTarget(
-    target: SyncTarget,
-    options?: SyncReconcileOptions,
-    shouldContinue?: () => boolean,
-  ): Promise<SyncReconcileResult> {
-    if (options?.direction === 'pull') {
-      return {};
-    }
-
-    const forceQuotaProbe = options?.forceQuotaProbe === true;
-    const forceProbeCids = forceQuotaProbe
-      ? new Set((await this.getQuotaBlocksForTarget(target)).map(({ messageCid }) => messageCid))
-      : undefined;
-    const link = await this.getOrCreateReplicationLink(target);
-    const result = await this.pushLocalFeedPages(
-      target,
-      link,
-      shouldContinue,
-      forceQuotaProbe,
-    );
-
-    // Feed checkpoints intentionally advance past quota-blocked roots so one
-    // oversized record cannot hold newer records (or other remotes) behind it.
-    // Process later feed state first: an update/delete may replay a retained
-    // dataless ancestor as its dependency. Only then probe remaining roots
-    // independently of the advanced checkpoint.
-    if (
-      result.aborted !== true &&
-      result.quotaBlocked !== true &&
-      (result.pushFailures?.length ?? 0) === 0
-    ) {
-      await this.probeQuotaBlocksForTarget(target, forceQuotaProbe, forceProbeCids, shouldContinue);
-    }
-
-    return result;
-  }
-
-  private async pushLocalFeedPages(
-    target: SyncTarget,
-    link: ReplicationLinkState,
-    shouldContinue?: () => boolean,
-    forceQuotaProbe = false,
-  ): Promise<SyncReconcileResult> {
-    if (link.push.contiguousAppliedToken === undefined) {
-      return this.pushLocalFeedDiffWithRemoteInventory(target, link, shouldContinue, forceQuotaProbe);
-    }
-
-    let hasActionableDiffs = false;
-    let cursor: ProgressToken | undefined = link.push.contiguousAppliedToken;
-
-    while (true) {
-      if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
-        return { aborted: true };
-      }
-
-      const reply = await queryLocalMessageFeed({
-        did                : target.did,
-        delegateDid        : target.delegateDid,
-        permissionGrantIds : target.permissionGrantIds,
-        filters            : SyncEngineLevel.messageFeedFiltersForScope(target.scope),
-        cursor,
-        limit              : FEED_PAGE_LIMIT,
-        agent              : this.agent,
-      });
-
-      if (await this.resetFeedAfterProgressGap(reply, link, 'push', false)) {
-        return this.pushLocalFeedDiffWithRemoteInventory(target, link, shouldContinue, forceQuotaProbe);
-      }
-
-      SyncEngineLevel.assertFeedQuerySucceeded(reply, target, 'push');
-      const pageResult = await this.pushLocalFeedPage(target, reply.entries ?? [], shouldContinue);
-      if (pageResult.kind === 'aborted') {
-        return { aborted: true };
-      }
-
-      hasActionableDiffs ||= pageResult.hasActionableDiffs;
-      if (pageResult.kind === 'failed') {
-        return { hasActionableDiffs, pushFailures: pageResult.failures };
-      }
-
-      const cursorAdvance = await this.advanceFeedCursor(link, 'push', cursor, reply, target);
-      if (cursorAdvance.drained) {
-        return { hasActionableDiffs, localFingerprint: reply.fingerprint, pushFailures: [] };
-      }
-
-      cursor = cursorAdvance.cursor;
-    }
-  }
-
-  private async pullRemoteFeedDiffWhenUseful(
-    target: SyncTarget,
-    link: ReplicationLinkState,
-    shouldContinue?: () => boolean,
-  ): Promise<SyncReconcileResult | undefined> {
-    const localCids = await this.collectLocalFeedCids(target, shouldContinue);
-    if (localCids === undefined) {
-      return { aborted: true };
-    }
-    if (localCids.size === 0) {
-      return undefined;
-    }
-
-    return this.pullRemoteFeedDiffPages(target, link, localCids, shouldContinue);
-  }
-
-  private async pushLocalFeedDiffWithRemoteInventory(
-    target: SyncTarget,
-    link: ReplicationLinkState,
-    shouldContinue?: () => boolean,
-    forceQuotaProbe = false,
-  ): Promise<SyncReconcileResult> {
-    const grantBootstrap = await this.bootstrapRemotePermissionGrants(target, shouldContinue, forceQuotaProbe);
-    if (grantBootstrap.kind === 'aborted') {
-      return { aborted: true };
-    }
-    if (grantBootstrap.quotaBlocked) {
-      return { hasActionableDiffs: grantBootstrap.hasActionableDiffs, pushFailures: [], quotaBlocked: true };
-    }
-    if (grantBootstrap.failures.length > 0) {
-      return { hasActionableDiffs: grantBootstrap.hasActionableDiffs, pushFailures: grantBootstrap.failures };
-    }
-
-    const remoteCids = await this.collectRemoteFeedCids(target, shouldContinue);
-    if (remoteCids === undefined) {
-      return { aborted: true };
-    }
-
-    const result = await this.pushLocalFeedDiffPages(target, link, remoteCids, shouldContinue);
-    if (result.aborted === true) {
-      return result;
-    }
-
-    return { ...result, hasActionableDiffs: result.hasActionableDiffs === true || grantBootstrap.hasActionableDiffs };
-  }
-
-  private async pushLocalFeedDiffPages(
-    target: SyncTarget,
-    link: ReplicationLinkState,
-    remoteCids: Set<string>,
-    shouldContinue?: () => boolean,
-  ): Promise<SyncReconcileResult> {
-    let hasActionableDiffs = false;
-    let cursor: ProgressToken | undefined;
-    let resetAfterProgressGap = false;
-
-    while (true) {
-      if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
-        return { aborted: true };
-      }
-
-      const reply = await this.queryFeedCidsPage(target, 'local', cursor);
-
-      if (await this.resetFeedAfterProgressGap(reply, link, 'push', resetAfterProgressGap)) {
-        resetAfterProgressGap = true;
-        cursor = undefined;
-        continue;
-      }
-
-      SyncEngineLevel.assertFeedQuerySucceeded(reply, target, 'push');
-      const missingEntries = SyncEngineLevel.feedEntriesMissingFrom(remoteCids, reply.entries ?? []);
-      const pageResult = await this.pushLocalFeedPage(target, missingEntries, shouldContinue);
-      if (pageResult.kind === 'aborted') {
-        return { aborted: true };
-      }
-
-      hasActionableDiffs ||= pageResult.hasActionableDiffs;
-      if (pageResult.kind === 'failed') {
-        return { hasActionableDiffs, pushFailures: pageResult.failures };
-      }
-      for (const entry of missingEntries) {
-        remoteCids.add(entry.messageCid);
-      }
-
-      const cursorAdvance = await this.advanceFeedCursor(link, 'push', cursor, reply, target);
-      if (cursorAdvance.drained) {
-        return { hasActionableDiffs, localFingerprint: reply.fingerprint, pushFailures: [] };
-      }
-
-      cursor = cursorAdvance.cursor;
-    }
+    return source === 'local'
+      ? queryLocalMessageFeed(params)
+      : queryRemoteMessageFeed({ ...params, dwnUrl: target.dwnUrl });
   }
 
   private async bootstrapRemotePermissionGrants(
@@ -4425,122 +3980,18 @@ export class SyncEngineLevel implements SyncEngine {
     });
   }
 
-  private async collectLocalFeedCids(target: SyncTarget, shouldContinue?: () => boolean): Promise<Set<string> | undefined> {
-    return this.collectFeedCids(target, 'local', shouldContinue);
-  }
-
-  private async collectRemoteFeedCids(target: SyncTarget, shouldContinue?: () => boolean): Promise<Set<string> | undefined> {
-    return this.collectFeedCids(target, 'remote', shouldContinue);
-  }
-
-  private async collectFeedCids(
+  private collectLocalFeedCids(
     target: SyncTarget,
-    source: 'local' | 'remote',
     shouldContinue?: () => boolean,
   ): Promise<Set<string> | undefined> {
-    const cids = new Set<string>();
-    let cursor: ProgressToken | undefined;
-
-    while (true) {
-      if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
-        return undefined;
-      }
-
-      const reply = await this.queryFeedCidsPage(target, source, cursor);
-      if (source === 'local') {
-        SyncEngineLevel.assertFeedQuerySucceeded(reply, target, 'push');
-      } else {
-        SyncEngineLevel.assertFeedQuerySucceeded(reply, target, 'pull');
-      }
-      for (const entry of reply.entries ?? []) {
-        cids.add(entry.messageCid);
-      }
-
-      const advance = this.nextFeedEnumerationCursor(reply, target, source);
-      if (advance.drained) {
-        return cids;
-      }
-
-      cursor = advance.cursor;
-    }
+    return this._durableFeedReconciler.collectLocalCids(target, shouldContinue);
   }
 
-  private async queryFeedCidsPage(
+  private collectRemoteFeedCids(
     target: SyncTarget,
-    source: 'local' | 'remote',
-    cursor: ProgressToken | undefined,
-  ): Promise<MessagesQueryReply> {
-    const params = {
-      did                : target.did,
-      delegateDid        : target.delegateDid,
-      permissionGrantIds : target.permissionGrantIds,
-      filters            : SyncEngineLevel.messageFeedFiltersForScope(target.scope),
-      cursor,
-      cidsOnly           : true,
-      limit              : FEED_PAGE_LIMIT,
-      agent              : this.agent,
-    };
-
-    return source === 'local'
-      ? queryLocalMessageFeed(params)
-      : queryRemoteMessageFeed({ ...params, dwnUrl: target.dwnUrl });
-  }
-
-  private nextFeedEnumerationCursor(
-    reply: MessagesQueryReply,
-    target: SyncTarget,
-    source: 'local' | 'remote',
-  ): FeedCursorAdvanceResult {
-    const drained = reply.drained === true;
-    if (reply.cursor === undefined) {
-      if (drained) {
-        return { drained: true };
-      }
-      throw new Error(`SyncEngineLevel: ${source} MessagesQuery for ${target.did} -> ${target.dwnUrl} returned no cursor before drain`);
-    }
-
-    if (!this.isValidProgressToken(reply.cursor)) {
-      throw new Error(`SyncEngineLevel: ${source} MessagesQuery returned an invalid cursor for ${target.did} -> ${target.dwnUrl}`);
-    }
-
-    return drained ? { drained: true } : { cursor: reply.cursor, drained: false };
-  }
-
-  private static feedEntriesMissingFrom(knownCids: Set<string>, entries: MessagesQueryReplyEntry[]): MessagesQueryReplyEntry[] {
-    return entries.filter(entry => !knownCids.has(entry.messageCid));
-  }
-
-  private async admitRemoteFeedPageAndTrack({
-    target,
-    entries,
-    admittedCids,
-    knownCids,
-    shouldContinue,
-  }: {
-    target: SyncTarget;
-    entries: MessagesQueryReplyEntry[];
-    admittedCids: string[];
-    knownCids?: Set<string>;
-    shouldContinue?: () => boolean;
-  }): Promise<TrackedFeedPageAdmissionResult> {
-    const pageResult = await this.admitRemoteFeedPage(target, entries, shouldContinue);
-    if (pageResult.kind === 'aborted') {
-      return { kind: 'aborted' };
-    }
-
-    admittedCids.push(...pageResult.admittedCids);
-    for (const messageCid of pageResult.admittedCids) {
-      knownCids?.add(messageCid);
-    }
-
-    if (pageResult.kind === 'deferred') {
-      if (admittedCids.length > 0) {
-        this.emitReconcileApplied(target, admittedCids);
-      }
-      throw new Error(`SyncEngineLevel: pull deferred for ${pageResult.messageCid}: ${pageResult.detail ?? 'dependency unavailable'}`);
-    }
-
-    return { kind: 'processed', hasActionableDiffs: pageResult.hasActionableDiffs };
+    shouldContinue?: () => boolean,
+  ): Promise<Set<string> | undefined> {
+    return this._durableFeedReconciler.collectRemoteCids(target, shouldContinue);
   }
 
   private async pushLocalFeedPage(
@@ -4746,28 +4197,6 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     return (message as GenericMessage & { recordId?: string }).recordId === recordId;
-  }
-
-  private async resetFeedAfterProgressGap(
-    reply: MessagesQueryReply,
-    link: ReplicationLinkState,
-    direction: SyncDirection,
-    alreadyReset: boolean,
-  ): Promise<boolean> {
-    if (reply.status.code !== 410 || alreadyReset) {
-      return false;
-    }
-
-    await this.ledger.resetCheckpoint(link, direction);
-    return true;
-  }
-
-  private static assertFeedQuerySucceeded(reply: MessagesQueryReply, target: SyncTarget, direction: SyncDirection): void {
-    if (reply.status.code !== 200) {
-      // The local feed query is labelled distinctly from the remote one.
-      const label = direction === 'push' ? 'local MessagesQuery' : 'MessagesQuery';
-      throw new Error(`SyncEngineLevel: ${label} failed for ${target.did} -> ${target.dwnUrl}: ${reply.status.code} ${reply.status.detail}`);
-    }
   }
 
   private async admitRemoteFeedPage(
@@ -5559,60 +4988,6 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
     return omittedCids;
-  }
-
-  private async advanceFeedCursor(
-    link: ReplicationLinkState,
-    direction: SyncDirection,
-    previousCursor: ProgressToken | undefined,
-    reply: MessagesQueryReply,
-    target: SyncTarget,
-  ): Promise<FeedCursorAdvanceResult> {
-    const checkpoint = link[direction];
-    const drained = reply.drained === true;
-    if (reply.cursor === undefined) {
-      if (drained) {
-        return { drained: true };
-      }
-      // The local feed query is labelled distinctly from the remote one.
-      const label = direction === 'push' ? 'local MessagesQuery' : 'MessagesQuery';
-      throw new Error(`SyncEngineLevel: ${label} for ${target.did} -> ${target.dwnUrl} returned no cursor before drain`);
-    }
-
-    this.assertFeedCursorProgress(link, checkpoint, previousCursor, reply.cursor, drained, target.dwnUrl, direction);
-    SyncCheckpoint.setReceivedToken(checkpoint, reply.cursor);
-    SyncCheckpoint.commitContiguousToken(checkpoint, reply.cursor);
-    await this.ledger.persistCheckpoint(link, direction);
-    this.emitCheckpointAdvance(link, direction);
-
-    return drained ? { drained: true } : { cursor: reply.cursor, drained: false };
-  }
-
-  private assertFeedCursorProgress(
-    link: ReplicationLinkState,
-    checkpoint: DirectionCheckpoint,
-    previousCursor: ProgressToken | undefined,
-    nextCursor: ProgressToken,
-    drained: boolean,
-    dwnUrl: string,
-    direction: SyncDirection,
-  ): void {
-    if (!this.isValidProgressToken(nextCursor)) {
-      throw new Error(`SyncEngineLevel: ${direction} MessagesQuery returned an invalid cursor for ${link.tenantDid} -> ${dwnUrl}`);
-    }
-
-    if (!SyncCheckpoint.validateTokenDomain(checkpoint, nextCursor)) {
-      throw new Error(`SyncEngineLevel: ${direction} MessagesQuery token domain mismatch for ${link.tenantDid} -> ${dwnUrl}`);
-    }
-
-    if (previousCursor === undefined) {
-      return;
-    }
-
-    const comparison = SyncCheckpoint.comparePosition(nextCursor, previousCursor);
-    if (comparison < 0 || (comparison === 0 && !drained)) {
-      throw new Error(`SyncEngineLevel: ${direction} MessagesQuery cursor did not advance for ${link.tenantDid} -> ${dwnUrl}`);
-    }
   }
 
   private async admitRemoteFeedEntry(
