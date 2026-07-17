@@ -5,6 +5,7 @@ import { RateLimitError } from '@enbox/dwn-clients';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
+import { SyncScopeClosureValidator } from '../src/sync-scope-closure-validator.js';
 
 function activateTestLink(engine: SyncEngineLevel, linkKey: string, did: string, remoteEndpoint = 'https://dwn.example.com'): any {
   return (engine as any).activateLink(linkKey, {
@@ -42,7 +43,7 @@ describe('SyncEngineLevel — identity management', () => {
   });
 
   beforeEach(() => {
-    sinon.stub(SyncEngineLevel.prototype as any, 'validateSyncScopeClosure').resolves();
+    sinon.stub(SyncScopeClosureValidator.prototype, 'validateClosure').resolves();
   });
 
   afterEach(async () => {
