@@ -20,8 +20,6 @@ import { DwnRegistrar } from '@enbox/dwn-clients';
 import { STORAGE_KEYS } from './types.js';
 
 import type {
-  ProviderAuthParams,
-  ProviderAuthResult,
   RegistrationOptions,
   RegistrationTokenData,
   StorageAdapter,
@@ -191,7 +189,7 @@ async function registerDidsAtEndpoint(
   if (hasProviderAuth && registration.onProviderAuthRequired) {
     // --- Provider Auth Path ---
     const tokenData = await resolveProviderAuthToken(
-      ctx, registration.onProviderAuthRequired, serverInfo, dwnEndpoint, updatedTokens,
+      ctx, registration, serverInfo, dwnEndpoint, updatedTokens,
     );
 
     // Register each DID using the provider auth token.
@@ -221,7 +219,7 @@ async function registerDidsAtEndpoint(
  */
 async function resolveProviderAuthToken(
   ctx: RegistrationContext,
-  onProviderAuthRequired: (params: ProviderAuthParams) => Promise<ProviderAuthResult>,
+  registration: RegistrationOptions,
   serverInfo: ServerInfo,
   dwnEndpoint: string,
   updatedTokens: Record<string, RegistrationTokenData>,
@@ -233,7 +231,7 @@ async function resolveProviderAuthToken(
 
   // Run the auth flow if no valid token exists.
   if (tokenData === undefined) {
-    tokenData = await runProviderAuthFlow(ctx, onProviderAuthRequired, serverInfo, dwnEndpoint, updatedTokens);
+    tokenData = await runProviderAuthFlow(ctx, registration, serverInfo, dwnEndpoint, updatedTokens);
   }
 
   return tokenData;
@@ -284,7 +282,7 @@ async function refreshExpiredProviderAuthToken(
  */
 async function runProviderAuthFlow(
   ctx: RegistrationContext,
-  onProviderAuthRequired: (params: ProviderAuthParams) => Promise<ProviderAuthResult>,
+  registration: RegistrationOptions,
   serverInfo: ServerInfo,
   dwnEndpoint: string,
   updatedTokens: Record<string, RegistrationTokenData>,
@@ -296,7 +294,7 @@ async function runProviderAuthFlow(
     + `redirect_uri=${encodeURIComponent(dwnEndpoint)}`
     + `&state=${encodeURIComponent(state)}`;
 
-  const authResult = await onProviderAuthRequired({
+  const authResult = await registration.onProviderAuthRequired!({
     authorizeUrl,
     dwnEndpoint,
     state,
