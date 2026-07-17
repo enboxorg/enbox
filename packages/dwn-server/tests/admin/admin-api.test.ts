@@ -3626,3 +3626,32 @@ describe('Passkey routes — unit coverage', () => {
     sessionManager.destroy();
   });
 });
+
+describe('AdminApi — async handler error contract', () => {
+  it('propagates async handler rejections to the caller instead of catching them as a JSON 500', async () => {
+    const { AdminApi } = require('../../src/admin/admin-api.js');
+
+    // `#handleStats` awaits `adminStore.getGlobalStats()` first, so a rejection
+    // there fails the whole handler. The route's `try/catch` must NOT swallow
+    // this into AdminApi's own `{ error: 'Internal server error' }` 500 — the
+    // matched handler is returned unawaited, so its rejection propagates to the
+    // caller (HttpApi, which renders a plain-text 500 + logs the method/path),
+    // exactly as it did before `route`'s dispatch was extracted.
+    const rejection = new Error('getGlobalStats boom');
+    const adminApi = AdminApi.create({
+      config     : { ...defaultConfig, adminToken },
+      dwn        : {} as any,
+      adminStore : {
+        getGlobalStats: (): Promise<never> => Promise.reject(rejection),
+      } as any,
+    });
+
+    const req = new Request('http://localhost/admin/api/stats', {
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+
+    await expect(
+      adminApi.route(req, new URL(req.url), '/admin/api/stats', 'GET'),
+    ).rejects.toBe(rejection);
+  });
+});

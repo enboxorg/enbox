@@ -195,7 +195,11 @@ export class AdminApi {
     }
 
     try {
-      return await this.#dispatchAuthenticatedRoutes(req, url, subPath, method, authResult);
+      // Route matching runs synchronously here; a matched handler is returned as
+      // an unawaited promise so its rejection propagates to the caller (HttpApi),
+      // exactly as before this dispatch was extracted. This `try` therefore only
+      // handles errors thrown synchronously while matching (e.g. a malformed URL).
+      return this.#dispatchAuthenticatedRoutes(req, url, subPath, method, authResult);
     } catch (error) {
       log.error('Admin API error:', error);
       return Response.json({ error: 'Internal server error' }, { status: 500 });
@@ -207,47 +211,47 @@ export class AdminApi {
    * Groups are checked in the exact order the individual routes were originally
    * checked, so route match order is unchanged.
    */
-  async #dispatchAuthenticatedRoutes(
+  #dispatchAuthenticatedRoutes(
     req: Request, url: URL, subPath: string, method: string, authResult: AdminAuthResult,
-  ): Promise<Response> {
+  ): Response | Promise<Response> {
     // --- Passkey management ---
-    const passkeyResult = await this.#matchPasskeyManagementRoutes(req, subPath, method, authResult);
+    const passkeyResult = this.#matchPasskeyManagementRoutes(req, subPath, method, authResult);
     if (passkeyResult) {
       return passkeyResult;
     }
 
     // --- Health / stats ---
-    const healthAndStatsResult = await this.#matchHealthAndStatsRoutes(url, subPath, method);
+    const healthAndStatsResult = this.#matchHealthAndStatsRoutes(url, subPath, method);
     if (healthAndStatsResult) {
       return healthAndStatsResult;
     }
 
     // --- Tenant management (list / create / detail / suspend / unsuspend / quota / messages / protocols / export) ---
-    const tenantResult = await this.#matchTenantRoutes(req, url, subPath, method);
+    const tenantResult = this.#matchTenantRoutes(req, url, subPath, method);
     if (tenantResult) {
       return tenantResult;
     }
 
     // --- Rate limits / audit log ---
-    const rateLimitAndAuditResult = await this.#matchRateLimitAndAuditRoutes(url, subPath, method);
+    const rateLimitAndAuditResult = this.#matchRateLimitAndAuditRoutes(url, subPath, method);
     if (rateLimitAndAuditResult) {
       return rateLimitAndAuditResult;
     }
 
     // --- Runtime config ---
-    const configResult = await this.#matchConfigRoutes(subPath, method, req);
+    const configResult = this.#matchConfigRoutes(subPath, method, req);
     if (configResult) {
       return configResult;
     }
 
     // --- Activity events / WebSocket connections ---
-    const eventsAndConnectionsResult = await this.#matchEventsAndConnectionsRoutes(url, subPath, method);
+    const eventsAndConnectionsResult = this.#matchEventsAndConnectionsRoutes(url, subPath, method);
     if (eventsAndConnectionsResult) {
       return eventsAndConnectionsResult;
     }
 
     // --- Webhooks / info ---
-    const webhookResult = await this.#matchWebhookRoutes(req, subPath, method);
+    const webhookResult = this.#matchWebhookRoutes(req, subPath, method);
     if (webhookResult) {
       return webhookResult;
     }
@@ -263,9 +267,9 @@ export class AdminApi {
    * Matches passkey management routes (registration, listing, deletion).
    * Registration and deletion require static token auth (not session auth).
    */
-  async #matchPasskeyManagementRoutes(
+  #matchPasskeyManagementRoutes(
     req: Request, subPath: string, method: string, authResult: AdminAuthResult,
-  ): Promise<Response | null> {
+  ): Response | Promise<Response> | null {
     if (subPath === '/passkeys/register/options' && method === 'POST') {
       if (authResult.authMethod !== 'token') {
         return Response.json({ error: 'Passkey registration requires static token authentication.' }, { status: 403 });
@@ -297,7 +301,7 @@ export class AdminApi {
   /**
    * Matches the health-check and server-stats routes.
    */
-  async #matchHealthAndStatsRoutes(url: URL, subPath: string, method: string): Promise<Response | null> {
+  #matchHealthAndStatsRoutes(url: URL, subPath: string, method: string): Response | Promise<Response> | null {
     // --- Health ---
     if (method === 'GET' && subPath === '/health') {
       return this.#handleHealth();
@@ -314,7 +318,7 @@ export class AdminApi {
   /**
    * Matches the rate-limit status and audit-log routes.
    */
-  async #matchRateLimitAndAuditRoutes(url: URL, subPath: string, method: string): Promise<Response | null> {
+  #matchRateLimitAndAuditRoutes(url: URL, subPath: string, method: string): Response | Promise<Response> | null {
     // --- Rate limits ---
     if (method === 'GET' && subPath === '/rate-limits') {
       return this.#handleRateLimits();
@@ -331,7 +335,7 @@ export class AdminApi {
   /**
    * Matches the activity-events and WebSocket-connections routes.
    */
-  async #matchEventsAndConnectionsRoutes(url: URL, subPath: string, method: string): Promise<Response | null> {
+  #matchEventsAndConnectionsRoutes(url: URL, subPath: string, method: string): Response | Promise<Response> | null {
     // --- Activity events ---
     if (method === 'GET' && subPath === '/events') {
       return this.#handleEvents(url);
@@ -349,7 +353,7 @@ export class AdminApi {
    * Matches tenant management routes: list / create / detail / suspend / unsuspend / quota /
    * messages / protocols / export.
    */
-  async #matchTenantRoutes(req: Request, url: URL, subPath: string, method: string): Promise<Response | null> {
+  #matchTenantRoutes(req: Request, url: URL, subPath: string, method: string): Response | Promise<Response> | null {
     // --- Tenant list ---
     if (method === 'GET' && subPath === '/tenants') {
       return this.#handleTenantList(url);
@@ -394,7 +398,7 @@ export class AdminApi {
     }
 
     // --- Tenant quota ---
-    const quotaResult = await this.#matchTenantQuotaRoutes(req, subPath, method);
+    const quotaResult = this.#matchTenantQuotaRoutes(req, subPath, method);
     if (quotaResult) {
       return quotaResult;
     }
@@ -432,7 +436,7 @@ export class AdminApi {
   /**
    * Matches the tenant quota sub-routes (`GET`/`PUT`/`DELETE` on `/tenants/:did/quota`).
    */
-  async #matchTenantQuotaRoutes(req: Request, subPath: string, method: string): Promise<Response | null> {
+  #matchTenantQuotaRoutes(req: Request, subPath: string, method: string): Response | Promise<Response> | null {
     const match = /^\/tenants\/([^/]+)\/quota$/.exec(subPath);
     if (!match) {
       return null;
@@ -455,7 +459,7 @@ export class AdminApi {
   /**
    * Matches runtime config routes (`GET`/`PATCH` on `/config`).
    */
-  async #matchConfigRoutes(subPath: string, method: string, req: Request): Promise<Response | null> {
+  #matchConfigRoutes(subPath: string, method: string, req: Request): Response | Promise<Response> | null {
     if (subPath === '/config') {
       if (method === 'GET') {
         return this.#handleConfigGet();
@@ -471,7 +475,7 @@ export class AdminApi {
   /**
    * Matches webhook routes (list / create / delete) and the `/info` smoke-test route.
    */
-  async #matchWebhookRoutes(req: Request, subPath: string, method: string): Promise<Response | null> {
+  #matchWebhookRoutes(req: Request, subPath: string, method: string): Response | Promise<Response> | null {
     // --- Webhooks ---
     if (subPath === '/webhooks') {
       if (method === 'GET') {
