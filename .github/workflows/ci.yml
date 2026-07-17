@@ -328,6 +328,22 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # Persist Turbo's local cache across runs so an unchanged package restores
+      # its dist/ from cache instead of rebuilding. The sha-suffixed key never
+      # hits on restore (each commit is unique), so restore-keys falls back to
+      # the most recent prior cache and Turbo rebuilds only what changed —
+      # dropping the warm-cache build from ~57s to the delta. Correctness of the
+      # cache hit relies on turbo.json globalDependencies covering shared build
+      # inputs (root tsconfig, build/); the lockfile and turbo.json are hashed
+      # by Turbo automatically.
+      - name: Restore Turbo build cache
+        uses: actions/cache@v4
+        with:
+          path: .turbo/cache
+          key: ${{ runner.os }}-turbo-build-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-build-
+
       - name: Build
         run: bun run build
 
