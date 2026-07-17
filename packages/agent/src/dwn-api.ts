@@ -904,6 +904,34 @@ export class AgentDwnApi {
     return { reply, message, messageCid };
   }
 
+  /**
+   * Resolves the URL to send a subscription request to: upgrades `dwnUrl` to a
+   * WebSocket transport when the server supports it (unsecured `ws` for `http`,
+   * secured `wss` for `https`), or records an error and returns `undefined` to
+   * signal that this endpoint should be skipped.
+   */
+  private async resolveSubscriptionDwnUrl(
+    dwnUrl: string,
+    errorMessages: { url: string, message: string }[],
+  ): Promise<string | undefined> {
+    // we get the server info to check if the server supports WebSocket for subscription requests
+    const serverInfo = await this.agent.rpc.getServerInfo(dwnUrl);
+    if (!serverInfo.webSocketSupport) {
+      // If the server does not support WebSocket, add an error message and continue to the next URL.
+      errorMessages.push({
+        url     : dwnUrl,
+        message : 'WebSocket support is not enabled on the server.'
+      });
+      return undefined;
+    }
+
+    // If the server supports WebSocket, replace the subscription URL with a socket transport.
+    // For `http` we use the unsecured `ws` protocol, and for `https` we use the secured `wss` protocol.
+    const parsedUrl = new URL(dwnUrl);
+    parsedUrl.protocol = parsedUrl.protocol === 'http:' ? 'ws:' : 'wss:';
+    return parsedUrl.toString();
+  }
+
   private async sendDwnRpcRequest<T extends DwnInterface>({
     targetDid, dwnEndpointUrls, message, data, subscriptionHandler, resubscribeFactory
   }: {
@@ -925,22 +953,11 @@ export class AgentDwnApi {
     for (let dwnUrl of dwnEndpointUrls) {
       try {
         if (subscriptionHandler !== undefined) {
-          // we get the server info to check if the server supports WebSocket for subscription requests
-          const serverInfo = await this.agent.rpc.getServerInfo(dwnUrl);
-          if (!serverInfo.webSocketSupport) {
-            // If the server does not support WebSocket, add an error message and continue to the next URL.
-            errorMessages.push({
-              url     : dwnUrl,
-              message : 'WebSocket support is not enabled on the server.'
-            });
+          const subscriptionDwnUrl = await this.resolveSubscriptionDwnUrl(dwnUrl, errorMessages);
+          if (subscriptionDwnUrl === undefined) {
             continue;
           }
-
-          // If the server supports WebSocket, replace the subscription URL with a socket transport.
-          // For `http` we use the unsecured `ws` protocol, and for `https` we use the secured `wss` protocol.
-          const parsedUrl = new URL(dwnUrl);
-          parsedUrl.protocol = parsedUrl.protocol === 'http:' ? 'ws:' : 'wss:';
-          dwnUrl = parsedUrl.toString();
+          dwnUrl = subscriptionDwnUrl;
         }
 
         const dwnReply = await this.agent.rpc.sendDwnRequest({
