@@ -391,49 +391,15 @@ export class HttpApi {
     }
 
     // --- Static routes ---
-    if (method === 'GET' && path === '/health') {
-      return Response.json({ ok: true });
+    const staticResponse = await this.#matchStaticRoutes(req, path, method);
+    if (staticResponse) {
+      return staticResponse;
     }
 
-    if (method === 'GET' && path === '/metrics') {
-      // Metrics require admin authentication when an admin token is configured.
-      if (this.#config.adminToken) {
-        const authResult = validateAdminAuth(req, this.#config, this.#sessionManager);
-        if (authResult.error) {
-          return authResult.error;
-        }
-      }
-      try {
-        const metricsBody = await register.metrics();
-        return new Response(metricsBody, {
-          headers: { 'content-type': register.contentType },
-        });
-      } catch (e) {
-        return new Response(String(e), { status: 500 });
-      }
-    }
-
-    if (method === 'GET' && path === '/') {
-      return new Response(
-        'please use an enbox client, for example: https://github.com/enboxorg/enbox ',
-        { headers: { 'content-type': 'text/plain' } },
-      );
-    }
-
-    if (method === 'GET' && path === '/info') {
-      return this.#handleInfo();
-    }
-
-    if (this.#config.localNodeProfileEnabled && path === '/local/status' && method === 'GET') {
-      return this.#handleLocalNodeStatus(req);
-    }
-
-    if (this.#config.localNodeProfileEnabled && path === '/local/pair' && method === 'POST') {
-      return this.#handleLocalNodePairRequest(req);
-    }
-
-    if (this.#config.localNodeProfileEnabled && path.startsWith('/local/pair/') && method === 'GET') {
-      return this.#handleLocalNodePairPoll(req, path);
+    // --- Local node convenience routes ---
+    const localNodeResponse = this.#matchLocalNodeConvenienceRoutes(req, path, method);
+    if (localNodeResponse) {
+      return localNodeResponse;
     }
 
     // --- JSON-RPC POST ---
@@ -441,30 +407,16 @@ export class HttpApi {
       return this.#handleJsonRpcPost(req);
     }
 
-    // --- Admin API routes ---
-    if (path.startsWith('/admin/api/') && this.#adminApi) {
-      return this.#adminApi.route(req, url, path, method);
-    }
-
-    // --- Admin UI static files (only when admin API is enabled) ---
-    if (method === 'GET' && path.startsWith('/admin') && this.#adminApi) {
-      const uiResponse = this.#serveAdminUi(path);
-      if (uiResponse) {
-        return uiResponse;
-      }
+    // --- Admin routes ---
+    const adminResponse = await this.#matchAdminRoutes(req, url, path, method);
+    if (adminResponse) {
+      return adminResponse;
     }
 
     // --- Provider auth (open-auth) routes ---
-    if (this.#openAuthHandler && path.startsWith('/provider-auth/')) {
-      if (method === 'GET' && path === '/provider-auth/authorize') {
-        return this.#openAuthHandler.handleAuthorize(url);
-      }
-      if (method === 'POST' && path === '/provider-auth/token') {
-        return this.#openAuthHandler.handleToken(req);
-      }
-      if (method === 'POST' && path === '/provider-auth/refresh') {
-        return this.#openAuthHandler.handleRefresh(req);
-      }
+    const providerAuthResponse = await this.#matchProviderAuthRoutes(req, url, path, method);
+    if (providerAuthResponse) {
+      return providerAuthResponse;
     }
 
     // --- Registration routes ---
@@ -481,6 +433,128 @@ export class HttpApi {
 
     // --- DID routes (parameterized) ---
     return this.#matchDidRoutes(req, url, path);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Static & local-node routes
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Matches the always-on static routes (`/health`, `/metrics`, `/`, `/info`).
+   * Returns `null` when `path`/`method` do not match any of them so the caller
+   * can continue trying subsequent route groups.
+   */
+  async #matchStaticRoutes(req: Request, path: string, method: string): Promise<Response | null> {
+    if (method === 'GET' && path === '/health') {
+      return Response.json({ ok: true });
+    }
+
+    if (method === 'GET' && path === '/metrics') {
+      return this.#handleMetrics(req);
+    }
+
+    if (method === 'GET' && path === '/') {
+      return new Response(
+        'please use an enbox client, for example: https://github.com/enboxorg/enbox ',
+        { headers: { 'content-type': 'text/plain' } },
+      );
+    }
+
+    if (method === 'GET' && path === '/info') {
+      return this.#handleInfo();
+    }
+
+    return null;
+  }
+
+  /** Serves Prometheus metrics, gated by admin authentication when an admin token is configured. */
+  async #handleMetrics(req: Request): Promise<Response> {
+    // Metrics require admin authentication when an admin token is configured.
+    if (this.#config.adminToken) {
+      const authResult = validateAdminAuth(req, this.#config, this.#sessionManager);
+      if (authResult.error) {
+        return authResult.error;
+      }
+    }
+    try {
+      const metricsBody = await register.metrics();
+      return new Response(metricsBody, {
+        headers: { 'content-type': register.contentType },
+      });
+    } catch (e) {
+      return new Response(String(e), { status: 500 });
+    }
+  }
+
+  /**
+   * Matches the local-node-profile convenience routes (`/local/status`,
+   * `/local/pair`, `/local/pair/:requestId`). Returns `null` when the
+   * local-node profile is disabled or `path`/`method` do not match.
+   */
+  #matchLocalNodeConvenienceRoutes(req: Request, path: string, method: string): Response | null {
+    if (this.#config.localNodeProfileEnabled && path === '/local/status' && method === 'GET') {
+      return this.#handleLocalNodeStatus(req);
+    }
+
+    if (this.#config.localNodeProfileEnabled && path === '/local/pair' && method === 'POST') {
+      return this.#handleLocalNodePairRequest(req);
+    }
+
+    if (this.#config.localNodeProfileEnabled && path.startsWith('/local/pair/') && method === 'GET') {
+      return this.#handleLocalNodePairPoll(req, path);
+    }
+
+    return null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Admin & provider-auth routes
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Matches the admin API (`/admin/api/*`) and, when the admin API is enabled,
+   * the admin UI static file routes (`/admin*`). Returns `null` when nothing
+   * matches, including when a `GET /admin*` request maps to no static file
+   * (the caller continues to subsequent route groups in that case).
+   */
+  async #matchAdminRoutes(req: Request, url: URL, path: string, method: string): Promise<Response | null> {
+    // --- Admin API routes ---
+    if (path.startsWith('/admin/api/') && this.#adminApi) {
+      return this.#adminApi.route(req, url, path, method);
+    }
+
+    // --- Admin UI static files (only when admin API is enabled) ---
+    if (method === 'GET' && path.startsWith('/admin') && this.#adminApi) {
+      const uiResponse = this.#serveAdminUi(path);
+      if (uiResponse) {
+        return uiResponse;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Matches the provider-auth (open-auth) routes (`/provider-auth/authorize`,
+   * `/provider-auth/token`, `/provider-auth/refresh`). Returns `null` when
+   * open-auth is disabled or `path`/`method` do not match.
+   */
+  async #matchProviderAuthRoutes(req: Request, url: URL, path: string, method: string): Promise<Response | null> {
+    if (!(this.#openAuthHandler && path.startsWith('/provider-auth/'))) {
+      return null;
+    }
+
+    if (method === 'GET' && path === '/provider-auth/authorize') {
+      return this.#openAuthHandler.handleAuthorize(url);
+    }
+    if (method === 'POST' && path === '/provider-auth/token') {
+      return this.#openAuthHandler.handleToken(req);
+    }
+    if (method === 'POST' && path === '/provider-auth/refresh') {
+      return this.#openAuthHandler.handleRefresh(req);
+    }
+
+    return null;
   }
 
   // ---------------------------------------------------------------------------

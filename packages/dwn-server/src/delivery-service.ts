@@ -1,6 +1,6 @@
 import type { DwnServerConfig } from './config.js';
 import type { JsonRpcRequest } from '@enbox/dwn-clients';
-import type { DidDocument, DidResolver } from '@enbox/dids';
+import type { DidDocument, DidResolver, DidService, DidServiceEndpoint } from '@enbox/dids';
 import type { Dwn, GenericMessage, ProtocolDefinition, ProtocolRuleSet, RecordsQueryReplyEntry, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 import type { MessageProcessedContext, MessageProcessedHook } from './message-processed-hook.js';
 
@@ -561,63 +561,118 @@ export class DeliveryService implements MessageProcessedHook {
    * - `{ url: "https://a.com", dataRetention: "cache" }` — map format with explicit retention
    */
   static #extractDwnEndpoints(didDocument: DidDocument): DwnEndpoint[] {
-    const endpoints: DwnEndpoint[] = [];
-
     if (!didDocument.service) {
-      return endpoints;
+      return [];
     }
 
+    const endpoints: DwnEndpoint[] = [];
     for (const service of didDocument.service) {
-      if (service.type !== 'DecentralizedWebNode') {
-        continue;
-      }
+      endpoints.push(...DeliveryService.#extractEndpointsFromService(service));
+    }
 
-      // serviceEndpoint can be a string, string[], object with nodes, or map with url.
-      const epValue = service.serviceEndpoint;
+    return endpoints;
+  }
 
-      if (typeof epValue === 'string') {
-        endpoints.push({ url: stripTrailingSlashes(epValue), isFull: true });
-      } else if (Array.isArray(epValue)) {
-        for (const entry of epValue) {
-          if (typeof entry === 'string') {
-            endpoints.push({ url: stripTrailingSlashes(entry), isFull: true });
-          } else if (entry && typeof entry === 'object') {
-            // Map entry: { url: "...", dataRetention?: "full" | "cache" }
-            const mapEntry = entry as { url?: string; dataRetention?: string };
-            if (typeof mapEntry.url === 'string') {
-              endpoints.push({
-                url    : stripTrailingSlashes(mapEntry.url),
-                isFull : mapEntry.dataRetention !== 'cache',
-              });
-            }
-          }
-        }
-      } else if (epValue && typeof epValue === 'object') {
-        // Legacy object format: { nodes: [...] }
-        if ('nodes' in epValue) {
-          const nodes = (epValue as { nodes: string[] }).nodes;
-          if (Array.isArray(nodes)) {
-            for (const node of nodes) {
-              if (typeof node === 'string') {
-                endpoints.push({ url: stripTrailingSlashes(node), isFull: true });
-              }
-            }
-          }
-        }
-        // Map format at top level: { url: "...", dataRetention?: "..." }
-        if ('url' in epValue) {
-          const mapEntry = epValue as { url?: string; dataRetention?: string };
-          if (typeof mapEntry.url === 'string') {
-            endpoints.push({
-              url    : stripTrailingSlashes(mapEntry.url),
-              isFull : mapEntry.dataRetention !== 'cache',
-            });
-          }
+  /**
+   * Extracts DWN endpoints from a single DID document service entry. Returns
+   * an empty array for non-`DecentralizedWebNode` services — mirrors the
+   * `continue` in the original per-service scan — and for any
+   * `serviceEndpoint` shape not covered by the string/array/object cases.
+   */
+  static #extractEndpointsFromService(service: DidService): DwnEndpoint[] {
+    if (service.type !== 'DecentralizedWebNode') {
+      return [];
+    }
+
+    // serviceEndpoint can be a string, string[], object with nodes, or map with url.
+    const epValue = service.serviceEndpoint;
+
+    if (typeof epValue === 'string') {
+      return [{ url: stripTrailingSlashes(epValue), isFull: true }];
+    }
+
+    if (Array.isArray(epValue)) {
+      return DeliveryService.#extractEndpointsFromArray(epValue);
+    }
+
+    if (epValue && typeof epValue === 'object') {
+      return DeliveryService.#extractEndpointsFromObject(epValue as Record<string, unknown>);
+    }
+
+    return [];
+  }
+
+  /**
+   * Extracts endpoints from a `serviceEndpoint` array. Each entry may be a
+   * bare URL string or a map entry (`{ url, dataRetention? }`); any other
+   * entry shape is silently skipped, matching the original per-entry scan.
+   */
+  static #extractEndpointsFromArray(entries: DidServiceEndpoint[]): DwnEndpoint[] {
+    const endpoints: DwnEndpoint[] = [];
+
+    for (const entry of entries) {
+      if (typeof entry === 'string') {
+        endpoints.push({ url: stripTrailingSlashes(entry), isFull: true });
+      } else if (entry && typeof entry === 'object') {
+        // Map entry: { url: "...", dataRetention?: "full" | "cache" }
+        const mapEndpoint = DeliveryService.#extractMapEndpoint(entry as Record<string, unknown>);
+        if (mapEndpoint) {
+          endpoints.push(mapEndpoint);
         }
       }
     }
 
     return endpoints;
+  }
+
+  /**
+   * Extracts endpoints from an object-shaped `serviceEndpoint`. The legacy
+   * `{ nodes: [...] }` format and the map format `{ url, dataRetention? }`
+   * are checked independently — not mutually exclusive, matching the
+   * original scan — so an object carrying both keys yields endpoints from
+   * each, `nodes` first.
+   */
+  static #extractEndpointsFromObject(epValue: Record<string, unknown>): DwnEndpoint[] {
+    const endpoints: DwnEndpoint[] = [];
+
+    // Legacy object format: { nodes: [...] }
+    if ('nodes' in epValue) {
+      const nodes = (epValue as { nodes: string[] }).nodes;
+      if (Array.isArray(nodes)) {
+        for (const node of nodes) {
+          if (typeof node === 'string') {
+            endpoints.push({ url: stripTrailingSlashes(node), isFull: true });
+          }
+        }
+      }
+    }
+
+    // Map format at top level: { url: "...", dataRetention?: "..." }
+    if ('url' in epValue) {
+      const mapEndpoint = DeliveryService.#extractMapEndpoint(epValue);
+      if (mapEndpoint) {
+        endpoints.push(mapEndpoint);
+      }
+    }
+
+    return endpoints;
+  }
+
+  /**
+   * Builds a `DwnEndpoint` from a map-shaped service endpoint entry
+   * (`{ url: "...", dataRetention?: "full" | "cache" }`). Returns `undefined`
+   * when `url` is not a string, matching the original guard.
+   */
+  static #extractMapEndpoint(value: Record<string, unknown>): DwnEndpoint | undefined {
+    const mapEntry = value as { url?: string; dataRetention?: string };
+    if (typeof mapEntry.url !== 'string') {
+      return undefined;
+    }
+
+    return {
+      url    : stripTrailingSlashes(mapEntry.url),
+      isFull : mapEntry.dataRetention !== 'cache',
+    };
   }
 
   // -------------------------------------------------------------------------
