@@ -290,6 +290,135 @@ export class FlattenedJwe {
   public static async decrypt({ jwe, key, keyManager, options }:
     FlattenedJweDecryptParams
   ): Promise<FlattenedJweDecryptResult> {
+    const { parsedProtectedHeader, joseHeader } = FlattenedJwe.parseAndValidateJoseHeader(jwe);
+
+    // Enforce the caller-supplied algorithm allow-lists before any key management processing to
+    // prevent algorithm-confusion attacks between callers that share the same engine.
+    FlattenedJwe.enforceAllowedAlgorithms(joseHeader, options);
+
+    const cek = await FlattenedJwe.resolveContentEncryptionKey({ jwe, key, joseHeader, minP2cCount: options.minP2cCount });
+
+    // If present, decode the JWE Initialization Vector (IV) and Authentication Tag.
+    const iv = decodeHeaderParam('iv', jwe.iv);
+    const tag = decodeHeaderParam('tag', jwe.tag);
+
+    // Decode the JWE Ciphertext to a byte array, and if present, append the Authentication Tag.
+    const ciphertext = tag === undefined
+      ? Convert.base64Url(jwe.ciphertext).toUint8Array()
+      : new Uint8Array([
+        ...Convert.base64Url(jwe.ciphertext).toUint8Array(),
+        ...(tag ?? [])
+      ]);
+
+    // If the JWE Additional Authenticated Data (AAD) is present, the Additional Authenticated Data
+    // input to the Content Encryption Algorithm is
+    // ASCII(Encoded Protected Header || '.' || BASE64URL(JWE AAD)). If the JWE AAD is absent, the
+    // Additional Authenticated Data is ASCII(BASE64URL(UTF8(JWE Protected Header))).
+    const additionalData = jwe.aad === undefined
+      ? Convert.string(jwe.protected ?? '').toUint8Array()
+      : new Uint8Array([
+        ...Convert.string(jwe.protected ?? '').toUint8Array(),
+        ...Convert.string('.').toUint8Array(),
+        ...Convert.string(jwe.aad).toUint8Array()
+      ]);
+
+    // Decrypt the JWE using the Content Encryption Key (CEK) with:
+    // - Key Manager: If the CEK is a Key Identifier.
+    // - Content encryption primitives: If the CEK is a JWK.
+    const plaintext = await FlattenedJwe.decryptCiphertext({ cek, keyManager, joseHeader, ciphertext, iv, additionalData });
+
+    return {
+      plaintext,
+      protectedHeader             : parsedProtectedHeader,
+      additionalAuthenticatedData : decodeHeaderParam('aad', jwe.aad),
+      sharedUnprotectedHeader     : jwe.unprotected,
+      unprotectedHeader           : jwe.header
+    };
+  }
+
+  public static async encrypt({
+    key,
+    plaintext,
+    additionalAuthenticatedData,
+    protectedHeader,
+    sharedUnprotectedHeader,
+    unprotectedHeader,
+    keyManager,
+  }: FlattenedJweEncryptParams): Promise<FlattenedJwe> {
+    const joseHeader = FlattenedJwe.validateAndBuildEncryptJoseHeader({
+      plaintext,
+      protectedHeader,
+      sharedUnprotectedHeader,
+      unprotectedHeader,
+    });
+
+    const { cek, encryptedKey, headerParams } = await JweKeyManagement.encrypt({ key, joseHeader });
+
+    // Merge any header parameters produced during key management (e.g. the ECDH-ES "epk" value)
+    // into the JWE Protected Header so that they are covered by the Additional Authenticated Data.
+    if (headerParams !== undefined) {
+      protectedHeader = { ...protectedHeader, ...headerParams };
+    }
+
+    // If required for the Content Encryption Algorithm, generate a random JWE Initialization
+    // Vector (IV) of the correct size; otherwise, let the JWE Initialization Vector be the empty
+    // octet sequence.
+    const iv = generateInitializationVector(joseHeader.enc);
+
+    // Compute the Encoded Protected Header value BASE64URL(UTF8(JWE Protected Header)).  If the JWE
+    // Protected Header is not present, let this value be the empty string.
+    const encodedProtectedHeader = protectedHeader
+      ? Convert.object(protectedHeader).toBase64Url()
+      : '';
+
+    // If the JWE Additional Authenticated Data (AAD) is present, the Additional Authenticated Data
+    // input to the Content Encryption Algorithm is
+    // ASCII(Encoded Protected Header || '.' || BASE64URL(JWE AAD)). If the JWE AAD is absent, the
+    // Additional Authenticated Data is ASCII(BASE64URL(UTF8(JWE Protected Header))).
+    let additionalData: Uint8Array;
+    let encodedAad: string | undefined;
+    if (additionalAuthenticatedData) {
+      encodedAad = Convert.uint8Array(additionalAuthenticatedData).toBase64Url();
+      additionalData = Convert.string(encodedProtectedHeader + '.' + encodedAad).toUint8Array();
+    } else {
+      additionalData = Convert.string(encodedProtectedHeader).toUint8Array();
+    }
+
+    // Encrypt the plaintext using the CEK, the JWE Initialization Vector, and the Additional
+    // Authenticated Data value using the specified content encryption algorithm to create the JWE
+    // Ciphertext value and the JWE Authentication Tag.
+    const ciphertextWithTag = await FlattenedJwe.encryptCiphertext({ cek, keyManager, joseHeader, plaintext, iv, additionalData });
+    const ciphertext = ciphertextWithTag.slice(0, -16);
+    const authenticationTag = ciphertextWithTag.slice(-16);
+
+    return FlattenedJwe.buildFlattenedJwe({
+      ciphertext,
+      encryptedKey,
+      protectedHeader,
+      encodedProtectedHeader,
+      sharedUnprotectedHeader,
+      unprotectedHeader,
+      iv,
+      encodedAad,
+      authenticationTag,
+    });
+  }
+
+  /**
+   * Parses and validates the JOSE Header components of a flattened JWE (`protected`, `header`,
+   * `unprotected`), verifies the JWE Ciphertext is present, decodes the JWE Protected Header,
+   * checks for duplicate Header Parameter names, and validates that the resulting JOSE Header
+   * contains the required "alg" and "enc" values.
+   *
+   * @param jwe - The flattened JWE (or its parameter shape) to parse.
+   * @returns The parsed JWE Protected Header (if present) and the merged, validated JOSE Header.
+   * @throws {@link CryptoError} if the JOSE header objects or Ciphertext are missing.
+   * @throws Throws a plain `Error` if the JWE Protected Header is malformed, contains duplicate
+   *         Header Parameter names, or the merged JOSE Header is missing required parameters.
+   */
+  private static parseAndValidateJoseHeader(
+    jwe: FlattenedJweParams | FlattenedJwe
+  ): { parsedProtectedHeader: Partial<JweHeaderParams> | undefined; joseHeader: JweHeaderParams } {
     // Verify that at least one of the JOSE header objects is present.
     if (!jwe.protected && !jwe.header && !jwe.unprotected) {
       throw new CryptoError(CryptoErrorCode.InvalidJwe,
@@ -333,8 +462,18 @@ export class FlattenedJwe {
       throw new Error('JWE Header is missing required "alg" (Algorithm) and/or "enc" (Encryption) Header Parameters');
     }
 
-    // Enforce the caller-supplied algorithm allow-lists before any key management processing to
-    // prevent algorithm-confusion attacks between callers that share the same engine.
+    return { parsedProtectedHeader, joseHeader };
+  }
+
+  /**
+   * Enforces the caller-supplied "alg" and "enc" allow-lists on the resolved JOSE Header,
+   * preventing algorithm-confusion attacks between callers that share the same decryption engine.
+   *
+   * @param joseHeader - The validated JOSE Header.
+   * @param options - The decrypt options containing the allow-lists.
+   * @throws {@link CryptoError} if the "alg" or "enc" value is not in the caller's allow-list.
+   */
+  private static enforceAllowedAlgorithms(joseHeader: JweHeaderParams, options: JweDecryptOptions): void {
     if (!options.allowedAlgs.includes(joseHeader.alg as JweAlg)) {
       throw new CryptoError(
         CryptoErrorCode.AlgorithmNotSupported,
@@ -347,16 +486,35 @@ export class FlattenedJwe {
         `JWE "enc" (Encryption Algorithm) Header Parameter value is not allowed by the caller: ${joseHeader.enc}`
       );
     }
+  }
 
-    let cek: KeyIdentifier | Jwk;
+  /**
+   * Resolves the Content Encryption Key (CEK) for decryption by delegating to
+   * {@link JweKeyManagement.decrypt}. If key management processing fails for a reason other than
+   * an invalid JWE or unsupported algorithm, a random CEK is substituted instead of propagating
+   * the error, per
+   * {@link https://datatracker.ietf.org/doc/html/rfc7516#section-11.5 | RFC 7516 Section 11.5} and
+   * {@link https://datatracker.ietf.org/doc/html/rfc3218 | RFC 3218} timing-attack mitigations.
+   *
+   * @param params - The CEK resolution parameters.
+   * @returns A Promise that resolves to the CEK (a Key Identifier or JWK).
+   * @throws {@link CryptoError} with code `InvalidJwe` or `AlgorithmNotSupported` if key
+   *         management processing fails for those reasons.
+   */
+  private static async resolveContentEncryptionKey({ jwe, key, joseHeader, minP2cCount }: {
+    jwe: FlattenedJweParams | FlattenedJwe;
+    key: JweKeyManagementDecryptKey;
+    joseHeader: JweHeaderParams;
+    minP2cCount?: number;
+  }): Promise<KeyIdentifier | Jwk> {
     try {
       const encryptedKey = jwe.encrypted_key
         ? Convert.base64Url(jwe.encrypted_key).toUint8Array()
         : undefined;
 
-      cek = await JweKeyManagement.decrypt(
+      return await JweKeyManagement.decrypt(
         { key, encryptedKey, joseHeader },
-        { minP2cCount: options.minP2cCount }
+        { minP2cCount }
       );
 
     } catch (error: any) {
@@ -375,64 +533,55 @@ export class FlattenedJwe {
       // recommended, in the event of receiving an improperly formatted key, that the recipient
       // substitute a randomly generated CEK and proceed to the next step, to mitigate timing
       // attacks.
-      cek = await generateCek(joseHeader.enc);
+      return await generateCek(joseHeader.enc);
     }
+  }
 
-    // If present, decode the JWE Initialization Vector (IV) and Authentication Tag.
-    const iv = decodeHeaderParam('iv', jwe.iv);
-    const tag = decodeHeaderParam('tag', jwe.tag);
-
-    // Decode the JWE Ciphertext to a byte array, and if present, append the Authentication Tag.
-    const ciphertext = tag === undefined
-      ? Convert.base64Url(jwe.ciphertext).toUint8Array()
-      : new Uint8Array([
-        ...Convert.base64Url(jwe.ciphertext).toUint8Array(),
-        ...(tag ?? [])
-      ]);
-
-    // If the JWE Additional Authenticated Data (AAD) is present, the Additional Authenticated Data
-    // input to the Content Encryption Algorithm is
-    // ASCII(Encoded Protected Header || '.' || BASE64URL(JWE AAD)). If the JWE AAD is absent, the
-    // Additional Authenticated Data is ASCII(BASE64URL(UTF8(JWE Protected Header))).
-    const additionalData = jwe.aad === undefined
-      ? Convert.string(jwe.protected ?? '').toUint8Array()
-      : new Uint8Array([
-        ...Convert.string(jwe.protected ?? '').toUint8Array(),
-        ...Convert.string('.').toUint8Array(),
-        ...Convert.string(jwe.aad).toUint8Array()
-      ]);
-
-    // Decrypt the JWE using the Content Encryption Key (CEK) with:
-    // - Key Manager: If the CEK is a Key Identifier.
-    // - Content encryption primitives: If the CEK is a JWK.
-    let plaintext: Uint8Array;
+  /**
+   * Decrypts the JWE Ciphertext using the resolved Content Encryption Key (CEK): via the
+   * injected `keyManager` when the CEK is a Key Identifier, or via the content encryption
+   * primitives when the CEK is a JWK.
+   *
+   * @param params - The ciphertext decryption parameters.
+   * @returns A Promise that resolves to the decrypted plaintext.
+   * @throws {@link CryptoError} if the CEK is a Key Identifier and no `keyManager` was provided.
+   */
+  private static async decryptCiphertext({ cek, keyManager, joseHeader, ciphertext, iv, additionalData }: {
+    cek: KeyIdentifier | Jwk;
+    keyManager?: JweCipher;
+    joseHeader: JweHeaderParams;
+    ciphertext: Uint8Array;
+    iv?: Uint8Array;
+    additionalData?: Uint8Array;
+  }): Promise<Uint8Array> {
     if (typeof cek === 'string') {
       if (keyManager === undefined) {
         throw new CryptoError(CryptoErrorCode.OperationNotSupported, 'A "keyManager" is required to decrypt with a Key Identifier CEK.');
       }
-      plaintext = await keyManager.decrypt({ keyUri: cek, data: ciphertext, iv, additionalData });
-    } else {
-      plaintext = await decryptContent({ enc: joseHeader.enc, cek, ciphertext, iv, additionalData });
+      return await keyManager.decrypt({ keyUri: cek, data: ciphertext, iv, additionalData });
     }
-
-    return {
-      plaintext,
-      protectedHeader             : parsedProtectedHeader,
-      additionalAuthenticatedData : decodeHeaderParam('aad', jwe.aad),
-      sharedUnprotectedHeader     : jwe.unprotected,
-      unprotectedHeader           : jwe.header
-    };
+    return await decryptContent({ enc: joseHeader.enc, cek, ciphertext, iv, additionalData });
   }
 
-  public static async encrypt({
-    key,
-    plaintext,
-    additionalAuthenticatedData,
-    protectedHeader,
-    sharedUnprotectedHeader,
-    unprotectedHeader,
-    keyManager,
-  }: FlattenedJweEncryptParams): Promise<FlattenedJwe> {
+  /**
+   * Validates the inputs to {@link FlattenedJwe.encrypt} and builds the merged JOSE Header.
+   *
+   * Verifies that at least one JOSE header object is present, that the plaintext is a byte array,
+   * that there are no duplicate Header Parameter names across the header objects, and that the
+   * merged JOSE Header contains the required "alg" and "enc" values.
+   *
+   * @param params - The encrypt inputs to validate.
+   * @returns The merged, validated JOSE Header.
+   * @throws {@link CryptoError} if the JOSE header objects or plaintext are missing.
+   * @throws Throws a plain `Error` if there are duplicate Header Parameter names or the merged
+   *         JOSE Header is missing required parameters.
+   */
+  private static validateAndBuildEncryptJoseHeader({ plaintext, protectedHeader, sharedUnprotectedHeader, unprotectedHeader }: {
+    plaintext: Uint8Array;
+    protectedHeader?: Partial<JweHeaderParams>;
+    sharedUnprotectedHeader?: Partial<JweHeaderParams>;
+    unprotectedHeader?: Partial<JweHeaderParams>;
+  }): JweHeaderParams {
     // Verify that at least one of the JOSE header objects is present.
     if (!protectedHeader && !sharedUnprotectedHeader && !unprotectedHeader) {
       throw new CryptoError(CryptoErrorCode.InvalidJwe,
@@ -466,58 +615,67 @@ export class FlattenedJwe {
       throw new Error('JWE Header is missing required "alg" (Algorithm) and/or "enc" (Encryption) Header Parameters');
     }
 
-    const { cek, encryptedKey, headerParams } = await JweKeyManagement.encrypt({ key, joseHeader });
+    return joseHeader;
+  }
 
-    // Merge any header parameters produced during key management (e.g. the ECDH-ES "epk" value)
-    // into the JWE Protected Header so that they are covered by the Additional Authenticated Data.
-    if (headerParams !== undefined) {
-      protectedHeader = { ...protectedHeader, ...headerParams };
-    }
-
-    // If required for the Content Encryption Algorithm, generate a random JWE Initialization
-    // Vector (IV) of the correct size; otherwise, let the JWE Initialization Vector be the empty
-    // octet sequence.
-    const iv = generateInitializationVector(joseHeader.enc);
-
-    // Compute the Encoded Protected Header value BASE64URL(UTF8(JWE Protected Header)).  If the JWE
-    // Protected Header is not present, let this value be the empty string.
-    const encodedProtectedHeader = protectedHeader
-      ? Convert.object(protectedHeader).toBase64Url()
-      : '';
-
-    // If the JWE Additional Authenticated Data (AAD) is present, the Additional Authenticated Data
-    // input to the Content Encryption Algorithm is
-    // ASCII(Encoded Protected Header || '.' || BASE64URL(JWE AAD)). If the JWE AAD is absent, the
-    // Additional Authenticated Data is ASCII(BASE64URL(UTF8(JWE Protected Header))).
-    let additionalData: Uint8Array;
-    let encodedAad: string | undefined;
-    if (additionalAuthenticatedData) {
-      encodedAad = Convert.uint8Array(additionalAuthenticatedData).toBase64Url();
-      additionalData = Convert.string(encodedProtectedHeader + '.' + encodedAad).toUint8Array();
-    } else {
-      additionalData = Convert.string(encodedProtectedHeader).toUint8Array();
-    }
-
-    // Encrypt the plaintext using the CEK, the JWE Initialization Vector, and the Additional
-    // Authenticated Data value using the specified content encryption algorithm to create the JWE
-    // Ciphertext value and the JWE Authentication Tag.
-    let ciphertextWithTag: Uint8Array;
+  /**
+   * Encrypts the plaintext using the resolved Content Encryption Key (CEK): via the injected
+   * `keyManager` when the CEK is a Key Identifier, or via the content encryption primitives when
+   * the CEK is a JWK.
+   *
+   * @param params - The plaintext encryption parameters.
+   * @returns A Promise that resolves to the ciphertext with the authentication tag appended.
+   * @throws {@link CryptoError} if the CEK is a Key Identifier and no `keyManager` was provided.
+   */
+  private static async encryptCiphertext({ cek, keyManager, joseHeader, plaintext, iv, additionalData }: {
+    cek: KeyIdentifier | Jwk;
+    keyManager?: JweCipher;
+    joseHeader: JweHeaderParams;
+    plaintext: Uint8Array;
+    iv: Uint8Array;
+    additionalData?: Uint8Array;
+  }): Promise<Uint8Array> {
     if (typeof cek === 'string') {
       if (keyManager === undefined) {
         throw new CryptoError(CryptoErrorCode.OperationNotSupported, 'A "keyManager" is required to encrypt with a Key Identifier CEK.');
       }
-      ciphertextWithTag = await keyManager.encrypt({ keyUri: cek, data: plaintext, iv, additionalData });
-    } else {
-      ciphertextWithTag = await encryptContent({ enc: joseHeader.enc, cek, plaintext, iv, additionalData });
+      return await keyManager.encrypt({ keyUri: cek, data: plaintext, iv, additionalData });
     }
-    const ciphertext = ciphertextWithTag.slice(0, -16);
-    const authenticationTag = ciphertextWithTag.slice(-16);
+    return await encryptContent({ enc: joseHeader.enc, cek, plaintext, iv, additionalData });
+  }
 
-    // Create the Flattened JWE JSON Serialization output, which is based upon the General syntax,
-    // but flattens it, optimizing it for the single-recipient case. It flattens it by removing the
-    // "recipients" member and instead placing those members defined for use in the "recipients"
-    // array (the "header" and "encrypted_key" members) in the top-level JSON object (at the same
-    // level as the "ciphertext" member).
+  /**
+   * Assembles the Flattened JWE JSON Serialization output from its encoded components.
+   *
+   * This is based upon the General syntax, but flattened for the single-recipient case: it
+   * removes the "recipients" member and instead places the members defined for use in the
+   * "recipients" array (the "header" and "encrypted_key" members) in the top-level JSON object
+   * (at the same level as the "ciphertext" member).
+   *
+   * @param params - The encoded JWE components.
+   * @returns The assembled {@link FlattenedJwe}.
+   */
+  private static buildFlattenedJwe({
+    ciphertext,
+    encryptedKey,
+    protectedHeader,
+    encodedProtectedHeader,
+    sharedUnprotectedHeader,
+    unprotectedHeader,
+    iv,
+    encodedAad,
+    authenticationTag,
+  }: {
+    ciphertext: Uint8Array;
+    encryptedKey?: Uint8Array;
+    protectedHeader?: Partial<JweHeaderParams>;
+    encodedProtectedHeader: string;
+    sharedUnprotectedHeader?: Partial<JweHeaderParams>;
+    unprotectedHeader?: Partial<JweHeaderParams>;
+    iv: Uint8Array;
+    encodedAad?: string;
+    authenticationTag: Uint8Array;
+  }): FlattenedJwe {
     const jwe = new FlattenedJwe({
       ciphertext: Convert.uint8Array(ciphertext).toBase64Url(),
     });

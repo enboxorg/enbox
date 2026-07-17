@@ -271,115 +271,16 @@ export class JweKeyManagement {
     // Determine the Key Management Mode employed by the algorithm specified by the "alg"
     // (algorithm) Header Parameter.
     switch (joseHeader.alg) {
-      case 'dir': {
-        // In Direct Encryption mode, a JWE "Encrypted Key" is not provided. Instead, the
-        // provided key management `key` is directly used as the Content Encryption Key (CEK) to
-        // decrypt the JWE payload.
+      case 'dir':
+        return JweKeyManagement.decryptDirect({ key, encryptedKey });
 
-        // Verify that the JWE Encrypted Key value is empty.
-        if (encryptedKey !== undefined) {
-          throw new CryptoError(CryptoErrorCode.InvalidJwe, 'JWE "encrypted_key" is not allowed when using "dir" (Direct Encryption Mode).');
-        }
-
-        // Verify the key management `key` is a Key Identifier or JWK.
-        if (key instanceof Uint8Array || isJweEcdhEsKey(key)) {
-          throw new CryptoError(CryptoErrorCode.InvalidJwe, 'Key management "key" must be a Key URI or JWK when using "dir" (Direct Encryption Mode).');
-        }
-
-        // return the key management `key` as the CEK.
-        return key;
-      }
-
-      case 'ECDH-ES': {
-        // In Direct Key Agreement mode (ECDH-ES), a JWE "Encrypted Key" is not provided. Instead,
-        // an ECDH shared secret is computed between the recipient's static private key and the
-        // ephemeral public key ("epk") from the JOSE Header, and the Content Encryption Key (CEK)
-        // is derived from the shared secret using the Concat KDF per RFC 7518, Section 4.6.
-
-        // Verify that the JWE Encrypted Key value is empty.
-        if (encryptedKey !== undefined) {
-          throw new CryptoError(CryptoErrorCode.InvalidJwe, 'JWE "encrypted_key" is not allowed when using "ECDH-ES" (Direct Key Agreement Mode).');
-        }
-
-        // Verify the key management `key` is an ECDH-ES decrypt input with a private key.
-        if (!(isJweEcdhEsKey(key) && 'privateKey' in key)) {
-          throw new CryptoError(CryptoErrorCode.InvalidJwe,
-            'Key management "key" must be an object with "mode": "ecdh-es" and "privateKey" when using "ECDH-ES" (Direct Key Agreement Mode).'
-          );
-        }
-
-        // Only the X25519 curve is supported for ECDH-ES key agreement.
-        if (key.privateKey.crv !== 'X25519') {
-          throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `Unsupported ECDH-ES private key curve: ${key.privateKey.crv}`);
-        }
-
-        // Validate the ephemeral public key ("epk") from the JOSE Header.
-        const ephemeralPublicKey = JweKeyManagement.validateEpk(joseHeader.epk);
-
-        // Compute the ECDH shared secret between the recipient's static private key and the
-        // ephemeral public key.
-        const sharedSecret = await X25519.sharedSecret({
-          privateKeyA : key.privateKey,
-          publicKeyB  : ephemeralPublicKey
-        });
-
-        // Derive the CEK from the shared secret using the Concat KDF (and the optional PIN
-        // strengthening wrapper).
-        return await JweKeyManagement.deriveEcdhEsCek({ sharedSecret, joseHeader, pin: key.pin });
-      }
+      case 'ECDH-ES':
+        return await JweKeyManagement.decryptEcdhEs({ key, encryptedKey, joseHeader });
 
       case 'PBES2-HS256+A128KW':
       case 'PBES2-HS384+A192KW':
-      case 'PBES2-HS512+A256KW': {
-        // In Key Encryption mode (PBES2) with key wrapping (A128KW, A192KW, A256KW), the given
-        // passphrase, salt (p2s), and iteration count (p2c) are used with the PBKDF2 key derivation
-        // function to derive the Key Encryption Key (KEK).  The KEK is then used to decrypt the JWE
-        // Encrypted Key to obtain the Content Encryption Key (CEK).
-
-        if (typeof joseHeader.p2c !== 'number') {
-          throw new CryptoError(CryptoErrorCode.InvalidJwe, 'JOSE Header "p2c" (PBES2 Count) is missing or not a number.');
-        }
-
-        // Per RFC 7518, Section 4.8.1.2, a minimum iteration count of 1000 is RECOMMENDED.
-        // Enforce this floor to prevent an attacker from supplying a crafted JWE with a
-        // trivially low iteration count that would weaken key derivation.
-        if (joseHeader.p2c < minP2cCount) {
-          throw new CryptoError(
-            CryptoErrorCode.InvalidJwe,
-            `JOSE Header "p2c" (PBES2 Count) is ${joseHeader.p2c}, which is below the minimum of ${minP2cCount}.`
-          );
-        }
-
-        if (typeof joseHeader.p2s !== 'string') {
-          throw new CryptoError(CryptoErrorCode.InvalidJwe, 'JOSE Header "p2s" (PBES2 salt) is missing or not a string.');
-        }
-
-        // Throw an error if the key management `key` is not a byte array. For PBES2, the key is
-        // expected to be a low-entropy passphrase as a byte array.
-        if (!(key instanceof Uint8Array)) {
-          throw new CryptoError(CryptoErrorCode.InvalidJwe, 'Key management "key" must be a Uint8Array when using "PBES2" (Key Encryption Mode).');
-        }
-
-        // Verify that the JWE Encrypted Key value is present.
-        if (encryptedKey === undefined) {
-          throw new CryptoError(CryptoErrorCode.InvalidJwe, 'JWE "encrypted_key" is required when using "PBES2" (Key Encryption Mode).');
-        }
-
-        // Derive the Key Encryption Key (KEK) from the given passphrase, salt, and iteration count.
-        const kek = await JweKeyManagement.derivePbes2Kek({
-          alg        : joseHeader.alg as Pbes2Alg,
-          passphrase : key,
-          p2c        : joseHeader.p2c,
-          p2s        : joseHeader.p2s
-        });
-
-        // Decrypt the Content Encryption Key (CEK) with the derived KEK.
-        return await AesKw.unwrapKey({
-          decryptionKey       : kek,
-          wrappedKeyBytes     : encryptedKey,
-          wrappedKeyAlgorithm : joseHeader.enc
-        });
-      }
+      case 'PBES2-HS512+A256KW':
+        return await JweKeyManagement.decryptPbes2({ key, encryptedKey, joseHeader, minP2cCount });
 
       default: {
         throw new CryptoError(
@@ -388,6 +289,140 @@ export class JweKeyManagement {
         );
       }
     }
+  }
+
+  /**
+   * Decrypts the CEK for `"alg": "dir"` (Direct Encryption Mode): the provided key management
+   * `key` is used directly as the Content Encryption Key (CEK) to decrypt the JWE payload.
+   *
+   * @throws {@link CryptoError} if a JWE Encrypted Key is present, or if `key` is not a Key
+   *         Identifier or JWK.
+   */
+  private static decryptDirect({ key, encryptedKey }: {
+    key: JweKeyManagementDecryptKey;
+    encryptedKey?: Uint8Array;
+  }): KeyIdentifier | Jwk {
+    // Verify that the JWE Encrypted Key value is empty.
+    if (encryptedKey !== undefined) {
+      throw new CryptoError(CryptoErrorCode.InvalidJwe, 'JWE "encrypted_key" is not allowed when using "dir" (Direct Encryption Mode).');
+    }
+
+    // Verify the key management `key` is a Key Identifier or JWK.
+    if (key instanceof Uint8Array || isJweEcdhEsKey(key)) {
+      throw new CryptoError(CryptoErrorCode.InvalidJwe, 'Key management "key" must be a Key URI or JWK when using "dir" (Direct Encryption Mode).');
+    }
+
+    // return the key management `key` as the CEK.
+    return key;
+  }
+
+  /**
+   * Decrypts the CEK for `"alg": "ECDH-ES"` (Direct Key Agreement Mode): a JWE "Encrypted Key" is
+   * not provided. Instead, an ECDH shared secret is computed between the recipient's static
+   * private key and the ephemeral public key ("epk") from the JOSE Header, and the Content
+   * Encryption Key (CEK) is derived from the shared secret using the Concat KDF per RFC 7518,
+   * Section 4.6.
+   *
+   * @throws {@link CryptoError} if a JWE Encrypted Key is present, `key` is not an ECDH-ES
+   *         decrypt input with a private key, the private key curve is unsupported, or the "epk"
+   *         Header Parameter is missing or malformed.
+   */
+  private static async decryptEcdhEs({ key, encryptedKey, joseHeader }: {
+    key: JweKeyManagementDecryptKey;
+    encryptedKey?: Uint8Array;
+    joseHeader: JweHeaderParams;
+  }): Promise<Jwk> {
+    // Verify that the JWE Encrypted Key value is empty.
+    if (encryptedKey !== undefined) {
+      throw new CryptoError(CryptoErrorCode.InvalidJwe, 'JWE "encrypted_key" is not allowed when using "ECDH-ES" (Direct Key Agreement Mode).');
+    }
+
+    // Verify the key management `key` is an ECDH-ES decrypt input with a private key.
+    if (!(isJweEcdhEsKey(key) && 'privateKey' in key)) {
+      throw new CryptoError(CryptoErrorCode.InvalidJwe,
+        'Key management "key" must be an object with "mode": "ecdh-es" and "privateKey" when using "ECDH-ES" (Direct Key Agreement Mode).'
+      );
+    }
+
+    // Only the X25519 curve is supported for ECDH-ES key agreement.
+    if (key.privateKey.crv !== 'X25519') {
+      throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `Unsupported ECDH-ES private key curve: ${key.privateKey.crv}`);
+    }
+
+    // Validate the ephemeral public key ("epk") from the JOSE Header.
+    const ephemeralPublicKey = JweKeyManagement.validateEpk(joseHeader.epk);
+
+    // Compute the ECDH shared secret between the recipient's static private key and the
+    // ephemeral public key.
+    const sharedSecret = await X25519.sharedSecret({
+      privateKeyA : key.privateKey,
+      publicKeyB  : ephemeralPublicKey
+    });
+
+    // Derive the CEK from the shared secret using the Concat KDF (and the optional PIN
+    // strengthening wrapper).
+    return await JweKeyManagement.deriveEcdhEsCek({ sharedSecret, joseHeader, pin: key.pin });
+  }
+
+  /**
+   * Decrypts the CEK for the PBES2 family (`"alg": "PBES2-HS256+A128KW"`,
+   * `"PBES2-HS384+A192KW"`, `"PBES2-HS512+A256KW"`) — Key Encryption Mode with key wrapping: the
+   * given passphrase, salt (p2s), and iteration count (p2c) are used with the PBKDF2 key
+   * derivation function to derive the Key Encryption Key (KEK), which is then used to decrypt the
+   * JWE Encrypted Key to obtain the Content Encryption Key (CEK).
+   *
+   * @throws {@link CryptoError} if "p2c" or "p2s" are missing/invalid, "p2c" is below
+   *         `minP2cCount`, `key` is not a `Uint8Array`, or the JWE Encrypted Key is missing.
+   */
+  private static async decryptPbes2({ key, encryptedKey, joseHeader, minP2cCount }: {
+    key: JweKeyManagementDecryptKey;
+    encryptedKey?: Uint8Array;
+    joseHeader: JweHeaderParams;
+    minP2cCount: number;
+  }): Promise<Jwk> {
+    if (typeof joseHeader.p2c !== 'number') {
+      throw new CryptoError(CryptoErrorCode.InvalidJwe, 'JOSE Header "p2c" (PBES2 Count) is missing or not a number.');
+    }
+
+    // Per RFC 7518, Section 4.8.1.2, a minimum iteration count of 1000 is RECOMMENDED.
+    // Enforce this floor to prevent an attacker from supplying a crafted JWE with a
+    // trivially low iteration count that would weaken key derivation.
+    if (joseHeader.p2c < minP2cCount) {
+      throw new CryptoError(
+        CryptoErrorCode.InvalidJwe,
+        `JOSE Header "p2c" (PBES2 Count) is ${joseHeader.p2c}, which is below the minimum of ${minP2cCount}.`
+      );
+    }
+
+    if (typeof joseHeader.p2s !== 'string') {
+      throw new CryptoError(CryptoErrorCode.InvalidJwe, 'JOSE Header "p2s" (PBES2 salt) is missing or not a string.');
+    }
+
+    // Throw an error if the key management `key` is not a byte array. For PBES2, the key is
+    // expected to be a low-entropy passphrase as a byte array.
+    if (!(key instanceof Uint8Array)) {
+      throw new CryptoError(CryptoErrorCode.InvalidJwe, 'Key management "key" must be a Uint8Array when using "PBES2" (Key Encryption Mode).');
+    }
+
+    // Verify that the JWE Encrypted Key value is present.
+    if (encryptedKey === undefined) {
+      throw new CryptoError(CryptoErrorCode.InvalidJwe, 'JWE "encrypted_key" is required when using "PBES2" (Key Encryption Mode).');
+    }
+
+    // Derive the Key Encryption Key (KEK) from the given passphrase, salt, and iteration count.
+    const kek = await JweKeyManagement.derivePbes2Kek({
+      alg        : joseHeader.alg as Pbes2Alg,
+      passphrase : key,
+      p2c        : joseHeader.p2c,
+      p2s        : joseHeader.p2s
+    });
+
+    // Decrypt the Content Encryption Key (CEK) with the derived KEK.
+    return await AesKw.unwrapKey({
+      decryptionKey       : kek,
+      wrappedKeyBytes     : encryptedKey,
+      wrappedKeyAlgorithm : joseHeader.enc
+    });
   }
 
   /**

@@ -164,37 +164,10 @@ export class CoseKey {
 
     if (jwk.kty === 'OKP') {
       coseKey.set(CoseKeyLabel.Kty, CoseKeyType.OKP);
-
-      const crv = jwk.crv;
-      if (crv === undefined || !(crv in jwkCrvToCose)) {
-        throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `CoseKey: unsupported OKP curve '${crv}'`);
-      }
-      coseKey.set(CoseKeyParamLabel.Crv, jwkCrvToCose[crv]);
-
-      if (jwk.x !== undefined) {
-        coseKey.set(CoseKeyParamLabel.X, Convert.base64Url(jwk.x).toUint8Array());
-      }
-      if (jwk.d !== undefined) {
-        coseKey.set(CoseKeyParamLabel.D, Convert.base64Url(jwk.d).toUint8Array());
-      }
+      CoseKey.setOkpKeyFields(coseKey, jwk);
     } else if (jwk.kty === 'EC') {
       coseKey.set(CoseKeyLabel.Kty, CoseKeyType.EC2);
-
-      const crv = jwk.crv;
-      if (crv === undefined || !(crv in jwkCrvToCose)) {
-        throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `CoseKey: unsupported EC curve '${crv}'`);
-      }
-      coseKey.set(CoseKeyParamLabel.Crv, jwkCrvToCose[crv]);
-
-      if (jwk.x !== undefined) {
-        coseKey.set(CoseKeyParamLabel.X, Convert.base64Url(jwk.x).toUint8Array());
-      }
-      if (jwk.y !== undefined) {
-        coseKey.set(CoseKeyParamLabel.Y, Convert.base64Url(jwk.y).toUint8Array());
-      }
-      if (jwk.d !== undefined) {
-        coseKey.set(CoseKeyParamLabel.D, Convert.base64Url(jwk.d).toUint8Array());
-      }
+      CoseKey.setEc2KeyFields(coseKey, jwk);
     } else {
       throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `CoseKey: unsupported key type '${jwk.kty}'`);
     }
@@ -221,58 +194,9 @@ export class CoseKey {
     const kty = coseKey.get(CoseKeyLabel.Kty) as number;
 
     if (kty === CoseKeyType.OKP) {
-      const crv = coseKey.get(CoseKeyParamLabel.Crv) as number;
-      if (!(crv in coseCrvToJwk)) {
-        throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `CoseKey: unsupported COSE OKP curve ${crv}`);
-      }
-
-      const jwk: Jwk = {
-        kty : 'OKP',
-        crv : coseCrvToJwk[crv],
-      };
-
-      const x = coseKey.get(CoseKeyParamLabel.X) as Uint8Array | undefined;
-      if (x !== undefined) {
-        jwk.x = Convert.uint8Array(x).toBase64Url();
-      }
-
-      const d = coseKey.get(CoseKeyParamLabel.D) as Uint8Array | undefined;
-      if (d !== undefined) {
-        jwk.d = Convert.uint8Array(d).toBase64Url();
-      }
-
-      CoseKey.applyCommonFields(coseKey, jwk);
-      return jwk;
-
+      return CoseKey.okpCoseKeyToJwk(coseKey);
     } else if (kty === CoseKeyType.EC2) {
-      const crv = coseKey.get(CoseKeyParamLabel.Crv) as number;
-      if (!(crv in coseCrvToJwk)) {
-        throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `CoseKey: unsupported COSE EC2 curve ${crv}`);
-      }
-
-      const jwk: Jwk = {
-        kty : 'EC',
-        crv : coseCrvToJwk[crv],
-      };
-
-      const x = coseKey.get(CoseKeyParamLabel.X) as Uint8Array | undefined;
-      if (x !== undefined) {
-        jwk.x = Convert.uint8Array(x).toBase64Url();
-      }
-
-      const y = coseKey.get(CoseKeyParamLabel.Y) as Uint8Array | undefined;
-      if (y !== undefined) {
-        jwk.y = Convert.uint8Array(y).toBase64Url();
-      }
-
-      const d = coseKey.get(CoseKeyParamLabel.D) as Uint8Array | undefined;
-      if (d !== undefined) {
-        jwk.d = Convert.uint8Array(d).toBase64Url();
-      }
-
-      CoseKey.applyCommonFields(coseKey, jwk);
-      return jwk;
-
+      return CoseKey.ec2CoseKeyToJwk(coseKey);
     } else {
       throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `CoseKey: unsupported COSE key type ${kty}`);
     }
@@ -340,5 +264,115 @@ export class CoseKey {
     if (alg !== undefined && alg in coseAlgToJwk) {
       jwk.alg = coseAlgToJwk[alg];
     }
+  }
+
+  /**
+   * Validates the OKP curve and sets the OKP-specific COSE key parameters (crv, x, d) on the
+   * given COSE key map.
+   *
+   * @throws {CryptoError} If the JWK curve is missing or not a supported OKP curve.
+   */
+  private static setOkpKeyFields(coseKey: Map<number, unknown>, jwk: Jwk): void {
+    const crv = jwk.crv;
+    if (crv === undefined || !(crv in jwkCrvToCose)) {
+      throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `CoseKey: unsupported OKP curve '${crv}'`);
+    }
+    coseKey.set(CoseKeyParamLabel.Crv, jwkCrvToCose[crv]);
+
+    if (jwk.x !== undefined) {
+      coseKey.set(CoseKeyParamLabel.X, Convert.base64Url(jwk.x).toUint8Array());
+    }
+    if (jwk.d !== undefined) {
+      coseKey.set(CoseKeyParamLabel.D, Convert.base64Url(jwk.d).toUint8Array());
+    }
+  }
+
+  /**
+   * Validates the EC curve and sets the EC2-specific COSE key parameters (crv, x, y, d) on the
+   * given COSE key map.
+   *
+   * @throws {CryptoError} If the JWK curve is missing or not a supported EC curve.
+   */
+  private static setEc2KeyFields(coseKey: Map<number, unknown>, jwk: Jwk): void {
+    const crv = jwk.crv;
+    if (crv === undefined || !(crv in jwkCrvToCose)) {
+      throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `CoseKey: unsupported EC curve '${crv}'`);
+    }
+    coseKey.set(CoseKeyParamLabel.Crv, jwkCrvToCose[crv]);
+
+    if (jwk.x !== undefined) {
+      coseKey.set(CoseKeyParamLabel.X, Convert.base64Url(jwk.x).toUint8Array());
+    }
+    if (jwk.y !== undefined) {
+      coseKey.set(CoseKeyParamLabel.Y, Convert.base64Url(jwk.y).toUint8Array());
+    }
+    if (jwk.d !== undefined) {
+      coseKey.set(CoseKeyParamLabel.D, Convert.base64Url(jwk.d).toUint8Array());
+    }
+  }
+
+  /**
+   * Converts an OKP COSE key Map to a JWK.
+   *
+   * @throws {CryptoError} If the COSE curve is not a supported OKP curve.
+   */
+  private static okpCoseKeyToJwk(coseKey: Map<number, unknown>): Jwk {
+    const crv = coseKey.get(CoseKeyParamLabel.Crv) as number;
+    if (!(crv in coseCrvToJwk)) {
+      throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `CoseKey: unsupported COSE OKP curve ${crv}`);
+    }
+
+    const jwk: Jwk = {
+      kty : 'OKP',
+      crv : coseCrvToJwk[crv],
+    };
+
+    const x = coseKey.get(CoseKeyParamLabel.X) as Uint8Array | undefined;
+    if (x !== undefined) {
+      jwk.x = Convert.uint8Array(x).toBase64Url();
+    }
+
+    const d = coseKey.get(CoseKeyParamLabel.D) as Uint8Array | undefined;
+    if (d !== undefined) {
+      jwk.d = Convert.uint8Array(d).toBase64Url();
+    }
+
+    CoseKey.applyCommonFields(coseKey, jwk);
+    return jwk;
+  }
+
+  /**
+   * Converts an EC2 COSE key Map to a JWK.
+   *
+   * @throws {CryptoError} If the COSE curve is not a supported EC curve.
+   */
+  private static ec2CoseKeyToJwk(coseKey: Map<number, unknown>): Jwk {
+    const crv = coseKey.get(CoseKeyParamLabel.Crv) as number;
+    if (!(crv in coseCrvToJwk)) {
+      throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `CoseKey: unsupported COSE EC2 curve ${crv}`);
+    }
+
+    const jwk: Jwk = {
+      kty : 'EC',
+      crv : coseCrvToJwk[crv],
+    };
+
+    const x = coseKey.get(CoseKeyParamLabel.X) as Uint8Array | undefined;
+    if (x !== undefined) {
+      jwk.x = Convert.uint8Array(x).toBase64Url();
+    }
+
+    const y = coseKey.get(CoseKeyParamLabel.Y) as Uint8Array | undefined;
+    if (y !== undefined) {
+      jwk.y = Convert.uint8Array(y).toBase64Url();
+    }
+
+    const d = coseKey.get(CoseKeyParamLabel.D) as Uint8Array | undefined;
+    if (d !== undefined) {
+      jwk.d = Convert.uint8Array(d).toBase64Url();
+    }
+
+    CoseKey.applyCommonFields(coseKey, jwk);
+    return jwk;
   }
 }
