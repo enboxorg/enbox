@@ -1,6 +1,12 @@
 import type { PermissionsApi } from './types/permissions.js';
 import type { SyncEndpointStore } from './sync-endpoint-store.js';
-import type { NonEmptyStringArray, SyncAuthorization, SyncIdentityOptions, SyncScope } from './types/sync.js';
+import type {
+  NonEmptyStringArray,
+  ReplicationLinkState,
+  SyncAuthorization,
+  SyncIdentityOptions,
+  SyncScope,
+} from './types/sync.js';
 
 import { DwnInterface } from './types/dwn.js';
 import { computeAuthorizationEpoch, computeProjectionId, syncScopeFromProtocols } from './types/sync.js';
@@ -24,6 +30,22 @@ export type SyncTarget = {
   authorizationEpoch: string;
   permissionGrantIds?: NonEmptyStringArray;
 };
+
+/** Recreate the canonical target represented by one durable link. */
+export function syncTargetFromLink(link: ReplicationLinkState): SyncTarget {
+  return {
+    did                : link.tenantDid,
+    dwnUrl             : link.remoteEndpoint,
+    delegateDid        : link.delegateDid,
+    projectionId       : link.projectionId,
+    scope              : link.scope,
+    authorization      : link.authorization,
+    authorizationEpoch : link.authorizationEpoch,
+    permissionGrantIds : link.authorization.kind === 'delegate'
+      ? link.authorization.permissionGrantIds
+      : undefined,
+  };
+}
 
 /** Scope and authorization details shared by every endpoint for an identity. */
 export type SyncTargetResolution = Pick<

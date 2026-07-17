@@ -392,7 +392,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
         retryableFailures: [{ cid: 'cid-1', kind: 'Deferred' }],
       };
     });
-    const requeueSpy = sinon.spy(engine as never, 'requeueOrReconcile');
+    const requeueSpy = sinon.spy(engine['_livePushCoordinator'], 'requeue');
 
     const flushing = (engine as unknown as {
       flushPendingPushesForLink(key: string): Promise<void>;

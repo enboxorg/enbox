@@ -2,6 +2,9 @@ import { sleep } from '@enbox/common';
 
 import { SyncTaskGroup } from './sync-task-group.js';
 
+/** Starts work in one identity task group captured for a specific runtime lifetime. */
+export type SyncIdentityTaskRunner = (operation: () => Promise<void>) => Promise<void>;
+
 /**
  * Coordinates sync lifecycle transitions, exclusive sync operations, and
  * supervised background work without depending on a persistence backend.
@@ -121,6 +124,12 @@ export class SyncLifecycleCoordinator {
       this._identityTaskGroups.set(did, taskGroup);
     }
     return taskGroup;
+  }
+
+  /** Bind a runner to the current identity group without resolving it again at fire time. */
+  public captureIdentityTaskRunner(did: string): SyncIdentityTaskRunner {
+    const taskGroup = this.getIdentityTaskGroup(did);
+    return (operation): Promise<void> => this.runIdentityTask(taskGroup, operation);
   }
 
   /** Starts work supervised by both the global runtime and an identity task group. */
