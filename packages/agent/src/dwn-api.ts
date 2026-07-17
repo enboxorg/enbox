@@ -539,6 +539,16 @@ export class AgentDwnApi {
     return this._dwn;
   }
 
+  /**
+   * Composes a DWN with default LevelDB stores for any component not
+   * injected. When no `messageLog` is supplied, a default pair is created
+   * internally and its channel-bridged wake publisher's handle is NOT
+   * retained by the returned `Dwn` — callers who need the channel released
+   * with the agent should build the pair via
+   * {@link AgentDwnApi.createDefaultMessageLog}, pass it here as
+   * `messageLog`, and hand its `wakePublisher` to
+   * `new AgentDwnApi({ dwn, wakePublisher })` (as `EnboxUserAgent` does).
+   */
   public static async createDwn({
     dataPath, dataStore, didResolver, messageLog, tenantGate, resumableTaskStore
   }: DwnApiCreateDwnParams): Promise<Dwn> {
