@@ -29,7 +29,6 @@ import type {
   SyncDirection,
   SyncDrainOptions,
   SyncDrainResult,
-  SyncDrainTargetResult,
   SyncEngine,
   SyncEvent,
   SyncEventListener,
@@ -69,6 +68,7 @@ import { SyncCheckpoint } from './sync-checkpoint.js';
 import { SyncConnectivityManager } from './sync-connectivity-manager.js';
 import { SyncDeadLetterStoreLevel } from './sync-dead-letter-store-level.js';
 import { SyncDeferredPullStoreLevel } from './sync-deferred-pull-store-level.js';
+import { SyncDrainCoordinator } from './sync-drain-coordinator.js';
 import { SyncDurableFeedReconciler } from './sync-durable-feed-reconciler.js';
 import { SyncEchoSuppressor } from './sync-echo-suppressor.js';
 import { SyncEndpointStoreLevel } from './sync-endpoint-store-level.js';
@@ -124,13 +124,6 @@ type LinkInitializationResult =
 type SyncRunOptions = {
   verifyConvergence?: boolean;
 };
-
-type SyncDrainPlan = {
-  targets: SyncTarget[];
-  failures: SyncDrainTargetResult[];
-};
-
-type SyncDrainStopReason = 'cancelled' | 'topology-changed';
 
 type SyncTargetGroupRunResult = {
   dwnUrl: string;
@@ -224,6 +217,7 @@ export class SyncEngineLevel implements SyncEngine {
   private readonly _connectivityManager: SyncConnectivityManager;
   private readonly _deadLetterStore: SyncDeadLetterStore;
   private readonly _deferredPullStore: SyncDeferredPullStore;
+  private readonly _drainCoordinator: SyncDrainCoordinator;
   private readonly _echoSuppressor = new SyncEchoSuppressor();
   private readonly _endpointStore: SyncEndpointStore;
   private readonly _durableFeedReconciler: SyncDurableFeedReconciler;
@@ -290,6 +284,33 @@ export class SyncEngineLevel implements SyncEngine {
     });
     this._endpointStore = new SyncEndpointStoreLevel(this._db);
     this._identityStore = new SyncIdentityStoreLevel(this._db);
+    this._drainCoordinator = new SyncDrainCoordinator({
+      identityStore : this._identityStore,
+      operations    : {
+        buildTargetsForEndpoint: (did, remoteEndpoint, options): Promise<SyncTarget[]> =>
+          this.targetResolver.buildTargetsForEndpoint(did, remoteEndpoint, options),
+        clearFeedConvergenceFailure: (target): Promise<void> =>
+          this.clearFeedConvergenceFailure(target),
+        getLink                      : (target): Promise<ReplicationLinkState> => this.getOrCreateReplicationLink(target),
+        getQuotaBlockCount           : async (target): Promise<number> => (await this.getQuotaBlocksForTarget(target)).length,
+        getTopologyGeneration        : (): number => this._targetPlanner.generation,
+        handleVerifiedFeedDivergence : (target, result): Promise<boolean> =>
+          this.handleVerifiedFeedDivergence(target, result),
+        onReconcileApplied : (target, messageCids): void => { this.emitReconcileApplied(target, messageCids); },
+        prepareLiveTarget  : (target): Promise<void> => this.prepareDrainLiveTarget(target),
+        reconcileTarget    : (target, options, shouldContinue): Promise<SyncReconcileResult> =>
+          this.syncTargetWithDurableFeeds(target, options, shouldContinue),
+        recordConnectivityFailure : (): void => { this._connectivityManager.recordFailure(); },
+        recordConnectivitySuccess : (): void => { this._connectivityManager.recordSuccess(); },
+        recordPushFailures        : async (target, failures): Promise<void> => {
+          await this.recordTerminalSyncPushFailures(target, failures);
+        },
+        registerEndpoint: (remoteEndpoint): Promise<void> =>
+          this.registerSupplementalDwnEndpoint(remoteEndpoint),
+        verifyConvergence: (target, shouldContinue): Promise<SyncReconcileResult> =>
+          this.verifyFeedConvergence(target, shouldContinue),
+      },
+    });
     this._scopeClosureValidator = new SyncScopeClosureValidator({
       operations: {
         queryProtocolHistory: (query): Promise<SyncScopeProtocolHistoryPage> =>
@@ -740,80 +761,10 @@ export class SyncEngineLevel implements SyncEngine {
       throw new Error('SyncEngineLevel: Sync operation is already in progress.');
     }
     try {
-      await this.registerSupplementalDwnEndpoint(normalizedEndpoint);
-      const topologyGeneration = this._targetPlanner.generation;
-      const getStopReason = (): SyncDrainStopReason | undefined => {
-        if (options.signal?.aborted === true) {
-          return 'cancelled';
-        }
-        if (this._targetPlanner.generation !== topologyGeneration) {
-          return 'topology-changed';
-        }
-      };
-
-      const plan = await this.buildSyncDrainPlan(normalizedEndpoint);
-      await this.initializeDrainTargetsForLiveSync(plan.targets, getStopReason);
-      const targets = [...plan.failures];
-
-      for (const target of plan.targets) {
-        targets.push(await this.drainSyncTarget(target, getStopReason));
-      }
-
-      const stopReason = getStopReason();
-      const cancelled = stopReason === 'cancelled' || targets.some((target): boolean => target.cancelled);
-      const topologyChanged = stopReason === 'topology-changed';
-      const completed = targets.length > 0 && !cancelled && !topologyChanged && targets.every((target): boolean => target.completed);
-      const error = SyncEngineLevel.drainResultError(targets, stopReason);
-      this.updateConnectivityAfterDrain(targets);
-
-      return {
-        endpoint: normalizedEndpoint,
-        completed,
-        cancelled,
-        topologyChanged,
-        targets,
-        ...(error !== undefined ? { error } : {}),
-      };
+      return await this._drainCoordinator.drain(normalizedEndpoint, options);
     } finally {
       this._lifecycle.releaseSync();
     }
-  }
-
-  private async buildSyncDrainPlan(remoteEndpoint: string): Promise<SyncDrainPlan> {
-    const plan: SyncDrainPlan = {
-      failures : [],
-      targets  : [],
-    };
-
-    for await (const entry of this._identityStore.entries()) {
-      if (entry.status === 'corrupt') {
-        plan.failures.push({
-          tenantDid : entry.did,
-          remoteEndpoint,
-          completed : false,
-          cancelled : false,
-          converged : false,
-          error     : `corrupt sync options: ${SyncEngineLevel.errorMessage(entry.error)}`,
-        });
-        continue;
-      }
-
-      try {
-        plan.targets.push(...await this.targetResolver.buildTargetsForEndpoint(entry.did, remoteEndpoint, entry.options));
-      } catch (error: unknown) {
-        plan.failures.push({
-          tenantDid : entry.did,
-          remoteEndpoint,
-          scope     : SyncEngineLevel.syncScopeForDrainFailure(entry.options),
-          completed : false,
-          cancelled : false,
-          converged : false,
-          error     : SyncEngineLevel.errorMessage(error),
-        });
-      }
-    }
-
-    return plan;
   }
 
   /**
@@ -821,242 +772,15 @@ export class SyncEngineLevel implements SyncEngine {
    * When live sync is already running, open the new links before reconciling
    * so writes that race the drain continue to be delivered after parity.
    */
-  private async initializeDrainTargetsForLiveSync(
-    targets: SyncTarget[],
-    getStopReason: () => SyncDrainStopReason | undefined,
-  ): Promise<void> {
+  private async prepareDrainLiveTarget(target: SyncTarget): Promise<void> {
     if (this._syncMode !== 'live') {
       return;
     }
 
-    for (const target of targets) {
-      if (getStopReason() !== undefined) {
-        return;
-      }
-
-      const link = await this.getOrCreateReplicationLink(target);
-      const linkKey = this.getReplicationLinkKey(target, link);
-      if (!this._linkControllers.has(linkKey)) {
-        await this.initializeLinkTargetWithRetry(target);
-      }
-    }
-  }
-
-  private async drainSyncTarget(
-    target: SyncTarget,
-    getStopReason: () => SyncDrainStopReason | undefined,
-  ): Promise<SyncDrainTargetResult> {
-    const stopReasonAtStart = getStopReason();
-    if (stopReasonAtStart !== undefined) {
-      return SyncEngineLevel.stoppedDrainTarget(target, stopReasonAtStart);
-    }
-
-    try {
-      const shouldContinue = (): boolean => getStopReason() === undefined;
-      const result = await this.syncTargetWithDurableFeeds(
-        target,
-        { forceQuotaProbe: true, verifyConvergence: true },
-        shouldContinue,
-      );
-      if (result.admittedCids !== undefined && result.admittedCids.length > 0) {
-        this.emitReconcileApplied(target, result.admittedCids);
-      }
-
-      const pushFailures = result.pushFailures ?? [];
-      if (pushFailures.length > 0) {
-        await this.recordTerminalSyncPushFailures(target, pushFailures);
-      }
-
-      const link = await this.getOrCreateReplicationLink(target);
-      const feedHeadChanged = await this.verifyDrainConvergenceStability(target, result, link, pushFailures, getStopReason);
-
-      const divergenceExplained = await this.resolveDrainDivergence(target, result, feedHeadChanged, getStopReason);
-
-      const stopReason = getStopReason();
-      const quotaBlocked = (await this.getQuotaBlocksForTarget(target)).length > 0;
-      if (divergenceExplained && !quotaBlocked) {
-        // Resolved per-link omissions are logical convergence: the remote has
-        // acknowledged newer state and the intentionally absent history will
-        // never be probed again, even though raw fingerprints differ.
-        result.converged = true;
-      }
-      const error = SyncEngineLevel.drainError(result, pushFailures, link.status === 'paused', feedHeadChanged, stopReason);
-
-      return {
-        tenantDid         : target.did,
-        remoteEndpoint    : target.dwnUrl,
-        scope             : target.scope,
-        completed         : error === undefined,
-        cancelled         : stopReason === 'cancelled',
-        converged         : SyncEngineLevel.drainConverged(result, link.status === 'paused', feedHeadChanged, stopReason),
-        ...(quotaBlocked ? { quotaBlocked: true } : {}),
-        pushCheckpoint    : link.push.contiguousAppliedToken,
-        localFingerprint  : result.localFingerprint,
-        remoteFingerprint : result.remoteFingerprint,
-        ...(error !== undefined ? { error } : {}),
-      };
-    } catch (error: unknown) {
-      const stopReason = getStopReason();
-      if (stopReason !== undefined) {
-        return SyncEngineLevel.stoppedDrainTarget(target, stopReason);
-      }
-
-      return {
-        tenantDid      : target.did,
-        remoteEndpoint : target.dwnUrl,
-        scope          : target.scope,
-        completed      : false,
-        // Reached only when getStopReason() is undefined (the stop branch above
-        // returns first), so this drain ended on a genuine error, not a stop.
-        cancelled      : false,
-        converged      : false,
-        error          : SyncEngineLevel.errorMessage(error),
-      };
-    }
-  }
-
-  /**
-   * Re-verify feed convergence after a converged drain to catch a feed head that
-   * moved during the run; folds the stability result back into `result` and
-   * reports whether the head changed. No-op (returns false) when the link is
-   * paused, the run did not converge, pushes failed, or a stop was requested.
-   */
-  private async verifyDrainConvergenceStability(
-    target: SyncTarget,
-    result: SyncReconcileResult,
-    link: ReplicationLinkState,
-    pushFailures: PushFailure[],
-    getStopReason: () => SyncDrainStopReason | undefined,
-  ): Promise<boolean> {
-    if (
-      link.status === 'paused' ||
-      result.converged !== true ||
-      pushFailures.length !== 0 ||
-      getStopReason() !== undefined
-    ) {
-      return false;
-    }
-
-    const stability = await this.verifyFeedConvergence(target, (): boolean => getStopReason() === undefined);
-    const feedHeadChanged = stability.converged !== true ||
-      stability.localFingerprint !== result.localFingerprint ||
-      stability.remoteFingerprint !== result.remoteFingerprint;
-    result.aborted ||= stability.aborted;
-    result.converged = !feedHeadChanged;
-    result.localFingerprint = stability.localFingerprint ?? result.localFingerprint;
-    result.remoteFingerprint = stability.remoteFingerprint ?? result.remoteFingerprint;
-    return feedHeadChanged;
-  }
-
-  /**
-   * After a drain run, either record a genuine unexplained divergence for repair
-   * or clear a prior convergence failure. Returns whether the divergence is fully
-   * explained by resolved per-link quota omissions. No-op when a stop was requested.
-   */
-  private async resolveDrainDivergence(
-    target: SyncTarget,
-    result: SyncReconcileResult,
-    feedHeadChanged: boolean,
-    getStopReason: () => SyncDrainStopReason | undefined,
-  ): Promise<boolean> {
-    if (getStopReason() !== undefined) {
-      return false;
-    }
-    if (result.converged === false && !feedHeadChanged) {
-      return this.handleVerifiedFeedDivergence(target, result);
-    }
-    if (result.converged === true) {
-      await this.clearFeedConvergenceFailure(target);
-    }
-    return false;
-  }
-
-  private updateConnectivityAfterDrain(targets: SyncDrainTargetResult[]): void {
-    if (targets.length === 0) {
-      return;
-    }
-
-    if (targets.some((target): boolean => target.completed || target.quotaBlocked === true)) {
-      this._connectivityManager.recordSuccess();
-      return;
-    }
-
-    this._connectivityManager.recordFailure();
-  }
-
-  private static drainError(
-    result: SyncReconcileResult,
-    pushFailures: PushFailure[],
-    paused: boolean,
-    feedHeadChanged: boolean,
-    stopReason: SyncDrainStopReason | undefined,
-  ): string | undefined {
-    if (stopReason === 'cancelled') {
-      return 'drain aborted';
-    }
-    if (stopReason === 'topology-changed') {
-      return 'sync registrations changed during drain; retry required';
-    }
-    if (paused) {
-      return 'replication link is paused';
-    }
-    if (feedHeadChanged) {
-      return 'feed head changed during drain; retry required';
-    }
-    if (result.aborted === true) {
-      return 'drain aborted';
-    }
-    if (pushFailures.length > 0) {
-      return `drain push failed for ${pushFailures.length} message(s)`;
-    }
-    if (result.converged !== true) {
-      return 'feed fingerprints did not converge';
-    }
-  }
-
-  private static drainConverged(
-    result: SyncReconcileResult,
-    paused: boolean,
-    feedHeadChanged: boolean,
-    stopReason: SyncDrainStopReason | undefined,
-  ): boolean {
-    return result.converged === true && !paused && !feedHeadChanged && stopReason === undefined;
-  }
-
-  private static stoppedDrainTarget(target: SyncTarget, stopReason: SyncDrainStopReason): SyncDrainTargetResult {
-    return {
-      tenantDid      : target.did,
-      remoteEndpoint : target.dwnUrl,
-      scope          : target.scope,
-      completed      : false,
-      cancelled      : stopReason === 'cancelled',
-      converged      : false,
-      error          : stopReason === 'cancelled'
-        ? 'drain aborted'
-        : 'sync registrations changed during drain; retry required',
-    };
-  }
-
-  private static drainResultError(
-    targets: SyncDrainTargetResult[],
-    stopReason: SyncDrainStopReason | undefined,
-  ): string | undefined {
-    if (stopReason === 'cancelled') {
-      return 'drain aborted';
-    }
-    if (stopReason === 'topology-changed') {
-      return 'sync registrations changed during drain; retry required';
-    }
-    if (targets.length === 0) {
-      return 'drain plan contained no registered sync targets';
-    }
-  }
-
-  private static syncScopeForDrainFailure(options: SyncIdentityOptions): SyncScope | undefined {
-    try {
-      return syncScopeFromProtocols(options.protocols);
-    } catch {
-      return;
+    const link = await this.getOrCreateReplicationLink(target);
+    const linkKey = this.getReplicationLinkKey(target, link);
+    if (!this._linkControllers.has(linkKey)) {
+      await this.initializeLinkTargetWithRetry(target);
     }
   }
 
