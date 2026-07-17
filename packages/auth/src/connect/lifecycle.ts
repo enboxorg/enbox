@@ -16,7 +16,7 @@
 
 import type { GenericMessage } from '@enbox/dwn-sdk-js';
 import type { PortableDid } from '@enbox/dids';
-import type { AgentSessionIdentity, BearerIdentity, DwnDataEncodedRecordsWriteMessage, EnboxUserAgent, PermissionGrantEntry } from '@enbox/agent';
+import type { AgentSessionIdentity, BearerIdentity, DwnDataEncodedRecordsWriteMessage, EnboxUserAgent, PermissionGrantEntry, SyncIdentityOptions } from '@enbox/agent';
 
 import type { AuthEventEmitter } from '../events.js';
 import type { PasswordProvider } from '../password-provider.js';
@@ -386,6 +386,72 @@ export function toSyncIdentityProtocols(
   return scope as [string, ...string[]];
 }
 
+// ─── sync registration helpers ──────────────────────────────────
+
+/**
+ * Register a sync identity, falling back to `updateIdentityOptions` when the
+ * identity is already registered from a prior session.
+ *
+ * @internal
+ */
+async function registerOrUpdateIdentitySync(
+  userAgent: EnboxUserAgent,
+  connectedDid: string,
+  options: SyncIdentityOptions,
+): Promise<void> {
+  try {
+    await userAgent.sync.registerIdentity({ did: connectedDid, options });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : '';
+    if (msg.includes('already registered')) {
+      await userAgent.sync.updateIdentityOptions({ did: connectedDid, options });
+    } else {
+      throw error;
+    }
+  }
+}
+
+/**
+ * Clear a stale sync registration, tolerating an "is not registered" error
+ * from an identity that was never registered (or already unregistered).
+ *
+ * @internal
+ */
+async function unregisterStaleIdentitySync(
+  userAgent: EnboxUserAgent,
+  connectedDid: string,
+): Promise<void> {
+  try {
+    await userAgent.sync.unregisterIdentity(connectedDid);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : '';
+    if (!msg.includes('is not registered')) { throw error; }
+  }
+}
+
+/**
+ * Derive a delegate's active sync scope from its stored grants and either
+ * register/update its sync protocol list, or clear a stale registration when
+ * no sync-relevant grants remain.
+ *
+ * @internal
+ */
+async function registerDelegateSyncScope(
+  userAgent: EnboxUserAgent,
+  connectedDid: string,
+  delegateDid: string,
+): Promise<void> {
+  const scope = await deriveActiveSyncScope(userAgent, delegateDid);
+  const narrowed = toSyncIdentityProtocols(scope);
+  if (narrowed === undefined) {
+    // Zero grants — clear any stale sync registration so revoked protocols stop syncing.
+    await unregisterStaleIdentitySync(userAgent, connectedDid);
+    return;
+  }
+
+  await registerOrUpdateIdentitySync(userAgent, connectedDid, { delegateDid, protocols: narrowed });
+}
+
 // ─── registerSyncScopeForIdentity ───────────────────────────────
 
 /**
@@ -414,29 +480,7 @@ export async function registerSyncScopeForIdentity(params: {
   const { userAgent, connectedDid, delegateDid, identitySyncProtocols } = params;
 
   if (delegateDid !== undefined) {
-    const scope = await deriveActiveSyncScope(userAgent, delegateDid);
-    const narrowed = toSyncIdentityProtocols(scope);
-    if (narrowed !== undefined) {
-      const options = { delegateDid, protocols: narrowed };
-      try {
-        await userAgent.sync.registerIdentity({ did: connectedDid, options });
-      } catch (error: unknown) {
-        const msg = error instanceof Error ? error.message : '';
-        if (msg.includes('already registered')) {
-          await userAgent.sync.updateIdentityOptions({ did: connectedDid, options });
-        } else {
-          throw error;
-        }
-      }
-    } else {
-      // Zero grants — clear any stale sync registration so revoked protocols stop syncing.
-      try {
-        await userAgent.sync.unregisterIdentity(connectedDid);
-      } catch (error: unknown) {
-        const msg = error instanceof Error ? error.message : '';
-        if (!msg.includes('is not registered')) { throw error; }
-      }
-    }
+    await registerDelegateSyncScope(userAgent, connectedDid, delegateDid);
     return;
   }
 
@@ -444,17 +488,7 @@ export async function registerSyncScopeForIdentity(params: {
     return;
   }
 
-  const options = { protocols: identitySyncProtocols };
-  try {
-    await userAgent.sync.registerIdentity({ did: connectedDid, options });
-  } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : '';
-    if (msg.includes('already registered')) {
-      await userAgent.sync.updateIdentityOptions({ did: connectedDid, options });
-    } else {
-      throw error;
-    }
-  }
+  await registerOrUpdateIdentitySync(userAgent, connectedDid, { protocols: identitySyncProtocols });
 }
 
 // ─── processConnectedGrants ─────────────────────────────────────
@@ -690,27 +724,13 @@ export async function processDelegateGrantsForExistingIdentity(params: {
   // identity is already registered from a prior session, update its protocol
   // list so it matches the replacement grant bundle.
   const narrowedProtocols = toSyncIdentityProtocols(connectedProtocols);
-  if (narrowedProtocols !== undefined) {
-    const syncOptions = { delegateDid, protocols: narrowedProtocols };
-    try {
-      await userAgent.sync.registerIdentity({ did: connectedDid, options: syncOptions });
-    } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : '';
-      if (msg.includes('already registered')) {
-        await userAgent.sync.updateIdentityOptions({ did: connectedDid, options: syncOptions });
-      } else {
-        throw error;
-      }
-    }
-  } else {
+  if (narrowedProtocols === undefined) {
     // Zero grants — remove any stale sync registration so revoked protocols stop syncing.
-    try {
-      await userAgent.sync.unregisterIdentity(connectedDid);
-    } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : '';
-      if (!msg.includes('is not registered')) { throw error; }
-    }
+    await unregisterStaleIdentitySync(userAgent, connectedDid);
+    return;
   }
+
+  await registerOrUpdateIdentitySync(userAgent, connectedDid, { delegateDid, protocols: narrowedProtocols });
 }
 
 // ─── finalizeDelegateSession ────────────────────────────────────

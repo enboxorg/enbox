@@ -1581,46 +1581,59 @@ export class AuthManager {
         return;
       }
 
-      const statusKey = `${status.connectSessionId ?? 'none'}:${status.state}`;
-      if (statusKey === monitor.lastStatusKey) {
-        return;
-      }
-      monitor.lastStatusKey = statusKey;
-
-      if (status.state === 'expiring-soon') {
-        this._emitter.emit('connection-expiring', { status });
-      } else if (status.state === 'expired' || status.state === 'revoked') {
-        this._emitter.emit('connection-expired', { status });
-      }
-
-      const autoRefresh = monitor.options.autoRefresh;
-      if (autoRefresh === undefined || this._isConnecting ||
-        (status.state !== 'expiring-soon' && status.state !== 'expired')) {
-        return;
-      }
-
-      const attemptKey = `${status.connectSessionId ?? status.delegateDid ?? 'unknown'}:${status.state}`;
-      if (monitor.autoRefreshAttempts.has(attemptKey)) {
-        return;
-      }
-      monitor.autoRefreshAttempts.add(attemptKey);
-      await this._refresh(autoRefresh, monitor);
+      await this._handleConnectionMonitorStatus(monitor, status);
     } catch (error: unknown) {
-      if (this._connectionMonitor !== monitor) {
-        return;
-      }
-
-      if (monitor.options.onError !== undefined) {
-        try {
-          monitor.options.onError(error);
-        } catch (callbackError: unknown) {
-          console.error('[@enbox/auth] Connection monitor error callback failed:', callbackError);
-        }
-      } else {
-        console.error('[@enbox/auth] Connection monitor failed:', error);
-      }
+      this._handleConnectionMonitorError(monitor, error);
     } finally {
       monitor.isPolling = false;
+    }
+  }
+
+  /** Emit lifecycle events for a resolved connection-status snapshot and trigger auto-refresh when eligible. */
+  private async _handleConnectionMonitorStatus(
+    monitor: ConnectionMonitorState,
+    status: ConnectionStatus,
+  ): Promise<void> {
+    const statusKey = `${status.connectSessionId ?? 'none'}:${status.state}`;
+    if (statusKey === monitor.lastStatusKey) {
+      return;
+    }
+    monitor.lastStatusKey = statusKey;
+
+    if (status.state === 'expiring-soon') {
+      this._emitter.emit('connection-expiring', { status });
+    } else if (status.state === 'expired' || status.state === 'revoked') {
+      this._emitter.emit('connection-expired', { status });
+    }
+
+    const autoRefresh = monitor.options.autoRefresh;
+    if (autoRefresh === undefined || this._isConnecting ||
+      (status.state !== 'expiring-soon' && status.state !== 'expired')) {
+      return;
+    }
+
+    const attemptKey = `${status.connectSessionId ?? status.delegateDid ?? 'unknown'}:${status.state}`;
+    if (monitor.autoRefreshAttempts.has(attemptKey)) {
+      return;
+    }
+    monitor.autoRefreshAttempts.add(attemptKey);
+    await this._refresh(autoRefresh, monitor);
+  }
+
+  /** Handle an error thrown while polling a connection monitor. */
+  private _handleConnectionMonitorError(monitor: ConnectionMonitorState, error: unknown): void {
+    if (this._connectionMonitor !== monitor) {
+      return;
+    }
+
+    if (monitor.options.onError !== undefined) {
+      try {
+        monitor.options.onError(error);
+      } catch (callbackError: unknown) {
+        console.error('[@enbox/auth] Connection monitor error callback failed:', callbackError);
+      }
+    } else {
+      console.error('[@enbox/auth] Connection monitor failed:', error);
     }
   }
 
