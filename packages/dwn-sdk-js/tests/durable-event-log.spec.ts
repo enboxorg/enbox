@@ -7,6 +7,7 @@ import type { RecordsWriteMessage, SubscriptionMessage } from '../src/index.js';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
+import { BroadcastChannelWakePublisher } from '../src/event-stream/broadcast-channel-wake-publisher.js';
 import { DurableEventLog } from '../src/event-stream/durable-event-log.js';
 import { EventEmitterWakePublisher } from '../src/event-stream/event-emitter-wake-publisher.js';
 import { Message } from '../src/core/message.js';
@@ -235,6 +236,47 @@ describe('DurableEventLog', () => {
     expect(liveEvent.cursor.position).toBe('2');
 
     await subscription.close();
+  });
+
+  it('should drain a wake mirrored from a sibling context over a BroadcastChannel', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+
+    // Two event logs over one store, wired to SEPARATE channel-bridged
+    // publishers — the two-tab shape: context A commits, context B must
+    // observe via the channel alone (idle re-drain is disabled).
+    const contextA = new BroadcastChannelWakePublisher('bcwp-durable-event-log');
+    const contextB = new BroadcastChannelWakePublisher('bcwp-durable-event-log');
+    const sharedStore = new MessageStoreLevel({
+      location      : 'TEST-MESSAGESTORE-BCWP-EVENT-LOG',
+      wakePublisher : contextA,
+    });
+    await sharedStore.open();
+    const contextBLog = new DurableEventLog(sharedStore, contextB, { idleRedrainIntervalMs: 0 });
+    await contextBLog.open();
+
+    try {
+      const received: SubscriptionMessage[] = [];
+      const subscription = await contextBLog.subscribe(alice.did, 'cross-context-wake', (message): void => {
+        received.push(message);
+      });
+
+      const record = await TestDataGenerator.generateRecordsWrite({ author: alice });
+      const indexes = await record.recordsWrite.constructIndexes(true);
+      await sharedStore.put(alice.did, record.message, indexes);
+
+      const messageCid = await Message.getCid(record.message);
+      await Poller.pollUntilSuccessOrTimeout(async () => {
+        expect(received.some(message => message.type === 'event' && message.messageCid === messageCid)).toBe(true);
+      });
+
+      await subscription.close();
+    } finally {
+      await sharedStore.clear();
+      await contextBLog.close();
+      await sharedStore.close();
+      contextA.close();
+      contextB.close();
+    }
   });
 
   it('should gate wake-driven live delivery until after EOSE at the frozen catch-up cursor', async () => {

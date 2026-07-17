@@ -135,6 +135,7 @@ export * from './types/permission-types.js';
 export * from './types/records-types.js';
 
 // concrete event log implementations
+export { BroadcastChannelWakePublisher } from './event-stream/broadcast-channel-wake-publisher.js';
 export { EventEmitterWakePublisher } from './event-stream/event-emitter-wake-publisher.js';
 export { DurableEventLog } from './event-stream/durable-event-log.js';
 export type { DurableEventLogConfig, DurableEventLogStore } from './event-stream/durable-event-log.js';

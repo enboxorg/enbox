@@ -200,9 +200,13 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
           localDwnStrategy: localDwnStrategy ?? DEFAULT_LOCAL_DWN_STRATEGY,
         });
       } else {
-        // Local mode: create an in-process DWN with LevelDB stores.
+        // Local mode: create an in-process DWN with LevelDB stores. The
+        // message log's wake bus is handed to the API so close() releases
+        // its BroadcastChannel with the stores.
+        const messageLog = await AgentDwnApi.createDefaultMessageLog(dataPath);
         dwnApi = new AgentDwnApi({
-          dwn              : await AgentDwnApi.createDwn({ dataPath, didResolver: didApi }),
+          dwn              : await AgentDwnApi.createDwn({ dataPath, didResolver: didApi, messageLog }),
+          wakePublisher    : messageLog.wakePublisher,
           localDwnStrategy : localDwnStrategy ?? DEFAULT_LOCAL_DWN_STRATEGY,
         });
       }
