@@ -1799,7 +1799,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     await this.setLinkOfflineStatus(link, 'paused');
-    if (controller === undefined || !controller.isActive) {
+    if (!controller?.isActive) {
       return;
     }
 
@@ -1894,25 +1894,17 @@ export class SyncEngineLevel implements SyncEngine {
    * transitions to `live`. If it fails, throws so callers can retry.
    */
   private async doRepairLink(controller: SyncLinkController): Promise<void> {
-    const { link, linkKey } = controller;
-
-    // Capture the sync generation at repair start. If teardown occurs during
-    // any await, the generation will have incremented and we bail before
-    // mutating state — preventing the race where repair continues after teardown.
+    const { link } = controller;
     const generation = this._engineGeneration;
-
-    const isStaleLink = (): boolean => !controller.isActive;
-
-    const { tenantDid: did, remoteEndpoint: dwnUrl, delegateDid, scope, authorization } = link;
+    const { tenantDid: did, remoteEndpoint: dwnUrl, scope } = link;
     const eventScope = syncEventScope(scope);
-
     const attempts = controller.incrementRepairAttempts();
     this.emitEvent({ type: 'repair:started', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope, attempt: attempts });
 
     // Step 1: Close existing subscriptions FIRST to stop old events from
     // mutating local state while repair runs.
     await controller.closeSubscriptions();
-    if (this._engineGeneration !== generation || isStaleLink()) { return; }
+    if (this.isRepairStale(controller, generation)) { return; }
 
     // Step 2: Clear runtime ordinals immediately — stale state must not
     // persist across repair attempts (successful or failed).
@@ -1920,26 +1912,23 @@ export class SyncEngineLevel implements SyncEngine {
 
     try {
       // Step 3: Replay durable feed entries for this link.
-      const reconcileOutcome = await this.syncTargetWithDurableFeeds({
-        did,
-        dwnUrl,
-        delegateDid,
-        projectionId       : link.projectionId,
-        scope,
-        authorization,
-        authorizationEpoch : link.authorizationEpoch,
-        permissionGrantIds : this.getAuthorizationGrantIds(authorization),
-      }, undefined, () => this._engineGeneration === generation && !isStaleLink());
+      const target = this.createRepairTarget(controller);
+      const reconcileOutcome = await this.syncTargetWithDurableFeeds(
+        target,
+        undefined,
+        () => !this.isRepairStale(controller, generation),
+      );
       if (reconcileOutcome.aborted) { return; }
-      if (this._engineGeneration !== generation || isStaleLink()) { return; }
+      if (this.isRepairStale(controller, generation)) { return; }
       const reconcilePushFailures = reconcileOutcome.pushFailures ?? [];
-      if (reconcileOutcome.admittedCids !== undefined && reconcileOutcome.admittedCids.length > 0) {
+      const { admittedCids } = reconcileOutcome;
+      if (admittedCids?.length) {
         this.emitEvent({
           type           : 'reconcile:applied',
           tenantDid      : did,
           remoteEndpoint : dwnUrl,
           ...eventScope,
-          messageCids    : reconcileOutcome.admittedCids,
+          messageCids    : admittedCids,
         });
       }
 
@@ -1951,97 +1940,151 @@ export class SyncEngineLevel implements SyncEngine {
       // The push checkpoint is independent of the pull resume token and remains intact.
       const resumeToken = controller.repairResumeToken ?? link.pull.contiguousAppliedToken;
       await this.ledger.resetCheckpoint(link, 'pull', resumeToken);
-      if (this._engineGeneration !== generation || isStaleLink()) { return; }
+      if (this.isRepairStale(controller, generation)) { return; }
 
       // Step 5: Reopen subscriptions.
-      const target = {
-        did,
-        dwnUrl,
-        delegateDid,
-        projectionId       : link.projectionId,
-        scope,
-        authorization,
-        authorizationEpoch : link.authorizationEpoch,
-        permissionGrantIds : this.getAuthorizationGrantIds(authorization),
-        linkKey,
-      };
-      try {
-        const pullOpened = await this.openLivePullSubscription(target, controller);
-        if (pullOpened === false) { return; }
-      } catch (pullErr: any) {
-        if (pullErr.isProgressGap) {
-          console.warn(`SyncEngineLevel: Stale pull resume token for ${did} -> ${dwnUrl}, resetting to start fresh`);
-          await this.ledger.resetCheckpoint(link, 'pull');
-          if (this._engineGeneration !== generation || isStaleLink()) { return; }
-          const pullOpened = await this.openLivePullSubscription(target, controller);
-          if (pullOpened === false) { return; }
-        } else {
-          throw pullErr;
-        }
-      }
-      if (this._engineGeneration !== generation || isStaleLink()) {
-        await controller.closeSubscriptions();
-        return;
-      }
-      try {
-        const pushOpened = await this.openLocalPushSubscription(target, controller);
-        if (pushOpened === false) {
-          await controller.closeSubscriptions();
-          return;
-        }
-      } catch (pushError) {
-        await controller.closeSubscriptions();
-        throw pushError;
-      }
-      if (this._engineGeneration !== generation || isStaleLink()) {
-        await controller.closeSubscriptions();
-        return;
-      }
+      const subscriptionsOpened = await this.reopenRepairSubscriptions(target, controller, generation);
+      if (!subscriptionsOpened) { return; }
 
       // Note: post-repair reconcile to close the repair-window gap is scheduled
       // by repairLink() after the controller clears its active repair.
 
       // Step 6: Clean up repair context and transition to live.
-      controller.clearRepairProgress();
-      const prevRepairConnectivity = link.connectivity;
-      link.connectivity = 'online';
-      await this.ledger.setStatus(link, 'live');
-      if (this._engineGeneration !== generation || isStaleLink()) { return; }
-      if (reconcilePushFailures.length > 0) {
-        await this.handleReconcilePushFailures(linkKey, link, reconcilePushFailures);
-        if (this._engineGeneration !== generation || isStaleLink()) { return; }
+      await this.completeRepair(controller, generation, reconcilePushFailures);
+    } catch (error: unknown) {
+      await this.handleRepairFailure(controller, generation, attempts, error);
+    }
+  }
+
+  private createRepairTarget(controller: SyncLinkController): LinkSyncTarget {
+    const { link, linkKey } = controller;
+    const { tenantDid: did, remoteEndpoint: dwnUrl, delegateDid, scope, authorization } = link;
+    return {
+      did,
+      dwnUrl,
+      delegateDid,
+      projectionId       : link.projectionId,
+      scope,
+      authorization,
+      authorizationEpoch : link.authorizationEpoch,
+      permissionGrantIds : this.getAuthorizationGrantIds(authorization),
+      linkKey,
+    };
+  }
+
+  private isRepairStale(controller: SyncLinkController, generation: number): boolean {
+    return this._engineGeneration !== generation || !controller.isActive;
+  }
+
+  private async reopenRepairSubscriptions(
+    target: LinkSyncTarget,
+    controller: SyncLinkController,
+    generation: number,
+  ): Promise<boolean> {
+    const pullOpened = await this.openRepairPullSubscription(target, controller, generation);
+    if (!pullOpened) { return false; }
+
+    if (this.isRepairStale(controller, generation)) {
+      await controller.closeSubscriptions();
+      return false;
+    }
+
+    try {
+      const pushOpened = await this.openLocalPushSubscription(target, controller);
+      if (!pushOpened) {
+        await controller.closeSubscriptions();
+        return false;
       }
-
-      this.emitEvent({ type: 'repair:completed', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope });
-      if (prevRepairConnectivity !== 'online') {
-        this.emitEvent({ type: 'link:connectivity-change', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope, from: prevRepairConnectivity, to: 'online' });
-      }
-      this.emitEvent({ type: 'link:status-change', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope, from: 'repairing', to: 'live' });
-
-    } catch (error: any) {
-      // If teardown occurred during repair or the link was replaced by a
-      // hot-remove + re-add, don't retry or terminalize the replacement link.
-      if (this._engineGeneration !== generation || isStaleLink()) { return; }
-
-      if (SyncEngineLevel.isTerminalAuthorizationFailure(String(error?.message ?? error))) {
-        console.warn(`SyncEngineLevel: sync authorization for ${did} -> ${dwnUrl} was revoked or expired — pausing link (reconnect to resume).`);
-        this.emitEvent({ type: 'repair:failed', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope, attempt: attempts, error: String(error.message ?? error) });
-        await this.transitionToPaused(linkKey, link);
-        return;
-      }
-
-      console.error(`SyncEngineLevel: Repair failed for ${did} -> ${dwnUrl} (attempt ${attempts})`, error);
-      this.emitEvent({ type: 'repair:failed', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope, attempt: attempts, error: String(error.message ?? error) });
-
-      if (attempts >= SyncEngineLevel.MAX_REPAIR_ATTEMPTS) {
-        console.warn(`SyncEngineLevel: Max repair attempts reached for ${did} -> ${dwnUrl}, pausing link`);
-        await this.transitionToPaused(linkKey, link);
-        return;
-      }
-
-      // Re-throw so callers can handle retry scheduling.
+    } catch (error: unknown) {
+      await controller.closeSubscriptions();
       throw error;
     }
+
+    if (!this.isRepairStale(controller, generation)) { return true; }
+    await controller.closeSubscriptions();
+    return false;
+  }
+
+  private async openRepairPullSubscription(
+    target: LinkSyncTarget,
+    controller: SyncLinkController,
+    generation: number,
+  ): Promise<boolean> {
+    try {
+      return await this.openLivePullSubscription(target, controller);
+    } catch (error: unknown) {
+      if (!SyncEngineLevel.isProgressGapError(error)) { throw error; }
+
+      console.warn(`SyncEngineLevel: Stale pull resume token for ${target.did} -> ${target.dwnUrl}, resetting to start fresh`);
+      await this.ledger.resetCheckpoint(controller.link, 'pull');
+      if (this.isRepairStale(controller, generation)) { return false; }
+      return this.openLivePullSubscription(target, controller);
+    }
+  }
+
+  private async completeRepair(
+    controller: SyncLinkController,
+    generation: number,
+    reconcilePushFailures: PushFailure[],
+  ): Promise<void> {
+    const { link, linkKey } = controller;
+    const { tenantDid: did, remoteEndpoint: dwnUrl, scope } = link;
+    const eventScope = syncEventScope(scope);
+
+    controller.clearRepairProgress();
+    const prevRepairConnectivity = link.connectivity;
+    link.connectivity = 'online';
+    await this.ledger.setStatus(link, 'live');
+    if (this.isRepairStale(controller, generation)) { return; }
+
+    if (reconcilePushFailures.length > 0) {
+      await this.handleReconcilePushFailures(linkKey, link, reconcilePushFailures);
+      if (this.isRepairStale(controller, generation)) { return; }
+    }
+
+    this.emitEvent({ type: 'repair:completed', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope });
+    if (prevRepairConnectivity !== 'online') {
+      this.emitEvent({ type: 'link:connectivity-change', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope, from: prevRepairConnectivity, to: 'online' });
+    }
+    this.emitEvent({ type: 'link:status-change', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope, from: 'repairing', to: 'live' });
+  }
+
+  private async handleRepairFailure(
+    controller: SyncLinkController,
+    generation: number,
+    attempts: number,
+    error: unknown,
+  ): Promise<void> {
+    if (this.isRepairStale(controller, generation)) { return; }
+
+    const { link, linkKey } = controller;
+    const { tenantDid: did, remoteEndpoint: dwnUrl, scope } = link;
+    const eventScope = syncEventScope(scope);
+    const errorMessage = SyncEngineLevel.errorMessage(error);
+
+    if (SyncEngineLevel.isTerminalAuthorizationFailure(errorMessage)) {
+      console.warn(`SyncEngineLevel: sync authorization for ${did} -> ${dwnUrl} was revoked or expired — pausing link (reconnect to resume).`);
+      this.emitEvent({ type: 'repair:failed', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope, attempt: attempts, error: errorMessage });
+      await this.transitionToPaused(linkKey, link);
+      return;
+    }
+
+    console.error(`SyncEngineLevel: Repair failed for ${did} -> ${dwnUrl} (attempt ${attempts})`, error);
+    this.emitEvent({ type: 'repair:failed', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope, attempt: attempts, error: errorMessage });
+
+    if (attempts >= SyncEngineLevel.MAX_REPAIR_ATTEMPTS) {
+      console.warn(`SyncEngineLevel: Max repair attempts reached for ${did} -> ${dwnUrl}, pausing link`);
+      await this.transitionToPaused(linkKey, link);
+      return;
+    }
+
+    // Re-throw so callers can handle retry scheduling.
+    throw error;
+  }
+
+  private static isProgressGapError(error: unknown): boolean {
+    return typeof error === 'object' && error !== null &&
+      (error as { isProgressGap?: unknown }).isProgressGap === true;
   }
 
   // ---------------------------------------------------------------------------
