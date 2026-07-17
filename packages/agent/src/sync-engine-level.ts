@@ -1096,7 +1096,10 @@ export class SyncEngineLevel implements SyncEngine {
       try {
         await this.sync(undefined, { verifyConvergence: true });
       } catch (error) {
-        console.error('SyncEngineLevel: Error during sync operation', error);
+        // A queued run cancelled by teardown is expected, not an error.
+        if (!(error instanceof SyncRunCancelledError)) {
+          console.error('SyncEngineLevel: Error during sync operation', error);
+        }
       }
 
       const effectiveInterval = this._connectivityManager.getPollInterval(intervalMilliseconds);
@@ -1116,7 +1119,10 @@ export class SyncEngineLevel implements SyncEngine {
       try {
         await this.sync(undefined, { verifyConvergence: true });
       } catch (error) {
-        console.error('SyncEngineLevel: Error during initial poll sync', error);
+        // A queued run cancelled by teardown is expected, not an error.
+        if (!(error instanceof SyncRunCancelledError)) {
+          console.error('SyncEngineLevel: Error during initial poll sync', error);
+        }
       }
     }
   }
@@ -1149,7 +1155,10 @@ export class SyncEngineLevel implements SyncEngine {
     try {
       await this.sync();
     } catch (error) {
-      console.error('SyncEngineLevel: Error during initial live-sync catch-up', error);
+      // A queued run cancelled by teardown is expected, not an error.
+      if (!(error instanceof SyncRunCancelledError)) {
+        console.error('SyncEngineLevel: Error during initial live-sync catch-up', error);
+      }
     }
 
     // Step 2: Initialize replication links and open live subscriptions.
@@ -1171,7 +1180,10 @@ export class SyncEngineLevel implements SyncEngine {
     try {
       await this.sync(undefined, { verifyConvergence: true });
     } catch (error) {
-      console.error('SyncEngineLevel: Error during durable feed settle check', error);
+      // A queued run cancelled by teardown is expected, not an error.
+      if (!(error instanceof SyncRunCancelledError)) {
+        console.error('SyncEngineLevel: Error during durable feed settle check', error);
+      }
     }
   }
 

@@ -1,17 +1,17 @@
+import type { AdmitOutcome } from '../src/sync-admit-closure.js';
+
 import sinon from 'sinon';
 
 import { afterEach, describe, expect, it } from 'bun:test';
 import { DwnErrorCode, Encoder, ENCRYPTION_CONTROL_AUDIENCE_PATH, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { admitClosure } from '../src/sync-admit-closure.js';
-
-import type { AdmitOutcome } from '../src/sync-admit-closure.js';
+import { DwnInterface } from '../src/types/dwn.js';
 
 /** CIDs of freshly-applied entries, in admission order ([] for non-admitted outcomes). */
 function freshCidsOf(outcome: AdmitOutcome): string[] {
   return outcome.kind === 'admitted' ? outcome.freshEntries.map(entry => entry.messageCid) : [];
 }
-import { DwnInterface } from '../src/types/dwn.js';
 
 describe('admitClosure', () => {
   afterEach(() => {
