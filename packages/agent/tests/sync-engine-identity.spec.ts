@@ -391,19 +391,28 @@ describe('SyncEngineLevel — identity management', () => {
   });
 
   describe('sync lock', () => {
-    it('should throw when sync is already in progress', async () => {
+    it('should coalesce a sync() that arrives while the lock is held', async () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
         did      : { dereference: sinon.stub() },
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
       const lifecycle = (engine as any)._lifecycle;
+      const run = sinon.stub().resolves();
+      (engine as any)._runCoordinator = { run };
 
       expect(lifecycle.tryAcquireSync()).toBe(true);
 
-      await expect(engine.sync()).rejects.toThrow('Sync operation is already in progress');
+      // Instead of throwing, the call queues a follow-up run behind the lock.
+      const queued = engine.sync('pull');
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(run.notCalled).toBe(true);
 
       lifecycle.releaseSync();
+      await queued;
+
+      expect(run.calledOnce).toBe(true);
+      expect(run.firstCall.args[0]).toBe('pull');
     });
   });
 

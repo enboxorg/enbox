@@ -84,6 +84,35 @@ describe('SyncRunCoordinator', () => {
     expect(operations.recordConnectivityFailure.notCalled).toBe(true);
   });
 
+  it('reconciles only the scoped identity when options.did is provided', async () => {
+    const alice = ownerTarget('did:example:alice', 'https://a.example');
+    const aliceSecondEndpoint = ownerTarget('did:example:alice', 'https://b.example');
+    const bob = ownerTarget('did:example:bob', 'https://a.example');
+    const { coordinator, operations } = createFixture([alice, aliceSecondEndpoint, bob]);
+
+    await coordinator.run('pull', { did: 'did:example:alice' });
+
+    const reconciledTargets = operations.reconcileTarget.getCalls().map(call => call.args[0] as SyncTarget);
+    expect(reconciledTargets.map(target => target.did)).toEqual([
+      'did:example:alice',
+      'did:example:alice',
+    ]);
+    expect(reconciledTargets.map(target => target.dwnUrl).sort()).toEqual([
+      'https://a.example',
+      'https://b.example',
+    ]);
+  });
+
+  it('no-ops a scoped run whose identity matches no targets', async () => {
+    const { coordinator, operations } = createFixture([
+      ownerTarget('did:example:alice', 'https://a.example'),
+    ]);
+
+    await coordinator.run(undefined, { did: 'did:example:carol' });
+
+    expect(operations.reconcileTarget.notCalled).toBe(true);
+  });
+
   it('runs endpoints concurrently while keeping targets within each endpoint sequential', async () => {
     const alice = ownerTarget('did:example:alice', 'https://a.example');
     const bob = ownerTarget('did:example:bob', 'https://a.example');

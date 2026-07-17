@@ -3,6 +3,7 @@ import type {
   DeadLetterEntry,
   RemoteSyncState,
   RemoteSyncStatus,
+  ReplicationLinkSnapshot,
   ReplicationLinkState,
   SyncConnectivityState,
   SyncHealthSummary,
@@ -114,6 +115,43 @@ export class SyncStatusReporter {
         SyncStatusReporter.remoteRowKey(a.tenantDid, a.remoteEndpoint),
         SyncStatusReporter.remoteRowKey(b.tenantDid, b.remoteEndpoint),
       ));
+  }
+
+  /** Build read-only per-link snapshots of current links, optionally scoped to one tenant. */
+  public async getReplicationLinks(tenantDid?: string): Promise<ReplicationLinkSnapshot[]> {
+    const currentLinkIdentityKeys = await this._operations.getCurrentLinkIdentityKeys();
+    const snapshots: ReplicationLinkSnapshot[] = [];
+    for (const link of await this._operations.getLinks()) {
+      if (!SyncStatusReporter.matchesTenant(link.tenantDid, tenantDid)) { continue; }
+      if (!SyncStatusReporter.isCurrentLink(link, currentLinkIdentityKeys)) { continue; }
+      snapshots.push(SyncStatusReporter.linkSnapshotFrom(link));
+    }
+
+    return snapshots.sort((a, b) => lexicographicalCompare(
+      SyncStatusReporter.remoteRowKey(a.tenantDid, a.remoteEndpoint),
+      SyncStatusReporter.remoteRowKey(b.tenantDid, b.remoteEndpoint),
+    ));
+  }
+
+  /**
+   * Project a durable link into its public, mutation-safe snapshot shape.
+   * `scope` is shared by reference — safe because `getLinks()` deserializes
+   * fresh link objects per call, so no engine-held state is exposed.
+   */
+  private static linkSnapshotFrom(link: ReplicationLinkState): ReplicationLinkSnapshot {
+    const pullPosition = link.pull.contiguousAppliedToken?.position;
+    const pushPosition = link.push.contiguousAppliedToken?.position;
+    return {
+      tenantDid      : link.tenantDid,
+      remoteEndpoint : link.remoteEndpoint,
+      scope          : link.scope,
+      status         : link.status,
+      connectivity   : link.connectivity,
+      ...(link.delegateDid === undefined ? {} : { delegateDid: link.delegateDid }),
+      ...(pullPosition === undefined ? {} : { pullPosition }),
+      ...(pushPosition === undefined ? {} : { pushPosition }),
+      ...(link.lastActivityAt === undefined ? {} : { lastActivityAt: link.lastActivityAt }),
+    };
   }
 
   /** Durable links seed connectivity, activity, and degraded state. */

@@ -6,7 +6,7 @@ import type { SyncEchoSuppressor } from './sync-echo-suppressor.js';
 import type { SyncLinkController } from './sync-link-controller.js';
 import type { SyncMessageEntry } from './sync-messages.js';
 import type { SyncTarget } from './sync-target-resolver.js';
-import type { AdmitClosureDeps, AdmitOutcome } from './sync-admit-closure.js';
+import type { AdmitClosureDeps, AdmitOutcome, SyncFreshEntry } from './sync-admit-closure.js';
 import type {
   DeadLetterEntry,
   NonEmptyStringArray,
@@ -23,7 +23,7 @@ import { isRecordsWrite } from './utils.js';
 import { isTerminalSyncAuthorizationFailure } from './sync-runtime-errors.js';
 import { SyncCheckpoint } from './sync-checkpoint.js';
 import { syncTargetFromLink } from './sync-target-resolver.js';
-import { fetchRemoteMessages, SyncPullAbortedError } from './sync-messages.js';
+import { fetchRemoteMessages, syncMessageDescriptor, SyncPullAbortedError } from './sync-messages.js';
 
 export type SyncLivePullContext = {
   controller?: SyncLinkController;
@@ -72,7 +72,7 @@ type PullDelivery = {
 
 type LivePullProcessResult =
   | { admitted: false; messageCid: string }
-  | { admitted: true; appliedCids: string[]; messageCid: string };
+  | { admitted: true; appliedCids: string[]; messageCid: string; freshEntries: SyncFreshEntry[] };
 
 type LivePullDataStreamFactory = () => Promise<ReadableStream<Uint8Array> | undefined>;
 
@@ -217,11 +217,36 @@ export class SyncLivePullProcessor {
             syncTargetFromLink(context.link),
           );
         }
+        // Fresh only: a Duplicate/Superseded apply (an echo of a message this
+        // store already held, e.g. our own push looping back via another
+        // endpoint) is not a remote change and must not signal consumers.
+        // Every freshly-applied message announces — the delivered root AND
+        // any fetched dependency (parent, role record, initial write) the
+        // closure admitted alongside it, each with its own descriptor.
+        for (const freshEntry of result.freshEntries) {
+          this.emitDeliveryApplied(context, freshEntry.message, freshEntry.messageCid);
+        }
       }
       await this.commitDelivery(context, message.cursor, delivery);
     } catch (error: unknown) {
       await this.handleProcessingError(context, error);
     }
+  }
+
+  /** Announce one freshly-admitted applied message with its routing descriptor. */
+  private emitDeliveryApplied(
+    { did, dwnUrl, eventScope }: SyncLivePullContext,
+    message: GenericMessage,
+    messageCid: string,
+  ): void {
+    this._operations.emitEvent({
+      type           : 'delivery:applied',
+      tenantDid      : did,
+      remoteEndpoint : dwnUrl,
+      ...eventScope,
+      messageCid,
+      descriptor     : syncMessageDescriptor(message),
+    });
   }
 
   private markLinkOnline({ did, dwnUrl, eventScope, link }: SyncLivePullContext): void {
@@ -332,7 +357,12 @@ export class SyncLivePullProcessor {
     if (context.isStale()) { return undefined; }
 
     if (outcome.kind === 'admitted') {
-      return { admitted: true, appliedCids: outcome.appliedCids, messageCid: rootCid };
+      return {
+        admitted     : true,
+        appliedCids  : outcome.appliedCids,
+        messageCid   : rootCid,
+        freshEntries : outcome.freshEntries,
+      };
     }
     if (outcome.kind === 'failed') {
       await this.recordAdmissionFailure(context, rootCid, event, outcome);

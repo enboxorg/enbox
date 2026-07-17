@@ -1,5 +1,19 @@
 import { DwnErrorCode } from '@enbox/dwn-sdk-js';
 
+/**
+ * A queued `sync()` follow-up was invalidated by an engine runtime transition
+ * (`stopSync`/`clear`/`close`/mode switch) before it could run. Rejecting —
+ * rather than resolving silently — keeps the `sync()` contract honest: a
+ * resolved call always means a run covering the request completed. Callers
+ * racing teardown by design can catch this error specifically.
+ */
+export class SyncRunCancelledError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SyncRunCancelledError';
+  }
+}
+
 /** Authorization failures whose grants cannot recover through retry. */
 export function isTerminalSyncAuthorizationFailure(detail: string | undefined): boolean {
   if (!detail) {

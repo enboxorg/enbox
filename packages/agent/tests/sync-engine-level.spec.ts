@@ -731,7 +731,7 @@ describe('SyncEngineLevel', () => {
     });
 
     describe('sync()', () => {
-      it('throws an error if the sync is currently already running', async () => {
+      it('coalesces a sync() issued while another is already running', async () => {
         // Register Alice's DID to be synchronized.
         await testHarness.agent.sync.registerIdentity({
           did     : alice.did.uri,
@@ -747,23 +747,20 @@ describe('SyncEngineLevel', () => {
           }, 90);
         }));
 
-        // do not await
-        syncEngine.sync();
+        const first = syncEngine.sync();
 
         await clock.tickAsync(50);
 
-        // do not block for subsequent syncs
+        // A sync issued mid-run queues a coalesced follow-up instead of
+        // throwing; it resolves once the follow-up completes.
         getSyncTargetsStub.returns(Promise.resolve([]));
-        try {
-          await syncEngine.sync();
-          throw new Error('Expected an error to be thrown');
-        } catch (error:any) {
-          expect(error.message).toBe('SyncEngineLevel: Sync operation is already in progress.');
-        }
+        const queued = syncEngine.sync();
 
         await clock.tickAsync(50);
+        await first;
+        await queued;
 
-        // no error thrown
+        // The lock is free again — a fresh sync runs immediately.
         await syncEngine.sync();
 
         clock.restore();

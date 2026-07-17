@@ -1,10 +1,8 @@
 import type { SyncDurableFeedReconcileResult } from './sync-durable-feed-reconciler.js';
 import type { SyncTarget } from './sync-target-resolver.js';
-import type { PushFailure, SyncDirection } from './types/sync.js';
+import type { PushFailure, SyncDirection, SyncRunOptions } from './types/sync.js';
 
-export type SyncRunOptions = {
-  verifyConvergence?: boolean;
-};
+export type { SyncRunOptions } from './types/sync.js';
 
 export interface SyncRunCoordinatorOperations {
   clearFeedConvergenceFailure(target: SyncTarget): Promise<void>;
@@ -54,7 +52,13 @@ export class SyncRunCoordinator {
 
   /** Run all current targets, concurrently by endpoint and sequentially within each endpoint. */
   public async run(direction?: SyncDirection, options?: SyncRunOptions): Promise<void> {
-    const targets = await this._operations.getTargets();
+    let targets = await this._operations.getTargets();
+    if (options?.did !== undefined) {
+      // Scoped run: reconcile only the requested identity's targets. The
+      // engine validates registration before dispatching, so an empty list
+      // here means the identity has no resolvable endpoints — a no-op run.
+      targets = targets.filter(target => target.did === options.did);
+    }
     const summary = await this.runTargetGroups(targets, direction, options);
     this.updateConnectivity(summary);
     SyncRunCoordinator.assertTargetGroupsSucceeded(summary);

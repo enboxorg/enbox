@@ -17,7 +17,6 @@ import type { SyncIdentityTaskRunner } from './sync-lifecycle-coordinator.js';
 import type { SyncLivePullContext } from './sync-live-pull-processor.js';
 import type { SyncMessageEntry } from './sync-messages.js';
 import type { SyncReplicationLinkStore } from './sync-replication-link-store.js';
-import type { SyncRunOptions } from './sync-run-coordinator.js';
 import type {
   DeadLetterCategory,
   DeadLetterEntry,
@@ -25,6 +24,7 @@ import type {
   PushFailure,
   PushResult,
   RemoteSyncStatus,
+  ReplicationLinkSnapshot,
   ReplicationLinkState,
   StartSyncParams,
   SyncAuthorization,
@@ -39,6 +39,7 @@ import type {
   SyncHealthSummary,
   SyncIdentityOptions,
   SyncMode,
+  SyncRunOptions,
   SyncScope,
 } from './types/sync.js';
 import type {
@@ -81,6 +82,7 @@ import { SyncLivePushCoordinator } from './sync-live-push-coordinator.js';
 import { SyncQuotaManager } from './sync-quota-manager.js';
 import { SyncQuotaStoreLevel } from './sync-quota-store-level.js';
 import { SyncReplicationLinkStoreLevel } from './sync-replication-link-store-level.js';
+import { SyncRunCancelledError } from './sync-runtime-errors.js';
 import { SyncRunCoordinator } from './sync-run-coordinator.js';
 import { SyncScopeClosureValidator } from './sync-scope-closure-validator.js';
 import { SyncStatusReporter } from './sync-status-reporter.js';
@@ -119,6 +121,25 @@ type FeedPushEntryResult =
   | { kind: 'pushed' }
   | { kind: 'skipped' }
   | { kind: 'failed'; failures: PushFailure[] };
+
+/** Accumulated shape of every `sync()` request joined into one queued follow-up run. */
+type MergedSyncRunRequest = {
+  direction?: SyncDirection;
+  /** Joiners disagreed on direction — the follow-up runs both. */
+  directionConflict: boolean;
+  did?: string;
+  /** Any joiner was unscoped (or scopes disagreed) — the follow-up runs unscoped. */
+  unscoped: boolean;
+  verifyConvergence: boolean;
+};
+
+/** The single queued follow-up `sync()` run that coalesced callers share. */
+type PendingSyncRun = {
+  merged: MergedSyncRunRequest;
+  /** Engine generation at queue time — a runtime transition invalidates the run. */
+  generation: number;
+  promise: Promise<void>;
+};
 
 function syncEventScope(scope: SyncScope | undefined): SyncEventScope {
   if (scope === undefined) {
@@ -188,6 +209,13 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Current sync mode, set by `startSync`. Reset to `undefined` by `stopSync`/`clear`. */
   private _syncMode: SyncMode | undefined = 'poll';
+
+  /**
+   * The queued follow-up run shared by `sync()` callers that arrived while
+   * the exclusive lock was held. Cleared the moment the follow-up acquires
+   * the lock, so later callers start a fresh cycle. See {@link joinPendingSyncRun}.
+   */
+  private _pendingSyncRun?: PendingSyncRun;
 
   /**
    * Monotonic session generation counter. Incremented on every teardown.
@@ -774,14 +802,105 @@ export class SyncEngineLevel implements SyncEngine {
   // ---------------------------------------------------------------------------
 
   public async sync(direction?: SyncDirection, options?: SyncRunOptions): Promise<void> {
-    if (!this._lifecycle.tryAcquireSync()) {
-      throw new Error('SyncEngineLevel: Sync operation is already in progress.');
+    if (options?.did !== undefined && await this._identityStore.get(options.did) === undefined) {
+      throw new Error(`SyncEngineLevel: Identity with DID ${options.did} is not registered.`);
     }
 
-    try {
-      await this._runCoordinator.run(direction, options);
-    } finally {
-      this._lifecycle.releaseSync();
+    if (this._lifecycle.tryAcquireSync()) {
+      try {
+        await this._runCoordinator.run(direction, options);
+      } finally {
+        this._lifecycle.releaseSync();
+      }
+      return;
+    }
+
+    return this.joinPendingSyncRun(direction, options);
+  }
+
+  /**
+   * Coalesces a `sync()` call that arrived while the exclusive lock was held.
+   * All such callers share ONE queued follow-up run that starts after the
+   * in-flight operation releases the lock; their requests are merged so the
+   * follow-up covers every joiner (differing directions widen to both,
+   * differing identity scopes widen to unscoped, convergence verification
+   * ORs). A caller joining after the follow-up has started gets a fresh one.
+   *
+   * Fairness note: `releaseSync()` wakes every `acquireSync()` waiter, so an
+   * identity mutation or retry can take the lock ahead of the queued
+   * follow-up. Progress is guaranteed (the follow-up re-waits), joiners just
+   * observe the extra latency.
+   */
+  private joinPendingSyncRun(direction?: SyncDirection, options?: SyncRunOptions): Promise<void> {
+    const pending = this._pendingSyncRun;
+    if (pending !== undefined) {
+      SyncEngineLevel.mergeSyncRunRequest(pending.merged, direction, options);
+      return pending.promise;
+    }
+
+    const merged: MergedSyncRunRequest = {
+      direction         : direction,
+      directionConflict : false,
+      did               : options?.did,
+      unscoped          : options?.did === undefined,
+      verifyConvergence : options?.verifyConvergence === true,
+    };
+
+    // The placeholder promise is replaced synchronously below, before any
+    // caller can observe it.
+    const followUp: PendingSyncRun = {
+      merged,
+      generation : this._engineGeneration,
+      promise    : Promise.resolve(),
+    };
+    followUp.promise = (async (): Promise<void> => {
+      await this._lifecycle.acquireSync();
+      // Snapshot and detach: joiners from here on start a new follow-up.
+      if (this._pendingSyncRun === followUp) {
+        this._pendingSyncRun = undefined;
+      }
+      try {
+        // A runtime transition (stopSync/clear/close/mode switch) invalidated
+        // this queued run while it waited for the lock. Reject rather than
+        // resolve: a resolved sync() must always mean a run covering the
+        // request completed (callers like recovery read state right after).
+        if (this._engineGeneration !== followUp.generation) {
+          throw new SyncRunCancelledError(
+            'SyncEngineLevel: queued sync run was cancelled by an engine runtime transition.',
+          );
+        }
+        await this._runCoordinator.run(
+          merged.directionConflict ? undefined : merged.direction,
+          {
+            ...(merged.unscoped || merged.did === undefined ? {} : { did: merged.did }),
+            ...(merged.verifyConvergence ? { verifyConvergence: true } : {}),
+          },
+        );
+      } finally {
+        this._lifecycle.releaseSync();
+      }
+    })();
+    this._pendingSyncRun = followUp;
+    return followUp.promise;
+  }
+
+  private static mergeSyncRunRequest(
+    merged: MergedSyncRunRequest,
+    direction?: SyncDirection,
+    options?: SyncRunOptions,
+  ): void {
+    if (merged.direction !== direction) {
+      merged.directionConflict = true;
+    }
+    if (options?.did === undefined) {
+      merged.unscoped = true;
+    } else if (merged.did !== undefined && merged.did !== options.did) {
+      merged.unscoped = true;
+    } else {
+      merged.did = options.did;
+    }
+    if (options?.verifyConvergence === true) {
+      merged.verifyConvergence = true;
     }
   }
 
@@ -901,6 +1020,9 @@ export class SyncEngineLevel implements SyncEngine {
 
   private prepareForSyncRuntimeTransition(): void {
     this._engineGeneration++;
+    // Drop the queued follow-up join point: the blocked run wakes later, sees
+    // the generation change, and resolves without running.
+    this._pendingSyncRun = undefined;
     this._lifecycle.pauseTaskAdmission();
     if (this._syncIntervalId) {
       clearInterval(this._syncIntervalId);
@@ -974,7 +1096,10 @@ export class SyncEngineLevel implements SyncEngine {
       try {
         await this.sync(undefined, { verifyConvergence: true });
       } catch (error) {
-        console.error('SyncEngineLevel: Error during sync operation', error);
+        // A queued run cancelled by teardown is expected, not an error.
+        if (!(error instanceof SyncRunCancelledError)) {
+          console.error('SyncEngineLevel: Error during sync operation', error);
+        }
       }
 
       const effectiveInterval = this._connectivityManager.getPollInterval(intervalMilliseconds);
@@ -994,7 +1119,10 @@ export class SyncEngineLevel implements SyncEngine {
       try {
         await this.sync(undefined, { verifyConvergence: true });
       } catch (error) {
-        console.error('SyncEngineLevel: Error during initial poll sync', error);
+        // A queued run cancelled by teardown is expected, not an error.
+        if (!(error instanceof SyncRunCancelledError)) {
+          console.error('SyncEngineLevel: Error during initial poll sync', error);
+        }
       }
     }
   }
@@ -1027,7 +1155,10 @@ export class SyncEngineLevel implements SyncEngine {
     try {
       await this.sync();
     } catch (error) {
-      console.error('SyncEngineLevel: Error during initial live-sync catch-up', error);
+      // A queued run cancelled by teardown is expected, not an error.
+      if (!(error instanceof SyncRunCancelledError)) {
+        console.error('SyncEngineLevel: Error during initial live-sync catch-up', error);
+      }
     }
 
     // Step 2: Initialize replication links and open live subscriptions.
@@ -1049,7 +1180,10 @@ export class SyncEngineLevel implements SyncEngine {
     try {
       await this.sync(undefined, { verifyConvergence: true });
     } catch (error) {
-      console.error('SyncEngineLevel: Error during durable feed settle check', error);
+      // A queued run cancelled by teardown is expected, not an error.
+      if (!(error instanceof SyncRunCancelledError)) {
+        console.error('SyncEngineLevel: Error during durable feed settle check', error);
+      }
     }
   }
 
@@ -2698,6 +2832,10 @@ export class SyncEngineLevel implements SyncEngine {
 
   public async getRemoteSyncStatus(tenantDid?: string): Promise<RemoteSyncStatus[]> {
     return this._statusReporter.getRemoteStatus(tenantDid);
+  }
+
+  public async getReplicationLinks(tenantDid?: string): Promise<ReplicationLinkSnapshot[]> {
+    return this._statusReporter.getReplicationLinks(tenantDid);
   }
 
   public async retryRemoteNow(tenantDid: string, remoteEndpoint: string): Promise<void> {

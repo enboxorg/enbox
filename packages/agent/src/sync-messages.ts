@@ -20,6 +20,7 @@ import type {
   PushFailure,
   PushResult,
   PushSuccessResolution,
+  SyncMessageDescriptor,
 } from './types/sync.js';
 
 import {
@@ -58,6 +59,45 @@ export type SyncMessageEntry = {
   /** Buffered data bytes for retry — avoids re-fetching from remote when stream is consumed. */
   bufferedData?: Uint8Array;
 };
+
+/**
+ * Builds a {@link SyncMessageDescriptor} for a sync-delivered message so event
+ * consumers can route the change (protocol path, record, author) without
+ * re-reading the local store. Fields a given interface/method does not carry
+ * are simply absent: `recordId` comes from the message envelope for
+ * `RecordsWrite` and from the descriptor for `RecordsDelete`, and `protocol`
+ * falls back to the configured definition for `ProtocolsConfigure`.
+ */
+export function syncMessageDescriptor(message: GenericMessage): SyncMessageDescriptor {
+  const descriptor = message.descriptor as GenericMessage['descriptor'] & {
+    protocol?: string;
+    protocolPath?: string;
+    recordId?: string;
+    definition?: { protocol?: string };
+  };
+  const envelope = message as GenericMessage & { recordId?: string; contextId?: string };
+
+  let author: string | undefined;
+  try {
+    author = Message.getAuthor(message) ?? undefined;
+  } catch {
+    // Anonymous or unparseable authorization — the descriptor stays author-less.
+  }
+
+  const protocol = descriptor.protocol ?? descriptor.definition?.protocol;
+  const recordId = envelope.recordId ?? descriptor.recordId;
+
+  return {
+    interface : descriptor.interface,
+    method    : descriptor.method,
+    ...(descriptor.messageTimestamp === undefined ? {} : { messageTimestamp: descriptor.messageTimestamp }),
+    ...(protocol === undefined ? {} : { protocol }),
+    ...(descriptor.protocolPath === undefined ? {} : { protocolPath: descriptor.protocolPath }),
+    ...(recordId === undefined ? {} : { recordId }),
+    ...(envelope.contextId === undefined ? {} : { contextId: envelope.contextId }),
+    ...(author === undefined ? {} : { author }),
+  };
+}
 
 export type MessageFeedQuery = {
   did: string;
