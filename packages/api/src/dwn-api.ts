@@ -27,6 +27,7 @@ import { PermissionGrant } from './permission-grant.js';
 import { PermissionRequest } from './permission-request.js';
 import { Protocol } from './protocol.js';
 import { Record } from './record.js';
+import { describeMessage, MessagesLiveQuery } from './messages-live-query.js';
 
 /**
  * Represents the request payload for fetching permission requests from a Decentralized Web Node (DWN).
@@ -182,6 +183,28 @@ export type RecordsSubscribeRequest = Omit<DwnMessageParams[DwnInterface.Records
 export type RecordsSubscribeResponse = DwnResponseStatus & {
   /** The live query instance, or `undefined` if the request failed. */
   liveQuery?: LiveQuery;
+};
+
+/**
+ * Represents a request to subscribe to the message-level change feed of a
+ * Decentralized Web Node (DWN) tenant.
+ *
+ * Where {@link RecordsSubscribeRequest} hydrates full `Record` objects for one
+ * filter, this is the lightweight change signal: multiple filters per
+ * subscription, one `event` per message recorded on the tenant's log, each
+ * carrying the raw message plus a routing {@link MessageDescriptor}. Designed
+ * for cache invalidation and reactive reads over the local store, which sync
+ * keeps populated — including messages applied by sync itself.
+ */
+export type MessagesSubscribeRequest = Omit<DwnMessageParams[DwnInterface.MessagesSubscribe], 'signer'> & {
+  /** Optional DID specifying the remote target DWN tenant to subscribe from. */
+  from?: string;
+};
+
+/** Encapsulates the response from a DWN MessagesSubscribeRequest. */
+export type MessagesSubscribeResponse = DwnResponseStatus & {
+  /** The live message feed, or `undefined` if the request failed. */
+  liveQuery?: MessagesLiveQuery;
 };
 
 /**
@@ -518,6 +541,142 @@ export class DwnApi {
 
         return { protocols, status };
       }
+    };
+  }
+
+  /**
+   * API to observe the DWN's message-level change feed
+   * (e.g., `dwn.messages.subscribe()`).
+   */
+  get messages(): {
+      subscribe: (request?: MessagesSubscribeRequest) => Promise<MessagesSubscribeResponse>;
+      } {
+
+    return {
+      /**
+       * Subscribes to the tenant's message-level change feed. One `event`
+       * fires per message recorded on the log across every interface the
+       * `filters` cover (multiple filters per subscription), each carrying
+       * the raw message plus a routing {@link MessageDescriptor}. Without a
+       * `from`, the subscription targets the local store — and fires for
+       * messages applied by sync as well, making it the primitive for
+       * reactive local reads and cache invalidation.
+       *
+       * Delegated access resolves a `Messages.Read` grant when the filters
+       * name exactly one protocol; multi-protocol delegated subscriptions
+       * should pass explicit `permissionGrantIds`.
+       */
+      subscribe: async (request: MessagesSubscribeRequest = {}): Promise<MessagesSubscribeResponse> => {
+        const { from, ...messageParams } = request;
+
+        // Constructed BEFORE the request is dispatched: a local cursor
+        // catch-up (and its EOSE) replays synchronously inside the subscribe
+        // call, and must land in the query's pre-listener buffer, not a void.
+        const liveQuery = new MessagesLiveQuery();
+
+        const subscriptionHandler = (msg: DwnSubscriptionMessage): void => {
+          if (msg.type === 'eose') {
+            liveQuery.handleLifecycleEvent('eose');
+            return;
+          }
+
+          if (msg.type === 'error') {
+            liveQuery.handleError({
+              code   : msg.error.code,
+              detail : msg.error.detail,
+              cursor : msg.cursor,
+            });
+            Promise.resolve(liveQuery.close()).catch(() => {});
+            return;
+          }
+
+          if (msg.type === 'disconnected') {
+            liveQuery.handleLifecycleEvent('disconnected');
+            return;
+          }
+
+          if (msg.type === 'reconnected') {
+            liveQuery.handleLifecycleEvent('reconnected');
+            return;
+          }
+
+          if (msg.type === 'reconnecting') {
+            liveQuery.handleLifecycleEvent('reconnecting', { attempt: msg.attempt });
+            return;
+          }
+
+          const { message } = msg.event;
+          liveQuery.handleEvent({
+            message,
+            descriptor : describeMessage(message),
+            messageCid : msg.messageCid,
+            cursor     : msg.cursor,
+          });
+        };
+
+        const agentRequest: ProcessDwnRequest<DwnInterface.MessagesSubscribe> = {
+          author      : this.connectedDid,
+          messageParams,
+          messageType : DwnInterface.MessagesSubscribe,
+          target      : from || this.connectedDid,
+          subscriptionHandler,
+        };
+
+        if (this.delegateDid) {
+          if (messageParams.permissionGrantIds?.length) {
+            // Caller-supplied grants win: no auto-resolution, no clobbering.
+            agentRequest.granteeDid = this.delegateDid;
+          } else {
+            const protocols = [...new Set(
+              (messageParams.filters ?? [])
+                .map(filter => filter.protocol)
+                .filter((protocol): protocol is string => protocol !== undefined),
+            )];
+            if (protocols.length !== 1) {
+              // Deliberately OUTSIDE the grant-lookup try: a precondition
+              // failure must reach the caller, not degrade into the
+              // public fallback.
+              throw new Error('DwnApi: delegated messages.subscribe requires a single-protocol filter set or explicit permissionGrantIds.');
+            }
+            try {
+              const { grant } = await this.permissionsApi.getPermissionForRequest({
+                connectedDid : this.connectedDid,
+                delegateDid  : this.delegateDid,
+                protocol     : protocols[0],
+                cached       : true,
+                messageType  : agentRequest.messageType,
+              });
+
+              agentRequest.messageParams = {
+                ...agentRequest.messageParams,
+                permissionGrantIds: [grant.id],
+              };
+              agentRequest.granteeDid = this.delegateDid;
+            } catch {
+              // Without a usable grant, author as the delegate — mirrors
+              // records.subscribe: public/anonymous-visible messages only.
+              agentRequest.author = this.delegateDid;
+            }
+          }
+        }
+
+        let agentResponse: DwnResponse<DwnInterface.MessagesSubscribe>;
+
+        if (from) {
+          agentResponse = await this.agent.sendDwnRequest(agentRequest);
+        } else {
+          agentResponse = await this.agent.processDwnRequest(agentRequest);
+        }
+
+        const { status, subscription } = agentResponse.reply;
+
+        if (subscription === undefined) {
+          return { status };
+        }
+
+        liveQuery.attachSubscription(subscription);
+        return { status, liveQuery };
+      },
     };
   }
 

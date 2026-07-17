@@ -30,6 +30,7 @@ export * from './enbox.js';
 export type * from './enbox-types.js';
 export * from './grant-revocation.js';
 export * from './live-query.js';
+export * from './messages-live-query.js';
 export * from './permission-grant.js';
 export * from './permission-request.js';
 export * from './protocol.js';
