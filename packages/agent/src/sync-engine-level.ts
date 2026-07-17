@@ -10,6 +10,7 @@ import { parseDurationInMilliseconds, sleep } from '@enbox/common';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
+import type { SyncDeadLetterStore } from './sync-dead-letter-store.js';
 import type { SyncEndpointStore } from './sync-endpoint-store.js';
 import type { SyncIdentityStore } from './sync-identity-store.js';
 import type { SyncMessageEntry } from './sync-messages.js';
@@ -47,6 +48,7 @@ import type {
   SyncDurableFeedReconcileOptions as SyncReconcileOptions,
   SyncDurableFeedReconcileResult as SyncReconcileResult,
 } from './sync-durable-feed-reconciler.js';
+import type { SyncDeferredPullState, SyncDeferredPullStore } from './sync-deferred-pull-store.js';
 import type { SyncEndpointDiscovery, SyncTarget } from './sync-target-resolver.js';
 import type { SyncPushRuntimeEntry, SyncPushRuntimeState } from './sync-link-controller.js';
 import type { SyncQuotaBlockEntry, SyncQuotaPushResultTransition } from './sync-quota-manager.js';
@@ -66,6 +68,8 @@ import { classifySyncEventScope } from './sync-scope-acceptance.js';
 import { DwnInterface } from './types/dwn.js';
 import { isRecordsWrite } from './utils.js';
 import { SyncCheckpoint } from './sync-checkpoint.js';
+import { SyncDeadLetterStoreLevel } from './sync-dead-letter-store-level.js';
+import { SyncDeferredPullStoreLevel } from './sync-deferred-pull-store-level.js';
 import { SyncDurableFeedReconciler } from './sync-durable-feed-reconciler.js';
 import { SyncEndpointStoreLevel } from './sync-endpoint-store-level.js';
 import { SyncIdentityStoreLevel } from './sync-identity-store-level.js';
@@ -140,13 +144,6 @@ type SyncTargetGroupSummary = {
 type FeedConvergenceFailureState = {
   attempts: number;
   signature: string;
-};
-
-type DeferredPullState = {
-  attempts: number;
-  detail?: string;
-  firstDeferredAt: string;
-  lastDeferredAt: string;
 };
 
 /** Per-(tenant, remote) accumulator built by getRemoteSyncStatus from links, quota blocks, and dead letters. */
@@ -236,6 +233,8 @@ export class SyncEngineLevel implements SyncEngine {
   private _permissionsApi: PermissionsApi;
 
   private readonly _db: AbstractLevel<string | Buffer | Uint8Array>;
+  private readonly _deadLetterStore: SyncDeadLetterStore;
+  private readonly _deferredPullStore: SyncDeferredPullStore;
   private readonly _endpointStore: SyncEndpointStore;
   private readonly _durableFeedReconciler: SyncDurableFeedReconciler;
   private readonly _identityStore: SyncIdentityStore;
@@ -331,6 +330,8 @@ export class SyncEngineLevel implements SyncEngine {
     this._agent = agent;
     this._permissionsApi = new AgentPermissionsApi({ agent });
     this._db = db ?? new Level<string, string>(dataPath ?? 'DATA/AGENT/SYNC_STORE');
+    this._deadLetterStore = new SyncDeadLetterStoreLevel(this._db);
+    this._deferredPullStore = new SyncDeferredPullStoreLevel(this._db);
     this._endpointStore = new SyncEndpointStoreLevel(this._db);
     this._identityStore = new SyncIdentityStoreLevel(this._db);
     this._scopeClosureValidator = new SyncScopeClosureValidator({
@@ -483,19 +484,9 @@ export class SyncEngineLevel implements SyncEngine {
     return reply;
   }
 
-  /** LevelDB sublevel for permanently failed messages (dead letters). */
-  private get _deadLetters(): AbstractLevel<string | Buffer | Uint8Array, string, string> {
-    return this._db.sublevel('deadLetters') as unknown as AbstractLevel<string | Buffer | Uint8Array, string, string>;
-  }
-
-  /** LevelDB sublevel for pull entries that are temporarily deferred. */
-  private get _deferredPulls(): AbstractLevel<string | Buffer | Uint8Array, string, string> {
-    return this._db.sublevel('deferredPulls') as unknown as AbstractLevel<string | Buffer | Uint8Array, string, string>;
-  }
-
   private async clearSyncDb(): Promise<void> {
-    await this._deadLetters.clear();
-    await this._deferredPulls.clear();
+    await this._deadLetterStore.clear();
+    await this._deferredPullStore.clear();
     await this._quotaManager.clear();
     await this._identityStore.clear();
     await this.ledger.clear();
@@ -3465,10 +3456,8 @@ export class SyncEngineLevel implements SyncEngine {
 
   private async getAdmissionDeadLetterCidsForTarget(target: SyncTarget): Promise<string[]> {
     const messageCids = new Set<string>();
-    for await (const [, value] of this._deadLetters.iterator(SyncEngineLevel.tenantKeyRange(target.did))) {
-      const entry = JSON.parse(value) as DeadLetterEntry;
+    for (const entry of await this._deadLetterStore.getForTenant(target.did)) {
       if (
-        entry.tenantDid === target.did &&
         entry.remoteEndpoint === target.dwnUrl &&
         entry.category === 'admit-failed' &&
         SyncEngineLevel.deadLetterMatchesTarget(entry, target.scope)
@@ -3478,19 +3467,6 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     return [...messageCids].sort((a, b) => a.localeCompare(b));
-  }
-
-  /**
-   * LevelDB range that selects every key beginning with `${tenantDid}|`. Both
-   * the dead-letter and quota-block sublevels prefix their compound keys with
-   * the tenant DID, so this scheme-neutral range enumerates either one per
-   * tenant. The tenant DID never contains `|`, so the range is exact.
-   */
-  private static tenantKeyRange(tenantDid: string): { gte: string; lte: string } {
-    return {
-      gte : `${tenantDid}|`,
-      lte : `${tenantDid}|\xff`,
-    };
   }
 
   private static deadLetterMatchesTarget(entry: DeadLetterEntry, scope: SyncScope): boolean {
@@ -4090,38 +4066,26 @@ export class SyncEngineLevel implements SyncEngine {
     return true;
   }
 
-  private async recordDeferredPull(target: SyncTarget, messageCid: string, detail: string | undefined): Promise<DeferredPullState> {
-    const key = SyncEngineLevel.deadLetterKey(target.did, messageCid, target.dwnUrl);
+  private async recordDeferredPull(
+    target: SyncTarget,
+    messageCid: string,
+    detail: string | undefined,
+  ): Promise<SyncDeferredPullState> {
     const now = new Date().toISOString();
-    let previous: DeferredPullState | undefined;
-    try {
-      previous = JSON.parse(await this._deferredPulls.get(key)) as DeferredPullState;
-    } catch (error) {
-      const e = error as { code?: string };
-      if (e.code !== 'LEVEL_NOT_FOUND') {
-        throw error;
-      }
-    }
+    const previous = await this._deferredPullStore.get(target.did, messageCid, target.dwnUrl);
 
-    const state: DeferredPullState = {
+    const state: SyncDeferredPullState = {
       attempts        : (previous?.attempts ?? 0) + 1,
       detail,
       firstDeferredAt : previous?.firstDeferredAt ?? now,
       lastDeferredAt  : now,
     };
-    await this._deferredPulls.put(key, JSON.stringify(state));
+    await this._deferredPullStore.put(target.did, messageCid, target.dwnUrl, state);
     return state;
   }
 
   private async clearDeferredPull(tenantDid: string, dwnUrl: string, messageCid: string): Promise<void> {
-    try {
-      await this._deferredPulls.del(SyncEngineLevel.deadLetterKey(tenantDid, messageCid, dwnUrl));
-    } catch (error) {
-      const e = error as { code?: string };
-      if (e.code !== 'LEVEL_NOT_FOUND') {
-        throw error;
-      }
-    }
+    await this._deferredPullStore.delete(tenantDid, messageCid, dwnUrl);
   }
   private getQuotaBlockState(target: SyncTarget, messageCid: string): Promise<SyncQuotaBlockState | undefined> {
     return this._quotaManager.getState(target, messageCid);
@@ -4579,14 +4543,6 @@ export class SyncEngineLevel implements SyncEngine {
   // Dead letter tracking
   // ---------------------------------------------------------------------------
 
-  /**
-   * Build a compound dead letter key. Different tenants and remotes can fail
-   * the same CID for different reasons, so the durable key includes both.
-   */
-  private static deadLetterKey(tenantDid: string, messageCid: string, remoteEndpoint?: string): string {
-    return `${tenantDid}|${messageCid}|${remoteEndpoint ?? ''}`;
-  }
-
   public async recordDeadLetter(params: {
     messageCid : string;
     tenantDid : string;
@@ -4600,9 +4556,8 @@ export class SyncEngineLevel implements SyncEngine {
       ...params,
       failedAt: new Date().toISOString(),
     };
-    const key = SyncEngineLevel.deadLetterKey(params.tenantDid, params.messageCid, params.remoteEndpoint);
     try {
-      await this._deadLetters.put(key, JSON.stringify(entry));
+      await this._deadLetterStore.put(entry);
     } catch (error) {
       // Suppress only the expected teardown race — any other error surfaces.
       if (!SyncEngineLevel.isDatabaseNotOpenError(error)) {
@@ -4616,49 +4571,22 @@ export class SyncEngineLevel implements SyncEngine {
     remoteEndpoint: string,
     messageCid: string,
   ): Promise<boolean> {
-    const key = SyncEngineLevel.deadLetterKey(tenantDid, messageCid, remoteEndpoint);
-    try {
-      const value = await this._deadLetters.get(key);
-      const entry = JSON.parse(value) as DeadLetterEntry;
-      return entry.tenantDid === tenantDid && entry.category === 'admit-failed';
-    } catch (error) {
-      const e = error as { code?: string };
-      if (e.code === 'LEVEL_NOT_FOUND') { return false; }
-      throw error;
-    }
+    const entry = await this._deadLetterStore.get(tenantDid, messageCid, remoteEndpoint);
+    return entry?.tenantDid === tenantDid && entry.category === 'admit-failed';
   }
 
   public async getFailedMessages(tenantDid?: string): Promise<DeadLetterEntry[]> {
-    const entries: DeadLetterEntry[] = [];
-    for await (const [, value] of this._deadLetters.iterator()) {
-      const entry = JSON.parse(value) as DeadLetterEntry;
-      if (!tenantDid || entry.tenantDid === tenantDid) {
-        entries.push(entry);
-      }
-    }
+    const entries = (await this._deadLetterStore.getAll())
+      .filter((entry): boolean => !tenantDid || entry.tenantDid === tenantDid);
     // Deterministic ordering: newest first so apps see the most recent failures.
     entries.sort((a, b) => lexicographicalCompare(b.failedAt, a.failedAt));
     return entries;
   }
 
-  /** Delete every dead-letter entry matching `match`; returns how many were removed. */
-  private async deleteDeadLettersWhere(match: (entry: DeadLetterEntry) => boolean): Promise<number> {
-    const batch: { type: 'del'; key: string }[] = [];
-    for await (const [key, value] of this._deadLetters.iterator()) {
-      if (match(JSON.parse(value) as DeadLetterEntry)) {
-        batch.push({ type: 'del', key });
-      }
-    }
-    if (batch.length > 0) {
-      await this._deadLetters.batch(batch);
-    }
-    return batch.length;
-  }
-
   /** Clear the exact dead letter resolved by an internal tenant sync outcome. */
   private async clearFailedMessageForTenant(tenantDid: string, messageCid: string, remoteEndpoint: string): Promise<void> {
     try {
-      await this._deadLetters.del(SyncEngineLevel.deadLetterKey(tenantDid, messageCid, remoteEndpoint));
+      await this._deadLetterStore.deleteExact(tenantDid, messageCid, remoteEndpoint);
     } catch (error) {
       // A late live callback may race orderly storage teardown.
       if (!SyncEngineLevel.isDatabaseNotOpenError(error)) {
@@ -4677,27 +4605,24 @@ export class SyncEngineLevel implements SyncEngine {
     // The durable key includes tenant, but this API intentionally clears by
     // message CID and optional remote regardless of tenant, matching the
     // previous public contract.
-    const deleted = await this.deleteDeadLettersWhere(
-      (entry) => entry.messageCid === messageCid && (remoteEndpoint === undefined || entry.remoteEndpoint === remoteEndpoint),
-    );
+    const deleted = await this._deadLetterStore.deleteForMessage(messageCid, remoteEndpoint);
     return deleted > 0;
   }
 
   public async clearAllFailedMessages(tenantDid?: string): Promise<void> {
     if (!tenantDid) {
-      await this._deadLetters.clear();
+      await this._deadLetterStore.clear();
       return;
     }
 
-    await this.deleteDeadLettersWhere((entry) => entry.tenantDid === tenantDid);
+    await this._deadLetterStore.deleteForTenant(tenantDid);
   }
 
   public async getSyncHealth(): Promise<SyncHealthSummary> {
     let failedMessageCount = 0;
     let admissionFailureCount = 0;
-    for await (const [, value] of this._deadLetters.iterator()) {
+    for (const entry of await this._deadLetterStore.getAll()) {
       failedMessageCount++;
-      const entry = JSON.parse(value) as DeadLetterEntry;
       if (entry.category === 'admit-failed') {
         admissionFailureCount++;
       }
@@ -4816,8 +4741,7 @@ export class SyncEngineLevel implements SyncEngine {
     rows: Map<string, RemoteStatusAccumulator>,
     matchesTenant: (did: string) => boolean,
   ): Promise<void> {
-    for await (const [, value] of this._deadLetters.iterator()) {
-      const entry = JSON.parse(value) as DeadLetterEntry;
+    for (const entry of await this._deadLetterStore.getAll()) {
       if (!matchesTenant(entry.tenantDid) || entry.remoteEndpoint === undefined) { continue; }
       const row = SyncEngineLevel.remoteStatusRowFor(rows, entry.tenantDid, entry.remoteEndpoint);
       row.failedMessageCount++;
