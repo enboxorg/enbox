@@ -1,7 +1,7 @@
 import type { AbstractLevel } from 'abstract-level';
 
 import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
-import type { GenericMessage, MessageEvent, MessagesFilter, MessagesQueryReply, MessagesQueryReplyEntry, MessagesSubscribeReply, ProgressToken, ProtocolDefinition, RecordsQueryReply, SubscriptionMessage } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessageEvent, MessagesFilter, MessagesQueryReply, MessagesQueryReplyEntry, MessagesSubscribeReply, ProgressToken, RecordsQueryReply, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
 import { Level } from 'level';
 import { RateLimitError } from '@enbox/dwn-clients';
@@ -51,6 +51,12 @@ import type { SyncEndpointDiscovery, SyncTarget } from './sync-target-resolver.j
 import type { SyncPushRuntimeEntry, SyncPushRuntimeState } from './sync-link-controller.js';
 import type { SyncQuotaBlockEntry, SyncQuotaPushResultTransition } from './sync-quota-manager.js';
 import type { SyncQuotaBlockSource, SyncQuotaBlockState } from './sync-quota-store.js';
+import type {
+  SyncScopeClosureGrantQuery,
+  SyncScopeClosureGrantResolution,
+  SyncScopeProtocolHistoryPage,
+  SyncScopeProtocolHistoryQuery,
+} from './sync-scope-closure-validator.js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 
@@ -58,7 +64,6 @@ import { admitClosure } from './sync-admit-closure.js';
 import { buildLinkId } from './sync-link-id.js';
 import { classifySyncEventScope } from './sync-scope-acceptance.js';
 import { DwnInterface } from './types/dwn.js';
-import { getProtocolClosureEdges } from './sync-scope-closure.js';
 import { isRecordsWrite } from './utils.js';
 import { SyncCheckpoint } from './sync-checkpoint.js';
 import { SyncDurableFeedReconciler } from './sync-durable-feed-reconciler.js';
@@ -69,6 +74,7 @@ import { SyncLinkController } from './sync-link-controller.js';
 import { SyncQuotaManager } from './sync-quota-manager.js';
 import { SyncQuotaStoreLevel } from './sync-quota-store-level.js';
 import { SyncReplicationLinkStoreLevel } from './sync-replication-link-store-level.js';
+import { SyncScopeClosureValidator } from './sync-scope-closure-validator.js';
 import { SyncTargetPlanner } from './sync-target-planner.js';
 import { computeProjectionId, isTerminalPushFailure, lexicographicalCompare, protocolsForSyncScope, pushBatchReconcileReason, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
 import { fetchRemoteMessages, getLocalMessage, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, SyncPullAbortedError } from './sync-messages.js';
@@ -91,9 +97,6 @@ const PUSH_DEBOUNCE_MS = 100;
 
 /** Maximum concurrent live-pull deliveries waiting for earlier ordinals to commit. */
 const MAX_IN_FLIGHT_PULL_DELIVERIES = 100;
-
-/** Page size for local retained ProtocolsConfigure history scans. */
-const PROTOCOL_HISTORY_PAGE_LIMIT = 500;
 
 type LinkSyncTarget = SyncTarget & { linkKey: string };
 
@@ -122,15 +125,6 @@ type SyncDrainPlan = {
 };
 
 type SyncDrainStopReason = 'cancelled' | 'topology-changed';
-
-type SyncScopeClosureValidationState = {
-  requestedProtocols: Set<string>;
-  protocolsToScan: string[];
-  scannedProtocols: Set<string>;
-  missingGrantProtocols: Set<string>;
-  nonScopedUsesProtocols: Set<string>;
-  splitDependencyEdges: Map<string, Set<string>>;
-};
 
 type SyncTargetGroupRunResult = {
   dwnUrl: string;
@@ -247,6 +241,7 @@ export class SyncEngineLevel implements SyncEngine {
   private readonly _identityStore: SyncIdentityStore;
   private readonly _lifecycle = new SyncLifecycleCoordinator();
   private readonly _quotaManager: SyncQuotaManager;
+  private readonly _scopeClosureValidator: SyncScopeClosureValidator;
   private readonly _targetPlanner: SyncTargetPlanner;
   private _targetResolver?: SyncTargetResolver;
   private _syncIntervalId?: ReturnType<typeof setInterval>;
@@ -312,263 +307,6 @@ export class SyncEngineLevel implements SyncEngine {
   /** Maximum entries in the echo-loop suppression cache. */
   private static readonly ECHO_SUPPRESS_MAX_ENTRIES = 10_000;
 
-  /** Validate `SyncIdentityOptions` for `registerIdentity` and `updateIdentityOptions`. */
-  private static validateSyncIdentityOptions(options: SyncIdentityOptions): void {
-    if (!options || !('protocols' in options)) {
-      throw new Error('SyncEngineLevel: options.protocols is required — pass \'all\' for a full replica or a non-empty protocol list.');
-    }
-    if (options.protocols !== 'all' && !Array.isArray(options.protocols)) {
-      throw new Error('SyncEngineLevel: protocols must be \'all\' or a non-empty string array.');
-    }
-    if (Array.isArray(options.protocols) && options.protocols.length === 0) {
-      throw new Error('SyncEngineLevel: protocols must be \'all\' or a non-empty array of protocol URIs. An empty array is ambiguous.');
-    }
-  }
-
-  private async validateSyncScopeClosure(did: string, options: SyncIdentityOptions): Promise<void> {
-    const scope = syncScopeFromProtocols(options.protocols);
-    if (scope.kind === 'full') {
-      return;
-    }
-
-    const state = SyncEngineLevel.createScopeClosureValidationState(scope.protocols);
-    await this.scanSyncScopeClosure(did, options, state);
-
-    const details = SyncEngineLevel.scopeClosureErrorDetails(options, state);
-    if (details.length > 0) {
-      throw new Error(`SyncEngineLevel: sync scope closure validation failed for ${did}: ${details.join('; ')}`);
-    }
-  }
-
-  private static createScopeClosureValidationState(protocols: NonEmptyStringArray): SyncScopeClosureValidationState {
-    return {
-      requestedProtocols     : new Set(protocols),
-      protocolsToScan        : [...protocols],
-      scannedProtocols       : new Set(),
-      missingGrantProtocols  : new Set(),
-      nonScopedUsesProtocols : new Set(),
-      splitDependencyEdges   : new Map(),
-    };
-  }
-
-  private async scanSyncScopeClosure(
-    did: string,
-    options: SyncIdentityOptions,
-    state: SyncScopeClosureValidationState,
-  ): Promise<void> {
-    while (state.protocolsToScan.length > 0) {
-      const protocol = state.protocolsToScan.shift();
-      if (protocol === undefined || state.scannedProtocols.has(protocol)) {
-        continue;
-      }
-
-      await this.scanSyncScopeProtocol(did, options, protocol, state);
-    }
-  }
-
-  private async scanSyncScopeProtocol(
-    did: string,
-    options: SyncIdentityOptions,
-    protocol: string,
-    state: SyncScopeClosureValidationState,
-  ): Promise<void> {
-    state.scannedProtocols.add(protocol);
-
-    const permissionGrantIds = await this.permissionGrantIdsForClosureProtocol(did, options, protocol);
-    if (permissionGrantIds === 'missing') {
-      state.missingGrantProtocols.add(protocol);
-      return;
-    }
-
-    const definitions = await this.fetchLocalProtocolHistory(did, protocol, options.delegateDid, permissionGrantIds);
-    for (const definition of definitions) {
-      SyncEngineLevel.recordScopeClosureEdges(state, definition);
-    }
-  }
-
-  private static recordScopeClosureEdges(
-    state: SyncScopeClosureValidationState,
-    definition: ProtocolDefinition,
-  ): void {
-    const edges = getProtocolClosureEdges(definition);
-    SyncEngineLevel.recordUsesClosureProtocols(state, edges.usesProtocols);
-    SyncEngineLevel.recordDependencyClosureProtocols(state, definition.protocol, edges.dependencyProtocols);
-  }
-
-  private static recordUsesClosureProtocols(
-    state: SyncScopeClosureValidationState,
-    protocols: string[],
-  ): void {
-    for (const protocol of protocols) {
-      if (!state.requestedProtocols.has(protocol)) {
-        state.nonScopedUsesProtocols.add(protocol);
-      }
-      SyncEngineLevel.enqueueScopeClosureProtocol(state, protocol);
-    }
-  }
-
-  private static recordDependencyClosureProtocols(
-    state: SyncScopeClosureValidationState,
-    sourceProtocol: string,
-    protocols: string[],
-  ): void {
-    for (const protocol of protocols) {
-      if (!state.requestedProtocols.has(protocol)) {
-        SyncEngineLevel.addProtocolEdge(state.splitDependencyEdges, sourceProtocol, protocol);
-      }
-      SyncEngineLevel.enqueueScopeClosureProtocol(state, protocol);
-    }
-  }
-
-  private static enqueueScopeClosureProtocol(state: SyncScopeClosureValidationState, protocol: string): void {
-    if (!state.scannedProtocols.has(protocol)) {
-      state.protocolsToScan.push(protocol);
-    }
-  }
-
-  private static scopeClosureErrorDetails(
-    options: SyncIdentityOptions,
-    state: SyncScopeClosureValidationState,
-  ): string[] {
-    if (state.missingGrantProtocols.size === 0 && state.splitDependencyEdges.size === 0) {
-      return [];
-    }
-
-    const details: string[] = [];
-    if (state.missingGrantProtocols.size > 0) {
-      details.push(
-        `delegate ${options.delegateDid} lacks Messages.Read grants for closure protocols: ` +
-        SyncEngineLevel.formatStringSet(state.missingGrantProtocols)
-      );
-    }
-    if (state.splitDependencyEdges.size > 0) {
-      details.push(`scope splits cross-protocol dependencies: ${SyncEngineLevel.formatProtocolEdges(state.splitDependencyEdges)}`);
-    }
-    if (state.nonScopedUsesProtocols.size > 0) {
-      details.push(`uses protocols outside the sync scope: ${SyncEngineLevel.formatStringSet(state.nonScopedUsesProtocols)}`);
-    }
-
-    return details;
-  }
-
-  private async permissionGrantIdsForClosureProtocol(
-    did: string,
-    options: SyncIdentityOptions,
-    protocol: string,
-  ): Promise<NonEmptyStringArray | undefined | 'missing'> {
-    if (options.delegateDid === undefined) {
-      return undefined;
-    }
-
-    try {
-      const grants = await getMessagesPermissionGrantsForScope({
-        did,
-        delegateDid    : options.delegateDid,
-        protocols      : [protocol],
-        messageType    : DwnInterface.MessagesQuery,
-        permissionsApi : this._permissionsApi,
-      });
-      return permissionGrantIdsFromEntries(grants);
-    } catch (error) {
-      if (error instanceof SyncProtocolRootPermissionGrantMissingError) {
-        return 'missing';
-      }
-      throw error;
-    }
-  }
-
-  private async fetchLocalProtocolHistory(
-    did: string,
-    protocol: string,
-    delegateDid: string | undefined,
-    permissionGrantIds: NonEmptyStringArray | undefined,
-  ): Promise<ProtocolDefinition[]> {
-    const definitions: ProtocolDefinition[] = [];
-    let cursor: ProgressToken | undefined;
-
-    for (;;) {
-      const { reply } = await this.agent.dwn.processRequest({
-        author        : did,
-        target        : did,
-        messageType   : DwnInterface.MessagesQuery,
-        granteeDid    : delegateDid,
-        messageParams : {
-          cursor,
-          filters: [{
-            interface : DwnInterfaceName.Protocols,
-            method    : DwnMethodName.Configure,
-            protocol,
-          }],
-          limit              : PROTOCOL_HISTORY_PAGE_LIMIT,
-          permissionGrantIds : permissionGrantIds,
-        },
-      });
-
-      if (reply.status.code !== 200) {
-        throw new Error(
-          `SyncEngineLevel: local protocol history query failed for ${did} / ${protocol}: ${reply.status.code} ${reply.status.detail}`
-        );
-      }
-
-      for (const entry of reply.entries ?? []) {
-        const definition = SyncEngineLevel.protocolDefinitionFromMessage(entry.message);
-        if (definition !== undefined) {
-          definitions.push(definition);
-        }
-      }
-
-      if (reply.drained === true) {
-        return definitions;
-      }
-      if (reply.cursor === undefined) {
-        throw new Error(`SyncEngineLevel: local protocol history query returned no cursor before drain for ${did} / ${protocol}`);
-      }
-
-      cursor = reply.cursor;
-    }
-  }
-
-  private static protocolDefinitionFromMessage(message: GenericMessage | undefined): ProtocolDefinition | undefined {
-    const descriptor = message?.descriptor as { interface?: string; method?: string; definition?: unknown } | undefined;
-    if (
-      descriptor?.interface !== DwnInterfaceName.Protocols ||
-      descriptor.method !== DwnMethodName.Configure ||
-      !SyncEngineLevel.isProtocolDefinition(descriptor.definition)
-    ) {
-      return undefined;
-    }
-
-    return descriptor.definition;
-  }
-
-  private static isProtocolDefinition(value: unknown): value is ProtocolDefinition {
-    return typeof value === 'object' &&
-      value !== null &&
-      typeof (value as { protocol?: unknown }).protocol === 'string';
-  }
-
-  private static addProtocolEdge(edges: Map<string, Set<string>>, from: string, to: string): void {
-    let targets = edges.get(from);
-    if (targets === undefined) {
-      targets = new Set();
-      edges.set(from, targets);
-    }
-    targets.add(to);
-  }
-
-  private static formatStringSet(values: Set<string>): string {
-    return [...values].sort(lexicographicalCompare).join(', ');
-  }
-
-  private static formatProtocolEdges(edges: Map<string, Set<string>>): string {
-    return [...edges.entries()]
-      .sort(([a], [b]) => lexicographicalCompare(a, b))
-      .flatMap(([from, targets]) => [...targets]
-        .sort(lexicographicalCompare)
-        .map(to => `${from} -> ${to}`))
-      .join(', ');
-  }
-
   /** Backoff schedule for recently published did:dht records. */
   private static readonly DID_RESOLUTION_RETRY_BACKOFF_MS = [2000, 4000, 8000];
 
@@ -595,6 +333,14 @@ export class SyncEngineLevel implements SyncEngine {
     this._db = db ?? new Level<string, string>(dataPath ?? 'DATA/AGENT/SYNC_STORE');
     this._endpointStore = new SyncEndpointStoreLevel(this._db);
     this._identityStore = new SyncIdentityStoreLevel(this._db);
+    this._scopeClosureValidator = new SyncScopeClosureValidator({
+      operations: {
+        queryProtocolHistory: (query): Promise<SyncScopeProtocolHistoryPage> =>
+          this.queryScopeProtocolHistory(query),
+        resolvePermissionGrantIds: (query): Promise<SyncScopeClosureGrantResolution> =>
+          this.resolveScopeClosurePermissionGrantIds(query),
+      },
+    });
     this._quotaManager = new SyncQuotaManager({
       store      : new SyncQuotaStoreLevel(this._db),
       operations : {
@@ -690,6 +436,51 @@ export class SyncEngineLevel implements SyncEngine {
     });
 
     return this._targetResolver;
+  }
+
+  private async resolveScopeClosurePermissionGrantIds(
+    query: SyncScopeClosureGrantQuery,
+  ): Promise<SyncScopeClosureGrantResolution> {
+    try {
+      const grants = await getMessagesPermissionGrantsForScope({
+        did            : query.did,
+        delegateDid    : query.delegateDid,
+        protocols      : [query.protocol],
+        messageType    : DwnInterface.MessagesQuery,
+        permissionsApi : this._permissionsApi,
+      });
+      return {
+        kind               : 'granted',
+        permissionGrantIds : permissionGrantIdsFromEntries(grants),
+      };
+    } catch (error) {
+      if (error instanceof SyncProtocolRootPermissionGrantMissingError) {
+        return { kind: 'missing' };
+      }
+      throw error;
+    }
+  }
+
+  private async queryScopeProtocolHistory(
+    query: SyncScopeProtocolHistoryQuery,
+  ): Promise<SyncScopeProtocolHistoryPage> {
+    const { reply } = await this.agent.dwn.processRequest({
+      author        : query.did,
+      target        : query.did,
+      messageType   : DwnInterface.MessagesQuery,
+      granteeDid    : query.delegateDid,
+      messageParams : {
+        cursor  : query.cursor,
+        filters : [{
+          interface : DwnInterfaceName.Protocols,
+          method    : DwnMethodName.Configure,
+          protocol  : query.protocol,
+        }],
+        limit              : query.limit,
+        permissionGrantIds : query.permissionGrantIds,
+      },
+    });
+    return reply;
   }
 
   /** LevelDB sublevel for permanently failed messages (dead letters). */
@@ -872,14 +663,14 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async doRegisterIdentity({ did, options }: { did: string; options: SyncIdentityOptions }): Promise<void> {
-    SyncEngineLevel.validateSyncIdentityOptions(options);
+    this._scopeClosureValidator.validateOptions(options);
 
     const existing = await this.getIdentityOptions(did);
     if (existing) {
       throw new Error(`SyncEngineLevel: Identity with DID ${did} is already registered.`);
     }
 
-    await this.validateSyncScopeClosure(did, options);
+    await this._scopeClosureValidator.validateClosure(did, options);
     await this._identityStore.set(did, options);
     this.invalidateSyncTargetsCache();
 
@@ -933,14 +724,14 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async doUpdateIdentityOptions({ did, options }: { did: string, options: SyncIdentityOptions }): Promise<void> {
-    SyncEngineLevel.validateSyncIdentityOptions(options);
+    this._scopeClosureValidator.validateOptions(options);
 
     const existingOptions = await this.getIdentityOptions(did);
     if (!existingOptions) {
       throw new Error(`SyncEngineLevel: Identity with DID ${did} is not registered.`);
     }
 
-    await this.validateSyncScopeClosure(did, options);
+    await this._scopeClosureValidator.validateClosure(did, options);
     await this._identityStore.set(did, options);
     this.invalidateSyncTargetsCache();
 

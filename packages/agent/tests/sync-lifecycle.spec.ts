@@ -1,3 +1,5 @@
+import type { SyncScopeClosureValidator } from '../src/sync-scope-closure-validator.js';
+
 import sinon from 'sinon';
 
 import { Level } from 'level';
@@ -16,6 +18,10 @@ function createDeferred(): Deferred {
     resolve = resolvePromise;
   });
   return { promise, resolve };
+}
+
+function getScopeClosureValidator(engine: SyncEngineLevel): SyncScopeClosureValidator {
+  return (engine as unknown as { _scopeClosureValidator: SyncScopeClosureValidator })._scopeClosureValidator;
 }
 
 describe('SyncEngineLevel lifecycle', () => {
@@ -365,7 +371,7 @@ describe('SyncEngineLevel lifecycle', () => {
     const engine = new SyncEngineLevel({ db });
     const validationStarted = createDeferred();
     const releaseValidation = createDeferred();
-    const validateScope = sinon.stub(engine as never, 'validateSyncScopeClosure');
+    const validateScope = sinon.stub(getScopeClosureValidator(engine), 'validateClosure');
     const readIdentityOptions = engine.getIdentityOptions.bind(engine);
     let firstRegistrationReleased = false;
     let identityOptionsReads = 0;
@@ -416,7 +422,7 @@ describe('SyncEngineLevel lifecycle', () => {
       return [];
     });
     sinon.stub(engine, 'getIdentityOptions').resolves(undefined);
-    const validateScope = sinon.spy(engine as never, 'validateSyncScopeClosure');
+    const validateScope = sinon.spy(getScopeClosureValidator(engine), 'validateClosure');
 
     const syncPromise = engine.sync();
     await syncStarted.promise;
