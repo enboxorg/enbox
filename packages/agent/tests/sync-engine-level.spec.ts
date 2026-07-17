@@ -208,6 +208,7 @@ describe('SyncEngineLevel', () => {
         tenantDid          : 'did:example:alice',
       };
       const context = {
+        controller : undefined as any,
         did        : link.tenantDid,
         dwnUrl,
         eventScope : {},
@@ -219,7 +220,8 @@ describe('SyncEngineLevel', () => {
       const events: unknown[] = [];
       const unsubscribe = syncEngine.on((event) => events.push(event));
 
-      internal._activeLinks.set(linkKey, link);
+      const controller = internal.activateLink(linkKey, link);
+      context.controller = controller;
       internal._ledger = { persistCheckpoint };
       internal.trackRecentlyPushedMessage(context.did, messageCid, dwnUrl);
       sinon.stub(internal, 'shouldSkipLivePullEvent').resolves(false);
@@ -238,7 +240,7 @@ describe('SyncEngineLevel', () => {
       expect(processLivePullEvent.called).toBe(false);
       expect(persistCheckpoint.calledOnceWithExactly(link, 'pull')).toBe(true);
       expect(link.pull.contiguousAppliedToken).toEqual(cursor);
-      expect(internal._linkRuntimes.get(linkKey)?.inflight.size).toBe(0);
+      expect(controller.pullInflightCount).toBe(0);
       expect(events).toContainEqual(expect.objectContaining({
         type           : 'checkpoint:pull-advance',
         messageCid,
@@ -523,13 +525,24 @@ describe('SyncEngineLevel', () => {
     it('should bypass hot retries and delay reconciliation for retryable Incomplete failures', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
       const linkKey = 'did:example:alice^https://dwn.example^projection^epoch';
-      const link = { status: 'live' } as any;
-      syncEngine['_activeLinks'].set(linkKey, link);
+      const link = {
+        authorization      : { kind: 'owner' },
+        authorizationEpoch : 'epoch',
+        connectivity       : 'online',
+        projectionId       : 'projection',
+        pull               : {},
+        push               : {},
+        remoteEndpoint     : 'https://dwn.example',
+        scope              : { kind: 'full' },
+        status             : 'live',
+        tenantDid          : 'did:example:alice',
+      } as any;
+      const controller = syncEngine['activateLink'](linkKey, link);
 
       const scheduleReconcile = sinon.stub(syncEngine as any, 'scheduleLinkReconcileIfActive');
       const schedulePushRetry = sinon.stub(syncEngine as any, 'schedulePushRetry');
 
-      await syncEngine['requeueOrReconcile'](linkKey, {
+      await syncEngine['requeueOrReconcile'](controller, {
         did     : 'did:example:alice',
         dwnUrl  : 'https://dwn.example',
         entries : [{
@@ -541,7 +554,7 @@ describe('SyncEngineLevel', () => {
 
       expect(schedulePushRetry.called).toBe(false);
       expect(scheduleReconcile.calledOnceWithExactly(linkKey, link, 'push-incomplete', 30_000)).toBe(true);
-      expect(syncEngine['_pushRuntimes'].has(linkKey)).toBe(false);
+      expect(controller.pushRuntime).toBeUndefined();
     });
   });
 
@@ -3788,17 +3801,17 @@ describe('SyncEngineLevel', () => {
         });
         const linkKey = `${did}^${dwnUrl}^${link.projectionId}^${link.authorizationEpoch}`;
         link.status = 'paused';
-        syncEngine['_activeLinks'].set(linkKey, link);
+        const controller = syncEngine['activateLink'](linkKey, link);
 
         const statusSpy = sinon.spy(syncEngine as any, 'setLinkOfflineStatus');
         const repairStub = sinon.stub(syncEngine as any, 'repairLink').resolves();
 
         await syncEngine['transitionToRepairing'](linkKey, link);
-        syncEngine['scheduleRepairRetry'](linkKey);
+        syncEngine['scheduleRepairRetry'](controller);
 
         expect(statusSpy.called).toBe(false);
         expect(repairStub.called).toBe(false);
-        expect(syncEngine['_repairRetryTimers'].has(linkKey)).toBe(false);
+        expect(controller.repairRetryTimer).toBeUndefined();
       });
 
       it('should pause a live link only once and leave it degraded', async () => {
@@ -3813,8 +3826,9 @@ describe('SyncEngineLevel', () => {
         });
         const linkKey = `${did}^${dwnUrl}^${link.projectionId}^${link.authorizationEpoch}`;
         link.status = 'live';
-
-        const closeStub = sinon.stub(syncEngine as any, 'closeLinkSubscriptions').resolves();
+        const controller = syncEngine['activateLink'](linkKey, link);
+        const closeStub = sinon.stub().resolves();
+        controller.setLiveSubscription({ close: closeStub });
 
         await syncEngine['transitionToPaused'](linkKey, link);
         await syncEngine['transitionToPaused'](linkKey, link);
@@ -3837,24 +3851,23 @@ describe('SyncEngineLevel', () => {
           });
           const linkKey = `${did}^${dwnUrl}^${link.projectionId}^${link.authorizationEpoch}`;
           link.status = 'repairing';
-          syncEngine['_activeLinks'].set(linkKey, link);
-          syncEngine['_repairAttempts'].set(linkKey, 1);
+          const controller = syncEngine['activateLink'](linkKey, link);
+          controller.incrementRepairAttempts();
           // beforeEach clears the engine, which intentionally pauses background
           // task admission. This white-box scheduler test models an active runtime.
           syncEngine['_lifecycle'].resumeTaskAdmission();
 
           const repairStub = sinon.stub(syncEngine as any, 'repairLink').rejects(new Error('still broken'));
 
-          syncEngine['scheduleRepairRetry'](linkKey);
+          syncEngine['scheduleRepairRetry'](controller);
           await clock.tickAsync(1_000);
 
           expect(repairStub.calledOnce).toBe(true);
-          expect(syncEngine['_repairRetryTimers'].has(linkKey)).toBe(true);
+          expect(controller.repairRetryTimer).toBeDefined();
         } finally {
-          for (const retryTimer of syncEngine['_repairRetryTimers'].values()) {
-            clearTimeout(retryTimer);
+          for (const controller of syncEngine['_linkControllers'].values()) {
+            controller.cancelRepairRetry();
           }
-          syncEngine['_repairRetryTimers'].clear();
           clock.restore();
         }
       });
@@ -3940,7 +3953,7 @@ describe('SyncEngineLevel', () => {
           });
           expect(link.delegateDid).toBe('did:example:old-delegate');
 
-          syncEngine['_activeLinks'].set(linkKeyFor(did, testDwnUrls[0], link), link);
+          syncEngine['activateLink'](linkKeyFor(did, testDwnUrls[0], link), link);
 
           const removeStub = sinon.stub(syncEngine as any, 'removeIdentityFromLiveSync').resolves();
           const addStub = sinon.stub(syncEngine as any, 'addIdentityToLiveSync').resolves(new Set());
@@ -3980,15 +3993,14 @@ describe('SyncEngineLevel', () => {
           });
           const linkKey = linkKeyFor(did, testDwnUrls[0], link);
           link.status = 'live';
-          syncEngine['_activeLinks'].set(linkKey, link);
+          const controller = syncEngine['activateLink'](linkKey, link);
 
           // Manually inject a push runtime to simulate pending pushes.
-          syncEngine['_pushRuntimes'].set(linkKey, {
+          const pushRuntime = controller.getOrCreatePushRuntime({
             did,
-            dwnUrl     : testDwnUrls[0],
-            entries    : [{ cid: 'cid-1' }],
-            retryCount : 0,
+            dwnUrl: testDwnUrls[0],
           });
+          pushRuntime.entries.push({ cid: 'cid-1' });
 
           // Hot-remove.
           await syncEngine['removeIdentityFromLiveSync'](did);
@@ -4017,14 +4029,14 @@ describe('SyncEngineLevel', () => {
           });
           const linkKey = linkKeyFor(did, testDwnUrls[0], link);
           link.status = 'live';
-          syncEngine['_activeLinks'].set(linkKey, link);
+          const controller = syncEngine['activateLink'](linkKey, link);
 
-          syncEngine['_pushRuntimes'].set(linkKey, {
+          const pushRuntime = controller.getOrCreatePushRuntime({
             did,
-            dwnUrl     : testDwnUrls[0],
-            entries    : [{ cid: 'cid-1' }],
-            retryCount : 1,
+            dwnUrl: testDwnUrls[0],
           });
+          pushRuntime.entries.push({ cid: 'cid-1' });
+          pushRuntime.retryCount = 1;
 
           // flushPendingPushesForLink calls the imported pushMessages function
           // directly, not this.pushMessages. Stub the agent.dwn.processRequest
@@ -4033,7 +4045,7 @@ describe('SyncEngineLevel', () => {
           const processStub = sinon.stub(testHarness.agent.dwn, 'processRequest').callsFake(async () => {
             // Mid-flight: replace the link with a new object.
             const replacementLink = { ...link };
-            syncEngine['_activeLinks'].set(linkKey, replacementLink);
+            syncEngine['activateLink'](linkKey, replacementLink);
             return {
               reply: {
                 status : { code: 200 },
@@ -4071,32 +4083,60 @@ describe('SyncEngineLevel', () => {
           });
           const linkKey = linkKeyFor(did, testDwnUrls[0], link);
           link.status = 'live';
-          syncEngine['_activeLinks'].set(linkKey, link);
+          const controller = syncEngine['activateLink'](linkKey, link);
 
-          // Schedule a reconcile (sets a timer).
-          const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
-          syncEngine['scheduleReconcile'](linkKey, 500);
-          expect(syncEngine['_reconcileTimers'].has(linkKey)).toBe(true);
-
-          // Hot-remove clears the timer.
-          await syncEngine['removeIdentityFromLiveSync'](did);
-          expect(syncEngine['_reconcileTimers'].has(linkKey)).toBe(false);
-
-          // Even if a stale timer fires, the _activeLinks guard prevents execution.
           const reconcileSpy = sinon.spy(syncEngine as any, 'reconcileLink');
+          const timerSpy = sinon.spy(globalThis, 'setTimeout');
+          syncEngine['scheduleReconcile'](linkKey, 60_000);
+          const staleTimerCallback = timerSpy.firstCall.args[0] as () => void;
+          timerSpy.restore();
 
-          const staleGeneration = syncEngine['_engineGeneration'];
-          clock.setTimeout((): void => {
-            if (syncEngine['_engineGeneration'] !== staleGeneration) { return; }
-            if (!syncEngine['_activeLinks'].has(linkKey)) { return; }
-            syncEngine['reconcileLink'](linkKey);
-          }, 500);
+          expect(controller.reconcileTimer).toBeDefined();
 
-          await clock.tickAsync(600);
+          await syncEngine['removeIdentityFromLiveSync'](did);
+          expect(controller.reconcileTimer).toBeUndefined();
+
+          staleTimerCallback();
+          await Promise.resolve();
 
           expect(reconcileSpy.called).toBe(false);
+        });
 
-          clock.restore();
+        it('should not retry repair when a stale repair timer fires after hot-remove', async () => {
+          const did = alice.did.uri;
+
+          await syncEngine.registerIdentity({ did, options: { protocols: 'all' } });
+          syncEngine['_syncMode'] = 'live';
+
+          const ledger = syncEngine['ledger'];
+          const link = await ledger.getOrCreateLink({
+            tenantDid      : did,
+            remoteEndpoint : testDwnUrls[0],
+            scope          : { kind: 'full' },
+            ...ownerAuthorization,
+          });
+          const linkKey = linkKeyFor(did, testDwnUrls[0], link);
+          link.status = 'repairing';
+          const controller = syncEngine['activateLink'](linkKey, link);
+          controller.incrementRepairAttempts();
+          controller.incrementRepairAttempts();
+          controller.incrementRepairAttempts();
+
+          const repairSpy = sinon.spy(syncEngine as any, 'repairLink');
+          const timerSpy = sinon.spy(globalThis, 'setTimeout');
+          syncEngine['scheduleRepairRetry'](controller);
+          const staleTimerCallback = timerSpy.firstCall.args[0] as () => void;
+          timerSpy.restore();
+
+          expect(controller.repairRetryTimer).toBeDefined();
+
+          await syncEngine['removeIdentityFromLiveSync'](did);
+          expect(controller.repairRetryTimer).toBeUndefined();
+
+          staleTimerCallback();
+          await Promise.resolve();
+
+          expect(repairSpy.called).toBe(false);
         });
       });
 
@@ -4121,7 +4161,7 @@ describe('SyncEngineLevel', () => {
           });
           const linkKey = linkKeyFor(did, testDwnUrls[0], originalLink);
           originalLink.status = 'repairing';
-          syncEngine['_activeLinks'].set(linkKey, originalLink);
+          const originalController = syncEngine['activateLink'](linkKey, originalLink);
 
           // Reload from ledger — same data, different object identity.
           const replacementLink = await ledger.getOrCreateLink({
@@ -4132,12 +4172,11 @@ describe('SyncEngineLevel', () => {
           });
           expect(replacementLink).not.toBe(originalLink);
 
-          // Replace the link in _activeLinks.
-          syncEngine['_activeLinks'].set(linkKey, replacementLink);
+          const replacementController = syncEngine['activateLink'](linkKey, replacementLink);
 
-          // The original link is stale; the replacement is not.
-          expect(syncEngine['_activeLinks'].get(linkKey)).not.toBe(originalLink);
-          expect(syncEngine['_activeLinks'].get(linkKey)).toBe(replacementLink);
+          expect(originalController.isActive).toBe(false);
+          expect(replacementController.isActive).toBe(true);
+          expect(syncEngine['getActiveLink'](linkKey)).toBe(replacementLink);
         });
 
         it('should bail old reconcile when the same link key is re-added during in-flight reconcile', async () => {
@@ -4155,7 +4194,7 @@ describe('SyncEngineLevel', () => {
           });
           const linkKey = linkKeyFor(did, testDwnUrls[0], originalLink);
           originalLink.status = 'live';
-          syncEngine['_activeLinks'].set(linkKey, originalLink);
+          const originalController = syncEngine['activateLink'](linkKey, originalLink);
 
           // Stub the feed reconcile path to capture the shouldContinue callback.
           let capturedShouldContinue: (() => boolean) | undefined;
@@ -4163,7 +4202,7 @@ describe('SyncEngineLevel', () => {
             capturedShouldContinue = sc;
             // Simulate: during reconciliation, the link gets removed and re-added.
             const newLink = { ...originalLink };
-            syncEngine['_activeLinks'].set(linkKey, newLink);
+            syncEngine['activateLink'](linkKey, newLink);
 
             // shouldContinue should now return false.
             if (capturedShouldContinue && !capturedShouldContinue()) {
@@ -4172,10 +4211,10 @@ describe('SyncEngineLevel', () => {
             return { aborted: false, converged: true };
           });
 
-          await syncEngine['doReconcileLink'](linkKey);
+          await syncEngine['doReconcileLink'](originalController);
 
           expect(capturedShouldContinue).toBeDefined();
-          const currentLink = syncEngine['_activeLinks'].get(linkKey)!;
+          const currentLink = syncEngine['getActiveLink'](linkKey)!;
           expect(currentLink).not.toBe(originalLink);
         });
 
@@ -4194,17 +4233,14 @@ describe('SyncEngineLevel', () => {
           });
           const linkKey = linkKeyFor(did, testDwnUrls[0], link);
           link.status = 'repairing';
-          syncEngine['_activeLinks'].set(linkKey, link);
-
-          // Stub closeLinkSubscriptions.
-          sinon.stub(syncEngine as any, 'closeLinkSubscriptions').resolves();
+          const originalController = syncEngine['activateLink'](linkKey, link);
 
           let capturedShouldContinue: (() => boolean) | undefined;
           sinon.stub(syncEngine as any, 'syncTargetWithDurableFeeds').callsFake((_target: unknown, _options: unknown, sc?: () => boolean) => {
             capturedShouldContinue = sc;
-            // Mid-repair: replace the link in _activeLinks.
+            // Mid-repair: replace the link controller for the same durable key.
             const newLink = { ...link };
-            syncEngine['_activeLinks'].set(linkKey, newLink);
+            syncEngine['activateLink'](linkKey, newLink);
 
             if (capturedShouldContinue && !capturedShouldContinue()) {
               return { aborted: true };
@@ -4212,12 +4248,12 @@ describe('SyncEngineLevel', () => {
             return { aborted: false };
           });
 
-          await syncEngine['doRepairLink'](linkKey);
+          await syncEngine['doRepairLink'](originalController);
 
           expect(capturedShouldContinue).toBeDefined();
           // Repair aborted — subscriptions were NOT reopened.
-          expect(syncEngine['_activeLinks'].has(linkKey)).toBe(true);
-          expect(syncEngine['_activeLinks'].get(linkKey)).not.toBe(link);
+          expect(syncEngine['_linkControllers'].has(linkKey)).toBe(true);
+          expect(syncEngine['getActiveLink'](linkKey)).not.toBe(link);
         });
       });
     });

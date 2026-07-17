@@ -34,7 +34,7 @@ type PushEchoProbe = {
 };
 
 type ObservableSyncEngine = {
-  _activeLinks: Map<string, { pull: { contiguousAppliedToken?: { messageCid?: string; position?: string } } }>;
+  _linkControllers: Map<string, { link: { pull: { contiguousAppliedToken?: { messageCid?: string; position?: string } } } }>;
   _recentlyPushedCids: Map<string, number>;
 };
 
@@ -118,7 +118,7 @@ describe('E2E: live sync convergence', () => {
   function pullCheckpointPosition(): string | undefined {
     const syncEngine = harness.agent.sync as SyncEngineLevel;
     const observable = syncEngine as unknown as ObservableSyncEngine;
-    return [...observable._activeLinks.values()][0]?.pull.contiguousAppliedToken?.position;
+    return [...observable._linkControllers.values()][0]?.link.pull.contiguousAppliedToken?.position;
   }
 
   async function expectPushEchoSuppressed(
@@ -129,7 +129,7 @@ describe('E2E: live sync convergence', () => {
     const syncEngine = harness.agent.sync as SyncEngineLevel;
     const observable = syncEngine as unknown as ObservableSyncEngine;
     await waitFor(() => {
-      const token = [...observable._activeLinks.values()][0]?.pull.contiguousAppliedToken;
+      const token = [...observable._linkControllers.values()][0]?.link.pull.contiguousAppliedToken;
       return token?.messageCid === messageCid && token.position !== previousPullPosition;
     }, 10_000, 100);
 
