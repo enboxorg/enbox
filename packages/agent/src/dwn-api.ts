@@ -114,13 +114,25 @@ type DwnApiParams = {
   agent?: EnboxPlatformAgent;
   localDwnStrategy?: LocalDwnStrategy;
 } & (
-  | { dwn: Dwn; localDwnEndpoint?: never }
-  | { dwn?: never; localDwnEndpoint: string }
+  | {
+      dwn: Dwn;
+      /**
+       * Wake bus whose lifecycle this API owns: released in {@link AgentDwnApi.close}
+       * after the DWN's stores. Pass the publisher from
+       * {@link AgentDwnApi.createDefaultMessageLog} so channel-bridged wakes
+       * don't leak a `BroadcastChannel` per agent lifecycle.
+       */
+      wakePublisher?: { close(): void };
+      localDwnEndpoint?: never;
+    }
+  | { dwn?: never; wakePublisher?: never; localDwnEndpoint: string }
 );
 
 type MessageLog = {
   eventLog: EventLog;
   messageStore: MessageStore;
+  /** The wake bus coupling the pair, when the composer wants to hand off its lifecycle. */
+  wakePublisher?: { close(): void };
 };
 
 type DwnApiCreateDwnParams = Omit<Partial<DwnConfig>, 'eventLog' | 'messageStore'> & {
@@ -216,6 +228,9 @@ export class AgentDwnApi {
    */
   private readonly _dwn?: Dwn;
 
+  /** Wake bus owned by this API (see {@link DwnApiParams.wakePublisher}); released in `close()`. */
+  private readonly _wakePublisher?: { close(): void };
+
   /**
    * The local DWN server endpoint for remote mode.
    * When set, `_dwn` is `undefined` and `processRequest()` routes
@@ -275,6 +290,9 @@ export class AgentDwnApi {
 
     // Set the DWN instance (undefined in remote mode).
     this._dwn = 'dwn' in params ? params.dwn : undefined;
+
+    // Wake bus owned by this API, released in close() (undefined unless handed off).
+    this._wakePublisher = 'wakePublisher' in params ? params.wakePublisher : undefined;
 
     // Set the remote endpoint (undefined in local mode).
     this._localDwnEndpoint = 'localDwnEndpoint' in params ? params.localDwnEndpoint : undefined;
@@ -497,13 +515,16 @@ export class AgentDwnApi {
    */
   /**
    * Closes the in-process DWN's stores (message store, data store, event log,
-   * resumable task store), releasing their LevelDB handles. No-op when the
-   * agent operates in remote mode (no in-process DWN).
+   * resumable task store), releasing their LevelDB handles — then the wake
+   * bus this API owns, so channel-bridged wakes don't leak a
+   * `BroadcastChannel` (and its `onmessage` handler) per agent lifecycle.
+   * No-op when the agent operates in remote mode (no in-process DWN).
    */
   public async close(): Promise<void> {
     if (this._dwn !== undefined) {
       await this._dwn.close();
     }
+    this._wakePublisher?.close();
   }
 
   get node(): Dwn {
@@ -544,20 +565,29 @@ export class AgentDwnApi {
     return await Dwn.create({ dataStore, didResolver, eventLog, messageStore, tenantGate, resumableTaskStore });
   }
 
-  private static async createDefaultMessageLog(dataPath?: string): Promise<MessageLog> {
+  /**
+   * Builds the default message store + durable event log pair, coupled by a
+   * channel-bridged wake bus: sibling contexts sharing this store location
+   * (tabs, workers, a SharedWorker over one IndexedDB) observe each other's
+   * commits immediately instead of waiting for the event log's idle
+   * re-drain; environments without `BroadcastChannel` degrade to in-process
+   * delivery. The returned `wakePublisher` is the pair's lifecycle handle —
+   * pass it to `new AgentDwnApi({ dwn, wakePublisher })` so `close()`
+   * releases the channel with the stores.
+   */
+  public static async createDefaultMessageLog(dataPath?: string): Promise<MessageLog> {
     const { MessageStoreLevel } = await import('@enbox/dwn-sdk-js/stores/level');
-    // Channel-bridged wakes: sibling contexts sharing this store location
-    // (tabs, workers, a SharedWorker over one IndexedDB) observe each other's
-    // commits immediately instead of waiting for the event log's idle
-    // re-drain. Scoped by location so distinct stores never cross-wake;
-    // degrades to in-process-only where BroadcastChannel is unavailable.
-    const wakePublisher = new BroadcastChannelWakePublisher(`enbox:wake:${dataPath ?? 'default'}/DWN_MESSAGESTORE`);
+    // One shared expression pins the store-location ↔ channel-name mapping:
+    // contexts sharing this exact store share wakes, distinct stores never
+    // cross-wake — including the (pre-existing) literal 'undefined' path.
+    const messageStoreLocation = `${dataPath}/DWN_MESSAGESTORE`;
+    const wakePublisher = new BroadcastChannelWakePublisher(`enbox:wake:${messageStoreLocation}`);
     const messageStore = new MessageStoreLevel({
-      location: `${dataPath}/DWN_MESSAGESTORE`,
+      location: messageStoreLocation,
       wakePublisher,
     });
 
-    return { eventLog: new DurableEventLog(messageStore, wakePublisher), messageStore };
+    return { eventLog: new DurableEventLog(messageStore, wakePublisher), messageStore, wakePublisher };
   }
 
   public async processRequest<T extends DwnInterface>(

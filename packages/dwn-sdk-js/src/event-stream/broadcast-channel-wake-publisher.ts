@@ -15,10 +15,14 @@ import { EventEmitterWakePublisher } from './event-emitter-wake-publisher.js';
  * without `BroadcastChannel` degrade to in-process-only delivery, and
  * publication stays best-effort by contract: channel failures must not affect
  * the write path that already committed the row.
+ *
+ * In Node/Bun, `BroadcastChannel` spans only threads within one process —
+ * multi-process server deployments still converge through the event log's
+ * idle re-drain rather than through this bridge.
  */
 export class BroadcastChannelWakePublisher implements WakePublisher, WakeSubscriber {
-  private readonly local = new EventEmitterWakePublisher();
-  private readonly channel?: BroadcastChannel;
+  private readonly _local = new EventEmitterWakePublisher();
+  private readonly _channel?: BroadcastChannel;
 
   /**
    * @param channelName - Channel identity. Contexts sharing one physical
@@ -30,38 +34,38 @@ export class BroadcastChannelWakePublisher implements WakePublisher, WakeSubscri
       return;
     }
 
-    this.channel = new BroadcastChannel(channelName);
+    this._channel = new BroadcastChannel(channelName);
     // Node's channel keeps the event loop alive unless unreferenced; the
     // browser implementation has no `unref` and needs none.
-    (this.channel as { unref?: () => void }).unref?.();
-    this.channel.onmessage = (event: MessageEvent): void => {
+    (this._channel as { unref?: () => void }).unref?.();
+    this._channel.onmessage = (event: MessageEvent): void => {
       const wake = event.data as Wake | undefined;
       if (typeof wake?.tenant !== 'string' || typeof wake?.seq !== 'string') {
         return; // not a wake — ignore foreign traffic on the channel
       }
-      this.local.publish(wake);
+      this._local.publish(wake);
     };
   }
 
   public publish(wake: Wake): void {
-    this.local.publish(wake);
+    this._local.publish(wake);
     try {
-      this.channel?.postMessage(wake);
+      this._channel?.postMessage(wake);
     } catch {
       // Best-effort by contract — e.g. a closed channel.
     }
   }
 
   public subscribe(listener: WakeListener): () => void {
-    return this.local.subscribe(listener);
+    return this._local.subscribe(listener);
   }
 
   public clear(): void {
-    this.local.clear();
+    this._local.clear();
   }
 
   /** Releases the underlying channel. In-process delivery keeps working. */
   public close(): void {
-    this.channel?.close();
+    this._channel?.close();
   }
 }
