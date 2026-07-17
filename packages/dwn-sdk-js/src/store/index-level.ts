@@ -23,6 +23,9 @@ export type IndexLevelConfig = {
 
 export type IndexedItem = { messageCid: string, indexes: KeyValues };
 
+/** A value that can be encoded into a lexicographically sortable index key. */
+type IndexableValue = string | number | boolean;
+
 /**
  * Defines a compound index that covers multiple filter properties and a sort property.
  *
@@ -218,7 +221,7 @@ export class IndexLevel {
     tenant: string,
     item: IndexedItem,
     indexName: string,
-    indexValue: string | number | boolean
+    indexValue: IndexableValue
   ): Promise<LevelWrapperBatchOperation<string>> {
     const { messageCid } = item;
 

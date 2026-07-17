@@ -410,7 +410,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     const theme = options.theme ?? {};
     const appearance = theme.appearance ?? 'auto';
     if (appearance !== 'auto') {
-      modal.setAttribute('data-appearance', appearance);
+      modal.dataset.appearance = appearance;
     }
 
     // Dapp palette overrides land as inline custom properties: setProperty
@@ -489,7 +489,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       document.removeEventListener('keydown', onKeydown);
       document.removeEventListener('visibilitychange', onVisibilityReturn);
       systemDark?.removeEventListener?.('change', onSchemeChange);
-      try { document.body.removeChild(host); } catch { /* best effort */ }
+      try { host.remove(); } catch { /* best effort */ }
     };
 
     const settle = (settler: () => void): void => {

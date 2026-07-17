@@ -40,7 +40,7 @@ export class SocketConnection {
   private readonly heartbeatInterval: ReturnType<typeof setInterval>;
   private readonly subscriptions: Map<JsonRpcId, JsonRpcSubscription> = new Map();
   private readonly flowControllers: Map<JsonRpcId, FlowController> = new Map();
-  private isAlive: boolean;
+  private isAlive: boolean = true;
 
   constructor(
     private readonly socket: ServerWebSocket<WsData>,
@@ -56,7 +56,6 @@ export class SocketConnection {
   ){
     // Bun handles ping/pong automatically at the protocol level, but we still
     // want an application-level heartbeat to detect dead connections.
-    this.isAlive = true;
     this.heartbeatInterval = setInterval(() => {
       if (this.isAlive === false) {
         this.close();

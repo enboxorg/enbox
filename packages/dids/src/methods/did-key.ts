@@ -241,7 +241,7 @@ export class DidKey extends DidMethod {
   /**
    * Name of the DID method, as defined in the DID Key specification.
    */
-  public static methodName = 'key';
+  public static readonly methodName = 'key';
 
   /**
    * Creates a new DID using the `did:key` method formed from a newly generated key.

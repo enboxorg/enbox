@@ -97,7 +97,7 @@ describe('qrToSvg', () => {
     const qr = encodeQr('https://enbox.org');
     const svg = qrToSvg(qr, { dark: '#111111', light: 'transparent', quietZone: 2 });
 
-    expect(svg instanceof SVGSVGElement).toBe(true);
+    expect(svg).toBeInstanceOf(SVGSVGElement);
     expect(svg.getAttribute('shape-rendering')).toBe('crispEdges');
     expect(svg.getAttribute('viewBox')).toBe(`0 0 ${qr.size + 4} ${qr.size + 4}`);
     expect(svg.querySelector('rect')?.getAttribute('fill')).toBe('transparent');
@@ -110,7 +110,7 @@ describe('qrToSvg', () => {
     const svg = qrToSvg(qr, { dark: hostile });
 
     // DOM construction means the payload can only ever be an attribute value.
-    expect(svg.querySelector('img')).toBe(null);
+    expect(svg.querySelector('img')).toBeNull();
     expect(svg.querySelector('path')?.getAttribute('fill')).toBe(hostile);
   });
 });

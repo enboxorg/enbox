@@ -212,8 +212,6 @@ export class HttpApi {
   // ---------------------------------------------------------------------------
 
   async start(port: number): Promise<void> {
-    const self = this; // capture for closures
-
     if (this.#config.localNodeProfileEnabled) {
       assertLocalNodeBindHostname(this.#config.hostname);
     }
@@ -222,23 +220,23 @@ export class HttpApi {
       hostname: this.#config.hostname,
       port,
 
-      async fetch(req: Request, server): Promise<Response | undefined> {
+      fetch: async (req: Request, server): Promise<Response | undefined> => {
         const startTime = performance.now();
         const url = new URL(req.url);
         const path = url.pathname;
         const method = req.method;
 
-        if (self.#config.localNodeProfileEnabled && !isLocalNodeHostHeaderAllowed(req.headers.get('host'))) {
+        if (this.#config.localNodeProfileEnabled && !isLocalNodeHostHeaderAllowed(req.headers.get('host'))) {
           return new Response('Forbidden', { status: 403 });
         }
 
         const isWebSocketUpgrade = method === 'GET' && req.headers.get('upgrade')?.toLowerCase() === 'websocket';
         let localNodeSession: LocalNodeWebSocketSession | undefined;
 
-        if (self.#config.localNodeProfileEnabled) {
-          const authorizationResult = self.#authorizeLocalNodeRequest(req, url, path, method, isWebSocketUpgrade);
+        if (this.#config.localNodeProfileEnabled) {
+          const authorizationResult = this.#authorizeLocalNodeRequest(req, url, path, method, isWebSocketUpgrade);
           if (authorizationResult.status === 'unauthorized') {
-            self.#applyCorsHeaders(req, authorizationResult.response, path);
+            this.#applyCorsHeaders(req, authorizationResult.response, path);
             return authorizationResult.response;
           }
 
@@ -255,9 +253,9 @@ export class HttpApi {
         }
 
         // --- Per-IP rate limiting ---
-        if (self.#ipRateLimiter) {
+        if (this.#ipRateLimiter) {
           const ip = server.requestIP(req)?.address ?? 'unknown';
-          const result = self.#ipRateLimiter.consume(ip);
+          const result = this.#ipRateLimiter.consume(ip);
           if (result.allowed === false) {
             const retryAfterSec = Math.ceil(result.retryAfterMs / 1000);
             const response = new Response(
@@ -270,7 +268,7 @@ export class HttpApi {
                 },
               },
             );
-            self.#applyCorsHeaders(req, response, path);
+            this.#applyCorsHeaders(req, response, path);
             return response;
           }
         }
@@ -278,7 +276,7 @@ export class HttpApi {
         // --- Route matching ---
         let response: Response;
         try {
-          response = await self.#route(req, url, path, method);
+          response = await this.#route(req, url, path, method);
         } catch (error) {
           log.error(`Unhandled error on ${method} ${path}:`, error);
           response = new Response('Internal Server Error', { status: 500 });
@@ -287,7 +285,7 @@ export class HttpApi {
         // --- CORS headers ---
         // Admin API and metrics endpoints do not receive wildcard CORS headers
         // to limit cross-origin access when the admin token is configured.
-        self.#applyCorsHeaders(req, response, path);
+        this.#applyCorsHeaders(req, response, path);
 
         // --- Response-time metrics ---
         const elapsed = performance.now() - startTime;
@@ -302,10 +300,10 @@ export class HttpApi {
       },
 
       websocket: {
-        maxPayloadLength: maxWsJsonRpcPayloadBytes(self.#config.maxRecordDataSize),
-        open(ws: ServerWebSocket<WsData>): void {
-          if (self.onWebSocketConnection) {
-            self.onWebSocketConnection(ws);
+        maxPayloadLength : maxWsJsonRpcPayloadBytes(this.#config.maxRecordDataSize),
+        open             : (ws: ServerWebSocket<WsData>): void => {
+          if (this.onWebSocketConnection) {
+            this.onWebSocketConnection(ws);
           }
         },
         message(ws: ServerWebSocket<WsData>, msg: string | Buffer): void {

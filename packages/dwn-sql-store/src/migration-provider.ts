@@ -26,7 +26,7 @@ export type DwnMigrationFactory = (dialect: Dialect) => Migration;
  */
 export class DwnMigrationProvider implements MigrationProvider {
   readonly #dialect: Dialect;
-  #factories: ReadonlyArray<readonly [name: string, factory: DwnMigrationFactory]>;
+  readonly #factories: ReadonlyArray<readonly [name: string, factory: DwnMigrationFactory]>;
 
   constructor(
     dialect: Dialect,

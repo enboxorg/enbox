@@ -12,7 +12,7 @@ import { Migrator } from 'kysely';
  */
 class ServerMigrationProvider implements MigrationProvider {
   readonly #dialect: Dialect;
-  #factories: ReadonlyArray<readonly [name: string, factory: ServerMigrationFactory]>;
+  readonly #factories: ReadonlyArray<readonly [name: string, factory: ServerMigrationFactory]>;
 
   constructor(
     dialect: Dialect,

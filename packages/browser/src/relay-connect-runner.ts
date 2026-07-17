@@ -101,7 +101,7 @@ export interface RelayConnectOptions {
    * Cancellation signal: when it settles, polling stops and the handshake
    * rejects with {@link RelayConnectCancelledError}.
    */
-  cancelled?: Promise<never> | undefined;
+  cancelled?: Promise<never>;
 
   /**
    * Invoked once when the relay reports the wallet has claimed (fetched)

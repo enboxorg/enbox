@@ -31,12 +31,12 @@ export class Multicodec {
   /**
    * A static field containing a map of codec codes to their corresponding names.
    */
-  static codeToName = new Map<MulticodecCode, string>();
+  static readonly codeToName = new Map<MulticodecCode, string>();
 
   /**
    * A static field containing a map of codec names to their corresponding codes.
    */
-  static nameToCode = new Map<string, MulticodecCode>();
+  static readonly nameToCode = new Map<string, MulticodecCode>();
 
   /**
    * Adds a multicodec prefix to input data.

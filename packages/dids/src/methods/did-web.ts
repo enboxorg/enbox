@@ -137,7 +137,7 @@ export class DidWeb extends DidMethod {
   /**
    * Name of the DID method, as defined in the DID Web specification.
    */
-  public static methodName = 'web';
+  public static readonly methodName = 'web';
 
   /**
    * Creates a new DID using the `did:web` method formed from a newly generated key.
