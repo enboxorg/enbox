@@ -1,4 +1,5 @@
 import type { DwnSubscriptionMessage } from '@enbox/dwn-clients';
+import type { MessageChange } from '../src/messages-live-query.js';
 import type { Record } from '../src/record.js';
 import type { BearerDid, PortableDid } from '@enbox/dids';
 import type { DwnProtocolDefinition, EnboxAgent, ProcessDwnRequest } from '@enbox/agent';
@@ -86,6 +87,48 @@ describe('DwnApi', () => {
     sinon.restore();
     await testHarness.clearStorage();
     await testHarness.closeStorage();
+  });
+
+  describe('messages.subscribe() from remote', () => {
+    it('should stream remote events over the subscription socket', async () => {
+      // Install the protocol locally and on the remote DWN.
+      const { status: configStatus, protocol } = await dwnAlice.protocols.configure({ definition: protocolDefinition });
+      expect(configStatus.code).toBe(202);
+      const { status: protocolSendStatus } = await protocol!.send(aliceDid.uri);
+      expect(protocolSendStatus.code).toBe(202);
+
+      const { status, liveQuery } = await dwnAlice.messages.subscribe({
+        from    : aliceDid.uri,
+        filters : [{ protocol: protocolDefinition.protocol }],
+      });
+      expect(status.code).toBe(200);
+      expect(liveQuery).toBeDefined();
+      expect(liveQuery!.isConnected).toBe(true);
+
+      const events: MessageChange[] = [];
+      liveQuery!.on('event', (change): void => { events.push(change); });
+
+      const { status: writeStatus, record } = await dwnAlice.records.write({
+        data         : 'remote hello',
+        protocol     : protocolDefinition.protocol,
+        protocolPath : 'thread',
+        schema       : protocolDefinition.types.thread.schema,
+        dataFormat   : 'application/json',
+      });
+      expect(writeStatus.code).toBe(202);
+      const { status: recordSendStatus } = await record.send(aliceDid.uri);
+      expect(recordSendStatus.code).toBe(202);
+
+      await Poller.pollUntilSuccessOrTimeout(async () => {
+        expect(events.some(event => event.descriptor.recordId === record.id)).toBe(true);
+      });
+
+      const change = events.find(event => event.descriptor.recordId === record.id)!;
+      expect(change.descriptor.protocol).toBe(protocolDefinition.protocol);
+      expect(change.descriptor.author).toBe(aliceDid.uri);
+
+      await liveQuery!.close();
+    });
   });
 
   describe('as delegateDid', () => {
@@ -191,6 +234,78 @@ describe('DwnApi', () => {
       // Construct the Enbox instance directly with delegate support.
       const enbox = new Enbox({ agent: delegateHarness.agent, connectedDid: aliceDid.uri, delegateDid: delegateDid.uri });
       delegateDwn = (enbox as any)._dwn;
+    });
+
+    describe('messages', () => {
+      it('should subscribe with an auto-resolved Messages.Read grant and receive delegated writes', async () => {
+        const { status, liveQuery } = await delegateDwn.messages.subscribe({
+          filters: [{ protocol: notesProtocol.protocol }],
+        });
+        expect(status.code).toBe(200);
+        expect(liveQuery).toBeDefined();
+
+        const events: MessageChange[] = [];
+        liveQuery!.on('event', (change): void => { events.push(change); });
+
+        const { status: writeStatus, record } = await delegateDwn.records.write({
+          data         : 'delegated note',
+          protocol     : notesProtocol.protocol,
+          protocolPath : 'note',
+          schema       : notesProtocol.types.note.schema,
+          dataFormat   : 'text/plain',
+        });
+        expect(writeStatus.code).toBe(202);
+
+        await Poller.pollUntilSuccessOrTimeout(async () => {
+          expect(events.some(event => event.descriptor.recordId === record.id)).toBe(true);
+        });
+
+        const change = events.find(event => event.descriptor.recordId === record.id)!;
+        expect(change.descriptor.protocol).toBe(notesProtocol.protocol);
+        // Alice is the author; the delegate only signed on her behalf.
+        expect(change.descriptor.author).toBe(aliceDid.uri);
+
+        await liveQuery!.close();
+      });
+
+      it('should honour caller-supplied permissionGrantIds without re-resolution', async () => {
+        // Obtain the Messages.Read grant id the connect ceremony delivered.
+        const { grant } = await (delegateDwn as any).permissionsApi.getPermissionForRequest({
+          connectedDid : aliceDid.uri,
+          delegateDid  : delegateDid.uri,
+          protocol     : notesProtocol.protocol,
+          cached       : true,
+          messageType  : DwnInterface.MessagesSubscribe,
+        });
+
+        // Explicit ids must win: no further grant resolution happens.
+        const resolveSpy = sinon.spy((delegateDwn as any).permissionsApi, 'getPermissionForRequest');
+        const { status, liveQuery } = await delegateDwn.messages.subscribe({
+          filters            : [{ protocol: notesProtocol.protocol }],
+          permissionGrantIds : [grant.id],
+        });
+        expect(status.code).toBe(200);
+        expect(resolveSpy.notCalled).toBe(true);
+        resolveSpy.restore();
+
+        const events: MessageChange[] = [];
+        liveQuery!.on('event', (change): void => { events.push(change); });
+
+        const { status: writeStatus, record } = await delegateDwn.records.write({
+          data         : 'explicit grant note',
+          protocol     : notesProtocol.protocol,
+          protocolPath : 'note',
+          schema       : notesProtocol.types.note.schema,
+          dataFormat   : 'text/plain',
+        });
+        expect(writeStatus.code).toBe(202);
+
+        await Poller.pollUntilSuccessOrTimeout(async () => {
+          expect(events.some(event => event.descriptor.recordId === record.id)).toBe(true);
+        });
+
+        await liveQuery!.close();
+      });
     });
 
     describe('records', () => {
