@@ -46,7 +46,7 @@ export function isCrossProtocolRef(ref: string): boolean {
  * e.g. `'thread/comment'` → `'comment'`, `'note'` → `'note'`.
  */
 export function getTypeName(protocolPath: string): string {
-  return protocolPath.split('/').slice(-1)[0];
+  return protocolPath.split('/').at(-1)!;
 }
 
 /**
@@ -121,7 +121,7 @@ export class Protocols {
     keyDeriver: EncryptionKeyDeriver,
   ): Promise<ProtocolDefinition> {
     // clone before modify
-    const clone = JSON.parse(JSON.stringify(protocolDefinition)) as ProtocolDefinition;
+    const clone = structuredClone(protocolDefinition);
 
     const basePath = [KeyDerivationScheme.ProtocolPath, protocolDefinition.protocol];
     clone.$keyAgreement = {

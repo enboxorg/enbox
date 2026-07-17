@@ -3,6 +3,7 @@ import type { Hasher } from '../types/hasher.js';
 
 import { CryptoAlgorithm } from './crypto-algorithm.js';
 import { Sha256 } from '../primitives/sha256.js';
+import { CryptoError, CryptoErrorCode } from '../crypto-error.js';
 
 /**
  * The `Sha2DigestParams` interface defines the algorithm-specific parameters that should be
@@ -53,13 +54,11 @@ export class Sha2Algorithm extends CryptoAlgorithm
    * @returns A Promise which will be fulfilled with the hash digest.
    */
   public async digest({ algorithm, data }: Sha2DigestParams): Promise<Uint8Array> {
-    switch (algorithm) {
-
-      case 'SHA-256': {
-        const hash = await Sha256.digest({ data });
-        return hash;
-      }
+    if (algorithm === 'SHA-256') {
+      const hash = await Sha256.digest({ data });
+      return hash;
     }
 
+    throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `Algorithm not supported: ${algorithm}`);
   }
 }

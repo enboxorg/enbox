@@ -252,7 +252,7 @@ export async function runRelayConnect(options: RelayConnectOptions): Promise<Con
       // Best-effort completion signal so the wallet can flip its pairing
       // screen to a confirmed "connected" state instead of leaving the user
       // to dismiss it blind. Fire-and-forget — mirrors the kernel client.
-      void transport.confirmComplete?.().catch((): undefined => undefined);
+      transport.confirmComplete?.().catch((): undefined => undefined);
 
       return {
         delegatePortableDid,

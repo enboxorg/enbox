@@ -52,16 +52,11 @@ export class X25519Algorithm extends CryptoAlgorithm
   public async bytesToPrivateKey({ algorithm, privateKeyBytes }:
     BytesToPrivateKeyParams & { algorithm: 'X25519' }
   ): Promise<Jwk> {
-    switch (algorithm) {
-
-      case 'X25519': {
-        return X25519.bytesToPrivateKey({ privateKeyBytes });
-      }
-
-      default: {
-        throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `Algorithm not supported: ${algorithm}`);
-      }
+    if (algorithm === 'X25519') {
+      return X25519.bytesToPrivateKey({ privateKeyBytes });
     }
+
+    throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `Algorithm not supported: ${algorithm}`);
   }
 
   /**
@@ -77,16 +72,11 @@ export class X25519Algorithm extends CryptoAlgorithm
   ): Promise<Jwk> {
     if (!isOkpPrivateJwk(key)) {throw new TypeError('Invalid key provided. Must be an octet key pair (OKP) private key.');}
 
-    switch (key.crv) {
-
-      case 'X25519': {
-        return X25519.computePublicKey({ key });
-      }
-
-      default: {
-        throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `Unsupported curve: ${key.crv}`);
-      }
+    if (key.crv === 'X25519') {
+      return X25519.computePublicKey({ key });
     }
+
+    throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `Unsupported curve: ${key.crv}`);
   }
 
   /**
@@ -100,16 +90,11 @@ export class X25519Algorithm extends CryptoAlgorithm
   async generateKey({ algorithm }:
     X25519GenerateKeyParams
   ): Promise<Jwk> {
-    switch (algorithm) {
-
-      case 'X25519': {
-        return X25519.generateKey();
-      }
-
-      default: {
-        throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `Algorithm not supported: ${algorithm}`);
-      }
+    if (algorithm === 'X25519') {
+      return X25519.generateKey();
     }
+
+    throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `Algorithm not supported: ${algorithm}`);
   }
 
   /**
@@ -125,16 +110,11 @@ export class X25519Algorithm extends CryptoAlgorithm
   ): Promise<Jwk> {
     if (!isOkpPrivateJwk(key)) {throw new TypeError('Invalid key provided. Must be an octet key pair (OKP) private key.');}
 
-    switch (key.crv) {
-
-      case 'X25519': {
-        return X25519.getPublicKey({ key });
-      }
-
-      default: {
-        throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `Unsupported curve: ${key.crv}`);
-      }
+    if (key.crv === 'X25519') {
+      return X25519.getPublicKey({ key });
     }
+
+    throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `Unsupported curve: ${key.crv}`);
   }
 
   /**

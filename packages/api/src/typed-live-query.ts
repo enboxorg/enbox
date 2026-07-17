@@ -89,11 +89,9 @@ export class TypedLiveQuery<T> {
 
   /** The initial snapshot of matching records, typed as `TypedRecord<T>[]`. */
   public get records(): TypedRecord<T>[] {
-    if (!this._typedRecords) {
-      this._typedRecords = this._liveQuery.records.map(
-        (record) => new TypedRecord<T>(record),
-      );
-    }
+    this._typedRecords ??= this._liveQuery.records.map(
+      (record) => new TypedRecord<T>(record),
+    );
     return this._typedRecords;
   }
 

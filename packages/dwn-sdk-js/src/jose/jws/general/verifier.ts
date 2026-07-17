@@ -24,7 +24,7 @@ export class GeneralJwsVerifier {
   cache: Cache;
 
   private constructor(cache?: Cache) {
-    this.cache = cache || new MemoryCache(600);
+    this.cache = cache ?? new MemoryCache(600);
   }
 
   private static get singleton(): GeneralJwsVerifier {

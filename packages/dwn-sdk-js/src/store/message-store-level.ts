@@ -325,8 +325,8 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     }
 
     const messages: GenericMessage[] = [];
-    for (let i = 0; i < results.length; i++) {
-      const { messageCid } = results[i];
+    for (const result of results) {
+      const { messageCid } = result;
       const message = await this.get(tenant, messageCid, options);
       if (message) { messages.push(message); }
     }

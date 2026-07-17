@@ -187,7 +187,7 @@ export class DidKeyUtils {
     }
 
     // If name is undefined, lookup by code.
-    name = (name === undefined ) ? Multicodec.getNameFromCode({ code: code! }) : name;
+    name = name ?? Multicodec.getNameFromCode({ code: code! });
 
     const lookupKey = name;
     const jose = DidKeyUtils.MULTICODEC_TO_JWK[lookupKey];

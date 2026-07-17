@@ -1,7 +1,7 @@
 import type { Dialect } from '@enbox/dwn-sql-store';
 import type { AdminWebhook, AdminWebhookInput } from './types.js';
 
-import { createHmac } from 'crypto';
+import { createHmac } from 'node:crypto';
 import log from 'loglevel';
 import { sleep } from '@enbox/common';
 import { Kysely, sql } from 'kysely';

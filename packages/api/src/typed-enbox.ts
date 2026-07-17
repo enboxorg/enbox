@@ -761,9 +761,7 @@ export class TypedEnbox<
       return;
     }
 
-    if (this._ensureReadyPromise === null) {
-      this._ensureReadyPromise = this._autoConfigureOnce();
-    }
+    this._ensureReadyPromise ??= this._autoConfigureOnce();
 
     await this._ensureReadyPromise;
     this._assertValidPath(path);
@@ -1299,7 +1297,7 @@ function normalizePath(path: string): string {
  */
 function lastSegment(path: string): string {
   const parts = path.split('/');
-  return parts[parts.length - 1];
+  return parts.at(-1)!;
 }
 
 /**

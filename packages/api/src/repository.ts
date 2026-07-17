@@ -392,7 +392,7 @@ export function repository<
   const definition = typed.definition as ProtocolDefinition;
 
   // Get root-level type keys from the structure
-  const rootKeys = Object.keys(definition.structure).filter((k) => !k.startsWith('$'));
+  const rootKeys = new Set(Object.keys(definition.structure).filter((k) => !k.startsWith('$')));
   const nodeCache: Record<string, unknown> = {};
 
   const proxy = new Proxy({} as Record<string, unknown>, {
@@ -408,7 +408,7 @@ export function repository<
       }
 
       // Root-level type nodes
-      if (rootKeys.includes(prop)) {
+      if (rootKeys.has(prop)) {
         if (!(prop in nodeCache)) {
           nodeCache[prop] = buildNode(
             typed as unknown as TypedEnbox<ProtocolDefinition, SchemaMap>,

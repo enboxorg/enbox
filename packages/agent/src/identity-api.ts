@@ -202,7 +202,7 @@ export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyMana
 
     const identities = await Promise.all(storedIdentities.map(metadata => this.get({ didUri: metadata.uri })));
 
-    return identities.filter(identity => typeof identity !== 'undefined') as BearerIdentity[];
+    return identities.filter(identity => identity !== undefined) as BearerIdentity[];
   }
 
   public async delete({ didUri }:{

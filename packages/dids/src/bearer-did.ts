@@ -130,11 +130,11 @@ export class BearerDid {
     }
 
     // Create a new `PortableDid` copy object to store the exported data.
-    const portableDid: PortableDid = JSON.parse(JSON.stringify({
+    const portableDid: PortableDid = structuredClone({
       uri      : this.uri,
       document : this.document,
       metadata : this.metadata
-    }));
+    });
 
     // If the BearerDid's key manager supports exporting private keys, add them to the portable DID.
     if ('exportKey' in this.keyManager && typeof this.keyManager.exportKey === 'function') {

@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID, timingSafeEqual } from 'crypto';
+import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 
 export type LocalNodePairingCreateResult =
   | { status: 'created'; requestId: string }
@@ -113,7 +113,7 @@ export class LocalNodePairingManager {
     const pendingRequestId = this.#pendingRequestIdsByOrigin.get(origin);
     if (pendingRequestId !== undefined) {
       const pendingRequest = this.#requests.get(pendingRequestId);
-      if (pendingRequest !== undefined && pendingRequest.status === 'pending' && pendingRequest.expiresAt > now) {
+      if (pendingRequest?.status === 'pending' && pendingRequest.expiresAt > now) {
         return { status: 'coalesced', requestId: pendingRequest.id };
       }
     }
@@ -330,7 +330,7 @@ export class LocalNodePairingManager {
   #getActivePendingRequest(requestId: string): LocalNodePairingRequest | undefined {
     const request = this.#requests.get(requestId);
     const now = this.#now();
-    if (request === undefined || request.status !== 'pending') {
+    if (request?.status !== 'pending') {
       return undefined;
     }
 

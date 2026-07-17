@@ -1,7 +1,7 @@
 import type { AdminSessionManager } from './admin-session.js';
 import type { DwnServerConfig } from '../config.js';
 
-import { timingSafeEqual } from 'crypto';
+import { timingSafeEqual } from 'node:crypto';
 
 /**
  * The result of admin authentication.

@@ -123,7 +123,7 @@ function decodeHeaderParam(param: string, value?: string): Uint8Array | undefine
   if (value === undefined) {return undefined;}
 
   try {
-    if (typeof value !== 'string') {throw new Error();}
+    if (typeof value !== 'string') {throw new TypeError(`JWE Header parameter '${param}' value must be a string.`);}
     return Convert.base64Url(value).toUint8Array();
   } catch {
     throw new CryptoError(CryptoErrorCode.InvalidJwe,

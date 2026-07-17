@@ -7,7 +7,7 @@ import type { DataStore, DataStoreGetResult, DataStorePutResult } from '@enbox/d
 import * as DataRefs from './utils/data-refs.js';
 import { createRequire } from 'node:module';
 import { drainReadableStream } from './utils/stream.js';
-import { Readable } from 'stream';
+import { Readable } from 'node:stream';
 import { Kysely, sql } from 'kysely';
 
 const MIN_PART_SIZE = 5 * 1024 * 1024;

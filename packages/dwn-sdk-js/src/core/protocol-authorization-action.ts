@@ -283,7 +283,7 @@ export async function authorizeAgainstAllowedActions(
         // else the incoming message must be a `RecordsDelete` because only `co-update`, `co-delete`, `co-prune` are allowed recipient actions,
         // (we do this check in `validateRuleSetRecursively()`)
         // and we have already checked that the incoming message is not a `RecordsWrite` above which covers `co-update` path.
-        recordsWriteMessage = recordChain[recordChain.length - 1];
+        recordsWriteMessage = recordChain.at(-1)!;
       }
 
       if (recordsWriteMessage.descriptor.recipient === author) {

@@ -631,7 +631,7 @@ export class JweKeyManagement {
     }
 
     try {
-      if (typeof value !== 'string') { throw new Error(); }
+      if (typeof value !== 'string') { throw new TypeError(`JOSE Header "${param}" value must be a string.`); }
       return Convert.base64Url(value).toUint8Array();
     } catch {
       throw new CryptoError(CryptoErrorCode.EncodingError, `Failed to decode the JOSE Header "${param}" value from Base64 URL format.`);

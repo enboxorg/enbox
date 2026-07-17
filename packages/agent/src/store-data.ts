@@ -276,10 +276,8 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
    * Cached after first computation since the protocol definition is immutable.
    */
   private get encryptionRequired(): boolean {
-    if (this._encryptionRequired === undefined) {
-      this._encryptionRequired = Object.values(this._recordProtocolDefinition.types)
-        .some((type): boolean => type.encryptionRequired === true);
-    }
+    this._encryptionRequired ??= Object.values(this._recordProtocolDefinition.types)
+      .some((type): boolean => type.encryptionRequired === true);
     return this._encryptionRequired;
   }
 

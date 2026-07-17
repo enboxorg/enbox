@@ -44,14 +44,13 @@ export function verifyEqualityOfImmutableProperties(
 
   // get distinct property names that exist in either the existing message given or new message
   let descriptorPropertyNames: string[] = [];
-  descriptorPropertyNames.push(...Object.keys(existingWriteMessage.descriptor));
-  descriptorPropertyNames.push(...Object.keys(newMessage.descriptor));
+  descriptorPropertyNames.push(...Object.keys(existingWriteMessage.descriptor), ...Object.keys(newMessage.descriptor));
   descriptorPropertyNames = [...new Set(descriptorPropertyNames)]; // step to remove duplicates
 
   // ensure all immutable properties are not modified
   for (const descriptorPropertyName of descriptorPropertyNames) {
     // if property is supposed to be immutable
-    if (mutableDescriptorProperties.indexOf(descriptorPropertyName) === -1) {
+    if (!mutableDescriptorProperties.includes(descriptorPropertyName)) {
       const valueInExistingWrite = (existingWriteMessage.descriptor as Record<string, unknown>)[descriptorPropertyName];
       const valueInNewMessage = (newMessage.descriptor as Record<string, unknown>)[descriptorPropertyName];
       if (valueInNewMessage !== valueInExistingWrite) {

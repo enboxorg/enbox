@@ -16,14 +16,15 @@ export async function getDwnServiceEndpointUrls(didUri: string, dereferencer: Di
 
   if (didUtils.isDwnDidService(dereferencingResult.contentStream)) {
     const { serviceEndpoint } = dereferencingResult.contentStream;
+    const stringArrayEndpoints = Array.isArray(serviceEndpoint) && serviceEndpoint.every(endpoint => typeof endpoint === 'string')
+    // If the service endpoint is an array of strings, use it as is.
+      ? serviceEndpoint
+      // If the service endpoint is neither a string nor an array of strings, return an empty array.
+      : [];
     const serviceEndpointUrls = typeof serviceEndpoint === 'string'
     // If the service endpoint is a string, format it as a single-element array.
       ? [serviceEndpoint]
-      : Array.isArray(serviceEndpoint) && serviceEndpoint.every(endpoint => typeof endpoint === 'string')
-      // If the service endpoint is an array of strings, use it as is.
-        ? serviceEndpoint
-        // If the service endpoint is neither a string nor an array of strings, return an empty array.
-        : [];
+      : stringArrayEndpoints;
 
     if (serviceEndpointUrls.length > 0) {
       return [...new Set(serviceEndpointUrls.map(normalizeDwnServiceEndpointUrl))];

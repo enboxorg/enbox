@@ -1,7 +1,6 @@
 import type { Generated } from 'kysely';
-import type { KeyValues } from '@enbox/dwn-sdk-js';
 
-export type { KeyValues };
+export type { KeyValues } from '@enbox/dwn-sdk-js';
 
 type MessageStoreTable = {
   id: Generated<number>;

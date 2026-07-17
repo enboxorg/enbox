@@ -89,16 +89,19 @@ export function Overview() {
                   </tr>
                 </thead>
                 <tbody>
-                  {Object.entries(health.checks).map(([name, check]: [string, any]) => (
-                    <tr key={name}>
-                      <td>{name}</td>
-                      <td>
-                        <span class={`status-dot ${check.status === 'healthy' ? 'healthy' : check.status === 'unhealthy' ? 'unhealthy' : 'unknown'}`} />
-                        {check.status}
-                      </td>
-                      <td>{check.latencyMs === undefined ? '—' : `${check.latencyMs}ms`}</td>
-                    </tr>
-                  ))}
+                  {Object.entries(health.checks).map(([name, check]: [string, any]) => {
+                    const nonHealthyStatus = check.status === 'unhealthy' ? 'unhealthy' : 'unknown';
+                    return (
+                      <tr key={name}>
+                        <td>{name}</td>
+                        <td>
+                          <span class={`status-dot ${check.status === 'healthy' ? 'healthy' : nonHealthyStatus}`} />
+                          {check.status}
+                        </td>
+                        <td>{check.latencyMs === undefined ? '—' : `${check.latencyMs}ms`}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

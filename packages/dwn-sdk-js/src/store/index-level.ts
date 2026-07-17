@@ -786,10 +786,9 @@ export class IndexLevel {
    * NOTE: we currently only use this for strings, numbers and booleans.
    */
   static encodeValue(value: string | number | boolean): string {
-    switch (typeof value) {
-    case 'number':
+    if (typeof value === 'number') {
       return this.encodeNumberValue(value);
-    default:
+    } else {
       return JSON.stringify(value);
     }
   }

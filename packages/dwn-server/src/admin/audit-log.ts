@@ -172,7 +172,7 @@ export class AuditLog {
     let cursor: number | undefined;
     if (events.length > limit) {
       events.pop();
-      cursor = events[events.length - 1].id;
+      cursor = events.at(-1)!.id;
     }
 
     return { events, cursor };

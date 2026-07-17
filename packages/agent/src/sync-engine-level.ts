@@ -729,7 +729,7 @@ export class SyncEngineLevel implements SyncEngine {
   constructor({ agent, dataPath, db }: SyncEngineLevelParams) {
     this._agent = agent;
     this._permissionsApi = new AgentPermissionsApi({ agent });
-    this._db = (db) ? db : new Level<string, string>(dataPath ?? 'DATA/AGENT/SYNC_STORE');
+    this._db = db ?? new Level<string, string>(dataPath ?? 'DATA/AGENT/SYNC_STORE');
     this._endpointStore = new SyncEndpointStoreLevel(this._db);
     this._identityStore = new SyncIdentityStoreLevel(this._db);
     this._targetPlanner = new SyncTargetPlanner({
@@ -741,9 +741,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Lazy accessor for the replication ledger. */
   private get ledger(): SyncReplicationLinkStore {
-    if (!this._ledger) {
-      this._ledger = new SyncReplicationLinkStoreLevel(this._db);
-    }
+    this._ledger ??= new SyncReplicationLinkStoreLevel(this._db);
     return this._ledger;
   }
 
@@ -1672,9 +1670,7 @@ export class SyncEngineLevel implements SyncEngine {
         : intervalMilliseconds;
 
       if (this._engineGeneration !== generation) { return; }
-      if (!this._syncIntervalId) {
-        this._syncIntervalId = this.scheduleSyncInterval(intervalSync, effectiveInterval);
-      }
+      this._syncIntervalId ??= this.scheduleSyncInterval(intervalSync, effectiveInterval);
     };
 
     if (this._syncIntervalId) {

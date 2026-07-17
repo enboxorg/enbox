@@ -45,12 +45,10 @@ export function sanitizeIndexes(records: KeyValues): void {
  * NOTE: sqlite3 we use does not support inserting boolean values, so we convert them to a number.
  */
 export function sanitizedValue(value: string | number | boolean): string | number {
-  switch (typeof value) {
-    case 'boolean':
-      return value ? 1 : 0;
-    default:
-      return value;
+  if (typeof value === 'boolean') {
+    return value ? 1 : 0;
   }
+  return value;
 }
 
 /**
@@ -95,12 +93,10 @@ export function sanitizeFiltersAndSeparateTags(filters: Filter[]): {
  *       so we convert them to a number during insertions/updates, as a result we need to align the filter values in queries.
 */
 export function sanitizeFilterValue(value: any): any {
-  switch (typeof value) {
-    case 'boolean':
-      return value ? 1 : 0;
-    default:
-      return value;
+  if (typeof value === 'boolean') {
+    return value ? 1 : 0;
   }
+  return value;
 }
 
 export function sanitizeFilters(filters: Filter[]): void {

@@ -16,7 +16,7 @@ import type {
   WakePublisher,
 } from '@enbox/dwn-sdk-js';
 
-import * as fs from 'fs';
+import * as fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
@@ -254,7 +254,7 @@ async function runSqlMigrationsIfNeeded(config: DwnServerConfig): Promise<void> 
  *          backend was configured or needed.
  */
 export async function runServerMigrationsIfNeeded(config: DwnServerConfig): Promise<Dialect | undefined> {
-  const sqlBackends: string[] = [BackendTypes.SQLITE, BackendTypes.MYSQL, BackendTypes.POSTGRES];
+  const sqlBackends = new Set<string>([BackendTypes.SQLITE, BackendTypes.MYSQL, BackendTypes.POSTGRES]);
 
   // Determine the target URL for server migrations. Prefer registrationStoreUrl
   // since admin stores and the TTL cache share that database. Fall back to
@@ -277,7 +277,7 @@ export async function runServerMigrationsIfNeeded(config: DwnServerConfig): Prom
   }
 
   const protocol = parsedUrl.protocol.slice(0, -1);
-  if (!sqlBackends.includes(protocol)) {
+  if (!sqlBackends.has(protocol)) {
     return undefined;
   }
 
@@ -294,7 +294,7 @@ export async function runServerMigrationsIfNeeded(config: DwnServerConfig): Prom
 
     if (ttlUrl) {
       const ttlProtocol = ttlUrl.protocol.slice(0, -1);
-      if (sqlBackends.includes(ttlProtocol)) {
+      if (sqlBackends.has(ttlProtocol)) {
         throw new Error(
           'DWN server misconfiguration: DWN_TTL_CACHE_URL must point to the same database as ' +
           'DWN_REGISTRATION_STORE_URL (or DWN_STORAGE) because the cacheEntries table is managed ' +
