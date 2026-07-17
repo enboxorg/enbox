@@ -124,7 +124,7 @@ describe('SyncEngineLevel', () => {
       });
       sinon.stub(syncEngine as any, 'clearFailedMessageForTenant').resolves();
       sinon.stub(syncEngine as any, 'clearDeferredPull').resolves();
-      const clearQuotaBlock = sinon.stub(syncEngine as any, 'clearQuotaBlockWithResolution').resolves();
+      const clearQuotaBlock = sinon.spy(syncEngine['_quotaManager'], 'clearBlock');
       const resolveSuperseded = sinon.stub(syncEngine as any, 'resolveQuotaBlocksSupersededByAcknowledgement').resolves();
       const commitPullDelivery = sinon.stub(syncEngine as any, 'commitPullDelivery').resolves();
 
@@ -330,18 +330,14 @@ describe('SyncEngineLevel', () => {
       let resumeIterator!: () => void;
       const iteratorStarted = new Promise<void>((resolve) => { resolveIteratorStarted = resolve; });
       const iteratorGate = new Promise<void>((resolve) => { resumeIterator = resolve; });
-      const batch = sinon.stub().resolves();
-      sinon.stub(internal, '_quotaBlocks').get(() => ({
-        batch,
-        async *iterator(): AsyncGenerator<[string, string]> {
-          resolveIteratorStarted();
-          await iteratorGate;
-          yield ['stale-key', JSON.stringify({
-            linkKey: 'stale-link',
-            tenantDid,
-          })];
-        },
-      }));
+      const prune = sinon.stub().callsFake(async (_targets: unknown[], isCurrent: () => boolean): Promise<void> => {
+        resolveIteratorStarted();
+        await iteratorGate;
+        if (isCurrent()) {
+          throw new Error('stale target resolution was pruned');
+        }
+      });
+      sinon.stub(internal._quotaManager, 'pruneForCurrentTargets').callsFake(prune);
 
       const resolution = internal.getSyncTargets();
       await iteratorStarted;
@@ -349,7 +345,7 @@ describe('SyncEngineLevel', () => {
       resumeIterator();
       await resolution;
 
-      expect(batch.called).toBe(false);
+      expect(prune.calledOnce).toBe(true);
       expect(internal._targetPlanner.lastResolutionComplete).toBe(false);
     });
 

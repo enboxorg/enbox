@@ -8,6 +8,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
 import { buildLinkId } from '../src/sync-link-id.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
+import { SyncQuotaManager } from '../src/sync-quota-manager.js';
 import {
   computeAuthorizationEpoch,
   computeProjectionId,
@@ -616,16 +617,16 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
         messageTimestamp : '2026-01-04T00:00:00.000000Z',
       },
     } as GenericMessage;
-    const internal = SyncEngineLevel as unknown as {
+    const quotaPolicy = SyncQuotaManager as unknown as {
       acknowledgementSupersedesBlockedWrite(
         acknowledgement: GenericMessage,
         blocked: GenericMessage,
       ): Promise<boolean>;
     };
 
-    expect(await internal.acknowledgementSupersedesBlockedWrite(olderDelete, blocked)).toBe(true);
-    expect(await internal.acknowledgementSupersedesBlockedWrite(olderUpdate, blocked)).toBe(false);
-    expect(await internal.acknowledgementSupersedesBlockedWrite(unrelatedNewerUpdate, blocked)).toBe(false);
+    expect(await quotaPolicy.acknowledgementSupersedesBlockedWrite(olderDelete, blocked)).toBe(true);
+    expect(await quotaPolicy.acknowledgementSupersedesBlockedWrite(olderUpdate, blocked)).toBe(false);
+    expect(await quotaPolicy.acknowledgementSupersedesBlockedWrite(unrelatedNewerUpdate, blocked)).toBe(false);
   });
 
   it('terminal reclassification removes stale quota state without emitting a recovery event', async () => {
