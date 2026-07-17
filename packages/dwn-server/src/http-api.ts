@@ -1101,86 +1101,23 @@ export class HttpApi {
     req: Request, path: string, method: string
   ): Promise<Response | null> {
     // POST /connect/par
-    if (method === 'POST' && path === '/connect/par') {
-      log.info('Storing Pushed Authorization Request (PAR) request...');
-      const body = await req.json();
-
-      if (!body.request) {
-        return Response.json({
-          ok     : false,
-          status : { code: 400, message: 'Bad Request: Missing \'request\' parameter' },
-        }, { status: 400 });
-      }
-
-      if (body?.request?.request_uri) {
-        return Response.json({
-          ok     : false,
-          status : { code: 400, message: 'Bad Request: \'request_uri\' parameter is not allowed in PAR' },
-        }, { status: 400 });
-      }
-
-      const result = await this.connectServer.setConnectRequest(body.request);
-      return Response.json(result, { status: 201 });
+    const parResult = await this.#handleConnectPar(req, path, method);
+    if (parResult !== null) {
+      return parResult;
     }
 
     // GET /connect/authorize/:requestId.jwt
     {
       const match = /^\/connect\/authorize\/([^/]+)\.jwt$/.exec(path);
       if (match && method === 'GET') {
-        const requestId = match[1];
-        log.info(`Retrieving Connect Request object of ID: ${requestId}...`);
-
-        const requestObjectJwt = await this.connectServer.getConnectRequest(requestId);
-        if (requestObjectJwt) {
-          const body = typeof requestObjectJwt === 'string'
-            ? requestObjectJwt
-            : JSON.stringify(requestObjectJwt);
-          return new Response(body, {
-            headers: { 'content-type': 'application/jwt' },
-          });
-        } else {
-          return Response.json({
-            ok     : false,
-            status : { code: 404, message: 'Not Found' },
-          }, { status: 404 });
-        }
+        return this.#handleConnectAuthorize(match[1]);
       }
     }
 
     // POST /connect/callback
-    if (method === 'POST' && path === '/connect/callback') {
-      log.info('Storing Identity Provider (wallet) pushed response with ID token...');
-
-      // The agent's submitConnectResponse sends application/x-www-form-urlencoded
-      // but the server was previously parsing as JSON, causing a 500 error.
-      // Support both content types for robustness.
-      const contentType = req.headers.get('content-type') ?? '';
-      let idToken: string | undefined;
-      let state: string | undefined;
-
-      if (contentType.includes('application/x-www-form-urlencoded')) {
-        const text = await req.text();
-        const params = new URLSearchParams(text);
-        idToken = params.get('id_token') ?? undefined;
-        state = params.get('state') ?? undefined;
-      } else {
-        const body = await req.json();
-        idToken = body.id_token;
-        state = body.state;
-      }
-
-      if (idToken !== undefined && state != undefined) {
-        await this.connectServer.setConnectResponse(state, idToken);
-        return Response.json({
-          ok     : true,
-          status : { code: 201, message: 'Created' },
-        }, { status: 201 });
-      } else {
-        return Response.json({
-          ok     : false,
-          status : { code: 400, message: 'Bad Request' },
-        }, { status: 400 });
-      }
+    const callbackResult = await this.#handleConnectCallback(req, path, method);
+    if (callbackResult !== null) {
+      return callbackResult;
     }
 
     // GET /connect/status/:requestId
@@ -1191,9 +1128,7 @@ export class HttpApi {
     {
       const match = /^\/connect\/status\/([^/]+)$/.exec(path);
       if (match && method === 'GET') {
-        const requestId = match[1];
-        const claimed = await this.connectServer.isConnectRequestClaimed(requestId);
-        return Response.json({ claimed }, { status: 200 });
+        return this.#handleConnectRequestStatus(match[1]);
       }
     }
 
@@ -1203,21 +1138,9 @@ export class HttpApi {
     // opaque `state` correlator as the token route; the wallet polls the
     // matching GET to flip its pairing screen to "connected" instead of
     // asking the user to dismiss it blind.
-    if (method === 'POST' && path === '/connect/complete') {
-      const body = await req.json().catch((): undefined => undefined) as { state?: unknown } | undefined;
-      const state = body?.state;
-      if (typeof state !== 'string' || state === '') {
-        return Response.json({
-          ok     : false,
-          status : { code: 400, message: 'Bad Request: Missing \'state\' parameter' },
-        }, { status: 400 });
-      }
-
-      await this.connectServer.setConnectComplete(state);
-      return Response.json({
-        ok     : true,
-        status : { code: 201, message: 'Created' },
-      }, { status: 201 });
+    const completeResult = await this.#handleConnectComplete(req, path, method);
+    if (completeResult !== null) {
+      return completeResult;
     }
 
     // GET /connect/complete/:state
@@ -1226,9 +1149,7 @@ export class HttpApi {
     {
       const match = /^\/connect\/complete\/([^/]+)$/.exec(path);
       if (match && method === 'GET') {
-        const state = decodeURIComponent(match[1]);
-        const completed = await this.connectServer.isConnectComplete(state);
-        return Response.json({ completed }, { status: 200 });
+        return this.#handleConnectCompleteState(match[1]);
       }
     }
 
@@ -1236,21 +1157,140 @@ export class HttpApi {
     {
       const match = /^\/connect\/token\/([^/]+)\.jwt$/.exec(path);
       if (match && method === 'GET') {
-        const state = match[1];
-        log.info(`Retrieving ID token for state: ${state}...`);
-
-        const idToken = await this.connectServer.getConnectResponse(state);
-        if (idToken) {
-          const body = typeof idToken === 'string' ? idToken : JSON.stringify(idToken);
-          return new Response(body, {
-            headers: { 'content-type': 'application/jwt' },
-          });
-        } else {
-          return new Response(null, { status: 204 }); // Not ready or already consumed: a clean 204, never a 404 (the app long-polls this).
-        }
+        return this.#handleConnectToken(match[1]);
       }
     }
 
     return null;
+  }
+
+  async #handleConnectPar(req: Request, path: string, method: string): Promise<Response | null> {
+    if (!(method === 'POST' && path === '/connect/par')) {
+      return null;
+    }
+
+    log.info('Storing Pushed Authorization Request (PAR) request...');
+    const body = await req.json();
+
+    if (!body.request) {
+      return Response.json({
+        ok     : false,
+        status : { code: 400, message: 'Bad Request: Missing \'request\' parameter' },
+      }, { status: 400 });
+    }
+
+    if (body?.request?.request_uri) {
+      return Response.json({
+        ok     : false,
+        status : { code: 400, message: 'Bad Request: \'request_uri\' parameter is not allowed in PAR' },
+      }, { status: 400 });
+    }
+
+    const result = await this.connectServer.setConnectRequest(body.request);
+    return Response.json(result, { status: 201 });
+  }
+
+  async #handleConnectAuthorize(requestId: string): Promise<Response> {
+    log.info(`Retrieving Connect Request object of ID: ${requestId}...`);
+
+    const requestObjectJwt = await this.connectServer.getConnectRequest(requestId);
+    if (requestObjectJwt) {
+      const body = typeof requestObjectJwt === 'string'
+        ? requestObjectJwt
+        : JSON.stringify(requestObjectJwt);
+      return new Response(body, {
+        headers: { 'content-type': 'application/jwt' },
+      });
+    } else {
+      return Response.json({
+        ok     : false,
+        status : { code: 404, message: 'Not Found' },
+      }, { status: 404 });
+    }
+  }
+
+  async #handleConnectCallback(req: Request, path: string, method: string): Promise<Response | null> {
+    if (!(method === 'POST' && path === '/connect/callback')) {
+      return null;
+    }
+
+    log.info('Storing Identity Provider (wallet) pushed response with ID token...');
+
+    // The agent's submitConnectResponse sends application/x-www-form-urlencoded
+    // but the server was previously parsing as JSON, causing a 500 error.
+    // Support both content types for robustness.
+    const contentType = req.headers.get('content-type') ?? '';
+    let idToken: string | undefined;
+    let state: string | undefined;
+
+    if (contentType.includes('application/x-www-form-urlencoded')) {
+      const text = await req.text();
+      const params = new URLSearchParams(text);
+      idToken = params.get('id_token') ?? undefined;
+      state = params.get('state') ?? undefined;
+    } else {
+      const body = await req.json();
+      idToken = body.id_token;
+      state = body.state;
+    }
+
+    if (idToken !== undefined && state != undefined) {
+      await this.connectServer.setConnectResponse(state, idToken);
+      return Response.json({
+        ok     : true,
+        status : { code: 201, message: 'Created' },
+      }, { status: 201 });
+    } else {
+      return Response.json({
+        ok     : false,
+        status : { code: 400, message: 'Bad Request' },
+      }, { status: 400 });
+    }
+  }
+
+  async #handleConnectRequestStatus(requestId: string): Promise<Response> {
+    const claimed = await this.connectServer.isConnectRequestClaimed(requestId);
+    return Response.json({ claimed }, { status: 200 });
+  }
+
+  async #handleConnectComplete(req: Request, path: string, method: string): Promise<Response | null> {
+    if (!(method === 'POST' && path === '/connect/complete')) {
+      return null;
+    }
+
+    const body = await req.json().catch((): undefined => undefined) as { state?: unknown } | undefined;
+    const state = body?.state;
+    if (typeof state !== 'string' || state === '') {
+      return Response.json({
+        ok     : false,
+        status : { code: 400, message: 'Bad Request: Missing \'state\' parameter' },
+      }, { status: 400 });
+    }
+
+    await this.connectServer.setConnectComplete(state);
+    return Response.json({
+      ok     : true,
+      status : { code: 201, message: 'Created' },
+    }, { status: 201 });
+  }
+
+  async #handleConnectCompleteState(rawState: string): Promise<Response> {
+    const state = decodeURIComponent(rawState);
+    const completed = await this.connectServer.isConnectComplete(state);
+    return Response.json({ completed }, { status: 200 });
+  }
+
+  async #handleConnectToken(state: string): Promise<Response> {
+    log.info(`Retrieving ID token for state: ${state}...`);
+
+    const idToken = await this.connectServer.getConnectResponse(state);
+    if (idToken) {
+      const body = typeof idToken === 'string' ? idToken : JSON.stringify(idToken);
+      return new Response(body, {
+        headers: { 'content-type': 'application/jwt' },
+      });
+    } else {
+      return new Response(null, { status: 204 }); // Not ready or already consumed: a clean 204, never a 404 (the app long-polls this).
+    }
   }
 }

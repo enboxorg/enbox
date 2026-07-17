@@ -508,48 +508,13 @@ export class AdminApi {
       );
     }
 
-    const listOptions: TenantListOptions = {
-      cursor : url.searchParams.get('cursor') ?? undefined,
-      limit  : Math.min(parseIntOrDefault(url.searchParams.get('limit'), 20), 100),
-      search : url.searchParams.get('search') ?? undefined,
-      status : (url.searchParams.get('status') as TenantListOptions['status']) ?? undefined,
-      sort   : (url.searchParams.get('sort') as TenantListOptions['sort']) ?? undefined,
-      order  : (url.searchParams.get('order') as TenantListOptions['order']) ?? undefined,
-    };
+    const listOptionsResult = this.#parseAndValidateTenantListOptions(url);
+    if (listOptionsResult instanceof Response) {
+      return listOptionsResult;
+    }
+    const listOptions = listOptionsResult;
 
-    // Validate enum-style params.
-    if (listOptions.status !== undefined && listOptions.status !== 'active' && listOptions.status !== 'suspended') {
-      return Response.json({ error: 'status must be "active" or "suspended"' }, { status: 400 });
-    }
-    if (listOptions.sort !== undefined && !['did', 'storage', 'messages'].includes(listOptions.sort)) {
-      return Response.json({ error: 'sort must be "did", "storage", or "messages"' }, { status: 400 });
-    }
-    if (listOptions.order !== undefined && listOptions.order !== 'asc' && listOptions.order !== 'desc') {
-      return Response.json({ error: 'order must be "asc" or "desc"' }, { status: 400 });
-    }
-
-    // Get tenant list from registration store if available, otherwise discover from messages.
-    let tenantDids: string[];
-    let nextCursor: string | undefined;
-
-    if (this.#registrationStore) {
-      const result = await this.#registrationStore.listTenants({
-        cursor : listOptions.cursor,
-        limit  : listOptions.limit,
-        search : listOptions.search,
-        status : listOptions.status,
-      });
-      tenantDids = result.tenants.map((t): string => t.did);
-      nextCursor = result.cursor;
-    } else {
-      const result = await this.#adminStore.getDistinctTenants({
-        cursor : listOptions.cursor,
-        limit  : listOptions.limit,
-        search : listOptions.search,
-      });
-      tenantDids = result.tenants;
-      nextCursor = result.cursor;
-    }
+    const { tenantDids, nextCursor } = await this.#resolveTenantDidPage(listOptions);
 
     // Enrich with stats.
     const tenants: AdminTenantSummary[] = await Promise.all(
@@ -583,6 +548,63 @@ export class AdminApi {
     };
 
     return Response.json(response);
+  }
+
+  /**
+   * Parses tenant-list query parameters from the URL and validates the
+   * enum-style params (`status`, `sort`, `order`). Extracted from
+   * `#handleTenantList()`.
+   *
+   * @returns The validated options, or an error `Response` when validation fails.
+   */
+  #parseAndValidateTenantListOptions(url: URL): TenantListOptions | Response {
+    const listOptions: TenantListOptions = {
+      cursor : url.searchParams.get('cursor') ?? undefined,
+      limit  : Math.min(parseIntOrDefault(url.searchParams.get('limit'), 20), 100),
+      search : url.searchParams.get('search') ?? undefined,
+      status : (url.searchParams.get('status') as TenantListOptions['status']) ?? undefined,
+      sort   : (url.searchParams.get('sort') as TenantListOptions['sort']) ?? undefined,
+      order  : (url.searchParams.get('order') as TenantListOptions['order']) ?? undefined,
+    };
+
+    // Validate enum-style params.
+    if (listOptions.status !== undefined && listOptions.status !== 'active' && listOptions.status !== 'suspended') {
+      return Response.json({ error: 'status must be "active" or "suspended"' }, { status: 400 });
+    }
+    if (listOptions.sort !== undefined && !['did', 'storage', 'messages'].includes(listOptions.sort)) {
+      return Response.json({ error: 'sort must be "did", "storage", or "messages"' }, { status: 400 });
+    }
+    if (listOptions.order !== undefined && listOptions.order !== 'asc' && listOptions.order !== 'desc') {
+      return Response.json({ error: 'order must be "asc" or "desc"' }, { status: 400 });
+    }
+
+    return listOptions;
+  }
+
+  /**
+   * Resolves a page of tenant DIDs (and pagination cursor) for the tenant
+   * list — from the registration store when available, otherwise by
+   * discovering distinct tenants from stored messages. Extracted from
+   * `#handleTenantList()`.
+   */
+  async #resolveTenantDidPage(listOptions: TenantListOptions): Promise<{ tenantDids: string[]; nextCursor: string | undefined }> {
+    // Get tenant list from registration store if available, otherwise discover from messages.
+    if (this.#registrationStore) {
+      const result = await this.#registrationStore.listTenants({
+        cursor : listOptions.cursor,
+        limit  : listOptions.limit,
+        search : listOptions.search,
+        status : listOptions.status,
+      });
+      return { tenantDids: result.tenants.map((t): string => t.did), nextCursor: result.cursor };
+    }
+
+    const result = await this.#adminStore.getDistinctTenants({
+      cursor : listOptions.cursor,
+      limit  : listOptions.limit,
+      search : listOptions.search,
+    });
+    return { tenantDids: result.tenants, nextCursor: result.cursor };
   }
 
   /**
@@ -970,6 +992,36 @@ export class AdminApi {
    * Patches runtime-changeable configuration values and applies them immediately.
    */
   async #handleConfigPatch(req: Request): Promise<Response> {
+    const patchResult = await this.#parseAndValidateConfigPatch(req);
+    if (patchResult instanceof Response) {
+      return patchResult;
+    }
+    const body = patchResult;
+
+    const changes = this.#applyConfigPatchFields(body);
+
+    if (changes.length === 0) {
+      return Response.json({ error: 'No valid configuration fields provided.' }, { status: 400 });
+    }
+
+    // Reconfigure rate limiters if rate limit settings changed.
+    // @see https://github.com/enboxorg/enbox/issues/389
+    this.#reconfigureRateLimitersIfChanged(body);
+
+    await this.#audit('config.update', undefined, JSON.stringify({ changes, values: body }));
+
+    return Response.json({ success: true, updated: changes });
+  }
+
+  /**
+   * Parses and validates a runtime config patch request body: the JSON must
+   * parse, `logLevel` (if present) must be a recognized log level, and each
+   * numeric field (if present) must be a non-negative finite number.
+   * Extracted from `#handleConfigPatch()`.
+   *
+   * @returns The parsed patch body, or an error `Response` when parsing or validation fails.
+   */
+  async #parseAndValidateConfigPatch(req: Request): Promise<RuntimeConfigPatch | Response> {
     let body: RuntimeConfigPatch;
     try {
       body = await req.json() as RuntimeConfigPatch;
@@ -993,6 +1045,15 @@ export class AdminApi {
       }
     }
 
+    return body;
+  }
+
+  /**
+   * Applies each present field of a runtime config patch to `this.#config`,
+   * returning the list of field names that were changed. Extracted from
+   * `#handleConfigPatch()`.
+   */
+  #applyConfigPatchFields(body: RuntimeConfigPatch): string[] {
     const changes: string[] = [];
 
     if (body.logLevel !== undefined) {
@@ -1041,12 +1102,16 @@ export class AdminApi {
       changes.push('rateLimitTenantBurst');
     }
 
-    if (changes.length === 0) {
-      return Response.json({ error: 'No valid configuration fields provided.' }, { status: 400 });
-    }
+    return changes;
+  }
 
-    // Reconfigure rate limiters if rate limit settings changed.
-    // @see https://github.com/enboxorg/enbox/issues/389
+  /**
+   * Reconfigures the IP and tenant rate limiters when the corresponding
+   * patch fields were provided. Extracted from `#handleConfigPatch()`.
+   *
+   * @see https://github.com/enboxorg/enbox/issues/389
+   */
+  #reconfigureRateLimitersIfChanged(body: RuntimeConfigPatch): void {
     if (this.#ipRateLimiter && (body.rateLimitRequestsPerSecond !== undefined || body.rateLimitBurst !== undefined)) {
       this.#ipRateLimiter.reconfigure({
         refillRate : this.#config.rateLimitRequestsPerSecond,
@@ -1059,10 +1124,6 @@ export class AdminApi {
         maxTokens  : this.#config.rateLimitTenantBurst,
       });
     }
-
-    await this.#audit('config.update', undefined, JSON.stringify({ changes, values: body }));
-
-    return Response.json({ success: true, updated: changes });
   }
 
   // ---------------------------------------------------------------------------
