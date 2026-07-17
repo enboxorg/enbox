@@ -15,6 +15,7 @@ import type { SyncEndpointStore } from './sync-endpoint-store.js';
 import type { SyncIdentityStore } from './sync-identity-store.js';
 import type { SyncMessageEntry } from './sync-messages.js';
 import type { SyncReplicationLinkStore } from './sync-replication-link-store.js';
+import type { SyncRunOptions } from './sync-run-coordinator.js';
 import type {
   DeadLetterCategory,
   DeadLetterEntry,
@@ -78,6 +79,7 @@ import { SyncLinkController } from './sync-link-controller.js';
 import { SyncQuotaManager } from './sync-quota-manager.js';
 import { SyncQuotaStoreLevel } from './sync-quota-store-level.js';
 import { SyncReplicationLinkStoreLevel } from './sync-replication-link-store-level.js';
+import { SyncRunCoordinator } from './sync-run-coordinator.js';
 import { SyncScopeClosureValidator } from './sync-scope-closure-validator.js';
 import { SyncStatusReporter } from './sync-status-reporter.js';
 import { SyncTargetPlanner } from './sync-target-planner.js';
@@ -120,21 +122,6 @@ enum LinkInitializationStatus {
 type LinkInitializationResult =
   | { status: LinkInitializationStatus.Active; durableLinkIdentityKey: string }
   | { status: LinkInitializationStatus.Failed };
-
-type SyncRunOptions = {
-  verifyConvergence?: boolean;
-};
-
-type SyncTargetGroupRunResult = {
-  dwnUrl: string;
-  succeeded: boolean;
-};
-
-type SyncTargetGroupSummary = {
-  failedUrls: string[];
-  groupsFailed: number;
-  groupsSucceeded: number;
-};
 
 type FeedConvergenceFailureState = {
   attempts: number;
@@ -224,6 +211,7 @@ export class SyncEngineLevel implements SyncEngine {
   private readonly _identityStore: SyncIdentityStore;
   private readonly _lifecycle = new SyncLifecycleCoordinator();
   private readonly _quotaManager: SyncQuotaManager;
+  private readonly _runCoordinator: SyncRunCoordinator;
   private readonly _scopeClosureValidator: SyncScopeClosureValidator;
   private readonly _statusReporter: SyncStatusReporter;
   private readonly _targetPlanner: SyncTargetPlanner;
@@ -309,6 +297,24 @@ export class SyncEngineLevel implements SyncEngine {
           this.registerSupplementalDwnEndpoint(remoteEndpoint),
         verifyConvergence: (target, shouldContinue): Promise<SyncReconcileResult> =>
           this.verifyFeedConvergence(target, shouldContinue),
+      },
+    });
+    this._runCoordinator = new SyncRunCoordinator({
+      operations: {
+        clearFeedConvergenceFailure: (target): Promise<void> =>
+          this.clearFeedConvergenceFailure(target),
+        getTargets                   : (): Promise<SyncTarget[]> => this.getSyncTargets(),
+        handleVerifiedFeedDivergence : async (target, result): Promise<void> => {
+          await this.handleVerifiedFeedDivergence(target, result);
+        },
+        onReconcileApplied : (target, messageCids): void => { this.emitReconcileApplied(target, messageCids); },
+        reconcileTarget    : (target, direction, verifyConvergence): Promise<SyncReconcileResult> =>
+          this.syncTargetWithDurableFeeds(target, { direction, verifyConvergence }),
+        recordConnectivityFailure : (): void => { this._connectivityManager.recordFailure(); },
+        recordConnectivitySuccess : (): void => { this._connectivityManager.recordSuccess(); },
+        recordPushFailures        : (target, failures): Promise<number> =>
+          this.recordTerminalSyncPushFailures(target, failures),
+        reportError: (message, error): void => { console.error(message, error); },
       },
     });
     this._scopeClosureValidator = new SyncScopeClosureValidator({
@@ -731,10 +737,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     try {
-      const syncTargets = await this.getSyncTargets();
-      const groupSummary = await this.syncTargetGroups(syncTargets, direction, options);
-      this.updateConnectivityAfterSync(groupSummary);
-      SyncEngineLevel.assertSyncTargetGroupsSucceeded(groupSummary);
+      await this._runCoordinator.run(direction, options);
     } finally {
       this._lifecycle.releaseSync();
     }
@@ -796,153 +799,6 @@ export class SyncEngineLevel implements SyncEngine {
 
   private static errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
-  }
-
-  private async syncTargetGroups(
-    syncTargets: SyncTarget[],
-    direction: SyncDirection | undefined,
-    options: SyncRunOptions | undefined,
-  ): Promise<SyncTargetGroupSummary> {
-    // Group targets by remote endpoint so each URL group can be reconciled
-    // concurrently. Within a group, targets are processed sequentially so
-    // that a single network failure skips the rest of that group.
-    const byUrl = SyncEngineLevel.groupSyncTargetsByDwnUrl(syncTargets);
-    const results = await Promise.allSettled([...byUrl.entries()].map(([dwnUrl, targets]) =>
-      this.syncTargetGroupWithUrl(dwnUrl, targets, direction, options)
-    ));
-
-    return SyncEngineLevel.summarizeSyncTargetGroupResults(results);
-  }
-
-  private static groupSyncTargetsByDwnUrl(syncTargets: SyncTarget[]): Map<string, SyncTarget[]> {
-    const byUrl = new Map<string, SyncTarget[]>();
-    for (const target of syncTargets) {
-      const group = byUrl.get(target.dwnUrl) ?? [];
-      group.push(target);
-      byUrl.set(target.dwnUrl, group);
-    }
-
-    return byUrl;
-  }
-
-  private async syncTargetGroupWithUrl(
-    dwnUrl: string,
-    targets: SyncTarget[],
-    direction: SyncDirection | undefined,
-    options: SyncRunOptions | undefined,
-  ): Promise<SyncTargetGroupRunResult> {
-    return {
-      dwnUrl,
-      succeeded: await this.syncTargetGroup(dwnUrl, targets, direction, options),
-    };
-  }
-
-  private static summarizeSyncTargetGroupResults(
-    results: PromiseSettledResult<SyncTargetGroupRunResult>[]
-  ): SyncTargetGroupSummary {
-    const summary: SyncTargetGroupSummary = {
-      failedUrls      : [],
-      groupsFailed    : 0,
-      groupsSucceeded : 0,
-    };
-
-    for (const result of results) {
-      SyncEngineLevel.countSyncTargetGroupResult(summary, result);
-    }
-
-    return summary;
-  }
-
-  private static countSyncTargetGroupResult(
-    summary: SyncTargetGroupSummary,
-    result: PromiseSettledResult<SyncTargetGroupRunResult>
-  ): void {
-    if (result.status === 'rejected') {
-      summary.groupsFailed++;
-      return;
-    }
-
-    if (result.value.succeeded) {
-      summary.groupsSucceeded++;
-      return;
-    }
-
-    summary.groupsFailed++;
-    summary.failedUrls.push(result.value.dwnUrl);
-  }
-
-  private updateConnectivityAfterSync(summary: SyncTargetGroupSummary): void {
-    // If at least one group succeeded, stay online — partial reachability is still online.
-    // Every group is counted as exactly one of succeeded/failed, so when there are no
-    // groups (no targets) neither fires and connectivity is left unchanged.
-    if (summary.groupsSucceeded > 0) {
-      this._connectivityManager.recordSuccess();
-      return;
-    }
-
-    if (summary.groupsFailed > 0) {
-      this._connectivityManager.recordFailure();
-    }
-  }
-
-  private static assertSyncTargetGroupsSucceeded(summary: SyncTargetGroupSummary): void {
-    if (summary.groupsFailed === 0) {
-      return;
-    }
-
-    throw new Error(
-      `SyncEngineLevel: Sync operation failed for ${summary.groupsFailed} remote endpoint(s)`
-      + (summary.failedUrls.length > 0 ? `: ${summary.failedUrls.join(', ')}` : '.')
-    );
-  }
-
-  private async syncTargetGroup(
-    dwnUrl: string,
-    targets: SyncTarget[],
-    direction: SyncDirection | undefined,
-    options: SyncRunOptions | undefined,
-  ): Promise<boolean> {
-    for (const target of targets) {
-      try {
-        await this.syncSingleTarget(target, direction, options);
-      } catch (error: any) {
-        // Skip remaining targets for this DWN endpoint.
-        console.error(`SyncEngineLevel: Error syncing ${target.did} with ${dwnUrl}`, error);
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  private async syncSingleTarget(
-    target: SyncTarget,
-    direction: SyncDirection | undefined,
-    options: SyncRunOptions | undefined,
-  ): Promise<void> {
-    const result = await this.syncTargetWithDurableFeeds(target, {
-      direction,
-      verifyConvergence: options?.verifyConvergence,
-    });
-
-    if (result.admittedCids !== undefined && result.admittedCids.length > 0) {
-      this.emitReconcileApplied(target, result.admittedCids);
-    }
-
-    if (result.pushFailures !== undefined && result.pushFailures.length > 0) {
-      const retryableFailures = await this.recordTerminalSyncPushFailures(target, result.pushFailures);
-      if (retryableFailures > 0) {
-        throw new Error(`SyncEngineLevel: reconciliation push failed for ${retryableFailures} retryable message(s).`);
-      }
-    }
-
-    if (options?.verifyConvergence === true) {
-      if (result.converged === false) {
-        await this.handleVerifiedFeedDivergence(target, result);
-      } else if (result.converged === true) {
-        await this.clearFeedConvergenceFailure(target);
-      }
-    }
   }
 
   // ---------------------------------------------------------------------------
