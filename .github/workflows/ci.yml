@@ -1021,17 +1021,17 @@ jobs:
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
-  # Coverage + SonarCloud: merge all LCOV files (node + browser) into one report
-  # and run the SonarCloud scan in the same job. The merge is only ~15s, so a
-  # separate Sonar job just pays for a second checkout + runner pickup. Coverage
-  # merging is skipped (but the Sonar scan still runs) when no test job produced
-  # coverage, e.g. an apps/docs-only change.
+  # Coverage: merge all LCOV files (node + browser) into one report and publish
+  # it as the `coverage-merged` artifact for the SonarCloud jobs to consume.
+  # This is the only coverage/Sonar job in `ci-passed`'s critical path, and it
+  # is fast (~15s) — so CI Passed no longer serializes behind the ~150s Sonar
+  # scan, which now runs in the sonar-pr / sonar-main jobs below.
   #
   # NOTE: intentionally does not depend on test-e2e — the e2e suite emits no
   # LCOV, so it must not be able to gate or delay coverage.
   # ---------------------------------------------------------------------------
-  coverage-sonar:
-    name: 'Coverage & SonarCloud'
+  coverage:
+    name: 'Coverage: merge'
     runs-on: ubuntu-latest
     timeout-minutes: 12
     needs: [changes, test-lightweight, test-dwn-sdk, test-agent, test-api-clients, test-sql-store, test-dwn-server, test-browser]
@@ -1064,15 +1064,6 @@ jobs:
           else
             echo "value=false" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: Restore Sonar cache
-        if: vars.SONAR_PROJECT_KEY != '' && vars.SONAR_ORG != ''
-        uses: actions/cache@v4
-        with:
-          path: ~/.sonar/cache
-          key: ${{ runner.os }}-sonar-${{ hashFiles('sonar-project.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-sonar-
 
       - name: Download coverage artifacts
         if: steps.have_coverage.outputs.value == 'true'
@@ -1221,11 +1212,46 @@ jobs:
             echo "$response" | head -5
           fi
 
-      # Sonar reads the merged report from ./coverage/merged/lcov.info (produced
-      # above in this same job when coverage ran). The scan still runs without
-      # coverage on apps/docs-only changes.
+  # ---------------------------------------------------------------------------
+  # SonarCloud (PR quality gate): runs ONLY on pull requests and blocks the PR
+  # on the quality gate (qualitygate.wait=true). It IS in `ci-passed`'s needs,
+  # so a failed gate fails CI Passed and blocks the merge — the gate is
+  # preserved, just no longer in the main-branch critical path. Consumes the
+  # merged LCOV artifact from the `coverage` job.
+  # ---------------------------------------------------------------------------
+  sonar-pr:
+    name: SonarCloud (PR gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [changes, coverage]
+    if: >-
+      always() && !cancelled() &&
+      needs.changes.outputs.src == 'true' &&
+      github.event_name == 'pull_request' &&
+      vars.SONAR_PROJECT_KEY != '' && vars.SONAR_ORG != ''
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Restore Sonar cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar-${{ hashFiles('sonar-project.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-sonar-
+
+      - name: Download merged coverage
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: coverage-merged
+          path: coverage/merged
+
       - name: Validate SonarCloud secrets
-        if: vars.SONAR_PROJECT_KEY != '' && vars.SONAR_ORG != ''
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
@@ -1235,20 +1261,80 @@ jobs:
           fi
 
       - name: Run SonarCloud scan
-        if: vars.SONAR_PROJECT_KEY != '' && vars.SONAR_ORG != ''
         uses: SonarSource/sonarqube-scan-action@v6
         env:
           SONAR_HOST_URL: https://sonarcloud.io
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
-          # Quality gate enforcement only on PRs (new code period).
-          # Main branch pushes run the scan for analysis but don't block
-          # on pre-existing quality gate failures.
+          # Block the PR on the quality gate for the new-code period.
           args: >
             -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
             -Dsonar.organization=${{ vars.SONAR_ORG }}
             -Dsonar.pullrequest.github.repository=${{ github.repository }}
-            -Dsonar.qualitygate.wait=${{ github.event_name == 'pull_request' }}
+            -Dsonar.qualitygate.wait=true
+            -Dsonar.qualitygate.timeout=300
+
+  # ---------------------------------------------------------------------------
+  # SonarCloud (main analysis): runs ONLY on pushes to main. It refreshes the
+  # SonarCloud main-branch analysis + coverage record but does NOT block
+  # (qualitygate.wait=false), and is intentionally NOT in `ci-passed`'s needs.
+  # That is the whole point of this split: CI Passed (and the release flow that
+  # keys off it) go green as soon as tests + coverage merge finish, instead of
+  # waiting ~150s for a scan that does not gate main anyway.
+  # ---------------------------------------------------------------------------
+  sonar-main:
+    name: SonarCloud (main analysis)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [changes, coverage]
+    if: >-
+      always() && !cancelled() &&
+      needs.changes.outputs.src == 'true' &&
+      github.event_name == 'push' &&
+      vars.SONAR_PROJECT_KEY != '' && vars.SONAR_ORG != ''
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Restore Sonar cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar-${{ hashFiles('sonar-project.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-sonar-
+
+      - name: Download merged coverage
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: coverage-merged
+          path: coverage/merged
+
+      - name: Validate SonarCloud secrets
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [ -z "$SONAR_TOKEN" ]; then
+            echo "::error::Set the SONAR_TOKEN repository secret before enabling SonarCloud scanning"
+            exit 1
+          fi
+
+      - name: Run SonarCloud scan
+        uses: SonarSource/sonarqube-scan-action@v6
+        env:
+          SONAR_HOST_URL: https://sonarcloud.io
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          # Analysis only — main pushes don't block on pre-existing QG state.
+          args: >
+            -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
+            -Dsonar.organization=${{ vars.SONAR_ORG }}
+            -Dsonar.pullrequest.github.repository=${{ github.repository }}
+            -Dsonar.qualitygate.wait=false
             -Dsonar.qualitygate.timeout=300
 
   # ---------------------------------------------------------------------------
@@ -1448,7 +1534,7 @@ jobs:
     name: CI Passed
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    needs: [changes, lint, build, test-lightweight, test-dwn-sdk, test-agent, test-api-clients, test-e2e, test-sql-store, test-dwn-server, test-browser, coverage-sonar]
+    needs: [changes, lint, build, test-lightweight, test-dwn-sdk, test-agent, test-api-clients, test-e2e, test-sql-store, test-dwn-server, test-browser, coverage, sonar-pr]
     if: always()
     steps:
       - name: Check results
@@ -1505,11 +1591,19 @@ jobs:
             exit 1
           fi
 
-          # Coverage + SonarCloud: required when it ran, OK to skip (no test jobs
-          # ran). A SonarCloud quality-gate failure fails this job, so a failed
-          # gate still blocks the PR through the coverage-sonar result.
-          if [ "${{ needs.coverage-sonar.result }}" != "success" ] && [ "${{ needs.coverage-sonar.result }}" != "skipped" ]; then
-            echo "::error::coverage-sonar failed"
+          # Coverage merge: required when it ran, OK to skip (no test jobs ran).
+          if [ "${{ needs.coverage.result }}" != "success" ] && [ "${{ needs.coverage.result }}" != "skipped" ]; then
+            echo "::error::coverage failed"
+            exit 1
+          fi
+
+          # SonarCloud PR quality gate: gates pull requests. A failed quality
+          # gate fails sonar-pr, which fails this job and blocks the merge. It is
+          # skipped on main pushes and on fork PRs without Sonar vars — both OK.
+          # (The non-gating sonar-main analysis job is intentionally excluded
+          # from this gate so main pushes don't wait on the scan.)
+          if [ "${{ needs.sonar-pr.result }}" != "success" ] && [ "${{ needs.sonar-pr.result }}" != "skipped" ]; then
+            echo "::error::sonar-pr (quality gate) failed"
             exit 1
           fi
 
