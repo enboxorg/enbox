@@ -162,6 +162,73 @@ describe('DwnApi.messages', () => {
       await liveQuery!.close();
     });
 
+    it('should replay stored events from a cursor and emit eose before going live', async () => {
+      const definition = { ...emailProtocolDefinition, protocol: protocolUri };
+      const { status: configureStatus } = await dwnAlice.protocols.configure({ definition });
+      expect(configureStatus.code).toBe(202);
+
+      // Baseline subscription captures per-event cursors for two writes.
+      const baseline = await dwnAlice.messages.subscribe({ filters: [{ protocol: definition.protocol }] });
+      const seen: MessageChange[] = [];
+      baseline.liveQuery!.on('event', (change): void => { seen.push(change); });
+
+      const writeThread = async (data: string): Promise<string> => {
+        const { record } = await dwnAlice.records.write({
+          data,
+          protocol     : definition.protocol,
+          protocolPath : 'thread',
+          schema       : definition.types.thread.schema,
+          dataFormat   : 'application/json',
+        });
+        return record!.id;
+      };
+
+      const firstRecordId = await writeThread('first');
+      const secondRecordId = await writeThread('second');
+
+      await Poller.pollUntilSuccessOrTimeout(async () => {
+        expect(seen.some(change => change.descriptor.recordId === firstRecordId)).toBe(true);
+        expect(seen.some(change => change.descriptor.recordId === secondRecordId)).toBe(true);
+      });
+      const cursorAfterFirst = seen.find(change => change.descriptor.recordId === firstRecordId)!.cursor;
+      await baseline.liveQuery!.close();
+
+      // Resume from the first event's cursor: the stored SECOND event must
+      // replay through the pre-listener buffer, followed by its EOSE — with
+      // no new writes happening at all.
+      const resumed = await dwnAlice.messages.subscribe({
+        filters : [{ protocol: definition.protocol }],
+        cursor  : cursorAfterFirst,
+      });
+      const ordered: string[] = [];
+      const replayed: MessageChange[] = [];
+      resumed.liveQuery!.on('event', (change): void => {
+        ordered.push('event');
+        replayed.push(change);
+      });
+      resumed.liveQuery!.on('eose', (): void => { ordered.push('eose'); });
+
+      // The buffered backlog flushes one microtask after handlers attach.
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      expect(ordered).toEqual(['event', 'eose']);
+      expect(replayed[0].descriptor.recordId).toBe(secondRecordId);
+
+      await resumed.liveQuery!.close();
+    });
+
+    it('should reject a delegated multi-protocol subscribe without explicit grants', async () => {
+      const delegated = new DwnApi({
+        agent        : testHarness.agent,
+        connectedDid : aliceDid.uri,
+        delegateDid  : aliceDid.uri,
+      });
+
+      await expect(delegated.messages.subscribe({
+        filters: [{ protocol: 'http://a.example' }, { protocol: 'http://b.example' }],
+      })).rejects.toThrow('single-protocol filter set or explicit permissionGrantIds');
+    });
+
     it('should describe a RecordsDelete with the deleted recordId', async () => {
       const definition = { ...emailProtocolDefinition, protocol: protocolUri };
       const { status: configureStatus } = await dwnAlice.protocols.configure({ definition });

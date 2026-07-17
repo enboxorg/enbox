@@ -75,19 +75,13 @@ export type MessageChange = {
   message: GenericMessage;
   /** Routing summary extracted from the message. */
   descriptor: MessageDescriptor;
-  /** CID of the delivered message. */
-  messageCid: string;
+  /**
+   * CID of the delivered message. Present on durable-log deliveries; when a
+   * transport omits it, compute one via `Message.getCid(change.message)`.
+   */
+  messageCid?: string;
   /** Progress cursor for resuming a later subscription after this event. */
   cursor: ProgressToken;
-};
-
-/**
- * Options for creating a {@link MessagesLiveQuery}.
- * @internal — Constructed by `DwnApi.messages.subscribe()`, not by end users.
- */
-export type MessagesLiveQueryOptions = {
-  /** The underlying DWN subscription handle. */
-  subscription: DwnMessageSubscription;
 };
 
 /**
@@ -114,10 +108,33 @@ export type MessagesLiveQueryEventType = 'event' | LiveQueryLifecycleEvent | 'er
  * | `reconnected` | — | Connection restored, subscription resubscribed |
  * | `eose` | — | End-of-stored-events: cursor catch-up complete, events are now live |
  * | `error` | {@link LiveQueryError} | Terminal subscription error; no further events will be delivered |
+ *
+ * On the local path, `eose` is emitted only for cursor subscriptions (the
+ * marker closing the stored-events replay); a cursor-less subscription is
+ * live-only and never emits it — don't gate on `eose` unless you passed a
+ * cursor.
+ *
+ * Cursor catch-up replays synchronously inside the subscribe call, before the
+ * caller can register handlers — so dispatch is buffered until the first
+ * {@link MessagesLiveQuery.on | `.on()`} handler attaches, then flushed in
+ * order one microtask later (so every handler attached in the same
+ * synchronous block sees the backlog). Attach all handlers synchronously
+ * right after subscribing; listeners added after the flush do not see the
+ * replayed backlog.
  */
 export class MessagesLiveQuery extends EventTarget {
-  /** The underlying DWN subscription handle. */
-  private readonly _subscription: DwnMessageSubscription;
+  /** The underlying DWN subscription handle, attached once the reply arrives. */
+  private _subscription?: DwnMessageSubscription;
+
+  /**
+   * Dispatches buffered until the first `.on()` handler attaches — the local
+   * cursor replay fires inside the subscribe call, before any caller code can
+   * listen. `undefined` once flushed (events then dispatch immediately).
+   */
+  private _pending?: Array<{ type: MessagesLiveQueryEventType; detail?: unknown }> = [];
+
+  /** A microtask flush is queued (set by the first `.on()`). */
+  private _flushScheduled = false;
 
   /** Whether the live query has been closed. */
   private _closed = false;
@@ -125,9 +142,36 @@ export class MessagesLiveQuery extends EventTarget {
   /** Whether the transport connection is currently active. */
   private _connected = true;
 
-  constructor(options: MessagesLiveQueryOptions) {
-    super();
-    this._subscription = options.subscription;
+  /**
+   * Attach the underlying subscription handle once the subscribe reply
+   * arrives. The query is constructed BEFORE the request is dispatched so the
+   * handler (and this buffer) exist for synchronous catch-up delivery.
+   *
+   * @internal — Called by `DwnApi.messages.subscribe()`.
+   */
+  public attachSubscription(subscription: DwnMessageSubscription): void {
+    this._subscription = subscription;
+  }
+
+  /** Queue (pre-flush) or dispatch one typed event. */
+  private emit(type: MessagesLiveQueryEventType, detail?: unknown): void {
+    if (this._pending !== undefined) {
+      this._pending.push({ type, detail });
+      return;
+    }
+    this.dispatchEvent(new CustomEvent(type, { detail }));
+  }
+
+  /** Flush the pre-listener buffer in arrival order. */
+  private flushPending(): void {
+    const pending = this._pending;
+    if (pending === undefined) {
+      return;
+    }
+    this._pending = undefined;
+    for (const { type, detail } of pending) {
+      this.dispatchEvent(new CustomEvent(type, { detail }));
+    }
   }
 
   /** Whether the transport connection is currently active. */
@@ -146,7 +190,7 @@ export class MessagesLiveQuery extends EventTarget {
       return;
     }
 
-    this.dispatchEvent(new CustomEvent('event', { detail: change }));
+    this.emit('event', change);
   }
 
   /**
@@ -166,7 +210,7 @@ export class MessagesLiveQuery extends EventTarget {
       this._connected = true;
     }
 
-    this.dispatchEvent(new CustomEvent(type, { detail }));
+    this.emit(type, detail);
   }
 
   /**
@@ -181,7 +225,7 @@ export class MessagesLiveQuery extends EventTarget {
     }
 
     this._connected = false;
-    this.dispatchEvent(new CustomEvent('error', { detail: error }));
+    this.emit('error', error);
   }
 
   /**
@@ -216,6 +260,14 @@ export class MessagesLiveQuery extends EventTarget {
     };
 
     this.addEventListener(event, wrapper);
+    // The first typed handler opens the flow — one microtask later, so every
+    // handler attached in the same synchronous block (the normal
+    // `on('event'…); on('eose'…);` sequence right after subscribing) sees the
+    // buffered catch-up backlog in order.
+    if (this._pending !== undefined && !this._flushScheduled) {
+      this._flushScheduled = true;
+      queueMicrotask((): void => this.flushPending());
+    }
     return (): void => { this.removeEventListener(event, wrapper); };
   }
 
@@ -227,6 +279,7 @@ export class MessagesLiveQuery extends EventTarget {
       return;
     }
     this._closed = true;
-    await this._subscription.close();
+    this._pending = undefined;
+    await this._subscription?.close();
   }
 }

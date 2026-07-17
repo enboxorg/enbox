@@ -545,7 +545,8 @@ export class DwnApi {
   }
 
   /**
-   * API to interact with DWN records (e.g., `dwn.records.write()`).
+   * API to observe the DWN's message-level change feed
+   * (e.g., `dwn.messages.subscribe()`).
    */
   get messages(): {
       subscribe: (request?: MessagesSubscribeRequest) => Promise<MessagesSubscribeResponse>;
@@ -568,41 +569,44 @@ export class DwnApi {
       subscribe: async (request: MessagesSubscribeRequest = {}): Promise<MessagesSubscribeResponse> => {
         const { from, ...messageParams } = request;
 
-        let liveQuery: MessagesLiveQuery | undefined;
+        // Constructed BEFORE the request is dispatched: a local cursor
+        // catch-up (and its EOSE) replays synchronously inside the subscribe
+        // call, and must land in the query's pre-listener buffer, not a void.
+        const liveQuery = new MessagesLiveQuery();
 
         const subscriptionHandler = (msg: DwnSubscriptionMessage): void => {
           if (msg.type === 'eose') {
-            liveQuery?.handleLifecycleEvent('eose');
+            liveQuery.handleLifecycleEvent('eose');
             return;
           }
 
           if (msg.type === 'error') {
-            liveQuery?.handleError({
+            liveQuery.handleError({
               code   : msg.error.code,
               detail : msg.error.detail,
               cursor : msg.cursor,
             });
-            Promise.resolve(liveQuery?.close()).catch(() => {});
+            Promise.resolve(liveQuery.close()).catch(() => {});
             return;
           }
 
           if (msg.type === 'disconnected') {
-            liveQuery?.handleLifecycleEvent('disconnected');
+            liveQuery.handleLifecycleEvent('disconnected');
             return;
           }
 
           if (msg.type === 'reconnected') {
-            liveQuery?.handleLifecycleEvent('reconnected');
+            liveQuery.handleLifecycleEvent('reconnected');
             return;
           }
 
           if (msg.type === 'reconnecting') {
-            liveQuery?.handleLifecycleEvent('reconnecting', { attempt: msg.attempt });
+            liveQuery.handleLifecycleEvent('reconnecting', { attempt: msg.attempt });
             return;
           }
 
           const { message } = msg.event;
-          liveQuery?.handleEvent({
+          liveQuery.handleEvent({
             message,
             descriptor : describeMessage(message),
             messageCid : msg.messageCid,
@@ -619,32 +623,40 @@ export class DwnApi {
         };
 
         if (this.delegateDid) {
-          const protocols = [...new Set(
-            (messageParams.filters ?? [])
-              .map(filter => filter.protocol)
-              .filter((protocol): protocol is string => protocol !== undefined),
-          )];
-          try {
+          if (messageParams.permissionGrantIds?.length) {
+            // Caller-supplied grants win: no auto-resolution, no clobbering.
+            agentRequest.granteeDid = this.delegateDid;
+          } else {
+            const protocols = [...new Set(
+              (messageParams.filters ?? [])
+                .map(filter => filter.protocol)
+                .filter((protocol): protocol is string => protocol !== undefined),
+            )];
             if (protocols.length !== 1) {
+              // Deliberately OUTSIDE the grant-lookup try: a precondition
+              // failure must reach the caller, not degrade into the
+              // public fallback.
               throw new Error('DwnApi: delegated messages.subscribe requires a single-protocol filter set or explicit permissionGrantIds.');
             }
-            const { grant } = await this.permissionsApi.getPermissionForRequest({
-              connectedDid : this.connectedDid,
-              delegateDid  : this.delegateDid,
-              protocol     : protocols[0],
-              cached       : true,
-              messageType  : agentRequest.messageType,
-            });
+            try {
+              const { grant } = await this.permissionsApi.getPermissionForRequest({
+                connectedDid : this.connectedDid,
+                delegateDid  : this.delegateDid,
+                protocol     : protocols[0],
+                cached       : true,
+                messageType  : agentRequest.messageType,
+              });
 
-            agentRequest.messageParams = {
-              ...agentRequest.messageParams,
-              permissionGrantIds: [grant.id],
-            };
-            agentRequest.granteeDid = this.delegateDid;
-          } catch {
-            // Without a usable grant, author as the delegate — mirrors
-            // records.subscribe: public/anonymous-visible messages only.
-            agentRequest.author = this.delegateDid;
+              agentRequest.messageParams = {
+                ...agentRequest.messageParams,
+                permissionGrantIds: [grant.id],
+              };
+              agentRequest.granteeDid = this.delegateDid;
+            } catch {
+              // Without a usable grant, author as the delegate — mirrors
+              // records.subscribe: public/anonymous-visible messages only.
+              agentRequest.author = this.delegateDid;
+            }
           }
         }
 
@@ -658,15 +670,19 @@ export class DwnApi {
 
         const { status, subscription } = agentResponse.reply;
 
-        if (subscription) {
-          liveQuery = new MessagesLiveQuery({ subscription });
+        if (subscription === undefined) {
+          return { status };
         }
 
+        liveQuery.attachSubscription(subscription);
         return { status, liveQuery };
       },
     };
   }
 
+  /**
+   * API to interact with DWN records (e.g., `dwn.records.write()`).
+   */
   get records(): {
       delete: (request: RecordsDeleteRequest) => Promise<DwnResponseStatus>;
       query: (request: RecordsQueryRequest) => Promise<RecordsQueryResponse>;
