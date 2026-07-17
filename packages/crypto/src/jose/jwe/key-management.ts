@@ -1,5 +1,4 @@
 import type { Jwk } from '../jwk.js';
-import type { KeyIdentifier } from '../../types/identifier.js';
 import type { JweEnc, JweHeaderParams } from './header.js';
 
 import { Convert } from '@enbox/common';
@@ -74,12 +73,12 @@ export type JweEcdhEsDecryptKey = {
 /**
  * The key management key material accepted by {@link JweKeyManagement.decrypt}.
  */
-export type JweKeyManagementDecryptKey = KeyIdentifier | Jwk | Uint8Array | JweEcdhEsDecryptKey;
+export type JweKeyManagementDecryptKey = string | Jwk | Uint8Array | JweEcdhEsDecryptKey;
 
 /**
  * The key management key material accepted by {@link JweKeyManagement.encrypt}.
  */
-export type JweKeyManagementEncryptKey = KeyIdentifier | Jwk | Uint8Array | JweEcdhEsEncryptKey;
+export type JweKeyManagementEncryptKey = string | Jwk | Uint8Array | JweEcdhEsEncryptKey;
 
 /**
  * Represents the result of the JWE key management encryption process, encapsulating the Content
@@ -90,7 +89,7 @@ export interface JweKeyManagementEncryptResult {
    * The Content Encryption Key (CEK) used for encrypting the JWE payload. It can be a Key
    * Identifier such as a KMS URI or a JSON Web Key (JWK).
    */
-  cek: KeyIdentifier | Jwk;
+  cek: string | Jwk;
 
   /**
    * The encrypted version of the CEK, provided as a byte array. The encrypted version of the CEK
@@ -266,7 +265,7 @@ export class JweKeyManagement {
    */
   public static async decrypt({ key, encryptedKey, joseHeader }: JweKeyManagementDecryptParams,
     options?: { minP2cCount?: number }
-  ): Promise<KeyIdentifier | Jwk> {
+  ): Promise<string | Jwk> {
     const minP2cCount = options?.minP2cCount ?? 1000;
     // Determine the Key Management Mode employed by the algorithm specified by the "alg"
     // (algorithm) Header Parameter.
@@ -301,7 +300,7 @@ export class JweKeyManagement {
   private static decryptDirect({ key, encryptedKey }: {
     key: JweKeyManagementDecryptKey;
     encryptedKey?: Uint8Array;
-  }): KeyIdentifier | Jwk {
+  }): string | Jwk {
     // Verify that the JWE Encrypted Key value is empty.
     if (encryptedKey !== undefined) {
       throw new CryptoError(CryptoErrorCode.InvalidJwe, 'JWE "encrypted_key" is not allowed when using "dir" (Direct Encryption Mode).');
@@ -461,7 +460,7 @@ export class JweKeyManagement {
    */
   public static async encrypt({ key, joseHeader }: JweKeyManagementEncryptParams
   ): Promise<JweKeyManagementEncryptResult> {
-    let cek: KeyIdentifier | Jwk;
+    let cek: string | Jwk;
     let encryptedKey: Uint8Array | undefined;
     let headerParams: Partial<JweHeaderParams> | undefined;
 

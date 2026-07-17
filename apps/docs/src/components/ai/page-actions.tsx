@@ -13,9 +13,9 @@ export function LLMCopyButton({
    * A URL to fetch the raw Markdown/MDX content of page
    */
   markdownUrl,
-}: {
+}: Readonly<{
   markdownUrl: string;
-}) {
+}>) {
   const [isLoading, setLoading] = useState(false);
   const [checked, onClick] = useCopyButton(async () => {
     const cached = cache.get(markdownUrl);
@@ -61,7 +61,7 @@ export function LLMCopyButton({
 export function ViewOptions({
   markdownUrl,
   githubUrl,
-}: {
+}: Readonly<{
   /**
    * A URL to the raw Markdown/MDX content of page
    */
@@ -71,7 +71,7 @@ export function ViewOptions({
    * Source file URL on GitHub
    */
   githubUrl: string;
-}) {
+}>) {
   const items = useMemo(() => {
     const pageUrl = typeof window === 'undefined' ? 'loading' : window.location.href;
     const q = `Read ${pageUrl}, I want to ask questions about it.`;

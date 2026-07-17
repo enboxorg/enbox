@@ -2,7 +2,6 @@ import type {
   EnclosedSignParams,
   EnclosedVerifyParams,
   Jwk,
-  KeyIdentifier,
   KeyImporterExporter,
   KeyManager,
   KmsExportKeyParams,
@@ -238,7 +237,7 @@ export class BearerDid {
    *         keys for any verification method are missing in the key manager.
    */
   public static async import({ portableDid, keyManager = new LocalKeyManager() }: {
-    keyManager?: KeyManager & KeyImporterExporter<KmsImportKeyParams, KeyIdentifier, KmsExportKeyParams>;
+    keyManager?: KeyManager & KeyImporterExporter<KmsImportKeyParams, string, KmsExportKeyParams>;
     portableDid: PortableDid;
   }): Promise<BearerDid> {
 

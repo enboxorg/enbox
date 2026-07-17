@@ -12,9 +12,9 @@ declare module 'bun:test' {
   type SuiteFn = (name: string, fn: () => void) => void;
   type HookFn = (fn: () => void | Promise<void>, timeout?: number) => void;
 
-  export const describe: SuiteFn & { skip: SuiteFn; only: SuiteFn; todo: SuiteFn };
-  export const it: TestFn & { skip: TestFn; only: TestFn; todo: TestFn };
-  export const test: TestFn & { skip: TestFn; only: TestFn; todo: TestFn };
+  export const describe: SuiteFn & { skip: SuiteFn; only: SuiteFn; todo: SuiteFn; skipIf: (condition: boolean) => SuiteFn };
+  export const it: TestFn & { skip: TestFn; only: TestFn; todo: TestFn; skipIf: (condition: boolean) => TestFn };
+  export const test: TestFn & { skip: TestFn; only: TestFn; todo: TestFn; skipIf: (condition: boolean) => TestFn };
   export const beforeAll: HookFn;
   export const afterAll: HookFn;
   export const beforeEach: HookFn;

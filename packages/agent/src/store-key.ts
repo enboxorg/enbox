@@ -10,7 +10,7 @@ import type { EnboxPlatformAgent } from './types/agent.js';
 import { DwnInterface } from './types/dwn.js';
 import { JwkProtocolDefinition } from './store-data-protocols.js';
 import { TENANT_SEPARATOR } from './utils-internal.js';
-import type { AgentDataStore, DataStoreDeleteParams, DataStoreGetParams, DataStoreListParams, DataStoreSetParams } from './store-data.js';
+import type { AgentDataStore, DataStoreDeleteParams, DataStoreGetParams, DataStoreSetParams, DataStoreTenantParams } from './store-data.js';
 import { DwnDataStore, InMemoryDataStore } from './store-data.js';
 
 export class DwnKeyStore extends DwnDataStore<Jwk> implements AgentDataStore<Jwk> {
@@ -40,7 +40,7 @@ export class DwnKeyStore extends DwnDataStore<Jwk> implements AgentDataStore<Jwk
     await super.set(params);
   }
 
-  public async list(params: DataStoreListParams): Promise<Jwk[]> {
+  public async list(params: DataStoreTenantParams): Promise<Jwk[]> {
     return await super.list(params);
   }
 
@@ -117,7 +117,7 @@ export class InMemoryKeyStore extends InMemoryDataStore<Jwk> implements AgentDat
     return await super.get(params);
   }
 
-  public async list(params: DataStoreListParams): Promise<Jwk[]> {
+  public async list(params: DataStoreTenantParams): Promise<Jwk[]> {
     return await super.list(params);
   }
 

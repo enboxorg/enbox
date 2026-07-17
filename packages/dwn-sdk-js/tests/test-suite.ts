@@ -55,6 +55,15 @@ export class TestSuite {
     resumableTaskStore?: ResumableTaskStore,
   }): void {
 
+    // Applied synchronously so sub-suites can probe the store implementations
+    // under test at registration time (e.g. to compute `it.skipIf()`
+    // conditions). The `beforeAll` below re-applies the same overrides at run
+    // time, because a sibling `runInjectableDependentTests()` invocation
+    // registered later would otherwise have overwritten the shared
+    // `TestStores` / `TestEventLog` state before this suite's tests execute.
+    TestEventLog.override(overrides);
+    TestStores.override(overrides);
+
     beforeAll(async () => {
       TestEventLog.override(overrides);
       TestStores.override(overrides);

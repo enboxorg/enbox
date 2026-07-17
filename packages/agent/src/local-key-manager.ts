@@ -7,7 +7,6 @@ import type {
   GetPublicKeyParams,
   Jwk,
   KeyGenerator,
-  KeyIdentifier,
   KmsCipherParams,
   KmsDigestParams,
   KmsExportKeyParams,
@@ -276,7 +275,7 @@ export class LocalKeyManager implements AgentKeyManager {
    */
   public async generateKey({ algorithm: algorithmIdentifier }:
     LocalKmsGenerateKeyParams
-  ): Promise<KeyIdentifier> {
+  ): Promise<string> {
     // Determine the algorithm name based on the given algorithm identifier.
     const algorithm = this.getAlgorithmName({ key: { alg: algorithmIdentifier } });
 
@@ -333,7 +332,7 @@ export class LocalKeyManager implements AgentKeyManager {
    */
   public async getKeyUri({ key }:
     KmsGetKeyUriParams
-  ): Promise<KeyIdentifier> {
+  ): Promise<string> {
     // Compute the JWK thumbprint.
     const jwkThumbprint = await computeJwkThumbprint({ jwk: key });
 
@@ -382,7 +381,7 @@ export class LocalKeyManager implements AgentKeyManager {
    * The private key stays within the KMS — only the public key is returned.
    */
   public async derivePublicKey({ keyUri, derivationPath }: {
-    keyUri: KeyIdentifier;
+    keyUri: string;
     derivationPath: string[];
   }): Promise<PublicKeyJwk> {
     // Get stored X25519 private key as bytes
@@ -410,7 +409,7 @@ export class LocalKeyManager implements AgentKeyManager {
     encryptedKey,
     ephemeralPublicKey,
   }: {
-    keyUri: KeyIdentifier;
+    keyUri: string;
     derivationPath: string[];
     encryptedKey: Uint8Array;
     ephemeralPublicKey: PublicKeyJwk;
@@ -444,7 +443,7 @@ export class LocalKeyManager implements AgentKeyManager {
    * Used for scoped decryption-key delivery.
    */
   public async derivePrivateKeyBytes({ keyUri, derivationPath }: {
-    keyUri: KeyIdentifier;
+    keyUri: string;
     derivationPath: string[];
   }): Promise<Uint8Array> {
     // Get stored X25519 private key as bytes
@@ -483,7 +482,7 @@ export class LocalKeyManager implements AgentKeyManager {
    */
   public async importKey({ key }:
     KmsImportKeyParams
-  ): Promise<KeyIdentifier> {
+  ): Promise<string> {
     if (!isPrivateJwk(key)) {throw new TypeError('Invalid key provided. Must be a private key in JWK format.');}
 
     // Make a deep copy of the key to avoid mutating the original.
@@ -588,7 +587,7 @@ export class LocalKeyManager implements AgentKeyManager {
     return isSignatureValid;
   }
 
-  public async deleteKey({ keyUri }:{ keyUri: KeyIdentifier }): Promise<void> {
+  public async deleteKey({ keyUri }:{ keyUri: string }): Promise<void> {
     // Get the private key from the key store.
     const jwk = await this._keyStore.get({ id: keyUri, agent: this.agent, useCache: true });
     if (!jwk) {
@@ -685,7 +684,7 @@ export class LocalKeyManager implements AgentKeyManager {
    * @throws Error if the key is not found or is not an X25519 key
    */
   private async getX25519PrivateKeyBytes({ keyUri }: {
-    keyUri: KeyIdentifier;
+    keyUri: string;
   }): Promise<Uint8Array> {
     const privateKeyJwk = await this.getPrivateKey({ keyUri }) as PrivateKeyJwk;
     return X25519.privateKeyToBytes({ privateKey: privateKeyJwk });
@@ -707,7 +706,7 @@ export class LocalKeyManager implements AgentKeyManager {
    * @throws Error if the key is not found in the key store.
    */
   private async getPrivateKey({ keyUri }: {
-    keyUri: KeyIdentifier;
+    keyUri: string;
   }): Promise<Jwk> {
     // First, check the agent DID's own key manager. The agent DID's private keys
     // (from the vault) are held in-memory by BearerDid.keyManager and are NOT

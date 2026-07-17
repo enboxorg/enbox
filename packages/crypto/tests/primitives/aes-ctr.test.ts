@@ -193,9 +193,7 @@ describe('AesCtr', () => {
       expect(privateKeyBytes.byteLength).toBe(32);
     });
 
-    it('supports key lengths of 192 bits in all supported runtimes except Chrome browser', async () => {
-      if (isChrome) { return; }
-
+    it.skipIf(isChrome)('supports key lengths of 192 bits in all supported runtimes except Chrome browser', async () => {
       // 192 bits
       const privateKey: Jwk = await AesCtr.generateKey({ length: 192 }) as JwkParamsOctPrivate;
       const privateKeyBytes: Uint8Array = Convert.base64Url(privateKey.k!).toUint8Array();

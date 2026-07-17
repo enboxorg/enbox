@@ -16,8 +16,6 @@ import {
 const NATS_URL = process.env.NATS_URL || 'nats://localhost:4222';
 const SUBJECT_PREFIX = `dwn.test.wakes.${Date.now()}`;
 
-let natsAvailable = false;
-
 async function isNatsReachable(): Promise<boolean> {
   const url = new URL(NATS_URL.replace('nats://', 'http://'));
   const host = url.hostname;
@@ -37,14 +35,15 @@ async function isNatsReachable(): Promise<boolean> {
   });
 }
 
-function natsIt(name: string, fn: () => Promise<void>): void {
-  it(name, async () => {
-    if (!natsAvailable) {
-      return;
-    }
+// Probed at module load so `natsIt` can register tests as skipped (rather than
+// silently passing) when no NATS server is reachable.
+const natsAvailable = await isNatsReachable();
+if (!natsAvailable) {
+  console.log(`NATS is not reachable at ${NATS_URL} — skipping NatsEventBus tests.`);
+}
 
-    await fn();
-  });
+function natsIt(name: string, fn: () => Promise<void>): void {
+  it.skipIf(!natsAvailable)(name, fn);
 }
 
 function collectWakes(count: number, timeoutMs = 5_000): {
@@ -104,13 +103,7 @@ function collectMessages(count: number, timeoutMs = 5_000): {
 }
 
 describe('NatsEventBus', () => {
-  beforeAll(async () => {
-    natsAvailable = await isNatsReachable();
-    if (!natsAvailable) {
-      console.log(`NATS is not reachable at ${NATS_URL} — skipping NatsEventBus tests.`);
-      return;
-    }
-
+  beforeAll(() => {
     process.env.NATS_URL = NATS_URL;
     process.env.NATS_WAKE_SUBJECT_PREFIX = SUBJECT_PREFIX;
   });

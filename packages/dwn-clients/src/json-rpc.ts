@@ -1,7 +1,6 @@
 import type { ProgressToken } from '@enbox/dwn-sdk-js';
 
 export type JsonRpcId = string | number | null;
-export type JsonRpcParams = any;
 export type JsonRpcVersion = '2.0';
 
 export interface JsonRpcRequest {
@@ -89,7 +88,7 @@ export const createJsonRpcNotification = (
 export const createJsonRpcRequest = (
   id: JsonRpcId,
   method: string,
-  params?: JsonRpcParams,
+  params?: any,
 ): JsonRpcRequest => {
   return {
     jsonrpc: '2.0',

@@ -1,4 +1,3 @@
-import type { AlgorithmIdentifier } from './identifier.js';
 import type { Jwk } from '../jose/jwk.js';
 
 /**
@@ -6,7 +5,7 @@ import type { Jwk } from '../jose/jwk.js';
  */
 export interface BytesToPrivateKeyParams {
   /** The algorithm identifier. */
-  algorithm: AlgorithmIdentifier;
+  algorithm: string;
 
   /** The raw private key bytes. */
   privateKeyBytes: Uint8Array;
@@ -17,7 +16,7 @@ export interface BytesToPrivateKeyParams {
  */
 export interface BytesToPublicKeyParams {
   /** The algorithm identifier. */
-  algorithm: AlgorithmIdentifier;
+  algorithm: string;
 
   /** The raw public key bytes. */
   publicKeyBytes: Uint8Array;
@@ -92,7 +91,7 @@ export interface DeriveKeyBytesParams {
  */
 export interface DigestParams {
   /** The algorithm identifier. */
-  algorithm: AlgorithmIdentifier;
+  algorithm: string;
 
   /** Data to be digested. */
   data: Uint8Array;
@@ -114,7 +113,7 @@ export interface EncryptParams {
  */
 export interface GenerateKeyParams {
   /** The algorithm identifier. */
-  algorithm: AlgorithmIdentifier;
+  algorithm: string;
 }
 
 /**

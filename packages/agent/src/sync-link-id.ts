@@ -1,9 +1,6 @@
 /** Separator used in compound replication link identifiers. */
 export const LINK_ID_SEPARATOR = '^';
 
-/** Opaque runtime identifier for a replication link. */
-export type LinkId = string;
-
 /**
  * Build the endpoint-independent identity of a durable replication link.
  *
@@ -28,6 +25,6 @@ export function buildLinkId(
   remoteEndpoint: string,
   projectionId: string,
   authorizationEpoch: string,
-): LinkId {
+): string {
   return `${tenantDid}${LINK_ID_SEPARATOR}${remoteEndpoint}${LINK_ID_SEPARATOR}${projectionId}${LINK_ID_SEPARATOR}${authorizationEpoch}`;
 }

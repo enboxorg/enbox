@@ -282,13 +282,9 @@ describe('PasswordProvider', () => {
   });
 
   describe('fromTty()', () => {
-    test('throws when stdin is not a TTY', async () => {
-      // In test environments, stdin is typically not a TTY
-      if (process.stdin.isTTY) {
-        // Skip — cannot reliably test this in a TTY environment
-        return;
-      }
-
+    // In test environments, stdin is typically not a TTY; skipped when it is,
+    // since the non-TTY rejection cannot be reliably tested from a TTY.
+    test.skipIf(Boolean(process.stdin.isTTY))('throws when stdin is not a TTY', async () => {
       const provider = PasswordProvider.fromTty();
       await expect(provider.getPassword({ reason: 'unlock' })).rejects.toThrow(
         'stdin is not a TTY'
@@ -643,13 +639,9 @@ describe('PasswordProvider', () => {
   });
 
   describe('fromTty() - stdin not a TTY', () => {
-    test('throws when stdin.isTTY is false', async () => {
-      // This tests fromTty's getPassword() when stdin is not a TTY (lines 303, 305-308).
-      // We can only run this when stdin is actually not a TTY (typical in CI).
-      if (process.stdin.isTTY) {
-        return;
-      }
-
+    // This tests fromTty's getPassword() when stdin is not a TTY (lines 303, 305-308).
+    // We can only run this when stdin is actually not a TTY (typical in CI).
+    test.skipIf(Boolean(process.stdin.isTTY))('throws when stdin.isTTY is false', async () => {
       const provider = PasswordProvider.fromTty();
       await expect(provider.getPassword({ reason: 'unlock' })).rejects.toThrow(
         'stdin is not a TTY'

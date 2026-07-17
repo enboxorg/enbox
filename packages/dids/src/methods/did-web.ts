@@ -1,6 +1,5 @@
 import type {
   InferKeyGeneratorAlgorithm,
-  KeyIdentifier,
   KeyImporterExporter,
   KeyManager,
   KmsExportKeyParams,
@@ -332,7 +331,7 @@ export class DidWeb extends DidMethod {
    *          provided keys.
    */
   public static async import({ portableDid, keyManager = new LocalKeyManager() }: {
-    keyManager?: KeyManager & KeyImporterExporter<KmsImportKeyParams, KeyIdentifier, KmsExportKeyParams>;
+    keyManager?: KeyManager & KeyImporterExporter<KmsImportKeyParams, string, KmsExportKeyParams>;
     portableDid: PortableDid;
   }): Promise<BearerDid> {
     // Verify the DID method is supported.

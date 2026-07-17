@@ -2,7 +2,7 @@ import { Convert } from '@enbox/common';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { IdentityMetadata } from './types/identity.js';
-import type { AgentDataStore, DataStoreDeleteParams, DataStoreGetParams, DataStoreListParams, DataStoreSetParams } from './store-data.js';
+import type { AgentDataStore, DataStoreDeleteParams, DataStoreGetParams, DataStoreSetParams, DataStoreTenantParams } from './store-data.js';
 
 import { DwnInterface } from './types/dwn.js';
 import { IdentityProtocolDefinition } from './store-data-protocols.js';
@@ -42,7 +42,7 @@ export class DwnIdentityStore extends DwnDataStore<IdentityMetadata> implements 
     return await super.set(params);
   }
 
-  public async list(params: DataStoreListParams): Promise<IdentityMetadata[]> {
+  public async list(params: DataStoreTenantParams): Promise<IdentityMetadata[]> {
     return await super.list(params);
   }
 
@@ -99,7 +99,7 @@ export class InMemoryIdentityStore extends InMemoryDataStore<IdentityMetadata> i
     return await super.get(params);
   }
 
-  public async list(params: DataStoreListParams): Promise<IdentityMetadata[]> {
+  public async list(params: DataStoreTenantParams): Promise<IdentityMetadata[]> {
     return await super.list(params);
   }
 

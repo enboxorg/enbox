@@ -1,12 +1,11 @@
 import type { Jwk } from '../jose/jwk.js';
-import type { AlgorithmIdentifier, KeyIdentifier } from './identifier.js';
 
 /**
  * Parameters for KMS-based digest computation. Intended for use with a Key Management System.
  */
 export interface KmsDigestParams {
   /** The algorithm identifier. */
-  algorithm: AlgorithmIdentifier;
+  algorithm: string;
 
   /** Data to be digested. */
   data: Uint8Array;
@@ -17,7 +16,7 @@ export interface KmsDigestParams {
  */
 export interface KmsExportKeyParams {
   /** Identifier for the private key to be exported from the KMS. */
-  keyUri: KeyIdentifier;
+  keyUri: string;
 }
 
 /**
@@ -25,7 +24,7 @@ export interface KmsExportKeyParams {
  */
 export interface KmsGenerateKeyParams {
   /** The algorithm identifier. */
-  algorithm: AlgorithmIdentifier;
+  algorithm: string;
 }
 
 /**
@@ -43,7 +42,7 @@ export interface KmsGetKeyUriParams {
  */
 export interface KmsGetPublicKeyParams {
   /** Identifier for the private key in the KMS. */
-  keyUri: KeyIdentifier;
+  keyUri: string;
 }
 
 /**
@@ -59,7 +58,7 @@ export interface KmsImportKeyParams {
  */
 export interface KmsSignParams {
   /** Identifier for the signing private key in the KMS. */
-  keyUri: KeyIdentifier;
+  keyUri: string;
 
   /** Data to be signed. */
   data: Uint8Array;
@@ -87,7 +86,7 @@ export interface KmsVerifyParams {
  */
 export interface KmsCipherParams {
   /** Identifier for the private key in the KMS. */
-  keyUri: KeyIdentifier;
+  keyUri: string;
 
   /** Data to be encrypted or decrypted. */
   data: Uint8Array;
@@ -98,5 +97,5 @@ export interface KmsCipherParams {
  */
 export interface KmsDeleteKeyParams {
   /** Identifier for the key to be deleted in the KMS. */
-  keyUri: KeyIdentifier;
+  keyUri: string;
 }

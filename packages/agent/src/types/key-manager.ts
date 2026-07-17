@@ -3,7 +3,6 @@ import type {
   Jwk,
   KeyDeleter,
   KeyExporter,
-  KeyIdentifier,
   KeyImporter,
   KeyManager,
   KmsCipherParams,
@@ -17,7 +16,7 @@ import type { EnboxPlatformAgent } from './agent.js';
 
 export interface AgentKeyManager extends KeyManager,
   Cipher<KmsCipherParams, KmsCipherParams>,
-  KeyImporter<KmsImportKeyParams, KeyIdentifier>,
+  KeyImporter<KmsImportKeyParams, string>,
   KeyExporter<KmsExportKeyParams, Jwk>,
   KeyDeleter<KmsDeleteKeyParams> {
 
@@ -34,7 +33,7 @@ export interface AgentKeyManager extends KeyManager,
    * @returns The derived child public key as a JWK
    */
   derivePublicKey(params: {
-    keyUri: KeyIdentifier;
+    keyUri: string;
     derivationPath: string[];
   }): Promise<PublicKeyJwk>;
 
@@ -55,7 +54,7 @@ export interface AgentKeyManager extends KeyManager,
    * @returns The unwrapped CEK bytes (typically 32 bytes for AES-256)
    */
   unwrapContentKey(params: {
-    keyUri: KeyIdentifier;
+    keyUri: string;
     derivationPath: string[];
     encryptedKey: Uint8Array;
     ephemeralPublicKey: PublicKeyJwk;
@@ -79,7 +78,7 @@ export interface AgentKeyManager extends KeyManager,
    * @returns The derived child private key as raw bytes
    */
   derivePrivateKeyBytes(params: {
-    keyUri: KeyIdentifier;
+    keyUri: string;
     derivationPath: string[];
   }): Promise<Uint8Array>;
 }

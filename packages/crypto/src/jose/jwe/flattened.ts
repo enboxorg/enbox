@@ -1,5 +1,4 @@
 import type { Jwk } from '../jwk.js';
-import type { KeyIdentifier } from '../../types/identifier.js';
 import type { JweAlg, JweCipher, JweDecryptOptions, JweEnc, JweEncryptOptions, JweHeaderParams } from './header.js';
 import type { JweKeyManagementDecryptKey, JweKeyManagementEncryptKey } from './key-management.js';
 
@@ -506,7 +505,7 @@ export class FlattenedJwe {
     key: JweKeyManagementDecryptKey;
     joseHeader: JweHeaderParams;
     minP2cCount?: number;
-  }): Promise<KeyIdentifier | Jwk> {
+  }): Promise<string | Jwk> {
     try {
       const encryptedKey = jwe.encrypted_key
         ? Convert.base64Url(jwe.encrypted_key).toUint8Array()
@@ -547,7 +546,7 @@ export class FlattenedJwe {
    * @throws {@link CryptoError} if the CEK is a Key Identifier and no `keyManager` was provided.
    */
   private static async decryptCiphertext({ cek, keyManager, joseHeader, ciphertext, iv, additionalData }: {
-    cek: KeyIdentifier | Jwk;
+    cek: string | Jwk;
     keyManager?: JweCipher;
     joseHeader: JweHeaderParams;
     ciphertext: Uint8Array;
@@ -628,7 +627,7 @@ export class FlattenedJwe {
    * @throws {@link CryptoError} if the CEK is a Key Identifier and no `keyManager` was provided.
    */
   private static async encryptCiphertext({ cek, keyManager, joseHeader, plaintext, iv, additionalData }: {
-    cek: KeyIdentifier | Jwk;
+    cek: string | Jwk;
     keyManager?: JweCipher;
     joseHeader: JweHeaderParams;
     plaintext: Uint8Array;

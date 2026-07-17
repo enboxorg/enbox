@@ -5,16 +5,6 @@ import { CryptoUtils } from '@enbox/crypto';
 import { SqlTtlCache } from './sql-ttl-cache.js';
 
 /**
- * The Connect Request object.
- */
-export type ConnectRequest = any; // TODO: define type in common repo for reuse (https://github.com/enboxorg/enbox/issues/138)
-
-/**
- * The Connect Response object.
- */
-export type ConnectResponse = any; // TODO: define type in common repo for reuse (https://github.com/enboxorg/enbox/issues/138)
-
-/**
  * The result of the setConnectRequest() method.
  */
 export type SetConnectRequestResult = {
@@ -67,7 +57,8 @@ export class ConnectServer {
    * Stores the given Connect Request object, which is also an OAuth 2 Pushed Authorization Request (PAR) object.
    * This is the initial call to the connect server to start the DWeb Connect flow.
    */
-  public async setConnectRequest(request: ConnectRequest): Promise<SetConnectRequestResult> {
+  // TODO: define Connect Request/Response object types in common repo for reuse (https://github.com/enboxorg/enbox/issues/138)
+  public async setConnectRequest(request: any): Promise<SetConnectRequestResult> {
     // Generate a request URI
     const requestId = CryptoUtils.randomUuid();
     const request_uri = `${this.baseUrl}/connect/authorize/${requestId}.jwt`;
@@ -86,7 +77,7 @@ export class ConnectServer {
   /**
    * Returns the Connect Request object. The request ID can only be used once.
    */
-  public async getConnectRequest(requestId: string): Promise<ConnectRequest | undefined> {
+  public async getConnectRequest(requestId: string): Promise<any> {
     const request = await this.cache.get(`request:${requestId}`);
 
     // Delete the Request Object from cache once it has been retrieved.
@@ -121,7 +112,7 @@ export class ConnectServer {
   /**
    * Sets the Connect Response object.
    */
-  public async setConnectResponse(state: string, response: ConnectResponse): Promise<any> {
+  public async setConnectResponse(state: string, response: any): Promise<any> {
     // Awaited so the callback's 201 means the app's next token poll can see
     // the response.
     await this.cache.insert(`response:${state}`, response, ConnectServer.ttlInSeconds);
@@ -150,7 +141,7 @@ export class ConnectServer {
   /**
    * Gets the Connect Response object. The `state` string can only be used once.
    */
-  public async getConnectResponse(state: string): Promise<ConnectResponse | undefined> {
+  public async getConnectResponse(state: string): Promise<any> {
     const response = await this.cache.get(`response:${state}`);
 
     // Delete the Response object from the cache once it has been retrieved.

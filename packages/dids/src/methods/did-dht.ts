@@ -1,7 +1,6 @@
 import type {
   AsymmetricKeyConverter,
   Jwk,
-  KeyIdentifier,
   KeyImporterExporter,
   KeyManager,
   KmsExportKeyParams,
@@ -377,7 +376,7 @@ export class DidDht extends DidMethod {
    *         manager.
    */
   public static async import({ portableDid, keyManager = new LocalKeyManager() }: {
-    keyManager?: KeyManager & KeyImporterExporter<KmsImportKeyParams, KeyIdentifier, KmsExportKeyParams>;
+    keyManager?: KeyManager & KeyImporterExporter<KmsImportKeyParams, string, KmsExportKeyParams>;
     portableDid: PortableDid;
   }): Promise<BearerDid> {
     // Verify the DID method is supported.

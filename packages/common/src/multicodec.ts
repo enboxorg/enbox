@@ -1,9 +1,7 @@
 import { varint } from 'multiformats';
 
-export type MulticodecCode = number;
-
-export type MulticodecDefinition<MulticodecCode> = {
-  code: MulticodecCode;
+export type MulticodecDefinition = {
+  code: number;
   // codeBytes: Uint8Array;
   name: string;
 };
@@ -31,12 +29,12 @@ export class Multicodec {
   /**
    * A static field containing a map of codec codes to their corresponding names.
    */
-  static readonly codeToName = new Map<MulticodecCode, string>();
+  static readonly codeToName = new Map<number, string>();
 
   /**
    * A static field containing a map of codec names to their corresponding codes.
    */
-  static readonly nameToCode = new Map<string, MulticodecCode>();
+  static readonly nameToCode = new Map<string, number>();
 
   /**
    * Adds a multicodec prefix to input data.
@@ -48,7 +46,7 @@ export class Multicodec {
    * @returns The data with the added prefix as a Uint8Array.
    */
   public static addPrefix(options: {
-    code?: MulticodecCode,
+    code?: number,
     data: Uint8Array,
     name?: string,
   }): Uint8Array {
@@ -86,7 +84,7 @@ export class Multicodec {
    */
   public static getCodeFromData(options: {
     prefixedData: Uint8Array
-  }): MulticodecCode {
+  }): number {
     const { prefixedData } = options;
     const [code, _] = varint.decode(prefixedData);
 
@@ -102,7 +100,7 @@ export class Multicodec {
    */
   public static getCodeFromName(options: {
     name: string
-  }): MulticodecCode {
+  }): number {
     const { name } = options;
 
     // Throw error if a registered Codec wasn't found.
@@ -122,7 +120,7 @@ export class Multicodec {
    * @returns - The Multicodec name as a string.
    */
   public static getNameFromCode(options: {
-    code: MulticodecCode
+    code: number
   }): string {
     const { code } = options;
 
@@ -140,7 +138,7 @@ export class Multicodec {
    *
    * @param codec - The codec to be registered.
    */
-  public static registerCodec(codec: MulticodecDefinition<MulticodecCode>): void {
+  public static registerCodec(codec: MulticodecDefinition): void {
     Multicodec.codeToName.set(codec.code, codec.name);
     Multicodec.nameToCode.set(codec.name, codec.code);
   }
@@ -153,7 +151,7 @@ export class Multicodec {
    */
   public static removePrefix(options: {
     prefixedData: Uint8Array
-  }): { code: MulticodecCode, name: string, data: Uint8Array } {
+  }): { code: number, name: string, data: Uint8Array } {
     const { prefixedData } = options;
     const [code, codeByteLength] = varint.decode(prefixedData);
 
