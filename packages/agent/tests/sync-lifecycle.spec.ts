@@ -710,4 +710,76 @@ describe('SyncEngineLevel lifecycle', () => {
 
     expect(sync.called).toBe(false);
   });
+
+  it('should exclude one-shot sync from the clear() destructive phase', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const registeredIdentities = db.sublevel<string, string>('registeredIdentities');
+    await registeredIdentities.put('did:example:alice', JSON.stringify({ protocols: 'all' }));
+
+    const wipeStarted = createDeferred();
+    const releaseWipe = createDeferred();
+    const clearSyncDb = sinon.stub(engine as never, 'clearSyncDb').callsFake(async (): Promise<void> => {
+      wipeStarted.resolve();
+      await releaseWipe.promise;
+    });
+    const getSyncTargets = sinon.stub(engine as never, 'getSyncTargets').resolves([]);
+
+    const clearPromise = engine.clear();
+    await wipeStarted.promise;
+
+    // A sync admitted mid-wipe must not start its run inside the destructive
+    // phase: without the exclusive lock it would reach getSyncTargets before
+    // its first suspension.
+    const syncPromise = engine.sync();
+    expect(getSyncTargets.called).toBe(false);
+
+    releaseWipe.resolve();
+    await clearPromise;
+    await syncPromise;
+
+    expect(getSyncTargets.called).toBe(true);
+    expect(getSyncTargets.calledAfter(clearSyncDb)).toBe(true);
+  });
+
+  it('should retry DID-resolution failures while the runtime generation is unchanged', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const originalBackoff = SyncEngineLevel['DID_RESOLUTION_RETRY_BACKOFF_MS'];
+    (SyncEngineLevel as unknown as { DID_RESOLUTION_RETRY_BACKOFF_MS: number[] }).DID_RESOLUTION_RETRY_BACKOFF_MS = [1, 1];
+    try {
+      const initializeLinkTarget = sinon.stub(engine as never, 'initializeLinkTarget')
+        .rejects(new Error('remote DWN rejected request: GetPublicKeyNotFound'));
+
+      const result = await (engine as unknown as {
+        initializeLinkTargetWithRetry(target: unknown): Promise<{ status: string }>;
+      }).initializeLinkTargetWithRetry({});
+
+      expect(result).toEqual({ status: 'failed' });
+      expect(initializeLinkTarget.callCount).toBe(3);
+    } finally {
+      (SyncEngineLevel as unknown as { DID_RESOLUTION_RETRY_BACKOFF_MS: number[] }).DID_RESOLUTION_RETRY_BACKOFF_MS = originalBackoff;
+    }
+  });
+
+  it('should stop DID-resolution init retries after a runtime transition', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const originalBackoff = SyncEngineLevel['DID_RESOLUTION_RETRY_BACKOFF_MS'];
+    (SyncEngineLevel as unknown as { DID_RESOLUTION_RETRY_BACKOFF_MS: number[] }).DID_RESOLUTION_RETRY_BACKOFF_MS = [1, 1];
+    try {
+      const initializeLinkTarget = sinon.stub(engine as never, 'initializeLinkTarget')
+        .callsFake(async (): Promise<never> => {
+          // Simulate stopSync/clear/close racing the backoff window.
+          engine['_engineGeneration'] += 1;
+          throw new Error('remote DWN rejected request: GetPublicKeyNotFound');
+        });
+
+      const result = await (engine as unknown as {
+        initializeLinkTargetWithRetry(target: unknown): Promise<{ status: string }>;
+      }).initializeLinkTargetWithRetry({});
+
+      expect(result).toEqual({ status: 'failed' });
+      expect(initializeLinkTarget.callCount).toBe(1);
+    } finally {
+      (SyncEngineLevel as unknown as { DID_RESOLUTION_RETRY_BACKOFF_MS: number[] }).DID_RESOLUTION_RETRY_BACKOFF_MS = originalBackoff;
+    }
+  });
 });

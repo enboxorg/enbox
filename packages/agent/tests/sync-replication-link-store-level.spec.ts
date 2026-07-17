@@ -408,4 +408,96 @@ describe('SyncReplicationLinkStoreLevel', () => {
     expect(await store.getAllLinks()).toHaveLength(0);
     expect(await db.sublevel('syncMetadata').get('futureMetadataKey')).toBe('preserve me');
   });
+
+  it('should not regress a same-domain checkpoint persisted from a stale link instance', async () => {
+    const staleLink = await store.getOrCreateLink({
+      tenantDid      : 'did:example:alice',
+      remoteEndpoint : 'https://dwn.example.com',
+      scope          : { kind: 'full' },
+      ...ownerAuthorization,
+    });
+    const freshLink = await store.getOrCreateLink({
+      tenantDid      : 'did:example:alice',
+      remoteEndpoint : 'https://dwn.example.com',
+      scope          : { kind: 'full' },
+      ...ownerAuthorization,
+    });
+
+    // The reconciler's freshly loaded instance advances the pull checkpoint...
+    freshLink.pull = { contiguousAppliedToken: token(50), receivedToken: token(52) };
+    await store.persistCheckpoint(freshLink, 'pull');
+
+    // ...then a live handler persists the same direction from the stale
+    // controller instance that never saw that advance.
+    staleLink.pull = { contiguousAppliedToken: token(10), receivedToken: token(11) };
+    await store.persistCheckpoint(staleLink, 'pull');
+
+    const [persisted] = await store.getAllLinks();
+    expect(persisted.pull.contiguousAppliedToken).toEqual(token(50));
+    expect(persisted.pull.receivedToken).toEqual(token(52));
+  });
+
+  it('should not clear a persisted checkpoint when a stale instance has none', async () => {
+    const staleLink = await store.getOrCreateLink({
+      tenantDid      : 'did:example:alice',
+      remoteEndpoint : 'https://dwn.example.com',
+      scope          : { kind: 'full' },
+      ...ownerAuthorization,
+    });
+    const freshLink = await store.getOrCreateLink({
+      tenantDid      : 'did:example:alice',
+      remoteEndpoint : 'https://dwn.example.com',
+      scope          : { kind: 'full' },
+      ...ownerAuthorization,
+    });
+    freshLink.pull = { contiguousAppliedToken: token(50), receivedToken: token(50) };
+    await store.persistCheckpoint(freshLink, 'pull');
+
+    await store.persistCheckpoint(staleLink, 'pull');
+
+    const [persisted] = await store.getAllLinks();
+    expect(persisted.pull.contiguousAppliedToken).toEqual(token(50));
+  });
+
+  it('should replace the checkpoint wholesale when the token domain changes', async () => {
+    const link = await store.getOrCreateLink({
+      tenantDid      : 'did:example:alice',
+      remoteEndpoint : 'https://dwn.example.com',
+      scope          : { kind: 'full' },
+      ...ownerAuthorization,
+    });
+    link.pull = { contiguousAppliedToken: token(50, 'one'), receivedToken: token(52, 'one') };
+    await store.persistCheckpoint(link, 'pull');
+
+    // A stream/epoch change is a deliberate feed reset: a lower position in
+    // the new domain must replace the old domain's checkpoint entirely.
+    link.pull = { contiguousAppliedToken: token(3, 'two'), receivedToken: token(4, 'two') };
+    await store.persistCheckpoint(link, 'pull');
+
+    const [persisted] = await store.getAllLinks();
+    expect(persisted.pull.contiguousAppliedToken).toEqual(token(3, 'two'));
+    expect(persisted.pull.receivedToken).toEqual(token(4, 'two'));
+  });
+
+  it('should still clear a checkpoint through an explicit reset after a newer persist', async () => {
+    const staleLink = await store.getOrCreateLink({
+      tenantDid      : 'did:example:alice',
+      remoteEndpoint : 'https://dwn.example.com',
+      scope          : { kind: 'full' },
+      ...ownerAuthorization,
+    });
+    const freshLink = await store.getOrCreateLink({
+      tenantDid      : 'did:example:alice',
+      remoteEndpoint : 'https://dwn.example.com',
+      scope          : { kind: 'full' },
+      ...ownerAuthorization,
+    });
+    freshLink.pull = { contiguousAppliedToken: token(50), receivedToken: token(50) };
+    await store.persistCheckpoint(freshLink, 'pull');
+
+    await store.resetCheckpoint(staleLink, 'pull');
+
+    const [persisted] = await store.getAllLinks();
+    expect(persisted.pull).toEqual({});
+  });
 });
