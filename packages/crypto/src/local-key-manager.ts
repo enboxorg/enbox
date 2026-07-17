@@ -4,7 +4,6 @@ import { MemoryStore } from '@enbox/common';
 import type { CryptoAlgorithm } from './algorithms/crypto-algorithm.js';
 import type { Hasher } from './types/hasher.js';
 import type { Jwk } from './jose/jwk.js';
-import type { KeyIdentifier } from './types/identifier.js';
 import type { KeyImporterExporter } from './types/key-io.js';
 import type { KeyManager } from './types/crypto-api.js';
 import type { Signer } from './types/signer.js';
@@ -83,7 +82,7 @@ export type LocalKeyManagerParams = {
    * This store is responsible for managing cryptographic keys, allowing them to be retrieved,
    * stored, and managed during cryptographic operations.
    */
-  keyStore?: KeyValueStore<KeyIdentifier, Jwk>;
+  keyStore?: KeyValueStore<string, Jwk>;
 };
 
 /**
@@ -114,7 +113,7 @@ export interface LocalKeyManagerGenerateKeyParams extends KmsGenerateKeyParams {
 
 export class LocalKeyManager implements
     KeyManager,
-    KeyImporterExporter<KmsImportKeyParams, KeyIdentifier, KmsExportKeyParams> {
+    KeyImporterExporter<KmsImportKeyParams, string, KmsExportKeyParams> {
 
   /**
    * A private map that stores instances of cryptographic algorithm implementations. Each key in
@@ -132,10 +131,10 @@ export class LocalKeyManager implements
    * persistent storage, providing flexibility in key management according to the application's
    * requirements.
    */
-  private readonly _keyStore: KeyValueStore<KeyIdentifier, Jwk>;
+  private readonly _keyStore: KeyValueStore<string, Jwk>;
 
   constructor(params?: LocalKeyManagerParams) {
-    this._keyStore = params?.keyStore ?? new MemoryStore<KeyIdentifier, Jwk>();
+    this._keyStore = params?.keyStore ?? new MemoryStore<string, Jwk>();
   }
 
   /**
@@ -221,7 +220,7 @@ export class LocalKeyManager implements
    */
   public async generateKey({ algorithm }:
     LocalKeyManagerGenerateKeyParams
-  ): Promise<KeyIdentifier> {
+  ): Promise<string> {
     // Get the key generator implementation based on the specified `algorithm` parameter.
     const keyGenerator = this.getAlgorithm({ algorithm }) as KeyGenerator<LocalKeyManagerGenerateKeyParams, Jwk>;
 
@@ -270,7 +269,7 @@ export class LocalKeyManager implements
    */
   public async getKeyUri({ key }:
     KmsGetKeyUriParams
-  ): Promise<KeyIdentifier> {
+  ): Promise<string> {
     // Compute the JWK thumbprint.
     const jwkThumbprint = await computeJwkThumbprint({ jwk: key });
 
@@ -340,7 +339,7 @@ export class LocalKeyManager implements
    */
   public async importKey({ key }:
     KmsImportKeyParams
-  ): Promise<KeyIdentifier> {
+  ): Promise<string> {
     if (!isPrivateJwk(key)) {throw new TypeError('Invalid key provided. Must be a private key in JWK format.');}
 
     // Make a deep copy of the key to avoid mutating the original.
@@ -531,7 +530,7 @@ export class LocalKeyManager implements
    * @throws Error if the key is not found in the key store.
    */
   private async getPrivateKey({ keyUri }: {
-    keyUri: KeyIdentifier;
+    keyUri: string;
   }): Promise<Jwk> {
     // Get the private key from the key store.
     const privateKey = await this._keyStore.get(keyUri);

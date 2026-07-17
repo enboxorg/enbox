@@ -7,7 +7,7 @@ import { Convert } from '@enbox/common';
 import { DidJwk, isPortableDid } from '@enbox/dids';
 
 import type { EnboxPlatformAgent } from '../src/types/agent.js';
-import type { AgentDataStore, DataStoreDeleteParams, DataStoreGetParams, DataStoreListParams, DataStoreSetParams } from '../src/store-data.js';
+import type { AgentDataStore, DataStoreDeleteParams, DataStoreGetParams, DataStoreSetParams, DataStoreTenantParams } from '../src/store-data.js';
 
 import { AgentDidApi } from '../src/did-api.js';
 import { DwnInterface } from '../src/types/dwn.js';
@@ -55,7 +55,7 @@ class DwnTestStore extends DwnDataStore<PortableDid> implements AgentDataStore<P
     return await super.set(params);
   }
 
-  public async list(params: DataStoreListParams): Promise<PortableDid[]> {
+  public async list(params: DataStoreTenantParams): Promise<PortableDid[]> {
     return await super.list(params);
   }
 
@@ -112,7 +112,7 @@ class InMemoryTestStore extends InMemoryDataStore<PortableDid> implements AgentD
     return await super.get(params);
   }
 
-  public async list(params: DataStoreListParams): Promise<PortableDid[]> {
+  public async list(params: DataStoreTenantParams): Promise<PortableDid[]> {
     return await super.list(params);
   }
 
@@ -217,11 +217,9 @@ describe('AgentDataStore', () => {
           expect(deleteResult).toBe(false);
         });
 
-        it('throws an error if no keys exist for specified DID', async () => {
-          // Skip this test for InMemoryTestStore, as checking for keys to sign DWN messages is not
-          // relevant given that the store is in-memory.
-          if (TestStore.name === 'InMemoryTestStore') { return; }
-
+        // Skip this test for InMemoryTestStore, as checking for keys to sign DWN messages is not
+        // relevant given that the store is in-memory.
+        it.skipIf(TestStore.name === 'InMemoryTestStore')('throws an error if no keys exist for specified DID', async () => {
           try {
             await testStore.delete({
               id     : 'did:jwk:eyJrdHkiOiJFQyIsInVzZSI6InNpZyIsImNydiI6InNlY3AyNTZrMSIsImtpZCI6ImkzU1BSQnRKS292SEZzQmFxTTkydGk2eFFDSkxYM0U3WUNld2lIVjJDU2ciLCJ4IjoidmRyYnoyRU96dmJMRFZfLWtMNGVKdDdWSS04VEZaTm1BOVlnV3p2aGg3VSIsInkiOiJWTEZxUU1aUF9Bc3B1Y1hvV1gyLWJHWHBBTzFmUTVMbjE5VjVSQXhyZ3ZVIiwiYWxnIjoiRVMyNTZLIn0',
@@ -236,10 +234,8 @@ describe('AgentDataStore', () => {
           }
         });
 
-        it('throws an error if the DWN delete request fails', async () => {
-          // Skip this test for InMemoryTestStore, as it is only relevant for the DWN store.
-          if (TestStore.name === 'InMemoryTestStore') { return; }
-
+        // Skip this test for InMemoryTestStore, as it is only relevant for the DWN store.
+        it.skipIf(TestStore.name === 'InMemoryTestStore')('throws an error if the DWN delete request fails', async () => {
           // Store test data in the store that will be deleted.
           await testStore.set({
             id    : 'test-1',
@@ -297,11 +293,9 @@ describe('AgentDataStore', () => {
           expect(storedDid).toBeUndefined();
         });
 
-        it('throws an error if no keys exist for specified DID', async () => {
-          // Skip this test for InMemoryTestStore, as checking for keys to sign DWN messages is not
-          // relevant given that the store is in-memory.
-          if (TestStore.name === 'InMemoryTestStore') { return; }
-
+        // Skip this test for InMemoryTestStore, as checking for keys to sign DWN messages is not
+        // relevant given that the store is in-memory.
+        it.skipIf(TestStore.name === 'InMemoryTestStore')('throws an error if no keys exist for specified DID', async () => {
           try {
             await testStore.get({
               id     : 'did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5IiwieCI6IjNFQmFfRUxvczJhbHZMb2pxSVZjcmJLcGlyVlhqNmNqVkQ1djJWaHdMejgifQ',
@@ -316,10 +310,8 @@ describe('AgentDataStore', () => {
           }
         });
 
-        it('throws an error if DWN unexpectedly is missing a record that is present in the index', async () => {
-          // Skip this test for InMemoryTestStore, as it is only relevant for the DWN store.
-          if (TestStore.name === 'InMemoryTestStore') { return; }
-
+        // Skip this test for InMemoryTestStore, as it is only relevant for the DWN store.
+        it.skipIf(TestStore.name === 'InMemoryTestStore')('throws an error if DWN unexpectedly is missing a record that is present in the index', async () => {
           // Store test data in the store that will be retrieved.
           await testStore.set({
             id    : 'test-1',
@@ -419,11 +411,9 @@ describe('AgentDataStore', () => {
           expect(storedDids).toHaveLength(0);
         });
 
-        it('throws an error if the DID records exceed the DWN maximum data size for query results', async () => {
-          // Skip this test for InMemoryTestStore, as the in-memory store returns all records
-          // regardless of the size of the data.
-          if (TestStore.name === 'InMemoryTestStore') { return; }
-
+        // Skip this test for InMemoryTestStore, as the in-memory store returns all records
+        // regardless of the size of the data.
+        it.skipIf(TestStore.name === 'InMemoryTestStore')('throws an error if the DID records exceed the DWN maximum data size for query results', async () => {
           const didBytes = Convert.string(new Array(102400 + 1).join('0')).toUint8Array();
 
           // since we are writing directly to the dwn we first initialize the storage protocol
@@ -555,11 +545,9 @@ describe('AgentDataStore', () => {
           }
         });
 
-        it('throws an error if no keys exist for specified DID', async () => {
-          // Skip this test for InMemoryTestStore, as checking for keys to sign DWN messages is not
-          // relevant given that the store is in-memory.
-          if (TestStore.name === 'InMemoryTestStore') { return; }
-
+        // Skip this test for InMemoryTestStore, as checking for keys to sign DWN messages is not
+        // relevant given that the store is in-memory.
+        it.skipIf(TestStore.name === 'InMemoryTestStore')('throws an error if no keys exist for specified DID', async () => {
           // Generate a new DID.
           const bearerDid = await DidJwk.create();
 
@@ -580,10 +568,8 @@ describe('AgentDataStore', () => {
           }
         });
 
-        it('throws an error if the DWN write request fails', async () => {
-          // Skip this test for InMemoryTestStore, as it is only relevant for the DWN store.
-          if (TestStore.name === 'InMemoryTestStore') { return; }
-
+        // Skip this test for InMemoryTestStore, as it is only relevant for the DWN store.
+        it.skipIf(TestStore.name === 'InMemoryTestStore')('throws an error if the DWN write request fails', async () => {
           // since we are writing directly to the dwn we first initialize the storage protocol
           await (testStore as DwnDataStore<PortableDid>)['initialize']({ agent: testHarness.agent });
 
@@ -614,13 +600,11 @@ describe('AgentDataStore', () => {
           }
         });
 
-        it('checks that protocol is installed only once', async () => {
+        // Skip this test for InMemoryTestStore, as checking for protocol installation is not
+        // relevant given that the store is in-memory.
+        it.skipIf(TestStore.name === 'InMemoryTestStore')('checks that protocol is installed only once', async () => {
           // Scenario: The storage protocol should only need to be installed once
           // any operations after the first should not attempt to re-install the protocol.
-
-          // Skip this test for InMemoryTestStore, as checking for protocol installation is not
-          // relevant given that the store is in-memory.
-          if (TestStore.name === 'InMemoryTestStore') { return; }
 
           // spy on the installProtocol method
           const installProtocolSpy = spyOn(testStore as any, 'installProtocol');
@@ -652,10 +636,8 @@ describe('AgentDataStore', () => {
           expect(storedDids.map(d => d.uri)).toEqual(expect.arrayContaining([portableDid1.uri, portableDid2.uri, portableDid3.uri]));
         });
 
-        it('throws an error if dwn failed during query for protocol installation', async () => {
-          // Skip this test for InMemoryTestStore, as it is only relevant for the DWN store.
-          if (TestStore.name === 'InMemoryTestStore') { return; }
-
+        // Skip this test for InMemoryTestStore, as it is only relevant for the DWN store.
+        it.skipIf(TestStore.name === 'InMemoryTestStore')('throws an error if dwn failed during query for protocol installation', async () => {
           // stub `processRequest` to return a code other than 200
           spyOn(testHarness.agent.dwn, 'processRequest').mockResolvedValue({
             messageCid : 'test-cid',
@@ -679,10 +661,8 @@ describe('AgentDataStore', () => {
           }
         });
 
-        it('throws an error if dwn failed during protocol installation', async () => {
-          // Skip this test for InMemoryTestStore, as it is only relevant for the DWN store.
-          if (TestStore.name === 'InMemoryTestStore') { return; }
-
+        // Skip this test for InMemoryTestStore, as it is only relevant for the DWN store.
+        it.skipIf(TestStore.name === 'InMemoryTestStore')('throws an error if dwn failed during protocol installation', async () => {
           // stub `processRequest` to return a code other than 200
           spyOn(testHarness.agent.dwn, 'processRequest').mockResolvedValue({
             messageCid : 'test-cid',

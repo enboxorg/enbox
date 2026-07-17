@@ -433,9 +433,8 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     const hasPaletteOverrides = theme.accent !== undefined || theme.accentContrast !== undefined
       || theme.light !== undefined || theme.dark !== undefined;
     const applyPaletteTokens = (): void => {
-      const scheme = appearance === 'auto'
-        ? (systemDark?.matches === true ? 'dark' : 'light')
-        : appearance;
+      const systemScheme = systemDark?.matches === true ? 'dark' : 'light';
+      const scheme = appearance === 'auto' ? systemScheme : appearance;
       const palette: ConnectModalPalette = {
         accent         : theme.accent,
         accentContrast : theme.accentContrast,

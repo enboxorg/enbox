@@ -6,7 +6,7 @@ import { useState } from 'react';
 /* ------------------------------------------------------------------ */
 /* Enbox mark — three overlapping rounded rects + central node        */
 /* ------------------------------------------------------------------ */
-function EnboxMark({ size = 56 }: { size?: number }) {
+function EnboxMark({ size = 56 }: Readonly<{ size?: number }>) {
   return (
     <svg
       width={size}
@@ -27,7 +27,7 @@ function EnboxMark({ size = 56 }: { size?: number }) {
 /* ------------------------------------------------------------------ */
 /* Bun logo — small inline SVG                                        */
 /* ------------------------------------------------------------------ */
-function BunLogo({ size = 16 }: { size?: number }) {
+function BunLogo({ size = 16 }: Readonly<{ size?: number }>) {
   return (
     <svg
       width={size}
@@ -56,7 +56,7 @@ function BunLogo({ size = 16 }: { size?: number }) {
 /* ------------------------------------------------------------------ */
 /* Copy button with check animation                                    */
 /* ------------------------------------------------------------------ */
-function CopyButton({ text }: { text: string }) {
+function CopyButton({ text }: Readonly<{ text: string }>) {
   const [copied, setCopied] = useState(false);
 
   async function copy() {
@@ -93,7 +93,7 @@ function CopyButton({ text }: { text: string }) {
 /* ------------------------------------------------------------------ */
 /* Install bar — pill shape, mono font, accent prompt, copy button    */
 /* ------------------------------------------------------------------ */
-function InstallBar({ command }: { command: string }) {
+function InstallBar({ command }: Readonly<{ command: string }>) {
   return (
     <div
       className="inline-flex items-center gap-3 px-3 py-2 rounded-full font-mono text-sm max-w-full"
@@ -113,7 +113,7 @@ function InstallBar({ command }: { command: string }) {
 /* ------------------------------------------------------------------ */
 /* Code block — terminal-style with dots and language badge            */
 /* ------------------------------------------------------------------ */
-function CodeBlock({ language, filename, children }: { language: string; filename?: string; children: string }) {
+function CodeBlock({ language, filename, children }: Readonly<{ language: string; filename?: string; children: string }>) {
   return (
     <div
       className="rounded-xl overflow-hidden"
@@ -166,7 +166,7 @@ function CodeBlock({ language, filename, children }: { language: string; filenam
 /* ------------------------------------------------------------------ */
 /* Feature card — design system card pattern                           */
 /* ------------------------------------------------------------------ */
-function FeatureCard({ title, description }: { title: string; description: string }) {
+function FeatureCard({ title, description }: Readonly<{ title: string; description: string }>) {
   return (
     <div
       className="flex flex-col gap-4 p-8 rounded-2xl transition-all duration-200"

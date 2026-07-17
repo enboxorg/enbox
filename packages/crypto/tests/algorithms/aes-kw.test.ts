@@ -71,9 +71,7 @@ describe('AesKwAlgorithm', () => {
       }
     });
 
-    it(`supports 'A192KW' algorithm in all supported runtimes except Chrome browser`, async () => {
-      if (isChrome) { return; }
-
+    it.skipIf(isChrome)(`supports 'A192KW' algorithm in all supported runtimes except Chrome browser`, async () => {
       const algorithms = ['A192KW'] as const;
       for (const algorithm of algorithms) {
         const privateKey = await aesKw.generateKey({ algorithm });
@@ -112,9 +110,7 @@ describe('AesKwAlgorithm', () => {
       }
     });
 
-    it('produces correct byte length for A192KW in all supported runtimes except Chrome browser', async () => {
-      if (isChrome) { return; }
-
+    it.skipIf(isChrome)('produces correct byte length for A192KW in all supported runtimes except Chrome browser', async () => {
       const privateKey = await aesKw.generateKey({ algorithm: 'A192KW' });
       const privateKeyBytes = await aesKw.privateKeyToBytes({ privateKey });
       expect(privateKeyBytes.byteLength).toBe(24);

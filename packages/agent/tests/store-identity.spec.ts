@@ -87,11 +87,9 @@ describe('IdentityStore', () => {
           expect(deleteResult).toBe(false);
         });
 
-        it('throws an error if no keys exist for specified DID', async () => {
-          // Skip this test for InMemoryIdentityStore, as checking for keys to sign DWN messages is not
-          // relevant given that the store is in-memory.
-          if (IdentityStore.name === 'InMemoryIdentityStore') { return; }
-
+        // Skip this test for InMemoryIdentityStore, as checking for keys to sign DWN messages is not
+        // relevant given that the store is in-memory.
+        it.skipIf(IdentityStore.name === 'InMemoryIdentityStore')('throws an error if no keys exist for specified DID', async () => {
           try {
             await identityStore.delete({
               id     : 'did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5IiwieCI6IjNFQmFfRUxvczJhbHZMb2pxSVZjcmJLcGlyVlhqNmNqVkQ1djJWaHdMejgifQ',
@@ -132,11 +130,9 @@ describe('IdentityStore', () => {
           expect(storedIdentity).toBeUndefined();
         });
 
-        it('throws an error if no keys exist for specified DID', async () => {
-          // Skip this test for InMemoryIdentityStore, as checking for keys to sign DWN messages is not
-          // relevant given that the store is in-memory.
-          if (IdentityStore.name === 'InMemoryIdentityStore') { return; }
-
+        // Skip this test for InMemoryIdentityStore, as checking for keys to sign DWN messages is not
+        // relevant given that the store is in-memory.
+        it.skipIf(IdentityStore.name === 'InMemoryIdentityStore')('throws an error if no keys exist for specified DID', async () => {
           try {
             await identityStore.get({
               id     : 'did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5IiwieCI6IjNFQmFfRUxvczJhbHZMb2pxSVZjcmJLcGlyVlhqNmNqVkQ1djJWaHdMejgifQ',
@@ -196,11 +192,9 @@ describe('IdentityStore', () => {
           }
         });
 
-        it('throws an error if the Identity records exceed the DWN maximum data size for query results', async () => {
-          // Skip this test for InMemoryIdentityStore, as the in-memory store returns all records
-          // regardless of the size of the data.
-          if (IdentityStore.name === 'InMemoryIdentityStore') { return; }
-
+        // Skip this test for InMemoryIdentityStore, as the in-memory store returns all records
+        // regardless of the size of the data.
+        it.skipIf(IdentityStore.name === 'InMemoryIdentityStore')('throws an error if the Identity records exceed the DWN maximum data size for query results', async () => {
           // since we are writing directly to the dwn we first initialize the storage protocol
           await (identityStore as DwnDataStore<IdentityMetadata>)['initialize']({ agent: testHarness.agent });
 

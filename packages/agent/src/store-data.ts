@@ -15,8 +15,6 @@ export type DataStoreTenantParams = {
   tenant?: string;
 };
 
-export type DataStoreListParams = DataStoreTenantParams;
-
 export type DataStoreGetParams = DataStoreTenantParams & {
   id: string;
   useCache?: boolean;
@@ -152,7 +150,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
     return await this.getRecord({ recordId: matchingRecordId, tenantDid, agent, useCache });
   }
 
-  public async list({ agent, tenant }: DataStoreListParams): Promise<TStoreObject[]> {
+  public async list({ agent, tenant }: DataStoreTenantParams): Promise<TStoreObject[]> {
     // Determine the tenant identifier (DID) for the list operation.
     const tenantDid = await getDataStoreTenant({ tenant, agent });
 
@@ -447,7 +445,7 @@ export class InMemoryDataStore<TStoreObject extends Record<string, any> = Jwk> i
     return this.store.get(`${tenantDid}${TENANT_SEPARATOR}${id}`);
   }
 
-  public async list({ agent, tenant }: DataStoreListParams): Promise<TStoreObject[]> {
+  public async list({ agent, tenant }: DataStoreTenantParams): Promise<TStoreObject[]> {
     // Determine the tenant identifier (DID) for the list operation.
     const tenantDid = await getDataStoreTenant({ tenant, agent });
 

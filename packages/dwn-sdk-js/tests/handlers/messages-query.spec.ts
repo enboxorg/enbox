@@ -42,6 +42,14 @@ export function testMessagesQueryHandler(): void {
     let resumableTaskStore: ResumableTaskStore;
     let dwn: Dwn;
 
+    // Registration-time probe of the injected message store, so feed-dependent
+    // tests can register as skipped via `it.skipIf()` when the store under
+    // test does not implement the replication feed reader interface.
+    // `TestSuite.runInjectableDependentTests()` applies store overrides
+    // synchronously before invoking this suite, so the probe sees the same
+    // store implementation that `beforeAll` resolves at run time.
+    const supportsReplicationFeed = getFeedReader(TestStores.get().messageStore) !== undefined;
+
     beforeAll(async () => {
       didResolver = new UniversalResolver({ didResolvers: [DidKey] });
 
@@ -77,11 +85,7 @@ export function testMessagesQueryHandler(): void {
       expect(reply.status.detail).toContain(DwnErrorCode.MessagesQueryReplicationFeedUnimplemented);
     });
 
-    it('returns full log entries with inline RecordsWrite data detached from the message', async () => {
-      if (getFeedReader(messageStore) === undefined) {
-        return;
-      }
-
+    it.skipIf(!supportsReplicationFeed)('returns full log entries with inline RecordsWrite data detached from the message', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
@@ -111,11 +115,7 @@ export function testMessagesQueryHandler(): void {
       expect(reply.cursor).toBeDefined();
     });
 
-    it('supports cidsOnly pagination with high-water cursors', async () => {
-      if (getFeedReader(messageStore) === undefined) {
-        return;
-      }
-
+    it.skipIf(!supportsReplicationFeed)('supports cidsOnly pagination with high-water cursors', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
@@ -152,12 +152,8 @@ export function testMessagesQueryHandler(): void {
       expect(secondReply.drained).toBe(true);
     });
 
-    it('includes fingerprints only for canonical sync scopes', async () => {
-      const feedReader = getFeedReader(messageStore);
-      if (feedReader === undefined) {
-        return;
-      }
-
+    it.skipIf(!supportsReplicationFeed)('includes fingerprints only for canonical sync scopes', async () => {
+      const feedReader = getFeedReader(messageStore)!;
       const alice = await TestDataGenerator.generateDidKeyPersona();
       await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
@@ -248,11 +244,7 @@ export function testMessagesQueryHandler(): void {
       expect(nonCanonicalReply.fingerprint).toBeUndefined();
     });
 
-    it('maps progress gaps to a 410 response with structured metadata', async () => {
-      if (getFeedReader(messageStore) === undefined) {
-        return;
-      }
-
+    it.skipIf(!supportsReplicationFeed)('maps progress gaps to a 410 response with structured metadata', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
@@ -271,11 +263,7 @@ export function testMessagesQueryHandler(): void {
       expect(reply.error?.reason).toBe('stream_mismatch');
     });
 
-    it('allows delegated protocol-scoped queries and includes tagged core protocol records', async () => {
-      if (getFeedReader(messageStore) === undefined) {
-        return;
-      }
-
+    it.skipIf(!supportsReplicationFeed)('allows delegated protocol-scoped queries and includes tagged core protocol records', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const protocolDefinition: ProtocolDefinition = { ...freeForAll, published: false, protocol: 'http://messages-query-delegated' };
@@ -337,12 +325,8 @@ export function testMessagesQueryHandler(): void {
       ].sort());
     });
 
-    it('transports delivery control events and accumulator fingerprints for delegated MessagesQuery', async () => {
-      const feedReader = getFeedReader(messageStore);
-      if (feedReader === undefined) {
-        return;
-      }
-
+    it.skipIf(!supportsReplicationFeed)('transports delivery control events and accumulator fingerprints for delegated MessagesQuery', async () => {
+      const feedReader = getFeedReader(messageStore)!;
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const carol = await TestDataGenerator.generateDidKeyPersona();
@@ -456,11 +440,7 @@ export function testMessagesQueryHandler(): void {
       expect(fullReply.fingerprint).toBe(ownerReply.fingerprint);
     });
 
-    it('rejects unfiltered delegated queries with a protocol-scoped grant', async () => {
-      if (getFeedReader(messageStore) === undefined) {
-        return;
-      }
-
+    it.skipIf(!supportsReplicationFeed)('rejects unfiltered delegated queries with a protocol-scoped grant', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const protocolDefinition: ProtocolDefinition = { ...freeForAll, published: false, protocol: 'http://messages-query-unfiltered-delegated' };

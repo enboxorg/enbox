@@ -1,7 +1,6 @@
 import type {
   InferKeyGeneratorAlgorithm,
   Jwk,
-  KeyIdentifier,
   KeyImporterExporter,
   KeyManager,
   KmsExportKeyParams,
@@ -305,7 +304,7 @@ export class DidJwk extends DidMethod {
    * @throws An error if the DID document does not contain exactly one verification method.
    */
   public static async import({ portableDid, keyManager = new LocalKeyManager() }: {
-    keyManager?: KeyManager & KeyImporterExporter<KmsImportKeyParams, KeyIdentifier, KmsExportKeyParams>;
+    keyManager?: KeyManager & KeyImporterExporter<KmsImportKeyParams, string, KmsExportKeyParams>;
     portableDid: PortableDid;
   }): Promise<BearerDid> {
     // Verify the DID method is supported.

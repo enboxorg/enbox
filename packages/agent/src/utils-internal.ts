@@ -1,4 +1,4 @@
-import type { Jwk, KeyIdentifier, KmsExportKeyParams, KmsGetPublicKeyParams, KmsSignParams } from '@enbox/crypto';
+import type { Jwk, KmsExportKeyParams, KmsGetPublicKeyParams, KmsSignParams } from '@enbox/crypto';
 
 import { computeJwkThumbprint, Ed25519, LocalKeyManager } from '@enbox/crypto';
 
@@ -16,8 +16,8 @@ import type { EnboxPlatformAgent } from './types/agent.js';
 export const TENANT_SEPARATOR = '^';
 
 export class DeterministicKeyGenerator extends LocalKeyManager {
-  private _predefinedKeys: Map<KeyIdentifier, Jwk>;
-  private _keyGenerator: IterableIterator<KeyIdentifier>;
+  private _predefinedKeys: Map<string, Jwk>;
+  private _keyGenerator: IterableIterator<string>;
 
   constructor() {
     super();
@@ -26,7 +26,7 @@ export class DeterministicKeyGenerator extends LocalKeyManager {
   }
 
   public async addPredefinedKeys({ privateKeys }: { privateKeys: Jwk[] }): Promise<void> {
-    const predefinedKeys: { [keyUri: KeyIdentifier]: Jwk } = {};
+    const predefinedKeys: { [keyUri: string]: Jwk } = {};
 
     for (const key of privateKeys) {
       // If the key ID is undefined, set it to the JWK thumbprint.
@@ -62,7 +62,7 @@ export class DeterministicKeyGenerator extends LocalKeyManager {
 
   public async generateKey(_params: {
     algorithm: 'Ed25519' | 'secp256k1' | 'secp256r1' | 'X25519'
-  }): Promise<KeyIdentifier> {
+  }): Promise<string> {
     // Get the next key from the array of predefined keys.
     const { value: keyUri, done } = this._keyGenerator.next();
 

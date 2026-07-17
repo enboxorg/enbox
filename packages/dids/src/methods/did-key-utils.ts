@@ -1,5 +1,5 @@
+import type { MulticodecDefinition } from '@enbox/common';
 import type { AsymmetricKeyConverter, Jwk, KeyCompressor } from '@enbox/crypto';
-import type { MulticodecCode, MulticodecDefinition } from '@enbox/common';
 
 import { Multicodec } from '@enbox/common';
 import { Ed25519, Secp256k1, Secp256r1 } from '@enbox/crypto';
@@ -98,7 +98,7 @@ export class DidKeyUtils {
    */
   public static async jwkToMulticodec({ jwk }: {
     jwk: Jwk
-  }): Promise<MulticodecDefinition<MulticodecCode>> {
+  }): Promise<MulticodecDefinition> {
     const params: string[] = [];
 
     if (jwk.crv) {
@@ -178,7 +178,7 @@ export class DidKeyUtils {
    * @returns A promise that resolves to a JOSE format key.
    */
   public static async multicodecToJwk({ code, name }: {
-    code?: MulticodecCode,
+    code?: number,
     name?: string
   }): Promise<Jwk> {
     // Either code or name must be specified, but not both.

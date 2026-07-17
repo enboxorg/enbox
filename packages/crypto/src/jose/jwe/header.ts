@@ -1,6 +1,5 @@
 import type { JoseHeaderParams } from '../jws.js';
 import type { Jwk } from '../jwk.js';
-import type { KeyIdentifier } from '../../types/identifier.js';
 
 /**
  * JWE "alg" (Algorithm) Header Parameter values supported by this engine's key management.
@@ -76,7 +75,7 @@ export interface JweDecryptOptions {
 export interface JweEncryptOptions {}
 
 /**
- * A minimal cipher interface over {@link KeyIdentifier} (e.g. KMS URI) referenced keys.
+ * A minimal cipher interface over key-identifier (e.g. KMS URI) referenced keys.
  *
  * When a JWE uses "dir" (Direct Encryption Mode) with a Content Encryption Key that is referenced
  * by a Key Identifier rather than provided as a JWK, the engine delegates content encryption and
@@ -90,7 +89,7 @@ export interface JweCipher {
    * @param params - The parameters for the decryption operation.
    * @returns A Promise that resolves to the decrypted data as a byte array.
    */
-  decrypt(params: { keyUri: KeyIdentifier; data: Uint8Array; iv?: Uint8Array; additionalData?: Uint8Array }): Promise<Uint8Array>;
+  decrypt(params: { keyUri: string; data: Uint8Array; iv?: Uint8Array; additionalData?: Uint8Array }): Promise<Uint8Array>;
 
   /**
    * Encrypts the provided data using the key identified by `keyUri`.
@@ -99,7 +98,7 @@ export interface JweCipher {
    * @returns A Promise that resolves to the ciphertext (including the authentication tag) as a
    *          byte array.
    */
-  encrypt(params: { keyUri: KeyIdentifier; data: Uint8Array; iv?: Uint8Array; additionalData?: Uint8Array }): Promise<Uint8Array>;
+  encrypt(params: { keyUri: string; data: Uint8Array; iv?: Uint8Array; additionalData?: Uint8Array }): Promise<Uint8Array>;
 }
 
 /**

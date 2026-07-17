@@ -19,7 +19,7 @@ import type {
   RoleAudienceKeyMaterial,
   WrappedGrantKeyEnvelope,
 } from '@enbox/dwn-sdk-js';
-import type { KeyIdentifier, PrivateKeyJwk, PublicKeyJwk } from '@enbox/crypto';
+import type { PrivateKeyJwk, PublicKeyJwk } from '@enbox/crypto';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type {
@@ -134,7 +134,6 @@ type AudienceDeliveryReadActor = {
 
 type EncodedRecordsWriteMessage = RecordsWriteMessage & { encodedData?: string };
 
-type AudienceDeliveryMessage = EncodedRecordsWriteMessage;
 
 type AudienceRecordCandidate = {
   message: EncodedRecordsWriteMessage;
@@ -215,7 +214,7 @@ export async function getEncryptionKeyInfo(
   didUri: string,
 ): Promise<{
   keyId: string;
-  keyUri: KeyIdentifier;
+  keyUri: string;
   publicKeyJwk: PublicKeyJwk;
 }> {
   // 1. Resolve the DID document
@@ -299,7 +298,7 @@ export async function getEncryptionKeyInfo(
 export function buildKmsDecryptCallback(
   agent: EnboxPlatformAgent,
   keyId: string,
-  keyUri: KeyIdentifier,
+  keyUri: string,
   derivationScheme: typeof KeyDerivationScheme.ProtocolPath,
 ): KeyDecrypter {
   const keyManager = agent.keyManager;
@@ -440,7 +439,7 @@ type GrantKeyRecordData = {
 };
 
 type WrappedGrantKeyRecipient = {
-  keyUri: KeyIdentifier;
+  keyUri: string;
   rootKeyId: string;
 };
 
@@ -1446,7 +1445,7 @@ async function hydrateAudienceKeyFromSeal(
 async function queryAudienceDeliveryMessages(
   params: HydrateAudienceKeyParams,
   deliveryReadActor: AudienceDeliveryReadActor,
-): Promise<AudienceDeliveryMessage[]> {
+): Promise<EncodedRecordsWriteMessage[]> {
   const { reply } = await processDwnRequestWithRemoteFallback(params.agent, {
     author        : deliveryReadActor.authorDid,
     granteeDid    : deliveryReadActor.granteeDid,
@@ -1472,13 +1471,13 @@ async function queryAudienceDeliveryMessages(
     return [];
   }
 
-  return reply.entries as AudienceDeliveryMessage[];
+  return reply.entries as EncodedRecordsWriteMessage[];
 }
 
 async function hydrateAudienceKeyFromDeliveries(input: {
   audienceRecord: AudienceRecordCandidate;
   deliveryDecrypters: KeyDecrypter[];
-  deliveryMessages: AudienceDeliveryMessage[];
+  deliveryMessages: EncodedRecordsWriteMessage[];
   deliveryReadActor: AudienceDeliveryReadActor;
   params: HydrateAudienceKeyParams;
 }): Promise<AudienceDecryptionKeyEntry | undefined> {
@@ -1501,7 +1500,7 @@ async function hydrateAudienceKeyFromDeliveries(input: {
 async function hydrateAudienceKeyFromDelivery(input: {
   audienceRecord: AudienceRecordCandidate;
   deliveryDecrypters: KeyDecrypter[];
-  deliveryMessage: AudienceDeliveryMessage;
+  deliveryMessage: EncodedRecordsWriteMessage;
   deliveryReadActor: AudienceDeliveryReadActor;
   params: HydrateAudienceKeyParams;
 }): Promise<AudienceDecryptionKeyEntry | undefined> {
@@ -1537,7 +1536,7 @@ async function hydrateAudienceKeyFromDelivery(input: {
 async function decryptAudienceDelivery(input: {
   audienceRecord: AudienceRecordCandidate;
   decrypter: KeyDecrypter;
-  deliveryMessage: AudienceDeliveryMessage;
+  deliveryMessage: EncodedRecordsWriteMessage;
   deliveryReadActor: AudienceDeliveryReadActor;
   encryptedData: Uint8Array;
   params: HydrateAudienceKeyParams;
@@ -1595,7 +1594,7 @@ async function getAudienceDeliveryEncryptedData(
   agent: EnboxPlatformAgent,
   actor: AudienceDeliveryReadActor,
   sourceDid: string,
-  deliveryMessage: AudienceDeliveryMessage,
+  deliveryMessage: EncodedRecordsWriteMessage,
 ): Promise<Uint8Array | undefined> {
   return readRecordDataWithRemoteFallback({
     agent,

@@ -207,11 +207,8 @@ describe('AgentDidApi', () => {
           }
         });
 
-        it('should not be able to get signer for tenant after the tenant DID is deleted and the deleteKey parameter is set not false', async () => {
-          // This test is only relevant for the DWN store as it needs a signer to perform storage operations
-          if (agentStoreType !== 'dwn') {
-            return;
-          }
+        // This test is only relevant for the DWN store as it needs a signer to perform storage operations
+        it.skipIf(agentStoreType !== 'dwn')('should not be able to get signer for tenant after the tenant DID is deleted and the deleteKey parameter is set not false', async () => {
           // Generate a new DID, since no tenant is provided it will be stored under its own tenant
           const did = await testHarness.agent.did.create({ method: 'jwk', store: true }); // store
 

@@ -80,9 +80,7 @@ describe('AesGcmAlgorithm', () => {
       }
     });
 
-    it(`supports 'A192GCM' algorithm in all supported runtimes except Chrome browser`, async () => {
-      if (isChrome) { return; }
-
+    it.skipIf(isChrome)(`supports 'A192GCM' algorithm in all supported runtimes except Chrome browser`, async () => {
       const algorithms = ['A192GCM'] as const;
       for (const algorithm of algorithms) {
         const privateKey = await aesGcm.generateKey({ algorithm });
@@ -110,8 +108,7 @@ describe('AesGcmAlgorithm', () => {
       expect(privateKey.alg).toBe('A128GCM');
     });
 
-    it('sets alg to A192GCM for 192-bit keys', async () => {
-      if (isChrome) { return; }
+    it.skipIf(isChrome)('sets alg to A192GCM for 192-bit keys', async () => {
       const privateKeyBytes = new Uint8Array(24);
       const privateKey = await aesGcm.bytesToPrivateKey({ privateKeyBytes });
       expect(privateKey.alg).toBe('A192GCM');

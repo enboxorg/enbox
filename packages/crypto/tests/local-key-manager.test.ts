@@ -1,5 +1,4 @@
 import type { Jwk } from '../src/jose/jwk.js';
-import type { KeyIdentifier } from '../src/types/identifier.js';
 
 import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { Convert, MemoryStore } from '@enbox/common';
@@ -26,7 +25,7 @@ describe('LocalKeyManager', () => {
     });
 
     it('initializes with a custom in-memory key store', () => {
-      const keyStore = new MemoryStore<KeyIdentifier, Jwk>();
+      const keyStore = new MemoryStore<string, Jwk>();
       const keyManager = new LocalKeyManager({ keyStore });
 
       expect(keyManager).toBeDefined();
@@ -240,7 +239,7 @@ describe('LocalKeyManager', () => {
   describe('importKey()', () => {
     it('imports a private key and return a key URI', async () => {
       // Setup.
-      const memoryStore = new MemoryStore<KeyIdentifier, Jwk>();
+      const memoryStore = new MemoryStore<string, Jwk>();
       const keyManager = new LocalKeyManager({ keyStore: memoryStore });
       const privateKey: Jwk = {
         kty : 'EC',
@@ -264,7 +263,7 @@ describe('LocalKeyManager', () => {
 
     it('does not modify the kid property, if provided', async () => {
       // Setup.
-      const memoryStore = new MemoryStore<KeyIdentifier, Jwk>();
+      const memoryStore = new MemoryStore<string, Jwk>();
       const keyManager = new LocalKeyManager({ keyStore: memoryStore });
       const privateKey: Jwk = {
         kty : 'EC',
@@ -285,7 +284,7 @@ describe('LocalKeyManager', () => {
 
     it('adds the kid property, if missing', async () => {
       // Setup.
-      const memoryStore = new MemoryStore<KeyIdentifier, Jwk>();
+      const memoryStore = new MemoryStore<string, Jwk>();
       const keyManager = new LocalKeyManager({ keyStore: memoryStore });
       const privateKey: Jwk = {
         kty : 'EC',

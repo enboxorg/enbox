@@ -1,6 +1,5 @@
 import type { JweCipher } from '../../src/jose/jwe/header.js';
 import type { Jwk } from '../../src/jose/jwk.js';
-import type { KeyIdentifier } from '../../src/types/identifier.js';
 
 import { Convert } from '@enbox/common';
 import { beforeEach, describe, expect, it } from 'bun:test';
@@ -15,16 +14,16 @@ import { X25519 } from '../../src/primitives/x25519.js';
  * path. Mirrors the structural surface the agent's `LocalKeyManager` provides.
  */
 class TestJweCipher implements JweCipher {
-  private _keys = new Map<KeyIdentifier, Jwk>();
+  private _keys = new Map<string, Jwk>();
 
-  public async importKey({ key }: { key: Jwk }): Promise<KeyIdentifier> {
+  public async importKey({ key }: { key: Jwk }): Promise<string> {
     const keyUri = `urn:jwk:${await computeJwkThumbprint({ jwk: key })}`;
     this._keys.set(keyUri, key);
     return keyUri;
   }
 
   public async decrypt({ keyUri, data, iv, additionalData }: {
-    keyUri: KeyIdentifier;
+    keyUri: string;
     data: Uint8Array;
     iv?: Uint8Array;
     additionalData?: Uint8Array;
@@ -34,7 +33,7 @@ class TestJweCipher implements JweCipher {
   }
 
   public async encrypt({ keyUri, data, iv, additionalData }: {
-    keyUri: KeyIdentifier;
+    keyUri: string;
     data: Uint8Array;
     iv?: Uint8Array;
     additionalData?: Uint8Array;
@@ -43,7 +42,7 @@ class TestJweCipher implements JweCipher {
     return await AesGcm.encrypt({ key, data, iv: iv!, additionalData });
   }
 
-  private getKey(keyUri: KeyIdentifier): Jwk {
+  private getKey(keyUri: string): Jwk {
     const key = this._keys.get(keyUri);
     if (key === undefined) { throw new Error(`TestJweCipher: Key not found: ${keyUri}`); }
     return key;
