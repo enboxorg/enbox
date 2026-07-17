@@ -165,7 +165,7 @@ describe('SyncEngineLevel', () => {
       };
       const delivery = { ordinal: -1 };
 
-      internal.trackRecentlyPushedMessage(context.did, messageCid, dwnUrl);
+      internal._echoSuppressor.trackPushed(context.did, messageCid, dwnUrl);
       sinon.stub(internal, 'shouldSkipLivePullEvent').resolves(false);
       sinon.stub(internal, 'startPullDelivery').returns(delivery);
       const processLivePullEvent = sinon.stub(internal, 'processLivePullEvent');
@@ -223,7 +223,7 @@ describe('SyncEngineLevel', () => {
       const controller = internal.activateLink(linkKey, link);
       context.controller = controller;
       internal._ledger = { persistCheckpoint };
-      internal.trackRecentlyPushedMessage(context.did, messageCid, dwnUrl);
+      internal._echoSuppressor.trackPushed(context.did, messageCid, dwnUrl);
       sinon.stub(internal, 'shouldSkipLivePullEvent').resolves(false);
       const processLivePullEvent = sinon.stub(internal, 'processLivePullEvent');
 
@@ -249,52 +249,21 @@ describe('SyncEngineLevel', () => {
       }));
     });
 
-    it('scopes echo caches per tenant and endpoint and expires stale pushed entries', () => {
+    it('clears pulled and pushed echo state during live teardown', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
       const internal = syncEngine as any;
-      const messageCid = 'bafy-pushed-message';
-      const firstTenant = 'did:example:alice';
-      const firstRemote = 'https://first.example';
+      const tenantDid = 'did:example:alice';
+      const messageCid = 'bafy-message';
+      const remoteEndpoint = 'https://dwn.example';
+      internal._echoSuppressor.trackPulled(tenantDid, messageCid, remoteEndpoint);
+      internal._echoSuppressor.trackPushed(tenantDid, messageCid, remoteEndpoint);
 
-      internal.trackRecentlyPushedMessage(firstTenant, messageCid, firstRemote);
+      await internal.teardownLiveSync();
 
-      expect(internal.isRecentlyPushed(firstTenant, messageCid, firstRemote)).toBe(true);
-      expect(internal.isRecentlyPushed('did:example:bob', messageCid, firstRemote)).toBe(false);
-      expect(internal.isRecentlyPushed(firstTenant, messageCid, 'https://second.example')).toBe(false);
-
-      internal.trackRecentlyPulledMessage(firstTenant, messageCid, firstRemote);
-      expect(internal.isRecentlyPulled(firstTenant, messageCid, firstRemote)).toBe(true);
-      expect(internal.isRecentlyPulled('did:example:bob', messageCid, firstRemote)).toBe(false);
-      expect(internal.isRecentlyPulled(firstTenant, messageCid, 'https://second.example')).toBe(false);
-
-      const key = `${messageCid}|${firstTenant}|${firstRemote}`;
-      internal._recentlyPushedCids.set(key, Date.now() - 1);
-      expect(internal.isRecentlyPushed(firstTenant, messageCid, firstRemote)).toBe(false);
-      expect(internal._recentlyPushedCids.has(key)).toBe(false);
+      expect(internal._echoSuppressor.hasRecentlyPulled(tenantDid, messageCid, remoteEndpoint)).toBe(false);
+      expect(internal._echoSuppressor.hasRecentlyPushed(tenantDid, messageCid, remoteEndpoint)).toBe(false);
     });
 
-    it('bounds the pushed-echo cache at its max size, evicting the oldest entries first', () => {
-      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
-      const internal = syncEngine as any;
-      const cap = (SyncEngineLevel as any).ECHO_SUPPRESS_MAX_ENTRIES as number;
-      const farFuture = Date.now() + 10 * 60_000;
-      const keyFor = (index: number): string => `cid-${index}|did:example:alice|https://dwn.example`;
-
-      // Seed past the cap with unexpired entries so only the size bound — not
-      // the TTL sweep — can trim them.
-      for (let index = 0; index < cap + 5; index++) {
-        internal._recentlyPushedCids.set(keyFor(index), farFuture);
-      }
-      expect(internal._recentlyPushedCids.size).toBe(cap + 5);
-
-      internal.evictExpiredEchoEntries(internal._recentlyPushedCids);
-
-      expect(internal._recentlyPushedCids.size).toBe(cap);
-      // Oldest-inserted keys are evicted first; the most recent survive.
-      expect(internal._recentlyPushedCids.has(keyFor(0))).toBe(false);
-      expect(internal._recentlyPushedCids.has(keyFor(4))).toBe(false);
-      expect(internal._recentlyPushedCids.has(keyFor(cap + 4))).toBe(true);
-    });
   });
 
   describe('durable feed coordination', () => {

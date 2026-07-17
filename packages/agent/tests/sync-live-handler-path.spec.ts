@@ -3,10 +3,11 @@
  * Uses LocalDwnRpcShim to route pull subscription requests to an in-process DWN,
  * exercising the real subscription handler code path with real EventLog events.
  *
- * These tests assert actual behavioral outcomes (checkpoint advancement,
- * echo-suppression entries), not just "link is live."
+ * These tests assert actual behavioral outcomes (checkpoint advancement and
+ * echo suppression), not just "link is live."
  */
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { SyncEchoSuppressor } from '../src/sync-echo-suppressor.js';
 import type { SyncEngineLevel } from '../src/sync-engine-level.js';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -186,7 +187,7 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
     await syncEngine.stopSync();
   });
 
-  it('should populate echo-suppression cache after pull handler processes an event', async () => {
+  it('should track pull echo suppression after the real handler processes an event', async () => {
     const syncEngine = testHarness.agent.sync as SyncEngineLevel;
     await syncEngine.registerIdentity({
       did     : tenant,
@@ -203,7 +204,7 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
       messageParams : { definition: testProtocol },
     });
 
-    await testHarness.agent.dwn.processRequest({
+    const { messageCid: writeMessageCid } = await testHarness.agent.dwn.processRequest({
       author        : tenant,
       target        : tenant,
       messageType   : DwnInterface.RecordsWrite,
@@ -216,17 +217,13 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
       dataStream: new Blob([new TextEncoder().encode('Echo test')]),
     });
 
-    // Poll until echo-suppression cache has at least one entry — proves
-    // the pull handler ran and recorded the CID for echo-loop prevention.
-    const echoCache = (syncEngine as any)._recentlyPulledCids as Map<string, number>;
+    if (writeMessageCid === undefined) {
+      throw new Error('Expected the local RecordsWrite to produce a message CID.');
+    }
+    const echoSuppressor = (syncEngine as unknown as { _echoSuppressor: SyncEchoSuppressor })._echoSuppressor;
+    await waitFor(() => echoSuppressor.hasRecentlyPulled(tenant, writeMessageCid, 'http://localhost:9999'));
 
-    await waitFor(() => echoCache.size > 0);
-
-    expect(echoCache.size).toBeGreaterThan(0);
-
-    // The echo entry should be keyed by cid|dwnUrl.
-    const firstKey = [...echoCache.keys()][0];
-    expect(firstKey).toContain('|');
+    expect(echoSuppressor.hasRecentlyPulled(tenant, writeMessageCid, 'http://localhost:9999')).toBe(true);
 
     await syncEngine.stopSync();
   });
