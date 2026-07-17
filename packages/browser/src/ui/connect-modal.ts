@@ -881,7 +881,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       }
     };
 
-    const startPopup = (): void => {
+    const startPopup = async (): Promise<void> => {
       // Synchronous popup open inside the click's call stack.
       relaySession?.cancel();
       clearRemint();
@@ -898,8 +898,12 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       popupBusy = true;
       renderPopupWaiting();
 
+      // `runPopup(...)` is invoked synchronously (its `window.open` runs before the
+      // first `await`), preserving the user-gesture popup open. Awaiting it inside the
+      // try means both a synchronous throw (a custom transport) and an async rejection
+      // are handled here — no unhandled promise sits inside the try (Sonar S4822).
       try {
-        deps.runPopup({
+        const result = await deps.runPopup({
           walletUrl,
           permissionRequests  : options.permissionRequests,
           appName,
@@ -907,20 +911,17 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
           timeoutMs           : options.timeout,
           delegatePortableDid : options.delegatePortableDid,
           requestType         : options.mode,
-        })
-          .then((result) => {
-            if (settled) { return; }
-            if (result === undefined) {
-              renderDenied();
-            } else {
-              succeed(result);
-            }
-          })
-          .catch(renderPopupFailure)
-          .finally(() => { popupBusy = false; });
+        });
+        if (settled) { return; }
+        if (result === undefined) {
+          renderDenied();
+        } else {
+          succeed(result);
+        }
       } catch (error) {
-        popupBusy = false;
         renderPopupFailure(error);
+      } finally {
+        popupBusy = false;
       }
     };
 
