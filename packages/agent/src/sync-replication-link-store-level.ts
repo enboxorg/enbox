@@ -177,9 +177,7 @@ export class SyncReplicationLinkStoreLevel implements SyncReplicationLinkStore {
    */
   private static mergeCheckpoint(persisted: DirectionCheckpoint, incoming: DirectionCheckpoint): void {
     if (incoming.contiguousAppliedToken === undefined) {
-      if (incoming.receivedToken !== undefined) {
-        SyncCheckpoint.setReceivedToken(persisted, incoming.receivedToken);
-      }
+      SyncReplicationLinkStoreLevel.mergeReceivedToken(persisted, incoming.receivedToken);
       return;
     }
 
@@ -190,9 +188,20 @@ export class SyncReplicationLinkStoreLevel implements SyncReplicationLinkStore {
     }
 
     SyncCheckpoint.commitContiguousToken(persisted, incoming.contiguousAppliedToken);
-    if (incoming.receivedToken !== undefined) {
-      SyncCheckpoint.setReceivedToken(persisted, incoming.receivedToken);
+    SyncReplicationLinkStoreLevel.mergeReceivedToken(persisted, incoming.receivedToken);
+  }
+
+  /**
+   * Merge a received token only within the persisted checkpoint's established
+   * domain. `setReceivedToken` compares positions alone, so a stale old-epoch
+   * token with a numerically larger position would otherwise override a
+   * newer domain's value and leave a mixed-domain checkpoint.
+   */
+  private static mergeReceivedToken(persisted: DirectionCheckpoint, token: ProgressToken | undefined): void {
+    if (token === undefined || !SyncCheckpoint.validateTokenDomain(persisted, token)) {
+      return;
     }
+    SyncCheckpoint.setReceivedToken(persisted, token);
   }
 
   private static cloneLink(link: ReplicationLinkState): ReplicationLinkState {

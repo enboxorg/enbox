@@ -479,6 +479,32 @@ describe('SyncReplicationLinkStoreLevel', () => {
     expect(persisted.pull.receivedToken).toEqual(token(4, 'two'));
   });
 
+  it('should ignore a stale cross-domain receivedToken from an instance with no applied token', async () => {
+    const staleLink = await store.getOrCreateLink({
+      tenantDid      : 'did:example:alice',
+      remoteEndpoint : 'https://dwn.example.com',
+      scope          : { kind: 'full' },
+      ...ownerAuthorization,
+    });
+    const freshLink = await store.getOrCreateLink({
+      tenantDid      : 'did:example:alice',
+      remoteEndpoint : 'https://dwn.example.com',
+      scope          : { kind: 'full' },
+      ...ownerAuthorization,
+    });
+    freshLink.pull = { contiguousAppliedToken: token(50, 'two'), receivedToken: token(52, 'two') };
+    await store.persistCheckpoint(freshLink, 'pull');
+
+    // Position comparison alone would let the old domain's numerically larger
+    // received position override the new domain's value.
+    staleLink.pull = { receivedToken: token(99, 'one') };
+    await store.persistCheckpoint(staleLink, 'pull');
+
+    const [persisted] = await store.getAllLinks();
+    expect(persisted.pull.contiguousAppliedToken).toEqual(token(50, 'two'));
+    expect(persisted.pull.receivedToken).toEqual(token(52, 'two'));
+  });
+
   it('should still clear a checkpoint through an explicit reset after a newer persist', async () => {
     const staleLink = await store.getOrCreateLink({
       tenantDid      : 'did:example:alice',

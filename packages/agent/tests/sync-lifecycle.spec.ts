@@ -6,6 +6,7 @@ import { Level } from 'level';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
+import { SyncRunCancelledError } from '../src/sync-runtime-errors.js';
 
 type Deferred = {
   promise: Promise<void>;
@@ -711,14 +712,14 @@ describe('SyncEngineLevel lifecycle', () => {
     expect(sync.called).toBe(false);
   });
 
-  it('should exclude one-shot sync from the clear() destructive phase', async () => {
+  it('should exclude one-shot sync from the clear() destructive phase and cancel the joined run', async () => {
     const engine = new SyncEngineLevel({ db });
     const registeredIdentities = db.sublevel<string, string>('registeredIdentities');
     await registeredIdentities.put('did:example:alice', JSON.stringify({ protocols: 'all' }));
 
     const wipeStarted = createDeferred();
     const releaseWipe = createDeferred();
-    const clearSyncDb = sinon.stub(engine as never, 'clearSyncDb').callsFake(async (): Promise<void> => {
+    sinon.stub(engine as never, 'clearSyncDb').callsFake(async (): Promise<void> => {
       wipeStarted.resolve();
       await releaseWipe.promise;
     });
@@ -735,10 +736,44 @@ describe('SyncEngineLevel lifecycle', () => {
 
     releaseWipe.resolve();
     await clearPromise;
-    await syncPromise;
 
+    // The joined run raced the wipe rather than following it — it cancels
+    // through the queued-run convention instead of running on wiped state.
+    await expect(syncPromise).rejects.toThrow(SyncRunCancelledError);
+    expect(getSyncTargets.called).toBe(false);
+
+    // A sync issued after clear() completes runs normally.
+    await engine.sync();
     expect(getSyncTargets.called).toBe(true);
-    expect(getSyncTargets.calledAfter(clearSyncDb)).toBe(true);
+  });
+
+  it('should cancel a sync joined during the close() destructive phase instead of failing on closed storage', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const registeredIdentities = db.sublevel<string, string>('registeredIdentities');
+    await registeredIdentities.put('did:example:alice', JSON.stringify({ protocols: 'all' }));
+
+    const closeStarted = createDeferred();
+    const releaseClose = createDeferred();
+    const dbClose = sinon.stub(db, 'close').callsFake(async (): Promise<void> => {
+      closeStarted.resolve();
+      await releaseClose.promise;
+      await dbClose.wrappedMethod.call(db);
+    });
+    const getSyncTargets = sinon.stub(engine as never, 'getSyncTargets').resolves([]);
+
+    const closePromise = engine.close();
+    await closeStarted.promise;
+
+    const syncPromise = engine.sync();
+    releaseClose.resolve();
+    await closePromise;
+
+    // The joined run must cancel with the typed queued-run error instead of
+    // executing against the closed database and surfacing an internal
+    // storage error to the caller.
+    await expect(syncPromise).rejects.toThrow(SyncRunCancelledError);
+    expect(getSyncTargets.called).toBe(false);
+    expect(db.status).toBe('closed');
   });
 
   it('should retry DID-resolution failures while the runtime generation is unchanged', async () => {

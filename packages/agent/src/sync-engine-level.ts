@@ -705,12 +705,20 @@ export class SyncEngineLevel implements SyncEngine {
    * so without this a `sync()`, `drainTo()`, or `retryRemoteNow()` admitted
    * after that wait could interleave with the wipe or the closed database and
    * resurrect sync state that `clear()` guarantees is gone.
+   *
+   * The generation bump invalidates work that queued against the lock while
+   * the phase ran: those callers raced the destruction rather than following
+   * it, so they cancel through the engine's stale-work convention instead of
+   * running against wiped state or failing on closed storage. The queued
+   * join point itself is left in place — post-bump joiners must share that
+   * cancellation, not start a fresh run.
    */
   private async runDestructivePhase(operation: () => Promise<void>): Promise<void> {
     await this._lifecycle.acquireSync();
     try {
       await operation();
     } finally {
+      this._engineGeneration++;
       this._lifecycle.releaseSync();
     }
   }
@@ -1510,10 +1518,15 @@ export class SyncEngineLevel implements SyncEngine {
       if (!this.isDidResolutionFailure(error)) { throw error; }
 
       for (const delay of SyncEngineLevel.DID_RESOLUTION_RETRY_BACKOFF_MS) {
+        // A runtime transition during an attempt or the backoff tore down
+        // whatever this initialization would have joined; a retry now would
+        // re-activate a link controller and reopen subscriptions behind that
+        // teardown. Checked on both sides of the sleep so a transition during
+        // the previous attempt skips the backoff wait entirely.
+        if (this._engineGeneration !== generation) {
+          return { status: LinkInitializationStatus.Failed };
+        }
         await sleep(delay);
-        // A runtime transition during the backoff tore down whatever this
-        // initialization would have joined; a retry now would re-activate a
-        // link controller and reopen subscriptions behind that teardown.
         if (this._engineGeneration !== generation) {
           return { status: LinkInitializationStatus.Failed };
         }
