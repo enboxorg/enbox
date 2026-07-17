@@ -18,15 +18,28 @@ export type { EnboxUserAgent } from '@enbox/agent';
 
 // ─── Sync ────────────────────────────────────────────────────────
 
+/** Interval string such as `'30s'`, `'2m'`, `'1h'`. */
+export type SyncIntervalString = `${number}${'s' | 'm' | 'h'}`;
+
 /**
  * Controls DWN synchronisation behaviour.
  *
- * - `'off'`   — Sync disabled entirely.
- * - An interval string such as `'30s'`, `'2m'`, `'1h'` — Poll mode at the
- *   specified interval.
  * - `undefined` (omitted) — Live WebSocket sync (default).
+ * - `'off'` — Sync disabled entirely.
+ * - `'live'` — Live WebSocket sync, explicitly.
+ * - `{ mode, interval? }` — Explicit mode with an optional interval. In
+ *   `'live'` mode the interval only paces the background integrity check
+ *   (default `'5m'`); in `'poll'` mode it is the poll cadence (default `'2m'`).
+ * - A bare interval string such as `'30s'` — **Deprecated.** Selects POLL
+ *   mode at that cadence, silently giving up real-time delivery; prefer
+ *   `{ mode: 'poll', interval: '30s' }` (or `{ mode: 'live', interval }` to
+ *   keep live delivery and tune the integrity check).
  */
-export type SyncOption = 'off' | `${number}${'s' | 'm' | 'h'}`;
+export type SyncOption =
+  | 'off'
+  | 'live'
+  | SyncIntervalString
+  | { mode: 'live' | 'poll'; interval?: SyncIntervalString };
 
 /**
  * Protocol scope used when auth registers a local identity for sync.

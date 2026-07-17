@@ -239,6 +239,24 @@ export type DirectionCheckpoint = {
 export type SyncDirection = 'push' | 'pull';
 
 /**
+ * Options for a one-shot {@link SyncEngine.sync} run.
+ */
+export type SyncRunOptions = {
+  /**
+   * Restrict the run to one registered identity's replication targets. The
+   * run reconciles only that identity's endpoints; every other registered
+   * identity is untouched. Rejects when the DID is not registered.
+   */
+  did?: string;
+
+  /**
+   * Verify cids-only feed convergence after reconciliation and schedule
+   * repair on divergence. Used by the engine's own settle checks.
+   */
+  verifyConvergence?: boolean;
+};
+
+/**
  * Status of a replication link.
  *
  * - `initializing` — link created, no subscriptions open yet.
@@ -479,6 +497,30 @@ type SyncEventBase = {
 } & SyncEventScope;
 
 /**
+ * What a sync-delivered message is, extracted from its descriptor so event
+ * consumers can route a change (e.g. invalidate an app cache for one protocol
+ * path) without re-reading the local store.
+ */
+export type SyncMessageDescriptor = {
+  /** DWN interface name, e.g. `Records` or `Protocols`. */
+  interface: string;
+  /** DWN method name, e.g. `Write` or `Delete`. */
+  method: string;
+  /** The message's `messageTimestamp`, when present. */
+  messageTimestamp?: string;
+  /** Protocol URI, for protocol-bound messages. */
+  protocol?: string;
+  /** Protocol path, for records messages. */
+  protocolPath?: string;
+  /** Record ID, for records messages. */
+  recordId?: string;
+  /** Context ID, for contextual records messages. */
+  contextId?: string;
+  /** The DID that authored the message, when recoverable from its authorization. */
+  author?: string;
+};
+
+/**
  * Events emitted by the sync engine at key state transitions.
  * Consumers subscribe via `SyncEngine.on('event', handler)` and can
  * hook these into metrics, logging, or UI state.
@@ -488,6 +530,17 @@ export type SyncEvent =
   | SyncEventBase & { type: 'link:connectivity-change'; from: SyncConnectivityState; to: SyncConnectivityState }
   | SyncEventBase & { type: 'checkpoint:pull-advance'; position: string; messageCid?: string }
   | SyncEventBase & { type: 'checkpoint:push-advance'; position: string; messageCid?: string }
+  /**
+   * Emitted once per remote message admitted through a live pull
+   * subscription, with the message described so consumers can react to the
+   * specific change (protocol path, record, author) without querying.
+   * Live-path only: messages admitted by durable-feed reconciliation are
+   * reported through `reconcile:applied` (cids-only) instead — that split is
+   * the origin signal (`delivery:applied` = pushed to us in real time;
+   * `reconcile:applied` = found by a reconciliation pass, including one-shot
+   * `sync()` runs this agent initiated itself).
+   */
+  | SyncEventBase & { type: 'delivery:applied'; messageCid: string; descriptor: SyncMessageDescriptor }
   /** Emitted when set reconciliation admits remote messages outside the live pull checkpoint stream. */
   | SyncEventBase & { type: 'reconcile:applied'; messageCids: string[] }
   | SyncEventBase & { type: 'reconcile:needed'; reason: string }
@@ -594,6 +647,36 @@ export type RemoteSyncStatus = {
   lastActivityAt?: string;
 };
 
+/**
+ * Read-only snapshot of one current replication link, one row per
+ * `(tenantDid, remoteEndpoint, scope)`. Where {@link RemoteSyncStatus} rolls
+ * links up per remote for a status badge, this exposes the per-link detail an
+ * app needs to reason about replication progress — most notably `status`:
+ * a link whose status has reached `live` has finished replaying its remote
+ * backlog (the subscription's end-of-stored-events marker), so "every link
+ * for this identity is `live`" is the per-identity caught-up signal.
+ */
+export type ReplicationLinkSnapshot = {
+  /** The tenant DID this link syncs for. */
+  tenantDid: string;
+  /** The remote DWN endpoint URL. */
+  remoteEndpoint: string;
+  /** The scope definition this link covers. */
+  scope: SyncScope;
+  /** Current link status (`initializing` | `live` | `repairing` | `paused`). */
+  status: LinkStatus;
+  /** Per-link connectivity state. */
+  connectivity: SyncConnectivityState;
+  /** Delegate DID used to sign sync messages, if any. */
+  delegateDid?: string;
+  /** Durable pull checkpoint position (remote → local), when advanced past the stream start. */
+  pullPosition?: string;
+  /** Durable push checkpoint position (local → remote), when advanced past the stream start. */
+  pushPosition?: string;
+  /** ISO-8601 timestamp of last successful sync activity. */
+  lastActivityAt?: string;
+};
+
 export interface SyncEngine {
   /**
    * The agent that the SyncEngine is attached to.
@@ -647,12 +730,27 @@ export interface SyncEngine {
    */
   updateIdentityOptions(params: { did: string, options: SyncIdentityOptions }): Promise<void>;
   /**
-   * Preforms a one-shot sync operation. If no direction is provided, it will perform both push and pull.
-   * @param direction which direction you'd like to perform the sync operation.
+   * Performs a one-shot sync operation. If no direction is provided, it will perform both push and pull.
    *
-   * @throws {Error} if a sync is already in progress or the sync operation fails.
+   * Concurrent calls coalesce instead of throwing: when a sync (or drain) is
+   * already holding the lock, the call joins a single queued follow-up run
+   * that starts after the current operation completes. All joined callers
+   * share that run's outcome, and their requested directions/scopes are
+   * merged (differing directions widen to both; differing scopes widen to
+   * unscoped) so the follow-up covers every joined request. A runtime
+   * transition (`stopSync`/`clear`/`close`/mode switch) while the follow-up
+   * is still queued cancels it — joined callers resolve without a run, the
+   * engine's convention for work invalidated by teardown.
+   *
+   * @param direction which direction you'd like to perform the sync operation.
+   * @param options optional scoping — `did` restricts the run to one
+   * registered identity's replication targets (its endpoints only), which
+   * keeps an app-triggered "pull my inbox now" from re-reconciling every
+   * other identity.
+   *
+   * @throws {Error} if `options.did` is not a registered identity, or the sync operation fails.
    */
-  sync(direction?: SyncDirection): Promise<void>;
+  sync(direction?: SyncDirection, options?: SyncRunOptions): Promise<void>;
   /**
    * Drains every registered sync identity to the given DWN endpoint.
    *
@@ -672,6 +770,15 @@ export interface SyncEngine {
    *
    * Subsequent calls update the mode/interval. Calling with a different mode
    * tears down the previous mode's resources before starting the new one.
+   *
+   * The returned promise resolves after the initial durable-feed catch-up and
+   * (in live mode) after link subscriptions have been opened for identities
+   * registered before the call — so `await startSync(...)` is the
+   * "initially caught up" signal for those identities, best-effort: individual
+   * link failures schedule repair rather than rejecting. Identities hot-added
+   * later report their own catch-up through
+   * {@link SyncEngine.getReplicationLinks} (all links `'live'`) and the
+   * `link:status-change` event.
    */
   startSync(params: StartSyncParams): Promise<void>;
   /**
@@ -735,6 +842,16 @@ export interface SyncEngine {
    * current durable link state plus live quota-block and dead-letter records.
    */
   getRemoteSyncStatus(tenantDid?: string): Promise<RemoteSyncStatus[]>;
+
+  /**
+   * Returns a read-only snapshot of every current replication link, optionally
+   * filtered by tenant. Superseded links (from a previous scope/delegate
+   * registration) are excluded. An identity has completed its initial
+   * catch-up when every one of its links reports `status: 'live'` —
+   * `startSync()` resolving covers identities registered before start, and
+   * this surface covers hot-added identities and later inspection.
+   */
+  getReplicationLinks(tenantDid?: string): Promise<ReplicationLinkSnapshot[]>;
 
   /**
    * Immediately re-probe a remote's quota-blocked messages instead of waiting

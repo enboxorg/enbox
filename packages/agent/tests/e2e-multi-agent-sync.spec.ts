@@ -1,8 +1,8 @@
 import type { BearerIdentity } from '../src/bearer-identity.js';
 import type { DwnDataEncodedRecordsWriteMessage } from '../src/types/dwn.js';
 import type { PrivateKeyJwk } from '@enbox/crypto';
-import type { PushResult } from '../src/types/sync.js';
 import type { GenericMessage, MessagesQueryReplyEntry, PermissionScope, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { PushResult, SyncEvent } from '../src/types/sync.js';
 
 import sinon from 'sinon';
 
@@ -1540,6 +1540,195 @@ describe('E2E Multi-Agent Sync', () => {
 
       await primaryHarness.agent.sync.stopSync();
       await deviceHarness.agent.sync.stopSync();
+    });
+  });
+
+  // =========================================================================
+  // Live-mode peer-authored delivery (the inbox pattern)
+  // =========================================================================
+
+  describe('live-mode peer-authored delivery', () => {
+    /**
+     * Mirrors a payments-style inbox: a published protocol whose `message`
+     * path is `anyone`-creatable, so a foreign author can deliver a record
+     * straight into the tenant's remote DWN (the payer → payee pattern).
+     */
+    const protocolInbox: ProtocolDefinition = {
+      published : true,
+      protocol  : 'https://protocol.xyz/inbox',
+      types     : {
+        message: {
+          schema      : 'https://schemas.xyz/inbox-message',
+          dataFormats : ['application/json'],
+        },
+      },
+      structure: {
+        message: {
+          $actions: [{ who: 'anyone', can: ['create'] }],
+        },
+      },
+    };
+
+    /** Inbox owner — a fresh identity, so the remote tenant starts clean. */
+    let carol: BearerIdentity;
+
+    /** Foreign author on the other agent — NOT a delegate of carol. */
+    let bob: BearerIdentity;
+
+    beforeAll(async () => {
+      carol = await primaryHarness.createIdentity({ name: 'Carol', testDwnUrls });
+      bob = await deviceHarness.agent.identity.create({
+        store     : true,
+        didMethod : 'jwk',
+        metadata  : { name: 'Bob' },
+      });
+
+      // Install the inbox protocol on carol's local and remote DWN.
+      const localConfigure = await primaryHarness.agent.dwn.processRequest({
+        author        : carol.did.uri,
+        target        : carol.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: protocolInbox },
+      });
+      expect(localConfigure.reply.status.code).toBe(202);
+
+      const remoteConfigure = await retryFreshDidResolution(() => primaryHarness.agent.dwn.sendRequest({
+        author        : carol.did.uri,
+        target        : carol.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: protocolInbox },
+      }));
+      expect(remoteConfigure.reply.status.code).toBe(202);
+    });
+
+    beforeEach(async () => {
+      await primaryHarness.agent.sync.stopSync();
+      await primaryHarness.syncStore.clear();
+    });
+
+    it('should deliver an anyone-create write by a foreign author in real time', async () => {
+      await primaryHarness.agent.sync.registerIdentity({
+        did     : carol.did.uri,
+        options : { protocols: [protocolInbox.protocol] },
+      });
+      await primaryHarness.agent.sync.startSync({ mode: 'live', interval: '60s' });
+      await new Promise(r => setTimeout(r, 500));
+
+      // Capture the engine's per-delivery events: a freshly admitted live
+      // delivery must announce itself with a routing descriptor.
+      const deliveries: Extract<SyncEvent, { type: 'delivery:applied' }>[] = [];
+      const offSyncEvents = primaryHarness.agent.sync.on((event) => {
+        if (event.type === 'delivery:applied' && event.descriptor.protocol === protocolInbox.protocol) {
+          deliveries.push(event);
+        }
+      });
+
+      // A local subscription on carol's agent — the application-visible
+      // signal that an inbox record landed (what an app invalidates on).
+      const sawInboxRecord = createDeferred();
+      const localSub = await primaryHarness.agent.dwn.processRequest({
+        author              : carol.did.uri,
+        target              : carol.did.uri,
+        messageType         : DwnInterface.MessagesSubscribe,
+        messageParams       : { filters: [{ protocol: protocolInbox.protocol }] },
+        subscriptionHandler : (msg): void => {
+          if (msg.type === 'event') { sawInboxRecord.resolve(); }
+        },
+      });
+      expect(localSub.reply.status.code).toBe(200);
+
+      // Bob — a different author on a different agent, holding no grants
+      // from carol — writes directly into carol's REMOTE DWN (anyone-create).
+      const writeResult = await retryFreshDidResolution(() => deviceHarness.agent.dwn.sendRequest({
+        author        : bob.did.uri,
+        target        : carol.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          dataFormat   : 'application/json',
+          protocol     : protocolInbox.protocol,
+          protocolPath : 'message',
+          schema       : protocolInbox.types.message.schema,
+          recipient    : carol.did.uri,
+        },
+        dataStream: new Blob([JSON.stringify({ kind: 'payment', amountSat: 42 })]),
+      }));
+      expect(writeResult.reply.status.code).toBe(202);
+      const recordId = writeResult.message!.recordId;
+
+      // The reconcile interval is 60s and the assertion window is 8s, so the
+      // record can only arrive via the live MessagesSubscribe pull path.
+      const received = await waitForRecord(primaryHarness.agent, {
+        did       : carol.did.uri,
+        protocol  : protocolInbox.protocol,
+        recordId,
+        timeoutMs : 8_000,
+      });
+      expect(received.recordId).toBe(recordId);
+
+      // The local event log must announce the pulled record to subscribers.
+      const timeout = new Promise<'timeout'>(resolve => setTimeout(() => resolve('timeout'), 3_000));
+      const outcome = await Promise.race([sawInboxRecord.promise.then(() => 'event' as const), timeout]);
+      expect(outcome).toBe('event');
+
+      // The engine emitted `delivery:applied` with a routing descriptor.
+      const delivery = deliveries.find(event => event.descriptor.recordId === recordId);
+      expect(delivery).toBeDefined();
+      expect(delivery!.tenantDid).toBe(carol.did.uri);
+      expect(delivery!.descriptor).toMatchObject({
+        interface    : 'Records',
+        method       : 'Write',
+        protocol     : protocolInbox.protocol,
+        protocolPath : 'message',
+        recordId,
+        author       : bob.did.uri,
+      });
+
+      offSyncEvents();
+      await localSub.reply.subscription!.close();
+      await primaryHarness.agent.sync.stopSync();
+    });
+
+    it('should deliver to an identity hot-added after live sync started', async () => {
+      // The wallet-app ordering: sync starts agent-wide first, the profile is
+      // registered later (on wallet open), relying on hot-add semantics.
+      await primaryHarness.agent.sync.startSync({ mode: 'live', interval: '60s' });
+      await new Promise(r => setTimeout(r, 300));
+      await primaryHarness.agent.sync.registerIdentity({
+        did     : carol.did.uri,
+        options : { protocols: [protocolInbox.protocol] },
+      });
+      await new Promise(r => setTimeout(r, 500));
+
+      const writeResult = await retryFreshDidResolution(() => deviceHarness.agent.dwn.sendRequest({
+        author        : bob.did.uri,
+        target        : carol.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          dataFormat   : 'application/json',
+          protocol     : protocolInbox.protocol,
+          protocolPath : 'message',
+          schema       : protocolInbox.types.message.schema,
+          recipient    : carol.did.uri,
+        },
+        dataStream: new Blob([JSON.stringify({ kind: 'payment', amountSat: 7 })]),
+      }));
+      expect(writeResult.reply.status.code).toBe(202);
+
+      const received = await waitForRecord(primaryHarness.agent, {
+        did       : carol.did.uri,
+        protocol  : protocolInbox.protocol,
+        recordId  : writeResult.message!.recordId,
+        timeoutMs : 8_000,
+      });
+      expect(received.recordId).toBe(writeResult.message!.recordId);
+
+      // Every link for the hot-added identity has finished its initial
+      // replay — the per-identity caught-up signal exposed to apps.
+      const links = await primaryHarness.agent.sync.getReplicationLinks(carol.did.uri);
+      expect(links.length).toBeGreaterThan(0);
+      expect(links.every(link => link.status === 'live')).toBe(true);
+
+      await primaryHarness.agent.sync.stopSync();
     });
   });
 });

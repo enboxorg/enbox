@@ -189,14 +189,50 @@ export async function ensureVaultReady(params: {
 
 // ─── startSyncIfEnabled ─────────────────────────────────────────
 
+/** Warn once per process about the deprecated bare-interval `sync` form. */
+let bareIntervalSyncWarned = false;
+
+/**
+ * Resolve a {@link SyncOption} into explicit `startSync` parameters.
+ *
+ * - `undefined` / `'live'` → live mode (engine default integrity interval).
+ * - `{ mode, interval? }` → exactly as given.
+ * - A bare interval string → poll mode at that cadence, preserved for
+ *   backwards compatibility but deprecated: it silently trades real-time
+ *   WebSocket delivery for polling, which is rarely what callers meant.
+ *
+ * @internal
+ */
+export function resolveSyncOption(
+  sync: Exclude<SyncOption, 'off'> | undefined,
+): { mode: 'live' | 'poll'; interval: string } {
+  if (sync === undefined || sync === 'live') {
+    return { mode: 'live', interval: '5m' };
+  }
+
+  if (typeof sync === 'object') {
+    return { mode: sync.mode, interval: sync.interval ?? (sync.mode === 'live' ? '5m' : '2m') };
+  }
+
+  if (!bareIntervalSyncWarned) {
+    bareIntervalSyncWarned = true;
+    console.warn(
+      `[@enbox/auth] Passing a bare interval ('${sync}') as the sync option selects POLL mode and ` +
+      `disables real-time delivery. Pass { mode: 'poll', interval: '${sync}' } to keep this behaviour ` +
+      `explicitly, or { mode: 'live', interval: '${sync}' } to keep live delivery and tune its ` +
+      'background integrity check. The bare-interval form is deprecated.',
+    );
+  }
+  return { mode: 'poll', interval: sync };
+}
+
 /**
  * Start DWN synchronisation if `sync` is not `'off'`.
  *
  * Consolidates 6 copies of:
  * ```ts
- * const syncMode = sync === undefined ? 'live' : 'poll';
- * const syncInterval = sync ?? (syncMode === 'live' ? '5m' : '2m');
- * userAgent.sync.startSync({ mode: syncMode, interval: syncInterval })
+ * const { mode, interval } = resolveSyncOption(sync);
+ * userAgent.sync.startSync({ mode, interval })
  *   .catch((err) => console.error('[@enbox/auth] Sync failed:', err));
  * ```
  *
@@ -211,10 +247,7 @@ export async function startSyncIfEnabled(
   }
 
   if (userAgent.sync.hasActiveSubscriptions) { return; } // registerIdentity() hot-adds inline
-  const syncMode = sync === undefined ? 'live' : 'poll';
-  const syncInterval = sync ?? (syncMode === 'live' ? '5m' : '2m');
-
-  await userAgent.sync.startSync({ mode: syncMode, interval: syncInterval });
+  await userAgent.sync.startSync(resolveSyncOption(sync));
 }
 
 // ─── createDefaultIdentity ──────────────────────────────────────

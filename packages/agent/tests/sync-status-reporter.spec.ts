@@ -280,3 +280,56 @@ function deadLetter(overrides: Partial<DeadLetterEntry> = {}): DeadLetterEntry {
 function timestamp(seconds: number): string {
   return new Date(Date.UTC(2026, 0, 1, 0, 0, seconds)).toISOString();
 }
+
+describe('SyncStatusReporter.getReplicationLinks', () => {
+  it('projects current links with checkpoint positions and sorts by tenant and remote', async () => {
+    const bobLink = link({
+      tenantDid      : BOB,
+      remoteEndpoint : REMOTE_B,
+      projectionId   : 'bob-projection',
+      delegateDid    : 'did:example:device',
+      status         : 'initializing',
+      pull           : { contiguousAppliedToken: { streamId: 'stream', epoch: 'epoch', position: '00042' } },
+      lastActivityAt : timestamp(4),
+    });
+    const aliceLink = link({ projectionId: 'alice-projection' });
+    const reporter = createReporter({ links: [bobLink, aliceLink] });
+
+    const snapshots = await reporter.getReplicationLinks();
+
+    expect(snapshots).toEqual([
+      {
+        tenantDid      : ALICE,
+        remoteEndpoint : REMOTE_A,
+        scope          : { kind: 'full' },
+        status         : 'live',
+        connectivity   : 'online',
+      },
+      {
+        tenantDid      : BOB,
+        remoteEndpoint : REMOTE_B,
+        scope          : { kind: 'full' },
+        status         : 'initializing',
+        connectivity   : 'online',
+        delegateDid    : 'did:example:device',
+        pullPosition   : '00042',
+        lastActivityAt : timestamp(4),
+      },
+    ]);
+  });
+
+  it('filters by tenant and excludes superseded links', async () => {
+    const current = link({ projectionId: 'current' });
+    const superseded = link({ projectionId: 'superseded', status: 'paused' });
+    const bobLink = link({ tenantDid: BOB, projectionId: 'bob' });
+    const reporter = createReporter({
+      links                   : [current, superseded, bobLink],
+      currentLinkIdentityKeys : new Set([identityKey(current), identityKey(bobLink)]),
+    });
+
+    const aliceSnapshots = await reporter.getReplicationLinks(ALICE);
+
+    expect(aliceSnapshots).toHaveLength(1);
+    expect(aliceSnapshots[0]).toMatchObject({ tenantDid: ALICE, status: 'live' });
+  });
+});

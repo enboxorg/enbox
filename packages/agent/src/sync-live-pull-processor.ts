@@ -23,7 +23,7 @@ import { isRecordsWrite } from './utils.js';
 import { isTerminalSyncAuthorizationFailure } from './sync-runtime-errors.js';
 import { SyncCheckpoint } from './sync-checkpoint.js';
 import { syncTargetFromLink } from './sync-target-resolver.js';
-import { fetchRemoteMessages, SyncPullAbortedError } from './sync-messages.js';
+import { fetchRemoteMessages, syncMessageDescriptor, SyncPullAbortedError } from './sync-messages.js';
 
 export type SyncLivePullContext = {
   controller?: SyncLinkController;
@@ -72,7 +72,7 @@ type PullDelivery = {
 
 type LivePullProcessResult =
   | { admitted: false; messageCid: string }
-  | { admitted: true; appliedCids: string[]; messageCid: string };
+  | { admitted: true; appliedCids: string[]; messageCid: string; fresh: boolean };
 
 type LivePullDataStreamFactory = () => Promise<ReadableStream<Uint8Array> | undefined>;
 
@@ -217,11 +217,33 @@ export class SyncLivePullProcessor {
             syncTargetFromLink(context.link),
           );
         }
+        // Fresh only: a Duplicate/Superseded apply (an echo of a message this
+        // store already held, e.g. our own push looping back via another
+        // endpoint) is not a remote change and must not signal consumers.
+        if (result.fresh) {
+          this.emitDeliveryApplied(context, message.event, result.messageCid);
+        }
       }
       await this.commitDelivery(context, message.cursor, delivery);
     } catch (error: unknown) {
       await this.handleProcessingError(context, error);
     }
+  }
+
+  /** Announce one freshly-admitted live delivery with its routing descriptor. */
+  private emitDeliveryApplied(
+    { did, dwnUrl, eventScope }: SyncLivePullContext,
+    event: MessageEvent,
+    messageCid: string,
+  ): void {
+    this._operations.emitEvent({
+      type           : 'delivery:applied',
+      tenantDid      : did,
+      remoteEndpoint : dwnUrl,
+      ...eventScope,
+      messageCid,
+      descriptor     : syncMessageDescriptor(event.message),
+    });
   }
 
   private markLinkOnline({ did, dwnUrl, eventScope, link }: SyncLivePullContext): void {
@@ -332,7 +354,12 @@ export class SyncLivePullProcessor {
     if (context.isStale()) { return undefined; }
 
     if (outcome.kind === 'admitted') {
-      return { admitted: true, appliedCids: outcome.appliedCids, messageCid: rootCid };
+      return {
+        admitted    : true,
+        appliedCids : outcome.appliedCids,
+        messageCid  : rootCid,
+        fresh       : outcome.freshCids.includes(rootCid),
+      };
     }
     if (outcome.kind === 'failed') {
       await this.recordAdmissionFailure(context, rootCid, event, outcome);

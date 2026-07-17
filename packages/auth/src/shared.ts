@@ -102,6 +102,7 @@ export type {
   RestoreSessionOptions,
   ShutdownOptions,
   StorageAdapter,
+  SyncIntervalString,
   SyncOption,
   VaultConnectOptions,
   WalletConnectOptions,
