@@ -1527,15 +1527,22 @@ jobs:
           exit 1
 
   # ---------------------------------------------------------------------------
-  # Gate job for branch protection — always runs so required checks pass even
-  # when the pipeline is skipped (e.g. docs-only changes).
+  # Gate job for branch protection — runs so required checks pass even when the
+  # pipeline is skipped (e.g. docs-only changes).
+  #
+  # Guarded with `!cancelled()`: when a run is superseded by a newer commit
+  # (concurrency cancel-in-progress), this job must be left as `cancelled`, not
+  # reported as `failure`. With a bare `always()` it would run during the
+  # cancellation, see its cancelled dependencies fail the checks below, and turn
+  # the required "CI Passed" check red on every superseded run. A genuine job
+  # failure is not `cancelled()`, so real failures are still caught.
   # ---------------------------------------------------------------------------
   ci-passed:
     name: CI Passed
     runs-on: ubuntu-latest
     timeout-minutes: 2
     needs: [changes, lint, build, test-lightweight, test-dwn-sdk, test-agent, test-api-clients, test-e2e, test-sql-store, test-dwn-server, test-browser, sonar-pr]
-    if: always()
+    if: always() && !cancelled()
     steps:
       - name: Check results
         run: |
