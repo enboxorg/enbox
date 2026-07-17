@@ -1,6 +1,7 @@
 import type { GenericMessage, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
 import type { SyncEchoSuppressor } from './sync-echo-suppressor.js';
+import type { SyncIdentityTaskRunner } from './sync-lifecycle-coordinator.js';
 import type { SyncTarget } from './sync-target-resolver.js';
 import type {
   DeadLetterEntry,
@@ -30,12 +31,12 @@ export type SyncLivePushBatchRequest = {
 };
 
 export interface SyncLivePushCoordinatorOperations {
+  captureIdentityTaskRunner(tenantDid: string): SyncIdentityTaskRunner;
   clearQuotaBlock(tenantDid: string, linkKey: string, messageCid: string): Promise<unknown>;
   getController(linkKey: string): SyncLinkController | undefined;
   pushMessages(request: SyncLivePushBatchRequest): Promise<PushResult>;
   recordDeadLetter(entry: Omit<DeadLetterEntry, 'failedAt'>): Promise<void>;
   reportError(message: string, error: unknown): void;
-  runIdentityTask(tenantDid: string, operation: () => Promise<void>): Promise<void>;
   scheduleReconcile(linkKey: string, link: ReplicationLinkState, reason: string, delayMs?: number): void;
   transitionPushResult(
     target: SyncTarget,
@@ -106,6 +107,7 @@ export class SyncLivePushCoordinator {
     target: SyncLivePushTarget,
     controller: SyncLinkController,
     isStale: () => boolean,
+    runIdentityTask: SyncIdentityTaskRunner,
     message: SubscriptionMessage,
   ): Promise<void> {
     if (isStale() || message.type !== 'event') {
@@ -137,7 +139,7 @@ export class SyncLivePushCoordinator {
     runtime.entries.push({ cid });
 
     if (!runtime.flushing && runtime.timer === undefined) {
-      this.startSupervisedFlush(controller);
+      this.startSupervisedFlush(controller, runIdentityTask);
     }
   }
 
@@ -149,6 +151,7 @@ export class SyncLivePushCoordinator {
     }
 
     const { controller, entries, isStale, runtime } = batch;
+    const batchRetryCount = runtime.retryCount;
     try {
       const result = await this._operations.pushMessages({
         did                : runtime.did,
@@ -167,7 +170,7 @@ export class SyncLivePushCoordinator {
         await this.requeue(controller, {
           ...SyncLivePushCoordinator.pendingFromRuntime(runtime),
           entries,
-          retryCount: runtime.retryCount + 1,
+          retryCount: batchRetryCount + 1,
         });
       }
     } finally {
@@ -234,6 +237,13 @@ export class SyncLivePushCoordinator {
     }
 
     this.scheduleRetry(controller, runtime, { entries, retryCount: pending.retryCount });
+  }
+
+  /** Schedule a quota-probe reconciliation using the shared deadline policy. */
+  public scheduleQuotaProbe(linkKey: string, link: ReplicationLinkState, nextProbeAt: string): void {
+    const parsed = Date.parse(nextProbeAt);
+    const delay = Number.isFinite(parsed) ? Math.max(0, parsed - Date.now()) : 0;
+    this._operations.scheduleReconcile(linkKey, link, 'push-quota-probe', delay);
   }
 
   private takeBatch(linkKey: string, expectedController?: SyncLinkController): PushFlushBatch | undefined {
@@ -307,11 +317,12 @@ export class SyncLivePushCoordinator {
       return;
     }
 
+    const runIdentityTask = this._operations.captureIdentityTaskRunner(runtime.did);
     const timer = setTimeout((): void => {
       if (!controller.consumePushTimer(runtime, timer)) {
         return;
       }
-      this.startSupervisedFlush(controller);
+      this.startSupervisedFlush(controller, runIdentityTask);
     }, this._debounceMs);
     controller.setPushTimer(runtime, timer);
   }
@@ -350,30 +361,25 @@ export class SyncLivePushCoordinator {
     runtime.entries.push(...pending.entries);
     runtime.retryCount = pending.retryCount;
     const delayMs = this._retryBackoffMs[pending.retryCount] ?? this._retryBackoffMs.at(-1) ?? 0;
+    const runIdentityTask = this._operations.captureIdentityTaskRunner(runtime.did);
     const timer = setTimeout((): void => {
       if (!controller.consumePushTimer(runtime, timer)) {
         return;
       }
-      this.startSupervisedFlush(controller);
+      this.startSupervisedFlush(controller, runIdentityTask);
     }, delayMs);
     controller.setPushTimer(runtime, timer);
   }
 
-  private startSupervisedFlush(controller: SyncLinkController): void {
-    void this._operations.runIdentityTask(
-      controller.link.tenantDid,
-      () => this.flushLink(controller.linkKey, controller),
-    );
+  private startSupervisedFlush(
+    controller: SyncLinkController,
+    runIdentityTask: SyncIdentityTaskRunner,
+  ): void {
+    void runIdentityTask(() => this.flushLink(controller.linkKey, controller));
   }
 
   private stopRuntime(controller: SyncLinkController, runtime: SyncPushRuntimeState): void {
     controller.clearPushRuntime(runtime);
-  }
-
-  private scheduleQuotaProbe(linkKey: string, link: ReplicationLinkState, nextProbeAt: string): void {
-    const parsed = Date.parse(nextProbeAt);
-    const delay = Number.isFinite(parsed) ? Math.max(0, parsed - Date.now()) : 0;
-    this._operations.scheduleReconcile(linkKey, link, 'push-quota-probe', delay);
   }
 
   private static pendingFromRuntime(

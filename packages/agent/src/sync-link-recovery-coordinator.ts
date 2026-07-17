@@ -1,6 +1,7 @@
 import type { ProgressToken } from '@enbox/dwn-sdk-js';
 
 import type { SyncFeedConvergenceLinkContext } from './sync-feed-convergence-manager.js';
+import type { SyncIdentityTaskRunner } from './sync-lifecycle-coordinator.js';
 import type { SyncLinkController } from './sync-link-controller.js';
 import type { SyncTarget } from './sync-target-resolver.js';
 import type {
@@ -23,6 +24,7 @@ import { isSyncProgressGapError, isTerminalSyncAuthorizationFailure, syncErrorMe
 export type SyncLinkRecoveryTarget = SyncTarget & { linkKey: string };
 
 export interface SyncLinkRecoveryCoordinatorOperations {
+  captureIdentityTaskRunner(tenantDid: string): SyncIdentityTaskRunner;
   clearConvergence(linkKey: string): void;
   emitEvent(event: SyncEvent): void;
   getController(linkKey: string): SyncLinkController | undefined;
@@ -42,7 +44,6 @@ export interface SyncLinkRecoveryCoordinatorOperations {
   ): Promise<SyncDurableFeedReconcileResult>;
   reportError(message: string, error: unknown): void;
   resetPullCheckpoint(link: ReplicationLinkState, resumeToken?: ProgressToken): Promise<void>;
-  runIdentityTask(tenantDid: string, operation: () => Promise<void>): Promise<void>;
   setStatus(link: ReplicationLinkState, status: ReplicationLinkState['status']): Promise<void>;
   warn(message: string): void;
 }
@@ -119,7 +120,8 @@ export class SyncLinkRecoveryCoordinator {
     }
     controller.clearPullInflight();
 
-    this.startSupervisedRepair(controller);
+    const runIdentityTask = this._operations.captureIdentityTaskRunner(link.tenantDid);
+    this.startSupervisedRepair(controller, runIdentityTask);
   }
 
   /** Park a link and discard every transient runtime owned by its controller. */
@@ -157,6 +159,7 @@ export class SyncLinkRecoveryCoordinator {
       Math.min(attempts - 1, this._repairBackoffMs.length - 1)
     ] ?? 0;
     const generation = this._operations.getGeneration();
+    const runIdentityTask = this._operations.captureIdentityTaskRunner(link.tenantDid);
     const timer = setTimeout((): void => {
       if (!controller.consumeRepairRetryTimer(timer)) {
         return;
@@ -164,7 +167,7 @@ export class SyncLinkRecoveryCoordinator {
       if (this.isStale(controller, generation) || link.status !== 'repairing') {
         return;
       }
-      this.startSupervisedRepair(controller);
+      this.startSupervisedRepair(controller, runIdentityTask);
     }, delayMs);
     controller.setRepairRetryTimer(timer);
   }
@@ -232,11 +235,12 @@ export class SyncLinkRecoveryCoordinator {
     }
 
     const generation = this._operations.getGeneration();
+    const runIdentityTask = this._operations.captureIdentityTaskRunner(controller.link.tenantDid);
     const timer = setTimeout((): void => {
       if (!controller.consumeReconcileTimer(timer) || this.isStale(controller, generation)) {
         return;
       }
-      void this._operations.runIdentityTask(controller.link.tenantDid, async (): Promise<void> => {
+      void runIdentityTask(async (): Promise<void> => {
         try {
           await this.reconcile(controller);
         } catch {
@@ -262,8 +266,11 @@ export class SyncLinkRecoveryCoordinator {
     return promise;
   }
 
-  private startSupervisedRepair(controller: SyncLinkController): void {
-    void this._operations.runIdentityTask(controller.link.tenantDid, async (): Promise<void> => {
+  private startSupervisedRepair(
+    controller: SyncLinkController,
+    runIdentityTask: SyncIdentityTaskRunner,
+  ): void {
+    void runIdentityTask(async (): Promise<void> => {
       try {
         await this.repair(controller);
       } catch {

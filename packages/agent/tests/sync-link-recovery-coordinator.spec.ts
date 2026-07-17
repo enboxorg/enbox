@@ -22,6 +22,7 @@ type RecoveryFixture = {
   getGeneration(): number;
   operations: RecoveryOperationStubs;
   setGeneration(generation: number): void;
+  taskRunner: SinonStub;
 };
 
 const DID = 'did:example:alice';
@@ -56,21 +57,22 @@ function createFixture(options: {
 } = {}): RecoveryFixture {
   let generation = 0;
   const controllers = new Map<string, SyncLinkController>();
+  const taskRunner = sinon.stub().callsFake(async (operation: () => Promise<void>) => operation());
   const operations: RecoveryOperationStubs = {
-    clearConvergence     : sinon.stub(),
-    emitEvent            : sinon.stub(),
-    getController        : sinon.stub().callsFake((linkKey: string) => controllers.get(linkKey)),
-    getGeneration        : sinon.stub().callsFake(() => generation),
-    handleDivergence     : sinon.stub().resolves(false),
-    handlePushFailures   : sinon.stub().resolves(),
-    openPullSubscription : sinon.stub().resolves(true),
-    openPushSubscription : sinon.stub().resolves(true),
-    reconcileTarget      : sinon.stub().resolves({ converged: true }),
-    reportError          : sinon.stub(),
-    resetPullCheckpoint  : sinon.stub().resolves(),
-    runIdentityTask      : sinon.stub().callsFake(async (_tenantDid, operation) => operation()),
-    setStatus            : sinon.stub().callsFake(async (state, status) => { state.status = status; }),
-    warn                 : sinon.stub(),
+    captureIdentityTaskRunner : sinon.stub().returns(taskRunner),
+    clearConvergence          : sinon.stub(),
+    emitEvent                 : sinon.stub(),
+    getController             : sinon.stub().callsFake((linkKey: string) => controllers.get(linkKey)),
+    getGeneration             : sinon.stub().callsFake(() => generation),
+    handleDivergence          : sinon.stub().resolves(false),
+    handlePushFailures        : sinon.stub().resolves(),
+    openPullSubscription      : sinon.stub().resolves(true),
+    openPushSubscription      : sinon.stub().resolves(true),
+    reconcileTarget           : sinon.stub().resolves({ converged: true }),
+    reportError               : sinon.stub(),
+    resetPullCheckpoint       : sinon.stub().resolves(),
+    setStatus                 : sinon.stub().callsFake(async (state, status) => { state.status = status; }),
+    warn                      : sinon.stub(),
   };
   const coordinator = new SyncLinkRecoveryCoordinator({ ...options, operations });
   return {
@@ -79,6 +81,7 @@ function createFixture(options: {
     getGeneration : () => generation,
     operations,
     setGeneration : (next): void => { generation = next; },
+    taskRunner,
   };
 }
 
@@ -88,8 +91,8 @@ function activate(fixture: RecoveryFixture, state = link()): SyncLinkController 
   return controller;
 }
 
-async function waitForLastTask(operations: RecoveryOperationStubs): Promise<void> {
-  await operations.runIdentityTask.lastCall?.returnValue;
+async function waitForLastTask(taskRunner: SinonStub): Promise<void> {
+  await taskRunner.lastCall?.returnValue;
 }
 
 describe('SyncLinkRecoveryCoordinator', () => {
@@ -106,7 +109,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const repair = sinon.stub(fixture.coordinator, 'repair').resolves();
 
     await fixture.coordinator.transitionToRepairing(LINK_KEY, state, { resumeToken });
-    await waitForLastTask(fixture.operations);
+    await waitForLastTask(fixture.taskRunner);
 
     expect(state.status).toBe('repairing');
     expect(state.connectivity).toBe('offline');
@@ -296,14 +299,17 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const repair = sinon.stub(fixture.coordinator, 'repair').resolves();
 
     fixture.coordinator.scheduleRepairRetry(controller);
+    expect(fixture.operations.captureIdentityTaskRunner.calledOnceWithExactly(DID)).toBe(true);
+    fixture.operations.captureIdentityTaskRunner.resetHistory();
     fixture.setGeneration(1);
     await clock.tickAsync(1000);
     expect(repair.called).toBe(false);
+    expect(fixture.operations.captureIdentityTaskRunner.notCalled).toBe(true);
     expect(controller.repairRetryTimer).toBeUndefined();
 
     fixture.coordinator.scheduleRepairRetry(controller);
     await clock.tickAsync(1000);
-    await waitForLastTask(fixture.operations);
+    await waitForLastTask(fixture.taskRunner);
     expect(repair.calledOnceWithExactly(controller)).toBe(true);
     expect(controller.repairRetryTimer).toBeUndefined();
   });
@@ -315,11 +321,14 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const reconcile = sinon.stub(fixture.coordinator, 'reconcile').resolves();
 
     expect(fixture.coordinator.scheduleReconcile(LINK_KEY, 1000)).toBe(true);
+    expect(fixture.operations.captureIdentityTaskRunner.calledOnceWithExactly(DID)).toBe(true);
+    fixture.operations.captureIdentityTaskRunner.resetHistory();
     expect(fixture.coordinator.scheduleReconcile(LINK_KEY, 2000)).toBe(false);
     expect(fixture.coordinator.scheduleReconcile(LINK_KEY, 500)).toBe(true);
     expect(controller.reconcileTimerDueAt).toBe(500);
     await clock.tickAsync(500);
-    await waitForLastTask(fixture.operations);
+    await waitForLastTask(fixture.taskRunner);
+    expect(fixture.operations.captureIdentityTaskRunner.calledOnceWithExactly(DID)).toBe(true);
     expect(reconcile.calledOnceWithExactly(controller)).toBe(true);
     expect(controller.reconcileTimer).toBeUndefined();
 

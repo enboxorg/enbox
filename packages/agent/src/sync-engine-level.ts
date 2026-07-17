@@ -13,6 +13,7 @@ import type { PermissionsApi } from './types/permissions.js';
 import type { SyncDeadLetterStore } from './sync-dead-letter-store.js';
 import type { SyncEndpointStore } from './sync-endpoint-store.js';
 import type { SyncIdentityStore } from './sync-identity-store.js';
+import type { SyncIdentityTaskRunner } from './sync-lifecycle-coordinator.js';
 import type { SyncLivePullContext } from './sync-live-pull-processor.js';
 import type { SyncMessageEntry } from './sync-messages.js';
 import type { SyncReplicationLinkStore } from './sync-replication-link-store.js';
@@ -414,15 +415,15 @@ export class SyncEngineLevel implements SyncEngine {
     this._livePushCoordinator = new SyncLivePushCoordinator({
       echoSuppressor : this._echoSuppressor,
       operations     : {
+        captureIdentityTaskRunner: (tenantDid): SyncIdentityTaskRunner =>
+          this._lifecycle.captureIdentityTaskRunner(tenantDid),
         clearQuotaBlock: (tenantDid, linkKey, messageCid): Promise<boolean> =>
           this.clearQuotaBlockByLinkKey(tenantDid, linkKey, messageCid),
-        getController    : (linkKey): SyncLinkController | undefined => this.getLinkController(linkKey),
-        pushMessages     : (request): Promise<PushResult> => this.pushMessages(request),
-        recordDeadLetter : (entry): Promise<void> => this.recordDeadLetter(entry),
-        reportError      : (message, error): void => { console.error(message, error); },
-        runIdentityTask  : (tenantDid, operation): Promise<void> =>
-          this._lifecycle.runIdentityTask(this._lifecycle.getIdentityTaskGroup(tenantDid), operation),
-        scheduleReconcile: (linkKey, link, reason, delayMs): void => {
+        getController     : (linkKey): SyncLinkController | undefined => this.getLinkController(linkKey),
+        pushMessages      : (request): Promise<PushResult> => this.pushMessages(request),
+        recordDeadLetter  : (entry): Promise<void> => this.recordDeadLetter(entry),
+        reportError       : (message, error): void => { console.error(message, error); },
+        scheduleReconcile : (linkKey, link, reason, delayMs): void => {
           this.scheduleLinkReconcile(linkKey, link, reason, delayMs);
         },
         transitionPushResult: (target, result, options): Promise<SyncQuotaPushResultTransition> =>
@@ -431,6 +432,8 @@ export class SyncEngineLevel implements SyncEngine {
     });
     this._linkRecoveryCoordinator = new SyncLinkRecoveryCoordinator({
       operations: {
+        captureIdentityTaskRunner: (tenantDid): SyncIdentityTaskRunner =>
+          this._lifecycle.captureIdentityTaskRunner(tenantDid),
         clearConvergence : (linkKey): void => { this._feedConvergenceManager.clearLink(linkKey); },
         emitEvent        : (event): void => { this.emitEvent(event); },
         getController    : (linkKey): SyncLinkController | undefined => this.getLinkController(linkKey),
@@ -448,8 +451,6 @@ export class SyncEngineLevel implements SyncEngine {
         reportError         : (message, error): void => { console.error(message, error); },
         resetPullCheckpoint : (link, resumeToken): Promise<void> =>
           this.ledger.resetCheckpoint(link, 'pull', resumeToken),
-        runIdentityTask: (tenantDid, operation): Promise<void> =>
-          this._lifecycle.runIdentityTask(this._lifecycle.getIdentityTaskGroup(tenantDid), operation),
         setStatus : (link, status): Promise<void> => this.ledger.setStatus(link, status),
         warn      : (message): void => { console.warn(message); },
       },
@@ -1534,10 +1535,10 @@ export class SyncEngineLevel implements SyncEngine {
       permissionGrantIds : target.permissionGrantIds,
       isStale,
     };
-    const taskGroup = this._lifecycle.getIdentityTaskGroup(did);
+    const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(did);
 
     const subscriptionHandler = (subMessage: SubscriptionMessage): Promise<void> =>
-      this._lifecycle.runIdentityTask(taskGroup, () => this.handleLivePullMessage(pullContext, subMessage));
+      runIdentityTask(() => this.handleLivePullMessage(pullContext, subMessage));
 
     // Construct the subscribe message and send it directly to the specific
     // dwnUrl via WebSocket.  We do NOT use agent.dwn.sendRequest() because
@@ -1676,13 +1677,6 @@ export class SyncEngineLevel implements SyncEngine {
     return this._livePullProcessor.handleEose(context, subMessage);
   }
 
-  private handleLivePullSubscriptionError(
-    context: SyncLivePullContext,
-    subMessage: Extract<SubscriptionMessage, { type: 'error' }>,
-  ): Promise<void> {
-    return this._livePullProcessor.handleSubscriptionError(context, subMessage);
-  }
-
   private handleLivePullEvent(
     context: SyncLivePullContext,
     subMessage: Extract<SubscriptionMessage, { type: 'event' }>,
@@ -1736,14 +1730,17 @@ export class SyncEngineLevel implements SyncEngine {
     const isPushStale = (): boolean =>
       this._engineGeneration !== handlerGeneration ||
       !controller.isActive;
-    const taskGroup = this._lifecycle.getIdentityTaskGroup(did);
+    const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(did);
 
     // Subscribe to the local DWN's EventLog.
     const subscriptionHandler = (subMessage: SubscriptionMessage): Promise<void> =>
-      this._lifecycle.runIdentityTask(
-        taskGroup,
-        () => this._livePushCoordinator.handleEvent(target, controller, isPushStale, subMessage),
-      );
+      runIdentityTask(() => this._livePushCoordinator.handleEvent(
+        target,
+        controller,
+        isPushStale,
+        runIdentityTask,
+        subMessage,
+      ));
 
     // Subscribe to the local DWN EventLog from "now" — opportunistic push
     // does not replay from a stored cursor. Any writes missed during outages
@@ -1789,9 +1786,7 @@ export class SyncEngineLevel implements SyncEngine {
     link: ReplicationLinkState,
     nextProbeAt: string,
   ): void {
-    const parsed = Date.parse(nextProbeAt);
-    const delay = Number.isFinite(parsed) ? Math.max(0, parsed - Date.now()) : 0;
-    this.scheduleLinkReconcile(linkKey, link, 'push-quota-probe', delay);
+    this._livePushCoordinator.scheduleQuotaProbe(linkKey, link, nextProbeAt);
   }
 
   private async recordTerminalSyncPushFailures(

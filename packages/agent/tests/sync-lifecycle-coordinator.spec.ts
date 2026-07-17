@@ -125,6 +125,24 @@ describe('SyncLifecycleCoordinator', () => {
     expect(await coordinator.waitForBackgroundTasks()).toBe(true);
   });
 
+  it('should bind captured runners to the original identity group without a fire-time lookup', async () => {
+    const coordinator = new SyncLifecycleCoordinator();
+    const did = 'did:example:alice';
+    const getIdentityTaskGroup = sinon.spy(coordinator, 'getIdentityTaskGroup');
+    const runIdentityTask = coordinator.captureIdentityTaskRunner(did);
+    const originalGroup = coordinator.getIdentityTaskGroup(did);
+    originalGroup.pause();
+    coordinator.deleteIdentityTaskGroup(did, originalGroup);
+    getIdentityTaskGroup.resetHistory();
+
+    let staleCalls = 0;
+    await runIdentityTask(async (): Promise<void> => { staleCalls++; });
+
+    expect(staleCalls).toBe(0);
+    expect(getIdentityTaskGroup.notCalled).toBe(true);
+    expect(coordinator.getIdentityTaskGroup(did)).not.toBe(originalGroup);
+  });
+
   it('should pause all task admission and resume only the new global runtime', async () => {
     const coordinator = new SyncLifecycleCoordinator();
     const oldIdentityGroup = coordinator.getIdentityTaskGroup('did:example:alice');
