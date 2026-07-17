@@ -347,6 +347,19 @@ function createRelaySession(): RelaySession {
 }
 
 /**
+ * Wraps `settler` so the returned thunk runs it through `settle()`. Defined
+ * at module scope — not as an inline closure inside each render function —
+ * so the returned closure is lexically nested one level (inside this
+ * function), not several levels inside `runConnectModal()`'s own render
+ * closures (Sonar S2004). `settle` and `settler` are threaded through
+ * unchanged, so behavior is identical to writing `() => settle(settler)`
+ * inline.
+ */
+function settleWith(settle: (settler: () => void) => void, settler: () => void): () => void {
+  return () => settle(settler);
+}
+
+/**
  * Opens the connect modal and resolves when the session ends.
  *
  * @returns The delegated credentials; `undefined` when the user denied the
@@ -452,6 +465,11 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     let remintAt: number | undefined;
     let popupBusy = false;
     let pinResolve: ((pin: string) => void) | undefined;
+    // Proxy pinResolve reads/clears for buildPinInputs (module scope), whose
+    // per-input closures would otherwise be nested inside renderPin()'s own
+    // executor chain too deeply (Sonar S2004).
+    const getPinResolve = (): ((pin: string) => void) | undefined => pinResolve;
+    const clearPinResolve = (): void => { pinResolve = undefined; };
     const discoveryCache = new Map<string, Promise<string | undefined>>();
 
     // Collapsed identity row: the selected wallet plus the next catalog
@@ -504,8 +522,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
         writeLastChoice(deps.storage, { method, walletUrl: walletUrl ?? '' });
       }
       renderConnected();
-      const finish = (): void => settle(() => resolve(result));
-      setTimeout(finish, 1_200);
+      setTimeout(settleWith(settle, () => resolve(result)), 1_200);
     };
 
     const cancelModal = (): void => settle(() => reject(new Error('[@enbox/browser] Connect cancelled.')));
@@ -659,54 +676,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
           boxes.classList.add('shake');
         }
 
-        const inputs: HTMLInputElement[] = [];
-        for (let i = 0; i < PIN_LENGTH; i++) {
-          const input = document.createElement('input');
-          input.className = 'pin-input';
-          input.type = 'text';
-          input.inputMode = 'numeric';
-          input.maxLength = 1;
-          input.setAttribute('aria-label', `Code digit ${i + 1}`);
-          inputs.push(input);
-          boxes.appendChild(input);
-        }
-
-        const submitIfComplete = (): void => {
-          const code = inputs.map((i) => i.value).join('');
-          if (code.length === PIN_LENGTH && pinResolve !== undefined) {
-            const resolveOnce = pinResolve;
-            pinResolve = undefined;
-            renderBusy('Checking the code…');
-            resolveOnce(code);
-          }
-        };
-
-        inputs.forEach((input, index) => {
-          input.addEventListener('input', () => {
-            input.value = input.value.replace(/\D/g, '').slice(0, 1);
-            if (input.value !== '' && index + 1 < inputs.length) {
-              inputs[index + 1].focus();
-            }
-            submitIfComplete();
-          });
-          input.addEventListener('keydown', (event) => {
-            if (event.key === 'Backspace' && input.value === '' && index > 0) {
-              inputs[index - 1].focus();
-            }
-          });
-          input.addEventListener('paste', (event) => {
-            const digits = (event.clipboardData?.getData('text') ?? '').replace(/\D/g, '').slice(0, PIN_LENGTH);
-            if (digits.length === 0) { return; }
-            event.preventDefault();
-            digits.split('').forEach((digit, digitIndex) => {
-              if (inputs[digitIndex] !== undefined) {
-                inputs[digitIndex].value = digit;
-              }
-            });
-            inputs[Math.min(digits.length, PIN_LENGTH) - 1]?.focus();
-            submitIfComplete();
-          });
-        });
+        const inputs = buildPinInputs(boxes, getPinResolve, clearPinResolve, renderBusy);
 
         setStage(
           el('p', 'stage-caption', `Enter the code shown in ${walletName}`),
@@ -730,7 +700,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       setStage(
         el('p', 'stage-caption', 'No problem — nothing was shared.'),
         stageButton('Start over', () => { void startMethod(); }),
-        stageLinkButton('Close', () => settle(() => resolve(undefined))),
+        stageLinkButton('Close', settleWith(settle, () => resolve(undefined))),
       );
     };
 
@@ -738,7 +708,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       setStage(
         el('p', 'stage-caption', message),
         stageButton('Start over', () => { void startMethod(); }),
-        stageLinkButton('Close', () => settle(() => reject(error ?? new Error(`[@enbox/browser] ${message}`)))),
+        stageLinkButton('Close', settleWith(settle, () => reject(error ?? new Error(`[@enbox/browser] ${message}`)))),
       );
     };
 
@@ -1044,7 +1014,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
 
       // The panel grid holds only the wallets NOT already visible in the
       // row, so expanding never shows the same wallet twice.
-      const gridWallets = wallets.filter((wallet) => !rowWallets.some((shown) => shown.url === wallet.url));
+      const gridWallets = wallets.filter((wallet) => !walletInCatalog(rowWallets, wallet.url));
 
       const more = document.createElement('button');
       more.className = 'row-tile more-tile';
@@ -1338,6 +1308,77 @@ function buildHeader(titleText: string, appIcon: string | undefined, onCancel: (
   header.appendChild(identity);
   header.appendChild(closeBtn);
   return header;
+}
+
+/**
+ * Builds the PIN-entry boxes, wires their input/keydown/paste behavior, and
+ * returns the input elements in order. Module-level — `renderPin()`'s own
+ * `new Promise` executor already nests two levels deep inside
+ * `runConnectModal()`, so a per-input closure defined there would sit too
+ * deep for Sonar's S2004 nesting-depth check.
+ *
+ * `getPinResolve`/`clearPinResolve` proxy the `pinResolve` state kept in
+ * `runConnectModal()`'s closure: a completed code needs it read once, then
+ * cleared — in that order, before the busy state renders and the pending
+ * promise resolves — exactly as it was inline.
+ */
+function buildPinInputs(
+  boxes: HTMLDivElement,
+  getPinResolve: () => ((pin: string) => void) | undefined,
+  clearPinResolve: () => void,
+  renderBusy: (message: string) => void,
+): HTMLInputElement[] {
+  const inputs: HTMLInputElement[] = [];
+  for (let i = 0; i < PIN_LENGTH; i++) {
+    const input = document.createElement('input');
+    input.className = 'pin-input';
+    input.type = 'text';
+    input.inputMode = 'numeric';
+    input.maxLength = 1;
+    input.setAttribute('aria-label', `Code digit ${i + 1}`);
+    inputs.push(input);
+    boxes.appendChild(input);
+  }
+
+  const submitIfComplete = (): void => {
+    const code = inputs.map((i) => i.value).join('');
+    const pinResolve = getPinResolve();
+    if (code.length === PIN_LENGTH && pinResolve !== undefined) {
+      const resolveOnce = pinResolve;
+      clearPinResolve();
+      renderBusy('Checking the code…');
+      resolveOnce(code);
+    }
+  };
+
+  inputs.forEach((input, index) => {
+    input.addEventListener('input', () => {
+      input.value = input.value.replace(/\D/g, '').slice(0, 1);
+      if (input.value !== '' && index + 1 < inputs.length) {
+        inputs[index + 1].focus();
+      }
+      submitIfComplete();
+    });
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Backspace' && input.value === '' && index > 0) {
+        inputs[index - 1].focus();
+      }
+    });
+    input.addEventListener('paste', (event) => {
+      const digits = (event.clipboardData?.getData('text') ?? '').replace(/\D/g, '').slice(0, PIN_LENGTH);
+      if (digits.length === 0) { return; }
+      event.preventDefault();
+      digits.split('').forEach((digit, digitIndex) => {
+        if (inputs[digitIndex] !== undefined) {
+          inputs[digitIndex].value = digit;
+        }
+      });
+      inputs[Math.min(digits.length, PIN_LENGTH) - 1]?.focus();
+      submitIfComplete();
+    });
+  });
+
+  return inputs;
 }
 
 function trapFocus(shadow: ShadowRoot, event: KeyboardEvent): void {

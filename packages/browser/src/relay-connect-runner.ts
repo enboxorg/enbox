@@ -236,39 +236,80 @@ export async function runRelayConnect(options: RelayConnectOptions): Promise<Con
       ? options.requestPin(attempt, lastError)
       : Promise.race([options.requestPin(attempt, lastError), options.cancelled]));
 
-    try {
-      const response = await openResponse({
-        jwe                 : responseCiphertext,
-        recipientPrivateKey : responsePrivateKey,
-        expected            : { clientDid: clientDid.uri, nonce, state },
-        pin,
-      });
+    const outcome = await attemptPinOpen({
+      responseCiphertext,
+      responsePrivateKey,
+      clientDid           : clientDid.uri,
+      nonce,
+      state,
+      pin,
+      delegatePortableDid : options.delegatePortableDid,
+      confirmComplete     : transport.confirmComplete?.bind(transport),
+    });
+    if (outcome.matched) {
+      return outcome.result;
+    }
+    lastError = outcome.error;
+  }
 
-      const delegatePortableDid = resolveDelegatePortableDid({
-        localDelegatePortableDid: options.delegatePortableDid,
-        response,
-      });
+  throw new Error(`[@enbox/browser] The pairing code did not match after ${MAX_PIN_ATTEMPTS} attempts.`);
+}
 
-      // Best-effort completion signal so the wallet can flip its pairing
-      // screen to a confirmed "connected" state instead of leaving the user
-      // to dismiss it blind. Fire-and-forget — mirrors the kernel client.
-      transport.confirmComplete?.().catch((): undefined => undefined);
+/** One PIN attempt's outcome: either the delegated credentials, or a retryable failure. */
+type PinAttemptOutcome =
+  | { matched: true; result: ConnectResult }
+  | { matched: false; error: Error };
 
-      return {
+/**
+ * Opens `responseCiphertext` with one PIN attempt and, on success, resolves
+ * the delegated credentials and fires the best-effort completion signal.
+ * Kernel value-check failures (`'Connect:'`-prefixed) are structural, not a
+ * mistyped code, so they rethrow instead of reporting a mismatch — the
+ * retry loop in {@link runRelayConnect} treats that as fatal.
+ */
+async function attemptPinOpen(params: {
+  responseCiphertext: string;
+  responsePrivateKey: Jwk;
+  clientDid: string;
+  nonce: string;
+  state: string;
+  pin: string;
+  delegatePortableDid: PortableDid | undefined;
+  confirmComplete: (() => Promise<void>) | undefined;
+}): Promise<PinAttemptOutcome> {
+  try {
+    const response = await openResponse({
+      jwe                 : params.responseCiphertext,
+      recipientPrivateKey : params.responsePrivateKey,
+      expected            : { clientDid: params.clientDid, nonce: params.nonce, state: params.state },
+      pin                 : params.pin,
+    });
+
+    const delegatePortableDid = resolveDelegatePortableDid({
+      localDelegatePortableDid: params.delegatePortableDid,
+      response,
+    });
+
+    // Best-effort completion signal so the wallet can flip its pairing
+    // screen to a confirmed "connected" state instead of leaving the user
+    // to dismiss it blind. Fire-and-forget — mirrors the kernel client.
+    params.confirmComplete?.().catch((): undefined => undefined);
+
+    return {
+      matched : true,
+      result  : {
         delegatePortableDid,
         delegateGrants     : response.delegateGrants,
         connectedDid       : response.providerDid,
         sessionRevocations : response.sessionRevocations,
-      };
-    } catch (error) {
-      const failure = error instanceof Error ? error : new Error(String(error));
-      if (failure.message.startsWith('Connect:')) {
-        // Structural/value-check failure — retrying the PIN cannot help.
-        throw failure;
-      }
-      lastError = failure;
+      },
+    };
+  } catch (error) {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    if (failure.message.startsWith('Connect:')) {
+      // Structural/value-check failure — retrying the PIN cannot help.
+      throw failure;
     }
+    return { matched: false, error: failure };
   }
-
-  throw new Error(`[@enbox/browser] The pairing code did not match after ${MAX_PIN_ATTEMPTS} attempts.`);
 }
