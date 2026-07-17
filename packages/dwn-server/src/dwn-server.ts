@@ -1,3 +1,4 @@
+import type { Dialect } from '@enbox/dwn-sql-store';
 import type { DidResolver } from '@enbox/dids';
 import type { DwnServerConfig } from './config.js';
 import type { EventBus } from './event-bus.js';
@@ -5,6 +6,7 @@ import type { LocalNodePairingManager } from './local-node-pairing.js';
 import type { MessageProcessedHook } from './message-processed-hook.js';
 import type { ProcessHandlers } from './process-handlers.js';
 import type { ProviderAuthPlugin } from './registration/provider-auth-plugin.js';
+import type { RegistrationStore } from './registration/registration-store.js';
 import type { Server } from 'bun';
 import type { WsData } from './http-api.js';
 
@@ -78,6 +80,32 @@ export type DwnServerOptions = {
    * Shell-specific wrappers use this to approve or deny pairing requests.
    */
   localNodePairingManager?: LocalNodePairingManager;
+};
+
+/**
+ * Inputs required by `#setupAdminApi()` to initialize the admin API and its
+ * supporting stores. Extracted from `#setupServer()`'s local state so admin
+ * bootstrap logic can be isolated into its own method.
+ */
+type AdminApiSetupParams = {
+  serverDialect: Dialect | undefined;
+  registrationManager: RegistrationManager | undefined;
+  registrationStore: RegistrationStore | undefined;
+  ipRateLimiter: RateLimiter | undefined;
+  tenantRateLimiter: RateLimiter | undefined;
+};
+
+/**
+ * Admin API and supporting stores created by `#setupAdminApi()`, or all
+ * `undefined` fields when no admin token is configured.
+ */
+type AdminApiSetupResult = {
+  adminApi: AdminApi | undefined;
+  activityLog: ActivityLog | undefined;
+  adminStore: AdminStore | undefined;
+  auditLog: AuditLog | undefined;
+  passkeyStore: AdminPasskeyStore | undefined;
+  sessionManager: AdminSessionManager | undefined;
 };
 
 /**
@@ -161,6 +189,68 @@ export class DwnServer {
     // and stores.
     const serverDialect = await runServerMigrationsIfNeeded(this.config);
 
+    const registrationManager = await this.#createDwnAndRegistrationManager();
+
+    // Assemble message-processed hooks.
+    const messageProcessedHooks = this.#buildMessageProcessedHooks();
+
+    // Create rate limiters when configured.
+    const { ipRateLimiter, tenantRateLimiter } = this.#createRateLimiters();
+
+    const registrationStore = registrationManager?.getRegistrationStore();
+
+    // Initialize admin API if an admin token is configured.
+    const {
+      adminApi, activityLog, adminStore, auditLog, passkeyStore, sessionManager,
+    } = await this.#setupAdminApi({ serverDialect, registrationManager, registrationStore, ipRateLimiter, tenantRateLimiter });
+
+    // Store references for cleanup in stop().
+    this.#adminApi = adminApi;
+    this.#ipRateLimiter = ipRateLimiter;
+    this.#tenantRateLimiter = tenantRateLimiter;
+    this.#auditLog = auditLog;
+    this.#passkeyStore = passkeyStore;
+    this.#sessionManager = sessionManager;
+
+    const openAuthHandler = this.#createOpenAuthHandler();
+
+    this.#httpApi = await HttpApi.create(
+      this.config, this.dwn, registrationManager, adminApi, activityLog,
+      {
+        adminStore, registrationStore, ipRateLimiter, tenantRateLimiter,
+        messageProcessedHooks, openAuthHandler, sessionManager,
+        localNodePairingManager : this.#localNodePairingManager,
+        ttlCacheDialect         : serverDialect,
+      },
+    );
+
+    await this.#httpApi.start(this.config.port);
+    log.info(`HttpServer listening on port ${this.config.port}`);
+
+    if (this.config.webSocketSupport) {
+      this.#wsApi = new WsApi(this.#httpApi, this.dwn, { activityLog });
+      this.#wsApi.start();
+      log.info('WebSocketServer ready...');
+
+      // Wire connection manager to admin API for connection counting.
+      if (adminApi) {
+        adminApi.setConnectionManager(this.#wsApi.connectionManager);
+      }
+    }
+
+    // Start periodic Prometheus gauge updates.
+    if (adminApi) {
+      adminApi.startMetricsUpdater();
+    }
+  }
+
+  /**
+   * Creates the DWN instance (when one wasn't pre-built) together with its
+   * RegistrationManager, or resolves the externally-provided
+   * RegistrationManager when a pre-built DWN was supplied. Extracted from
+   * `#setupServer()` to keep the top-level setup sequence readable.
+   */
+  async #createDwnAndRegistrationManager(): Promise<RegistrationManager | undefined> {
     let registrationManager: RegistrationManager | undefined;
 
     if (!this.dwn) {
@@ -198,7 +288,15 @@ export class DwnServer {
       registrationManager = this.#externalRegistrationManager;
     }
 
-    // Assemble message-processed hooks.
+    return registrationManager;
+  }
+
+  /**
+   * Assembles the ordered list of message-processed hooks: the built-in
+   * DeliveryService hook (when forwarding or delivery is enabled) followed by
+   * any externally-provided hooks. Extracted from `#setupServer()`.
+   */
+  #buildMessageProcessedHooks(): MessageProcessedHook[] {
     const messageProcessedHooks: MessageProcessedHook[] = [];
 
     // Add the built-in DeliveryService hook when forwarding or delivery is enabled.
@@ -214,7 +312,14 @@ export class DwnServer {
     // Append externally provided hooks.
     messageProcessedHooks.push(...this.#externalHooks);
 
-    // Create rate limiters when configured.
+    return messageProcessedHooks;
+  }
+
+  /**
+   * Creates the per-IP and per-tenant rate limiters when their respective
+   * thresholds are configured. Extracted from `#setupServer()`.
+   */
+  #createRateLimiters(): { ipRateLimiter: RateLimiter | undefined; tenantRateLimiter: RateLimiter | undefined } {
     let ipRateLimiter: RateLimiter | undefined;
     let tenantRateLimiter: RateLimiter | undefined;
 
@@ -234,9 +339,18 @@ export class DwnServer {
       log.info(`Per-tenant rate limiting enabled: ${this.config.rateLimitTenantRequestsPerSecond} req/s, burst ${this.config.rateLimitTenantBurst}`);
     }
 
-    const registrationStore = registrationManager?.getRegistrationStore();
+    return { ipRateLimiter, tenantRateLimiter };
+  }
 
-    // Initialize admin API if an admin token is configured.
+  /**
+   * Initializes the admin API and its supporting stores (activity log, audit
+   * log, webhook manager, passkey store, session manager) when an admin token
+   * is configured. Extracted from `#setupServer()` to keep the top-level setup
+   * sequence readable.
+   */
+  async #setupAdminApi(params: AdminApiSetupParams): Promise<AdminApiSetupResult> {
+    const { serverDialect, registrationManager, registrationStore, ipRateLimiter, tenantRateLimiter } = params;
+
     let adminApi: AdminApi | undefined;
     let activityLog: ActivityLog | undefined;
     let adminStore: AdminStore | undefined;
@@ -306,14 +420,15 @@ export class DwnServer {
       log.info('Admin API enabled');
     }
 
-    // Store references for cleanup in stop().
-    this.#adminApi = adminApi;
-    this.#ipRateLimiter = ipRateLimiter;
-    this.#tenantRateLimiter = tenantRateLimiter;
-    this.#auditLog = auditLog;
-    this.#passkeyStore = passkeyStore;
-    this.#sessionManager = sessionManager;
+    return { adminApi, activityLog, adminStore, auditLog, passkeyStore, sessionManager };
+  }
 
+  /**
+   * Resolves the open-auth handler to use for provider-auth endpoints and
+   * auto-configures the authorize/token/refresh URLs when the handler is
+   * active and the URLs aren't explicitly set. Extracted from `#setupServer()`.
+   */
+  #createOpenAuthHandler(): OpenAuthHandler | undefined {
     // Create open-auth handler if provider auth is enabled with a JWT secret
     // and authorize/token URLs point to this server (or are not set — defaulting to built-in).
     // An externally-provided handler (e.g. from the relay) takes precedence.
@@ -339,34 +454,7 @@ export class DwnServer {
       }
     }
 
-    this.#httpApi = await HttpApi.create(
-      this.config, this.dwn, registrationManager, adminApi, activityLog,
-      {
-        adminStore, registrationStore, ipRateLimiter, tenantRateLimiter,
-        messageProcessedHooks, openAuthHandler, sessionManager,
-        localNodePairingManager : this.#localNodePairingManager,
-        ttlCacheDialect         : serverDialect,
-      },
-    );
-
-    await this.#httpApi.start(this.config.port);
-    log.info(`HttpServer listening on port ${this.config.port}`);
-
-    if (this.config.webSocketSupport) {
-      this.#wsApi = new WsApi(this.#httpApi, this.dwn, { activityLog });
-      this.#wsApi.start();
-      log.info('WebSocketServer ready...');
-
-      // Wire connection manager to admin API for connection counting.
-      if (adminApi) {
-        adminApi.setConnectionManager(this.#wsApi.connectionManager);
-      }
-    }
-
-    // Start periodic Prometheus gauge updates.
-    if (adminApi) {
-      adminApi.startMetricsUpdater();
-    }
+    return openAuthHandler;
   }
 
   async #createEventBus(): Promise<EventBus> {

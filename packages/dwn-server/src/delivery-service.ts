@@ -330,7 +330,34 @@ export class DeliveryService implements MessageProcessedHook {
       targetDids.add(recipient);
     }
 
-    // Method 2: Role-based discovery from $actions rules.
+    // Method 2 & 3: Role-based and actor-based discovery from $actions rules.
+    await this.#collectRoleAndActorTargets(tenant, protocolDefinition, ruleSet, contextId, targetDids);
+
+    // Resolve endpoints for each target DID.
+    const targets: DeliveryTarget[] = [];
+    for (const did of targetDids) {
+      const endpoints = await this.#resolveDwnEndpoints(did);
+      if (endpoints.length > 0) {
+        targets.push({ did, endpoints });
+      }
+    }
+
+    return targets;
+  }
+
+  /**
+   * Adds delivery target DIDs discovered via a protocol rule set's `$actions`
+   * to `targetDids`, mutating the set in place. Covers role-based discovery
+   * (Method 2) and actor-based discovery via `who`/`of` (Method 3). Extracted
+   * from `#resolveDeliveryTargets()`.
+   */
+  async #collectRoleAndActorTargets(
+    tenant: string,
+    protocolDefinition: ProtocolDefinition,
+    ruleSet: ProtocolRuleSet,
+    contextId: string | undefined,
+    targetDids: Set<string>,
+  ): Promise<void> {
     const actionRules = ruleSet.$actions ?? [];
 
     for (const rule of actionRules) {
@@ -359,17 +386,6 @@ export class DeliveryService implements MessageProcessedHook {
         }
       }
     }
-
-    // Resolve endpoints for each target DID.
-    const targets: DeliveryTarget[] = [];
-    for (const did of targetDids) {
-      const endpoints = await this.#resolveDwnEndpoints(did);
-      if (endpoints.length > 0) {
-        targets.push({ did, endpoints });
-      }
-    }
-
-    return targets;
   }
 
   /**
