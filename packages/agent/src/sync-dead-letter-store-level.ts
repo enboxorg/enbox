@@ -1,0 +1,86 @@
+import type { AbstractLevel } from 'abstract-level';
+
+import type { DeadLetterEntry } from './types/sync.js';
+import type { SyncDeadLetterStore } from './sync-dead-letter-store.js';
+import type { SyncMessageStoreLevelDelete, SyncMessageStoreLevelKey } from './sync-message-store-level.js';
+
+import { buildSyncMessageStoreLevelKey, isSyncMessageStoreLevelNotFound, syncMessageStoreLevelTenantKeyRange } from './sync-message-store-level.js';
+
+/** Level-backed persistence for terminal sync failures. */
+export class SyncDeadLetterStoreLevel implements SyncDeadLetterStore {
+  private readonly _db: AbstractLevel<SyncMessageStoreLevelKey>;
+
+  constructor(db: AbstractLevel<SyncMessageStoreLevelKey>) {
+    this._db = db;
+  }
+
+  private get deadLetters(): AbstractLevel<SyncMessageStoreLevelKey, string, string> {
+    return this._db.sublevel('deadLetters');
+  }
+
+  public async clear(): Promise<void> {
+    await this.deadLetters.clear();
+  }
+
+  public deleteForMessage(messageCid: string, remoteEndpoint?: string): Promise<number> {
+    return this.deleteWhere(
+      (entry): boolean => entry.messageCid === messageCid &&
+        (remoteEndpoint === undefined || entry.remoteEndpoint === remoteEndpoint),
+    );
+  }
+
+  public async deleteExact(tenantDid: string, messageCid: string, remoteEndpoint?: string): Promise<void> {
+    await this.deadLetters.del(buildSyncMessageStoreLevelKey(tenantDid, messageCid, remoteEndpoint));
+  }
+
+  public async deleteForTenant(tenantDid: string): Promise<void> {
+    await this.deleteWhere((entry): boolean => entry.tenantDid === tenantDid);
+  }
+
+  public async get(tenantDid: string, messageCid: string, remoteEndpoint?: string): Promise<DeadLetterEntry | undefined> {
+    try {
+      const value = await this.deadLetters.get(buildSyncMessageStoreLevelKey(tenantDid, messageCid, remoteEndpoint));
+      return JSON.parse(value) as DeadLetterEntry;
+    } catch (error: unknown) {
+      if (isSyncMessageStoreLevelNotFound(error)) {
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
+  public async getAll(): Promise<DeadLetterEntry[]> {
+    return this.readEntries(this.deadLetters.iterator());
+  }
+
+  public async getForTenant(tenantDid: string): Promise<DeadLetterEntry[]> {
+    const entries = await this.readEntries(this.deadLetters.iterator(syncMessageStoreLevelTenantKeyRange(tenantDid)));
+    return entries.filter((entry): boolean => entry.tenantDid === tenantDid);
+  }
+
+  public async put(entry: DeadLetterEntry): Promise<void> {
+    const key = buildSyncMessageStoreLevelKey(entry.tenantDid, entry.messageCid, entry.remoteEndpoint);
+    await this.deadLetters.put(key, JSON.stringify(entry));
+  }
+
+  private async deleteWhere(match: (entry: DeadLetterEntry) => boolean): Promise<number> {
+    const batch: SyncMessageStoreLevelDelete[] = [];
+    for await (const [key, value] of this.deadLetters.iterator()) {
+      if (match(JSON.parse(value) as DeadLetterEntry)) {
+        batch.push({ type: 'del', key });
+      }
+    }
+    if (batch.length > 0) {
+      await this.deadLetters.batch(batch);
+    }
+    return batch.length;
+  }
+
+  private async readEntries(entries: AsyncIterable<[string, string]>): Promise<DeadLetterEntry[]> {
+    const deadLetters: DeadLetterEntry[] = [];
+    for await (const [, value] of entries) {
+      deadLetters.push(JSON.parse(value) as DeadLetterEntry);
+    }
+    return deadLetters;
+  }
+}
