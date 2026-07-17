@@ -232,31 +232,11 @@ export class HttpDwnRpcClient implements DwnRpc {
       throw new RateLimitError(retryAfter);
     }
 
-    let dwnRpcResponse: JsonRpcResponse;
-
     // When the server streams record data back, the JSON-RPC envelope is in the
     // `dwn-response` header and the body is the raw data stream.  Otherwise the
     // entire JSON-RPC response is the body.
     const hasDataStream = resp.headers.has('dwn-response');
-
-    if (hasDataStream) {
-      const jsonRpcResponse = parseJson(resp.headers.get('dwn-response')!) as JsonRpcResponse;
-
-      if (jsonRpcResponse == null) {
-        throw new Error(`failed to parse json rpc response. dwn url: ${request.dwnUrl}`);
-      }
-
-      dwnRpcResponse = jsonRpcResponse;
-    } else {
-      const responseBody = await resp.text();
-      const jsonRpcResponse = parseJson(responseBody) as JsonRpcResponse;
-
-      if (jsonRpcResponse == null) {
-        throw new Error(`failed to parse json rpc response. dwn url: ${request.dwnUrl}, status: ${resp.status}`);
-      }
-
-      dwnRpcResponse = jsonRpcResponse;
-    }
+    const dwnRpcResponse = await this.parseDwnRpcResponseBody(resp, hasDataStream, request.dwnUrl);
 
     if (dwnRpcResponse.error) {
       const { code, message } = dwnRpcResponse.error;
@@ -338,6 +318,34 @@ export class HttpDwnRpcClient implements DwnRpc {
     }
 
     return pendingRequest;
+  }
+
+  /**
+   * Parses the JSON-RPC envelope from a `sendDwnRequest()` response. When the server streamed
+   * record data back, the envelope is in the `dwn-response` header; otherwise the envelope is
+   * the entire response body.
+   *
+   * @throws Error when the JSON-RPC envelope cannot be parsed.
+   */
+  private async parseDwnRpcResponseBody(resp: Response, hasDataStream: boolean, dwnUrl: string): Promise<JsonRpcResponse> {
+    if (hasDataStream) {
+      const jsonRpcResponse = parseJson(resp.headers.get('dwn-response')!) as JsonRpcResponse;
+
+      if (jsonRpcResponse == null) {
+        throw new Error(`failed to parse json rpc response. dwn url: ${dwnUrl}`);
+      }
+
+      return jsonRpcResponse;
+    }
+
+    const responseBody = await resp.text();
+    const jsonRpcResponse = parseJson(responseBody) as JsonRpcResponse;
+
+    if (jsonRpcResponse == null) {
+      throw new Error(`failed to parse json rpc response. dwn url: ${dwnUrl}, status: ${resp.status}`);
+    }
+
+    return jsonRpcResponse;
   }
 
   private async createDwnRequestInit({

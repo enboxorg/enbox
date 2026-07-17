@@ -210,57 +210,91 @@ export class RelayClientTransport implements ConnectTransport {
 
     const tokenUrl = concatenateUrl(this._connectServerUrl, `token/${this._state}.jwt`);
     const deadline = this._now() + this._timeoutMs;
-
-    // Claimed observation is best-effort and only runs when the app asked
-    // for it. The request ID rides in the `request_uri` returned by the PAR.
-    const requestId = this._onClaimed !== undefined && this._requestUri !== undefined
-      ? /\/connect\/authorize\/([^/]+)\.jwt$/.exec(this._requestUri)?.[1]
-      : undefined;
-    const statusUrl = requestId !== undefined
-      ? concatenateUrl(this._connectServerUrl, `status/${requestId}`)
-      : undefined;
+    const statusUrl = this.resolveClaimedStatusUrl();
     let claimedNotified = false;
 
     while (this._now() < deadline) {
       this._signal?.throwIfAborted();
-      const response = await this._fetch(tokenUrl, { signal: this.requestSignal() });
-      // The relay serves the sealed response (or the literal DENIED token) as a
-      // non-empty body once the wallet has answered. Until then it reports "not
-      // ready" — 204 No Content on current relays, 404 on older ones — and both
-      // are steady poll states, never a failure. Only a non-empty 2xx body ends
-      // the wait; an empty 2xx (204) falls through to the next poll.
-      if (response.ok) {
-        const body = await response.text();
-        if (body.length > 0) {
-          return body;
-        }
-      } else {
-        // Release the unread body so keep-alive sockets are not pinned across polls.
-        await response.body?.cancel().catch((): void => {});
+
+      const body = await this.pollToken(tokenUrl);
+      if (body !== undefined) {
+        return body;
       }
 
       if (statusUrl !== undefined && !claimedNotified) {
-        try {
-          const statusResponse = await this._fetch(statusUrl, { signal: this.requestSignal() });
-          if (statusResponse.ok) {
-            const status = await statusResponse.json() as { claimed?: unknown };
-            if (status.claimed === true) {
-              claimedNotified = true;
-              this._onClaimed?.();
-            }
-          } else {
-            await statusResponse.body?.cancel().catch((): void => {});
-          }
-        } catch {
-          // Older relays without the status route (or transient failures)
-          // degrade silently — progress display is optional.
-        }
+        await this.pollClaimedStatus(statusUrl, (): void => { claimedNotified = true; });
       }
 
       await this.sleepUntilNextPoll();
     }
 
     throw new Error(`Connect: timed out after ${this._timeoutMs}ms waiting for the wallet response.`);
+  }
+
+  /**
+   * Resolves the relay's claimed-status URL from the `request_uri` captured by
+   * `deliverRequest()`, if status observation was requested via `onClaimed`.
+   * Claimed observation is best-effort and only runs when the app asked for
+   * it. The request ID rides in the `request_uri` returned by the PAR.
+   */
+  private resolveClaimedStatusUrl(): string | undefined {
+    const requestId = this._onClaimed !== undefined && this._requestUri !== undefined
+      ? /\/connect\/authorize\/([^/]+)\.jwt$/.exec(this._requestUri)?.[1]
+      : undefined;
+
+    return requestId !== undefined
+      ? concatenateUrl(this._connectServerUrl, `status/${requestId}`)
+      : undefined;
+  }
+
+  /**
+   * Polls `tokenUrl` once and returns the response body when the wallet has
+   * answered, or `undefined` when the relay reports "not ready yet".
+   *
+   * The relay serves the sealed response (or the literal DENIED token) as a
+   * non-empty body once the wallet has answered. Until then it reports "not
+   * ready" — 204 No Content on current relays, 404 on older ones — and both
+   * are steady poll states, never a failure. Only a non-empty 2xx body ends
+   * the wait; an empty 2xx (204) falls through to the next poll.
+   */
+  private async pollToken(tokenUrl: string): Promise<string | undefined> {
+    const response = await this._fetch(tokenUrl, { signal: this.requestSignal() });
+    if (response.ok) {
+      const body = await response.text();
+      if (body.length > 0) {
+        return body;
+      }
+    } else {
+      // Release the unread body so keep-alive sockets are not pinned across polls.
+      await response.body?.cancel().catch((): void => {});
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Polls `statusUrl` once for the claimed marker and invokes `markClaimed`
+   * (before the `onClaimed` callback, matching the caller's "notify once"
+   * semantics even if that callback throws) when the relay reports the
+   * request has been claimed. Older relays without the status route (or
+   * transient failures) degrade silently — progress display is optional.
+   */
+  private async pollClaimedStatus(statusUrl: string, markClaimed: () => void): Promise<void> {
+    try {
+      const statusResponse = await this._fetch(statusUrl, { signal: this.requestSignal() });
+      if (statusResponse.ok) {
+        const status = await statusResponse.json() as { claimed?: unknown };
+        if (status.claimed === true) {
+          markClaimed();
+          this._onClaimed?.();
+        }
+      } else {
+        await statusResponse.body?.cancel().catch((): void => {});
+      }
+    } catch {
+      // Older relays without the status route (or transient failures)
+      // degrade silently — progress display is optional.
+    }
   }
 
   /**

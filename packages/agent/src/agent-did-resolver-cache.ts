@@ -1,5 +1,5 @@
 import type { DidResolverCacheLevelParams } from '@enbox/dids/resolver-cache-level';
-import type { DidResolutionResult, DidResolverCache } from '@enbox/dids';
+import type { DidResolutionResult, DidResolverCache, PortableDid } from '@enbox/dids';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
 
@@ -51,42 +51,7 @@ export class AgentDidResolverCache extends DidResolverCacheLevel implements DidR
       const str = await this.cache.get(did);
       const cachedResult = JSON.parse(str);
       if (!this._resolving.has(did) && Date.now() >= cachedResult.ttlMillis) {
-        this._resolving.set(did, true);
-
-        // if a DID is stored in the DID Store, then we don't want to evict it from the cache until we have a successful resolution
-        // upon a successful resolution, we will update both the storage and the cache with the newly resolved Document.
-        const storedDid = await this.agent.did.get({ didUri: did, tenant: this.agent.agentDid.uri });
-        if ('undefined' === typeof storedDid) {
-          this._resolving.delete(did);
-          this.cache.nextTick(() => this.cache.del(did));
-        } else {
-          try {
-            const result = await this.agent.did.resolve(did);
-
-            // if the resolution was successful, update the stored DID with the new Document
-            if (!result.didResolutionMetadata.error && result.didDocument) {
-
-              const portableDid = {
-                ...storedDid,
-                document : result.didDocument,
-                metadata : result.didDocumentMetadata,
-              };
-
-              try {
-                // this will throw an error if the DID is not managed by the agent, or there is no difference between the stored and resolved DID
-                // We don't publish the DID in this case, as it was received by the resolver.
-                await this.agent.did.update({ portableDid, tenant: this.agent.agentDid.uri, publish: false });
-              } catch (error: any) {
-                // if the error is not due to no changes detected, log the error
-                if (error.message && !error.message.includes('No changes detected, update aborted')) {
-                  logger.error(`Error updating DID: ${error.message}`);
-                }
-              }
-            }
-          } finally {
-            this._resolving.delete(did);
-          }
-        }
+        await this.refreshStaleDid(did);
       }
       return cachedResult.value;
     } catch (error: any) {
@@ -94,6 +59,58 @@ export class AgentDidResolverCache extends DidResolverCacheLevel implements DidR
         return;
       }
       throw error;
+    }
+  }
+
+  /**
+   * Re-resolves a DID that is managed by the agent (or is the agent's own DID) after its cache
+   * entry has gone stale. If the DID is not found in the DID Store, its cache entry is evicted.
+   * Otherwise, the cache entry is kept until a new resolution succeeds, at which point both the
+   * store and the cache are updated with the newly resolved Document.
+   */
+  private async refreshStaleDid(did: string): Promise<void> {
+    this._resolving.set(did, true);
+
+    // if a DID is stored in the DID Store, then we don't want to evict it from the cache until we have a successful resolution
+    // upon a successful resolution, we will update both the storage and the cache with the newly resolved Document.
+    const storedDid = await this.agent.did.get({ didUri: did, tenant: this.agent.agentDid.uri });
+    if ('undefined' === typeof storedDid) {
+      this._resolving.delete(did);
+      this.cache.nextTick(() => this.cache.del(did));
+    } else {
+      try {
+        const result = await this.agent.did.resolve(did);
+
+        // if the resolution was successful, update the stored DID with the new Document
+        if (!result.didResolutionMetadata.error && result.didDocument) {
+
+          const portableDid = {
+            ...storedDid,
+            document : result.didDocument,
+            metadata : result.didDocumentMetadata,
+          };
+
+          await this.updateStoredDid(portableDid);
+        }
+      } finally {
+        this._resolving.delete(did);
+      }
+    }
+  }
+
+  /**
+   * Persists a freshly resolved Document to the DID Store. Throws internally (and is swallowed
+   * here) if the DID is not managed by the agent, or if there is no difference between the stored
+   * and resolved DID — in either case we don't publish the DID, as it was received by the resolver.
+   */
+  private async updateStoredDid(portableDid: PortableDid): Promise<void> {
+    try {
+      await this.agent.did.update({ portableDid, tenant: this.agent.agentDid.uri, publish: false });
+    } catch (error: any) {
+      // if the error is not due to no changes detected, log the error
+      if (error.message && !error.message.includes('No changes detected, update aborted')) {
+        logger.error(`Error updating DID: ${error.message}`);
+      }
     }
   }
 }

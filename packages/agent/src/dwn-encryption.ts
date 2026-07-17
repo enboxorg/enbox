@@ -13,6 +13,7 @@ import type {
   PermissionGrant,
   ProtocolDefinition,
   RecordsQueryReply,
+  RecordsQueryReplyEntry,
   RecordsReadReply,
   RecordsWriteMessage,
   RoleAudienceKeyMaterial,
@@ -985,6 +986,54 @@ async function unwrapAudienceSeal(params: {
 }
 
 /**
+ * Attempts to resolve a delegate's decryption key from the scope-aware cache: first
+ * a covering key already cached, then — if the cache supports writes — freshly
+ * hydrated grant-key records merged into the cache and re-checked. Returns
+ * `undefined` when no covering key is found by either path (the caller falls back
+ * to role-audience delivery).
+ */
+async function resolveCachedDelegateDecryptionKey(params: {
+  agent: EnboxPlatformAgent;
+  targetDid: string;
+  granteeDid: string;
+  protocol: string;
+  protocolPath: string | undefined;
+  delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
+}): Promise<KeyDecrypter | undefined> {
+  const { agent, targetDid, granteeDid, protocol, protocolPath, delegateDecryptionKeyCache } = params;
+  const cacheKey = `ddk~${granteeDid}`;
+  const cachedKey = findCoveringDelegateKey(delegateDecryptionKeyCache?.get(cacheKey), targetDid, protocol, protocolPath);
+  if (cachedKey !== undefined) {
+    return buildProtocolPathSubtreeDecrypter(cachedKey.derivedPrivateKey);
+  }
+
+  if (delegateDecryptionKeyCache?.set === undefined) {
+    return undefined;
+  }
+
+  const hydratedKeys = await resolveGrantKeyRecords({
+    agent,
+    grantorDid: targetDid,
+    granteeDid,
+    protocol,
+    protocolPath,
+  });
+
+  if (hydratedKeys.length === 0) {
+    return undefined;
+  }
+
+  const mergedKeys = mergeDelegateDecryptionKeys(
+    delegateDecryptionKeyCache.get(cacheKey) ?? [],
+    hydratedKeys,
+  );
+  delegateDecryptionKeyCache.set(cacheKey, mergedKeys);
+
+  const hydratedKey = findCoveringDelegateKey(mergedKeys, targetDid, protocol, protocolPath);
+  return hydratedKey !== undefined ? buildProtocolPathSubtreeDecrypter(hydratedKey.derivedPrivateKey) : undefined;
+}
+
+/**
  * Resolves the appropriate KeyDecrypter for a record's encryption scheme.
  *
  * Owners derive protocol-path keys directly from KMS. Delegates use delivered
@@ -1008,33 +1057,16 @@ export async function resolveKeyDecrypter(params: ResolveKeyDecrypterParams): Pr
     const protocol = recordsWrite.descriptor.protocol;
     const protocolPath = recordsWrite.descriptor.protocolPath;
     if (protocol && targetDid !== undefined) {
-      const cacheKey = `ddk~${granteeDid}`;
-      const cachedKey = findCoveringDelegateKey(delegateDecryptionKeyCache?.get(cacheKey), targetDid, protocol, protocolPath);
-      if (cachedKey !== undefined) {
-        return buildProtocolPathSubtreeDecrypter(cachedKey.derivedPrivateKey);
-      }
-
-      if (delegateDecryptionKeyCache?.set !== undefined) {
-        const hydratedKeys = await resolveGrantKeyRecords({
-          agent,
-          grantorDid: targetDid,
-          granteeDid,
-          protocol,
-          protocolPath,
-        });
-
-        if (hydratedKeys.length > 0) {
-          const mergedKeys = mergeDelegateDecryptionKeys(
-            delegateDecryptionKeyCache.get(cacheKey) ?? [],
-            hydratedKeys,
-          );
-          delegateDecryptionKeyCache.set(cacheKey, mergedKeys);
-
-          const hydratedKey = findCoveringDelegateKey(mergedKeys, targetDid, protocol, protocolPath);
-          if (hydratedKey !== undefined) {
-            return buildProtocolPathSubtreeDecrypter(hydratedKey.derivedPrivateKey);
-          }
-        }
+      const cachedDecrypter = await resolveCachedDelegateDecryptionKey({
+        agent,
+        targetDid,
+        granteeDid,
+        protocol,
+        protocolPath,
+        delegateDecryptionKeyCache,
+      });
+      if (cachedDecrypter !== undefined) {
+        return cachedDecrypter;
       }
     }
 
@@ -1075,6 +1107,120 @@ export async function resolveKeyDecrypter(params: ResolveKeyDecrypterParams): Pr
   return getKeyDecrypter(agent, authorDid);
 }
 
+/** Bundled `resolveKeyDecrypter` inputs shared by every entry decrypted within one `maybeDecryptReply` call. */
+type RecordDecryptionContext = {
+  agent: EnboxPlatformAgent;
+  authorDid: string;
+  targetDid: string;
+  granteeDid: string | undefined;
+  delegatedGrant: DataEncodedRecordsWriteMessage | undefined;
+  delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
+  audienceDecryptionKeyCache?: AudienceDecryptionKeyCache;
+};
+
+/**
+ * Auto-decrypts a `RecordsRead` reply's data in place, when the entry is
+ * encrypted, carries data, and is not itself an encryption-control record.
+ *
+ * @throws Error wrapping the underlying decryption failure with the record ID.
+ */
+async function decryptRecordsReadReply(
+  readReply: RecordsReadReply,
+  context: RecordDecryptionContext,
+): Promise<void> {
+  const { agent, authorDid, targetDid, granteeDid, delegatedGrant, delegateDecryptionKeyCache, audienceDecryptionKeyCache } = context;
+
+  if (readReply.status.code !== 200
+      || !readReply.entry?.recordsWrite?.encryption
+      || !readReply.entry?.data
+      || isEncryptionControlPath(readReply.entry.recordsWrite.descriptor.protocolPath)) {
+    return;
+  }
+
+  const keyDecrypter = await resolveKeyDecrypter({
+    agent,
+    audienceDecryptionKeyCache,
+    authorDid,
+    delegatedGrant,
+    delegateDecryptionKeyCache,
+    granteeDid,
+    recordsWrite: readReply.entry.recordsWrite,
+    targetDid,
+  });
+
+  try {
+    readReply.entry.data = await Records.decrypt(
+      readReply.entry.recordsWrite,
+      keyDecrypter,
+      readReply.entry.data,
+    );
+  } catch (error: any) {
+    throw new Error(
+      `AgentDwnApi: Failed to decrypt record ` +
+      `'${readReply.entry.recordsWrite.recordId}'. ` +
+      `Original error: ${error.message}`
+    );
+  }
+}
+
+/**
+ * Auto-decrypts one `RecordsQuery` reply entry's `encodedData` in place, when the
+ * entry is encrypted, carries `encodedData`, and is not itself an
+ * encryption-control record.
+ *
+ * @throws Error wrapping the underlying decryption failure with the record ID.
+ */
+async function decryptRecordsQueryEntry(
+  entry: RecordsQueryReplyEntry,
+  context: RecordDecryptionContext,
+): Promise<void> {
+  const { agent, authorDid, targetDid, granteeDid, delegatedGrant, delegateDecryptionKeyCache, audienceDecryptionKeyCache } = context;
+
+  if (!entry.encryption || !entry.encodedData || isEncryptionControlPath(entry.descriptor.protocolPath)) {
+    return;
+  }
+
+  const keyDecrypter = await resolveKeyDecrypter({
+    agent,
+    audienceDecryptionKeyCache,
+    authorDid,
+    delegatedGrant,
+    delegateDecryptionKeyCache,
+    granteeDid,
+    recordsWrite: entry as RecordsWriteMessage,
+    targetDid,
+  });
+
+  try {
+    const cipherBytes = Encoder.base64UrlToBytes(entry.encodedData);
+    const cipherStream = DataStream.fromBytes(cipherBytes);
+    const plainStream = await Records.decrypt(
+      entry as RecordsWriteMessage, keyDecrypter, cipherStream,
+    );
+    const plainBytes = await DataStream.toBytes(plainStream);
+    entry.encodedData = Encoder.bytesToBase64Url(plainBytes);
+  } catch (error: any) {
+    throw new Error(
+      `AgentDwnApi: Failed to decrypt record ` +
+      `'${entry.recordId}'. Original error: ${error.message}`
+    );
+  }
+}
+
+/** Auto-decrypts every eligible entry of a `RecordsQuery` reply (small records inline as `encodedData`), in place. */
+async function decryptRecordsQueryReply(
+  queryReply: RecordsQueryReply,
+  context: RecordDecryptionContext,
+): Promise<void> {
+  if (queryReply.status.code !== 200 || !queryReply.entries) {
+    return;
+  }
+
+  for (const entry of queryReply.entries) {
+    await decryptRecordsQueryEntry(entry, context);
+  }
+}
+
 /**
  * Post-processes a DWN reply, auto-decrypting data if encryption is enabled.
  * Delegates to the SDK's Records.decrypt() with the appropriate KeyDecrypter —
@@ -1102,77 +1248,24 @@ export async function maybeDecryptReply<T extends DwnInterface>(
   // `granteeDid` field. Narrow once at the top so neither branch below
   // needs to repeat the cast.
   const encryptedRequest = request as ProcessDwnRequest<T>;
-  const granteeDid = encryptedRequest.granteeDid;
-  const delegatedGrant = getDelegatedGrantFromRequest(encryptedRequest);
+  const context: RecordDecryptionContext = {
+    agent,
+    authorDid      : encryptedRequest.author,
+    targetDid      : encryptedRequest.target,
+    granteeDid     : encryptedRequest.granteeDid,
+    delegatedGrant : getDelegatedGrantFromRequest(encryptedRequest),
+    delegateDecryptionKeyCache,
+    audienceDecryptionKeyCache,
+  };
 
   // Auto-decrypt RecordsRead replies
   if (isDwnRequest(encryptedRequest as ProcessDwnRequest<DwnInterface>, DwnInterface.RecordsRead)) {
-    const readReply = reply as RecordsReadReply;
-    if (readReply.status.code === 200
-        && readReply.entry?.recordsWrite?.encryption
-        && readReply.entry?.data
-        && !isEncryptionControlPath(readReply.entry.recordsWrite.descriptor.protocolPath)) {
-      const keyDecrypter = await resolveKeyDecrypter({
-        agent,
-        audienceDecryptionKeyCache,
-        authorDid    : encryptedRequest.author,
-        delegatedGrant,
-        delegateDecryptionKeyCache,
-        granteeDid,
-        recordsWrite : readReply.entry.recordsWrite,
-        targetDid    : encryptedRequest.target,
-      });
-
-      try {
-        readReply.entry.data = await Records.decrypt(
-          readReply.entry.recordsWrite,
-          keyDecrypter,
-          readReply.entry.data,
-        );
-      } catch (error: any) {
-        throw new Error(
-          `AgentDwnApi: Failed to decrypt record ` +
-          `'${readReply.entry.recordsWrite.recordId}'. ` +
-          `Original error: ${error.message}`
-        );
-      }
-    }
+    await decryptRecordsReadReply(reply as RecordsReadReply, context);
   }
 
   // Auto-decrypt RecordsQuery replies (small records inline as encodedData)
   if (isDwnRequest(encryptedRequest as ProcessDwnRequest<DwnInterface>, DwnInterface.RecordsQuery)) {
-    const queryReply = reply as RecordsQueryReply;
-    if (queryReply.status.code === 200 && queryReply.entries) {
-      for (const entry of queryReply.entries) {
-        if (entry.encryption && entry.encodedData && !isEncryptionControlPath(entry.descriptor.protocolPath)) {
-          const keyDecrypter = await resolveKeyDecrypter({
-            agent,
-            audienceDecryptionKeyCache,
-            authorDid    : encryptedRequest.author,
-            delegatedGrant,
-            delegateDecryptionKeyCache,
-            granteeDid,
-            recordsWrite : entry as RecordsWriteMessage,
-            targetDid    : encryptedRequest.target,
-          });
-
-          try {
-            const cipherBytes = Encoder.base64UrlToBytes(entry.encodedData);
-            const cipherStream = DataStream.fromBytes(cipherBytes);
-            const plainStream = await Records.decrypt(
-              entry as RecordsWriteMessage, keyDecrypter, cipherStream,
-            );
-            const plainBytes = await DataStream.toBytes(plainStream);
-            entry.encodedData = Encoder.bytesToBase64Url(plainBytes);
-          } catch (error: any) {
-            throw new Error(
-              `AgentDwnApi: Failed to decrypt record ` +
-              `'${entry.recordId}'. Original error: ${error.message}`
-            );
-          }
-        }
-      }
-    }
+    await decryptRecordsQueryReply(reply as RecordsQueryReply, context);
   }
 }
 

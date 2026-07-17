@@ -1,6 +1,6 @@
 import type { DwnDatabaseType } from '../types.js';
+import type { DynamicReferenceBuilder, ExpressionBuilder, OperandExpression, RawBuilder, SelectQueryBuilder, SqlBool } from 'kysely';
 import type { EqualFilter, Filter, RangeFilter } from '@enbox/dwn-sdk-js';
-import type { ExpressionBuilder, OperandExpression, RawBuilder, SelectQueryBuilder, SqlBool } from 'kysely';
 
 import { DynamicModule, sql } from 'kysely';
 import { sanitizedValue, sanitizeFiltersAndSeparateTags } from './sanitize.js';
@@ -54,32 +54,52 @@ function processFilter<DB = DwnDatabaseType, TB extends keyof DB = keyof DB>(
     if (Array.isArray(value)) { // OneOfFilter
       andOperands.push(eb(column, 'in', value));
     } else if (typeof value === 'object') { // RangeFilter
-      // Detect prefix-style range filters created by `constructPrefixFilterAsRangeFilter`
-      // which uses `{ gte: prefix, lt: prefix + '\uffff' }`. The U+FFFF sentinel does not
-      // sort correctly under ICU/libc collation rules (e.g. PostgreSQL's en_US.UTF-8),
-      // so we convert these to a collation-safe SQL LIKE expression.
-      const prefixRangeFilterPrefix = getPrefixRangeFilterPrefix(value);
-      if (prefixRangeFilterPrefix !== undefined) {
-        const prefix = escapeLikePattern(prefixRangeFilterPrefix);
-        andOperands.push(sql`${sql.ref(property)} LIKE ${prefix + '%'} ESCAPE ${'\\'}`);
-        continue;
-      }
-
-      if (value.gt) {
-        andOperands.push(eb(column, '>', sanitizedValue(value.gt)));
-      }
-      if (value.gte) {
-        andOperands.push(eb(column, '>=', sanitizedValue(value.gte)));
-      }
-      if (value.lt) {
-        andOperands.push(eb(column, '<', sanitizedValue(value.lt)));
-      }
-      if (value.lte) {
-        andOperands.push(eb(column, '<=', sanitizedValue(value.lte)));
-      }
+      processRangeFilterProperty(eb, andOperands, property, column, value);
     } else { // EqualFilter
       andOperands.push(eb(column, '=', sanitizedValue(value)));
     }
+  }
+}
+
+/**
+ * Processes a single `RangeFilter` property (the `typeof value === 'object'` branch of
+ * {@link processFilter}) and appends the corresponding AND operand(s) to `andOperands`.
+ *
+ * @param eb The ExpressionBuilder from the query.
+ * @param andOperands The array of AND operands to append to.
+ * @param property The filter property name.
+ * @param column The dynamic column reference for `property`.
+ * @param value The RangeFilter value to be evaluated.
+ */
+function processRangeFilterProperty<DB = DwnDatabaseType, TB extends keyof DB = keyof DB>(
+  eb: ExpressionBuilder<DB, TB>,
+  andOperands: OperandExpression<SqlBool>[],
+  property: string,
+  column: DynamicReferenceBuilder<never>,
+  value: RangeFilter
+): void {
+  // Detect prefix-style range filters created by `constructPrefixFilterAsRangeFilter`
+  // which uses `{ gte: prefix, lt: prefix + '\uffff' }`. The U+FFFF sentinel does not
+  // sort correctly under ICU/libc collation rules (e.g. PostgreSQL's en_US.UTF-8),
+  // so we convert these to a collation-safe SQL LIKE expression.
+  const prefixRangeFilterPrefix = getPrefixRangeFilterPrefix(value);
+  if (prefixRangeFilterPrefix !== undefined) {
+    const prefix = escapeLikePattern(prefixRangeFilterPrefix);
+    andOperands.push(sql`${sql.ref(property)} LIKE ${prefix + '%'} ESCAPE ${'\\'}`);
+    return;
+  }
+
+  if (value.gt) {
+    andOperands.push(eb(column, '>', sanitizedValue(value.gt)));
+  }
+  if (value.gte) {
+    andOperands.push(eb(column, '>=', sanitizedValue(value.gte)));
+  }
+  if (value.lt) {
+    andOperands.push(eb(column, '<', sanitizedValue(value.lt)));
+  }
+  if (value.lte) {
+    andOperands.push(eb(column, '<=', sanitizedValue(value.lte)));
   }
 }
 

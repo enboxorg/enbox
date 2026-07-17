@@ -1,6 +1,6 @@
 import type { DidMetadata } from '../types/portable-did.js';
 import type { PreviousDidProof } from './did-dht-types.js';
-import type { DidDocument, DidService } from '../types/did-core.js';
+import type { DidDocument, DidService, DidVerificationMethod } from '../types/did-core.js';
 import type { Packet, StringAnswer, TxtAnswer, TxtData } from '@dnsquery/dns-packet';
 
 import { AUTHORITATIVE_ANSWER } from '@dnsquery/dns-packet';
@@ -162,139 +162,203 @@ export async function fromDnsPacket({ didUri, dnsPacket }: {
 
     switch (true) {
       // Process an also known as record.
-      case dnsRecordId.startsWith('aka'): {
-        // Decode the DNS TXT record data value to a string.
-        const data = parseTxtDataToString(answer.data);
-
-        // Add the 'alsoKnownAs' property to the DID document.
-        didDocument.alsoKnownAs = data.split(VALUE_SEPARATOR);
-
+      case dnsRecordId.startsWith('aka'):
+        applyAlsoKnownAsRecord(didDocument, answer);
         break;
-      }
 
       // Process a controller record.
-      case dnsRecordId.startsWith('cnt'): {
-        // Decode the DNS TXT record data value to a string.
-        const data = parseTxtDataToString(answer.data);
-
-        // Add the 'controller' property to the DID document.
-        didDocument.controller = data.includes(VALUE_SEPARATOR) ? data.split(VALUE_SEPARATOR) : data;
-
+      case dnsRecordId.startsWith('cnt'):
+        applyControllerRecord(didDocument, answer);
         break;
-      }
 
       // Process verification methods.
-      case dnsRecordId.startsWith('k'): {
-        // Get the key type (t), Base64URL-encoded public key (k), algorithm (a), and
-        // optionally, controller (c) or Verification Method ID (id) from the decoded TXT record data.
-        const { id, t, k, c, a: parsedAlg } = parseTxtDataToObject(answer.data);
-
-        // Convert the public key from Base64URL format to a byte array.
-        const publicKeyBytes = Convert.base64Url(k).toUint8Array();
-
-        // Use the key type integer to look up the cryptographic curve name.
-        const namedCurve = DidDhtRegisteredKeyType[Number(t)];
-
-        // Convert the public key from a byte array to JWK format.
-        const publicKey = await keyConverter(namedCurve).bytesToPublicKey({ publicKeyBytes });
-
-        publicKey.alg = parsedAlg || KeyTypeToDefaultAlgorithmMap[Number(t) as DidDhtRegisteredKeyType];
-
-        // TODO: when this is complete https://github.com/enboxorg/enbox/issues/638 then we can add this back and
-        // update the test vectors kid back to '0'
-        // if(dnsRecordId === 'k0') {
-        //   publicKey.kid = '0';
-        // }
-
-        // Determine the Verification Method ID: '0' for the identity key,
-        // the id from the TXT Data Object, or the JWK thumbprint if an explicity Verification Method ID not defined.
-        const vmId = dnsRecordId === 'k0' ? '0' : id ?? await computeJwkThumbprint({ jwk: publicKey });
-
-        // Initialize the `verificationMethod` array if it does not already exist.
-        didDocument.verificationMethod ??= [];
-
-        // Prepend the DID URI to the ID fragment to form the full verification method ID.
-        const methodId = `${didUri}#${vmId}`;
-
-        // Add the verification method to the DID document.
-        didDocument.verificationMethod.push({
-          id           : methodId,
-          type         : 'JsonWebKey',
-          controller   : c ?? didUri,
-          publicKeyJwk : publicKey,
-        });
-
-        // Add a mapping from the DNS record ID (e.g., 'k0', 'k1', etc.) to the verification
-        // method ID (e.g., 'did:dht:...#0', etc.).
-        idLookup.set(dnsRecordId, methodId);
-
+      case dnsRecordId.startsWith('k'):
+        await applyVerificationMethodRecord({ didUri, dnsRecordId, answer, didDocument, idLookup });
         break;
-      }
 
       // Process services.
-      case dnsRecordId.startsWith('s'): {
-        // Get the service ID fragment (id), type (t), service endpoint (se), and optionally,
-        // other properties from the decoded TXT record data.
-        const { id, t, se, ...customProperties } = parseTxtDataToObject(answer.data);
-
-        // if multi-values: 'a,b,c' -> ['a', 'b', 'c'], if single-value: 'a' -> ['a']
-        // NOTE: The service endpoint technically can either be a string or an array of strings,
-        // we enforce an array for single-value to simplify verification of vector 3 in the spec: https://did-dht.com/#vector-3
-        const serviceEndpoint = se.includes(VALUE_SEPARATOR) ? se.split(VALUE_SEPARATOR) : [se];
-
-        // Convert custom property values to either a string or an array of strings.
-        const serviceProperties = Object.fromEntries(Object.entries(customProperties).map(
-          ([k, v]: [string, string]): [string, string | string[]] => [k, v.includes(VALUE_SEPARATOR) ? v.split(VALUE_SEPARATOR) : v]
-        ));
-
-        // Initialize the `service` array if it does not already exist.
-        didDocument.service ??= [];
-
-        didDocument.service.push({
-          ...serviceProperties,
-          id   : `${didUri}#${id}`,
-          type : t,
-          serviceEndpoint
-        });
-
+      case dnsRecordId.startsWith('s'):
+        applyServiceRecord(didDocument, didUri, answer);
         break;
-      }
 
       // Process DID DHT types.
-      case dnsRecordId.startsWith('typ'): {
-        // Decode the DNS TXT record data value to an object.
-        const { id: types } = parseTxtDataToObject(answer.data);
-
-        // Add the DID DHT Registered DID Types represented as numbers to DID metadata.
-        didDocumentMetadata.types = types.split(VALUE_SEPARATOR).map(Number);
-
+      case dnsRecordId.startsWith('typ'):
+        applyDidTypesRecord(didDocumentMetadata, answer);
         break;
-      }
 
       // Process root record.
-      case dnsRecordId.startsWith('did'): {
-        // Helper function that maps verification relationship values to verification method IDs.
-        const recordIdsToMethodIds = (data: string): string[] => data
-          .split(VALUE_SEPARATOR)
-          .map((dnsRecordId: string): string | undefined => idLookup.get(dnsRecordId))
-          .filter((id): id is string => typeof id === 'string');
-
-        // Decode the DNS TXT record data and destructure verification relationship properties.
-        const { auth, asm, del, inv, agm } = parseTxtDataToObject(answer.data);
-
-        // Add the verification relationships, if any, to the DID document.
-        if (auth) {didDocument.authentication = recordIdsToMethodIds(auth);}
-        if (asm) {didDocument.assertionMethod = recordIdsToMethodIds(asm);}
-        if (del) {didDocument.capabilityDelegation = recordIdsToMethodIds(del);}
-        if (inv) {didDocument.capabilityInvocation = recordIdsToMethodIds(inv);}
-        if (agm) {didDocument.keyAgreement = recordIdsToMethodIds(agm);}
-
+      case dnsRecordId.startsWith('did'):
+        applyVerificationRelationshipsRecord(didDocument, answer, idLookup);
         break;
-      }
     }
   }
 
   return { didDocument, didDocumentMetadata, didResolutionMetadata: {} };
+}
+
+/**
+ * Applies an "also known as" (`aka`) DNS TXT record to the given DID document.
+ *
+ * @param didDocument - The DID document to update.
+ * @param answer - The `aka` DNS TXT answer record.
+ */
+function applyAlsoKnownAsRecord(didDocument: DidDocument, answer: TxtAnswer): void {
+  // Decode the DNS TXT record data value to a string.
+  const data = parseTxtDataToString(answer.data);
+
+  // Add the 'alsoKnownAs' property to the DID document.
+  didDocument.alsoKnownAs = data.split(VALUE_SEPARATOR);
+}
+
+/**
+ * Applies a controller (`cnt`) DNS TXT record to the given DID document.
+ *
+ * @param didDocument - The DID document to update.
+ * @param answer - The `cnt` DNS TXT answer record.
+ */
+function applyControllerRecord(didDocument: DidDocument, answer: TxtAnswer): void {
+  // Decode the DNS TXT record data value to a string.
+  const data = parseTxtDataToString(answer.data);
+
+  // Add the 'controller' property to the DID document.
+  didDocument.controller = data.includes(VALUE_SEPARATOR) ? data.split(VALUE_SEPARATOR) : data;
+}
+
+/**
+ * Applies a verification method (`k*`) DNS TXT record to the given DID document, converting the
+ * encoded public key to JWK format and recording the DNS record ID -> verification method ID
+ * mapping used later to resolve verification relationships from the root record.
+ *
+ * @param params - The parameters needed to process the verification method record.
+ * @param params.didUri - The DID URI of the DID document.
+ * @param params.dnsRecordId - The DID DHT record identifier (e.g., 'k0', 'k1').
+ * @param params.answer - The `k*` DNS TXT answer record.
+ * @param params.didDocument - The DID document to update.
+ * @param params.idLookup - The DNS record ID -> verification method ID map to update.
+ */
+async function applyVerificationMethodRecord({ didUri, dnsRecordId, answer, didDocument, idLookup }: {
+  didUri: string;
+  dnsRecordId: string;
+  answer: TxtAnswer;
+  didDocument: DidDocument;
+  idLookup: Map<string, string>;
+}): Promise<void> {
+  // Get the key type (t), Base64URL-encoded public key (k), algorithm (a), and
+  // optionally, controller (c) or Verification Method ID (id) from the decoded TXT record data.
+  const { id, t, k, c, a: parsedAlg } = parseTxtDataToObject(answer.data);
+
+  // Convert the public key from Base64URL format to a byte array.
+  const publicKeyBytes = Convert.base64Url(k).toUint8Array();
+
+  // Use the key type integer to look up the cryptographic curve name.
+  const namedCurve = DidDhtRegisteredKeyType[Number(t)];
+
+  // Convert the public key from a byte array to JWK format.
+  const publicKey = await keyConverter(namedCurve).bytesToPublicKey({ publicKeyBytes });
+
+  publicKey.alg = parsedAlg || KeyTypeToDefaultAlgorithmMap[Number(t) as DidDhtRegisteredKeyType];
+
+  // TODO: when this is complete https://github.com/enboxorg/enbox/issues/638 then we can add this back and
+  // update the test vectors kid back to '0'
+  // if(dnsRecordId === 'k0') {
+  //   publicKey.kid = '0';
+  // }
+
+  // Determine the Verification Method ID: '0' for the identity key,
+  // the id from the TXT Data Object, or the JWK thumbprint if an explicity Verification Method ID not defined.
+  const vmId = dnsRecordId === 'k0' ? '0' : id ?? await computeJwkThumbprint({ jwk: publicKey });
+
+  // Initialize the `verificationMethod` array if it does not already exist.
+  didDocument.verificationMethod ??= [];
+
+  // Prepend the DID URI to the ID fragment to form the full verification method ID.
+  const methodId = `${didUri}#${vmId}`;
+
+  // Add the verification method to the DID document.
+  didDocument.verificationMethod.push({
+    id           : methodId,
+    type         : 'JsonWebKey',
+    controller   : c ?? didUri,
+    publicKeyJwk : publicKey,
+  });
+
+  // Add a mapping from the DNS record ID (e.g., 'k0', 'k1', etc.) to the verification
+  // method ID (e.g., 'did:dht:...#0', etc.).
+  idLookup.set(dnsRecordId, methodId);
+}
+
+/**
+ * Applies a service (`s*`) DNS TXT record to the given DID document.
+ *
+ * @param didDocument - The DID document to update.
+ * @param didUri - The DID URI of the DID document.
+ * @param answer - The `s*` DNS TXT answer record.
+ */
+function applyServiceRecord(didDocument: DidDocument, didUri: string, answer: TxtAnswer): void {
+  // Get the service ID fragment (id), type (t), service endpoint (se), and optionally,
+  // other properties from the decoded TXT record data.
+  const { id, t, se, ...customProperties } = parseTxtDataToObject(answer.data);
+
+  // if multi-values: 'a,b,c' -> ['a', 'b', 'c'], if single-value: 'a' -> ['a']
+  // NOTE: The service endpoint technically can either be a string or an array of strings,
+  // we enforce an array for single-value to simplify verification of vector 3 in the spec: https://did-dht.com/#vector-3
+  const serviceEndpoint = se.includes(VALUE_SEPARATOR) ? se.split(VALUE_SEPARATOR) : [se];
+
+  // Convert custom property values to either a string or an array of strings.
+  const serviceProperties = Object.fromEntries(Object.entries(customProperties).map(
+    ([k, v]: [string, string]): [string, string | string[]] => [k, v.includes(VALUE_SEPARATOR) ? v.split(VALUE_SEPARATOR) : v]
+  ));
+
+  // Initialize the `service` array if it does not already exist.
+  didDocument.service ??= [];
+
+  didDocument.service.push({
+    ...serviceProperties,
+    id   : `${didUri}#${id}`,
+    type : t,
+    serviceEndpoint
+  });
+}
+
+/**
+ * Applies a DID DHT types (`typ`) DNS TXT record to the given DID document metadata.
+ *
+ * @param didDocumentMetadata - The DID document metadata to update.
+ * @param answer - The `typ` DNS TXT answer record.
+ */
+function applyDidTypesRecord(didDocumentMetadata: DidMetadata, answer: TxtAnswer): void {
+  // Decode the DNS TXT record data value to an object.
+  const { id: types } = parseTxtDataToObject(answer.data);
+
+  // Add the DID DHT Registered DID Types represented as numbers to DID metadata.
+  didDocumentMetadata.types = types.split(VALUE_SEPARATOR).map(Number);
+}
+
+/**
+ * Applies the root (`did`) DNS TXT record's verification relationships (authentication,
+ * assertionMethod, capabilityDelegation, capabilityInvocation, keyAgreement) to the given DID
+ * document, resolving DNS record IDs to verification method IDs via `idLookup`.
+ *
+ * @param didDocument - The DID document to update.
+ * @param answer - The root `did` DNS TXT answer record.
+ * @param idLookup - The DNS record ID -> verification method ID map.
+ */
+function applyVerificationRelationshipsRecord(didDocument: DidDocument, answer: TxtAnswer, idLookup: Map<string, string>): void {
+  // Helper function that maps verification relationship values to verification method IDs.
+  const recordIdsToMethodIds = (data: string): string[] => data
+    .split(VALUE_SEPARATOR)
+    .map((dnsRecordId: string): string | undefined => idLookup.get(dnsRecordId))
+    .filter((id): id is string => typeof id === 'string');
+
+  // Decode the DNS TXT record data and destructure verification relationship properties.
+  const { auth, asm, del, inv, agm } = parseTxtDataToObject(answer.data);
+
+  // Add the verification relationships, if any, to the DID document.
+  if (auth) {didDocument.authentication = recordIdsToMethodIds(auth);}
+  if (asm) {didDocument.assertionMethod = recordIdsToMethodIds(asm);}
+  if (del) {didDocument.capabilityDelegation = recordIdsToMethodIds(del);}
+  if (inv) {didDocument.capabilityInvocation = recordIdsToMethodIds(inv);}
+  if (agm) {didDocument.keyAgreement = recordIdsToMethodIds(agm);}
 }
 
 /**
@@ -363,74 +427,12 @@ export async function toDnsPacket({ didDocument, didMetadata, authoritativeGatew
 
   // Add DNS TXT records for each verification method.
   for (const [index, verificationMethod] of didDocument.verificationMethod?.entries() ?? []) {
-    const dnsRecordId = `k${index}`;
-    verificationMethodIds.push(dnsRecordId);
-    const methodId = verificationMethod.id.split('#').pop()!; // Remove fragment prefix, if any.
-    idLookup.set(methodId, dnsRecordId);
-
-    const publicKey = verificationMethod.publicKeyJwk;
-
-    if (!(publicKey?.crv && publicKey.crv in AlgorithmToKeyTypeMap)) {
-      throw new DidError(DidErrorCode.InvalidPublicKeyType, `Verification method '${verificationMethod.id}' contains an unsupported key type: ${publicKey?.crv ?? 'undefined'}`);
-    }
-
-    // Use the public key's `crv` property to get the DID DHT key type.
-    const keyType = DidDhtRegisteredKeyType[publicKey.crv as keyof typeof DidDhtRegisteredKeyType];
-
-    // Convert the public key from JWK format to a byte array.
-    const publicKeyBytes = await keyConverter(publicKey.crv).publicKeyToBytes({ publicKey });
-
-    // Convert the public key from a byte array to Base64URL format.
-    const publicKeyBase64Url = Convert.uint8Array(publicKeyBytes).toBase64Url();
-
-    // Define the data for the DNS TXT record.
-    const txtData = [`t=${keyType}`, `k=${publicKeyBase64Url}`];
-    // if the methodId is not the identity key or a thumbprint, explicity define the id within the DNS TXT record.
-    // otherwise the id can be inferred from the thumbprint.
-    if (methodId !== '0' && await computeJwkThumbprint({ jwk: publicKey }) !== methodId) {
-      txtData.unshift(`id=${methodId}`);
-    }
-    // Only set the algorithm property (`a`) if it differs from the default algorithm for the key type.
-    if (publicKey.alg !== KeyTypeToDefaultAlgorithmMap[keyType]) {
-      txtData.push(`a=${publicKey.alg}`);
-    }
-
-    // Add the controller property, if set to a value other than the Identity Key (DID Subject).
-    if (verificationMethod.controller !== didDocument.id) {txtData.push(`c=${verificationMethod.controller}`);}
-
-    // Add a TXT record for the verification method.
-    txtRecords.push({
-      type : 'TXT',
-      name : `_${dnsRecordId}._did.`,
-      ttl  : DNS_RECORD_TTL,
-      data : txtData.join(PROPERTY_SEPARATOR)
-    });
+    await processVerificationMethodForDnsPacket({ index, verificationMethod, didDocument, idLookup, verificationMethodIds, txtRecords });
   }
 
   // Add DNS TXT records for each service.
   didDocument.service?.forEach((service: DidService, index: number): void => {
-    const dnsRecordId = `s${index}`;
-    serviceIds.push(dnsRecordId);
-
-    let { id, type: t, serviceEndpoint: se, ...customProperties } = service;
-    id = extractDidFragment(id)!;
-    se = Array.isArray(se) ? se.join(',') : se;
-
-    // Define the data for the DNS TXT record.
-    const txtData = Object.entries({ id, t, se, ...customProperties }).map(
-      ([key, value]: [string, unknown]): string => `${key}=${value}`
-    );
-
-    const txtDataString = txtData.join(PROPERTY_SEPARATOR);
-    const data = chunkDataIfNeeded(txtDataString);
-
-    // Add a TXT record for the verification method.
-    txtRecords.push({
-      type : 'TXT',
-      name : `_${dnsRecordId}._did.`,
-      ttl  : DNS_RECORD_TTL,
-      data
-    });
+    processServiceForDnsPacket(service, index, txtRecords, serviceIds);
   });
 
   // Initialize the root DNS TXT record with the DID DHT specification version.
@@ -443,15 +445,7 @@ export async function toDnsPacket({ didDocument, didMetadata, authoritativeGatew
 
   // Add verification relationships to the root record.
   Object.keys(DidVerificationRelationship).forEach((relationship: string): void => {
-    // Collect the verification method IDs for the given relationship.
-    const dnsRecordIds = (didDocument[relationship as keyof DidDocument] as string[] | undefined)
-      ?.map((id: string): string | undefined => idLookup.get(id.split('#').pop()!));
-
-    // If the relationship includes verification methods, add them to the root record.
-    if (dnsRecordIds) {
-      const recordName = DidDhtVerificationRelationship[relationship as keyof typeof DidDhtVerificationRelationship];
-      rootRecord.push(`${recordName}=${dnsRecordIds.join(VALUE_SEPARATOR)}`);
-    }
+    appendVerificationRelationshipToRootRecord(didDocument, idLookup, rootRecord, relationship);
   });
 
   // Add services to the root record.
@@ -503,6 +497,134 @@ export async function toDnsPacket({ didDocument, didMetadata, authoritativeGatew
   };
 
   return dnsPacket;
+}
+
+/**
+ * Converts a single verification method to its DNS TXT record, pushing it onto `txtRecords` and
+ * recording the DNS record ID both for the root record's `vm` list and later verification
+ * relationship lookups via `idLookup`.
+ *
+ * @param params - The parameters needed to process the verification method.
+ * @param params.index - The verification method's index within `didDocument.verificationMethod`.
+ * @param params.verificationMethod - The verification method to convert.
+ * @param params.didDocument - The DID document the verification method belongs to.
+ * @param params.idLookup - The verification method ID -> DNS record ID map to update.
+ * @param params.verificationMethodIds - The list of DNS record IDs to append to.
+ * @param params.txtRecords - The list of DNS TXT answer records to append to.
+ * @throws {@link DidError} with {@link DidErrorCode.InvalidPublicKeyType} if the verification
+ * method's public key uses an unsupported curve.
+ */
+async function processVerificationMethodForDnsPacket({ index, verificationMethod, didDocument, idLookup, verificationMethodIds, txtRecords }: {
+  index: number;
+  verificationMethod: DidVerificationMethod;
+  didDocument: DidDocument;
+  idLookup: Map<string, string>;
+  verificationMethodIds: string[];
+  txtRecords: TxtAnswer[];
+}): Promise<void> {
+  const dnsRecordId = `k${index}`;
+  verificationMethodIds.push(dnsRecordId);
+  const methodId = verificationMethod.id.split('#').pop()!; // Remove fragment prefix, if any.
+  idLookup.set(methodId, dnsRecordId);
+
+  const publicKey = verificationMethod.publicKeyJwk;
+
+  if (!(publicKey?.crv && publicKey.crv in AlgorithmToKeyTypeMap)) {
+    throw new DidError(DidErrorCode.InvalidPublicKeyType, `Verification method '${verificationMethod.id}' contains an unsupported key type: ${publicKey?.crv ?? 'undefined'}`);
+  }
+
+  // Use the public key's `crv` property to get the DID DHT key type.
+  const keyType = DidDhtRegisteredKeyType[publicKey.crv as keyof typeof DidDhtRegisteredKeyType];
+
+  // Convert the public key from JWK format to a byte array.
+  const publicKeyBytes = await keyConverter(publicKey.crv).publicKeyToBytes({ publicKey });
+
+  // Convert the public key from a byte array to Base64URL format.
+  const publicKeyBase64Url = Convert.uint8Array(publicKeyBytes).toBase64Url();
+
+  // Define the data for the DNS TXT record.
+  const txtData = [`t=${keyType}`, `k=${publicKeyBase64Url}`];
+  // if the methodId is not the identity key or a thumbprint, explicity define the id within the DNS TXT record.
+  // otherwise the id can be inferred from the thumbprint.
+  if (methodId !== '0' && await computeJwkThumbprint({ jwk: publicKey }) !== methodId) {
+    txtData.unshift(`id=${methodId}`);
+  }
+  // Only set the algorithm property (`a`) if it differs from the default algorithm for the key type.
+  if (publicKey.alg !== KeyTypeToDefaultAlgorithmMap[keyType]) {
+    txtData.push(`a=${publicKey.alg}`);
+  }
+
+  // Add the controller property, if set to a value other than the Identity Key (DID Subject).
+  if (verificationMethod.controller !== didDocument.id) {txtData.push(`c=${verificationMethod.controller}`);}
+
+  // Add a TXT record for the verification method.
+  txtRecords.push({
+    type : 'TXT',
+    name : `_${dnsRecordId}._did.`,
+    ttl  : DNS_RECORD_TTL,
+    data : txtData.join(PROPERTY_SEPARATOR)
+  });
+}
+
+/**
+ * Converts a single service to its DNS TXT record, chunking the data if it exceeds the 255
+ * character DNS TXT record segment limit, and pushes it onto `txtRecords`.
+ *
+ * @param service - The service to convert.
+ * @param index - The service's index within `didDocument.service`.
+ * @param txtRecords - The list of DNS TXT answer records to append to.
+ * @param serviceIds - The list of DNS record IDs to append to.
+ */
+function processServiceForDnsPacket(service: DidService, index: number, txtRecords: TxtAnswer[], serviceIds: string[]): void {
+  const dnsRecordId = `s${index}`;
+  serviceIds.push(dnsRecordId);
+
+  let { id, type: t, serviceEndpoint: se, ...customProperties } = service;
+  id = extractDidFragment(id)!;
+  se = Array.isArray(se) ? se.join(',') : se;
+
+  // Define the data for the DNS TXT record.
+  const txtData = Object.entries({ id, t, se, ...customProperties }).map(
+    ([key, value]: [string, unknown]): string => `${key}=${value}`
+  );
+
+  const txtDataString = txtData.join(PROPERTY_SEPARATOR);
+  const data = chunkDataIfNeeded(txtDataString);
+
+  // Add a TXT record for the verification method.
+  txtRecords.push({
+    type : 'TXT',
+    name : `_${dnsRecordId}._did.`,
+    ttl  : DNS_RECORD_TTL,
+    data
+  });
+}
+
+/**
+ * Appends the DNS root record entry for a single verification relationship (e.g.
+ * `authentication`, `assertionMethod`), if the DID document defines any verification methods for
+ * that relationship.
+ *
+ * @param didDocument - The DID document to read the verification relationship from.
+ * @param idLookup - The verification method ID -> DNS record ID map.
+ * @param rootRecord - The list of root DNS TXT record entries to append to.
+ * @param relationship - The verification relationship name (e.g. `authentication`).
+ */
+function appendVerificationRelationshipToRootRecord(
+  didDocument: DidDocument,
+  idLookup: Map<string, string>,
+  rootRecord: string[],
+  relationship: string
+): void {
+  // Collect the verification method IDs for the given relationship.
+  const dnsRecordIds = (didDocument[relationship as keyof DidDocument] as string[] | undefined)
+    ?.map((id: string): string | undefined => idLookup.get(id.split('#').pop()!));
+
+  // If the relationship includes verification methods, add them to the root record.
+  if (dnsRecordIds) {
+    const recordName = DidDhtVerificationRelationship[relationship as keyof typeof DidDhtVerificationRelationship];
+    rootRecord.push(`${recordName}=${dnsRecordIds.join(VALUE_SEPARATOR)}`);
+  }
 }
 
 /**
