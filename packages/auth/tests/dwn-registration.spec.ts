@@ -12,7 +12,12 @@ import {
   saveTokensToStorage,
 } from '../src/registration.js';
 
-import type { RegistrationTokenData } from '../src/types.js';
+import type {
+  ProviderAuthParams,
+  ProviderAuthResult,
+  RegistrationOptions,
+  RegistrationTokenData,
+} from '../src/types.js';
 
 // We mock @enbox/dwn-clients so no real HTTP requests are made.
 const mockRegisterTenant = mock(async () => {});
@@ -180,6 +185,61 @@ describe('registerWithDwnEndpoints', () => {
     expect(capturedTokens!['https://dwn1.example.com'].registrationToken).toBe('new-token');
     expect(capturedTokens!['https://dwn1.example.com'].tokenUrl).toBe('https://auth.example.com/token');
     expect(capturedTokens!['https://dwn1.example.com'].refreshUrl).toBe('https://auth.example.com/refresh');
+  });
+
+  test('preserves the receiver for a stateful provider auth callback', async () => {
+    mockRegisterTenantWithToken.mockClear();
+    mockExchangeAuthCode.mockClear();
+
+    const agent = createMockAgent({
+      rpcGetServerInfo: async () => ({
+        registrationRequirements : ['provider-auth-v0'],
+        providerAuth             : {
+          authorizeUrl : 'https://auth.example.com/authorize',
+          tokenUrl     : 'https://auth.example.com/token',
+        },
+        maxFileSize: 10_000_000,
+      }),
+    });
+
+    class StatefulRegistration implements RegistrationOptions {
+      private readonly _code = 'stateful-auth-code';
+
+      public callbackReceiver: StatefulRegistration | undefined;
+      public failure: unknown = undefined;
+      public successCalled = false;
+
+      public onSuccess(): void {
+        this.successCalled = true;
+      }
+
+      public onFailure(error: unknown): void {
+        this.failure = error;
+      }
+
+      public async onProviderAuthRequired(params: ProviderAuthParams): Promise<ProviderAuthResult> {
+        this.callbackReceiver = this;
+        return { code: this._code, state: params.state };
+      }
+    }
+
+    const registration = new StatefulRegistration();
+
+    await registerWithDwnEndpoints(
+      {
+        userAgent    : agent,
+        dwnEndpoints : ['https://dwn1.example.com'],
+        agentDid     : 'did:dht:agent1',
+        connectedDid : 'did:dht:user1',
+      },
+      registration,
+    );
+
+    expect(registration.callbackReceiver).toBe(registration);
+    expect(registration.successCalled).toBe(true);
+    expect(registration.failure).toBeUndefined();
+    expect(mockExchangeAuthCode.mock.calls[0][1]).toBe('stateful-auth-code');
+    expect(mockRegisterTenantWithToken.mock.calls).toHaveLength(2);
   });
 
   test('uses existing valid registration token instead of re-authing', async () => {
