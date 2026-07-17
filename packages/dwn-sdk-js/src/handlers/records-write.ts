@@ -1,3 +1,4 @@
+import type { CoreProtocol } from '../core/core-protocol.js';
 import type { ProgressToken } from '../types/subscriptions.js';
 import type { GenericMessage, GenericMessageReply } from '../types/message-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
@@ -49,13 +50,9 @@ export class RecordsWriteHandler implements MethodHandler {
     // mutable validation. An already-stored message has already passed
     // admission; replay should not be reinterpreted against current protocol,
     // parent, role, grant, or record-limit state.
-    const incomingCid = await Message.getCid(message);
-    for (const existingMessage of existingMessages) {
-      if (await Message.getCid(existingMessage) !== incomingCid) {
-        continue;
-      }
-
-      return { status: { code: 409, detail: 'Conflict' } };
+    const conflictReply = await this.findConflictingMessageReply(message, existingMessages);
+    if (conflictReply !== undefined) {
+      return conflictReply;
     }
 
     const newMessageIsInitialWrite = await recordsWrite.isInitialWrite();
@@ -81,12 +78,9 @@ export class RecordsWriteHandler implements MethodHandler {
       return messageReplyFromError(e, 401);
     }
 
-    if (initialWrite !== undefined) {
-      try {
-        this.verifyImmutableProperties(initialWrite, message);
-      } catch (e) {
-        return messageReplyFromError(e, 400);
-      }
+    const immutablePropertyReply = this.verifyImmutablePropertiesReply(initialWrite, message);
+    if (immutablePropertyReply !== undefined) {
+      return immutablePropertyReply;
     }
 
     // Squash backstop: if the protocol path has $squash: true, reject any write whose
@@ -111,88 +105,23 @@ export class RecordsWriteHandler implements MethodHandler {
 
     // Look up the core protocol (if any) for the incoming message so that lifecycle hooks
     // can be dispatched generically rather than checking for specific protocol URIs.
-    const coreProtocol = message.descriptor.protocol === undefined
-      ? undefined
-      : this.deps.coreProtocols?.get(message.descriptor.protocol);
+    const coreProtocol = this.getCoreProtocolForWrite(message);
     let position: ProgressToken | undefined;
 
     try {
-      if (newestExistingMessage?.descriptor.method === DwnMethodName.Delete) {
-        throw new DwnError(
-          DwnErrorCode.RecordsWriteNotAllowedAfterDelete,
-          'RecordsWrite is not allowed after a RecordsDelete.'
-        );
-      }
-
-      // Dispatch pre-processing hooks to the core protocol, if applicable.
-      // This allows core protocols to perform cross-record validation before storage
-      // (e.g. ensuring revocation tag consistency with the parent grant's scoped protocol).
-      if (coreProtocol?.preProcessWrite !== undefined) {
-        await coreProtocol.preProcessWrite(tenant, message, this.deps.validationStateReader);
-      }
-      if (EncryptionControl.isControlMessage(message)) {
-        await EncryptionControl.preProcessWrite(tenant, message, this.deps.validationStateReader);
-        if (dataStream === undefined) {
-          throw new DwnError(
-            DwnErrorCode.EncryptionControlValidateUnexpectedRecord,
-            'encryption control records require data.'
-          );
-        }
-      }
-
-      // NOTE: We allow isLatestBaseState to be true ONLY if the incoming message comes with data, or if the incoming message is NOT an initial write
-      // This would allow an initial write to be written to the DB without data, but having it not queryable,
-      // because query implementation filters on `isLatestBaseState` being `true`
-      // thus preventing a user's attempt to gain authorized access to data by referencing the dataCid of a private data in their initial writes,
-      // See: https://github.com/enboxorg/enbox/issues/359 for more info
-      let isLatestBaseState = false;
-      let messageWithOptionalEncodedData = message as RecordsQueryReplyEntry;
-
-      if (dataStream === undefined) {
-        // data stream is NOT provided
-
-        // if the incoming message is not an initial write, and no dataStream is provided, we would allow it provided it passes validation
-        // processMessageWithoutDataStream() abstracts that logic
-        if (!newMessageIsInitialWrite) {
-          const newestExistingWrite = newestExistingMessage as RecordsQueryReplyEntry;
-          messageWithOptionalEncodedData = await this.processMessageWithoutDataStream(tenant, message, newestExistingWrite );
-          isLatestBaseState = true;
-        }
-      } else {
-        messageWithOptionalEncodedData = await this.processMessageWithDataStream(tenant, message, dataStream);
-        isLatestBaseState = true;
-      }
-
-      const indexes = await recordsWrite.constructIndexes(isLatestBaseState);
-
-      // store the new message and displace every other message for this record in one atomic
-      // commit, retaining only the initial write as non-latest state — readers can never observe
-      // two latest-state rows for the record
-      const putResult = await StorageController.commitLatestStateTransition(
-        tenant,
+      const commitResult = await this.commitRecordsWrite({
+        coreProtocol,
+        dataStream,
         existingMessages,
-        { message: messageWithOptionalEncodedData, indexes },
-        [],
-        this.deps.messageStore,
-        this.deps.dataStore!,
-      );
-      position = putResult.position;
+        message,
+        newestExistingMessage,
+        newMessageIsInitialWrite,
+        recordsWrite,
+        tenant,
+      });
+      position = commitResult.position;
     } catch (error) {
-      if (error instanceof DwnError) {
-        if (error.code === DwnErrorCode.RecordsWriteMissingEncodedDataInPrevious ||
-          error.code === DwnErrorCode.RecordsWriteMissingDataInPrevious ||
-          error.code === DwnErrorCode.RecordsWriteNotAllowedAfterDelete ||
-          error.code === DwnErrorCode.RecordsWriteDataCidMismatch ||
-          error.code === DwnErrorCode.RecordsWriteDataSizeMismatch ||
-          error.code.startsWith('SchemaValidator') ||
-          EncryptionControl.mapErrorToStatusCode(error.code) !== undefined ||
-          this.deps.coreProtocols?.mapErrorToStatusCode(error.code) !== undefined) {
-          return messageReplyFromError(error, 400);
-        }
-      }
-
-      // else throw
-      throw error;
+      return this.mapCommitWriteErrorToReply(error);
     }
 
     const messageReply = {
@@ -226,6 +155,162 @@ export class RecordsWriteHandler implements MethodHandler {
 
     return messageReply;
   };
+
+  /**
+   * Returns a 409 Conflict reply if a message with the same CID as the incoming message already
+   * exists among `existingMessages`, else `undefined`. An already-stored message has already
+   * passed admission; replay should not be reinterpreted against current protocol, parent, role,
+   * grant, or record-limit state.
+   */
+  private async findConflictingMessageReply(
+    message: RecordsWriteMessage,
+    existingMessages: GenericMessage[],
+  ): Promise<GenericMessageReply | undefined> {
+    const incomingCid = await Message.getCid(message);
+    for (const existingMessage of existingMessages) {
+      if (await Message.getCid(existingMessage) !== incomingCid) {
+        continue;
+      }
+
+      return { status: { code: 409, detail: 'Conflict' } };
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Verifies that immutable properties are unchanged relative to the `initialWrite`, returning a
+   * 400 reply if verification fails. Returns `undefined` (skipping verification) when there is no
+   * `initialWrite` to compare against, i.e. the incoming message is itself the initial write.
+   */
+  private verifyImmutablePropertiesReply(
+    initialWrite: RecordsWriteMessage | undefined,
+    message: RecordsWriteMessage,
+  ): GenericMessageReply | undefined {
+    if (initialWrite === undefined) {
+      return undefined;
+    }
+
+    try {
+      this.verifyImmutableProperties(initialWrite, message);
+      return undefined;
+    } catch (e) {
+      return messageReplyFromError(e, 400);
+    }
+  }
+
+  /**
+   * Looks up the core protocol (if any) for the incoming message so that lifecycle hooks
+   * can be dispatched generically rather than checking for specific protocol URIs.
+   */
+  private getCoreProtocolForWrite(message: RecordsWriteMessage): CoreProtocol | undefined {
+    if (message.descriptor.protocol === undefined) {
+      return undefined;
+    }
+
+    return this.deps.coreProtocols?.get(message.descriptor.protocol);
+  }
+
+  /**
+   * Runs the pre-processing hooks, resolves whether the write is queryable (`isLatestBaseState`),
+   * and commits the new message and its indexes as the latest state transition for the record.
+   */
+  private async commitRecordsWrite(input: {
+    coreProtocol: CoreProtocol | undefined;
+    dataStream?: ReadableStream<Uint8Array>;
+    existingMessages: GenericMessage[];
+    message: RecordsWriteMessage;
+    newestExistingMessage: GenericMessage | undefined;
+    newMessageIsInitialWrite: boolean;
+    recordsWrite: RecordsWrite;
+    tenant: string;
+  }): Promise<{ position?: ProgressToken }> {
+    const { coreProtocol, dataStream, existingMessages, message, newestExistingMessage, newMessageIsInitialWrite, recordsWrite, tenant } = input;
+
+    if (newestExistingMessage?.descriptor.method === DwnMethodName.Delete) {
+      throw new DwnError(
+        DwnErrorCode.RecordsWriteNotAllowedAfterDelete,
+        'RecordsWrite is not allowed after a RecordsDelete.'
+      );
+    }
+
+    // Dispatch pre-processing hooks to the core protocol, if applicable.
+    // This allows core protocols to perform cross-record validation before storage
+    // (e.g. ensuring revocation tag consistency with the parent grant's scoped protocol).
+    if (coreProtocol?.preProcessWrite !== undefined) {
+      await coreProtocol.preProcessWrite(tenant, message, this.deps.validationStateReader);
+    }
+    if (EncryptionControl.isControlMessage(message)) {
+      await EncryptionControl.preProcessWrite(tenant, message, this.deps.validationStateReader);
+      if (dataStream === undefined) {
+        throw new DwnError(
+          DwnErrorCode.EncryptionControlValidateUnexpectedRecord,
+          'encryption control records require data.'
+        );
+      }
+    }
+
+    // NOTE: We allow isLatestBaseState to be true ONLY if the incoming message comes with data, or if the incoming message is NOT an initial write
+    // This would allow an initial write to be written to the DB without data, but having it not queryable,
+    // because query implementation filters on `isLatestBaseState` being `true`
+    // thus preventing a user's attempt to gain authorized access to data by referencing the dataCid of a private data in their initial writes,
+    // See: https://github.com/enboxorg/enbox/issues/359 for more info
+    let isLatestBaseState = false;
+    let messageWithOptionalEncodedData = message as RecordsQueryReplyEntry;
+
+    if (dataStream === undefined) {
+      // data stream is NOT provided
+
+      // if the incoming message is not an initial write, and no dataStream is provided, we would allow it provided it passes validation
+      // processMessageWithoutDataStream() abstracts that logic
+      if (!newMessageIsInitialWrite) {
+        const newestExistingWrite = newestExistingMessage as RecordsQueryReplyEntry;
+        messageWithOptionalEncodedData = await this.processMessageWithoutDataStream(tenant, message, newestExistingWrite );
+        isLatestBaseState = true;
+      }
+    } else {
+      messageWithOptionalEncodedData = await this.processMessageWithDataStream(tenant, message, dataStream);
+      isLatestBaseState = true;
+    }
+
+    const indexes = await recordsWrite.constructIndexes(isLatestBaseState);
+
+    // store the new message and displace every other message for this record in one atomic
+    // commit, retaining only the initial write as non-latest state — readers can never observe
+    // two latest-state rows for the record
+    const putResult = await StorageController.commitLatestStateTransition(
+      tenant,
+      existingMessages,
+      { message: messageWithOptionalEncodedData, indexes },
+      [],
+      this.deps.messageStore,
+      this.deps.dataStore!,
+    );
+
+    return { position: putResult.position };
+  }
+
+  /**
+   * Maps a `commitRecordsWrite()` failure to a 400 reply when the error is a recognized,
+   * client-facing validation failure; otherwise rethrows the original error.
+   */
+  private mapCommitWriteErrorToReply(error: unknown): GenericMessageReply {
+    if (error instanceof DwnError) {
+      if (error.code === DwnErrorCode.RecordsWriteMissingEncodedDataInPrevious ||
+        error.code === DwnErrorCode.RecordsWriteMissingDataInPrevious ||
+        error.code === DwnErrorCode.RecordsWriteNotAllowedAfterDelete ||
+        error.code === DwnErrorCode.RecordsWriteDataCidMismatch ||
+        error.code === DwnErrorCode.RecordsWriteDataSizeMismatch ||
+        error.code.startsWith('SchemaValidator') ||
+        EncryptionControl.mapErrorToStatusCode(error.code) !== undefined ||
+        this.deps.coreProtocols?.mapErrorToStatusCode(error.code) !== undefined) {
+        return messageReplyFromError(error, 400);
+      }
+    }
+
+    // else throw
+    throw error;
+  }
 
   /**
    * Returns a `RecordsQueryReplyEntry` with a copy of the incoming message and the incoming data encoded to `Base64URL`.

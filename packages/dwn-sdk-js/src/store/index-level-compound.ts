@@ -1,5 +1,5 @@
 import type { CompoundIndexDefinition, IndexedItem, IndexLevelOptions } from './index-level.js';
-import type { Filter, KeyValues, QueryOptions } from '../types/query-types.js';
+import type { Filter, KeyValues, PaginationCursor, QueryOptions } from '../types/query-types.js';
 import type { LevelWrapper, LevelWrapperBatchOperation, LevelWrapperIteratorOptions } from './level-wrapper.js';
 
 import { FilterUtility } from '../utils/filter.js';
@@ -201,6 +201,45 @@ export async function queryWithCompoundIndex(
   const partition = await getCompoundIndexPartition(db, tenant, compoundIndex);
 
   // determine the iterator bounds from the prefix
+  const iteratorOptions = buildCompoundQueryIteratorOptions(prefix, sortDirection, cursor, encodeValue, delimiter);
+
+  // determine which filter properties are NOT covered by the compound index
+  // (need in-memory verification for these)
+  // NOTE: the compound index equality properties are fully covered by the prefix scan,
+  // but the sort property is only covered for ordering — any range filter on the sort
+  // property must still be applied as a residual filter.
+  const { residualFilter, hasResidualFilter } = computeCompoundIndexResidualFilter(filter, compoundIndex);
+
+  const matches: IndexedItem[] = [];
+  for await (const [_key, value] of partition.iterator(iteratorOptions, options)) {
+    if (limit !== undefined && matches.length === limit) {
+      break;
+    }
+
+    const item = JSON.parse(value) as IndexedItem;
+
+    // verify any residual filter properties in memory
+    if (hasResidualFilter && !FilterUtility.matchFilter(item.indexes, residualFilter)) {
+      continue;
+    }
+
+    matches.push(item);
+  }
+
+  return matches;
+}
+
+/**
+ * Determines the LevelDB iterator bounds for a compound-index prefix scan, accounting for the
+ * sort direction and an optional pagination cursor.
+ */
+function buildCompoundQueryIteratorOptions(
+  prefix: string,
+  sortDirection: SortDirection,
+  cursor: PaginationCursor | undefined,
+  encodeValue: (value: IndexableValue) => string,
+  delimiter: string,
+): LevelWrapperIteratorOptions<string> {
   const iteratorOptions: LevelWrapperIteratorOptions<string> = {};
 
   if (cursor === undefined) {
@@ -229,11 +268,16 @@ export async function queryWithCompoundIndex(
     }
   }
 
-  // determine which filter properties are NOT covered by the compound index
-  // (need in-memory verification for these)
-  // NOTE: the compound index equality properties are fully covered by the prefix scan,
-  // but the sort property is only covered for ordering — any range filter on the sort
-  // property must still be applied as a residual filter.
+  return iteratorOptions;
+}
+
+/**
+ * Determines which filter properties are NOT covered by a compound index's equality-prefix scan
+ * and therefore require in-memory verification.
+ */
+function computeCompoundIndexResidualFilter(
+  filter: Filter, compoundIndex: CompoundIndexDefinition
+): { residualFilter: Filter; hasResidualFilter: boolean } {
   const coveredEqualityProperties = new Set(compoundIndex.properties);
   const residualFilter: Filter = {};
   let hasResidualFilter = false;
@@ -244,23 +288,7 @@ export async function queryWithCompoundIndex(
     }
   }
 
-  const matches: IndexedItem[] = [];
-  for await (const [_key, value] of partition.iterator(iteratorOptions, options)) {
-    if (limit !== undefined && matches.length === limit) {
-      break;
-    }
-
-    const item = JSON.parse(value) as IndexedItem;
-
-    // verify any residual filter properties in memory
-    if (hasResidualFilter && !FilterUtility.matchFilter(item.indexes, residualFilter)) {
-      continue;
-    }
-
-    matches.push(item);
-  }
-
-  return matches;
+  return { residualFilter, hasResidualFilter };
 }
 
 /**

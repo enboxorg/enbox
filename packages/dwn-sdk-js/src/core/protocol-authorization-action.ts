@@ -127,38 +127,8 @@ export async function getActionsSeekingARuleMatch(
 ): Promise<ProtocolAction[]> {
 
   switch (incomingMessage.message.descriptor.method) {
-  case DwnMethodName.Delete: {
-    const recordsDelete = incomingMessage as RecordsDelete;
-    const recordId = recordsDelete.message.descriptor.recordId;
-    const initialWrite = await validationStateReader.fetchInitialRecordsWrite(tenant, recordId);
-
-    // if there is no initial write, then no action rule can authorize the incoming message, because we won't know who the original author is
-    // NOTE: purely defensive programming: currently not reachable
-    // because RecordsDelete handler already have an existence check prior to this method being called.
-    if (initialWrite === undefined) {
-      return [];
-    }
-
-    const actionsThatWouldAuthorizeDelete: ProtocolAction[] = [];
-    const prune = recordsDelete.message.descriptor.prune;
-    if (prune) {
-      actionsThatWouldAuthorizeDelete.push(ProtocolAction.CoPrune);
-
-      // A prune by the original record author can also be authorized by a 'prune' rule.
-      if (incomingMessage.author === initialWrite.author) {
-        actionsThatWouldAuthorizeDelete.push(ProtocolAction.Prune);
-      }
-    } else {
-      actionsThatWouldAuthorizeDelete.push(ProtocolAction.CoDelete);
-
-      // A delete by the original record author can also be authorized by a 'delete' rule.
-      if (incomingMessage.author === initialWrite.author) {
-        actionsThatWouldAuthorizeDelete.push(ProtocolAction.Delete);
-      }
-    }
-
-    return actionsThatWouldAuthorizeDelete;
-  }
+  case DwnMethodName.Delete:
+    return getDeleteActionsSeekingARuleMatch(tenant, incomingMessage, validationStateReader);
 
   case DwnMethodName.Count:
     return [ProtocolAction.Read];
@@ -172,41 +142,91 @@ export async function getActionsSeekingARuleMatch(
   case DwnMethodName.Subscribe:
     return [ProtocolAction.Read];
 
-  case DwnMethodName.Write: {
-    const incomingRecordsWrite = incomingMessage as RecordsWrite;
-
-    if (await incomingRecordsWrite.isInitialWrite()) {
-      // A squash write seeks the `squash` action first, with fallback to `create`.
-      // This means any DID authorized to `create` can also squash when no explicit `squash` rule exists.
-      if (incomingRecordsWrite.message.descriptor.squash === true) {
-        return [ProtocolAction.Squash, ProtocolAction.Create];
-      }
-      return [ProtocolAction.Create];
-    } else {
-      // else incoming RecordsWrite not an initial write
-
-      const recordId = (incomingMessage as RecordsWrite).message.recordId;
-      const initialWrite = await validationStateReader.fetchInitialRecordsWrite(tenant, recordId);
-
-      // if there is no initial write to update from, then no action rule can authorize the incoming message
-      if (initialWrite === undefined) {
-        return [];
-      }
-
-      if (incomingMessage.author === initialWrite.author) {
-      // 'update' or 'co-update' action authorizes the incoming message
-        return [ProtocolAction.CoUpdate, ProtocolAction.Update];
-      } else {
-        // An update by someone who is not the record author can only be authorized by a 'co-update' rule.
-        return [ProtocolAction.CoUpdate];
-      }
-    }
-  }
+  case DwnMethodName.Write:
+    return getWriteActionsSeekingARuleMatch(tenant, incomingMessage, validationStateReader);
   }
 
   // purely defensive programming: should not be reachable
   // setting to empty array will prevent any message from being authorized
   return [];
+}
+
+/**
+ * Handles the `RecordsDelete` case of `getActionsSeekingARuleMatch()`.
+ */
+async function getDeleteActionsSeekingARuleMatch(
+  tenant: string,
+  incomingMessage: RecordsCount | RecordsDelete | RecordsQuery | RecordsRead | RecordsSubscribe | RecordsWrite,
+  validationStateReader: ValidationStateReader,
+): Promise<ProtocolAction[]> {
+  const recordsDelete = incomingMessage as RecordsDelete;
+  const recordId = recordsDelete.message.descriptor.recordId;
+  const initialWrite = await validationStateReader.fetchInitialRecordsWrite(tenant, recordId);
+
+  // if there is no initial write, then no action rule can authorize the incoming message, because we won't know who the original author is
+  // NOTE: purely defensive programming: currently not reachable
+  // because RecordsDelete handler already have an existence check prior to this method being called.
+  if (initialWrite === undefined) {
+    return [];
+  }
+
+  const actionsThatWouldAuthorizeDelete: ProtocolAction[] = [];
+  const prune = recordsDelete.message.descriptor.prune;
+  if (prune) {
+    actionsThatWouldAuthorizeDelete.push(ProtocolAction.CoPrune);
+
+    // A prune by the original record author can also be authorized by a 'prune' rule.
+    if (incomingMessage.author === initialWrite.author) {
+      actionsThatWouldAuthorizeDelete.push(ProtocolAction.Prune);
+    }
+  } else {
+    actionsThatWouldAuthorizeDelete.push(ProtocolAction.CoDelete);
+
+    // A delete by the original record author can also be authorized by a 'delete' rule.
+    if (incomingMessage.author === initialWrite.author) {
+      actionsThatWouldAuthorizeDelete.push(ProtocolAction.Delete);
+    }
+  }
+
+  return actionsThatWouldAuthorizeDelete;
+}
+
+/**
+ * Handles the `RecordsWrite` case of `getActionsSeekingARuleMatch()`.
+ */
+async function getWriteActionsSeekingARuleMatch(
+  tenant: string,
+  incomingMessage: RecordsCount | RecordsDelete | RecordsQuery | RecordsRead | RecordsSubscribe | RecordsWrite,
+  validationStateReader: ValidationStateReader,
+): Promise<ProtocolAction[]> {
+  const incomingRecordsWrite = incomingMessage as RecordsWrite;
+
+  if (await incomingRecordsWrite.isInitialWrite()) {
+    // A squash write seeks the `squash` action first, with fallback to `create`.
+    // This means any DID authorized to `create` can also squash when no explicit `squash` rule exists.
+    if (incomingRecordsWrite.message.descriptor.squash === true) {
+      return [ProtocolAction.Squash, ProtocolAction.Create];
+    }
+    return [ProtocolAction.Create];
+  } else {
+    // else incoming RecordsWrite not an initial write
+
+    const recordId = (incomingMessage as RecordsWrite).message.recordId;
+    const initialWrite = await validationStateReader.fetchInitialRecordsWrite(tenant, recordId);
+
+    // if there is no initial write to update from, then no action rule can authorize the incoming message
+    if (initialWrite === undefined) {
+      return [];
+    }
+
+    if (incomingMessage.author === initialWrite.author) {
+    // 'update' or 'co-update' action authorizes the incoming message
+      return [ProtocolAction.CoUpdate, ProtocolAction.Update];
+    } else {
+      // An update by someone who is not the record author can only be authorized by a 'co-update' rule.
+      return [ProtocolAction.CoUpdate];
+    }
+  }
 }
 
 /**
@@ -240,67 +260,10 @@ export async function authorizeAgainstAllowedActions(
 
   // Iterate through the action rules to find a rule that authorizes the incoming message.
   for (const actionRule of actionRules) {
-    // If the action rule does not have an allowed action that matches an action that can authorize the message, skip to evaluate next action rule.
-    const ruleHasAMatchingAllowedAction = actionRule.can.some(
-      (allowedAction: string): boolean => actionsSeekingARuleMatch.includes(allowedAction as ProtocolAction)
+    const actionRuleAuthorizes = await actionRuleAuthorizesMessage(
+      actionRule, actionsSeekingARuleMatch, author, invokedRole, incomingMessage, recordChain, protocolDefinition
     );
-    if (!ruleHasAMatchingAllowedAction) {
-      continue;
-    }
-
-    // Code reaches here means this action rule has an allowed action that matches the action of the message.
-    // The remaining code checks the actor/author of the incoming message.
-
-    // If the action rule allows `anyone`, then no further checks are needed.
-    if (actionRule.who === ProtocolActor.Anyone) {
-      return;
-    }
-
-    // Since not `anyone` is allowed in this action rule, we will need to check the author of the incoming message,
-    // if the author of incoming message is not defined, this action rule cannot authorize the incoming message.
-    if (author === undefined) {
-      continue;
-    }
-
-    // go through role validation path if a role is invoked by the incoming message
-    if (invokedRole !== undefined) {
-      // When a protocol role is being invoked, we require that there is a matching `role` rule.
-      if (actionRule.role === invokedRole) {
-        // role is successfully invoked
-        return;
-      } else {
-        continue;
-      }
-    }
-
-    // else we go through the actor (`who`) validation
-
-    // If `of` is not set, handle it as a special case
-    // NOTE: `of` is always set if `who` is set to `author` (we do this check in `validateRuleSetRecursively()`)
-    if (actionRule.who === ProtocolActor.Recipient && actionRule.of === undefined) {
-      // If the action rule specifies a recipient without `of` and the incoming message is authenticated:
-
-      // Author must be recipient of the record being accessed
-      let recordsWriteMessage: RecordsWriteMessage;
-      if (incomingMessage.message.descriptor.method === DwnMethodName.Write) {
-        recordsWriteMessage = incomingMessage.message as RecordsWriteMessage;
-      } else {
-        // else the incoming message must be a `RecordsDelete` because only `co-update`, `co-delete`, `co-prune` are allowed recipient actions,
-        // (we do this check in `validateRuleSetRecursively()`)
-        // and we have already checked that the incoming message is not a `RecordsWrite` above which covers `co-update` path.
-        recordsWriteMessage = recordChain.at(-1)!;
-      }
-
-      if (recordsWriteMessage.descriptor.recipient === author) {
-        return;
-      } else {
-        continue;
-      }
-    }
-
-    // validate the actor is allowed by the current action rule
-    const ancestorRuleSuccess: boolean = await checkActor(author, actionRule, recordChain, protocolDefinition);
-    if (ancestorRuleSuccess) {
+    if (actionRuleAuthorizes) {
       return;
     }
   }
@@ -310,6 +273,88 @@ export async function authorizeAgainstAllowedActions(
     DwnErrorCode.ProtocolAuthorizationActionNotAllowed,
     `Inbound message action Records${incomingMessageMethod} by author ${incomingMessage.author} not allowed.`
   );
+}
+
+/**
+ * Evaluates whether a single action rule authorizes the incoming message, mirroring the
+ * original per-rule evaluation performed inline in the `authorizeAgainstAllowedActions()` loop.
+ * Returns `true` when the rule authorizes the message (the caller should stop and authorize);
+ * `false` when the rule does not match and the caller should move on to the next rule.
+ */
+async function actionRuleAuthorizesMessage(
+  actionRule: ProtocolActionRule,
+  actionsSeekingARuleMatch: ProtocolAction[],
+  author: string | undefined,
+  invokedRole: string | undefined,
+  incomingMessage: RecordsCount | RecordsDelete | RecordsQuery | RecordsRead | RecordsSubscribe | RecordsWrite,
+  recordChain: RecordsWriteMessage[],
+  protocolDefinition?: ProtocolDefinition,
+): Promise<boolean> {
+  // If the action rule does not have an allowed action that matches an action that can authorize the message, skip to evaluate next action rule.
+  const ruleHasAMatchingAllowedAction = actionRule.can.some(
+    (allowedAction: string): boolean => actionsSeekingARuleMatch.includes(allowedAction as ProtocolAction)
+  );
+  if (!ruleHasAMatchingAllowedAction) {
+    return false;
+  }
+
+  // Code reaches here means this action rule has an allowed action that matches the action of the message.
+  // The remaining code checks the actor/author of the incoming message.
+
+  // If the action rule allows `anyone`, then no further checks are needed.
+  if (actionRule.who === ProtocolActor.Anyone) {
+    return true;
+  }
+
+  // Since not `anyone` is allowed in this action rule, we will need to check the author of the incoming message,
+  // if the author of incoming message is not defined, this action rule cannot authorize the incoming message.
+  if (author === undefined) {
+    return false;
+  }
+
+  // go through role validation path if a role is invoked by the incoming message
+  if (invokedRole !== undefined) {
+    // When a protocol role is being invoked, we require that there is a matching `role` rule.
+    if (actionRule.role === invokedRole) {
+      // role is successfully invoked
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  // else we go through the actor (`who`) validation
+
+  // If `of` is not set, handle it as a special case
+  // NOTE: `of` is always set if `who` is set to `author` (we do this check in `validateRuleSetRecursively()`)
+  if (actionRule.who === ProtocolActor.Recipient && actionRule.of === undefined) {
+    // If the action rule specifies a recipient without `of` and the incoming message is authenticated:
+
+    // Author must be recipient of the record being accessed
+    let recordsWriteMessage: RecordsWriteMessage;
+    if (incomingMessage.message.descriptor.method === DwnMethodName.Write) {
+      recordsWriteMessage = incomingMessage.message as RecordsWriteMessage;
+    } else {
+      // else the incoming message must be a `RecordsDelete` because only `co-update`, `co-delete`, `co-prune` are allowed recipient actions,
+      // (we do this check in `validateRuleSetRecursively()`)
+      // and we have already checked that the incoming message is not a `RecordsWrite` above which covers `co-update` path.
+      recordsWriteMessage = recordChain.at(-1)!;
+    }
+
+    if (recordsWriteMessage.descriptor.recipient === author) {
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  // validate the actor is allowed by the current action rule
+  const ancestorRuleSuccess: boolean = await checkActor(author, actionRule, recordChain, protocolDefinition);
+  if (ancestorRuleSuccess) {
+    return true;
+  }
+
+  return false;
 }
 
 /**

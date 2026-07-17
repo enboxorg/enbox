@@ -1,5 +1,5 @@
 import type { MessageSort } from '../types/message-types.js';
-import type { EventSubscription, ProgressGapInfo, SubscriptionEvent, SubscriptionListener, SubscriptionMessage } from '../types/subscriptions.js';
+import type { EventSubscription, ProgressGapInfo, ProgressToken, SubscriptionEvent, SubscriptionListener, SubscriptionMessage } from '../types/subscriptions.js';
 import type { Filter, PaginationCursor } from '../types/query-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { RecordsQueryReplyEntry, RecordsSubscribeMessage, RecordsSubscribeReply } from '../types/records-types.js';
@@ -51,34 +51,12 @@ export class RecordsSubscribeHandler implements MethodHandler {
       return messageReplyFromError(e, 400);
     }
 
-    let eventFilters: Filter[] = [];
-    let queryFilters: Filter[] = [];
     const requester = Message.getRequester(recordsSubscribe.message);
-
-    // if this is an anonymous subscribe and the filter supports published records, subscribe to only published records
-    if (Records.filterIncludesPublishedRecords(recordsSubscribe.message.descriptor.filter) && recordsSubscribe.author === undefined) {
-      eventFilters = [RecordsSubscribeHandler.buildPublishedEventFilter(recordsSubscribe)];
-      queryFilters = [RecordsSubscribeHandler.buildPublishedQueryFilter(recordsSubscribe)];
-      // delete the undefined authorization property else the code will encounter the following IPLD issue when attempting to generate CID:
-      // Error: `undefined` is not supported by the IPLD Data Model and cannot be encoded
-      delete message.authorization;
-    } else {
-      // authentication and authorization
-      try {
-        await authenticate(message.authorization!, this.deps.didResolver);
-        await RecordsSubscribeHandler.authorizeRecordsSubscribe(tenant, recordsSubscribe, this.deps);
-      } catch (error) {
-        return messageReplyFromError(error, 401);
-      }
-
-      if (recordsSubscribe.author === tenant) {
-        eventFilters = RecordsSubscribeHandler.buildOwnerEventFilters(recordsSubscribe);
-        queryFilters = RecordsSubscribeHandler.buildOwnerQueryFilters(recordsSubscribe);
-      } else {
-        eventFilters = RecordsSubscribeHandler.buildNonOwnerEventFilters(recordsSubscribe);
-        queryFilters = RecordsSubscribeHandler.buildNonOwnerQueryFilters(recordsSubscribe);
-      }
+    const filterResolution = await this.resolveSubscriptionFilters(tenant, message, recordsSubscribe);
+    if ('errorReply' in filterResolution) {
+      return filterResolution.errorReply;
     }
+    const { eventFilters, queryFilters } = filterResolution;
 
     const messageCid = await Message.getCid(message);
     const { cursor: eventLogCursor } = recordsSubscribe.message.descriptor;
@@ -95,34 +73,107 @@ export class RecordsSubscribeHandler implements MethodHandler {
       // All catch-up, buffering, dedup, and EOSE delivery are handled by the
       // EventLog implementation. The handler just passes the cursor and filters.
       // The subscriptionHandler receives SubscriptionMessage (event + EOSE) directly.
-
-      try {
-        const subscription = await this.deps.eventLog.subscribe(tenant, messageCid, projectedSubscriptionHandler.listener, {
-          cursor  : eventLogCursor,
-          filters : eventFilters,
-        });
-        await projectedSubscriptionHandler.setSubscription(subscription);
-
-        return {
-          status: { code: 200, detail: 'OK' },
-          subscription,
-        };
-      } catch (error) {
-        if (error instanceof DwnError && error.code === DwnErrorCode.EventLogProgressGap) {
-          const gapInfo = (error as any).gapInfo as ProgressGapInfo | undefined;
-          return {
-            status : { code: 410, detail: 'Progress token gap' },
-            error  : gapInfo === undefined ? undefined : { code: 'ProgressGap' as const, ...gapInfo },
-          };
-        }
-        return messageReplyFromError(error, 500);
-      }
+      return this.handleCursorSubscription(tenant, messageCid, eventFilters, eventLogCursor, projectedSubscriptionHandler);
     }
 
     // ---- No cursor: existing behavior (initial snapshot from MessageStore) ----
+    return this.handleSnapshotSubscription(
+      tenant, messageCid, recordsSubscribe, requester, eventFilters, queryFilters, projectedSubscriptionHandler
+    );
+  }
 
+  /**
+   * Resolves the event/query filters for the subscription, performing authentication and
+   * authorization when the request is not an anonymous published-records-only subscribe.
+   * Returns the resolved filters, or an `errorReply` if authentication/authorization failed.
+   */
+  private async resolveSubscriptionFilters(
+    tenant: string,
+    message: RecordsSubscribeMessage,
+    recordsSubscribe: RecordsSubscribe,
+  ): Promise<{ eventFilters: Filter[]; queryFilters: Filter[] } | { errorReply: RecordsSubscribeReply }> {
+    // if this is an anonymous subscribe and the filter supports published records, subscribe to only published records
+    if (Records.filterIncludesPublishedRecords(recordsSubscribe.message.descriptor.filter) && recordsSubscribe.author === undefined) {
+      const eventFilters = [RecordsSubscribeHandler.buildPublishedEventFilter(recordsSubscribe)];
+      const queryFilters = [RecordsSubscribeHandler.buildPublishedQueryFilter(recordsSubscribe)];
+      // delete the undefined authorization property else the code will encounter the following IPLD issue when attempting to generate CID:
+      // Error: `undefined` is not supported by the IPLD Data Model and cannot be encoded
+      delete message.authorization;
+      return { eventFilters, queryFilters };
+    }
+
+    // authentication and authorization
+    try {
+      await authenticate(message.authorization!, this.deps.didResolver);
+      await RecordsSubscribeHandler.authorizeRecordsSubscribe(tenant, recordsSubscribe, this.deps);
+    } catch (error) {
+      return { errorReply: messageReplyFromError(error, 401) };
+    }
+
+    if (recordsSubscribe.author === tenant) {
+      return {
+        eventFilters : RecordsSubscribeHandler.buildOwnerEventFilters(recordsSubscribe),
+        queryFilters : RecordsSubscribeHandler.buildOwnerQueryFilters(recordsSubscribe),
+      };
+    }
+
+    return {
+      eventFilters : RecordsSubscribeHandler.buildNonOwnerEventFilters(recordsSubscribe),
+      queryFilters : RecordsSubscribeHandler.buildNonOwnerQueryFilters(recordsSubscribe),
+    };
+  }
+
+  /**
+   * Handles cursor-mode subscription: catch-up from EventLog + EOSE + live. All catch-up,
+   * buffering, dedup, and EOSE delivery are handled by the EventLog implementation. The handler
+   * just passes the cursor and filters. The subscriptionHandler receives SubscriptionMessage
+   * (event + EOSE) directly.
+   */
+  private async handleCursorSubscription(
+    tenant: string,
+    messageCid: string,
+    eventFilters: Filter[],
+    eventLogCursor: ProgressToken,
+    projectedSubscriptionHandler: ProjectedRecordsSubscriptionHandler,
+  ): Promise<RecordsSubscribeReply> {
+    try {
+      const subscription = await this.deps.eventLog!.subscribe(tenant, messageCid, projectedSubscriptionHandler.listener, {
+        cursor  : eventLogCursor,
+        filters : eventFilters,
+      });
+      await projectedSubscriptionHandler.setSubscription(subscription);
+
+      return {
+        status: { code: 200, detail: 'OK' },
+        subscription,
+      };
+    } catch (error) {
+      if (error instanceof DwnError && error.code === DwnErrorCode.EventLogProgressGap) {
+        const gapInfo = (error as any).gapInfo as ProgressGapInfo | undefined;
+        return {
+          status : { code: 410, detail: 'Progress token gap' },
+          error  : gapInfo === undefined ? undefined : { code: 'ProgressGap' as const, ...gapInfo },
+        };
+      }
+      return messageReplyFromError(error, 500);
+    }
+  }
+
+  /**
+   * Handles the no-cursor path: registers the event listener first (so no events are missed
+   * between query and subscribe), then queries for the initial snapshot of matching records.
+   */
+  private async handleSnapshotSubscription(
+    tenant: string,
+    messageCid: string,
+    recordsSubscribe: RecordsSubscribe,
+    requester: string | undefined,
+    eventFilters: Filter[],
+    queryFilters: Filter[],
+    projectedSubscriptionHandler: ProjectedRecordsSubscriptionHandler,
+  ): Promise<RecordsSubscribeReply> {
     // Step 1: Register event listener FIRST to ensure no events are missed between query and subscribe
-    const subscription = await this.deps.eventLog.subscribe(tenant, messageCid, projectedSubscriptionHandler.listener, {
+    const subscription = await this.deps.eventLog!.subscribe(tenant, messageCid, projectedSubscriptionHandler.listener, {
       filters: eventFilters,
     });
     await projectedSubscriptionHandler.setSubscription(subscription);
