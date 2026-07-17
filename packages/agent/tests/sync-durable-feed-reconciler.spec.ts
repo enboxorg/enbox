@@ -188,6 +188,7 @@ describe('SyncDurableFeedReconciler', () => {
         release();
       }
       await Promise.all([firstA, secondA, firstB]);
+      expect((reconciler as any)._runs.size).toBe(0);
     } finally {
       for (const release of releases.splice(0)) {
         release();
