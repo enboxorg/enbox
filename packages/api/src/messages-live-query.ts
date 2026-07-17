@@ -153,6 +153,26 @@ export class MessagesLiveQuery extends EventTarget {
     this._subscription = subscription;
   }
 
+  /**
+   * The first listener opens the flow — one microtask later, so every
+   * handler attached in the same synchronous block (the normal
+   * `on('event'…); on('eose'…);` sequence right after subscribing) sees the
+   * buffered catch-up backlog in order. Overridden here (rather than in
+   * {@link MessagesLiveQuery.on | `.on()`}) so direct `addEventListener`
+   * usage — supported, as on the sibling `LiveQuery` — opens the flow too.
+   */
+  public override addEventListener(
+    type: string,
+    callback: EventListenerOrEventListenerObject | null,
+    options?: AddEventListenerOptions | boolean,
+  ): void {
+    super.addEventListener(type, callback, options);
+    if (this._pending !== undefined && !this._flushScheduled) {
+      this._flushScheduled = true;
+      queueMicrotask((): void => this.flushPending());
+    }
+  }
+
   /** Queue (pre-flush) or dispatch one typed event. */
   private emit(type: MessagesLiveQueryEventType, detail?: unknown): void {
     if (this._pending !== undefined) {
@@ -260,14 +280,6 @@ export class MessagesLiveQuery extends EventTarget {
     };
 
     this.addEventListener(event, wrapper);
-    // The first typed handler opens the flow — one microtask later, so every
-    // handler attached in the same synchronous block (the normal
-    // `on('event'…); on('eose'…);` sequence right after subscribing) sees the
-    // buffered catch-up backlog in order.
-    if (this._pending !== undefined && !this._flushScheduled) {
-      this._flushScheduled = true;
-      queueMicrotask((): void => this.flushPending());
-    }
     return (): void => { this.removeEventListener(event, wrapper); };
   }
 
@@ -279,7 +291,11 @@ export class MessagesLiveQuery extends EventTarget {
       return;
     }
     this._closed = true;
-    this._pending = undefined;
+    // Deliberately NOT clearing `_pending`: a terminal error can close the
+    // query before any listener attached (the subscribe-handler error path),
+    // and the buffered backlog — including that error — must still flush to
+    // the first listener instead of vanishing behind a 200 status. The
+    // `_closed` guard above keeps the buffer from growing further.
     await this._subscription?.close();
   }
 }

@@ -53,6 +53,43 @@ describe('MessagesLiveQuery', () => {
     expect(order).toEqual(['event:1', 'event:2', 'eose', 'event:3']);
   });
 
+  it('should open the flow for direct addEventListener consumers too', async () => {
+    const query = new MessagesLiveQuery();
+    query.handleEvent(change('1'));
+
+    const seen: string[] = [];
+    // Raw EventTarget usage — no typed .on() involved.
+    query.addEventListener('event', (dispatched): void => {
+      seen.push((dispatched as CustomEvent<MessageChange>).detail.descriptor.recordId!);
+    });
+
+    await Promise.resolve();
+    expect(seen).toEqual(['1']);
+  });
+
+  it('should deliver the buffered backlog and terminal error to a listener attached after close', async () => {
+    const { subscription, closes } = trackedSubscription();
+    const query = new MessagesLiveQuery();
+    query.attachSubscription(subscription);
+
+    // The subscribe-handler error path: an event and a terminal error arrive
+    // — and the handler closes the query — before any listener attached.
+    query.handleEvent(change('1'));
+    query.handleError({ code: 'GrantAuthorizationGrantRevoked', detail: 'revoked' });
+    await query.close();
+    expect(closes()).toBe(1);
+
+    const seen: string[] = [];
+    query.on('event', (delivered): void => { seen.push(`event:${delivered.descriptor.recordId}`); });
+    query.on('error', (error): void => { seen.push(`error:${error.code}`); });
+
+    await Promise.resolve();
+
+    // Nothing vanished behind the 200 status: backlog first, then the error.
+    expect(seen).toEqual(['event:1', 'error:GrantAuthorizationGrantRevoked']);
+    expect(query.isConnected).toBe(false);
+  });
+
   it('should track connection state through transport lifecycle events', async () => {
     const query = new MessagesLiveQuery();
     const seen: Array<string | number> = [];
