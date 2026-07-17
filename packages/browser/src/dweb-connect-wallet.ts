@@ -29,6 +29,7 @@ import type { Jwk } from '@enbox/crypto';
 import { X25519 } from '@enbox/crypto';
 import { CONNECT_DENIED_TOKEN, ConnectProvider } from '@enbox/connect';
 
+import { createHandledDeferred } from './handled-deferred.js';
 import {
   DWEB_CONNECT_ACK_MESSAGE_TYPE,
   DWEB_CONNECT_LOADED_MESSAGE_TYPE,
@@ -88,28 +89,27 @@ export class WalletPostMessageTransport {
   private _resolveAck?: (acked: boolean) => void;
 
   private readonly _requestPromise: Promise<ConnectRequest>;
-  private _resolveRequest?: (request: ConnectRequest) => void;
-  private _rejectRequest?: (error: Error) => void;
+  private readonly _resolveRequest: (request: ConnectRequest) => void;
+  private readonly _rejectRequest: (error: Error) => void;
 
   private constructor(params: { dappOrigin: string; dappWindow: Window; recipientPrivateKey: Jwk; timeoutMs: number }) {
     this._dappOrigin = params.dappOrigin;
     this._dappWindow = params.dappWindow;
     this._recipientPrivateKey = params.recipientPrivateKey;
 
-    this._requestPromise = new Promise<ConnectRequest>((resolve, reject): void => {
-      this._resolveRequest = resolve;
-      this._rejectRequest = reject;
-    });
-    // Mark early rejections (timeout before `awaitRequest()` is called) as
-    // handled until the wallet attaches its own handlers.
-    this._requestPromise.catch((): undefined => undefined);
+    // Early rejections (timeout before `awaitRequest()` is called) are
+    // pre-marked as handled until the wallet attaches its own handlers.
+    const request = createHandledDeferred<ConnectRequest>();
+    this._requestPromise = request.promise;
+    this._resolveRequest = request.resolve;
+    this._rejectRequest = request.reject;
 
     this._messageListener = (event: MessageEvent): void => { this.onMessage(event); };
     window.addEventListener('message', this._messageListener);
 
     this._timeoutId = setTimeout((): void => {
       this.close();
-      this._rejectRequest?.(new Error('[@enbox/browser] Timed out waiting for the connect request from the dapp.'));
+      this._rejectRequest(new Error('[@enbox/browser] Timed out waiting for the connect request from the dapp.'));
     }, params.timeoutMs);
   }
 
@@ -281,10 +281,10 @@ export class WalletPostMessageTransport {
     clearTimeout(this._timeoutId);
     if (outcome instanceof Error) {
       this.close();
-      this._rejectRequest?.(outcome);
+      this._rejectRequest(outcome);
       return;
     }
-    this._resolveRequest?.(outcome);
+    this._resolveRequest(outcome);
   }
 }
 
