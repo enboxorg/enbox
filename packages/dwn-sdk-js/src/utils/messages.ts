@@ -59,44 +59,67 @@ export class Messages {
 
     for (const filter of filters) {
       // Ask each core protocol whether it needs an additional shadow filter for this query.
-      // For example, the Permissions protocol injects a filter for grants/requests/revocations
-      // tagged with the target protocol so they appear alongside that protocol's own records.
-      if (coreProtocols !== undefined) {
-        for (const coreProtocol of coreProtocols.all()) {
-          const additionalFilter = coreProtocol.constructAdditionalMessageFilter?.(filter);
-          if (additionalFilter !== undefined) {
-            messagesQueryFilters.push(additionalFilter);
-          }
-        }
-      }
+      messagesQueryFilters.push(...this.constructCoreProtocolFilters(filter, coreProtocols));
 
       messagesQueryFilters.push(this.convertFilter(filter));
 
-      // When protocolPathPrefix is used with a protocol, inject a shadow filter
-      // for ProtocolsConfigure events. Without this, protocol metadata updates
-      // would be excluded (ProtocolsConfigure indexes have no protocolPath).
-      // This mirrors the existing core-protocol additional-filter pattern above.
-      // The messageTimestamp constraint is carried over so time-bounded queries
-      // (including cursor-based subscriptions) also apply to the shadow filter.
-      if ((filter.protocolPathPrefix !== undefined || filter.contextIdPrefix !== undefined) && filter.protocol !== undefined) {
-        const metadataFilter: Filter = {
-          interface : 'Protocols',
-          method    : 'Configure',
-          protocol  : filter.protocol,
-        };
-
-        if (filter.messageTimestamp !== undefined) {
-          const timestampFilter = FilterUtility.convertRangeCriterion(filter.messageTimestamp);
-          if (timestampFilter) {
-            metadataFilter.messageTimestamp = timestampFilter;
-          }
-        }
-
+      // When protocolPathPrefix is used with a protocol, inject a shadow filter for ProtocolsConfigure events.
+      const metadataFilter = this.constructProtocolConfigureShadowFilter(filter);
+      if (metadataFilter !== undefined) {
         messagesQueryFilters.push(metadataFilter);
       }
     }
 
     return messagesQueryFilters;
+  }
+
+  /**
+   * Asks each core protocol whether it needs an additional shadow filter for the given query filter.
+   * For example, the Permissions protocol injects a filter for grants/requests/revocations
+   * tagged with the target protocol so they appear alongside that protocol's own records.
+   */
+  private static constructCoreProtocolFilters(filter: MessagesFilter, coreProtocols?: CoreProtocolRegistry): Filter[] {
+    if (coreProtocols === undefined) {
+      return [];
+    }
+
+    const additionalFilters: Filter[] = [];
+    for (const coreProtocol of coreProtocols.all()) {
+      const additionalFilter = coreProtocol.constructAdditionalMessageFilter?.(filter);
+      if (additionalFilter !== undefined) {
+        additionalFilters.push(additionalFilter);
+      }
+    }
+
+    return additionalFilters;
+  }
+
+  /**
+   * When protocolPathPrefix or contextIdPrefix is used with a protocol, constructs a shadow filter
+   * for ProtocolsConfigure events. Without this, protocol metadata updates would be excluded
+   * (ProtocolsConfigure indexes have no protocolPath). This mirrors the core-protocol additional-filter
+   * pattern above. The messageTimestamp constraint is carried over so time-bounded queries
+   * (including cursor-based subscriptions) also apply to the shadow filter.
+   */
+  private static constructProtocolConfigureShadowFilter(filter: MessagesFilter): Filter | undefined {
+    if ((filter.protocolPathPrefix === undefined && filter.contextIdPrefix === undefined) || filter.protocol === undefined) {
+      return undefined;
+    }
+
+    const metadataFilter: Filter = {
+      interface : 'Protocols',
+      method    : 'Configure',
+      protocol  : filter.protocol,
+    };
+
+    if (filter.messageTimestamp !== undefined) {
+      const timestampFilter = FilterUtility.convertRangeCriterion(filter.messageTimestamp);
+      if (timestampFilter) {
+        metadataFilter.messageTimestamp = timestampFilter;
+      }
+    }
+
+    return metadataFilter;
   }
 
   /**

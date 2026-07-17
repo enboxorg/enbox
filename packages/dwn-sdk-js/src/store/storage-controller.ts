@@ -132,22 +132,7 @@ export class StorageController {
 
     // Group messages by recordId — RecordsWrite messages use `message.recordId`,
     // RecordsDelete messages use `message.descriptor.recordId`.
-    const recordIdToMessages = new Map<string, GenericMessage[]>();
-    for (const msg of siblingMessages) {
-      let recordId: string;
-      if (Records.isRecordsWrite(msg)) {
-        recordId = msg.recordId;
-      } else {
-        recordId = (msg as RecordsDeleteMessage).descriptor.recordId;
-      }
-
-      const existing = recordIdToMessages.get(recordId);
-      if (existing === undefined) {
-        recordIdToMessages.set(recordId, [msg]);
-      } else {
-        existing.push(msg);
-      }
-    }
+    const recordIdToMessages = StorageController.groupSquashSiblingsByRecordId(siblingMessages);
 
     // Delete all records whose newest message timestamp is strictly older than the squash timestamp.
     // Skip the squash record itself.
@@ -168,6 +153,32 @@ export class StorageController {
         await StorageController.purgeRecordMessages(tenant, messages, this.messageStore, this.dataStore);
       }
     }
+  }
+
+  /**
+   * Groups the given messages by `recordId` — RecordsWrite messages use `message.recordId`,
+   * RecordsDelete messages use `message.descriptor.recordId`. Used by `performRecordsSquash()`
+   * to identify sibling records at the squash record's protocol path and parent context.
+   */
+  private static groupSquashSiblingsByRecordId(messages: GenericMessage[]): Map<string, GenericMessage[]> {
+    const recordIdToMessages = new Map<string, GenericMessage[]>();
+    for (const msg of messages) {
+      let recordId: string;
+      if (Records.isRecordsWrite(msg)) {
+        recordId = msg.recordId;
+      } else {
+        recordId = (msg as RecordsDeleteMessage).descriptor.recordId;
+      }
+
+      const existing = recordIdToMessages.get(recordId);
+      if (existing === undefined) {
+        recordIdToMessages.set(recordId, [msg]);
+      } else {
+        existing.push(msg);
+      }
+    }
+
+    return recordIdToMessages;
   }
 
   /**

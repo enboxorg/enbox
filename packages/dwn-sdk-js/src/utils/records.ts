@@ -446,6 +446,20 @@ export class Records {
     authorSignaturePayload: GenericSignaturePayload | undefined,
     ownerSignaturePayload?: GenericSignaturePayload | undefined
   ): Promise<void> {
+    await Records.validateAuthorDelegatedGrantReferentialIntegrity(message, authorSignaturePayload);
+
+    // repeat the same checks for the owner signature below
+    await Records.validateOwnerDelegatedGrantReferentialIntegrity(message, ownerSignaturePayload);
+  }
+
+  /**
+   * Validates the referential integrity of the author-delegated grant, if any.
+   * Extracted from `validateDelegatedGrantReferentialIntegrity()` to keep its cognitive complexity low.
+   */
+  private static async validateAuthorDelegatedGrantReferentialIntegrity(
+    message: RecordsCountMessage | RecordsReadMessage | RecordsQueryMessage | RecordsWriteMessage | RecordsDeleteMessage | RecordsSubscribeMessage,
+    authorSignaturePayload: GenericSignaturePayload | undefined,
+  ): Promise<void> {
     // `deletedGrantId` in the payload of the message signature and `authorDelegatedGrant` in `authorization` must both exist or be both undefined
     const authorDelegatedGrantIdDefined = authorSignaturePayload?.delegatedGrantId !== undefined;
     const authorDelegatedGrantDefined = message.authorization?.authorDelegatedGrant !== undefined;
@@ -458,38 +472,47 @@ export class Records {
       );
     }
 
-    if (authorDelegatedGrantDefined) {
-      const delegatedGrant = message.authorization!.authorDelegatedGrant!;
-
-      const permissionGrant = PermissionGrant.parse(delegatedGrant);
-      if (permissionGrant.delegated !== true) {
-        throw new DwnError(
-          DwnErrorCode.RecordsAuthorDelegatedGrantNotADelegatedGrant,
-          `The owner delegated grant given is not a delegated grant.`
-        );
-      }
-
-      const grantedTo = delegatedGrant.descriptor.recipient;
-      const signer = Message.getSigner(message);
-      if (grantedTo !== signer) {
-        throw new DwnError(
-          DwnErrorCode.RecordsAuthorDelegatedGrantGrantedToAndOwnerSignatureMismatch,
-          `grantedTo ${grantedTo} in author delegated grant must be the same as the signer ${signer} of the message signature.`
-        );
-      }
-
-      const delegateGrantCid = await Message.getCid(delegatedGrant);
-      if (delegateGrantCid !== authorSignaturePayload!.delegatedGrantId) {
-        throw new DwnError(
-          DwnErrorCode.RecordsAuthorDelegatedGrantCidMismatch,
-          `CID of the author delegated grant ${delegateGrantCid} must be the same as \
-          the delegatedGrantId ${authorSignaturePayload!.delegatedGrantId} in the message signature.`
-        );
-      }
+    if (!authorDelegatedGrantDefined) {
+      return;
     }
 
-    // repeat the same checks for the owner signature below
+    const delegatedGrant = message.authorization!.authorDelegatedGrant!;
 
+    const permissionGrant = PermissionGrant.parse(delegatedGrant);
+    if (permissionGrant.delegated !== true) {
+      throw new DwnError(
+        DwnErrorCode.RecordsAuthorDelegatedGrantNotADelegatedGrant,
+        `The owner delegated grant given is not a delegated grant.`
+      );
+    }
+
+    const grantedTo = delegatedGrant.descriptor.recipient;
+    const signer = Message.getSigner(message);
+    if (grantedTo !== signer) {
+      throw new DwnError(
+        DwnErrorCode.RecordsAuthorDelegatedGrantGrantedToAndOwnerSignatureMismatch,
+        `grantedTo ${grantedTo} in author delegated grant must be the same as the signer ${signer} of the message signature.`
+      );
+    }
+
+    const delegateGrantCid = await Message.getCid(delegatedGrant);
+    if (delegateGrantCid !== authorSignaturePayload!.delegatedGrantId) {
+      throw new DwnError(
+        DwnErrorCode.RecordsAuthorDelegatedGrantCidMismatch,
+        `CID of the author delegated grant ${delegateGrantCid} must be the same as \
+        the delegatedGrantId ${authorSignaturePayload!.delegatedGrantId} in the message signature.`
+      );
+    }
+  }
+
+  /**
+   * Validates the referential integrity of the owner-delegated grant, if any.
+   * Extracted from `validateDelegatedGrantReferentialIntegrity()` to keep its cognitive complexity low.
+   */
+  private static async validateOwnerDelegatedGrantReferentialIntegrity(
+    message: RecordsCountMessage | RecordsReadMessage | RecordsQueryMessage | RecordsWriteMessage | RecordsDeleteMessage | RecordsSubscribeMessage,
+    ownerSignaturePayload: GenericSignaturePayload | undefined,
+  ): Promise<void> {
     // `deletedGrantId` in the payload of the owner signature and `ownerDelegatedGrant` in `authorization` must both exist or be both undefined
     const ownerDelegatedGrantIdDefined = ownerSignaturePayload?.delegatedGrantId !== undefined;
     const ownerDelegatedGrantDefined = message.authorization?.ownerDelegatedGrant !== undefined;
@@ -502,34 +525,36 @@ export class Records {
       );
     }
 
-    if (ownerDelegatedGrantDefined) {
-      const delegatedGrant = message.authorization!.ownerDelegatedGrant!;
-      const permissionGrant = PermissionGrant.parse(delegatedGrant);
+    if (!ownerDelegatedGrantDefined) {
+      return;
+    }
 
-      if (permissionGrant.delegated !== true) {
-        throw new DwnError(
-          DwnErrorCode.RecordsOwnerDelegatedGrantNotADelegatedGrant,
-          `The owner delegated grant given is not a delegated grant.`
-        );
-      }
+    const delegatedGrant = message.authorization!.ownerDelegatedGrant!;
+    const permissionGrant = PermissionGrant.parse(delegatedGrant);
 
-      const grantedTo = delegatedGrant.descriptor.recipient;
-      const signer = Jws.getSignerDid(message.authorization!.ownerSignature!.signatures[0]);
-      if (grantedTo !== signer) {
-        throw new DwnError(
-          DwnErrorCode.RecordsOwnerDelegatedGrantGrantedToAndOwnerSignatureMismatch,
-          `grantedTo ${grantedTo} in owner delegated grant must be the same as the signer ${signer} of the owner signature.`
-        );
-      }
+    if (permissionGrant.delegated !== true) {
+      throw new DwnError(
+        DwnErrorCode.RecordsOwnerDelegatedGrantNotADelegatedGrant,
+        `The owner delegated grant given is not a delegated grant.`
+      );
+    }
 
-      const delegateGrantCid = await Message.getCid(delegatedGrant);
-      if (delegateGrantCid !== ownerSignaturePayload!.delegatedGrantId) {
-        throw new DwnError(
-          DwnErrorCode.RecordsOwnerDelegatedGrantCidMismatch,
-          `CID of the owner delegated grant ${delegateGrantCid} must be the same as \
-          the delegatedGrantId ${ownerSignaturePayload!.delegatedGrantId} in the owner signature.`
-        );
-      }
+    const grantedTo = delegatedGrant.descriptor.recipient;
+    const signer = Jws.getSignerDid(message.authorization!.ownerSignature!.signatures[0]);
+    if (grantedTo !== signer) {
+      throw new DwnError(
+        DwnErrorCode.RecordsOwnerDelegatedGrantGrantedToAndOwnerSignatureMismatch,
+        `grantedTo ${grantedTo} in owner delegated grant must be the same as the signer ${signer} of the owner signature.`
+      );
+    }
+
+    const delegateGrantCid = await Message.getCid(delegatedGrant);
+    if (delegateGrantCid !== ownerSignaturePayload!.delegatedGrantId) {
+      throw new DwnError(
+        DwnErrorCode.RecordsOwnerDelegatedGrantCidMismatch,
+        `CID of the owner delegated grant ${delegateGrantCid} must be the same as \
+        the delegatedGrantId ${ownerSignaturePayload!.delegatedGrantId} in the owner signature.`
+      );
     }
   }
 

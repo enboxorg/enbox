@@ -628,29 +628,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
   private async validateIntegrity(): Promise<void> {
     // if the new message is the initial write
     const isInitialWrite = await this.isInitialWrite();
-    if (isInitialWrite) {
-      // `messageTimestamp` and `dateCreated` equality check
-      const dateRecordCreated = this.message.descriptor.dateCreated;
-      const messageTimestamp = this.message.descriptor.messageTimestamp;
-      if (messageTimestamp !== dateRecordCreated) {
-        throw new DwnError(
-          DwnErrorCode.RecordsWriteValidateIntegrityDateCreatedMismatch,
-          `messageTimestamp ${messageTimestamp} must match dateCreated ${dateRecordCreated} for the initial write`
-        );
-      }
-
-      // if the message is a protocol context root, the `contextId` must match the expected deterministic value
-      if (this.message.descriptor.parentId === undefined) {
-        const expectedContextId = await this.getEntryId();
-
-        if (this.message.contextId !== expectedContextId) {
-          throw new DwnError(
-            DwnErrorCode.RecordsWriteValidateIntegrityContextIdMismatch,
-            `contextId in message: ${this.message.contextId} does not match deterministic contextId: ${expectedContextId}`
-          );
-        }
-      }
-    }
+    await this.validateInitialWriteIntegrity(isInitialWrite);
 
     // NOTE: validateSignatureStructure() call earlier enforces the presence of `authorization` and thus `signature` in RecordsWrite
     const signaturePayload = this.signaturePayload!;
@@ -685,6 +663,59 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
       }
     }
 
+    await this.validateEncryptionCidIntegrity(signaturePayload);
+
+    validateProtocolUrlNormalized(this.message.descriptor.protocol);
+    if (this.message.descriptor.schema !== undefined) {
+      validateSchemaUrlNormalized(this.message.descriptor.schema);
+    }
+
+    Time.validateTimestamp(this.message.descriptor.messageTimestamp);
+    Time.validateTimestamp(this.message.descriptor.dateCreated);
+    if (this.message.descriptor.datePublished) {
+      Time.validateTimestamp(this.message.descriptor.datePublished);
+    }
+  }
+
+  /**
+   * Validates the `messageTimestamp`/`dateCreated` equality and, for a protocol context root,
+   * the deterministic `contextId` — both of which only apply to the initial write of a record.
+   * No-op when `isInitialWrite` is `false`.
+   */
+  private async validateInitialWriteIntegrity(isInitialWrite: boolean): Promise<void> {
+    if (!isInitialWrite) {
+      return;
+    }
+
+    // `messageTimestamp` and `dateCreated` equality check
+    const dateRecordCreated = this.message.descriptor.dateCreated;
+    const messageTimestamp = this.message.descriptor.messageTimestamp;
+    if (messageTimestamp !== dateRecordCreated) {
+      throw new DwnError(
+        DwnErrorCode.RecordsWriteValidateIntegrityDateCreatedMismatch,
+        `messageTimestamp ${messageTimestamp} must match dateCreated ${dateRecordCreated} for the initial write`
+      );
+    }
+
+    // if the message is a protocol context root, the `contextId` must match the expected deterministic value
+    if (this.message.descriptor.parentId === undefined) {
+      const expectedContextId = await this.getEntryId();
+
+      if (this.message.contextId !== expectedContextId) {
+        throw new DwnError(
+          DwnErrorCode.RecordsWriteValidateIntegrityContextIdMismatch,
+          `contextId in message: ${this.message.contextId} does not match deterministic contextId: ${expectedContextId}`
+        );
+      }
+    }
+  }
+
+  /**
+   * Validates that `encryption` in the message and `encryptionCid` in the signature payload are
+   * consistently present/absent, and that when both are present, `encryptionCid` matches the CID
+   * computed from `encryption`.
+   */
+  private async validateEncryptionCidIntegrity(signaturePayload: RecordsWriteSignaturePayload): Promise<void> {
     // if `encryption` is given in message, make sure the correct `encryptionCid` is in the payload of the message signature
     if (this.message.encryption !== undefined && signaturePayload.encryptionCid === undefined) {
       throw new DwnError(
@@ -709,17 +740,6 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
           `CID ${expectedEncryptionCid} of encryption property in message does not match encryptionCid in authorization: ${actualEncryptionCid}`
         );
       }
-    }
-
-    validateProtocolUrlNormalized(this.message.descriptor.protocol);
-    if (this.message.descriptor.schema !== undefined) {
-      validateSchemaUrlNormalized(this.message.descriptor.schema);
-    }
-
-    Time.validateTimestamp(this.message.descriptor.messageTimestamp);
-    Time.validateTimestamp(this.message.descriptor.dateCreated);
-    if (this.message.descriptor.datePublished) {
-      Time.validateTimestamp(this.message.descriptor.datePublished);
     }
   }
 
