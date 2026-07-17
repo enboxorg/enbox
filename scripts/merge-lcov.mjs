@@ -7,6 +7,10 @@ const rootDir = process.cwd();
 const outputPath = path.join(rootDir, 'coverage/merged/lcov.info');
 const patterns = [
   'packages/*/coverage/lcov.info',
+  // Suites sharded across CI jobs stage each leg under coverage-shard-N/
+  // (e.g. the two-way agent split); each shard covers a subset of the same
+  // package, merged here into one report.
+  'packages/*/coverage-shard-*/lcov.info',
   'packages/*/coverage-browser/lcov.info',
   'packages/*/coverage-browser-*/lcov.info',
 ];

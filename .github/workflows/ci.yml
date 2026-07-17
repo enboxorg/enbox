@@ -461,10 +461,153 @@ jobs:
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
-  # dids + Agent + API: need a live Pkarr relay and dwn-server (backed by Postgres)
+  # Agent: the largest service-backed suite (~70 spec files). Split two ways via
+  # a round-robin file shard so the slow files (sync-engine-level,
+  # connect-approval) don't pile up in a single leg. Needs a live Pkarr relay
+  # and dwn-server (backed by Postgres). Runs in parallel with test-api-clients.
   # ---------------------------------------------------------------------------
-  test-agent-api:
-    name: 'Test: dids / agent / api'
+  test-agent:
+    name: 'Test: agent (shard ${{ matrix.shard }}/2)'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    needs: [build, changes]
+    if: needs.changes.outputs.needs_agent == 'true'
+
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+
+    services:
+      postgres-dwn-server:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: dwn
+          POSTGRES_USER: dwn_user
+          POSTGRES_PASSWORD: dwn_password
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Restore bun cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-store-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download build outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: workspace-build
+          path: packages
+
+      - name: Start Pkarr relay
+        run: |
+          docker run -d --name pkarr-relay -p 7527:15411 synonymsoft/pkarr-relay pkarr-relay --testnet
+          echo "Waiting for Pkarr relay..."
+          for i in $(seq 1 20); do
+            if curl -sf http://localhost:7527/ >/dev/null 2>&1 || [ $? -eq 22 ]; then
+              echo "Pkarr relay is ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Start dwn-server
+        run: |
+          export DS_PORT=3000
+          export DWN_BASE_URL=http://localhost:3000
+          export DWN_TTL_CACHE_URL=postgres://dwn_user:dwn_password@localhost:5433/dwn
+          export DWN_STORAGE_MESSAGES=postgres://dwn_user:dwn_password@localhost:5433/dwn
+          export DWN_STORAGE_DATA=postgres://dwn_user:dwn_password@localhost:5433/dwn
+          export DWN_STORAGE_RESUMABLE_TASKS=postgres://dwn_user:dwn_password@localhost:5433/dwn
+          export DID_DHT_GATEWAY_URI=http://localhost:7527
+          # The DWN server itself talks to the local Pkarr relay; opt in to private gateways for
+          # this dev/CI process. Production deployments leave this unset.
+          export DID_DHT_ALLOW_PRIVATE_GATEWAY=1
+          export DWN_RATE_LIMIT_REQUESTS_PER_SECOND=0
+          export DWN_RATE_LIMIT_TENANT_REQUESTS_PER_SECOND=0
+
+          bun packages/dwn-server/dist/esm/src/main.js &
+          echo "DWN_SERVER_PID=$!" >> $GITHUB_ENV
+
+          echo "Waiting for dwn-server..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/info >/dev/null 2>&1; then
+              echo "dwn-server is ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Run agent tests with coverage (shard ${{ matrix.shard }}/2)
+        run: |
+          export DID_DHT_GATEWAY_URI=http://localhost:7527
+          # Opt-in for the test process so the agent / DWN can talk to the local Pkarr relay
+          # without each call site having to pass `allowPrivateGatewayUri: true`.
+          export DID_DHT_ALLOW_PRIVATE_GATEWAY=1
+          cd packages/agent
+          # Deterministic round-robin split of the non-e2e spec files across the
+          # two shards (same file list as the package `test:node:coverage`
+          # script, minus tests/e2e/*). Sorting first keeps the split stable.
+          mapfile -t all_specs < <(find tests -name '*.spec.ts' -not -path 'tests/e2e/*' | sort)
+          shard_specs=()
+          for i in "${!all_specs[@]}"; do
+            if [ $(( i % 2 )) -eq $(( ${{ matrix.shard }} - 1 )) ]; then
+              shard_specs+=("${all_specs[$i]}")
+            fi
+          done
+          echo "Shard ${{ matrix.shard }}/2 running ${#shard_specs[@]} of ${#all_specs[@]} spec files"
+          bun test --timeout 10000 --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage "${shard_specs[@]}"
+
+      - name: Stage coverage
+        if: always()
+        run: |
+          mkdir -p coverage-staging/packages/agent/coverage-shard-${{ matrix.shard }}
+          cp packages/agent/coverage/lcov.info coverage-staging/packages/agent/coverage-shard-${{ matrix.shard }}/lcov.info 2>/dev/null || true
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-agent-shard-${{ matrix.shard }}
+          path: coverage-staging/
+          retention-days: 1
+          if-no-files-found: warn
+
+      - name: Stop services
+        if: always()
+        run: |
+          if [ -n "$DWN_SERVER_PID" ]; then
+            kill "$DWN_SERVER_PID" || true
+          fi
+          docker rm -f pkarr-relay || true
+
+  # ---------------------------------------------------------------------------
+  # dids + dwn-clients + api + browser (node): the remaining service-backed
+  # suites, split off from the agent shards so they run in parallel. Need a live
+  # Pkarr relay and dwn-server (backed by Postgres).
+  # ---------------------------------------------------------------------------
+  test-api-clients:
+    name: 'Test: dids / dwn-clients / api'
     runs-on: ubuntu-latest
     timeout-minutes: 8
     needs: [build, changes]
@@ -563,17 +706,15 @@ jobs:
           export DID_DHT_ALLOW_PRIVATE_GATEWAY=1
           bun run --filter @enbox/dids         test:node:coverage
           bun run --filter @enbox/dwn-clients  test:node:coverage
-          bun run --filter @enbox/agent        test:node:coverage
           bun run --filter @enbox/api          test:node:coverage
           bun run --filter @enbox/browser      test:node:coverage
 
       - name: Stage coverage
         if: always()
         run: |
-          mkdir -p coverage-staging/packages/dids/coverage coverage-staging/packages/dwn-clients/coverage coverage-staging/packages/agent/coverage coverage-staging/packages/api/coverage coverage-staging/packages/browser/coverage
+          mkdir -p coverage-staging/packages/dids/coverage coverage-staging/packages/dwn-clients/coverage coverage-staging/packages/api/coverage coverage-staging/packages/browser/coverage
           cp packages/dids/coverage/lcov.info coverage-staging/packages/dids/coverage/lcov.info 2>/dev/null || true
           cp packages/dwn-clients/coverage/lcov.info coverage-staging/packages/dwn-clients/coverage/lcov.info 2>/dev/null || true
-          cp packages/agent/coverage/lcov.info coverage-staging/packages/agent/coverage/lcov.info 2>/dev/null || true
           cp packages/api/coverage/lcov.info coverage-staging/packages/api/coverage/lcov.info 2>/dev/null || true
           cp packages/browser/coverage/lcov.info coverage-staging/packages/browser/coverage/lcov.info 2>/dev/null || true
 
@@ -581,7 +722,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-agent-api
+          name: coverage-api-clients
           path: coverage-staging/
           retention-days: 1
           if-no-files-found: warn
@@ -864,19 +1005,22 @@ jobs:
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
-  # Coverage (Node): merge all LCOV files (node + browser) for SonarCloud.
+  # Coverage + SonarCloud: merge all LCOV files (node + browser) into one report
+  # and run the SonarCloud scan in the same job. The merge is only ~15s, so a
+  # separate Sonar job just pays for a second checkout + runner pickup. Coverage
+  # merging is skipped (but the Sonar scan still runs) when no test job produced
+  # coverage, e.g. an apps/docs-only change.
+  #
+  # NOTE: intentionally does not depend on test-e2e — the e2e suite emits no
+  # LCOV, so it must not be able to gate or delay coverage.
   # ---------------------------------------------------------------------------
-  coverage-node:
-    name: 'Coverage: Node'
+  coverage-sonar:
+    name: 'Coverage & SonarCloud'
     runs-on: ubuntu-latest
-    timeout-minutes: 6
-    needs: [changes, test-lightweight, test-dwn-sdk, test-agent-api, test-e2e, test-sql-store, test-dwn-server, test-browser]
-    # Run when at least one test job actually ran (node or browser)
+    timeout-minutes: 12
+    needs: [changes, test-lightweight, test-dwn-sdk, test-agent, test-api-clients, test-sql-store, test-dwn-server, test-browser]
     if: >-
-      always() && !cancelled() && needs.changes.outputs.src == 'true' &&
-      (needs.test-lightweight.result == 'success' || needs.test-dwn-sdk.result == 'success' ||
-       needs.test-agent-api.result == 'success' || needs.test-sql-store.result == 'success' ||
-       needs.test-dwn-server.result == 'success' || needs.test-browser.result == 'success')
+      always() && !cancelled() && needs.changes.outputs.src == 'true'
 
     steps:
       - name: Checkout repository
@@ -889,7 +1033,33 @@ jobs:
         with:
           bun-version: 1.3.14
 
-      - name: Download node coverage artifacts
+      # Merge coverage only when at least one test job actually produced LCOV.
+      - name: Check for coverage-producing test jobs
+        id: have_coverage
+        run: |
+          if [ "${{ needs.test-lightweight.result }}" = "success" ] || \
+             [ "${{ needs.test-dwn-sdk.result }}" = "success" ] || \
+             [ "${{ needs.test-agent.result }}" = "success" ] || \
+             [ "${{ needs.test-api-clients.result }}" = "success" ] || \
+             [ "${{ needs.test-sql-store.result }}" = "success" ] || \
+             [ "${{ needs.test-dwn-server.result }}" = "success" ] || \
+             [ "${{ needs.test-browser.result }}" = "success" ]; then
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restore Sonar cache
+        if: vars.SONAR_PROJECT_KEY != '' && vars.SONAR_ORG != ''
+        uses: actions/cache@v4
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar-${{ hashFiles('sonar-project.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-sonar-
+
+      - name: Download coverage artifacts
+        if: steps.have_coverage.outputs.value == 'true'
         uses: actions/download-artifact@v4
         with:
           pattern: coverage-*
@@ -897,9 +1067,11 @@ jobs:
           merge-multiple: true
 
       - name: Merge LCOV coverage
+        if: steps.have_coverage.outputs.value == 'true'
         run: bun run coverage:merge:reports
 
       - name: Upload merged coverage
+        if: steps.have_coverage.outputs.value == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-merged
@@ -908,14 +1080,18 @@ jobs:
           if-no-files-found: error
 
       - name: Build coverage badges
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        if: steps.have_coverage.outputs.value == 'true' && github.ref == 'refs/heads/main' && github.event_name == 'push'
         shell: bash
         run: |
           shopt -s nullglob
 
-          parse_lcov() {
-            local lcov_file="$1"
-            local total_lf=0 total_lh=0 in_src=false
+          # Accumulate raw LF/LH per package so a package whose coverage is split
+          # across several LCOV files (e.g. the two agent shards) still yields a
+          # single, correctly-weighted badge.
+          declare -A pkg_lf pkg_lh
+
+          add_lcov() {
+            local lcov_file="$1" pkg="$2" in_src=false
 
             while IFS= read -r line; do
               case "$line" in
@@ -923,22 +1099,16 @@ jobs:
                 SF:*) in_src=false ;;
                 LF:*)
                   if [ "$in_src" = true ]; then
-                    total_lf=$((total_lf + ${line#LF:}))
+                    pkg_lf[$pkg]=$(( ${pkg_lf[$pkg]:-0} + ${line#LF:} ))
                   fi
                   ;;
                 LH:*)
                   if [ "$in_src" = true ]; then
-                    total_lh=$((total_lh + ${line#LH:}))
+                    pkg_lh[$pkg]=$(( ${pkg_lh[$pkg]:-0} + ${line#LH:} ))
                   fi
                   ;;
               esac
             done < "$lcov_file"
-
-            if [ "$total_lf" -gt 0 ]; then
-              awk "BEGIN { printf \"%.1f\", ($total_lh / $total_lf) * 100 }"
-            else
-              echo "0.0"
-            fi
           }
 
           badge_color_for() {
@@ -957,13 +1127,25 @@ jobs:
             fi
           }
 
-          found_any=false
-          mkdir -p coverage-badges
+          # Node coverage lives in coverage/; the sharded agent suite stages its
+          # halves under coverage-shard-N/ instead.
+          for lcov_file in packages/*/coverage/lcov.info packages/*/coverage-shard-*/lcov.info; do
+            pkg=$(printf '%s' "$lcov_file" | sed -E 's#packages/([^/]+)/.*#\1#')
+            add_lcov "$lcov_file" "$pkg"
+          done
 
-          for lcov_file in packages/*/coverage/lcov.info; do
+          mkdir -p coverage-badges
+          found_any=false
+
+          for pkg in "${!pkg_lf[@]}"; do
             found_any=true
-            pkg=$(basename "$(dirname "$(dirname "$lcov_file")")")
-            coverage=$(parse_lcov "$lcov_file")
+            lf=${pkg_lf[$pkg]}
+            lh=${pkg_lh[$pkg]:-0}
+            if [ "$lf" -gt 0 ]; then
+              coverage=$(awk "BEGIN { printf \"%.1f\", ($lh / $lf) * 100 }")
+            else
+              coverage="0.0"
+            fi
             badge_color=$(badge_color_for "$coverage")
 
             printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' \
@@ -1023,12 +1205,47 @@ jobs:
             echo "$response" | head -5
           fi
 
+      # Sonar reads the merged report from ./coverage/merged/lcov.info (produced
+      # above in this same job when coverage ran). The scan still runs without
+      # coverage on apps/docs-only changes.
+      - name: Validate SonarCloud secrets
+        if: vars.SONAR_PROJECT_KEY != '' && vars.SONAR_ORG != ''
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [ -z "$SONAR_TOKEN" ]; then
+            echo "::error::Set the SONAR_TOKEN repository secret before enabling SonarCloud scanning"
+            exit 1
+          fi
+
+      - name: Run SonarCloud scan
+        if: vars.SONAR_PROJECT_KEY != '' && vars.SONAR_ORG != ''
+        uses: SonarSource/sonarqube-scan-action@v6
+        env:
+          SONAR_HOST_URL: https://sonarcloud.io
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          # Quality gate enforcement only on PRs (new code period).
+          # Main branch pushes run the scan for analysis but don't block
+          # on pre-existing quality gate failures.
+          args: >
+            -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
+            -Dsonar.organization=${{ vars.SONAR_ORG }}
+            -Dsonar.pullrequest.github.repository=${{ github.repository }}
+            -Dsonar.qualitygate.wait=${{ github.event_name == 'pull_request' }}
+            -Dsonar.qualitygate.timeout=300
+
   # ---------------------------------------------------------------------------
   # Browser tests: run Vitest browser mode with Playwright.
   #
   # Two-dimensional matrix: shard (package group) × browser.  Each cell runs
-  # a single browser so (a) browsers execute in parallel and (b) coverage is
-  # collected per-browser for the merged SonarCloud LCOV artifact.
+  # a single browser so browsers execute in parallel.
+  #
+  # Coverage is collected on the chromium cells only. All three engines run the
+  # same spec files, so their line coverage is effectively identical — a second
+  # and third instrumented run would only slow the (slower) Firefox/WebKit cells
+  # without moving the merged SonarCloud number. Firefox/WebKit therefore run
+  # uninstrumented as pure correctness checks.
   #
   # Trade-off: 9 jobs instead of 3, but each job only installs one Playwright
   # browser (~20s) and runs ~1/3 the tests, so wall-clock time drops from
@@ -1135,7 +1352,7 @@ jobs:
         timeout-minutes: 3
         run: bunx playwright install ${{ matrix.browser }}
 
-      - name: Run browser tests with coverage
+      - name: Run browser tests
         id: browser-tests
         env:
           CI: true
@@ -1145,6 +1362,14 @@ jobs:
         # the final step to fail the job if tests actually broke.
         continue-on-error: true
         run: |
+          # Collect coverage on chromium only — Firefox/WebKit run the same
+          # specs, so instrumenting them too would only slow the slower engines
+          # without changing the merged LCOV.
+          script="test:browser"
+          if [ "${{ matrix.browser }}" = "chromium" ]; then
+            script="test:browser:coverage"
+          fi
+
           # Firefox's ESM loader can transiently crash with "error loading
           # dynamically imported module" (affects ~14% of runs, random test
           # file each time).  Vitest's test-level retry cannot recover from
@@ -1160,7 +1385,7 @@ jobs:
             attempt=1
             pkg_passed=false
             while [ $attempt -le $max_attempts ]; do
-              if bun run --filter "$pkg" test:browser:coverage -- --browser.connectTimeout=120000; then
+              if bun run --filter "$pkg" "$script" -- --browser.connectTimeout=120000; then
                 pkg_passed=true
                 break
               fi
@@ -1175,8 +1400,9 @@ jobs:
           done
           exit $exit_code
 
+      # Only the chromium cells produce a coverage-browser-chromium directory.
       - name: Stage browser coverage
-        if: always()
+        if: always() && matrix.browser == 'chromium'
         run: |
           for dir in ${{ matrix.shard.coverage-dirs }}; do
             mkdir -p "coverage-staging/packages/${dir}/coverage-browser-${{ matrix.browser }}"
@@ -1185,7 +1411,7 @@ jobs:
           done
 
       - name: Upload browser coverage
-        if: always()
+        if: always() && matrix.browser == 'chromium'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-browser-${{ matrix.shard.name }}-${{ matrix.browser }}
@@ -1199,68 +1425,6 @@ jobs:
           exit 1
 
   # ---------------------------------------------------------------------------
-  # SonarCloud: consume the merged LCOV artifact and publish analysis results.
-  # The job activates once SONAR_PROJECT_KEY / SONAR_ORG repo vars are set.
-  # Quality gate is enforced (blocks PRs that fail the SonarCloud QG).
-  # ---------------------------------------------------------------------------
-  sonarcloud:
-    name: SonarCloud
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    needs: [changes, coverage-node]
-    # Run after coverage finishes; OK if coverage was skipped
-    if: >-
-      always() && !cancelled() &&
-      needs.changes.outputs.src == 'true' &&
-      vars.SONAR_PROJECT_KEY != '' && vars.SONAR_ORG != ''
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Restore Sonar cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.sonar/cache
-          key: ${{ runner.os }}-sonar-${{ hashFiles('sonar-project.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-sonar-
-
-      - name: Download merged coverage
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          name: coverage-merged
-          path: coverage/merged
-
-      - name: Validate SonarCloud secrets
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: |
-          if [ -z "$SONAR_TOKEN" ]; then
-            echo "::error::Set the SONAR_TOKEN repository secret before enabling SonarCloud scanning"
-            exit 1
-          fi
-
-      - name: Run SonarCloud scan
-        uses: SonarSource/sonarqube-scan-action@v6
-        env:
-          SONAR_HOST_URL: https://sonarcloud.io
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        with:
-          # Quality gate enforcement only on PRs (new code period).
-          # Main branch pushes run the scan for analysis but don't block
-          # on pre-existing quality gate failures.
-          args: >
-            -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
-            -Dsonar.organization=${{ vars.SONAR_ORG }}
-            -Dsonar.pullrequest.github.repository=${{ github.repository }}
-            -Dsonar.qualitygate.wait=${{ github.event_name == 'pull_request' }}
-            -Dsonar.qualitygate.timeout=300
-
-  # ---------------------------------------------------------------------------
   # Gate job for branch protection — always runs so required checks pass even
   # when the pipeline is skipped (e.g. docs-only changes).
   # ---------------------------------------------------------------------------
@@ -1268,7 +1432,7 @@ jobs:
     name: CI Passed
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    needs: [changes, lint, build, test-lightweight, test-dwn-sdk, test-agent-api, test-e2e, test-sql-store, test-dwn-server, test-browser, coverage-node, sonarcloud]
+    needs: [changes, lint, build, test-lightweight, test-dwn-sdk, test-agent, test-api-clients, test-e2e, test-sql-store, test-dwn-server, test-browser, coverage-sonar]
     if: always()
     steps:
       - name: Check results
@@ -1298,8 +1462,12 @@ jobs:
             echo "::error::test-dwn-sdk failed"
             exit 1
           fi
-          if [ "${{ needs.test-agent-api.result }}" != "success" ] && [ "${{ needs.test-agent-api.result }}" != "skipped" ]; then
-            echo "::error::test-agent-api failed"
+          if [ "${{ needs.test-agent.result }}" != "success" ] && [ "${{ needs.test-agent.result }}" != "skipped" ]; then
+            echo "::error::test-agent failed"
+            exit 1
+          fi
+          if [ "${{ needs.test-api-clients.result }}" != "success" ] && [ "${{ needs.test-api-clients.result }}" != "skipped" ]; then
+            echo "::error::test-api-clients failed"
             exit 1
           fi
           if [ "${{ needs.test-e2e.result }}" != "success" ] && [ "${{ needs.test-e2e.result }}" != "skipped" ]; then
@@ -1321,18 +1489,12 @@ jobs:
             exit 1
           fi
 
-          # Coverage (node): required when it ran, OK to skip (no test jobs ran)
-          if [ "${{ needs.coverage-node.result }}" != "success" ] && [ "${{ needs.coverage-node.result }}" != "skipped" ]; then
-            echo "::error::coverage-node failed"
+          # Coverage + SonarCloud: required when it ran, OK to skip (no test jobs
+          # ran). A SonarCloud quality-gate failure fails this job, so a failed
+          # gate still blocks the PR through the coverage-sonar result.
+          if [ "${{ needs.coverage-sonar.result }}" != "success" ] && [ "${{ needs.coverage-sonar.result }}" != "skipped" ]; then
+            echo "::error::coverage-sonar failed"
             exit 1
-          fi
-
-          # SonarCloud: required when configured and ran
-          if [ -n "${{ vars.SONAR_PROJECT_KEY }}" ] && [ -n "${{ vars.SONAR_ORG }}" ]; then
-            if [ "${{ needs.sonarcloud.result }}" != "success" ] && [ "${{ needs.sonarcloud.result }}" != "skipped" ]; then
-              echo "::error::SonarCloud scan failed"
-              exit 1
-            fi
           fi
 
           echo "All checks passed"
