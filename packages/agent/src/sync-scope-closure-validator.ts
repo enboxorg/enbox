@@ -72,13 +72,13 @@ export class SyncScopeClosureValidator {
   /** Validate the shape and non-empty scope contract of identity options. */
   public validateOptions(options: SyncIdentityOptions): void {
     if (!options || !('protocols' in options)) {
-      throw new Error('SyncEngineLevel: options.protocols is required — pass \'all\' for a full replica or a non-empty protocol list.');
+      throw new Error('SyncScopeClosureValidator: options.protocols is required — pass \'all\' for a full replica or a non-empty protocol list.');
     }
     if (options.protocols !== 'all' && !Array.isArray(options.protocols)) {
-      throw new Error('SyncEngineLevel: protocols must be \'all\' or a non-empty string array.');
+      throw new Error('SyncScopeClosureValidator: protocols must be \'all\' or a non-empty string array.');
     }
     if (Array.isArray(options.protocols) && options.protocols.length === 0) {
-      throw new Error('SyncEngineLevel: protocols must be \'all\' or a non-empty array of protocol URIs. An empty array is ambiguous.');
+      throw new Error('SyncScopeClosureValidator: protocols must be \'all\' or a non-empty array of protocol URIs. An empty array is ambiguous.');
     }
   }
 
@@ -94,7 +94,7 @@ export class SyncScopeClosureValidator {
 
     const details = SyncScopeClosureValidator.errorDetails(options, state);
     if (details.length > 0) {
-      throw new Error(`SyncEngineLevel: sync scope closure validation failed for ${did}: ${details.join('; ')}`);
+      throw new Error(`SyncScopeClosureValidator: sync scope closure validation failed for ${did}: ${details.join('; ')}`);
     }
   }
 
@@ -242,7 +242,7 @@ export class SyncScopeClosureValidator {
 
       if (page.status.code !== 200) {
         throw new Error(
-          `SyncEngineLevel: local protocol history query failed for ${did} / ${protocol}: ` +
+          `SyncScopeClosureValidator: local protocol history query failed for ${did} / ${protocol}: ` +
           `${page.status.code} ${page.status.detail}`
         );
       }
@@ -258,7 +258,7 @@ export class SyncScopeClosureValidator {
         return definitions;
       }
       if (page.cursor === undefined) {
-        throw new Error(`SyncEngineLevel: local protocol history query returned no cursor before drain for ${did} / ${protocol}`);
+        throw new Error(`SyncScopeClosureValidator: local protocol history query returned no cursor before drain for ${did} / ${protocol}`);
       }
 
       cursor = page.cursor;

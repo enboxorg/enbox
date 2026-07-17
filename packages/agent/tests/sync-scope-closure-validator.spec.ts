@@ -35,13 +35,13 @@ describe('SyncScopeClosureValidator', () => {
     const { operations, validator } = createHarness();
 
     expect(() => validator.validateOptions(undefined as never)).toThrow(
-      'SyncEngineLevel: options.protocols is required — pass \'all\' for a full replica or a non-empty protocol list.'
+      'SyncScopeClosureValidator: options.protocols is required — pass \'all\' for a full replica or a non-empty protocol list.'
     );
     expect(() => validator.validateOptions({ protocols: 'invalid' } as never)).toThrow(
-      'SyncEngineLevel: protocols must be \'all\' or a non-empty string array.'
+      'SyncScopeClosureValidator: protocols must be \'all\' or a non-empty string array.'
     );
     expect(() => validator.validateOptions({ protocols: [] })).toThrow(
-      'SyncEngineLevel: protocols must be \'all\' or a non-empty array of protocol URIs. An empty array is ambiguous.'
+      'SyncScopeClosureValidator: protocols must be \'all\' or a non-empty array of protocol URIs. An empty array is ambiguous.'
     );
     expect(() => validator.validateOptions({ protocols: 'all' })).not.toThrow();
     expect(() => validator.validateOptions({ protocols: [commentsProtocol] })).not.toThrow();
@@ -118,7 +118,7 @@ describe('SyncScopeClosureValidator', () => {
       delegateDid : 'did:example:delegate',
       protocols   : [commentsProtocol],
     })).rejects.toThrow(
-      'SyncEngineLevel: sync scope closure validation failed for did:example:alice: ' +
+      'SyncScopeClosureValidator: sync scope closure validation failed for did:example:alice: ' +
       `delegate did:example:delegate lacks Messages.Read grants for closure protocols: ${profilesProtocol}, ${threadsProtocol}; ` +
       `scope splits cross-protocol dependencies: ${commentsProtocol} -> ${profilesProtocol}, ` +
       `${commentsProtocol} -> ${threadsProtocol}; ` +
@@ -139,9 +139,10 @@ describe('SyncScopeClosureValidator', () => {
     await expect(validator.validateClosure('did:example:alice', {
       protocols: [commentsProtocol],
     })).rejects.toThrow(
-      `SyncEngineLevel: local protocol history query failed for did:example:alice / ${commentsProtocol}: ` +
+      `SyncScopeClosureValidator: local protocol history query failed for did:example:alice / ${commentsProtocol}: ` +
       '503 temporarily unavailable'
     );
+    expect(operations.resolvePermissionGrantIds.called).toBe(false);
   });
 
   it('rejects an undrained protocol-history page without a cursor', async () => {
@@ -151,7 +152,7 @@ describe('SyncScopeClosureValidator', () => {
     await expect(validator.validateClosure('did:example:alice', {
       protocols: [commentsProtocol],
     })).rejects.toThrow(
-      `SyncEngineLevel: local protocol history query returned no cursor before drain for did:example:alice / ${commentsProtocol}`
+      `SyncScopeClosureValidator: local protocol history query returned no cursor before drain for did:example:alice / ${commentsProtocol}`
     );
   });
 });
