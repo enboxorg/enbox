@@ -35,7 +35,6 @@ type PushEchoProbe = {
 
 type ObservableSyncEngine = {
   _linkControllers: Map<string, { link: { pull: { contiguousAppliedToken?: { messageCid?: string; position?: string } } } }>;
-  _recentlyPushedCids: Map<string, number>;
 };
 
 const chatProtocol: ProtocolDefinition = {
@@ -133,7 +132,6 @@ describe('E2E: live sync convergence', () => {
       return token?.messageCid === messageCid && token.position !== previousPullPosition;
     }, 10_000, 100);
 
-    expect([...observable._recentlyPushedCids.keys()].some((key): boolean => key.startsWith(`${messageCid}|`))).toBe(true);
     expect(probe.remoteMessagesReadCount(messageCid)).toBe(0);
     expect(probe.localApplyCount(messageCid)).toBe(0);
   }
