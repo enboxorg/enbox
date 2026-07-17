@@ -930,6 +930,17 @@ describe('SyncEngineLevel', () => {
 
         clock.restore();
       });
+
+      it('delegates the requested run while holding the sync lock', async () => {
+        const run = sinon.stub(syncEngine['_runCoordinator'], 'run').callsFake(async (): Promise<void> => {
+          expect(syncEngine['_lifecycle'].isSyncInProgress).toBe(true);
+        });
+
+        await syncEngine.sync('pull', { verifyConvergence: true });
+
+        expect(run.calledOnceWithExactly('pull', { verifyConvergence: true })).toBe(true);
+        expect(syncEngine['_lifecycle'].isSyncInProgress).toBe(false);
+      });
     });
 
     describe('drainTo()', () => {
