@@ -19,6 +19,7 @@ import type {
 import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
 
 import {
+  BroadcastChannelWakePublisher,
   Cid,
   ContentEncryptionAlgorithm,
   DataStream,
@@ -30,7 +31,6 @@ import {
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
   EncryptionControl,
   EncryptionControlDeliveryRecipientAuthority,
-  EventEmitterWakePublisher,
   getRoleAudienceContextId,
   getRuleSetAtPath,
   isCrossProtocolRef,
@@ -546,7 +546,12 @@ export class AgentDwnApi {
 
   private static async createDefaultMessageLog(dataPath?: string): Promise<MessageLog> {
     const { MessageStoreLevel } = await import('@enbox/dwn-sdk-js/stores/level');
-    const wakePublisher = new EventEmitterWakePublisher();
+    // Channel-bridged wakes: sibling contexts sharing this store location
+    // (tabs, workers, a SharedWorker over one IndexedDB) observe each other's
+    // commits immediately instead of waiting for the event log's idle
+    // re-drain. Scoped by location so distinct stores never cross-wake;
+    // degrades to in-process-only where BroadcastChannel is unavailable.
+    const wakePublisher = new BroadcastChannelWakePublisher(`enbox:wake:${dataPath ?? 'default'}/DWN_MESSAGESTORE`);
     const messageStore = new MessageStoreLevel({
       location: `${dataPath}/DWN_MESSAGESTORE`,
       wakePublisher,
