@@ -21,7 +21,6 @@ import type {
   NonEmptyStringArray,
   PushFailure,
   PushResult,
-  RemoteSyncState,
   RemoteSyncStatus,
   ReplicationLinkState,
   StartSyncParams,
@@ -63,7 +62,6 @@ import type {
 import { AgentPermissionsApi } from './permissions-api.js';
 
 import { admitClosure } from './sync-admit-closure.js';
-import { buildLinkId } from './sync-link-id.js';
 import { classifySyncEventScope } from './sync-scope-acceptance.js';
 import { DwnInterface } from './types/dwn.js';
 import { isRecordsWrite } from './utils.js';
@@ -79,7 +77,9 @@ import { SyncQuotaManager } from './sync-quota-manager.js';
 import { SyncQuotaStoreLevel } from './sync-quota-store-level.js';
 import { SyncReplicationLinkStoreLevel } from './sync-replication-link-store-level.js';
 import { SyncScopeClosureValidator } from './sync-scope-closure-validator.js';
+import { SyncStatusReporter } from './sync-status-reporter.js';
 import { SyncTargetPlanner } from './sync-target-planner.js';
+import { buildDurableLinkIdentityKey, buildLinkId } from './sync-link-id.js';
 import { computeProjectionId, isTerminalPushFailure, lexicographicalCompare, protocolsForSyncScope, pushBatchReconcileReason, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
 import { fetchRemoteMessages, getLocalMessage, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, SyncPullAbortedError } from './sync-messages.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
@@ -144,20 +144,6 @@ type SyncTargetGroupSummary = {
 type FeedConvergenceFailureState = {
   attempts: number;
   signature: string;
-};
-
-/** Per-(tenant, remote) accumulator built by getRemoteSyncStatus from links, quota blocks, and dead letters. */
-type RemoteStatusAccumulator = {
-  tenantDid: string;
-  remoteEndpoint: string;
-  connectivity: SyncConnectivityState;
-  quotaBlockedMessageCount: number;
-  failedMessageCount: number;
-  degraded: boolean;
-  nextProbeAt?: string;
-  lastError?: string;
-  lastErrorAt?: string;
-  lastActivityAt?: string;
 };
 
 type FeedPushEntryResult =
@@ -241,6 +227,7 @@ export class SyncEngineLevel implements SyncEngine {
   private readonly _lifecycle = new SyncLifecycleCoordinator();
   private readonly _quotaManager: SyncQuotaManager;
   private readonly _scopeClosureValidator: SyncScopeClosureValidator;
+  private readonly _statusReporter: SyncStatusReporter;
   private readonly _targetPlanner: SyncTargetPlanner;
   private _targetResolver?: SyncTargetResolver;
   private _syncIntervalId?: ReturnType<typeof setInterval>;
@@ -419,6 +406,16 @@ export class SyncEngineLevel implements SyncEngine {
       getTargetResolver : (): SyncTargetResolver => this.targetResolver,
       identityStore     : this._identityStore,
       warn              : (message, error): void => { console.warn(message, error); },
+    });
+    this._statusReporter = new SyncStatusReporter({
+      operations: {
+        getConnectivityState       : (): SyncConnectivityState => this.connectivityState,
+        getCurrentLinkIdentityKeys : (): Promise<Set<string> | undefined> => this.getCurrentDurableLinkIdentityKeys(),
+        getCurrentQuotaLinkKeys    : (): Promise<Set<string> | undefined> => this.getCurrentQuotaLinkKeys(),
+        getDeadLetters             : (): Promise<DeadLetterEntry[]> => this._deadLetterStore.getAll(),
+        getLinks                   : (): Promise<ReplicationLinkState[]> => this.ledger.getAllLinks(),
+        getQuotaBlocks             : (): Promise<SyncQuotaBlockState[]> => this._quotaManager.getAllStates(),
+      },
     });
   }
 
@@ -2368,7 +2365,7 @@ export class SyncEngineLevel implements SyncEngine {
     const keys = new Set<string>();
     for (const resolution of resolutions) {
       const projectionId = await computeProjectionId(did, resolution.scope);
-      keys.add(SyncEngineLevel.durableLinkIdentityKey(did, projectionId, resolution.authorizationEpoch));
+      keys.add(buildDurableLinkIdentityKey(did, projectionId, resolution.authorizationEpoch));
     }
     return keys;
   }
@@ -4619,161 +4616,11 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public async getSyncHealth(): Promise<SyncHealthSummary> {
-    let failedMessageCount = 0;
-    let admissionFailureCount = 0;
-    for (const entry of await this._deadLetterStore.getAll()) {
-      failedMessageCount++;
-      if (entry.category === 'admit-failed') {
-        admissionFailureCount++;
-      }
-    }
-
-    const currentQuotaLinkKeys = await this.getCurrentQuotaLinkKeys();
-    let quotaBlockedMessageCount = 0;
-    for (const state of await this._quotaManager.getAllStates()) {
-      if (state.supersededAt !== undefined) { continue; }
-      if (currentQuotaLinkKeys === undefined || currentQuotaLinkKeys.has(state.linkKey)) {
-        quotaBlockedMessageCount++;
-      }
-    }
-
-    // Superseded authorization epochs can leave durable link state behind. Only
-    // links that still belong to the current registered projection/epoch should
-    // affect health. Endpoint-level orphan cleanup is a separate GC concern.
-    const currentLinkIdentityKeys = await this.getCurrentDurableLinkIdentityKeys();
-    let degradedLinkCount = 0;
-    const allLinks = await this.ledger.getAllLinks();
-    for (const link of allLinks) {
-      const isCurrentLink = currentLinkIdentityKeys === undefined || currentLinkIdentityKeys.has(this.getDurableLinkIdentityKey(link));
-      if (isCurrentLink && SyncEngineLevel.isUnhealthyLinkStatus(link.status)) {
-        degradedLinkCount++;
-      }
-    }
-
-    return {
-      connectivity             : this.connectivityState,
-      failedMessageCount       : failedMessageCount,
-      admissionFailureCount    : admissionFailureCount,
-      degradedLinkCount        : degradedLinkCount,
-      quotaBlockedMessageCount : quotaBlockedMessageCount,
-      syncHealthy              : failedMessageCount === 0 && degradedLinkCount === 0 && quotaBlockedMessageCount === 0,
-    };
+    return this._statusReporter.getHealth();
   }
 
   public async getRemoteSyncStatus(tenantDid?: string): Promise<RemoteSyncStatus[]> {
-    const rows = new Map<string, RemoteStatusAccumulator>();
-    const matchesTenant = (did: string): boolean => tenantDid === undefined || did === tenantDid;
-
-    await this.accumulateLinkStatus(rows, matchesTenant);
-    await this.accumulateQuotaBlockStatus(rows, matchesTenant);
-    await this.accumulateDeadLetterStatus(rows, matchesTenant);
-
-    return [...rows.values()]
-      .map((row): RemoteSyncStatus => SyncEngineLevel.remoteStatusFromRow(row))
-      .sort((a, b) => lexicographicalCompare(
-        SyncEngineLevel.remoteRowKey(a.tenantDid, a.remoteEndpoint),
-        SyncEngineLevel.remoteRowKey(b.tenantDid, b.remoteEndpoint),
-      ));
-  }
-
-  private static remoteRowKey(did: string, remote: string): string {
-    return `${did}|${remote}`;
-  }
-
-  private static remoteStatusRowFor(
-    rows: Map<string, RemoteStatusAccumulator>,
-    did: string,
-    remote: string,
-  ): RemoteStatusAccumulator {
-    const key = SyncEngineLevel.remoteRowKey(did, remote);
-    let row = rows.get(key);
-    if (row === undefined) {
-      row = { tenantDid: did, remoteEndpoint: remote, connectivity: 'unknown', quotaBlockedMessageCount: 0, failedMessageCount: 0, degraded: false };
-      rows.set(key, row);
-    }
-    return row;
-  }
-
-  /** Durable links seed connectivity + degraded state per (tenant, remote). */
-  private async accumulateLinkStatus(
-    rows: Map<string, RemoteStatusAccumulator>,
-    matchesTenant: (did: string) => boolean,
-  ): Promise<void> {
-    const currentLinkIdentityKeys = await this.getCurrentDurableLinkIdentityKeys();
-    for (const link of await this.ledger.getAllLinks()) {
-      if (!matchesTenant(link.tenantDid)) { continue; }
-      const isCurrentLink = currentLinkIdentityKeys === undefined || currentLinkIdentityKeys.has(this.getDurableLinkIdentityKey(link));
-      if (!isCurrentLink) { continue; }
-      const row = SyncEngineLevel.remoteStatusRowFor(rows, link.tenantDid, link.remoteEndpoint);
-      if (link.connectivity === 'offline') { row.connectivity = 'offline'; }
-      else if (row.connectivity !== 'offline' && link.connectivity === 'online') { row.connectivity = 'online'; }
-      if (SyncEngineLevel.isUnhealthyLinkStatus(link.status)) { row.degraded = true; }
-      if (link.lastActivityAt !== undefined) {
-        row.lastActivityAt = SyncEngineLevel.latestTimestamp(row.lastActivityAt, link.lastActivityAt);
-      }
-    }
-  }
-
-  /** Quota blocks: count, soonest next probe, latest detail. */
-  private async accumulateQuotaBlockStatus(
-    rows: Map<string, RemoteStatusAccumulator>,
-    matchesTenant: (did: string) => boolean,
-  ): Promise<void> {
-    const currentQuotaLinkKeys = await this.getCurrentQuotaLinkKeys();
-    for (const state of await this._quotaManager.getAllStates()) {
-      if (!matchesTenant(state.tenantDid)) { continue; }
-      if (currentQuotaLinkKeys !== undefined && !currentQuotaLinkKeys.has(state.linkKey)) { continue; }
-      if (state.supersededAt !== undefined) { continue; }
-      const row = SyncEngineLevel.remoteStatusRowFor(rows, state.tenantDid, state.remoteEndpoint);
-      row.quotaBlockedMessageCount++;
-      row.nextProbeAt = SyncEngineLevel.earliestTimestamp(row.nextProbeAt, state.nextProbeAt);
-      // Quota blocks feed lastErrorAt directly; blocked-at and error-at coincide here
-      // and only diverge once the dead-letter loop below records a later failure.
-      if (row.lastErrorAt === undefined || lexicographicalCompare(state.lastBlockedAt, row.lastErrorAt) > 0) {
-        row.lastErrorAt = state.lastBlockedAt;
-        row.lastError = state.detail;
-      }
-    }
-  }
-
-  /** Dead letters: terminal failure counts per (tenant, remote). */
-  private async accumulateDeadLetterStatus(
-    rows: Map<string, RemoteStatusAccumulator>,
-    matchesTenant: (did: string) => boolean,
-  ): Promise<void> {
-    for (const entry of await this._deadLetterStore.getAll()) {
-      if (!matchesTenant(entry.tenantDid) || entry.remoteEndpoint === undefined) { continue; }
-      const row = SyncEngineLevel.remoteStatusRowFor(rows, entry.tenantDid, entry.remoteEndpoint);
-      row.failedMessageCount++;
-      row.degraded = true;
-      if (row.lastErrorAt === undefined || lexicographicalCompare(entry.failedAt, row.lastErrorAt) > 0) {
-        row.lastErrorAt = entry.failedAt;
-        row.lastError = entry.errorDetail;
-      }
-    }
-  }
-
-  private static remoteStatusFromRow(row: RemoteStatusAccumulator): RemoteSyncStatus {
-    return {
-      tenantDid                : row.tenantDid,
-      remoteEndpoint           : row.remoteEndpoint,
-      state                    : SyncEngineLevel.rollUpRemoteState(row),
-      connectivity             : row.connectivity,
-      quotaBlockedMessageCount : row.quotaBlockedMessageCount,
-      failedMessageCount       : row.failedMessageCount,
-      ...(row.nextProbeAt === undefined ? {} : { nextProbeAt: row.nextProbeAt }),
-      ...(row.lastError === undefined ? {} : { lastError: row.lastError }),
-      ...(row.lastActivityAt === undefined ? {} : { lastActivityAt: row.lastActivityAt }),
-    };
-  }
-
-  private static rollUpRemoteState(
-    row: { connectivity: SyncConnectivityState; quotaBlockedMessageCount: number; failedMessageCount: number; degraded: boolean },
-  ): RemoteSyncState {
-    if (row.connectivity === 'offline') { return 'offline'; }
-    if (row.quotaBlockedMessageCount > 0) { return 'quota-blocked'; }
-    if (row.degraded || row.failedMessageCount > 0) { return 'degraded'; }
-    return 'healthy';
+    return this._statusReporter.getRemoteStatus(tenantDid);
   }
 
   public async retryRemoteNow(tenantDid: string, remoteEndpoint: string): Promise<void> {
@@ -4866,7 +4713,7 @@ export class SyncEngineLevel implements SyncEngine {
         const resolutions = await this.targetResolver.buildTargetResolutions(entry.did, scope, entry.options);
         for (const resolution of resolutions) {
           const projectionId = await computeProjectionId(entry.did, resolution.scope);
-          identityKeys.add(SyncEngineLevel.durableLinkIdentityKey(entry.did, projectionId, resolution.authorizationEpoch));
+          identityKeys.add(buildDurableLinkIdentityKey(entry.did, projectionId, resolution.authorizationEpoch));
         }
       }
       return identityKeys;
@@ -4891,23 +4738,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private getDurableLinkIdentityKey(link: ReplicationLinkState): string {
-    return SyncEngineLevel.durableLinkIdentityKey(link.tenantDid, link.projectionId, link.authorizationEpoch);
-  }
-
-  private static durableLinkIdentityKey(tenantDid: string, projectionId: string, authorizationEpoch: string): string {
-    return `${tenantDid}^${projectionId}^${authorizationEpoch}`;
-  }
-
-  private static isUnhealthyLinkStatus(status: ReplicationLinkState['status']): boolean {
-    return status === 'repairing' || status === 'paused';
-  }
-
-  private static earliestTimestamp(current: string | undefined, candidate: string): string {
-    return current === undefined || lexicographicalCompare(candidate, current) < 0 ? candidate : current;
-  }
-
-  private static latestTimestamp(current: string | undefined, candidate: string): string {
-    return current === undefined || lexicographicalCompare(candidate, current) > 0 ? candidate : current;
+    return buildDurableLinkIdentityKey(link.tenantDid, link.projectionId, link.authorizationEpoch);
   }
 
   // ---------------------------------------------------------------------------
