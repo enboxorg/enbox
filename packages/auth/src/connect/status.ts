@@ -69,6 +69,25 @@ export function computeConnectionStatus(
   grants: ConnectionStatusGrant[],
   options: ComputeConnectionStatusOptions = {},
 ): ConnectionStatus {
+  const { threshold, nowMs } = resolveStatusTimestamps(options);
+
+  const groups = groupGrantsBySession(grants);
+  const newest = findNewestSessionGroup(groups);
+
+  if (newest === undefined) {
+    return { state: 'none' };
+  }
+
+  return deriveConnectionStatusFromGroup(newest, nowMs, threshold);
+}
+
+/**
+ * Resolve and validate the expiring-soon threshold and "current time" inputs
+ * used by {@link computeConnectionStatus}.
+ */
+function resolveStatusTimestamps(
+  options: ComputeConnectionStatusOptions,
+): { threshold: number; nowMs: number } {
   const threshold = options.expiringSoonThresholdSeconds ?? DEFAULT_EXPIRING_SOON_THRESHOLD_SECONDS;
   if (!Number.isFinite(threshold) || threshold < 0) {
     throw new RangeError('Connection status expiry threshold must be a non-negative finite number.');
@@ -80,6 +99,11 @@ export function computeConnectionStatus(
     throw new RangeError(`Connection status received an invalid current timestamp: ${now}`);
   }
 
+  return { threshold, nowMs };
+}
+
+/** Group grants by their `connectSession.id`, tracking each group's newest `createdAt`. */
+function groupGrantsBySession(grants: ConnectionStatusGrant[]): Map<string, ConnectionSessionGroup> {
   const groups = new Map<string, ConnectionSessionGroup>();
   for (const grant of grants) {
     const session = grant.connectSession;
@@ -101,7 +125,13 @@ export function computeConnectionStatus(
       }
     }
   }
+  return groups;
+}
 
+/** Select the newest session group, breaking `createdAt` ties by the higher session id. */
+function findNewestSessionGroup(
+  groups: Map<string, ConnectionSessionGroup>,
+): ConnectionSessionGroup | undefined {
   let newest: ConnectionSessionGroup | undefined;
   for (const group of groups.values()) {
     if (newest === undefined || group.createdAt > newest.createdAt ||
@@ -109,11 +139,15 @@ export function computeConnectionStatus(
       newest = group;
     }
   }
+  return newest;
+}
 
-  if (newest === undefined) {
-    return { state: 'none' };
-  }
-
+/** Derive the final `ConnectionStatus` from the newest session group. */
+function deriveConnectionStatusFromGroup(
+  newest: ConnectionSessionGroup,
+  nowMs: number,
+  threshold: number,
+): ConnectionStatus {
   const expiresAt = newest.grants.reduce(
     (earliest, grant) => grant.dateExpires < earliest ? grant.dateExpires : earliest,
     newest.grants[0].dateExpires,
