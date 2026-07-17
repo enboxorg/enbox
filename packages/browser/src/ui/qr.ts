@@ -59,21 +59,58 @@ function dataCodewords(version: number): number {
 export function encodeQr(text: string, forcedMask?: number): QrCode {
   const data = new TextEncoder().encode(text);
 
-  // ── Version selection: smallest version that fits the segment. ──
-  let version = 0;
-  for (let candidate = 1; candidate <= MAX_VERSION; candidate++) {
-    const capacityBits = dataCodewords(candidate) * 8;
-    const headerBits = 4 + (candidate <= 9 ? 8 : 16);
-    if (headerBits + data.length * 8 <= capacityBits) {
-      version = candidate;
-      break;
-    }
-  }
+  const version = selectVersion(data.length);
   if (version === 0) {
     throw new Error(`[@enbox/browser] QR payload too long (${data.length} bytes exceeds version ${MAX_VERSION}-M capacity).`);
   }
 
-  // ── Segment bits: mode 0100, char count, data, terminator, padding. ──
+  const codewords = buildDataCodewords(data, version);
+
+  // ── Reed-Solomon blocks + interleave. ──
+  const allCodewords = buildInterleavedCodewords(codewords, version);
+
+  // ── Module placement. ──
+  const size = 17 + 4 * version;
+  const modules: boolean[][] = Array.from({ length: size }, () => new Array<boolean>(size).fill(false));
+  const isFunction: boolean[][] = Array.from({ length: size }, () => new Array<boolean>(size).fill(false));
+
+  drawFunctionPatterns(modules, isFunction, version);
+  drawCodewords(modules, isFunction, allCodewords);
+
+  // ── Mask selection: apply each mask, score, keep the best. ──
+  let mask = forcedMask ?? -1;
+  if (mask === -1) {
+    mask = selectBestMask(modules, isFunction);
+  }
+
+  applyMask(modules, isFunction, mask);
+  drawFormatBits(modules, isFunction, mask);
+
+  return { size, modules, version, mask };
+}
+
+/**
+ * Smallest version (1–{@link MAX_VERSION}) whose level-M byte-mode capacity
+ * fits a `dataLength`-byte payload plus its mode/char-count header; `0` if
+ * none fits.
+ */
+function selectVersion(dataLength: number): number {
+  for (let candidate = 1; candidate <= MAX_VERSION; candidate++) {
+    const capacityBits = dataCodewords(candidate) * 8;
+    const headerBits = 4 + (candidate <= 9 ? 8 : 16);
+    if (headerBits + dataLength * 8 <= capacityBits) {
+      return candidate;
+    }
+  }
+  return 0;
+}
+
+/**
+ * Builds the packed data codewords for `data` at `version`: mode indicator,
+ * char count, byte data, terminator, byte-alignment padding, and the
+ * alternating pad-byte fill up to the version's level-M data capacity.
+ */
+function buildDataCodewords(data: Uint8Array, version: number): Uint8Array {
   const bits: number[] = [];
   const pushBits = (value: number, length: number): void => {
     for (let i = length - 1; i >= 0; i--) {
@@ -102,38 +139,24 @@ export function encodeQr(text: string, forcedMask?: number): QrCode {
   for (let i = 0; i < bits.length; i++) {
     codewords[i >> 3] |= bits[i] << (7 - (i & 7));
   }
+  return codewords;
+}
 
-  // ── Reed-Solomon blocks + interleave. ──
-  const allCodewords = buildInterleavedCodewords(codewords, version);
-
-  // ── Module placement. ──
-  const size = 17 + 4 * version;
-  const modules: boolean[][] = Array.from({ length: size }, () => new Array<boolean>(size).fill(false));
-  const isFunction: boolean[][] = Array.from({ length: size }, () => new Array<boolean>(size).fill(false));
-
-  drawFunctionPatterns(modules, isFunction, version);
-  drawCodewords(modules, isFunction, allCodewords);
-
-  // ── Mask selection: apply each mask, score, keep the best. ──
-  let mask = forcedMask ?? -1;
-  if (mask === -1) {
-    let bestPenalty = Infinity;
-    for (let candidate = 0; candidate < 8; candidate++) {
-      applyMask(modules, isFunction, candidate);
-      drawFormatBits(modules, isFunction, candidate);
-      const penalty = computePenalty(modules);
-      if (penalty < bestPenalty) {
-        bestPenalty = penalty;
-        mask = candidate;
-      }
-      applyMask(modules, isFunction, candidate); // undo (XOR is involutive)
+/** Applies each of the 8 mask patterns, scores it, and returns the lowest-penalty mask index. */
+function selectBestMask(modules: boolean[][], isFunction: boolean[][]): number {
+  let bestMask = 0;
+  let bestPenalty = Infinity;
+  for (let candidate = 0; candidate < 8; candidate++) {
+    applyMask(modules, isFunction, candidate);
+    drawFormatBits(modules, isFunction, candidate);
+    const penalty = computePenalty(modules);
+    if (penalty < bestPenalty) {
+      bestPenalty = penalty;
+      bestMask = candidate;
     }
+    applyMask(modules, isFunction, candidate); // undo (XOR is involutive)
   }
-
-  applyMask(modules, isFunction, mask);
-  drawFormatBits(modules, isFunction, mask);
-
-  return { size, modules, version, mask };
+  return bestMask;
 }
 
 /** Splits data codewords into level-M blocks, computes ECC, interleaves. */
@@ -364,18 +387,41 @@ function drawCodewords(modules: boolean[][], isFunction: boolean[][], codewords:
     // loop counter (Sonar S2310). `size` is always odd, so `right` is always
     // even and `right - 1` maps 6→5, 4→3, 2→1, matching the original traversal.
     const rightCol = right <= 6 ? right - 1 : right;
-    for (let vertical = 0; vertical < size; vertical++) {
-      for (let j = 0; j < 2; j++) {
-        const x = rightCol - j;
-        const upward = ((rightCol + 1) & 2) === 0;
-        const y = upward ? size - 1 - vertical : vertical;
-        if (!isFunction[y][x] && bitIndex < codewords.length * 8) {
-          modules[y][x] = ((codewords[bitIndex >> 3] >>> (7 - (bitIndex & 7))) & 1) !== 0;
-          bitIndex++;
-        }
+    bitIndex = placeColumnPairBits(modules, isFunction, codewords, rightCol, size, bitIndex);
+  }
+}
+
+/**
+ * Places codeword bits into the zig-zag column pair (`rightCol`,
+ * `rightCol - 1`) top-to-bottom or bottom-to-top per {@link zigZagCoordinate},
+ * starting at `bitIndex`; returns the updated bit index.
+ */
+function placeColumnPairBits(
+  modules: boolean[][],
+  isFunction: boolean[][],
+  codewords: Uint8Array,
+  rightCol: number,
+  size: number,
+  bitIndex: number,
+): number {
+  for (let vertical = 0; vertical < size; vertical++) {
+    for (let j = 0; j < 2; j++) {
+      const { x, y } = zigZagCoordinate(rightCol, vertical, j, size);
+      if (!isFunction[y][x] && bitIndex < codewords.length * 8) {
+        modules[y][x] = ((codewords[bitIndex >> 3] >>> (7 - (bitIndex & 7))) & 1) !== 0;
+        bitIndex++;
       }
     }
   }
+  return bitIndex;
+}
+
+/** Module coordinate for column-pair `rightCol`, row `vertical`, sub-column `j` (0 = right, 1 = left). */
+function zigZagCoordinate(rightCol: number, vertical: number, j: number, size: number): { x: number; y: number } {
+  const x = rightCol - j;
+  const upward = ((rightCol + 1) & 2) === 0;
+  const y = upward ? size - 1 - vertical : vertical;
+  return { x, y };
 }
 
 /** XORs the mask pattern over non-function modules (involutive). */

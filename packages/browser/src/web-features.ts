@@ -426,6 +426,41 @@ function cancelNavigation(): void {
   activeNavigation = null;
 }
 
+/**
+ * Opens the tab/loading-overlay target for a DRL anchor click, then resolves
+ * and navigates to the DRL's first working DWN endpoint. Extracted from the
+ * click handler so the handler itself stays a shallow guard-clause dispatch
+ * (Sonar S3776).
+ */
+async function navigateToDrl(did: string, path: string, openAsTab: boolean): Promise<void> {
+  let tab: Window | null = null;
+  if (openAsTab) {
+    tab = window.open('', '_blank');
+    if (tab) {tab.document.write(tabContent);}
+  } else {
+    activeNavigation = path;
+    // this is to allow for cached DIDs to instantly load without any flash of loading UI
+    setTimeout(
+      () =>
+        document.documentElement.setAttribute('drl-link-loading', ''),
+      50
+    );
+  }
+  const endpoints = await getDwnEndpoints(did);
+  if (!endpoints.length) {
+    throw new Error('no valid DWN endpoints found');
+  }
+  const url = `${endpoints[0].replace(
+    trailingSlashRegex,
+    ''
+  )}/${did}/${path}`;
+  if (openAsTab) {
+    if (tab && !tab.closed) {tab.location.href = url;}
+  } else if (activeNavigation === path) {
+    window.location.href = url;
+  }
+}
+
 let activeNavigation: string | null = null;
 let linkFeaturesActive = false;
 
@@ -437,50 +472,27 @@ function addLinkFeatures(): void {
   if (!linkFeaturesActive) {
     clickHandler = async (event: MouseEvent): Promise<void> => {
       const anchor = (event.target as Element)?.closest('a');
-      if (anchor) {
-        const href = anchor.href;
-        const parsed = parseDrlUrl(href);
-        if (parsed) {
-          const did = parsed[0];
-          const path = parsed[1];
-          const openAsTab = anchor.target === '_blank';
-          event.preventDefault();
-          try {
-            let tab: Window | null = null;
-            if (openAsTab) {
-              tab = window.open('', '_blank');
-              if (tab) {tab.document.write(tabContent);}
-            } else {
-              activeNavigation = path;
-              // this is to allow for cached DIDs to instantly load without any flash of loading UI
-              setTimeout(
-                () =>
-                  document.documentElement.setAttribute('drl-link-loading', ''),
-                50
-              );
-            }
-            const endpoints = await getDwnEndpoints(did);
-            if (!endpoints.length) {
-              throw new Error('no valid DWN endpoints found');
-            }
-            const url = `${endpoints[0].replace(
-              trailingSlashRegex,
-              ''
-            )}/${did}/${path}`;
-            if (openAsTab) {
-              if (tab && !tab.closed) {tab.location.href = url;}
-            } else if (activeNavigation === path) {
-              window.location.href = url;
-            }
-          } catch {
-            if (activeNavigation === path) {
-              cancelNavigation();
-            }
-            throw new Error(
-              `DID endpoint resolution failed for the DRL: ${href}`
-            );
-          }
+      if (!anchor) {
+        return;
+      }
+      const href = anchor.href;
+      const parsed = parseDrlUrl(href);
+      if (!parsed) {
+        return;
+      }
+      const did = parsed[0];
+      const path = parsed[1];
+      const openAsTab = anchor.target === '_blank';
+      event.preventDefault();
+      try {
+        await navigateToDrl(did, path, openAsTab);
+      } catch {
+        if (activeNavigation === path) {
+          cancelNavigation();
         }
+        throw new Error(
+          `DID endpoint resolution failed for the DRL: ${href}`
+        );
       }
     };
 
