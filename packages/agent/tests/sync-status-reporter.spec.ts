@@ -96,6 +96,39 @@ describe('SyncStatusReporter', () => {
     });
   });
 
+  it('keeps connectivity unknown for a remote represented only by quota state', async () => {
+    const reporter = createReporter({
+      quotaBlocks: [quotaBlock()],
+    });
+
+    await expect(reporter.getRemoteStatus()).resolves.toEqual([{
+      connectivity             : 'unknown',
+      failedMessageCount       : 0,
+      lastError                : 'over quota',
+      nextProbeAt              : timestamp(6),
+      quotaBlockedMessageCount : 1,
+      remoteEndpoint           : REMOTE_A,
+      state                    : 'quota-blocked',
+      tenantDid                : ALICE,
+    }]);
+  });
+
+  it('reports a remote represented only by dead letters as degraded', async () => {
+    const reporter = createReporter({
+      deadLetters: [deadLetter({ remoteEndpoint: REMOTE_B })],
+    });
+
+    await expect(reporter.getRemoteStatus()).resolves.toEqual([{
+      connectivity             : 'unknown',
+      failedMessageCount       : 1,
+      lastError                : 'terminal failure',
+      quotaBlockedMessageCount : 0,
+      remoteEndpoint           : REMOTE_B,
+      state                    : 'degraded',
+      tenantDid                : ALICE,
+    }]);
+  });
+
   it('folds timestamps and applies stable remote-state precedence independently per key', async () => {
     const reporter = createReporter({
       links: [
