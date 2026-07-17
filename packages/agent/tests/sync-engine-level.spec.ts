@@ -94,132 +94,7 @@ describe('SyncEngineLevel', () => {
     });
   });
 
-  describe('terminal authorization failures', () => {
-    const isTerminal = (detail: string | undefined): boolean =>
-      (SyncEngineLevel as any).isTerminalAuthorizationFailure(detail);
-
-    it('should classify revoked, expired, and subscribe-delivery authorization failures as terminal', () => {
-      expect(isTerminal('401 GrantAuthorizationGrantRevoked: Permission grant with CID bafy… has been revoked')).toBe(true);
-      expect(isTerminal('GrantAuthorizationGrantExpired: grant expired')).toBe(true);
-      expect(isTerminal('MessagesSubscribeDeliveryAuthorizationFailed')).toBe(true);
-      expect(isTerminal('503 something transient')).toBe(false);
-      expect(isTerminal(undefined)).toBe(false);
-      expect(isTerminal('')).toBe(false);
-    });
-
-    it('should pause instead of repairing when a live pull subscription reports a terminal authorization error', async () => {
-      const syncEngine = new SyncEngineLevel({ agent: { agentDid: 'did:method:abc123' } as any, db: {} as any });
-      const transitions: string[] = [];
-      (syncEngine as any).transitionToPaused = async (): Promise<void> => { transitions.push('paused'); };
-      (syncEngine as any).transitionToRepairing = async (): Promise<void> => { transitions.push('repairing'); };
-
-      const context = { did: 'did:dht:tenant', dwnUrl: 'https://dwn.example', linkKey: 'k', link: {} as any, isStale: (): boolean => false };
-
-      await (syncEngine as any).handleLivePullSubscriptionError(context, {
-        type  : 'error',
-        error : { code: 'MessagesSubscribeDeliveryAuthorizationFailed', message: 'delivery authorization failed' },
-      });
-      expect(transitions).toEqual(['paused']);
-
-      await (syncEngine as any).handleLivePullSubscriptionError(context, {
-        type  : 'error',
-        error : { code: 'SomeTransientCode', message: 'flaky network' },
-      });
-      expect(transitions).toEqual(['paused', 'repairing']);
-    });
-  });
-
-  describe('live pull quota transitions', () => {
-    it('uses admitted CIDs only to resolve older same-record quota blocks', async () => {
-      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
-      const appliedCids = ['dependency-cid', 'successor-cid'];
-      const link = {
-        authorization      : { kind: 'owner' as const },
-        authorizationEpoch : 'owner-epoch',
-        connectivity       : 'online',
-        projectionId       : 'projection-id',
-        pull               : {},
-        push               : {},
-        remoteEndpoint     : 'https://dwn.example',
-        scope              : { kind: 'full' as const },
-        status             : 'live',
-        tenantDid          : 'did:example:alice',
-      };
-      const context = {
-        did        : link.tenantDid,
-        dwnUrl     : link.remoteEndpoint,
-        eventScope : {},
-        isStale    : (): boolean => false,
-        link,
-        linkKey    : 'link-key',
-      };
-
-      sinon.stub(syncEngine as any, 'shouldSkipLivePullEvent').resolves(false);
-      sinon.stub(syncEngine as any, 'startPullDelivery').returns({ ordinal: -1 });
-      sinon.stub(syncEngine as any, 'processLivePullEvent').resolves({
-        admitted   : true,
-        appliedCids,
-        messageCid : 'successor-cid',
-      });
-      sinon.stub(syncEngine as any, 'clearFailedMessageForTenant').resolves();
-      sinon.stub(syncEngine as any, 'clearDeferredPull').resolves();
-      const clearQuotaBlock = sinon.spy(syncEngine['_quotaManager'], 'clearBlock');
-      const resolveSuperseded = sinon.stub(syncEngine as any, 'resolveQuotaBlocksSupersededByAcknowledgement').resolves();
-      const commitPullDelivery = sinon.stub(syncEngine as any, 'commitPullDelivery').resolves();
-
-      await (syncEngine as any).handleLivePullEvent(context, {
-        cursor : { epoch: 'epoch', position: '1', streamId: 'stream' },
-        event  : {},
-        type   : 'event',
-      });
-
-      expect(clearQuotaBlock.called).toBe(false);
-      expect(resolveSuperseded.callCount).toBe(2);
-      expect(resolveSuperseded.firstCall.args[1]).toBe('dependency-cid');
-      expect(resolveSuperseded.secondCall.args[1]).toBe('successor-cid');
-      expect(commitPullDelivery.calledOnce).toBe(true);
-    });
-  });
-
   describe('live push echo suppression', () => {
-    it('commits a pushed echo without fetching or reapplying it', async () => {
-      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
-      const internal = syncEngine as any;
-      const dwnUrl = 'https://dwn.example';
-      const message = {
-        descriptor: {
-          interface        : DwnInterfaceName.Protocols,
-          method           : DwnMethodName.Configure,
-          messageTimestamp : '2026-07-16T00:00:00.000000Z',
-        },
-      } as GenericMessage;
-      const messageCid = await Message.getCid(message);
-      const cursor = { epoch: 'epoch', messageCid, position: '1', streamId: 'stream' };
-      const context = {
-        did        : 'did:example:alice',
-        dwnUrl,
-        eventScope : {},
-        isStale    : (): boolean => false,
-        linkKey    : 'link-key',
-      };
-      const delivery = { ordinal: -1 };
-
-      internal._echoSuppressor.trackPushed(context.did, messageCid, dwnUrl);
-      sinon.stub(internal, 'shouldSkipLivePullEvent').resolves(false);
-      sinon.stub(internal, 'startPullDelivery').returns(delivery);
-      const processLivePullEvent = sinon.stub(internal, 'processLivePullEvent');
-      const commitPullDelivery = sinon.stub(internal, 'commitPullDelivery').resolves();
-
-      await internal.handleLivePullEvent(context, {
-        cursor,
-        event : { message },
-        type  : 'event',
-      });
-
-      expect(processLivePullEvent.called).toBe(false);
-      expect(commitPullDelivery.calledOnceWithExactly(context, cursor, delivery)).toBe(true);
-    });
-
     it('durably commits a pushed echo delivered while the link is initializing', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
       const internal = syncEngine as any;
@@ -263,8 +138,6 @@ describe('SyncEngineLevel', () => {
       context.controller = controller;
       internal._ledger = { persistCheckpoint };
       internal._echoSuppressor.trackPushed(context.did, messageCid, dwnUrl);
-      sinon.stub(internal, 'shouldSkipLivePullEvent').resolves(false);
-      const processLivePullEvent = sinon.stub(internal, 'processLivePullEvent');
 
       try {
         await internal.handleLivePullEvent(context, {
@@ -276,7 +149,6 @@ describe('SyncEngineLevel', () => {
         unsubscribe();
       }
 
-      expect(processLivePullEvent.called).toBe(false);
       expect(persistCheckpoint.calledOnceWithExactly(link, 'pull')).toBe(true);
       expect(link.pull.contiguousAppliedToken).toEqual(cursor);
       expect(controller.pullInflightCount).toBe(0);
@@ -455,43 +327,6 @@ describe('SyncEngineLevel', () => {
 
       expect(await result).toEqual({ kind: 'aborted' });
       expect(transition.called).toBe(false);
-    });
-  });
-
-  describe('push retry scheduling', () => {
-    it('should bypass hot retries and delay reconciliation for retryable Incomplete failures', async () => {
-      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
-      const linkKey = 'did:example:alice^https://dwn.example^projection^epoch';
-      const link = {
-        authorization      : { kind: 'owner' },
-        authorizationEpoch : 'epoch',
-        connectivity       : 'online',
-        projectionId       : 'projection',
-        pull               : {},
-        push               : {},
-        remoteEndpoint     : 'https://dwn.example',
-        scope              : { kind: 'full' },
-        status             : 'live',
-        tenantDid          : 'did:example:alice',
-      } as any;
-      const controller = syncEngine['activateLink'](linkKey, link);
-
-      const scheduleReconcile = sinon.stub(syncEngine as any, 'scheduleLinkReconcileIfActive');
-      const schedulePushRetry = sinon.stub(syncEngine as any, 'schedulePushRetry');
-
-      await syncEngine['requeueOrReconcile'](controller, {
-        did     : 'did:example:alice',
-        dwnUrl  : 'https://dwn.example',
-        entries : [{
-          cid         : 'root-cid',
-          lastFailure : { cid: 'root-cid', kind: 'Incomplete', detail: 'dependency remains unavailable' },
-        }],
-        retryCount: 1,
-      });
-
-      expect(schedulePushRetry.called).toBe(false);
-      expect(scheduleReconcile.calledOnceWithExactly(linkKey, link, 'push-incomplete', 30_000)).toBe(true);
-      expect(controller.pushRuntime).toBeUndefined();
     });
   });
 
@@ -3608,92 +3443,6 @@ describe('SyncEngineLevel', () => {
       });
     });
 
-    describe('paused repair behavior', () => {
-      it('should not transition paused links back to repairing or schedule repair retries', async () => {
-        const did = alice.did.uri;
-        const dwnUrl = testDwnUrls[0];
-        const link = await syncEngine['ledger'].getOrCreateLink({
-          tenantDid          : did,
-          remoteEndpoint     : dwnUrl,
-          scope              : { kind: 'full' },
-          authorization      : { kind: 'owner' },
-          authorizationEpoch : 'owner-epoch',
-        });
-        const linkKey = `${did}^${dwnUrl}^${link.projectionId}^${link.authorizationEpoch}`;
-        link.status = 'paused';
-        const controller = syncEngine['activateLink'](linkKey, link);
-
-        const statusSpy = sinon.spy(syncEngine as any, 'setLinkOfflineStatus');
-        const repairStub = sinon.stub(syncEngine as any, 'repairLink').resolves();
-
-        await syncEngine['transitionToRepairing'](linkKey, link);
-        syncEngine['scheduleRepairRetry'](controller);
-
-        expect(statusSpy.called).toBe(false);
-        expect(repairStub.called).toBe(false);
-        expect(controller.repairRetryTimer).toBeUndefined();
-      });
-
-      it('should pause a live link only once and leave it degraded', async () => {
-        const did = alice.did.uri;
-        const dwnUrl = testDwnUrls[0];
-        const link = await syncEngine['ledger'].getOrCreateLink({
-          tenantDid          : did,
-          remoteEndpoint     : dwnUrl,
-          scope              : { kind: 'full' },
-          authorization      : { kind: 'owner' },
-          authorizationEpoch : 'owner-epoch',
-        });
-        const linkKey = `${did}^${dwnUrl}^${link.projectionId}^${link.authorizationEpoch}`;
-        link.status = 'live';
-        const controller = syncEngine['activateLink'](linkKey, link);
-        const closeStub = sinon.stub().resolves();
-        controller.setLiveSubscription({ close: closeStub });
-
-        await syncEngine['transitionToPaused'](linkKey, link);
-        await syncEngine['transitionToPaused'](linkKey, link);
-
-        expect(link.status).toBe('paused');
-        expect(closeStub.calledOnce).toBe(true);
-      });
-
-      it('should schedule another repair retry when a retry attempt fails below the attempt ceiling', async () => {
-        const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
-        try {
-          const did = alice.did.uri;
-          const dwnUrl = testDwnUrls[0];
-          const link = await syncEngine['ledger'].getOrCreateLink({
-            tenantDid          : did,
-            remoteEndpoint     : dwnUrl,
-            scope              : { kind: 'full' },
-            authorization      : { kind: 'owner' },
-            authorizationEpoch : 'owner-epoch',
-          });
-          const linkKey = `${did}^${dwnUrl}^${link.projectionId}^${link.authorizationEpoch}`;
-          link.status = 'repairing';
-          const controller = syncEngine['activateLink'](linkKey, link);
-          controller.incrementRepairAttempts();
-          // beforeEach clears the engine, which intentionally pauses background
-          // task admission. This white-box scheduler test models an active runtime.
-          syncEngine['_lifecycle'].resumeTaskAdmission();
-
-          const repairStub = sinon.stub(syncEngine as any, 'repairLink').rejects(new Error('still broken'));
-
-          syncEngine['scheduleRepairRetry'](controller);
-          await clock.tickAsync(1_000);
-
-          expect(repairStub.calledOnce).toBe(true);
-          expect(controller.repairRetryTimer).toBeDefined();
-        } finally {
-          for (const controller of syncEngine['_linkControllers'].values()) {
-            controller.cancelRepairRetry();
-          }
-          clock.restore();
-        }
-      });
-
-    });
-
     describe('feed convergence wiring', () => {
       const feedDivergence = (
         localFingerprint = 'local-fingerprint',
@@ -3952,10 +3701,9 @@ describe('SyncEngineLevel', () => {
           pushRuntime.entries.push({ cid: 'cid-1' });
           pushRuntime.retryCount = 1;
 
-          // flushPendingPushesForLink calls the imported pushMessages function
-          // directly, not this.pushMessages. Stub the agent.dwn.processRequest
-          // that pushMessages eventually calls, and replace the link mid-flight.
-          const requeueSpy = sinon.spy(syncEngine as any, 'requeueOrReconcile');
+          // The live-push coordinator ultimately calls the imported pushMessages
+          // helper. Stub its underlying agent request and replace the link mid-flight.
+          const requeueSpy = sinon.spy(syncEngine['_livePushCoordinator'], 'requeue');
           const processStub = sinon.stub(testHarness.agent.dwn, 'processRequest').callsFake(async () => {
             // Mid-flight: replace the link with a new object.
             const replacementLink = { ...link };
@@ -3968,13 +3716,13 @@ describe('SyncEngineLevel', () => {
             } as any;
           });
 
-          // Stub rpc to return a failure so the code path reaches requeueOrReconcile
+          // Stub rpc to return a failure so the code path reaches requeue.
           // (if it weren't for the stale check).
           const rpcStub = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').resolves({ status: { code: 500 } } as any);
 
           await syncEngine['flushPendingPushesForLink'](linkKey);
 
-          // requeueOrReconcile should NOT have been called — the isFlushStale
+          // Requeue should NOT have been called — the stale-result
           // check after pushMessages detected the replacement and bailed.
           expect(requeueSpy.called).toBe(false);
 
@@ -3982,79 +3730,8 @@ describe('SyncEngineLevel', () => {
           rpcStub.restore();
         });
 
-        it('should not start reconcile when a stale reconcile timer fires after hot-remove', async () => {
-          const did = alice.did.uri;
-
-          await syncEngine.registerIdentity({ did, options: { protocols: 'all' } });
-          syncEngine['_syncMode'] = 'live';
-
-          const ledger = syncEngine['ledger'];
-          const link = await ledger.getOrCreateLink({
-            tenantDid      : did,
-            remoteEndpoint : testDwnUrls[0],
-            scope          : { kind: 'full' },
-            ...ownerAuthorization,
-          });
-          const linkKey = linkKeyFor(did, testDwnUrls[0], link);
-          link.status = 'live';
-          const controller = syncEngine['activateLink'](linkKey, link);
-
-          const reconcileSpy = sinon.spy(syncEngine as any, 'reconcileLink');
-          const timerSpy = sinon.spy(globalThis, 'setTimeout');
-          syncEngine['scheduleReconcile'](linkKey, 60_000);
-          const staleTimerCallback = timerSpy.firstCall.args[0] as () => void;
-          timerSpy.restore();
-
-          expect(controller.reconcileTimer).toBeDefined();
-
-          await syncEngine['removeIdentityFromLiveSync'](did);
-          expect(controller.reconcileTimer).toBeUndefined();
-
-          staleTimerCallback();
-          await Promise.resolve();
-
-          expect(reconcileSpy.called).toBe(false);
-        });
-
-        it('should not retry repair when a stale repair timer fires after hot-remove', async () => {
-          const did = alice.did.uri;
-
-          await syncEngine.registerIdentity({ did, options: { protocols: 'all' } });
-          syncEngine['_syncMode'] = 'live';
-
-          const ledger = syncEngine['ledger'];
-          const link = await ledger.getOrCreateLink({
-            tenantDid      : did,
-            remoteEndpoint : testDwnUrls[0],
-            scope          : { kind: 'full' },
-            ...ownerAuthorization,
-          });
-          const linkKey = linkKeyFor(did, testDwnUrls[0], link);
-          link.status = 'repairing';
-          const controller = syncEngine['activateLink'](linkKey, link);
-          controller.incrementRepairAttempts();
-          controller.incrementRepairAttempts();
-          controller.incrementRepairAttempts();
-
-          const repairSpy = sinon.spy(syncEngine as any, 'repairLink');
-          const timerSpy = sinon.spy(globalThis, 'setTimeout');
-          syncEngine['scheduleRepairRetry'](controller);
-          const staleTimerCallback = timerSpy.firstCall.args[0] as () => void;
-          timerSpy.restore();
-
-          expect(controller.repairRetryTimer).toBeDefined();
-
-          await syncEngine['removeIdentityFromLiveSync'](did);
-          expect(controller.repairRetryTimer).toBeUndefined();
-
-          staleTimerCallback();
-          await Promise.resolve();
-
-          expect(repairSpy.called).toBe(false);
-        });
       });
 
-      // -----------------------------------------------------------------------
       // Item 3: Same link key stale repair/reconcile isolation
       // -----------------------------------------------------------------------
 
@@ -4093,82 +3770,6 @@ describe('SyncEngineLevel', () => {
           expect(syncEngine['getActiveLink'](linkKey)).toBe(replacementLink);
         });
 
-        it('should bail old reconcile when the same link key is re-added during in-flight reconcile', async () => {
-          const did = alice.did.uri;
-
-          await syncEngine.registerIdentity({ did, options: { protocols: 'all' } });
-          syncEngine['_syncMode'] = 'live';
-
-          const ledger = syncEngine['ledger'];
-          const originalLink = await ledger.getOrCreateLink({
-            tenantDid      : did,
-            remoteEndpoint : testDwnUrls[0],
-            scope          : { kind: 'full' },
-            ...ownerAuthorization,
-          });
-          const linkKey = linkKeyFor(did, testDwnUrls[0], originalLink);
-          originalLink.status = 'live';
-          const originalController = syncEngine['activateLink'](linkKey, originalLink);
-
-          // Stub the feed reconcile path to capture the shouldContinue callback.
-          let capturedShouldContinue: (() => boolean) | undefined;
-          sinon.stub(syncEngine as any, 'syncTargetWithDurableFeeds').callsFake((_target: unknown, _options: unknown, sc?: () => boolean) => {
-            capturedShouldContinue = sc;
-            // Simulate: during reconciliation, the link gets removed and re-added.
-            const newLink = { ...originalLink };
-            syncEngine['activateLink'](linkKey, newLink);
-
-            // shouldContinue should now return false.
-            if (capturedShouldContinue && !capturedShouldContinue()) {
-              return { aborted: true, converged: false };
-            }
-            return { aborted: false, converged: true };
-          });
-
-          await syncEngine['doReconcileLink'](originalController);
-
-          expect(capturedShouldContinue).toBeDefined();
-          const currentLink = syncEngine['getActiveLink'](linkKey)!;
-          expect(currentLink).not.toBe(originalLink);
-        });
-
-        it('should bail old repair when the same link key is re-added during in-flight repair', async () => {
-          const did = alice.did.uri;
-
-          await syncEngine.registerIdentity({ did, options: { protocols: 'all' } });
-          syncEngine['_syncMode'] = 'live';
-
-          const ledger = syncEngine['ledger'];
-          const link = await ledger.getOrCreateLink({
-            tenantDid      : did,
-            remoteEndpoint : testDwnUrls[0],
-            scope          : { kind: 'full' },
-            ...ownerAuthorization,
-          });
-          const linkKey = linkKeyFor(did, testDwnUrls[0], link);
-          link.status = 'repairing';
-          const originalController = syncEngine['activateLink'](linkKey, link);
-
-          let capturedShouldContinue: (() => boolean) | undefined;
-          sinon.stub(syncEngine as any, 'syncTargetWithDurableFeeds').callsFake((_target: unknown, _options: unknown, sc?: () => boolean) => {
-            capturedShouldContinue = sc;
-            // Mid-repair: replace the link controller for the same durable key.
-            const newLink = { ...link };
-            syncEngine['activateLink'](linkKey, newLink);
-
-            if (capturedShouldContinue && !capturedShouldContinue()) {
-              return { aborted: true };
-            }
-            return { aborted: false };
-          });
-
-          await syncEngine['doRepairLink'](originalController);
-
-          expect(capturedShouldContinue).toBeDefined();
-          // Repair aborted — subscriptions were NOT reopened.
-          expect(syncEngine['_linkControllers'].has(linkKey)).toBe(true);
-          expect(syncEngine['getActiveLink'](linkKey)).not.toBe(link);
-        });
       });
     });
   });

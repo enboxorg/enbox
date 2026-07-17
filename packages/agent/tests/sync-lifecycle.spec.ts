@@ -202,10 +202,10 @@ describe('SyncEngineLevel lifecycle', () => {
     };
 
     engine['activateLink'](linkKey, link as never);
-    sinon.stub(engine as never, 'setLinkOfflineStatus').callsFake(async (): Promise<void> => {
+    sinon.stub(engine['ledger'], 'setStatus').callsFake(async (): Promise<void> => {
       link.status = 'repairing';
     });
-    sinon.stub(engine as never, 'doRepairLink').callsFake(async (): Promise<void> => {
+    sinon.stub(engine['_linkRecoveryCoordinator'], 'repair').callsFake(async (): Promise<void> => {
       repairStarted.resolve();
       await releaseRepair.promise;
     });
@@ -247,14 +247,13 @@ describe('SyncEngineLevel lifecycle', () => {
     };
 
     engine['activateLink'](linkKey, link as never);
-    sinon.stub(engine as never, 'doReconcileLink').callsFake(async (): Promise<void> => {
+    const recoveryCoordinator = engine['_linkRecoveryCoordinator'];
+    sinon.stub(recoveryCoordinator, 'reconcile').callsFake(async (): Promise<void> => {
       reconcileStarted.resolve();
       await releaseReconcile.promise;
     });
 
-    const scheduled = (engine as unknown as {
-      scheduleReconcile(linkKey: string, delay: number): boolean;
-    }).scheduleReconcile(linkKey, 0);
+    const scheduled = recoveryCoordinator.scheduleReconcile(linkKey, 0);
     expect(scheduled).toBe(true);
     await reconcileStarted.promise;
 
@@ -293,18 +292,18 @@ describe('SyncEngineLevel lifecycle', () => {
       dwnUrl : 'https://dwn.example.com',
     });
 
-    sinon.stub(engine as never, 'flushPendingPushesForLink').callsFake(async (): Promise<void> => {
+    const livePushCoordinator = engine['_livePushCoordinator'];
+    sinon.stub(livePushCoordinator, 'flushLink').callsFake(async (): Promise<void> => {
       pushStarted.resolve();
       await releasePush.promise;
     });
 
-    (engine as unknown as {
-      schedulePushRetry(
-        linkController: typeof controller,
-        runtime: unknown,
-        pending: { entries: Array<{ cid: string }>; retryCount: number },
-      ): void;
-    }).schedulePushRetry(controller, pushRuntime, { entries: [{ cid: 'cid-1' }], retryCount: 0 });
+    await livePushCoordinator.requeue(controller, {
+      did        : pushRuntime.did,
+      dwnUrl     : pushRuntime.dwnUrl,
+      entries    : [{ cid: 'cid-1' }],
+      retryCount : 0,
+    });
     await pushStarted.promise;
 
     let closeCompleted = false;
@@ -465,10 +464,10 @@ describe('SyncEngineLevel lifecycle', () => {
     await engine.registerIdentity({ did, options: { protocols: 'all' } });
     engine['_syncMode'] = 'live';
     engine['activateLink'](linkKey, link as never);
-    sinon.stub(engine as never, 'setLinkOfflineStatus').callsFake(async (): Promise<void> => {
+    sinon.stub(engine['ledger'], 'setStatus').callsFake(async (): Promise<void> => {
       link.status = 'repairing';
     });
-    sinon.stub(engine as never, 'doRepairLink').callsFake(async (): Promise<void> => {
+    sinon.stub(engine['_linkRecoveryCoordinator'], 'repair').callsFake(async (): Promise<void> => {
       repairStarted.resolve();
       await releaseRepair.promise;
     });
@@ -522,10 +521,10 @@ describe('SyncEngineLevel lifecycle', () => {
 
     engine['activateLink'](aliceLinkKey, aliceLink as never);
     engine['activateLink'](bobLinkKey, bobLink as never);
-    sinon.stub(engine as never, 'setLinkOfflineStatus').callsFake(async (): Promise<void> => {
+    sinon.stub(engine['ledger'], 'setStatus').callsFake(async (): Promise<void> => {
       bobLink.status = 'repairing';
     });
-    sinon.stub(engine as never, 'doRepairLink').callsFake(async (): Promise<void> => {
+    sinon.stub(engine['_linkRecoveryCoordinator'], 'repair').callsFake(async (): Promise<void> => {
       repairStarted.resolve();
       await releaseRepair.promise;
     });
@@ -576,7 +575,8 @@ describe('SyncEngineLevel lifecycle', () => {
     await engine.registerIdentity({ did, options: { protocols: 'all' } });
     engine['_syncMode'] = 'live';
     engine['activateLink'](linkKey, link as never);
-    sinon.stub(engine as never, 'doReconcileLink').callsFake(async (): Promise<void> => {
+    const recoveryCoordinator = engine['_linkRecoveryCoordinator'];
+    sinon.stub(recoveryCoordinator, 'reconcile').callsFake(async (): Promise<void> => {
       reconcileStarted.resolve();
       await releaseReconcile.promise;
     });
@@ -589,9 +589,7 @@ describe('SyncEngineLevel lifecycle', () => {
       await removal;
     });
 
-    const scheduled = (engine as unknown as {
-      scheduleReconcile(linkIdentity: string, delay: number): boolean;
-    }).scheduleReconcile(linkKey, 0);
+    const scheduled = recoveryCoordinator.scheduleReconcile(linkKey, 0);
     expect(scheduled).toBe(true);
     await reconcileStarted.promise;
 
@@ -640,7 +638,8 @@ describe('SyncEngineLevel lifecycle', () => {
 
     await engine.registerIdentity({ did, options: { protocols: 'all' } });
     engine['_syncMode'] = 'live';
-    sinon.stub(engine as never, 'flushPendingPushesForLink').callsFake(async (): Promise<void> => {
+    const livePushCoordinator = engine['_livePushCoordinator'];
+    sinon.stub(livePushCoordinator, 'flushLink').callsFake(async (): Promise<void> => {
       pushStarted.resolve();
       await releasePush.promise;
     });
@@ -651,13 +650,12 @@ describe('SyncEngineLevel lifecycle', () => {
       await removal;
     });
 
-    (engine as unknown as {
-      schedulePushRetry(
-        linkController: typeof controller,
-        runtime: unknown,
-        pending: { entries: Array<{ cid: string }>; retryCount: number },
-      ): void;
-    }).schedulePushRetry(controller, pushRuntime, { entries: [{ cid: 'cid-1' }], retryCount: 0 });
+    await livePushCoordinator.requeue(controller, {
+      did        : pushRuntime.did,
+      dwnUrl     : pushRuntime.dwnUrl,
+      entries    : [{ cid: 'cid-1' }],
+      retryCount : 0,
+    });
     await pushStarted.promise;
 
     const unregisterPromise = engine.unregisterIdentity(did);
