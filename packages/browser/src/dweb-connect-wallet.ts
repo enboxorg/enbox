@@ -89,8 +89,8 @@ export class WalletPostMessageTransport {
   private _resolveAck?: (acked: boolean) => void;
 
   private readonly _requestPromise: Promise<ConnectRequest>;
-  private _resolveRequest?: (request: ConnectRequest) => void;
-  private _rejectRequest?: (error: Error) => void;
+  private readonly _resolveRequest: (request: ConnectRequest) => void;
+  private readonly _rejectRequest: (error: Error) => void;
 
   private constructor(params: { dappOrigin: string; dappWindow: Window; recipientPrivateKey: Jwk; timeoutMs: number }) {
     this._dappOrigin = params.dappOrigin;
@@ -109,7 +109,7 @@ export class WalletPostMessageTransport {
 
     this._timeoutId = setTimeout((): void => {
       this.close();
-      this._rejectRequest?.(new Error('[@enbox/browser] Timed out waiting for the connect request from the dapp.'));
+      this._rejectRequest(new Error('[@enbox/browser] Timed out waiting for the connect request from the dapp.'));
     }, params.timeoutMs);
   }
 
@@ -281,10 +281,10 @@ export class WalletPostMessageTransport {
     clearTimeout(this._timeoutId);
     if (outcome instanceof Error) {
       this.close();
-      this._rejectRequest?.(outcome);
+      this._rejectRequest(outcome);
       return;
     }
-    this._resolveRequest?.(outcome);
+    this._resolveRequest(outcome);
   }
 }
 

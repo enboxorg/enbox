@@ -155,8 +155,8 @@ export class PopupClientTransport implements ConnectTransport {
   private _rejectWalletEpk?: (error: Error) => void;
 
   private readonly _responsePromise: Promise<string>;
-  private _resolveResponse?: (payload: string) => void;
-  private _rejectResponse?: (error: Error) => void;
+  private readonly _resolveResponse: (payload: string) => void;
+  private readonly _rejectResponse: (error: Error) => void;
 
   constructor(options: PopupClientTransportOptions) {
     assertBrowserEnvironment();
@@ -308,7 +308,7 @@ export class PopupClientTransport implements ConnectTransport {
     // No-op on the normal path; unblocks `requestProfile()` if a response
     // somehow arrives before the beacon.
     this._rejectWalletEpk?.(new Error('[@enbox/browser] Wallet responded before the handshake was established.'));
-    this._resolveResponse?.(message.payload);
+    this._resolveResponse(message.payload);
   }
 
   private onClosedPoll(): void {
@@ -331,7 +331,7 @@ export class PopupClientTransport implements ConnectTransport {
       if (this._settled) { return; }
       this._settled = true;
       this.cleanup();
-      this._resolveResponse?.(CONNECT_DENIED_TOKEN);
+      this._resolveResponse(CONNECT_DENIED_TOKEN);
     }, CLOSED_RESPONSE_GRACE_MS);
   }
 
@@ -341,7 +341,7 @@ export class PopupClientTransport implements ConnectTransport {
     this.cleanup();
     try { this._popup.close(); } catch { /* best effort */ }
     this._rejectWalletEpk?.(error);
-    this._rejectResponse?.(error);
+    this._rejectResponse(error);
   }
 
   private cleanup(): void {
