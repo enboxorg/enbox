@@ -66,6 +66,7 @@ import { classifySyncEventScope } from './sync-scope-acceptance.js';
 import { DwnInterface } from './types/dwn.js';
 import { isRecordsWrite } from './utils.js';
 import { SyncCheckpoint } from './sync-checkpoint.js';
+import { SyncConnectivityManager } from './sync-connectivity-manager.js';
 import { SyncDeadLetterStoreLevel } from './sync-dead-letter-store-level.js';
 import { SyncDeferredPullStoreLevel } from './sync-deferred-pull-store-level.js';
 import { SyncDurableFeedReconciler } from './sync-durable-feed-reconciler.js';
@@ -220,6 +221,7 @@ export class SyncEngineLevel implements SyncEngine {
   private _permissionsApi: PermissionsApi;
 
   private readonly _db: AbstractLevel<string | Buffer | Uint8Array>;
+  private readonly _connectivityManager: SyncConnectivityManager;
   private readonly _deadLetterStore: SyncDeadLetterStore;
   private readonly _deferredPullStore: SyncDeferredPullStore;
   private readonly _echoSuppressor = new SyncEchoSuppressor();
@@ -259,9 +261,6 @@ export class SyncEngineLevel implements SyncEngine {
    */
   private _engineGeneration = 0;
 
-  /** Connectivity state derived from subscription health. */
-  private _connectivityState: SyncConnectivityState = 'unknown';
-
   /** Registered event listeners for observability. */
   private readonly _eventListeners: Set<SyncEventListener> = new Set();
 
@@ -274,29 +273,21 @@ export class SyncEngineLevel implements SyncEngine {
   /** Backoff schedule for recently published did:dht records. */
   private static readonly DID_RESOLUTION_RETRY_BACKOFF_MS = [2000, 4000, 8000];
 
-  /** Count of consecutive sync failures (for backoff in poll mode). */
-  private _consecutiveFailures = 0;
-
-  /** Maximum consecutive failures before entering backoff. */
-  private static readonly MAX_CONSECUTIVE_FAILURES = 5;
-
-  /** Backoff multiplier for consecutive failures (caps at 4x the configured interval). */
-  private static readonly MAX_BACKOFF_MULTIPLIER = 4;
-
-  /**
-   * Bound browser event handlers so they can be added and removed.
-   * Set in `startBrowserConnectivityListeners`, cleared in `stopBrowserConnectivityListeners`.
-   */
-  private _onOnline?: () => void;
-  private _onOffline?: () => void;
-  private _onVisibilityChange?: () => void;
-
   constructor({ agent, dataPath, db }: SyncEngineLevelParams) {
     this._agent = agent;
     this._permissionsApi = new AgentPermissionsApi({ agent });
     this._db = db ?? new Level<string, string>(dataPath ?? 'DATA/AGENT/SYNC_STORE');
     this._deadLetterStore = new SyncDeadLetterStoreLevel(this._db);
     this._deferredPullStore = new SyncDeferredPullStoreLevel(this._db);
+    this._connectivityManager = new SyncConnectivityManager({
+      operations: {
+        getGeneration          : (): number => this._engineGeneration,
+        isSyncInProgress       : (): boolean => this._lifecycle.isSyncInProgress,
+        markActiveLinksOffline : (): void => { this.markActiveLinksOffline(); },
+        runBackgroundTask      : (operation): Promise<void> => this._lifecycle.runBackgroundTask(operation),
+        runIntegrityCheck      : (): Promise<void> => this.sync(undefined, { verifyConvergence: true }),
+      },
+    });
     this._endpointStore = new SyncEndpointStoreLevel(this._db);
     this._identityStore = new SyncIdentityStoreLevel(this._db);
     this._scopeClosureValidator = new SyncScopeClosureValidator({
@@ -512,23 +503,8 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   get connectivityState(): SyncConnectivityState {
-    // Aggregate per-link connectivity: if any link is online, report online.
-    // If all are offline, report offline. If all unknown, report unknown.
-    // Falls back to the global _connectivityState for poll-mode (no active links).
-    if (this._linkControllers.size === 0) {
-      return this._connectivityState;
-    }
-
-    let hasOnline = false;
-    let hasOffline = false;
-    for (const { link } of this._linkControllers.values()) {
-      if (link.connectivity === 'online') { hasOnline = true; }
-      if (link.connectivity === 'offline') { hasOffline = true; }
-    }
-
-    if (hasOnline) { return 'online'; }
-    if (hasOffline) { return 'offline'; }
-    return 'unknown';
+    const linkStates = [...this._linkControllers.values()].map(({ link }) => link.connectivity);
+    return this._connectivityManager.getState(linkStates);
   }
 
   private activateLink(linkKey: string, link: ReplicationLinkState): SyncLinkController {
@@ -1001,11 +977,11 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     if (targets.some((target): boolean => target.completed || target.quotaBlocked === true)) {
-      this.recordSyncSuccess();
+      this._connectivityManager.recordSuccess();
       return;
     }
 
-    this.recordSyncFailure();
+    this._connectivityManager.recordFailure();
   }
 
   private static drainError(
@@ -1176,24 +1152,12 @@ export class SyncEngineLevel implements SyncEngine {
     // Every group is counted as exactly one of succeeded/failed, so when there are no
     // groups (no targets) neither fires and connectivity is left unchanged.
     if (summary.groupsSucceeded > 0) {
-      this.recordSyncSuccess();
+      this._connectivityManager.recordSuccess();
       return;
     }
 
     if (summary.groupsFailed > 0) {
-      this.recordSyncFailure();
-    }
-  }
-
-  private recordSyncSuccess(): void {
-    this._consecutiveFailures = 0;
-    this._connectivityState = 'online';
-  }
-
-  private recordSyncFailure(): void {
-    this._consecutiveFailures++;
-    if (this._connectivityState === 'online') {
-      this._connectivityState = 'offline';
+      this._connectivityManager.recordFailure();
     }
   }
 
@@ -1395,14 +1359,7 @@ export class SyncEngineLevel implements SyncEngine {
         console.error('SyncEngineLevel: Error during sync operation', error);
       }
 
-      // Apply backoff on consecutive failures.
-      const backoffMultiplier = Math.min(
-        Math.pow(2, this._consecutiveFailures),
-        SyncEngineLevel.MAX_BACKOFF_MULTIPLIER,
-      );
-      const effectiveInterval = this._consecutiveFailures > 0
-        ? intervalMilliseconds * backoffMultiplier
-        : intervalMilliseconds;
+      const effectiveInterval = this._connectivityManager.getPollInterval(intervalMilliseconds);
 
       if (this._engineGeneration !== generation) { return; }
       this._syncIntervalId ??= this.scheduleSyncInterval(intervalSync, effectiveInterval);
@@ -1446,7 +1403,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     // Step 0: Register browser connectivity listeners for instant recovery
     // on network switch, sleep/wake, or tab foregrounding. No-op in Node.
-    this.startBrowserConnectivityListeners();
+    this._connectivityManager.start();
 
     // Step 1: Initial durable feed catch-up.
     try {
@@ -1846,109 +1803,22 @@ export class SyncEngineLevel implements SyncEngine {
       (error as { isProgressGap?: unknown }).isProgressGap === true;
   }
 
-  // ---------------------------------------------------------------------------
-  // Browser connectivity: online/offline + visibilitychange
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Registers browser `online`, `offline`, and `visibilitychange` event
-   * listeners to detect connectivity changes that WebSocket `close` events
-   * miss (NAT timeout, network switch, sleep/wake). Safe to call in Node —
-   * the guards skip registration when browser APIs are unavailable.
-   */
-  private startBrowserConnectivityListeners(): void {
-    this.stopBrowserConnectivityListeners();
-
-    // Guard: only run in browser environments with the required APIs.
-    if (typeof globalThis.addEventListener !== 'function') { return; }
-
-    const generation = this._engineGeneration;
-
-    this._onOnline = (): void => {
-      if (this._engineGeneration !== generation) { return; }
-      console.info('SyncEngineLevel: browser online — triggering immediate integrity check');
-      // Don't set _connectivityState here — individual links will transition
-      // to online as their WebSocket connections actually recover during the
-      // sync below. The public getter uses per-link aggregation.
-
-      // Kick off an immediate durable feed reconcile to catch up after being offline.
-      if (!this._lifecycle.isSyncInProgress) {
-        void this._lifecycle.runBackgroundTask(async (): Promise<void> => {
-          try {
-            await this.sync(undefined, { verifyConvergence: true });
-          } catch (error: unknown) {
-            console.error('SyncEngineLevel: post-online sync failed', error);
-          }
-        });
+  private markActiveLinksOffline(): void {
+    for (const { link } of this._linkControllers.values()) {
+      const previous = link.connectivity;
+      if (previous === 'offline') {
+        continue;
       }
-    };
 
-    this._onOffline = (): void => {
-      if (this._engineGeneration !== generation) { return; }
-      console.info('SyncEngineLevel: browser offline');
-      this._connectivityState = 'offline';
-
-      // Transition every active link to offline so the public
-      // connectivityState getter (which aggregates per-link state)
-      // reflects the browser's network status immediately.
-      for (const { link } of this._linkControllers.values()) {
-        const prev = link.connectivity;
-        if (prev !== 'offline') {
-          link.connectivity = 'offline';
-          this.emitEvent({
-            type           : 'link:connectivity-change',
-            tenantDid      : link.tenantDid,
-            remoteEndpoint : link.remoteEndpoint,
-            ...syncEventScope(link.scope),
-            from           : prev,
-            to             : 'offline',
-          });
-        }
-      }
-    };
-
-    this._onVisibilityChange = (): void => {
-      if (this._engineGeneration !== generation) { return; }
-
-      // Only act when the page becomes visible again — the user is back.
-      if (typeof document === 'undefined' || document.visibilityState !== 'visible') { return; }
-
-      console.info('SyncEngineLevel: page became visible — triggering integrity check');
-
-      // The device may have slept and WebSockets may be dead. An immediate
-      // sync via durable feed reconciliation detects and repairs any divergence.
-      if (!this._lifecycle.isSyncInProgress) {
-        void this._lifecycle.runBackgroundTask(async (): Promise<void> => {
-          try {
-            await this.sync(undefined, { verifyConvergence: true });
-          } catch (error: unknown) {
-            console.error('SyncEngineLevel: post-visibility sync failed', error);
-          }
-        });
-      }
-    };
-
-    globalThis.addEventListener('online', this._onOnline);
-    globalThis.addEventListener('offline', this._onOffline);
-
-    if (typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', this._onVisibilityChange);
-    }
-  }
-
-  /** Removes browser connectivity listeners if they were registered. */
-  private stopBrowserConnectivityListeners(): void {
-    if (this._onOnline) {
-      globalThis.removeEventListener('online', this._onOnline);
-      this._onOnline = undefined;
-    }
-    if (this._onOffline) {
-      globalThis.removeEventListener('offline', this._onOffline);
-      this._onOffline = undefined;
-    }
-    if (this._onVisibilityChange && typeof document !== 'undefined') {
-      document.removeEventListener('visibilitychange', this._onVisibilityChange);
-      this._onVisibilityChange = undefined;
+      link.connectivity = 'offline';
+      this.emitEvent({
+        type           : 'link:connectivity-change',
+        tenantDid      : link.tenantDid,
+        remoteEndpoint : link.remoteEndpoint,
+        ...syncEventScope(link.scope),
+        from           : previous,
+        to             : 'offline',
+      });
     }
   }
 
@@ -1958,7 +1828,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   private async teardownLiveSync(): Promise<void> {
     // Remove browser connectivity listeners before tearing down.
-    this.stopBrowserConnectivityListeners();
+    this._connectivityManager.stop();
 
     // Invalidate callbacks, cancel timers, and close subscriptions through the
     // same lifetime owner used by normal hot-remove and repair paths.
@@ -2152,7 +2022,7 @@ export class SyncEngineLevel implements SyncEngine {
     this.removeLinkController(linkKey, controller);
 
     if (!this.hasActiveSubscriptions) {
-      this._connectivityState = 'unknown';
+      this._connectivityManager.setState('unknown');
     }
   }
 
@@ -2582,7 +2452,7 @@ export class SyncEngineLevel implements SyncEngine {
     link?: ReplicationLinkState;
   }): void {
     if (!link) {
-      this._connectivityState = 'online';
+      this._connectivityManager.setState('online');
       return;
     }
 
