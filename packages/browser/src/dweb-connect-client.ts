@@ -31,6 +31,7 @@ import type {
 
 import { assertX25519PublicJwk, CONNECT_DENIED_TOKEN, ConnectClient } from '@enbox/connect';
 
+import { createHandledDeferred } from './handled-deferred.js';
 import {
   DWEB_CONNECT_ACK_MESSAGE_TYPE,
   DWEB_CONNECT_LOADED_MESSAGE_TYPE,
@@ -181,14 +182,13 @@ export class PopupClientTransport implements ConnectTransport {
     });
 
     // Created up-front so a response (or deny) arriving before
-    // `awaitResponse()` is called is never dropped. The no-op catch marks
-    // early rejections (timeout, popup closed during load) as handled until
+    // `awaitResponse()` is called is never dropped. Early rejections
+    // (timeout, popup closed during load) are pre-marked as handled until
     // the kernel attaches its own handlers via `awaitResponse()`.
-    this._responsePromise = new Promise<string>((resolve, reject): void => {
-      this._resolveResponse = resolve;
-      this._rejectResponse = reject;
-    });
-    this._responsePromise.catch((): undefined => undefined);
+    const response = createHandledDeferred<string>();
+    this._responsePromise = response.promise;
+    this._resolveResponse = response.resolve;
+    this._rejectResponse = response.reject;
 
     // Listen synchronously, before the wallet page can emit its `loaded`
     // beacon, so the beacon is never missed while the kernel awaits key

@@ -29,6 +29,7 @@ import type { Jwk } from '@enbox/crypto';
 import { X25519 } from '@enbox/crypto';
 import { CONNECT_DENIED_TOKEN, ConnectProvider } from '@enbox/connect';
 
+import { createHandledDeferred } from './handled-deferred.js';
 import {
   DWEB_CONNECT_ACK_MESSAGE_TYPE,
   DWEB_CONNECT_LOADED_MESSAGE_TYPE,
@@ -96,13 +97,12 @@ export class WalletPostMessageTransport {
     this._dappWindow = params.dappWindow;
     this._recipientPrivateKey = params.recipientPrivateKey;
 
-    this._requestPromise = new Promise<ConnectRequest>((resolve, reject): void => {
-      this._resolveRequest = resolve;
-      this._rejectRequest = reject;
-    });
-    // Mark early rejections (timeout before `awaitRequest()` is called) as
-    // handled until the wallet attaches its own handlers.
-    this._requestPromise.catch((): undefined => undefined);
+    // Early rejections (timeout before `awaitRequest()` is called) are
+    // pre-marked as handled until the wallet attaches its own handlers.
+    const request = createHandledDeferred<ConnectRequest>();
+    this._requestPromise = request.promise;
+    this._resolveRequest = request.resolve;
+    this._rejectRequest = request.reject;
 
     this._messageListener = (event: MessageEvent): void => { this.onMessage(event); };
     window.addEventListener('message', this._messageListener);
