@@ -483,7 +483,7 @@ jobs:
   # and dwn-server (backed by Postgres). Runs in parallel with test-api-clients.
   # ---------------------------------------------------------------------------
   test-agent:
-    name: 'Test: agent (shard ${{ matrix.shard }}/2)'
+    name: 'Test: agent (shard ${{ matrix.shard }}/3)'
     runs-on: ubuntu-latest
     timeout-minutes: 8
     needs: [build, changes]
@@ -492,7 +492,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3]
 
     services:
       postgres-dwn-server:
@@ -574,7 +574,7 @@ jobs:
             sleep 2
           done
 
-      - name: Run agent tests with coverage (shard ${{ matrix.shard }}/2)
+      - name: Run agent tests with coverage (shard ${{ matrix.shard }}/3)
         run: |
           export DID_DHT_GATEWAY_URI=http://localhost:7527
           # Opt-in for the test process so the agent / DWN can talk to the local Pkarr relay
@@ -582,16 +582,16 @@ jobs:
           export DID_DHT_ALLOW_PRIVATE_GATEWAY=1
           cd packages/agent
           # Deterministic round-robin split of the non-e2e spec files across the
-          # two shards (same file list as the package `test:node:coverage`
+          # three shards (same file list as the package `test:node:coverage`
           # script, minus tests/e2e/*). Sorting first keeps the split stable.
           mapfile -t all_specs < <(find tests -name '*.spec.ts' -not -path 'tests/e2e/*' | sort)
           shard_specs=()
           for i in "${!all_specs[@]}"; do
-            if [ $(( i % 2 )) -eq $(( ${{ matrix.shard }} - 1 )) ]; then
+            if [ $(( i % 3 )) -eq $(( ${{ matrix.shard }} - 1 )) ]; then
               shard_specs+=("${all_specs[$i]}")
             fi
           done
-          echo "Shard ${{ matrix.shard }}/2 running ${#shard_specs[@]} of ${#all_specs[@]} spec files"
+          echo "Shard ${{ matrix.shard }}/3 running ${#shard_specs[@]} of ${#all_specs[@]} spec files"
           bun test --timeout 10000 --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage "${shard_specs[@]}"
 
       - name: Stage coverage
@@ -1527,15 +1527,22 @@ jobs:
           exit 1
 
   # ---------------------------------------------------------------------------
-  # Gate job for branch protection — always runs so required checks pass even
-  # when the pipeline is skipped (e.g. docs-only changes).
+  # Gate job for branch protection — runs so required checks pass even when the
+  # pipeline is skipped (e.g. docs-only changes).
+  #
+  # Guarded with `!cancelled()`: when a run is superseded by a newer commit
+  # (concurrency cancel-in-progress), this job must be left as `cancelled`, not
+  # reported as `failure`. With a bare `always()` it would run during the
+  # cancellation, see its cancelled dependencies fail the checks below, and turn
+  # the required "CI Passed" check red on every superseded run. A genuine job
+  # failure is not `cancelled()`, so real failures are still caught.
   # ---------------------------------------------------------------------------
   ci-passed:
     name: CI Passed
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    needs: [changes, lint, build, test-lightweight, test-dwn-sdk, test-agent, test-api-clients, test-e2e, test-sql-store, test-dwn-server, test-browser, coverage, sonar-pr]
-    if: always()
+    needs: [changes, lint, build, test-lightweight, test-dwn-sdk, test-agent, test-api-clients, test-e2e, test-sql-store, test-dwn-server, test-browser, sonar-pr]
+    if: always() && !cancelled()
     steps:
       - name: Check results
         run: |
@@ -1591,12 +1598,13 @@ jobs:
             exit 1
           fi
 
-          # Coverage merge: required when it ran, OK to skip (no test jobs ran).
-          if [ "${{ needs.coverage.result }}" != "success" ] && [ "${{ needs.coverage.result }}" != "skipped" ]; then
-            echo "::error::coverage failed"
-            exit 1
-          fi
-
+          # Coverage merge is intentionally NOT a direct dependency of this gate:
+          # on main it only feeds the non-gating sonar-main scan, so CI Passed can
+          # green as soon as tests finish instead of waiting on the merge. On PRs
+          # it is still enforced transitively — sonar-pr needs coverage, and a
+          # broken merge leaves the scan without coverage, failing the quality
+          # gate below.
+          #
           # SonarCloud PR quality gate: gates pull requests. A failed quality
           # gate fails sonar-pr, which fails this job and blocks the merge. It is
           # skipped on main pushes and on fork PRs without Sonar vars — both OK.
