@@ -228,7 +228,7 @@ describe('FlattenedJwe', () => {
         key,
       });
 
-      expect(Convert.base64Url(flattenedJwe.iv!).toUint8Array().length).toBe(24);
+      expect(Convert.base64Url(flattenedJwe.iv!).toUint8Array()).toHaveLength(24);
     });
 
     it('round-trips XC20P content encryption through dir mode', async () => {

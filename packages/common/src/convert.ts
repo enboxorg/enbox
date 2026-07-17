@@ -222,11 +222,7 @@ export class Convert {
 
     switch (this.format) {
 
-      case 'ArrayBuffer': {
-        const u8a = this.toUint8Array();
-        return Convert.uint8Array(u8a).toHex();
-      }
-
+      case 'ArrayBuffer':
       case 'Base64Url': {
         const u8a = this.toUint8Array();
         return Convert.uint8Array(u8a).toHex();

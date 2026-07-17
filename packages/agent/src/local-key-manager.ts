@@ -665,9 +665,7 @@ export class LocalKeyManager implements AgentKeyManager {
 
     for (const algorithmIdentifier of Object.keys(supportedAlgorithms) as SupportedAlgorithm[]) {
       const algorithmNames = supportedAlgorithms[algorithmIdentifier].names as readonly string[];
-      if (algProperty && algorithmNames.includes(algProperty)) {
-        return algorithmIdentifier;
-      } else if (crvProperty && algorithmNames.includes(crvProperty)) {
+      if ((algProperty && algorithmNames.includes(algProperty)) || (crvProperty && algorithmNames.includes(crvProperty))) {
         return algorithmIdentifier;
       }
     }

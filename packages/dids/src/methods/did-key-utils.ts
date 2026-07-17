@@ -53,7 +53,7 @@ export class DidKeyUtils {
    * Defines the expected byte lengths for public keys associated with different cryptographic
    * algorithms, indexed by their multicodec code values.
    */
-  public static MULTICODEC_PUBLIC_KEY_LENGTH: Record<number, number> = {
+  public static readonly MULTICODEC_PUBLIC_KEY_LENGTH: Record<number, number> = {
     // secp256k1-pub - Secp256k1 public key (compressed) - 33 bytes
     0xe7: 33,
 

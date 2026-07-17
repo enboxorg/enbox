@@ -167,7 +167,7 @@ describe('JWE conformance vectors (jwe-vectors-v2.json)', () => {
     it('should use a 24-byte nonce for every XC20P vector', () => {
       for (const vector of vectors.filter((candidate): boolean => candidate.protectedHeader.enc === 'XC20P')) {
         const [, , iv] = vector.jweCompact.split('.');
-        expect(Convert.base64Url(iv).toUint8Array().length).toBe(24);
+        expect(Convert.base64Url(iv).toUint8Array()).toHaveLength(24);
       }
     });
 

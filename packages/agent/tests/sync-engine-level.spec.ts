@@ -4136,8 +4136,8 @@ describe('SyncEngineLevel', () => {
           syncEngine['_activeLinks'].set(linkKey, replacementLink);
 
           // The original link is stale; the replacement is not.
-          expect(syncEngine['_activeLinks'].get(linkKey) !== originalLink).toBe(true);
-          expect(syncEngine['_activeLinks'].get(linkKey) !== replacementLink).toBe(false);
+          expect(syncEngine['_activeLinks'].get(linkKey)).not.toBe(originalLink);
+          expect(syncEngine['_activeLinks'].get(linkKey)).toBe(replacementLink);
         });
 
         it('should bail old reconcile when the same link key is re-added during in-flight reconcile', async () => {

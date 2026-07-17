@@ -212,7 +212,9 @@ export class EnboxRpcClient implements EnboxRpc {
 
 export class HttpEnboxRpcClient extends HttpDwnRpcClient implements EnboxRpc {
   /** HTTP transport holds no persistent connections — nothing to release. */
-  public async close(): Promise<void> {}
+  public async close(): Promise<void> {
+    // no-op: HTTP transport holds no persistent connections to release.
+  }
 
   async sendDidRequest(request: DidRpcRequest): Promise<DidRpcResponse> {
     const requestId = CryptoUtils.randomUuid();

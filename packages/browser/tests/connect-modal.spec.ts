@@ -675,7 +675,7 @@ describe('runConnectModal', () => {
 
     const css = shadowRoot().querySelector('style')?.textContent ?? '';
     // Balanced braces — a nesting slip once swallowed whole rules silently.
-    expect((css.match(/\{/g) ?? []).length).toBe((css.match(/\}/g) ?? []).length);
+    expect(css.match(/\{/g) ?? []).toHaveLength((css.match(/\}/g) ?? []).length);
     expect(css).toMatch(/\}\s*\.claimed-pulse\s*\{/);
     // The QR card keeps its scannable white ground in both appearances.
     const qrRule = /\.qr-box\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';

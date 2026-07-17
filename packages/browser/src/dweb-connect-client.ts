@@ -145,8 +145,8 @@ export class PopupClientTransport implements ConnectTransport {
   private readonly _popup: Window;
   private _settled = false;
   private _walletEpkReceived = false;
-  private _timeoutId?: ReturnType<typeof setTimeout>;
-  private _closedPollId?: ReturnType<typeof setInterval>;
+  private readonly _timeoutId?: ReturnType<typeof setTimeout>;
+  private readonly _closedPollId?: ReturnType<typeof setInterval>;
   private _messageListener?: (event: MessageEvent) => void;
 
   private readonly _walletEpkPromise: Promise<Jwk>;

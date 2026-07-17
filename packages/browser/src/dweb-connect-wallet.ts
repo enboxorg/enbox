@@ -83,7 +83,7 @@ export class WalletPostMessageTransport {
   private readonly _recipientPrivateKey: Jwk;
 
   private _requestReceived = false;
-  private _timeoutId?: ReturnType<typeof setTimeout>;
+  private readonly _timeoutId?: ReturnType<typeof setTimeout>;
   private _messageListener?: (event: MessageEvent) => void;
   private _resolveAck?: (acked: boolean) => void;
 

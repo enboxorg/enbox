@@ -164,7 +164,7 @@ export class DidJwk extends DidMethod {
   /**
    * Name of the DID method, as defined in the DID JWK specification.
    */
-  public static methodName = 'jwk';
+  public static readonly methodName = 'jwk';
 
   /**
    * Creates a new DID using the `did:jwk` method formed from a newly generated key.

@@ -8,6 +8,9 @@ import { SortDirection } from '../types/query-types.js';
 /** Separator between compound key segments (higher than \x00 so prefix scans work correctly). */
 export const COMPOUND_SEGMENT_SEPARATOR = '\x01';
 
+/** A value that can be encoded into a lexicographically sortable index key. */
+type IndexableValue = string | number | boolean;
+
 /**
  * Gets the compound index partition for a given compound index definition.
  * Compound index sublevels use the naming convention `__compound:<name>__`.
@@ -28,7 +31,7 @@ export async function getCompoundIndexPartition(
  */
 export function buildCompoundKey(
   messageCid: string, indexes: KeyValues, compoundIndex: CompoundIndexDefinition,
-  encodeValue: (value: string | number | boolean) => string, delimiter: string
+  encodeValue: (value: IndexableValue) => string, delimiter: string
 ): string | undefined {
   const segments: string[] = [];
 

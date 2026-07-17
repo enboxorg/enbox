@@ -17,9 +17,11 @@ import {
 export class BlockstoreMock implements Blockstore {
 
   async open(): Promise<void> {
+    // no-op: mock blockstore has no underlying storage to open
   }
 
   async close(): Promise<void> {
+    // no-op: mock blockstore has no underlying storage to close
   }
 
   async put(key: CID, _val: BlockstoreInput, _options?: BlockstoreAbortOptions): Promise<CID> {
@@ -62,5 +64,6 @@ export class BlockstoreMock implements Blockstore {
    * deletes all entries
    */
   async clear(): Promise<void> {
+    // no-op: mock blockstore has no underlying storage to clear
   }
 }

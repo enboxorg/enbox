@@ -163,7 +163,7 @@ describe('HttpDwnRpcClient', () => {
       const fetchCallArgs = fetchStub.firstCall.args;
       const fetchOpts = fetchCallArgs[1] as Record<string, unknown>;
 
-      expect(fetchOpts.body instanceof ReadableStream).toBe(true);
+      expect(fetchOpts.body).toBeInstanceOf(ReadableStream);
       expect(fetchOpts.duplex).toBe('half');
 
       const sentBytes = await DataStream.toBytes(fetchOpts.body as ReadableStream<Uint8Array>);
@@ -335,7 +335,7 @@ describe('HttpDwnRpcClient', () => {
       const fetchOpts = fetchStub.firstCall.args[1] as RequestInit;
       const headers = fetchOpts.headers as Record<string, string>;
       expect(headers['content-type']).toBe('application/octet-stream');
-      expect(fetchOpts.body instanceof ReadableStream).toBe(true);
+      expect(fetchOpts.body).toBeInstanceOf(ReadableStream);
       expect((fetchOpts as Record<string, unknown>).duplex).toBe('half');
 
       const sentBytes = await DataStream.toBytes(fetchOpts.body as ReadableStream<Uint8Array>);

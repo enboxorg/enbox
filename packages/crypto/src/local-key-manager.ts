@@ -506,9 +506,8 @@ export class LocalKeyManager implements
 
     for (const algName in supportedAlgorithms) {
       const algorithmInfo = supportedAlgorithms[algName as SupportedAlgorithm];
-      if (algProperty && algorithmInfo.names.includes(algProperty)) {
-        return algName as SupportedAlgorithm;
-      } else if (crvProperty && algorithmInfo.names.includes(crvProperty)) {
+      if ((algProperty && algorithmInfo.names.includes(algProperty)) ||
+          (crvProperty && algorithmInfo.names.includes(crvProperty))) {
         return algName as SupportedAlgorithm;
       }
     }

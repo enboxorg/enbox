@@ -114,18 +114,16 @@ export function AuditLog({ path }: { path?: string }) {
                 <td class="mono" title={entry.target}>{truncateDid(entry.target, 30)}</td>
                 <td>
                   {entry.detail && entry.detail.length > 60 ? (
-                    <span
-                      role="button"
-                      tabIndex={0}
+                    <button
+                      type="button"
                       onClick={() => toggleDetail(entry.id)}
-                      onKeyDown={(e: KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleDetail(entry.id); } }}
-                      style="cursor:pointer;color:var(--color-primary)"
+                      style="cursor:pointer;color:var(--color-primary);background:none;border:none;padding:0;font:inherit"
                       title={expandedId === entry.id ? 'Click to collapse' : 'Click to expand'}
                     >
                       {expandedId === entry.id
                         ? entry.detail
                         : entry.detail.slice(0, 60) + '...'}
-                    </span>
+                    </button>
                   ) : (
                     <span>{entry.detail || '\u2014'}</span>
                   )}

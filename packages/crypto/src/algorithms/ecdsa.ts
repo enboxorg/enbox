@@ -21,6 +21,11 @@ import { CryptoError, CryptoErrorCode } from '../crypto-error.js';
 import { isEcPrivateJwk, isEcPublicJwk } from '../jose/jwk.js';
 
 /**
+ * Identifies the ECDSA curve/algorithm combination to use for a cryptographic operation.
+ */
+type EcdsaAlgorithmName = 'ES256' | 'ES256K' | 'secp256k1' | 'secp256r1';
+
+/**
  * The `EcdsaGenerateKeyParams` interface defines the algorithm-specific parameters that should be
  * passed into the `generateKey()` method when using the ECDSA algorithm.
  */
@@ -32,7 +37,7 @@ export interface EcdsaGenerateKeyParams extends GenerateKeyParams {
    * - `"secp256k1"`: ECDSA using the secp256k1 curve and SHA-256.
    * - `"secp256r1"`: ECDSA using the secp256r1 (P-256) curve and SHA-256.
    */
-  algorithm: 'ES256' | 'ES256K' | 'secp256k1' | 'secp256r1';
+  algorithm: EcdsaAlgorithmName;
 }
 
 /**

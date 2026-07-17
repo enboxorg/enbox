@@ -39,8 +39,8 @@ describe('CryptoError', () => {
     const error = new CryptoError(CryptoErrorCode.InvalidJwe, 'jwe error');
 
     // Verify that Object.setPrototypeOf in the constructor maintains correct prototype chain.
-    expect(error instanceof CryptoError).toBe(true);
-    expect(error instanceof Error).toBe(true);
+    expect(error).toBeInstanceOf(CryptoError);
+    expect(error).toBeInstanceOf(Error);
   });
 
   // NOTE: The original version had 7 individual tests asserting exact string values

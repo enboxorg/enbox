@@ -167,7 +167,7 @@ describe('ProofOfWorkManager', () => {
     await clock.tickAsync(60 * 60 * 1000);
     await clock.runToLastAsync();
 
-    expect(proofOfWorkManager.currentMaximumAllowedHashValue === initialMaximumAllowedHashValueAsBigInt).toBe(true);
+    expect(proofOfWorkManager.currentMaximumAllowedHashValue).toBe(initialMaximumAllowedHashValueAsBigInt);
   });
 
   it('should use default difficulty if not given', async () => {

@@ -506,7 +506,8 @@ export async function prepareProtocol(
   for (const [taskIndex, settled] of verifiedPostconditions.entries()) {
     const dwnUrl = endpointsNeedingConfigure[taskIndex];
     if (settled.status === 'rejected') {
-      failedEndpoints.push(`${dwnUrl}: ${endpointFailures.get(dwnUrl) ?? `unreachable at verification: ${settled.reason}`}`);
+      const unreachableReason = `unreachable at verification: ${settled.reason}`;
+      failedEndpoints.push(`${dwnUrl}: ${endpointFailures.get(dwnUrl) ?? unreachableReason}`);
       continue;
     }
     if (!settled.value.converged) {

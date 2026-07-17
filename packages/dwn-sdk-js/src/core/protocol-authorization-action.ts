@@ -14,13 +14,18 @@ import { getRoleContextPrefix, getRuleSetAtPath, isCrossProtocolRef, parseCrossP
 import { ProtocolAction, ProtocolActor } from '../types/protocols-types.js';
 
 /**
+ * A DWN message subject to protocol action-rule authorization checks.
+ */
+type ProtocolAuthorizableMessage = RecordsCount | RecordsDelete | RecordsQuery | RecordsRead | RecordsSubscribe | RecordsWrite;
+
+/**
  * Check if the incoming message is invoking a role. If so, validate the invoked role.
  * For cross-protocol role invocation, the role record may live in a different protocol
  * (resolved via the composing protocol's `uses` map).
  */
 export async function verifyInvokedRole(
   tenant: string,
-  incomingMessage: RecordsCount | RecordsDelete | RecordsQuery | RecordsRead | RecordsSubscribe | RecordsWrite,
+  incomingMessage: ProtocolAuthorizableMessage,
   protocolUri: string,
   contextId: string | undefined,
   protocolDefinition: ProtocolDefinition,
