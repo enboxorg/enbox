@@ -157,7 +157,7 @@ export function Configuration({ path }: { path?: string }) {
         </div>
       ))}
 
-      <button class="btn btn-primary" onClick={handleSave} disabled={saving}>
+      <button type="button" class="btn btn-primary" onClick={handleSave} disabled={saving}>
         {saving ? 'Saving...' : 'Save Changes'}
       </button>
     </div>

@@ -224,18 +224,50 @@ function normalizeDwnError(input: unknown): NormalizedDwnError | undefined {
   return undefined;
 }
 
+function isSeparatorChar(char: string | undefined): boolean {
+  return char === ':' || char === '-';
+}
+
+function isWhitespaceChar(char: string | undefined): boolean {
+  return char !== undefined && /\s/.test(char);
+}
+
+/**
+ * Parses a leading `<3-digit code><separator><detail>` prefix, where separator
+ * is a single `:`/`-` and/or a run of whitespace. Matched by hand — rather than
+ * a regex with a quantified group nested inside an optional alternative — so the
+ * scan is provably linear in the input length (Sonar S8786).
+ */
 function normalizeErrorText(text: string): NormalizedDwnError {
-  // Separator alternation is first-character-disjoint (`[:-]…` vs `\s…`) so the
-  // engine never backtracks between overlapping whitespace-matching branches —
-  // avoids the super-linear runtime of `(?:\s*[:-]\s*)|\s+` (Sonar S8786).
-  const statusPrefix = /^\s*(\d{3})(?:[:-]\s*|\s+(?:[:-]\s*)?)([^]*)$/.exec(text);
-  if (statusPrefix === null) {
+  const leadingWhitespace = text.length - text.trimStart().length;
+  const digitsMatch = /^\d{3}/.exec(text.slice(leadingWhitespace));
+  if (digitsMatch === null) {
+    return { detail: text.trim() };
+  }
+
+  let index = leadingWhitespace + digitsMatch[0].length;
+  let sawSeparator = false;
+
+  if (isSeparatorChar(text[index])) {
+    index += 1;
+    sawSeparator = true;
+    while (isWhitespaceChar(text[index])) { index += 1; }
+  } else if (isWhitespaceChar(text[index])) {
+    sawSeparator = true;
+    while (isWhitespaceChar(text[index])) { index += 1; }
+    if (isSeparatorChar(text[index])) {
+      index += 1;
+      while (isWhitespaceChar(text[index])) { index += 1; }
+    }
+  }
+
+  if (!sawSeparator) {
     return { detail: text.trim() };
   }
 
   return {
-    code   : Number(statusPrefix[1]),
-    detail : statusPrefix[2].trim(),
+    code   : Number(digitsMatch[0]),
+    detail : text.slice(index).trim(),
   };
 }
 

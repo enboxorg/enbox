@@ -96,7 +96,7 @@ export function Connections({ path }: { path?: string }) {
           <h2>Connections</h2>
           <p class="description">Active WebSocket connections</p>
         </div>
-        <button class="btn" onClick={fetchConnections}>Refresh</button>
+        <button type="button" class="btn" onClick={fetchConnections}>Refresh</button>
       </div>
 
       {error && <div class="card" style="color:var(--color-danger)">{error}</div>}
