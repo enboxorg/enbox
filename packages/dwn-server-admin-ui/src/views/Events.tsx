@@ -118,6 +118,7 @@ export function Events({ path }: { path?: string }) {
           <span style="font-size:12px;color:var(--color-text-secondary)">Transport:</span>
           {(['all', 'http', 'ws'] as const).map((t) => (
             <button
+              type="button"
               key={t}
               class={`btn btn-sm${transportFilter === t ? ' btn-primary' : ''}`}
               onClick={() => setTransportFilter(t)}

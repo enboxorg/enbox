@@ -67,6 +67,7 @@ function CopyButton({ text }: { text: string }) {
 
   return (
     <button
+      type="button"
       onClick={copy}
       className="inline-flex items-center justify-center w-8 h-8 rounded-lg shrink-0 transition-colors cursor-pointer"
       style={{

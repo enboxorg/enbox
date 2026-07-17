@@ -204,4 +204,16 @@ describe('session error helpers', () => {
     expect(isSessionExpiredError({ code: 401, detail: 'another error' })).toBe(false);
     expect(isSessionExpiredError(undefined)).toBe(false);
   });
+
+  test('parses a status prefix separated by whitespace only, with no colon or dash', () => {
+    expect(isSessionExpiredError(`401 ${SESSION_EXPIRED_ERROR_CODE}: expired`)).toBe(true);
+  });
+
+  test('parses a status prefix separated by whitespace then a dash', () => {
+    expect(isSessionExpiredError(`401 - ${SESSION_EXPIRED_ERROR_CODE}: expired`)).toBe(true);
+  });
+
+  test('does not treat a status-like prefix with no separator as a coded error', () => {
+    expect(isSessionExpiredError(`401${SESSION_EXPIRED_ERROR_CODE}: expired`)).toBe(false);
+  });
 });

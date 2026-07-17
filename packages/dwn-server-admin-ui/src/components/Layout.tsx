@@ -73,7 +73,7 @@ export function Layout({ onLogout }: LayoutProps) {
           ))}
         </nav>
         <div class="sidebar-footer">
-          <button onClick={handleLogout}>Sign Out</button>
+          <button type="button" onClick={handleLogout}>Sign Out</button>
         </div>
       </aside>
       <main class="main-content">

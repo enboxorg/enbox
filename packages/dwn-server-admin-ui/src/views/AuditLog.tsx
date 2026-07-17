@@ -139,7 +139,7 @@ export function AuditLog({ path }: { path?: string }) {
           <span class="info">
             Showing {entries.length} entries{total === undefined ? '' : ` of ${total}`}
           </span>
-          <button class="btn" onClick={() => fetchAudit(true)} disabled={loadingMore}>
+          <button type="button" class="btn" onClick={() => fetchAudit(true)} disabled={loadingMore}>
             {loadingMore ? 'Loading...' : 'Load More'}
           </button>
         </div>
@@ -191,7 +191,7 @@ export function AuditLog({ path }: { path?: string }) {
               }
             />
           </div>
-          <button class="btn btn-primary" onClick={handleApplyFilters} style="height:34px">
+          <button type="button" class="btn btn-primary" onClick={handleApplyFilters} style="height:34px">
             Apply Filters
           </button>
         </div>

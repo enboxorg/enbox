@@ -231,6 +231,7 @@ function TenantList() {
           </div>
           {sort && (
             <button
+              type="button"
               class="btn btn-sm"
               onClick={() => setOrder(order === 'asc' ? 'desc' : 'asc')}
               title={order === 'asc' ? 'Ascending' : 'Descending'}
@@ -301,6 +302,7 @@ function TenantList() {
               </div>
               <div style="display:flex;gap:8px">
                 <button
+                  type="button"
                   class="btn btn-sm"
                   disabled={prevCursors.length === 0}
                   onClick={() => {
@@ -313,6 +315,7 @@ function TenantList() {
                   Previous
                 </button>
                 <button
+                  type="button"
                   class="btn btn-sm"
                   disabled={!nextCursor}
                   onClick={() => {
@@ -424,6 +427,7 @@ function MessageBrowser({ did }: { did: string }) {
         </div>
         {(filterInterface || filterMethod || filterProtocol) && (
           <button
+            type="button"
             class="btn btn-sm"
             onClick={() => { setFilterInterface(''); setFilterMethod(''); setFilterProtocol(''); }}
           >
@@ -486,6 +490,7 @@ function MessageBrowser({ did }: { did: string }) {
             </div>
             <div style="display:flex;gap:8px">
               <button
+                type="button"
                 class="btn btn-sm"
                 disabled={prevCursors.length === 0}
                 onClick={() => {
@@ -498,6 +503,7 @@ function MessageBrowser({ did }: { did: string }) {
                 Previous
               </button>
               <button
+                type="button"
                 class="btn btn-sm"
                 disabled={!nextCursor}
                 onClick={() => {
@@ -612,6 +618,7 @@ function TenantDetail({ did }: { did: string }) {
       {/* Actions */}
       <div style="display:flex;gap:8px;margin-bottom:16px">
         <button
+          type="button"
           class={`btn btn-sm ${tenant?.suspended ? 'btn-primary' : ''}`}
           disabled={actionLoading}
           onClick={handleSuspend}
@@ -619,6 +626,7 @@ function TenantDetail({ did }: { did: string }) {
           {tenant?.suspended ? 'Unsuspend' : 'Suspend'}
         </button>
         <button
+          type="button"
           class="btn btn-sm btn-danger"
           disabled={actionLoading}
           onClick={handleDelete}
