@@ -1,5 +1,6 @@
 import type { SinonStub } from 'sinon';
 
+import type { SyncMessageEntry } from '../src/sync-messages.js';
 import type { SyncQuotaManagerOperations } from '../src/sync-quota-manager.js';
 import type { SyncTarget } from '../src/sync-target-resolver.js';
 import type { SyncQuotaBlockState, SyncQuotaStore } from '../src/sync-quota-store.js';
@@ -17,6 +18,7 @@ type SyncQuotaOperationStubs = {
 type SyncQuotaManagerHarness = {
   manager: SyncQuotaManager;
   operations: SyncQuotaOperationStubs;
+  store: MemoryQuotaStore;
 };
 
 type Deferred<T> = {
@@ -142,6 +144,80 @@ describe('SyncQuotaManager', () => {
     expect(await manager.getState(target(), 'cid-1')).toBeUndefined();
   });
 
+  it('abandons a probe when topology changes during the root-message lookup', async () => {
+    const lookupStarted = deferred<void>();
+    const releaseLookup = deferred<void>();
+    const { manager, operations } = createHarness();
+    let generation = 0;
+    operations.getGeneration.callsFake(() => generation);
+    operations.getLocalMessage.callsFake(async () => {
+      lookupStarted.resolve();
+      await releaseLookup.promise;
+      return undefined;
+    });
+    await manager.recordBlock(target(), 'cid-1', undefined, 'over quota');
+
+    const probing = manager.probeBlocksForTarget(target(), true);
+    await lookupStarted.promise;
+    generation += 1;
+    releaseLookup.resolve();
+    await probing;
+
+    expect(operations.pushMessages.called).toBe(false);
+    expect(operations.pushEntries.called).toBe(false);
+    expect(await manager.getState(target(), 'cid-1')).toBeDefined();
+  });
+
+  it('abandons a probe when topology changes during the dependency lookup', async () => {
+    const dependencyLookupStarted = deferred<void>();
+    const releaseDependencyLookup = deferred<void>();
+    const { manager, operations } = createHarness();
+    let generation = 0;
+    operations.getGeneration.callsFake(() => generation);
+    operations.getLocalMessage.onFirstCall().resolves(messageEntry('root-cid'));
+    operations.getLocalMessage.onSecondCall().callsFake(async () => {
+      dependencyLookupStarted.resolve();
+      await releaseDependencyLookup.promise;
+      return messageEntry('dependency-cid');
+    });
+    await manager.recordBlock(target(), 'root-cid', undefined, 'over quota', 'feed', 'dependency-cid');
+
+    const probing = manager.probeBlocksForTarget(target(), true);
+    await dependencyLookupStarted.promise;
+    generation += 1;
+    releaseDependencyLookup.resolve();
+    await probing;
+
+    expect(operations.getLocalMessage.calledTwice).toBe(true);
+    expect(operations.pushMessages.called).toBe(false);
+    expect(operations.pushEntries.called).toBe(false);
+    expect(await manager.getState(target(), 'root-cid')).toBeDefined();
+  });
+
+  it('discards a probe result when topology changes while transport is in flight', async () => {
+    const transportStarted = deferred<void>();
+    const releaseTransport = deferred<void>();
+    const { manager, operations } = createHarness();
+    let generation = 0;
+    operations.getGeneration.callsFake(() => generation);
+    operations.pushMessages.callsFake(async () => {
+      transportStarted.resolve();
+      await releaseTransport.promise;
+      return { failed: [], succeeded: ['cid-1'] };
+    });
+    await manager.recordBlock(target(), 'cid-1', undefined, 'over quota');
+
+    const probing = manager.probeBlocksForTarget(target(), true);
+    await transportStarted.promise;
+    generation += 1;
+    releaseTransport.resolve();
+    await probing;
+
+    expect(await manager.getState(target(), 'cid-1')).toBeDefined();
+    expect(operations.clearFailedMessage.called).toBe(false);
+    expect(operations.onQuotaCleared.called).toBe(false);
+  });
+
   it('rechecks topology generation before atomically pruning stale link rows', async () => {
     const { manager } = createHarness();
     const current = target();
@@ -175,6 +251,39 @@ describe('SyncQuotaManager', () => {
     operations.collectRemoteFeedCids.resolves(new Set(['unexpected-remote-cid']));
     expect(await manager.isFeedDivergenceExplained(target(), {})).toBe(false);
   });
+
+  it('uses the earliest feed probe and latest grant probe when folding a target schedule', async () => {
+    const { manager, store } = createHarness();
+    const states = await Promise.all([
+      manager.recordBlock(target(), 'feed-early', undefined, undefined),
+      manager.recordBlock(target(), 'feed-late', undefined, undefined),
+      manager.recordBlock(target(), 'grant-early', undefined, undefined, 'permission-grant'),
+      manager.recordBlock(target(), 'grant-late', undefined, undefined, 'permission-grant'),
+    ]);
+    const nextProbeAts = [
+      '2026-01-01T00:04:00.000Z',
+      '2026-01-01T00:10:00.000Z',
+      '2026-01-01T00:01:00.000Z',
+      '2026-01-01T00:07:00.000Z',
+    ];
+    await Promise.all(states.map((state, index) => store.put({
+      ...state,
+      nextProbeAt: nextProbeAts[index],
+    })));
+
+    expect(await manager.getNextProbeAtForTarget(target())).toBe('2026-01-01T00:04:00.000Z');
+  });
+
+  it('treats a feed reconciled to no quota rows as converged when inventories match', async () => {
+    const { manager, operations } = createHarness();
+    await manager.recordBlock(target(), 'retired-cid', undefined, undefined);
+    operations.collectLocalFeedCids.resolves(new Set());
+    operations.collectRemoteFeedCids.resolves(new Set());
+
+    expect(await manager.isFeedDivergenceExplained(target(), {})).toBe(true);
+    expect(await manager.getStatesForTarget(target())).toEqual([]);
+    expect(operations.onQuotaCleared.calledOnceWith(target(), 'retired-cid', 'superseded')).toBe(true);
+  });
 });
 
 function createHarness(): SyncQuotaManagerHarness {
@@ -183,6 +292,7 @@ function createHarness(): SyncQuotaManagerHarness {
   return {
     manager: new SyncQuotaManager({ operations, store }),
     operations,
+    store,
   };
 }
 
@@ -217,6 +327,19 @@ function deferred<T>(): Deferred<T> {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((res) => { resolve = res; });
   return { promise, resolve };
+}
+
+function messageEntry(recordId: string): SyncMessageEntry {
+  return {
+    message: {
+      descriptor: {
+        interface        : 'Records',
+        messageTimestamp : '2026-01-01T00:00:00.000Z',
+        method           : 'Delete',
+      },
+      recordId,
+    } as SyncMessageEntry['message'],
+  };
 }
 
 class MemoryQuotaStore implements SyncQuotaStore {
