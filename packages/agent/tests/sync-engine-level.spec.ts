@@ -4085,30 +4085,58 @@ describe('SyncEngineLevel', () => {
           link.status = 'live';
           const controller = syncEngine['activateLink'](linkKey, link);
 
-          // Schedule a reconcile (sets a timer).
-          const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
-          syncEngine['scheduleReconcile'](linkKey, 500);
+          const reconcileSpy = sinon.spy(syncEngine as any, 'reconcileLink');
+          const timerSpy = sinon.spy(globalThis, 'setTimeout');
+          syncEngine['scheduleReconcile'](linkKey, 60_000);
+          const staleTimerCallback = timerSpy.firstCall.args[0] as () => void;
+          timerSpy.restore();
+
           expect(controller.reconcileTimer).toBeDefined();
 
-          // Hot-remove clears the timer.
           await syncEngine['removeIdentityFromLiveSync'](did);
           expect(controller.reconcileTimer).toBeUndefined();
 
-          // Even if a stale timer fires, the controller lifetime guard prevents execution.
-          const reconcileSpy = sinon.spy(syncEngine as any, 'reconcileLink');
-
-          const staleGeneration = syncEngine['_engineGeneration'];
-          clock.setTimeout((): void => {
-            if (syncEngine['_engineGeneration'] !== staleGeneration) { return; }
-            if (!controller.isActive) { return; }
-            syncEngine['reconcileLink'](controller);
-          }, 500);
-
-          await clock.tickAsync(600);
+          staleTimerCallback();
+          await Promise.resolve();
 
           expect(reconcileSpy.called).toBe(false);
+        });
 
-          clock.restore();
+        it('should not retry repair when a stale repair timer fires after hot-remove', async () => {
+          const did = alice.did.uri;
+
+          await syncEngine.registerIdentity({ did, options: { protocols: 'all' } });
+          syncEngine['_syncMode'] = 'live';
+
+          const ledger = syncEngine['ledger'];
+          const link = await ledger.getOrCreateLink({
+            tenantDid      : did,
+            remoteEndpoint : testDwnUrls[0],
+            scope          : { kind: 'full' },
+            ...ownerAuthorization,
+          });
+          const linkKey = linkKeyFor(did, testDwnUrls[0], link);
+          link.status = 'repairing';
+          const controller = syncEngine['activateLink'](linkKey, link);
+          controller.incrementRepairAttempts();
+          controller.incrementRepairAttempts();
+          controller.incrementRepairAttempts();
+
+          const repairSpy = sinon.spy(syncEngine as any, 'repairLink');
+          const timerSpy = sinon.spy(globalThis, 'setTimeout');
+          syncEngine['scheduleRepairRetry'](controller);
+          const staleTimerCallback = timerSpy.firstCall.args[0] as () => void;
+          timerSpy.restore();
+
+          expect(controller.repairRetryTimer).toBeDefined();
+
+          await syncEngine['removeIdentityFromLiveSync'](did);
+          expect(controller.repairRetryTimer).toBeUndefined();
+
+          staleTimerCallback();
+          await Promise.resolve();
+
+          expect(repairSpy.called).toBe(false);
         });
       });
 

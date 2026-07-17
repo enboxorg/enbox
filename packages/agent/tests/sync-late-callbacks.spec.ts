@@ -211,7 +211,14 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     await engine.startSync({ mode: 'live', interval: '30s' });
 
     const handler = getLocalHandler();
+    const [controller] = engine['_linkControllers'].values();
     expect(handler).toBeDefined();
+    expect(controller).toBeDefined();
+    if (controller === undefined) {
+      throw new Error('Expected live sync to activate a link controller');
+    }
+
+    const enqueueSpy = sinon.spy(controller, 'getOrCreatePushRuntime');
 
     await engine.stopSync();
 
@@ -221,7 +228,8 @@ describe('SyncEngineLevel late subscription callbacks', () => {
       event  : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
     });
 
-    expect([...engine['_linkControllers'].values()].every(controller => controller.pushRuntime === undefined)).toBe(true);
+    expect(enqueueSpy.called).toBe(false);
+    expect(controller.pushRuntime).toBeUndefined();
   });
 
   it('should close a remote subscription that resolves after its link lifetime ends', async () => {

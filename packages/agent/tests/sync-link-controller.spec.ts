@@ -62,8 +62,24 @@ describe('SyncLinkController', () => {
     controller.clearPullInflight();
     const next = controller.startPullDelivery(token(2));
 
+    expect(next).toBe(1);
     expect(controller.commitPullDelivery(next, token(2))).toBe(1);
     expect(link.pull.contiguousAppliedToken).toEqual(token(2));
+  });
+
+  it('should restart pull delivery ordering when the runtime is reset', () => {
+    const link = createLink();
+    const controller = new SyncLinkController('link-key', link);
+    controller.startPullDelivery(token(1));
+    controller.startPullDelivery(token(2));
+
+    controller.resetPullRuntime();
+    const next = controller.startPullDelivery(token(3));
+
+    expect(next).toBe(0);
+    expect(controller.pullInflightCount).toBe(1);
+    expect(controller.commitPullDelivery(next, token(3))).toBe(1);
+    expect(link.pull.contiguousAppliedToken).toEqual(token(3));
   });
 
   it('should not let an old push batch clear or consume a replacement queue', () => {
@@ -89,6 +105,32 @@ describe('SyncLinkController', () => {
     expect(controller.pushRuntime?.timer).toBe(replacementTimer);
 
     controller.clearPushRuntime(replacement);
+  });
+
+  it('should reject and cancel push timers for stale or inactive runtimes', async () => {
+    const clock = sinon.useFakeTimers();
+    const controller = new SyncLinkController('link-key', createLink());
+    const fired = sinon.stub();
+    const stale = controller.getOrCreatePushRuntime({
+      did    : 'did:example:alice',
+      dwnUrl : 'https://dwn.example.com',
+    });
+    controller.clearPushRuntime(stale);
+    const current = controller.getOrCreatePushRuntime({
+      did    : 'did:example:alice',
+      dwnUrl : 'https://dwn.example.com',
+    });
+
+    const staleTimer = setTimeout(fired, 10) as unknown as SyncLinkTimer;
+    expect(controller.setPushTimer(stale, staleTimer)).toBe(false);
+
+    controller.deactivate();
+    const inactiveTimer = setTimeout(fired, 10) as unknown as SyncLinkTimer;
+    expect(controller.setPushTimer(current, inactiveTimer)).toBe(false);
+
+    await clock.tickAsync(10);
+
+    expect(fired.called).toBe(false);
   });
 
   it('should own and close both link subscriptions even when one close fails', async () => {

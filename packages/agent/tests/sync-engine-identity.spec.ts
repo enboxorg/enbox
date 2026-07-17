@@ -628,6 +628,7 @@ describe('SyncEngineLevel — identity management', () => {
       await (engine as any).removeIdentityFromLiveSync('did:example:alice');
 
       expect(aliceController.reconcileTimer).toBeUndefined();
+      expect(aliceController.reconcileInFlight).toBeUndefined();
       expect(bobController.reconcileTimer).toBeDefined();
       expect((engine as any)._linkControllers.has(aliceController.linkKey)).toBe(false);
 
