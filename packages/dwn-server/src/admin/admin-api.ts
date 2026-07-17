@@ -1,5 +1,6 @@
 import type * as SimpleWebAuthnServer from '@simplewebauthn/server';
 import type { ActivityLog } from './activity-log.js';
+import type { AdminAuthResult } from './admin-auth.js';
 import type { AdminPasskeyStore } from './admin-passkey-store.js';
 import type { AdminSessionManager } from './admin-session.js';
 import type { AdminStore } from './admin-store.js';
@@ -194,191 +195,310 @@ export class AdminApi {
     }
 
     try {
-      // --- Passkey management (authenticated) ---
-      // Registration requires static token auth (not session auth).
-      if (subPath === '/passkeys/register/options' && method === 'POST') {
-        if (authResult.authMethod !== 'token') {
-          return Response.json({ error: 'Passkey registration requires static token authentication.' }, { status: 403 });
-        }
-        return this.#handlePasskeyRegisterOptions(req);
-      }
-      if (subPath === '/passkeys/register/verify' && method === 'POST') {
-        if (authResult.authMethod !== 'token') {
-          return Response.json({ error: 'Passkey registration requires static token authentication.' }, { status: 403 });
-        }
-        return this.#handlePasskeyRegisterVerify(req);
-      }
-      if (subPath === '/passkeys' && method === 'GET') {
-        return this.#handlePasskeyList();
-      }
-      {
-        const match = /^\/passkeys\/([^/]+)$/.exec(subPath);
-        if (match && method === 'DELETE') {
-          if (authResult.authMethod !== 'token') {
-            return Response.json({ error: 'Passkey deletion requires static token authentication.' }, { status: 403 });
-          }
-          return this.#handlePasskeyDelete(match[1]);
-        }
-      }
-
-      // --- Health ---
-      if (method === 'GET' && subPath === '/health') {
-        return this.#handleHealth();
-      }
-
-      // --- Stats ---
-      if (method === 'GET' && subPath === '/stats') {
-        return this.#handleStats(url);
-      }
-
-      // --- Tenant list ---
-      if (method === 'GET' && subPath === '/tenants') {
-        return this.#handleTenantList(url);
-      }
-
-      // --- Tenant creation ---
-      if (method === 'POST' && subPath === '/tenants') {
-        return this.#handleTenantCreate(req);
-      }
-
-      // --- Tenant detail / suspend / unsuspend / delete ---
-      {
-        const match = /^\/tenants\/([^/]+)$/.exec(subPath);
-        if (match) {
-          const did = decodeURIComponent(match[1]);
-          if (method === 'GET') {
-            return this.#handleTenantDetail(did);
-          }
-          if (method === 'DELETE') {
-            const purge = url.searchParams.get('purge') === 'true';
-            return this.#handleTenantDelete(did, purge);
-          }
-        }
-      }
-
-      // --- Tenant suspend ---
-      {
-        const match = /^\/tenants\/([^/]+)\/suspend$/.exec(subPath);
-        if (match && method === 'POST') {
-          const did = decodeURIComponent(match[1]);
-          return this.#handleTenantSuspend(did);
-        }
-      }
-
-      // --- Tenant unsuspend ---
-      {
-        const match = /^\/tenants\/([^/]+)\/unsuspend$/.exec(subPath);
-        if (match && method === 'POST') {
-          const did = decodeURIComponent(match[1]);
-          return this.#handleTenantUnsuspend(did);
-        }
-      }
-
-      // --- Tenant quota ---
-      {
-        const match = /^\/tenants\/([^/]+)\/quota$/.exec(subPath);
-        if (match) {
-          const did = decodeURIComponent(match[1]);
-          if (method === 'GET') {
-            return this.#handleQuotaGet(did);
-          }
-          if (method === 'PUT') {
-            return this.#handleQuotaSet(did, req);
-          }
-          if (method === 'DELETE') {
-            return this.#handleQuotaDelete(did);
-          }
-        }
-      }
-
-      // --- Tenant messages browser ---
-      {
-        const match = /^\/tenants\/([^/]+)\/messages$/.exec(subPath);
-        if (match && method === 'GET') {
-          const did = decodeURIComponent(match[1]);
-          return this.#handleTenantMessages(did, url);
-        }
-      }
-
-      // --- Tenant protocols ---
-      {
-        const match = /^\/tenants\/([^/]+)\/protocols$/.exec(subPath);
-        if (match && method === 'GET') {
-          const did = decodeURIComponent(match[1]);
-          return this.#handleTenantProtocols(did);
-        }
-      }
-
-      // --- Tenant data export ---
-      {
-        const match = /^\/tenants\/([^/]+)\/export$/.exec(subPath);
-        if (match && method === 'POST') {
-          const did = decodeURIComponent(match[1]);
-          return this.#handleTenantExport(did);
-        }
-      }
-
-      // --- Rate limits ---
-      if (method === 'GET' && subPath === '/rate-limits') {
-        return this.#handleRateLimits();
-      }
-
-      // --- Audit log ---
-      if (method === 'GET' && subPath === '/audit') {
-        return this.#handleAudit(url);
-      }
-
-      // --- Runtime config ---
-      if (subPath === '/config') {
-        if (method === 'GET') {
-          return this.#handleConfigGet();
-        }
-        if (method === 'PATCH') {
-          return this.#handleConfigPatch(req);
-        }
-      }
-
-      // --- Activity events ---
-      if (method === 'GET' && subPath === '/events') {
-        return this.#handleEvents(url);
-      }
-
-      // --- WebSocket connections ---
-      if (method === 'GET' && subPath === '/connections') {
-        return this.#handleConnections();
-      }
-
-      // --- Webhooks ---
-      if (subPath === '/webhooks') {
-        if (method === 'GET') {
-          return this.#handleWebhookList();
-        }
-        if (method === 'POST') {
-          return this.#handleWebhookCreate(req);
-        }
-      }
-
-      // --- Webhook delete ---
-      {
-        const match = /^\/webhooks\/([^/]+)$/.exec(subPath);
-        if (match && method === 'DELETE') {
-          return this.#handleWebhookDelete(match[1]);
-        }
-      }
-
-      // --- Info (smoke test) ---
-      if (method === 'GET' && subPath === '/info') {
-        return Response.json({
-          adminApi : true,
-          uptime   : Math.floor((Date.now() - this.#startTime) / 1000),
-        });
-      }
-
-      return new Response('Not Found', { status: 404 });
+      return await this.#dispatchAuthenticatedRoutes(req, url, subPath, method, authResult);
     } catch (error) {
       log.error('Admin API error:', error);
       return Response.json({ error: 'Internal server error' }, { status: 500 });
     }
+  }
+
+  /**
+   * Dispatches an authenticated admin API request to its matching route group.
+   * Groups are checked in the exact order the individual routes were originally
+   * checked, so route match order is unchanged.
+   */
+  async #dispatchAuthenticatedRoutes(
+    req: Request, url: URL, subPath: string, method: string, authResult: AdminAuthResult,
+  ): Promise<Response> {
+    // --- Passkey management ---
+    const passkeyResult = await this.#matchPasskeyManagementRoutes(req, subPath, method, authResult);
+    if (passkeyResult) {
+      return passkeyResult;
+    }
+
+    // --- Health / stats ---
+    const healthAndStatsResult = await this.#matchHealthAndStatsRoutes(url, subPath, method);
+    if (healthAndStatsResult) {
+      return healthAndStatsResult;
+    }
+
+    // --- Tenant management (list / create / detail / suspend / unsuspend / quota / messages / protocols / export) ---
+    const tenantResult = await this.#matchTenantRoutes(req, url, subPath, method);
+    if (tenantResult) {
+      return tenantResult;
+    }
+
+    // --- Rate limits / audit log ---
+    const rateLimitAndAuditResult = await this.#matchRateLimitAndAuditRoutes(url, subPath, method);
+    if (rateLimitAndAuditResult) {
+      return rateLimitAndAuditResult;
+    }
+
+    // --- Runtime config ---
+    const configResult = await this.#matchConfigRoutes(subPath, method, req);
+    if (configResult) {
+      return configResult;
+    }
+
+    // --- Activity events / WebSocket connections ---
+    const eventsAndConnectionsResult = await this.#matchEventsAndConnectionsRoutes(url, subPath, method);
+    if (eventsAndConnectionsResult) {
+      return eventsAndConnectionsResult;
+    }
+
+    // --- Webhooks / info ---
+    const webhookResult = await this.#matchWebhookRoutes(req, subPath, method);
+    if (webhookResult) {
+      return webhookResult;
+    }
+
+    return new Response('Not Found', { status: 404 });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Route matchers (authenticated)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Matches passkey management routes (registration, listing, deletion).
+   * Registration and deletion require static token auth (not session auth).
+   */
+  async #matchPasskeyManagementRoutes(
+    req: Request, subPath: string, method: string, authResult: AdminAuthResult,
+  ): Promise<Response | null> {
+    if (subPath === '/passkeys/register/options' && method === 'POST') {
+      if (authResult.authMethod !== 'token') {
+        return Response.json({ error: 'Passkey registration requires static token authentication.' }, { status: 403 });
+      }
+      return this.#handlePasskeyRegisterOptions(req);
+    }
+    if (subPath === '/passkeys/register/verify' && method === 'POST') {
+      if (authResult.authMethod !== 'token') {
+        return Response.json({ error: 'Passkey registration requires static token authentication.' }, { status: 403 });
+      }
+      return this.#handlePasskeyRegisterVerify(req);
+    }
+    if (subPath === '/passkeys' && method === 'GET') {
+      return this.#handlePasskeyList();
+    }
+    {
+      const match = /^\/passkeys\/([^/]+)$/.exec(subPath);
+      if (match && method === 'DELETE') {
+        if (authResult.authMethod !== 'token') {
+          return Response.json({ error: 'Passkey deletion requires static token authentication.' }, { status: 403 });
+        }
+        return this.#handlePasskeyDelete(match[1]);
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Matches the health-check and server-stats routes.
+   */
+  async #matchHealthAndStatsRoutes(url: URL, subPath: string, method: string): Promise<Response | null> {
+    // --- Health ---
+    if (method === 'GET' && subPath === '/health') {
+      return this.#handleHealth();
+    }
+
+    // --- Stats ---
+    if (method === 'GET' && subPath === '/stats') {
+      return this.#handleStats(url);
+    }
+
+    return null;
+  }
+
+  /**
+   * Matches the rate-limit status and audit-log routes.
+   */
+  async #matchRateLimitAndAuditRoutes(url: URL, subPath: string, method: string): Promise<Response | null> {
+    // --- Rate limits ---
+    if (method === 'GET' && subPath === '/rate-limits') {
+      return this.#handleRateLimits();
+    }
+
+    // --- Audit log ---
+    if (method === 'GET' && subPath === '/audit') {
+      return this.#handleAudit(url);
+    }
+
+    return null;
+  }
+
+  /**
+   * Matches the activity-events and WebSocket-connections routes.
+   */
+  async #matchEventsAndConnectionsRoutes(url: URL, subPath: string, method: string): Promise<Response | null> {
+    // --- Activity events ---
+    if (method === 'GET' && subPath === '/events') {
+      return this.#handleEvents(url);
+    }
+
+    // --- WebSocket connections ---
+    if (method === 'GET' && subPath === '/connections') {
+      return this.#handleConnections();
+    }
+
+    return null;
+  }
+
+  /**
+   * Matches tenant management routes: list / create / detail / suspend / unsuspend / quota /
+   * messages / protocols / export.
+   */
+  async #matchTenantRoutes(req: Request, url: URL, subPath: string, method: string): Promise<Response | null> {
+    // --- Tenant list ---
+    if (method === 'GET' && subPath === '/tenants') {
+      return this.#handleTenantList(url);
+    }
+
+    // --- Tenant creation ---
+    if (method === 'POST' && subPath === '/tenants') {
+      return this.#handleTenantCreate(req);
+    }
+
+    // --- Tenant detail / suspend / unsuspend / delete ---
+    {
+      const match = /^\/tenants\/([^/]+)$/.exec(subPath);
+      if (match) {
+        const did = decodeURIComponent(match[1]);
+        if (method === 'GET') {
+          return this.#handleTenantDetail(did);
+        }
+        if (method === 'DELETE') {
+          const purge = url.searchParams.get('purge') === 'true';
+          return this.#handleTenantDelete(did, purge);
+        }
+      }
+    }
+
+    // --- Tenant suspend ---
+    {
+      const match = /^\/tenants\/([^/]+)\/suspend$/.exec(subPath);
+      if (match && method === 'POST') {
+        const did = decodeURIComponent(match[1]);
+        return this.#handleTenantSuspend(did);
+      }
+    }
+
+    // --- Tenant unsuspend ---
+    {
+      const match = /^\/tenants\/([^/]+)\/unsuspend$/.exec(subPath);
+      if (match && method === 'POST') {
+        const did = decodeURIComponent(match[1]);
+        return this.#handleTenantUnsuspend(did);
+      }
+    }
+
+    // --- Tenant quota ---
+    const quotaResult = await this.#matchTenantQuotaRoutes(req, subPath, method);
+    if (quotaResult) {
+      return quotaResult;
+    }
+
+    // --- Tenant messages browser ---
+    {
+      const match = /^\/tenants\/([^/]+)\/messages$/.exec(subPath);
+      if (match && method === 'GET') {
+        const did = decodeURIComponent(match[1]);
+        return this.#handleTenantMessages(did, url);
+      }
+    }
+
+    // --- Tenant protocols ---
+    {
+      const match = /^\/tenants\/([^/]+)\/protocols$/.exec(subPath);
+      if (match && method === 'GET') {
+        const did = decodeURIComponent(match[1]);
+        return this.#handleTenantProtocols(did);
+      }
+    }
+
+    // --- Tenant data export ---
+    {
+      const match = /^\/tenants\/([^/]+)\/export$/.exec(subPath);
+      if (match && method === 'POST') {
+        const did = decodeURIComponent(match[1]);
+        return this.#handleTenantExport(did);
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Matches the tenant quota sub-routes (`GET`/`PUT`/`DELETE` on `/tenants/:did/quota`).
+   */
+  async #matchTenantQuotaRoutes(req: Request, subPath: string, method: string): Promise<Response | null> {
+    const match = /^\/tenants\/([^/]+)\/quota$/.exec(subPath);
+    if (!match) {
+      return null;
+    }
+
+    const did = decodeURIComponent(match[1]);
+    if (method === 'GET') {
+      return this.#handleQuotaGet(did);
+    }
+    if (method === 'PUT') {
+      return this.#handleQuotaSet(did, req);
+    }
+    if (method === 'DELETE') {
+      return this.#handleQuotaDelete(did);
+    }
+
+    return null;
+  }
+
+  /**
+   * Matches runtime config routes (`GET`/`PATCH` on `/config`).
+   */
+  async #matchConfigRoutes(subPath: string, method: string, req: Request): Promise<Response | null> {
+    if (subPath === '/config') {
+      if (method === 'GET') {
+        return this.#handleConfigGet();
+      }
+      if (method === 'PATCH') {
+        return this.#handleConfigPatch(req);
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Matches webhook routes (list / create / delete) and the `/info` smoke-test route.
+   */
+  async #matchWebhookRoutes(req: Request, subPath: string, method: string): Promise<Response | null> {
+    // --- Webhooks ---
+    if (subPath === '/webhooks') {
+      if (method === 'GET') {
+        return this.#handleWebhookList();
+      }
+      if (method === 'POST') {
+        return this.#handleWebhookCreate(req);
+      }
+    }
+
+    // --- Webhook delete ---
+    {
+      const match = /^\/webhooks\/([^/]+)$/.exec(subPath);
+      if (match && method === 'DELETE') {
+        return this.#handleWebhookDelete(match[1]);
+      }
+    }
+
+    // --- Info (smoke test) ---
+    if (method === 'GET' && subPath === '/info') {
+      return Response.json({
+        adminApi : true,
+        uptime   : Math.floor((Date.now() - this.#startTime) / 1000),
+      });
+    }
+
+    return null;
   }
 
   // ---------------------------------------------------------------------------
