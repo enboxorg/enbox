@@ -106,6 +106,16 @@ export class ProtocolAuthorization {
     incomingMessage: RecordsWrite,
     validationStateReader: ValidationStateReader,
   ): Promise<void> {
+    // Encryption control records live at reserved virtual paths and are admitted through
+    // `EncryptionControl` validation (see `validateReferentialIntegrity()`), never against the
+    // app definition's structure — judging them against rule sets that by construction cannot
+    // contain their paths would purge valid key material. They are instead revalidated in
+    // their own domain: only removal of the role path they provision can invalidate them.
+    if (isEncryptionControlPath(incomingMessage.message.descriptor.protocolPath)) {
+      await EncryptionControl.validateStoredControlRecord(tenant, incomingMessage.message, validationStateReader);
+      return;
+    }
+
     await ProtocolAuthorization.verifyStoredInitialWrite(incomingMessage);
 
     const protocolDefinitionTimestamp = incomingMessage.message.descriptor.messageTimestamp;

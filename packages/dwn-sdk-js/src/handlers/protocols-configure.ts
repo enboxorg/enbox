@@ -20,6 +20,7 @@ import { getRuleSetAtPath, getTypeName, parseCrossProtocolRef } from '../utils/p
 type StoredInitialWriteConfigValidity = 'valid' | 'invalid' | 'unknown';
 
 const STORED_INITIAL_WRITE_CONFIG_INVALID_CODES = new Set<string>([
+  DwnErrorCode.EncryptionControlValidateAudienceRolePathInvalid,
   DwnErrorCode.ProtocolAuthorizationEncryptionRequired,
   DwnErrorCode.ProtocolAuthorizationIncorrectDataFormat,
   DwnErrorCode.ProtocolAuthorizationInitialWriteRevalidationNotInitial,
