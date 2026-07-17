@@ -482,7 +482,9 @@ export class HttpApi {
         headers: { 'content-type': register.contentType },
       });
     } catch (e) {
-      return new Response(String(e), { status: 500 });
+      // Do not leak internal error details (e.g. stack traces) to the client.
+      log.error('Failed to collect Prometheus metrics:', e);
+      return new Response('Internal Server Error', { status: 500 });
     }
   }
 
