@@ -1,5 +1,8 @@
 import type { BearerIdentity } from '../src/bearer-identity.js';
+import type { ReplicationLinkState } from '../src/types/sync.js';
+import type { SyncDurableFeedReconcileResult } from '../src/sync-durable-feed-reconciler.js';
 import type { SyncIdentityOptions } from '../src/index.js';
+import type { SyncTarget } from '../src/sync-target-resolver.js';
 import type { GenericMessage, ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
@@ -3689,6 +3692,135 @@ describe('SyncEngineLevel', () => {
         }
       });
 
+    });
+
+    describe('feed convergence wiring', () => {
+      const feedDivergence = (
+        localFingerprint = 'local-fingerprint',
+        remoteFingerprint = 'remote-fingerprint',
+      ): SyncDurableFeedReconcileResult => ({
+        converged          : false,
+        hasActionableDiffs : true,
+        localFingerprint,
+        pushFailures       : [],
+        remoteFingerprint,
+      });
+
+      const createConvergenceTarget = async (did: string): Promise<{
+        link: ReplicationLinkState;
+        linkKey: string;
+        target: SyncTarget;
+      }> => {
+        const dwnUrl = testDwnUrls[0];
+        const link = await syncEngine['ledger'].getOrCreateLink({
+          tenantDid          : did,
+          remoteEndpoint     : dwnUrl,
+          scope              : { kind: 'full' },
+          authorization      : { kind: 'owner' },
+          authorizationEpoch : 'owner-epoch',
+        });
+        const linkKey = `${did}^${dwnUrl}^${link.projectionId}^${link.authorizationEpoch}`;
+        const target: SyncTarget = {
+          authorization      : { kind: 'owner' },
+          authorizationEpoch : 'owner-epoch',
+          did,
+          dwnUrl,
+          projectionId       : link.projectionId,
+          scope              : { kind: 'full' },
+        };
+        return { link, linkKey, target };
+      };
+
+      it('should schedule the next quota probe on the live link when verified divergence is quota-explained', async () => {
+        const { link, linkKey, target } = await createConvergenceTarget(alice.did.uri);
+        link.status = 'live';
+        syncEngine['activateLink'](linkKey, link);
+
+        sinon.stub(syncEngine as any, 'isFeedDivergenceExplainedByQuotaBlocks').resolves(true);
+        sinon.stub(syncEngine as any, 'getNextQuotaProbeAtForTarget').resolves('2026-01-01T00:01:00.000Z');
+        const probeStub = sinon.stub(syncEngine as any, 'scheduleQuotaProbeForActiveLink');
+
+        const explained = await syncEngine['_feedConvergenceManager'].handleVerifiedDivergence(target, feedDivergence());
+
+        expect(explained).toBe(true);
+        expect(probeStub.calledOnceWithExactly(linkKey, link, '2026-01-01T00:01:00.000Z')).toBe(true);
+      });
+
+      it('should reset durable checkpoints and reconcile the live link until identical mismatches pause it', async () => {
+        const { link, linkKey, target } = await createConvergenceTarget(alice.did.uri);
+        link.status = 'live';
+        link.pull.receivedToken = { epoch: 'epoch-1', messageCid: 'bafy-checkpoint', position: '5', streamId: 'pull-stream' };
+        await syncEngine['ledger'].persistCheckpoint(link, 'pull');
+        syncEngine['activateLink'](linkKey, link);
+
+        sinon.stub(syncEngine as any, 'isFeedDivergenceExplainedByQuotaBlocks').resolves(false);
+        const reconcileStub = sinon.stub(syncEngine as any, 'scheduleLinkReconcile');
+        const pauseStub = sinon.stub(syncEngine as any, 'transitionToPaused').resolves();
+        await syncEngine['_deadLetterStore'].put({
+          category       : 'admit-failed',
+          errorDetail    : 'admission failed',
+          failedAt       : '2026-01-01T00:00:00.000Z',
+          messageCid     : 'bafy-admit-failed',
+          remoteEndpoint : target.dwnUrl,
+          tenantDid      : target.did,
+        });
+
+        await syncEngine['_feedConvergenceManager'].handleVerifiedDivergence(target, feedDivergence());
+        await syncEngine['_feedConvergenceManager'].handleVerifiedDivergence(target, feedDivergence());
+
+        const persisted = await createConvergenceTarget(alice.did.uri);
+        expect(link.pull.receivedToken).toBeUndefined();
+        expect(persisted.link.pull.receivedToken).toBeUndefined();
+        expect(reconcileStub.calledTwice).toBe(true);
+        expect(reconcileStub.alwaysCalledWithExactly(linkKey, link, 'feed-fingerprint-mismatch', 0)).toBe(true);
+        expect(pauseStub.notCalled).toBe(true);
+
+        // A new admission dead letter for this remote changes the failure
+        // signature, so the attempt count restarts instead of pausing.
+        await syncEngine['_deadLetterStore'].put({
+          category       : 'admit-failed',
+          errorDetail    : 'admission failed',
+          failedAt       : '2026-01-01T00:02:00.000Z',
+          messageCid     : 'bafy-admit-failed-2',
+          remoteEndpoint : target.dwnUrl,
+          tenantDid      : target.did,
+        });
+        await syncEngine['_feedConvergenceManager'].handleVerifiedDivergence(target, feedDivergence());
+        await syncEngine['_feedConvergenceManager'].handleVerifiedDivergence(target, feedDivergence());
+        expect(pauseStub.notCalled).toBe(true);
+
+        await syncEngine['_feedConvergenceManager'].handleVerifiedDivergence(target, feedDivergence());
+        expect(pauseStub.calledOnceWithExactly(linkKey, link)).toBe(true);
+        expect(reconcileStub.callCount).toBe(4);
+      });
+
+      it('should scope cleared mismatch state to the removed identity through engine link keys', async () => {
+        const aliceContext = await createConvergenceTarget(alice.did.uri);
+        const bobContext = await createConvergenceTarget('did:example:bob');
+        const manager = syncEngine['_feedConvergenceManager'];
+
+        sinon.stub(syncEngine as any, 'isFeedDivergenceExplainedByQuotaBlocks').resolves(false);
+        const pauseStub = sinon.stub(syncEngine as any, 'transitionToPaused').resolves();
+
+        await manager.handleVerifiedDivergence(aliceContext.target, feedDivergence());
+        await manager.handleVerifiedDivergence(aliceContext.target, feedDivergence());
+        await manager.handleVerifiedDivergence(bobContext.target, feedDivergence());
+        await manager.handleVerifiedDivergence(bobContext.target, feedDivergence());
+
+        syncEngine['clearIdentityRuntimeState'](alice.did.uri);
+
+        // Alice's attempt count restarted after identity cleanup; Bob's did not.
+        await manager.handleVerifiedDivergence(aliceContext.target, feedDivergence());
+        expect(pauseStub.notCalled).toBe(true);
+
+        await manager.handleVerifiedDivergence(bobContext.target, feedDivergence());
+        expect(pauseStub.calledOnce).toBe(true);
+        expect(pauseStub.firstCall.args[0]).toBe(bobContext.linkKey);
+
+        manager.clearLink(bobContext.linkKey);
+        await manager.handleVerifiedDivergence(bobContext.target, feedDivergence());
+        expect(pauseStub.calledOnce).toBe(true);
+      });
     });
 
     // -----------------------------------------------------------------------
