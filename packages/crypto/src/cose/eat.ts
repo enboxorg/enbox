@@ -267,15 +267,38 @@ export class Eat {
    * @throws {CryptoError} If the payload is not valid CBOR or not a map.
    */
   private static parseClaims(payload: Uint8Array): EatClaims {
-    let rawClaims: Map<number | string, unknown>;
+    const rawClaims = Eat.decodeRawClaims(payload);
 
+    const claims: EatClaims = { rawClaims };
+
+    // Extract standard CWT claims.
+    Eat.applyCwtClaims(rawClaims, claims);
+
+    // Extract EAT-specific claims.
+    Eat.applyEatSpecificClaims(rawClaims, claims);
+
+    return claims;
+  }
+
+  /**
+   * Decodes the CBOR-encoded EAT payload into a label-keyed claims Map.
+   *
+   * Handles both integer-keyed (CBOR standard) and string-keyed claims: the `cborg` library
+   * decodes CBOR maps as JavaScript `Map` instances, but some encoders produce plain objects
+   * instead of Maps for maps with string keys.
+   *
+   * @param payload - The CBOR-encoded claims byte string.
+   * @returns The raw claims Map.
+   * @throws {CryptoError} If the payload is not valid CBOR or not a map.
+   */
+  private static decodeRawClaims(payload: Uint8Array): Map<number | string, unknown> {
     try {
       const decoded = Cbor.decode<unknown>(payload);
       if (decoded instanceof Map) {
-        rawClaims = decoded as Map<number | string, unknown>;
+        return decoded as Map<number | string, unknown>;
       } else if (typeof decoded === 'object' && decoded !== null) {
         // Some encoders produce plain objects instead of Maps for maps with string keys.
-        rawClaims = new Map(Object.entries(decoded));
+        return new Map(Object.entries(decoded));
       } else {
         throw new Error('not a map');
       }
@@ -288,10 +311,13 @@ export class Eat {
         'Eat: payload is not a valid CBOR map'
       );
     }
+  }
 
-    const claims: EatClaims = { rawClaims };
-
-    // Extract standard CWT claims.
+  /**
+   * Extracts the standard CWT registered claims (iss, sub, aud, exp, nbf, iat, cti) from the raw
+   * claims Map onto the given {@link EatClaims} object.
+   */
+  private static applyCwtClaims(rawClaims: Map<number | string, unknown>, claims: EatClaims): void {
     const iss = rawClaims.get(EatClaimKey.Iss);
     if (iss !== undefined) {
       claims.iss = iss as string;
@@ -326,8 +352,13 @@ export class Eat {
     if (cti !== undefined) {
       claims.cti = cti as Uint8Array;
     }
+  }
 
-    // Extract EAT-specific claims.
+  /**
+   * Extracts the EAT-specific claims (nonce, ueid, hwmodel, hwversion, dbgstat, measres,
+   * submods) from the raw claims Map onto the given {@link EatClaims} object.
+   */
+  private static applyEatSpecificClaims(rawClaims: Map<number | string, unknown>, claims: EatClaims): void {
     const nonce = rawClaims.get(EatClaimKey.Nonce);
     if (nonce !== undefined) {
       claims.nonce = nonce as Uint8Array | Uint8Array[];
@@ -362,7 +393,5 @@ export class Eat {
     if (submods !== undefined) {
       claims.submods = submods as Map<string, unknown>;
     }
-
-    return claims;
   }
 }

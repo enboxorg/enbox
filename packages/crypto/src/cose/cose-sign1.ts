@@ -273,6 +273,30 @@ export class CoseSign1 {
    * @throws {CryptoError} If the message does not conform to COSE_Sign1 structure.
    */
   public static decode(coseSign1: Uint8Array): CoseSign1Decoded {
+    const decoded = CoseSign1.decodeCborEnvelope(coseSign1);
+
+    const [protectedHeaderBytes, unprotectedHeaderMap, payload, signature] = CoseSign1.extractCoseSign1Array(decoded);
+
+    const protectedHeaderMap = CoseSign1.decodeProtectedHeaderMap(protectedHeaderBytes);
+
+    const protectedHeader = CoseSign1.buildProtectedHeader(protectedHeaderMap);
+
+    return {
+      protectedHeader,
+      protectedHeaderBytes,
+      unprotectedHeader : unprotectedHeaderMap instanceof Map ? unprotectedHeaderMap : new Map(),
+      payload           : payload instanceof Uint8Array ? payload : null,
+      signature,
+    };
+  }
+
+  /**
+   * Decodes the outer CBOR envelope of a COSE_Sign1 message, unwrapping CBOR tag 18 (COSE_Sign1)
+   * if present.
+   *
+   * @throws {CryptoError} If the input is not valid CBOR.
+   */
+  private static decodeCborEnvelope(coseSign1: Uint8Array): unknown {
     let decoded: unknown;
     try {
       decoded = Cbor.decode(coseSign1);
@@ -292,6 +316,18 @@ export class CoseSign1 {
       }
     }
 
+    return decoded;
+  }
+
+  /**
+   * Validates the decoded value is a 4-element COSE_Sign1 CBOR array and that the protected
+   * header and signature elements are byte strings, then destructures the array.
+   *
+   * @throws {CryptoError} If the decoded value is not a well-formed COSE_Sign1 array.
+   */
+  private static extractCoseSign1Array(
+    decoded: unknown
+  ): [Uint8Array, Map<number, unknown>, Uint8Array | null, Uint8Array] {
     // Validate the COSE_Sign1 array structure.
     if (!Array.isArray(decoded) || decoded.length !== 4) {
       throw new CryptoError(
@@ -319,21 +355,37 @@ export class CoseSign1 {
       );
     }
 
-    // Decode the protected header.
-    let protectedHeaderMap: Map<number, unknown>;
+    return [protectedHeaderBytes, unprotectedHeaderMap, payload, signature];
+  }
+
+  /**
+   * Decodes the CBOR-encoded protected header bytes into a label-keyed Map, treating an empty
+   * byte string as an empty protected header.
+   *
+   * @throws {CryptoError} If the protected header bytes are not valid CBOR.
+   */
+  private static decodeProtectedHeaderMap(protectedHeaderBytes: Uint8Array): Map<number, unknown> {
     if (protectedHeaderBytes.length === 0) {
-      protectedHeaderMap = new Map();
-    } else {
-      try {
-        protectedHeaderMap = Cbor.decode<Map<number, unknown>>(protectedHeaderBytes);
-      } catch {
-        throw new CryptoError(
-          CryptoErrorCode.InvalidCoseSign1,
-          'CoseSign1: failed to decode protected header CBOR'
-        );
-      }
+      return new Map();
     }
 
+    try {
+      return Cbor.decode<Map<number, unknown>>(protectedHeaderBytes);
+    } catch {
+      throw new CryptoError(
+        CryptoErrorCode.InvalidCoseSign1,
+        'CoseSign1: failed to decode protected header CBOR'
+      );
+    }
+  }
+
+  /**
+   * Builds the typed {@link CoseSign1ProtectedHeader} from the decoded protected header Map.
+   *
+   * @throws {CryptoError} If the protected header does not contain a numeric algorithm
+   *         identifier (label 1).
+   */
+  private static buildProtectedHeader(protectedHeaderMap: Map<number, unknown>): CoseSign1ProtectedHeader {
     // Extract the algorithm from the protected header.
     const alg = protectedHeaderMap.get(CoseHeaderLabel.Alg);
     if (alg === undefined || typeof alg !== 'number') {
@@ -356,13 +408,7 @@ export class CoseSign1 {
       protectedHeader.kid = kid as Uint8Array;
     }
 
-    return {
-      protectedHeader,
-      protectedHeaderBytes,
-      unprotectedHeader : unprotectedHeaderMap instanceof Map ? unprotectedHeaderMap : new Map(),
-      payload           : payload instanceof Uint8Array ? payload : null,
-      signature,
-    };
+    return protectedHeader;
   }
 
   /**
