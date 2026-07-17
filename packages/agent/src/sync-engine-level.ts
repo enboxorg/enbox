@@ -73,6 +73,7 @@ import { SyncDrainCoordinator } from './sync-drain-coordinator.js';
 import { SyncDurableFeedReconciler } from './sync-durable-feed-reconciler.js';
 import { SyncEchoSuppressor } from './sync-echo-suppressor.js';
 import { SyncEndpointStoreLevel } from './sync-endpoint-store-level.js';
+import { SyncFeedConvergenceManager } from './sync-feed-convergence-manager.js';
 import { SyncIdentityStoreLevel } from './sync-identity-store-level.js';
 import { SyncLifecycleCoordinator } from './sync-lifecycle-coordinator.js';
 import { SyncLinkController } from './sync-link-controller.js';
@@ -122,11 +123,6 @@ enum LinkInitializationStatus {
 type LinkInitializationResult =
   | { status: LinkInitializationStatus.Active; durableLinkIdentityKey: string }
   | { status: LinkInitializationStatus.Failed };
-
-type FeedConvergenceFailureState = {
-  attempts: number;
-  signature: string;
-};
 
 type FeedPushEntryResult =
   | { kind: 'aborted' }
@@ -208,6 +204,7 @@ export class SyncEngineLevel implements SyncEngine {
   private readonly _echoSuppressor = new SyncEchoSuppressor();
   private readonly _endpointStore: SyncEndpointStore;
   private readonly _durableFeedReconciler: SyncDurableFeedReconciler;
+  private readonly _feedConvergenceManager: SyncFeedConvergenceManager;
   private readonly _identityStore: SyncIdentityStore;
   private readonly _lifecycle = new SyncLifecycleCoordinator();
   private readonly _quotaManager: SyncQuotaManager;
@@ -278,12 +275,12 @@ export class SyncEngineLevel implements SyncEngine {
         buildTargetsForEndpoint: (did, remoteEndpoint, options): Promise<SyncTarget[]> =>
           this.targetResolver.buildTargetsForEndpoint(did, remoteEndpoint, options),
         clearFeedConvergenceFailure: (target): Promise<void> =>
-          this.clearFeedConvergenceFailure(target),
+          this._feedConvergenceManager.clear(target),
         getLink                      : (target): Promise<ReplicationLinkState> => this.getOrCreateReplicationLink(target),
         getQuotaBlockCount           : async (target): Promise<number> => (await this.getQuotaBlocksForTarget(target)).length,
         getTopologyGeneration        : (): number => this._targetPlanner.generation,
         handleVerifiedFeedDivergence : (target, result): Promise<boolean> =>
-          this.handleVerifiedFeedDivergence(target, result),
+          this._feedConvergenceManager.handleVerifiedDivergence(target, result),
         onReconcileApplied : (target, messageCids): void => { this.emitReconcileApplied(target, messageCids); },
         prepareLiveTarget  : (target): Promise<void> => this.prepareDrainLiveTarget(target),
         reconcileTarget    : (target, options, shouldContinue): Promise<SyncReconcileResult> =>
@@ -302,10 +299,10 @@ export class SyncEngineLevel implements SyncEngine {
     this._runCoordinator = new SyncRunCoordinator({
       operations: {
         clearFeedConvergenceFailure: (target): Promise<void> =>
-          this.clearFeedConvergenceFailure(target),
+          this._feedConvergenceManager.clear(target),
         getTargets                   : (): Promise<SyncTarget[]> => this.getSyncTargets(),
         handleVerifiedFeedDivergence : async (target, result): Promise<void> => {
-          await this.handleVerifiedFeedDivergence(target, result);
+          await this._feedConvergenceManager.handleVerifiedDivergence(target, result);
         },
         onReconcileApplied : (target, messageCids): void => { this.emitReconcileApplied(target, messageCids); },
         reconcileTarget    : (target, direction, verifyConvergence): Promise<SyncReconcileResult> =>
@@ -372,6 +369,28 @@ export class SyncEngineLevel implements SyncEngine {
         }),
         recordTerminalFailure: (target, failure): Promise<void> =>
           this.recordTerminalQuotaFailure(target, failure),
+      },
+    });
+    this._feedConvergenceManager = new SyncFeedConvergenceManager({
+      operations: {
+        getActiveLink           : (linkKey): ReplicationLinkState | undefined => this.getActiveLink(linkKey),
+        getDeadLettersForTenant : (tenantDid): Promise<DeadLetterEntry[]> =>
+          this._deadLetterStore.getForTenant(tenantDid),
+        getLink             : (target): Promise<ReplicationLinkState> => this.getOrCreateReplicationLink(target),
+        getLinkKey          : (target, link): string => this.getReplicationLinkKey(target, link),
+        getNextQuotaProbeAt : (target): Promise<string | undefined> =>
+          this.getNextQuotaProbeAtForTarget(target),
+        isDivergenceExplained: (target, result): Promise<boolean> =>
+          this.isFeedDivergenceExplainedByQuotaBlocks(target, result),
+        isLinkKeyForTenant    : (linkKey, tenantDid): boolean => this.isLinkKeyForDid(linkKey, tenantDid),
+        resetCheckpoints      : (link): Promise<void> => this.ledger.resetCheckpoints(link),
+        scheduleLinkReconcile : (linkKey, link, reason, delayMs): void => {
+          this.scheduleLinkReconcile(linkKey, link, reason, delayMs);
+        },
+        scheduleQuotaProbe: (linkKey, link, nextProbeAt): void => {
+          this.scheduleQuotaProbeForActiveLink(linkKey, link, nextProbeAt);
+        },
+        transitionToPaused: (linkKey, link): Promise<void> => this.transitionToPaused(linkKey, link),
       },
     });
     this._durableFeedReconciler = new SyncDurableFeedReconciler({
@@ -1022,14 +1041,8 @@ export class SyncEngineLevel implements SyncEngine {
   /** Maximum consecutive repair attempts before the link is paused. */
   private static readonly MAX_REPAIR_ATTEMPTS = 3;
 
-  /** Maximum repeated verified feed mismatches before pausing the link. */
-  private static readonly MAX_FEED_CONVERGENCE_ATTEMPTS = 3;
-
   /** Maximum age for a repeatedly deferred pull entry before it is dead-lettered and skipped. */
   private static readonly DEFERRED_PULL_DEAD_LETTER_AFTER_MS = 24 * 60 * 60 * 1000;
-
-  /** Repeated feed mismatches; engine-owned because poll-mode runs have no active link controller. */
-  private readonly _feedConvergenceFailures: Map<string, FeedConvergenceFailureState> = new Map();
 
   /** Backoff schedule for repair retries (milliseconds). */
   private static readonly REPAIR_BACKOFF_MS = [1_000, 3_000, 10_000];
@@ -1421,7 +1434,7 @@ export class SyncEngineLevel implements SyncEngine {
       await controller.closeSubscriptions();
     }
 
-    this._feedConvergenceFailures.clear();
+    this._feedConvergenceManager.clearAll();
 
     // Clear pending rate-limit link-init retries.
     for (const timer of this._linkInitRetryTimers.values()) {
@@ -1765,16 +1778,7 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
 
-    this.deleteLinkKeyedEntriesForDid(this._feedConvergenceFailures, did);
-  }
-
-  /** Delete every entry whose link key belongs to `did` from a link-keyed map. */
-  private deleteLinkKeyedEntriesForDid<V>(map: Map<string, V>, did: string): void {
-    for (const key of map.keys()) {
-      if (this.isLinkKeyForDid(key, did)) {
-        map.delete(key);
-      }
-    }
+    this._feedConvergenceManager.clearTenant(did);
   }
 
   private async tryPruneSupersededDurableLinksForRegisteredIdentity(did: string, options: SyncIdentityOptions): Promise<void> {
@@ -2803,120 +2807,6 @@ export class SyncEngineLevel implements SyncEngine {
     return retryableEntries;
   }
 
-  private async handleVerifiedFeedDivergence(target: SyncTarget, result: SyncReconcileResult, active?: {
-    link: ReplicationLinkState;
-    linkKey: string;
-  }): Promise<boolean> {
-    if (await this.isFeedDivergenceExplainedByQuotaBlocks(target, result)) {
-      await this.clearFeedConvergenceFailure(target, active);
-      const nextProbeAt = await this.getNextQuotaProbeAtForTarget(target);
-      if (nextProbeAt !== undefined) {
-        const ledgerLink = active?.link ?? await this.getOrCreateReplicationLink(target);
-        const linkKey = active?.linkKey ?? this.getReplicationLinkKey(target, ledgerLink);
-        const liveLink = this.getActiveLink(linkKey);
-        if (liveLink?.status === 'live') {
-          this.scheduleQuotaProbeForActiveLink(linkKey, liveLink, nextProbeAt);
-        }
-      }
-      return true;
-    }
-
-    const deadLetterCids = await this.getAdmissionDeadLetterCidsForTarget(target);
-    await this.handleRepeatedFeedConvergenceMismatch(target, result, deadLetterCids, active);
-    return false;
-  }
-
-  private async clearFeedConvergenceFailure(target: SyncTarget, active?: {
-    link: ReplicationLinkState;
-    linkKey: string;
-  }): Promise<void> {
-    if (active !== undefined) {
-      this._feedConvergenceFailures.delete(active.linkKey);
-      return;
-    }
-
-    const link = await this.getOrCreateReplicationLink(target);
-    this._feedConvergenceFailures.delete(this.getReplicationLinkKey(target, link));
-  }
-
-  private async handleRepeatedFeedConvergenceMismatch(
-    target: SyncTarget,
-    result: SyncReconcileResult,
-    deadLetterCids: string[],
-    active?: {
-      link: ReplicationLinkState;
-      linkKey: string;
-    },
-  ): Promise<void> {
-    const ledgerLink = active?.link ?? await this.getOrCreateReplicationLink(target);
-    const linkKey = active?.linkKey ?? this.getReplicationLinkKey(target, ledgerLink);
-    const activeLink = this.getActiveLink(linkKey);
-    if (activeLink !== undefined && activeLink !== ledgerLink) {
-      activeLink.pull = ledgerLink.pull;
-      activeLink.push = ledgerLink.push;
-    }
-    const link = activeLink ?? ledgerLink;
-    const signature = SyncEngineLevel.feedConvergenceFailureSignature(result, deadLetterCids);
-    const previous = this._feedConvergenceFailures.get(linkKey);
-    const attempts = previous?.signature === signature ? previous.attempts + 1 : 1;
-
-    this._feedConvergenceFailures.set(linkKey, { attempts, signature });
-
-    if (attempts >= SyncEngineLevel.MAX_FEED_CONVERGENCE_ATTEMPTS) {
-      await this.transitionToPaused(linkKey, link);
-      return;
-    }
-
-    await this.handleFeedConvergenceMismatch(target, 'feed-fingerprint-mismatch', { link, linkKey });
-  }
-
-  private async getAdmissionDeadLetterCidsForTarget(target: SyncTarget): Promise<string[]> {
-    const messageCids = new Set<string>();
-    for (const entry of await this._deadLetterStore.getForTenant(target.did)) {
-      if (
-        entry.remoteEndpoint === target.dwnUrl &&
-        entry.category === 'admit-failed' &&
-        SyncEngineLevel.deadLetterMatchesTarget(entry, target.scope)
-      ) {
-        messageCids.add(entry.messageCid);
-      }
-    }
-
-    return [...messageCids].sort((a, b) => a.localeCompare(b));
-  }
-
-  private static deadLetterMatchesTarget(entry: DeadLetterEntry, scope: SyncScope): boolean {
-    if (scope.kind === 'full') {
-      return true;
-    }
-
-    return entry.protocol === undefined || scope.protocols.includes(entry.protocol);
-  }
-
-  private static feedConvergenceFailureSignature(result: SyncReconcileResult, deadLetterCids: string[]): string {
-    return JSON.stringify({
-      deadLetterCids,
-      localFingerprint  : result.localFingerprint,
-      remoteFingerprint : result.remoteFingerprint,
-    });
-  }
-
-  private async handleFeedConvergenceMismatch(target: SyncTarget, reason: string, active?: {
-    link: ReplicationLinkState;
-    linkKey: string;
-  }): Promise<void> {
-    const ledgerLink = active?.link ?? await this.getOrCreateReplicationLink(target);
-    const linkKey = active?.linkKey ?? this.getReplicationLinkKey(target, ledgerLink);
-    const activeLink = this.getActiveLink(linkKey);
-    const link = activeLink ?? ledgerLink;
-
-    await this.ledger.resetCheckpoints(link);
-
-    if (activeLink?.status === 'live') {
-      this.scheduleLinkReconcile(linkKey, activeLink, reason, 0);
-    }
-  }
-
   private stopPushRuntime(controller: SyncLinkController, pushRuntime: SyncPushRuntimeState): void {
     controller.clearPushRuntime(pushRuntime);
   }
@@ -3844,13 +3734,17 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       if (reconcileOutcome.converged) {
-        this._feedConvergenceFailures.delete(linkKey);
+        this._feedConvergenceManager.clearLink(linkKey);
         this.emitEvent({ type: 'reconcile:completed', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope });
       } else if (!isStaleLink()) {
         // Feed fingerprints still differ — retry after a delay. This can
         // happen when push retries were exhausted, remote admission partially
         // failed, or new writes arrived during reconciliation.
-        await this.handleVerifiedFeedDivergence(reconcileTarget, reconcileOutcome, { link, linkKey });
+        await this._feedConvergenceManager.handleVerifiedDivergence(
+          reconcileTarget,
+          reconcileOutcome,
+          { link, linkKey },
+        );
       }
     } catch (error: any) {
       if (isStaleLink()) { return; }

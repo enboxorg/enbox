@@ -3689,41 +3689,6 @@ describe('SyncEngineLevel', () => {
         }
       });
 
-      it('should pause the link after repeated feed convergence mismatches', async () => {
-        const did = alice.did.uri;
-        const dwnUrl = testDwnUrls[0];
-        const target = {
-          did                : did,
-          dwnUrl             : dwnUrl,
-          scope              : { kind: 'full' as const },
-          authorization      : { kind: 'owner' as const },
-          authorizationEpoch : 'owner-epoch',
-        };
-        const link = await syncEngine['ledger'].getOrCreateLink({
-          tenantDid          : did,
-          remoteEndpoint     : dwnUrl,
-          scope              : target.scope,
-          authorization      : target.authorization,
-          authorizationEpoch : target.authorizationEpoch,
-        });
-        const linkKey = `${did}^${dwnUrl}^${link.projectionId}^${link.authorizationEpoch}`;
-        const result = {
-          admittedCids       : [],
-          converged          : false,
-          hasActionableDiffs : true,
-          pushFailures       : [],
-        };
-
-        const mismatchStub = sinon.stub(syncEngine as any, 'handleFeedConvergenceMismatch').resolves();
-        const pauseStub = sinon.stub(syncEngine as any, 'transitionToPaused').resolves();
-
-        await syncEngine['handleRepeatedFeedConvergenceMismatch'](target, result, [], { link, linkKey });
-        await syncEngine['handleRepeatedFeedConvergenceMismatch'](target, result, [], { link, linkKey });
-        await syncEngine['handleRepeatedFeedConvergenceMismatch'](target, result, [], { link, linkKey });
-
-        expect(mismatchStub.callCount).toBe(2);
-        expect(pauseStub.calledOnceWith(linkKey, link)).toBe(true);
-      });
     });
 
     // -----------------------------------------------------------------------
