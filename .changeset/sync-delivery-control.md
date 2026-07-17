@@ -1,6 +1,6 @@
 ---
-"@enbox/agent": minor
-"@enbox/auth": minor
+"@enbox/agent": patch
+"@enbox/auth": patch
 ---
 
 feat(agent): per-delivery sync events, scoped one-shot sync, coalesced concurrency, and per-link replication status; feat(auth): explicit sync mode option
