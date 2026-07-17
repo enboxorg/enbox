@@ -62,9 +62,24 @@ async function installDefaultTestProtocolViaHttp(httpClient: HttpDwnRpcClient, d
   }
 }
 
-/** helper method to sleep while waiting for events to process/arrive */
-async function sleepWhileWaitingForEvents(override?: number):Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, override || 10));
+/**
+ * Polls `predicate` until it returns true or the timeout elapses. Use this instead of a
+ * fixed sleep when waiting for asynchronous WebSocket subscription events: a fixed sleep
+ * races the event-arrival window and flakes under CI load, whereas this waits exactly as
+ * long as needed (up to `timeoutMs`) and fails with a clear message if the events never
+ * arrive.
+ */
+async function waitForCondition(
+  predicate: () => boolean,
+  { timeoutMs = 5000, intervalMs = 10 }: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) {
+      throw new Error(`waitForCondition: timed out after ${timeoutMs}ms waiting for the expected events`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
 }
 
 describe('WebSocketDwnRpcClient', () => {
@@ -321,8 +336,12 @@ describe('WebSocketDwnRpcClient', () => {
       });
       expect(updateReply.status.code).toBe(202);
 
-      // wait for events to emit
-      await sleepWhileWaitingForEvents();
+      // Wait deterministically for both update events to arrive rather than a fixed
+      // sleep that races event delivery and flakes under CI load (see `waitForCondition`).
+      await waitForCondition(() =>
+        dataCids.includes(update1.descriptor.dataCid) &&
+        dataCids.includes(update2.descriptor.dataCid)
+      );
       await subscribeResponse.subscription!.close();
 
       expect(dataCids).toEqual(expect.arrayContaining([
@@ -759,7 +778,8 @@ describe('WebSocketDwnRpcClient', () => {
           data      : dataBytes,
         });
 
-        await sleepWhileWaitingForEvents(100);
+        // Wait for the subscription event to arrive rather than a fixed sleep.
+        await waitForCondition(() => receivedMessages.length >= 1);
 
         // should have received at least one event
         expect(receivedMessages.length).toBeGreaterThanOrEqual(1);
@@ -873,13 +893,16 @@ describe('WebSocketDwnRpcClient', () => {
           data      : dataBytes,
         });
 
-        await sleepWhileWaitingForEvents(100);
-
-        // Verify that socket.send was called with an rpc.ack message
-        const ackCalls = sendSpy.mock.calls.filter((call: any[]) => {
+        const isAckCall = (call: any[]): boolean => {
           const req = call[0];
           return req && typeof req === 'object' && req.method === 'rpc.ack';
-        });
+        };
+
+        // Wait for an rpc.ack to be sent rather than a fixed sleep.
+        await waitForCondition(() => sendSpy.mock.calls.some(isAckCall));
+
+        // Verify that socket.send was called with an rpc.ack message
+        const ackCalls = sendSpy.mock.calls.filter(isAckCall);
         expect(ackCalls.length).toBeGreaterThanOrEqual(1);
 
         // Verify the ack has the correct structure
@@ -1139,7 +1162,8 @@ describe('WebSocketDwnRpcClient', () => {
 
         // Close the underlying socket — this triggers the onclose handler
         connection.socket.close();
-        await sleepWhileWaitingForEvents(50);
+        // Wait for the onclose handler to remove the connection rather than a fixed sleep.
+        await waitForCondition(() => !connections.has(connectionKey));
 
         // Connection should be removed from the map
         expect(connections.has(connectionKey)).toBe(false);
@@ -1171,7 +1195,8 @@ describe('WebSocketDwnRpcClient', () => {
         const connectionKey = connectionKeyForDwnUrl(socketDwnUrl);
         const connection = (WebSocketDwnRpcClient as any)['connections'].get(connectionKey);
         connection.socket.close();
-        await sleepWhileWaitingForEvents(50);
+        // Wait for the disconnect notification rather than a fixed sleep.
+        await waitForCondition(() => receivedMessages.some((m) => m.type === 'disconnected'));
 
         // Handler should have received a 'disconnected' message
         const disconnectMsgs = receivedMessages.filter((m) => m.type === 'disconnected');
