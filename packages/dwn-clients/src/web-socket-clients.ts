@@ -109,6 +109,64 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   private static readonly connections = new Map<string, SocketConnection>();
   private static readonly pendingConnections = new Map<string, Promise<SocketConnection>>();
 
+  /** Browser wake listeners (online / tab visible), registered once per process. */
+  private static onWake: (() => void) | undefined;
+  private static onVisibilityWake: (() => void) | undefined;
+
+  /**
+   * Force an immediate liveness verdict on every pooled connection.
+   *
+   * Dead sockets are detected and torn down right away — triggering
+   * auto-reconnect and resubscription — instead of waiting out heartbeat
+   * timers that browsers throttle in backgrounded tabs.
+   */
+  public static checkAllConnections(): void {
+    for (const connection of WebSocketDwnRpcClient.connections.values()) {
+      void connection.socket.checkHealth();
+    }
+  }
+
+  /**
+   * Registers browser recovery listeners so wake signals (network back
+   * online, tab foregrounded) trigger an immediate pooled-connection health
+   * check. No-op outside browser-like environments and after the first call.
+   */
+  private static ensureWakeListeners(): void {
+    if (WebSocketDwnRpcClient.onWake !== undefined) {
+      return;
+    }
+    if (typeof globalThis.addEventListener !== 'function') {
+      return;
+    }
+
+    const onWake = (): void => { WebSocketDwnRpcClient.checkAllConnections(); };
+    WebSocketDwnRpcClient.onWake = onWake;
+    globalThis.addEventListener('online', onWake);
+
+    const visibilityDocument = typeof document === 'undefined' ? undefined : document;
+    if (visibilityDocument !== undefined) {
+      const onVisibilityWake = (): void => {
+        if (visibilityDocument.visibilityState === 'visible') {
+          onWake();
+        }
+      };
+      WebSocketDwnRpcClient.onVisibilityWake = onVisibilityWake;
+      visibilityDocument.addEventListener('visibilitychange', onVisibilityWake);
+    }
+  }
+
+  /** Removes the browser wake listeners registered by {@link ensureWakeListeners}. */
+  private static removeWakeListeners(): void {
+    if (WebSocketDwnRpcClient.onWake !== undefined && typeof globalThis.removeEventListener === 'function') {
+      globalThis.removeEventListener('online', WebSocketDwnRpcClient.onWake);
+    }
+    if (WebSocketDwnRpcClient.onVisibilityWake !== undefined && typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', WebSocketDwnRpcClient.onVisibilityWake);
+    }
+    WebSocketDwnRpcClient.onWake = undefined;
+    WebSocketDwnRpcClient.onVisibilityWake = undefined;
+  }
+
   public constructor(
     private readonly serverInfoRpc: DwnServerInfoRpc = new HttpDwnRpcClient(),
     private readonly authOptions: DwnRpcAuthOptions = {},
@@ -123,6 +181,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
    * The pool is process-wide, so this is intended for application shutdown.
    */
   public static async closeAllConnections(): Promise<void> {
+    WebSocketDwnRpcClient.removeWakeListeners();
     const pending = [...WebSocketDwnRpcClient.pendingConnections.values()];
     WebSocketDwnRpcClient.pendingConnections.clear();
     for (const pendingConnection of pending) {
@@ -214,6 +273,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
     let pending = WebSocketDwnRpcClient.pendingConnections.get(key);
     if (pending === undefined) {
+      WebSocketDwnRpcClient.ensureWakeListeners();
       pending = WebSocketDwnRpcClient.createConnection(url)
         .then((connection) => {
           WebSocketDwnRpcClient.connections.set(key, connection);

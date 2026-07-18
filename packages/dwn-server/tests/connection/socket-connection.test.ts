@@ -18,6 +18,7 @@ function createMockSocket(): ServerWebSocket<WsData> {
     sendText      : sinon.stub(),
     sendBinary    : sinon.stub(),
     close         : sinon.stub(),
+    terminate     : sinon.stub(),
     ping          : sinon.stub(),
     pong          : sinon.stub(),
     publish       : sinon.stub(),
@@ -146,6 +147,21 @@ describe('SocketConnection', () => {
     clock.tick(60_100); // interval has to run twice
     clock.restore();
 
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('should terminate the socket immediately when the heartbeat detects a dead peer', async () => {
+    const socket = createMockSocket();
+    const clock = sinon.useFakeTimers();
+    const connection = new SocketConnection(socket, dwn);
+    const closeSpy = spyOn(connection, 'close');
+
+    clock.tick(60_100); // interval has to run twice without a pong
+    clock.restore();
+
+    // A dead peer cannot complete a close handshake — the socket must be
+    // torn down immediately, then connection resources released.
+    expect((socket.terminate as sinon.SinonStub).calledOnce).toBe(true);
     expect(closeSpy).toHaveBeenCalledTimes(1);
   });
 

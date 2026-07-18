@@ -688,6 +688,101 @@ describe('JsonRpcSocket', () => {
       expect(client.isConnected).toBe(false);
     });
 
+    it('should resolve checkHealth true on a live connection', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl);
+
+      const healthy = await client.checkHealth();
+
+      expect(healthy).toBe(true);
+      expect(client.isConnected).toBe(true);
+      client.close();
+    });
+
+    it('should force-close a dead connection and resolve checkHealth false', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl, {
+        autoReconnect      : false,
+        healthProbeTimeout : 50,
+      });
+
+      // Drop outgoing pings — a dead connection swallows writes silently.
+      client['send'] = (): void => {};
+
+      const healthy = await client.checkHealth();
+
+      expect(healthy).toBe(false);
+      expect(client.isConnected).toBe(false);
+    });
+
+    it('should clear a stale heartbeat deadline when the health probe pongs', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl);
+
+      // Simulate a deadline armed before a tab freeze: pong still pending.
+      client['_awaitingPong'] = true;
+      client['_heartbeatTimeout'] = setTimeout((): void => {}, 60_000);
+
+      const healthy = await client.checkHealth();
+
+      expect(healthy).toBe(true);
+      expect(client['_awaitingPong']).toBe(false);
+      expect(client['_heartbeatTimeout']).toBeUndefined();
+      client.close();
+    });
+
+    it('should deduplicate concurrent health probes', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl);
+
+      const originalSend = client['send'].bind(client);
+      let pingCount = 0;
+      client['send'] = (request): void => {
+        if (request.method === 'rpc.ping') {
+          pingCount++;
+        }
+        originalSend(request);
+      };
+
+      const [first, second] = await Promise.all([client.checkHealth(), client.checkHealth()]);
+
+      expect(first).toBe(true);
+      expect(second).toBe(true);
+      expect(pingCount).toBe(1);
+      client.close();
+    });
+
+    it('should not reconnect on checkHealth after a user close', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl, { autoReconnect: true });
+      client.close();
+
+      const healthy = await client.checkHealth();
+
+      expect(healthy).toBe(false);
+      expect(client['reconnecting']).toBe(false);
+    });
+
+    it('should fast-forward a pending reconnect backoff on checkHealth', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl, {
+        autoReconnect      : true,
+        // Long enough that reconnection cannot happen in test time without the wake.
+        baseReconnectDelay : 60_000,
+        maxReconnectDelay  : 60_000,
+      });
+
+      // Simulate an unexpected close and let the reconnect loop arm its backoff wait.
+      client['socket'].close();
+      await sleepWhileWaitingForEvents(100);
+      expect(client.isConnected).toBe(false);
+      expect(client['reconnecting']).toBe(true);
+      expect(client['_backoffWake']).toBeDefined();
+
+      // A wake signal fast-forwards the backoff — reconnection happens now.
+      const healthy = await client.checkHealth();
+      expect(healthy).toBe(false);
+
+      await sleepWhileWaitingForEvents(500);
+      expect(client.isConnected).toBe(true);
+
+      client.close();
+    }, 10_000);
+
     it('should restart heartbeat after reconnection', async (): Promise<void> => {
       const client = await JsonRpcSocket.connect(socketDwnUrl, {
         heartbeatInterval : 100,
