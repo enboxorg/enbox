@@ -135,8 +135,9 @@ describe('processMessage parity', () => {
     const writeAfterDeleteReply = await dwn.processMessage(alice.did, writeAfterDeleteMessage, { dataStream: writeAfterDeleteStream });
     expect(writeAfterDeleteReply).toEqual({
       status: {
-        code   : 400,
-        detail : `${DwnErrorCode.RecordsWriteNotAllowedAfterDelete}: RecordsWrite is not allowed after a RecordsDelete.`,
+        code      : 400,
+        detail    : `${DwnErrorCode.RecordsWriteNotAllowedAfterDelete}: RecordsWrite is not allowed after a RecordsDelete.`,
+        errorCode : DwnErrorCode.RecordsWriteNotAllowedAfterDelete,
       },
     });
 
@@ -198,8 +199,9 @@ describe('processMessage parity', () => {
     const strangerReply = await dwn.processMessage(alice.did, strangerMessage, { dataStream: strangerDataStream });
     expect(strangerReply).toEqual({
       status: {
-        code   : 401,
-        detail : `${DwnErrorCode.ProtocolAuthorizationActionRulesNotFound}: no action rule defined for RecordsWrite, ${bob.did} is unauthorized`,
+        code      : 401,
+        detail    : `${DwnErrorCode.ProtocolAuthorizationActionRulesNotFound}: no action rule defined for RecordsWrite, ${bob.did} is unauthorized`,
+        errorCode : DwnErrorCode.ProtocolAuthorizationActionRulesNotFound,
       },
     });
   });
@@ -247,8 +249,9 @@ describe('processMessage parity', () => {
     const carolChatReply: GenericMessageReply = await dwn.processMessage(alice.did, carolChatMessage, { dataStream: carolChatDataStream });
     expect(carolChatReply).toEqual({
       status: {
-        code   : 401,
-        detail : `${DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound}: No matching role record found for protocol path friend`,
+        code      : 401,
+        detail    : `${DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound}: No matching role record found for protocol path friend`,
+        errorCode : DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound,
       },
     });
   });

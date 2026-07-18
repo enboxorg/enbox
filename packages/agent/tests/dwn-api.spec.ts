@@ -6,6 +6,7 @@ import { DidDht } from '@enbox/dids';
 import {
   ContentEncryptionAlgorithm,
   DataStream,
+  DwnErrorCode,
   DwnInterfaceName,
   DwnMethodName,
   ENCRYPTION_CONTROL_DELIVERY_PATH,
@@ -620,6 +621,92 @@ describe('AgentDwnApi', () => {
 
     afterAll(async () => {
       await testHarness.clearStorage();
+    });
+
+    it('exposes machine-readable errorCode and info on a locally rejected write (squash backstop)', async () => {
+      // install a protocol with a $squash-enabled path
+      const squashProtocolDefinition: ProtocolDefinition = {
+        protocol  : 'http://squash-structured-errors-local.xyz',
+        published : true,
+        types     : {
+          document : {},
+          patch    : {},
+        },
+        structure: {
+          document: {
+            $actions : [{ who: 'anyone', can: ['create', 'read'] }],
+            patch    : {
+              $immutable : true,
+              $squash    : true,
+              $actions   : [{ who: 'anyone', can: ['create', 'read'] }],
+            }
+          }
+        }
+      };
+
+      const { reply: configureReply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: squashProtocolDefinition }
+      });
+      expect(configureReply.status.code).toBe(202);
+
+      // create the parent document
+      const { message: documentMessage, reply: documentReply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          dataFormat   : 'text/plain',
+          protocol     : squashProtocolDefinition.protocol,
+          protocolPath : 'document'
+        },
+        dataStream: new Blob([Convert.string('document').toUint8Array() as BlobPart])
+      });
+      expect(documentReply.status.code).toBe(202);
+
+      // write a squash record to establish the temporal floor
+      const squashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
+      const { reply: squashReply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          dataFormat       : 'text/plain',
+          protocol         : squashProtocolDefinition.protocol,
+          protocolPath     : 'document/patch',
+          parentContextId  : documentMessage!.contextId,
+          messageTimestamp : squashTimestamp,
+          dateCreated      : squashTimestamp,
+          squash           : true
+        },
+        dataStream: new Blob([Convert.string('squash').toUint8Array() as BlobPart])
+      });
+      expect(squashReply.status.code).toBe(202);
+
+      // attempt a write older than the squash floor — rejected with structured error data
+      const olderTimestamp = Time.createOffsetTimestamp({ seconds: 5 });
+      const { reply: rejectedReply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          dataFormat       : 'text/plain',
+          protocol         : squashProtocolDefinition.protocol,
+          protocolPath     : 'document/patch',
+          parentContextId  : documentMessage!.contextId,
+          messageTimestamp : olderTimestamp,
+          dateCreated      : olderTimestamp
+        },
+        dataStream: new Blob([Convert.string('too old').toUint8Array() as BlobPart])
+      });
+
+      expect(rejectedReply.status.code).toBe(409);
+      expect(rejectedReply.status.errorCode).toBe(DwnErrorCode.ProtocolAuthorizationSquashBackstop);
+
+      // the squash floor is readable as data — no parsing of the `detail` prose required
+      expect(rejectedReply.status.info?.squashFloorTimestamp).toBe(squashTimestamp);
     });
 
     it('handles MessagesQuery through the generic request path', async () => {
@@ -1675,6 +1762,92 @@ describe('AgentDwnApi', () => {
 
     afterAll(async () => {
       await testHarness.clearStorage();
+    });
+
+    it('exposes machine-readable errorCode and info on a remotely rejected write (squash backstop)', async () => {
+      // install a protocol with a $squash-enabled path on the remote DWN
+      const squashProtocolDefinition: ProtocolDefinition = {
+        protocol  : 'http://squash-structured-errors-remote.xyz',
+        published : true,
+        types     : {
+          document : {},
+          patch    : {},
+        },
+        structure: {
+          document: {
+            $actions : [{ who: 'anyone', can: ['create', 'read'] }],
+            patch    : {
+              $immutable : true,
+              $squash    : true,
+              $actions   : [{ who: 'anyone', can: ['create', 'read'] }],
+            }
+          }
+        }
+      };
+
+      const { reply: configureReply } = await testHarness.agent.dwn.sendRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: squashProtocolDefinition }
+      });
+      expect(configureReply.status.code).toBe(202);
+
+      // create the parent document on the remote DWN
+      const { message: documentMessage, reply: documentReply } = await testHarness.agent.dwn.sendRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          dataFormat   : 'text/plain',
+          protocol     : squashProtocolDefinition.protocol,
+          protocolPath : 'document'
+        },
+        dataStream: new Blob([Convert.string('document').toUint8Array() as BlobPart])
+      });
+      expect(documentReply.status.code).toBe(202);
+
+      // write a squash record to establish the temporal floor
+      const squashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
+      const { reply: squashReply } = await testHarness.agent.dwn.sendRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          dataFormat       : 'text/plain',
+          protocol         : squashProtocolDefinition.protocol,
+          protocolPath     : 'document/patch',
+          parentContextId  : documentMessage!.contextId,
+          messageTimestamp : squashTimestamp,
+          dateCreated      : squashTimestamp,
+          squash           : true
+        },
+        dataStream: new Blob([Convert.string('squash').toUint8Array() as BlobPart])
+      });
+      expect(squashReply.status.code).toBe(202);
+
+      // attempt a write older than the squash floor — the remote rejection surfaces structured error data
+      const olderTimestamp = Time.createOffsetTimestamp({ seconds: 5 });
+      const { reply: rejectedReply } = await testHarness.agent.dwn.sendRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          dataFormat       : 'text/plain',
+          protocol         : squashProtocolDefinition.protocol,
+          protocolPath     : 'document/patch',
+          parentContextId  : documentMessage!.contextId,
+          messageTimestamp : olderTimestamp,
+          dateCreated      : olderTimestamp
+        },
+        dataStream: new Blob([Convert.string('too old').toUint8Array() as BlobPart])
+      });
+
+      expect(rejectedReply.status.code).toBe(409);
+      expect(rejectedReply.status.errorCode).toBe(DwnErrorCode.ProtocolAuthorizationSquashBackstop);
+
+      // the squash floor is readable as data — no parsing of the `detail` prose required
+      expect(rejectedReply.status.info?.squashFloorTimestamp).toBe(squashTimestamp);
     });
 
     it('handles sending existing message using `messageCid` request property', async () => {

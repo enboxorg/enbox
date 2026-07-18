@@ -4496,6 +4496,7 @@ export function testRecordsWriteHandler(): void {
             await dwn.processMessage(alice.did, failedCredentialResponse.message, { dataStream: failedCredentialResponse.dataStream });
           expect(failedCredentialResponseReply.status.code).toBe(400);
           expect(failedCredentialResponseReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMissingRuleSet);
+          expect(failedCredentialResponseReply.status.errorCode).toBe(DwnErrorCode.ProtocolAuthorizationMissingRuleSet);
 
           // Successfully write a 'credentialApplication' at the top level of the of the record hierarchy
           const credentialApplication = await TestDataGenerator.generateRecordsWrite({

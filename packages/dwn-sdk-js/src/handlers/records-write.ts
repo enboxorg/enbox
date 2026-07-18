@@ -499,7 +499,8 @@ export class RecordsWriteHandler implements MethodHandler {
         DwnErrorCode.ProtocolAuthorizationSquashBackstop,
         `incoming message timestamp '${message.descriptor.messageTimestamp}' is not newer than ` +
         `the most recent squash record timestamp '${newestSquash.descriptor.messageTimestamp}' ` +
-        `at protocol path '${message.descriptor.protocolPath}'.`
+        `at protocol path '${message.descriptor.protocolPath}'.`,
+        { info: { squashFloorTimestamp: newestSquash.descriptor.messageTimestamp } }
       );
     }
   }

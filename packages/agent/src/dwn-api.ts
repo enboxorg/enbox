@@ -59,6 +59,7 @@ import type {
   DwnMessageReply,
   DwnMessageWithData,
   DwnResponse,
+  DwnResponseStatus,
   DwnSigner,
   GetAudienceKeyDeliveryStatusParams,
   MessageHandler,
@@ -866,7 +867,7 @@ export class AgentDwnApi {
     tenant: string,
     message: GenericMessage,
     options?: { dataStream?: ReadableStream<Uint8Array> },
-  ): Promise<{ status: { code: number; detail: string } }> {
+  ): Promise<DwnResponseStatus> {
     if (this._dwn) {
       return this._dwn.processMessage(tenant, message, { dataStream: options?.dataStream });
     }

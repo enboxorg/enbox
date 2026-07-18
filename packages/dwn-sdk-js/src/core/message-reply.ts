@@ -2,14 +2,30 @@ import type { PaginationCursor } from '../types/query-types.js';
 import type { ProgressToken } from '../types/subscriptions.js';
 import type { ProtocolsConfigureMessage } from '../types/protocols-types.js';
 import type { RecordsReadReplyEntry } from '../types/records-types.js';
-import type { GenericMessageReply, MessageSubscription, QueryResultEntry } from '../types/message-types.js';
+import type { GenericMessageReply, MessageSubscription, QueryResultEntry, Status } from '../types/message-types.js';
 import type { MessagesQueryReplyEntry, MessagesReadReplyEntry } from '../types/messages-types.js';
 
+import { DwnError } from './dwn-error.js';
+
+/**
+ * Constructs a message reply from the given error.
+ * When the error is a `DwnError`, the reply status carries the machine-readable `errorCode`
+ * (and `info` when present) in addition to the human-readable `detail` prose.
+ */
 export function messageReplyFromError(e: unknown, code: number): GenericMessageReply {
 
   const detail = e instanceof Error ? e.message : 'Error';
+  const status: Status = { code, detail };
 
-  return { status: { code, detail } };
+  if (e instanceof DwnError) {
+    status.errorCode = e.code;
+
+    if (e.info !== undefined) {
+      status.info = e.info;
+    }
+  }
+
+  return { status };
 }
 
 /**

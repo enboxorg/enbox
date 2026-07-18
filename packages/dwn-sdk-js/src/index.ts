@@ -48,6 +48,7 @@ export { Dwn } from './dwn.js';
 export type { MessageOptions } from './dwn.js';
 export { DwnConstant } from './core/dwn-constant.js';
 export { DwnError, DwnErrorCode } from './core/dwn-error.js';
+export type { DwnErrorInfo } from './core/dwn-error.js';
 export { DwnInterfaceName, DwnMethodName } from './enums/dwn-interface-method.js';
 export { Encoder } from './utils/encoder.js';
 export { MessagesSubscribe } from './interfaces/messages-subscribe.js';

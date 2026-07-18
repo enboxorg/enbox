@@ -10,7 +10,7 @@ import { normalizeReadableStream } from '../src/readable-stream.js';
 import sinon from 'sinon';
 
 import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
-import { DataStream, Jws, ProtocolsConfigure, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnErrorCode, Jws, ProtocolsConfigure, RecordsRead, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
 import {
   HTTP_DWN_RPC_BODY_V1,
   HTTP_DWN_RPC_BODY_V1_CONTENT_TYPE,
@@ -123,6 +123,71 @@ describe('HttpDwnRpcClient', () => {
       expect(readResponse.status.code).toBe(200);
       expect(readResponse.entry).toBeDefined();
       expect(readResponse.entry?.recordsWrite?.recordId).toBe(writeMessage.recordId);
+    });
+
+    it('surfaces machine-readable errorCode and info on a rejected RecordsWrite', async () => {
+      // install a protocol with a $squash-enabled root path
+      const squashProtocolDefinition: ProtocolDefinition = {
+        protocol  : 'http://squash-structured-errors.xyz',
+        published : true,
+        types     : { note: {} },
+        structure : {
+          note: {
+            $squash  : true,
+            $actions : [{ who: 'anyone', can: ['create', 'read'] }],
+          }
+        }
+      };
+      const protocolsConfigure = await ProtocolsConfigure.create({
+        definition : squashProtocolDefinition,
+        signer     : Jws.createSigner(alice),
+      });
+      const configureReply = await client.sendDwnRequest({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message   : protocolsConfigure.message,
+      });
+      expect(configureReply.status.code).toBe(202);
+
+      // write a squash record to establish the temporal floor
+      const squashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
+      const { message: squashMessage, dataBytes: squashDataBytes } = await TestDataGenerator.generateRecordsWrite({
+        author           : alice,
+        protocol         : squashProtocolDefinition.protocol,
+        protocolPath     : 'note',
+        messageTimestamp : squashTimestamp,
+        dateCreated      : squashTimestamp,
+        squash           : true,
+      });
+      const squashReply = await client.sendDwnRequest({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message   : squashMessage,
+        data      : squashDataBytes,
+      });
+      expect(squashReply.status.code).toBe(202);
+
+      // attempt a write older than the squash floor — the rejection carries structured error data
+      const olderTimestamp = Time.createOffsetTimestamp({ seconds: 5 });
+      const { message: olderMessage, dataBytes: olderDataBytes } = await TestDataGenerator.generateRecordsWrite({
+        author           : alice,
+        protocol         : squashProtocolDefinition.protocol,
+        protocolPath     : 'note',
+        messageTimestamp : olderTimestamp,
+        dateCreated      : olderTimestamp,
+      });
+      const rejectedReply = await client.sendDwnRequest({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message   : olderMessage,
+        data      : olderDataBytes,
+      });
+
+      expect(rejectedReply.status.code).toBe(409);
+      expect(rejectedReply.status.errorCode).toBe(DwnErrorCode.ProtocolAuthorizationSquashBackstop);
+
+      // the squash floor is readable as data — no parsing of the `detail` prose required
+      expect(rejectedReply.status.info?.squashFloorTimestamp).toBe(squashTimestamp);
     });
 
     it('should stream ReadableStream request bodies with duplex half', async () => {

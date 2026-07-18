@@ -35,6 +35,7 @@ import type {
   RecordsSubscribeReply,
   RecordsWriteMessage,
   RecordsWriteOptions,
+  Status,
   SubscriptionListener,
 } from '@enbox/dwn-sdk-js';
 
@@ -175,16 +176,13 @@ export type DwnRequest<T extends DwnInterface> = {
 
 /**
  * Defines the structure for response status, including a status code and detail message.
+ *
+ * Reuses the DWN engine reply `Status` shape verbatim, so the optional machine-readable
+ * `errorCode` and `info` fields populated by the engine flow through to consumers untouched.
  */
 export type DwnResponseStatus = {
   /** Encapsulates the outcome of an operation, providing both a numeric status code and a descriptive message. */
-  status: {
-    /** Numeric status code representing the outcome of the operation. */
-    code: number;
-
-    /** Descriptive detail about the status or error. */
-    detail: string;
-  };
+  status: Status;
 };
 
 export type ProcessDwnRequest<T extends DwnInterface> = DwnRequest<T> & {

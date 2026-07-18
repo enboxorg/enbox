@@ -430,6 +430,10 @@ export function testRecordsSquash(): void {
         const olderReply = await dwn.processMessage(alice.did, olderRecord.message, { dataStream: olderRecord.dataStream });
         expect(olderReply.status.code).toBe(409);
         expect(olderReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationSquashBackstop);
+
+        // the reply status carries the error code and the squash floor timestamp as machine-readable data
+        expect(olderReply.status.errorCode).toBe(DwnErrorCode.ProtocolAuthorizationSquashBackstop);
+        expect(olderReply.status.info).toEqual({ squashFloorTimestamp: squashTimestamp });
       });
 
       it('should allow writes newer than the most recent squash', async () => {
@@ -992,6 +996,8 @@ export function testRecordsSquash(): void {
         );
         expect(equalReply.status.code).toBe(409);
         expect(equalReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationSquashBackstop);
+        expect(equalReply.status.errorCode).toBe(DwnErrorCode.ProtocolAuthorizationSquashBackstop);
+        expect(equalReply.status.info).toEqual({ squashFloorTimestamp: squashTimestamp });
       });
     });
 
