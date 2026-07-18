@@ -167,21 +167,30 @@ export type AudienceDecryptionKeyEntry = {
  *   it role-readable — the record must be re-written to heal.
  * - `'delivery-missing'` — the record's role-audience entry resolved (the audience record exists),
  *   but no `$encryption/delivery` record wraps that key to this recipient. Only asserted from an
- *   authoritative 200-empty lookup: the remote DWN was consulted successfully or was not needed,
- *   AND the querying actor fully enumerates the recipient's deliveries (the tenant, or the
- *   addressed recipient itself) — a delegated actor's visibility-filtered empty result and a
- *   non-200 reply never classify here.
+ *   authoritative 200-empty lookup: the remote DWN was consulted successfully or was not needed
+ *   because the source tenant is locally managed by this agent, AND the querying actor fully
+ *   enumerates the recipient's deliveries (the tenant, or the addressed recipient itself) — a
+ *   delegated actor's visibility-filtered empty result, a non-200 reply, and a foreign tenant whose
+ *   remote was never consulted never classify here.
  * - `'role-not-held'` — a delivery candidate was found but verification rejected the recipient
  *   because no active `$role` record backs the delivery (the role was revoked or never granted).
- *   Only asserted from an authoritative 200-empty role lookup; a non-200 reply or an unreachable
- *   remote during role verification classifies as `'remote-unverifiable'` instead.
+ *   Only asserted from an authoritative 200-empty role lookup under the same source-tenant
+ *   authority rule; a non-200 reply, an unreachable remote, or an unconsulted foreign tenant
+ *   classifies as `'remote-unverifiable'` instead.
  * - `'audience-superseded'` — the record is wrapped to a role-audience key that is not the tuple's
  *   current audience key (an older or purged audience); delivering the current key cannot open it —
  *   the record must be re-encrypted to the current audience.
  * - `'remote-unverifiable'` — the audience/delivery/role lookups did not return an authoritative
- *   result: empty locally with the remote DWN unreachable, or a non-200 reply — so absence cannot
- *   be asserted.
+ *   result: empty locally with the remote DWN unreachable or never consulted for a foreign tenant,
+ *   a non-200 reply, or a lookup that failed outright — so absence cannot be asserted.
  * - `'unknown'` — no specific cause was observed; the original failure detail is preserved.
+ *
+ * A record wrapped for multiple roles carries one role-audience entry per role-read rule, and each
+ * entry is one decryption route. Per-route outcomes aggregate conservatively: a definitive negative
+ * (`'delivery-missing'`, `'role-not-held'`, `'audience-superseded'`) is only reported when EVERY
+ * route reached a definitive dead-end; any unverifiable route makes the overall cause
+ * `'remote-unverifiable'` (the record might still decrypt once that route is reachable), and any
+ * unexplained route makes it `'unknown'`. Per-route outcomes are enumerated in `detail`.
  */
 export type AudienceDecryptFailureCause =
   | 'not-wrapped-for-role'
@@ -223,7 +232,11 @@ export class AudienceDecryptError extends Error {
   }
 }
 
-/** Ranks {@link AudienceDecryptFailureCause} values so the most specific observation wins. */
+/**
+ * Ranks {@link AudienceDecryptFailureCause} values so the most specific observation wins WITHIN one
+ * role route (or the route-less base scope). Across routes the aggregation is conservative instead:
+ * any unverifiable route dominates definitive negatives from other routes.
+ */
 const AUDIENCE_DECRYPT_CAUSE_PRIORITY: Record<AudienceDecryptFailureCause, number> = {
   'unknown'              : 0,
   'not-wrapped-for-role' : 1,
@@ -233,21 +246,53 @@ const AUDIENCE_DECRYPT_CAUSE_PRIORITY: Record<AudienceDecryptFailureCause, numbe
   'role-not-held'        : 5,
 };
 
+/** One role-audience entry's classified outcome: the route label is the entry's role path. */
+type AudienceDecryptRouteOutcome = {
+  label: string;
+  cause: AudienceDecryptFailureCause;
+  detail?: string;
+};
+
 /**
  * Collects decrypt-failure observations along the role-audience hydration flow so the final throw
- * site can construct an {@link AudienceDecryptError} with the most specific cause observed.
- * Secondary observations (skipped deliveries, skipped grantKeys) are kept as notes appended to the
- * error detail instead of being swallowed by logging alone.
+ * site can construct an {@link AudienceDecryptError}. Observations are scoped per role route (one
+ * route per role-audience entry attempted); route outcomes aggregate conservatively — a definitive
+ * negative is reported only when every route reached a definitive dead-end, any unverifiable route
+ * yields `'remote-unverifiable'`, and any unexplained route yields `'unknown'`. Secondary
+ * observations (skipped deliveries, skipped grantKeys) are kept as notes appended to the error
+ * detail instead of being swallowed by logging alone.
  */
 class AudienceDecryptFailureAccumulator {
-  private _cause: AudienceDecryptFailureCause = 'unknown';
-  private _detail: string | undefined;
+  private _baseCause: AudienceDecryptFailureCause = 'unknown';
+  private _baseDetail: string | undefined;
   private readonly _notes: string[] = [];
+  private readonly _routes: AudienceDecryptRouteOutcome[] = [];
+  private _activeRoute: AudienceDecryptRouteOutcome | undefined;
+
+  public beginRoute(label: string): void {
+    this.endRoute();
+    this._activeRoute = { cause: 'unknown', label };
+  }
+
+  public endRoute(): void {
+    if (this._activeRoute !== undefined) {
+      this._routes.push(this._activeRoute);
+      this._activeRoute = undefined;
+    }
+  }
 
   public record(cause: AudienceDecryptFailureCause, detail: string): void {
-    if (AUDIENCE_DECRYPT_CAUSE_PRIORITY[cause] > AUDIENCE_DECRYPT_CAUSE_PRIORITY[this._cause]) {
-      this._cause = cause;
-      this._detail = detail;
+    if (this._activeRoute !== undefined) {
+      if (AUDIENCE_DECRYPT_CAUSE_PRIORITY[cause] > AUDIENCE_DECRYPT_CAUSE_PRIORITY[this._activeRoute.cause]) {
+        this._activeRoute.cause = cause;
+        this._activeRoute.detail = detail;
+      }
+      return;
+    }
+
+    if (AUDIENCE_DECRYPT_CAUSE_PRIORITY[cause] > AUDIENCE_DECRYPT_CAUSE_PRIORITY[this._baseCause]) {
+      this._baseCause = cause;
+      this._baseDetail = detail;
     }
   }
 
@@ -261,14 +306,44 @@ class AudienceDecryptFailureAccumulator {
     protocol?: string;
     recipientDid?: string;
   }): AudienceDecryptError {
-    const detail = [this._detail ?? params.fallbackDetail, ...this._notes.slice(0, 5)].join(' ');
+    this.endRoute();
+    const outcome = this.resolveOutcome();
+    const detailParts = [outcome.detail ?? params.fallbackDetail];
+    if (this._routes.length > 1) {
+      detailParts.push(`Role routes: ${this._routes.map((route): string => `${route.label}: ${route.cause}`).join('; ')}.`);
+    }
+    detailParts.push(...this._notes.slice(0, 5));
     return new AudienceDecryptError({
-      cause        : this._cause,
-      detail,
+      cause        : outcome.cause,
+      detail       : detailParts.join(' '),
       protocol     : params.protocol,
       recipientDid : params.recipientDid,
       recordId     : params.recordId,
     });
+  }
+
+  private resolveOutcome(): { cause: AudienceDecryptFailureCause; detail?: string } {
+    if (this._routes.length === 0) {
+      return { cause: this._baseCause, detail: this._baseDetail };
+    }
+
+    const unverifiableRoute = this._routes.find((route): boolean => route.cause === 'remote-unverifiable');
+    if (unverifiableRoute !== undefined) {
+      return { cause: 'remote-unverifiable', detail: unverifiableRoute.detail };
+    }
+
+    const unknownRoute = this._routes.find((route): boolean => route.cause === 'unknown');
+    if (unknownRoute !== undefined) {
+      return { cause: 'unknown', detail: unknownRoute.detail };
+    }
+
+    let winner = this._routes[0];
+    for (const route of this._routes) {
+      if (AUDIENCE_DECRYPT_CAUSE_PRIORITY[route.cause] > AUDIENCE_DECRYPT_CAUSE_PRIORITY[winner.cause]) {
+        winner = route;
+      }
+    }
+    return { cause: winner.cause, detail: winner.detail };
   }
 }
 
@@ -1297,26 +1372,30 @@ async function decryptRecordsReadReply(
     return;
   }
 
+  // Boundary guarantee: no raw error may reach callers from the role-audience decrypt path —
+  // resolution and decryption failures alike surface as AudienceDecryptError.
   const failureAccumulator = new AudienceDecryptFailureAccumulator();
-  const keyDecrypter = await resolveKeyDecrypter({
-    agent,
-    audienceDecryptionKeyCache,
-    authorDid,
-    delegatedGrant,
-    delegateDecryptionKeyCache,
-    failureAccumulator,
-    granteeDid,
-    recordsWrite: readReply.entry.recordsWrite,
-    targetDid,
-  });
-
   try {
+    const keyDecrypter = await resolveKeyDecrypter({
+      agent,
+      audienceDecryptionKeyCache,
+      authorDid,
+      delegatedGrant,
+      delegateDecryptionKeyCache,
+      failureAccumulator,
+      granteeDid,
+      recordsWrite: readReply.entry.recordsWrite,
+      targetDid,
+    });
     readReply.entry.data = await Records.decrypt(
       readReply.entry.recordsWrite,
       keyDecrypter,
       readReply.entry.data,
     );
   } catch (error: any) {
+    if (error instanceof AudienceDecryptError) {
+      throw error;
+    }
     throw failureAccumulator.toError({
       fallbackDetail : `Original error: ${error.message}`,
       protocol       : readReply.entry.recordsWrite.descriptor.protocol,
@@ -1343,20 +1422,21 @@ async function decryptRecordsQueryEntry(
     return;
   }
 
+  // Boundary guarantee: no raw error may reach callers from the role-audience decrypt path —
+  // resolution and decryption failures alike surface as AudienceDecryptError.
   const failureAccumulator = new AudienceDecryptFailureAccumulator();
-  const keyDecrypter = await resolveKeyDecrypter({
-    agent,
-    audienceDecryptionKeyCache,
-    authorDid,
-    delegatedGrant,
-    delegateDecryptionKeyCache,
-    failureAccumulator,
-    granteeDid,
-    recordsWrite: entry as RecordsWriteMessage,
-    targetDid,
-  });
-
   try {
+    const keyDecrypter = await resolveKeyDecrypter({
+      agent,
+      audienceDecryptionKeyCache,
+      authorDid,
+      delegatedGrant,
+      delegateDecryptionKeyCache,
+      failureAccumulator,
+      granteeDid,
+      recordsWrite: entry as RecordsWriteMessage,
+      targetDid,
+    });
     const cipherBytes = Encoder.base64UrlToBytes(entry.encodedData);
     const cipherStream = DataStream.fromBytes(cipherBytes);
     const plainStream = await Records.decrypt(
@@ -1365,6 +1445,9 @@ async function decryptRecordsQueryEntry(
     const plainBytes = await DataStream.toBytes(plainStream);
     entry.encodedData = Encoder.bytesToBase64Url(plainBytes);
   } catch (error: any) {
+    if (error instanceof AudienceDecryptError) {
+      throw error;
+    }
     throw failureAccumulator.toError({
       fallbackDetail : `Original error: ${error.message}`,
       protocol       : entry.descriptor.protocol,
@@ -1483,6 +1566,9 @@ async function resolveRoleAudienceDecrypter(params: {
       return buildAudienceContentDecrypter(cachedKey);
     }
 
+    // Each role-audience entry is one decryption route; its observations are scoped so the
+    // final error can aggregate per-route outcomes conservatively.
+    params.failureAccumulator?.beginRoute(entry.rolePath);
     const hydratedKey = await hydrateAudienceKey({
       agent                      : params.agent,
       sourceDid                  : params.sourceDid,
@@ -1496,6 +1582,7 @@ async function resolveRoleAudienceDecrypter(params: {
       rolePath                   : entry.rolePath,
       keyId                      : entry.keyId,
     });
+    params.failureAccumulator?.endRoute();
     if (hydratedKey !== undefined) {
       putAudienceKeyInMemoryCache({
         audienceDecryptionKeyCache : params.audienceDecryptionKeyCache,
@@ -1548,15 +1635,21 @@ export async function resolveAudienceDecryptionKey(params: {
 }
 
 async function hydrateAudienceKey(params: HydrateAudienceKeyParams): Promise<AudienceDecryptionKeyEntry | undefined> {
-  const audienceLookup = await fetchAudienceRecord({
-    agent     : params.agent,
-    authorDid : params.granteeDid ?? params.recipientDid,
-    contextId : params.contextId,
-    keyId     : params.keyId,
-    protocol  : params.protocol,
-    rolePath  : params.rolePath,
-    sourceDid : params.sourceDid,
-  });
+  let audienceLookup: { record?: AudienceRecordCandidate; remote: RemoteReadOutcome; replyStatusCode: number };
+  try {
+    audienceLookup = await fetchAudienceRecord({
+      agent     : params.agent,
+      authorDid : params.granteeDid ?? params.recipientDid,
+      contextId : params.contextId,
+      keyId     : params.keyId,
+      protocol  : params.protocol,
+      rolePath  : params.rolePath,
+      sourceDid : params.sourceDid,
+    });
+  } catch (error) {
+    recordFailedLookup(params, 'audience', error);
+    return undefined;
+  }
   const audienceRecord = audienceLookup.record;
   if (audienceRecord === undefined) {
     await classifyMissingAudienceRecord(params, audienceLookup);
@@ -1569,7 +1662,13 @@ async function hydrateAudienceKey(params: HydrateAudienceKeyParams): Promise<Aud
   }
 
   const deliveryReadActor = getAudienceDeliveryReadActor(params);
-  const deliveryLookup = await queryAudienceDeliveryMessagesDetailed(params, deliveryReadActor);
+  let deliveryLookup: { messages: EncodedRecordsWriteMessage[]; remote: RemoteReadOutcome; replyStatusCode: number };
+  try {
+    deliveryLookup = await queryAudienceDeliveryMessagesDetailed(params, deliveryReadActor);
+  } catch (error) {
+    recordFailedLookup(params, '$encryption/delivery', error);
+    return undefined;
+  }
   const deliveryMessages = deliveryLookup.messages;
   if (deliveryMessages.length === 0) {
     await classifyMissingDeliveries(params, deliveryLookup);
@@ -1598,10 +1697,48 @@ async function hydrateAudienceKey(params: HydrateAudienceKeyParams): Promise<Aud
 }
 
 /**
+ * Records a lookup that failed outright (a thrown local/remote request) as unverifiable: a failed
+ * lookup is never evidence of absence, and diagnostic classification must not throw.
+ */
+function recordFailedLookup(params: HydrateAudienceKeyParams, lookupName: string, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  logger.log(`AgentDwnApi: ${lookupName} lookup for role-audience key '${params.keyId}' failed: ${message}`);
+  params.failureAccumulator?.record(
+    'remote-unverifiable',
+    `the ${lookupName} lookup for role-audience key '${params.keyId}' failed (${message}); absence cannot be asserted.`
+  );
+}
+
+/**
+ * Whether the local DWN is authoritative for `sourceDid` — the DID is one of this agent's locally
+ * managed tenants. For a foreign tenant, a read-through that never consulted the remote
+ * (`'skipped'`: no resolvable endpoint) leaves only a possibly-stale local replica, so emptiness
+ * under it cannot be asserted as absence.
+ */
+async function isLocallyManagedTenant(agent: EnboxPlatformAgent, didUri: string): Promise<boolean> {
+  try {
+    return await agent.did.get({ didUri }) !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+/** Whether an empty lookup's absence is authoritative: the remote answered, or none was needed because the source tenant is locally managed. */
+async function isAbsenceAuthoritative(params: HydrateAudienceKeyParams, remote: RemoteReadOutcome): Promise<boolean> {
+  if (remote === 'failed') {
+    return false;
+  }
+  if (remote === 'skipped') {
+    return isLocallyManagedTenant(params.agent, params.sourceDid);
+  }
+  return true;
+}
+
+/**
  * Classifies an absent audience record for the record's role-audience key. A failed lookup — a
- * non-200 reply, or an unreachable remote — is never evidence of absence; only an authoritative
- * 200-empty result is probed against the tuple's current audience to distinguish a
- * superseded/purged audience from an unknown failure.
+ * non-200 reply, an unreachable remote, or an unconsulted foreign tenant — is never evidence of
+ * absence; only an authoritative 200-empty result is probed against the tuple's current audience to
+ * distinguish a superseded/purged audience from an unknown failure.
  */
 async function classifyMissingAudienceRecord(
   params: HydrateAudienceKeyParams,
@@ -1621,11 +1758,11 @@ async function classifyMissingAudienceRecord(
     return;
   }
 
-  if (lookup.remote === 'failed') {
+  if (!await isAbsenceAuthoritative(params, lookup.remote)) {
     accumulator.record(
       'remote-unverifiable',
-      `no audience record for role-audience key '${params.keyId}' is visible locally and the remote DWN ` +
-      `could not be consulted; absence cannot be asserted.`
+      `no audience record for role-audience key '${params.keyId}' is visible locally and the source tenant's ` +
+      `remote DWN could not be consulted; absence cannot be asserted.`
     );
     return;
   }
@@ -1635,11 +1772,11 @@ async function classifyMissingAudienceRecord(
 
 /**
  * Classifies an empty delivery lookup for the record's role-audience key. A failed lookup — a
- * non-200 reply, or an unreachable remote — is never evidence of absence; a missing delivery is
- * only asserted from an authoritative 200-empty result, then probed against the tuple's current
- * audience in case the record's key was superseded. A delegated actor's empty result is structural
- * (the DWN visibility-filters delivery records for delegates) and is never classified as a missing
- * delivery.
+ * non-200 reply, an unreachable remote, or an unconsulted foreign tenant — is never evidence of
+ * absence; a missing delivery is only asserted from an authoritative 200-empty result, then probed
+ * against the tuple's current audience in case the record's key was superseded. A delegated actor's
+ * empty result is structural (the DWN visibility-filters delivery records for delegates) and is
+ * never classified as a missing delivery.
  */
 async function classifyMissingDeliveries(
   params: HydrateAudienceKeyParams,
@@ -1659,11 +1796,11 @@ async function classifyMissingDeliveries(
     return;
   }
 
-  if (lookup.remote === 'failed') {
+  if (!await isAbsenceAuthoritative(params, lookup.remote)) {
     accumulator.record(
       'remote-unverifiable',
       `no $encryption/delivery record wrapping role-audience key '${params.keyId}' to '${params.recipientDid}' ` +
-      `is visible locally and the remote DWN could not be consulted; absence cannot be asserted.`
+      `is visible locally and the source tenant's remote DWN could not be consulted; absence cannot be asserted.`
     );
     return;
   }
@@ -1697,13 +1834,27 @@ function deliveryAbsenceIsAuthoritative(params: HydrateAudienceKeyParams): boole
 /**
  * Resolves the tuple's CURRENT audience key via the projected audience query (no `keyId` tag) and
  * records `'audience-superseded'` when it differs from the key the record is wrapped to. Runs only
- * on the already-failing path, and only when cause detection is active.
+ * on the already-failing path, and only when cause detection is active. A failing probe never
+ * throws — it records the failure as unverifiable so a diagnostic cannot mask the primary error.
  */
 async function recordSupersededAudienceIfCurrentDiffers(
   params: HydrateAudienceKeyParams,
   accumulator: AudienceDecryptFailureAccumulator,
 ): Promise<void> {
-  const currentKeyId = await probeCurrentAudienceKeyId(params);
+  let currentKeyId: string | undefined;
+  try {
+    currentKeyId = await probeCurrentAudienceKeyId(params);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.log(`AgentDwnApi: current-audience probe for role-audience key '${params.keyId}' failed: ${message}`);
+    accumulator.record(
+      'remote-unverifiable',
+      `the current-audience probe for (${params.protocol}, ${params.rolePath}, '${params.contextId}') failed ` +
+      `(${message}); superseded-ness cannot be asserted.`
+    );
+    return;
+  }
+
   if (currentKeyId !== undefined && currentKeyId !== params.keyId) {
     accumulator.record(
       'audience-superseded',
@@ -2369,9 +2520,14 @@ async function verifyAudienceKeyRoleAssignment(params: {
   });
 
   if (!hasRoleRecord) {
-    // A role record absent from the local projection with the remote unreachable is not
-    // evidence of revocation — never launder a transport failure into role-not-held.
+    // A role record absent from the local projection is only evidence of revocation when the
+    // lookup was authoritative: the remote answered, or none was needed because the source
+    // tenant is locally managed. An unreachable remote — or a foreign tenant whose remote was
+    // never consulted — must never launder into role-not-held.
     if (remote === 'failed') {
+      throw new AudienceRoleUnverifiableError();
+    }
+    if (remote === 'skipped' && !await isLocallyManagedTenant(params.agent, params.sourceDid)) {
       throw new AudienceRoleUnverifiableError();
     }
     throw new AudienceRoleNotHeldError();

@@ -344,9 +344,17 @@ describe('dwn-encryption', () => {
         };
       }
 
-      function makeRecipientAgent(sendDwnRequest: sinon.SinonStub, processDwnRequest?: sinon.SinonStub): any {
+      function makeRecipientAgent(
+        sendDwnRequest: sinon.SinonStub,
+        processDwnRequest?: sinon.SinonStub,
+        options: { locallyManagedSource?: boolean } = {},
+      ): any {
         return {
           did: {
+            // Whether the source tenant counts as one of this agent's own (locally managed) tenants.
+            get: sinon.stub().resolves(
+              options.locallyManagedSource === true ? { uri: 'did:example:alice' } : undefined,
+            ),
             resolve: sinon.stub().resolves({
               didDocument: {
                 id                 : 'did:example:bob',
@@ -370,32 +378,63 @@ describe('dwn-encryption', () => {
         };
       }
 
-      /** Routes local queries by their filter's `protocolPath`; unrouted paths get a 200-empty reply. */
-      function routeLocalQueriesByProtocolPath(routes: Record<string, unknown>): sinon.SinonStub {
+      /** Routes local queries through `route(filter)`; returning an Error throws it, `undefined` yields 200-empty. */
+      function routeLocalQueries(route: (filter: any) => unknown): sinon.SinonStub {
         return sinon.stub().callsFake(async (request: any): Promise<unknown> => {
-          const protocolPath = request.messageParams?.filter?.protocolPath;
-          return routes[protocolPath] ?? { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
+          const resolved = route(request.messageParams?.filter ?? {});
+          if (resolved instanceof Error) {
+            throw resolved;
+          }
+          return resolved ?? { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
         });
       }
 
-      function makeAudienceQueryReply(keyId: string, publicKeyJwk: Record<string, unknown>): any {
+      /** Routes local queries by their filter's `protocolPath`; unrouted paths get a 200-empty reply. */
+      function routeLocalQueriesByProtocolPath(routes: Record<string, unknown>): sinon.SinonStub {
+        return routeLocalQueries((filter): unknown => routes[filter.protocolPath]);
+      }
+
+      function makeAudienceQueryReply(keyId: string, publicKeyJwk: Record<string, unknown>, rolePath: string = 'admin'): any {
         const payload = {
           protocol         : TAXONOMY_PROTOCOL,
-          rolePath         : 'admin',
+          rolePath,
           contextId        : '',
           keyId,
           publicKeyJwk,
           sealedPrivateKey : {},
         };
         return { reply: { status  : { code: 200, detail: 'OK' }, entries : [{
-          recordId   : 'audience-current',
+          recordId   : `audience-${keyId}`,
           descriptor : {
             protocol     : TAXONOMY_PROTOCOL,
             protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-            tags         : { protocol: TAXONOMY_PROTOCOL, rolePath: 'admin', contextId: '', keyId },
+            tags         : { protocol: TAXONOMY_PROTOCOL, rolePath, contextId: '', keyId },
           },
           encodedData: Encoder.bytesToBase64Url(Encoder.objectToBytes(payload)),
         }] } };
+      }
+
+      function makeMultiRoleWrappedReadReply(entries: { keyId: string; rolePath: string }[]): any {
+        return {
+          status : { code: 200 },
+          entry  : {
+            recordsWrite: {
+              recordId   : 'rec-multi-role',
+              contextId  : 'rec-multi-role',
+              descriptor : { protocol: TAXONOMY_PROTOCOL, protocolPath: 'note' },
+              encryption : {
+                keyEncryption: entries.map((entry): Record<string, unknown> => ({
+                  algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+                  derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+                  keyId            : entry.keyId,
+                  protocol         : TAXONOMY_PROTOCOL,
+                  rolePath         : entry.rolePath,
+                })),
+              },
+            },
+            data: new ReadableStream(),
+          },
+        };
       }
 
       /** The read-through's "tenant advertises no remote DWN" shape: a local-only DID. */
@@ -410,10 +449,10 @@ describe('dwn-encryption', () => {
         messageType : 'RecordsRead',
       } as any;
 
-      async function catchDecryptError(mockAgent: any, keyId?: string): Promise<AudienceDecryptError> {
+      async function catchDecryptErrorForReply(mockAgent: any, reply: any, request: any = recipientReadRequest): Promise<AudienceDecryptError> {
         let caught: unknown;
         try {
-          await maybeDecryptReply(recipientReadRequest, makeRoleWrappedReadReply(keyId), mockAgent);
+          await maybeDecryptReply(request, reply, mockAgent);
         } catch (error) {
           caught = error;
         }
@@ -421,10 +460,66 @@ describe('dwn-encryption', () => {
         return caught as AudienceDecryptError;
       }
 
-      async function decryptAndCatch(mockAgent: any): Promise<AudienceDecryptError> {
+      async function catchDecryptError(mockAgent: any, keyId?: string): Promise<AudienceDecryptError> {
+        return catchDecryptErrorForReply(mockAgent, makeRoleWrappedReadReply(keyId));
+      }
+
+      async function stubDecryptRejection(): Promise<void> {
         const dwnSdk = await import('@enbox/dwn-sdk-js');
         sinon.stub(dwnSdk.Records, 'decrypt').rejects(new Error('no matching key encryption entry in test'));
+      }
+
+      async function decryptAndCatch(mockAgent: any): Promise<AudienceDecryptError> {
+        await stubDecryptRejection();
         return catchDecryptError(mockAgent);
+      }
+
+      /**
+       * Builds a role-verification scenario: a real audience key, a delivery that decrypts to it,
+       * and routed local queries whose role lookup returns `roleReply` (an Error value throws).
+       * `Records.decrypt` is stubbed so only the delivery opens.
+       */
+      async function makeRoleVerificationAgent(
+        roleReply: unknown,
+        options: { locallyManagedSource?: boolean } = {},
+      ): Promise<{ mockAgent: any; keyId: string }> {
+        const audienceKey = await generateAudienceKey({ contextId: '', protocol: TAXONOMY_PROTOCOL, rolePath: 'admin' });
+        const deliveryMessage = {
+          recordId   : 'delivery-role-check',
+          descriptor : {
+            protocol     : TAXONOMY_PROTOCOL,
+            protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+            recipient    : 'did:example:bob',
+            tags         : {
+              protocol           : TAXONOMY_PROTOCOL,
+              rolePath           : 'admin',
+              contextId          : '',
+              keyId              : audienceKey.keyId,
+              recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
+            },
+          },
+          encodedData: Encoder.bytesToBase64Url(new Uint8Array([1])),
+        };
+        const deliveryPayload = {
+          protocol    : TAXONOMY_PROTOCOL,
+          rolePath    : 'admin',
+          contextId   : '',
+          keyId       : audienceKey.keyId,
+          keyMaterial : audienceKey.keyMaterial,
+        };
+        const dwnSdk = await import('@enbox/dwn-sdk-js');
+        sinon.stub(dwnSdk.Records, 'decrypt').callsFake(async (message: any): Promise<any> => {
+          if (message.recordId === 'delivery-role-check') {
+            return DataStream.fromBytes(Encoder.objectToBytes(deliveryPayload));
+          }
+          throw new Error('no matching key encryption entry in test');
+        });
+        const mockAgent = makeRecipientAgent(noRemoteServiceStub(), routeLocalQueriesByProtocolPath({
+          [ENCRYPTION_CONTROL_AUDIENCE_PATH] : makeAudienceQueryReply(audienceKey.keyId, audienceKey.keyMaterial.publicKeyJwk as any),
+          [ENCRYPTION_CONTROL_DELIVERY_PATH] : { reply: { status: { code: 200, detail: 'OK' }, entries: [deliveryMessage] } },
+          'admin'                            : roleReply,
+        }), options);
+        return { keyId: audienceKey.keyId, mockAgent };
       }
 
       it('should classify an unreachable remote during the audience lookup as remote-unverifiable', async () => {
@@ -477,49 +572,240 @@ describe('dwn-encryption', () => {
       it('should classify a non-200 role lookup on a local-only DID as remote-unverifiable, not role-not-held', async () => {
         // A real audience key so the delivered payload passes key-material verification and the
         // flow reaches the role-assignment lookup, whose local reply is a 500.
-        const audienceKey = await generateAudienceKey({ contextId: '', protocol: TAXONOMY_PROTOCOL, rolePath: 'admin' });
-        const deliveryMessage = {
-          recordId   : 'delivery-role-check',
-          descriptor : {
-            protocol     : TAXONOMY_PROTOCOL,
-            protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
-            recipient    : 'did:example:bob',
-            tags         : {
-              protocol           : TAXONOMY_PROTOCOL,
-              rolePath           : 'admin',
-              contextId          : '',
-              keyId              : audienceKey.keyId,
-              recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
-            },
-          },
-          encodedData: Encoder.bytesToBase64Url(new Uint8Array([1])),
-        };
-        const deliveryPayload = {
-          protocol    : TAXONOMY_PROTOCOL,
-          rolePath    : 'admin',
-          contextId   : '',
-          keyId       : audienceKey.keyId,
-          keyMaterial : audienceKey.keyMaterial,
-        };
-        const dwnSdk = await import('@enbox/dwn-sdk-js');
-        sinon.stub(dwnSdk.Records, 'decrypt').callsFake(async (message: any): Promise<any> => {
-          if (message.recordId === 'delivery-role-check') {
-            return DataStream.fromBytes(Encoder.objectToBytes(deliveryPayload));
-          }
-          throw new Error('no matching key encryption entry in test');
-        });
-        const mockAgent = makeRecipientAgent(noRemoteServiceStub(), routeLocalQueriesByProtocolPath({
-          [ENCRYPTION_CONTROL_AUDIENCE_PATH] : makeAudienceQueryReply(audienceKey.keyId, audienceKey.keyMaterial.publicKeyJwk as any),
-          [ENCRYPTION_CONTROL_DELIVERY_PATH] : { reply: { status: { code: 200, detail: 'OK' }, entries: [deliveryMessage] } },
-          'admin'                            : { reply: { status: { code: 500, detail: 'Internal Server Error' } } },
-        }));
+        const { mockAgent, keyId } = await makeRoleVerificationAgent({ reply: { status: { code: 500, detail: 'Internal Server Error' } } });
 
-        const decryptError = await catchDecryptError(mockAgent, audienceKey.keyId);
+        const decryptError = await catchDecryptError(mockAgent, keyId);
 
         expect(decryptError.cause).toBe('remote-unverifiable');
-        expect(decryptError.cause).not.toBe('role-not-held');
         expect(decryptError.detail).toContain('could not be verified');
         expect(decryptError.detail).not.toContain('not an active holder');
+      });
+
+      describe('foreign-tenant emptiness with no remote to consult (remote skipped)', () => {
+        it('should classify a foreign tenant delivery emptiness as remote-unverifiable, not delivery-missing', async () => {
+          const mockAgent = makeRecipientAgent(noRemoteServiceStub(), routeLocalQueriesByProtocolPath({
+            [ENCRYPTION_CONTROL_AUDIENCE_PATH]: makeAudienceQueryReply('wrapped-role-key', { kty: 'OKP', crv: 'X25519', x: 'AAAA' }),
+          }));
+
+          const decryptError = await decryptAndCatch(mockAgent);
+
+          expect(decryptError.cause).toBe('remote-unverifiable');
+          expect(decryptError.cause).not.toBe('delivery-missing');
+          expect(decryptError.detail).toContain(`source tenant's remote DWN could not be consulted`);
+        });
+
+        it('should keep delivery-missing when the empty source tenant is locally managed', async () => {
+          const mockAgent = makeRecipientAgent(noRemoteServiceStub(), routeLocalQueriesByProtocolPath({
+            [ENCRYPTION_CONTROL_AUDIENCE_PATH]: makeAudienceQueryReply('wrapped-role-key', { kty: 'OKP', crv: 'X25519', x: 'AAAA' }),
+          }), { locallyManagedSource: true });
+
+          const decryptError = await decryptAndCatch(mockAgent);
+
+          expect(decryptError.cause).toBe('delivery-missing');
+          expect(decryptError.detail).toContain('no $encryption/delivery record wraps');
+        });
+
+        it('should classify a foreign tenant role emptiness as remote-unverifiable, not role-not-held', async () => {
+          const { mockAgent, keyId } = await makeRoleVerificationAgent({ reply: { status: { code: 200, detail: 'OK' }, entries: [] } });
+
+          const decryptError = await catchDecryptError(mockAgent, keyId);
+
+          expect(decryptError.cause).toBe('remote-unverifiable');
+          expect(decryptError.detail).toContain('could not be verified');
+          expect(decryptError.detail).not.toContain('not an active holder');
+        });
+
+        it('should keep role-not-held when the empty source tenant is locally managed', async () => {
+          const { mockAgent, keyId } = await makeRoleVerificationAgent(
+            { reply: { status: { code: 200, detail: 'OK' }, entries: [] } },
+            { locallyManagedSource: true },
+          );
+
+          const decryptError = await catchDecryptError(mockAgent, keyId);
+
+          expect(decryptError.cause).toBe('role-not-held');
+          expect(decryptError.detail).toContain('not an active holder');
+        });
+
+        it('should classify a foreign tenant audience emptiness as remote-unverifiable instead of probing a stale replica', async () => {
+          const mockAgent = makeRecipientAgent(noRemoteServiceStub());
+
+          const decryptError = await decryptAndCatch(mockAgent);
+
+          expect(decryptError.cause).toBe('remote-unverifiable');
+          expect(decryptError.detail).toContain('no audience record');
+        });
+      });
+
+      describe('multi-route aggregation across role-audience entries', () => {
+        const K1 = 'collaborator-key';
+        const K2 = 'viewer-key';
+
+        function makeReviewerReproAgent(): any {
+          // Collaborator: authoritative 200-empty delivery lookup (remote answers) → definitive
+          // delivery-missing. Viewer: local 401 with the remote unreachable → unverifiable.
+          const localRouter = routeLocalQueries((filter): unknown => {
+            const rolePath = filter.tags?.rolePath;
+            if (filter.protocolPath === ENCRYPTION_CONTROL_AUDIENCE_PATH) {
+              return rolePath === 'collaborator'
+                ? makeAudienceQueryReply(K1, { kty: 'OKP', crv: 'X25519', x: 'AAAA' }, 'collaborator')
+                : makeAudienceQueryReply(K2, { kty: 'OKP', crv: 'X25519', x: 'BBBB' }, 'viewer');
+            }
+            if (filter.protocolPath === ENCRYPTION_CONTROL_DELIVERY_PATH && rolePath === 'viewer') {
+              return { reply: { status: { code: 401, detail: 'Unauthorized' } } };
+            }
+            return undefined;
+          });
+          const sendRouter = sinon.stub().callsFake(async (request: any): Promise<unknown> => {
+            if (request.messageParams?.filter?.tags?.rolePath === 'viewer') {
+              throw new Error('remote transport down in test');
+            }
+            return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
+          });
+          return makeRecipientAgent(sendRouter, localRouter);
+        }
+
+        it('should report remote-unverifiable when one route is definitive and another is unverifiable', async () => {
+          await stubDecryptRejection();
+          const decryptError = await catchDecryptErrorForReply(makeReviewerReproAgent(), makeMultiRoleWrappedReadReply([
+            { keyId: K1, rolePath: 'collaborator' },
+            { keyId: K2, rolePath: 'viewer' },
+          ]));
+
+          expect(decryptError.cause).toBe('remote-unverifiable');
+          expect(decryptError.detail).toContain('Role routes:');
+          expect(decryptError.detail).toContain('collaborator: delivery-missing');
+          expect(decryptError.detail).toContain('viewer: remote-unverifiable');
+        });
+
+        it('should report remote-unverifiable in the reverse entry order too', async () => {
+          await stubDecryptRejection();
+          const decryptError = await catchDecryptErrorForReply(makeReviewerReproAgent(), makeMultiRoleWrappedReadReply([
+            { keyId: K2, rolePath: 'viewer' },
+            { keyId: K1, rolePath: 'collaborator' },
+          ]));
+
+          expect(decryptError.cause).toBe('remote-unverifiable');
+          expect(decryptError.detail).toContain('collaborator: delivery-missing');
+          expect(decryptError.detail).toContain('viewer: remote-unverifiable');
+        });
+
+        it('should report the most specific definitive cause when every route is a definitive dead-end', async () => {
+          // Collaborator: authoritative delivery-missing. Viewer: its exact audience is gone but
+          // the tuple's current audience is a different key → audience-superseded.
+          const localRouter = routeLocalQueries((filter): unknown => {
+            const rolePath = filter.tags?.rolePath;
+            const isExactAudienceLookup = filter.tags?.keyId !== undefined;
+            if (filter.protocolPath === ENCRYPTION_CONTROL_AUDIENCE_PATH && rolePath === 'collaborator') {
+              return makeAudienceQueryReply(K1, { kty: 'OKP', crv: 'X25519', x: 'AAAA' }, 'collaborator');
+            }
+            if (filter.protocolPath === ENCRYPTION_CONTROL_AUDIENCE_PATH && rolePath === 'viewer') {
+              return isExactAudienceLookup
+                ? { reply: { status: { code: 200, detail: 'OK' }, entries: [] } }
+                : makeAudienceQueryReply('viewer-current-key', { kty: 'OKP', crv: 'X25519', x: 'CCCC' }, 'viewer');
+            }
+            return undefined;
+          });
+          const mockAgent = makeRecipientAgent(
+            sinon.stub().resolves({ reply: { status: { code: 200, detail: 'OK' }, entries: [] } }),
+            localRouter,
+          );
+          await stubDecryptRejection();
+
+          const decryptError = await catchDecryptErrorForReply(mockAgent, makeMultiRoleWrappedReadReply([
+            { keyId: K1, rolePath: 'collaborator' },
+            { keyId: K2, rolePath: 'viewer' },
+          ]));
+
+          expect(decryptError.cause).toBe('audience-superseded');
+          expect(decryptError.detail).toContain(`current audience key is 'viewer-current-key'`);
+          expect(decryptError.detail).toContain('collaborator: delivery-missing');
+          expect(decryptError.detail).toContain('viewer: audience-superseded');
+        });
+      });
+
+      describe('fail-safe diagnostic lookups', () => {
+        it('should record an audience lookup rejection as remote-unverifiable instead of throwing raw', async () => {
+          const mockAgent = makeRecipientAgent(noRemoteServiceStub(), routeLocalQueries((filter): unknown =>
+            filter.protocolPath === ENCRYPTION_CONTROL_AUDIENCE_PATH ? new Error('audience lookup exploded in test') : undefined,
+          ));
+
+          const decryptError = await decryptAndCatch(mockAgent);
+
+          expect(decryptError.cause).toBe('remote-unverifiable');
+          expect(decryptError.detail).toContain('audience lookup for role-audience key');
+          expect(decryptError.detail).toContain('audience lookup exploded in test');
+        });
+
+        it('should record a delivery lookup rejection as remote-unverifiable instead of throwing raw', async () => {
+          const mockAgent = makeRecipientAgent(noRemoteServiceStub(), routeLocalQueries((filter): unknown => {
+            if (filter.protocolPath === ENCRYPTION_CONTROL_AUDIENCE_PATH) {
+              return makeAudienceQueryReply('wrapped-role-key', { kty: 'OKP', crv: 'X25519', x: 'AAAA' });
+            }
+            return filter.protocolPath === ENCRYPTION_CONTROL_DELIVERY_PATH ? new Error('delivery lookup exploded in test') : undefined;
+          }));
+
+          const decryptError = await decryptAndCatch(mockAgent);
+
+          expect(decryptError.cause).toBe('remote-unverifiable');
+          expect(decryptError.detail).toContain('$encryption/delivery lookup for role-audience key');
+          expect(decryptError.detail).toContain('delivery lookup exploded in test');
+        });
+
+        it('should keep the failure typed when the role lookup rejects outright', async () => {
+          const { mockAgent, keyId } = await makeRoleVerificationAgent(new Error('role lookup exploded in test'));
+
+          const decryptError = await catchDecryptError(mockAgent, keyId);
+
+          expect(decryptError.cause).toBe('unknown');
+          expect(decryptError.detail).toContain('Skipped audience delivery');
+          expect(decryptError.detail).toContain('role lookup exploded in test');
+        });
+
+        it('should record a current-audience probe rejection as remote-unverifiable instead of throwing raw', async () => {
+          const localRouter = routeLocalQueries((filter): unknown => {
+            if (filter.protocolPath !== ENCRYPTION_CONTROL_AUDIENCE_PATH) {
+              return undefined;
+            }
+            return filter.tags?.keyId !== undefined
+              ? { reply: { status: { code: 200, detail: 'OK' }, entries: [] } }
+              : new Error('current-audience probe exploded in test');
+          });
+          const mockAgent = makeRecipientAgent(
+            sinon.stub().resolves({ reply: { status: { code: 200, detail: 'OK' }, entries: [] } }),
+            localRouter,
+          );
+
+          const decryptError = await decryptAndCatch(mockAgent);
+
+          expect(decryptError.cause).toBe('remote-unverifiable');
+          expect(decryptError.detail).toContain('current-audience probe');
+          expect(decryptError.detail).toContain('probe exploded in test');
+        });
+
+        it('should wrap resolution failures outside the role-audience path into AudienceDecryptError', async () => {
+          const mockAgent = {
+            did: {
+              get     : sinon.stub().resolves(undefined),
+              resolve : sinon.stub().rejects(new Error('resolver exploded in test')),
+            },
+            keyManager        : { getKeyUri: sinon.stub().resolves('key-uri') },
+            processDwnRequest : sinon.stub().resolves({ reply: { status: { code: 200, detail: 'OK' }, entries: [] } }),
+            sendDwnRequest    : noRemoteServiceStub(),
+          };
+          const ownerReadRequest = {
+            author      : 'did:example:alice',
+            target      : 'did:example:alice',
+            encryption  : true,
+            messageType : 'RecordsRead',
+          } as any;
+
+          const decryptError = await catchDecryptErrorForReply(mockAgent, makeRoleWrappedReadReply(), ownerReadRequest);
+
+          expect(decryptError.cause).toBe('unknown');
+          expect(decryptError.message).toContain('Failed to decrypt record');
+          expect(decryptError.detail).toContain('resolver exploded in test');
+        });
       });
     });
 
