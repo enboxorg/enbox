@@ -19,8 +19,8 @@ import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
 
+import { AudienceDecryptError, createGrantKeyRecordsForGrants, getEncryptionKeyInfo, resolveKeyDecrypter } from '../src/dwn-encryption.js';
 import { ContentEncryptionAlgorithm, DataStream, DwnInterfaceName, DwnMethodName, Encoder, EncryptionProtocol, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
-import { createGrantKeyRecordsForGrants, getEncryptionKeyInfo, resolveKeyDecrypter } from '../src/dwn-encryption.js';
 
 const encryptedNoteProtocol: ProtocolDefinition = {
   published : true,
@@ -350,14 +350,27 @@ describe('e2e: delegate + encrypted protocol', () => {
       get : sinon.stub().returns(undefined),
       set : sinon.stub(),
     };
-    await expect(resolveKeyDecrypter({
-      agent        : delegateHarness.agent,
-      authorDid    : delegateDid,
-      delegateDecryptionKeyCache,
-      granteeDid   : delegateDid,
-      recordsWrite : noteWrite as RecordsWriteMessage,
-      targetDid    : walletIdentity.did.uri,
-    })).rejects.toThrow('no delivered decryption key covers encrypted record');
+    let caught: unknown;
+    try {
+      await resolveKeyDecrypter({
+        agent        : delegateHarness.agent,
+        authorDid    : delegateDid,
+        delegateDecryptionKeyCache,
+        granteeDid   : delegateDid,
+        recordsWrite : noteWrite as RecordsWriteMessage,
+        targetDid    : walletIdentity.did.uri,
+      });
+    } catch (error) {
+      caught = error;
+    }
+    // The failure is typed: the revoked grantKey is no longer logger-swallowed — it
+    // surfaces as error data on the AudienceDecryptError detail.
+    expect(caught).toBeInstanceOf(AudienceDecryptError);
+    const decryptError = caught as AudienceDecryptError;
+    expect(decryptError.cause).toBe('unknown');
+    expect(decryptError.message).toContain('no delivered decryption key covers encrypted record');
+    expect(decryptError.detail).toContain('Skipped grantKey');
+    expect(decryptError.detail).toContain('revoked permission grant');
     expect(delegateDecryptionKeyCache.set.called).toBe(false);
   });
 

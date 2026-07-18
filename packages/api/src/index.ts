@@ -49,6 +49,7 @@ export * from './vc-api.js';
 // Agent types surfaced on public API responses — re-exported so apps can name
 // them without depending on `@enbox/agent` directly.
 export type { AudienceKeyDeliveryOutcome } from '@enbox/agent';
+export { AudienceDecryptError, type AudienceDecryptFailureCause } from '@enbox/agent';
 
 export * as utils from './utils.js';
 export { isOk } from './utils.js';
