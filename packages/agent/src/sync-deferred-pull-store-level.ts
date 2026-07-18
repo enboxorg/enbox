@@ -3,7 +3,7 @@ import type { AbstractLevel } from 'abstract-level';
 import type { SyncMessageStoreLevelKey } from './sync-message-store-level.js';
 import type { SyncDeferredPullState, SyncDeferredPullStore } from './sync-deferred-pull-store.js';
 
-import { buildSyncMessageStoreLevelKey, isSyncMessageStoreLevelNotFound } from './sync-message-store-level.js';
+import { buildSyncMessageStoreLevelKey, isSyncMessageStoreLevelNotFound, syncMessageStoreLevelTenantKeyRange } from './sync-message-store-level.js';
 
 /** Level-backed persistence for temporarily deferred pull admissions. */
 export class SyncDeferredPullStoreLevel implements SyncDeferredPullStore {
@@ -29,6 +29,10 @@ export class SyncDeferredPullStoreLevel implements SyncDeferredPullStore {
         throw error;
       }
     }
+  }
+
+  public async deleteForTenant(tenantDid: string): Promise<void> {
+    await this.deferredPulls.clear(syncMessageStoreLevelTenantKeyRange(tenantDid));
   }
 
   public async get(

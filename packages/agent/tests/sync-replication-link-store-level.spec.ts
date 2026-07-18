@@ -394,6 +394,32 @@ describe('SyncReplicationLinkStoreLevel', () => {
     }
   });
 
+  it('should reload a persisted repairing link as initializing while paused stays durable', async () => {
+    const params = {
+      tenantDid      : 'did:example:alice',
+      remoteEndpoint : 'https://dwn.example.com',
+      scope          : { kind: 'full' } as const,
+      ...ownerAuthorization,
+    };
+    const link = await store.getOrCreateLink(params);
+
+    // 'repairing' is runtime state: an interrupted repair must not disable
+    // live replication for the link in the next session.
+    await store.setStatus(link, 'repairing');
+    const reloadedRepairing = await store.getOrCreateLink(params);
+    expect(reloadedRepairing.status).toBe('initializing');
+    expect(reloadedRepairing.connectivity).toBe('unknown');
+
+    // 'paused' is a durable decision and must survive reload.
+    await store.setStatus(link, 'paused');
+    const reloadedPaused = await store.getOrCreateLink(params);
+    expect(reloadedPaused.status).toBe('paused');
+
+    await store.setStatus(link, 'live');
+    const reloadedLive = await store.getOrCreateLink(params);
+    expect(reloadedLive.status).toBe('live');
+  });
+
   it('should clear only replication-link records', async () => {
     await store.getOrCreateLink({
       tenantDid      : 'did:example:alice',

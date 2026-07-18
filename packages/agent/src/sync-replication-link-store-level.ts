@@ -4,6 +4,7 @@ import type { ProgressToken } from '@enbox/dwn-sdk-js';
 import type { DirectionCheckpoint, LinkStatus, ReplicationLinkState, SyncDirection } from './types/sync.js';
 import type { SyncReplicationLinkCreateParams, SyncReplicationLinkStore } from './sync-replication-link-store.js';
 
+import { runSerializedByKey } from './sync-cross-context-lock.js';
 import { SyncCheckpoint } from './sync-checkpoint.js';
 import { canonicalizeSyncScope, computeProjectionId } from './types/sync.js';
 
@@ -59,10 +60,7 @@ export class SyncReplicationLinkStoreLevel implements SyncReplicationLinkStore {
     return this.runForLink(key, async (): Promise<ReplicationLinkState> => {
       const existing = await this.getLink(key);
       if (existing !== undefined) {
-        // Connectivity is runtime state. A prior session's value must not make
-        // a newly loaded link appear online before transport setup succeeds.
-        existing.connectivity = 'unknown';
-        return existing;
+        return SyncReplicationLinkStoreLevel.normalizeResumedLink(existing);
       }
 
       const link: ReplicationLinkState = {
@@ -161,6 +159,23 @@ export class SyncReplicationLinkStoreLevel implements SyncReplicationLinkStore {
     );
   }
 
+  /**
+   * Runtime state does not survive sessions; durable decisions do. A prior
+   * session's connectivity must not make a freshly loaded link appear online
+   * before transport setup succeeds, and a persisted 'repairing' means a
+   * repair was in flight when that session ended — nothing re-kicks repair on
+   * load (subscription setup refuses 'repairing' links as a concurrent-
+   * transition guard), so a fresh initialization subsumes the interrupted
+   * repair. 'paused' is a durable decision and stays.
+   */
+  private static normalizeResumedLink(existing: ReplicationLinkState): ReplicationLinkState {
+    existing.connectivity = 'unknown';
+    if (existing.status === 'repairing') {
+      existing.status = 'initializing';
+    }
+    return existing;
+  }
+
   private static cloneCheckpoint(checkpoint: DirectionCheckpoint): DirectionCheckpoint {
     return structuredClone(checkpoint);
   }
@@ -240,26 +255,7 @@ export class SyncReplicationLinkStoreLevel implements SyncReplicationLinkStore {
 
   /** Serialize read/merge/write operations for one complete link identity. */
   private async runForLink<T>(key: string, operation: () => Promise<T>): Promise<T> {
-    const previous = this._pendingLinkOperations.get(key);
-    const operationPromise = (async (): Promise<T> => {
-      if (previous !== undefined) {
-        await previous;
-      }
-      return operation();
-    })();
-    const completion = operationPromise.then(
-      (): void => undefined,
-      (): void => undefined,
-    );
-    this._pendingLinkOperations.set(key, completion);
-
-    try {
-      return await operationPromise;
-    } finally {
-      if (this._pendingLinkOperations.get(key) === completion) {
-        this._pendingLinkOperations.delete(key);
-      }
-    }
+    return runSerializedByKey(this._pendingLinkOperations, key, operation);
   }
 
   private async waitForPendingLinkOperations(): Promise<void> {

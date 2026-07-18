@@ -333,6 +333,10 @@ describe('SyncDrainCoordinator', () => {
     expect(operations.verifyConvergence.notCalled).toBe(true);
     expect(operations.handleVerifiedFeedDivergence.notCalled).toBe(true);
     expect(operations.clearFeedConvergenceFailure.notCalled).toBe(true);
+    // An interrupted drain says nothing about reachability: it must record
+    // neither a connectivity failure (widening poll backoff) nor a success.
+    expect(operations.recordConnectivityFailure.notCalled).toBe(true);
+    expect(operations.recordConnectivitySuccess.notCalled).toBe(true);
   });
 
   it('invalidates completion when registrations change during reconciliation', async () => {
@@ -368,6 +372,10 @@ describe('SyncDrainCoordinator', () => {
       error     : 'sync registrations changed during drain; retry required',
     });
     expect(operations.verifyConvergence.notCalled).toBe(true);
+    // A topology-interrupted drain says nothing about reachability: it must
+    // record neither a connectivity failure nor a success.
+    expect(operations.recordConnectivityFailure.notCalled).toBe(true);
+    expect(operations.recordConnectivitySuccess.notCalled).toBe(true);
   });
 
   it('requires an unchanged feed head before reporting completion', async () => {

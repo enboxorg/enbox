@@ -91,12 +91,13 @@ export class SyncDrainCoordinator {
     const stopReason = getStopReason();
     const cancelled = stopReason === 'cancelled' || targets.some((target): boolean => target.cancelled);
     const topologyChanged = stopReason === 'topology-changed';
+    const interrupted = stopReason !== undefined;
     const completed = targets.length > 0 &&
       !cancelled &&
       !topologyChanged &&
       targets.every((target): boolean => target.completed);
     const error = SyncDrainCoordinator.resultError(targets, stopReason);
-    this.updateConnectivity(targets);
+    this.updateConnectivity(targets, interrupted);
 
     return {
       endpoint: remoteEndpoint,
@@ -295,12 +296,18 @@ export class SyncDrainCoordinator {
     }
   }
 
-  private updateConnectivity(targets: SyncDrainTargetResult[]): void {
+  private updateConnectivity(targets: SyncDrainTargetResult[], interrupted: boolean): void {
     if (targets.length === 0) {
       return;
     }
     if (targets.some((target): boolean => target.completed || target.quotaBlocked === true)) {
       this._operations.recordConnectivitySuccess();
+      return;
+    }
+    // An interrupted drain — caller cancellation or a topology change — says
+    // nothing about remote reachability: it must not mark the engine offline
+    // or widen the poll backoff. Only genuine target failures may.
+    if (interrupted) {
       return;
     }
     this._operations.recordConnectivityFailure();
