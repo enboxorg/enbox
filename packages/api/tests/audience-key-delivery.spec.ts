@@ -46,12 +46,14 @@ const chatDefinitionTemplate = {
     participant : { schema: 'https://schemas.xyz/participant', dataFormats: ['application/json'] },
     chat        : { schema: 'https://schemas.xyz/chat', dataFormats: ['text/plain'] },
     settings    : { schema: 'https://schemas.xyz/settings', dataFormats: ['application/json'] },
+    meta        : { schema: 'https://schemas.xyz/meta', dataFormats: ['application/json'] },
   },
   structure: {
     admin  : { $role: true },
     thread : {
       participant : { $role: true },
       chat        : {},
+      meta        : { $recordLimit: { max: 1, strategy: 'reject' } },
     },
     settings: { $recordLimit: { max: 1, strategy: 'reject' } },
   },
@@ -65,6 +67,7 @@ type ChatSchemaMap = {
   participant: { name: string; role?: string };
   chat: string;
   settings: { theme: string };
+  meta: { note: string };
 };
 
 /** Returns a fresh definition with a unique protocol URI so tests never share protocol state. */
@@ -471,6 +474,94 @@ describe('audience key delivery propagation', () => {
       expect(second.status.code).toBe(202);
       expect(second.record!.id).toBe(first.record!.id);
       expect(second.audienceKeyDelivery).toEqual(injectedOutcome);
+    }, 15000);
+
+    it('should forward recipientRolePublicKey through the root singleton set() update branch', async () => {
+      const definition = makeChatDefinition();
+      const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {} as ChatSchemaMap));
+      const repo = repository(typed);
+
+      const { status: configureStatus } = await repo.configure({ encryption: true });
+      expect(configureStatus.code).toBe(202);
+
+      const first = await repo.settings.set({ data: { theme: 'dark' } });
+      expect(first.status.code).toBe(202);
+
+      // Intercept at the agent boundary: capture the update write, strip the
+      // key before calling through (`settings` is not a role path, so the
+      // real agent would reject a supplied key there), and attach an outcome
+      // so the update branch has one to carry.
+      const injectedOutcome = { delivered: true, recipientDid: bobDid.uri };
+      const capturedRequests: any[] = [];
+      const originalProcess = testHarness.agent.processDwnRequest.bind(testHarness.agent);
+      sinon.stub(testHarness.agent, 'processDwnRequest').callsFake(async (request: any): Promise<any> => {
+        if (request.messageType === DwnInterface.RecordsWrite && request.messageParams?.protocolPath === 'settings') {
+          capturedRequests.push(request);
+          const passthrough = { ...request };
+          delete passthrough.recipientRolePublicKey;
+          const response = await originalProcess(passthrough);
+          return { ...response, audienceKeyDelivery: injectedOutcome };
+        }
+        return originalProcess(request);
+      });
+
+      const second = await repo.settings.set({
+        data                   : { theme: 'light' },
+        recipientRolePublicKey : VALID_X25519_KEY,
+      });
+
+      expect(second.status.code).toBe(202);
+      expect(second.record!.id).toBe(first.record!.id);
+      expect(second.audienceKeyDelivery).toEqual(injectedOutcome);
+
+      // The supplied key reached the agent request at the top level and never
+      // landed in `messageParams`.
+      expect(capturedRequests).toHaveLength(1);
+      expect(capturedRequests[0].recipientRolePublicKey).toEqual(VALID_X25519_KEY);
+      expect(capturedRequests[0].messageParams.recipientRolePublicKey).toBeUndefined();
+    }, 15000);
+
+    it('should forward recipientRolePublicKey through the nested singleton set() update branch', async () => {
+      const definition = makeChatDefinition();
+      const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {} as ChatSchemaMap));
+      const repo = repository(typed);
+
+      const { status: configureStatus } = await repo.configure({ encryption: true });
+      expect(configureStatus.code).toBe(202);
+
+      const threadResult = await repo.thread.create({ data: { title: 'Meta Thread' } });
+      expect(threadResult.status.code).toBe(202);
+      const threadContextId = threadResult.record!.contextId;
+
+      const first = await repo.thread.meta.set(threadContextId, { data: { note: 'v1' } });
+      expect(first.status.code).toBe(202);
+
+      const injectedOutcome = { delivered: true, recipientDid: bobDid.uri };
+      const capturedRequests: any[] = [];
+      const originalProcess = testHarness.agent.processDwnRequest.bind(testHarness.agent);
+      sinon.stub(testHarness.agent, 'processDwnRequest').callsFake(async (request: any): Promise<any> => {
+        if (request.messageType === DwnInterface.RecordsWrite && request.messageParams?.protocolPath === 'thread/meta') {
+          capturedRequests.push(request);
+          const passthrough = { ...request };
+          delete passthrough.recipientRolePublicKey;
+          const response = await originalProcess(passthrough);
+          return { ...response, audienceKeyDelivery: injectedOutcome };
+        }
+        return originalProcess(request);
+      });
+
+      const second = await repo.thread.meta.set(threadContextId, {
+        data                   : { note: 'v2' },
+        recipientRolePublicKey : VALID_X25519_KEY,
+      });
+
+      expect(second.status.code).toBe(202);
+      expect(second.record!.id).toBe(first.record!.id);
+      expect(second.audienceKeyDelivery).toEqual(injectedOutcome);
+
+      expect(capturedRequests).toHaveLength(1);
+      expect(capturedRequests[0].recipientRolePublicKey).toEqual(VALID_X25519_KEY);
+      expect(capturedRequests[0].messageParams.recipientRolePublicKey).toBeUndefined();
     }, 15000);
   });
 });

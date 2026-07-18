@@ -128,6 +128,7 @@ async function updateSingletonRecord(record: SingletonRecord, options: Record<st
   const { status, record: updatedRecord, audienceKeyDelivery } = await record.update({
     data: options.data,
     ...(options.tags === undefined ? {} : { tags: options.tags }),
+    ...(options.recipientRolePublicKey === undefined ? {} : { recipientRolePublicKey: options.recipientRolePublicKey }),
   });
   return { status, record: updatedRecord, ...(audienceKeyDelivery ? { audienceKeyDelivery } : {}) };
 }
