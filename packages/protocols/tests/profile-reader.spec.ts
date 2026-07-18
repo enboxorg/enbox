@@ -816,6 +816,43 @@ describe('createProfileReader', () => {
       reader.dispose();
     });
 
+    it('should finish notifying a stable watcher snapshot when a listener unsubscribes another listener', async () => {
+      const clock = new FakeClock();
+      const profileGate = deferred<void>();
+      const surface = new FakeSurface();
+      surface.queryHandler = async (): Promise<ProfileReaderQueryResponse> => {
+        await profileGate.promise;
+        return { status: OK, records: [jsonRecord({ displayName: 'Alice' })] };
+      };
+      const reader = createProfileReader(surface, { ...FAST_OPTIONS, timers: clock });
+      const deliveries: string[] = [];
+
+      let unwatchSecond = (): void => { /* assigned after its initial emission */ };
+      const unwatchFirst = reader.watch([ALICE], (snapshot) => {
+        if (snapshot.status === 'settled') {
+          deliveries.push('first');
+          unwatchSecond();
+        }
+      });
+      unwatchSecond = reader.watch([ALICE], (snapshot) => {
+        if (snapshot.status === 'settled') {
+          deliveries.push('second');
+        }
+      });
+
+      profileGate.resolve();
+      await waitUntil(() => deliveries.length === 2, 'stable watcher snapshot delivery');
+      expect(deliveries).toEqual(['first', 'second']);
+
+      const secondDeliveries = deliveries.filter((delivery) => delivery === 'second').length;
+      await reader.loadImages(ALICE);
+      expect(deliveries.filter((delivery) => delivery === 'second')).toHaveLength(secondDeliveries);
+
+      unwatchFirst();
+      unwatchSecond();
+      reader.dispose();
+    });
+
     it('should release an entry after the idle window once the last watcher unsubscribes', async () => {
       const clock = new FakeClock();
       const surface = new FakeSurface({ displayName: 'Alice' });

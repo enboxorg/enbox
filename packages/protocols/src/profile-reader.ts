@@ -1232,12 +1232,15 @@ class DwnProfileReader implements ProfileReader {
     // Releasing an entry publishes to arbitrary watchers, which may synchronously
     // touch the LRU. Iterate a stable snapshot so re-entrancy cannot revisit or
     // add eviction candidates during this enforcement pass.
-    const candidates = Array.from(this._imageLru.values());
-    for (let i = 0; i < candidates.length; i++) {
+    this.releaseImageCandidates(Array.from(this._imageLru.values()), protectedEntry);
+  }
+
+  /** Release eligible entries from a stable image-LRU snapshot. */
+  private releaseImageCandidates(candidates: readonly CacheEntry[], protectedEntry: CacheEntry): void {
+    for (const candidate of candidates) {
       if (this._retainedImageBytes <= this._imageByteBudget) {
         return;
       }
-      const candidate = candidates[i];
       if (candidate === protectedEntry || candidate.fetchQueued || candidate.waiters.length > 0 || candidate.imageWaiters.length > 0) {
         continue;
       }
@@ -1284,9 +1287,13 @@ class DwnProfileReader implements ProfileReader {
 
   private publish(entry: CacheEntry): void {
     entry.snapshot = buildSnapshot(entry.did, entry.fields);
-    const watchers = Array.from(entry.watchers);
-    for (let i = 0; i < watchers.length; i++) {
-      this.notifyWatcher(watchers[i], entry.snapshot);
+    this.notifyWatchers(Array.from(entry.watchers), entry.snapshot);
+  }
+
+  /** Notify the stable watcher snapshot captured by {@link publish}. */
+  private notifyWatchers(watchers: readonly WatchHandle[], snapshot: ProfileSnapshot): void {
+    for (const watcher of watchers) {
+      this.notifyWatcher(watcher, snapshot);
     }
   }
 
