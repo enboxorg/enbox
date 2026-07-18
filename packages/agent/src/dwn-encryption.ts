@@ -166,15 +166,19 @@ export type AudienceDecryptionKeyEntry = {
  *   written under a protocol revision without the role's read rule, so no key delivery can ever make
  *   it role-readable — the record must be re-written to heal.
  * - `'delivery-missing'` — the record's role-audience entry resolved (the audience record exists),
- *   but no `$encryption/delivery` record wraps that key to this recipient, and the remote DWN was
- *   consulted successfully or was not needed, so the absence is authoritative.
+ *   but no `$encryption/delivery` record wraps that key to this recipient. Only asserted when the
+ *   absence is authoritative: the remote DWN was consulted successfully or was not needed, AND the
+ *   querying actor fully enumerates the recipient's deliveries (the tenant, or the addressed
+ *   recipient itself) — a delegated actor's visibility-filtered empty result never classifies here.
  * - `'role-not-held'` — a delivery candidate was found but verification rejected the recipient
  *   because no active `$role` record backs the delivery (the role was revoked or never granted).
+ *   Only asserted when the role lookup's absence is authoritative; an unreachable remote during
+ *   role verification classifies as `'remote-unverifiable'` instead.
  * - `'audience-superseded'` — the record is wrapped to a role-audience key that is not the tuple's
  *   current audience key (an older or purged audience); delivering the current key cannot open it —
  *   the record must be re-encrypted to the current audience.
- * - `'remote-unverifiable'` — the audience/delivery lookups were empty locally and the remote DWN
- *   could not be consulted, so absence cannot be asserted.
+ * - `'remote-unverifiable'` — the audience/delivery/role lookups were empty locally and the remote
+ *   DWN could not be consulted, so absence cannot be asserted.
  * - `'unknown'` — no specific cause was observed; the original failure detail is preserved.
  */
 export type AudienceDecryptFailureCause =
@@ -270,6 +274,17 @@ class AudienceDecryptFailureAccumulator {
 class AudienceRoleNotHeldError extends Error {
   public constructor() {
     super('audience delivery recipient is not an active holder of the referenced role.');
+  }
+}
+
+/**
+ * Typed marker for a role-assignment verification that could not be completed: the role record is
+ * absent from the local projection and the remote DWN could not be consulted, so the absence must
+ * not be read as revocation.
+ */
+class AudienceRoleUnverifiableError extends Error {
+  public constructor() {
+    super('audience delivery recipient role could not be verified: the role record is absent locally and the remote DWN could not be consulted.');
   }
 }
 
@@ -1606,7 +1621,9 @@ async function classifyMissingAudienceRecord(params: HydrateAudienceKeyParams, r
 /**
  * Classifies an empty delivery lookup for the record's role-audience key: an unreachable remote
  * means absence cannot be asserted; an authoritative absence is a missing delivery, then probed
- * against the tuple's current audience in case the record's key was superseded.
+ * against the tuple's current audience in case the record's key was superseded. A delegated actor's
+ * empty result is structural (the DWN visibility-filters delivery records for delegates) and is
+ * never classified as a missing delivery.
  */
 async function classifyMissingDeliveries(params: HydrateAudienceKeyParams, remote: RemoteReadOutcome): Promise<void> {
   const accumulator = params.failureAccumulator;
@@ -1623,12 +1640,30 @@ async function classifyMissingDeliveries(params: HydrateAudienceKeyParams, remot
     return;
   }
 
+  if (!deliveryAbsenceIsAuthoritative(params)) {
+    accumulator.note(
+      `The delivery lookup ran under a delegated actor context whose results are visibility-filtered; ` +
+      `the empty result is not evidence of non-delivery.`
+    );
+    return;
+  }
+
   accumulator.record(
     'delivery-missing',
     `no $encryption/delivery record wraps role-audience key '${params.keyId}' of ` +
     `(${params.protocol}, ${params.rolePath}, '${params.contextId}') to '${params.recipientDid}'.`
   );
   await recordSupersededAudienceIfCurrentDiffers(params, accumulator);
+}
+
+/**
+ * Whether the delivery query's actor context authoritatively enumerates the recipient's delivery
+ * records — no grantee (the recipient itself, which always sees its own deliveries, including the
+ * tenant), or a grantee acting as the addressed recipient. Any other delegated context is
+ * visibility-filtered, so an empty result under it is structural rather than proof of absence.
+ */
+function deliveryAbsenceIsAuthoritative(params: HydrateAudienceKeyParams): boolean {
+  return params.granteeDid === undefined || params.granteeDid === params.recipientDid;
 }
 
 /**
@@ -1826,6 +1861,8 @@ async function hydrateAudienceKeyFromDelivery(input: {
       const message = error instanceof Error ? error.message : String(error);
       if (error instanceof AudienceRoleNotHeldError) {
         params.failureAccumulator?.record('role-not-held', `audience delivery '${deliveryMessage.recordId}' was rejected: ${message}`);
+      } else if (error instanceof AudienceRoleUnverifiableError) {
+        params.failureAccumulator?.record('remote-unverifiable', `audience delivery '${deliveryMessage.recordId}' could not be verified: ${message}`);
       } else {
         params.failureAccumulator?.note(`Skipped audience delivery '${deliveryMessage.recordId}': ${message}`);
       }
@@ -2266,7 +2303,10 @@ async function verifyAudienceKeyRoleAssignment(params: {
     throw new AudienceRoleNotHeldError();
   }
 
-  const { reply } = await processDwnRequestWithRemoteFallback(params.agent, {
+  const { response, remote } = await processDwnReadThroughDetailed({
+    process : params.agent.processDwnRequest.bind(params.agent),
+    send    : params.agent.sendDwnRequest.bind(params.agent),
+  }, {
     author        : params.deliveryReadActor.authorDid,
     granteeDid    : params.deliveryReadActor.granteeDid,
     target        : params.sourceDid,
@@ -2282,6 +2322,7 @@ async function verifyAudienceKeyRoleAssignment(params: {
     },
   }, hasRecordsQueryEntries);
 
+  const reply = response.reply;
   const entries = reply.status.code === 200 ? reply.entries ?? [] : [];
   const hasRoleRecord = entries.some((entry): boolean => {
     const roleRecord = entry as RecordsWriteMessage;
@@ -2292,6 +2333,11 @@ async function verifyAudienceKeyRoleAssignment(params: {
   });
 
   if (!hasRoleRecord) {
+    // A role record absent from the local projection with the remote unreachable is not
+    // evidence of revocation — never launder a transport failure into role-not-held.
+    if (remote === 'failed') {
+      throw new AudienceRoleUnverifiableError();
+    }
     throw new AudienceRoleNotHeldError();
   }
 }

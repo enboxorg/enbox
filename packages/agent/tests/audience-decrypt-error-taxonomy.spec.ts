@@ -16,6 +16,8 @@ import { X25519 } from '@enbox/crypto';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 import {
   DataStream,
+  DwnInterfaceName,
+  DwnMethodName,
   Encoder,
   Encryption,
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
@@ -309,6 +311,142 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
     );
     expect(decryptError.detail).toContain('not an active holder');
     expect(decryptError.detail).toContain('Skipped audience delivery');
+  }, 30000);
+
+  it('reports remote-unverifiable, not role-not-held, when the role lookup cannot consult the remote', async () => {
+    const definition = noteProtocolDefinition();
+    await installProtocol(alice.did.uri, definition);
+    const bob = await testHarness.createIdentity({ name: 'Bob RoleRemoteDown', testDwnUrls });
+    await installProtocol(bob.did.uri, definition);
+
+    const { delivered, roleRecordId } = await writeRoleRecord(definition, bob.did.uri);
+    expect(delivered).toBe(true);
+    const noteWrite = await writeEncryptedNote(definition, 'note read during a role-lookup outage');
+
+    // The role record is absent from the local projection AND the remote leg is down: the
+    // delivery opens, but the role verification's empty result must not read as revocation.
+    const { reply: deleteReply } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsDelete,
+      messageParams : { recordId: roleRecordId },
+    });
+    expect(deleteReply.status.code).toBe(202);
+    const sendStub = sinon.stub(testHarness.agent, 'sendDwnRequest')
+      .rejects(new Error('remote transport down in test'));
+
+    const decryptError = await expectAudienceDecryptError(
+      readNoteAs(bob.did.uri, noteWrite.recordId),
+      'remote-unverifiable',
+    );
+    expect(decryptError.detail).toContain('could not be verified');
+    expect(decryptError.detail).not.toContain('not an active holder');
+    sendStub.restore();
+  }, 30000);
+
+  it('does not report delivery-missing for a delegated actor whose empty delivery view is inconclusive', async () => {
+    const definition = noteProtocolDefinition();
+    await installProtocol(alice.did.uri, definition);
+    const bob = await testHarness.createIdentity({ name: 'Bob DelegatedBlind', testDwnUrls });
+
+    // No delivery exists for Bob (skipped at share time) — the exact emptiness a plain read by
+    // Bob classifies as delivery-missing.
+    const roleKeyStub = stubUnresolvableRecipientKey();
+    const { delivered } = await writeRoleRecord(definition, bob.did.uri);
+    expect(delivered).toBe(false);
+    roleKeyStub.restore();
+    const noteWrite = await writeEncryptedNote(definition, 'note read through a delegated session');
+
+    // A session delegate reads for Bob under a protocol-wide delegated grant: the delivery
+    // query is authorized and comes back empty with the remote consulted, but a delegated
+    // actor's view is visibility-filtered by design, so the emptiness must stay inconclusive
+    // instead of classifying as delivery-missing.
+    const delegate = await testHarness.agent.identity.create({
+      didMethod : 'jwk',
+      metadata  : { name: 'Blind Session Delegate' },
+    });
+    const sessionReadGrant = await testHarness.agent.permissions.createGrant({
+      author      : bob.did.uri,
+      dateExpires : '2099-01-01T00:00:00.000000Z',
+      delegated   : true,
+      grantedTo   : delegate.did.uri,
+      scope       : {
+        interface : DwnInterfaceName.Records,
+        method    : DwnMethodName.Read,
+        protocol  : definition.protocol,
+      },
+      store: true,
+    });
+
+    const decryptError = await expectAudienceDecryptError(
+      testHarness.agent.dwn.processRequest({
+        author        : bob.did.uri,
+        granteeDid    : delegate.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : {
+          delegatedGrant : sessionReadGrant.message,
+          filter         : { recordId: noteWrite.recordId },
+        },
+        encryption: true,
+      }),
+      'unknown',
+    );
+    expect(decryptError.cause).not.toBe('delivery-missing');
+    expect(decryptError.detail).toContain('visibility-filtered');
+    expect(decryptError.detail).toContain('no delivered decryption key covers');
+  }, 30000);
+
+  it('never reads an existing delivery hidden from a delegated query as delivery-missing', async () => {
+    const definition = noteProtocolDefinition();
+    await installProtocol(alice.did.uri, definition);
+    const bob = await testHarness.createIdentity({ name: 'Bob DelegatedHidden', testDwnUrls });
+    await installProtocol(bob.did.uri, definition);
+
+    // Bob's delivery EXISTS on Alice's tenant.
+    const { delivered } = await writeRoleRecord(definition, bob.did.uri);
+    expect(delivered).toBe(true);
+    const noteWrite = await writeEncryptedNote(definition, 'note whose delivery is hidden from the session');
+
+    // The session's delegated grant is contextId-scoped — grantKey-INELIGIBLE for delivery
+    // visibility — so the delivery query is authorized but the DWN filters the existing delivery
+    // out of its results: a visibility-filtered empty with the remote consulted must never
+    // classify as a missing delivery.
+    const delegate = await testHarness.agent.identity.create({
+      didMethod : 'jwk',
+      metadata  : { name: 'Context-Scoped Session Delegate' },
+    });
+    const contextScopedGrant = await testHarness.agent.permissions.createGrant({
+      author      : bob.did.uri,
+      dateExpires : '2099-01-01T00:00:00.000000Z',
+      delegated   : true,
+      grantedTo   : delegate.did.uri,
+      scope       : {
+        interface : DwnInterfaceName.Records,
+        method    : DwnMethodName.Read,
+        protocol  : definition.protocol,
+        contextId : noteWrite.contextId!,
+      },
+      store: true,
+    });
+
+    const decryptError = await expectAudienceDecryptError(
+      testHarness.agent.dwn.processRequest({
+        author        : bob.did.uri,
+        granteeDid    : delegate.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : {
+          delegatedGrant : contextScopedGrant.message,
+          filter         : { recordId: noteWrite.recordId },
+        },
+        encryption: true,
+      }),
+      'unknown',
+    );
+    expect(decryptError.cause).not.toBe('delivery-missing');
+    expect(decryptError.detail).toContain('visibility-filtered');
+    expect(decryptError.detail).toContain('no delivered decryption key covers');
   }, 30000);
 
   it('reports audience-superseded when the record wraps a non-current audience key', async () => {

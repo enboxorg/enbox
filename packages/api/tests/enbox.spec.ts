@@ -18,13 +18,15 @@ import { TypedEnbox } from '../src/typed-enbox.js';
 
 describe('AudienceDecryptError re-export', () => {
   it('re-exports the same class identity as @enbox/agent so instanceof checks work across layers', () => {
+    // Reference equality is the point: the api export must be the SAME class object,
+    // not a lookalike, or cross-layer instanceof checks would silently fail.
     expect(AudienceDecryptError).toBe(AgentAudienceDecryptError);
     const decryptError = new AudienceDecryptError({
       cause    : 'delivery-missing',
       detail   : 'no delivery covers the record.',
       recordId : 'test-record',
     });
-    expect(decryptError instanceof AgentAudienceDecryptError).toBe(true);
+    expect(decryptError).toBeInstanceOf(AgentAudienceDecryptError);
     expect(decryptError.cause).toBe('delivery-missing');
   });
 });
