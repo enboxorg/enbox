@@ -419,6 +419,65 @@ export class DwnApi {
    */
   private static readonly QUERY_ALL_MAX_CONSECUTIVE_EMPTY_PAGES = 3;
 
+  /** Throws before a query when the drain has exhausted its page-request budget. */
+  private static assertQueryAllPageBudget(pagesFetched: number, maxPages: number): void {
+    if (pagesFetched >= maxPages) {
+      throw new Error(
+        `DwnApi: records.queryAll() exceeded its page budget of ${maxPages} pages with results still remaining. ` +
+        'Raise maxPages for legitimately huge drains, or use maxRecords / pagination for intentional truncation.',
+      );
+    }
+  }
+
+  /** Throws when an underlying query page did not complete successfully. */
+  private static assertQueryAllPageSucceeded(status: DwnResponseStatus['status']): void {
+    if (status.code < 200 || status.code > 299) {
+      throw new Error(`DwnApi: records.queryAll() page failed with status ${status.code}: ${status.detail}`);
+    }
+  }
+
+  /**
+   * Validates cursor progress and returns the next consecutive-empty-page count.
+   * These guards bound buggy or adversarial remotes that keep returning cursors
+   * without ever yielding a record.
+   */
+  private static nextQueryAllEmptyPageCount(params: {
+    consecutiveEmptyPages: number;
+    cursor: DwnPaginationCursor | undefined;
+    nextCursor: DwnPaginationCursor | undefined;
+    recordCount: number;
+  }): number {
+    const { consecutiveEmptyPages, cursor, nextCursor, recordCount } = params;
+    if (nextCursor === undefined) {
+      return consecutiveEmptyPages;
+    }
+
+    // A page that hands back the cursor it was requested with would make the
+    // next request identical to this one — an infinite loop, and never a
+    // legitimate server behavior.
+    if (cursor !== undefined && JSON.stringify(nextCursor) === JSON.stringify(cursor)) {
+      throw new Error(
+        'DwnApi: records.queryAll() terminated: the remote returned a repeated pagination cursor ' +
+        '(same cursor as the request that produced it), which can never make progress.',
+      );
+    }
+
+    if (recordCount > 0) {
+      return 0;
+    }
+
+    // Empty pages that still carry a (changing) cursor never trip
+    // `maxRecords` (it counts yields), so they get their own small budget.
+    const nextEmptyPageCount = consecutiveEmptyPages + 1;
+    if (nextEmptyPageCount >= DwnApi.QUERY_ALL_MAX_CONSECUTIVE_EMPTY_PAGES) {
+      throw new Error(
+        `DwnApi: records.queryAll() terminated after ${nextEmptyPageCount} consecutive empty pages ` +
+        'that still returned a pagination cursor — the remote is not making progress.',
+      );
+    }
+    return nextEmptyPageCount;
+  }
+
   /**
    * Holds the instance of a {@link EnboxAgent} that represents the current execution context for
    * the `DwnApi`. This agent is used to process DWN requests.
@@ -1387,12 +1446,7 @@ export class DwnApi {
     let yielded = 0;
 
     do {
-      if (pagesFetched >= maxPages) {
-        throw new Error(
-          `DwnApi: records.queryAll() exceeded its page budget of ${maxPages} pages with results still remaining. ` +
-          'Raise maxPages for legitimately huge drains, or use maxRecords / pagination for intentional truncation.',
-        );
-      }
+      DwnApi.assertQueryAllPageBudget(pagesFetched, maxPages);
 
       const { status, records, cursor: nextCursor } = await this.records.query({
         ...queryRequest,
@@ -1400,9 +1454,7 @@ export class DwnApi {
       });
       pagesFetched += 1;
 
-      if (status.code < 200 || status.code > 299) {
-        throw new Error(`DwnApi: records.queryAll() page failed with status ${status.code}: ${status.detail}`);
-      }
+      DwnApi.assertQueryAllPageSucceeded(status);
 
       for (const record of records) {
         if (maxRecords !== undefined && yielded >= maxRecords) {
@@ -1412,31 +1464,12 @@ export class DwnApi {
         yielded += 1;
       }
 
-      if (nextCursor !== undefined) {
-        // A page that hands back the cursor it was requested with would make
-        // the next request identical to this one — an infinite loop, and
-        // never a legitimate server behavior.
-        if (cursor !== undefined && JSON.stringify(nextCursor) === JSON.stringify(cursor)) {
-          throw new Error(
-            'DwnApi: records.queryAll() terminated: the remote returned a repeated pagination cursor ' +
-            '(same cursor as the request that produced it), which can never make progress.',
-          );
-        }
-
-        // Empty pages that still carry a (changing) cursor never trip
-        // `maxRecords` (it counts yields), so they get their own small budget.
-        if (records.length === 0) {
-          consecutiveEmptyPages += 1;
-          if (consecutiveEmptyPages >= DwnApi.QUERY_ALL_MAX_CONSECUTIVE_EMPTY_PAGES) {
-            throw new Error(
-              `DwnApi: records.queryAll() terminated after ${consecutiveEmptyPages} consecutive empty pages ` +
-              'that still returned a pagination cursor — the remote is not making progress.',
-            );
-          }
-        } else {
-          consecutiveEmptyPages = 0;
-        }
-      }
+      consecutiveEmptyPages = DwnApi.nextQueryAllEmptyPageCount({
+        consecutiveEmptyPages,
+        cursor,
+        nextCursor,
+        recordCount: records.length,
+      });
 
       cursor = nextCursor;
     } while (cursor !== undefined && (maxRecords === undefined || yielded < maxRecords));
