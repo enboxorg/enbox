@@ -339,6 +339,11 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       subscriptions.delete(subscriptionId);
     };
 
+    // Acks are chained per subscription: each fires only after its event's
+    // handler has fully processed (a promise-returning handler, e.g. the
+    // agent's decrypting wrapper, gates it), and in arrival order — so the
+    // server's flow-control window cannot outrun slow processing.
+    let ackChain: Promise<void> = Promise.resolve();
     const { response, close } = await socket.subscribe(request, (response) => {
       const { result, error } = response;
       if (error) {
@@ -347,22 +352,31 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       }
 
       const subscriptionMessage = result.subscription as SubscriptionMessage;
-      handler(subscriptionMessage);
+      const handled = Promise.resolve(
+        handler(subscriptionMessage) as unknown,
+      ).catch(() => {});
 
       if (subscriptionMessage.type === 'error') {
         closeTrackedSubscription();
         return;
       }
 
-      // Track the latest cursor for reconnection.
+      // Track the latest cursor for reconnection immediately — resubscribe
+      // correctness must not wait on event processing.
       if ('cursor' in subscriptionMessage && subscriptionMessage.cursor) {
         const tracked = subscriptions.get(subscriptionId);
         if (tracked && shouldReplaceLastCursor(tracked.lastCursor, subscriptionMessage.cursor)) {
           tracked.lastCursor = subscriptionMessage.cursor;
         }
 
-        // Send rpc.ack to advance the server's flow-control window.
-        socket.send(createJsonRpcAck(subscriptionId, subscriptionMessage.cursor));
+        const cursor = subscriptionMessage.cursor;
+        ackChain = ackChain
+          .then(async (): Promise<void> => {
+            await handled;
+            // Send rpc.ack to advance the server's flow-control window.
+            socket.send(createJsonRpcAck(subscriptionId, cursor));
+          })
+          .catch(() => {});
       }
     });
 

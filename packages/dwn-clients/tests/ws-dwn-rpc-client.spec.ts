@@ -776,6 +776,80 @@ describe('WebSocketDwnRpcClient', () => {
     });
 
     describe('subscription lifecycle events', () => {
+      it('should send the flow-control ack only after an async handler resolves', async () => {
+        const { message } = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : { schema: 'foo/bar' },
+        });
+
+        let subHandler: any;
+        const sentMessages: any[] = [];
+        const socket = {
+          subscribe: async (_request: any, handler: any): Promise<any> => {
+            subHandler = handler;
+            return {
+              response: {
+                jsonrpc : '2.0',
+                id      : 'id',
+                result  : {
+                  reply: {
+                    status       : { code: 200, detail: 'OK' },
+                    subscription : { id: 'sub-id', close: async (): Promise<void> => {} },
+                  },
+                },
+              },
+              close: async (): Promise<void> => {},
+            };
+          },
+          send: (request: any): void => {
+            sentMessages.push(request);
+          },
+        };
+        const subscriptions = new Map();
+        const connection = { socket, subscriptions, url: socketDwnUrl };
+
+        // A promise-returning handler (the agent's decrypting wrapper shape):
+        // each event's ack must wait for its completion, in arrival order.
+        const releases: Array<() => void> = [];
+        const gatedHandler = (): Promise<void> =>
+          new Promise((resolve) => releases.push(resolve));
+
+        await WebSocketDwnRpcClient['subscriptionRequest'](
+          connection as any, alice.did, message, gatedHandler as any,
+        );
+
+        const tokenA = { streamId: 's1', epoch: 'e1', position: '10', messageCid: 'cid-10' };
+        const tokenB = { streamId: 's1', epoch: 'e1', position: '20', messageCid: 'cid-20' };
+        subHandler({
+          jsonrpc : '2.0',
+          id      : 'event-a',
+          result  : { subscription: { type: 'event', cursor: tokenA, event: { message } } },
+        });
+        subHandler({
+          jsonrpc : '2.0',
+          id      : 'event-b',
+          result  : { subscription: { type: 'event', cursor: tokenB, event: { message } } },
+        });
+
+        // Both handlers invoked, neither resolved: no acks may be sent.
+        await waitForCondition(() => releases.length === 2);
+        expect(sentMessages).toHaveLength(0);
+
+        // Releasing the SECOND event alone must not ack ahead of the first.
+        releases[1]();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(sentMessages).toHaveLength(0);
+
+        // Releasing the first flushes both acks, in arrival order.
+        releases[0]();
+        await waitForCondition(() => sentMessages.length === 2);
+        const cursors = sentMessages.map((frame) =>
+          JSON.parse(typeof frame === 'string' ? frame : JSON.stringify(frame)).params?.cursor ??
+          (frame as { params?: { cursor?: unknown } }).params?.cursor,
+        );
+        expect(cursors).toEqual([tokenA, tokenB]);
+      });
+
       it('should track lastCursor from subscription events', async () => {
         // install the default test protocol so the DWN accepts the record
         await installDefaultTestProtocolViaHttp(httpClient, testDwnUrl, alice);
@@ -887,7 +961,10 @@ describe('WebSocketDwnRpcClient', () => {
         });
 
         const tracked = [...subscriptions.values()][0];
+        // Cursor tracking is immediate (resubscribe correctness), while acks
+        // flush after handler completion settles.
         expect(tracked.lastCursor).toEqual(highToken);
+        await waitForCondition(() => sentMessages.length === 2);
         expect(sentMessages).toHaveLength(2);
       });
 
