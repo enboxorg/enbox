@@ -46,10 +46,10 @@
  * @module
  */
 
-import type { DwnResponseStatus } from '@enbox/agent';
 import type { Repository } from './repository-types.js';
 import type { SchemaMap } from './protocol-types.js';
 import type { TypedEnbox } from './typed-enbox.js';
+import type { AudienceKeyDeliveryOutcome, DwnResponseStatus } from '@enbox/agent';
 import type { ProtocolDefinition, ProtocolRuleSet } from '@enbox/dwn-sdk-js';
 
 // ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@ import type { ProtocolDefinition, ProtocolRuleSet } from '@enbox/dwn-sdk-js';
 
 type SingletonRecord = {
   id: string;
-  update(options: Record<string, unknown>): Promise<DwnResponseStatus & { record?: unknown }>;
+  update(options: Record<string, unknown>): Promise<DwnResponseStatus & { record?: unknown; audienceKeyDelivery?: AudienceKeyDeliveryOutcome }>;
 };
 
 type SingletonQueryResult = {
@@ -67,6 +67,7 @@ type SingletonQueryResult = {
 
 type SingletonWriteResult = DwnResponseStatus & {
   record?: SingletonRecord;
+  audienceKeyDelivery?: AudienceKeyDeliveryOutcome;
 };
 
 /**
@@ -124,11 +125,12 @@ async function querySingletonRecord(
 }
 
 async function updateSingletonRecord(record: SingletonRecord, options: Record<string, unknown>): Promise<unknown> {
-  const { status, record: updatedRecord } = await record.update({
+  const { status, record: updatedRecord, audienceKeyDelivery } = await record.update({
     data: options.data,
     ...(options.tags === undefined ? {} : { tags: options.tags }),
+    ...(options.recipientRolePublicKey === undefined ? {} : { recipientRolePublicKey: options.recipientRolePublicKey }),
   });
-  return { status, record: updatedRecord };
+  return { status, record: updatedRecord, ...(audienceKeyDelivery ? { audienceKeyDelivery } : {}) };
 }
 
 async function createSingletonRecord(
@@ -152,7 +154,11 @@ async function setSingletonRecord(
   }
 
   const createResult = await createSingletonRecord(typed, path, createOptions);
-  return { status: createResult.status, record: createResult.record };
+  return {
+    status : createResult.status,
+    record : createResult.record,
+    ...(createResult.audienceKeyDelivery ? { audienceKeyDelivery: createResult.audienceKeyDelivery } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -168,8 +174,8 @@ function buildRootCollectionMethods(
 ): Record<string, Function> {
   return {
     async create(options: Record<string, unknown>): Promise<unknown> {
-      const { status, record } = await typed.records.create(path, options as never);
-      return { status, record };
+      const { status, record, audienceKeyDelivery } = await typed.records.create(path, options as never);
+      return { status, record, ...(audienceKeyDelivery ? { audienceKeyDelivery } : {}) };
     },
 
     async query(options?: Record<string, unknown>): Promise<unknown> {
@@ -230,11 +236,11 @@ function buildNestedCollectionMethods(
 ): Record<string, Function> {
   return {
     async create(parentContextId: string, options: Record<string, unknown>): Promise<unknown> {
-      const { status, record } = await typed.records.create(path, {
+      const { status, record, audienceKeyDelivery } = await typed.records.create(path, {
         ...options,
         parentContextId,
       } as never);
-      return { status, record };
+      return { status, record, ...(audienceKeyDelivery ? { audienceKeyDelivery } : {}) };
     },
 
     async query(parentContextId: string, options?: Record<string, unknown>): Promise<unknown> {
