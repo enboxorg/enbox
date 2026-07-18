@@ -333,6 +333,10 @@ describe('SyncDrainCoordinator', () => {
     expect(operations.verifyConvergence.notCalled).toBe(true);
     expect(operations.handleVerifiedFeedDivergence.notCalled).toBe(true);
     expect(operations.clearFeedConvergenceFailure.notCalled).toBe(true);
+    // An interrupted drain says nothing about reachability: it must record
+    // neither a connectivity failure (widening poll backoff) nor a success.
+    expect(operations.recordConnectivityFailure.notCalled).toBe(true);
+    expect(operations.recordConnectivitySuccess.notCalled).toBe(true);
   });
 
   it('invalidates completion when registrations change during reconciliation', async () => {

@@ -786,6 +786,10 @@ export class SyncEngineLevel implements SyncEngine {
     await this._identityStore.delete(did);
     this.invalidateSyncTargetsCache();
     await this.clearQuotaBlocksForTenant(did);
+    // Deferred-pull retry state is tenant-scoped bookkeeping. Rows left
+    // behind would seed a stale firstDeferredAt after a re-registration and
+    // instantly dead-letter the first deferral of the same CID.
+    await this._deferredPullStore.deleteTenant(did);
     await this.pruneSupersededDurableLinksForIdentity(did, new Set());
   }
 
@@ -2534,8 +2538,12 @@ export class SyncEngineLevel implements SyncEngine {
   private async trackRemoteFeedAppliedCids(messageCids: string[], target: SyncTarget): Promise<void> {
     for (const cid of messageCids) {
       this._echoSuppressor.trackPulled(target.did, cid, target.dwnUrl);
-      await this.clearFailedMessageForTenant(target.did, cid, target.dwnUrl);
+      // Clear the deferral BEFORE the dead letter: the expiry path verifies
+      // the deferral row right before dead-lettering, so removing the row
+      // first maximizes the window in which a racing expiry aborts, and a
+      // dead letter it still writes is wiped by the clear that follows.
       await this.clearDeferredPull(target.did, target.dwnUrl, cid);
+      await this.clearFailedMessageForTenant(target.did, cid, target.dwnUrl);
       // A pull admission only proves that the signed message exists remotely.
       // The remote may retain a RecordsWrite CID as dataless ancestry, while
       // the local admission reports Duplicate because it already has the full
@@ -2551,9 +2559,23 @@ export class SyncEngineLevel implements SyncEngine {
     detail: string | undefined,
   ): Promise<boolean> {
     const state = await this.recordDeferredPull(target, entry.messageCid, detail);
+    if (state === undefined) {
+      // A concurrent live-pull admission applied this message mid-record:
+      // nothing to defer or dead-letter, and the feed may continue past it.
+      return true;
+    }
     const firstDeferredAt = Date.parse(state.firstDeferredAt);
     if (!Number.isFinite(firstDeferredAt) || Date.now() - firstDeferredAt < SyncEngineLevel.DEFERRED_PULL_DEAD_LETTER_AFTER_MS) {
       return false;
+    }
+
+    // Re-verify the deferral still exists before acting on its age: an
+    // admission racing this expiry check must win, because dead-lettering an
+    // already-admitted message would permanently block its CID from future
+    // feed admission.
+    const current = await this._deferredPullStore.get(target.did, entry.messageCid, target.dwnUrl);
+    if (current === undefined) {
+      return true;
     }
 
     await this.recordDeadLetter({
@@ -2573,7 +2595,7 @@ export class SyncEngineLevel implements SyncEngine {
     target: SyncTarget,
     messageCid: string,
     detail: string | undefined,
-  ): Promise<SyncDeferredPullState> {
+  ): Promise<SyncDeferredPullState | undefined> {
     const now = new Date().toISOString();
     const previous = await this._deferredPullStore.get(target.did, messageCid, target.dwnUrl);
 
@@ -2583,6 +2605,16 @@ export class SyncEngineLevel implements SyncEngine {
       firstDeferredAt : previous?.firstDeferredAt ?? now,
       lastDeferredAt  : now,
     };
+    if (previous !== undefined) {
+      // A concurrent live-pull admission may have applied this message and
+      // cleared its row between the read above and this write. Re-check so a
+      // merge carrying the old firstDeferredAt cannot resurrect retry state
+      // for a message that no longer needs it.
+      const stillDeferred = await this._deferredPullStore.get(target.did, messageCid, target.dwnUrl);
+      if (stillDeferred === undefined) {
+        return undefined;
+      }
+    }
     await this._deferredPullStore.put(target.did, messageCid, target.dwnUrl, state);
     return state;
   }
@@ -2590,6 +2622,7 @@ export class SyncEngineLevel implements SyncEngine {
   private async clearDeferredPull(tenantDid: string, dwnUrl: string, messageCid: string): Promise<void> {
     await this._deferredPullStore.delete(tenantDid, messageCid, dwnUrl);
   }
+
   private getQuotaBlockState(target: SyncTarget, messageCid: string): Promise<SyncQuotaBlockState | undefined> {
     return this._quotaManager.getState(target, messageCid);
   }

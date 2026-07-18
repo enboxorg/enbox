@@ -29,6 +29,22 @@ describe('SyncDeferredPullStoreLevel', () => {
     await db.close();
   });
 
+  it('deletes every entry for one tenant without touching other tenants', async () => {
+    await store.put(tenantDid, 'cid-1', remoteEndpoint, deferredPull());
+    await store.put(tenantDid, 'cid-2', 'https://b.example', deferredPull());
+    // Underscores are valid DID characters: a tenant whose DID extends the
+    // deleted one must keep its entries.
+    await store.put(`${tenantDid}_extra`, 'cid-3', remoteEndpoint, deferredPull());
+    await store.put('did:example:bob', 'cid-4', remoteEndpoint, deferredPull());
+
+    await store.deleteTenant(tenantDid);
+
+    expect(await store.get(tenantDid, 'cid-1', remoteEndpoint)).toBeUndefined();
+    expect(await store.get(tenantDid, 'cid-2', 'https://b.example')).toBeUndefined();
+    expect(await store.get(`${tenantDid}_extra`, 'cid-3', remoteEndpoint)).toBeDefined();
+    expect(await store.get('did:example:bob', 'cid-4', remoteEndpoint)).toBeDefined();
+  });
+
   it('preserves the existing compound key and serialized state format', async () => {
     const state = deferredPull();
 

@@ -62,6 +62,16 @@ export class SyncReplicationLinkStoreLevel implements SyncReplicationLinkStore {
         // Connectivity is runtime state. A prior session's value must not make
         // a newly loaded link appear online before transport setup succeeds.
         existing.connectivity = 'unknown';
+        // 'repairing' is runtime state too: it means a repair was in flight
+        // when the previous session ended. Nothing re-kicks repair for a
+        // freshly loaded link — subscription setup refuses 'repairing' links
+        // as a concurrent-transition guard — so keeping the persisted value
+        // would disable live replication for this link permanently. A fresh
+        // initialization subsumes the interrupted repair (resubscribe plus
+        // post-init reconcile). 'paused' stays: it is a durable decision.
+        if (existing.status === 'repairing') {
+          existing.status = 'initializing';
+        }
         return existing;
       }
 

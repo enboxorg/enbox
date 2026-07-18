@@ -184,6 +184,109 @@ describe('SyncEngineLevel dead letter tracking', () => {
     }]);
   });
 
+  it('should not resurrect a deferral cleared by a concurrent admission mid-record', async () => {
+    const messageCid = 'cid-raced-record';
+    const tenantDid = 'did:example:alice';
+    const store = (syncEngine as any)._deferredPullStore;
+    const aged: SyncDeferredPullState = {
+      attempts        : 3,
+      firstDeferredAt : new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+      lastDeferredAt  : new Date().toISOString(),
+    };
+    const get = sinon.stub(store, 'get');
+    get.onFirstCall().resolves(aged);
+    // The concurrent admission cleared the row between the merge read and
+    // the write-back: the merge must not resurrect it.
+    get.onSecondCall().resolves(undefined);
+    const put = sinon.stub(store, 'put').resolves();
+
+    const internal = syncEngine as unknown as {
+      deadLetterExpiredDeferredPull(
+        target: SyncTarget,
+        entry: MessagesQueryReplyEntry,
+        detail: string | undefined,
+      ): Promise<boolean>;
+    };
+    const promoted = await internal.deadLetterExpiredDeferredPull(
+      target('did:example:alice'),
+      { messageCid },
+      'dependency unavailable',
+    );
+
+    expect(promoted).toBe(true);
+    expect(put.notCalled).toBe(true);
+    expect(await syncEngine.getFailedMessages(tenantDid)).toEqual([]);
+    sinon.restore();
+  });
+
+  it('should not dead-letter a deferral cleared between the age check and the write', async () => {
+    const messageCid = 'cid-raced-expiry';
+    const tenantDid = 'did:example:alice';
+    const store = (syncEngine as any)._deferredPullStore;
+    const aged: SyncDeferredPullState = {
+      attempts        : 3,
+      firstDeferredAt : new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+      lastDeferredAt  : new Date().toISOString(),
+    };
+    const get = sinon.stub(store, 'get');
+    get.onFirstCall().resolves(aged);
+    get.onSecondCall().resolves(aged);
+    // The admission's clear landed after the merge write but before the
+    // dead-letter decision: the expiry path must yield, not dead-letter an
+    // already-admitted message.
+    get.onThirdCall().resolves(undefined);
+    sinon.stub(store, 'put').resolves();
+
+    const internal = syncEngine as unknown as {
+      deadLetterExpiredDeferredPull(
+        target: SyncTarget,
+        entry: MessagesQueryReplyEntry,
+        detail: string | undefined,
+      ): Promise<boolean>;
+    };
+    const promoted = await internal.deadLetterExpiredDeferredPull(
+      target('did:example:alice'),
+      { messageCid },
+      'dependency unavailable',
+    );
+
+    expect(promoted).toBe(true);
+    expect(await syncEngine.getFailedMessages(tenantDid)).toEqual([]);
+    sinon.restore();
+  });
+
+  it('should clear deferred-pull retry state when an identity is unregistered', async () => {
+    const remoteEndpoint = 'https://dwn.example';
+    const store = (syncEngine as any)._deferredPullStore;
+    await db.sublevel('registeredIdentities').put('did:example:alice', JSON.stringify({ protocols: 'all' }));
+    await store.put('did:example:alice', 'cid-1', remoteEndpoint, {
+      attempts        : 1,
+      firstDeferredAt : new Date().toISOString(),
+      lastDeferredAt  : new Date().toISOString(),
+    });
+    await store.put('did:example:bob', 'cid-2', remoteEndpoint, {
+      attempts        : 1,
+      firstDeferredAt : new Date().toISOString(),
+      lastDeferredAt  : new Date().toISOString(),
+    });
+
+    await syncEngine.unregisterIdentity('did:example:alice');
+
+    expect(await store.get('did:example:alice', 'cid-1', remoteEndpoint)).toBeUndefined();
+    expect(await store.get('did:example:bob', 'cid-2', remoteEndpoint)).toBeDefined();
+  });
+
+  function target(did: string): SyncTarget {
+    return {
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'owner',
+      did,
+      dwnUrl             : 'https://dwn.example',
+      projectionId       : 'projection',
+      scope              : { kind: 'full' },
+    };
+  }
+
   async function recordDeadLetter(params: {
     category?: 'admit-failed';
     messageCid: string;
