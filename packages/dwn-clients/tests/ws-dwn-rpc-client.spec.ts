@@ -11,7 +11,7 @@ import { RateLimitError } from '../src/rate-limit-error.js';
 import { WebSocketDwnRpcClient } from '../src/web-socket-clients.js';
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { createJsonRpcErrorResponse, createJsonRpcRequest, JsonRpcErrorCodes } from '../src/json-rpc.js';
-import { DwnInterfaceName, DwnMethodName, Encoder, Jws, ProtocolsConfigure, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Jws, Message, MessagesRead, ProtocolsConfigure, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 /**
  * Matches the defaults used by `TestDataGenerator.generateRecordsWrite()`.
@@ -220,6 +220,41 @@ describe('WebSocketDwnRpcClient', () => {
       expect(connectionError?.message).not.toContain(localNodeToken);
       expect(connectionError?.message).not.toContain('native-user');
       expect(connectionError?.message).not.toContain('native-password');
+    });
+
+    it('surfaces machine-readable errorCode on a rejected message', async () => {
+      // install the default test protocol and write a protocol record for alice via http
+      // (RecordsWrite is http-only by design; the socket transport carries the rejection reply)
+      await installDefaultTestProtocolViaHttp(httpClient, testDwnUrl, alice);
+      const { message: writeMessage, dataBytes } = await TestDataGenerator.generateRecordsWrite({
+        author       : alice,
+        protocol     : defaultTestProtocolDefinition.protocol,
+        protocolPath : 'testRecord',
+      });
+      const writeResponse = await httpClient.sendDwnRequest({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message   : writeMessage,
+        data      : dataBytes,
+      });
+      expect(writeResponse.status.code).toBe(202);
+
+      // bob attempts to read alice's message — the engine rejects with a DwnError over the socket
+      const bob = await TestDataGenerator.generateDidKeyPersona();
+      const { message: readMessage } = await MessagesRead.create({
+        messageCid : await Message.getCid(writeMessage),
+        signer     : Jws.createSigner(bob),
+      });
+
+      const rejectedReply = await client.sendDwnRequest({
+        dwnUrl    : socketDwnUrl,
+        targetDid : alice.did,
+        message   : readMessage,
+      });
+
+      expect(rejectedReply.status.code).toBe(401);
+      expect(rejectedReply.status.detail).toContain(DwnErrorCode.MessagesReadAuthorizationFailed);
+      expect(rejectedReply.status.errorCode).toBe(DwnErrorCode.MessagesReadAuthorizationFailed);
     });
 
     it('responds to a RecordsRead message', async () => {

@@ -1,3 +1,4 @@
+import type { DwnErrorInfo } from '../core/dwn-error.js';
 import type { GeneralJws } from './jws-types.js';
 import type { ProgressToken } from './subscriptions.js';
 import type { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
@@ -127,8 +128,23 @@ export type Pagination = {
 };
 
 export type Status = {
+  /** Numeric status code representing the outcome of the operation, aligned with HTTP status codes. */
   code: number
+
+  /** Human-readable detail about the status or error. Prose only — load-bearing values belong in `info`. */
   detail: string
+
+  /**
+   * The `DwnErrorCode` of the `DwnError` that produced this status.
+   * Only present when the failure originated from a `DwnError`; synthesized statuses (e.g. tenant gate rejections) omit it.
+   */
+  errorCode?: string
+
+  /**
+   * Structured, machine-readable error data (e.g. the squash floor timestamp for a squash backstop rejection).
+   * Only present when the originating `DwnError` carries an info bag; values mirror `DwnErrorInfo`.
+   */
+  info?: DwnErrorInfo
 };
 
 export type GenericMessageReply = {

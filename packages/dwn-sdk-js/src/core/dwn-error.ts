@@ -1,11 +1,25 @@
 /**
+ * Structured, machine-readable data attached to a `DwnError`.
+ * Values are restricted to JSON primitives so the bag can be surfaced verbatim in a message reply `status.info`.
+ */
+export type DwnErrorInfo = Record<string, string | number | boolean>;
+
+/**
  * A class that represents a DWN error.
  */
 export class DwnError extends Error {
-  constructor (public code: string, message: string) {
+  /**
+   * Structured, machine-readable data describing this error.
+   * Surfaced verbatim as `status.info` when the error becomes a message reply,
+   * so consumers can read error-specific values (e.g. the squash floor timestamp) without parsing prose.
+   */
+  public readonly info?: DwnErrorInfo;
+
+  constructor (public code: string, message: string, options?: { info?: DwnErrorInfo }) {
     super(`${code}: ${message}`);
 
     this.name = 'DwnError';
+    this.info = options?.info;
   }
 }
 
