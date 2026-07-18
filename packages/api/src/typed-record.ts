@@ -39,7 +39,7 @@
 
 import type { Record } from './record.js';
 import type { RecordData } from './record-data.js';
-import type { DwnDateSort, DwnInterface, DwnMessage, DwnPaginationCursor, DwnResponseStatus } from '@enbox/agent';
+import type { AudienceKeyDeliveryOutcome, DwnDateSort, DwnInterface, DwnMessage, DwnPaginationCursor, DwnResponseStatus } from '@enbox/agent';
 import type { RecordDeleteParams, RecordModel, RecordUpdateParams } from './record-types.js';
 
 // ---------------------------------------------------------------------------
@@ -128,6 +128,13 @@ export type TypedRecordUpdateResult<T> = DwnResponseStatus & {
    * references see the updated data.
    */
   record: TypedRecord<T>;
+
+  /**
+   * Outcome of role-audience key delivery provisioning, forwarded from the agent. Present only
+   * when the accepted update wrote a `$role` record with a `recipient`, which re-provisions the
+   * recipient's key delivery — the retry idiom for a previously skipped best-effort delivery.
+   */
+  audienceKeyDelivery?: AudienceKeyDeliveryOutcome;
 };
 
 /**
@@ -290,12 +297,12 @@ export class TypedRecord<T> {
    * ```
    */
   public async update(params: TypedRecordUpdateParams<T>): Promise<TypedRecordUpdateResult<T>> {
-    const { status, record } = await this._record.update(params as RecordUpdateParams);
+    const { status, record, audienceKeyDelivery } = await this._record.update(params as RecordUpdateParams);
     // The underlying Record.update() now also mutates `this._record` in-place,
     // so the original TypedRecord reference already reflects the new data.
     // We still return a new TypedRecord wrapping the returned record for callers
     // that use the destructured result.
-    return { status, record: new TypedRecord<T>(record) };
+    return { status, record: new TypedRecord<T>(record), ...(audienceKeyDelivery ? { audienceKeyDelivery } : {}) };
   }
 
   /**

@@ -5,6 +5,7 @@
 /// <reference types="@enbox/dwn-sdk-js" />
 
 import type {
+  AudienceKeyDeliveryOutcome,
   DwnDateSort,
   DwnMessage,
   DwnMessageDescriptor,
@@ -60,6 +61,13 @@ export type { RecordData } from './record-data.js';
 export type RecordUpdateResult = DwnResponseStatus & {
   /** The updated Record instance reflecting the new state. */
   record: Record;
+
+  /**
+   * Outcome of role-audience key delivery provisioning, forwarded from the agent. Present only
+   * when the accepted update wrote a `$role` record with a `recipient`, which re-provisions the
+   * recipient's key delivery — the retry idiom for a previously skipped best-effort delivery.
+   */
+  audienceKeyDelivery?: AudienceKeyDeliveryOutcome;
 };
 
 /**
@@ -587,7 +595,7 @@ export class Record implements RecordModel {
 
     const agentResponse = await this._agent.processDwnRequest(requestOptions);
 
-    const { message: responseMessage, reply: { status } } = agentResponse;
+    const { message: responseMessage, reply: { status }, audienceKeyDelivery } = agentResponse;
 
     if (!(200 <= status.code && status.code <= 299)) {
       // Return a shallow copy of this record on failure — no state change.
@@ -626,7 +634,7 @@ export class Record implements RecordModel {
     this._readableStream = undefined; // Invalidate any consumed stream.
     this._rawMessageDirty = true; // Force rawMessage cache rebuild.
 
-    return { status, record: updatedRecord };
+    return { status, record: updatedRecord, ...(audienceKeyDelivery ? { audienceKeyDelivery } : {}) };
   }
 
   /**

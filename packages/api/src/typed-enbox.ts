@@ -40,9 +40,9 @@
 import type { LiveQuery } from './live-query.js';
 import type { Protocol } from './protocol.js';
 
+import type { AudienceKeyDeliveryOutcome, DwnPaginationCursor, DwnPublicKeyJwk, DwnResponseStatus } from '@enbox/agent';
 import type { DateSort, ProtocolDefinition, ProtocolType, RecordsFilter } from '@enbox/dwn-sdk-js';
 import type { DwnApi, ProtocolsConfigureResponse } from './dwn-api.js';
-import type { DwnPaginationCursor, DwnResponseStatus } from '@enbox/agent';
 import type { ProtocolPaths, SchemaMap, TypedProtocol, TypeNameAtPath } from './protocol-types.js';
 
 import { TypedLiveQuery } from './typed-live-query.js';
@@ -164,6 +164,20 @@ export type TypedCreateRequest<
   recipient?: string;
 
   /**
+   * The recipient's role-path public key for this write, forwarded to the
+   * agent when creating a `$role` record with a `recipient`.
+   *
+   * Supply it for recipients whose role-path key cannot be resolved from
+   * their DWN (e.g. a bare `did:jwk` publishing no resolvable DWN
+   * endpoint); the recipient computes the key locally and carries it out
+   * of band for the writer to supply here. When omitted, role-audience
+   * key delivery is best-effort and its outcome is reported on
+   * {@link TypedCreateResponse.audienceKeyDelivery} instead of failing
+   * the write.
+   */
+  recipientRolePublicKey?: DwnPublicKeyJwk;
+
+  /**
    * The protocol role under which to create this record.
    *
    * The DWN will verify that the author is authorized to write under
@@ -232,11 +246,16 @@ export type TypedCreateRequest<
  * }
  * ```
  *
+ * When the accepted create wrote a `$role` record with a `recipient`, the
+ * role-audience key-delivery outcome is forwarded on `audienceKeyDelivery`
+ * (see {@link AudienceKeyDeliveryOutcome}) — a skipped best-effort delivery
+ * is reported there with `delivered: false` instead of failing the write.
+ *
  * @typeParam T - The data type of the created record.
  */
 export type TypedCreateResponse<T = unknown> =
-  | (DwnResponseStatus & { record: TypedRecord<T> })
-  | (DwnResponseStatus & { record: undefined });
+  | (DwnResponseStatus & { record: TypedRecord<T>; audienceKeyDelivery?: AudienceKeyDeliveryOutcome })
+  | (DwnResponseStatus & { record: undefined; audienceKeyDelivery?: AudienceKeyDeliveryOutcome });
 
 /**
  * Filter options for {@link TypedEnbox} `records.query()` and `records.subscribe()`.
@@ -966,26 +985,28 @@ export class TypedEnbox<
         const autoEncryption = typeEntry?.encryptionRequired === true
           ? true : undefined;
 
-        const { status, record } = await this._dwn.records.write({
-          data            : request.data,
-          store           : request.store,
-          encryption      : request.encryption ?? autoEncryption,
-          parentContextId : request.parentContextId,
-          published       : request.published,
-          datePublished   : request.datePublished,
-          recipient       : request.recipient,
-          protocolRole    : request.protocolRole,
-          squash          : request.squash,
-          tags            : request.tags,
-          protocol        : this._definition.protocol,
-          protocolPath    : normalizedPath,
+        const { status, record, audienceKeyDelivery } = await this._dwn.records.write({
+          data                   : request.data,
+          store                  : request.store,
+          encryption             : request.encryption ?? autoEncryption,
+          parentContextId        : request.parentContextId,
+          published              : request.published,
+          datePublished          : request.datePublished,
+          recipient              : request.recipient,
+          recipientRolePublicKey : request.recipientRolePublicKey,
+          protocolRole           : request.protocolRole,
+          squash                 : request.squash,
+          tags                   : request.tags,
+          protocol               : this._definition.protocol,
+          protocolPath           : normalizedPath,
           ...(typeEntry?.schema === undefined ? {} : { schema: typeEntry.schema }),
-          dataFormat      : request.dataFormat ?? typeEntry?.dataFormats?.[0],
+          dataFormat             : request.dataFormat ?? typeEntry?.dataFormats?.[0],
         });
 
         return {
           status,
           record: record ? new TypedRecord<DataForPath<D, M, Path>>(record) : undefined,
+          ...(audienceKeyDelivery ? { audienceKeyDelivery } : {}),
         };
       },
 

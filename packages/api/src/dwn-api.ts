@@ -5,11 +5,13 @@
 /// <reference types="@enbox/dwn-sdk-js" />
 
 import type {
+  AudienceKeyDeliveryOutcome,
   CreateGrantParams,
   CreateRequestParams,
   DwnMessage,
   DwnMessageParams,
   DwnPaginationCursor,
+  DwnPublicKeyJwk,
   DwnResponse,
   DwnResponseStatus,
   EnboxAgent,
@@ -228,6 +230,18 @@ export type RecordsWriteRequest = Omit<Partial<DwnMessageParams[DwnInterface.Rec
 
   /** When true, automatically encrypts the record data using the protocol's encryption keys. */
   encryption?: boolean;
+
+  /**
+   * The recipient's role-path public key for this write, forwarded to the agent when writing a
+   * `$role` record with a `recipient`.
+   *
+   * Supply it for recipients whose role-path key cannot be resolved from their DWN (e.g. a bare
+   * `did:jwk` publishing no resolvable DWN endpoint); the recipient computes the key locally and
+   * carries it out of band for the writer to supply here. When omitted, role-audience key delivery
+   * is best-effort and its outcome is reported on
+   * {@link RecordsWriteResponse.audienceKeyDelivery} instead of failing the write.
+   */
+  recipientRolePublicKey?: DwnPublicKeyJwk;
 };
 
 /**
@@ -250,6 +264,17 @@ export type RecordsWriteResponse = DwnResponseStatus & {
    * Always check `status.code` before accessing the record.
    */
   record?: Record;
+
+  /**
+   * Outcome of role-audience key delivery provisioning, forwarded from the agent. Present only
+   * for accepted `$role` record writes with a `recipient` that triggered delivery provisioning.
+   *
+   * On the best-effort path (no `recipientRolePublicKey` supplied), a recipient whose role-path
+   * key could not be resolved is reported here with `delivered: false` instead of failing the
+   * write — inspect the outcome and re-write the role record (e.g. with a caller-supplied
+   * `recipientRolePublicKey`) to retry delivery.
+   */
+  audienceKeyDelivery?: AudienceKeyDeliveryOutcome;
 };
 
 /**
@@ -1065,7 +1090,7 @@ export class DwnApi {
        * requires fetching from the DWN datastore.
        */
       write: async (request: RecordsWriteRequest): Promise<RecordsWriteResponse> => {
-        const { data, store, encryption, ...restParams } = request;
+        const { data, store, encryption, recipientRolePublicKey, ...restParams } = request;
         const { dataBlob, dataFormat } = dataToBlob(data, restParams.dataFormat);
 
         const messageParams = { ...restParams, dataFormat };
@@ -1078,6 +1103,7 @@ export class DwnApi {
           target      : this.connectedDid,
           dataStream  : dataBlob,
           encryption,
+          recipientRolePublicKey,
         };
 
         // if impersonation is enabled, fetch the delegated grant to use with the write operation
@@ -1100,7 +1126,7 @@ export class DwnApi {
 
         const agentResponse = await this.agent.processDwnRequest(dwnRequestParams);
 
-        const { message: responseMessage, reply: { status } } = agentResponse;
+        const { message: responseMessage, reply: { status }, audienceKeyDelivery } = agentResponse;
 
         let record: Record | undefined;
         if (200 <= status.code && status.code <= 299) {
@@ -1124,7 +1150,7 @@ export class DwnApi {
           record = new Record(this.agent, recordOptions, this.permissionsApi);
         }
 
-        return { record, status };
+        return { record, status, ...(audienceKeyDelivery ? { audienceKeyDelivery } : {}) };
       },
     };
   }
