@@ -204,7 +204,7 @@ describe('SyncEngineLevel lifecycle', () => {
       tenantDid          : 'did:example:alice',
     };
 
-    engine['activateLink'](linkKey, link as never);
+    const controller = engine['activateLink'](linkKey, link as never);
     sinon.stub(engine['ledger'], 'setStatus').callsFake(async (): Promise<void> => {
       link.status = 'repairing';
     });
@@ -213,9 +213,7 @@ describe('SyncEngineLevel lifecycle', () => {
       await releaseRepair.promise;
     });
 
-    await (engine as unknown as {
-      transitionToRepairing(linkKey: string, linkState: unknown): Promise<void>;
-    }).transitionToRepairing(linkKey, link);
+    await engine['_linkRecoveryCoordinator'].transitionToRepairing(controller);
     await repairStarted.promise;
 
     let closeCompleted = false;
@@ -249,14 +247,14 @@ describe('SyncEngineLevel lifecycle', () => {
       tenantDid          : 'did:example:alice',
     };
 
-    engine['activateLink'](linkKey, link as never);
+    const controller = engine['activateLink'](linkKey, link as never);
     const recoveryCoordinator = engine['_linkRecoveryCoordinator'];
     sinon.stub(recoveryCoordinator, 'reconcile').callsFake(async (): Promise<void> => {
       reconcileStarted.resolve();
       await releaseReconcile.promise;
     });
 
-    const scheduled = recoveryCoordinator.scheduleReconcile(linkKey, 0);
+    const scheduled = recoveryCoordinator.scheduleReconcile(controller, 0);
     expect(scheduled).toBe(true);
     await reconcileStarted.promise;
 
@@ -481,9 +479,9 @@ describe('SyncEngineLevel lifecycle', () => {
       await removal;
     });
 
-    await (engine as unknown as {
-      transitionToRepairing(linkIdentity: string, linkState: unknown): Promise<void>;
-    }).transitionToRepairing(linkKey, link);
+    await engine['_linkRecoveryCoordinator'].transitionToRepairing(
+      engine['_linkControllers'].get(linkKey)!,
+    );
     await repairStarted.promise;
 
     const unregisterPromise = engine.unregisterIdentity(did);
@@ -532,9 +530,9 @@ describe('SyncEngineLevel lifecycle', () => {
       await releaseRepair.promise;
     });
 
-    await (engine as unknown as {
-      transitionToRepairing(linkIdentity: string, linkState: unknown): Promise<void>;
-    }).transitionToRepairing(bobLinkKey, bobLink);
+    await engine['_linkRecoveryCoordinator'].transitionToRepairing(
+      engine['_linkControllers'].get(bobLinkKey)!,
+    );
     await repairStarted.promise;
 
     const removal = (engine as unknown as {
@@ -577,7 +575,7 @@ describe('SyncEngineLevel lifecycle', () => {
 
     await engine.registerIdentity({ did, options: { protocols: 'all' } });
     engine['_syncMode'] = 'live';
-    engine['activateLink'](linkKey, link as never);
+    const controller = engine['activateLink'](linkKey, link as never);
     const recoveryCoordinator = engine['_linkRecoveryCoordinator'];
     sinon.stub(recoveryCoordinator, 'reconcile').callsFake(async (): Promise<void> => {
       reconcileStarted.resolve();
@@ -592,7 +590,7 @@ describe('SyncEngineLevel lifecycle', () => {
       await removal;
     });
 
-    const scheduled = recoveryCoordinator.scheduleReconcile(linkKey, 0);
+    const scheduled = recoveryCoordinator.scheduleReconcile(controller, 0);
     expect(scheduled).toBe(true);
     await reconcileStarted.promise;
 

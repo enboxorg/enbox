@@ -214,7 +214,7 @@ describe('SyncLivePullProcessor', () => {
     });
 
     expect(operations.transitionToPaused.calledOnceWithExactly(context.linkKey, context.link)).toBe(true);
-    expect(operations.transitionToRepairing.calledOnceWithExactly(context.linkKey, context.link)).toBe(true);
+    expect(operations.transitionToRepairing.calledOnceWithExactly(context.controller)).toBe(true);
     expect(isTerminalSyncAuthorizationFailure('GrantAuthorizationGrantRevoked')).toBe(true);
     expect(isTerminalSyncAuthorizationFailure('GrantAuthorizationGrantExpired')).toBe(true);
     expect(isTerminalSyncAuthorizationFailure('temporary')).toBe(false);
@@ -251,7 +251,7 @@ describe('SyncLivePullProcessor', () => {
 
     await processor.handleEose(context, { type: 'eose', cursor: token('2', 'new-epoch') });
 
-    expect(operations.transitionToRepairing.calledOnceWithExactly(context.linkKey, state)).toBe(true);
+    expect(operations.transitionToRepairing.calledOnceWithExactly(context.controller)).toBe(true);
     expect(operations.persistCheckpoint.notCalled).toBe(true);
     expect(state.pull.receivedToken).toBeUndefined();
   });
@@ -277,7 +277,7 @@ describe('SyncLivePullProcessor', () => {
     } as GenericMessage;
     await processor.handleEvent(context, event(token('2'), recordsDelete));
 
-    expect(operations.transitionToRepairing.calledOnceWithExactly(context.linkKey, state)).toBe(true);
+    expect(operations.transitionToRepairing.calledOnceWithExactly(context.controller)).toBe(true);
   });
 
   it('commits a recently pushed echo without reapplying it', async () => {
@@ -332,8 +332,7 @@ describe('SyncLivePullProcessor', () => {
     admit.resolves({ kind: 'deferred', rootCid: messageCid, detail: 'missing dependency' });
     await processor.handleEvent(durableContext, event(token('2'), message));
     expect(operations.scheduleReconcile.calledOnceWithExactly(
-      durableContext.linkKey,
-      durableContext.link,
+      durableContext.controller,
       'pull-deferred',
     )).toBe(true);
   });
@@ -358,7 +357,7 @@ describe('SyncLivePullProcessor', () => {
     expect(operations.reportError.calledOnceWithMatch(
       'SyncLivePullProcessor: Error processing live-pull event',
     )).toBe(true);
-    expect(operations.transitionToRepairing.calledOnceWithExactly(context.linkKey, context.link)).toBe(true);
+    expect(operations.transitionToRepairing.calledOnceWithExactly(context.controller)).toBe(true);
   });
 
   it('preserves delivery order when later admission completes first', async () => {
@@ -406,7 +405,7 @@ describe('SyncLivePullProcessor', () => {
     await processor.handleEvent(context, event(token('2'), protocolMessage('https://protocol.example/second')));
 
     expect(context.controller?.pullInflightCount).toBe(2);
-    expect(operations.transitionToRepairing.calledOnceWithExactly(context.linkKey, context.link)).toBe(true);
+    expect(operations.transitionToRepairing.calledOnceWithExactly(context.controller)).toBe(true);
 
     releaseFirst.resolve();
     await first;

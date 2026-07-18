@@ -35,7 +35,7 @@ export interface SyncLinkRecoveryCoordinatorOperations {
     result: SyncDurableFeedReconcileResult,
     context: SyncFeedConvergenceLinkContext,
   ): Promise<unknown>;
-  handlePushFailures(linkKey: string, link: ReplicationLinkState, failures: PushFailure[]): Promise<void>;
+  handlePushFailures(controller: SyncLinkController, failures: PushFailure[]): Promise<void>;
   openPullSubscription(target: SyncLinkRecoveryTarget, controller: SyncLinkController): Promise<boolean>;
   openPushSubscription(target: SyncLinkRecoveryTarget, controller: SyncLinkController): Promise<boolean>;
   reconcileTarget(
@@ -99,16 +99,11 @@ export class SyncLinkRecoveryCoordinator {
 
   /** Move an active link offline and supervise its first repair attempt. */
   public async transitionToRepairing(
-    linkKey: string,
-    link: ReplicationLinkState,
+    controller: SyncLinkController,
     options?: SyncRepairTransitionOptions,
   ): Promise<void> {
-    if (link.status === 'paused') {
-      return;
-    }
-
-    const controller = this.matchingController(linkKey, link);
-    if (controller?.isActive !== true) {
+    const { link } = controller;
+    if (link.status === 'paused' || !controller.isActive) {
       return;
     }
 
@@ -188,8 +183,7 @@ export class SyncLinkRecoveryCoordinator {
       controller.clearRepairInFlight(promise);
       if (controller.isActive && controller.link.status === 'live') {
         this.scheduleLinkReconcile(
-          controller.linkKey,
-          controller.link,
+          controller,
           'post-repair-gap',
           this._postRepairReconcileDelayMs,
         );
@@ -201,15 +195,15 @@ export class SyncLinkRecoveryCoordinator {
 
   /** Emit and coalesce a named durable-reconciliation request for a live link. */
   public scheduleLinkReconcile(
-    linkKey: string,
-    link: ReplicationLinkState,
+    controller: SyncLinkController,
     reason: string,
     delayMs?: number,
   ): void {
-    if (link.status !== 'live' || this.matchingController(linkKey, link)?.isActive !== true) {
+    const { link } = controller;
+    if (link.status !== 'live' || !controller.isActive) {
       return;
     }
-    if (!this.scheduleReconcile(linkKey, delayMs)) {
+    if (!this.scheduleReconcile(controller, delayMs)) {
       return;
     }
 
@@ -223,9 +217,8 @@ export class SyncLinkRecoveryCoordinator {
   }
 
   /** Schedule the earliest requested reconciliation for an exact link lifetime. */
-  public scheduleReconcile(linkKey: string, delayMs = this._reconcileDelayMs): boolean {
-    const controller = this._operations.getController(linkKey);
-    if (controller === undefined || controller.repairInFlight !== undefined) {
+  public scheduleReconcile(controller: SyncLinkController, delayMs = this._reconcileDelayMs): boolean {
+    if (controller.repairInFlight !== undefined) {
       return false;
     }
 
@@ -384,7 +377,7 @@ export class SyncLinkRecoveryCoordinator {
     runtimeScope: SyncRuntimeHandle,
     pushFailures: PushFailure[],
   ): Promise<void> {
-    const { link, linkKey } = controller;
+    const { link } = controller;
     controller.clearRepairProgress();
     const previousConnectivity = link.connectivity;
     link.connectivity = 'online';
@@ -394,7 +387,7 @@ export class SyncLinkRecoveryCoordinator {
     }
 
     if (pushFailures.length > 0) {
-      await this._operations.handlePushFailures(linkKey, link, pushFailures);
+      await this._operations.handlePushFailures(controller, pushFailures);
       if (this.isStale(controller, runtimeScope)) {
         return;
       }
@@ -495,7 +488,7 @@ export class SyncLinkRecoveryCoordinator {
 
       const pushFailures = outcome.pushFailures ?? [];
       if (pushFailures.length > 0) {
-        await this._operations.handlePushFailures(linkKey, link, pushFailures);
+        await this._operations.handlePushFailures(controller, pushFailures);
         return;
       }
       if (outcome.converged) {
@@ -517,7 +510,7 @@ export class SyncLinkRecoveryCoordinator {
         `SyncLinkRecoveryCoordinator: Reconciliation failed for ${link.tenantDid} -> ${link.remoteEndpoint}`,
         error,
       );
-      this.scheduleReconcile(linkKey, this._reconcileRetryDelayMs);
+      this.scheduleReconcile(controller, this._reconcileRetryDelayMs);
     }
   }
 
@@ -575,13 +568,6 @@ export class SyncLinkRecoveryCoordinator {
     return true;
   }
 
-  private matchingController(
-    linkKey: string,
-    link: ReplicationLinkState,
-  ): SyncLinkController | undefined {
-    const controller = this._operations.getController(linkKey);
-    return controller?.link === link ? controller : undefined;
-  }
 
   private isStale(controller: SyncLinkController, scope: SyncRuntimeHandle): boolean {
     return scope.disposed || !controller.isActive;
