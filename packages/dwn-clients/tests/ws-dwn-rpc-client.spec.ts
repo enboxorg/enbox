@@ -961,11 +961,12 @@ describe('WebSocketDwnRpcClient', () => {
         });
 
         const tracked = [...subscriptions.values()][0];
-        // Cursor tracking is immediate (resubscribe correctness), while acks
-        // flush after handler completion settles.
-        expect(tracked.lastCursor).toEqual(highToken);
+        // Cursor tracking and acks both flush after handler completion
+        // settles, in delivery order — an event the consumer never fully
+        // processed must be replayed on resubscription, never skipped.
         await waitForCondition(() => sentMessages.length === 2);
         expect(sentMessages).toHaveLength(2);
+        expect(tracked.lastCursor).toEqual(highToken);
       });
 
       it('should send rpc.ack when cursor events arrive', async () => {

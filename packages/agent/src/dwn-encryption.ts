@@ -36,6 +36,7 @@ import type {
 } from './types/dwn.js';
 
 import { logger } from '@enbox/common';
+import { SubscriptionHandlerTerminalError } from '@enbox/dwn-clients';
 import {
   assertWrappedGrantKeyEnvelope,
   Cid,
@@ -1662,40 +1663,57 @@ export function maybeWrapSubscriptionHandlerForDecryption<T extends DwnInterface
     audienceDecryptionKeyCache,
   };
 
+  const listener = handler as SubscriptionListener;
   let deliveryQueue: Promise<void> = Promise.resolve();
   let pendingDecrypts = 0;
   let overflowed = false;
-  let lastCursor: SubscriptionEose['cursor'] | undefined;
+  let lastDeliveredCursor: SubscriptionEose['cursor'] | undefined;
+
+  const overflowDetail =
+    `subscription decryption fell more than ${MAX_PENDING_SUBSCRIPTION_DECRYPTS} events behind; ` +
+    'the subscription is terminated — resubscribe from the last delivered cursor to replay the gap.';
+
+  // A terminal rejection tells an ack-coupled transport to close the tracked
+  // subscription and withhold the ack for this and every later event. The
+  // rejection is pre-observed so emitters that ignore listener return values
+  // (the local DWN event stream) cannot surface it as an unhandled rejection.
+  const terminalRejection = (): Promise<void> => {
+    const rejection = Promise.reject(new SubscriptionHandlerTerminalError(overflowDetail));
+    rejection.catch((): void => {});
+    return rejection;
+  };
 
   // Returns the event's own completion promise so transports that support
   // backpressure (the WebSocket client awaits the handler before acking) can
-  // gate their flow-control window on decryption actually finishing.
+  // gate their flow-control window on decryption AND consumer processing
+  // actually finishing.
   const decryptingListener = (subscriptionMessage: SubscriptionMessage): Promise<void> => {
-    if (overflowed) {return Promise.resolve();}
-    if ('cursor' in subscriptionMessage && subscriptionMessage.cursor !== undefined) {
-      lastCursor = subscriptionMessage.cursor;
+    if (overflowed) {
+      return terminalRejection();
     }
 
     if (pendingDecrypts >= MAX_PENDING_SUBSCRIPTION_DECRYPTS) {
       // The bound is the backstop for transports without ack coupling: fail
       // the subscription loudly instead of accumulating ciphertext without
-      // limit. Consumers resubscribe from their cursor watermark and the gap
-      // replays — no event is silently dropped.
+      // limit. The overflowing event is dropped, so the synthetic error —
+      // delivered only after every queued event has drained — carries the
+      // cursor of the last event actually delivered: resubscribing from it
+      // replays the dropped event and everything after it. No event is
+      // silently skipped.
       overflowed = true;
-      const overflowError: SubscriptionMessage = {
-        type   : 'error',
-        cursor : lastCursor as SubscriptionEose['cursor'],
-        error  : {
-          code   : 'SubscriptionDecryptBackpressureExceeded',
-          detail : `subscription decryption fell more than ${MAX_PENDING_SUBSCRIPTION_DECRYPTS} events behind; ` +
-            'the subscription is terminated — resubscribe from the last cursor to replay the gap.',
-        },
-      };
-      const turn = deliveryQueue.then((): void => {
-        (handler as SubscriptionListener)(overflowError);
+      const errorTurn = deliveryQueue.then(async (): Promise<void> => {
+        const overflowError: SubscriptionMessage = {
+          type   : 'error',
+          cursor : lastDeliveredCursor as SubscriptionEose['cursor'],
+          error  : {
+            code   : 'SubscriptionDecryptBackpressureExceeded',
+            detail : overflowDetail,
+          },
+        };
+        await listener(overflowError);
       });
-      deliveryQueue = turn.catch(() => {});
-      return turn;
+      deliveryQueue = errorTurn.catch((): void => {});
+      return terminalRejection();
     }
 
     pendingDecrypts += 1;
@@ -1703,14 +1721,19 @@ export function maybeWrapSubscriptionHandlerForDecryption<T extends DwnInterface
       if (subscriptionMessage.type === 'event') {
         await decryptSubscriptionEventData(subscriptionMessage, context);
       }
-      (handler as SubscriptionListener)(subscriptionMessage);
+      await listener(subscriptionMessage);
+      // Only an event the consumer fully processed moves the delivered
+      // watermark; a throwing consumer leaves it in place.
+      if ('cursor' in subscriptionMessage && subscriptionMessage.cursor !== undefined) {
+        lastDeliveredCursor = subscriptionMessage.cursor;
+      }
     });
-    deliveryQueue = turn.catch(() => {});
+    deliveryQueue = turn.catch((): void => {});
     void turn
       .finally((): void => {
         pendingDecrypts -= 1;
       })
-      .catch(() => {});
+      .catch((): void => {});
     return turn;
   };
 

@@ -1,6 +1,27 @@
 import { JsonRpcErrorCodes } from './json-rpc.js';
 
 /**
+ * Rejection a subscription handler uses to declare its delivery pipeline
+ * terminally failed for the remainder of the subscription.
+ *
+ * The WebSocket transport reacts by closing the tracked subscription and
+ * withholding the acknowledgement — and reconnect-cursor advancement — for the
+ * triggering event and every later one, so an eventual resubscription replays
+ * everything the consumer did not fully process. The thrower is responsible
+ * for informing its own consumer (e.g. with a synthetic `error` subscription
+ * message); the transport only handles close/ack semantics.
+ *
+ * Any other handler rejection is swallowed and the event acknowledged,
+ * matching the plain-handler convention.
+ */
+export class SubscriptionHandlerTerminalError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SubscriptionHandlerTerminalError';
+  }
+}
+
+/**
  * Error surfaced by DWN JSON-RPC transports when the server returns a typed
  * JSON-RPC error envelope.
  */

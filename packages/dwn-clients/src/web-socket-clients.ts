@@ -18,7 +18,6 @@ import type {
 } from '@enbox/dwn-sdk-js';
 
 import { CryptoUtils } from '@enbox/crypto';
-import { DwnRpcError } from './dwn-rpc-error.js';
 import { HttpDwnRpcClient } from './http-dwn-rpc-client.js';
 import { JsonRpcSocket } from './json-rpc-socket.js';
 import { parseReplicationApplyResult } from './replication-apply-result.js';
@@ -27,6 +26,7 @@ import { withLocalNodeTokenQuery } from './rpc-auth.js';
 import { createJsonRpcAck, createJsonRpcRequest, createJsonRpcSubscriptionRequest, JsonRpcErrorCodes } from './json-rpc.js';
 import { DataStream, Encoder } from '@enbox/dwn-sdk-js';
 import { DEFAULT_MAX_WS_RAW_RECORD_DATA_BYTES, maxWsJsonRpcPayloadBytes } from './ws-payload-size.js';
+import { DwnRpcError, SubscriptionHandlerTerminalError } from './dwn-rpc-error.js';
 
 const DEFAULT_MAX_WS_JSON_RPC_PAYLOAD_BYTES = maxWsJsonRpcPayloadBytes(DEFAULT_MAX_WS_RAW_RECORD_DATA_BYTES);
 
@@ -342,9 +342,17 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     // Acks are chained per subscription: each fires only after its event's
     // handler has fully processed (a promise-returning handler, e.g. the
     // agent's decrypting wrapper, gates it), and in arrival order — so the
-    // server's flow-control window cannot outrun slow processing.
+    // server's flow-control window cannot outrun slow processing. The
+    // reconnect cursor advances on the same completion: an event the consumer
+    // never fully processed must be replayed by a resubscription, never
+    // skipped, so cursor and ack move together or not at all.
     let ackChain: Promise<void> = Promise.resolve();
+    let terminalHandlerFailure = false;
     const { response, close } = await socket.subscribe(request, (response) => {
+      if (terminalHandlerFailure) {
+        return;
+      }
+
       const { result, error } = response;
       if (error) {
         closeTrackedSubscription();
@@ -352,27 +360,46 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       }
 
       const subscriptionMessage = result.subscription as SubscriptionMessage;
-      const handled = Promise.resolve(
-        handler(subscriptionMessage) as unknown,
-      ).catch(() => {});
+      const handled = Promise.resolve(handler(subscriptionMessage));
+      // Observe the rejection immediately so a message that never enters the
+      // ack chain (or a chain cut short by teardown) cannot surface as an
+      // unhandled rejection; awaiting `handled` below still sees the failure.
+      handled.catch(() => {});
 
       if (subscriptionMessage.type === 'error') {
         closeTrackedSubscription();
         return;
       }
 
-      // Track the latest cursor for reconnection immediately — resubscribe
-      // correctness must not wait on event processing.
       if ('cursor' in subscriptionMessage && subscriptionMessage.cursor) {
-        const tracked = subscriptions.get(subscriptionId);
-        if (tracked && shouldReplaceLastCursor(tracked.lastCursor, subscriptionMessage.cursor)) {
-          tracked.lastCursor = subscriptionMessage.cursor;
-        }
-
         const cursor = subscriptionMessage.cursor;
         ackChain = ackChain
           .then(async (): Promise<void> => {
-            await handled;
+            if (terminalHandlerFailure) {
+              return;
+            }
+            try {
+              await handled;
+            } catch (handlerError: unknown) {
+              if (handlerError instanceof SubscriptionHandlerTerminalError) {
+                // The consumer pipeline is terminally failed from this event
+                // on: close out the subscription and leave this event — and
+                // every later one — unacknowledged and cursor-untracked so a
+                // resubscription replays them. The thrower already informed
+                // its own consumer.
+                terminalHandlerFailure = true;
+                closeTrackedSubscription();
+                return;
+              }
+              // Ordinary handler failures keep the plain-handler convention:
+              // swallowed, acknowledged, delivery continues.
+            }
+
+            const tracked = subscriptions.get(subscriptionId);
+            if (tracked && shouldReplaceLastCursor(tracked.lastCursor, cursor)) {
+              tracked.lastCursor = cursor;
+            }
+
             // Send rpc.ack to advance the server's flow-control window.
             socket.send(createJsonRpcAck(subscriptionId, cursor));
           })
