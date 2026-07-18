@@ -968,6 +968,225 @@ export function testProtocolsConfigureHandler(): void {
         expect(deliveryMessages.messages).toHaveLength(0);
       });
 
+      it('should reject a control record invalid under newly learned governing history regardless of config arrival order', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+        const protocol = 'http://config-validity.example/control-record-history-order';
+        const roleDefinition: ProtocolDefinition = {
+          protocol,
+          published : true,
+          types     : {
+            member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            member: {
+              $role    : true,
+              $actions : [{ who: 'anyone', can: [ProtocolAction.Create] }],
+            },
+          },
+        };
+        const keyDeriver = TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk);
+        const encryptedRoleDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(roleDefinition, keyDeriver);
+        const encryptedMissingDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys({
+          ...roleDefinition,
+          structure: { member: {} },
+        }, keyDeriver);
+        const config1 = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : encryptedRoleDefinition,
+          messageTimestamp   : '2025-01-01T00:00:00.000000Z',
+        });
+        const config2 = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : encryptedMissingDefinition,
+          messageTimestamp   : '2025-01-02T00:00:00.000000Z',
+        });
+        const config4 = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : encryptedRoleDefinition,
+          messageTimestamp   : '2025-01-04T00:00:00.000000Z',
+        });
+        const audience = await createAudienceControlWrite({
+          author           : bob,
+          dateCreated      : '2025-01-03T00:00:00.000000Z',
+          messageTimestamp : '2025-01-03T00:00:00.000000Z',
+          protocol,
+          rolePath         : 'member',
+          roleRuleSet      : encryptedRoleDefinition.structure.member as ProtocolRuleSet,
+        });
+
+        for (const config of [config1, config4]) {
+          expect((await dwn.processMessage(alice.did, config.message)).status.code).toBe(202);
+        }
+        await processControlWrite(dwn, alice.did, audience);
+        expect((await dwn.processMessage(alice.did, config2.message)).status.code).toBe(202);
+
+        const repaired = await messageStore.query(alice.did, [{ recordId: audience.recordsWrite.message.recordId }]);
+        expect(repaired.messages).toHaveLength(0);
+
+        await messageStore.clear();
+        await dataStore.clear();
+        await resumableTaskStore.clear();
+        for (const config of [config1, config2, config4]) {
+          expect((await dwn.processMessage(alice.did, config.message)).status.code).toBe(202);
+        }
+        const rejected = await dwn.processMessage(alice.did, audience.recordsWrite.message, {
+          dataStream: DataStream.fromBytes(audience.dataBytes),
+        });
+        expect(rejected.status.code).toBe(400);
+        expect(rejected.status.detail).toContain(DwnErrorCode.EncryptionControlValidateAudienceRolePathInvalid);
+      });
+
+      it('should purge a control record disallowed by a newly learned governing create policy', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+        const protocol = 'http://config-validity.example/control-record-history-action';
+        const openDefinition: ProtocolDefinition = {
+          protocol,
+          published : true,
+          types     : {
+            member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            member: {
+              $role    : true,
+              $actions : [{ who: 'anyone', can: [ProtocolAction.Create] }],
+            },
+          },
+        };
+        const closedDefinition: ProtocolDefinition = {
+          ...openDefinition,
+          structure: { member: { $role: true } },
+        };
+        const keyDeriver = TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk);
+        const encryptedOpenDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(openDefinition, keyDeriver);
+        const encryptedClosedDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(closedDefinition, keyDeriver);
+
+        for (const [definition, messageTimestamp] of [
+          [encryptedOpenDefinition, '2025-02-01T00:00:00.000000Z'],
+          [encryptedOpenDefinition, '2025-02-04T00:00:00.000000Z'],
+        ] as const) {
+          const config = await TestDataGenerator.generateProtocolsConfigure({
+            author             : alice,
+            protocolDefinition : definition,
+            messageTimestamp,
+          });
+          expect((await dwn.processMessage(alice.did, config.message)).status.code).toBe(202);
+        }
+
+        const audience = await createAudienceControlWrite({
+          author           : bob,
+          dateCreated      : '2025-02-03T00:00:00.000000Z',
+          messageTimestamp : '2025-02-03T00:00:00.000000Z',
+          protocol,
+          rolePath         : 'member',
+          roleRuleSet      : encryptedOpenDefinition.structure.member as ProtocolRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, audience);
+
+        const closedConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : encryptedClosedDefinition,
+          messageTimestamp   : '2025-02-02T00:00:00.000000Z',
+        });
+        expect((await dwn.processMessage(alice.did, closedConfig.message)).status.code).toBe(202);
+
+        const repaired = await messageStore.query(alice.did, [{ recordId: audience.recordsWrite.message.recordId }]);
+        expect(repaired.messages).toHaveLength(0);
+      });
+
+      it('should purge an audience sealed to a key superseded by newly learned governing history', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+        const protocol = 'http://config-validity.example/control-record-history-key';
+        const definition: ProtocolDefinition = {
+          protocol,
+          published : true,
+          types     : {
+            member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            member: { $role: true },
+          },
+        };
+        const aliceKeyDeriver = TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk);
+        const bobKeyDeriver = TestDataGenerator.createProtocolPathKeyDeriver(bob.keyId, bob.encryptionKeyPair.privateJwk);
+        const aliceKeyDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(definition, aliceKeyDeriver);
+        const bobKeyDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(definition, bobKeyDeriver);
+
+        for (const messageTimestamp of ['2025-03-01T00:00:00.000000Z', '2025-03-04T00:00:00.000000Z']) {
+          const config = await TestDataGenerator.generateProtocolsConfigure({
+            author             : alice,
+            protocolDefinition : aliceKeyDefinition,
+            messageTimestamp,
+          });
+          expect((await dwn.processMessage(alice.did, config.message)).status.code).toBe(202);
+        }
+
+        const audience = await createAudienceControlWrite({
+          author           : alice,
+          dateCreated      : '2025-03-03T00:00:00.000000Z',
+          messageTimestamp : '2025-03-03T00:00:00.000000Z',
+          protocol,
+          rolePath         : 'member',
+          roleRuleSet      : aliceKeyDefinition.structure.member as ProtocolRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, audience);
+
+        const governingConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : bobKeyDefinition,
+          messageTimestamp   : '2025-03-02T00:00:00.000000Z',
+        });
+        expect((await dwn.processMessage(alice.did, governingConfig.message)).status.code).toBe(202);
+
+        const repaired = await messageStore.query(alice.did, [{ recordId: audience.recordsWrite.message.recordId }]);
+        expect(repaired.messages).toHaveLength(0);
+      });
+
+      it('should retain historically valid controls when the newest role temporarily lacks key agreement', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const protocol = 'http://config-validity.example/control-record-current-key-missing';
+        const definition: ProtocolDefinition = {
+          protocol,
+          published : true,
+          types     : {
+            member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            member: { $role: true },
+          },
+        };
+        const keyDeriver = TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk);
+        const encryptedDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(definition, keyDeriver);
+        const encryptedConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : encryptedDefinition,
+          messageTimestamp   : '2025-04-01T00:00:00.000000Z',
+        });
+        expect((await dwn.processMessage(alice.did, encryptedConfig.message)).status.code).toBe(202);
+
+        const audience = await createAudienceControlWrite({
+          author           : alice,
+          dateCreated      : '2025-04-02T00:00:00.000000Z',
+          messageTimestamp : '2025-04-02T00:00:00.000000Z',
+          protocol,
+          rolePath         : 'member',
+          roleRuleSet      : encryptedDefinition.structure.member as ProtocolRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, audience);
+
+        const temporarilyUnkeyedConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : definition,
+          messageTimestamp   : '2025-04-03T00:00:00.000000Z',
+        });
+        expect((await dwn.processMessage(alice.did, temporarilyUnkeyedConfig.message)).status.code).toBe(202);
+
+        const retained = await messageStore.query(alice.did, [{ recordId: audience.recordsWrite.message.recordId }]);
+        expect(retained.messages.length).toBeGreaterThan(0);
+      });
+
       it('should return 400 if protocol is not normalized', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
