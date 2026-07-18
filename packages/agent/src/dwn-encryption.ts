@@ -92,6 +92,7 @@ type ResolveKeyDecrypterParams = {
   granteeDid?: string;
   audienceDecryptionKeyCache?: AudienceDecryptionKeyCache;
   delegatedGrant?: DataEncodedRecordsWriteMessage;
+  failureAccumulator?: AudienceDecryptFailureAccumulator;
 };
 
 export type AudienceDecryptionKeyCache = {
@@ -129,6 +130,7 @@ type HydrateAudienceKeyParams = {
   granteeDid?: string;
   delegatedGrant?: DataEncodedRecordsWriteMessage;
   delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
+  failureAccumulator?: AudienceDecryptFailureAccumulator;
 };
 
 /** The actor a `$encryption/delivery` query is authored as (optionally via a delegated grant). */
@@ -156,6 +158,120 @@ export type AudienceDecryptionKeyEntry = {
   rolePath: string;
   keyMaterial: RoleAudienceKeyMaterial;
 };
+
+/**
+ * Machine-readable cause of a recipient-side role-audience decrypt failure.
+ *
+ * - `'not-wrapped-for-role'` — the record's `keyEncryption` carries no role-audience entry: it was
+ *   written under a protocol revision without the role's read rule, so no key delivery can ever make
+ *   it role-readable — the record must be re-written to heal.
+ * - `'delivery-missing'` — the record's role-audience entry resolved (the audience record exists),
+ *   but no `$encryption/delivery` record wraps that key to this recipient, and the remote DWN was
+ *   consulted successfully or was not needed, so the absence is authoritative.
+ * - `'role-not-held'` — a delivery candidate was found but verification rejected the recipient
+ *   because no active `$role` record backs the delivery (the role was revoked or never granted).
+ * - `'audience-superseded'` — the record is wrapped to a role-audience key that is not the tuple's
+ *   current audience key (an older or purged audience); delivering the current key cannot open it —
+ *   the record must be re-encrypted to the current audience.
+ * - `'remote-unverifiable'` — the audience/delivery lookups were empty locally and the remote DWN
+ *   could not be consulted, so absence cannot be asserted.
+ * - `'unknown'` — no specific cause was observed; the original failure detail is preserved.
+ */
+export type AudienceDecryptFailureCause =
+  | 'not-wrapped-for-role'
+  | 'delivery-missing'
+  | 'role-not-held'
+  | 'audience-superseded'
+  | 'remote-unverifiable'
+  | 'unknown';
+
+/**
+ * Typed recipient-side decrypt failure raised by the auto-decrypt pipeline
+ * (`maybeDecryptReply` and `resolveKeyDecrypter`). Carries the most specific
+ * {@link AudienceDecryptFailureCause} observed while resolving the record's decryption key, plus the
+ * record coordinates apps need to attribute the failure. Non-role decrypt failures that flow through
+ * the same wrap sites surface as cause `'unknown'` with the original detail preserved.
+ * Re-exported from `@enbox/api` so apps can catch it from record data rejections.
+ */
+export class AudienceDecryptError extends Error {
+  public readonly cause: AudienceDecryptFailureCause;
+  public readonly detail: string;
+  public readonly protocol?: string;
+  public readonly recipientDid?: string;
+  public readonly recordId: string;
+
+  public constructor(init: {
+    cause: AudienceDecryptFailureCause;
+    detail: string;
+    protocol?: string;
+    recipientDid?: string;
+    recordId: string;
+  }) {
+    super(`AgentDwnApi: Failed to decrypt record '${init.recordId}'. Cause: ${init.cause}. ${init.detail}`);
+    this.name = 'AudienceDecryptError';
+    this.cause = init.cause;
+    this.detail = init.detail;
+    this.protocol = init.protocol;
+    this.recipientDid = init.recipientDid;
+    this.recordId = init.recordId;
+  }
+}
+
+/** Ranks {@link AudienceDecryptFailureCause} values so the most specific observation wins. */
+const AUDIENCE_DECRYPT_CAUSE_PRIORITY: Record<AudienceDecryptFailureCause, number> = {
+  'unknown'              : 0,
+  'not-wrapped-for-role' : 1,
+  'remote-unverifiable'  : 2,
+  'delivery-missing'     : 3,
+  'audience-superseded'  : 4,
+  'role-not-held'        : 5,
+};
+
+/**
+ * Collects decrypt-failure observations along the role-audience hydration flow so the final throw
+ * site can construct an {@link AudienceDecryptError} with the most specific cause observed.
+ * Secondary observations (skipped deliveries, skipped grantKeys) are kept as notes appended to the
+ * error detail instead of being swallowed by logging alone.
+ */
+class AudienceDecryptFailureAccumulator {
+  private _cause: AudienceDecryptFailureCause = 'unknown';
+  private _detail: string | undefined;
+  private readonly _notes: string[] = [];
+
+  public record(cause: AudienceDecryptFailureCause, detail: string): void {
+    if (AUDIENCE_DECRYPT_CAUSE_PRIORITY[cause] > AUDIENCE_DECRYPT_CAUSE_PRIORITY[this._cause]) {
+      this._cause = cause;
+      this._detail = detail;
+    }
+  }
+
+  public note(detail: string): void {
+    this._notes.push(detail);
+  }
+
+  public toError(params: {
+    recordId: string;
+    fallbackDetail: string;
+    protocol?: string;
+    recipientDid?: string;
+  }): AudienceDecryptError {
+    const detail = [this._detail ?? params.fallbackDetail, ...this._notes.slice(0, 5)].join(' ');
+    return new AudienceDecryptError({
+      cause        : this._cause,
+      detail,
+      protocol     : params.protocol,
+      recipientDid : params.recipientDid,
+      recordId     : params.recordId,
+    });
+  }
+}
+
+/** Typed marker for the role-assignment verification rejection so hydration can classify it. */
+class AudienceRoleNotHeldError extends Error {
+  public constructor() {
+    super('audience delivery recipient is not an active holder of the referenced role.');
+  }
+}
 
 /**
  * Returns the IV/counter byte length for DWN content encryption.
@@ -1004,6 +1120,7 @@ async function resolveCachedDelegateDecryptionKey(params: {
   protocol: string;
   protocolPath: string | undefined;
   delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
+  failureAccumulator?: AudienceDecryptFailureAccumulator;
 }): Promise<KeyDecrypter | undefined> {
   const { agent, targetDid, granteeDid, protocol, protocolPath, delegateDecryptionKeyCache } = params;
   const cacheKey = `ddk~${granteeDid}`;
@@ -1018,10 +1135,11 @@ async function resolveCachedDelegateDecryptionKey(params: {
 
   const hydratedKeys = await resolveGrantKeyRecords({
     agent,
-    grantorDid: targetDid,
+    grantorDid         : targetDid,
     granteeDid,
     protocol,
     protocolPath,
+    failureAccumulator : params.failureAccumulator,
   });
 
   if (hydratedKeys.length === 0) {
@@ -1057,6 +1175,7 @@ export async function resolveKeyDecrypter(params: ResolveKeyDecrypterParams): Pr
     recordsWrite,
     targetDid,
   } = params;
+  const failureAccumulator = params.failureAccumulator ?? new AudienceDecryptFailureAccumulator();
 
   if (granteeDid !== undefined) {
     const protocol = recordsWrite.descriptor.protocol;
@@ -1069,6 +1188,7 @@ export async function resolveKeyDecrypter(params: ResolveKeyDecrypterParams): Pr
         protocol,
         protocolPath,
         delegateDecryptionKeyCache,
+        failureAccumulator,
       });
       if (cachedDecrypter !== undefined) {
         return cachedDecrypter;
@@ -1084,15 +1204,18 @@ export async function resolveKeyDecrypter(params: ResolveKeyDecrypterParams): Pr
       recordsWrite,
       delegateDecryptionKeyCache,
       audienceDecryptionKeyCache,
+      failureAccumulator,
     });
     if (audienceDecrypter !== undefined) {
       return audienceDecrypter;
     }
 
-    throw new Error(
-      `AgentDwnApi: no delivered decryption key covers encrypted record ` +
-      `'${recordsWrite.recordId}' for delegate '${granteeDid}'.`
-    );
+    throw failureAccumulator.toError({
+      fallbackDetail : `no delivered decryption key covers encrypted record '${recordsWrite.recordId}' for delegate '${granteeDid}'.`,
+      protocol       : recordsWrite.descriptor.protocol,
+      recipientDid   : authorDid,
+      recordId       : recordsWrite.recordId,
+    });
   }
 
   if (targetDid !== undefined && targetDid !== authorDid) {
@@ -1103,13 +1226,28 @@ export async function resolveKeyDecrypter(params: ResolveKeyDecrypterParams): Pr
       delegatedGrant,
       recordsWrite,
       audienceDecryptionKeyCache,
+      failureAccumulator,
     });
     if (audienceDecrypter !== undefined) {
       return audienceDecrypter;
     }
+    if (!recordHasRoleAudienceKeyEncryption(recordsWrite)) {
+      failureAccumulator.record(
+        'not-wrapped-for-role',
+        `the record carries no role-audience key-encryption entry: it was written under a protocol revision ` +
+        `without the role's read rule, so no key delivery can make it role-readable — the record must be re-written to heal.`
+      );
+    }
   }
 
   return getKeyDecrypter(agent, authorDid);
+}
+
+/** Whether the record's encryption envelope wraps its data key to any role-audience key. */
+function recordHasRoleAudienceKeyEncryption(recordsWrite: RecordsWriteMessage): boolean {
+  return recordsWrite.encryption?.keyEncryption.some(
+    (entry): boolean => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME,
+  ) === true;
 }
 
 /** Bundled `resolveKeyDecrypter` inputs shared by every entry decrypted within one `maybeDecryptReply` call. */
@@ -1142,12 +1280,14 @@ async function decryptRecordsReadReply(
     return;
   }
 
+  const failureAccumulator = new AudienceDecryptFailureAccumulator();
   const keyDecrypter = await resolveKeyDecrypter({
     agent,
     audienceDecryptionKeyCache,
     authorDid,
     delegatedGrant,
     delegateDecryptionKeyCache,
+    failureAccumulator,
     granteeDid,
     recordsWrite: readReply.entry.recordsWrite,
     targetDid,
@@ -1160,11 +1300,12 @@ async function decryptRecordsReadReply(
       readReply.entry.data,
     );
   } catch (error: any) {
-    throw new Error(
-      `AgentDwnApi: Failed to decrypt record ` +
-      `'${readReply.entry.recordsWrite.recordId}'. ` +
-      `Original error: ${error.message}`
-    );
+    throw failureAccumulator.toError({
+      fallbackDetail : `Original error: ${error.message}`,
+      protocol       : readReply.entry.recordsWrite.descriptor.protocol,
+      recipientDid   : authorDid,
+      recordId       : readReply.entry.recordsWrite.recordId,
+    });
   }
 }
 
@@ -1185,12 +1326,14 @@ async function decryptRecordsQueryEntry(
     return;
   }
 
+  const failureAccumulator = new AudienceDecryptFailureAccumulator();
   const keyDecrypter = await resolveKeyDecrypter({
     agent,
     audienceDecryptionKeyCache,
     authorDid,
     delegatedGrant,
     delegateDecryptionKeyCache,
+    failureAccumulator,
     granteeDid,
     recordsWrite: entry as RecordsWriteMessage,
     targetDid,
@@ -1205,10 +1348,12 @@ async function decryptRecordsQueryEntry(
     const plainBytes = await DataStream.toBytes(plainStream);
     entry.encodedData = Encoder.bytesToBase64Url(plainBytes);
   } catch (error: any) {
-    throw new Error(
-      `AgentDwnApi: Failed to decrypt record ` +
-      `'${entry.recordId}'. Original error: ${error.message}`
-    );
+    throw failureAccumulator.toError({
+      fallbackDetail : `Original error: ${error.message}`,
+      protocol       : entry.descriptor.protocol,
+      recipientDid   : authorDid,
+      recordId       : entry.recordId,
+    });
   }
 }
 
@@ -1290,6 +1435,7 @@ async function resolveRoleAudienceDecrypter(params: {
   delegatedGrant?: DataEncodedRecordsWriteMessage;
   delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
   audienceDecryptionKeyCache?: AudienceDecryptionKeyCache;
+  failureAccumulator?: AudienceDecryptFailureAccumulator;
 }): Promise<KeyDecrypter | undefined> {
   if (params.sourceDid === undefined || params.recordsWrite.encryption === undefined) {
     return undefined;
@@ -1327,6 +1473,7 @@ async function resolveRoleAudienceDecrypter(params: {
       granteeDid                 : params.granteeDid,
       delegatedGrant             : params.delegatedGrant,
       delegateDecryptionKeyCache : params.delegateDecryptionKeyCache,
+      failureAccumulator         : params.failureAccumulator,
       protocol                   : entry.protocol,
       contextId,
       rolePath                   : entry.rolePath,
@@ -1384,7 +1531,7 @@ export async function resolveAudienceDecryptionKey(params: {
 }
 
 async function hydrateAudienceKey(params: HydrateAudienceKeyParams): Promise<AudienceDecryptionKeyEntry | undefined> {
-  const audienceRecord = await fetchAudienceRecord({
+  const audienceLookup = await fetchAudienceRecord({
     agent     : params.agent,
     authorDid : params.granteeDid ?? params.recipientDid,
     contextId : params.contextId,
@@ -1393,7 +1540,9 @@ async function hydrateAudienceKey(params: HydrateAudienceKeyParams): Promise<Aud
     rolePath  : params.rolePath,
     sourceDid : params.sourceDid,
   });
+  const audienceRecord = audienceLookup.record;
   if (audienceRecord === undefined) {
+    await classifyMissingAudienceRecord(params, audienceLookup.remote);
     return undefined;
   }
 
@@ -1403,8 +1552,10 @@ async function hydrateAudienceKey(params: HydrateAudienceKeyParams): Promise<Aud
   }
 
   const deliveryReadActor = getAudienceDeliveryReadActor(params);
-  const deliveryMessages = await queryAudienceDeliveryMessages(params, deliveryReadActor);
+  const deliveryLookup = await queryAudienceDeliveryMessagesDetailed(params, deliveryReadActor);
+  const deliveryMessages = deliveryLookup.messages;
   if (deliveryMessages.length === 0) {
+    await classifyMissingDeliveries(params, deliveryLookup.remote);
     return undefined;
   }
 
@@ -1427,6 +1578,109 @@ async function hydrateAudienceKey(params: HydrateAudienceKeyParams): Promise<Aud
     deliveryReadActor,
     params,
   });
+}
+
+/**
+ * Classifies an absent audience record for the record's role-audience key: an unreachable remote
+ * means absence cannot be asserted; an authoritative absence is probed against the tuple's current
+ * audience to distinguish a superseded/purged audience from an unknown failure.
+ */
+async function classifyMissingAudienceRecord(params: HydrateAudienceKeyParams, remote: RemoteReadOutcome): Promise<void> {
+  const accumulator = params.failureAccumulator;
+  if (accumulator === undefined) {
+    return;
+  }
+
+  if (remote === 'failed') {
+    accumulator.record(
+      'remote-unverifiable',
+      `no audience record for role-audience key '${params.keyId}' is visible locally and the remote DWN ` +
+      `could not be consulted; absence cannot be asserted.`
+    );
+    return;
+  }
+
+  await recordSupersededAudienceIfCurrentDiffers(params, accumulator);
+}
+
+/**
+ * Classifies an empty delivery lookup for the record's role-audience key: an unreachable remote
+ * means absence cannot be asserted; an authoritative absence is a missing delivery, then probed
+ * against the tuple's current audience in case the record's key was superseded.
+ */
+async function classifyMissingDeliveries(params: HydrateAudienceKeyParams, remote: RemoteReadOutcome): Promise<void> {
+  const accumulator = params.failureAccumulator;
+  if (accumulator === undefined) {
+    return;
+  }
+
+  if (remote === 'failed') {
+    accumulator.record(
+      'remote-unverifiable',
+      `no $encryption/delivery record wrapping role-audience key '${params.keyId}' to '${params.recipientDid}' ` +
+      `is visible locally and the remote DWN could not be consulted; absence cannot be asserted.`
+    );
+    return;
+  }
+
+  accumulator.record(
+    'delivery-missing',
+    `no $encryption/delivery record wraps role-audience key '${params.keyId}' of ` +
+    `(${params.protocol}, ${params.rolePath}, '${params.contextId}') to '${params.recipientDid}'.`
+  );
+  await recordSupersededAudienceIfCurrentDiffers(params, accumulator);
+}
+
+/**
+ * Resolves the tuple's CURRENT audience key via the projected audience query (no `keyId` tag) and
+ * records `'audience-superseded'` when it differs from the key the record is wrapped to. Runs only
+ * on the already-failing path, and only when cause detection is active.
+ */
+async function recordSupersededAudienceIfCurrentDiffers(
+  params: HydrateAudienceKeyParams,
+  accumulator: AudienceDecryptFailureAccumulator,
+): Promise<void> {
+  const currentKeyId = await probeCurrentAudienceKeyId(params);
+  if (currentKeyId !== undefined && currentKeyId !== params.keyId) {
+    accumulator.record(
+      'audience-superseded',
+      `the record is wrapped to role-audience key '${params.keyId}' but the tuple's current audience key is ` +
+      `'${currentKeyId}'; delivering the current key cannot open it — the record must be re-encrypted to the current audience.`
+    );
+  }
+}
+
+/**
+ * Queries the source tenant for the CURRENT audience record of one (protocol, rolePath, contextId)
+ * tuple. Omitting the `keyId` tag keeps the query inside the DWN's current-audience projection, so
+ * at most the tuple's current record is returned. Visibility still applies: an actor who cannot
+ * enumerate the tuple's audience records observes nothing and no cause is recorded.
+ */
+async function probeCurrentAudienceKeyId(params: HydrateAudienceKeyParams): Promise<string | undefined> {
+  const { reply } = await processDwnRequestWithRemoteFallback(params.agent, {
+    author        : params.granteeDid ?? params.recipientDid,
+    target        : params.sourceDid,
+    messageType   : DwnInterface.RecordsQuery,
+    messageParams : {
+      filter: {
+        protocol     : params.protocol,
+        protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+        tags         : {
+          protocol  : params.protocol,
+          rolePath  : params.rolePath,
+          contextId : params.contextId,
+        },
+      },
+    },
+  }, hasRecordsQueryEntries);
+
+  if (reply.status.code !== 200 || reply.entries === undefined || reply.entries.length === 0) {
+    return undefined;
+  }
+
+  const currentAudienceMessage = reply.entries[0] as RecordsWriteMessage;
+  const keyId = currentAudienceMessage.descriptor.tags?.keyId;
+  return typeof keyId === 'string' ? keyId : undefined;
 }
 
 async function hydrateAudienceKeyFromSeal(
@@ -1569,9 +1823,14 @@ async function hydrateAudienceKeyFromDelivery(input: {
         params,
       });
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (error instanceof AudienceRoleNotHeldError) {
+        params.failureAccumulator?.record('role-not-held', `audience delivery '${deliveryMessage.recordId}' was rejected: ${message}`);
+      } else {
+        params.failureAccumulator?.note(`Skipped audience delivery '${deliveryMessage.recordId}': ${message}`);
+      }
       logger.log(
-        `AgentDwnApi: skipped audience delivery '${deliveryMessage.recordId}' while resolving role-audience key: ` +
-        `${error instanceof Error ? error.message : String(error)}`
+        `AgentDwnApi: skipped audience delivery '${deliveryMessage.recordId}' while resolving role-audience key: ${message}`
       );
     }
   }
@@ -1821,11 +2080,11 @@ async function fetchAudienceRecord(params: {
   rolePath: string;
   contextId: string;
   keyId: string;
-}): Promise<{
-  message: RecordsWriteMessage & { encodedData?: string };
-  payload: EncryptionControlAudiencePayload;
-} | undefined> {
-  const { reply } = await processDwnRequestWithRemoteFallback(params.agent, {
+}): Promise<{ record?: AudienceRecordCandidate; remote: RemoteReadOutcome }> {
+  const { response, remote } = await processDwnReadThroughDetailed({
+    process : params.agent.processDwnRequest.bind(params.agent),
+    send    : params.agent.sendDwnRequest.bind(params.agent),
+  }, {
     author        : params.authorDid,
     target        : params.sourceDid,
     messageType   : DwnInterface.RecordsQuery,
@@ -1843,12 +2102,13 @@ async function fetchAudienceRecord(params: {
     },
   }, hasRecordsQueryEntries);
 
+  const reply = response.reply;
   if (reply.status.code !== 200 || reply.entries === undefined || reply.entries.length === 0) {
-    return undefined;
+    return { remote };
   }
 
   for (const entry of reply.entries) {
-    const audienceMessage = entry as RecordsWriteMessage & { encodedData?: string };
+    const audienceMessage = entry as EncodedRecordsWriteMessage;
     const dataBytes = await getAudienceRecordData(
       params.agent,
       params.authorDid,
@@ -1861,11 +2121,11 @@ async function fetchAudienceRecord(params: {
 
     const payload = Encoder.bytesToObject(dataBytes) as EncryptionControlAudiencePayload;
     if (audiencePayloadMatches(payload, audienceMessage, params)) {
-      return { message: audienceMessage, payload };
+      return { record: { message: audienceMessage, payload }, remote };
     }
   }
 
-  return undefined;
+  return { remote };
 }
 
 async function getAudienceRecordData(
@@ -2003,7 +2263,7 @@ async function verifyAudienceKeyRoleAssignment(params: {
 }): Promise<void> {
   const contextIdPrefix = getRoleContextPrefix(params.rolePath, params.contextId);
   if (contextIdPrefix === undefined && params.rolePath.includes('/')) {
-    throw new Error('audience delivery recipient is not an active holder of the referenced role.');
+    throw new AudienceRoleNotHeldError();
   }
 
   const { reply } = await processDwnRequestWithRemoteFallback(params.agent, {
@@ -2032,7 +2292,7 @@ async function verifyAudienceKeyRoleAssignment(params: {
   });
 
   if (!hasRoleRecord) {
-    throw new Error('audience delivery recipient is not an active holder of the referenced role.');
+    throw new AudienceRoleNotHeldError();
   }
 }
 
@@ -2357,6 +2617,7 @@ type ResolveGrantKeyRecordsParams = {
   granteeDid: string;
   protocol: string;
   protocolPath?: string;
+  failureAccumulator?: AudienceDecryptFailureAccumulator;
 };
 
 type ResolveGrantKeyRecordParams = ResolveGrantKeyRecordsParams & {
@@ -2411,7 +2672,7 @@ async function resolveGrantKeyRecords(params: ResolveGrantKeyRecordsParams): Pro
         resolvedKeys.push(resolvedKey);
       }
     } catch (error) {
-      collectGrantKeyRecordResolutionError(error, grantKeyMessage, targetMismatches);
+      collectGrantKeyRecordResolutionError(error, grantKeyMessage, targetMismatches, params.failureAccumulator);
     }
   }
 
@@ -2481,14 +2742,16 @@ function collectGrantKeyRecordResolutionError(
   error: unknown,
   grantKeyMessage: RecordsWriteMessage,
   targetMismatches: WrappedGrantKeyTargetMismatchError[],
+  failureAccumulator?: AudienceDecryptFailureAccumulator,
 ): void {
   if (error instanceof WrappedGrantKeyTargetMismatchError) {
     targetMismatches.push(error);
   }
 
+  const message = error instanceof Error ? error.message : String(error);
+  failureAccumulator?.note(`Skipped grantKey '${grantKeyMessage.recordId}': ${message}`);
   logger.log(
-    `AgentDwnApi: skipped grantKey '${grantKeyMessage.recordId}' while resolving delegate decryption key: ` +
-    `${error instanceof Error ? error.message : String(error)}`
+    `AgentDwnApi: skipped grantKey '${grantKeyMessage.recordId}' while resolving delegate decryption key: ${message}`
   );
 }
 

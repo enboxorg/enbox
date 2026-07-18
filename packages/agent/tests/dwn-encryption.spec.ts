@@ -11,6 +11,7 @@ import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 
 import {
+  AudienceDecryptError,
   buildEncryptionInput,
   buildKmsDecryptCallback,
   buildProtocolPathSubtreeDecrypter,
@@ -314,6 +315,96 @@ describe('dwn-encryption', () => {
           request, reply, mockAgent,
         )
       ).rejects.toThrow('AgentDwnApi: Failed to decrypt record \'rec-fail-query\'');
+    });
+
+    describe('audience decrypt failure taxonomy for role-wrapped records', () => {
+      function makeRoleWrappedReadReply(): any {
+        return {
+          status : { code: 200 },
+          entry  : {
+            recordsWrite: {
+              recordId   : 'rec-role-wrapped',
+              contextId  : 'rec-role-wrapped',
+              descriptor : { protocol: 'https://proto.example.com', protocolPath: 'note' },
+              encryption : {
+                keyEncryption: [{
+                  algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+                  derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+                  keyId            : 'wrapped-role-key',
+                  protocol         : 'https://proto.example.com',
+                  rolePath         : 'admin',
+                }],
+              },
+            },
+            data: new ReadableStream(),
+          },
+        };
+      }
+
+      function makeRecipientAgent(sendDwnRequest: sinon.SinonStub): any {
+        return {
+          did: {
+            resolve: sinon.stub().resolves({
+              didDocument: {
+                id                 : 'did:example:bob',
+                keyAgreement       : ['#enc'],
+                verificationMethod : [{
+                  id           : 'did:example:bob#enc',
+                  type         : 'JsonWebKey2020',
+                  controller   : 'did:example:bob',
+                  publicKeyJwk : { kty: 'OKP', crv: 'X25519', x: 'AAAA' },
+                }],
+              },
+              didResolutionMetadata: {},
+            }),
+          },
+          keyManager        : { getKeyUri: sinon.stub().resolves('key-uri-bob') },
+          processDwnRequest : sinon.stub().resolves({ reply: { status: { code: 200, detail: 'OK' }, entries: [] } }),
+          sendDwnRequest,
+        };
+      }
+
+      const recipientReadRequest = {
+        author      : 'did:example:bob',
+        target      : 'did:example:alice',
+        encryption  : true,
+        messageType : 'RecordsRead',
+      } as any;
+
+      async function decryptAndCatch(mockAgent: any): Promise<AudienceDecryptError> {
+        const dwnSdk = await import('@enbox/dwn-sdk-js');
+        sinon.stub(dwnSdk.Records, 'decrypt').rejects(new Error('no matching key encryption entry in test'));
+
+        let caught: unknown;
+        try {
+          await maybeDecryptReply(recipientReadRequest, makeRoleWrappedReadReply(), mockAgent);
+        } catch (error) {
+          caught = error;
+        }
+        expect(caught).toBeInstanceOf(AudienceDecryptError);
+        return caught as AudienceDecryptError;
+      }
+
+      it('should classify an unreachable remote during the audience lookup as remote-unverifiable', async () => {
+        const mockAgent = makeRecipientAgent(sinon.stub().rejects(new Error('remote transport down in test')));
+
+        const decryptError = await decryptAndCatch(mockAgent);
+
+        expect(decryptError.cause).toBe('remote-unverifiable');
+        expect(decryptError.detail).toContain('no audience record');
+        expect(decryptError.recordId).toBe('rec-role-wrapped');
+        expect(decryptError.protocol).toBe('https://proto.example.com');
+        expect(decryptError.recipientDid).toBe('did:example:bob');
+      });
+
+      it('should fall back to cause unknown when audience absence is authoritative and no current audience is visible', async () => {
+        const mockAgent = makeRecipientAgent(sinon.stub().resolves({ reply: { status: { code: 200, detail: 'OK' }, entries: [] } }));
+
+        const decryptError = await decryptAndCatch(mockAgent);
+
+        expect(decryptError.cause).toBe('unknown');
+        expect(decryptError.detail).toContain('Original error');
+      });
     });
 
     it('should decrypt RecordsRead replies using delivered delegate keys without owner KMS fallback', async () => {
