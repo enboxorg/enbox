@@ -88,7 +88,7 @@ import { SyncRuntime } from './sync-runtime.js';
 import { SyncScopeClosureValidator } from './sync-scope-closure-validator.js';
 import { SyncStatusReporter } from './sync-status-reporter.js';
 import { SyncTargetPlanner } from './sync-target-planner.js';
-import { buildDurableLinkIdentityKey, buildLinkId } from './sync-link-id.js';
+import { buildDurableLinkIdentityKey, buildLinkId, LINK_ID_SEPARATOR } from './sync-link-id.js';
 import { computeProjectionId, isTerminalPushFailure, lexicographicalCompare, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
 import { fetchRemoteMessages, getLocalMessage, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed } from './sync-messages.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
@@ -813,17 +813,30 @@ export class SyncEngineLevel implements SyncEngine {
     await this._identityStore.set(did, options);
     this.invalidateSyncTargetsCache();
 
+    // A pending rate-limit init retry captured the PREVIOUS options' target
+    // (old scope, old authorization epoch). Cancel before deciding anything
+    // else: arming is token-checked, so after this line no NEW retry task
+    // can start for the superseded options — even from a firing the event
+    // loop had already queued.
+    this.cancelLinkInitRetriesForDid(did);
+
+    // A retry that fired earlier may already be RUNNING as an identity task.
+    // It is invisible to timer cancellation and, with no controller active
+    // yet, would slip past the rebuild gate below and activate the
+    // superseded scope after this update returns. Drain it first: if it
+    // activates a link, the rebuild decision now sees that link and tears it
+    // down; if it re-arms a retry on failure, the second cancellation clears
+    // that timer.
+    const identityTaskGroup = this._lifecycle.getIdentityTaskGroup(did);
+    if (!this.hasActiveLinksForDid(did) && identityTaskGroup.size > 0) {
+      await identityTaskGroup.settle();
+      this.cancelLinkInitRetriesForDid(did);
+    }
+
     const rebuildLiveLinks = this._syncMode === 'live' && this.hasActiveLinksForDid(did);
     if (rebuildLiveLinks) {
       await this.removeIdentityFromLiveSync(did);
     }
-
-    // A pending rate-limit init retry captured the PREVIOUS options' target
-    // (old scope, old authorization epoch) and may exist without an active
-    // link, in which case the rebuild path above never runs. Firing it would
-    // re-create the superseded durable link and reopen subscriptions with
-    // the replaced scope — cancel it unconditionally.
-    this.cancelLinkInitRetriesForDid(did);
 
     // Scope/delegate changes define different replication links. A block from
     // the previous authorization must not suppress the replacement link's
@@ -1580,9 +1593,15 @@ export class SyncEngineLevel implements SyncEngine {
   // Hot-add / hot-remove: per-identity live sync management
   // ---------------------------------------------------------------------------
 
-  /** Check whether a link key belongs to a given DID. */
+  /**
+   * Check whether a link key belongs to a given DID. Link keys always join
+   * segments with {@link LINK_ID_SEPARATOR}, which cannot appear in a DID.
+   * Matching must use exactly that delimiter: underscores ARE valid DID
+   * characters, so a looser prefix match would let one DID claim the keys of
+   * another DID that merely extends it (e.g. `…alice` vs `…alice_extra`).
+   */
   private isLinkKeyForDid(key: string, did: string): boolean {
-    return key.startsWith(did + '^') || key.startsWith(did + '_');
+    return key.startsWith(did + LINK_ID_SEPARATOR);
   }
 
   /** Check whether this DID has any active links. */
