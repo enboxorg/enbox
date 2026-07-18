@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'bun:test';
+import sinon from 'sinon';
+
+import { afterEach, describe, expect, it } from 'bun:test';
 
 import { SyncRuntime } from '../src/sync-runtime.js';
 
@@ -6,7 +8,28 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Capture the wrappers SyncRuntime hands to the native setInterval, so a
+ * test can invoke one as if the event loop had already queued that firing
+ * before a replacement or disposal happened. clearInterval cannot retract
+ * such a queued firing; the runtime's ownership re-check must neutralize it.
+ */
+function captureScheduledCallbacks(): Array<() => void> {
+  const scheduled: Array<() => void> = [];
+  let nextHandle = 1;
+  sinon.stub(globalThis, 'setInterval').callsFake(((callback: () => void): number => {
+    scheduled.push(callback);
+    return nextHandle++;
+  }) as unknown as typeof setInterval);
+  sinon.stub(globalThis, 'clearInterval').callsFake(((): void => {}) as unknown as typeof clearInterval);
+  return scheduled;
+}
+
 describe('SyncRuntime', () => {
+  afterEach(() => {
+    sinon.restore();
+  });
+
   it('should fire an armed interval until cleared', async () => {
     const runtime = new SyncRuntime();
     let ticks = 0;
@@ -84,5 +107,41 @@ describe('SyncRuntime', () => {
     runtime.dispose();
     runtime.clearTimer('never-armed');
     expect(runtime.disposed).toBe(true);
+  });
+
+  it('should neutralize a firing queued before dispose', () => {
+    const scheduled = captureScheduledCallbacks();
+    const runtime = new SyncRuntime();
+    let ran = 0;
+    runtime.armInterval('tick', () => { ran++; }, 5);
+
+    runtime.dispose();
+    // The event loop had already queued this firing when dispose ran.
+    scheduled[0]();
+
+    expect(ran).toBe(0);
+  });
+
+  it('should neutralize a replaced timer\'s queued firing and protect the replacement from it', () => {
+    const scheduled = captureScheduledCallbacks();
+    const runtime = new SyncRuntime();
+    let staleRan = 0;
+    let currentRan = 0;
+
+    // The stale callback behaves like the engine's poll tick: it clears its
+    // own key. Delivered after replacement, it must neither run nor clear
+    // the replacement timer.
+    runtime.armInterval('tick', () => {
+      staleRan++;
+      runtime.clearTimer('tick');
+    }, 5);
+    runtime.armInterval('tick', () => { currentRan++; }, 5);
+
+    scheduled[0]();
+    expect(staleRan).toBe(0);
+
+    // The replacement still owns the key: its firings execute.
+    scheduled[1]();
+    expect(currentRan).toBe(1);
   });
 });
