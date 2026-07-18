@@ -134,6 +134,9 @@ export class JsonRpcSocket {
   /** Whether a heartbeat pong is pending. */
   private _awaitingPong = false;
 
+  /** Request id of the outstanding heartbeat ping — the active generation. */
+  private _heartbeatPingId: JsonRpcId | undefined;
+
   /** In-flight on-demand health probe, deduplicating concurrent checks. */
   private _healthProbe: Promise<boolean> | undefined;
 
@@ -154,6 +157,11 @@ export class JsonRpcSocket {
   /** Whether the socket is currently connected. */
   public get isConnected(): boolean {
     return this._isConnected;
+  }
+
+  /** Whether {@link close} was called — a user-closed socket never reconnects. */
+  public get isClosedByUser(): boolean {
+    return this.closedByUser;
   }
 
   public static async connect(url: string, options: JsonRpcSocketOptions = {}): Promise<JsonRpcSocket> {
@@ -450,8 +458,12 @@ export class JsonRpcSocket {
 
       this._awaitingPong = true;
 
-      // Send a lightweight JSON-RPC request as the ping.
-      const pingId = `hb-${Date.now()}`;
+      // Send a lightweight JSON-RPC request as the ping. The id doubles as
+      // the heartbeat generation: only the pong for the ACTIVE ping may
+      // mutate heartbeat state, so a late pong from a superseded ping (one a
+      // health probe cleared) cannot defuse a newer ping's deadline.
+      const pingId = `hb-${CryptoUtils.randomUuid()}`;
+      this._heartbeatPingId = pingId;
       const pingRequest: JsonRpcRequest = {
         jsonrpc : '2.0',
         id      : pingId,
@@ -460,8 +472,12 @@ export class JsonRpcSocket {
 
       // Register a one-shot handler for the pong response.
       this.messageHandlers.set(pingId, () => {
-        this._awaitingPong = false;
         this.messageHandlers.delete(pingId);
+        if (this._heartbeatPingId !== pingId) {
+          return;
+        }
+        this._heartbeatPingId = undefined;
+        this._awaitingPong = false;
         if (this._heartbeatTimeout) {
           clearTimeout(this._heartbeatTimeout);
           this._heartbeatTimeout = undefined;
@@ -473,6 +489,7 @@ export class JsonRpcSocket {
       } catch {
         // Socket may already be closing — the close handler will deal with it.
         this.messageHandlers.delete(pingId);
+        this._heartbeatPingId = undefined;
         this._awaitingPong = false;
         return;
       }
@@ -481,6 +498,7 @@ export class JsonRpcSocket {
       this._heartbeatTimeout = setTimeout(() => {
         this._heartbeatTimeout = undefined;
         this.messageHandlers.delete(pingId);
+        this._heartbeatPingId = undefined;
         this._awaitingPong = false;
 
         if (!this.closedByUser && this._isConnected) {
@@ -506,12 +524,19 @@ export class JsonRpcSocket {
    *
    * Also called when an on-demand health probe proves liveness: a deadline
    * armed before a tab was frozen may otherwise fire on resume and kill a
-   * connection the probe just verified.
+   * connection the probe just verified. The superseded ping's pong handler
+   * is removed with it — a late pong for a cleared ping must never mutate a
+   * newer heartbeat's state, and superseded handlers must not accumulate
+   * across wake cycles.
    */
   private clearHeartbeatDeadline(): void {
     if (this._heartbeatTimeout) {
       clearTimeout(this._heartbeatTimeout);
       this._heartbeatTimeout = undefined;
+    }
+    if (this._heartbeatPingId !== undefined) {
+      this.messageHandlers.delete(this._heartbeatPingId);
+      this._heartbeatPingId = undefined;
     }
     this._awaitingPong = false;
   }

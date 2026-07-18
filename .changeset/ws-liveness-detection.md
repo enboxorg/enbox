@@ -13,11 +13,17 @@ undetected for 60–100s while subscriptions silently missed events.
   connection is probed with a short-deadline `rpc.ping` (a miss force-closes
   and hands off to auto-reconnect), a reconnecting socket has its pending
   backoff wait fast-forwarded, and a disconnected socket starts a fresh
-  reconnect loop. A probe pong also clears a stale heartbeat deadline armed
-  before a tab freeze so it cannot kill a verified-alive connection on resume.
+  reconnect loop. A probe pong supersedes an outstanding heartbeat entirely —
+  deadline cleared and its pong handler removed, with heartbeat generations
+  tracked by ping id — so a deadline armed before a tab freeze cannot kill a
+  verified-alive connection on resume and a late stale pong cannot defuse a
+  newer heartbeat's deadline.
 - `WebSocketDwnRpcClient` registers browser wake listeners (network back
-  online, tab foregrounded) that run `checkAllConnections()` across the pool,
-  so recovery starts the moment the page wakes instead of at the next
-  throttled timer tick. Listeners are removed by `closeAllConnections()`.
+  online, tab foregrounded) that run `checkAllConnections()` across the pool
+  AND a registry of sockets evicted from the pool mid-reconnect — the sockets
+  parked in backoff are exactly the ones a wake must reach. Recovery starts
+  the moment the page wakes instead of at the next throttled timer tick.
+  `closeAllConnections()` removes the listeners and also closes reconnecting
+  sockets so none survive shutdown to re-register into a cleared pool.
 - `dwn-server` heartbeat now `terminate()`s a dead peer instead of initiating
   a close handshake the peer can never complete.

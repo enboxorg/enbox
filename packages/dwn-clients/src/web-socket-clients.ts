@@ -109,20 +109,38 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   private static readonly connections = new Map<string, SocketConnection>();
   private static readonly pendingConnections = new Map<string, Promise<SocketConnection>>();
 
+  /**
+   * Sockets evicted from the pool by an unexpected close while their
+   * auto-reconnect loop runs. The pool only holds live connections, so
+   * without this registry a wake signal could never reach exactly the
+   * sockets that need it — the ones parked in reconnect backoff. Entries
+   * move back to the pool on reconnection and leave the registry.
+   */
+  private static readonly reconnectingSockets = new Set<JsonRpcSocket>();
+
   /** Browser wake listeners (online / tab visible), registered once per process. */
   private static onWake: (() => void) | undefined;
   private static onVisibilityWake: (() => void) | undefined;
 
   /**
-   * Force an immediate liveness verdict on every pooled connection.
+   * Force an immediate liveness verdict on every pooled connection and every
+   * socket reconnecting outside the pool.
    *
    * Dead sockets are detected and torn down right away — triggering
-   * auto-reconnect and resubscription — instead of waiting out heartbeat
-   * timers that browsers throttle in backgrounded tabs.
+   * auto-reconnect and resubscription — and sockets parked in reconnect
+   * backoff have that wait fast-forwarded, instead of waiting out timers
+   * that browsers throttle in backgrounded tabs.
    */
   public static checkAllConnections(): void {
     for (const connection of WebSocketDwnRpcClient.connections.values()) {
       void connection.socket.checkHealth();
+    }
+    for (const socket of WebSocketDwnRpcClient.reconnectingSockets) {
+      if (socket.isClosedByUser) {
+        WebSocketDwnRpcClient.reconnectingSockets.delete(socket);
+        continue;
+      }
+      void socket.checkHealth();
     }
   }
 
@@ -205,6 +223,18 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       connection.subscriptions.clear();
       try {
         connection.socket.close();
+      } catch {
+        // Best-effort.
+      }
+    }
+
+    // Sockets mid-reconnect are outside the pool; without this they would
+    // keep reconnecting after shutdown and re-register into a cleared pool.
+    const reconnecting = [...WebSocketDwnRpcClient.reconnectingSockets];
+    WebSocketDwnRpcClient.reconnectingSockets.clear();
+    for (const socket of reconnecting) {
+      try {
+        socket.close();
       } catch {
         // Best-effort.
       }
@@ -300,8 +330,13 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
     const socket = await JsonRpcSocket.connect(url.toString(), {
       onclose: (): void => {
-        // Remove the stale connection from the map so new requests create a fresh one.
+        // Remove the stale connection from the map so new requests create a
+        // fresh one — and register the socket as reconnecting so wake-driven
+        // health checks can still reach it and fast-forward its backoff.
         WebSocketDwnRpcClient.connections.delete(key);
+        if (!socket.isClosedByUser) {
+          WebSocketDwnRpcClient.reconnectingSockets.add(socket);
+        }
 
         // Notify all subscription handlers of disconnection. Invocation is
         // normalized so one throwing handler cannot skip the rest.
@@ -318,6 +353,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
       onreconnected: (): void => {
         // Re-register this connection in the map (it was deleted on close).
+        WebSocketDwnRpcClient.reconnectingSockets.delete(socket);
         const conn = { socket, subscriptions, url: url.toString() };
         WebSocketDwnRpcClient.connections.set(key, conn);
 

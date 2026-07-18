@@ -758,6 +758,57 @@ describe('JsonRpcSocket', () => {
       expect(client['reconnecting']).toBe(false);
     });
 
+    it('should remove a superseded heartbeat handler and ignore its late pong', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl, {
+        heartbeatInterval : 50,
+        heartbeatTimeout  : 5_000,
+      });
+
+      // Swallow heartbeat pings (they go outstanding) but let health probes
+      // through — the frozen-tab shape: a ping stuck awaiting its pong while
+      // a wake-triggered probe verifies the connection is actually alive.
+      const originalSend = client['send'].bind(client);
+      client['send'] = (request): void => {
+        const id = String(request.id ?? '');
+        if (id.startsWith('hb-') && !id.startsWith('hb-probe-')) {
+          return;
+        }
+        originalSend(request);
+      };
+
+      // Wait for a heartbeat ping to go outstanding.
+      while (client['_awaitingPong'] !== true) {
+        await sleepWhileWaitingForEvents(10);
+      }
+      const staleId = client['_heartbeatPingId'] as string;
+      expect(staleId).toBeDefined();
+      expect(client['messageHandlers'].has(staleId)).toBe(true);
+
+      // A successful probe supersedes the outstanding heartbeat completely:
+      // deadline cleared AND the stale pong handler removed.
+      expect(await client.checkHealth()).toBe(true);
+      expect(client['messageHandlers'].has(staleId)).toBe(false);
+      expect(client['_heartbeatPingId']).toBeUndefined();
+      expect(client['_awaitingPong']).toBe(false);
+
+      // Let the next heartbeat go outstanding with a fresh deadline.
+      while (client['_awaitingPong'] !== true) {
+        await sleepWhileWaitingForEvents(10);
+      }
+      expect(client['_heartbeatTimeout']).toBeDefined();
+
+      // A late pong for the superseded ping must not defuse the newer
+      // heartbeat's deadline.
+      client['socket'].dispatchEvent(new MessageEvent('message', {
+        data: JSON.stringify({ jsonrpc: '2.0', id: staleId, result: { ok: true } }),
+      }));
+      await sleepWhileWaitingForEvents(20);
+      expect(client['_awaitingPong']).toBe(true);
+      expect(client['_heartbeatTimeout']).toBeDefined();
+
+      client.close();
+    }, 10_000);
+
     it('should fast-forward a pending reconnect backoff on checkHealth', async () => {
       const client = await JsonRpcSocket.connect(socketDwnUrl, {
         autoReconnect      : true,
