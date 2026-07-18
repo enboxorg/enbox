@@ -28,6 +28,9 @@ function stubConnection(onCheck: () => void): unknown {
   };
 }
 
+/** Wake-event tests need a dispatchable global EventTarget (Bun and browsers have one). */
+const canDispatchGlobalEvents = typeof globalThis.dispatchEvent === 'function';
+
 describe('WebSocketDwnRpcClient wake health checks', () => {
   afterEach(async () => {
     await WebSocketDwnRpcClient.closeAllConnections();
@@ -45,11 +48,7 @@ describe('WebSocketDwnRpcClient wake health checks', () => {
     expect(checked.sort()).toEqual(['a', 'b']);
   });
 
-  it('should check pooled connections when the browser comes back online', async () => {
-    if (typeof globalThis.dispatchEvent !== 'function') {
-      return;
-    }
-
+  it.skipIf(!canDispatchGlobalEvents)('should check pooled connections when the browser comes back online', async () => {
     const checked: string[] = [];
     const pool = poolOf(WebSocketDwnRpcClient);
     pool.connections.set('wss://wake.example/', stubConnection((): void => { checked.push('wake'); }));
@@ -61,11 +60,7 @@ describe('WebSocketDwnRpcClient wake health checks', () => {
     expect(checked).toEqual(['wake']);
   });
 
-  it('should stop listening for wake events after closeAllConnections()', async () => {
-    if (typeof globalThis.dispatchEvent !== 'function') {
-      return;
-    }
-
+  it.skipIf(!canDispatchGlobalEvents)('should stop listening for wake events after closeAllConnections()', async () => {
     const checked: string[] = [];
     const pool = poolOf(WebSocketDwnRpcClient);
     pool.connections.set('wss://stale.example/', stubConnection((): void => { checked.push('stale'); }));
