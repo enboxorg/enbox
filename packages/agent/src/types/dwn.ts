@@ -255,8 +255,11 @@ export type AudienceKeyDeliveryOutcome =
       recipientDid: string;
 
       /**
-       * Set when a delivery for the CURRENT audience key already existed for the
-       * recipient, so no new record was written. Only reported by
+       * Set when a delivery wrapping the CURRENT audience key to the CURRENT
+       * resolved recipient wrap target (the supplied or resolved role-path key)
+       * already existed, so no new record was written. A delivery wrapping a
+       * different recipient key — e.g. a mistaken earlier supplied key — does
+       * NOT count and is repaired by a fresh write. Only reported by
        * `AgentDwnApi.reprovisionAudienceKeyDelivery` (delivery provisioning on a
        * fresh `$role` write always writes).
        */
@@ -335,9 +338,12 @@ export type AudienceKeyDeliveryStatus =
     }
   | {
       /**
-       * The caller operates as a delegate, whose view of third-party delivery
-       * records is visibility-filtered by the DWN — empty query results would be
-       * structural, not evidence of non-delivery — so no query was issued.
+       * The status cannot be determined, for one of two reasons (told apart by
+       * `reason`): the caller operates as a delegate, whose view of third-party
+       * delivery records is visibility-filtered by the DWN (no query is issued);
+       * or the remote DWN was unreachable (or replied with an error) while the
+       * local projection had no matching record, so an empty result cannot be
+       * asserted as authoritative absence.
        */
       status: 'unverifiable';
 
@@ -392,17 +398,30 @@ export type GetAudienceKeyDeliveryStatusParams = {
  * the role record to force re-delivery, which piles up record states and
  * duplicate delivery records (delivery records are immutable and undeletable).
  *
- * Skip-if-exists: when a delivery for the CURRENT audience key already exists
- * for the recipient, the outcome is `{ delivered: true, alreadyDelivered: true }`
- * and no duplicate record is written. Delegate contexts are structurally blind
- * to third-party deliveries (see {@link AudienceKeyDeliveryStatus}), so the
- * existence check is skipped for them and a duplicate may be written.
+ * The recipient's role-path public key is resolved FIRST (the supplied
+ * `recipientRolePublicKey`, else remote resolution from the recipient's
+ * installed protocol definition) — it is both the wrap target of a new delivery
+ * and the dedupe discriminant.
+ *
+ * Skip-if-exists: when a delivery wrapping the CURRENT audience key to that
+ * resolved recipient key already exists, the outcome is
+ * `{ delivered: true, alreadyDelivered: true }` and no duplicate record is
+ * written. A delivery wrapping a DIFFERENT recipient key (a mistaken earlier
+ * supplied key, or a superseded recipient key) does not suppress the write —
+ * that is exactly the state this primitive repairs. Delegate contexts are
+ * structurally blind to third-party deliveries (see
+ * {@link AudienceKeyDeliveryStatus}), so the existence check is skipped for
+ * them and a duplicate may be written. An existence check the remote cannot
+ * confirm never blocks the write either — re-provisioning stays best-effort
+ * and may duplicate. Concurrent calls in one agent for the same tuple and
+ * recipient key are coalesced onto one execution; cross-device idempotency
+ * (deterministic delivery identity) is tracked by the delivery-dedupe design
+ * (#1092). Duplicates are a storage/scan cost, not a correctness break —
+ * recipients try candidate deliveries until one decrypts.
  *
  * Otherwise the audience key is resolved — or minted, which requires seal
  * coverage (the owner identity, or a delegate holding covering grantKey
- * material) — the recipient's role-path public key is resolved from its
- * installed protocol definition (skipped when `recipientRolePublicKey` is
- * supplied), and the delivery record is written. Like delivery provisioning on
+ * material) — and the delivery record is written. Like delivery provisioning on
  * a `$role` write, this is BEST-EFFORT: failures — missing seal coverage, an
  * unresolvable recipient key, or the DWN rejecting the write because the
  * recipient holds no active role record at `rolePath` — are reported as

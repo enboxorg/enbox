@@ -63,9 +63,14 @@ import {
 } from '@enbox/dwn-sdk-js';
 import { Ed25519, X25519 } from '@enbox/crypto';
 
+import type { RemoteReadOutcome } from './dwn-read-through.js';
+
 import { DwnInterface } from './types/dwn.js';
 import { isDwnRequest } from './dwn-type-guards.js';
-import { processDwnRequestWithRemoteFallback as processDwnReadThrough } from './dwn-read-through.js';
+import {
+  processDwnRequestWithRemoteFallback as processDwnReadThrough,
+  processDwnRequestWithRemoteFallbackDetailed as processDwnReadThroughDetailed,
+} from './dwn-read-through.js';
 
 const GRANT_KEY_DERIVATION_PATH = [
   KeyDerivationScheme.ProtocolPath,
@@ -1455,16 +1460,18 @@ export type QueryAudienceDeliveryMessagesParams = {
 };
 
 /**
- * Queries the source tenant for `$encryption/delivery` records wrapping ONE exact audience tuple
- * (protocol, rolePath, contextId, keyId) to `recipientDid` — matching on `keyId` distinguishes a
- * current-key delivery from a stale one. Results are visibility-filtered for non-tenant actors:
- * an empty result under a delegate actor is structural, not evidence of non-delivery.
+ * Detailed variant of {@link queryAudienceDeliveryMessages} that also surfaces the
+ * {@link RemoteReadOutcome} of the read-through, so an empty result can be told apart from an
+ * unreachable remote.
  */
-export async function queryAudienceDeliveryMessages(
+export async function queryAudienceDeliveryMessagesDetailed(
   params: QueryAudienceDeliveryMessagesParams,
   deliveryReadActor: AudienceDeliveryReadActor,
-): Promise<EncodedRecordsWriteMessage[]> {
-  const { reply } = await processDwnRequestWithRemoteFallback(params.agent, {
+): Promise<{ messages: EncodedRecordsWriteMessage[]; remote: RemoteReadOutcome }> {
+  const { response, remote } = await processDwnReadThroughDetailed({
+    process : params.agent.processDwnRequest.bind(params.agent),
+    send    : params.agent.sendDwnRequest.bind(params.agent),
+  }, {
     author        : deliveryReadActor.authorDid,
     granteeDid    : deliveryReadActor.granteeDid,
     target        : params.sourceDid,
@@ -1485,11 +1492,32 @@ export async function queryAudienceDeliveryMessages(
     },
   }, hasRecordsQueryEntries);
 
+  const reply = response.reply;
   if (reply.status.code !== 200 || reply.entries === undefined || reply.entries.length === 0) {
-    return [];
+    return { messages: [], remote };
   }
+  return { messages: reply.entries as EncodedRecordsWriteMessage[], remote };
+}
 
-  return reply.entries as EncodedRecordsWriteMessage[];
+/**
+ * Queries the source tenant for `$encryption/delivery` records wrapping ONE exact audience tuple
+ * (protocol, rolePath, contextId, keyId) to `recipientDid` — matching on `keyId` distinguishes a
+ * current-key delivery from a stale one. Results are visibility-filtered for non-tenant actors:
+ * an empty result under a delegate actor is structural, not evidence of non-delivery.
+ */
+export async function queryAudienceDeliveryMessages(
+  params: QueryAudienceDeliveryMessagesParams,
+  deliveryReadActor: AudienceDeliveryReadActor,
+): Promise<EncodedRecordsWriteMessage[]> {
+  return (await queryAudienceDeliveryMessagesDetailed(params, deliveryReadActor)).messages;
+}
+
+/**
+ * Whether a stored `$encryption/delivery` message's encryption envelope wraps its payload to
+ * `keyId` — the recipient wrap target set by {@link createAudienceDeliveryRecord}.
+ */
+export function audienceDeliveryWrapsKeyId(message: RecordsWriteMessage, keyId: string): boolean {
+  return message.encryption?.keyEncryption.some((entry): boolean => entry.keyId === keyId) === true;
 }
 
 async function hydrateAudienceKeyFromDeliveries(input: {

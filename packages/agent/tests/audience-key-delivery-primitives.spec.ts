@@ -21,7 +21,7 @@ import { DwnInterface } from '../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
-import { createAudienceDeliveryRecord, createAudienceRecord } from '../src/dwn-encryption.js';
+import { createAudienceDeliveryRecord, createAudienceRecord, resolveAudienceDecryptionKey } from '../src/dwn-encryption.js';
 
 const testDwnUrls: string[] = [testDwnUrl];
 
@@ -349,6 +349,57 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       expect(audienceResolveSpy.called).toBe(false);
     }, 30000);
 
+    it('reports unverifiable when the remote cannot confirm a missing audience record', async () => {
+      const chat = chatProtocolDefinition();
+      const bob = await testHarness.createIdentity({ name: 'Bob AudienceRemoteDown', testDwnUrls });
+      await installProtocol(alice.did.uri, chat);
+      const threadContextId = await writeThread(chat);
+
+      // No audience exists locally and the remote leg is down, so an empty local
+      // projection cannot be asserted as authoritative absence.
+      const sendStub = sinon.stub(testHarness.agent.dwn as any, 'sendRequest')
+        .rejects(new Error('remote transport down in test'));
+      const status = await testHarness.agent.dwn.getAudienceKeyDeliveryStatus({
+        contextId    : threadContextId,
+        protocol     : chat.protocol,
+        recipientDid : bob.did.uri,
+        rolePath     : ROLE_PATH,
+        target       : alice.did.uri,
+      });
+      sendStub.restore();
+
+      expect(status.status).toBe('unverifiable');
+      expect(status.status === 'unverifiable' && status.reason.includes('remote DWN')).toBe(true);
+    }, 30000);
+
+    it('reports unverifiable when the remote cannot confirm a missing delivery record', async () => {
+      const chat = chatProtocolDefinition();
+      const bob = await testHarness.createIdentity({ name: 'Bob DeliveryRemoteDown', testDwnUrls });
+      await installProtocol(alice.did.uri, chat);
+
+      // The audience resolves locally (minted during the role write); only the
+      // delivery query's remote leg is down.
+      const roleKeyStub = stubUnresolvableRecipientKey();
+      const threadContextId = await writeThread(chat);
+      const { delivery } = await writeRoleRecord(chat, threadContextId, bob.did.uri);
+      expect(delivery?.delivered).toBe(false);
+      roleKeyStub.restore();
+
+      const sendStub = sinon.stub(testHarness.agent as any, 'sendDwnRequest')
+        .rejects(new Error('remote transport down in test'));
+      const status = await testHarness.agent.dwn.getAudienceKeyDeliveryStatus({
+        contextId    : threadContextId,
+        protocol     : chat.protocol,
+        recipientDid : bob.did.uri,
+        rolePath     : ROLE_PATH,
+        target       : alice.did.uri,
+      });
+      sendStub.restore();
+
+      expect(status.status).toBe('unverifiable');
+      expect(status.status === 'unverifiable' && status.reason.includes('remote DWN')).toBe(true);
+    }, 30000);
+
     it('throws on a nested role path without a contextId instead of guessing a tuple', async () => {
       const chat = chatProtocolDefinition();
       await expect(testHarness.agent.dwn.getAudienceKeyDeliveryStatus({
@@ -382,6 +433,148 @@ describe('AgentDwnApi audience key delivery primitives', () => {
 
       expect(outcome).toEqual({ alreadyDelivered: true, delivered: true, recipientDid: bob.did.uri });
       // No duplicate delivery record was written.
+      expect(await countDeliveries(chat, bob.did.uri)).toBe(1);
+    }, 30000);
+
+    it('repairs a delivery wrapped to the wrong recipient key instead of reporting alreadyDelivered', async () => {
+      const chat = chatProtocolDefinition();
+      const bob = await testHarness.createIdentity({ name: 'Bob Poisoned', testDwnUrls });
+      await installProtocol(alice.did.uri, chat);
+
+      const roleKeyStub = stubUnresolvableRecipientKey();
+      const threadContextId = await writeThread(chat);
+      const { roleContextId, delivery } = await writeRoleRecord(chat, threadContextId, bob.did.uri);
+      expect(delivery?.delivered).toBe(false);
+      roleKeyStub.restore();
+
+      // Poison the tuple: deliver the CURRENT audience key wrapped to an unrelated
+      // key — the exact state a mistaken caller-supplied key leaves behind.
+      const [audienceKeyId] = await queryAudienceKeyIds(chat, threadContextId);
+      const audienceKey = await resolveAudienceDecryptionKey({
+        agent        : testHarness.agent,
+        contextId    : threadContextId,
+        keyId        : audienceKeyId,
+        protocol     : chat.protocol,
+        recipientDid : alice.did.uri,
+        rolePath     : ROLE_PATH,
+        sourceDid    : alice.did.uri,
+      });
+      expect(audienceKey).toBeDefined();
+      await createAudienceDeliveryRecord({
+        agent       : testHarness.agent,
+        audienceKey : {
+          contextId   : threadContextId,
+          keyId       : audienceKeyId,
+          keyMaterial : audienceKey!.keyMaterial,
+          protocol    : chat.protocol,
+          rolePath    : ROLE_PATH,
+        },
+        authorDid              : alice.did.uri,
+        recipientAuthority     : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
+        recipientDid           : bob.did.uri,
+        recipientRolePublicKey : await randomX25519PublicKey(),
+        sourceDid              : alice.did.uri,
+      });
+      expect(await countDeliveries(chat, bob.did.uri)).toBe(1);
+
+      // Re-provision with Bob's REAL role-path key: the poisoned delivery must not
+      // read as alreadyDelivered — a fresh, correctly-wrapped delivery is written.
+      await installProtocol(bob.did.uri, chat);
+      const bobRoleKey = await readRolePublicKey(bob.did.uri, chat.protocol);
+      const outcome = await testHarness.agent.dwn.reprovisionAudienceKeyDelivery({
+        contextId              : roleContextId,
+        protocol               : chat.protocol,
+        recipientDid           : bob.did.uri,
+        recipientRolePublicKey : bobRoleKey,
+        rolePath               : ROLE_PATH,
+        target                 : alice.did.uri,
+      });
+      expect(outcome).toEqual({ delivered: true, recipientDid: bob.did.uri });
+      expect(await countDeliveries(chat, bob.did.uri)).toBe(2);
+
+      // End-to-end: recipient hydration skips the undecryptable poisoned candidate
+      // and opens the repaired delivery.
+      const chatText = `repaired secret ${crypto.randomUUID()}`;
+      const chatWrite = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          dataFormat      : 'text/plain',
+          parentContextId : threadContextId,
+          protocol        : chat.protocol,
+          protocolPath    : 'thread/chat',
+          schema          : chat.types.chat.schema,
+        },
+        dataStream : new Blob([chatText]),
+        encryption : true,
+      });
+      expect(chatWrite.reply.status.code).toBe(202);
+      const read = await testHarness.agent.dwn.processRequest({
+        author        : bob.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : {
+          filter       : { recordId: (chatWrite.message as RecordsWriteMessage).recordId },
+          protocolRole : ROLE_PATH,
+        },
+        encryption: true,
+      });
+      expect(read.reply.status.code).toBe(200);
+      const decrypted = new TextDecoder().decode(await DataStream.toBytes(read.reply.entry!.data!));
+      expect(decrypted).toBe(chatText);
+    }, 30000);
+
+    it('reports a best-effort failure when the recipient key cannot be resolved and none is supplied', async () => {
+      const chat = chatProtocolDefinition();
+      const bob = await testHarness.createIdentity({ name: 'Bob Unresolvable', testDwnUrls });
+      await installProtocol(alice.did.uri, chat);
+      const threadContextId = await writeThread(chat);
+      await writeRoleRecord(chat, threadContextId, bob.did.uri);
+
+      // No supplied key, and the recipient's role key cannot be resolved: the
+      // wrap target is unknowable, so re-provisioning reports the failure.
+      const roleKeyStub = stubUnresolvableRecipientKey();
+      const outcome = await testHarness.agent.dwn.reprovisionAudienceKeyDelivery({
+        contextId    : threadContextId,
+        protocol     : chat.protocol,
+        recipientDid : bob.did.uri,
+        rolePath     : ROLE_PATH,
+        target       : alice.did.uri,
+      });
+      roleKeyStub.restore();
+
+      expect(outcome.delivered).toBe(false);
+      expect(!outcome.delivered && outcome.reason).toMatch(/unresolvable in test/i);
+    }, 30000);
+
+    it('coalesces concurrent re-provision calls into a single delivery write', async () => {
+      const chat = chatProtocolDefinition();
+      const bob = await testHarness.createIdentity({ name: 'Bob Concurrent', testDwnUrls });
+      await installProtocol(alice.did.uri, chat);
+
+      const roleKeyStub = stubUnresolvableRecipientKey();
+      const threadContextId = await writeThread(chat);
+      const { roleContextId, delivery } = await writeRoleRecord(chat, threadContextId, bob.did.uri);
+      expect(delivery?.delivered).toBe(false);
+      roleKeyStub.restore();
+
+      const request = {
+        contextId              : roleContextId,
+        protocol               : chat.protocol,
+        recipientDid           : bob.did.uri,
+        recipientRolePublicKey : await randomX25519PublicKey(),
+        rolePath               : ROLE_PATH,
+        target                 : alice.did.uri,
+      };
+      const [first, second] = await Promise.all([
+        testHarness.agent.dwn.reprovisionAudienceKeyDelivery(request),
+        testHarness.agent.dwn.reprovisionAudienceKeyDelivery(request),
+      ]);
+
+      expect(first.delivered).toBe(true);
+      expect(second.delivered).toBe(true);
+      // The non-atomic check-then-write coalesced onto one execution: one record.
       expect(await countDeliveries(chat, bob.did.uri)).toBe(1);
     }, 30000);
 
