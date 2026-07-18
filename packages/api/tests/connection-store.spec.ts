@@ -156,6 +156,21 @@ describe('createConnectionStore()', () => {
 
       expect(notifications).toBe(1);
     });
+
+    it('should finish notifying the current listener snapshot when a listener unsubscribes another', async () => {
+      const fake = createFakeAuth();
+      const store = createConnectionStore({ auth: asAuth(fake) });
+      await store.initialize();
+
+      let notifications = 0;
+      store.subscribe(() => { unsubscribeSecond(); });
+      const unsubscribeSecond = store.subscribe(() => { notifications++; });
+
+      fake.emitter.emit('vault-locked', {});
+      fake.emitter.emit('vault-unlocked', {});
+
+      expect(notifications).toBe(1);
+    });
   });
 
   describe('initialize()', () => {

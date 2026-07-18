@@ -767,9 +767,10 @@ class HeadlessConnectionStore implements ConnectionStore {
     }
 
     this._snapshot = Object.freeze(next);
-    for (const listener of [...this._listeners]) {
+    const listeners = Array.from(this._listeners);
+    for (let i = 0; i < listeners.length; i++) {
       try {
-        listener(this._snapshot);
+        listeners[i](this._snapshot);
       } catch (cause: unknown) {
         console.error('[@enbox/api] ConnectionStore: error in snapshot listener:', cause);
       }
