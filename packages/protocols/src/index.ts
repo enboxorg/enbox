@@ -14,5 +14,6 @@ export * from './connect.js';
 export * from './lists.js';
 export * from './preferences.js';
 export * from './profile.js';
+export * from './profile-reader.js';
 export * from './social-graph.js';
 export * from './status.js';
