@@ -451,7 +451,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
 
   it('aborts an exact-target retry when registration topology changes in flight', async () => {
     const internal = syncEngine as any;
-    const generation = internal._engineGeneration as number;
+    const transitionFence = internal.captureTransitionFence() as () => boolean;
     const topologyGeneration = internal._targetPlanner.generation as number;
     sinon.stub(internal, 'getQuotaBlocksForTarget').callsFake(async () => {
       internal._targetPlanner.invalidate();
@@ -469,7 +469,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
       authorization      : { kind: 'owner' },
       authorizationEpoch : 'owner',
       projectionId,
-    }, generation, topologyGeneration);
+    }, transitionFence, topologyGeneration);
 
     expect(reconcile.called).toBe(false);
   });

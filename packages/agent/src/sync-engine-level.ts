@@ -138,8 +138,8 @@ type MergedSyncRunRequest = {
 /** The single queued follow-up `sync()` run that coalesced callers share. */
 type PendingSyncRun = {
   merged: MergedSyncRunRequest;
-  /** Engine generation at queue time — a runtime transition invalidates the run. */
-  generation: number;
+  /** Transition fence captured at queue time — a runtime transition invalidates the run. */
+  fence: () => boolean;
   promise: Promise<void>;
 };
 
@@ -712,11 +712,12 @@ export class SyncEngineLevel implements SyncEngine {
    * after that wait could interleave with the wipe or the closed database and
    * resurrect sync state that `clear()` guarantees is gone.
    *
-   * The generation bump invalidates work that queued against the lock while
-   * the phase ran: those callers raced the destruction rather than following
-   * it, so they cancel through the engine's stale-work convention instead of
-   * running against wiped state or failing on closed storage. The queued
-   * join point itself is left in place — post-bump joiners must share that
+   * Installing a fresh disposed scope invalidates work that queued against
+   * the lock while the phase ran: those callers raced the destruction rather
+   * than following it, so their transition fences trip and they cancel
+   * through the engine's stale-work convention instead of running against
+   * wiped state or failing on closed storage. The queued join point itself
+   * is left in place — joiners arriving mid-destruction must share that
    * cancellation, not start a fresh run.
    */
   private async runDestructivePhase(operation: () => Promise<void>): Promise<void> {
@@ -724,9 +725,21 @@ export class SyncEngineLevel implements SyncEngine {
     try {
       await operation();
     } finally {
-      this._engineGeneration++;
+      this.installDisposedRuntimeScope();
       this._lifecycle.releaseSync();
     }
+  }
+
+  /**
+   * Replace the current scope with a fresh, already-disposed one. Every
+   * transition installs a new scope object, so a fence captured under ANY
+   * earlier scope — including one captured while the engine was already
+   * stopped — observes the transition as an identity change.
+   */
+  private installDisposedRuntimeScope(): void {
+    const replacement = new SyncRuntime();
+    replacement.dispose();
+    this._runtime = replacement;
   }
 
   public registerIdentity(params: { did: string; options: SyncIdentityOptions }): Promise<void> {
@@ -908,8 +921,8 @@ export class SyncEngineLevel implements SyncEngine {
     // caller can observe it.
     const followUp: PendingSyncRun = {
       merged,
-      generation : this._engineGeneration,
-      promise    : Promise.resolve(),
+      fence   : this.captureTransitionFence(),
+      promise : Promise.resolve(),
     };
     followUp.promise = (async (): Promise<void> => {
       await this._lifecycle.acquireSync();
@@ -922,7 +935,7 @@ export class SyncEngineLevel implements SyncEngine {
         // this queued run while it waited for the lock. Reject rather than
         // resolve: a resolved sync() must always mean a run covering the
         // request completed (callers like recovery read state right after).
-        if (this._engineGeneration !== followUp.generation) {
+        if (!followUp.fence()) {
           throw new SyncRunCancelledError(
             'SyncEngineLevel: queued sync run was cancelled by an engine runtime transition.',
           );
@@ -1082,11 +1095,12 @@ export class SyncEngineLevel implements SyncEngine {
 
   private prepareForSyncRuntimeTransition(): void {
     this._engineGeneration++;
-    // Drop the queued follow-up join point: the blocked run wakes later, sees
-    // the generation change, and resolves without running.
+    // Drop the queued follow-up join point: the blocked run wakes later, its
+    // transition fence trips, and it cancels without running.
     this._pendingSyncRun = undefined;
     this._lifecycle.pauseTaskAdmission();
     this._runtime.dispose();
+    this.installDisposedRuntimeScope();
     this.invalidateSyncTargetsCache();
     this._syncMode = undefined;
   }
@@ -1322,12 +1336,12 @@ export class SyncEngineLevel implements SyncEngine {
    * link, open pull + push subscriptions, and transition the link to `'live'`.
    */
   private async initializeLinkTarget(target: SyncTarget): Promise<LinkInitializationResult> {
-    const generation = this._engineGeneration;
+    const runtimeScope = this._runtime;
     let link: ReplicationLinkState | undefined;
     let controller: SyncLinkController | undefined;
     try {
       link = await this.getOrCreateReplicationLink(target);
-      if (this._engineGeneration !== generation) {
+      if (runtimeScope.disposed) {
         return { status: LinkInitializationStatus.Failed };
       }
       const linkKey = this.getReplicationLinkKey(target, link);
@@ -1351,7 +1365,7 @@ export class SyncEngineLevel implements SyncEngine {
       }
       return this.createActiveLinkInitializationResult(link);
     } catch (error: any) {
-      if (this._engineGeneration !== generation) {
+      if (runtimeScope.disposed) {
         return { status: LinkInitializationStatus.Failed };
       }
       return this.handleInitializeLinkTargetError(target, link, controller, error);
@@ -1552,7 +1566,7 @@ export class SyncEngineLevel implements SyncEngine {
    * propagation settle before giving up.
    */
   private async initializeLinkTargetWithRetry(target: SyncTarget): Promise<LinkInitializationResult> {
-    const generation = this._engineGeneration;
+    const runtimeScope = this._runtime;
     try {
       return await this.initializeLinkTarget(target);
     } catch (error: any) {
@@ -1564,11 +1578,11 @@ export class SyncEngineLevel implements SyncEngine {
         // re-activate a link controller and reopen subscriptions behind that
         // teardown. Checked on both sides of the sleep so a transition during
         // the previous attempt skips the backoff wait entirely.
-        if (this._engineGeneration !== generation) {
+        if (runtimeScope.disposed) {
           return { status: LinkInitializationStatus.Failed };
         }
         await sleep(delay);
-        if (this._engineGeneration !== generation) {
+        if (runtimeScope.disposed) {
           return { status: LinkInitializationStatus.Failed };
         }
         try {
@@ -2949,9 +2963,9 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public async retryRemoteNow(tenantDid: string, remoteEndpoint: string): Promise<void> {
-    const generation = this._engineGeneration;
+    const transitionFence = this.captureTransitionFence();
     const retry = this._retryRemoteQueue.then(async (): Promise<void> => {
-      await this.doRetryRemoteNow(tenantDid, remoteEndpoint, generation);
+      await this.doRetryRemoteNow(tenantDid, remoteEndpoint, transitionFence);
     });
     this._retryRemoteQueue = retry.catch((): void => {
       // Keep the queue usable after surfacing the original operation failure.
@@ -2959,14 +2973,14 @@ export class SyncEngineLevel implements SyncEngine {
     await retry;
   }
 
-  private async doRetryRemoteNow(tenantDid: string, remoteEndpoint: string, generation: number): Promise<void> {
+  private async doRetryRemoteNow(tenantDid: string, remoteEndpoint: string, transitionFence: () => boolean): Promise<void> {
     // A normal sync/drain already owns the feed checkpoints. Let that operation
     // finish, then preserve the explicit retry request rather than racing its
     // checkpoint writes or silently dropping a UI Retry-now action.
     await this._lifecycle.acquireSync();
 
     try {
-      if (this._engineGeneration !== generation) {
+      if (!transitionFence()) {
         return;
       }
       const topologyGeneration = this._targetPlanner.generation;
@@ -2975,7 +2989,7 @@ export class SyncEngineLevel implements SyncEngine {
       );
 
       await Promise.all(targets.map(async (target) => {
-        await this.retryQuotaBlocksForTarget(target, generation, topologyGeneration);
+        await this.retryQuotaBlocksForTarget(target, transitionFence, topologyGeneration);
       }));
     } finally {
       this._lifecycle.releaseSync();
@@ -2984,7 +2998,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   private async retryQuotaBlocksForTarget(
     target: SyncTarget,
-    generation: number,
+    transitionFence: () => boolean,
     topologyGeneration: number,
   ): Promise<void> {
     const linkKey = this._quotaManager.getLinkKey(target);
@@ -2999,7 +3013,7 @@ export class SyncEngineLevel implements SyncEngine {
       const blocks = await this.getQuotaBlocksForTarget(target);
       if (
         blocks.length === 0 ||
-        this._engineGeneration !== generation ||
+        !transitionFence() ||
         this._targetPlanner.generation !== topologyGeneration
       ) {
         return;
@@ -3013,7 +3027,7 @@ export class SyncEngineLevel implements SyncEngine {
         target,
         { direction: 'push', forceQuotaProbe: true },
         (): boolean =>
-          this._engineGeneration === generation &&
+          transitionFence() &&
           this._targetPlanner.generation === topologyGeneration,
       );
     })().finally((): void => {
