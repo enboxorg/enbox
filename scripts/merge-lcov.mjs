@@ -28,10 +28,13 @@ for (const coverageFile of coverageFiles) {
   mergeLcovContents(coverageFile, contents, mergedCoverage);
 }
 
+const { affectedFiles, droppedLines } = await dropNonExecutableZeroHitLines(mergedCoverage);
+
 await mkdir(path.dirname(outputPath), { recursive: true });
 await writeFile(outputPath, renderLcov(mergedCoverage), 'utf8');
 
 console.log(`Merged ${coverageFiles.length} LCOV files into ${toPosix(path.relative(rootDir, outputPath))}`);
+console.log(`Dropped ${droppedLines} zero-hit DA entries on non-executable lines across ${affectedFiles} source files`);
 
 async function collectCoverageFiles() {
   const files = new Set();
@@ -192,6 +195,85 @@ function mergeBranchTaken(existingTaken, nextTaken) {
   }
 
   return String(Math.max(existingValue, nextValue));
+}
+
+/**
+ * Bun's lcov reporter marks comment-only, blank, and lone-punctuation lines inside
+ * instrumented spans as executable-but-unhit (`DA:<line>,0`), so SonarCloud counts
+ * them in the coverage denominator and JSDoc on public methods reads as uncovered
+ * (issue #1345). After merging all shards, drop every zero-hit DA entry whose
+ * source line is definitely non-executable. Lines with hits are never touched, and
+ * `renderLcov` recomputes LF/LH from the surviving entries, so the summary stays
+ * consistent. When a source file cannot be read (e.g. a stale artifact for a file
+ * that no longer exists), its entries are kept as-is.
+ */
+async function dropNonExecutableZeroHitLines(mergedCoverage) {
+  let affectedFiles = 0;
+  let droppedLines = 0;
+
+  for (const [sourceFile, fileCoverage] of mergedCoverage) {
+    const zeroHitLineNumbers = [];
+
+    for (const [lineNumber, lineRecord] of fileCoverage.lines) {
+      if (lineRecord.hits === 0) {
+        zeroHitLineNumbers.push(lineNumber);
+      }
+    }
+
+    if (zeroHitLineNumbers.length === 0) {
+      continue;
+    }
+
+    let sourceLines;
+
+    try {
+      const sourceContents = await readFile(path.resolve(rootDir, sourceFile), 'utf8');
+      sourceLines = sourceContents.split(/\r?\n/);
+    } catch {
+      continue;
+    }
+
+    let droppedFromFile = 0;
+
+    for (const lineNumber of zeroHitLineNumbers) {
+      const sourceLine = sourceLines[lineNumber - 1];
+
+      if (sourceLine !== undefined && isNonExecutableSourceLine(sourceLine)) {
+        fileCoverage.lines.delete(lineNumber);
+        droppedFromFile += 1;
+      }
+    }
+
+    if (droppedFromFile > 0) {
+      affectedFiles += 1;
+      droppedLines += droppedFromFile;
+    }
+  }
+
+  return { affectedFiles, droppedLines };
+}
+
+/**
+ * Conservative allowlist of definitely-non-executable line shapes: blank lines,
+ * `//` line comments, block-comment bodies/closers (`*` prefix), block-comment
+ * openers with no code after the close on the same line, and punctuation-only
+ * lines (closing braces/brackets/parens and separators). Anything uncertain —
+ * notably multi-line string continuations, which a line-level heuristic cannot
+ * detect without parsing — stays counted as executable.
+ */
+function isNonExecutableSourceLine(sourceLine) {
+  const trimmed = sourceLine.trim();
+
+  if (trimmed.length === 0 || trimmed.startsWith('//') || trimmed.startsWith('*')) {
+    return true;
+  }
+
+  if (trimmed.startsWith('/*')) {
+    const closeIndex = trimmed.indexOf('*/');
+    return closeIndex === -1 || closeIndex === trimmed.length - 2;
+  }
+
+  return /^[{}[\]();,]+$/.test(trimmed);
 }
 
 function renderLcov(mergedCoverage) {
