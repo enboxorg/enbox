@@ -734,7 +734,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   public registerIdentity(params: { did: string; options: SyncIdentityOptions }): Promise<void> {
     return this._lifecycle.runIdentityMutation(async (): Promise<void> => {
-      await this.doRegisterIdentity(params);
+      await this.runIdentityLifecycle(params.did, (): Promise<void> => this.doRegisterIdentity(params));
     });
   }
 
@@ -763,7 +763,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   public unregisterIdentity(did: string): Promise<void> {
     return this._lifecycle.runIdentityMutation(async (): Promise<void> => {
-      await this.doUnregisterIdentity(did);
+      await this.runIdentityLifecycle(did, (): Promise<void> => this.doUnregisterIdentity(did));
     });
   }
 
@@ -784,12 +784,17 @@ export class SyncEngineLevel implements SyncEngine {
     // unregistered — cancel it unconditionally.
     this.cancelLinkInitRetriesForDid(did);
 
+    // Tenant-scoped cleanup runs first; the identity marker is deleted LAST
+    // as the commit point. A failure at any earlier step leaves the
+    // registration intact so the caller can simply retry the unregister,
+    // while a failure after the marker deletion leaves only orphaned durable
+    // links, which the next registration's supersession pruning removes.
+    await this.clearQuotaBlocksForTenant(did);
     await this.runDeferredPullLifecycle(did, async (): Promise<void> => {
-      await this._identityStore.delete(did);
       await this._deferredPullStore.deleteTenant(did);
+      await this._identityStore.delete(did);
     });
     this.invalidateSyncTargetsCache();
-    await this.clearQuotaBlocksForTenant(did);
     await this.pruneSupersededDurableLinksForIdentity(did, new Set());
   }
 
@@ -804,7 +809,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   public updateIdentityOptions(params: { did: string, options: SyncIdentityOptions }): Promise<void> {
     return this._lifecycle.runIdentityMutation(async (): Promise<void> => {
-      await this.doUpdateIdentityOptions(params);
+      await this.runIdentityLifecycle(params.did, (): Promise<void> => this.doUpdateIdentityOptions(params));
     });
   }
 
@@ -2566,11 +2571,6 @@ export class SyncEngineLevel implements SyncEngine {
         return false;
       }
 
-      const current = await this._deferredPullStore.get(target.did, entry.messageCid, target.dwnUrl);
-      if (current === undefined) {
-        return true;
-      }
-
       await this.recordDeadLetter({
         messageCid     : entry.messageCid,
         tenantDid      : target.did,
@@ -2603,12 +2603,6 @@ export class SyncEngineLevel implements SyncEngine {
       firstDeferredAt : previous?.firstDeferredAt ?? now,
       lastDeferredAt  : now,
     };
-    if (previous !== undefined) {
-      const stillDeferred = await this._deferredPullStore.get(target.did, messageCid, target.dwnUrl);
-      if (stillDeferred === undefined) {
-        return undefined;
-      }
-    }
     await this._deferredPullStore.put(target.did, messageCid, target.dwnUrl, state);
     return state;
   }
@@ -2617,7 +2611,25 @@ export class SyncEngineLevel implements SyncEngine {
     await this._deferredPullStore.delete(tenantDid, messageCid, dwnUrl);
   }
 
-  /** Serialize deferred/dead-letter lifecycle mutations with tenant unregister. */
+  /**
+   * Serialize identity lifecycle mutations (register, update, unregister)
+   * across every context sharing this storage, so one context's unregister
+   * cannot interleave with another's re-registration and prune its fresh
+   * durable links.
+   *
+   * Lock order: this lock is OUTERMOST. The per-tenant deferred-pull lock
+   * may be taken inside it (unregister does), never the reverse.
+   */
+  private async runIdentityLifecycle<T>(did: string, operation: () => Promise<T>): Promise<T> {
+    return runWithCrossContextLock(`enbox:sync-identity:${did}`, operation);
+  }
+
+  /**
+   * Serialize the deferred/dead-letter lifecycle per tenant across contexts.
+   * Every participant — admission cleanup, expiry promotion, and unregister's
+   * tenant sweep — runs its read-decide-write section under this lock, which
+   * is the single mechanism making those sections atomic with each other.
+   */
   private async runDeferredPullLifecycle<T>(
     tenantDid: string,
     operation: () => Promise<T>,
