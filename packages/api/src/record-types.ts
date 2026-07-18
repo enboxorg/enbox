@@ -10,6 +10,7 @@ import type {
   DwnInterface,
   DwnMessage,
   DwnMessageDescriptor,
+  DwnPublicKeyJwk,
 } from '@enbox/agent';
 
 /**
@@ -159,6 +160,27 @@ export type RecordUpdateParams = {
    * fresh DEK. Set to `false` explicitly to skip encryption on the update.
    */
   encryption?: boolean;
+
+  /**
+   * The recipient's role-path public key for this update, forwarded to the
+   * agent at the top level of the request (never into the message
+   * descriptor) when updating a `$role` record with a `recipient`.
+   *
+   * Updating a role record re-provisions its role-audience key delivery, so
+   * supplying the key here is the retry idiom for a write whose best-effort
+   * delivery was previously reported with `delivered: false`: the recipient
+   * computes its role-path key locally and carries it out of band (e.g. in
+   * a signed join request) for the writer to supply on the retry.
+   *
+   * Enbox validates only that the supplied key is a usable X25519 public
+   * key — it does NOT verify that the key belongs to the recipient. That
+   * authenticity binding rests entirely on the out-of-band channel the
+   * caller trusts. A `delivered: true` outcome means the delivery record
+   * was written wrapping THIS supplied key; it does not assert the intended
+   * recipient can decrypt it — supplying the wrong key yields
+   * `delivered: true` and a delivery the real recipient cannot decrypt.
+   */
+  recipientRolePublicKey?: DwnPublicKeyJwk;
 };
 
 /**

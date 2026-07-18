@@ -174,6 +174,15 @@ export type TypedCreateRequest<
    * key delivery is best-effort and its outcome is reported on
    * {@link TypedCreateResponse.audienceKeyDelivery} instead of failing
    * the write.
+   *
+   * Enbox validates only that the supplied key is a usable X25519 public
+   * key — it does NOT verify that the key belongs to the recipient. That
+   * authenticity binding rests entirely on the out-of-band channel the
+   * caller trusts (e.g. a signed join request). A `delivered: true`
+   * outcome means the delivery record was written wrapping THIS supplied
+   * key; it does not assert the intended recipient can decrypt it —
+   * supplying the wrong key yields `delivered: true` and a delivery the
+   * real recipient cannot decrypt.
    */
   recipientRolePublicKey?: DwnPublicKeyJwk;
 

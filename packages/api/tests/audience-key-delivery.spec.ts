@@ -20,6 +20,7 @@ import { DwnInterface, EnboxUserAgent } from '@enbox/agent';
 
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
+import { repository } from '../src/repository.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
@@ -32,31 +33,38 @@ const testDwnUrls: string[] = [testDwnUrl];
 // delivery to this key instead of resolving the recipient's key itself.
 const VALID_X25519_KEY: DwnPublicKeyJwk = { kty: 'OKP', crv: 'X25519', x: '11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo' };
 
-// Multi-party protocol with a `$role` participant path. Installed with
-// `encryption: true` so the role path carries a `$keyAgreement` audience,
-// which is what makes role-audience key delivery provisioning run.
+// Multi-party protocol with root (`admin`) and nested (`thread/participant`)
+// `$role` paths plus a `settings` singleton. Installed with `encryption: true`
+// so the role paths carry a `$keyAgreement` audience, which is what makes
+// role-audience key delivery provisioning run.
 const chatDefinitionTemplate = {
   published : true,
   protocol  : 'https://protocol.xyz/api-chat' as string,
   types     : {
+    admin       : { schema: 'https://schemas.xyz/admin', dataFormats: ['application/json'] },
     thread      : { schema: 'https://schemas.xyz/thread', dataFormats: ['application/json'] },
     participant : { schema: 'https://schemas.xyz/participant', dataFormats: ['application/json'] },
     chat        : { schema: 'https://schemas.xyz/chat', dataFormats: ['text/plain'] },
+    settings    : { schema: 'https://schemas.xyz/settings', dataFormats: ['application/json'] },
   },
   structure: {
-    thread: {
+    admin  : { $role: true },
+    thread : {
       participant : { $role: true },
       chat        : {},
     },
+    settings: { $recordLimit: { max: 1, strategy: 'reject' } },
   },
 } as const satisfies DwnProtocolDefinition;
 
 type ChatDefinition = typeof chatDefinitionTemplate;
 
 type ChatSchemaMap = {
+  admin: { name: string };
   thread: { title: string };
   participant: { name: string; role?: string };
   chat: string;
+  settings: { theme: string };
 };
 
 /** Returns a fresh definition with a unique protocol URI so tests never share protocol state. */
@@ -234,6 +242,47 @@ describe('audience key delivery propagation', () => {
       expect(updateResult.audienceKeyDelivery!.recipientDid).toBe(bobDid.uri);
     }, 15000);
 
+    it('should retry a skipped delivery via update() with a caller-supplied recipientRolePublicKey', async () => {
+      const { definition, threadContextId } = await installChatProtocolWithThread();
+
+      // Best-effort resolution stays broken for the whole test, so only the
+      // supplied key can produce a delivery on the retry.
+      sinon.stub(testHarness.agent.dwn as any, 'getRecipientRolePublicKey')
+        .rejects(new Error('recipient protocol not installed'));
+
+      const { status: writeStatus, record, audienceKeyDelivery: writeOutcome } = await dwnAlice.records.write({
+        data            : { name: 'Bob' },
+        protocol        : definition.protocol,
+        protocolPath    : 'thread/participant',
+        parentContextId : threadContextId,
+        schema          : definition.types.participant.schema,
+        dataFormat      : 'application/json',
+        recipient       : bobDid.uri,
+      });
+      expect(writeStatus.code).toBe(202);
+      expect(writeOutcome!.delivered).toBe(false);
+
+      const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
+
+      const updateResult = await record!.update({
+        data                   : { name: 'Bob', role: 'admin' },
+        recipientRolePublicKey : VALID_X25519_KEY,
+      });
+
+      expect(updateResult.status.code).toBe(202);
+      expect(updateResult.audienceKeyDelivery).toEqual({ delivered: true, recipientDid: bobDid.uri });
+
+      // The key rides the update's agent request at the top level and never
+      // lands in `messageParams`, where the DWN would reject it as an
+      // immutable descriptor property.
+      const updateCall = processSpy.getCalls().find((call): boolean =>
+        call.args[0].messageType === DwnInterface.RecordsWrite &&
+        (call.args[0] as { messageParams?: { protocolPath?: string } }).messageParams?.protocolPath === 'thread/participant');
+      expect(updateCall).toBeDefined();
+      expect((updateCall!.args[0] as { recipientRolePublicKey?: DwnPublicKeyJwk }).recipientRolePublicKey).toEqual(VALID_X25519_KEY);
+      expect((updateCall!.args[0] as { messageParams?: Record<string, unknown> }).messageParams!.recipientRolePublicKey).toBeUndefined();
+    }, 15000);
+
     it('should leave audienceKeyDelivery undefined on non-role record updates', async () => {
       const { definition } = await installChatProtocolWithThread();
 
@@ -317,6 +366,111 @@ describe('audience key delivery propagation', () => {
       expect(updateResult.audienceKeyDelivery).toBeDefined();
       expect(updateResult.audienceKeyDelivery!.delivered).toBe(false);
       expect(updateResult.audienceKeyDelivery!.recipientDid).toBe(bobDid.uri);
+    }, 15000);
+
+    it('should retry a skipped delivery via typed update() with a caller-supplied recipientRolePublicKey', async () => {
+      const definition = makeChatDefinition();
+      const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {} as ChatSchemaMap));
+
+      const { status: configureStatus } = await typed.configure({ encryption: true });
+      expect(configureStatus.code).toBe(202);
+
+      const { record: thread } = await typed.records.create('thread', { data: { title: 'Typed Thread' } });
+      expect(thread).toBeDefined();
+
+      sinon.stub(testHarness.agent.dwn as any, 'getRecipientRolePublicKey')
+        .rejects(new Error('recipient protocol not installed'));
+
+      const { record: participant, audienceKeyDelivery: createOutcome } = await typed.records.create('thread/participant', {
+        data            : { name: 'Bob' },
+        parentContextId : thread!.contextId,
+        recipient       : bobDid.uri,
+      });
+      expect(createOutcome!.delivered).toBe(false);
+
+      const updateResult = await participant!.update({
+        data                   : { name: 'Bob', role: 'admin' },
+        recipientRolePublicKey : VALID_X25519_KEY,
+      });
+
+      expect(updateResult.status.code).toBe(202);
+      expect(updateResult.audienceKeyDelivery).toEqual({ delivered: true, recipientDid: bobDid.uri });
+    }, 15000);
+  });
+
+  describe('repository()', () => {
+    it('should surface audienceKeyDelivery on a root-collection role create', async () => {
+      const definition = makeChatDefinition();
+      const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {} as ChatSchemaMap));
+      const repo = repository(typed);
+
+      const { status: configureStatus } = await repo.configure({ encryption: true });
+      expect(configureStatus.code).toBe(202);
+
+      const result = await repo.admin.create({
+        data                   : { name: 'Bob' },
+        recipient              : bobDid.uri,
+        recipientRolePublicKey : VALID_X25519_KEY,
+      });
+
+      expect(result.status.code).toBe(202);
+      expect(result.record).toBeDefined();
+      expect(result.audienceKeyDelivery).toEqual({ delivered: true, recipientDid: bobDid.uri });
+    }, 15000);
+
+    it('should surface audienceKeyDelivery on a nested-collection role create', async () => {
+      const definition = makeChatDefinition();
+      const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {} as ChatSchemaMap));
+      const repo = repository(typed);
+
+      const { status: configureStatus } = await repo.configure({ encryption: true });
+      expect(configureStatus.code).toBe(202);
+
+      const threadResult = await repo.thread.create({ data: { title: 'Repo Thread' } });
+      expect(threadResult.status.code).toBe(202);
+      expect(threadResult.audienceKeyDelivery).toBeUndefined();
+
+      const result = await repo.thread.participant.create(threadResult.record!.contextId, {
+        data                   : { name: 'Bob' },
+        recipient              : bobDid.uri,
+        recipientRolePublicKey : VALID_X25519_KEY,
+      });
+
+      expect(result.status.code).toBe(202);
+      expect(result.audienceKeyDelivery).toEqual({ delivered: true, recipientDid: bobDid.uri });
+    }, 15000);
+
+    it('should carry audienceKeyDelivery through both singleton set() branches', async () => {
+      const definition = makeChatDefinition();
+      const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {} as ChatSchemaMap));
+      const repo = repository(typed);
+
+      const { status: configureStatus } = await repo.configure({ encryption: true });
+      expect(configureStatus.code).toBe(202);
+
+      // Inject an outcome at the agent boundary for every stored `settings`
+      // write, so both set() branches must carry whatever the agent attaches.
+      const injectedOutcome = { delivered: false, recipientDid: bobDid.uri, reason: 'injected for plumbing test' };
+      const originalProcess = testHarness.agent.processDwnRequest.bind(testHarness.agent);
+      sinon.stub(testHarness.agent, 'processDwnRequest').callsFake(async (request: any): Promise<any> => {
+        const response = await originalProcess(request);
+        if (request.messageType === DwnInterface.RecordsWrite && request.messageParams?.protocolPath === 'settings') {
+          return { ...response, audienceKeyDelivery: injectedOutcome };
+        }
+        return response;
+      });
+
+      // First set(): no existing record — the create branch.
+      const first = await repo.settings.set({ data: { theme: 'dark' } });
+      expect(first.status.code).toBe(202);
+      expect(first.record).toBeDefined();
+      expect(first.audienceKeyDelivery).toEqual(injectedOutcome);
+
+      // Second set(): updates the existing record — the update branch.
+      const second = await repo.settings.set({ data: { theme: 'light' } });
+      expect(second.status.code).toBe(202);
+      expect(second.record!.id).toBe(first.record!.id);
+      expect(second.audienceKeyDelivery).toEqual(injectedOutcome);
     }, 15000);
   });
 });

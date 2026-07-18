@@ -13,13 +13,13 @@
 import type { SchemaMap } from './protocol-types.js';
 import type { TypedLiveQuery } from './typed-live-query.js';
 import type { TypedRecord } from './typed-record.js';
+import type { AudienceKeyDeliveryOutcome, DwnPaginationCursor, DwnResponseStatus } from '@enbox/agent';
 import type {
   DataForPath,
   TypedCreateRequest,
   TypedQueryRequest,
   TypedSubscribeRequest,
 } from './typed-enbox.js';
-import type { DwnPaginationCursor, DwnResponseStatus } from '@enbox/agent';
 import type { ProtocolDefinition, ProtocolRuleSet } from '@enbox/dwn-sdk-js';
 
 // ---------------------------------------------------------------------------
@@ -102,6 +102,20 @@ export type SingletonSetOptions<
 // CRUD shapes
 // ---------------------------------------------------------------------------
 
+/**
+ * Write-result fields shared by repository `create()` / `set()` calls.
+ *
+ * When the accepted write was a `$role` record with a `recipient`, the agent's
+ * role-audience key-delivery outcome is forwarded on `audienceKeyDelivery` —
+ * a skipped best-effort delivery is reported there with `delivered: false`
+ * instead of failing the write. For singleton `set()`, both the create and
+ * update branches carry the outcome.
+ */
+export type RepositoryWriteOutcome = {
+  /** Outcome of role-audience key delivery provisioning, when the write triggered it. */
+  audienceKeyDelivery?: AudienceKeyDeliveryOutcome;
+};
+
 /** CRUD API for a root-level collection (unbounded or max > 1). */
 export type CollectionCRUD<
   D extends ProtocolDefinition,
@@ -109,8 +123,8 @@ export type CollectionCRUD<
   Path extends string,
 > = {
   create(options: CollectionCreateOptions<D, M, Path>): Promise<
-    | (DwnResponseStatus & { record: TypedRecord<DataAt<D, M, Path>> })
-    | (DwnResponseStatus & { record: undefined })
+    | (DwnResponseStatus & RepositoryWriteOutcome & { record: TypedRecord<DataAt<D, M, Path>> })
+    | (DwnResponseStatus & RepositoryWriteOutcome & { record: undefined })
   >;
   query(options?: TypedQueryRequest): Promise<DwnResponseStatus & { records: TypedRecord<DataAt<D, M, Path>>[]; cursor?: DwnPaginationCursor }>;
   get(recordId: string): Promise<TypedRecord<DataAt<D, M, Path>> | undefined>;
@@ -125,8 +139,8 @@ export type SingletonCRUD<
   Path extends string,
 > = {
   set(options: SingletonSetOptions<D, M, Path>): Promise<
-    | (DwnResponseStatus & { record: TypedRecord<DataAt<D, M, Path>> })
-    | (DwnResponseStatus & { record: undefined })
+    | (DwnResponseStatus & RepositoryWriteOutcome & { record: TypedRecord<DataAt<D, M, Path>> })
+    | (DwnResponseStatus & RepositoryWriteOutcome & { record: undefined })
   >;
   get(): Promise<TypedRecord<DataAt<D, M, Path>> | undefined>;
   delete(recordId: string): Promise<DwnResponseStatus>;
@@ -142,8 +156,8 @@ export type NestedCollectionCRUD<
     parentContextId: string,
     options: CollectionCreateOptions<D, M, Path>,
   ): Promise<
-    | (DwnResponseStatus & { record: TypedRecord<DataAt<D, M, Path>> })
-    | (DwnResponseStatus & { record: undefined })
+    | (DwnResponseStatus & RepositoryWriteOutcome & { record: TypedRecord<DataAt<D, M, Path>> })
+    | (DwnResponseStatus & RepositoryWriteOutcome & { record: undefined })
   >;
   query(
     parentContextId: string,
@@ -167,8 +181,8 @@ export type NestedSingletonCRUD<
     parentContextId: string,
     options: SingletonSetOptions<D, M, Path>,
   ): Promise<
-    | (DwnResponseStatus & { record: TypedRecord<DataAt<D, M, Path>> })
-    | (DwnResponseStatus & { record: undefined })
+    | (DwnResponseStatus & RepositoryWriteOutcome & { record: TypedRecord<DataAt<D, M, Path>> })
+    | (DwnResponseStatus & RepositoryWriteOutcome & { record: undefined })
   >;
   get(parentContextId: string): Promise<TypedRecord<DataAt<D, M, Path>> | undefined>;
   delete(recordId: string): Promise<DwnResponseStatus>;

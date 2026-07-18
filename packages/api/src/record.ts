@@ -529,7 +529,9 @@ export class Record implements RecordModel {
    *
    * @beta
    */
-  async update({ timestamp, data, encryption, protocolRole, store = true, ...params }: RecordUpdateParams): Promise<RecordUpdateResult> {
+  async update(
+    { timestamp, data, encryption, protocolRole, store = true, recipientRolePublicKey, ...params }: RecordUpdateParams
+  ): Promise<RecordUpdateResult> {
 
     if (this.deleted) {
       throw new Error('Record: Cannot revive a deleted record.');
@@ -589,6 +591,7 @@ export class Record implements RecordModel {
       target        : this._connectedDid,
       store,
       encryption    : shouldEncrypt || undefined,
+      recipientRolePublicKey,
     };
 
     await this.applyDelegateGrant(requestOptions);
