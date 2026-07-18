@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, expectTypeOf, it } from 'bun:test';
 
 import type { DwnApi } from '@enbox/api/advanced';
 import type { EnboxAnonymousApi } from '@enbox/api';
@@ -198,12 +198,8 @@ describe('isRetryableProfileReadStatus', () => {
 describe('createProfileReader', () => {
   describe('source compatibility', () => {
     it('should structurally accept a connected DwnApi and the Enbox.anonymous() result (compile-time)', () => {
-      // These annotations fail `tsc` if the concrete API classes drift away
-      // from the reader's structural source type.
-      const dwnApiIsSource: DwnApi extends ProfileReaderSource ? true : false = true;
-      const anonymousApiIsSource: EnboxAnonymousApi extends ProfileReaderSource ? true : false = true;
-      expect(dwnApiIsSource).toBe(true);
-      expect(anonymousApiIsSource).toBe(true);
+      expectTypeOf<DwnApi>().toMatchTypeOf<ProfileReaderSource>();
+      expectTypeOf<EnboxAnonymousApi>().toMatchTypeOf<ProfileReaderSource>();
     });
   });
 

@@ -1188,12 +1188,13 @@ class DwnProfileReader implements ProfileReader {
   }
 
   private failureFromStatus(operation: string, status: ProfileReaderReplyStatus): FieldOutcome {
+    const detail = status.detail === undefined ? '' : `: ${status.detail}`;
     return {
       kind    : 'failure',
       failure : {
         retryable : isRetryableProfileReadStatus(status.code),
         code      : status.code,
-        message   : `${operation} failed with status ${status.code}${status.detail !== undefined ? `: ${status.detail}` : ''}`,
+        message   : `${operation} failed with status ${status.code}${detail}`,
       },
     };
   }
@@ -1228,10 +1229,15 @@ class DwnProfileReader implements ProfileReader {
     if (this._retainedImageBytes <= this._imageByteBudget) {
       return;
     }
-    for (const candidate of [...this._imageLru.values()]) {
+    // Releasing an entry publishes to arbitrary watchers, which may synchronously
+    // touch the LRU. Iterate a stable snapshot so re-entrancy cannot revisit or
+    // add eviction candidates during this enforcement pass.
+    const candidates = Array.from(this._imageLru.values());
+    for (let i = 0; i < candidates.length; i++) {
       if (this._retainedImageBytes <= this._imageByteBudget) {
         return;
       }
+      const candidate = candidates[i];
       if (candidate === protectedEntry || candidate.fetchQueued || candidate.waiters.length > 0 || candidate.imageWaiters.length > 0) {
         continue;
       }
@@ -1278,8 +1284,9 @@ class DwnProfileReader implements ProfileReader {
 
   private publish(entry: CacheEntry): void {
     entry.snapshot = buildSnapshot(entry.did, entry.fields);
-    for (const handle of [...entry.watchers]) {
-      this.notifyWatcher(handle, entry.snapshot);
+    const watchers = Array.from(entry.watchers);
+    for (let i = 0; i < watchers.length; i++) {
+      this.notifyWatcher(watchers[i], entry.snapshot);
     }
   }
 
