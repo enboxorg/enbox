@@ -342,6 +342,41 @@ describe('AgentDwnApi — subscription event decryption', () => {
     await reply.subscription!.close();
   });
 
+  it('should keep delivering events when the downstream handler throws', async () => {
+    const protocol = await installEncryptedProtocol();
+
+    const received: SubscriptionMessage[] = [];
+    let throwOnce = true;
+    const { reply } = await testHarness.agent.dwn.processRequest({
+      author              : alice.did.uri,
+      target              : alice.did.uri,
+      messageType         : DwnInterface.RecordsSubscribe,
+      messageParams       : { filter: { protocol } },
+      subscriptionHandler : (message: SubscriptionMessage): void => {
+        received.push(message);
+        if (throwOnce) {
+          throwOnce = false;
+          throw new Error('test-induced handler failure');
+        }
+      },
+      encryption: true,
+    });
+    expect(reply.status.code).toBe(200);
+
+    await writeEncryptedNote(protocol, 'first note');
+    await writeEncryptedNote(protocol, 'second note');
+
+    // The first delivery threw inside the handler; the delivery queue must not
+    // wedge — the second event still arrives, decrypted.
+    await Poller.pollUntilSuccessOrTimeout(async () => {
+      expect(received.length).toBeGreaterThanOrEqual(2);
+    });
+    expect(decodeEventData(asEvent(received[0]).encodedData!)).toBe('first note');
+    expect(decodeEventData(asEvent(received[1]).encodedData!)).toBe('second note');
+
+    await reply.subscription!.close();
+  });
+
   it('should pass RecordsDelete events through untouched on an encrypted subscription', async () => {
     const protocol = await installEncryptedProtocol();
 
