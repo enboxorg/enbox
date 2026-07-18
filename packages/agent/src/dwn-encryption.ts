@@ -166,19 +166,21 @@ export type AudienceDecryptionKeyEntry = {
  *   written under a protocol revision without the role's read rule, so no key delivery can ever make
  *   it role-readable — the record must be re-written to heal.
  * - `'delivery-missing'` — the record's role-audience entry resolved (the audience record exists),
- *   but no `$encryption/delivery` record wraps that key to this recipient. Only asserted when the
- *   absence is authoritative: the remote DWN was consulted successfully or was not needed, AND the
- *   querying actor fully enumerates the recipient's deliveries (the tenant, or the addressed
- *   recipient itself) — a delegated actor's visibility-filtered empty result never classifies here.
+ *   but no `$encryption/delivery` record wraps that key to this recipient. Only asserted from an
+ *   authoritative 200-empty lookup: the remote DWN was consulted successfully or was not needed,
+ *   AND the querying actor fully enumerates the recipient's deliveries (the tenant, or the
+ *   addressed recipient itself) — a delegated actor's visibility-filtered empty result and a
+ *   non-200 reply never classify here.
  * - `'role-not-held'` — a delivery candidate was found but verification rejected the recipient
  *   because no active `$role` record backs the delivery (the role was revoked or never granted).
- *   Only asserted when the role lookup's absence is authoritative; an unreachable remote during
- *   role verification classifies as `'remote-unverifiable'` instead.
+ *   Only asserted from an authoritative 200-empty role lookup; a non-200 reply or an unreachable
+ *   remote during role verification classifies as `'remote-unverifiable'` instead.
  * - `'audience-superseded'` — the record is wrapped to a role-audience key that is not the tuple's
  *   current audience key (an older or purged audience); delivering the current key cannot open it —
  *   the record must be re-encrypted to the current audience.
- * - `'remote-unverifiable'` — the audience/delivery/role lookups were empty locally and the remote
- *   DWN could not be consulted, so absence cannot be asserted.
+ * - `'remote-unverifiable'` — the audience/delivery/role lookups did not return an authoritative
+ *   result: empty locally with the remote DWN unreachable, or a non-200 reply — so absence cannot
+ *   be asserted.
  * - `'unknown'` — no specific cause was observed; the original failure detail is preserved.
  */
 export type AudienceDecryptFailureCause =
@@ -278,13 +280,13 @@ class AudienceRoleNotHeldError extends Error {
 }
 
 /**
- * Typed marker for a role-assignment verification that could not be completed: the role record is
- * absent from the local projection and the remote DWN could not be consulted, so the absence must
- * not be read as revocation.
+ * Typed marker for a role-assignment verification that could not be completed: the role lookup did
+ * not return an authoritative result (a non-200 reply, or an empty local projection with the remote
+ * DWN unreachable), so the absence must not be read as revocation.
  */
 class AudienceRoleUnverifiableError extends Error {
   public constructor() {
-    super('audience delivery recipient role could not be verified: the role record is absent locally and the remote DWN could not be consulted.');
+    super('audience delivery recipient role could not be verified: the role lookup returned no authoritative result; absence cannot be asserted.');
   }
 }
 
@@ -1557,7 +1559,7 @@ async function hydrateAudienceKey(params: HydrateAudienceKeyParams): Promise<Aud
   });
   const audienceRecord = audienceLookup.record;
   if (audienceRecord === undefined) {
-    await classifyMissingAudienceRecord(params, audienceLookup.remote);
+    await classifyMissingAudienceRecord(params, audienceLookup);
     return undefined;
   }
 
@@ -1570,7 +1572,7 @@ async function hydrateAudienceKey(params: HydrateAudienceKeyParams): Promise<Aud
   const deliveryLookup = await queryAudienceDeliveryMessagesDetailed(params, deliveryReadActor);
   const deliveryMessages = deliveryLookup.messages;
   if (deliveryMessages.length === 0) {
-    await classifyMissingDeliveries(params, deliveryLookup.remote);
+    await classifyMissingDeliveries(params, deliveryLookup);
     return undefined;
   }
 
@@ -1596,17 +1598,30 @@ async function hydrateAudienceKey(params: HydrateAudienceKeyParams): Promise<Aud
 }
 
 /**
- * Classifies an absent audience record for the record's role-audience key: an unreachable remote
- * means absence cannot be asserted; an authoritative absence is probed against the tuple's current
- * audience to distinguish a superseded/purged audience from an unknown failure.
+ * Classifies an absent audience record for the record's role-audience key. A failed lookup — a
+ * non-200 reply, or an unreachable remote — is never evidence of absence; only an authoritative
+ * 200-empty result is probed against the tuple's current audience to distinguish a
+ * superseded/purged audience from an unknown failure.
  */
-async function classifyMissingAudienceRecord(params: HydrateAudienceKeyParams, remote: RemoteReadOutcome): Promise<void> {
+async function classifyMissingAudienceRecord(
+  params: HydrateAudienceKeyParams,
+  lookup: { remote: RemoteReadOutcome; replyStatusCode: number },
+): Promise<void> {
   const accumulator = params.failureAccumulator;
   if (accumulator === undefined) {
     return;
   }
 
-  if (remote === 'failed') {
+  if (lookup.replyStatusCode !== 200) {
+    accumulator.record(
+      'remote-unverifiable',
+      `the audience lookup for role-audience key '${params.keyId}' did not return an authoritative result ` +
+      `(status ${lookup.replyStatusCode}); absence cannot be asserted.`
+    );
+    return;
+  }
+
+  if (lookup.remote === 'failed') {
     accumulator.record(
       'remote-unverifiable',
       `no audience record for role-audience key '${params.keyId}' is visible locally and the remote DWN ` +
@@ -1619,19 +1634,32 @@ async function classifyMissingAudienceRecord(params: HydrateAudienceKeyParams, r
 }
 
 /**
- * Classifies an empty delivery lookup for the record's role-audience key: an unreachable remote
- * means absence cannot be asserted; an authoritative absence is a missing delivery, then probed
- * against the tuple's current audience in case the record's key was superseded. A delegated actor's
- * empty result is structural (the DWN visibility-filters delivery records for delegates) and is
- * never classified as a missing delivery.
+ * Classifies an empty delivery lookup for the record's role-audience key. A failed lookup — a
+ * non-200 reply, or an unreachable remote — is never evidence of absence; a missing delivery is
+ * only asserted from an authoritative 200-empty result, then probed against the tuple's current
+ * audience in case the record's key was superseded. A delegated actor's empty result is structural
+ * (the DWN visibility-filters delivery records for delegates) and is never classified as a missing
+ * delivery.
  */
-async function classifyMissingDeliveries(params: HydrateAudienceKeyParams, remote: RemoteReadOutcome): Promise<void> {
+async function classifyMissingDeliveries(
+  params: HydrateAudienceKeyParams,
+  lookup: { remote: RemoteReadOutcome; replyStatusCode: number },
+): Promise<void> {
   const accumulator = params.failureAccumulator;
   if (accumulator === undefined) {
     return;
   }
 
-  if (remote === 'failed') {
+  if (lookup.replyStatusCode !== 200) {
+    accumulator.record(
+      'remote-unverifiable',
+      `the $encryption/delivery lookup for role-audience key '${params.keyId}' did not return an authoritative ` +
+      `result (status ${lookup.replyStatusCode}); absence cannot be asserted.`
+    );
+    return;
+  }
+
+  if (lookup.remote === 'failed') {
     accumulator.record(
       'remote-unverifiable',
       `no $encryption/delivery record wrapping role-audience key '${params.keyId}' to '${params.recipientDid}' ` +
@@ -1750,13 +1778,13 @@ export type QueryAudienceDeliveryMessagesParams = {
 
 /**
  * Detailed variant of {@link queryAudienceDeliveryMessages} that also surfaces the
- * {@link RemoteReadOutcome} of the read-through, so an empty result can be told apart from an
- * unreachable remote.
+ * {@link RemoteReadOutcome} of the read-through and the selected reply's status code, so an
+ * authoritative 200-empty result can be told apart from an unreachable remote or a failed lookup.
  */
 export async function queryAudienceDeliveryMessagesDetailed(
   params: QueryAudienceDeliveryMessagesParams,
   deliveryReadActor: AudienceDeliveryReadActor,
-): Promise<{ messages: EncodedRecordsWriteMessage[]; remote: RemoteReadOutcome }> {
+): Promise<{ messages: EncodedRecordsWriteMessage[]; remote: RemoteReadOutcome; replyStatusCode: number }> {
   const { response, remote } = await processDwnReadThroughDetailed({
     process : params.agent.processDwnRequest.bind(params.agent),
     send    : params.agent.sendDwnRequest.bind(params.agent),
@@ -1783,9 +1811,9 @@ export async function queryAudienceDeliveryMessagesDetailed(
 
   const reply = response.reply;
   if (reply.status.code !== 200 || reply.entries === undefined || reply.entries.length === 0) {
-    return { messages: [], remote };
+    return { messages: [], remote, replyStatusCode: reply.status.code };
   }
-  return { messages: reply.entries as EncodedRecordsWriteMessage[], remote };
+  return { messages: reply.entries as EncodedRecordsWriteMessage[], remote, replyStatusCode: reply.status.code };
 }
 
 /**
@@ -2117,7 +2145,7 @@ async function fetchAudienceRecord(params: {
   rolePath: string;
   contextId: string;
   keyId: string;
-}): Promise<{ record?: AudienceRecordCandidate; remote: RemoteReadOutcome }> {
+}): Promise<{ record?: AudienceRecordCandidate; remote: RemoteReadOutcome; replyStatusCode: number }> {
   const { response, remote } = await processDwnReadThroughDetailed({
     process : params.agent.processDwnRequest.bind(params.agent),
     send    : params.agent.sendDwnRequest.bind(params.agent),
@@ -2140,8 +2168,9 @@ async function fetchAudienceRecord(params: {
   }, hasRecordsQueryEntries);
 
   const reply = response.reply;
-  if (reply.status.code !== 200 || reply.entries === undefined || reply.entries.length === 0) {
-    return { remote };
+  const replyStatusCode = reply.status.code;
+  if (replyStatusCode !== 200 || reply.entries === undefined || reply.entries.length === 0) {
+    return { remote, replyStatusCode };
   }
 
   for (const entry of reply.entries) {
@@ -2158,11 +2187,11 @@ async function fetchAudienceRecord(params: {
 
     const payload = Encoder.bytesToObject(dataBytes) as EncryptionControlAudiencePayload;
     if (audiencePayloadMatches(payload, audienceMessage, params)) {
-      return { record: { message: audienceMessage, payload }, remote };
+      return { record: { message: audienceMessage, payload }, remote, replyStatusCode };
     }
   }
 
-  return { remote };
+  return { remote, replyStatusCode };
 }
 
 async function getAudienceRecordData(
@@ -2323,7 +2352,14 @@ async function verifyAudienceKeyRoleAssignment(params: {
   }, hasRecordsQueryEntries);
 
   const reply = response.reply;
-  const entries = reply.status.code === 200 ? reply.entries ?? [] : [];
+  // A failed lookup is not evidence of absence: role-not-held may only be asserted from an
+  // authoritative 200 reply. A non-200 reply (e.g. a 401/500 local reply on a tenant with no
+  // remote endpoint to fall through to) means the role simply could not be verified.
+  if (reply.status.code !== 200) {
+    throw new AudienceRoleUnverifiableError();
+  }
+
+  const entries = reply.entries ?? [];
   const hasRoleRecord = entries.some((entry): boolean => {
     const roleRecord = entry as RecordsWriteMessage;
     return roleRecord.descriptor.recipient === params.recipientDid &&

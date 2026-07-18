@@ -17,6 +17,7 @@ import {
   buildProtocolPathSubtreeDecrypter,
   createGrantKeyRecordsForGrants,
   encryptAndComputeCid,
+  generateAudienceKey,
   getEncryptionKeyDeriver,
   getEncryptionKeyInfo,
   getKeyDecrypter,
@@ -318,20 +319,22 @@ describe('dwn-encryption', () => {
     });
 
     describe('audience decrypt failure taxonomy for role-wrapped records', () => {
-      function makeRoleWrappedReadReply(): any {
+      const TAXONOMY_PROTOCOL = 'https://proto.example.com';
+
+      function makeRoleWrappedReadReply(keyId: string = 'wrapped-role-key'): any {
         return {
           status : { code: 200 },
           entry  : {
             recordsWrite: {
               recordId   : 'rec-role-wrapped',
               contextId  : 'rec-role-wrapped',
-              descriptor : { protocol: 'https://proto.example.com', protocolPath: 'note' },
+              descriptor : { protocol: TAXONOMY_PROTOCOL, protocolPath: 'note' },
               encryption : {
                 keyEncryption: [{
                   algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
                   derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
-                  keyId            : 'wrapped-role-key',
-                  protocol         : 'https://proto.example.com',
+                  keyId,
+                  protocol         : TAXONOMY_PROTOCOL,
                   rolePath         : 'admin',
                 }],
               },
@@ -341,7 +344,7 @@ describe('dwn-encryption', () => {
         };
       }
 
-      function makeRecipientAgent(sendDwnRequest: sinon.SinonStub): any {
+      function makeRecipientAgent(sendDwnRequest: sinon.SinonStub, processDwnRequest?: sinon.SinonStub): any {
         return {
           did: {
             resolve: sinon.stub().resolves({
@@ -358,10 +361,46 @@ describe('dwn-encryption', () => {
               didResolutionMetadata: {},
             }),
           },
-          keyManager        : { getKeyUri: sinon.stub().resolves('key-uri-bob') },
-          processDwnRequest : sinon.stub().resolves({ reply: { status: { code: 200, detail: 'OK' }, entries: [] } }),
+          keyManager: {
+            derivePrivateKeyBytes : sinon.stub().resolves(crypto.getRandomValues(new Uint8Array(32))),
+            getKeyUri             : sinon.stub().resolves('key-uri-bob'),
+          },
+          processDwnRequest: processDwnRequest ?? sinon.stub().resolves({ reply: { status: { code: 200, detail: 'OK' }, entries: [] } }),
           sendDwnRequest,
         };
+      }
+
+      /** Routes local queries by their filter's `protocolPath`; unrouted paths get a 200-empty reply. */
+      function routeLocalQueriesByProtocolPath(routes: Record<string, unknown>): sinon.SinonStub {
+        return sinon.stub().callsFake(async (request: any): Promise<unknown> => {
+          const protocolPath = request.messageParams?.filter?.protocolPath;
+          return routes[protocolPath] ?? { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
+        });
+      }
+
+      function makeAudienceQueryReply(keyId: string, publicKeyJwk: Record<string, unknown>): any {
+        const payload = {
+          protocol         : TAXONOMY_PROTOCOL,
+          rolePath         : 'admin',
+          contextId        : '',
+          keyId,
+          publicKeyJwk,
+          sealedPrivateKey : {},
+        };
+        return { reply: { status  : { code: 200, detail: 'OK' }, entries : [{
+          recordId   : 'audience-current',
+          descriptor : {
+            protocol     : TAXONOMY_PROTOCOL,
+            protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+            tags         : { protocol: TAXONOMY_PROTOCOL, rolePath: 'admin', contextId: '', keyId },
+          },
+          encodedData: Encoder.bytesToBase64Url(Encoder.objectToBytes(payload)),
+        }] } };
+      }
+
+      /** The read-through's "tenant advertises no remote DWN" shape: a local-only DID. */
+      function noRemoteServiceStub(): sinon.SinonStub {
+        return sinon.stub().rejects(new Error('AgentDwnApi: DID Service is missing or malformed in DID Document.'));
       }
 
       const recipientReadRequest = {
@@ -371,18 +410,21 @@ describe('dwn-encryption', () => {
         messageType : 'RecordsRead',
       } as any;
 
-      async function decryptAndCatch(mockAgent: any): Promise<AudienceDecryptError> {
-        const dwnSdk = await import('@enbox/dwn-sdk-js');
-        sinon.stub(dwnSdk.Records, 'decrypt').rejects(new Error('no matching key encryption entry in test'));
-
+      async function catchDecryptError(mockAgent: any, keyId?: string): Promise<AudienceDecryptError> {
         let caught: unknown;
         try {
-          await maybeDecryptReply(recipientReadRequest, makeRoleWrappedReadReply(), mockAgent);
+          await maybeDecryptReply(recipientReadRequest, makeRoleWrappedReadReply(keyId), mockAgent);
         } catch (error) {
           caught = error;
         }
         expect(caught).toBeInstanceOf(AudienceDecryptError);
         return caught as AudienceDecryptError;
+      }
+
+      async function decryptAndCatch(mockAgent: any): Promise<AudienceDecryptError> {
+        const dwnSdk = await import('@enbox/dwn-sdk-js');
+        sinon.stub(dwnSdk.Records, 'decrypt').rejects(new Error('no matching key encryption entry in test'));
+        return catchDecryptError(mockAgent);
       }
 
       it('should classify an unreachable remote during the audience lookup as remote-unverifiable', async () => {
@@ -393,7 +435,7 @@ describe('dwn-encryption', () => {
         expect(decryptError.cause).toBe('remote-unverifiable');
         expect(decryptError.detail).toContain('no audience record');
         expect(decryptError.recordId).toBe('rec-role-wrapped');
-        expect(decryptError.protocol).toBe('https://proto.example.com');
+        expect(decryptError.protocol).toBe(TAXONOMY_PROTOCOL);
         expect(decryptError.recipientDid).toBe('did:example:bob');
       });
 
@@ -404,6 +446,80 @@ describe('dwn-encryption', () => {
 
         expect(decryptError.cause).toBe('unknown');
         expect(decryptError.detail).toContain('Original error');
+      });
+
+      it('should classify a non-200 audience lookup on a local-only DID as remote-unverifiable', async () => {
+        const mockAgent = makeRecipientAgent(noRemoteServiceStub(), routeLocalQueriesByProtocolPath({
+          [ENCRYPTION_CONTROL_AUDIENCE_PATH]: { reply: { status: { code: 401, detail: 'Unauthorized' } } },
+        }));
+
+        const decryptError = await decryptAndCatch(mockAgent);
+
+        expect(decryptError.cause).toBe('remote-unverifiable');
+        expect(decryptError.detail).toContain('audience lookup');
+        expect(decryptError.detail).toContain('status 401');
+      });
+
+      it('should classify a non-200 delivery lookup on a local-only DID as remote-unverifiable, not delivery-missing', async () => {
+        const mockAgent = makeRecipientAgent(noRemoteServiceStub(), routeLocalQueriesByProtocolPath({
+          [ENCRYPTION_CONTROL_AUDIENCE_PATH] : makeAudienceQueryReply('wrapped-role-key', { kty: 'OKP', crv: 'X25519', x: 'AAAA' }),
+          [ENCRYPTION_CONTROL_DELIVERY_PATH] : { reply: { status: { code: 401, detail: 'Unauthorized' } } },
+        }));
+
+        const decryptError = await decryptAndCatch(mockAgent);
+
+        expect(decryptError.cause).toBe('remote-unverifiable');
+        expect(decryptError.cause).not.toBe('delivery-missing');
+        expect(decryptError.detail).toContain('$encryption/delivery lookup');
+        expect(decryptError.detail).toContain('status 401');
+      });
+
+      it('should classify a non-200 role lookup on a local-only DID as remote-unverifiable, not role-not-held', async () => {
+        // A real audience key so the delivered payload passes key-material verification and the
+        // flow reaches the role-assignment lookup, whose local reply is a 500.
+        const audienceKey = await generateAudienceKey({ contextId: '', protocol: TAXONOMY_PROTOCOL, rolePath: 'admin' });
+        const deliveryMessage = {
+          recordId   : 'delivery-role-check',
+          descriptor : {
+            protocol     : TAXONOMY_PROTOCOL,
+            protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+            recipient    : 'did:example:bob',
+            tags         : {
+              protocol           : TAXONOMY_PROTOCOL,
+              rolePath           : 'admin',
+              contextId          : '',
+              keyId              : audienceKey.keyId,
+              recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
+            },
+          },
+          encodedData: Encoder.bytesToBase64Url(new Uint8Array([1])),
+        };
+        const deliveryPayload = {
+          protocol    : TAXONOMY_PROTOCOL,
+          rolePath    : 'admin',
+          contextId   : '',
+          keyId       : audienceKey.keyId,
+          keyMaterial : audienceKey.keyMaterial,
+        };
+        const dwnSdk = await import('@enbox/dwn-sdk-js');
+        sinon.stub(dwnSdk.Records, 'decrypt').callsFake(async (message: any): Promise<any> => {
+          if (message.recordId === 'delivery-role-check') {
+            return DataStream.fromBytes(Encoder.objectToBytes(deliveryPayload));
+          }
+          throw new Error('no matching key encryption entry in test');
+        });
+        const mockAgent = makeRecipientAgent(noRemoteServiceStub(), routeLocalQueriesByProtocolPath({
+          [ENCRYPTION_CONTROL_AUDIENCE_PATH] : makeAudienceQueryReply(audienceKey.keyId, audienceKey.keyMaterial.publicKeyJwk as any),
+          [ENCRYPTION_CONTROL_DELIVERY_PATH] : { reply: { status: { code: 200, detail: 'OK' }, entries: [deliveryMessage] } },
+          'admin'                            : { reply: { status: { code: 500, detail: 'Internal Server Error' } } },
+        }));
+
+        const decryptError = await catchDecryptError(mockAgent, audienceKey.keyId);
+
+        expect(decryptError.cause).toBe('remote-unverifiable');
+        expect(decryptError.cause).not.toBe('role-not-held');
+        expect(decryptError.detail).toContain('could not be verified');
+        expect(decryptError.detail).not.toContain('not an active holder');
       });
     });
 
