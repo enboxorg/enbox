@@ -207,6 +207,40 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await clock.runAllAsync();
   });
 
+  it('emits protocol-scoped repair-completion events without leaking runtime-scope internals', async () => {
+    const clock = sinon.useFakeTimers();
+    const fixture = createFixture();
+    const protocol = 'https://proto.example/chat';
+    const state = link('repairing');
+    state.scope = { kind: 'protocolSet', protocols: [protocol] };
+    state.connectivity = 'offline';
+    const controller = activate(fixture, state);
+
+    await fixture.coordinator.repair(controller);
+
+    const completionEvents = fixture.operations.emitEvent.getCalls()
+      .map((call) => call.args[0] as Record<string, unknown>)
+      .filter((event) => ['repair:completed', 'link:connectivity-change', 'link:status-change'].includes(event.type as string));
+    expect(completionEvents.map((event) => event.type).sort()).toEqual([
+      'link:connectivity-change',
+      'link:status-change',
+      'repair:completed',
+    ]);
+
+    for (const event of completionEvents) {
+      // The event scope is the LINK's protocol scope — never the runtime
+      // scope handle, whose enumerable internals must not reach subscribers.
+      expect(event.protocol).toBe(protocol);
+      expect(event.protocols).toEqual([protocol]);
+      expect('_disposed' in event).toBe(false);
+      expect('_timers' in event).toBe(false);
+      expect('disposed' in event).toBe(false);
+    }
+
+    controller.deactivate();
+    await clock.runAllAsync();
+  });
+
   it('resets and retries a stale pull cursor when subscription open reports ProgressGap', async () => {
     const clock = sinon.useFakeTimers();
     const fixture = createFixture();
