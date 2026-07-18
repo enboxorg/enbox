@@ -140,6 +140,29 @@ export type RecordsQueryResponse = DwnResponseStatus & {
 };
 
 /**
+ * Encapsulates a request to drain every record matching a query from a Decentralized Web Node
+ * (DWN) via `records.queryAll()`.
+ *
+ * Identical to {@link RecordsQueryRequest} except that pagination is managed internally: the
+ * drain pages through results with `pageSize`-sized queries until the cursor is exhausted (or
+ * the optional `maxRecords` safety cap is reached), so callers never hand-write cursor loops.
+ */
+export type RecordsQueryAllRequest = Omit<RecordsQueryRequest, 'pagination'> & {
+  /**
+   * The number of records fetched per underlying query page. Defaults to 100. Tune it down for
+   * very large payload-bearing records, or up to reduce round-trips on small records.
+   */
+  pageSize?: number;
+
+  /**
+   * Optional safety cap on the total number of records yielded. When set, iteration stops after
+   * yielding this many records even if more pages remain — guarding accidental unbounded drains
+   * of very large record sets. When omitted, the drain runs to cursor exhaustion.
+   */
+  maxRecords?: number;
+};
+
+/**
  * Represents a request to read a specific record from a Decentralized Web Node (DWN).
  *
  * This request type is used to specify the target DWN from which the record should be read and any
@@ -240,6 +263,26 @@ export type RecordsWriteRequest = Omit<Partial<DwnMessageParams[DwnInterface.Rec
   data: unknown;
 
   /**
+   * Optional DID specifying the remote target DWN tenant the record will be written to.
+   *
+   * When set, the write targets the specified tenant's remote DWN (via the agent's
+   * `sendDwnRequest`, mirroring how remote reads and queries dispatch) instead of the connected
+   * DID's local DWN. The author stays the connected (grantee) DID — the grantee signs as
+   * themselves — and the remote DWN authorizes the write via `protocolRole` (role-invocation) or
+   * grant parameters (`permissionGrantId`/`delegatedGrant`). The returned {@link Record} is
+   * stamped with `remoteOrigin` so subsequent data reads target the owner tenant.
+   *
+   * Remote-path boundaries:
+   * - {@link RecordsWriteRequest.recipientRolePublicKey} is NOT supported with `from` — the
+   *   agent throws rather than silently ignoring the key (see that field's doc).
+   * - {@link RecordsWriteResponse.audienceKeyDelivery} is never present on remote writes —
+   *   role-audience key delivery provisioning is a local-processing (`processRequest`-only)
+   *   concept.
+   * - `store` applies to the local path only and has no effect when `from` is set.
+   */
+  from?: string;
+
+  /**
    * Optional flag indicating whether the record should be immediately stored. If true, the record
    * is persisted in the DWN as part of the write operation. If false, the record is created,
    * signed, and returned but not persisted.
@@ -265,6 +308,10 @@ export type RecordsWriteRequest = Omit<Partial<DwnMessageParams[DwnInterface.Rec
    * outcome means the delivery record was written wrapping THIS supplied key; it does not assert
    * the intended recipient can decrypt it — supplying the wrong key yields `delivered: true` and
    * a delivery the real recipient cannot decrypt.
+   *
+   * NOT supported together with {@link RecordsWriteRequest.from} — role-audience key delivery is
+   * provisioned on the owner's local DWN via `processRequest` only, so the agent rejects a
+   * supplied key on the remote dispatch path rather than silently ignoring it.
    */
   recipientRolePublicKey?: DwnPublicKeyJwk;
 };
@@ -298,6 +345,10 @@ export type RecordsWriteResponse = DwnResponseStatus & {
    * key could not be resolved is reported here with `delivered: false` instead of failing the
    * write — inspect the outcome and re-write the role record (e.g. with a caller-supplied
    * `recipientRolePublicKey`) to retry delivery.
+   *
+   * Never present for remote writes ({@link RecordsWriteRequest.from} set): delivery
+   * provisioning happens only during local processing (`processRequest`), and its absence on the
+   * remote path is structural — not a delivery failure.
    */
   audienceKeyDelivery?: AudienceKeyDeliveryOutcome;
 };
@@ -306,6 +357,9 @@ export type RecordsWriteResponse = DwnResponseStatus & {
  * Interface to interact with DWN Records and Protocols
  */
 export class DwnApi {
+  /** Default per-page record count used by `records.queryAll()` when no `pageSize` is given. */
+  private static readonly QUERY_ALL_DEFAULT_PAGE_SIZE = 100;
+
   /**
    * Holds the instance of a {@link EnboxAgent} that represents the current execution context for
    * the `DwnApi`. This agent is used to process DWN requests.
@@ -736,6 +790,7 @@ export class DwnApi {
   get records(): {
       delete: (request: RecordsDeleteRequest) => Promise<DwnResponseStatus>;
       query: (request: RecordsQueryRequest) => Promise<RecordsQueryResponse>;
+      queryAll: (request: RecordsQueryAllRequest) => AsyncGenerator<Record, void, undefined>;
       read: (request: RecordsReadRequest) => Promise<RecordsReadResponse>;
       subscribe: (request: RecordsSubscribeRequest) => Promise<RecordsSubscribeResponse>;
       write: (request: RecordsWriteRequest) => Promise<RecordsWriteResponse>;
@@ -884,6 +939,18 @@ export class DwnApi {
         });
 
         return { records, status, cursor };
+      },
+
+      /**
+       * Drain every record matching the given filter, paging through query
+       * results internally so callers never hand-write cursor loops.
+       *
+       * Returns an async generator — iterate it with `for await...of`. A page
+       * that fails with a non-2xx status aborts the drain with a thrown Error
+       * (an iterator has no clean status channel).
+       */
+      queryAll: (request: RecordsQueryAllRequest): AsyncGenerator<Record, void, undefined> => {
+        return this.queryAllRecords(request);
       },
 
       /**
@@ -1122,7 +1189,7 @@ export class DwnApi {
        * requires fetching from the DWN datastore.
        */
       write: async (request: RecordsWriteRequest): Promise<RecordsWriteResponse> => {
-        const { data, store, encryption, recipientRolePublicKey, ...restParams } = request;
+        const { data, from, store, encryption, recipientRolePublicKey, ...restParams } = request;
         const { dataBlob, dataFormat } = dataToBlob(data, restParams.dataFormat);
 
         const messageParams = { ...restParams, dataFormat };
@@ -1131,10 +1198,25 @@ export class DwnApi {
           store,
           messageType : DwnInterface.RecordsWrite,
           messageParams,
+          /**
+           * The `author` is the DID that will sign the message and must be the DID the Enbox app
+           * is connected with — even for cross-tenant writes, the grantee signs as themselves.
+           */
           author      : this.connectedDid,
-          target      : this.connectedDid,
+          /**
+           * The `target` is the DID of the DWN tenant the record will be written to. If `from` is
+           * provided, the write is dispatched to that tenant's remote DWN (mirroring the remote
+           * branch reads use). Otherwise, the record is written to the local DWN.
+           */
+          target      : from ?? this.connectedDid,
           dataStream  : dataBlob,
           encryption,
+          /**
+           * Forwarded verbatim on both paths: the agent REJECTS a supplied key on the remote
+           * (`sendDwnRequest`) path — role-audience key delivery is provisioned via local
+           * `processRequest` only — so caller misuse surfaces as a thrown error, never a
+           * silently dropped key.
+           */
           recipientRolePublicKey,
         };
 
@@ -1156,16 +1238,25 @@ export class DwnApi {
           dwnRequestParams.granteeDid = this.delegateDid;
         }
 
-        const agentResponse = await this.agent.processDwnRequest(dwnRequestParams);
+        let agentResponse: DwnResponse<DwnInterface.RecordsWrite>;
 
+        if (from) {
+          agentResponse = await this.agent.sendDwnRequest(dwnRequestParams);
+        } else {
+          agentResponse = await this.agent.processDwnRequest(dwnRequestParams);
+        }
+
+        // NOTE: `audienceKeyDelivery` is populated by local processing only — the remote
+        // (`sendDwnRequest`) branch never reports one, and none is ever fabricated for it.
         const { message: responseMessage, reply: { status }, audienceKeyDelivery } = agentResponse;
 
         let record: Record | undefined;
         if (200 <= status.code && status.code <= 299) {
           const recordOptions = {
             /**
-             * Assume the author is the connected DID since the record was just written to the
-             * local DWN.
+             * Assume the author is the connected DID since the record was just signed and written
+             * with the connected DID's key — for cross-tenant writes, the grantee authors the
+             * record in the owner's tenant.
              */
             author       : this.connectedDid,
             /**
@@ -1174,6 +1265,18 @@ export class DwnApi {
              * local DWN.
              */
             connectedDid : this.connectedDid,
+            /**
+             * If the record was written to a remote DWN, set the `remoteOrigin` to the DID of the
+             * target tenant so that subsequent data reads (e.g. `record.data`) are dispatched to
+             * the owner tenant that actually stores the record.
+             */
+            remoteOrigin : from,
+            /**
+             * Stamp the invoked role so follow-up operations on the returned record (data
+             * re-reads, updates) carry the same authorization the write used — mirroring how
+             * query/read/subscribe results are stamped.
+             */
+            protocolRole : messageParams.protocolRole,
             encodedData  : dataBlob,
             delegateDid  : this.delegateDid,
             ...responseMessage,
@@ -1185,5 +1288,40 @@ export class DwnApi {
         return { record, status, ...(audienceKeyDelivery ? { audienceKeyDelivery } : {}) };
       },
     };
+  }
+
+  /**
+   * Drains every record matching the given query request by paging through
+   * results until the pagination cursor is exhausted (or the `maxRecords`
+   * safety cap is reached). Backs `records.queryAll()`.
+   *
+   * @throws `Error` when any underlying query page returns a non-2xx status.
+   */
+  private async * queryAllRecords(request: RecordsQueryAllRequest): AsyncGenerator<Record, void, undefined> {
+    const { pageSize = DwnApi.QUERY_ALL_DEFAULT_PAGE_SIZE, maxRecords, ...queryRequest } = request;
+
+    let cursor: DwnPaginationCursor | undefined;
+    let yielded = 0;
+
+    do {
+      const { status, records, cursor: nextCursor } = await this.records.query({
+        ...queryRequest,
+        pagination: { limit: pageSize, cursor },
+      });
+
+      if (status.code < 200 || status.code > 299) {
+        throw new Error(`DwnApi: records.queryAll() page failed with status ${status.code}: ${status.detail}`);
+      }
+
+      for (const record of records) {
+        if (maxRecords !== undefined && yielded >= maxRecords) {
+          return;
+        }
+        yield record;
+        yielded += 1;
+      }
+
+      cursor = nextCursor;
+    } while (cursor !== undefined && (maxRecords === undefined || yielded < maxRecords));
   }
 }

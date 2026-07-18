@@ -122,6 +122,31 @@ export type RecordUpdateParams = {
   data?: unknown;
 
   /**
+   * Optional DID of a remote DWN tenant to dispatch this update to.
+   *
+   * Cross-tenant routing is strictly opt-in: the update is sent to the remote
+   * tenant's DWN (via the agent's `sendDwnRequest`) only when `from` is set
+   * and differs from the connected DID. The author stays the connected
+   * (grantee) DID — the grantee signs as themselves, and the remote DWN
+   * authorizes the write via `protocolRole` or grant parameters. A record
+   * that was merely *read* from a remote tenant still updates **locally**
+   * unless `from` is passed explicitly.
+   *
+   * The returned record is stamped with `remoteOrigin` (from `from`, falling
+   * back to the record's existing remote origin) so its subsequent data
+   * re-reads target the owner tenant.
+   *
+   * Remote-path boundaries:
+   * - {@link RecordUpdateParams.recipientRolePublicKey} is NOT supported with
+   *   `from` — role-audience key delivery is provisioned on the owner's local
+   *   DWN via `processRequest` only, and the agent throws rather than
+   *   silently ignoring the key.
+   * - `audienceKeyDelivery` is never reported for remote updates — delivery
+   *   provisioning is a local-processing (`processRequest`-only) concept.
+   */
+  from?: string;
+
+  /**
    * The Content Identifier (CID) of the data. Updating this value changes the reference to the data
    * associated with the record.
    */
@@ -179,6 +204,10 @@ export type RecordUpdateParams = {
    * was written wrapping THIS supplied key; it does not assert the intended
    * recipient can decrypt it — supplying the wrong key yields
    * `delivered: true` and a delivery the real recipient cannot decrypt.
+   *
+   * NOT supported together with {@link RecordUpdateParams.from} — remote
+   * dispatch never provisions role-audience key delivery, and the agent
+   * throws rather than silently ignoring the supplied key.
    */
   recipientRolePublicKey?: DwnPublicKeyJwk;
 };
