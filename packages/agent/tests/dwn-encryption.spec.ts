@@ -752,13 +752,13 @@ describe('dwn-encryption', () => {
           expect(decryptError.detail).toContain('delivery lookup exploded in test');
         });
 
-        it('should keep the failure typed when the role lookup rejects outright', async () => {
+        it('should classify an outright role lookup rejection as remote-unverifiable', async () => {
           const { mockAgent, keyId } = await makeRoleVerificationAgent(new Error('role lookup exploded in test'));
 
           const decryptError = await catchDecryptError(mockAgent, keyId);
 
-          expect(decryptError.cause).toBe('unknown');
-          expect(decryptError.detail).toContain('Skipped audience delivery');
+          expect(decryptError.cause).toBe('remote-unverifiable');
+          expect(decryptError.detail).toContain('could not be verified');
           expect(decryptError.detail).toContain('role lookup exploded in test');
         });
 

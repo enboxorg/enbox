@@ -310,7 +310,10 @@ class AudienceDecryptFailureAccumulator {
     const outcome = this.resolveOutcome();
     const detailParts = [outcome.detail ?? params.fallbackDetail];
     if (this._routes.length > 1) {
-      detailParts.push(`Role routes: ${this._routes.map((route): string => `${route.label}: ${route.cause}`).join('; ')}.`);
+      const routeSummary = this._routes
+        .map((route): string => `${route.label}: ${route.cause}`)
+        .join('; ');
+      detailParts.push(`Role routes: ${routeSummary}.`);
     }
     detailParts.push(...this._notes.slice(0, 5));
     return new AudienceDecryptError({
@@ -360,8 +363,8 @@ class AudienceRoleNotHeldError extends Error {
  * DWN unreachable), so the absence must not be read as revocation.
  */
 class AudienceRoleUnverifiableError extends Error {
-  public constructor() {
-    super('audience delivery recipient role could not be verified: the role lookup returned no authoritative result; absence cannot be asserted.');
+  public constructor(detail = 'the role lookup returned no authoritative result') {
+    super(`audience delivery recipient role could not be verified: ${detail}; absence cannot be asserted.`);
   }
 }
 
@@ -2483,25 +2486,32 @@ async function verifyAudienceKeyRoleAssignment(params: {
     throw new AudienceRoleNotHeldError();
   }
 
-  const { response, remote } = await processDwnReadThroughDetailed({
-    process : params.agent.processDwnRequest.bind(params.agent),
-    send    : params.agent.sendDwnRequest.bind(params.agent),
-  }, {
-    author        : params.deliveryReadActor.authorDid,
-    granteeDid    : params.deliveryReadActor.granteeDid,
-    target        : params.sourceDid,
-    messageType   : DwnInterface.RecordsQuery,
-    messageParams : {
-      delegatedGrant : params.deliveryReadActor.delegatedGrant,
-      filter         : {
-        ...(contextIdPrefix === undefined ? {} : { contextId: contextIdPrefix }),
-        recipient    : params.recipientDid,
-        protocol     : params.protocol,
-        protocolPath : params.rolePath,
+  let roleLookup: { response: DwnResponse<DwnInterface.RecordsQuery>; remote: RemoteReadOutcome };
+  try {
+    roleLookup = await processDwnReadThroughDetailed({
+      process : params.agent.processDwnRequest.bind(params.agent),
+      send    : params.agent.sendDwnRequest.bind(params.agent),
+    }, {
+      author        : params.deliveryReadActor.authorDid,
+      granteeDid    : params.deliveryReadActor.granteeDid,
+      target        : params.sourceDid,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : {
+        delegatedGrant : params.deliveryReadActor.delegatedGrant,
+        filter         : {
+          ...(contextIdPrefix === undefined ? {} : { contextId: contextIdPrefix }),
+          recipient    : params.recipientDid,
+          protocol     : params.protocol,
+          protocolPath : params.rolePath,
+        },
       },
-    },
-  }, hasRecordsQueryEntries);
+    }, hasRecordsQueryEntries);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new AudienceRoleUnverifiableError(`the role lookup failed (${message})`);
+  }
 
+  const { response, remote } = roleLookup;
   const reply = response.reply;
   // A failed lookup is not evidence of absence: role-not-held may only be asserted from an
   // authoritative 200 reply. A non-200 reply (e.g. a 401/500 local reply on a tenant with no
