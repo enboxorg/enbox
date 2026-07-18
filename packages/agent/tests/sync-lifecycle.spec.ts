@@ -55,13 +55,14 @@ describe('SyncEngineLevel lifecycle', () => {
 
     const syncPromise = engine.sync();
     await syncStarted.promise;
-    engine['_syncIntervalId'] = setInterval(() => {}, 60_000);
+    const runtime = engine['_runtime'];
+    runtime.armInterval('syncInterval', () => {}, 60_000);
 
     let closeCompleted = false;
     const closePromise = engine.close().then((): void => { closeCompleted = true; });
     await Promise.resolve();
 
-    expect(engine['_syncIntervalId']).toBeUndefined();
+    expect(runtime.disposed).toBe(true);
     expect(closeCompleted).toBe(false);
     expect(db.status).toBe('open');
 
@@ -86,12 +87,13 @@ describe('SyncEngineLevel lifecycle', () => {
 
     const syncPromise = engine.sync();
     await syncStarted.promise;
-    engine['_syncIntervalId'] = setInterval(() => {}, 60_000);
+    const runtime = engine['_runtime'];
+    runtime.armInterval('syncInterval', () => {}, 60_000);
 
     const clearPromise = engine.clear();
     await Promise.resolve();
 
-    expect(engine['_syncIntervalId']).toBeUndefined();
+    expect(runtime.disposed).toBe(true);
     expect(await engine.getIdentityOptions('did:example:alice')).toBeDefined();
 
     releaseSync.resolve();
@@ -702,12 +704,12 @@ describe('SyncEngineLevel lifecycle', () => {
   it('should ignore a stale live integrity callback after stop', async () => {
     const engine = new SyncEngineLevel({ db });
     const sync = sinon.stub(engine, 'sync').resolves();
-    const generation = engine['_engineGeneration'];
+    const staleRuntime = engine['_runtime'];
 
     await engine.stopSync();
     await (engine as unknown as {
-      runLiveIntegrityCheck(generation: number): Promise<void>;
-    }).runLiveIntegrityCheck(generation);
+      runLiveIntegrityCheck(runtime: unknown): Promise<void>;
+    }).runLiveIntegrityCheck(staleRuntime);
 
     expect(sync.called).toBe(false);
   });

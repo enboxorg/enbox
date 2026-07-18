@@ -84,6 +84,7 @@ import { SyncQuotaStoreLevel } from './sync-quota-store-level.js';
 import { SyncReplicationLinkStoreLevel } from './sync-replication-link-store-level.js';
 import { SyncRunCancelledError } from './sync-runtime-errors.js';
 import { SyncRunCoordinator } from './sync-run-coordinator.js';
+import { SyncRuntime } from './sync-runtime.js';
 import { SyncScopeClosureValidator } from './sync-scope-closure-validator.js';
 import { SyncStatusReporter } from './sync-status-reporter.js';
 import { SyncTargetPlanner } from './sync-target-planner.js';
@@ -187,11 +188,17 @@ export class SyncEngineLevel implements SyncEngine {
   private readonly _livePushCoordinator: SyncLivePushCoordinator;
   private readonly _quotaManager: SyncQuotaManager;
   private readonly _runCoordinator: SyncRunCoordinator;
+
+  /**
+   * Ownership scope for the current runtime generation's timers. Replaced on
+   * every `startSync` after the previous generation's work has settled;
+   * disposed by every runtime transition, which cancels all owned timers.
+   */
+  private _runtime = new SyncRuntime();
   private readonly _scopeClosureValidator: SyncScopeClosureValidator;
   private readonly _statusReporter: SyncStatusReporter;
   private readonly _targetPlanner: SyncTargetPlanner;
   private _targetResolver?: SyncTargetResolver;
-  private _syncIntervalId?: ReturnType<typeof setInterval>;
 
   /**
    * Durable replication ledger — persists per-link checkpoint state.
@@ -1015,6 +1022,10 @@ export class SyncEngineLevel implements SyncEngine {
     this._lifecycle.clearIdentityTaskGroups();
     this._lifecycle.resumeTaskAdmission();
 
+    // The previous generation's scope was disposed by the transition above;
+    // the new generation gets a fresh scope once its predecessor's work has
+    // fully settled.
+    this._runtime = new SyncRuntime();
     this._syncMode = mode;
 
     if (mode === 'live') {
@@ -1052,10 +1063,7 @@ export class SyncEngineLevel implements SyncEngine {
     // the generation change, and resolves without running.
     this._pendingSyncRun = undefined;
     this._lifecycle.pauseTaskAdmission();
-    if (this._syncIntervalId) {
-      clearInterval(this._syncIntervalId);
-      this._syncIntervalId = undefined;
-    }
+    this._runtime.dispose();
     this.invalidateSyncTargetsCache();
     this._syncMode = undefined;
   }
@@ -1110,16 +1118,18 @@ export class SyncEngineLevel implements SyncEngine {
   // Poll-mode sync
   // ---------------------------------------------------------------------------
 
+  /** Runtime-scope timer key for the poll interval / live settle check. */
+  private static readonly SYNC_INTERVAL_TIMER = 'syncInterval';
+
   private async startPollSync(intervalMilliseconds: number): Promise<void> {
-    const generation = this._engineGeneration;
+    const runtime = this._runtime;
     const intervalSync = async (): Promise<void> => {
-      if (this._engineGeneration !== generation) { return; }
+      if (runtime.disposed) { return; }
       if (this._lifecycle.isSyncInProgress) {
         return;
       }
 
-      clearInterval(this._syncIntervalId);
-      this._syncIntervalId = undefined;
+      runtime.clearTimer(SyncEngineLevel.SYNC_INTERVAL_TIMER);
 
       try {
         await this.sync(undefined, { verifyConvergence: true });
@@ -1132,15 +1142,16 @@ export class SyncEngineLevel implements SyncEngine {
 
       const effectiveInterval = this._connectivityManager.getPollInterval(intervalMilliseconds);
 
-      if (this._engineGeneration !== generation) { return; }
-      this._syncIntervalId ??= this.scheduleSyncInterval(intervalSync, effectiveInterval);
+      // Failure backoff re-arms with a widened interval; a concurrent tick
+      // that already re-armed wins. A disposed runtime refuses the arm.
+      runtime.armIntervalIfAbsent(
+        SyncEngineLevel.SYNC_INTERVAL_TIMER,
+        this.supervisedTick(intervalSync),
+        effectiveInterval,
+      );
     };
 
-    if (this._syncIntervalId) {
-      clearInterval(this._syncIntervalId);
-    }
-
-    this._syncIntervalId = this.scheduleSyncInterval(intervalSync, intervalMilliseconds);
+    runtime.armInterval(SyncEngineLevel.SYNC_INTERVAL_TIMER, this.supervisedTick(intervalSync), intervalMilliseconds);
 
     // Initiate an immediate sync.
     if (!this._lifecycle.isSyncInProgress) {
@@ -1155,10 +1166,11 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  private scheduleSyncInterval(operation: () => Promise<void>, intervalMilliseconds: number): ReturnType<typeof setInterval> {
-    return setInterval((): void => {
+  /** Wrap a scheduled operation so each tick runs as supervised background work. */
+  private supervisedTick(operation: () => Promise<void>): () => void {
+    return (): void => {
       void this._lifecycle.runBackgroundTask(operation);
-    }, intervalMilliseconds);
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -1173,7 +1185,7 @@ export class SyncEngineLevel implements SyncEngine {
    * 4. Schedules an infrequent durable feed settle check at `interval`.
    */
   private async startLiveSync(intervalMilliseconds: number): Promise<void> {
-    const generation = this._engineGeneration;
+    const runtime = this._runtime;
 
     // Step 0: Register browser connectivity listeners for instant recovery
     // on network switch, sleep/wake, or tab foregrounding. No-op in Node.
@@ -1195,13 +1207,13 @@ export class SyncEngineLevel implements SyncEngine {
     await Promise.allSettled(syncTargets.map(t => this.initializeLinkTarget(t)));
 
     // Step 3: Schedule infrequent durable feed settle check.
-    const integrityCheck = async (): Promise<void> => this.runLiveIntegrityCheck(generation);
+    const integrityCheck = async (): Promise<void> => this.runLiveIntegrityCheck(runtime);
 
-    this._syncIntervalId = this.scheduleSyncInterval(integrityCheck, intervalMilliseconds);
+    runtime.armInterval(SyncEngineLevel.SYNC_INTERVAL_TIMER, this.supervisedTick(integrityCheck), intervalMilliseconds);
   }
 
-  private async runLiveIntegrityCheck(generation: number): Promise<void> {
-    if (this._engineGeneration !== generation || this._lifecycle.isSyncInProgress) {
+  private async runLiveIntegrityCheck(runtime: SyncRuntime): Promise<void> {
+    if (runtime.disposed || this._lifecycle.isSyncInProgress) {
       return;
     }
 

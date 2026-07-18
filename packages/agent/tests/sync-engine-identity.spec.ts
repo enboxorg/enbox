@@ -917,10 +917,9 @@ describe('SyncEngineLevel — identity management', () => {
 
     it('should return false when only the integrity timer is active', () => {
       const engine = new SyncEngineLevel({ db });
-      (engine as any)._syncIntervalId = setInterval(() => {}, 60_000);
+      (engine as any)._runtime.armInterval('syncInterval', () => {}, 60_000);
       expect(engine.hasActiveSubscriptions).toBe(false);
-      clearInterval((engine as any)._syncIntervalId);
-      (engine as any)._syncIntervalId = undefined;
+      (engine as any)._runtime.dispose();
     });
 
     it('should return true when local push subscriptions are open', () => {
@@ -1030,11 +1029,11 @@ describe('SyncEngineLevel — identity management', () => {
     it('hasActiveSubscriptions should return false after last identity removed', () => {
       const engine = new SyncEngineLevel({ db });
       // Timer left over from live mode, but no subscriptions.
-      (engine as any)._syncIntervalId = setInterval(() => {}, 60_000);
+      (engine as any)._runtime.armInterval('syncInterval', () => {}, 60_000);
 
       expect(engine.hasActiveSubscriptions).toBe(false);
 
-      clearInterval((engine as any)._syncIntervalId);
+      (engine as any)._runtime.dispose();
     });
   });
 
