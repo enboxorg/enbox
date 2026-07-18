@@ -588,6 +588,24 @@ describe('SyncEngineLevel — identity management', () => {
       }
     });
 
+    it('updateIdentityOptions should initialize replacement live targets after cancelling a pending retry', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const did = 'did:example:replacementretry';
+      await engine.registerIdentity({ did, options: { protocols: 'all' } });
+      (engine as any)._syncMode = 'live';
+
+      const initializeReplacement = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
+      const linkKey = `${did}^https://dwn.example.com^projection-1^epoch-1`;
+      (engine as any).scheduleLinkInitRetry({ did }, linkKey, 60_000);
+
+      const options = { protocols: ['https://new.example'] };
+      await engine.updateIdentityOptions({ did, options });
+
+      expect((engine as any)._runtime.hasTimers((key: string) => key === `linkInitRetry:${linkKey}`)).toBe(false);
+      expect(initializeReplacement.calledOnceWith(did, options)).toBe(true);
+      (engine as any)._runtime.dispose();
+    });
+
     it('unregisterIdentity should cancel a pending init retry even without an active link', async () => {
       const clock = sinon.useFakeTimers();
       try {
@@ -609,7 +627,7 @@ describe('SyncEngineLevel — identity management', () => {
       }
     });
 
-    it('updateIdentityOptions should drain an already-started init retry before deciding the rebuild', async () => {
+    it('updateIdentityOptions should drain an already-started init retry before starting replacement targets', async () => {
       const engine = new SyncEngineLevel({ db });
       const did = 'did:example:startedretry';
       await engine.registerIdentity({ did, options: { protocols: 'all' } });
@@ -622,6 +640,10 @@ describe('SyncEngineLevel — identity management', () => {
         await retryGate;
         events.push('stale-retry-finished');
         return { status: 'failed' };
+      });
+      const initializeReplacement = sinon.stub(engine as any, 'addIdentityToLiveSync').callsFake(async (): Promise<Set<string>> => {
+        events.push('replacement-started');
+        return new Set();
       });
 
       // Replicate a Retry-After timer that fired BEFORE the update started:
@@ -636,7 +658,8 @@ describe('SyncEngineLevel — identity management', () => {
         }
       });
 
-      const updatePromise = engine.updateIdentityOptions({ did, options: { protocols: 'all' } })
+      const options = { protocols: ['https://replacement.example'] };
+      const updatePromise = engine.updateIdentityOptions({ did, options })
         .then((): void => { events.push('update-done'); });
 
       // The update must block on the in-flight retry, not complete around it
@@ -649,7 +672,8 @@ describe('SyncEngineLevel — identity management', () => {
 
       releaseRetry();
       await updatePromise;
-      expect(events).toEqual(['stale-retry-finished', 'update-done']);
+      expect(events).toEqual(['stale-retry-finished', 'replacement-started', 'update-done']);
+      expect(initializeReplacement.calledOnceWith(did, options)).toBe(true);
     });
 
     it('cancelLinkInitRetriesForDid should not cancel a retry for a DID that merely extends the mutated DID', async () => {

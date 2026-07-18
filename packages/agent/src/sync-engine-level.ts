@@ -814,27 +814,25 @@ export class SyncEngineLevel implements SyncEngine {
     this.invalidateSyncTargetsCache();
 
     // A pending rate-limit init retry captured the PREVIOUS options' target
-    // (old scope, old authorization epoch). Cancel before deciding anything
-    // else: arming is token-checked, so after this line no NEW retry task
-    // can start for the superseded options — even from a firing the event
-    // loop had already queued.
+    // (old scope, old authorization epoch). Remember that it represented an
+    // active live-sync attempt before cancelling it: the replacement options
+    // still need their own live links even though the rate-limited link has no
+    // controller yet. The runtime's ownership-token check neutralizes a timer
+    // firing that was queued but had not started before this cancellation.
+    const hadPendingLinkInitRetry = this.hasLinkInitRetriesForDid(did);
     this.cancelLinkInitRetriesForDid(did);
 
     // A retry that fired earlier may already be RUNNING as an identity task.
-    // It is invisible to timer cancellation and, with no controller active
-    // yet, would slip past the rebuild gate below and activate the
-    // superseded scope after this update returns. Drain it first: if it
-    // activates a link, the rebuild decision now sees that link and tears it
-    // down; if it re-arms a retry on failure, the second cancellation clears
-    // that timer.
+    // It is invisible to timer cancellation. Treat armed, running, and active
+    // states alike as a prior live runtime that must be torn down. The normal
+    // identity teardown pauses task admission before settling, then cancels
+    // any retry re-armed by work that was already in flight.
     const identityTaskGroup = this._lifecycle.getIdentityTaskGroup(did);
-    if (!this.hasActiveLinksForDid(did) && identityTaskGroup.size > 0) {
-      await identityTaskGroup.settle();
-      this.cancelLinkInitRetriesForDid(did);
-    }
-
-    const rebuildLiveLinks = this._syncMode === 'live' && this.hasActiveLinksForDid(did);
-    if (rebuildLiveLinks) {
+    const hadPriorLiveRuntime = hadPendingLinkInitRetry ||
+      identityTaskGroup.size > 0 ||
+      this.hasActiveLinksForDid(did);
+    const rebuildLiveLinks = this._syncMode === 'live' && hadPriorLiveRuntime;
+    if (hadPriorLiveRuntime) {
       await this.removeIdentityFromLiveSync(did);
     }
 
@@ -1510,6 +1508,13 @@ export class SyncEngineLevel implements SyncEngine {
   private isLinkInitRetryTimerKeyForDid(timerKey: string, did: string): boolean {
     return SyncEngineLevel.isLinkInitRetryTimerKey(timerKey) &&
       this.isLinkKeyForDid(timerKey.slice(SyncEngineLevel.LINK_INIT_RETRY_TIMER_PREFIX.length), did);
+  }
+
+  /** Whether an identity has any armed rate-limit link-initialization retry. */
+  private hasLinkInitRetriesForDid(did: string): boolean {
+    return this._runtime.hasTimers(
+      (timerKey: string): boolean => this.isLinkInitRetryTimerKeyForDid(timerKey, did),
+    );
   }
 
   /** Cancel pending rate-limit init retries whose captured targets belong to an identity. */
