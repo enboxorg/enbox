@@ -1,7 +1,7 @@
 import type { MessagesQueryReplyEntry } from '@enbox/dwn-sdk-js';
 
-import type { SyncDeferredPullState } from '../src/sync-deferred-pull-store.js';
 import type { SyncTarget } from '../src/sync-target-resolver.js';
+import type { SyncDeferredPullState, SyncDeferredPullStore } from '../src/sync-deferred-pull-store.js';
 
 import sinon from 'sinon';
 
@@ -9,6 +9,11 @@ import { Level } from 'level';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
+
+type Deferred<Value> = {
+  promise: Promise<Value>;
+  resolve: (value: Value | PromiseLike<Value>) => void;
+};
 
 describe('SyncEngineLevel dead letter tracking', () => {
   let db: Level<string, string>;
@@ -20,6 +25,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
   });
 
   afterEach(async () => {
+    sinon.restore();
     await db.sublevel('deadLetters').clear();
     await db.sublevel('deferredPulls').clear();
     await db.sublevel('replicationLinks').clear();
@@ -184,21 +190,35 @@ describe('SyncEngineLevel dead letter tracking', () => {
     }]);
   });
 
-  it('should not resurrect a deferral cleared by a concurrent admission mid-record', async () => {
+  it('should serialize admission cleanup after the final deferred-state recheck and put', async () => {
     const messageCid = 'cid-raced-record';
     const tenantDid = 'did:example:alice';
-    const store = (syncEngine as any)._deferredPullStore;
+    const remoteEndpoint = 'https://dwn.example';
+    const store = (syncEngine as unknown as { _deferredPullStore: SyncDeferredPullStore })._deferredPullStore;
     const aged: SyncDeferredPullState = {
       attempts        : 3,
       firstDeferredAt : new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
       lastDeferredAt  : new Date().toISOString(),
     };
-    const get = sinon.stub(store, 'get');
-    get.onFirstCall().resolves(aged);
-    // The concurrent admission cleared the row between the merge read and
-    // the write-back: the merge must not resurrect it.
-    get.onSecondCall().resolves(undefined);
-    const put = sinon.stub(store, 'put').resolves();
+    await store.put(tenantDid, messageCid, remoteEndpoint, aged);
+
+    const secondReadCompleted = deferred<void>();
+    const releaseSecondRead = deferred<void>();
+    const originalGet = store.get.bind(store);
+    let readCount = 0;
+    sinon.stub(store, 'get').callsFake(async (
+      did: string,
+      cid: string,
+      endpoint: string,
+    ): Promise<SyncDeferredPullState | undefined> => {
+      const state = await originalGet(did, cid, endpoint);
+      readCount++;
+      if (readCount === 2) {
+        secondReadCompleted.resolve();
+        await releaseSecondRead.promise;
+      }
+      return state;
+    });
 
     const internal = syncEngine as unknown as {
       deadLetterExpiredDeferredPull(
@@ -206,36 +226,60 @@ describe('SyncEngineLevel dead letter tracking', () => {
         entry: MessagesQueryReplyEntry,
         detail: string | undefined,
       ): Promise<boolean>;
+      trackRemoteFeedAppliedCids(messageCids: string[], target: SyncTarget): Promise<void>;
     };
-    const promoted = await internal.deadLetterExpiredDeferredPull(
-      target('did:example:alice'),
+    const expiry = internal.deadLetterExpiredDeferredPull(
+      target(tenantDid),
       { messageCid },
       'dependency unavailable',
     );
+    await secondReadCompleted.promise;
 
-    expect(promoted).toBe(true);
-    expect(put.notCalled).toBe(true);
+    let admissionCompleted = false;
+    const admission = internal.trackRemoteFeedAppliedCids([messageCid], target(tenantDid)).then((): void => {
+      admissionCompleted = true;
+    });
+    await Promise.resolve();
+
+    expect(admissionCompleted).toBe(false);
+
+    releaseSecondRead.resolve();
+    expect(await expiry).toBe(true);
+    await admission;
+
+    expect(await store.get(tenantDid, messageCid, remoteEndpoint)).toBeUndefined();
     expect(await syncEngine.getFailedMessages(tenantDid)).toEqual([]);
-    sinon.restore();
   });
 
-  it('should not dead-letter a deferral cleared between the age check and the write', async () => {
+  it('should serialize admission cleanup after the final expiry read and dead-letter write', async () => {
     const messageCid = 'cid-raced-expiry';
     const tenantDid = 'did:example:alice';
-    const store = (syncEngine as any)._deferredPullStore;
+    const remoteEndpoint = 'https://dwn.example';
+    const store = (syncEngine as unknown as { _deferredPullStore: SyncDeferredPullStore })._deferredPullStore;
     const aged: SyncDeferredPullState = {
       attempts        : 3,
       firstDeferredAt : new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
       lastDeferredAt  : new Date().toISOString(),
     };
-    const get = sinon.stub(store, 'get');
-    get.onFirstCall().resolves(aged);
-    get.onSecondCall().resolves(aged);
-    // The admission's clear landed after the merge write but before the
-    // dead-letter decision: the expiry path must yield, not dead-letter an
-    // already-admitted message.
-    get.onThirdCall().resolves(undefined);
-    sinon.stub(store, 'put').resolves();
+    await store.put(tenantDid, messageCid, remoteEndpoint, aged);
+
+    const finalReadCompleted = deferred<void>();
+    const releaseFinalRead = deferred<void>();
+    const originalGet = store.get.bind(store);
+    let readCount = 0;
+    sinon.stub(store, 'get').callsFake(async (
+      did: string,
+      cid: string,
+      endpoint: string,
+    ): Promise<SyncDeferredPullState | undefined> => {
+      const state = await originalGet(did, cid, endpoint);
+      readCount++;
+      if (readCount === 3) {
+        finalReadCompleted.resolve();
+        await releaseFinalRead.promise;
+      }
+      return state;
+    });
 
     const internal = syncEngine as unknown as {
       deadLetterExpiredDeferredPull(
@@ -243,16 +287,30 @@ describe('SyncEngineLevel dead letter tracking', () => {
         entry: MessagesQueryReplyEntry,
         detail: string | undefined,
       ): Promise<boolean>;
+      trackRemoteFeedAppliedCids(messageCids: string[], target: SyncTarget): Promise<void>;
     };
-    const promoted = await internal.deadLetterExpiredDeferredPull(
-      target('did:example:alice'),
+    const expiry = internal.deadLetterExpiredDeferredPull(
+      target(tenantDid),
       { messageCid },
       'dependency unavailable',
     );
+    await finalReadCompleted.promise;
 
-    expect(promoted).toBe(true);
+    let admissionCompleted = false;
+    const admission = internal.trackRemoteFeedAppliedCids([messageCid], target(tenantDid)).then((): void => {
+      admissionCompleted = true;
+    });
+    await Promise.resolve();
+
+    expect(admissionCompleted).toBe(false);
     expect(await syncEngine.getFailedMessages(tenantDid)).toEqual([]);
-    sinon.restore();
+
+    releaseFinalRead.resolve();
+    expect(await expiry).toBe(true);
+    await admission;
+
+    expect(await store.get(tenantDid, messageCid, remoteEndpoint)).toBeUndefined();
+    expect(await syncEngine.getFailedMessages(tenantDid)).toEqual([]);
   });
 
   it('should clear deferred-pull retry state when an identity is unregistered', async () => {
@@ -301,5 +359,13 @@ describe('SyncEngineLevel dead letter tracking', () => {
       remoteEndpoint : params.remoteEndpoint,
       tenantDid      : params.tenantDid,
     });
+  }
+
+  function deferred<Value>(): Deferred<Value> {
+    let resolve!: (value: Value | PromiseLike<Value>) => void;
+    const promise = new Promise<Value>((promiseResolve) => {
+      resolve = promiseResolve;
+    });
+    return { promise, resolve };
   }
 });
