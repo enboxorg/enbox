@@ -776,6 +776,38 @@ describe('SyncEngineLevel lifecycle', () => {
     expect(db.status).toBe('closed');
   });
 
+  it('should cancel a joined sync even when the destructive close() operation fails', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const registeredIdentities = db.sublevel<string, string>('registeredIdentities');
+    await registeredIdentities.put('did:example:alice', JSON.stringify({ protocols: 'all' }));
+
+    const closeStarted = createDeferred();
+    const releaseClose = createDeferred();
+    sinon.stub(db, 'close').callsFake(async (): Promise<void> => {
+      closeStarted.resolve();
+      await releaseClose.promise;
+      throw new Error('close failed');
+    });
+    const getSyncTargets = sinon.stub(engine as never, 'getSyncTargets').resolves([]);
+
+    const closePromise = engine.close();
+    closePromise.catch((): void => {});
+    await closeStarted.promise;
+
+    // The failed destructive operation surfaces to the close() caller, while
+    // the joiner that raced a half-destroyed engine still cancels cleanly:
+    // the generation bump lives in the finally, so a throwing operation
+    // cannot leave queued work runnable against partially destroyed state.
+    // Plain catch handlers pre-attach so neither rejection is ever unhandled.
+    const syncPromise = engine.sync();
+    syncPromise.catch((): void => {});
+    releaseClose.resolve();
+
+    await expect(closePromise).rejects.toThrow('close failed');
+    await expect(syncPromise).rejects.toThrow(SyncRunCancelledError);
+    expect(getSyncTargets.called).toBe(false);
+  });
+
   it('should retry DID-resolution failures while the runtime generation is unchanged', async () => {
     const engine = new SyncEngineLevel({ db });
     const originalBackoff = SyncEngineLevel['DID_RESOLUTION_RETRY_BACKOFF_MS'];
