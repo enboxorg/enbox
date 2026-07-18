@@ -3,6 +3,7 @@ import type { ProgressToken } from '@enbox/dwn-sdk-js';
 import type { SyncFeedConvergenceLinkContext } from './sync-feed-convergence-manager.js';
 import type { SyncIdentityTaskRunner } from './sync-lifecycle-coordinator.js';
 import type { SyncLinkController } from './sync-link-controller.js';
+import type { SyncRuntimeHandle } from './sync-runtime.js';
 import type { SyncTarget } from './sync-target-resolver.js';
 import type {
   NonEmptyStringArray,
@@ -28,7 +29,7 @@ export interface SyncLinkRecoveryCoordinatorOperations {
   clearConvergence(linkKey: string): void;
   emitEvent(event: SyncEvent): void;
   getController(linkKey: string): SyncLinkController | undefined;
-  getGeneration(): number;
+  getRuntimeScope(): SyncRuntimeHandle;
   handleDivergence(
     target: SyncTarget,
     result: SyncDurableFeedReconcileResult,
@@ -158,13 +159,13 @@ export class SyncLinkRecoveryCoordinator {
     const delayMs = this._repairBackoffMs[
       Math.min(attempts - 1, this._repairBackoffMs.length - 1)
     ] ?? 0;
-    const generation = this._operations.getGeneration();
+    const runtimeScope = this._operations.getRuntimeScope();
     const runIdentityTask = this._operations.captureIdentityTaskRunner(link.tenantDid);
     const timer = setTimeout((): void => {
       if (!controller.consumeRepairRetryTimer(timer)) {
         return;
       }
-      if (this.isStale(controller, generation) || link.status !== 'repairing') {
+      if (this.isStale(controller, runtimeScope) || link.status !== 'repairing') {
         return;
       }
       this.startSupervisedRepair(controller, runIdentityTask);
@@ -234,10 +235,10 @@ export class SyncLinkRecoveryCoordinator {
       return false;
     }
 
-    const generation = this._operations.getGeneration();
+    const runtimeScope = this._operations.getRuntimeScope();
     const runIdentityTask = this._operations.captureIdentityTaskRunner(controller.link.tenantDid);
     const timer = setTimeout((): void => {
-      if (!controller.consumeReconcileTimer(timer) || this.isStale(controller, generation)) {
+      if (!controller.consumeReconcileTimer(timer) || this.isStale(controller, runtimeScope)) {
         return;
       }
       void runIdentityTask(async (): Promise<void> => {
@@ -281,7 +282,7 @@ export class SyncLinkRecoveryCoordinator {
 
   private async runRepair(controller: SyncLinkController): Promise<void> {
     const { link } = controller;
-    const generation = this._operations.getGeneration();
+    const runtimeScope = this._operations.getRuntimeScope();
     const attempts = controller.incrementRepairAttempts();
     this._operations.emitEvent({
       type           : 'repair:started',
@@ -292,7 +293,7 @@ export class SyncLinkRecoveryCoordinator {
     });
 
     await controller.closeSubscriptions();
-    if (this.isStale(controller, generation)) {
+    if (this.isStale(controller, runtimeScope)) {
       return;
     }
     controller.resetPullRuntime();
@@ -302,38 +303,38 @@ export class SyncLinkRecoveryCoordinator {
       const outcome = await this._operations.reconcileTarget(
         target,
         undefined,
-        () => !this.isStale(controller, generation),
+        () => !this.isStale(controller, runtimeScope),
       );
-      if (outcome.aborted || this.isStale(controller, generation)) {
+      if (outcome.aborted || this.isStale(controller, runtimeScope)) {
         return;
       }
       this.emitApplied(link, outcome.admittedCids);
 
       const resumeToken = controller.repairResumeToken ?? link.pull.contiguousAppliedToken;
       await this._operations.resetPullCheckpoint(link, resumeToken);
-      if (this.isStale(controller, generation)) {
+      if (this.isStale(controller, runtimeScope)) {
         return;
       }
-      if (!await this.reopenSubscriptions(target, controller, generation)) {
+      if (!await this.reopenSubscriptions(target, controller, runtimeScope)) {
         return;
       }
 
-      await this.completeRepair(controller, generation, outcome.pushFailures ?? []);
+      await this.completeRepair(controller, runtimeScope, outcome.pushFailures ?? []);
     } catch (error: unknown) {
-      await this.handleRepairFailure(controller, generation, attempts, error);
+      await this.handleRepairFailure(controller, runtimeScope, attempts, error);
     }
   }
 
   private async reopenSubscriptions(
     target: SyncLinkRecoveryTarget,
     controller: SyncLinkController,
-    generation: number,
+    runtimeScope: SyncRuntimeHandle,
   ): Promise<boolean> {
-    const pullOpened = await this.openRepairPullSubscription(target, controller, generation);
+    const pullOpened = await this.openRepairPullSubscription(target, controller, runtimeScope);
     if (!pullOpened) {
       return false;
     }
-    if (this.isStale(controller, generation)) {
+    if (this.isStale(controller, runtimeScope)) {
       await controller.closeSubscriptions();
       return false;
     }
@@ -348,7 +349,7 @@ export class SyncLinkRecoveryCoordinator {
       throw error;
     }
 
-    if (!this.isStale(controller, generation)) {
+    if (!this.isStale(controller, runtimeScope)) {
       return true;
     }
     await controller.closeSubscriptions();
@@ -358,7 +359,7 @@ export class SyncLinkRecoveryCoordinator {
   private async openRepairPullSubscription(
     target: SyncLinkRecoveryTarget,
     controller: SyncLinkController,
-    generation: number,
+    runtimeScope: SyncRuntimeHandle,
   ): Promise<boolean> {
     try {
       return await this._operations.openPullSubscription(target, controller);
@@ -371,7 +372,7 @@ export class SyncLinkRecoveryCoordinator {
         `SyncLinkRecoveryCoordinator: Stale pull resume token for ${target.did} -> ${target.dwnUrl}, resetting to start fresh`,
       );
       await this._operations.resetPullCheckpoint(controller.link);
-      if (this.isStale(controller, generation)) {
+      if (this.isStale(controller, runtimeScope)) {
         return false;
       }
       return this._operations.openPullSubscription(target, controller);
@@ -380,7 +381,7 @@ export class SyncLinkRecoveryCoordinator {
 
   private async completeRepair(
     controller: SyncLinkController,
-    generation: number,
+    runtimeScope: SyncRuntimeHandle,
     pushFailures: PushFailure[],
   ): Promise<void> {
     const { link, linkKey } = controller;
@@ -388,30 +389,30 @@ export class SyncLinkRecoveryCoordinator {
     const previousConnectivity = link.connectivity;
     link.connectivity = 'online';
     await this._operations.setStatus(link, 'live');
-    if (this.isStale(controller, generation)) {
+    if (this.isStale(controller, runtimeScope)) {
       return;
     }
 
     if (pushFailures.length > 0) {
       await this._operations.handlePushFailures(linkKey, link, pushFailures);
-      if (this.isStale(controller, generation)) {
+      if (this.isStale(controller, runtimeScope)) {
         return;
       }
     }
 
-    const scope = eventScope(link.scope);
+    const linkEventScope = eventScope(link.scope);
     this._operations.emitEvent({
       type           : 'repair:completed',
       tenantDid      : link.tenantDid,
       remoteEndpoint : link.remoteEndpoint,
-      ...scope,
+      ...linkEventScope,
     });
     if (previousConnectivity !== 'online') {
       this._operations.emitEvent({
         type           : 'link:connectivity-change',
         tenantDid      : link.tenantDid,
         remoteEndpoint : link.remoteEndpoint,
-        ...scope,
+        ...linkEventScope,
         from           : previousConnectivity,
         to             : 'online',
       });
@@ -420,7 +421,7 @@ export class SyncLinkRecoveryCoordinator {
       type           : 'link:status-change',
       tenantDid      : link.tenantDid,
       remoteEndpoint : link.remoteEndpoint,
-      ...scope,
+      ...linkEventScope,
       from           : 'repairing',
       to             : 'live',
     });
@@ -428,11 +429,11 @@ export class SyncLinkRecoveryCoordinator {
 
   private async handleRepairFailure(
     controller: SyncLinkController,
-    generation: number,
+    runtimeScope: SyncRuntimeHandle,
     attempts: number,
     error: unknown,
   ): Promise<void> {
-    if (this.isStale(controller, generation)) {
+    if (this.isStale(controller, runtimeScope)) {
       return;
     }
 
@@ -477,9 +478,9 @@ export class SyncLinkRecoveryCoordinator {
       return;
     }
 
-    const generation = this._operations.getGeneration();
+    const runtimeScope = this._operations.getRuntimeScope();
     const shouldContinue = (): boolean =>
-      !this.isStale(controller, generation) && link.status === 'live';
+      !this.isStale(controller, runtimeScope) && link.status === 'live';
     const target = syncTargetFromLink(link);
     try {
       const outcome = await this._operations.reconcileTarget(
@@ -487,7 +488,7 @@ export class SyncLinkRecoveryCoordinator {
         { verifyConvergence: true },
         shouldContinue,
       );
-      if (outcome.aborted || this.isStale(controller, generation)) {
+      if (outcome.aborted || this.isStale(controller, runtimeScope)) {
         return;
       }
       this.emitApplied(link, outcome.admittedCids);
@@ -505,11 +506,11 @@ export class SyncLinkRecoveryCoordinator {
           remoteEndpoint : link.remoteEndpoint,
           ...eventScope(link.scope),
         });
-      } else if (!this.isStale(controller, generation)) {
+      } else if (!this.isStale(controller, runtimeScope)) {
         await this._operations.handleDivergence(target, outcome, { link, linkKey });
       }
     } catch (error: unknown) {
-      if (this.isStale(controller, generation)) {
+      if (this.isStale(controller, runtimeScope)) {
         return;
       }
       this._operations.reportError(
@@ -582,8 +583,8 @@ export class SyncLinkRecoveryCoordinator {
     return controller?.link === link ? controller : undefined;
   }
 
-  private isStale(controller: SyncLinkController, generation: number): boolean {
-    return this._operations.getGeneration() !== generation || !controller.isActive;
+  private isStale(controller: SyncLinkController, scope: SyncRuntimeHandle): boolean {
+    return scope.disposed || !controller.isActive;
   }
 
   private static targetFromController(controller: SyncLinkController): SyncLinkRecoveryTarget {

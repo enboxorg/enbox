@@ -42,8 +42,6 @@ export interface SyncQuotaManagerOperations {
 
   collectRemoteFeedCids(target: SyncTarget): Promise<Set<string> | undefined>;
 
-  getGeneration(): number;
-
   getLocalMessage(target: SyncTarget, messageCid: string): Promise<SyncMessageEntry | undefined>;
 
   onQuotaBlocked(target: SyncTarget, messageCid: string, detail: string | undefined, nextProbeAt: string): void;
@@ -512,7 +510,10 @@ export class SyncQuotaManager {
     force: boolean,
     shouldContinue?: () => boolean,
   ): Promise<void> {
-    const generation = this._operations.getGeneration();
+    // Staleness across the awaits below is the CALLER's fence: the engine
+    // composes a runtime-transition check into every shouldContinue it
+    // threads down, so probes abort mid-flight on start/stop/clear exactly
+    // as the old internal engine-generation reads did.
     if (SyncQuotaManager.shouldAbort(shouldContinue)) { return; }
     const state = await this.getState(target, messageCid);
     if (state === undefined || state.source === 'permission-grant' || state.supersededAt !== undefined) { return; }
@@ -520,7 +521,7 @@ export class SyncQuotaManager {
     if (!force && Number.isFinite(nextProbeAt) && Date.now() < nextProbeAt) { return; }
 
     const localEntry = await this._operations.getLocalMessage(target, messageCid);
-    if (this._operations.getGeneration() !== generation) { return; }
+    if (SyncQuotaManager.shouldAbort(shouldContinue)) { return; }
     if (localEntry !== undefined && SyncQuotaManager.hasUnmaterializedRecordsWriteData(localEntry)) {
       await this.deferUnmaterializedProbe(target, messageCid, state);
       return;
@@ -530,7 +531,7 @@ export class SyncQuotaManager {
       localEntry !== undefined && state.blockedCid !== undefined && state.blockedCid !== messageCid
         ? await this._operations.getLocalMessage(target, state.blockedCid)
         : undefined;
-    if (this._operations.getGeneration() !== generation) { return; }
+    if (SyncQuotaManager.shouldAbort(shouldContinue)) { return; }
 
     const result = localEntry === undefined
       ? await this._operations.pushMessages(target, [messageCid])
@@ -538,10 +539,7 @@ export class SyncQuotaManager {
         ...(blockedDependencyEntry === undefined ? [] : [blockedDependencyEntry]),
         localEntry,
       ]);
-    if (
-      this._operations.getGeneration() !== generation ||
-      SyncQuotaManager.shouldAbort(shouldContinue)
-    ) {
+    if (SyncQuotaManager.shouldAbort(shouldContinue)) {
       return;
     }
     const currentState = await this.getState(target, messageCid);

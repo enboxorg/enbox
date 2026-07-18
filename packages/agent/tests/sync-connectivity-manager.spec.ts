@@ -7,10 +7,11 @@ import type {
 import { describe, expect, it } from 'bun:test';
 
 import { SyncConnectivityManager } from '../src/sync-connectivity-manager.js';
+import { SyncRuntime } from '../src/sync-runtime.js';
 
 type TestOperationsState = {
   backgroundOperations: Array<() => Promise<void>>;
-  generation: number;
+  scope: SyncRuntime;
   integrityError?: Error;
   integrityChecks: number;
   linksMarkedOffline: number;
@@ -130,7 +131,7 @@ describe('SyncConnectivityManager', () => {
     expect(state.integrityChecks).toBe(2);
   });
 
-  it('rejects stale handlers and queued integrity checks after the generation changes', async () => {
+  it('rejects stale handlers and queued integrity checks after the runtime scope is disposed', async () => {
     const environment = new TestConnectivityEnvironment();
     const { manager, state } = setupManager({
       environment,
@@ -141,7 +142,7 @@ describe('SyncConnectivityManager', () => {
     environment.dispatch('online');
     expect(state.backgroundOperations).toHaveLength(1);
 
-    state.generation++;
+    state.scope.dispose();
     await state.backgroundOperations[0]();
     environment.dispatch('offline');
 
@@ -186,7 +187,7 @@ function setupManager(options: {
 } = {}): { manager: SyncConnectivityManager; state: TestOperationsState } {
   const state: TestOperationsState = {
     backgroundOperations     : [],
-    generation               : 1,
+    scope                    : new SyncRuntime(),
     integrityError           : options.integrityError,
     integrityChecks          : 0,
     linksMarkedOffline       : 0,
@@ -194,7 +195,7 @@ function setupManager(options: {
     syncInProgress           : false,
   };
   const operations: SyncConnectivityManagerOperations = {
-    getGeneration          : (): number => state.generation,
+    getRuntimeScope        : (): SyncRuntime => state.scope,
     isSyncInProgress       : (): boolean => state.syncInProgress,
     markActiveLinksOffline : (): void => { state.linksMarkedOffline++; },
     runBackgroundTask      : async (operation): Promise<void> => {

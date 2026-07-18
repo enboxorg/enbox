@@ -17,6 +17,7 @@ import type { SyncIdentityTaskRunner } from './sync-lifecycle-coordinator.js';
 import type { SyncLivePullContext } from './sync-live-pull-processor.js';
 import type { SyncMessageEntry } from './sync-messages.js';
 import type { SyncReplicationLinkStore } from './sync-replication-link-store.js';
+import type { SyncRuntimeHandle } from './sync-runtime.js';
 import type {
   DeadLetterCategory,
   DeadLetterEntry,
@@ -252,7 +253,7 @@ export class SyncEngineLevel implements SyncEngine {
     this._deferredPullStore = new SyncDeferredPullStoreLevel(this._db);
     this._connectivityManager = new SyncConnectivityManager({
       operations: {
-        getGeneration          : (): number => this._engineGeneration,
+        getRuntimeScope        : (): SyncRuntimeHandle => this._runtime,
         isSyncInProgress       : (): boolean => this._lifecycle.isSyncInProgress,
         markActiveLinksOffline : (): void => { this.markActiveLinksOffline(); },
         runBackgroundTask      : (operation): Promise<void> => this._lifecycle.runBackgroundTask(operation),
@@ -321,7 +322,6 @@ export class SyncEngineLevel implements SyncEngine {
           this.clearFailedMessageForTenant(target.did, messageCid, target.dwnUrl),
         collectLocalFeedCids  : (target): Promise<Set<string> | undefined> => this.collectLocalFeedCids(target),
         collectRemoteFeedCids : (target): Promise<Set<string> | undefined> => this.collectRemoteFeedCids(target),
-        getGeneration         : (): number => this._engineGeneration,
         getLocalMessage       : (target, messageCid): Promise<SyncMessageEntry | undefined> =>
           this.getLocalMessageForTarget(target, messageCid),
         onQuotaBlocked: (target, messageCid, detail, nextProbeAt): void => {
@@ -472,7 +472,7 @@ export class SyncEngineLevel implements SyncEngine {
         clearConvergence : (linkKey): void => { this._feedConvergenceManager.clearLink(linkKey); },
         emitEvent        : (event): void => { this.emitEvent(event); },
         getController    : (linkKey): SyncLinkController | undefined => this.getLinkController(linkKey),
-        getGeneration    : (): number => this._engineGeneration,
+        getRuntimeScope  : (): SyncRuntimeHandle => this._runtime,
         handleDivergence : (target, result, context): Promise<boolean> =>
           this._feedConvergenceManager.handleVerifiedDivergence(target, result, context),
         handlePushFailures: (linkKey, link, failures): Promise<void> =>
@@ -2642,7 +2642,27 @@ export class SyncEngineLevel implements SyncEngine {
     forceProbeCids?: Set<string>,
     shouldContinue?: () => boolean,
   ): Promise<void> {
-    return this._quotaManager.probeBlocksForTarget(target, force, forceProbeCids, shouldContinue);
+    // The quota manager fences its awaits with the shouldContinue it is
+    // given; compose a transition fence in so probes abort on start/stop/
+    // clear/close exactly as the old internal engine-generation reads did —
+    // including for one-shot callers running without a live runtime.
+    const transitionFence = this.captureTransitionFence();
+    const composed = shouldContinue === undefined
+      ? transitionFence
+      : (): boolean => transitionFence() && shouldContinue();
+    return this._quotaManager.probeBlocksForTarget(target, force, forceProbeCids, composed);
+  }
+
+  /**
+   * Capture a fence that reports whether a runtime transition (start, stop,
+   * clear, close, mode switch) has happened since capture. Valid from any
+   * state: an active scope trips the fence when it is disposed, and an
+   * already-disposed scope trips it when a new runtime replaces it.
+   */
+  private captureTransitionFence(): () => boolean {
+    const runtime = this._runtime;
+    const disposedAtCapture = runtime.disposed;
+    return (): boolean => this._runtime === runtime && runtime.disposed === disposedAtCapture;
   }
 
   private clearQuotaBlocksForTenant(tenantDid: string): Promise<void> {

@@ -6,6 +6,17 @@ type ArmedTimer = {
 };
 
 /**
+ * Read-only staleness view of a runtime scope.
+ *
+ * Collaborators capture the handle when they start work under a runtime
+ * generation and re-check `disposed` after awaits: once the scope is
+ * disposed, every continuation belonging to that generation is stale.
+ */
+export interface SyncRuntimeHandle {
+  readonly disposed: boolean;
+}
+
+/**
  * Ownership scope for one sync runtime generation.
  *
  * Every timer a runtime generation schedules is armed through this scope
@@ -28,7 +39,7 @@ type ArmedTimer = {
  * single start/stop cycle — the exclusive sync lock, durable stores, the
  * target planner and its topology generation — stays with its owner.
  */
-export class SyncRuntime {
+export class SyncRuntime implements SyncRuntimeHandle {
   private _disposed = false;
   private readonly _timers = new Map<string, ArmedTimer>();
 
