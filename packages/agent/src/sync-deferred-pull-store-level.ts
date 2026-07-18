@@ -31,11 +31,8 @@ export class SyncDeferredPullStoreLevel implements SyncDeferredPullStore {
     }
   }
 
-  public async deleteTenant(tenantDid: string): Promise<void> {
-    const range = syncMessageStoreLevelTenantKeyRange(tenantDid);
-    for await (const key of this.deferredPulls.keys(range)) {
-      await this.deferredPulls.del(key);
-    }
+  public async deleteForTenant(tenantDid: string): Promise<void> {
+    await this.deferredPulls.clear(syncMessageStoreLevelTenantKeyRange(tenantDid));
   }
 
   public async get(

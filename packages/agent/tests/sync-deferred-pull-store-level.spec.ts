@@ -37,7 +37,7 @@ describe('SyncDeferredPullStoreLevel', () => {
     await store.put(`${tenantDid}_extra`, 'cid-3', remoteEndpoint, deferredPull());
     await store.put('did:example:bob', 'cid-4', remoteEndpoint, deferredPull());
 
-    await store.deleteTenant(tenantDid);
+    await store.deleteForTenant(tenantDid);
 
     expect(await store.get(tenantDid, 'cid-1', remoteEndpoint)).toBeUndefined();
     expect(await store.get(tenantDid, 'cid-2', 'https://b.example')).toBeUndefined();

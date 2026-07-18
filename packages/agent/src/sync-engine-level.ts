@@ -223,6 +223,13 @@ export class SyncEngineLevel implements SyncEngine {
    */
   private _pendingSyncRun?: PendingSyncRun;
 
+  /**
+   * Storage-instance discriminator folded into cross-context lock names, so
+   * engines over DIFFERENT stores on one origin or in one process never
+   * contend on each other's locks. Mirrors the wake-channel naming.
+   */
+  private readonly _lockScope: string;
+
   /** Registered event listeners for observability. */
   private readonly _eventListeners: Set<SyncEventListener> = new Set();
 
@@ -236,6 +243,7 @@ export class SyncEngineLevel implements SyncEngine {
   private static readonly DID_RESOLUTION_RETRY_BACKOFF_MS = [2000, 4000, 8000];
 
   constructor({ agent, dataPath, db }: SyncEngineLevelParams) {
+    this._lockScope = dataPath ?? 'default';
     this._agent = agent;
     this._permissionsApi = new AgentPermissionsApi({ agent });
     this._db = db ?? new Level<string, string>(dataPath ?? 'DATA/AGENT/SYNC_STORE');
@@ -733,8 +741,17 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public registerIdentity(params: { did: string; options: SyncIdentityOptions }): Promise<void> {
+    return this.runExclusiveIdentityMutation(params.did, (): Promise<void> => this.doRegisterIdentity(params));
+  }
+
+  /**
+   * Every identity mutation layers the engine-local exclusive sync lock
+   * around the cross-context per-DID lifecycle lock. Composing both here
+   * makes the layering structurally unforgettable for future mutation sites.
+   */
+  private runExclusiveIdentityMutation(did: string, operation: () => Promise<void>): Promise<void> {
     return this._lifecycle.runIdentityMutation(async (): Promise<void> => {
-      await this.runIdentityLifecycle(params.did, (): Promise<void> => this.doRegisterIdentity(params));
+      await this.runIdentityLifecycle(did, operation);
     });
   }
 
@@ -762,9 +779,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public unregisterIdentity(did: string): Promise<void> {
-    return this._lifecycle.runIdentityMutation(async (): Promise<void> => {
-      await this.runIdentityLifecycle(did, (): Promise<void> => this.doUnregisterIdentity(did));
-    });
+    return this.runExclusiveIdentityMutation(did, (): Promise<void> => this.doUnregisterIdentity(did));
   }
 
   private async doUnregisterIdentity(did: string): Promise<void> {
@@ -785,17 +800,19 @@ export class SyncEngineLevel implements SyncEngine {
     this.cancelLinkInitRetriesForDid(did);
 
     // Tenant-scoped cleanup runs first; the identity marker is deleted LAST
-    // as the commit point. A failure at any earlier step leaves the
-    // registration intact so the caller can simply retry the unregister,
-    // while a failure after the marker deletion leaves only orphaned durable
-    // links, which the next registration's supersession pruning removes.
+    // as the durable commit point. A failure at any earlier step — including
+    // durable-link pruning — leaves the registration intact so the caller can
+    // simply retry the unregister. Pruning must precede the marker deletion:
+    // a paused link surviving an unregister shares its durable identity key
+    // with a same-scope re-registration, so supersession pruning would retain
+    // it and silently disable live replication.
     await this.clearQuotaBlocksForTenant(did);
+    await this.pruneSupersededDurableLinksForIdentity(did, new Set());
     await this.runDeferredPullLifecycle(did, async (): Promise<void> => {
-      await this._deferredPullStore.deleteTenant(did);
+      await this._deferredPullStore.deleteForTenant(did);
       await this._identityStore.delete(did);
     });
     this.invalidateSyncTargetsCache();
-    await this.pruneSupersededDurableLinksForIdentity(did, new Set());
   }
 
   public async getIdentityOptions(did: string): Promise<SyncIdentityOptions | undefined> {
@@ -808,9 +825,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public updateIdentityOptions(params: { did: string, options: SyncIdentityOptions }): Promise<void> {
-    return this._lifecycle.runIdentityMutation(async (): Promise<void> => {
-      await this.runIdentityLifecycle(params.did, (): Promise<void> => this.doUpdateIdentityOptions(params));
-    });
+    return this.runExclusiveIdentityMutation(params.did, (): Promise<void> => this.doUpdateIdentityOptions(params));
   }
 
   private async doUpdateIdentityOptions({ did, options }: { did: string, options: SyncIdentityOptions }): Promise<void> {
@@ -2562,10 +2577,14 @@ export class SyncEngineLevel implements SyncEngine {
     detail: string | undefined,
   ): Promise<boolean> {
     return this.runDeferredPullLifecycle(target.did, async (): Promise<boolean> => {
-      const state = await this.recordDeferredPull(target, entry.messageCid, detail);
-      if (state === undefined) {
+      // Stale work fence: after an unregister commits (inside this same
+      // per-tenant lock), deferred work for the tenant must yield rather
+      // than re-create retry state or dead letters.
+      if (await this.getIdentityOptions(target.did) === undefined) {
         return true;
       }
+
+      const state = await this.recordDeferredPull(target, entry.messageCid, detail);
       const firstDeferredAt = Date.parse(state.firstDeferredAt);
       if (!Number.isFinite(firstDeferredAt) || Date.now() - firstDeferredAt < SyncEngineLevel.DEFERRED_PULL_DEAD_LETTER_AFTER_MS) {
         return false;
@@ -2589,11 +2608,7 @@ export class SyncEngineLevel implements SyncEngine {
     target: SyncTarget,
     messageCid: string,
     detail: string | undefined,
-  ): Promise<SyncDeferredPullState | undefined> {
-    if (await this._identityStore.get(target.did) === undefined) {
-      return undefined;
-    }
-
+  ): Promise<SyncDeferredPullState> {
     const now = new Date().toISOString();
     const previous = await this._deferredPullStore.get(target.did, messageCid, target.dwnUrl);
 
@@ -2621,7 +2636,7 @@ export class SyncEngineLevel implements SyncEngine {
    * may be taken inside it (unregister does), never the reverse.
    */
   private async runIdentityLifecycle<T>(did: string, operation: () => Promise<T>): Promise<T> {
-    return runWithCrossContextLock(`enbox:sync-identity:${did}`, operation);
+    return runWithCrossContextLock(`enbox:sync-identity:${this._lockScope}:${did}`, operation);
   }
 
   /**
@@ -2634,7 +2649,7 @@ export class SyncEngineLevel implements SyncEngine {
     tenantDid: string,
     operation: () => Promise<T>,
   ): Promise<T> {
-    return runWithCrossContextLock(`enbox:sync-deferred-pull:${tenantDid}`, operation);
+    return runWithCrossContextLock(`enbox:sync-deferred-pull:${this._lockScope}:${tenantDid}`, operation);
   }
 
   private getQuotaBlockState(target: SyncTarget, messageCid: string): Promise<SyncQuotaBlockState | undefined> {

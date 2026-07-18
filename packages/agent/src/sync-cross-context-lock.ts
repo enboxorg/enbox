@@ -18,7 +18,20 @@ export async function runWithCrossContextLock<T>(name: string, operation: () => 
     throw new Error('Cross-context sync locking requires the Web Locks API.');
   }
 
-  const previous = pendingFallbackOperations.get(name);
+  return runSerializedByKey(pendingFallbackOperations, name, operation);
+}
+
+/**
+ * Serialize operations sharing one key through a pending-completion map: each
+ * operation chains behind the key's tail, failures never poison the queue,
+ * and the tail entry removes itself once no successor has replaced it.
+ */
+export async function runSerializedByKey<T>(
+  pending: Map<string, Promise<void>>,
+  key: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const previous = pending.get(key);
   const operationPromise = (async (): Promise<T> => {
     if (previous !== undefined) {
       await previous;
@@ -29,13 +42,13 @@ export async function runWithCrossContextLock<T>(name: string, operation: () => 
     (): void => undefined,
     (): void => undefined,
   );
-  pendingFallbackOperations.set(name, completion);
+  pending.set(key, completion);
 
   try {
     return await operationPromise;
   } finally {
-    if (pendingFallbackOperations.get(name) === completion) {
-      pendingFallbackOperations.delete(name);
+    if (pending.get(key) === completion) {
+      pending.delete(key);
     }
   }
 }

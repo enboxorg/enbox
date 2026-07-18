@@ -18,7 +18,7 @@ export interface SyncDeferredPullStore {
   delete(tenantDid: string, messageCid: string, remoteEndpoint: string): Promise<void>;
 
   /** Remove every deferred-pull entry belonging to one tenant. */
-  deleteTenant(tenantDid: string): Promise<void>;
+  deleteForTenant(tenantDid: string): Promise<void>;
 
   /** Read one exact tenant, message, and remote entry. */
   get(tenantDid: string, messageCid: string, remoteEndpoint: string): Promise<SyncDeferredPullState | undefined>;

@@ -1,5 +1,8 @@
 import type { MessagesQueryReplyEntry } from '@enbox/dwn-sdk-js';
 
+import type { SyncIdentityOptions } from '../src/types/sync.js';
+import type { SyncIdentityStore } from '../src/sync-identity-store.js';
+import type { SyncReplicationLinkStore } from '../src/sync-replication-link-store.js';
 import type { SyncTarget } from '../src/sync-target-resolver.js';
 import type { SyncDeferredPullState, SyncDeferredPullStore } from '../src/sync-deferred-pull-store.js';
 
@@ -148,34 +151,16 @@ describe('SyncEngineLevel dead letter tracking', () => {
     const messageCid = 'cid-expired';
     const remoteEndpoint = 'https://dwn.example';
     const tenantDid = 'did:example:alice';
-    const key = `${tenantDid}|${messageCid}|${remoteEndpoint}`;
-    const deferredState: SyncDeferredPullState = {
-      attempts        : 1,
-      detail          : 'dependency unavailable',
-      firstDeferredAt : new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-      lastDeferredAt  : new Date().toISOString(),
-    };
     await registerTenant(tenantDid);
-    await db.sublevel('deferredPulls').put(key, JSON.stringify(deferredState));
+    await deferredPullStoreOf(syncEngine).put(
+      tenantDid,
+      messageCid,
+      remoteEndpoint,
+      deferredState({ aged: true, detail: 'dependency unavailable' }),
+    );
 
-    const target: SyncTarget = {
-      authorization      : { kind: 'owner' },
-      authorizationEpoch : 'owner',
-      did                : tenantDid,
-      dwnUrl             : remoteEndpoint,
-      projectionId       : 'projection',
-      scope              : { kind: 'full' },
-    };
-    const internal = syncEngine as unknown as {
-      deadLetterExpiredDeferredPull(
-        target: SyncTarget,
-        entry: MessagesQueryReplyEntry,
-        detail: string | undefined,
-      ): Promise<boolean>;
-    };
-
-    const promoted = await internal.deadLetterExpiredDeferredPull(
-      target,
+    const promoted = await expiryOf(syncEngine)(
+      target(tenantDid),
       { messageCid, protocol: 'https://protocol.example' },
       'dependency unavailable',
     );
@@ -196,48 +181,24 @@ describe('SyncEngineLevel dead letter tracking', () => {
     const tenantDid = 'did:example:alice';
     const remoteEndpoint = 'https://dwn.example';
     const admissionEngine = new SyncEngineLevel({ db });
-    const store = (syncEngine as unknown as { _deferredPullStore: SyncDeferredPullStore })._deferredPullStore;
-    const aged: SyncDeferredPullState = {
-      attempts        : 3,
-      firstDeferredAt : new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-      lastDeferredAt  : new Date().toISOString(),
-    };
+    const store = deferredPullStoreOf(syncEngine);
     await registerTenant(tenantDid);
-    await store.put(tenantDid, messageCid, remoteEndpoint, aged);
+    await store.put(tenantDid, messageCid, remoteEndpoint, deferredState({ attempts: 3, aged: true }));
 
     // Gate the expiry section at its deferred-state read, which runs INSIDE
     // the per-tenant lifecycle lock: a concurrent admission from a second
     // engine must queue on that lock rather than interleave.
-    const readStarted = deferred<void>();
-    const releaseRead = deferred<void>();
-    const originalGet = store.get.bind(store);
-    sinon.stub(store, 'get').callsFake(async (
-      did: string,
-      cid: string,
-      endpoint: string,
-    ): Promise<SyncDeferredPullState | undefined> => {
-      const state = await originalGet(did, cid, endpoint);
-      readStarted.resolve();
-      await releaseRead.promise;
-      return state;
-    });
+    const gate = gateStoreGet(store);
 
-    const expiryInternal = syncEngine as unknown as {
-      deadLetterExpiredDeferredPull(
-        target: SyncTarget,
-        entry: MessagesQueryReplyEntry,
-        detail: string | undefined,
-      ): Promise<boolean>;
-    };
     const admissionInternal = admissionEngine as unknown as {
       trackRemoteFeedAppliedCids(messageCids: string[], target: SyncTarget): Promise<void>;
     };
-    const expiry = expiryInternal.deadLetterExpiredDeferredPull(
+    const expiry = expiryOf(syncEngine)(
       target(tenantDid),
       { messageCid },
       'dependency unavailable',
     );
-    await readStarted.promise;
+    await gate.started;
 
     let admissionCompleted = false;
     const admission = admissionInternal.trackRemoteFeedAppliedCids([messageCid], target(tenantDid)).then((): void => {
@@ -247,7 +208,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
 
     expect(admissionCompleted).toBe(false);
 
-    releaseRead.resolve();
+    gate.release();
     expect(await expiry).toBe(true);
     await admission;
 
@@ -259,18 +220,10 @@ describe('SyncEngineLevel dead letter tracking', () => {
 
   it('should clear deferred-pull retry state when an identity is unregistered', async () => {
     const remoteEndpoint = 'https://dwn.example';
-    const store = (syncEngine as unknown as { _deferredPullStore: SyncDeferredPullStore })._deferredPullStore;
-    await db.sublevel('registeredIdentities').put('did:example:alice', JSON.stringify({ protocols: 'all' }));
-    await store.put('did:example:alice', 'cid-1', remoteEndpoint, {
-      attempts        : 1,
-      firstDeferredAt : new Date().toISOString(),
-      lastDeferredAt  : new Date().toISOString(),
-    });
-    await store.put('did:example:bob', 'cid-2', remoteEndpoint, {
-      attempts        : 1,
-      firstDeferredAt : new Date().toISOString(),
-      lastDeferredAt  : new Date().toISOString(),
-    });
+    const store = deferredPullStoreOf(syncEngine);
+    await registerTenant('did:example:alice');
+    await store.put('did:example:alice', 'cid-1', remoteEndpoint, deferredState());
+    await store.put('did:example:bob', 'cid-2', remoteEndpoint, deferredState());
 
     await syncEngine.unregisterIdentity('did:example:alice');
 
@@ -284,42 +237,18 @@ describe('SyncEngineLevel dead letter tracking', () => {
     const tenantDid = 'did:example:alice';
     const expiryEngine = new SyncEngineLevel({ db });
     const unregisterEngine = new SyncEngineLevel({ db });
-    const store = (expiryEngine as unknown as { _deferredPullStore: SyncDeferredPullStore })._deferredPullStore;
-    const state: SyncDeferredPullState = {
-      attempts        : 1,
-      firstDeferredAt : new Date().toISOString(),
-      lastDeferredAt  : new Date().toISOString(),
-    };
+    const store = deferredPullStoreOf(expiryEngine);
     await registerTenant(tenantDid);
-    await store.put(tenantDid, messageCid, remoteEndpoint, state);
+    await store.put(tenantDid, messageCid, remoteEndpoint, deferredState());
 
-    const finalReadCompleted = deferred<void>();
-    const releaseFinalRead = deferred<void>();
-    const originalGet = store.get.bind(store);
-    sinon.stub(store, 'get').callsFake(async (
-      did: string,
-      cid: string,
-      endpoint: string,
-    ): Promise<SyncDeferredPullState | undefined> => {
-      const current = await originalGet(did, cid, endpoint);
-      finalReadCompleted.resolve();
-      await releaseFinalRead.promise;
-      return current;
-    });
+    const gate = gateStoreGet(store);
 
-    const expiryInternal = expiryEngine as unknown as {
-      deadLetterExpiredDeferredPull(
-        target: SyncTarget,
-        entry: MessagesQueryReplyEntry,
-        detail: string | undefined,
-      ): Promise<boolean>;
-    };
-    const expiry = expiryInternal.deadLetterExpiredDeferredPull(
+    const expiry = expiryOf(expiryEngine)(
       target(tenantDid),
       { messageCid },
       'dependency unavailable',
     );
-    await finalReadCompleted.promise;
+    await gate.started;
 
     let unregisterCompleted = false;
     const unregister = unregisterEngine.unregisterIdentity(tenantDid).then((): void => {
@@ -329,7 +258,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
 
     expect(unregisterCompleted).toBe(false);
 
-    releaseFinalRead.resolve();
+    gate.release();
     expect(await expiry).toBe(false);
     await unregister;
 
@@ -345,7 +274,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
     const staleEngine = new SyncEngineLevel({ db });
     const unregisterEngine = new SyncEngineLevel({ db });
     const staleTarget = target(tenantDid);
-    const store = (staleEngine as unknown as { _deferredPullStore: SyncDeferredPullStore })._deferredPullStore;
+    const store = deferredPullStoreOf(staleEngine);
     await registerTenant(tenantDid);
 
     await unregisterEngine.unregisterIdentity(tenantDid);
@@ -407,10 +336,27 @@ describe('SyncEngineLevel dead letter tracking', () => {
     // cannot observe — or prune — state the re-registration creates.
     const sweepStarted = deferred<void>();
     const releaseSweep = deferred<void>();
-    const unregisterStore = (unregisterEngine as unknown as { _deferredPullStore: SyncDeferredPullStore })._deferredPullStore;
-    sinon.stub(unregisterStore, 'deleteTenant').callsFake(async (): Promise<void> => {
+    const unregisterStore = deferredPullStoreOf(unregisterEngine);
+    sinon.stub(unregisterStore, 'deleteForTenant').callsFake(async (): Promise<void> => {
       sweepStarted.resolve();
       await releaseSweep.promise;
+    });
+
+    // Deterministic operation-order signal: record marker mutations from
+    // both engines and assert the unregister's delete strictly precedes the
+    // re-registration's write.
+    const markerEvents: string[] = [];
+    const unregisterIdentityStore = (unregisterEngine as unknown as { _identityStore: SyncIdentityStore })._identityStore;
+    const registerIdentityStore = (registerEngine as unknown as { _identityStore: SyncIdentityStore })._identityStore;
+    const originalDelete = unregisterIdentityStore.delete.bind(unregisterIdentityStore);
+    sinon.stub(unregisterIdentityStore, 'delete').callsFake(async (did: string): Promise<void> => {
+      markerEvents.push('unregister:marker-deleted');
+      await originalDelete(did);
+    });
+    const originalSet = registerIdentityStore.set.bind(registerIdentityStore);
+    sinon.stub(registerIdentityStore, 'set').callsFake(async (did: string, options: SyncIdentityOptions): Promise<void> => {
+      markerEvents.push('register:marker-set');
+      await originalSet(did, options);
     });
 
     const unregister = unregisterEngine.unregisterIdentity(tenantDid);
@@ -422,7 +368,8 @@ describe('SyncEngineLevel dead letter tracking', () => {
 
     // Give the re-registration ample time to finish if it were NOT queued on
     // the lifecycle lock; a locked registration cannot complete until the
-    // gated unregister releases.
+    // gated unregister releases. (The bound matters only for detecting the
+    // unlocked failure mode — the locked pass direction is time-independent.)
     await new Promise<void>((resolve) => setTimeout(resolve, 200));
     expect(registerCompleted).toBe(false);
 
@@ -430,23 +377,49 @@ describe('SyncEngineLevel dead letter tracking', () => {
     await unregister;
     await register;
 
-    // Serialized outcome: the re-registration ran wholly after the
-    // unregister completed, so the identity ends registered.
+    // Serialized outcome: the unregister's marker deletion strictly precedes
+    // the re-registration's marker write, and the identity ends registered.
+    expect(markerEvents).toEqual(['unregister:marker-deleted', 'register:marker-set']);
     expect(await registerEngine.getIdentityOptions(tenantDid)).toBeDefined();
+  });
+
+  it('should keep the registration intact when durable-link pruning fails, then succeed on retry', async () => {
+    const tenantDid = 'did:example:alice';
+    await registerTenant(tenantDid);
+    const ledger = (syncEngine as unknown as { ledger: SyncReplicationLinkStore }).ledger;
+    const link = await ledger.getOrCreateLink({
+      tenantDid,
+      remoteEndpoint     : 'https://dwn.example',
+      scope              : { kind: 'full' },
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'owner',
+    });
+    await ledger.setStatus(link, 'paused');
+
+    const deleteLink = sinon.stub(ledger, 'deleteLink').rejects(new Error('link delete failed'));
+
+    await expect(syncEngine.unregisterIdentity(tenantDid)).rejects.toThrow('link delete failed');
+    // Durable-link pruning precedes the identity-marker commit point: a
+    // failed prune leaves the registration intact, so the paused link cannot
+    // be orphaned onto a same-scope re-registration (where supersession
+    // pruning would retain it and silently disable live replication).
+    expect(await syncEngine.getIdentityOptions(tenantDid)).toBeDefined();
+
+    deleteLink.restore();
+    await syncEngine.unregisterIdentity(tenantDid);
+
+    expect(await syncEngine.getIdentityOptions(tenantDid)).toBeUndefined();
+    expect(await ledger.getAllLinks()).toEqual([]);
   });
 
   it('should keep the registration intact when unregister cleanup fails, then succeed on retry', async () => {
     const tenantDid = 'did:example:alice';
     const remoteEndpoint = 'https://dwn.example';
-    const store = (syncEngine as unknown as { _deferredPullStore: SyncDeferredPullStore })._deferredPullStore;
+    const store = deferredPullStoreOf(syncEngine);
     await registerTenant(tenantDid);
-    await store.put(tenantDid, 'cid-1', remoteEndpoint, {
-      attempts        : 2,
-      firstDeferredAt : new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-      lastDeferredAt  : new Date().toISOString(),
-    });
+    await store.put(tenantDid, 'cid-1', remoteEndpoint, deferredState({ attempts: 2, aged: true }));
 
-    const deleteTenant = sinon.stub(store, 'deleteTenant').rejects(new Error('sweep failed'));
+    const deleteForTenant = sinon.stub(store, 'deleteForTenant').rejects(new Error('sweep failed'));
 
     await expect(syncEngine.unregisterIdentity(tenantDid)).rejects.toThrow('sweep failed');
     // The identity marker is the commit point: a failed tenant sweep leaves
@@ -454,12 +427,64 @@ describe('SyncEngineLevel dead letter tracking', () => {
     // deferral — the caller simply retries the unregister.
     expect(await syncEngine.getIdentityOptions(tenantDid)).toBeDefined();
 
-    deleteTenant.restore();
+    deleteForTenant.restore();
     await syncEngine.unregisterIdentity(tenantDid);
 
     expect(await syncEngine.getIdentityOptions(tenantDid)).toBeUndefined();
     expect(await store.get(tenantDid, 'cid-1', remoteEndpoint)).toBeUndefined();
   });
+
+  function deferredPullStoreOf(engine: SyncEngineLevel): SyncDeferredPullStore {
+    return (engine as unknown as { _deferredPullStore: SyncDeferredPullStore })._deferredPullStore;
+  }
+
+  function expiryOf(engine: SyncEngineLevel): (
+    target: SyncTarget,
+    entry: MessagesQueryReplyEntry,
+    detail: string | undefined,
+  ) => Promise<boolean> {
+    const internal = engine as unknown as {
+      deadLetterExpiredDeferredPull(
+        target: SyncTarget,
+        entry: MessagesQueryReplyEntry,
+        detail: string | undefined,
+      ): Promise<boolean>;
+    };
+    return internal.deadLetterExpiredDeferredPull.bind(internal);
+  }
+
+  function deferredState({ attempts = 1, aged = false, detail }: {
+    attempts?: number;
+    aged?: boolean;
+    detail?: string;
+  } = {}): SyncDeferredPullState {
+    return {
+      attempts,
+      ...(detail === undefined ? {} : { detail }),
+      firstDeferredAt: aged
+        ? new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString()
+        : new Date().toISOString(),
+      lastDeferredAt: new Date().toISOString(),
+    };
+  }
+
+  /** Gate a store's get() so the caller can hold its locked section open. */
+  function gateStoreGet(store: SyncDeferredPullStore): { started: Promise<void>; release: () => void } {
+    const started = deferred<void>();
+    const release = deferred<void>();
+    const originalGet = store.get.bind(store);
+    sinon.stub(store, 'get').callsFake(async (
+      did: string,
+      cid: string,
+      endpoint: string,
+    ): Promise<SyncDeferredPullState | undefined> => {
+      const state = await originalGet(did, cid, endpoint);
+      started.resolve();
+      await release.promise;
+      return state;
+    });
+    return { started: started.promise, release: (): void => { release.resolve(); } };
+  }
 
   async function registerTenant(tenantDid: string): Promise<void> {
     await db.sublevel('registeredIdentities').put(tenantDid, JSON.stringify({ protocols: 'all' }));
