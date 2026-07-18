@@ -35,6 +35,11 @@ type RoleAudienceDefinition = {
   ruleSet: ProtocolRuleSet;
 };
 
+type ValidatedAudiencePayload = {
+  payload: EncryptionControlAudiencePayload;
+  tags: RoleAudienceKeyId;
+};
+
 type EffectiveControlActor = {
   did: string | undefined;
   grant?: PermissionGrant;
@@ -358,31 +363,47 @@ export class EncryptionControl {
   }
 
   /**
-   * Validates a stored encryption control record against the tenant's newest protocol definition.
+   * Validates the config-owned invariants of a stored encryption control record.
    *
-   * Control records are admitted through control-domain validation rather than the app
-   * definition's structure (see `validateReferentialIntegrity()`), so a config-history change
-   * can invalidate them only by removing the role path they provision keys for. The role's
-   * continued existence is the sole retention criterion: this deliberately avoids live
-   * dependency checks (audience lookups, parent chains) and does not require `$keyAgreement` —
-   * a definition missing it is recoverable by a later config and must not destroy sealed key
-   * material. Used by destructive config-history repair, where uncertainty must never purge.
+   * The definition governing the record timestamp is replayed first so a newly learned historical
+   * config cannot leave a record that would have failed admission under the complete history. The
+   * newest definition then decides whether the role still exists. Live dependency checks (audience
+   * lookups, role records, parent chains) are deliberately excluded, and the newest definition does
+   * not need `$keyAgreement`: a current definition missing it is recoverable and must not destroy
+   * historically valid sealed key material.
+   *
+   * @returns The role rule set that governed the stored record's timestamp.
    */
   public static async validateStoredControlRecord(
     tenant: string,
-    message: RecordsWriteMessage,
+    recordsWrite: RecordsWrite,
     validationStateReader: ValidationStateReader,
-  ): Promise<void> {
+  ): Promise<ProtocolRuleSet> {
+    const message = recordsWrite.message;
     const recordType = EncryptionControl.getRecordType(message);
     const tags = EncryptionControl.getRoleAudienceKeyId(message, recordType);
-    const protocolDefinition = await validationStateReader.fetchProtocolDefinition(tenant, tags.protocol);
-    const ruleSet = getRuleSetAtPath(tags.rolePath, protocolDefinition.structure);
-    if (ruleSet?.$role !== true) {
+
+    const { ruleSet: governingRuleSet } = await EncryptionControl.verifyRoleAudienceDefinition(
+      tenant, tags, message, validationStateReader, recordType
+    );
+    const encodedData = (message as RecordsWriteMessage & { encodedData?: string }).encodedData;
+    if (recordType === 'audience' && encodedData !== undefined) {
+      const { payload } = await EncryptionControl.validateAudiencePayload(
+        message, Encoder.base64UrlToBytes(encodedData)
+      );
+      await EncryptionControl.verifyAudienceSealKey(payload, governingRuleSet);
+    }
+
+    const newestDefinition = await validationStateReader.fetchProtocolDefinition(tenant, tags.protocol);
+    const newestRuleSet = getRuleSetAtPath(tags.rolePath, newestDefinition.structure);
+    if (newestRuleSet?.$role !== true) {
       throw new DwnError(
         DwnErrorCode.EncryptionControlValidateAudienceRolePathInvalid,
         `role audience path '${tags.rolePath}' no longer exists as a role in protocol '${tags.protocol}'.`
       );
     }
+
+    return governingRuleSet;
   }
 
   public static async preProcessWrite(
@@ -498,6 +519,15 @@ export class EncryptionControl {
     dataBytes: Uint8Array,
     validationStateReader: ValidationStateReader,
   ): Promise<void> {
+    const { payload, tags } = await EncryptionControl.validateAudiencePayload(message, dataBytes);
+    const { ruleSet } = await EncryptionControl.verifyRoleAudienceDefinition(tenant, tags, message, validationStateReader, 'audience');
+    await EncryptionControl.verifyAudienceSealKey(payload, ruleSet);
+  }
+
+  private static async validateAudiencePayload(
+    message: RecordsWriteMessage,
+    dataBytes: Uint8Array,
+  ): Promise<ValidatedAudiencePayload> {
     if (message.encryption !== undefined) {
       throw new DwnError(
         DwnErrorCode.EncryptionControlValidateUnexpectedRecord,
@@ -519,9 +549,15 @@ export class EncryptionControl {
       );
     }
 
-    const { ruleSet } = await EncryptionControl.verifyRoleAudienceDefinition(tenant, tags, message, validationStateReader, 'audience');
+    return { payload: dataObject, tags };
+  }
+
+  private static async verifyAudienceSealKey(
+    payload: EncryptionControlAudiencePayload,
+    ruleSet: ProtocolRuleSet,
+  ): Promise<void> {
     const sealingKeyId = await Encryption.getKeyId(ruleSet.$keyAgreement!.publicKeyJwk);
-    if (Object.is(sealingKeyId, dataObject.sealedPrivateKey.keyId)) {
+    if (Object.is(sealingKeyId, payload.sealedPrivateKey.keyId)) {
       return;
     }
 
