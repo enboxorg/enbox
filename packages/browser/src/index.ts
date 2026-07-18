@@ -143,6 +143,28 @@ export { TypedRecord } from '@enbox/api';
 export { BrowserStorage } from '@enbox/auth/browser';
 export type { ProviderAuthParams, ProviderAuthResult } from '@enbox/auth/browser';
 
+// Public-profile read/cache layer (from @enbox/protocols): fetch other
+// users' published profiles (displayName + avatar/hero) from their DWNs
+// with caching, retries, negative caching, and refcounted subscriptions.
+// Works over a connected records surface and over `Enbox.anonymous()`.
+export { createProfileReader, isRetryableProfileReadStatus } from '@enbox/protocols';
+export type {
+  ProfileEntryStatus,
+  ProfileFieldSnapshot,
+  ProfileFieldStatus,
+  ProfileImages,
+  ProfileReader,
+  ProfileReaderFailure,
+  ProfileReaderImagesMode,
+  ProfileReaderOptions,
+  ProfileReaderRecordsSurface,
+  ProfileReaderSource,
+  ProfileReaderTimers,
+  ProfileSnapshot,
+  ProfileWatchListener,
+  PublicProfile,
+} from '@enbox/protocols';
+
 // DWN interface enum for typing agent requests (from @enbox/agent).
 export { DwnInterface } from '@enbox/agent';
 

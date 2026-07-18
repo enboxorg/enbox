@@ -234,7 +234,8 @@ jobs:
           needs_auth=$( [ "$needs_agent" = "true" ] || [ "$auth" = "true" ] && echo true || echo false )
           needs_api=$( [ "$needs_agent" = "true" ] || [ "$needs_auth" = "true" ] || [ "$api" = "true" ] && echo true || echo false )
           needs_cli=$( [ "$needs_api" = "true" ] || [ "$cli" = "true" ] && echo true || echo false )
-          needs_lightweight=$( [ "$needs_common_crypto" = "true" ] || [ "$needs_connect" = "true" ] || [ "$needs_auth" = "true" ] || [ "$protocol_codegen" = "true" ] || [ "$needs_cli" = "true" ] || [ "$needs_local_node" = "true" ] && echo true || echo false )
+          needs_protocols=$( [ "$needs_api" = "true" ] || [ "$protocols" = "true" ] && echo true || echo false )
+          needs_lightweight=$( [ "$needs_common_crypto" = "true" ] || [ "$needs_connect" = "true" ] || [ "$needs_auth" = "true" ] || [ "$protocol_codegen" = "true" ] || [ "$needs_cli" = "true" ] || [ "$needs_local_node" = "true" ] || [ "$needs_protocols" = "true" ] && echo true || echo false )
           needs_agent_api_group=$( [ "$needs_dids" = "true" ] || [ "$needs_agent" = "true" ] || [ "$needs_auth" = "true" ] || [ "$needs_api" = "true" ] || [ "$dwn_clients" = "true" ] || [ "$protocols" = "true" ] && echo true || echo false )
           needs_browser_tests=$( [ "$needs_common_crypto" = "true" ] || [ "$needs_dids" = "true" ] || [ "$needs_dwn_sdk" = "true" ] || [ "$needs_agent" = "true" ] || [ "$needs_api" = "true" ] || [ "$browser_pkg" = "true" ] && echo true || echo false )
           needs_e2e=$( [ "$needs_agent" = "true" ] && echo true || echo false )
@@ -260,7 +261,7 @@ jobs:
           echo "Change detection results:"
           echo "  common_crypto=$needs_common_crypto dids=$needs_dids dwn_sdk=$needs_dwn_sdk"
           echo "  dwn_clients=$needs_dwn_clients dwn_sql_store=$needs_dwn_sql_store dwn_server=$needs_dwn_server"
-          echo "  agent=$needs_agent local_node=$needs_local_node auth=$needs_auth api=$needs_api protocol_codegen=$protocol_codegen cli=$needs_cli"
+          echo "  agent=$needs_agent local_node=$needs_local_node auth=$needs_auth api=$needs_api protocol_codegen=$protocol_codegen cli=$needs_cli protocols=$needs_protocols"
           echo "  agent_api_group=$needs_agent_api_group browser=$needs_browser_tests e2e=$needs_e2e"
 
   # ---------------------------------------------------------------------------
@@ -355,8 +356,9 @@ jobs:
           retention-days: 1
 
   # ---------------------------------------------------------------------------
-  # Lightweight packages: common, crypto, connect, auth, protocol-codegen, cli, local-node
-  # (no external services needed)
+  # Lightweight packages: common, crypto, connect, auth, protocol-codegen, cli, local-node, protocols
+  # (no external services needed — the protocols suite runs its DWN
+  # integration tests against an in-process engine with did:jwk identities)
   # ---------------------------------------------------------------------------
   test-lightweight:
     name: 'Test: common / crypto / connect / auth / cli'
@@ -400,11 +402,12 @@ jobs:
           bun run --filter @enbox/protocol-codegen test:node:coverage
           bun run --filter @enbox/cli     test:node:coverage
           bun run --filter @enbox/local-node test:node:coverage
+          bun run --filter @enbox/protocols test:node:coverage
 
       - name: Stage coverage
         if: always()
         run: |
-          mkdir -p coverage-staging/packages/common/coverage coverage-staging/packages/crypto/coverage coverage-staging/packages/connect/coverage coverage-staging/packages/auth/coverage coverage-staging/packages/protocol-codegen/coverage coverage-staging/packages/cli/coverage coverage-staging/packages/local-node/coverage
+          mkdir -p coverage-staging/packages/common/coverage coverage-staging/packages/crypto/coverage coverage-staging/packages/connect/coverage coverage-staging/packages/auth/coverage coverage-staging/packages/protocol-codegen/coverage coverage-staging/packages/cli/coverage coverage-staging/packages/local-node/coverage coverage-staging/packages/protocols/coverage
           cp packages/common/coverage/lcov.info coverage-staging/packages/common/coverage/lcov.info 2>/dev/null || true
           cp packages/crypto/coverage/lcov.info coverage-staging/packages/crypto/coverage/lcov.info 2>/dev/null || true
           cp packages/connect/coverage/lcov.info coverage-staging/packages/connect/coverage/lcov.info 2>/dev/null || true
@@ -412,6 +415,7 @@ jobs:
           cp packages/protocol-codegen/coverage/lcov.info coverage-staging/packages/protocol-codegen/coverage/lcov.info 2>/dev/null || true
           cp packages/cli/coverage/lcov.info coverage-staging/packages/cli/coverage/lcov.info 2>/dev/null || true
           cp packages/local-node/coverage/lcov.info coverage-staging/packages/local-node/coverage/lcov.info 2>/dev/null || true
+          cp packages/protocols/coverage/lcov.info coverage-staging/packages/protocols/coverage/lcov.info 2>/dev/null || true
 
       - name: Upload coverage
         if: always()

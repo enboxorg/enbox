@@ -27,6 +27,7 @@ describe('browser bundle artifacts', () => {
     expectExternalImport(api, '@enbox/auth/auth-manager');
     expectExternalImport(browser, '@enbox/api');
     expectExternalImport(browser, '@enbox/auth/browser');
+    expectExternalImport(browser, '@enbox/protocols');
 
     expect(api).not.toContain('class EnboxUserAgent');
     expect(browser).not.toContain('class EnboxUserAgent');
