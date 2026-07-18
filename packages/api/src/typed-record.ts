@@ -9,7 +9,8 @@
  * generic `T`:
  *
  * - `.data.json()` returns `Promise<T>` instead of `Promise<unknown>`.
- * - `.update({ data })` accepts `Partial<T>` for the data payload.
+ * - `.update({ data })` REPLACES the payload with a full `T`.
+ * - `.patch(partial)` merges changed fields over the current payload.
  *
  * You never construct `TypedRecord` directly — instances are returned by
  * {@link TypedEnbox} methods such as `records.create()`, `records.query()`,
@@ -27,10 +28,8 @@
  * // record is TypedRecord<FriendData>
  * const data = await record.data.json(); // FriendData — no manual cast
  *
- * // Update preserves the type
- * const { record: updated } = await record.update({
- *   data: { alias: 'Ali' },   // Partial<FriendData>
- * });
+ * // Merge a single field without dropping the rest
+ * const { record: updated } = await record.patch({ alias: 'Ali' });
  *
  * // Send to the remote DWN
  * await updated.send();
@@ -85,25 +84,55 @@ export type TypedRecordData<T> = Omit<RecordData, 'json'> & {
  * Update parameters for a {@link TypedRecord}.
  *
  * Extends the base {@link RecordUpdateParams} but narrows `data` from
- * `unknown` to `Partial<T>`, providing compile-time type safety when
- * updating record payloads.
+ * `unknown` to the FULL payload type `T`.
+ *
+ * `update({ data })` REPLACES the record's payload wholesale — for encrypted
+ * records the agent requires full payloads, so a partial object here would
+ * silently drop every omitted field. That is why `data` is typed as `T`,
+ * not `Partial<T>`: supply the complete payload, or use
+ * {@link TypedRecord.patch | patch()} to merge changed fields over the
+ * current data.
  *
  * @typeParam T - The full data type of the record being updated.
  *
  * @example
  * ```ts
+ * // Full replacement — every field supplied
  * await record.update({
- *   data: { title: 'Updated title' },  // Partial<NotebookData>
+ *   data: { title: 'Updated title', body: doc.body },  // NotebookData
  *   tags: { category: 'work' },
  * });
+ *
+ * // Partial change — use patch() instead
+ * await record.patch({ title: 'Updated title' });
  * ```
  */
 export type TypedRecordUpdateParams<T> = Omit<RecordUpdateParams, 'data'> & {
   /**
-   * The new data for the record. Type-checked against the schema map as
-   * `Partial<T>`, so you only need to supply the fields you want to change.
+   * The new data for the record — the FULL payload (`T`), which replaces
+   * the existing data wholesale. Omit it to update metadata only. To
+   * change a subset of fields, use {@link TypedRecord.patch | patch()}.
    */
-  data?: Partial<T>;
+  data?: T;
+};
+
+/**
+ * The partial-payload shape accepted by {@link TypedRecord.patch}.
+ *
+ * Every top-level key of `T` is optional. A key set to `null` DELETES the
+ * field from the payload — allowed only for keys that are optional on `T`
+ * (`undefined extends T[K]`); required keys cannot be null-deleted at the
+ * type level.
+ *
+ * The merge is SHALLOW: values are full replacements for their key, so a
+ * nested-object key must be supplied whole (nested partials are not
+ * deep-merged — typing values as full `T[K]` keeps the type honest about
+ * that).
+ *
+ * @typeParam T - The full data type of the record being patched.
+ */
+export type TypedRecordPatch<T> = {
+  [K in keyof T]?: undefined extends T[K] ? T[K] | null : T[K];
 };
 
 // ---------------------------------------------------------------------------
@@ -272,14 +301,22 @@ export class TypedRecord<T> {
   /**
    * Update the current record's data and/or metadata on the DWN.
    *
-   * The `data` field accepts `Partial<T>`, so you only need to provide
-   * the fields you want to change. A new {@link TypedRecord} is returned
-   * **and** the original instance is mutated in-place, so both the returned
-   * record and the original reference reflect the updated state.
+   * `data` REPLACES the payload wholesale — supply the FULL `T`. For
+   * encrypted records the agent requires full payloads, so a partial object
+   * would silently drop every omitted field; use
+   * {@link TypedRecord.patch | patch()} to change a subset of fields.
    *
-   * @param params - Update parameters. `data` is type-checked as `Partial<T>`.
-   *   Other fields like `tags`, `published`, and `datePublished` can also be
-   *   updated.
+   * A new {@link TypedRecord} is returned **and** the original instance is
+   * mutated in-place, so both the returned record and the original
+   * reference reflect the updated state.
+   *
+   * Pass {@link RecordUpdateParams.from} to dispatch the update to another
+   * tenant's remote DWN (cross-tenant co-update); without it the update
+   * always targets the connected DID's local DWN.
+   *
+   * @param params - Update parameters. `data` is type-checked as the full
+   *   `T`. Other fields like `tags`, `published`, and `datePublished` can
+   *   also be updated.
    * @returns A {@link TypedRecordUpdateResult} containing the DWN response
    *   `status` and the updated {@link TypedRecord}.
    * @throws `Error` if the record has been deleted.
@@ -287,7 +324,7 @@ export class TypedRecord<T> {
    * @example
    * ```ts
    * const { status, record: updated } = await record.update({
-   *   data: { title: 'New Title' },  // Partial<PageData>
+   *   data: { title: 'New Title', body: page.body },  // full PageData
    *   tags: { priority: 'high' },
    * });
    *
@@ -302,6 +339,55 @@ export class TypedRecord<T> {
     // so the original TypedRecord reference already reflects the new data.
     // We still return a new TypedRecord wrapping the returned record for callers
     // that use the destructured result.
+    return { status, record: new TypedRecord<T>(record), ...(audienceKeyDelivery ? { audienceKeyDelivery } : {}) };
+  }
+
+  /**
+   * Partially update the record's data with a read-merge-write cycle.
+   *
+   * Reads the current payload via `data.json()`, shallow-merges the given
+   * fields over it, and writes the FULL merged payload back through
+   * {@link TypedRecord.update | update()} — the safe partial-update idiom
+   * for encrypted records, whose updates always require full payloads.
+   *
+   * Merge semantics (shallow, top-level keys only):
+   * - a non-`null` value replaces the current value for its key — nested
+   *   objects are replaced wholesale, not deep-merged;
+   * - an explicit `null` DELETES the field (typed as allowed only for
+   *   optional keys of `T`);
+   * - `undefined` values are ignored (no change).
+   *
+   * CAUTION — read-merge-write race: there is no compare-and-swap
+   * primitive. Another writer landing an update between this method's read
+   * and its write is overwritten by the merged payload (last-writer-wins
+   * at the DWN layer).
+   *
+   * @param data - The fields to merge, typed as
+   *   {@link TypedRecordPatch | TypedRecordPatch<T>}.
+   * @param options - Optional update parameters (minus `data`) forwarded to
+   *   the underlying `update()` — e.g. `tags`, `from`, `protocolRole`.
+   * @returns A {@link TypedRecordUpdateResult} containing the DWN response
+   *   `status` and the updated {@link TypedRecord}.
+   * @throws `Error` if the record has been deleted, or if its current data
+   *   is not a JSON object.
+   *
+   * @example
+   * ```ts
+   * // Change one field, keep the rest — and delete an optional one
+   * const { record: updated } = await record.patch({
+   *   title    : 'New Title',
+   *   subtitle : null,          // deletes the optional `subtitle` field
+   * });
+   * ```
+   */
+  public async patch(
+    data: TypedRecordPatch<T>,
+    options?: Omit<RecordUpdateParams, 'data'>,
+  ): Promise<TypedRecordUpdateResult<T>> {
+    const { status, record, audienceKeyDelivery } = await this._record.patch(
+      data as globalThis.Record<string, unknown>,
+      options,
+    );
     return { status, record: new TypedRecord<T>(record), ...(audienceKeyDelivery ? { audienceKeyDelivery } : {}) };
   }
 

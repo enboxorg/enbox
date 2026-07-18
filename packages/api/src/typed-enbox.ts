@@ -45,6 +45,7 @@ import type { DateSort, ProtocolDefinition, ProtocolType, RecordsFilter } from '
 import type { DwnApi, ProtocolsConfigureResponse } from './dwn-api.js';
 import type { ProtocolPaths, SchemaMap, TypedProtocol, TypeNameAtPath } from './protocol-types.js';
 
+import { assertValidQueryAllOptions } from './dwn-api.js';
 import { TypedLiveQuery } from './typed-live-query.js';
 import { TypedRecord } from './typed-record.js';
 
@@ -120,6 +121,30 @@ export type TypedCreateRequest<
   data: DataForPath<D, M, Path>;
 
   /**
+   * Optional DID of a remote DWN tenant to write the record to.
+   *
+   * When set, the create is dispatched to the specified tenant's remote DWN
+   * (via the agent's `sendDwnRequest`, exactly like remote reads) instead of
+   * the connected DID's local DWN — the cross-tenant write path. The author
+   * stays the connected (grantee) DID, signing as themselves; the owner's
+   * DWN authorizes the write via {@link TypedCreateRequest.protocolRole}
+   * (role-invocation, e.g. a `collaborator` `$role` record naming the
+   * author as `recipient`) or delegated-grant parameters. Encrypted types
+   * are encrypted to the OWNER's published protocol keys — the agent
+   * resolves the owner's remote definition automatically.
+   *
+   * The returned record is stamped with its remote origin so subsequent
+   * data reads target the owner tenant.
+   *
+   * Remote-path boundaries:
+   * - {@link TypedCreateRequest.recipientRolePublicKey} is NOT supported
+   *   with `from` — the agent throws rather than silently ignoring the key.
+   * - {@link TypedCreateResponse.audienceKeyDelivery} is never present on
+   *   remote writes — delivery provisioning is a local-processing concept.
+   */
+  from?: string;
+
+  /**
    * The context ID of the parent record.
    *
    * Required when creating a child record under a parent in a hierarchical
@@ -155,6 +180,26 @@ export type TypedCreateRequest<
   datePublished?: string;
 
   /**
+   * ISO 8601 timestamp stamped as the record's immutable creation date.
+   *
+   * Forwarded verbatim to the write message — the DWN engine owns all
+   * timestamp validation rules. Supply it (typically together with
+   * {@link TypedCreateRequest.messageTimestamp}) when the logical creation
+   * time must differ from wall-clock now, e.g. a CRDT squash backstop
+   * forward-stamping a compacted snapshot.
+   */
+  dateCreated?: string;
+
+  /**
+   * ISO 8601 timestamp stamped as the write message's timestamp.
+   *
+   * Forwarded verbatim to the write message — the DWN engine owns all
+   * timestamp validation rules. Message timestamps drive conflict
+   * resolution ordering between writes of the same record.
+   */
+  messageTimestamp?: string;
+
+  /**
    * The DID of the intended recipient.
    *
    * Sets the recipient for permission-scoped records. The recipient may
@@ -183,6 +228,11 @@ export type TypedCreateRequest<
    * key; it does not assert the intended recipient can decrypt it —
    * supplying the wrong key yields `delivered: true` and a delivery the
    * real recipient cannot decrypt.
+   *
+   * NOT supported together with {@link TypedCreateRequest.from} —
+   * role-audience key delivery is provisioned on the owner's local DWN
+   * via `processRequest` only, so the agent rejects a supplied key on the
+   * remote dispatch path rather than silently ignoring it.
    */
   recipientRolePublicKey?: DwnPublicKeyJwk;
 
@@ -275,22 +325,38 @@ export type TypedCreateResponse<T = unknown> =
  *
  * Common filter fields inherited from `RecordsFilter`:
  *
- * - **`parentId`** — Filter by parent context ID. Despite the name, this
- *   filters on the parent record's **context ID** (i.e. pass
- *   `parent.contextId`, not `parent.id`). Use this to find child records
- *   under a specific parent in a hierarchical protocol.
+ * - **`parentId`** — Filter by the parent record's **bare record id** (the
+ *   value stored in the message descriptor). Prefer `parentContextId` for
+ *   child-scoped queries — see below.
  * - **`recordId`** — Match a specific record by its unique ID.
  * - **`recipient`** — Filter by recipient DID.
  * - **`dataFormat`** — Filter by MIME type.
  * - **`dateCreated`** — Range filter on creation date.
- * - **`contextId`** — Filter by context ID directly.
+ * - **`contextId`** — Filter by context ID directly (prefix match).
+ *
+ * ### Child-scoped queries on nested paths
+ *
+ * The DWN engine REJECTS a Query/Subscribe on a nested protocol path (any
+ * path containing `/`) unless the filter carries the DIRECT parent's
+ * compound `contextId` (e.g. `'rootId/parentId'` for a depth-3 path) — and
+ * the engine's `parentId` filter matches the parent's BARE record id, not
+ * its compound context id. Every app used to rediscover this via production
+ * 400s.
+ *
+ * The typed surface derives both automatically: pass the parent record's
+ * {@link TypedRecord.contextId | contextId} as **`parentContextId`** and the
+ * required bare `parentId` **and** compound `contextId` filters are injected
+ * for you. (A compound value passed via `parentId` is normalized the same
+ * way; explicitly-set `contextId`/`parentId` values are never overwritten.)
+ * For depth ≥ 3 paths a bare `parentId` alone cannot be completed — pass
+ * `parentContextId` (or `contextId`) instead.
  *
  * @example
  * ```ts
- * // Find pages under a specific notebook
+ * // Find pages under a specific notebook — parentId + contextId derived
  * const { records } = await proto.records.query('notebook/page', {
  *   filter: {
- *     parentId: notebook.contextId,  // filters by parent's context ID
+ *     parentContextId: notebook.contextId,
  *     tags: { status: 'published' },
  *   },
  * });
@@ -305,7 +371,15 @@ export type TypedQueryFilter = Omit<RecordsFilter, 'protocol' | 'protocolPath' |
    * specified values.
    */
   tags?: globalThis.Record<string, string | number | boolean | (string | number)[]>;
-  /** Alias for `parentId` — filters records by parent context ID. */
+  /**
+   * Scope the results to children of the parent record with this
+   * (compound) context ID — pass the parent record's
+   * {@link TypedRecord.contextId | contextId}.
+   *
+   * The typed surface derives the engine-level filters from it: the bare
+   * `parentId` (last context segment) and the compound `contextId` the
+   * engine requires for nested-path queries/subscriptions.
+   */
   parentContextId?: string;
 };
 
@@ -406,6 +480,50 @@ export type TypedQueryResponse<T = unknown> = DwnResponseStatus & {
 };
 
 /**
+ * Options for {@link TypedEnbox} `records.queryAll()` — the cursor-free
+ * drain of every record matching a query.
+ *
+ * Identical to {@link TypedQueryRequest} except pagination is managed
+ * internally: results are fetched in `pageSize`-sized pages until the
+ * cursor is exhausted (or the optional `maxRecords` safety cap is hit),
+ * so callers never hand-write cursor loops.
+ *
+ * @example
+ * ```ts
+ * for await (const note of proto.records.queryAll('note')) {
+ *   console.log(await note.data.json());
+ * }
+ * ```
+ */
+export type TypedQueryAllRequest = Omit<TypedQueryRequest, 'pagination'> & {
+  /**
+   * The number of records fetched per underlying query page. Defaults
+   * to 100.
+   */
+  pageSize?: number;
+
+  /**
+   * Optional safety cap on the total number of records yielded. When set,
+   * iteration stops after this many records even if more pages remain —
+   * guarding accidental unbounded drains. When omitted, the drain runs to
+   * cursor exhaustion.
+   */
+  maxRecords?: number;
+
+  /**
+   * Overall page-request budget for the drain, independent of `maxRecords`
+   * (which counts yielded records and so cannot bound empty pages).
+   * Defaults to 1000 pages; exceeding it THROWS — it is a runaway-remote
+   * guard, not a truncation knob. Must be a positive integer.
+   *
+   * Built-in liveness guards apply regardless: a repeated pagination
+   * cursor or a run of consecutive empty cursor-bearing pages terminates
+   * the drain with a thrown error.
+   */
+  maxPages?: number;
+};
+
+/**
  * Options for {@link TypedEnbox} `records.read()`.
  *
  * A `filter` is required to identify which record to read. The most common
@@ -498,6 +616,15 @@ export type TypedDeleteRequest = {
    * Use {@link TypedRecord.id | record.id} to obtain this value.
    */
   recordId: string;
+
+  /**
+   * Whether to also delete (prune) every descendant record beneath this
+   * record in the protocol hierarchy.
+   *
+   * Forwarded to the underlying `RecordsDelete` message. When omitted the
+   * delete is a plain tombstone that leaves children in place.
+   */
+  prune?: boolean;
 };
 
 /**
@@ -564,6 +691,93 @@ export type TypedSubscribeResponse<T = unknown> = DwnResponseStatus & {
    * to react to changes. Call `liveQuery.close()` to stop the subscription.
    */
   liveQuery?: TypedLiveQuery<T>;
+};
+
+/**
+ * Thrown/returned by {@link TypedEnbox.verifyInstalled} when a DELEGATE
+ * session's wallet-installed protocol definition is stale (or missing, or
+ * lacking required `$keyAgreement` keys).
+ *
+ * A delegate holds no `Protocols.Configure` authority: it can only import
+ * the wallet's already-signed configuration, so a drifted definition cannot
+ * be repaired from the app side. The wallet must re-install the protocol and
+ * re-approve the session — route the user back through the wallet connect /
+ * approval flow.
+ *
+ * Contrast with the OWNER case, where the same drift is reported as
+ * `'owner-can-update'` because a plain `configure()` call repairs it.
+ */
+export class WalletReapprovalRequiredError extends Error {
+  /** The protocol URI whose wallet-installed definition is stale or missing. */
+  public readonly protocol: string;
+
+  constructor(protocol: string, detail: string) {
+    super(
+      `WalletReapprovalRequiredError: protocol '${protocol}' ${detail} ` +
+      'A delegate cannot re-configure protocols — the wallet must re-install ' +
+      'the protocol and re-approve the session.',
+    );
+    this.name = 'WalletReapprovalRequiredError';
+    this.protocol = protocol;
+  }
+}
+
+/**
+ * Result of {@link TypedEnbox.verifyInstalled} — a strict, read-only
+ * verification of the installed protocol definition against the code's
+ * definition, including `$keyAgreement` key coverage.
+ *
+ * `status` semantics:
+ * - **`'up-to-date'`** — the installed definition canonically matches the
+ *   code definition (runtime encryption blocks stripped before comparison)
+ *   and, when the protocol declares encrypted types, every path the
+ *   encryption-key injection covers carries a `$keyAgreement.publicKeyJwk`.
+ * - **`'owner-can-update'`** — the connected identity owns the tenant and
+ *   the installation is missing, drifted, or lacking `$keyAgreement` keys;
+ *   calling {@link TypedEnbox.configure | configure()} repairs it.
+ * - **`'wallet-reapproval-required'`** — the session is a DELEGATE and the
+ *   WALLET-installed definition (fetched from the owner tenant) is missing,
+ *   drifted, or lacking `$keyAgreement` keys. The delegate cannot repair
+ *   this; `error` carries a throwable {@link WalletReapprovalRequiredError}
+ *   instead of the drift being silently imported.
+ */
+export type VerifyInstalledResult = {
+  /** The verification outcome — see the type-level doc for semantics. */
+  status: 'up-to-date' | 'owner-can-update' | 'wallet-reapproval-required';
+
+  /**
+   * Whether an installed definition was found at all — locally for owner
+   * sessions, on the wallet (owner) tenant for delegate sessions.
+   */
+  installed: boolean;
+
+  /**
+   * Whether the installed definition canonically matches the code
+   * definition, compared via {@link definitionsEqual} (deterministic JSON
+   * with `$encryption`/`$keyAgreement` runtime blocks stripped). `false`
+   * when no installation was found.
+   */
+  definitionsMatch: boolean;
+
+  /**
+   * Protocol paths the encryption-key injection should cover whose
+   * `$keyAgreement.publicKeyJwk` is missing from the installed definition.
+   * The empty string denotes the protocol root. Checked only when the
+   * definition declares encrypted types (`encryptionRequired: true`) and an
+   * installation was found; empty otherwise. `$ref` composition nodes are
+   * exempt — their records are governed by the referenced protocol's keys.
+   */
+  missingKeyAgreementPaths: string[];
+
+  /** Human-readable explanation of a non-`'up-to-date'` status. */
+  reason?: string;
+
+  /**
+   * Present only with `status: 'wallet-reapproval-required'` — a typed,
+   * throwable error for callers that want hard-failure semantics
+   * (`if (result.error) { throw result.error; }`).
+   */
+  error?: WalletReapprovalRequiredError;
 };
 
 // ---------------------------------------------------------------------------
@@ -652,6 +866,18 @@ export class TypedEnbox<
   }
 
   /**
+   * The underlying untyped {@link DwnApi} this instance operates through.
+   *
+   * This is the supported escape hatch to the raw DWN layer — use it when
+   * an operation is not (yet) surfaced on the typed API, e.g. low-level
+   * `records.write` with explicit message params. Prefer the typed
+   * methods for everything they cover.
+   */
+  public get dwn(): DwnApi {
+    return this._dwn;
+  }
+
+  /**
    * Configures (installs) this protocol on the local DWN.
    *
    * If the protocol is already installed with an identical definition,
@@ -733,6 +959,143 @@ export class TypedEnbox<
    */
   public get isConfigured(): boolean {
     return this._configured;
+  }
+
+  /**
+   * Strictly verifies the installed protocol definition without modifying
+   * anything — the read-only counterpart to {@link TypedEnbox.configure}.
+   *
+   * Where `configure()` only compares definitions (and, for delegates,
+   * silently imports whatever the wallet installed, warning on drift),
+   * `verifyInstalled()`:
+   *
+   * 1. canonically compares the installed definition against the code
+   *    definition via {@link definitionsEqual} (runtime
+   *    `$encryption`/`$keyAgreement` blocks stripped);
+   * 2. when the definition declares encrypted types, verifies a
+   *    `$keyAgreement.publicKeyJwk` is present at every path the
+   *    encryption-key injection covers (protocol root and every non-`$ref`
+   *    structure path);
+   * 3. distinguishes WHO can repair a failure: an owner gets
+   *    `'owner-can-update'` (call `configure()`), while a delegate whose
+   *    wallet-installed definition is stale gets
+   *    `'wallet-reapproval-required'` together with a typed
+   *    {@link WalletReapprovalRequiredError} — never a silent import.
+   *
+   * For owner sessions the LOCAL installation is verified; for delegate
+   * sessions the WALLET-installed definition is fetched from the owner
+   * tenant's remote DWN (the source auto-configure imports from).
+   *
+   * Never changes state: no configure, no import, no cache updates.
+   *
+   * @returns The structured verification result — see {@link VerifyInstalledResult}.
+   * @throws `Error` when the delegate's remote protocol query itself fails
+   *   (e.g. a revoked or expired session grant surfaces as a 401) — a
+   *   transport/authorization failure, not a verification outcome.
+   */
+  public async verifyInstalled(): Promise<VerifyInstalledResult> {
+    const isDelegate = this._dwn.isDelegate;
+
+    // Owners verify their local installation; delegates verify the
+    // wallet-installed definition on the owner tenant — the same source
+    // `_autoConfigureDelegateProtocol` imports from.
+    const { protocols, status } = await this._dwn.protocols.query({
+      ...(isDelegate ? { from: this._dwn.connectedDid } : {}),
+      filter: { protocol: this._definition.protocol },
+    });
+
+    // A failed query is a transport/authorization failure, not a verification
+    // outcome — never classify it as "not installed".
+    if (status !== undefined && status.code >= 300) {
+      const source = isDelegate
+        ? `the wallet's protocol definition from the owner's DWN`
+        : 'the locally installed protocol definition';
+      const delegateHint = isDelegate
+        ? ' A revoked or expired session grant fails with 401 — reconnect to obtain fresh grants.'
+        : '';
+      throw new Error(
+        `TypedEnbox: verifyInstalled() could not fetch ${source} ` +
+        `for '${this._definition.protocol}': ${status.code} ${status.detail}.${delegateHint}`,
+      );
+    }
+
+    const installedDefinition = protocols.length > 0 ? protocols[0].definition : undefined;
+
+    if (installedDefinition === undefined) {
+      return this.buildVerifyInstalledResult({
+        isDelegate,
+        installed                : false,
+        definitionsMatch         : false,
+        missingKeyAgreementPaths : [],
+        detail                   : isDelegate
+          ? 'is not installed on the wallet (owner) tenant.'
+          : 'is not installed on the local DWN.',
+      });
+    }
+
+    const definitionsMatch = definitionsEqual(installedDefinition, this._definition);
+
+    // `$keyAgreement` injection only happens for encrypted installs, so key
+    // coverage is only expected when the definition declares encrypted types.
+    const missingKeyAgreementPaths = this._hasEncryptedTypes
+      ? collectMissingKeyAgreementPaths(installedDefinition)
+      : [];
+
+    if (definitionsMatch && missingKeyAgreementPaths.length === 0) {
+      return {
+        status                   : 'up-to-date',
+        installed                : true,
+        definitionsMatch         : true,
+        missingKeyAgreementPaths : [],
+      };
+    }
+
+    const detail = definitionsMatch
+      ? `is installed but is missing $keyAgreement keys at: ${missingKeyAgreementPaths.map((p) => p === '' ? '(root)' : p).join(', ')}.`
+      : `is installed with a definition that differs from the application's definition.`;
+
+    return this.buildVerifyInstalledResult({
+      isDelegate,
+      installed: true,
+      definitionsMatch,
+      missingKeyAgreementPaths,
+      detail,
+    });
+  }
+
+  /**
+   * Shapes a non-`'up-to-date'` {@link VerifyInstalledResult}: owner
+   * sessions get `'owner-can-update'`; delegate sessions get
+   * `'wallet-reapproval-required'` with the typed error attached.
+   */
+  private buildVerifyInstalledResult(params: {
+    isDelegate: boolean;
+    installed: boolean;
+    definitionsMatch: boolean;
+    missingKeyAgreementPaths: string[];
+    detail: string;
+  }): VerifyInstalledResult {
+    const { isDelegate, installed, definitionsMatch, missingKeyAgreementPaths, detail } = params;
+
+    if (isDelegate) {
+      const error = new WalletReapprovalRequiredError(this._definition.protocol, detail);
+      return {
+        status : 'wallet-reapproval-required',
+        installed,
+        definitionsMatch,
+        missingKeyAgreementPaths,
+        reason : error.message,
+        error,
+      };
+    }
+
+    return {
+      status : 'owner-can-update',
+      installed,
+      definitionsMatch,
+      missingKeyAgreementPaths,
+      reason : `TypedEnbox: protocol '${this._definition.protocol}' ${detail} Call configure() to repair it.`,
+    };
   }
 
   /**
@@ -913,6 +1276,47 @@ export class TypedEnbox<
   }
 
   /**
+   * Backs `records.queryAll()`: ensures the protocol is ready, injects the
+   * protocol-scoped filter (with child-scope derivation), and delegates the
+   * cursor loop to the raw {@link DwnApi} drain, wrapping each yielded
+   * record in a {@link TypedRecord}.
+   */
+  private async * queryAllTypedRecords<Path extends ProtocolPaths<D> & string>(
+    path: Path,
+    request?: TypedQueryAllRequest,
+  ): AsyncGenerator<TypedRecord<DataForPath<D, M, Path>>, void, undefined> {
+    const normalizedPath = normalizePath(path);
+    await this._ensureReady(normalizedPath);
+    const typeName = lastSegment(normalizedPath);
+    const typeEntry = this._definition.types[typeName];
+
+    const drainFilter = deriveChildScopeFilter(request?.filter, normalizedPath);
+    // Auto-enable decryption when the type requires it — same policy as query().
+    const autoEncryption = typeEntry?.encryptionRequired === true
+      ? true : undefined;
+
+    const drain = this._dwn.records.queryAll({
+      from       : request?.from,
+      encryption : request?.encryption ?? autoEncryption,
+      filter     : {
+        ...drainFilter,
+        protocol     : this._definition.protocol,
+        protocolPath : normalizedPath,
+        ...(typeEntry?.schema === undefined ? {} : { schema: typeEntry.schema }),
+      },
+      dateSort     : request?.dateSort,
+      protocolRole : request?.protocolRole,
+      pageSize     : request?.pageSize,
+      maxRecords   : request?.maxRecords,
+      maxPages     : request?.maxPages,
+    });
+
+    for await (const record of drain) {
+      yield new TypedRecord<DataForPath<D, M, Path>>(record);
+    }
+  }
+
+  /**
    * Protocol-scoped record operations.
    *
    * Every method auto-injects the `protocol`, `protocolPath`, and `schema`
@@ -927,6 +1331,7 @@ export class TypedEnbox<
    * Available methods:
    * - {@link TypedEnbox.records.create | create(path, request)} — Create a new record
    * - {@link TypedEnbox.records.query | query(path, request?)} — Query records with filters
+   * - {@link TypedEnbox.records.queryAll | queryAll(path, request?)} — Drain all matching records (auto-pagination)
    * - {@link TypedEnbox.records.read | read(path, request)} — Read a single record
    * - {@link TypedEnbox.records.delete | delete(path, request)} — Delete a record by ID
    * - {@link TypedEnbox.records.subscribe | subscribe(path, request?)} — Real-time subscription
@@ -941,6 +1346,11 @@ export class TypedEnbox<
       path: Path,
       request?: TypedQueryRequest,
     ) => Promise<TypedQueryResponse<DataForPath<D, M, Path>>>;
+
+    queryAll: <Path extends ProtocolPaths<D> & string>(
+      path: Path,
+      request?: TypedQueryAllRequest,
+    ) => AsyncGenerator<TypedRecord<DataForPath<D, M, Path>>, void, undefined>;
 
     read: <Path extends ProtocolPaths<D> & string>(
       path: Path,
@@ -1007,11 +1417,14 @@ export class TypedEnbox<
 
         const { status, record, audienceKeyDelivery } = await this._dwn.records.write({
           data                   : request.data,
+          from                   : request.from,
           store                  : request.store,
           encryption             : request.encryption ?? autoEncryption,
           parentContextId        : request.parentContextId,
           published              : request.published,
           datePublished          : request.datePublished,
+          dateCreated            : request.dateCreated,
+          messageTimestamp       : request.messageTimestamp,
           recipient              : request.recipient,
           recipientRolePublicKey : request.recipientRolePublicKey,
           protocolRole           : request.protocolRole,
@@ -1074,7 +1487,7 @@ export class TypedEnbox<
         const typeName = lastSegment(normalizedPath);
         const typeEntry = this._definition.types[typeName];
 
-        const queryFilter = mapParentContextId(request?.filter);
+        const queryFilter = deriveChildScopeFilter(request?.filter, normalizedPath);
         // Auto-enable decryption when the type requires it. Delegates use
         // delivered ProtocolPath keys from the connect flow; the agent layer
         // resolves the correct key decrypter automatically.
@@ -1100,6 +1513,45 @@ export class TypedEnbox<
           records: records.map((r) => new TypedRecord<DataForPath<D, M, Path>>(r)),
           cursor,
         };
+      },
+
+      /**
+       * Drain every record at the given protocol path, paging through
+       * query results internally — no hand-written cursor loops.
+       *
+       * Returns an async generator of typed records; iterate it with
+       * `for await...of`. Pages are fetched lazily as iteration advances
+       * (`pageSize` records per underlying query, 100 by default), and the
+       * optional `maxRecords` safety cap bounds the total yield. A page
+       * that fails with a non-2xx status aborts iteration with a thrown
+       * Error, as do the liveness guards: a repeated pagination cursor, a
+       * run of consecutive empty cursor-bearing pages, or an exceeded
+       * `maxPages` budget.
+       *
+       * @param path - The protocol path to drain (e.g. `'notebook'`).
+       * @param request - Optional filter/sort options plus `pageSize`,
+       *   `maxRecords`, and `maxPages`. See {@link TypedQueryAllRequest}.
+       * @returns An `AsyncGenerator` yielding every matching
+       *   {@link TypedRecord} in sort order.
+       *
+       * @example
+       * ```ts
+       * const titles: string[] = [];
+       * for await (const page of proto.records.queryAll('notebook/page', {
+       *   filter: { parentContextId: notebook.contextId },
+       * })) {
+       *   titles.push((await page.data.json()).title);
+       * }
+       * ```
+       */
+      queryAll: <Path extends ProtocolPaths<D> & string>(
+        path: Path,
+        request?: TypedQueryAllRequest,
+      ): AsyncGenerator<TypedRecord<DataForPath<D, M, Path>>, void, undefined> => {
+        // Validated at CALL time (the generator body — including its inner
+        // raw queryAll call — only runs on first iteration).
+        assertValidQueryAllOptions(request ?? {});
+        return this.queryAllTypedRecords(path, request);
       },
 
       /**
@@ -1133,7 +1585,7 @@ export class TypedEnbox<
         const typeName = lastSegment(normalizedPath);
         const typeEntry = this._definition.types[typeName];
 
-        const readFilter = mapParentContextId(request.filter);
+        const readFilter = deriveChildScopeFilter(request.filter, normalizedPath);
         // Auto-enable decryption when the type requires it. See query()
         // comment for delegate decryption details.
         const autoEncryption = typeEntry?.encryptionRequired === true
@@ -1189,6 +1641,7 @@ export class TypedEnbox<
           from     : request.from,
           protocol : this._definition.protocol,
           recordId : request.recordId,
+          prune    : request.prune,
         });
       },
 
@@ -1237,7 +1690,7 @@ export class TypedEnbox<
         const typeName = lastSegment(normalizedPath);
         const typeEntry = this._definition.types[typeName];
 
-        const subFilter = mapParentContextId(request?.filter);
+        const subFilter = deriveChildScopeFilter(request?.filter, normalizedPath);
         // Auto-enable decryption when the type requires it. See query()
         // comment for delegate decryption details.
         const autoEncryption = typeEntry?.encryptionRequired === true
@@ -1272,18 +1725,63 @@ export class TypedEnbox<
 // ---------------------------------------------------------------------------
 
 /**
- * Maps the `parentContextId` alias to the underlying `parentId` field
- * expected by the DWN SDK. If both are provided, `parentId` takes precedence.
- * Returns a new object (or `undefined` if the input was `undefined`).
+ * Derives the engine-level child-scope filters from the `parentContextId`
+ * alias for the given (normalized) protocol path.
+ *
+ * The DWN engine has two coupled rules every app used to rediscover via
+ * production 400s:
+ *
+ * 1. `filter.parentId` matches the parent's BARE record id (the descriptor
+ *    stores only the last context segment), while record creation takes the
+ *    compound `parentContextId` — so the natural "pass `parent.contextId`
+ *    everywhere" symmetry silently matches nothing on nested parents.
+ * 2. Query/Count/Subscribe on a nested protocol path are REJECTED
+ *    (`...NestedProtocolPathContextIdInvalid`) unless the filter carries the
+ *    DIRECT parent's compound `contextId` (exactly `depth - 1` segments).
+ *
+ * Given a compound parent context id (via `parentContextId`, or a `parentId`
+ * value containing `/` — record ids never contain slashes), this injects
+ * BOTH: the bare `parentId` (last segment) and the compound `contextId`.
+ * For depth-2 paths the parent is a root record whose contextId IS its
+ * record id, so a bare `parentId` alone is also completed with the required
+ * `contextId`. Explicitly-set `contextId`/`parentId` values are never
+ * overwritten. Returns a new object (or `undefined` if the input was
+ * `undefined`).
  */
-function mapParentContextId<T extends Record<string, unknown>>(
+function deriveChildScopeFilter<T extends Record<string, unknown>>(
   filter: T | undefined,
+  protocolPath: string,
 ): Omit<T, 'parentContextId'> | undefined {
   if (!filter) { return undefined; }
   const { parentContextId, ...rest } = filter as Record<string, unknown>;
-  if (parentContextId !== undefined && rest.parentId === undefined) {
-    rest.parentId = parentContextId;
+  const pathDepth = protocolPath.split('/').length;
+
+  // Resolve the compound parent contextId source: the explicit alias wins;
+  // a `parentId` carrying a compound value (record ids never contain '/')
+  // is treated as one for backward-friendliness with the old alias docs.
+  let compoundParentContextId: string | undefined;
+  if (typeof parentContextId === 'string') {
+    compoundParentContextId = parentContextId;
+  } else if (typeof rest.parentId === 'string' && rest.parentId.includes('/')) {
+    compoundParentContextId = rest.parentId;
   }
+
+  if (compoundParentContextId !== undefined) {
+    // The engine's `parentId` filter matches the parent's bare record id.
+    if (rest.parentId === undefined || rest.parentId === compoundParentContextId) {
+      rest.parentId = lastSegment(compoundParentContextId);
+    }
+    // Nested-path Query/Subscribe require the direct parent's compound
+    // contextId; inject it when the caller didn't set one explicitly.
+    if (pathDepth >= 2 && rest.contextId === undefined) {
+      rest.contextId = compoundParentContextId;
+    }
+  } else if (pathDepth === 2 && typeof rest.parentId === 'string' && rest.contextId === undefined) {
+    // Depth-2 paths have a ROOT parent, whose contextId IS its record id —
+    // derive the required contextId filter from the bare parentId.
+    rest.contextId = rest.parentId;
+  }
+
   return rest as Omit<T, 'parentContextId'>;
 }
 
@@ -1304,10 +1802,12 @@ export function definitionsEqual(a: unknown, b: unknown): boolean {
 }
 
 /**
- * Recursively removes runtime-injected encryption keys from an object tree.
+ * Recursively removes runtime-injected encryption keys (`$encryption` and
+ * `$keyAgreement` blocks) from an object tree — the canonicalization step
+ * behind {@link definitionsEqual} and {@link TypedEnbox.verifyInstalled}.
  * Returns a new object — the original is not mutated.
  */
-function stripEncryptionBlocks(value: unknown): unknown {
+export function stripEncryptionBlocks(value: unknown): unknown {
   if (value === null || value === undefined || typeof value !== 'object') {
     return value;
   }
@@ -1322,6 +1822,58 @@ function stripEncryptionBlocks(value: unknown): unknown {
     result[key] = stripEncryptionBlocks(val);
   }
   return result;
+}
+
+/**
+ * Returns `true` when the given structure node carries an injected
+ * `$keyAgreement.publicKeyJwk`.
+ */
+function hasKeyAgreementKey(node: Record<string, unknown>): boolean {
+  const keyAgreement = node.$keyAgreement as { publicKeyJwk?: unknown } | undefined;
+  return keyAgreement?.publicKeyJwk !== undefined;
+}
+
+/**
+ * Collects every protocol path the encryption-key injection should cover
+ * whose `$keyAgreement.publicKeyJwk` is MISSING from an installed protocol
+ * definition.
+ *
+ * Mirrors the injection walk performed at encrypted configure time
+ * (`Protocols.deriveAndInjectPublicEncryptionKeys`): the protocol root
+ * (reported as the empty string) and every structure path are covered,
+ * `$`-prefixed keys are skipped, and `$ref` composition nodes are exempt —
+ * their records are governed by the referenced protocol's own keys — while
+ * their children (which belong to the composing protocol) are still checked.
+ */
+function collectMissingKeyAgreementPaths(definition: ProtocolDefinition): string[] {
+  const missing: string[] = [];
+
+  if (!hasKeyAgreementKey(definition as unknown as Record<string, unknown>)) {
+    missing.push('');
+  }
+
+  const walk = (structure: Record<string, unknown>, prefix: string): void => {
+    for (const key of Object.keys(structure)) {
+      if (key.startsWith('$')) { continue; }
+
+      const node = structure[key];
+      if (node === null || typeof node !== 'object') { continue; }
+
+      const nodeRecord = node as Record<string, unknown>;
+      const path = prefix ? `${prefix}/${key}` : key;
+
+      // `$ref` nodes are skipped by the injection (governed by the referenced
+      // protocol) — children still belong to the composing protocol.
+      if (nodeRecord.$ref === undefined && !hasKeyAgreementKey(nodeRecord)) {
+        missing.push(path);
+      }
+
+      walk(nodeRecord, path);
+    }
+  };
+
+  walk(definition.structure as Record<string, unknown>, '');
+  return missing;
 }
 
 /**

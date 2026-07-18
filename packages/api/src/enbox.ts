@@ -141,6 +141,36 @@ export class Enbox {
   }
 
   /**
+   * The underlying untyped {@link DwnApi} this instance operates through.
+   *
+   * This is the supported escape hatch to the raw DWN layer — use it when an
+   * operation is not (yet) surfaced by {@link Enbox.using}'s typed API, e.g.
+   * a low-level `records.write` with explicit message params. Prefer
+   * `enbox.using(protocol)` for everything the typed surface covers.
+   */
+  public get dwn(): DwnApi {
+    return this._dwn;
+  }
+
+  /**
+   * The DID of the connected DWN tenant all operations are scoped to.
+   *
+   * In a delegated session this is the OWNER's DID (the tenant), not the
+   * delegate's — see {@link Enbox.delegateDid}.
+   */
+  public get connectedDid(): string {
+    return this._connectedDid;
+  }
+
+  /**
+   * The delegate DID this instance signs with when operating under delegated
+   * grants, or `undefined` for owner (non-delegated) sessions.
+   */
+  public get delegateDid(): string | undefined {
+    return this._delegateDid;
+  }
+
+  /**
    * Returns the lifecycle state of the newest delegated connect approval.
    *
    * Expiry is computed from the grants stored locally for the current owner
