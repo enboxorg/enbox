@@ -110,15 +110,19 @@ function jsonRecord(data: unknown): ProfileReaderRecord {
   };
 }
 
-function imageRecord(blob: Blob, protocolPath: string): ProfileReaderRecord {
+function imageRecord(blob: Blob, protocolPath: string, options: { dataSize?: number; onBlobFetch?: () => void } = {}): ProfileReaderRecord {
   return {
     protocolPath,
     dataFormat : blob.type,
+    dataSize   : options.dataSize ?? blob.size,
     data       : {
       json: async (): Promise<unknown> => {
         throw new Error('not json');
       },
-      blob: async (): Promise<Blob> => blob,
+      blob: async (): Promise<Blob> => {
+        options.onBlobFetch?.();
+        return blob;
+      },
     },
   };
 }
@@ -225,10 +229,10 @@ describe('createProfileReader', () => {
   });
 
   describe('get()', () => {
-    it('should resolve displayName and avatar for a wallet-shaped profile and use the documented fetch shape', async () => {
+    it('should resolve displayName and avatar for a wallet-shaped profile in eager mode using the documented fetch shape', async () => {
       const clock = new FakeClock();
       const surface = new FakeSurface({ displayName: 'Alice', bio: 'hi' }, AVATAR_BLOB);
-      const reader = createProfileReader(surface, { ...FAST_OPTIONS, timers: clock });
+      const reader = createProfileReader(surface, { ...FAST_OPTIONS, images: 'eager', timers: clock });
 
       const profile = await reader.get(ALICE);
 
@@ -260,7 +264,7 @@ describe('createProfileReader', () => {
     it('should serve repeat get() calls for a settled profile from cache without refetching', async () => {
       const clock = new FakeClock();
       const surface = new FakeSurface({ displayName: 'Alice' });
-      const reader = createProfileReader(surface, { ...FAST_OPTIONS, timers: clock });
+      const reader = createProfileReader(surface, { ...FAST_OPTIONS, images: 'eager', timers: clock });
 
       await reader.get(ALICE);
       const again = await reader.get(ALICE);
@@ -280,6 +284,288 @@ describe('createProfileReader', () => {
       const first = reader.getSnapshot(ALICE);
       const second = reader.getSnapshot(ALICE);
       expect(first).toBe(second as ProfileSnapshot);
+      reader.dispose();
+    });
+  });
+
+  describe('untrusted profile JSON sanitization', () => {
+    it('should never let an injected did claim another identity — the requested DID is authoritative', async () => {
+      const clock = new FakeClock();
+      const surface = new FakeSurface({
+        displayName : 'Mallory',
+        did         : 'did:dht:attacker',
+      });
+      const reader = createProfileReader(surface, { ...FAST_OPTIONS, timers: clock });
+
+      const profile = await reader.get(ALICE);
+
+      expect(profile.did).toBe(ALICE);
+      expect(profile.displayName).toBe('Mallory');
+      expect(Object.keys(profile).sort()).toEqual(['did', 'displayName']);
+      reader.dispose();
+    });
+
+    it('should discard injected avatar/hero keys — images only come from their own records', async () => {
+      const clock = new FakeClock();
+      const surface = new FakeSurface({
+        displayName : 'Alice',
+        avatar      : 'https://evil.example/fake.png',
+        hero        : { sneaky: true },
+      });
+      const reader = createProfileReader(surface, { ...FAST_OPTIONS, images: 'eager', timers: clock });
+
+      const profile = await reader.get(ALICE);
+
+      // Images resolve only from the avatar/hero records (404 here).
+      expect(profile.avatar).toBeUndefined();
+      expect(profile.hero).toBeUndefined();
+      expect(reader.getSnapshot(ALICE)?.profile.value).toEqual({ displayName: 'Alice' });
+      reader.dispose();
+    });
+
+    it('should discard unknown properties from the profile JSON', async () => {
+      const clock = new FakeClock();
+      const surface = new FakeSurface({
+        displayName : 'Alice',
+        bio         : 'hi',
+        isAdmin     : true,
+        extra       : { deep: 'object' },
+      });
+      const reader = createProfileReader(surface, { ...FAST_OPTIONS, timers: clock });
+
+      const profile = await reader.get(ALICE);
+
+      expect(Object.keys(profile).sort()).toEqual(['bio', 'did', 'displayName']);
+      reader.dispose();
+    });
+
+    it('should drop allowlisted fields whose values are not strings', async () => {
+      const clock = new FakeClock();
+      const surface = new FakeSurface({
+        displayName : 12345,
+        bio         : ['not', 'a', 'string'],
+        tagline     : { obj: true },
+        location    : 'Berlin',
+      });
+      const reader = createProfileReader(surface, { ...FAST_OPTIONS, timers: clock });
+
+      const profile = await reader.get(ALICE);
+
+      expect(profile.did).toBe(ALICE);
+      expect(profile.displayName).toBeUndefined();
+      expect(profile.bio).toBeUndefined();
+      expect(profile.tagline).toBeUndefined();
+      expect(profile.location).toBe('Berlin');
+      expect(Object.keys(profile).sort()).toEqual(['did', 'location']);
+      reader.dispose();
+    });
+
+    it('should fail the profile field terminally when the payload is not a JSON object', async () => {
+      const clock = new FakeClock();
+      const surface = new FakeSurface(['an', 'array']);
+      const reader = createProfileReader(surface, { ...FAST_OPTIONS, timers: clock });
+
+      await expect(reader.get(ALICE)).rejects.toThrow('profile record data is not a JSON object');
+      expect(reader.getSnapshot(ALICE)?.status).toBe('error');
+      reader.dispose();
+    });
+  });
+
+  describe('image loading modes', () => {
+    it('should not fetch image bytes under the default lazy mode until loadImages() is called', async () => {
+      const clock = new FakeClock();
+      const surface = new FakeSurface({ displayName: 'Alice' }, AVATAR_BLOB);
+      const reader = createProfileReader(surface, { ...FAST_OPTIONS, timers: clock });
+
+      const profile = await reader.get(ALICE);
+      expect(profile.displayName).toBe('Alice');
+      expect(profile.avatar).toBeUndefined();
+      expect(surface.readCalls).toHaveLength(0);
+
+      const snapshot = reader.getSnapshot(ALICE);
+      expect(snapshot?.status).toBe('settled');
+      expect(snapshot?.avatar.status).toBe('idle');
+      expect(snapshot?.hero.status).toBe('idle');
+
+      const images = await reader.loadImages(ALICE);
+      expect(images.avatar).toBeInstanceOf(Blob);
+      expect(images.hero).toBeUndefined();
+      expect(surface.readCalls.map((call) => call.filter.protocolPath).sort()).toEqual([
+        'profile/avatar',
+        'profile/hero',
+      ]);
+
+      // Loaded images now appear in cached results and snapshots.
+      const withImages = await reader.get(ALICE);
+      expect(withImages.avatar).toBeInstanceOf(Blob);
+      expect(reader.getSnapshot(ALICE)?.avatar.status).toBe('settled');
+      expect(surface.readCalls).toHaveLength(2);
+      reader.dispose();
+    });
+
+    it('should load images and profile together when loadImages() is called on a cold entry', async () => {
+      const clock = new FakeClock();
+      const surface = new FakeSurface({ displayName: 'Alice' }, AVATAR_BLOB);
+      const reader = createProfileReader(surface, { ...FAST_OPTIONS, timers: clock });
+
+      const images = await reader.loadImages(ALICE);
+
+      expect(images.avatar).toBeInstanceOf(Blob);
+      expect(surface.queryCalls).toHaveLength(1);
+      expect(reader.getSnapshot(ALICE)?.profile.value?.displayName).toBe('Alice');
+      reader.dispose();
+    });
+
+    it('should throw from loadImages() when the reader was created with images: off', async () => {
+      const clock = new FakeClock();
+      const surface = new FakeSurface({ displayName: 'Alice' }, AVATAR_BLOB);
+      const reader = createProfileReader(surface, { ...FAST_OPTIONS, images: 'off', timers: clock });
+
+      const profile = await reader.get(ALICE);
+      expect(profile.avatar).toBeUndefined();
+      expect(surface.readCalls).toHaveLength(0);
+      await expect(reader.loadImages(ALICE)).rejects.toThrow('images: \'off\'');
+      reader.dispose();
+    });
+  });
+
+  describe('orphaned image suppression (missing root profile)', () => {
+    it('should never fetch or return images when the root profile record is missing, even in eager mode', async () => {
+      const clock = new FakeClock();
+      const surface = new FakeSurface(undefined, AVATAR_BLOB);
+      surface.queryHandler = async (): Promise<ProfileReaderQueryResponse> => ({ status: OK, records: [] });
+      const reader = createProfileReader(surface, { ...FAST_OPTIONS, images: 'eager', timers: clock });
+
+      const profile = await reader.get(ALICE);
+
+      // Orphaned avatar records exist on the surface, but without a root
+      // profile the reader must not even issue the image reads.
+      expect(profile).toEqual({ did: ALICE });
+      expect(surface.readCalls).toHaveLength(0);
+
+      const snapshot = reader.getSnapshot(ALICE);
+      expect(snapshot?.status).toBe('not-found');
+      expect(snapshot?.avatar.status).toBe('not-found');
+      expect(snapshot?.hero.status).toBe('not-found');
+      reader.dispose();
+    });
+
+    it('should resolve loadImages() with no images when the profile is missing', async () => {
+      const clock = new FakeClock();
+      const surface = new FakeSurface(undefined, AVATAR_BLOB);
+      surface.queryHandler = async (): Promise<ProfileReaderQueryResponse> => ({ status: OK, records: [] });
+      const reader = createProfileReader(surface, { ...FAST_OPTIONS, timers: clock });
+
+      const images = await reader.loadImages(ALICE);
+
+      expect(images).toEqual({});
+      expect(surface.readCalls).toHaveLength(0);
+      expect(reader.getSnapshot(ALICE)?.status).toBe('not-found');
+      reader.dispose();
+    });
+  });
+
+  describe('image size validation', () => {
+    it('should reject an image whose declared dataSize exceeds the protocol maximum without downloading it', async () => {
+      const clock = new FakeClock();
+      const avatarMax = ProfileDefinition.structure.profile.avatar.$size.max;
+      let blobFetched = false;
+      const surface = new FakeSurface({ displayName: 'Alice' });
+      surface.readHandler = async (request): Promise<ProfileReaderReadResponse> => {
+        if (request.filter.protocolPath === 'profile/avatar') {
+          return {
+            status : OK,
+            record : imageRecord(AVATAR_BLOB, 'profile/avatar', {
+              dataSize    : avatarMax + 1,
+              onBlobFetch : () => {
+                blobFetched = true;
+              },
+            }),
+          };
+        }
+        return { status: NOT_FOUND };
+      };
+      const reader = createProfileReader(surface, { ...FAST_OPTIONS, images: 'eager', timers: clock });
+
+      const profile = await reader.get(ALICE);
+
+      expect(profile.avatar).toBeUndefined();
+      expect(blobFetched).toBe(false);
+      const snapshot = reader.getSnapshot(ALICE);
+      expect(snapshot?.avatar.status).toBe('error');
+      expect(snapshot?.avatar.failure?.retryable).toBe(false);
+      expect(snapshot?.avatar.failure?.message).toContain('declares');
+      expect(snapshot?.avatar.failure?.message).toContain(`${avatarMax}`);
+      reader.dispose();
+    });
+
+    it('should reject an image whose actual bytes exceed the protocol maximum after download', async () => {
+      const clock = new FakeClock();
+      const heroMax = ProfileDefinition.structure.profile.hero.$size.max;
+      const oversized = new Blob([new Uint8Array(16).fill(1)], { type: 'image/png' });
+      Object.defineProperty(oversized, 'size', { value: heroMax + 1 });
+      const surface = new FakeSurface({ displayName: 'Alice' });
+      surface.readHandler = async (request): Promise<ProfileReaderReadResponse> => {
+        if (request.filter.protocolPath === 'profile/hero') {
+          // Understated declared size sneaks past the pre-check; the
+          // actual-bytes check must still reject.
+          return { status: OK, record: imageRecord(oversized, 'profile/hero', { dataSize: 1024 }) };
+        }
+        return { status: NOT_FOUND };
+      };
+      const reader = createProfileReader(surface, { ...FAST_OPTIONS, images: 'eager', timers: clock });
+
+      const profile = await reader.get(ALICE);
+
+      expect(profile.hero).toBeUndefined();
+      const snapshot = reader.getSnapshot(ALICE);
+      expect(snapshot?.hero.status).toBe('error');
+      expect(snapshot?.hero.failure?.retryable).toBe(false);
+      expect(snapshot?.hero.failure?.message).toContain('contains');
+      reader.dispose();
+    });
+  });
+
+  describe('image byte budget (LRU)', () => {
+    it('should release the least-recently-used entries images when the budget is exceeded', async () => {
+      const clock = new FakeClock();
+      const surface = new FakeSurface();
+      surface.queryHandler = async (request): Promise<ProfileReaderQueryResponse> => ({
+        status  : OK,
+        records : [jsonRecord({ displayName: request.from })],
+      });
+      surface.readHandler = async (request): Promise<ProfileReaderReadResponse> => {
+        if (request.filter.protocolPath === 'profile/avatar') {
+          return { status: OK, record: imageRecord(AVATAR_BLOB, 'profile/avatar') };
+        }
+        return { status: NOT_FOUND };
+      };
+      // Budget fits exactly one avatar blob.
+      const reader = createProfileReader(surface, {
+        ...FAST_OPTIONS,
+        images          : 'eager',
+        imageByteBudget : AVATAR_BLOB.size,
+        timers          : clock,
+      });
+
+      const first = await reader.get('did:example:one');
+      expect(first.avatar).toBeInstanceOf(Blob);
+      expect(reader.getSnapshot('did:example:one')?.avatar.status).toBe('settled');
+
+      // Loading a second DID's avatar evicts the first (LRU) under budget
+      // pressure: its avatar field returns to idle, profile stays cached.
+      const second = await reader.get('did:example:two');
+      expect(second.avatar).toBeInstanceOf(Blob);
+      const evicted = reader.getSnapshot('did:example:one');
+      expect(evicted?.avatar.status).toBe('idle');
+      expect(evicted?.avatar.value).toBeUndefined();
+      expect(evicted?.profile.value?.displayName).toBe('did:example:one');
+      expect(reader.getSnapshot('did:example:two')?.avatar.status).toBe('settled');
+
+      // The evicted entry's images can be re-requested on demand.
+      const reloaded = await reader.loadImages('did:example:one');
+      expect(reloaded.avatar).toBeInstanceOf(Blob);
+      expect(reader.getSnapshot('did:example:two')?.avatar.status).toBe('idle');
       reader.dispose();
     });
   });
@@ -338,9 +624,9 @@ describe('createProfileReader', () => {
   });
 
   describe('retry ladder', () => {
-    it('should retry retryable statuses on the ladder and settle the field on success', async () => {
+    it('should retry retryable statuses on the ladder while gated images wait for the root profile', async () => {
       const clock = new FakeClock();
-      const surface = new FakeSurface();
+      const surface = new FakeSurface(undefined, AVATAR_BLOB);
       let queryAttempts = 0;
       surface.queryHandler = async (): Promise<ProfileReaderQueryResponse> => {
         queryAttempts += 1;
@@ -349,16 +635,17 @@ describe('createProfileReader', () => {
         }
         return { status: OK, records: [jsonRecord({ displayName: 'Alice' })] };
       };
-      const reader = createProfileReader(surface, { ...FAST_OPTIONS, timers: clock });
+      const reader = createProfileReader(surface, { ...FAST_OPTIONS, images: 'eager', timers: clock });
 
       const resultPromise = reader.get(ALICE);
       resultPromise.catch(() => { /* inspected below */ });
 
-      // Attempt 1 fails (429); images settle immediately (404).
+      // Attempt 1 fails (429); images are root-gated, so no reads yet.
       await waitUntil(() => queryAttempts === 1, 'first query attempt');
       const midFlight = reader.getSnapshot(ALICE);
       expect(midFlight?.status).toBe('loading');
-      expect(midFlight?.avatar.status).toBe('not-found');
+      expect(midFlight?.avatar.status).toBe('loading');
+      expect(surface.readCalls).toHaveLength(0);
 
       // Ladder step 1: +250ms → attempt 2 fails; step 2: +1000ms → attempt 3 succeeds.
       await clock.tick(250);
@@ -368,6 +655,7 @@ describe('createProfileReader', () => {
 
       const profile = await resultPromise;
       expect(profile.displayName).toBe('Alice');
+      expect(profile.avatar).toBeInstanceOf(Blob);
       expect(reader.getSnapshot(ALICE)?.status).toBe('settled');
       reader.dispose();
     });
@@ -451,7 +739,7 @@ describe('createProfileReader', () => {
         }
         return { status: NOT_FOUND };
       };
-      const reader = createProfileReader(surface, { ...FAST_OPTIONS, timers: clock });
+      const reader = createProfileReader(surface, { ...FAST_OPTIONS, images: 'eager', timers: clock });
 
       const profile = await reader.get(ALICE);
       expect(profile.displayName).toBe('Alice');
@@ -466,7 +754,7 @@ describe('createProfileReader', () => {
   });
 
   describe('watch()', () => {
-    it('should emit the current snapshot on subscribe and settle fields in arrival order', async () => {
+    it('should emit the current snapshot on subscribe and settle the profile before the root-gated images', async () => {
       const clock = new FakeClock();
       const surface = new FakeSurface();
       const profileGate = deferred<void>();
@@ -482,7 +770,7 @@ describe('createProfileReader', () => {
         }
         return { status: NOT_FOUND };
       };
-      const reader = createProfileReader(surface, { ...FAST_OPTIONS, timers: clock });
+      const reader = createProfileReader(surface, { ...FAST_OPTIONS, images: 'eager', timers: clock });
 
       const seen: Array<{ status: string; profile: string; avatar: string }> = [];
       const unwatch = reader.watch([ALICE], (snapshot) => {
@@ -629,7 +917,7 @@ describe('createProfileReader', () => {
   });
 
   describe('dispose()', () => {
-    it('should reject pending gets, drop entries, and refuse further use', async () => {
+    it('should reject pending gets and loadImages, drop entries, and refuse further use', async () => {
       const clock = new FakeClock();
       const surface = new FakeSurface();
       surface.queryHandler = async (): Promise<ProfileReaderQueryResponse> => {
@@ -640,10 +928,13 @@ describe('createProfileReader', () => {
 
       const pending = reader.get(ALICE);
       pending.catch(() => { /* asserted below */ });
+      const pendingImages = reader.loadImages(ALICE);
+      pendingImages.catch(() => { /* asserted below */ });
       await waitUntil(() => surface.queryCalls.length === 1, 'fetch starts');
 
       reader.dispose();
       await expect(pending).rejects.toThrow('ProfileReader: disposed');
+      await expect(pendingImages).rejects.toThrow('ProfileReader: disposed');
       expect(reader.getSnapshot(ALICE)).toBeUndefined();
       expect(() => reader.watch([ALICE], () => { /* no-op */ })).toThrow('ProfileReader: instance has been disposed');
       await expect(reader.get(ALICE)).rejects.toThrow('ProfileReader: instance has been disposed');

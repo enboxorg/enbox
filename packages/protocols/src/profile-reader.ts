@@ -18,6 +18,26 @@
  *   read succeed (a `RecordsRead` is authorization-gated, not
  *   publication-gated).
  *
+ * Trust boundary: profile JSON comes from ANOTHER user's DWN and is
+ * untrusted input. The reader validates it against a strict allowlist of
+ * the Profile protocol's text fields, discards everything else, and always
+ * assigns the authoritative requested DID and the separately-fetched image
+ * Blobs after the JSON-derived fields — a profile record cannot claim a
+ * different `did` or inject fake `avatar`/`hero` values.
+ *
+ * Image fields are fetched only after the root profile JSON record is
+ * confirmed to exist. Deleting a profile without pruning leaves orphaned
+ * avatar/hero records behind; the reader suppresses those (a missing
+ * profile resolves to a bare `{ did }`). Wallets deleting a profile should
+ * pass `prune: true` on the root `RecordsDelete` to remove the images too.
+ *
+ * Images default to LAZY loading ({@link ProfileReaderOptions.images}):
+ * `get()`/`watch()` settle the text profile without downloading image
+ * bytes, and callers opt in per DID via {@link ProfileReader.loadImages}.
+ * Retained image Blobs are bounded by an LRU byte budget
+ * ({@link ProfileReaderOptions.imageByteBudget}); least-recently-used
+ * entries' images are released under pressure and can be re-requested.
+ *
  * Sources: works over a connected records surface (a `DwnApi` from
  * `@enbox/api/advanced`, or any compatible `{ query, read }` object) and
  * over the anonymous reader returned by `Enbox.anonymous()` — see
@@ -56,6 +76,11 @@ export type ProfileReaderRecord = {
   protocolPath?: string;
   /** MIME type of the record data. */
   dataFormat?: string;
+  /**
+   * Declared size of the record data in bytes, when known. Used to reject
+   * over-budget image records BEFORE downloading their bytes.
+   */
+  dataSize?: number;
   /** Data accessors. Reading may perform a network fetch for non-inlined data. */
   data: {
     blob(): Promise<Blob>;
@@ -130,8 +155,15 @@ export type ProfileReaderSource =
 // Snapshot / result types
 // ---------------------------------------------------------------------------
 
-/** Settlement status of a single profile field (JSON, avatar, or hero). */
-export type ProfileFieldStatus = 'loading' | 'settled' | 'not-found' | 'error';
+/**
+ * Settlement status of a single profile field (JSON, avatar, or hero).
+ *
+ * `'idle'` means the field has not been requested: image fields under
+ * `images: 'lazy'` before {@link ProfileReader.loadImages} is called,
+ * under `images: 'off'` always, and images released under
+ * {@link ProfileReaderOptions.imageByteBudget} pressure.
+ */
+export type ProfileFieldStatus = 'idle' | 'loading' | 'settled' | 'not-found' | 'error';
 
 /**
  * Aggregate status of a profile entry.
@@ -140,7 +172,8 @@ export type ProfileFieldStatus = 'loading' | 'settled' | 'not-found' | 'error';
  * profile `error` → `'error'`; profile `not-found` → `'not-found'`;
  * any field still `loading` → `'loading'`; otherwise `'settled'`.
  * Image-field failures do NOT fail the entry — the per-field snapshot
- * carries the failure while text fields stay usable.
+ * carries the failure while text fields stay usable — and `'idle'` image
+ * fields do not keep an entry in `'loading'`.
  */
 export type ProfileEntryStatus = 'loading' | 'settled' | 'not-found' | 'error';
 
@@ -171,11 +204,15 @@ export type ProfileFieldSnapshot<T> = {
  * A new snapshot object is produced on every change, so the reference is
  * stable between changes — safe to feed `useSyncExternalStore`-style
  * bindings directly.
+ *
+ * The profile field value is `Partial<ProfileData>`: it contains only the
+ * allowlisted Profile protocol text fields that validated as strings —
+ * unknown or wrong-typed properties from the remote JSON are discarded.
  */
 export type ProfileSnapshot = {
   did: string;
   status: ProfileEntryStatus;
-  profile: ProfileFieldSnapshot<ProfileData>;
+  profile: ProfileFieldSnapshot<Partial<ProfileData>>;
   avatar: ProfileFieldSnapshot<Blob>;
   hero: ProfileFieldSnapshot<Blob>;
 };
@@ -183,12 +220,20 @@ export type ProfileSnapshot = {
 /**
  * The resolved public profile returned by {@link ProfileReader.get}.
  *
- * Text fields come from the profile JSON singleton; `avatar`/`hero` are
- * raw image Blobs (object-URL creation is the caller's job — see the
- * module docs for why).
+ * Text fields come from the profile JSON singleton after allowlist
+ * validation; `avatar`/`hero` are raw image Blobs fetched separately from
+ * their own records (object-URL creation is the caller's job — see the
+ * module docs for why). The `did` is always the DID that was requested —
+ * never a value from the fetched JSON.
  */
 export type PublicProfile = Partial<ProfileData> & {
   did: string;
+  avatar?: Blob;
+  hero?: Blob;
+};
+
+/** Image Blobs resolved by {@link ProfileReader.loadImages}. */
+export type ProfileImages = {
   avatar?: Blob;
   hero?: Blob;
 };
@@ -210,11 +255,23 @@ export type ProfileReaderTimers = {
   now(): number;
 };
 
+/**
+ * Image loading policy for {@link createProfileReader}.
+ *
+ * - `'lazy'` (default) — `get()`/`watch()` settle the text profile without
+ *   downloading image bytes; call {@link ProfileReader.loadImages} to
+ *   fetch a DID's images on demand.
+ * - `'eager'` — images are fetched automatically once the root profile
+ *   record is confirmed to exist.
+ * - `'off'` — images are never fetched; `loadImages()` throws.
+ */
+export type ProfileReaderImagesMode = 'eager' | 'lazy' | 'off';
+
 /** Options for {@link createProfileReader}. */
 export type ProfileReaderOptions = {
   /**
    * Maximum number of DIDs fetched concurrently (each DID's fetch round
-   * issues its query/reads in parallel within the slot). Defaults to `4`.
+   * issues its requests within the slot). Defaults to `4`.
    */
   concurrency?: number;
   /**
@@ -238,6 +295,22 @@ export type ProfileReaderOptions = {
    * released from the cache. Defaults to `300000` (5 minutes).
    */
   idleReleaseMs?: number;
+  /**
+   * Image loading policy. Defaults to `'lazy'` — a protocol-valid
+   * avatar + hero pair can weigh ~36 MiB, so images are only downloaded
+   * when explicitly requested. See {@link ProfileReaderImagesMode}.
+   */
+  images?: ProfileReaderImagesMode;
+  /**
+   * Maximum total bytes of image Blobs retained across all cached entries.
+   * When a newly stored image pushes the total over the budget, the
+   * least-recently-used entries' images are released (their image fields
+   * return to `'idle'` and can be re-requested via `loadImages()`); the
+   * text profile stays cached. The budget is soft in one case: the most
+   * recently stored entry's images are always retained even if they alone
+   * exceed it. Defaults to `134217728` (128 MiB).
+   */
+  imageByteBudget?: number;
   /** Timer/clock override, primarily for tests. */
   timers?: ProfileReaderTimers;
 };
@@ -257,13 +330,28 @@ export type ProfileReader = {
   /**
    * Fetch (or serve from cache) the public profile for `did`.
    *
-   * Resolves once every field has concluded (settled, not found, or
-   * failed). A missing profile resolves to a bare `{ did }`; image-field
-   * failures resolve without that image. Rejects only when the profile
-   * JSON field fails terminally — so callers can distinguish "has no
-   * profile" from "could not fetch".
+   * Resolves once every requested field has concluded (settled, not
+   * found, or failed). A missing profile resolves to a bare `{ did }` —
+   * without images, even when orphaned avatar/hero records exist. Under
+   * the default `images: 'lazy'` policy the result contains no images
+   * until {@link ProfileReader.loadImages} has loaded them. Rejects only
+   * when the profile JSON field fails terminally — so callers can
+   * distinguish "has no profile" from "could not fetch".
    */
   get(did: string): Promise<PublicProfile>;
+
+  /**
+   * Load the avatar/hero image Blobs for `did` on demand.
+   *
+   * Ensures the profile entry is active, fetches the images once the root
+   * profile record is confirmed to exist, and resolves with whatever
+   * images settled (image-field failures resolve without that image, like
+   * `get()`). Resolves `{}` when the profile is missing — orphaned image
+   * records without a root profile are never returned. Under
+   * `images: 'eager'` this simply awaits the automatic image settlement.
+   * Throws when the reader was created with `images: 'off'`.
+   */
+  loadImages(did: string): Promise<ProfileImages>;
 
   /**
    * Subscribe to profile snapshots for a set of DIDs.
@@ -271,7 +359,8 @@ export type ProfileReader = {
    * Subscriptions are refcounted per DID: a second watcher of an
    * already-cached DID triggers no new fetch. The listener is invoked
    * once per DID with the current snapshot on subscribe, then on every
-   * field settlement (name may arrive before images). After the last
+   * field settlement (the text profile settles before images, which are
+   * only fetched after the root profile is confirmed). After the last
    * watcher of a DID unsubscribes, the entry is released after the idle
    * window.
    *
@@ -288,8 +377,8 @@ export type ProfileReader = {
   getSnapshot(did: string): ProfileSnapshot | undefined;
 
   /**
-   * Release all cached entries and cancel all timers. Pending `get()`
-   * promises reject. Further `get()`/`watch()` calls throw.
+   * Release all cached entries and cancel all timers. Pending `get()` and
+   * `loadImages()` promises reject. Further calls throw.
    */
   dispose(): void;
 };
@@ -317,6 +406,42 @@ export function isRetryableProfileReadStatus(code: number): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Untrusted-JSON sanitization
+// ---------------------------------------------------------------------------
+
+/**
+ * The exhaustive allowlist of Profile protocol text fields. Everything
+ * else in a fetched profile JSON — including `did`, `avatar`, `hero`, or
+ * any unknown key — is discarded.
+ */
+const PROFILE_TEXT_FIELDS = ['displayName', 'bio', 'tagline', 'location', 'website', 'pronouns'] as const;
+
+/**
+ * Validate untrusted profile JSON from a remote DWN.
+ *
+ * Returns `undefined` when the payload is not a plain JSON object.
+ * Otherwise returns a fresh object containing ONLY the allowlisted
+ * {@link ProfileData} fields whose values are strings; wrong-typed values
+ * and unknown properties are discarded. The result can never carry `did`,
+ * `avatar`, `hero`, or any other injected key.
+ */
+function sanitizeProfileData(data: unknown): Partial<ProfileData> | undefined {
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+    return undefined;
+  }
+
+  const source = data as Record<string, unknown>;
+  const sanitized: Partial<ProfileData> = {};
+  for (const key of PROFILE_TEXT_FIELDS) {
+    const value = source[key];
+    if (typeof value === 'string') {
+      sanitized[key] = value;
+    }
+  }
+  return sanitized;
+}
+
+// ---------------------------------------------------------------------------
 // Internal state
 // ---------------------------------------------------------------------------
 
@@ -326,10 +451,13 @@ const DEFAULT_CONCURRENCY = 4;
 const DEFAULT_RETRY_DELAYS_MS: readonly number[] = [250, 1000, 3000, 10000];
 const DEFAULT_NEGATIVE_CACHE_MS: readonly number[] = [1000, 5000, 30000];
 const DEFAULT_IDLE_RELEASE_MS = 300_000;
+const DEFAULT_IMAGE_BYTE_BUDGET = 134_217_728; // 128 MiB
 
 type ProfileFieldKey = 'profile' | 'avatar' | 'hero';
+type ImageFieldKey = 'avatar' | 'hero';
 
 const FIELD_KEYS: readonly ProfileFieldKey[] = ['profile', 'avatar', 'hero'];
+const IMAGE_FIELD_KEYS: readonly ImageFieldKey[] = ['avatar', 'hero'];
 
 /** Field key → protocol path of the record it reads. */
 const FIELD_PROTOCOL_PATHS: Record<ProfileFieldKey, string> = {
@@ -338,7 +466,13 @@ const FIELD_PROTOCOL_PATHS: Record<ProfileFieldKey, string> = {
   hero    : 'profile/hero',
 };
 
-type FieldValue = ProfileData | Blob;
+/** Image field → maximum data size the Profile protocol allows for it. */
+const IMAGE_MAX_BYTES: Record<ImageFieldKey, number> = {
+  avatar : ProfileDefinition.structure.profile.avatar.$size.max,
+  hero   : ProfileDefinition.structure.profile.hero.$size.max,
+};
+
+type FieldValue = Partial<ProfileData> | Blob;
 
 type MutableFieldState = {
   status: ProfileFieldStatus;
@@ -359,12 +493,22 @@ type Waiter = {
   reject: (error: Error) => void;
 };
 
+type ImageWaiter = {
+  resolve: (images: ProfileImages) => void;
+  reject: (error: Error) => void;
+};
+
 type CacheEntry = {
   did: string;
   fields: Record<ProfileFieldKey, MutableFieldState>;
   snapshot: ProfileSnapshot;
   watchers: Set<WatchHandle>;
   waiters: Waiter[];
+  imageWaiters: ImageWaiter[];
+  /** Whether `loadImages()` has requested this entry's images (lazy mode). */
+  imagesRequested: boolean;
+  /** Total bytes of image Blobs currently retained for this entry. */
+  imageBytes: number;
   /** True while a fetch round is queued or in flight. */
   fetchQueued: boolean;
   /** True once the entry has been evicted; in-flight work becomes a no-op. */
@@ -432,7 +576,8 @@ function isSuccessCode(code: number): boolean {
  * Build the immutable snapshot for an entry's current field states.
  *
  * Aggregate status precedence: profile `error` wins, then profile
- * `not-found`, then any still-`loading` field, then `settled`. See
+ * `not-found`, then any still-`loading` field, then `settled` (`'idle'`
+ * fields never hold an entry in `'loading'`). See
  * {@link ProfileEntryStatus}.
  */
 function buildSnapshot(did: string, fields: Record<ProfileFieldKey, MutableFieldState>): ProfileSnapshot {
@@ -456,7 +601,7 @@ function buildSnapshot(did: string, fields: Record<ProfileFieldKey, MutableField
   return {
     did,
     status,
-    profile : toFieldSnapshot<ProfileData>(fields.profile),
+    profile : toFieldSnapshot<Partial<ProfileData>>(fields.profile),
     avatar  : toFieldSnapshot<Blob>(fields.avatar),
     hero    : toFieldSnapshot<Blob>(fields.hero),
   };
@@ -472,6 +617,8 @@ class DwnProfileReader implements ProfileReader {
   private readonly _retryDelaysMs: readonly number[];
   private readonly _negativeCacheMs: readonly number[];
   private readonly _idleReleaseMs: number;
+  private readonly _imagesMode: ProfileReaderImagesMode;
+  private readonly _imageByteBudget: number;
   private readonly _timers: ProfileReaderTimers;
 
   private readonly _entries = new Map<string, CacheEntry>();
@@ -481,12 +628,18 @@ class DwnProfileReader implements ProfileReader {
   private _activeRounds = 0;
   private readonly _roundQueue: Array<() => void> = [];
 
+  /** LRU over entries that currently retain image Blobs (oldest first). */
+  private readonly _imageLru = new Map<string, CacheEntry>();
+  private _retainedImageBytes = 0;
+
   constructor(source: ProfileReaderSource, options: ProfileReaderOptions = {}) {
     this._surface = resolveRecordsSurface(source);
     this._concurrency = Math.max(1, options.concurrency ?? DEFAULT_CONCURRENCY);
     this._retryDelaysMs = [...(options.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS)];
     this._negativeCacheMs = [...(options.negativeCacheMs ?? DEFAULT_NEGATIVE_CACHE_MS)];
     this._idleReleaseMs = options.idleReleaseMs ?? DEFAULT_IDLE_RELEASE_MS;
+    this._imagesMode = options.images ?? 'lazy';
+    this._imageByteBudget = Math.max(0, options.imageByteBudget ?? DEFAULT_IMAGE_BYTE_BUDGET);
     this._timers = options.timers ?? DEFAULT_TIMERS;
 
     if (this._negativeCacheMs.length === 0) {
@@ -503,6 +656,7 @@ class DwnProfileReader implements ProfileReader {
 
     if (this.isConcluded(entry) && !entry.fetchQueued) {
       // Cache hit (fresh positive conclusion, or negative within its window).
+      this.touchImageLru(entry);
       this.armIdleTimerIfQuiescent(entry);
       if (entry.fields.profile.status === 'error') {
         throw this.buildProfileError(entry);
@@ -512,6 +666,52 @@ class DwnProfileReader implements ProfileReader {
 
     return new Promise<PublicProfile>((resolve, reject) => {
       entry.waiters.push({ resolve, reject });
+    });
+  }
+
+  public async loadImages(did: string): Promise<ProfileImages> {
+    this.assertNotDisposed();
+    if (this._imagesMode === 'off') {
+      throw new Error('ProfileReader: loadImages() is unavailable — this reader was created with images: \'off\'.');
+    }
+
+    const entry = this.ensureEntry(did);
+    this.cancelIdleTimer(entry);
+    entry.imagesRequested = true;
+    this.activate(entry);
+
+    // Promote idle image fields to loading only while the root profile is
+    // present or still being resolved — a concluded-missing profile means
+    // no images (orphaned image records are never surfaced).
+    const profileStatus = entry.fields.profile.status;
+    if (profileStatus === 'settled' || profileStatus === 'loading') {
+      let promoted = false;
+      for (const key of IMAGE_FIELD_KEYS) {
+        const field = entry.fields[key];
+        if (field.status === 'idle') {
+          field.status = 'loading';
+          field.failure = undefined;
+          field.attempts = 0;
+          field.nextAttemptAt = undefined;
+          promoted = true;
+        }
+      }
+      if (promoted) {
+        this.publish(entry);
+      }
+      if (!this.isConcluded(entry) && !entry.fetchQueued && entry.retryTimer === undefined) {
+        this.startRound(entry);
+      }
+    }
+
+    if (this.isConcluded(entry) && !entry.fetchQueued) {
+      this.touchImageLru(entry);
+      this.armIdleTimerIfQuiescent(entry);
+      return this.buildImagesResult(entry);
+    }
+
+    return new Promise<ProfileImages>((resolve, reject) => {
+      entry.imageWaiters.push({ resolve, reject });
     });
   }
 
@@ -571,12 +771,17 @@ class DwnProfileReader implements ProfileReader {
       entry.evicted = true;
       this.cancelIdleTimer(entry);
       this.cancelRetryTimer(entry);
-      const waiters = entry.waiters.splice(0);
-      for (const waiter of waiters) {
-        waiter.reject(new Error(`ProfileReader: disposed while loading profile for '${entry.did}'.`));
+      const error = new Error(`ProfileReader: disposed while loading profile for '${entry.did}'.`);
+      for (const waiter of entry.waiters.splice(0)) {
+        waiter.reject(error);
+      }
+      for (const imageWaiter of entry.imageWaiters.splice(0)) {
+        imageWaiter.reject(error);
       }
     }
     this._entries.clear();
+    this._imageLru.clear();
+    this._retainedImageBytes = 0;
     this._roundQueue.length = 0;
   }
 
@@ -596,10 +801,13 @@ class DwnProfileReader implements ProfileReader {
       return existing;
     }
 
+    // Image fields start idle unless images load eagerly; the fetch round
+    // only attempts them after the root profile record is confirmed.
+    const imageInitialStatus: ProfileFieldStatus = this._imagesMode === 'eager' ? 'loading' : 'idle';
     const fields: CacheEntry['fields'] = {
       profile : { status: 'loading', attempts: 0 },
-      avatar  : { status: 'loading', attempts: 0 },
-      hero    : { status: 'loading', attempts: 0 },
+      avatar  : { status: imageInitialStatus, attempts: 0 },
+      hero    : { status: imageInitialStatus, attempts: 0 },
     };
     const entry: CacheEntry = {
       did,
@@ -607,6 +815,9 @@ class DwnProfileReader implements ProfileReader {
       snapshot            : buildSnapshot(did, fields),
       watchers            : new Set(),
       waiters             : [],
+      imageWaiters        : [],
+      imagesRequested     : false,
+      imageBytes          : 0,
       fetchQueued         : false,
       evicted             : false,
       lastOutcomeNegative : false,
@@ -661,6 +872,11 @@ class DwnProfileReader implements ProfileReader {
     return FIELD_KEYS.every((key) => entry.fields[key].status !== 'loading');
   }
 
+  /** Whether image fetching is enabled for this entry (mode + lazy request). */
+  private imagesActive(entry: CacheEntry): boolean {
+    return this._imagesMode === 'eager' || (this._imagesMode === 'lazy' && entry.imagesRequested);
+  }
+
   // -------------------------------------------------------------------------
   // Fetch rounds
   // -------------------------------------------------------------------------
@@ -670,24 +886,71 @@ class DwnProfileReader implements ProfileReader {
     void this.runRound(entry);
   }
 
+  /**
+   * One fetch round for an entry: resolve the root profile field first,
+   * then — only when the root record exists — the due image fields. When
+   * the root concludes missing (or failed), still-pending image fields are
+   * suppressed so orphaned image records are never surfaced.
+   */
   private async runRound(entry: CacheEntry): Promise<void> {
     await this.acquireRoundSlot();
     try {
       if (entry.evicted || this._disposed) {
         return;
       }
-      const now = this._timers.now();
-      const dueFields = FIELD_KEYS.filter((key) => {
-        const field = entry.fields[key];
-        return field.status === 'loading' && (field.nextAttemptAt === undefined || field.nextAttemptAt <= now);
-      });
-      await Promise.all(dueFields.map((key) => this.attemptField(entry, key)));
+
+      const profileField = entry.fields.profile;
+      if (profileField.status === 'loading' && this.isFieldDue(profileField)) {
+        await this.attemptField(entry, 'profile');
+      }
+      if (entry.evicted || this._disposed) {
+        return;
+      }
+
+      if (profileField.status === 'settled') {
+        if (this.imagesActive(entry)) {
+          const dueImages = IMAGE_FIELD_KEYS.filter((key) => {
+            const field = entry.fields[key];
+            return field.status === 'loading' && this.isFieldDue(field);
+          });
+          await Promise.all(dueImages.map((key) => this.attemptField(entry, key)));
+        }
+      } else if (profileField.status === 'not-found' || profileField.status === 'error') {
+        this.suppressPendingImages(entry);
+      }
     } finally {
       this.releaseRoundSlot();
     }
 
     entry.fetchQueued = false;
     this.afterRound(entry);
+  }
+
+  private isFieldDue(field: MutableFieldState): boolean {
+    return field.nextAttemptAt === undefined || field.nextAttemptAt <= this._timers.now();
+  }
+
+  /**
+   * Conclude still-pending image fields as `not-found` when the root
+   * profile record is missing or failed: without a root profile there is
+   * no profile — orphaned avatar/hero records (e.g. left behind by a
+   * non-pruning root delete) must not be returned.
+   */
+  private suppressPendingImages(entry: CacheEntry): void {
+    let changed = false;
+    for (const key of IMAGE_FIELD_KEYS) {
+      const field = entry.fields[key];
+      if (field.status === 'loading') {
+        field.status = 'not-found';
+        field.value = undefined;
+        field.failure = undefined;
+        field.nextAttemptAt = undefined;
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.publish(entry);
+    }
   }
 
   private async acquireRoundSlot(): Promise<void> {
@@ -709,7 +972,7 @@ class DwnProfileReader implements ProfileReader {
     }
   }
 
-  /** After a round: conclude the entry, or arm the retry timer for pending fields. */
+  /** After a round: conclude the entry, or schedule the work that remains. */
   private afterRound(entry: CacheEntry): void {
     if (entry.evicted || this._disposed) {
       return;
@@ -720,14 +983,30 @@ class DwnProfileReader implements ProfileReader {
       return;
     }
 
+    // Fields that are due immediately (no scheduled retry): image fields
+    // promoted by loadImages() while a round was already past its image
+    // phase, or images that became eligible when the profile settled.
+    const profileSettled = entry.fields.profile.status === 'settled';
+    const hasImmediatelyDue = FIELD_KEYS.some((key) => {
+      const field = entry.fields[key];
+      if (field.status !== 'loading' || field.nextAttemptAt !== undefined) {
+        return false;
+      }
+      return key === 'profile' || (profileSettled && this.imagesActive(entry));
+    });
+    if (hasImmediatelyDue) {
+      this.startRound(entry);
+      return;
+    }
+
     const pendingDueTimes = FIELD_KEYS
       .map((key) => entry.fields[key])
       .filter((field) => field.status === 'loading' && field.nextAttemptAt !== undefined)
       .map((field) => field.nextAttemptAt as number);
 
     if (pendingDueTimes.length === 0) {
-      // Defensive: a loading field with no scheduled retry should not
-      // happen; conclude it as a terminal error rather than hanging.
+      // Defensive: a loading field that is neither due nor scheduled should
+      // not exist; conclude it as a terminal error rather than hanging.
       for (const key of FIELD_KEYS) {
         const field = entry.fields[key];
         if (field.status === 'loading') {
@@ -775,6 +1054,11 @@ class DwnProfileReader implements ProfileReader {
       }
     }
 
+    const imagesResult = this.buildImagesResult(entry);
+    for (const imageWaiter of entry.imageWaiters.splice(0)) {
+      imageWaiter.resolve(imagesResult);
+    }
+
     this.armIdleTimerIfQuiescent(entry);
   }
 
@@ -811,6 +1095,9 @@ class DwnProfileReader implements ProfileReader {
       field.status = 'settled';
       field.value = outcome.value;
       field.failure = undefined;
+      if (key !== 'profile' && outcome.value instanceof Blob) {
+        this.accountStoredImage(entry, outcome.value);
+      }
       this.publish(entry);
       return;
     }
@@ -850,17 +1137,18 @@ class DwnProfileReader implements ProfileReader {
     }
 
     const data = await record.data.json();
-    if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+    const sanitized = sanitizeProfileData(data);
+    if (sanitized === undefined) {
       return {
         kind    : 'failure',
         failure : { retryable: false, message: 'profile record data is not a JSON object' },
       };
     }
 
-    return { kind: 'settled', value: data as ProfileData };
+    return { kind: 'settled', value: sanitized };
   }
 
-  private async fetchImage(did: string, key: 'avatar' | 'hero'): Promise<FieldOutcome> {
+  private async fetchImage(did: string, key: ImageFieldKey): Promise<FieldOutcome> {
     const { status, record } = await this._surface.read({
       from   : did,
       filter : { protocol: PROFILE_PROTOCOL_URI, protocolPath: FIELD_PROTOCOL_PATHS[key] },
@@ -876,8 +1164,27 @@ class DwnProfileReader implements ProfileReader {
       return { kind: 'not-found' };
     }
 
+    // Reject over-budget records by declared size BEFORE downloading bytes,
+    // then re-check the actual bytes — a misbehaving server may understate.
+    const maxBytes = IMAGE_MAX_BYTES[key];
+    if (record.dataSize !== undefined && record.dataSize > maxBytes) {
+      return this.oversizedImageFailure(key, record.dataSize, maxBytes, 'declares');
+    }
     const value = await record.data.blob();
+    if (value.size > maxBytes) {
+      return this.oversizedImageFailure(key, value.size, maxBytes, 'contains');
+    }
     return { kind: 'settled', value };
+  }
+
+  private oversizedImageFailure(key: ImageFieldKey, actual: number, maxBytes: number, verb: 'declares' | 'contains'): FieldOutcome {
+    return {
+      kind    : 'failure',
+      failure : {
+        retryable : false,
+        message   : `${key} record ${verb} ${actual} bytes, exceeding the protocol maximum of ${maxBytes} bytes`,
+      },
+    };
   }
 
   private failureFromStatus(operation: string, status: ProfileReaderReplyStatus): FieldOutcome {
@@ -889,6 +1196,80 @@ class DwnProfileReader implements ProfileReader {
         message   : `${operation} failed with status ${status.code}${status.detail !== undefined ? `: ${status.detail}` : ''}`,
       },
     };
+  }
+
+  // -------------------------------------------------------------------------
+  // Image byte budget (LRU)
+  // -------------------------------------------------------------------------
+
+  /** Track a newly stored image Blob and enforce the byte budget. */
+  private accountStoredImage(entry: CacheEntry, blob: Blob): void {
+    entry.imageBytes += blob.size;
+    this._retainedImageBytes += blob.size;
+    this.touchImageLru(entry);
+    this.enforceImageBudget(entry);
+  }
+
+  /** Mark the entry as most-recently-used in the image LRU. */
+  private touchImageLru(entry: CacheEntry): void {
+    if (entry.imageBytes > 0) {
+      this._imageLru.delete(entry.did);
+      this._imageLru.set(entry.did, entry);
+    }
+  }
+
+  /**
+   * Release least-recently-used entries' images until the retained total
+   * fits the budget. The entry that just stored an image is protected, as
+   * are entries with in-flight work or pending waiters (they conclude
+   * shortly and the next store enforces again).
+   */
+  private enforceImageBudget(protectedEntry: CacheEntry): void {
+    if (this._retainedImageBytes <= this._imageByteBudget) {
+      return;
+    }
+    for (const candidate of [...this._imageLru.values()]) {
+      if (this._retainedImageBytes <= this._imageByteBudget) {
+        return;
+      }
+      if (candidate === protectedEntry || candidate.fetchQueued || candidate.waiters.length > 0 || candidate.imageWaiters.length > 0) {
+        continue;
+      }
+      this.releaseEntryImages(candidate);
+    }
+  }
+
+  /**
+   * Drop an entry's retained image Blobs: image fields return to `'idle'`
+   * (re-requestable via `loadImages()`), the text profile stays cached,
+   * and watchers are notified of the change.
+   */
+  private releaseEntryImages(entry: CacheEntry): void {
+    this._retainedImageBytes -= entry.imageBytes;
+    entry.imageBytes = 0;
+    this._imageLru.delete(entry.did);
+    let changed = false;
+    for (const key of IMAGE_FIELD_KEYS) {
+      const field = entry.fields[key];
+      if (field.value !== undefined) {
+        field.value = undefined;
+        field.status = 'idle';
+        field.failure = undefined;
+        changed = true;
+      }
+    }
+    // Released images must be explicitly re-requested in lazy mode.
+    entry.imagesRequested = false;
+    if (changed) {
+      this.publish(entry);
+    }
+  }
+
+  /** Remove an entry's contribution to the image accounting on eviction. */
+  private dropImageAccounting(entry: CacheEntry): void {
+    this._retainedImageBytes -= entry.imageBytes;
+    entry.imageBytes = 0;
+    this._imageLru.delete(entry.did);
   }
 
   // -------------------------------------------------------------------------
@@ -910,18 +1291,37 @@ class DwnProfileReader implements ProfileReader {
     }
   }
 
+  /**
+   * Assemble the public result. Untrusted JSON contributes only its
+   * sanitized allowlisted fields; the authoritative requested `did` and
+   * the separately-fetched image Blobs are assigned AFTER the spread so
+   * nothing from the remote JSON can shadow them.
+   */
   private buildPublicProfile(entry: CacheEntry): PublicProfile {
-    const profileData = entry.fields.profile.value as ProfileData | undefined;
-    const result: PublicProfile = { did: entry.did, ...profileData };
-    const avatar = entry.fields.avatar.value as Blob | undefined;
-    const hero = entry.fields.hero.value as Blob | undefined;
-    if (avatar !== undefined) {
+    const profileData = entry.fields.profile.value as Partial<ProfileData> | undefined;
+    const result: PublicProfile = { ...profileData, did: entry.did };
+    const avatar = entry.fields.avatar.value;
+    const hero = entry.fields.hero.value;
+    if (avatar instanceof Blob) {
       result.avatar = avatar;
     }
-    if (hero !== undefined) {
+    if (hero instanceof Blob) {
       result.hero = hero;
     }
     return result;
+  }
+
+  private buildImagesResult(entry: CacheEntry): ProfileImages {
+    const images: ProfileImages = {};
+    const avatar = entry.fields.avatar.value;
+    const hero = entry.fields.hero.value;
+    if (avatar instanceof Blob) {
+      images.avatar = avatar;
+    }
+    if (hero instanceof Blob) {
+      images.hero = hero;
+    }
+    return images;
   }
 
   private buildProfileError(entry: CacheEntry): Error {
@@ -952,14 +1352,17 @@ class DwnProfileReader implements ProfileReader {
 
   /**
    * Arm the idle-release countdown when nothing holds the entry: no
-   * watchers, no pending `get()` waiters, and no fetch activity. Re-arming
+   * watchers, no pending waiters, and no fetch activity. Re-arming
    * restarts the countdown.
    */
   private armIdleTimerIfQuiescent(entry: CacheEntry): void {
     if (entry.evicted || this._disposed) {
       return;
     }
-    if (entry.watchers.size > 0 || entry.waiters.length > 0 || entry.fetchQueued || entry.retryTimer !== undefined) {
+    if (
+      entry.watchers.size > 0 || entry.waiters.length > 0 || entry.imageWaiters.length > 0 ||
+      entry.fetchQueued || entry.retryTimer !== undefined
+    ) {
       return;
     }
     this.cancelIdleTimer(entry);
@@ -972,12 +1375,13 @@ class DwnProfileReader implements ProfileReader {
   }
 
   private evict(entry: CacheEntry): void {
-    if (entry.watchers.size > 0 || entry.waiters.length > 0 || entry.fetchQueued) {
+    if (entry.watchers.size > 0 || entry.waiters.length > 0 || entry.imageWaiters.length > 0 || entry.fetchQueued) {
       return; // Re-referenced since the timer was armed; keep the entry.
     }
     entry.evicted = true;
     this.cancelRetryTimer(entry);
     this.cancelIdleTimer(entry);
+    this.dropImageAccounting(entry);
     this._entries.delete(entry.did);
   }
 }
@@ -991,7 +1395,7 @@ class DwnProfileReader implements ProfileReader {
  *
  * @param source - A records surface, a `DwnApi`/`DwnReaderApi`-shaped
  *   object, or an `Enbox.anonymous()` result. See {@link ProfileReaderSource}.
- * @param options - Cache/retry tuning; see {@link ProfileReaderOptions}.
+ * @param options - Cache/retry/image tuning; see {@link ProfileReaderOptions}.
  *
  * @example
  * ```ts
@@ -1000,7 +1404,11 @@ class DwnProfileReader implements ProfileReader {
  *
  * const reader = createProfileReader(Enbox.anonymous());
  *
- * const { displayName, avatar } = await reader.get('did:dht:alice...');
+ * // Text profile only (images are lazy by default).
+ * const { displayName } = await reader.get('did:dht:alice...');
+ *
+ * // Load images on demand — e.g. when the profile scrolls into view.
+ * const { avatar } = await reader.loadImages('did:dht:alice...');
  *
  * const unwatch = reader.watch([aliceDid, bobDid], (snapshot) => {
  *   render(snapshot.did, snapshot.profile.value?.displayName, snapshot.avatar.value);
