@@ -1,5 +1,240 @@
 # @enbox/agent
 
+## 0.8.28
+
+### Patch Changes
+
+- [#1350](https://github.com/enboxorg/enbox/pull/1350) [`c4ee0bc`](https://github.com/enboxorg/enbox/commit/c4ee0bc057fb5b2278926fe1d9d1add618acc08d) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat(agent): typed error taxonomy for recipient-side role-audience decrypt failures
+
+  Recipient-side decrypt failures now throw `AudienceDecryptError` carrying a machine-readable
+  `cause` (`'not-wrapped-for-role' | 'delivery-missing' | 'role-not-held' | 'audience-superseded' |
+'remote-unverifiable' | 'unknown'`) plus `recordId`, `protocol`, `recipientDid`, and a `detail`
+  string, instead of one generic prose error with the real cause swallowed by logging. Previously
+  logger-only observations (rejected role-holder verification, skipped grantKeys, unreachable-remote
+  lookups) are folded into the error data. `@enbox/api` re-exports the class and cause type so apps
+  can catch it from record data rejections.
+
+- [#1344](https://github.com/enboxorg/enbox/pull/1344) [`6ad8f08`](https://github.com/enboxorg/enbox/commit/6ad8f08b2b87a9915ddbc6b289284a2b6635fbbd) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat(agent): audience key delivery status and re-provision primitives
+
+  Adds two public `AgentDwnApi` primitives for role-audience key delivery so apps no longer hand-roll `$encryption/delivery` queries or touch-update `$role` records to force re-delivery:
+
+  - `getAudienceKeyDeliveryStatus` — resolves whether a delivery record wraps the CURRENT audience key of a tuple to a recipient (`delivered` / `not-delivered` / `unverifiable`). Matches deliveries on the current audience `keyId` (a stale delivery of a superseded key no longer reads as delivered) and short-circuits to `unverifiable` for delegate contexts, whose view of third-party deliveries is structurally visibility-filtered.
+  - `reprovisionAudienceKeyDelivery` — provisions the current audience key delivery for one recipient without touching the `$role` record. Skips the write when the current key is already delivered (`alreadyDelivered: true`), otherwise resolves/mints the audience under the usual seal-coverage rules and writes the delivery, reporting failures best-effort as `{ delivered: false, reason }`.
+
+  Also updates stale pre-best-effort doc comments on `ProcessDwnRequest.recipientRolePublicKey`, `AudienceKeyDeliveryOutcome`, and `DwnResponse.audienceKeyDelivery` to match the reporting semantics (only pre-write validation throws).
+
+- [#1299](https://github.com/enboxorg/enbox/pull/1299) [`16c8ea4`](https://github.com/enboxorg/enbox/commit/16c8ea46380d303fb20eeec7047b5f1f286f661f) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Extract registered sync target planning and cache generation into a backend-neutral planner while preserving existing resolution and invalidation behavior.
+
+- [#1305](https://github.com/enboxorg/enbox/pull/1305) [`3e6d5fe`](https://github.com/enboxorg/enbox/commit/3e6d5fe51f3ae16db0c08174132bcdc828f15c93) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Isolate durable message-feed reconciliation, inventory comparison, and checkpoint progression in a backend-neutral coordinator.
+
+- [#1333](https://github.com/enboxorg/enbox/pull/1333) [`e83cb4b`](https://github.com/enboxorg/enbox/commit/e83cb4b05e7f184e515ccd547f5ac1c346fea045) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Decompose live pull processing, push batching, and per-link recovery into backend-neutral coordinators while preserving sync lifecycle and stale-callback guarantees.
+
+- [#1323](https://github.com/enboxorg/enbox/pull/1323) [`f41a755`](https://github.com/enboxorg/enbox/commit/f41a755adfe769ad1ca5b00b7275059f2ed2305e) Thanks [@LiranCohen](https://github.com/LiranCohen)! - refactor: isolate sync echo-loop suppression in a backend-neutral component
+
+- [#1294](https://github.com/enboxorg/enbox/pull/1294) [`73a76e1`](https://github.com/enboxorg/enbox/commit/73a76e1099ebfb6b8e399431541a43d14d3df5ec) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Refactor sync identity registration persistence behind a backend-neutral store contract while preserving the existing Level data format and sync behavior.
+
+- [#1300](https://github.com/enboxorg/enbox/pull/1300) [`8f6cc7d`](https://github.com/enboxorg/enbox/commit/8f6cc7de740771a15a7eb1732d0597b2082fb347) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Isolate sync lifecycle ordering and background task supervision in a backend-neutral coordinator.
+
+- [#1309](https://github.com/enboxorg/enbox/pull/1309) [`d5c8e83`](https://github.com/enboxorg/enbox/commit/d5c8e8300ffb30ba89580ea0a37c3f9513470572) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Extract durable sync quota lifecycle and persistence behind backend-neutral manager and store contracts while preserving the existing Level data format and retry behavior.
+
+- [#1327](https://github.com/enboxorg/enbox/pull/1327) [`3309d87`](https://github.com/enboxorg/enbox/commit/3309d87efdea35ca784917b3b0ec05362a4a7c81) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Refactor one-shot sync run coordination into a backend-neutral component.
+
+- [#1314](https://github.com/enboxorg/enbox/pull/1314) [`7f4c4e7`](https://github.com/enboxorg/enbox/commit/7f4c4e7b485f47b8cf0d6c40d60054363f4c56e3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Extract sync scope-closure validation and retained protocol-history traversal behind backend-neutral operations while preserving registration behavior.
+
+- [#1321](https://github.com/enboxorg/enbox/pull/1321) [`a40eb11`](https://github.com/enboxorg/enbox/commit/a40eb11831bd9e669ed1a6b5dca58274be82d9de) Thanks [@LiranCohen](https://github.com/LiranCohen)! - refactor: isolate backend-neutral sync health and remote-status aggregation
+
+- [#1297](https://github.com/enboxorg/enbox/pull/1297) [`e33cf82`](https://github.com/enboxorg/enbox/commit/e33cf820fec511d09676f5ea5473fa6db8727c5f) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Extract sync endpoint and authorization resolution into a backend-neutral target resolver while preserving existing target and cache behavior.
+
+- [#1337](https://github.com/enboxorg/enbox/pull/1337) [`a4fb419`](https://github.com/enboxorg/enbox/commit/a4fb419d9475b9d21e518028411ef149c47cbdc9) Thanks [@poindex-bot](https://github.com/poindex-bot)! - feat(dwn-sdk-js): BroadcastChannel-bridged event-log wakes for sibling contexts
+
+  New `BroadcastChannelWakePublisher` fans each store wake out to in-process listeners and mirrors it over a named `BroadcastChannel`, so sibling execution contexts sharing one underlying store (browser tabs, workers, a SharedWorker over the same IndexedDB) observe each other's commits immediately instead of waiting for the durable event log's idle re-drain (~30s). Wakes received from the channel are never re-posted (no loops), non-wake traffic is ignored, and environments without `BroadcastChannel` degrade to in-process-only delivery.
+
+  The agent's default message log now derives a channel name from the store location, so local subscriptions in one tab fire promptly when another tab (or a worker) writes — including writes applied by sync running in a different context.
+
+- [#1319](https://github.com/enboxorg/enbox/pull/1319) [`757cff1`](https://github.com/enboxorg/enbox/commit/757cff17cbb8bec36f806eec1a8ee3606f3c9ae2) Thanks [@LiranCohen](https://github.com/LiranCohen)! - refactor: isolate dead-letter and deferred-pull persistence behind backend-neutral store contracts
+
+- [#1324](https://github.com/enboxorg/enbox/pull/1324) [`2b50952`](https://github.com/enboxorg/enbox/commit/2b5095252fc621d6ea35db5a330759009c2a88e2) Thanks [@LiranCohen](https://github.com/LiranCohen)! - refactor: isolate sync connectivity and browser recovery coordination
+
+- [#1283](https://github.com/enboxorg/enbox/pull/1283) [`f6c1c59`](https://github.com/enboxorg/enbox/commit/f6c1c59962f56e39327461b5536b0fefb5b099a7) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat(agent): graceful, self-healing handling of quota-blocked sync pushes + observable per-remote sync status
+
+  Sync pushes rejected for tenant storage/message quota are no longer retried forever (the console-error flood that spun the remote). They are now detected precisely (`isQuotaExceededError`, newly exported from `@enbox/dwn-clients`) and deferred on a per-link, per-message exponential-backoff probe. Feed checkpoints may advance past the explicit omission, so a blocked message neither stalls newer records nor prevents other remotes from progressing; due and manual retries target the omitted CID independently of that checkpoint. If a later update or tombstone makes the old bytes unreachable, its acknowledgement converts the block into a resolved per-link omission: it is healthy, never retried, and remains durable only long enough to explain the intentional feed-CID difference.
+
+  Live sync now suppresses the remote subscription echo of messages already materialized in the same local tenant when it pushes them to that endpoint. The matching pull delivery still advances its durable checkpoint, but it no longer performs a redundant remote `MessagesRead` or re-applies data already present in the local DWN; tenant- and endpoint-scoped tracking preserves multi-identity isolation and normal multi-provider fan-out. Canonicalized bootstrap messages that may not exist in the destination tenant still follow normal pull admission. Pull deliveries accepted while a link is still initializing are also committed, preventing an early event from pinning every later checkpoint behind an unfinished ordinal.
+
+  Replicated metadata-only historical writes continue through storage-quota preflight without charging their declared payload size, while message-count quota and all normal data-bearing quota checks remain enforced. This lets a later tombstone or smaller update replay its retained initial-write dependency without exposing a dataless current record. Same-CID data retries against ancestry-only storage are deferred instead of falsely acknowledged, embedded message data is rejected in favor of the validated transport field, and storage reporting now counts only latest base-state data rather than metadata-only history.
+
+  New observability, re-exported through `@enbox/browser` for dapp "remotes" panels: `SyncEngine.getRemoteSyncStatus()` returns a per-`(tenant, remote)` snapshot (`healthy | quota-blocked | degraded | offline`, blocked count, next-probe time, last error/activity); `SyncEngine.retryRemoteNow()` directly re-probes only the selected remote; `push:quota-blocked` / `push:quota-cleared` events include durable timing and clear resolution; and `SyncHealthSummary` gains `quotaBlockedMessageCount`.
+
+  Also fixes a latent bug in the push dependency-fetch path: the four local dependency queries (`fetchProtocolConfig`, `fetchRecordsByRecordId`, `fetchRoleRecord`, `fetchRecordData`) passed `store: false`, which makes `AgentDwnApi.processRequest` short-circuit to a synthetic `202` reply with no entries instead of executing the query — so every attempt to satisfy a remote `Incomplete` missing-dependency from the local DWN silently returned `failed`. Dropping `store: false` lets those local queries run (read/query handlers persist nothing, so there is no side effect). The bug was masked because unit tests stub `processRequest`; the added live-sync/quota convergence coverage now exercises the real path.
+
+- [#1315](https://github.com/enboxorg/enbox/pull/1315) [`537c16f`](https://github.com/enboxorg/enbox/commit/537c16f2406e29edf6f2f867c2fba35915104165) Thanks [@poindex-bot](https://github.com/poindex-bot)! - refactor: reduce cognitive complexity across smaller packages (Sonar S3776)
+
+  Behavior-preserving extract-method refactoring of 12 functions (CC 16–29) to the ≤15
+  threshold, across five packages:
+
+  - **agent** — DID-resolver-cache `get`, three connect-protocol-preparation functions,
+    `AgentDwnApi.sendDwnRpcRequest`, and two `dwn-encryption` reply/decrypter functions.
+  - **dids** — `did-dht-dns` `fromDnsPacket` / `toDnsPacket`.
+  - **connect** — relay transport `awaitResponse`.
+  - **dwn-clients** — `sendDwnRequest` body parsing.
+  - **dwn-sql-store** — `processFilter` range handling.
+
+  Each extraction lifts a contiguous block into a named helper called at the same point.
+  The boolean transforms (De Morgan negations in `dwn-encryption.maybeDecryptReply`,
+  guard inversions, and one loop `continue`→`return`) were each verified algebraically
+  exact, so record decryption fires under identical conditions and every check/error/
+  order/side-effect is preserved. Notably, `relay-transport.awaitResponse` preserves the
+  subtle "onClaimed-callback throw is swallowed, leaving `claimedNotified` set" edge case.
+
+  The `dwn-api.ts` `constructDwnMessage` monster (CC 97) and the S107 parameter-count
+  findings are deferred to dedicated follow-ups.
+
+  Verified: build + lint clean across all five; connect (82), dids (320), dwn-clients
+  (206), and agent (1357) test suites pass; dwn-sql-store's DB-backed suite runs in CI.
+
+- [#1306](https://github.com/enboxorg/enbox/pull/1306) [`28407c2`](https://github.com/enboxorg/enbox/commit/28407c2fe21b5dab27a42c1ccef6786be6b8c211) Thanks [@poindex-bot](https://github.com/poindex-bot)! - chore: resolve SonarCloud type/class-hygiene and test-quality findings
+
+  Behavior-preserving cleanup (no functional changes):
+
+  - **readonly** on public static / constructor-only members (S1444, S2933)
+  - **named type aliases** for repeated inline unions (S4323)
+  - **more specific test assertions** — `toBeInstanceOf` / `toBeNull` / `toHaveLength` (S5906)
+  - merged identical conditional branches (S1871), `String.raw` (S7780), `.dataset` /
+    `.remove()` DOM APIs (S7761/S7762), class-field init (S7757), `self`→lexical-`this`
+    arrow closures (S7740), removed redundant `| undefined` (S4782), removed an
+    unnecessary regex escape (S6535), documented intentional no-op methods (S1186),
+    nested-template extraction (S4624), and a `role="button"` span → real `<button>`
+    in the admin UI (S6819).
+
+  Redundant-type-alias findings (S6564) on exported public API types, duplicated-code
+  findings (S4144) needing design judgment, deprecated-API swaps without a drop-in
+  replacement (S1874), and a few tests needing author intent were deliberately left
+  for follow-up rather than risk breaking API or behavior.
+
+- [#1335](https://github.com/enboxorg/enbox/pull/1335) [`1e8c7bb`](https://github.com/enboxorg/enbox/commit/1e8c7bb3e6b2df88ca3a6630c4bbdf408bedaefb) Thanks [@LiranCohen](https://github.com/LiranCohen)! - refactor: resolve SonarCloud maintainability findings — remove redundant type aliases (`KeyIdentifier`, `AlgorithmIdentifier`, `MulticodecCode`, `LinkId`, `DataStoreListParams`, `JsonRpcParams`, `ConnectRequest`/`ConnectResponse`, `AudienceDeliveryMessage`), extract a nested ternary in the browser connect modal, and convert early-return test skips to `test.skipIf()`
+
+- [#1303](https://github.com/enboxorg/enbox/pull/1303) [`e22ac1d`](https://github.com/enboxorg/enbox/commit/e22ac1d30c09f7bce3bc4e634a4d5c7cdf95603e) Thanks [@poindex-bot](https://github.com/poindex-bot)! - chore: resolve mechanical SonarCloud maintainability findings
+
+  Behavior-preserving cleanup across the monorepo clearing the bulk of Sonar's
+  maintainability findings (no functional changes):
+
+  - `node:` protocol prefixes on Node built-in imports (S7772)
+  - `export…from` re-exports (S7763)
+  - `switch` → `if` where simpler, preserving all cases/defaults (S1301)
+  - nested ternary extraction (S3358), nullish coalescing where falsy-safe (S6606/S6644),
+    optional chaining (S6582), `.at()` (S7755), `for…of` (S4138), `else if` (S6660),
+    `.includes()`/`.findLast()`/`Math.max()` (S7765/S7750/S7766)
+  - `structuredClone()` over `JSON.parse(JSON.stringify())` (S7784)
+  - `Set` for existence checks (S7776), combined `Array#push` calls (S7778)
+  - `TypeError` for post-type-check throws, with messages (S7786/S7722)
+
+  Verified: full monorepo build + lint clean; crypto, common, dwn-sdk-js, dids,
+  dwn-clients, protocol-codegen, auth, api, and agent test suites all green.
+
+- [#1329](https://github.com/enboxorg/enbox/pull/1329) [`4c32046`](https://github.com/enboxorg/enbox/commit/4c320469d38f4f67c51ad6b82edca397fc0bd4c2) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Refactor repeated feed convergence policy into a backend-neutral component.
+
+- [#1304](https://github.com/enboxorg/enbox/pull/1304) [`4498e5a`](https://github.com/enboxorg/enbox/commit/4498e5ad249bb38e24047d1665b6a19849f5c8a9) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Centralize each active replication link's subscriptions, pull ordering, push batching, repair, and reconciliation runtime in a backend-neutral lifetime controller.
+
+- [#1326](https://github.com/enboxorg/enbox/pull/1326) [`132cd4a`](https://github.com/enboxorg/enbox/commit/132cd4ad25c428991e60ea52f2871457169e9072) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Refactor one-shot sync drain coordination into a backend-neutral component.
+
+- [#1296](https://github.com/enboxorg/enbox/pull/1296) [`48fde39`](https://github.com/enboxorg/enbox/commit/48fde39d5857f8b7bb70ddbfc857ad276e49d27c) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Refactor supplemental sync endpoint persistence behind a backend-neutral store contract while preserving the existing Level data format and target behavior.
+
+- [#1301](https://github.com/enboxorg/enbox/pull/1301) [`74dd445`](https://github.com/enboxorg/enbox/commit/74dd445b283e476eb3c26d6fbd3f193c32fa924e) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Persist replication-link status and directional checkpoints through a backend-neutral store so concurrent pull, push, repair, and status work cannot replace unrelated durable link state.
+
+- [#1356](https://github.com/enboxorg/enbox/pull/1356) [`a3c42d7`](https://github.com/enboxorg/enbox/commit/a3c42d777b9bb23448c3b8fd58f26c100ee42dd0) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: structured machine-readable error fields on DWN message replies — reply `status` now carries optional `errorCode` (the `DwnErrorCode` of the originating `DwnError`) and `info` (structured error data, e.g. the squash backstop floor timestamp) so consumers no longer parse `detail` prose
+
+- [#1354](https://github.com/enboxorg/enbox/pull/1354) [`76be6bb`](https://github.com/enboxorg/enbox/commit/76be6bba0e0f7a3ae25ee1829915974581960982) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: opt-in decryption of subscription event payloads
+
+  `RecordsSubscribe` requests now accept `encryption: true` (auto-enabled by the typed layer on `encryptionRequired` paths): the agent decrypts the subscribe reply's initial snapshot entries and each event's inline payload before delivery, so subscription consumers read plaintext from `record.data` without re-reading every record through the read path. Events without inline data (large records) keep the lazy decrypting read; a record that cannot be decrypted never kills the subscription — its inline ciphertext is withheld and `record.data` rejects with the decryption error via the lazy read.
+
+- [#1361](https://github.com/enboxorg/enbox/pull/1361) [`9e4be6d`](https://github.com/enboxorg/enbox/commit/9e4be6de0206e0c3e2cbd5e235405cffef75e1bc) Thanks [@poindex-bot](https://github.com/poindex-bot)! - fix(agent): resolve remaining sync audit findings with cross-context lifecycle locking
+
+  - A link persisted with status `'repairing'` (a repair was in flight when the previous session ended) reloads as `'initializing'`, so the next session re-establishes live replication instead of refusing subscriptions forever; `'paused'` remains a durable decision.
+  - The deferred-pull/dead-letter lifecycle is serialized per `(tenant)` across every context sharing the storage — browser tabs and workers via the Web Locks API, engine instances in one process via a keyed fallback queue. Admission cleanup, 24h expiry promotion, and unregister's tenant sweep each run their read-decide-write section under the lock, so a live admission can no longer race the expiry path into resurrected retry state or a false `admit-failed` dead letter that would permanently block the CID from re-admission.
+  - Identity lifecycle mutations (register, update, unregister) take a cross-context per-DID lock — outermost, with the deferred-pull lock nesting inside — so one context's unregister can no longer interleave with another's re-registration and prune its freshly created durable links.
+  - Unregister deletes tenant-scoped state first and the identity marker last as the commit point: a failed cleanup leaves the registration intact for a simple retry, and a re-registration can never inherit an aged `firstDeferredAt` that would instantly dead-letter its first deferral (new `SyncDeferredPullStore.deleteTenant`, exact-tenant key range).
+  - An interrupted drain — caller cancellation or a topology change — no longer records a connectivity failure: interruptions say nothing about reachability and must not mark the engine offline or widen the poll backoff.
+
+- [#1352](https://github.com/enboxorg/enbox/pull/1352) [`b964d48`](https://github.com/enboxorg/enbox/commit/b964d48ab993934337c348f6655e9923bfa409f3) Thanks [@poindex-bot](https://github.com/poindex-bot)! - refactor(agent): make controller identity the staleness axis for link work
+
+  Repair, reconcile scheduling, and push-failure routing now flow `SyncLinkController` references instead of `(linkKey, link)` pairs: the recovery coordinator's `transitionToRepairing`/`scheduleLinkReconcile`/`scheduleReconcile`, its `handlePushFailures` operation, the push coordinator's `handleReconcileFailures`, and the live-pull processor's repair/reconcile operations are controller-addressed, deleting the scattered `controller.link === link` object-identity re-checks in favor of `controller.isActive`. Link-addressed entry points that legitimately run without a controller keep their addressing: `transitionToPaused` still persists the paused status for poll-mode links, and the engine's `scheduleLinkReconcile` boundary resolves feed-convergence/quota-manager requests to a matching active controller exactly as the deleted internal guards did. No behavior change; fourth step of the runtime-scope (Phase-2) refactor.
+
+- [#1283](https://github.com/enboxorg/enbox/pull/1283) [`f6c1c59`](https://github.com/enboxorg/enbox/commit/f6c1c59962f56e39327461b5536b0fefb5b099a7) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix sync success cleanup so resolving a message for one tenant does not clear another tenant's dead letter for the same CID and remote endpoint
+
+- [#1336](https://github.com/enboxorg/enbox/pull/1336) [`c7d1b82`](https://github.com/enboxorg/enbox/commit/c7d1b8265a73134cd55a6330b29d1ede137302c4) Thanks [@poindex-bot](https://github.com/poindex-bot)! - feat(agent): per-delivery sync events, scoped one-shot sync, coalesced concurrency, and per-link replication status; feat(auth): explicit sync mode option
+
+  Sync engine (`@enbox/agent`):
+
+  - New `delivery:applied` sync event, emitted once per **freshly** applied message a live-pull delivery admits — the delivered root AND any fetched dependency (parent, role record, initial write) the closure admitted alongside it — each with a routing descriptor (`interface`, `method`, `protocol`, `protocolPath`, `recordId`, `contextId`, `author`, `messageTimestamp`) so apps can invalidate exactly the affected state without re-querying. Echoes of messages the store already held (`Duplicate`/`Superseded` applies) do not emit — `admitClosure` now reports `freshEntries` (message + CID) alongside `appliedCids`.
+  - `sync(direction?, options?)` accepts `options.did` to scope a one-shot run to a single registered identity's replication targets (an app-triggered "pull my inbox now" no longer re-reconciles every identity). An unregistered DID rejects.
+  - Concurrent `sync()` calls now coalesce into one queued follow-up run instead of throwing `Sync operation is already in progress` — joined requests merge (differing directions widen to both, differing scopes widen to unscoped) and share the follow-up's outcome. A runtime transition (`stopSync`/`clear`/`close`/mode switch) while the follow-up is still queued cancels it, rejecting joiners with the new exported `SyncRunCancelledError` — a resolved `sync()` always means a run covering the request completed.
+  - New `getReplicationLinks(tenantDid?)` returns read-only per-link snapshots (scope, status, connectivity, checkpoint positions, last activity). All links `'live'` is the per-identity caught-up signal for hot-added identities; `startSync()` resolving covers identities registered before start (now documented).
+  - End-to-end regression coverage for the peer-authored inbox pattern: an `anyone`-create record written by a foreign author into the tenant's remote DWN is delivered through live sync in real time, wakes local `MessagesSubscribe` subscribers, and emits `delivery:applied` — including for identities hot-added after `startSync()`.
+
+  Auth (`@enbox/auth`):
+
+  - `SyncOption` now accepts `'live'` and `{ mode: 'live' | 'poll', interval? }` in addition to `'off'`. The bare interval string form (which silently selects poll mode and gives up real-time delivery) is deprecated and logs a one-time warning; behaviour is otherwise unchanged.
+
+- [#1360](https://github.com/enboxorg/enbox/pull/1360) [`d564725`](https://github.com/enboxorg/enbox/commit/d564725121d6488eea74790cb5279b505ff09dc9) Thanks [@poindex-bot](https://github.com/poindex-bot)! - refactor(agent): retire the engine generation counter and move sync mode onto the runtime scope
+
+  `_engineGeneration` is deleted. The last consumers — the live subscription handler guards (`createLinkStalePredicate` and the push handler's staleness closure) — capture the runtime scope at subscription-open time and fence on `scope.disposed || !controller.isActive`, exactly equivalent since the counter was only ever incremented by transitions that also dispose the captured scope. `_syncMode` moves onto the scope as `SyncRuntime.mode`, set at construction for the generation and reading `undefined` once disposed — reproducing the old reset-on-transition without a separate field. Completes the Phase-2 runtime-scope refactor: lifecycle staleness is now expressed solely through scope disposal, transition fences, and controller identity.
+
+- [#1283](https://github.com/enboxorg/enbox/pull/1283) [`f6c1c59`](https://github.com/enboxorg/enbox/commit/f6c1c59962f56e39327461b5536b0fefb5b099a7) Thanks [@LiranCohen](https://github.com/LiranCohen)! - serialize sync identity mutations and drain per-identity live work before replacing or removing link runtime state
+
+- [#1283](https://github.com/enboxorg/enbox/pull/1283) [`f6c1c59`](https://github.com/enboxorg/enbox/commit/f6c1c59962f56e39327461b5536b0fefb5b099a7) Thanks [@LiranCohen](https://github.com/LiranCohen)! - make sync lifecycle transitions stop their timers and wait for active sync work before clearing or closing storage, while tolerating expected dead-letter cleanup races during teardown
+
+- [#1340](https://github.com/enboxorg/enbox/pull/1340) [`d275b31`](https://github.com/enboxorg/enbox/commit/d275b31fb738a8f2aa2744dd14a4090481d2c9f4) Thanks [@poindex-bot](https://github.com/poindex-bot)! - fix(agent): harden sync lifecycle ahead of the runtime-scope refactor
+
+  - `clear()`/`close()` now hold the exclusive sync lock through their destructive phase, so a concurrent `sync()`, `drainTo()`, or `retryRemoteNow()` can no longer interleave with the wipe (resurrecting replication links or the drain endpoint) or crash against a mid-close database. Callers that queued against the lock while the phase ran cancel through the engine's stale-work convention — they raced the destruction rather than followed it — instead of running on wiped state or surfacing a closed-storage error.
+  - The DID-resolution link-init retry loop checks the runtime generation on both sides of each backoff sleep, so a retry can no longer re-activate a link controller and reopen live subscriptions after `stopSync()`/`close()` tore the runtime down.
+  - `SyncReplicationLinkStoreLevel.persistCheckpoint` merges checkpoints monotonically within a token domain instead of overwriting, so a persist from a stale in-memory link instance can never regress `contiguousAppliedToken` — and a stale cross-domain `receivedToken` can no longer produce a mixed-domain checkpoint. A stream/epoch change still replaces the checkpoint (deliberate feed reset), and explicit `resetCheckpoint` still overwrites.
+
+- [#1346](https://github.com/enboxorg/enbox/pull/1346) [`418030a`](https://github.com/enboxorg/enbox/commit/418030a14cd84a889a57aefe0237e5a2f2c39395) Thanks [@poindex-bot](https://github.com/poindex-bot)! - fix(agent): scope-own link-init retry timers and cancel them on identity mutations
+
+  Pending rate-limit (Retry-After) link-initialization retries move from an engine-held timer map into the `SyncRuntime` scope as keyed one-shot timers, gaining the scope's guarantees: a runtime transition disposes them, and a firing the event loop queued before a replacement or disposal never starts. `SyncRuntime` adds `armTimeout`, `hasTimers`, and `clearTimers` for keyed one-shot arming and predicate-based queries.
+
+  Behavioral fix: `updateIdentityOptions` and `unregisterIdentity` now cancel an identity's pending init retries unconditionally. Previously the cancellation only ran when live links were being rebuilt — but in exactly the rate-limited case the link controller was already dropped before the retry was armed, so the timer survived the mutation and could re-create a superseded durable link and reopen live subscriptions with the replaced scope and authorization epoch (or for an unregistered identity). An options update drains any retry that already started and immediately initializes replacement live targets, preserving live replication under the new scope and authorization epoch.
+
+- [#1349](https://github.com/enboxorg/enbox/pull/1349) [`5b4e0d3`](https://github.com/enboxorg/enbox/commit/5b4e0d305ab9c142111ba8ec553a4d4bd18a8ff7) Thanks [@poindex-bot](https://github.com/poindex-bot)! - refactor(agent): retire getGeneration from the sync collaborators in favor of runtime-scope handles
+
+  The connectivity manager and link-recovery coordinator now capture a read-only `SyncRuntimeHandle` when they start work and fence their continuations on `scope.disposed` — a runtime transition disposes exactly the scope those captures reference, so the staleness semantics are unchanged while the engine-generation plumbing disappears from their operation contracts. The quota manager's probe staleness becomes purely the caller's `shouldContinue` fence: the engine composes a transition fence into every probe it threads down, valid from any state (an active scope trips when disposed; an already-disposed scope trips when a new runtime replaces it), so one-shot callers such as a stopped-state `retryRemoteNow` keep probing exactly as before. No behavior change; third step of the runtime-scope (Phase-2) refactor.
+
+- [#1342](https://github.com/enboxorg/enbox/pull/1342) [`dd311d4`](https://github.com/enboxorg/enbox/commit/dd311d4459a8da2b1c6e0b233c10a5fa299e6548) Thanks [@poindex-bot](https://github.com/poindex-bot)! - refactor(agent): introduce a SyncRuntime timer scope for the sync engine
+
+  Adds an internal `SyncRuntime` ownership scope created per `startSync` generation. The engine's sync-interval timer (poll cadence and live settle check) is now armed through the scope under a stable key, and every runtime transition disposes the scope — cancelling all owned timers and refusing further arming — instead of hand-clearing a `_syncIntervalId` field. Each armed callback carries an ownership token that is re-checked when the event loop delivers a firing, so a callback whose timer was replaced or whose scope was disposed never starts — including firings the event loop had already queued, which `clearInterval` alone cannot retract. Async callback bodies that already started remain governed by lifecycle supervision and their own `disposed` re-checks after awaits. No behavior change; first step of the runtime-scope (Phase-2) refactor.
+
+- [#1283](https://github.com/enboxorg/enbox/pull/1283) [`f6c1c59`](https://github.com/enboxorg/enbox/commit/f6c1c59962f56e39327461b5536b0fefb5b099a7) Thanks [@LiranCohen](https://github.com/LiranCohen)! - track live sync callback, repair, reconcile, and push-flush work so lifecycle teardown drains in-flight tasks before clearing or closing storage
+
+- [#1358](https://github.com/enboxorg/enbox/pull/1358) [`024cd55`](https://github.com/enboxorg/enbox/commit/024cd5592e5cecfbdea348747deb34da9ba21b94) Thanks [@poindex-bot](https://github.com/poindex-bot)! - refactor(agent): move one-shot sync paths onto the runtime transition fence
+
+  The queued `sync()` follow-up, the `retryRemoteNow` chain, the DID-resolution link-init retry loop, and link initialization drop their engine-generation captures. Runtime-scoped work (link init and its retry loop — reachable only under a live runtime) fences on the captured scope's `disposed` flag; any-state work (queued sync runs, `retryRemoteNow`) captures the transition fence, which trips on runtime start/stop/clear/close from any starting state. Every transition — including the `clear()`/`close()` destructive phase, which previously bumped the generation — now installs a fresh disposed scope object, so fences captured under an already-disposed scope also observe it. Behavior-preserving; first half of the Phase-2 finale (the remaining generation sites are the subscription-handler guards, migrating with the `_syncMode` relocation).
+
+- [#1292](https://github.com/enboxorg/enbox/pull/1292) [`b5f49ac`](https://github.com/enboxorg/enbox/commit/b5f49ace4e6ab9e1caf23afb2cdd8735d44985b3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix(sync): honor Retry-After on WebSocket subscription rate limits
+
+  A tenant rate limit (429/`TooManyRequests`) on a `MessagesSubscribe`
+  WebSocket subscription was surfaced as a generic error: the WS transport
+  discarded the error code and `retryAfterSec`, and the sync engine marked
+  the link permanently `Failed` with no rate-limit-aware retry — leaving
+  live sync uninitialized for that target. HTTP requests already honored
+  `Retry-After`; WebSocket subscriptions now match.
+
+  - `web-socket-clients` translates a `TooManyRequests` subscribe error into
+    a `RateLimitError` (preserving `retryAfterSec`), mirroring the HTTP
+    client; other subscribe errors now surface as `DwnRpcError` with the
+    original code/data instead of a bare `Error`.
+  - `SyncEngineLevel` reschedules live-subscription initialization after the
+    server-provided Retry-After window instead of failing the link. Durable
+    feed reconciliation continues via the periodic settle check while the
+    live subscription is deferred, so no data is lost.
+
+- Updated dependencies [[`4430d0d`](https://github.com/enboxorg/enbox/commit/4430d0df16b34215f3db6965960e07a67f6d8441), [`6151a52`](https://github.com/enboxorg/enbox/commit/6151a5249e4cee07673cff0290cdbcb03d80db86), [`a4fb419`](https://github.com/enboxorg/enbox/commit/a4fb419d9475b9d21e518028411ef149c47cbdc9), [`f6c1c59`](https://github.com/enboxorg/enbox/commit/f6c1c59962f56e39327461b5536b0fefb5b099a7), [`451fd02`](https://github.com/enboxorg/enbox/commit/451fd024b25158be1290d589e2a13a199bb1b58c), [`eabdec5`](https://github.com/enboxorg/enbox/commit/eabdec5c9efe2580ec3412edd07f8f2f0a3e5b67), [`537c16f`](https://github.com/enboxorg/enbox/commit/537c16f2406e29edf6f2f867c2fba35915104165), [`28407c2`](https://github.com/enboxorg/enbox/commit/28407c2fe21b5dab27a42c1ccef6786be6b8c211), [`1e8c7bb`](https://github.com/enboxorg/enbox/commit/1e8c7bb3e6b2df88ca3a6630c4bbdf408bedaefb), [`e22ac1d`](https://github.com/enboxorg/enbox/commit/e22ac1d30c09f7bce3bc4e634a4d5c7cdf95603e), [`12ce706`](https://github.com/enboxorg/enbox/commit/12ce706f9412d8405f130c2fd56c3c8f898db8c1), [`a3c42d7`](https://github.com/enboxorg/enbox/commit/a3c42d777b9bb23448c3b8fd58f26c100ee42dd0), [`b5f49ac`](https://github.com/enboxorg/enbox/commit/b5f49ace4e6ab9e1caf23afb2cdd8735d44985b3)]:
+  - @enbox/dwn-sdk-js@0.4.13
+  - @enbox/dwn-clients@0.4.20
+  - @enbox/crypto@0.1.7
+  - @enbox/dids@0.1.7
+  - @enbox/connect@0.1.9
+  - @enbox/common@0.1.4
+
 ## 0.8.27
 
 ### Patch Changes

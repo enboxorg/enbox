@@ -1,5 +1,108 @@
 # @enbox/dwn-clients
 
+## 0.4.20
+
+### Patch Changes
+
+- [#1283](https://github.com/enboxorg/enbox/pull/1283) [`f6c1c59`](https://github.com/enboxorg/enbox/commit/f6c1c59962f56e39327461b5536b0fefb5b099a7) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat(agent): graceful, self-healing handling of quota-blocked sync pushes + observable per-remote sync status
+
+  Sync pushes rejected for tenant storage/message quota are no longer retried forever (the console-error flood that spun the remote). They are now detected precisely (`isQuotaExceededError`, newly exported from `@enbox/dwn-clients`) and deferred on a per-link, per-message exponential-backoff probe. Feed checkpoints may advance past the explicit omission, so a blocked message neither stalls newer records nor prevents other remotes from progressing; due and manual retries target the omitted CID independently of that checkpoint. If a later update or tombstone makes the old bytes unreachable, its acknowledgement converts the block into a resolved per-link omission: it is healthy, never retried, and remains durable only long enough to explain the intentional feed-CID difference.
+
+  Live sync now suppresses the remote subscription echo of messages already materialized in the same local tenant when it pushes them to that endpoint. The matching pull delivery still advances its durable checkpoint, but it no longer performs a redundant remote `MessagesRead` or re-applies data already present in the local DWN; tenant- and endpoint-scoped tracking preserves multi-identity isolation and normal multi-provider fan-out. Canonicalized bootstrap messages that may not exist in the destination tenant still follow normal pull admission. Pull deliveries accepted while a link is still initializing are also committed, preventing an early event from pinning every later checkpoint behind an unfinished ordinal.
+
+  Replicated metadata-only historical writes continue through storage-quota preflight without charging their declared payload size, while message-count quota and all normal data-bearing quota checks remain enforced. This lets a later tombstone or smaller update replay its retained initial-write dependency without exposing a dataless current record. Same-CID data retries against ancestry-only storage are deferred instead of falsely acknowledged, embedded message data is rejected in favor of the validated transport field, and storage reporting now counts only latest base-state data rather than metadata-only history.
+
+  New observability, re-exported through `@enbox/browser` for dapp "remotes" panels: `SyncEngine.getRemoteSyncStatus()` returns a per-`(tenant, remote)` snapshot (`healthy | quota-blocked | degraded | offline`, blocked count, next-probe time, last error/activity); `SyncEngine.retryRemoteNow()` directly re-probes only the selected remote; `push:quota-blocked` / `push:quota-cleared` events include durable timing and clear resolution; and `SyncHealthSummary` gains `quotaBlockedMessageCount`.
+
+  Also fixes a latent bug in the push dependency-fetch path: the four local dependency queries (`fetchProtocolConfig`, `fetchRecordsByRecordId`, `fetchRoleRecord`, `fetchRecordData`) passed `store: false`, which makes `AgentDwnApi.processRequest` short-circuit to a synthetic `202` reply with no entries instead of executing the query — so every attempt to satisfy a remote `Incomplete` missing-dependency from the local DWN silently returned `failed`. Dropping `store: false` lets those local queries run (read/query handlers persist nothing, so there is no side effect). The bug was masked because unit tests stub `processRequest`; the added live-sync/quota convergence coverage now exercises the real path.
+
+- [#1315](https://github.com/enboxorg/enbox/pull/1315) [`537c16f`](https://github.com/enboxorg/enbox/commit/537c16f2406e29edf6f2f867c2fba35915104165) Thanks [@poindex-bot](https://github.com/poindex-bot)! - refactor: reduce cognitive complexity across smaller packages (Sonar S3776)
+
+  Behavior-preserving extract-method refactoring of 12 functions (CC 16–29) to the ≤15
+  threshold, across five packages:
+
+  - **agent** — DID-resolver-cache `get`, three connect-protocol-preparation functions,
+    `AgentDwnApi.sendDwnRpcRequest`, and two `dwn-encryption` reply/decrypter functions.
+  - **dids** — `did-dht-dns` `fromDnsPacket` / `toDnsPacket`.
+  - **connect** — relay transport `awaitResponse`.
+  - **dwn-clients** — `sendDwnRequest` body parsing.
+  - **dwn-sql-store** — `processFilter` range handling.
+
+  Each extraction lifts a contiguous block into a named helper called at the same point.
+  The boolean transforms (De Morgan negations in `dwn-encryption.maybeDecryptReply`,
+  guard inversions, and one loop `continue`→`return`) were each verified algebraically
+  exact, so record decryption fires under identical conditions and every check/error/
+  order/side-effect is preserved. Notably, `relay-transport.awaitResponse` preserves the
+  subtle "onClaimed-callback throw is swallowed, leaving `claimedNotified` set" edge case.
+
+  The `dwn-api.ts` `constructDwnMessage` monster (CC 97) and the S107 parameter-count
+  findings are deferred to dedicated follow-ups.
+
+  Verified: build + lint clean across all five; connect (82), dids (320), dwn-clients
+  (206), and agent (1357) test suites pass; dwn-sql-store's DB-backed suite runs in CI.
+
+- [#1306](https://github.com/enboxorg/enbox/pull/1306) [`28407c2`](https://github.com/enboxorg/enbox/commit/28407c2fe21b5dab27a42c1ccef6786be6b8c211) Thanks [@poindex-bot](https://github.com/poindex-bot)! - chore: resolve SonarCloud type/class-hygiene and test-quality findings
+
+  Behavior-preserving cleanup (no functional changes):
+
+  - **readonly** on public static / constructor-only members (S1444, S2933)
+  - **named type aliases** for repeated inline unions (S4323)
+  - **more specific test assertions** — `toBeInstanceOf` / `toBeNull` / `toHaveLength` (S5906)
+  - merged identical conditional branches (S1871), `String.raw` (S7780), `.dataset` /
+    `.remove()` DOM APIs (S7761/S7762), class-field init (S7757), `self`→lexical-`this`
+    arrow closures (S7740), removed redundant `| undefined` (S4782), removed an
+    unnecessary regex escape (S6535), documented intentional no-op methods (S1186),
+    nested-template extraction (S4624), and a `role="button"` span → real `<button>`
+    in the admin UI (S6819).
+
+  Redundant-type-alias findings (S6564) on exported public API types, duplicated-code
+  findings (S4144) needing design judgment, deprecated-API swaps without a drop-in
+  replacement (S1874), and a few tests needing author intent were deliberately left
+  for follow-up rather than risk breaking API or behavior.
+
+- [#1335](https://github.com/enboxorg/enbox/pull/1335) [`1e8c7bb`](https://github.com/enboxorg/enbox/commit/1e8c7bb3e6b2df88ca3a6630c4bbdf408bedaefb) Thanks [@LiranCohen](https://github.com/LiranCohen)! - refactor: resolve SonarCloud maintainability findings — remove redundant type aliases (`KeyIdentifier`, `AlgorithmIdentifier`, `MulticodecCode`, `LinkId`, `DataStoreListParams`, `JsonRpcParams`, `ConnectRequest`/`ConnectResponse`, `AudienceDeliveryMessage`), extract a nested ternary in the browser connect modal, and convert early-return test skips to `test.skipIf()`
+
+- [#1303](https://github.com/enboxorg/enbox/pull/1303) [`e22ac1d`](https://github.com/enboxorg/enbox/commit/e22ac1d30c09f7bce3bc4e634a4d5c7cdf95603e) Thanks [@poindex-bot](https://github.com/poindex-bot)! - chore: resolve mechanical SonarCloud maintainability findings
+
+  Behavior-preserving cleanup across the monorepo clearing the bulk of Sonar's
+  maintainability findings (no functional changes):
+
+  - `node:` protocol prefixes on Node built-in imports (S7772)
+  - `export…from` re-exports (S7763)
+  - `switch` → `if` where simpler, preserving all cases/defaults (S1301)
+  - nested ternary extraction (S3358), nullish coalescing where falsy-safe (S6606/S6644),
+    optional chaining (S6582), `.at()` (S7755), `for…of` (S4138), `else if` (S6660),
+    `.includes()`/`.findLast()`/`Math.max()` (S7765/S7750/S7766)
+  - `structuredClone()` over `JSON.parse(JSON.stringify())` (S7784)
+  - `Set` for existence checks (S7776), combined `Array#push` calls (S7778)
+  - `TypeError` for post-type-check throws, with messages (S7786/S7722)
+
+  Verified: full monorepo build + lint clean; crypto, common, dwn-sdk-js, dids,
+  dwn-clients, protocol-codegen, auth, api, and agent test suites all green.
+
+- [#1292](https://github.com/enboxorg/enbox/pull/1292) [`b5f49ac`](https://github.com/enboxorg/enbox/commit/b5f49ace4e6ab9e1caf23afb2cdd8735d44985b3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix(sync): honor Retry-After on WebSocket subscription rate limits
+
+  A tenant rate limit (429/`TooManyRequests`) on a `MessagesSubscribe`
+  WebSocket subscription was surfaced as a generic error: the WS transport
+  discarded the error code and `retryAfterSec`, and the sync engine marked
+  the link permanently `Failed` with no rate-limit-aware retry — leaving
+  live sync uninitialized for that target. HTTP requests already honored
+  `Retry-After`; WebSocket subscriptions now match.
+
+  - `web-socket-clients` translates a `TooManyRequests` subscribe error into
+    a `RateLimitError` (preserving `retryAfterSec`), mirroring the HTTP
+    client; other subscribe errors now surface as `DwnRpcError` with the
+    original code/data instead of a bare `Error`.
+  - `SyncEngineLevel` reschedules live-subscription initialization after the
+    server-provided Retry-After window instead of failing the link. Durable
+    feed reconciliation continues via the periodic settle check while the
+    live subscription is deferred, so no data is lost.
+
+- Updated dependencies [[`4430d0d`](https://github.com/enboxorg/enbox/commit/4430d0df16b34215f3db6965960e07a67f6d8441), [`6151a52`](https://github.com/enboxorg/enbox/commit/6151a5249e4cee07673cff0290cdbcb03d80db86), [`a4fb419`](https://github.com/enboxorg/enbox/commit/a4fb419d9475b9d21e518028411ef149c47cbdc9), [`451fd02`](https://github.com/enboxorg/enbox/commit/451fd024b25158be1290d589e2a13a199bb1b58c), [`eabdec5`](https://github.com/enboxorg/enbox/commit/eabdec5c9efe2580ec3412edd07f8f2f0a3e5b67), [`28407c2`](https://github.com/enboxorg/enbox/commit/28407c2fe21b5dab27a42c1ccef6786be6b8c211), [`1e8c7bb`](https://github.com/enboxorg/enbox/commit/1e8c7bb3e6b2df88ca3a6630c4bbdf408bedaefb), [`e22ac1d`](https://github.com/enboxorg/enbox/commit/e22ac1d30c09f7bce3bc4e634a4d5c7cdf95603e), [`12ce706`](https://github.com/enboxorg/enbox/commit/12ce706f9412d8405f130c2fd56c3c8f898db8c1), [`a3c42d7`](https://github.com/enboxorg/enbox/commit/a3c42d777b9bb23448c3b8fd58f26c100ee42dd0)]:
+  - @enbox/dwn-sdk-js@0.4.13
+  - @enbox/crypto@0.1.7
+  - @enbox/common@0.1.4
+
 ## 0.4.19
 
 ### Patch Changes

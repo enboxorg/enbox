@@ -1,5 +1,72 @@
 # @enbox/crypto
 
+## 0.1.7
+
+### Patch Changes
+
+- [#1307](https://github.com/enboxorg/enbox/pull/1307) [`451fd02`](https://github.com/enboxorg/enbox/commit/451fd024b25158be1290d589e2a13a199bb1b58c) Thanks [@poindex-bot](https://github.com/poindex-bot)! - refactor: reduce cognitive complexity in JWE/COSE functions (Sonar S3776)
+
+  Behavior-preserving extract-method refactoring of 7 crypto functions flagged for
+  excessive cognitive complexity, bringing each to the ≤15 threshold. Every change
+  lifts a contiguous, self-contained block (a full algorithm branch, header-validation
+  pass, or CBOR-decode step — following the existing RFC-comment boundaries) into a
+  named private helper called at the exact same point. No validation, allow-list, or
+  security check was reordered, weakened, merged, or removed, and no error type/code/
+  message changed.
+
+  - `FlattenedJwe.decrypt` / `encrypt` — header validation, algorithm-allow-list
+    enforcement (still before key management), CEK resolution (incl. the RFC 7516
+    §11.5 timing-attack CEK-substitution fallback), and ciphertext dispatch extracted.
+  - `JweKeyManagement.decrypt` — per-`alg` branches (`dir` / `ECDH-ES` / `PBES2`, incl.
+    the `minP2cCount` iteration-count guard) extracted; the switch dispatch is untouched.
+  - `CoseKey.fromJwk` / `toJwk`, `CoseSign1.decode`, `Eat.parseClaims` — OKP/EC2 key
+    mapping, COSE_Sign1 envelope decoding, and CWT/EAT claim extraction extracted.
+
+  Verified: `@enbox/crypto` build + lint clean; all 748 crypto tests pass (including
+  the JWE/COSE security vectors and round-trips).
+
+- [#1306](https://github.com/enboxorg/enbox/pull/1306) [`28407c2`](https://github.com/enboxorg/enbox/commit/28407c2fe21b5dab27a42c1ccef6786be6b8c211) Thanks [@poindex-bot](https://github.com/poindex-bot)! - chore: resolve SonarCloud type/class-hygiene and test-quality findings
+
+  Behavior-preserving cleanup (no functional changes):
+
+  - **readonly** on public static / constructor-only members (S1444, S2933)
+  - **named type aliases** for repeated inline unions (S4323)
+  - **more specific test assertions** — `toBeInstanceOf` / `toBeNull` / `toHaveLength` (S5906)
+  - merged identical conditional branches (S1871), `String.raw` (S7780), `.dataset` /
+    `.remove()` DOM APIs (S7761/S7762), class-field init (S7757), `self`→lexical-`this`
+    arrow closures (S7740), removed redundant `| undefined` (S4782), removed an
+    unnecessary regex escape (S6535), documented intentional no-op methods (S1186),
+    nested-template extraction (S4624), and a `role="button"` span → real `<button>`
+    in the admin UI (S6819).
+
+  Redundant-type-alias findings (S6564) on exported public API types, duplicated-code
+  findings (S4144) needing design judgment, deprecated-API swaps without a drop-in
+  replacement (S1874), and a few tests needing author intent were deliberately left
+  for follow-up rather than risk breaking API or behavior.
+
+- [#1335](https://github.com/enboxorg/enbox/pull/1335) [`1e8c7bb`](https://github.com/enboxorg/enbox/commit/1e8c7bb3e6b2df88ca3a6630c4bbdf408bedaefb) Thanks [@LiranCohen](https://github.com/LiranCohen)! - refactor: resolve SonarCloud maintainability findings — remove redundant type aliases (`KeyIdentifier`, `AlgorithmIdentifier`, `MulticodecCode`, `LinkId`, `DataStoreListParams`, `JsonRpcParams`, `ConnectRequest`/`ConnectResponse`, `AudienceDeliveryMessage`), extract a nested ternary in the browser connect modal, and convert early-return test skips to `test.skipIf()`
+
+- [#1303](https://github.com/enboxorg/enbox/pull/1303) [`e22ac1d`](https://github.com/enboxorg/enbox/commit/e22ac1d30c09f7bce3bc4e634a4d5c7cdf95603e) Thanks [@poindex-bot](https://github.com/poindex-bot)! - chore: resolve mechanical SonarCloud maintainability findings
+
+  Behavior-preserving cleanup across the monorepo clearing the bulk of Sonar's
+  maintainability findings (no functional changes):
+
+  - `node:` protocol prefixes on Node built-in imports (S7772)
+  - `export…from` re-exports (S7763)
+  - `switch` → `if` where simpler, preserving all cases/defaults (S1301)
+  - nested ternary extraction (S3358), nullish coalescing where falsy-safe (S6606/S6644),
+    optional chaining (S6582), `.at()` (S7755), `for…of` (S4138), `else if` (S6660),
+    `.includes()`/`.findLast()`/`Math.max()` (S7765/S7750/S7766)
+  - `structuredClone()` over `JSON.parse(JSON.stringify())` (S7784)
+  - `Set` for existence checks (S7776), combined `Array#push` calls (S7778)
+  - `TypeError` for post-type-check throws, with messages (S7786/S7722)
+
+  Verified: full monorepo build + lint clean; crypto, common, dwn-sdk-js, dids,
+  dwn-clients, protocol-codegen, auth, api, and agent test suites all green.
+
+- Updated dependencies [[`28407c2`](https://github.com/enboxorg/enbox/commit/28407c2fe21b5dab27a42c1ccef6786be6b8c211), [`1e8c7bb`](https://github.com/enboxorg/enbox/commit/1e8c7bb3e6b2df88ca3a6630c4bbdf408bedaefb), [`e22ac1d`](https://github.com/enboxorg/enbox/commit/e22ac1d30c09f7bce3bc4e634a4d5c7cdf95603e)]:
+  - @enbox/common@0.1.4
+
 ## 0.1.6
 
 ### Patch Changes
