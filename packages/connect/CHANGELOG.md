@@ -1,5 +1,40 @@
 # @enbox/connect
 
+## 0.1.9
+
+### Patch Changes
+
+- [#1315](https://github.com/enboxorg/enbox/pull/1315) [`537c16f`](https://github.com/enboxorg/enbox/commit/537c16f2406e29edf6f2f867c2fba35915104165) Thanks [@poindex-bot](https://github.com/poindex-bot)! - refactor: reduce cognitive complexity across smaller packages (Sonar S3776)
+
+  Behavior-preserving extract-method refactoring of 12 functions (CC 16–29) to the ≤15
+  threshold, across five packages:
+
+  - **agent** — DID-resolver-cache `get`, three connect-protocol-preparation functions,
+    `AgentDwnApi.sendDwnRpcRequest`, and two `dwn-encryption` reply/decrypter functions.
+  - **dids** — `did-dht-dns` `fromDnsPacket` / `toDnsPacket`.
+  - **connect** — relay transport `awaitResponse`.
+  - **dwn-clients** — `sendDwnRequest` body parsing.
+  - **dwn-sql-store** — `processFilter` range handling.
+
+  Each extraction lifts a contiguous block into a named helper called at the same point.
+  The boolean transforms (De Morgan negations in `dwn-encryption.maybeDecryptReply`,
+  guard inversions, and one loop `continue`→`return`) were each verified algebraically
+  exact, so record decryption fires under identical conditions and every check/error/
+  order/side-effect is preserved. Notably, `relay-transport.awaitResponse` preserves the
+  subtle "onClaimed-callback throw is swallowed, leaving `claimedNotified` set" edge case.
+
+  The `dwn-api.ts` `constructDwnMessage` monster (CC 97) and the S107 parameter-count
+  findings are deferred to dedicated follow-ups.
+
+  Verified: build + lint clean across all five; connect (82), dids (320), dwn-clients
+  (206), and agent (1357) test suites pass; dwn-sql-store's DB-backed suite runs in CI.
+
+- Updated dependencies [[`4430d0d`](https://github.com/enboxorg/enbox/commit/4430d0df16b34215f3db6965960e07a67f6d8441), [`6151a52`](https://github.com/enboxorg/enbox/commit/6151a5249e4cee07673cff0290cdbcb03d80db86), [`a4fb419`](https://github.com/enboxorg/enbox/commit/a4fb419d9475b9d21e518028411ef149c47cbdc9), [`451fd02`](https://github.com/enboxorg/enbox/commit/451fd024b25158be1290d589e2a13a199bb1b58c), [`eabdec5`](https://github.com/enboxorg/enbox/commit/eabdec5c9efe2580ec3412edd07f8f2f0a3e5b67), [`537c16f`](https://github.com/enboxorg/enbox/commit/537c16f2406e29edf6f2f867c2fba35915104165), [`28407c2`](https://github.com/enboxorg/enbox/commit/28407c2fe21b5dab27a42c1ccef6786be6b8c211), [`1e8c7bb`](https://github.com/enboxorg/enbox/commit/1e8c7bb3e6b2df88ca3a6630c4bbdf408bedaefb), [`e22ac1d`](https://github.com/enboxorg/enbox/commit/e22ac1d30c09f7bce3bc4e634a4d5c7cdf95603e), [`12ce706`](https://github.com/enboxorg/enbox/commit/12ce706f9412d8405f130c2fd56c3c8f898db8c1), [`a3c42d7`](https://github.com/enboxorg/enbox/commit/a3c42d777b9bb23448c3b8fd58f26c100ee42dd0)]:
+  - @enbox/dwn-sdk-js@0.4.13
+  - @enbox/crypto@0.1.7
+  - @enbox/dids@0.1.7
+  - @enbox/common@0.1.4
+
 ## 0.1.8
 
 ### Patch Changes

@@ -1,5 +1,92 @@
 # @enbox/dwn-sdk-js
 
+## 0.4.13
+
+### Patch Changes
+
+- [#1339](https://github.com/enboxorg/enbox/pull/1339) [`4430d0d`](https://github.com/enboxorg/enbox/commit/4430d0df16b34215f3db6965960e07a67f6d8441) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: stop config-history repair from purging valid encryption control records
+
+  `ProtocolsConfigure` revalidation fed `$encryption/audience` and `$encryption/delivery` records to the app-definition validator, which cannot recognize their reserved paths — destroying valid audience keys and deliveries on every same-URI policy upgrade. Control records are now revalidated in their own domain: they are purged only when the role path they provision no longer exists in the newest definition.
+
+- [#1341](https://github.com/enboxorg/enbox/pull/1341) [`6151a52`](https://github.com/enboxorg/enbox/commit/6151a5249e4cee07673cff0290cdbcb03d80db86) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: make encryption control repair honor governing protocol history
+
+  Stored audience and delivery controls are now replayed against the protocol definition governing their timestamp before newest-role retention is considered. This prevents out-of-order config ingestion from retaining controls that full-history admission would reject, including controls authorized by superseded policy or sealed to a superseded key.
+
+- [#1337](https://github.com/enboxorg/enbox/pull/1337) [`a4fb419`](https://github.com/enboxorg/enbox/commit/a4fb419d9475b9d21e518028411ef149c47cbdc9) Thanks [@poindex-bot](https://github.com/poindex-bot)! - feat(dwn-sdk-js): BroadcastChannel-bridged event-log wakes for sibling contexts
+
+  New `BroadcastChannelWakePublisher` fans each store wake out to in-process listeners and mirrors it over a named `BroadcastChannel`, so sibling execution contexts sharing one underlying store (browser tabs, workers, a SharedWorker over the same IndexedDB) observe each other's commits immediately instead of waiting for the durable event log's idle re-drain (~30s). Wakes received from the channel are never re-posted (no loops), non-wake traffic is ignored, and environments without `BroadcastChannel` degrade to in-process-only delivery.
+
+  The agent's default message log now derives a channel name from the store location, so local subscriptions in one tab fire promptly when another tab (or a worker) writes — including writes applied by sync running in a different context.
+
+- [#1310](https://github.com/enboxorg/enbox/pull/1310) [`eabdec5`](https://github.com/enboxorg/enbox/commit/eabdec5c9efe2580ec3412edd07f8f2f0a3e5b67) Thanks [@poindex-bot](https://github.com/poindex-bot)! - refactor: reduce cognitive complexity in DWN handlers/core (Sonar S3776)
+
+  Behavior-preserving extract-method refactoring of 9 functions (CC 16–32) to the ≤15
+  threshold — RecordsWrite/RecordsSubscribe handlers, protocol-authorization action
+  resolution, integrity validation, message filter conversion, compound-index query,
+  storage squash, and delegated-grant integrity. Each extraction lifts a contiguous
+  block into a named helper called at the same point; the two non-verbatim transforms
+  (one De Morgan negation, one loop `return`/`continue`→boolean-predicate) are
+  algebraically exact. No authorization check reordered/weakened; no DwnError code or
+  message changed.
+
+  The two monster functions (`interfaces/protocols-configure.ts` CC 122 and
+  `handlers/protocols-configure.ts` CC 70) and the `index-level-compound` S107
+  parameter-count finding are deferred to dedicated follow-ups.
+
+  Verified: dwn-sdk-js build + lint clean; all 1578 tests pass.
+
+- [#1306](https://github.com/enboxorg/enbox/pull/1306) [`28407c2`](https://github.com/enboxorg/enbox/commit/28407c2fe21b5dab27a42c1ccef6786be6b8c211) Thanks [@poindex-bot](https://github.com/poindex-bot)! - chore: resolve SonarCloud type/class-hygiene and test-quality findings
+
+  Behavior-preserving cleanup (no functional changes):
+
+  - **readonly** on public static / constructor-only members (S1444, S2933)
+  - **named type aliases** for repeated inline unions (S4323)
+  - **more specific test assertions** — `toBeInstanceOf` / `toBeNull` / `toHaveLength` (S5906)
+  - merged identical conditional branches (S1871), `String.raw` (S7780), `.dataset` /
+    `.remove()` DOM APIs (S7761/S7762), class-field init (S7757), `self`→lexical-`this`
+    arrow closures (S7740), removed redundant `| undefined` (S4782), removed an
+    unnecessary regex escape (S6535), documented intentional no-op methods (S1186),
+    nested-template extraction (S4624), and a `role="button"` span → real `<button>`
+    in the admin UI (S6819).
+
+  Redundant-type-alias findings (S6564) on exported public API types, duplicated-code
+  findings (S4144) needing design judgment, deprecated-API swaps without a drop-in
+  replacement (S1874), and a few tests needing author intent were deliberately left
+  for follow-up rather than risk breaking API or behavior.
+
+- [#1335](https://github.com/enboxorg/enbox/pull/1335) [`1e8c7bb`](https://github.com/enboxorg/enbox/commit/1e8c7bb3e6b2df88ca3a6630c4bbdf408bedaefb) Thanks [@LiranCohen](https://github.com/LiranCohen)! - refactor: resolve SonarCloud maintainability findings — remove redundant type aliases (`KeyIdentifier`, `AlgorithmIdentifier`, `MulticodecCode`, `LinkId`, `DataStoreListParams`, `JsonRpcParams`, `ConnectRequest`/`ConnectResponse`, `AudienceDeliveryMessage`), extract a nested ternary in the browser connect modal, and convert early-return test skips to `test.skipIf()`
+
+- [#1303](https://github.com/enboxorg/enbox/pull/1303) [`e22ac1d`](https://github.com/enboxorg/enbox/commit/e22ac1d30c09f7bce3bc4e634a4d5c7cdf95603e) Thanks [@poindex-bot](https://github.com/poindex-bot)! - chore: resolve mechanical SonarCloud maintainability findings
+
+  Behavior-preserving cleanup across the monorepo clearing the bulk of Sonar's
+  maintainability findings (no functional changes):
+
+  - `node:` protocol prefixes on Node built-in imports (S7772)
+  - `export…from` re-exports (S7763)
+  - `switch` → `if` where simpler, preserving all cases/defaults (S1301)
+  - nested ternary extraction (S3358), nullish coalescing where falsy-safe (S6606/S6644),
+    optional chaining (S6582), `.at()` (S7755), `for…of` (S4138), `else if` (S6660),
+    `.includes()`/`.findLast()`/`Math.max()` (S7765/S7750/S7766)
+  - `structuredClone()` over `JSON.parse(JSON.stringify())` (S7784)
+  - `Set` for existence checks (S7776), combined `Array#push` calls (S7778)
+  - `TypeError` for post-type-check throws, with messages (S7786/S7722)
+
+  Verified: full monorepo build + lint clean; crypto, common, dwn-sdk-js, dids,
+  dwn-clients, protocol-codegen, auth, api, and agent test suites all green.
+
+- [#1302](https://github.com/enboxorg/enbox/pull/1302) [`12ce706`](https://github.com/enboxorg/enbox/commit/12ce706f9412d8405f130c2fd56c3c8f898db8c1) Thanks [@poindex-bot](https://github.com/poindex-bot)! - fix: resolve Sonar reliability findings
+
+  - **dwn-sdk-js** (S7746): drop the redundant `Promise.resolve()` wrapper in the async `Secp256r1.sign()`.
+  - **auth** (S8786): rewrite the `normalizeErrorText` status-prefix regex with first-character-disjoint separator alternation, eliminating super-linear backtracking. Behavior-preserving (verified equivalent across 36 inputs).
+  - **browser** (S2310, S1994): remove loop-counter mutations in the QR encoder — derive the shifted timing column instead of reassigning the counter, and use a `while` + toggle for pad-byte generation. Output is module-for-module identical to the reference encoder.
+
+- [#1356](https://github.com/enboxorg/enbox/pull/1356) [`a3c42d7`](https://github.com/enboxorg/enbox/commit/a3c42d777b9bb23448c3b8fd58f26c100ee42dd0) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: structured machine-readable error fields on DWN message replies — reply `status` now carries optional `errorCode` (the `DwnErrorCode` of the originating `DwnError`) and `info` (structured error data, e.g. the squash backstop floor timestamp) so consumers no longer parse `detail` prose
+
+- Updated dependencies [[`451fd02`](https://github.com/enboxorg/enbox/commit/451fd024b25158be1290d589e2a13a199bb1b58c), [`537c16f`](https://github.com/enboxorg/enbox/commit/537c16f2406e29edf6f2f867c2fba35915104165), [`28407c2`](https://github.com/enboxorg/enbox/commit/28407c2fe21b5dab27a42c1ccef6786be6b8c211), [`1e8c7bb`](https://github.com/enboxorg/enbox/commit/1e8c7bb3e6b2df88ca3a6630c4bbdf408bedaefb), [`e22ac1d`](https://github.com/enboxorg/enbox/commit/e22ac1d30c09f7bce3bc4e634a4d5c7cdf95603e)]:
+  - @enbox/crypto@0.1.7
+  - @enbox/dids@0.1.7
+  - @enbox/common@0.1.4
+
 ## 0.4.12
 
 ### Patch Changes

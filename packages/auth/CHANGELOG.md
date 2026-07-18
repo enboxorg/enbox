@@ -1,5 +1,106 @@
 # @enbox/auth
 
+## 0.6.74
+
+### Patch Changes
+
+- [#1313](https://github.com/enboxorg/enbox/pull/1313) [`8d59d0b`](https://github.com/enboxorg/enbox/commit/8d59d0b39e7d0cfefdb4a416da669aa77a69cda7) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: preserve stateful provider-auth callback behavior during DWN registration
+
+- [#1355](https://github.com/enboxorg/enbox/pull/1355) [`cd6940e`](https://github.com/enboxorg/enbox/commit/cd6940e28434cac31587bd2745ce3411d670bfa3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: add a framework-agnostic connection store and a typed connect-denied error
+
+  - `@enbox/auth`: connect, refresh, and wallet-connect denials now throw a typed `ConnectDeniedError` (messages unchanged); branch on the new `isConnectDeniedError()` predicate instead of string-matching error messages.
+  - `@enbox/api`: new `createConnectionStore()` — a headless, subscribable store that composes `AuthManager` + `Enbox` into one observable state machine (`initializing | disconnected | connecting | connected | error`), with `getSnapshot()`/`subscribe()` for `useSyncExternalStore`-style bindings, in-flight guards, delegated connection monitoring, and `dispose()` teardown.
+  - `@enbox/browser`: re-exports `createConnectionStore`, its types, `ConnectDeniedError`, and `isConnectDeniedError`.
+
+- [#1308](https://github.com/enboxorg/enbox/pull/1308) [`9889d7d`](https://github.com/enboxorg/enbox/commit/9889d7dcaf9fb53d2da7efea08b8d3c3f173932e) Thanks [@poindex-bot](https://github.com/poindex-bot)! - refactor: reduce cognitive complexity in connect/session functions (Sonar S3776)
+
+  Behavior-preserving extract-method refactoring of 7 auth functions flagged for
+  excessive cognitive complexity (CC 17–34), bringing each to the ≤15 threshold. Each
+  extraction lifts a contiguous logical unit (a validation pass, a branch handler, a
+  retry/fallback block) into a named helper called at the exact same point; no
+  validation/auth/security check was reordered, weakened, or removed, and no error
+  type/message changed.
+
+  - `AuthManager._pollConnectionMonitor` — status-handling and error-handling extracted.
+  - `connect/lifecycle.ts` `registerSyncScopeForIdentity` / `processDelegateGrantsForExistingIdentity`
+    — the shared "register-or-fallback-to-update" and "unregister-tolerating-not-registered"
+    blocks factored into helpers (identical error-message checks preserved).
+  - `connect/status.ts` `computeConnectionStatus` — timestamp resolution, grant grouping,
+    newest-group selection, and status derivation extracted.
+  - `connect/restore.ts` `restoreSession` / `retryOrphanedRevocations` — password resolution,
+    retry maintenance, identity resolution, and revocation bookkeeping extracted.
+  - `registration.ts` `registerWithDwnEndpoints` — token loading, per-endpoint dispatch,
+    provider-auth resolution/refresh, and token persistence extracted (CSRF check and the
+    nested provider-auth conditionals preserved without inversion).
+
+  The worst offender — `auth-manager.ts` `_getConnectionMonitorStatus` (CC 143) — is
+  intentionally deferred to a dedicated follow-up.
+
+  Verified: `@enbox/auth` build + lint clean; all 570 auth tests pass.
+
+- [#1303](https://github.com/enboxorg/enbox/pull/1303) [`e22ac1d`](https://github.com/enboxorg/enbox/commit/e22ac1d30c09f7bce3bc4e634a4d5c7cdf95603e) Thanks [@poindex-bot](https://github.com/poindex-bot)! - chore: resolve mechanical SonarCloud maintainability findings
+
+  Behavior-preserving cleanup across the monorepo clearing the bulk of Sonar's
+  maintainability findings (no functional changes):
+
+  - `node:` protocol prefixes on Node built-in imports (S7772)
+  - `export…from` re-exports (S7763)
+  - `switch` → `if` where simpler, preserving all cases/defaults (S1301)
+  - nested ternary extraction (S3358), nullish coalescing where falsy-safe (S6606/S6644),
+    optional chaining (S6582), `.at()` (S7755), `for…of` (S4138), `else if` (S6660),
+    `.includes()`/`.findLast()`/`Math.max()` (S7765/S7750/S7766)
+  - `structuredClone()` over `JSON.parse(JSON.stringify())` (S7784)
+  - `Set` for existence checks (S7776), combined `Array#push` calls (S7778)
+  - `TypeError` for post-type-check throws, with messages (S7786/S7722)
+
+  Verified: full monorepo build + lint clean; crypto, common, dwn-sdk-js, dids,
+  dwn-clients, protocol-codegen, auth, api, and agent test suites all green.
+
+- [#1331](https://github.com/enboxorg/enbox/pull/1331) [`d6f72b4`](https://github.com/enboxorg/enbox/commit/d6f72b4ec9f50fd86f288021416c7f22a61c60ed) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: resolve open SonarCloud reliability findings (medium impact)
+
+  - `@enbox/dwn-server-admin-ui`: add an explicit `type="button"` to every
+    standalone action `<button>` (none are inside a `<form>`), so clicking them
+    can never trigger an implicit form submission (Sonar S9011).
+  - `@enbox/auth`: replace the regex-based `<code><separator><detail>` parser in
+    `connect/status.ts` with an equivalent hand-written scan. The previous regex
+    nested a quantified group inside an optional alternative
+    (`\s+(?:[:-]\s*)?`), which Sonar's static analysis flags as capable of
+    super-linear backtracking (S8786) even though empirical testing showed no
+    actual quadratic blowup. The replacement is provably linear and was verified
+    byte-for-byte equivalent to the old regex across 200k fuzzed inputs.
+
+  Also fixes the same button-type issue in two `apps/docs` components
+  (non-published, no changeset needed for `@enbox/docs`).
+
+- [#1302](https://github.com/enboxorg/enbox/pull/1302) [`12ce706`](https://github.com/enboxorg/enbox/commit/12ce706f9412d8405f130c2fd56c3c8f898db8c1) Thanks [@poindex-bot](https://github.com/poindex-bot)! - fix: resolve Sonar reliability findings
+
+  - **dwn-sdk-js** (S7746): drop the redundant `Promise.resolve()` wrapper in the async `Secp256r1.sign()`.
+  - **auth** (S8786): rewrite the `normalizeErrorText` status-prefix regex with first-character-disjoint separator alternation, eliminating super-linear backtracking. Behavior-preserving (verified equivalent across 36 inputs).
+  - **browser** (S2310, S1994): remove loop-counter mutations in the QR encoder — derive the shifted timing column instead of reassigning the counter, and use a `while` + toggle for pad-byte generation. Output is module-for-module identical to the reference encoder.
+
+- [#1336](https://github.com/enboxorg/enbox/pull/1336) [`c7d1b82`](https://github.com/enboxorg/enbox/commit/c7d1b8265a73134cd55a6330b29d1ede137302c4) Thanks [@poindex-bot](https://github.com/poindex-bot)! - feat(agent): per-delivery sync events, scoped one-shot sync, coalesced concurrency, and per-link replication status; feat(auth): explicit sync mode option
+
+  Sync engine (`@enbox/agent`):
+
+  - New `delivery:applied` sync event, emitted once per **freshly** applied message a live-pull delivery admits — the delivered root AND any fetched dependency (parent, role record, initial write) the closure admitted alongside it — each with a routing descriptor (`interface`, `method`, `protocol`, `protocolPath`, `recordId`, `contextId`, `author`, `messageTimestamp`) so apps can invalidate exactly the affected state without re-querying. Echoes of messages the store already held (`Duplicate`/`Superseded` applies) do not emit — `admitClosure` now reports `freshEntries` (message + CID) alongside `appliedCids`.
+  - `sync(direction?, options?)` accepts `options.did` to scope a one-shot run to a single registered identity's replication targets (an app-triggered "pull my inbox now" no longer re-reconciles every identity). An unregistered DID rejects.
+  - Concurrent `sync()` calls now coalesce into one queued follow-up run instead of throwing `Sync operation is already in progress` — joined requests merge (differing directions widen to both, differing scopes widen to unscoped) and share the follow-up's outcome. A runtime transition (`stopSync`/`clear`/`close`/mode switch) while the follow-up is still queued cancels it, rejecting joiners with the new exported `SyncRunCancelledError` — a resolved `sync()` always means a run covering the request completed.
+  - New `getReplicationLinks(tenantDid?)` returns read-only per-link snapshots (scope, status, connectivity, checkpoint positions, last activity). All links `'live'` is the per-identity caught-up signal for hot-added identities; `startSync()` resolving covers identities registered before start (now documented).
+  - End-to-end regression coverage for the peer-authored inbox pattern: an `anyone`-create record written by a foreign author into the tenant's remote DWN is delivered through live sync in real time, wakes local `MessagesSubscribe` subscribers, and emits `delivery:applied` — including for identities hot-added after `startSync()`.
+
+  Auth (`@enbox/auth`):
+
+  - `SyncOption` now accepts `'live'` and `{ mode: 'live' | 'poll', interval? }` in addition to `'off'`. The bare interval string form (which silently selects poll mode and gives up real-time delivery) is deprecated and logs a one-time warning; behaviour is otherwise unchanged.
+
+- Updated dependencies [[`c4ee0bc`](https://github.com/enboxorg/enbox/commit/c4ee0bc057fb5b2278926fe1d9d1add618acc08d), [`6ad8f08`](https://github.com/enboxorg/enbox/commit/6ad8f08b2b87a9915ddbc6b289284a2b6635fbbd), [`16c8ea4`](https://github.com/enboxorg/enbox/commit/16c8ea46380d303fb20eeec7047b5f1f286f661f), [`3e6d5fe`](https://github.com/enboxorg/enbox/commit/3e6d5fe51f3ae16db0c08174132bcdc828f15c93), [`e83cb4b`](https://github.com/enboxorg/enbox/commit/e83cb4b05e7f184e515ccd547f5ac1c346fea045), [`f41a755`](https://github.com/enboxorg/enbox/commit/f41a755adfe769ad1ca5b00b7275059f2ed2305e), [`73a76e1`](https://github.com/enboxorg/enbox/commit/73a76e1099ebfb6b8e399431541a43d14d3df5ec), [`8f6cc7d`](https://github.com/enboxorg/enbox/commit/8f6cc7de740771a15a7eb1732d0597b2082fb347), [`d5c8e83`](https://github.com/enboxorg/enbox/commit/d5c8e8300ffb30ba89580ea0a37c3f9513470572), [`3309d87`](https://github.com/enboxorg/enbox/commit/3309d87efdea35ca784917b3b0ec05362a4a7c81), [`7f4c4e7`](https://github.com/enboxorg/enbox/commit/7f4c4e7b485f47b8cf0d6c40d60054363f4c56e3), [`a40eb11`](https://github.com/enboxorg/enbox/commit/a40eb11831bd9e669ed1a6b5dca58274be82d9de), [`e33cf82`](https://github.com/enboxorg/enbox/commit/e33cf820fec511d09676f5ea5473fa6db8727c5f), [`4430d0d`](https://github.com/enboxorg/enbox/commit/4430d0df16b34215f3db6965960e07a67f6d8441), [`6151a52`](https://github.com/enboxorg/enbox/commit/6151a5249e4cee07673cff0290cdbcb03d80db86), [`a4fb419`](https://github.com/enboxorg/enbox/commit/a4fb419d9475b9d21e518028411ef149c47cbdc9), [`757cff1`](https://github.com/enboxorg/enbox/commit/757cff17cbb8bec36f806eec1a8ee3606f3c9ae2), [`2b50952`](https://github.com/enboxorg/enbox/commit/2b5095252fc621d6ea35db5a330759009c2a88e2), [`f6c1c59`](https://github.com/enboxorg/enbox/commit/f6c1c59962f56e39327461b5536b0fefb5b099a7), [`451fd02`](https://github.com/enboxorg/enbox/commit/451fd024b25158be1290d589e2a13a199bb1b58c), [`eabdec5`](https://github.com/enboxorg/enbox/commit/eabdec5c9efe2580ec3412edd07f8f2f0a3e5b67), [`537c16f`](https://github.com/enboxorg/enbox/commit/537c16f2406e29edf6f2f867c2fba35915104165), [`28407c2`](https://github.com/enboxorg/enbox/commit/28407c2fe21b5dab27a42c1ccef6786be6b8c211), [`1e8c7bb`](https://github.com/enboxorg/enbox/commit/1e8c7bb3e6b2df88ca3a6630c4bbdf408bedaefb), [`e22ac1d`](https://github.com/enboxorg/enbox/commit/e22ac1d30c09f7bce3bc4e634a4d5c7cdf95603e), [`12ce706`](https://github.com/enboxorg/enbox/commit/12ce706f9412d8405f130c2fd56c3c8f898db8c1), [`4c32046`](https://github.com/enboxorg/enbox/commit/4c320469d38f4f67c51ad6b82edca397fc0bd4c2), [`4498e5a`](https://github.com/enboxorg/enbox/commit/4498e5ad249bb38e24047d1665b6a19849f5c8a9), [`132cd4a`](https://github.com/enboxorg/enbox/commit/132cd4ad25c428991e60ea52f2871457169e9072), [`48fde39`](https://github.com/enboxorg/enbox/commit/48fde39d5857f8b7bb70ddbfc857ad276e49d27c), [`74dd445`](https://github.com/enboxorg/enbox/commit/74dd445b283e476eb3c26d6fbd3f193c32fa924e), [`a3c42d7`](https://github.com/enboxorg/enbox/commit/a3c42d777b9bb23448c3b8fd58f26c100ee42dd0), [`76be6bb`](https://github.com/enboxorg/enbox/commit/76be6bba0e0f7a3ae25ee1829915974581960982), [`9e4be6d`](https://github.com/enboxorg/enbox/commit/9e4be6de0206e0c3e2cbd5e235405cffef75e1bc), [`b964d48`](https://github.com/enboxorg/enbox/commit/b964d48ab993934337c348f6655e9923bfa409f3), [`f6c1c59`](https://github.com/enboxorg/enbox/commit/f6c1c59962f56e39327461b5536b0fefb5b099a7), [`c7d1b82`](https://github.com/enboxorg/enbox/commit/c7d1b8265a73134cd55a6330b29d1ede137302c4), [`d564725`](https://github.com/enboxorg/enbox/commit/d564725121d6488eea74790cb5279b505ff09dc9), [`f6c1c59`](https://github.com/enboxorg/enbox/commit/f6c1c59962f56e39327461b5536b0fefb5b099a7), [`f6c1c59`](https://github.com/enboxorg/enbox/commit/f6c1c59962f56e39327461b5536b0fefb5b099a7), [`d275b31`](https://github.com/enboxorg/enbox/commit/d275b31fb738a8f2aa2744dd14a4090481d2c9f4), [`418030a`](https://github.com/enboxorg/enbox/commit/418030a14cd84a889a57aefe0237e5a2f2c39395), [`5b4e0d3`](https://github.com/enboxorg/enbox/commit/5b4e0d305ab9c142111ba8ec553a4d4bd18a8ff7), [`dd311d4`](https://github.com/enboxorg/enbox/commit/dd311d4459a8da2b1c6e0b233c10a5fa299e6548), [`f6c1c59`](https://github.com/enboxorg/enbox/commit/f6c1c59962f56e39327461b5536b0fefb5b099a7), [`024cd55`](https://github.com/enboxorg/enbox/commit/024cd5592e5cecfbdea348747deb34da9ba21b94), [`b5f49ac`](https://github.com/enboxorg/enbox/commit/b5f49ace4e6ab9e1caf23afb2cdd8735d44985b3)]:
+  - @enbox/agent@0.8.28
+  - @enbox/dwn-sdk-js@0.4.13
+  - @enbox/dwn-clients@0.4.20
+  - @enbox/crypto@0.1.7
+  - @enbox/dids@0.1.7
+  - @enbox/connect@0.1.9
+  - @enbox/common@0.1.4
+
 ## 0.6.73
 
 ### Patch Changes

@@ -1,5 +1,19 @@
 # @enbox/protocols
 
+## 0.2.93
+
+### Patch Changes
+
+- [#1353](https://github.com/enboxorg/enbox/pull/1353) [`ab5d3c9`](https://github.com/enboxorg/enbox/commit/ab5d3c940ab4edd4c81fc18303084ee22632d14b) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: add `createProfileReader` — a cached read layer for other users' public profiles
+
+  `@enbox/protocols` now ships a profile reader implementing the fetch shape wallets write: one records query for the published profile JSON singleton plus direct anyone-read `RecordsRead`s for the unpublished avatar/hero image singletons. It provides `get()`, refcounted `watch()` with field-level settlement, `getSnapshot()` for `useSyncExternalStore`-style bindings, a retry ladder for retryable statuses (401/403/408/410/425/429/5xx + transport errors), access-driven negative caching, bounded fetch concurrency, idle release, and an injectable clock. Works over a connected records surface (`DwnApi` from `@enbox/api/advanced`) and over `Enbox.anonymous()`. `@enbox/browser` re-exports the reader for batteries-included dapp setups.
+
+  Profile JSON is treated as untrusted input: fields are validated against a strict allowlist (string-valued `displayName`/`bio`/`tagline`/`location`/`website`/`pronouns` only) and the requested DID plus separately-fetched image Blobs always win over anything in the JSON. Images load lazily by default (`images: 'eager' | 'lazy' | 'off'`, `loadImages()` on demand), are fetched only after the root profile record is confirmed (orphaned avatar/hero records left by non-pruning deletes are suppressed), are size-validated against the protocol maxima before and after download, and retained Blobs are bounded by a configurable LRU byte budget (default 128 MiB).
+
+- Updated dependencies [[`c4ee0bc`](https://github.com/enboxorg/enbox/commit/c4ee0bc057fb5b2278926fe1d9d1add618acc08d), [`48149b9`](https://github.com/enboxorg/enbox/commit/48149b970383af60d1113019c7a54b3f26cdd24c), [`851ffb4`](https://github.com/enboxorg/enbox/commit/851ffb40396e710b596463c62b055034b3882fad), [`1774805`](https://github.com/enboxorg/enbox/commit/1774805f09934ff839c3008bfcbf2bf4fff04963), [`4430d0d`](https://github.com/enboxorg/enbox/commit/4430d0df16b34215f3db6965960e07a67f6d8441), [`6151a52`](https://github.com/enboxorg/enbox/commit/6151a5249e4cee07673cff0290cdbcb03d80db86), [`a4fb419`](https://github.com/enboxorg/enbox/commit/a4fb419d9475b9d21e518028411ef149c47cbdc9), [`cd6940e`](https://github.com/enboxorg/enbox/commit/cd6940e28434cac31587bd2745ce3411d670bfa3), [`eabdec5`](https://github.com/enboxorg/enbox/commit/eabdec5c9efe2580ec3412edd07f8f2f0a3e5b67), [`28407c2`](https://github.com/enboxorg/enbox/commit/28407c2fe21b5dab27a42c1ccef6786be6b8c211), [`1e8c7bb`](https://github.com/enboxorg/enbox/commit/1e8c7bb3e6b2df88ca3a6630c4bbdf408bedaefb), [`e22ac1d`](https://github.com/enboxorg/enbox/commit/e22ac1d30c09f7bce3bc4e634a4d5c7cdf95603e), [`12ce706`](https://github.com/enboxorg/enbox/commit/12ce706f9412d8405f130c2fd56c3c8f898db8c1), [`a3c42d7`](https://github.com/enboxorg/enbox/commit/a3c42d777b9bb23448c3b8fd58f26c100ee42dd0), [`76be6bb`](https://github.com/enboxorg/enbox/commit/76be6bba0e0f7a3ae25ee1829915974581960982)]:
+  - @enbox/api@0.6.66
+  - @enbox/dwn-sdk-js@0.4.13
+
 ## 0.2.92
 
 ### Patch Changes
