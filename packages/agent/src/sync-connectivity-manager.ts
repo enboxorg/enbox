@@ -1,4 +1,5 @@
 import type { SyncConnectivityState } from './types/sync.js';
+import type { SyncRuntimeHandle } from './sync-runtime.js';
 
 export type SyncConnectivityEventType = 'offline' | 'online' | 'visibilitychange';
 
@@ -10,7 +11,7 @@ export interface SyncConnectivityEnvironment {
 }
 
 export interface SyncConnectivityManagerOperations {
-  getGeneration(): number;
+  getRuntimeScope(): SyncRuntimeHandle;
   isSyncInProgress(): boolean;
   markActiveLinksOffline(): void;
   runBackgroundTask(operation: () => Promise<void>): Promise<void>;
@@ -35,7 +36,7 @@ export class SyncConnectivityManager {
   private readonly _operations: SyncConnectivityManagerOperations;
   private _activeEnvironment?: SyncConnectivityEnvironment;
   private _consecutiveFailures = 0;
-  private _generation?: number;
+  private _scope?: SyncRuntimeHandle;
   private _onOffline?: () => void;
   private _onOnline?: () => void;
   private _onVisibilityChange?: () => void;
@@ -114,7 +115,7 @@ export class SyncConnectivityManager {
     }
 
     this._activeEnvironment = environment;
-    this._generation = this._operations.getGeneration();
+    this._scope = this._operations.getRuntimeScope();
     this._onOnline = (): void => { this.handleOnline(); };
     this._onOffline = (): void => { this.handleOffline(); };
     this._onVisibilityChange = (): void => { this.handleVisibilityChange(); };
@@ -140,14 +141,14 @@ export class SyncConnectivityManager {
     }
 
     this._activeEnvironment = undefined;
-    this._generation = undefined;
+    this._scope = undefined;
     this._onOnline = undefined;
     this._onOffline = undefined;
     this._onVisibilityChange = undefined;
   }
 
   private handleOnline(): void {
-    if (!this.isCurrentGeneration()) {
+    if (!this.isCurrentScope()) {
       return;
     }
 
@@ -156,7 +157,7 @@ export class SyncConnectivityManager {
   }
 
   private handleOffline(): void {
-    if (!this.isCurrentGeneration()) {
+    if (!this.isCurrentScope()) {
       return;
     }
 
@@ -167,7 +168,7 @@ export class SyncConnectivityManager {
 
   private handleVisibilityChange(): void {
     if (
-      !this.isCurrentGeneration() ||
+      !this.isCurrentScope() ||
       this._activeEnvironment?.getVisibilityState() !== 'visible'
     ) {
       return;
@@ -177,9 +178,8 @@ export class SyncConnectivityManager {
     this.scheduleIntegrityCheck('visibility');
   }
 
-  private isCurrentGeneration(): boolean {
-    return this._generation !== undefined &&
-      this._operations.getGeneration() === this._generation;
+  private isCurrentScope(): boolean {
+    return this._scope !== undefined && !this._scope.disposed;
   }
 
   private scheduleIntegrityCheck(trigger: SyncIntegrityTrigger): void {
@@ -187,9 +187,9 @@ export class SyncConnectivityManager {
       return;
     }
 
-    const generation = this._generation;
+    const scope = this._scope;
     void this._operations.runBackgroundTask(async (): Promise<void> => {
-      if (generation === undefined || this._operations.getGeneration() !== generation) {
+      if (scope === undefined || scope.disposed) {
         return;
       }
 

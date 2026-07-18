@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 
 import { SyncLinkController } from '../src/sync-link-controller.js';
 import { SyncLinkRecoveryCoordinator } from '../src/sync-link-recovery-coordinator.js';
+import { SyncRuntime } from '../src/sync-runtime.js';
 
 type RecoveryOperationStubs = {
   [Operation in keyof SyncLinkRecoveryCoordinatorOperations]: SinonStub;
@@ -19,9 +20,9 @@ type RecoveryOperationStubs = {
 type RecoveryFixture = {
   controllers: Map<string, SyncLinkController>;
   coordinator: SyncLinkRecoveryCoordinator;
-  getGeneration(): number;
+  /** Simulate a runtime transition: dispose the current scope, install a fresh one. */
+  disposeScope(): void;
   operations: RecoveryOperationStubs;
-  setGeneration(generation: number): void;
   taskRunner: SinonStub;
 };
 
@@ -55,7 +56,7 @@ function createFixture(options: {
   reconcileRetryDelayMs?: number;
   repairBackoffMs?: readonly number[];
 } = {}): RecoveryFixture {
-  let generation = 0;
+  let scope = new SyncRuntime();
   const controllers = new Map<string, SyncLinkController>();
   const taskRunner = sinon.stub().callsFake(async (operation: () => Promise<void>) => operation());
   const operations: RecoveryOperationStubs = {
@@ -63,7 +64,7 @@ function createFixture(options: {
     clearConvergence          : sinon.stub(),
     emitEvent                 : sinon.stub(),
     getController             : sinon.stub().callsFake((linkKey: string) => controllers.get(linkKey)),
-    getGeneration             : sinon.stub().callsFake(() => generation),
+    getRuntimeScope           : sinon.stub().callsFake(() => scope),
     handleDivergence          : sinon.stub().resolves(false),
     handlePushFailures        : sinon.stub().resolves(),
     openPullSubscription      : sinon.stub().resolves(true),
@@ -78,9 +79,11 @@ function createFixture(options: {
   return {
     controllers,
     coordinator,
-    getGeneration : () => generation,
+    disposeScope: (): void => {
+      scope.dispose();
+      scope = new SyncRuntime();
+    },
     operations,
-    setGeneration : (next): void => { generation = next; },
     taskRunner,
   };
 }
@@ -223,7 +226,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await clock.runAllAsync();
   });
 
-  it('abandons a repair whose generation changes during durable reconciliation', async () => {
+  it('abandons a repair whose runtime scope is disposed during durable reconciliation', async () => {
     const fixture = createFixture();
     const state = link('repairing');
     const controller = activate(fixture, state);
@@ -239,7 +242,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
 
     const repairing = fixture.coordinator.repair(controller);
     await reconcileStarted.promise;
-    fixture.setGeneration(fixture.getGeneration() + 1);
+    fixture.disposeScope();
     expect(shouldContinue()).toBe(false);
     releaseReconcile.resolve();
     await repairing;
@@ -257,7 +260,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const closePull = sinon.stub().resolves();
     controller.setLiveSubscription({ close: closePull });
     fixture.operations.openPullSubscription.callsFake(async () => {
-      fixture.setGeneration(1);
+      fixture.disposeScope();
       return true;
     });
 
@@ -292,7 +295,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(fixture.operations.warn.calledWithMatch('Max repair attempts reached')).toBe(true);
   });
 
-  it('guards the production repair-retry timer by generation and consumes it before starting work', async () => {
+  it('guards the production repair-retry timer by scope disposal and consumes it before starting work', async () => {
     const clock = sinon.useFakeTimers();
     const fixture = createFixture({ repairBackoffMs: [1000] });
     const controller = activate(fixture, link('repairing'));
@@ -301,7 +304,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     fixture.coordinator.scheduleRepairRetry(controller);
     expect(fixture.operations.captureIdentityTaskRunner.calledOnceWithExactly(DID)).toBe(true);
     fixture.operations.captureIdentityTaskRunner.resetHistory();
-    fixture.setGeneration(1);
+    fixture.disposeScope();
     await clock.tickAsync(1000);
     expect(repair.called).toBe(false);
     expect(fixture.operations.captureIdentityTaskRunner.notCalled).toBe(true);
@@ -314,7 +317,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(controller.repairRetryTimer).toBeUndefined();
   });
 
-  it('keeps the earliest reconcile timer and drives the production callback only for its captured generation', async () => {
+  it('keeps the earliest reconcile timer and drives the production callback only for its captured scope', async () => {
     const clock = sinon.useFakeTimers();
     const fixture = createFixture();
     const controller = activate(fixture);
@@ -333,7 +336,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(controller.reconcileTimer).toBeUndefined();
 
     fixture.coordinator.scheduleReconcile(LINK_KEY, 100);
-    fixture.setGeneration(1);
+    fixture.disposeScope();
     await clock.tickAsync(100);
     expect(reconcile.calledOnce).toBe(true);
     expect(controller.reconcileTimer).toBeUndefined();

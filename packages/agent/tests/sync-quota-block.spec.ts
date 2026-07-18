@@ -474,6 +474,42 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     expect(reconcile.called).toBe(false);
   });
 
+  it('composes a runtime-transition fence into every quota probe from any runtime state', async () => {
+    const internal = syncEngine as any;
+    const fences: Array<() => boolean> = [];
+    sinon.stub(internal._quotaManager, 'probeBlocksForTarget').callsFake(
+      async (_target: unknown, _force: unknown, _cids: unknown, shouldContinue: () => boolean): Promise<void> => {
+        fences.push(shouldContinue);
+      },
+    );
+    const probeTarget = {
+      did                : TENANT,
+      dwnUrl             : REMOTE,
+      scope              : { kind: 'full' },
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'owner',
+      projectionId,
+    };
+
+    // Active runtime: the fence holds until a transition disposes the scope.
+    await internal.probeQuotaBlocksForTarget(probeTarget);
+    expect(fences[0]()).toBe(true);
+    internal.prepareForSyncRuntimeTransition();
+    expect(fences[0]()).toBe(false);
+
+    // Stopped state (scope already disposed at capture): the fence holds —
+    // a stopped-state retryRemoteNow must still probe — until a new runtime
+    // replaces the captured one.
+    await internal.probeQuotaBlocksForTarget(probeTarget);
+    expect(fences[1]()).toBe(true);
+    internal._runtime = new (internal._runtime.constructor)();
+    expect(fences[1]()).toBe(false);
+
+    // A caller-supplied fence composes with the transition fence.
+    await internal.probeQuotaBlocksForTarget(probeTarget, false, undefined, (): boolean => false);
+    expect(fences[2]()).toBe(false);
+  });
+
   it('does not let one quota omission mask an unrelated exact feed divergence', async () => {
     await seedQuotaBlock({
       cid         : 'blocked-cid',

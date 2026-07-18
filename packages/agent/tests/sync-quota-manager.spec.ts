@@ -144,12 +144,11 @@ describe('SyncQuotaManager', () => {
     expect(await manager.getState(target(), 'cid-1')).toBeUndefined();
   });
 
-  it('abandons a probe when topology changes during the root-message lookup', async () => {
+  it('abandons a probe when the caller fence trips during the root-message lookup', async () => {
     const lookupStarted = deferred<void>();
     const releaseLookup = deferred<void>();
     const { manager, operations } = createHarness();
-    let generation = 0;
-    operations.getGeneration.callsFake(() => generation);
+    let fenceTripped = false;
     operations.getLocalMessage.callsFake(async () => {
       lookupStarted.resolve();
       await releaseLookup.promise;
@@ -157,9 +156,9 @@ describe('SyncQuotaManager', () => {
     });
     await manager.recordBlock(target(), 'cid-1', undefined, 'over quota');
 
-    const probing = manager.probeBlocksForTarget(target(), true);
+    const probing = manager.probeBlocksForTarget(target(), true, undefined, (): boolean => !fenceTripped);
     await lookupStarted.promise;
-    generation += 1;
+    fenceTripped = true;
     releaseLookup.resolve();
     await probing;
 
@@ -168,12 +167,11 @@ describe('SyncQuotaManager', () => {
     expect(await manager.getState(target(), 'cid-1')).toBeDefined();
   });
 
-  it('abandons a probe when topology changes during the dependency lookup', async () => {
+  it('abandons a probe when the caller fence trips during the dependency lookup', async () => {
     const dependencyLookupStarted = deferred<void>();
     const releaseDependencyLookup = deferred<void>();
     const { manager, operations } = createHarness();
-    let generation = 0;
-    operations.getGeneration.callsFake(() => generation);
+    let fenceTripped = false;
     operations.getLocalMessage.onFirstCall().resolves(messageEntry('root-cid'));
     operations.getLocalMessage.onSecondCall().callsFake(async () => {
       dependencyLookupStarted.resolve();
@@ -182,9 +180,9 @@ describe('SyncQuotaManager', () => {
     });
     await manager.recordBlock(target(), 'root-cid', undefined, 'over quota', 'feed', 'dependency-cid');
 
-    const probing = manager.probeBlocksForTarget(target(), true);
+    const probing = manager.probeBlocksForTarget(target(), true, undefined, (): boolean => !fenceTripped);
     await dependencyLookupStarted.promise;
-    generation += 1;
+    fenceTripped = true;
     releaseDependencyLookup.resolve();
     await probing;
 
@@ -194,12 +192,11 @@ describe('SyncQuotaManager', () => {
     expect(await manager.getState(target(), 'root-cid')).toBeDefined();
   });
 
-  it('discards a probe result when topology changes while transport is in flight', async () => {
+  it('discards a probe result when the caller fence trips while transport is in flight', async () => {
     const transportStarted = deferred<void>();
     const releaseTransport = deferred<void>();
     const { manager, operations } = createHarness();
-    let generation = 0;
-    operations.getGeneration.callsFake(() => generation);
+    let fenceTripped = false;
     operations.pushMessages.callsFake(async () => {
       transportStarted.resolve();
       await releaseTransport.promise;
@@ -207,9 +204,9 @@ describe('SyncQuotaManager', () => {
     });
     await manager.recordBlock(target(), 'cid-1', undefined, 'over quota');
 
-    const probing = manager.probeBlocksForTarget(target(), true);
+    const probing = manager.probeBlocksForTarget(target(), true, undefined, (): boolean => !fenceTripped);
     await transportStarted.promise;
-    generation += 1;
+    fenceTripped = true;
     releaseTransport.resolve();
     await probing;
 
@@ -301,7 +298,6 @@ function createOperations(): SyncQuotaOperationStubs {
     clearFailedMessage    : sinon.stub().resolves(),
     collectLocalFeedCids  : sinon.stub().resolves(new Set<string>()),
     collectRemoteFeedCids : sinon.stub().resolves(new Set<string>()),
-    getGeneration         : sinon.stub().returns(0),
     getLocalMessage       : sinon.stub().resolves(undefined),
     onQuotaBlocked        : sinon.stub(),
     onQuotaCleared        : sinon.stub(),
