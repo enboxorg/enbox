@@ -16,6 +16,7 @@ import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, Message, Time } from
 import { DwnInterface } from '../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
+import { SyncRuntime } from '../src/sync-runtime.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
 
@@ -894,11 +895,11 @@ describe('SyncEngineLevel', () => {
         sinon.stub(syncEngine as any, 'getReplicationLinkKey').returns('link-key');
         const initialize = sinon.stub(syncEngine as any, 'initializeLinkTargetWithRetry').resolves();
 
-        syncEngine['_syncMode'] = 'poll';
+        syncEngine['_runtime'] = new SyncRuntime('poll');
         await (syncEngine as any).prepareDrainLiveTarget(target);
         expect(getLink.notCalled).toBe(true);
 
-        syncEngine['_syncMode'] = 'live';
+        syncEngine['_runtime'] = new SyncRuntime('live');
         await (syncEngine as any).prepareDrainLiveTarget(target);
         expect(initialize.calledOnceWithExactly(target)).toBe(true);
 
@@ -3596,7 +3597,7 @@ describe('SyncEngineLevel', () => {
             options: { protocols: 'all', delegateDid: 'did:example:old-delegate' },
           });
 
-          syncEngine['_syncMode'] = 'live';
+          syncEngine['_runtime'] = new SyncRuntime('live');
 
           const ledger = syncEngine['ledger'];
           const link = await ledger.getOrCreateLink({
@@ -3642,7 +3643,7 @@ describe('SyncEngineLevel', () => {
           const did = alice.did.uri;
 
           await syncEngine.registerIdentity({ did, options: { protocols: 'all' } });
-          syncEngine['_syncMode'] = 'live';
+          syncEngine['_runtime'] = new SyncRuntime('live');
 
           const ledger = syncEngine['ledger'];
           const link = await ledger.getOrCreateLink({
@@ -3678,7 +3679,7 @@ describe('SyncEngineLevel', () => {
           const did = alice.did.uri;
 
           await syncEngine.registerIdentity({ did, options: { protocols: 'all' } });
-          syncEngine['_syncMode'] = 'live';
+          syncEngine['_runtime'] = new SyncRuntime('live');
 
           const ledger = syncEngine['ledger'];
           const link = await ledger.getOrCreateLink({
@@ -3738,7 +3739,7 @@ describe('SyncEngineLevel', () => {
           const did = alice.did.uri;
 
           await syncEngine.registerIdentity({ did, options: { protocols: 'all' } });
-          syncEngine['_syncMode'] = 'live';
+          syncEngine['_runtime'] = new SyncRuntime('live');
 
           const ledger = syncEngine['ledger'];
           const originalLink = await ledger.getOrCreateLink({

@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { SyncRunCancelledError } from '../src/sync-runtime-errors.js';
+import { SyncRuntime } from '../src/sync-runtime.js';
 
 type Deferred = {
   promise: Promise<void>;
@@ -463,7 +464,7 @@ describe('SyncEngineLevel lifecycle', () => {
     };
 
     await engine.registerIdentity({ did, options: { protocols: 'all' } });
-    engine['_syncMode'] = 'live';
+    engine['_runtime'] = new SyncRuntime('live');
     engine['activateLink'](linkKey, link as never);
     sinon.stub(engine['ledger'], 'setStatus').callsFake(async (): Promise<void> => {
       link.status = 'repairing';
@@ -574,7 +575,7 @@ describe('SyncEngineLevel lifecycle', () => {
     };
 
     await engine.registerIdentity({ did, options: { protocols: 'all' } });
-    engine['_syncMode'] = 'live';
+    engine['_runtime'] = new SyncRuntime('live');
     const controller = engine['activateLink'](linkKey, link as never);
     const recoveryCoordinator = engine['_linkRecoveryCoordinator'];
     sinon.stub(recoveryCoordinator, 'reconcile').callsFake(async (): Promise<void> => {
@@ -638,7 +639,7 @@ describe('SyncEngineLevel lifecycle', () => {
     });
 
     await engine.registerIdentity({ did, options: { protocols: 'all' } });
-    engine['_syncMode'] = 'live';
+    engine['_runtime'] = new SyncRuntime('live');
     const livePushCoordinator = engine['_livePushCoordinator'];
     sinon.stub(livePushCoordinator, 'flushLink').callsFake(async (): Promise<void> => {
       pushStarted.resolve();
@@ -691,12 +692,12 @@ describe('SyncEngineLevel lifecycle', () => {
     await Promise.resolve();
 
     expect(stopCompleted).toBe(false);
-    expect(engine['_syncMode']).toBe('live');
+    expect(engine['_runtime'].mode).toBe('live');
 
     releaseStart.resolve();
     await Promise.all([startPromise, stopPromise]);
 
-    expect(engine['_syncMode']).toBeUndefined();
+    expect(engine['_runtime'].mode).toBeUndefined();
   });
 
   it('should ignore a stale live integrity callback after stop', async () => {

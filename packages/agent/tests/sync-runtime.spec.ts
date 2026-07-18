@@ -105,6 +105,19 @@ describe('SyncRuntime', () => {
     expect(ticks).toBe(0);
   });
 
+  it('should carry its mode for the generation and lose it on disposal', () => {
+    const modeless = new SyncRuntime();
+    expect(modeless.mode).toBeUndefined();
+
+    const runtime = new SyncRuntime('live');
+    expect(runtime.mode).toBe('live');
+
+    // Mode is a property of the generation: a disposed scope has none,
+    // exactly as the engine between runtimes has none.
+    runtime.dispose();
+    expect(runtime.mode).toBeUndefined();
+  });
+
   it('should tolerate clearing unarmed keys, double dispose, and clears after dispose', () => {
     const runtime = new SyncRuntime();
     runtime.clearTimer('never-armed');
