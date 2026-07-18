@@ -2634,6 +2634,190 @@ describe('DwnApi', () => {
 
         await live2!.close();
       });
+
+      describe('encryption', () => {
+        /** Installs a fresh encrypted-notes protocol under a random URI and returns the protocol URI. */
+        async function installEncryptedProtocol(): Promise<string> {
+          const encProtocol: DwnProtocolDefinition = {
+            published : true,
+            protocol  : `http://encrypted-notes.xyz/${TestDataGenerator.randomString(15)}`,
+            types     : {
+              note: {
+                schema      : 'https://schemas.xyz/note',
+                dataFormats : ['text/plain'],
+              },
+            },
+            structure: { note: {} },
+          };
+
+          const { status } = await dwnAlice.protocols.configure({
+            definition : encProtocol,
+            encryption : true,
+          });
+          expect(status.code).toBe(202);
+
+          return encProtocol.protocol;
+        }
+
+        /** Writes an encrypted note and returns the created record. */
+        async function writeEncryptedNote(protocol: string, plaintext: string): Promise<Record> {
+          const { status, record } = await dwnAlice.records.write({
+            data         : plaintext,
+            protocol,
+            protocolPath : 'note',
+            schema       : 'https://schemas.xyz/note',
+            dataFormat   : 'text/plain',
+            encryption   : true,
+          });
+          expect(status.code).toBe(202);
+          return record!;
+        }
+
+        /** Counts the RecordsRead requests issued through the given processDwnRequest spy. */
+        function countRecordsReads(spy: sinon.SinonSpy): number {
+          return spy.getCalls().filter((call) => call.args[0].messageType === DwnInterface.RecordsRead).length;
+        }
+
+        it('should deliver plaintext snapshot and event records without a read round-trip when enabled', async () => {
+          const protocol = await installEncryptedProtocol();
+
+          // write an encrypted record BEFORE subscribing — lands in the snapshot
+          await writeEncryptedNote(protocol, 'snapshot secret');
+
+          const { status, liveQuery: live } = await dwnAlice.records.subscribe({
+            filter     : { protocol },
+            encryption : true,
+          });
+          expect(status.code).toBe(200);
+          expect(live).toBeDefined();
+          expect(live!.records).toHaveLength(1);
+
+          const created: Record[] = [];
+          live!.on('create', (record) => { created.push(record); });
+
+          // write an encrypted record AFTER subscribing — arrives as a create event
+          await writeEncryptedNote(protocol, 'live secret');
+
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(created).toHaveLength(1);
+          });
+
+          // Spy AFTER delivery so only the data accesses below are observed.
+          const processDwnRequestSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
+
+          // Both records serve plaintext from the inline (pre-decrypted) payload.
+          expect(await live!.records[0].data.text()).toBe('snapshot secret');
+          expect(await created[0].data.text()).toBe('live secret');
+
+          // No RecordsRead round-trip was needed for either access.
+          expect(countRecordsReads(processDwnRequestSpy)).toBe(0);
+
+          await live!.close();
+        });
+
+        it('should preserve the lazy re-read behavior when encryption is not requested', async () => {
+          const protocol = await installEncryptedProtocol();
+
+          // snapshot record: inline data remains ciphertext when the flag is off
+          await writeEncryptedNote(protocol, 'snapshot secret');
+
+          const { liveQuery: live } = await dwnAlice.records.subscribe({
+            filter: { protocol },
+          });
+          expect(live).toBeDefined();
+          expect(live!.records).toHaveLength(1);
+          expect(await live!.records[0].data.text()).not.toBe('snapshot secret');
+
+          const created: Record[] = [];
+          live!.on('create', (record) => { created.push(record); });
+
+          await writeEncryptedNote(protocol, 'live secret');
+
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(created).toHaveLength(1);
+          });
+
+          // Event records carry no inline data; access re-reads from the DWN
+          // (decrypting, since the record carries an encryption envelope).
+          const processDwnRequestSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
+          expect(await created[0].data.text()).toBe('live secret');
+          expect(countRecordsReads(processDwnRequestSpy)).toBeGreaterThanOrEqual(1);
+
+          await live!.close();
+        });
+
+        it('should decrypt large (non-inlined) record events through the lazy read', async () => {
+          const protocol = await installEncryptedProtocol();
+
+          const { liveQuery: live } = await dwnAlice.records.subscribe({
+            filter     : { protocol },
+            encryption : true,
+          });
+          expect(live).toBeDefined();
+
+          const created: Record[] = [];
+          live!.on('create', (record) => { created.push(record); });
+
+          // Too large to be inlined with the event — nothing to decrypt inline.
+          const largePlaintext = 'A'.repeat(DwnConstant.maxDataSizeAllowedToBeEncoded + 1_000);
+          await writeEncryptedNote(protocol, largePlaintext);
+
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(created).toHaveLength(1);
+          });
+
+          // The lazy read path still decrypts on access.
+          const processDwnRequestSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
+          expect(await created[0].data.text()).toBe(largePlaintext);
+          expect(countRecordsReads(processDwnRequestSpy)).toBeGreaterThanOrEqual(1);
+
+          await live!.close();
+        });
+
+        it('should keep the subscription alive and reject data access for events that fail to decrypt', async () => {
+          const protocol = await installEncryptedProtocol();
+
+          const { liveQuery: live } = await dwnAlice.records.subscribe({
+            filter     : { protocol },
+            encryption : true,
+          });
+          expect(live).toBeDefined();
+
+          const created: Record[] = [];
+          live!.on('create', (record) => { created.push(record); });
+
+          // Make key unwrapping fail so the event's payload cannot be decrypted.
+          const unwrapStub = sinon.stub(testHarness.agent.keyManager, 'unwrapContentKey')
+            .rejects(new Error('test-induced key unwrap failure'));
+
+          const failedWrite = await writeEncryptedNote(protocol, 'cannot read me');
+
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(created).toHaveLength(1);
+          });
+
+          // The event was delivered (ciphertext withheld); data access falls back
+          // to the lazy decrypting read, which rejects with the decryption error.
+          expect(created[0].id).toBe(failedWrite.id);
+          await expect(created[0].data.text()).rejects.toThrow('Failed to decrypt record');
+
+          // The subscription survives: after keys work again, subsequent events
+          // are delivered decrypted.
+          unwrapStub.restore();
+          await writeEncryptedNote(protocol, 'readable note');
+
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(created).toHaveLength(2);
+          });
+          expect(await created[1].data.text()).toBe('readable note');
+
+          // Self-healing: the previously failed record's data now lazily reads
+          // (and decrypts) successfully.
+          expect(await created[0].data.text()).toBe('cannot read me');
+
+          await live!.close();
+        });
+      });
     });
 
     describe('from: did', () => {
