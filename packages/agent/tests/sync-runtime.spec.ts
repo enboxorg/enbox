@@ -9,19 +9,24 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Capture the wrappers SyncRuntime hands to the native setInterval, so a
- * test can invoke one as if the event loop had already queued that firing
- * before a replacement or disposal happened. clearInterval cannot retract
- * such a queued firing; the runtime's ownership re-check must neutralize it.
+ * Capture the wrappers SyncRuntime hands to the native setInterval and
+ * setTimeout, so a test can invoke one as if the event loop had already
+ * queued that firing before a replacement or disposal happened. Clearing a
+ * native timer cannot retract such a queued firing; the runtime's ownership
+ * re-check must neutralize it.
  */
 function captureScheduledCallbacks(): Array<() => void> {
   const scheduled: Array<() => void> = [];
   let nextHandle = 1;
-  sinon.stub(globalThis, 'setInterval').callsFake(((callback: () => void): number => {
+  const capture = ((callback: () => void): number => {
     scheduled.push(callback);
     return nextHandle++;
-  }) as unknown as typeof setInterval);
-  sinon.stub(globalThis, 'clearInterval').callsFake(((): void => {}) as unknown as typeof clearInterval);
+  }) as unknown;
+  const ignore = ((): void => {}) as unknown;
+  sinon.stub(globalThis, 'setInterval').callsFake(capture as typeof setInterval);
+  sinon.stub(globalThis, 'clearInterval').callsFake(ignore as typeof clearInterval);
+  sinon.stub(globalThis, 'setTimeout').callsFake(capture as typeof setTimeout);
+  sinon.stub(globalThis, 'clearTimeout').callsFake(ignore as typeof clearTimeout);
   return scheduled;
 }
 
@@ -143,5 +148,98 @@ describe('SyncRuntime', () => {
     // The replacement still owns the key: its firings execute.
     scheduled[1]();
     expect(currentRan).toBe(1);
+  });
+
+  it('should fire an armed timeout once, unarming its key before the callback runs', async () => {
+    const runtime = new SyncRuntime();
+    let runs = 0;
+    let armedDuringCallback: boolean | undefined;
+    runtime.armTimeout('retry', () => {
+      runs++;
+      armedDuringCallback = runtime.hasTimers((key) => key === 'retry');
+    }, 5);
+
+    expect(runtime.hasTimers((key) => key === 'retry')).toBe(true);
+    await sleep(20);
+    runtime.dispose();
+
+    expect(runs).toBe(1);
+    expect(armedDuringCallback).toBe(false);
+  });
+
+  it('should let a timeout callback re-arm its own key', async () => {
+    const runtime = new SyncRuntime();
+    let runs = 0;
+    runtime.armTimeout('retry', () => {
+      runs++;
+      runtime.armTimeout('retry', () => { runs++; }, 5);
+    }, 5);
+
+    await sleep(30);
+    runtime.dispose();
+
+    expect(runs).toBe(2);
+  });
+
+  it('should replace a pending timeout under the same key', async () => {
+    const runtime = new SyncRuntime();
+    let first = 0;
+    let second = 0;
+    runtime.armTimeout('retry', () => { first++; }, 5);
+    runtime.armTimeout('retry', () => { second++; }, 5);
+
+    await sleep(20);
+    runtime.dispose();
+
+    expect(first).toBe(0);
+    expect(second).toBe(1);
+  });
+
+  it('should neutralize a timeout firing queued before dispose or replacement', () => {
+    const scheduled = captureScheduledCallbacks();
+    const runtime = new SyncRuntime();
+    let staleRan = 0;
+    let currentRan = 0;
+    runtime.armTimeout('retry', () => { staleRan++; }, 5);
+    runtime.armTimeout('retry', () => { currentRan++; }, 5);
+
+    // The replaced timeout's firing was already queued: it must not start.
+    scheduled[0]();
+    expect(staleRan).toBe(0);
+
+    // The replacement still owns the key until delivery.
+    scheduled[1]();
+    expect(currentRan).toBe(1);
+
+    // A firing queued before dispose must not start either.
+    runtime.armTimeout('late', () => { staleRan++; }, 5);
+    runtime.dispose();
+    scheduled[2]();
+    expect(staleRan).toBe(0);
+  });
+
+  it('should query and clear timers by key predicate', () => {
+    const scheduled = captureScheduledCallbacks();
+    const runtime = new SyncRuntime();
+    let aliceRan = 0;
+    let bobRan = 0;
+    runtime.armTimeout('linkInitRetry:did:example:alice^https://a.example', () => { aliceRan++; }, 5);
+    runtime.armTimeout('linkInitRetry:did:example:bob^https://b.example', () => { bobRan++; }, 5);
+    runtime.armInterval('syncInterval', () => {}, 5);
+
+    expect(runtime.hasTimers((key) => key.startsWith('linkInitRetry:'))).toBe(true);
+    runtime.clearTimers((key) => key.startsWith('linkInitRetry:did:example:alice^'));
+
+    expect(runtime.hasTimers((key) => key.startsWith('linkInitRetry:did:example:alice^'))).toBe(false);
+    expect(runtime.hasTimers((key) => key.startsWith('linkInitRetry:did:example:bob^'))).toBe(true);
+    expect(runtime.hasTimers((key) => key === 'syncInterval')).toBe(true);
+
+    // The cleared timer's queued firing is neutralized; the survivor runs.
+    scheduled[0]();
+    scheduled[1]();
+    expect(aliceRan).toBe(0);
+    expect(bobRan).toBe(1);
+
+    runtime.dispose();
   });
 });

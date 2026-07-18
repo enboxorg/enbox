@@ -560,6 +560,158 @@ describe('SyncEngineLevel — identity management', () => {
       ).rejects.toThrow('is not registered');
     });
 
+    // --- pending init-retry cancellation on identity mutations ---
+    // The 429 path drops the link controller before arming the Retry-After
+    // timer, so an identity mutation can find no active links and skip the
+    // live-link rebuild entirely. The pending retry captured the superseded
+    // target (old scope, old authorization epoch); it must be cancelled
+    // unconditionally, not only when links are rebuilt.
+
+    it('updateIdentityOptions should cancel a pending init retry even without an active link', async () => {
+      const clock = sinon.useFakeTimers();
+      try {
+        const engine = new SyncEngineLevel({ db });
+        await engine.registerIdentity({ did: 'did:example:staleretry', options: { protocols: 'all' } });
+
+        const initialize = sinon.stub(engine as any, 'initializeLinkTarget').resolves({ status: 'active' });
+        const linkKey = 'did:example:staleretry^https://dwn.example.com^projection-1^epoch-1';
+        (engine as any).scheduleLinkInitRetry({ did: 'did:example:staleretry' }, linkKey, 60_000);
+        expect((engine as any)._runtime.hasTimers((key: string) => key.startsWith('linkInitRetry:'))).toBe(true);
+
+        await engine.updateIdentityOptions({ did: 'did:example:staleretry', options: { protocols: 'all' } });
+
+        expect((engine as any)._runtime.hasTimers((key: string) => key.startsWith('linkInitRetry:'))).toBe(false);
+        await clock.tickAsync(120_000);
+        expect(initialize.called).toBe(false);
+      } finally {
+        clock.restore();
+      }
+    });
+
+    it('updateIdentityOptions should initialize replacement live targets after cancelling a pending retry', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const did = 'did:example:replacementretry';
+      await engine.registerIdentity({ did, options: { protocols: 'all' } });
+      (engine as any)._syncMode = 'live';
+
+      const initializeReplacement = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
+      const linkKey = `${did}^https://dwn.example.com^projection-1^epoch-1`;
+      (engine as any).scheduleLinkInitRetry({ did }, linkKey, 60_000);
+
+      const options = { protocols: ['https://new.example'] };
+      await engine.updateIdentityOptions({ did, options });
+
+      expect((engine as any)._runtime.hasTimers((key: string) => key === `linkInitRetry:${linkKey}`)).toBe(false);
+      expect(initializeReplacement.calledOnceWith(did, options)).toBe(true);
+      (engine as any)._runtime.dispose();
+    });
+
+    it('unregisterIdentity should cancel a pending init retry even without an active link', async () => {
+      const clock = sinon.useFakeTimers();
+      try {
+        const engine = new SyncEngineLevel({ db });
+        await engine.registerIdentity({ did: 'did:example:staleretry2', options: { protocols: 'all' } });
+
+        const initialize = sinon.stub(engine as any, 'initializeLinkTarget').resolves({ status: 'active' });
+        const linkKey = 'did:example:staleretry2^https://dwn.example.com^projection-1^epoch-1';
+        (engine as any).scheduleLinkInitRetry({ did: 'did:example:staleretry2' }, linkKey, 60_000);
+        expect((engine as any)._runtime.hasTimers((key: string) => key.startsWith('linkInitRetry:'))).toBe(true);
+
+        await engine.unregisterIdentity('did:example:staleretry2');
+
+        expect((engine as any)._runtime.hasTimers((key: string) => key.startsWith('linkInitRetry:'))).toBe(false);
+        await clock.tickAsync(120_000);
+        expect(initialize.called).toBe(false);
+      } finally {
+        clock.restore();
+      }
+    });
+
+    it('updateIdentityOptions should drain an already-started init retry before starting replacement targets', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const did = 'did:example:startedretry';
+      await engine.registerIdentity({ did, options: { protocols: 'all' } });
+      (engine as any)._syncMode = 'live';
+
+      let releaseRetry!: () => void;
+      const retryGate = new Promise<void>((resolve) => { releaseRetry = resolve; });
+      const events: string[] = [];
+      const initialize = sinon.stub(engine as any, 'initializeLinkTarget').callsFake(async (): Promise<{ status: string }> => {
+        await retryGate;
+        events.push('stale-retry-finished');
+        return { status: 'failed' };
+      });
+      const initializeReplacement = sinon.stub(engine as any, 'addIdentityToLiveSync').callsFake(async (): Promise<Set<string>> => {
+        events.push('replacement-started');
+        return new Set();
+      });
+
+      // Replicate a Retry-After timer that fired BEFORE the update started:
+      // the timer key is already unarmed and the retry task is in flight in
+      // the identity task group, exactly as scheduleLinkInitRetry enqueues it.
+      const taskGroup = (engine as any)._lifecycle.getIdentityTaskGroup(did);
+      void (engine as any)._lifecycle.runIdentityTask(taskGroup, async (): Promise<void> => {
+        try {
+          await initialize({ did });
+        } catch {
+          // Mirrors scheduleLinkInitRetry's callback.
+        }
+      });
+
+      const options = { protocols: ['https://replacement.example'] };
+      const updatePromise = engine.updateIdentityOptions({ did, options })
+        .then((): void => { events.push('update-done'); });
+
+      // The update must block on the in-flight retry, not complete around it
+      // and let the stale target activate afterwards.
+      const updateFinishedEarly = await Promise.race([
+        updatePromise.then((): boolean => true),
+        new Promise<boolean>((resolve) => setTimeout((): void => { resolve(false); }, 50)),
+      ]);
+      expect(updateFinishedEarly).toBe(false);
+
+      releaseRetry();
+      await updatePromise;
+      expect(events).toEqual(['stale-retry-finished', 'replacement-started', 'update-done']);
+      expect(initializeReplacement.calledOnceWith(did, options)).toBe(true);
+
+      // The superseded group was paused for the drain and then discarded:
+      // late work enqueued on it is dropped, while the identity's future
+      // work runs on a fresh, accepting group.
+      let lateRan = false;
+      await (engine as any)._lifecycle.runIdentityTask(taskGroup, async (): Promise<void> => { lateRan = true; });
+      expect(lateRan).toBe(false);
+
+      const freshGroup = (engine as any)._lifecycle.getIdentityTaskGroup(did);
+      expect(freshGroup).not.toBe(taskGroup);
+      let freshRan = false;
+      await (engine as any)._lifecycle.runIdentityTask(freshGroup, async (): Promise<void> => { freshRan = true; });
+      expect(freshRan).toBe(true);
+    });
+
+    it('cancelLinkInitRetriesForDid should not cancel a retry for a DID that merely extends the mutated DID', async () => {
+      const engine = new SyncEngineLevel({ db });
+      (engine as any).scheduleLinkInitRetry(
+        { did: 'did:example:alice' },
+        'did:example:alice^https://dwn.example.com^projection-1^epoch-1',
+        60_000,
+      );
+      // Underscores are valid DID characters: this is a DIFFERENT identity
+      // whose DID happens to extend the one being mutated.
+      (engine as any).scheduleLinkInitRetry(
+        { did: 'did:example:alice_extra' },
+        'did:example:alice_extra^https://dwn.example.com^projection-1^epoch-1',
+        60_000,
+      );
+
+      (engine as any).cancelLinkInitRetriesForDid('did:example:alice');
+
+      expect((engine as any)._runtime.hasTimers((key: string) => key.startsWith('linkInitRetry:did:example:alice^'))).toBe(false);
+      expect((engine as any)._runtime.hasTimers((key: string) => key.startsWith('linkInitRetry:did:example:alice_extra^'))).toBe(true);
+
+      (engine as any)._runtime.dispose();
+    });
+
     // --- removeIdentityFromLiveSync subscription isolation ---
 
     it('removeIdentityFromLiveSync should close and remove subscriptions for the target DID only', async () => {
@@ -847,15 +999,13 @@ describe('SyncEngineLevel — identity management', () => {
       // The half-open link is dropped, not left live...
       expect(engine.hasActiveSubscriptions).toBe(false);
       expect((engine as any)._linkControllers.size).toBe(0);
-      // ...and exactly one Retry-After reattempt is scheduled.
-      expect((engine as any)._linkInitRetryTimers.size).toBe(1);
+      // ...and a Retry-After reattempt is scheduled (arming replaces any
+      // pending timer for the key, so a 429 burst coalesces to one).
+      expect((engine as any)._runtime.hasTimers((key: string) => key.startsWith('linkInitRetry:'))).toBe(true);
       expect(openPullStub.calledOnce).toBe(true);
 
       // Cancel the pending timer so it does not fire against a torn-down engine.
-      for (const timer of (engine as any)._linkInitRetryTimers.values()) {
-        clearTimeout(timer);
-      }
-      (engine as any)._linkInitRetryTimers.clear();
+      (engine as any)._runtime.clearTimers((key: string) => key.startsWith('linkInitRetry:'));
     });
 
     it('addIdentityToLiveSync should establish live sync when the reattempt succeeds after the Retry-After window', async () => {
@@ -894,7 +1044,7 @@ describe('SyncEngineLevel — identity management', () => {
 
       expect(openPullStub.callCount).toBe(2);
       expect((engine as any)._linkControllers.size).toBe(1);
-      expect((engine as any)._linkInitRetryTimers.size).toBe(0);
+      expect((engine as any)._runtime.hasTimers((key: string) => key.startsWith('linkInitRetry:'))).toBe(false);
     });
   });
 

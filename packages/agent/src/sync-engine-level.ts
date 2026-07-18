@@ -88,7 +88,7 @@ import { SyncRuntime } from './sync-runtime.js';
 import { SyncScopeClosureValidator } from './sync-scope-closure-validator.js';
 import { SyncStatusReporter } from './sync-status-reporter.js';
 import { SyncTargetPlanner } from './sync-target-planner.js';
-import { buildDurableLinkIdentityKey, buildLinkId } from './sync-link-id.js';
+import { buildDurableLinkIdentityKey, buildLinkId, LINK_ID_SEPARATOR } from './sync-link-id.js';
 import { computeProjectionId, isTerminalPushFailure, lexicographicalCompare, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
 import { fetchRemoteMessages, getLocalMessage, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed } from './sync-messages.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
@@ -612,11 +612,9 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private activateLink(linkKey: string, link: ReplicationLinkState): SyncLinkController {
-    const pendingInitializationRetry = this._linkInitRetryTimers.get(linkKey);
-    if (pendingInitializationRetry !== undefined) {
-      clearTimeout(pendingInitializationRetry);
-      this._linkInitRetryTimers.delete(linkKey);
-    }
+    // A link activated through another path (e.g. drain) supersedes any
+    // pending rate-limit init retry for the same key.
+    this._runtime.clearTimer(SyncEngineLevel.linkInitRetryTimerKey(linkKey));
 
     const existing = this._linkControllers.get(linkKey);
     if (existing?.link === link && existing.isActive) {
@@ -776,6 +774,12 @@ export class SyncEngineLevel implements SyncEngine {
       await this.removeIdentityFromLiveSync(did);
     }
 
+    // A pending rate-limit init retry may exist even without an active link
+    // (the 429 path drops the controller before arming the retry, so the
+    // hot-remove above can be skipped entirely). Its captured target is now
+    // unregistered — cancel it unconditionally.
+    this.cancelLinkInitRetriesForDid(did);
+
     await this._identityStore.delete(did);
     this.invalidateSyncTargetsCache();
     await this.clearQuotaBlocksForTenant(did);
@@ -809,8 +813,26 @@ export class SyncEngineLevel implements SyncEngine {
     await this._identityStore.set(did, options);
     this.invalidateSyncTargetsCache();
 
-    const rebuildLiveLinks = this._syncMode === 'live' && this.hasActiveLinksForDid(did);
-    if (rebuildLiveLinks) {
+    // A pending rate-limit init retry captured the PREVIOUS options' target
+    // (old scope, old authorization epoch). Remember that it represented an
+    // active live-sync attempt before cancelling it: the replacement options
+    // still need their own live links even though the rate-limited link has no
+    // controller yet. The runtime's ownership-token check neutralizes a timer
+    // firing that was queued but had not started before this cancellation.
+    const hadPendingLinkInitRetry = this.hasLinkInitRetriesForDid(did);
+    this.cancelLinkInitRetriesForDid(did);
+
+    // A retry that fired earlier may already be RUNNING as an identity task.
+    // It is invisible to timer cancellation. Treat armed, running, and active
+    // states alike as a prior live runtime that must be torn down. The normal
+    // identity teardown pauses task admission before settling, then cancels
+    // any retry re-armed by work that was already in flight.
+    const identityTaskGroup = this._lifecycle.getIdentityTaskGroup(did);
+    const hadPriorLiveRuntime = hadPendingLinkInitRetry ||
+      identityTaskGroup.size > 0 ||
+      this.hasActiveLinksForDid(did);
+    const rebuildLiveLinks = this._syncMode === 'live' && hadPriorLiveRuntime;
+    if (hadPriorLiveRuntime) {
       await this.removeIdentityFromLiveSync(did);
     }
 
@@ -1053,7 +1075,7 @@ export class SyncEngineLevel implements SyncEngine {
   private hasLiveSyncRuntime(): boolean {
     return this._syncMode === 'live' ||
       this._linkControllers.size > 0 ||
-      this._linkInitRetryTimers.size > 0 ||
+      this._runtime.hasTimers(SyncEngineLevel.isLinkInitRetryTimerKey) ||
       this.hasActiveSubscriptions;
   }
 
@@ -1289,11 +1311,10 @@ export class SyncEngineLevel implements SyncEngine {
 
     this._feedConvergenceManager.clearAll();
 
-    // Clear pending rate-limit link-init retries.
-    for (const timer of this._linkInitRetryTimers.values()) {
-      clearTimeout(timer);
-    }
-    this._linkInitRetryTimers.clear();
+    // Clear pending rate-limit link-init retries. The runtime scope is
+    // normally already disposed here; the explicit clear keeps this teardown
+    // correct for any caller that runs it against a live scope.
+    this._runtime.clearTimers(SyncEngineLevel.isLinkInitRetryTimerKey);
 
     this._echoSuppressor.clear();
 
@@ -1472,8 +1493,34 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  /** Pending link-initialization retries scheduled after a rate-limit (429), keyed by link key. */
-  private readonly _linkInitRetryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  /** Runtime-scope key prefix for pending rate-limit link-init retries. */
+  private static readonly LINK_INIT_RETRY_TIMER_PREFIX = 'linkInitRetry:';
+
+  private static linkInitRetryTimerKey(linkKey: string): string {
+    return `${SyncEngineLevel.LINK_INIT_RETRY_TIMER_PREFIX}${linkKey}`;
+  }
+
+  private static isLinkInitRetryTimerKey(timerKey: string): boolean {
+    return timerKey.startsWith(SyncEngineLevel.LINK_INIT_RETRY_TIMER_PREFIX);
+  }
+
+  /** Whether a runtime-scope timer key is a pending init retry for the given DID's links. */
+  private isLinkInitRetryTimerKeyForDid(timerKey: string, did: string): boolean {
+    return SyncEngineLevel.isLinkInitRetryTimerKey(timerKey) &&
+      this.isLinkKeyForDid(timerKey.slice(SyncEngineLevel.LINK_INIT_RETRY_TIMER_PREFIX.length), did);
+  }
+
+  /** Whether an identity has any armed rate-limit link-initialization retry. */
+  private hasLinkInitRetriesForDid(did: string): boolean {
+    return this._runtime.hasTimers(
+      (timerKey: string): boolean => this.isLinkInitRetryTimerKeyForDid(timerKey, did),
+    );
+  }
+
+  /** Cancel pending rate-limit init retries whose captured targets belong to an identity. */
+  private cancelLinkInitRetriesForDid(did: string): void {
+    this._runtime.clearTimers((timerKey: string): boolean => this.isLinkInitRetryTimerKeyForDid(timerKey, did));
+  }
 
   private isRateLimitError(error: unknown): error is RateLimitError {
     return error instanceof RateLimitError;
@@ -1482,26 +1529,15 @@ export class SyncEngineLevel implements SyncEngine {
   /**
    * Re-attempt live-subscription initialization for a rate-limited link after
    * the server-provided Retry-After window. Coalesces repeated requests for the
-   * same link so a burst of 429s schedules a single pending retry. A repeated
-   * rate limit on the retry reschedules again via
-   * {@link handleInitializeLinkTargetError}.
+   * same link so a burst of 429s schedules a single pending retry (arming
+   * replaces any pending timer for the key). A repeated rate limit on the
+   * retry reschedules again via {@link handleInitializeLinkTargetError}. The
+   * timer is runtime-scope-owned: a transition disposes it, and a firing the
+   * event loop queued before that never starts.
    */
   private scheduleLinkInitRetry(target: SyncTarget, linkKey: string, delayMs: number): void {
-    const existing = this._linkInitRetryTimers.get(linkKey);
-    if (existing) {
-      clearTimeout(existing);
-    }
-
-    const generation = this._engineGeneration;
     const taskGroup = this._lifecycle.getIdentityTaskGroup(target.did);
-    const timer = setTimeout((): void => {
-      if (this._linkInitRetryTimers.get(linkKey) !== timer) {
-        return;
-      }
-      this._linkInitRetryTimers.delete(linkKey);
-      if (this._engineGeneration !== generation) {
-        return;
-      }
+    this._runtime.armTimeout(SyncEngineLevel.linkInitRetryTimerKey(linkKey), (): void => {
       void this._lifecycle.runIdentityTask(taskGroup, async (): Promise<void> => {
         try {
           await this.initializeLinkTarget(target);
@@ -1511,7 +1547,6 @@ export class SyncEngineLevel implements SyncEngine {
         }
       });
     }, delayMs);
-    this._linkInitRetryTimers.set(linkKey, timer);
   }
 
   /**
@@ -1563,9 +1598,15 @@ export class SyncEngineLevel implements SyncEngine {
   // Hot-add / hot-remove: per-identity live sync management
   // ---------------------------------------------------------------------------
 
-  /** Check whether a link key belongs to a given DID. */
+  /**
+   * Check whether a link key belongs to a given DID. Link keys always join
+   * segments with {@link LINK_ID_SEPARATOR}, which cannot appear in a DID.
+   * Matching must use exactly that delimiter: underscores ARE valid DID
+   * characters, so a looser prefix match would let one DID claim the keys of
+   * another DID that merely extends it (e.g. `…alice` vs `…alice_extra`).
+   */
   private isLinkKeyForDid(key: string, did: string): boolean {
-    return key.startsWith(did + '^') || key.startsWith(did + '_');
+    return key.startsWith(did + LINK_ID_SEPARATOR);
   }
 
   /** Check whether this DID has any active links. */
@@ -1628,12 +1669,7 @@ export class SyncEngineLevel implements SyncEngine {
         controller.cancelReconcileTimer();
       }
     }
-    for (const [key, timer] of this._linkInitRetryTimers) {
-      if (this.isLinkKeyForDid(key, did)) {
-        clearTimeout(timer);
-        this._linkInitRetryTimers.delete(key);
-      }
-    }
+    this.cancelLinkInitRetriesForDid(did);
   }
 
   private clearIdentityRuntimeState(did: string): void {
