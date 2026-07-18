@@ -11,6 +11,7 @@ import type { AuthSession } from '../identity-session.js';
 import type { FlowContext } from './lifecycle.js';
 import type { WalletConnectOptions } from '../types.js';
 
+import { ConnectDeniedError } from '../errors.js';
 import { DEFAULT_DWN_ENDPOINTS } from '../types.js';
 import { registerWithDwnEndpoints } from '../registration.js';
 import { validateConnectResultGrants } from './validate-grants.js';
@@ -63,7 +64,7 @@ export async function walletConnect(
   });
 
   if (!result) {
-    throw new Error('[@enbox/auth] Connection was denied by the wallet.');
+    throw new ConnectDeniedError('[@enbox/auth] Connection was denied by the wallet.');
   }
 
   assertFlowActive(ctx);

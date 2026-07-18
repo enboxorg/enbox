@@ -29,12 +29,18 @@
 // The high-level Enbox API: DWN records, protocols, repositories.
 
 export {
+  createConnectionStore,
   Enbox,
   defineProtocol,
   repository,
 } from '@enbox/api';
 
 export type {
+  ConnectionPhase,
+  ConnectionSnapshot,
+  ConnectionSnapshotListener,
+  ConnectionStore,
+  ConnectionStoreOptions,
   EnboxAnonymousOptions,
   EnboxConnectOptions,
   EnboxConnectResult,
@@ -49,9 +55,11 @@ export type {
 export {
   AuthManager,
   AuthSession,
+  ConnectDeniedError,
   SESSION_EXPIRED_ERROR_CODE,
   SESSION_REVOKED_ERROR_CODE,
   computeConnectionStatus,
+  isConnectDeniedError,
   isSessionExpiredError,
   isSessionInvalidError,
   normalizeProtocolRequests,
