@@ -51,6 +51,7 @@ export default defineConfig({
     // Only include browser-safe tests (no LevelDB, no PlatformAgentTestHarness).
     include: [
       'tests/crypto-api.spec.ts',
+      'tests/sync-cross-context-lock.spec.ts',
       'tests/utils-internal.spec.ts',
     ],
     testTimeout : 15_000,

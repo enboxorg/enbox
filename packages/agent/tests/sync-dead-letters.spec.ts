@@ -190,10 +190,11 @@ describe('SyncEngineLevel dead letter tracking', () => {
     }]);
   });
 
-  it('should serialize admission cleanup after the final deferred-state recheck and put', async () => {
+  it('should serialize a second engine admission after the final deferred-state recheck and put', async () => {
     const messageCid = 'cid-raced-record';
     const tenantDid = 'did:example:alice';
     const remoteEndpoint = 'https://dwn.example';
+    const admissionEngine = new SyncEngineLevel({ db });
     const store = (syncEngine as unknown as { _deferredPullStore: SyncDeferredPullStore })._deferredPullStore;
     const aged: SyncDeferredPullState = {
       attempts        : 3,
@@ -220,15 +221,17 @@ describe('SyncEngineLevel dead letter tracking', () => {
       return state;
     });
 
-    const internal = syncEngine as unknown as {
+    const expiryInternal = syncEngine as unknown as {
       deadLetterExpiredDeferredPull(
         target: SyncTarget,
         entry: MessagesQueryReplyEntry,
         detail: string | undefined,
       ): Promise<boolean>;
+    };
+    const admissionInternal = admissionEngine as unknown as {
       trackRemoteFeedAppliedCids(messageCids: string[], target: SyncTarget): Promise<void>;
     };
-    const expiry = internal.deadLetterExpiredDeferredPull(
+    const expiry = expiryInternal.deadLetterExpiredDeferredPull(
       target(tenantDid),
       { messageCid },
       'dependency unavailable',
@@ -236,7 +239,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
     await secondReadCompleted.promise;
 
     let admissionCompleted = false;
-    const admission = internal.trackRemoteFeedAppliedCids([messageCid], target(tenantDid)).then((): void => {
+    const admission = admissionInternal.trackRemoteFeedAppliedCids([messageCid], target(tenantDid)).then((): void => {
       admissionCompleted = true;
     });
     await Promise.resolve();
@@ -251,10 +254,11 @@ describe('SyncEngineLevel dead letter tracking', () => {
     expect(await syncEngine.getFailedMessages(tenantDid)).toEqual([]);
   });
 
-  it('should serialize admission cleanup after the final expiry read and dead-letter write', async () => {
+  it('should serialize a second engine admission after the final expiry read and dead-letter write', async () => {
     const messageCid = 'cid-raced-expiry';
     const tenantDid = 'did:example:alice';
     const remoteEndpoint = 'https://dwn.example';
+    const admissionEngine = new SyncEngineLevel({ db });
     const store = (syncEngine as unknown as { _deferredPullStore: SyncDeferredPullStore })._deferredPullStore;
     const aged: SyncDeferredPullState = {
       attempts        : 3,
@@ -281,15 +285,17 @@ describe('SyncEngineLevel dead letter tracking', () => {
       return state;
     });
 
-    const internal = syncEngine as unknown as {
+    const expiryInternal = syncEngine as unknown as {
       deadLetterExpiredDeferredPull(
         target: SyncTarget,
         entry: MessagesQueryReplyEntry,
         detail: string | undefined,
       ): Promise<boolean>;
+    };
+    const admissionInternal = admissionEngine as unknown as {
       trackRemoteFeedAppliedCids(messageCids: string[], target: SyncTarget): Promise<void>;
     };
-    const expiry = internal.deadLetterExpiredDeferredPull(
+    const expiry = expiryInternal.deadLetterExpiredDeferredPull(
       target(tenantDid),
       { messageCid },
       'dependency unavailable',
@@ -297,7 +303,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
     await finalReadCompleted.promise;
 
     let admissionCompleted = false;
-    const admission = internal.trackRemoteFeedAppliedCids([messageCid], target(tenantDid)).then((): void => {
+    const admission = admissionInternal.trackRemoteFeedAppliedCids([messageCid], target(tenantDid)).then((): void => {
       admissionCompleted = true;
     });
     await Promise.resolve();

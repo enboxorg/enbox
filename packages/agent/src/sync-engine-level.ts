@@ -66,6 +66,7 @@ import { AgentPermissionsApi } from './permissions-api.js';
 import { admitClosure } from './sync-admit-closure.js';
 import { buildSyncMessageStoreLevelKey } from './sync-message-store-level.js';
 import { DwnInterface } from './types/dwn.js';
+import { runWithCrossContextLock } from './sync-cross-context-lock.js';
 import { SyncConnectivityManager } from './sync-connectivity-manager.js';
 import { SyncDeadLetterStoreLevel } from './sync-dead-letter-store-level.js';
 import { SyncDeferredPullStoreLevel } from './sync-deferred-pull-store-level.js';
@@ -228,9 +229,6 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** In-flight Retry-now target reconciliations, keyed by complete replication link. */
   private readonly _quotaRetryInFlight: Map<string, Promise<void>> = new Map();
-
-  /** Serializes deferred/dead-letter mutations for one tenant, CID, and remote. */
-  private readonly _deferredPullLifecycleOperations: Map<string, Promise<void>> = new Map();
 
   /** Serializes public Retry-now operations with each other before they acquire the sync lock. */
   private _retryRemoteQueue: Promise<void> = Promise.resolve();
@@ -2625,26 +2623,7 @@ export class SyncEngineLevel implements SyncEngine {
     operation: () => Promise<T>,
   ): Promise<T> {
     const key = buildSyncMessageStoreLevelKey(tenantDid, messageCid, remoteEndpoint);
-    const previous = this._deferredPullLifecycleOperations.get(key);
-    const operationPromise = (async (): Promise<T> => {
-      if (previous !== undefined) {
-        await previous;
-      }
-      return operation();
-    })();
-    const completion = operationPromise.then(
-      (): void => undefined,
-      (): void => undefined,
-    );
-    this._deferredPullLifecycleOperations.set(key, completion);
-
-    try {
-      return await operationPromise;
-    } finally {
-      if (this._deferredPullLifecycleOperations.get(key) === completion) {
-        this._deferredPullLifecycleOperations.delete(key);
-      }
-    }
+    return runWithCrossContextLock(`enbox:sync-deferred-pull:${key}`, operation);
   }
 
   private getQuotaBlockState(target: SyncTarget, messageCid: string): Promise<SyncQuotaBlockState | undefined> {
