@@ -1,3 +1,5 @@
+import type { SyncMode } from './types/sync.js';
+
 /** One armed native timer and the token proving it still owns its key. */
 type ArmedTimer = {
   kind: 'interval' | 'timeout';
@@ -41,11 +43,25 @@ export interface SyncRuntimeHandle {
  */
 export class SyncRuntime implements SyncRuntimeHandle {
   private _disposed = false;
+  private readonly _mode?: SyncMode;
   private readonly _timers = new Map<string, ArmedTimer>();
+
+  public constructor(mode?: SyncMode) {
+    this._mode = mode;
+  }
 
   /** Whether this runtime generation has been torn down. */
   public get disposed(): boolean {
     return this._disposed;
+  }
+
+  /**
+   * The sync mode this runtime generation runs in. Mode is a property of the
+   * generation: a disposed scope has no mode, exactly as the engine between
+   * runtimes has none.
+   */
+  public get mode(): SyncMode | undefined {
+    return this._disposed ? undefined : this._mode;
   }
 
   /** Arm (or replace) a repeating timer owned by this scope. No-op once disposed. */

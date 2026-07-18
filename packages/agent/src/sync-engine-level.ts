@@ -39,7 +39,6 @@ import type {
   SyncEventScope,
   SyncHealthSummary,
   SyncIdentityOptions,
-  SyncMode,
   SyncRunOptions,
   SyncScope,
 } from './types/sync.js';
@@ -215,8 +214,6 @@ export class SyncEngineLevel implements SyncEngine {
   // Live sync state
   // ---------------------------------------------------------------------------
 
-  /** Current sync mode, set by `startSync`. Reset to `undefined` by `stopSync`/`clear`. */
-  private _syncMode: SyncMode | undefined = 'poll';
 
   /**
    * The queued follow-up run shared by `sync()` callers that arrived while
@@ -224,14 +221,6 @@ export class SyncEngineLevel implements SyncEngine {
    * the lock, so later callers start a fresh cycle. See {@link joinPendingSyncRun}.
    */
   private _pendingSyncRun?: PendingSyncRun;
-
-  /**
-   * Monotonic session generation counter. Incremented on every teardown.
-   * Async operations (repair, retry timers) capture the generation at start
-   * and bail if it has changed — this prevents stale work from mutating
-   * state after teardown or mode switch.
-   */
-  private _engineGeneration = 0;
 
   /** Registered event listeners for observability. */
   private readonly _eventListeners: Set<SyncEventListener> = new Set();
@@ -761,7 +750,7 @@ export class SyncEngineLevel implements SyncEngine {
     this.invalidateSyncTargetsCache();
 
     // If live sync is active, hot-add subscriptions for this identity.
-    if (this._syncMode === 'live') {
+    if (this._runtime.mode === 'live') {
       const currentIdentityKeys = await this.addIdentityToLiveSync(did, options);
       if (currentIdentityKeys.size > 0) {
         await this.pruneSupersededDurableLinksForIdentity(did, currentIdentityKeys);
@@ -784,7 +773,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     // If live sync is active, hot-remove subscriptions for this identity.
-    if (this._syncMode === 'live') {
+    if (this._runtime.mode === 'live') {
       await this.removeIdentityFromLiveSync(did);
     }
 
@@ -845,7 +834,7 @@ export class SyncEngineLevel implements SyncEngine {
     const hadPriorLiveRuntime = hadPendingLinkInitRetry ||
       identityTaskGroup.size > 0 ||
       this.hasActiveLinksForDid(did);
-    const rebuildLiveLinks = this._syncMode === 'live' && hadPriorLiveRuntime;
+    const rebuildLiveLinks = this._runtime.mode === 'live' && hadPriorLiveRuntime;
     if (hadPriorLiveRuntime) {
       await this.removeIdentityFromLiveSync(did);
     }
@@ -1008,7 +997,7 @@ export class SyncEngineLevel implements SyncEngine {
    * so writes that race the drain continue to be delivered after parity.
    */
   private async prepareDrainLiveTarget(target: SyncTarget): Promise<void> {
-    if (this._syncMode !== 'live') {
+    if (this._runtime.mode !== 'live') {
       return;
     }
 
@@ -1059,10 +1048,9 @@ export class SyncEngineLevel implements SyncEngine {
     this._lifecycle.resumeTaskAdmission();
 
     // The previous generation's scope was disposed by the transition above;
-    // the new generation gets a fresh scope once its predecessor's work has
-    // fully settled.
-    this._runtime = new SyncRuntime();
-    this._syncMode = mode;
+    // the new generation gets a fresh scope — carrying its mode — once its
+    // predecessor's work has fully settled.
+    this._runtime = new SyncRuntime(mode);
 
     if (mode === 'live') {
       await this.startLiveSync(intervalMilliseconds);
@@ -1087,14 +1075,13 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private hasLiveSyncRuntime(): boolean {
-    return this._syncMode === 'live' ||
+    return this._runtime.mode === 'live' ||
       this._linkControllers.size > 0 ||
       this._runtime.hasTimers(SyncEngineLevel.isLinkInitRetryTimerKey) ||
       this.hasActiveSubscriptions;
   }
 
   private prepareForSyncRuntimeTransition(): void {
-    this._engineGeneration++;
     // Drop the queued follow-up join point: the blocked run wakes later, its
     // transition fence trips, and it cancels without running.
     this._pendingSyncRun = undefined;
@@ -1102,7 +1089,6 @@ export class SyncEngineLevel implements SyncEngine {
     this._runtime.dispose();
     this.installDisposedRuntimeScope();
     this.invalidateSyncTargetsCache();
-    this._syncMode = undefined;
   }
 
   /**
@@ -1745,7 +1731,7 @@ export class SyncEngineLevel implements SyncEngine {
       ? target.scope.protocols.map(protocol => ({ protocol }))
       : [];
 
-    const handlerGeneration = this._engineGeneration;
+    const runtimeScope = this._runtime;
 
     // Define the subscription handler that processes incoming events.
     // NOTE: The WebSocket client fires handlers without awaiting (fire-and-forget),
@@ -1753,7 +1739,7 @@ export class SyncEngineLevel implements SyncEngine {
     // ensures the checkpoint advances only when all earlier deliveries are committed.
     // Capture the controller lifetime so remove+re-add invalidates callbacks
     // even when the replacement uses the same durable link key.
-    const isStale = this.createLinkStalePredicate(controller, handlerGeneration);
+    const isStale = this.createLinkStalePredicate(controller, runtimeScope);
     const pullContext: SyncLivePullContext = {
       did,
       dwnUrl,
@@ -1885,10 +1871,10 @@ export class SyncEngineLevel implements SyncEngine {
 
   private createLinkStalePredicate(
     controller: SyncLinkController | undefined,
-    generation: number,
+    runtimeScope: SyncRuntimeHandle,
   ): () => boolean {
     return (): boolean =>
-      this._engineGeneration !== generation ||
+      runtimeScope.disposed ||
       controller?.isActive !== true;
   }
 
@@ -1954,11 +1940,11 @@ export class SyncEngineLevel implements SyncEngine {
       ? target.scope.protocols.map(protocol => ({ protocol }))
       : [];
 
-    const handlerGeneration = this._engineGeneration;
+    const runtimeScope = this._runtime;
 
     if (!controller.isActive || controller.linkKey !== target.linkKey) { return false; }
     const isPushStale = (): boolean =>
-      this._engineGeneration !== handlerGeneration ||
+      runtimeScope.disposed ||
       !controller.isActive;
     const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(did);
 
