@@ -199,6 +199,16 @@ export type ProcessDwnRequest<T extends DwnInterface> = DwnRequest<T> & {
   /**
    * If true, automatically encrypt protocol records and inject $keyAgreement keys.
    * Requires the identity to have an X25519 keyAgreement key.
+   *
+   * On read paths the same flag enables auto-DECRYPTION: `RecordsRead` and
+   * `RecordsQuery` replies are decrypted in place, and for `RecordsSubscribe`
+   * both the reply's initial snapshot entries and each event's inline
+   * `encodedData` payload are decrypted before delivery. Events whose data was
+   * too large to be inlined carry no payload to decrypt — the per-record lazy
+   * read (with decryption) remains the data path for those. A snapshot entry
+   * or event that cannot be decrypted never fails the subscribe or kills the
+   * subscription: its inline ciphertext is withheld instead, leaving the lazy
+   * read to surface the decryption error on data access.
    */
   encryption?: boolean;
   /**

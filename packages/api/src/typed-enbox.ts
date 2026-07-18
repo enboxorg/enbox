@@ -537,6 +537,17 @@ export type TypedSubscribeRequest = {
    * to specific roles.
    */
   protocolRole?: string;
+
+  /**
+   * When `true`, automatically decrypts encrypted records delivered by the
+   * subscription — both the initial snapshot and inline event payloads.
+   * Events whose data is too large to be delivered inline fall back to a
+   * lazy (decrypting) read on `record.data` access.
+   *
+   * Defaults to `true` when the subscribed type declares
+   * `encryptionRequired`; set `false` to opt out.
+   */
+  encryption?: boolean;
 };
 
 /**
@@ -1227,10 +1238,15 @@ export class TypedEnbox<
         const typeEntry = this._definition.types[typeName];
 
         const subFilter = mapParentContextId(request?.filter);
+        // Auto-enable decryption when the type requires it. See query()
+        // comment for delegate decryption details.
+        const autoEncryption = typeEntry?.encryptionRequired === true
+          ? true : undefined;
 
         const { status, liveQuery } = await this._dwn.records.subscribe({
-          from   : request?.from,
-          filter : {
+          from       : request?.from,
+          encryption : request?.encryption ?? autoEncryption,
+          filter     : {
             ...subFilter,
             protocol     : this._definition.protocol,
             protocolPath : normalizedPath,

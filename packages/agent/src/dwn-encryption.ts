@@ -15,8 +15,11 @@ import type {
   RecordsQueryReply,
   RecordsQueryReplyEntry,
   RecordsReadReply,
+  RecordsSubscribeReply,
   RecordsWriteMessage,
   RoleAudienceKeyMaterial,
+  SubscriptionEvent,
+  SubscriptionListener,
   WrappedGrantKeyEnvelope,
 } from '@enbox/dwn-sdk-js';
 import type { PrivateKeyJwk, PublicKeyJwk } from '@enbox/crypto';
@@ -25,6 +28,7 @@ import type { EnboxPlatformAgent } from './types/agent.js';
 import type {
   DwnMessageReply,
   DwnResponse,
+  MessageHandler,
   ProcessDwnRequest,
   SendDwnRequest,
 } from './types/dwn.js';
@@ -1227,6 +1231,39 @@ async function decryptRecordsQueryReply(
 }
 
 /**
+ * Auto-decrypts every eligible initial-snapshot entry of a `RecordsSubscribe`
+ * reply (small records inline as `encodedData`), in place.
+ *
+ * Unlike the `RecordsQuery` counterpart this NEVER throws: by the time the
+ * reply is post-processed the live subscription inside it is already
+ * registered, so a thrown decryption error would both discard the caller's
+ * only handle to close that subscription and fail a subscribe that is
+ * otherwise healthy. An entry that cannot be decrypted has its inline
+ * ciphertext withheld instead — the per-record lazy read surfaces (or, once a
+ * usable key has arrived, resolves) the decryption failure on data access.
+ */
+async function decryptRecordsSubscribeReply(
+  subscribeReply: RecordsSubscribeReply,
+  context: RecordDecryptionContext,
+): Promise<void> {
+  if (subscribeReply.status.code !== 200 || !subscribeReply.entries) {
+    return;
+  }
+
+  for (const entry of subscribeReply.entries) {
+    try {
+      await decryptRecordsQueryEntry(entry, context);
+    } catch (error: any) {
+      delete entry.encodedData;
+      logger.log(
+        `AgentDwnApi: withholding undecryptable subscription snapshot data for record ` +
+        `'${entry.recordId}'. Original error: ${error.message}`
+      );
+    }
+  }
+}
+
+/**
  * Post-processes a DWN reply, auto-decrypting data if encryption is enabled.
  * Delegates to the SDK's Records.decrypt() with the appropriate KeyDecrypter —
  * resolveKeyDecrypter() selects either a delivered delegate key or KMS.
@@ -1272,6 +1309,114 @@ export async function maybeDecryptReply<T extends DwnInterface>(
   if (isDwnRequest(encryptedRequest as ProcessDwnRequest<DwnInterface>, DwnInterface.RecordsQuery)) {
     await decryptRecordsQueryReply(reply as RecordsQueryReply, context);
   }
+
+  // Auto-decrypt RecordsSubscribe initial snapshot entries (small records inline as encodedData)
+  if (isDwnRequest(encryptedRequest as ProcessDwnRequest<DwnInterface>, DwnInterface.RecordsSubscribe)) {
+    await decryptRecordsSubscribeReply(reply as RecordsSubscribeReply, context);
+  }
+}
+
+/**
+ * Auto-decrypts one subscription event's inline `encodedData` in place, when
+ * the event carries a `RecordsWrite` with an `encryption` envelope, inline
+ * data, and is not an encryption-control record. Every other event —
+ * `RecordsDelete`, unencrypted records, and events whose data was too large to
+ * be inlined — passes through untouched; for the non-inlined case the
+ * per-record lazy read (with decryption) remains the data path.
+ *
+ * A decryption failure NEVER propagates (one undecryptable record must not
+ * kill the subscription): the inline ciphertext is withheld from the event
+ * instead, so the record's data access falls back to the lazy read, which
+ * rejects with the decryption error — or succeeds, once a usable key arrives.
+ */
+async function decryptSubscriptionEventData(
+  subscriptionEvent: SubscriptionEvent,
+  context: RecordDecryptionContext,
+): Promise<void> {
+  const { message } = subscriptionEvent.event;
+  if (subscriptionEvent.encodedData === undefined
+      || !Records.isRecordsWrite(message)
+      || message.encryption === undefined
+      || isEncryptionControlPath(message.descriptor.protocolPath)) {
+    return;
+  }
+
+  try {
+    const keyDecrypter = await resolveKeyDecrypter({
+      agent                      : context.agent,
+      audienceDecryptionKeyCache : context.audienceDecryptionKeyCache,
+      authorDid                  : context.authorDid,
+      delegatedGrant             : context.delegatedGrant,
+      delegateDecryptionKeyCache : context.delegateDecryptionKeyCache,
+      granteeDid                 : context.granteeDid,
+      recordsWrite               : message,
+      targetDid                  : context.targetDid,
+    });
+
+    const cipherBytes = Encoder.base64UrlToBytes(subscriptionEvent.encodedData);
+    const cipherStream = DataStream.fromBytes(cipherBytes);
+    const plainStream = await Records.decrypt(message, keyDecrypter, cipherStream);
+    const plainBytes = await DataStream.toBytes(plainStream);
+    subscriptionEvent.encodedData = Encoder.bytesToBase64Url(plainBytes);
+  } catch (error: any) {
+    delete subscriptionEvent.encodedData;
+    logger.log(
+      `AgentDwnApi: withholding undecryptable subscription event data for record ` +
+      `'${message.recordId}'. Original error: ${error.message}`
+    );
+  }
+}
+
+/**
+ * Wraps a `RecordsSubscribe` request's subscription handler so event-inline
+ * record payloads are auto-decrypted BEFORE events reach the caller, mirroring
+ * what {@link maybeDecryptReply} does for read/query replies. Returns the
+ * request's handler unchanged (possibly `undefined`) unless the request is a
+ * `RecordsSubscribe` with `encryption` enabled and a handler present.
+ *
+ * Subscription listeners are synchronous while decryption is not, so the
+ * wrapper serializes delivery through a promise chain: events are decrypted
+ * and forwarded strictly in arrival order, and non-event messages (EOSE,
+ * subscription errors, transport lifecycle notifications) flow through the
+ * same chain to preserve their ordering relative to events. The terminal
+ * `.catch` keeps a throwing downstream handler from wedging the chain,
+ * matching the SDK's own subscription delivery-queue convention.
+ */
+export function maybeWrapSubscriptionHandlerForDecryption<T extends DwnInterface>(
+  request: ProcessDwnRequest<T>,
+  agent: EnboxPlatformAgent,
+  delegateDecryptionKeyCache?: DelegateDecryptionKeyCache,
+  audienceDecryptionKeyCache?: AudienceDecryptionKeyCache,
+): MessageHandler[T] | undefined {
+  const handler = request.subscriptionHandler;
+  if (handler === undefined || !request.encryption
+      || !isDwnRequest(request as ProcessDwnRequest<DwnInterface>, DwnInterface.RecordsSubscribe)) {
+    return handler;
+  }
+
+  const context: RecordDecryptionContext = {
+    agent,
+    authorDid      : request.author,
+    targetDid      : request.target,
+    granteeDid     : request.granteeDid,
+    delegatedGrant : getDelegatedGrantFromRequest(request),
+    delegateDecryptionKeyCache,
+    audienceDecryptionKeyCache,
+  };
+
+  let deliveryQueue: Promise<void> = Promise.resolve();
+  const decryptingListener: SubscriptionListener = (subscriptionMessage): void => {
+    deliveryQueue = deliveryQueue
+      .then(async (): Promise<void> => {
+        if (subscriptionMessage.type === 'event') {
+          await decryptSubscriptionEventData(subscriptionMessage, context);
+        }
+        (handler as SubscriptionListener)(subscriptionMessage);
+      })
+      .catch(() => {});
+  };
+
+  return decryptingListener as MessageHandler[T];
 }
 
 function getDelegatedGrantFromRequest<T extends DwnInterface>(

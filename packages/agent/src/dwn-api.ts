@@ -96,6 +96,7 @@ import {
   hasAudienceSealCoverage as hasAudienceSealCoverageFn,
   ivLength as ivLengthFn,
   maybeDecryptReply as maybeDecryptReplyFn,
+  maybeWrapSubscriptionHandlerForDecryption as maybeWrapSubscriptionHandlerForDecryptionFn,
   queryAudienceDeliveryMessagesDetailed as queryAudienceDeliveryMessagesDetailedFn,
   queryAudienceDeliveryMessages as queryAudienceDeliveryMessagesFn,
   resolveAudienceDecryptionKey as resolveAudienceDecryptionKeyFn,
@@ -641,8 +642,9 @@ export class AgentDwnApi {
     const { message, dataStream } =
       await this.constructDwnMessage({ request });
 
-    // Extracts the optional subscription handler from the request to pass into `processMessage.
-    const { subscriptionHandler } = request;
+    // Extracts the optional subscription handler from the request to pass into `processMessage`,
+    // wrapped for event-payload auto-decryption when the request enables encryption.
+    const subscriptionHandler = this.maybeWrapSubscriptionHandler(request);
 
     // Conditionally processes the message with the DWN instance:
     // - If `store` is not explicitly set to false, it sends the message to the DWN node for
@@ -938,9 +940,10 @@ export class AgentDwnApi {
       messageCid = request.messageCid;
 
     } else {
-      // Otherwise, construct a new message.
+      // Otherwise, construct a new message. The subscription handler is wrapped
+      // for event-payload auto-decryption when the request enables encryption.
       ({ message, dataStream: data } = await this.constructDwnMessage({ request }));
-      subscriptionHandler = request.subscriptionHandler;
+      subscriptionHandler = this.maybeWrapSubscriptionHandler(request);
     }
 
     // Build a resubscribe factory for subscribe requests. This closure
@@ -2221,6 +2224,22 @@ export class AgentDwnApi {
   ): Promise<void> {
     return maybeDecryptReplyFn(
       request, reply, this.agent,
+      this._delegateDecryptionKeyCache,
+      this._audienceDecryptionKeyCache,
+    );
+  }
+
+  /**
+   * Returns the request's subscription handler, wrapped so event-inline record
+   * payloads are auto-decrypted before delivery when the request is a
+   * `RecordsSubscribe` with `encryption` enabled.
+   * Delegates to the standalone function in `dwn-encryption.ts`.
+   */
+  private maybeWrapSubscriptionHandler<T extends DwnInterface>(
+    request: ProcessDwnRequest<T>,
+  ): MessageHandler[T] | undefined {
+    return maybeWrapSubscriptionHandlerForDecryptionFn(
+      request, this.agent,
       this._delegateDecryptionKeyCache,
       this._audienceDecryptionKeyCache,
     );
