@@ -674,6 +674,19 @@ describe('SyncEngineLevel — identity management', () => {
       await updatePromise;
       expect(events).toEqual(['stale-retry-finished', 'replacement-started', 'update-done']);
       expect(initializeReplacement.calledOnceWith(did, options)).toBe(true);
+
+      // The superseded group was paused for the drain and then discarded:
+      // late work enqueued on it is dropped, while the identity's future
+      // work runs on a fresh, accepting group.
+      let lateRan = false;
+      await (engine as any)._lifecycle.runIdentityTask(taskGroup, async (): Promise<void> => { lateRan = true; });
+      expect(lateRan).toBe(false);
+
+      const freshGroup = (engine as any)._lifecycle.getIdentityTaskGroup(did);
+      expect(freshGroup).not.toBe(taskGroup);
+      let freshRan = false;
+      await (engine as any)._lifecycle.runIdentityTask(freshGroup, async (): Promise<void> => { freshRan = true; });
+      expect(freshRan).toBe(true);
     });
 
     it('cancelLinkInitRetriesForDid should not cancel a retry for a DID that merely extends the mutated DID', async () => {
