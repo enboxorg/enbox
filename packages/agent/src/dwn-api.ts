@@ -59,8 +59,10 @@ import type {
   DwnMessageWithData,
   DwnResponse,
   DwnSigner,
+  GetAudienceKeyDeliveryStatusParams,
   MessageHandler,
   ProcessDwnRequest,
+  ReprovisionAudienceKeyDeliveryParams,
   SendDwnRequest,
 } from './types/dwn.js';
 
@@ -1103,55 +1105,22 @@ export class AgentDwnApi {
   }
 
   /**
-   * Resolves whether a `$encryption/delivery` record wraps the CURRENT
-   * role-audience key of one audience tuple to `recipientDid` on the `target`
-   * tenant. This is the supported alternative to hand-rolling
-   * `$encryption/delivery` queries, which get two things wrong:
-   *
-   *   - A delivery of a SUPERSEDED audience key still matches a query that omits
-   *     the audience `keyId`, reporting `delivered` for a key the recipient can
-   *     no longer use. This method resolves the current audience record for the
-   *     tuple first and matches deliveries on its `keyId` only.
-   *   - A DELEGATE querying its grantor's tenant is visibility-filtered: the DWN
-   *     lets a delivery record be read only by the tenant, its author, its
-   *     recipient, or a delegate whose invoked Read grant names the delivery's
-   *     recipient as the grant's grantor or grantee. A third-party
-   *     collaborator's delivery is therefore NEVER visible to a wallet-session
-   *     delegate, under any grant — empty results are structural, not evidence
-   *     of non-delivery. When `granteeDid` names a delegate (present and not the
-   *     tenant), this method returns `'unverifiable'` WITHOUT issuing the query
-   *     rather than laundering that blindness into `'not-delivered'`.
-   *
-   * `contextId` accepts the role RECORD's `contextId` (or the role-audience
-   * context id itself) and is normalized internally; omit it for root-level role
-   * paths. `'delivered'` asserts the delivery record's existence only — it
-   * cannot assert the recipient can decrypt it (e.g. a delivery wrapped to a
-   * mistaken caller-supplied key still counts).
-   *
-   * @throws When a nested `rolePath` is given without a `contextId` deep enough
-   *         to reach its parent context (caller misuse).
+   * Resolves whether a `$encryption/delivery` record wraps the CURRENT role-audience key of one
+   * audience tuple to `recipientDid` on the `target` tenant — see {@link AudienceKeyDeliveryStatus}
+   * and {@link GetAudienceKeyDeliveryStatusParams} for the full semantics (current-key matching,
+   * the delegate `'unverifiable'` short-circuit, `contextId` normalization).
+   * @throws On caller misuse: a nested `rolePath` without a `contextId` reaching its parent context.
    */
-  public async getAudienceKeyDeliveryStatus(params: {
-    target: string;
-    protocol: string;
-    rolePath: string;
-    contextId?: string;
-    recipientDid: string;
-    granteeDid?: string;
-  }): Promise<AudienceKeyDeliveryStatus> {
+  public async getAudienceKeyDeliveryStatus(params: GetAudienceKeyDeliveryStatusParams): Promise<AudienceKeyDeliveryStatus> {
     const { target, protocol, rolePath, recipientDid, granteeDid } = params;
     const contextId = AgentDwnApi.getRoleAudienceContextIdOrThrow('getAudienceKeyDeliveryStatus', rolePath, params.contextId);
-
     if (granteeDid !== undefined && granteeDid !== target) {
       return {
-        reason: 'the caller operates as a delegate, and the DWN visibility-filters delivery records for delegates ' +
-          '(a third-party recipient\'s delivery is never readable through a delegated grant), so an empty query ' +
-          'result would be structural rather than evidence of non-delivery',
+        reason : 'the caller operates as a delegate, and the DWN visibility-filters delivery records for delegates (a third-party recipient\'s delivery is never readable through a delegated grant), so an empty query result would be structural rather than evidence of non-delivery',
         recipientDid,
-        status: 'unverifiable',
+        status : 'unverifiable',
       };
     }
-
     const currentAudience = await this.resolveCurrentAudienceRecord({
       authorDid : target,
       contextId,
@@ -1161,13 +1130,11 @@ export class AgentDwnApi {
     });
     if (currentAudience === undefined) {
       return {
-        reason: `no audience record exists for (${protocol}, ${rolePath}, '${contextId}') — no role-audience key ` +
-          'was ever provisioned for the tuple, so nothing could have been delivered',
+        reason : `no audience record exists for (${protocol}, ${rolePath}, '${contextId}'); nothing was ever provisioned to deliver`,
         recipientDid,
-        status: 'not-delivered',
+        status : 'not-delivered',
       };
     }
-
     const keyId = currentAudience.payload.keyId;
     const deliveries = await queryAudienceDeliveryMessagesFn({
       agent     : this.agent,
@@ -1181,69 +1148,27 @@ export class AgentDwnApi {
     if (deliveries.length === 0) {
       return {
         keyId,
-        reason: `no $encryption/delivery record wraps the current audience key '${keyId}' to '${recipientDid}' ` +
-          '(deliveries of superseded audience keys do not count)',
+        reason : `no $encryption/delivery record wraps current audience key '${keyId}' to '${recipientDid}' (superseded keys do not count)`,
         recipientDid,
-        status: 'not-delivered',
+        status : 'not-delivered',
       };
     }
-
     return { keyId, recipientDid, status: 'delivered' };
   }
 
   /**
-   * Provisions (or re-provisions) the `$encryption/delivery` record wrapping the
-   * CURRENT role-audience key of one audience tuple to `recipientDid`, WITHOUT
-   * touching the `$role` record. This is the supported alternative to
-   * "touch-updating" the role record to force re-delivery, which piles up record
-   * states and duplicate delivery records (delivery records are immutable and
-   * undeletable).
-   *
-   * Skip-if-exists: when a delivery for the CURRENT audience key already exists
-   * for the recipient, the outcome is `{ delivered: true, alreadyDelivered: true }`
-   * and no duplicate record is written. Delegate contexts are structurally blind
-   * to third-party deliveries (see {@link getAudienceKeyDeliveryStatus}), so the
-   * existence check is skipped for them and a duplicate may be written.
-   *
-   * Otherwise the audience key is resolved — or minted, which requires seal
-   * coverage (the owner identity, or a delegate holding covering grantKey
-   * material) — the recipient's role-path public key is resolved from its
-   * installed protocol definition (skipped when `recipientRolePublicKey` is
-   * supplied; the caller owns the supplied key's authenticity), and the delivery
-   * record is written. Like delivery provisioning on a `$role` write, this is
-   * BEST-EFFORT: failures — missing seal coverage, an unresolvable recipient
-   * key, or the DWN rejecting the write because the recipient holds no active
-   * role record at `rolePath` — are reported as `{ delivered: false, reason }`,
-   * never thrown.
-   *
-   * `contextId` accepts the role RECORD's `contextId` (or the role-audience
-   * context id itself) and is normalized internally; omit it for root-level role
-   * paths. For a delegated call, pass `granteeDid` plus the grant material
-   * (`delegatedGrant` or `permissionGrantId`) that authorizes the writes.
-   *
-   * @throws When a nested `rolePath` is given without a `contextId` deep enough
-   *         to reach its parent context, or when a supplied
-   *         `recipientRolePublicKey` is malformed or unusable (caller misuse —
-   *         validated before anything is written).
+   * Provisions (or re-provisions) the CURRENT role-audience key's `$encryption/delivery` record for
+   * one recipient WITHOUT touching the `$role` record. Skip-if-exists dedupe, seal-coverage mint
+   * rules, and the best-effort failure policy are on {@link ReprovisionAudienceKeyDeliveryParams}.
+   * @throws On caller misuse only, validated before anything is written: a malformed/unusable
+   *         supplied `recipientRolePublicKey`, or a nested `rolePath` without a deep-enough `contextId`.
    */
-  public async reprovisionAudienceKeyDelivery(params: {
-    target: string;
-    protocol: string;
-    rolePath: string;
-    contextId?: string;
-    recipientDid: string;
-    recipientRolePublicKey?: PublicKeyJwk;
-    granteeDid?: string;
-    permissionGrantId?: string;
-    delegatedGrant?: DataEncodedRecordsWriteMessage;
-    protocolRole?: string;
-  }): Promise<AudienceKeyDeliveryOutcome> {
+  public async reprovisionAudienceKeyDelivery(params: ReprovisionAudienceKeyDeliveryParams): Promise<AudienceKeyDeliveryOutcome> {
     const { target, protocol, rolePath, recipientDid, granteeDid, permissionGrantId, delegatedGrant, protocolRole } = params;
     const contextId = AgentDwnApi.getRoleAudienceContextIdOrThrow('reprovisionAudienceKeyDelivery', rolePath, params.contextId);
     if (params.recipientRolePublicKey !== undefined) {
       await assertX25519RolePublicKey(params.recipientRolePublicKey);
     }
-
     try {
       const isDelegate = granteeDid !== undefined && granteeDid !== target;
       if (!isDelegate) {
@@ -1269,7 +1194,6 @@ export class AgentDwnApi {
           }
         }
       }
-
       const audienceKey = await this.getOrCreateAudienceKey({
         authorDid : target,
         contextId,
@@ -1283,7 +1207,6 @@ export class AgentDwnApi {
       });
       const recipientRolePublicKey = params.recipientRolePublicKey
         ?? await this.getRecipientRolePublicKey({ protocol, recipientDid, rolePath });
-
       await createAudienceDeliveryRecordFn({
         agent              : this.agent,
         audienceKey,
@@ -1297,7 +1220,6 @@ export class AgentDwnApi {
         recipientRolePublicKey,
         sourceDid          : target,
       });
-
       return { delivered: true, recipientDid };
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -1306,20 +1228,14 @@ export class AgentDwnApi {
   }
 
   /**
-   * Normalizes a caller-supplied context id to the role-audience context id for
-   * `rolePath` (the role record's own `contextId` and the audience context id
-   * both normalize to the same value). Throws when a nested role path is given
-   * without a context id deep enough to reach its parent context.
+   * Normalizes a caller-supplied context id (role record `contextId` or audience context id) to
+   * the role-audience context id for `rolePath`; throws when a nested role path lacks a deep-enough context.
    */
   private static getRoleAudienceContextIdOrThrow(method: string, rolePath: string, contextId?: string): string {
     const audienceContextId = getRoleAudienceContextId(rolePath, contextId);
     if (audienceContextId === undefined) {
-      throw new Error(
-        `AgentDwnApi: ${method} requires a contextId that reaches the parent context of nested role path ` +
-        `'${rolePath}' — pass the role record's contextId (or the role-audience context id itself).`,
-      );
+      throw new Error(`AgentDwnApi: ${method} requires a contextId that reaches the parent context of nested role path '${rolePath}'.`);
     }
-
     return audienceContextId;
   }
 
