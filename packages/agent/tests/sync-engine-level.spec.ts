@@ -240,7 +240,7 @@ describe('SyncEngineLevel', () => {
         await Promise.resolve();
         expect(getSyncTargets.called).toBe(false);
 
-        internal._engineGeneration++;
+        internal._runtime.dispose();
         internal._lifecycle.releaseSync();
         await retry;
 

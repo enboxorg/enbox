@@ -835,7 +835,7 @@ describe('SyncEngineLevel lifecycle', () => {
       const initializeLinkTarget = sinon.stub(engine as never, 'initializeLinkTarget')
         .callsFake(async (): Promise<never> => {
           // Simulate stopSync/clear/close racing the backoff window.
-          engine['_engineGeneration'] += 1;
+          engine['_runtime'].dispose();
           throw new Error('remote DWN rejected request: GetPublicKeyNotFound');
         });
 
