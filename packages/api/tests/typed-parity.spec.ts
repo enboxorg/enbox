@@ -248,6 +248,27 @@ describe('typed api parity batch', () => {
   });
 
   describe('queryAll — cursor-free drain', () => {
+    /** Builds a fake agent query response page for adversarial-remote stubs. */
+    function fakePage(entries: unknown[], cursor?: { messageCid: string; value: number }): unknown {
+      return {
+        messageCid : 'stub-message-cid',
+        reply      : { status: { code: 200, detail: 'OK' }, entries, cursor },
+      };
+    }
+
+    /** Collects a drain, returning yielded records and the terminating error (if any). */
+    async function collectDrain(drain: AsyncGenerator<unknown, void, undefined>): Promise<{ count: number; error?: Error }> {
+      let count = 0;
+      try {
+        for await (const _record of drain) {
+          count += 1;
+        }
+      } catch (error) {
+        return { count, error: error as Error };
+      }
+      return { count };
+    }
+
     it('should drain every record across multiple pages on the typed surface', async () => {
       const { typed } = makeTyped();
 
@@ -344,6 +365,142 @@ describe('typed api parity batch', () => {
       }
 
       expect(drained.toSorted((a, b) => a.localeCompare(b))).toEqual(['x', 'y', 'z']);
+    });
+
+    it('should terminate with an error when the remote repeats a pagination cursor', async () => {
+      const { definition } = makeTyped();
+      const repeatedCursor = { messageCid: 'bafyrepeat', value: 1 };
+
+      // Adversarial remote: every page is empty and hands back the SAME
+      // cursor — the next request would be identical forever.
+      const stub = sinon.stub(testHarness.agent, 'processDwnRequest');
+      stub.resolves(fakePage([], repeatedCursor) as never);
+
+      const { count, error } = await collectDrain(dwnAlice.records.queryAll({
+        filter: { protocol: definition.protocol, protocolPath: 'list' },
+      }));
+
+      expect(count).toBe(0);
+      expect(error?.message).toContain('repeated pagination cursor');
+      // Page 1 establishes the cursor; page 2 repeats it — no third request.
+      expect(stub.callCount).toBe(2);
+    });
+
+    it('should terminate after the consecutive-empty-page budget when cursors keep changing', async () => {
+      const { definition } = makeTyped();
+
+      // Adversarial remote: zero-result pages with an endlessly CHANGING
+      // cursor — never trips the repeated-cursor guard, and maxRecords
+      // (counting yields) would never bound it.
+      const stub = sinon.stub(testHarness.agent, 'processDwnRequest');
+      stub.callsFake(async () => fakePage([], { messageCid: `bafy${stub.callCount}`, value: stub.callCount }) as never);
+
+      const { count, error } = await collectDrain(dwnAlice.records.queryAll({
+        filter: { protocol: definition.protocol, protocolPath: 'list' },
+      }));
+
+      expect(count).toBe(0);
+      expect(error?.message).toContain('consecutive empty pages');
+      expect(stub.callCount).toBe(3);
+    });
+
+    it('should terminate empty-page loops even with maxRecords set (reviewer repro)', async () => {
+      const { definition } = makeTyped();
+
+      const stub = sinon.stub(testHarness.agent, 'processDwnRequest');
+      stub.callsFake(async () => fakePage([], { messageCid: `bafy${stub.callCount}`, value: stub.callCount }) as never);
+
+      // maxRecords: 1 counts YIELDED records — zero-result pages never trip
+      // it, so only the liveness guards can end this drain.
+      const { count, error } = await collectDrain(dwnAlice.records.queryAll({
+        filter     : { protocol: definition.protocol, protocolPath: 'list' },
+        maxRecords : 1,
+      }));
+
+      expect(count).toBe(0);
+      expect(error?.message).toContain('consecutive empty pages');
+    });
+
+    it('should reset the empty-page budget when a page makes progress', async () => {
+      const { typed, definition } = makeTyped();
+      const { record } = await typed.records.create('list', { data: { name: 'real' } });
+      const rawEntry = record!.rawRecord.rawMessage;
+
+      const stub = sinon.stub(testHarness.agent, 'processDwnRequest');
+      const cursorAt = (n: number): { messageCid: string; value: number } => ({ messageCid: `bafy${n}`, value: n });
+      stub.onCall(0).resolves(fakePage([rawEntry], cursorAt(0)) as never);
+      stub.onCall(1).resolves(fakePage([], cursorAt(1)) as never);
+      stub.onCall(2).resolves(fakePage([], cursorAt(2)) as never);
+      stub.onCall(3).resolves(fakePage([rawEntry], cursorAt(3)) as never); // progress — resets the budget
+      stub.onCall(4).resolves(fakePage([], cursorAt(4)) as never);
+      stub.onCall(5).resolves(fakePage([], cursorAt(5)) as never);
+      stub.onCall(6).resolves(fakePage([], undefined) as never); // clean exhaustion
+
+      const { count, error } = await collectDrain(dwnAlice.records.queryAll({
+        filter: { protocol: definition.protocol, protocolPath: 'list' },
+      }));
+
+      // Four empty pages total but never three CONSECUTIVE — the drain
+      // completes normally with both real yields.
+      expect(error).toBeUndefined();
+      expect(count).toBe(2);
+      expect(stub.callCount).toBe(7);
+    });
+
+    it('should throw when the overall maxPages budget is exceeded', async () => {
+      const { typed, definition } = makeTyped();
+      const { record } = await typed.records.create('list', { data: { name: 'real' } });
+      const rawEntry = record!.rawRecord.rawMessage;
+
+      // Adversarial remote: endless NON-empty pages with changing cursors —
+      // no liveness guard trips, so only the page budget bounds the drain.
+      const stub = sinon.stub(testHarness.agent, 'processDwnRequest');
+      stub.callsFake(async () => fakePage([rawEntry], { messageCid: `bafy${stub.callCount}`, value: stub.callCount }) as never);
+
+      const { count, error } = await collectDrain(dwnAlice.records.queryAll({
+        filter   : { protocol: definition.protocol, protocolPath: 'list' },
+        maxPages : 5,
+      }));
+
+      expect(error?.message).toContain('page budget of 5');
+      expect(count).toBe(5);
+      expect(stub.callCount).toBe(5);
+    });
+
+    it('should propagate the liveness guards through the typed drain', async () => {
+      const { typed } = makeTyped();
+      // Bypass auto-configure so the stub only ever sees RecordsQuery traffic.
+      (typed as unknown as { _configured: boolean })._configured = true;
+
+      const stub = sinon.stub(testHarness.agent, 'processDwnRequest');
+      stub.resolves(fakePage([], { messageCid: 'bafyrepeat', value: 1 }) as never);
+
+      const { count, error } = await collectDrain(typed.records.queryAll('list'));
+
+      expect(count).toBe(0);
+      expect(error?.message).toContain('repeated pagination cursor');
+    });
+
+    it('should reject non-positive-integer options loudly at call time on both surfaces', () => {
+      const { typed, definition } = makeTyped();
+      const filter = { protocol: definition.protocol, protocolPath: 'list' };
+
+      // Raw surface — throws synchronously, before any page is fetched.
+      expect(() => dwnAlice.records.queryAll({ filter, pageSize: 0 }))
+        .toThrow('\'pageSize\' must be a positive integer');
+      expect(() => dwnAlice.records.queryAll({ filter, maxRecords: -1 }))
+        .toThrow('\'maxRecords\' must be a positive integer');
+      expect(() => dwnAlice.records.queryAll({ filter, maxPages: Number.NaN }))
+        .toThrow('\'maxPages\' must be a positive integer');
+      expect(() => dwnAlice.records.queryAll({ filter, pageSize: 1.5 }))
+        .toThrow('\'pageSize\' must be a positive integer');
+
+      // Typed surface — validated at call time too, even though the
+      // generator body (and its inner raw call) is deferred.
+      expect(() => typed.records.queryAll('list', { pageSize: 0 }))
+        .toThrow('\'pageSize\' must be a positive integer');
+      expect(() => typed.records.queryAll('list', { maxPages: -3 }))
+        .toThrow('\'maxPages\' must be a positive integer');
     });
   });
 

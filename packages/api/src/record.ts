@@ -114,13 +114,25 @@ export class Record implements RecordModel {
   private _encodedData?: Blob;
   /** Stream of the record's data (Web ReadableStream for cross-platform compatibility). */
   private _readableStream?: ReadableStream;
-  /** The origin DID if the record was fetched from a remote DWN. */
-  private readonly _remoteOrigin?: string;
+  /**
+   * The origin DID if the record was fetched from — or updated on — a remote DWN.
+   *
+   * Mutable for exactly one reason: a cross-tenant `update({ from })` re-homes the record's
+   * authoritative copy on the target tenant, so the in-place-mutated original must re-target
+   * its subsequent lazy data reads there. Never exposed through a setter.
+   */
+  private _remoteOrigin?: string;
 
   // Private variables for DWN `RecordsWrite` message properties.
 
-  /** The DID of the entity that most recently authored or deleted the record. */
-  private readonly _author: string;
+  /**
+   * The DID of the entity that most recently authored or deleted the record.
+   *
+   * Mutable because a successful `update()` mutates this instance in place, and a co-update
+   * may be signed by a different author than the message this instance was built from — the
+   * author is re-derived from the newly signed message. Never exposed through a setter.
+   */
+  private _author: string;
   /** The DID of the entity that originally created the record. */
   private readonly _creator: string;
   /** Attestation JWS signature. */
@@ -626,15 +638,23 @@ export class Record implements RecordModel {
     // Construct a new Record instance reflecting the updated state. When the
     // update was dispatched cross-tenant, stamp the returned record with the
     // remote origin so its subsequent data re-reads target the owner tenant.
+    //
+    // The author is derived from the NEWLY SIGNED response message (not
+    // carried over): after a co-update, the record's most recent author is
+    // whoever signed this update, which may differ from the previous author.
+    const msg = responseMessage as DwnMessage[DwnInterface.RecordsWrite];
+    const updatedAuthor = getRecordAuthor(msg) ?? this._author;
+    const updatedRemoteOrigin = from ?? this._remoteOrigin;
+
     const updatedRecord = new Record(this._agent, {
-      author       : this._author,
+      author       : updatedAuthor,
       connectedDid : this._connectedDid,
       delegateDid  : this._delegateDid,
-      remoteOrigin : from ?? this._remoteOrigin,
+      remoteOrigin : updatedRemoteOrigin,
       protocolRole : protocolRole ?? this._protocolRole,
       initialWrite,
       encodedData  : data === undefined ? this._encodedData : dataBlob,
-      ...responseMessage as DwnMessage[DwnInterface.RecordsWrite],
+      ...msg,
     }, this._permissionsApi);
 
     // Also mutate *this* record's internal state so that the caller's
@@ -642,7 +662,9 @@ export class Record implements RecordModel {
     // the returned record. This eliminates the common footgun where
     // `await record.update({ data }); await record.data.json()` returns
     // stale data because `update()` historically only returned a *new* Record.
-    const msg = responseMessage as DwnMessage[DwnInterface.RecordsWrite];
+    // Author and remote origin are kept consistent with the returned record:
+    // a cross-tenant update re-homes the authoritative copy on the target
+    // tenant, so later lazy data reads must target it — not the old origin.
     this._descriptor = msg.descriptor;
     this._attestation = msg.attestation;
     this._authorization = msg.authorization;
@@ -650,6 +672,8 @@ export class Record implements RecordModel {
     this._contextId = msg.contextId;
     this._initialWrite = initialWrite;
     this._protocolRole = protocolRole ?? this._protocolRole;
+    this._author = updatedAuthor;
+    this._remoteOrigin = updatedRemoteOrigin;
     this._encodedData = data === undefined ? this._encodedData : dataBlob;
     this._readableStream = undefined; // Invalidate any consumed stream.
     this._rawMessageDirty = true; // Force rawMessage cache rebuild.

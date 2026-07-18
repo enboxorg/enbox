@@ -5,8 +5,9 @@ import type { DwnMessage, DwnProtocolDefinition } from '@enbox/agent';
 import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
-import { Jws } from '@enbox/dwn-sdk-js';
 import { PlatformAgentTestHarness } from '@enbox/agent/test';
+
+import { DwnConstant, Jws } from '@enbox/dwn-sdk-js';
 
 import { createPermissionGrants, DwnInterface, EnboxUserAgent, getRecordAuthor } from '@enbox/agent';
 import { processConnectedGrants, WalletConnect } from '@enbox/auth';
@@ -343,6 +344,94 @@ describe('cross-tenant writes (#973)', () => {
       expect(sendSpy.callCount).toBe(0);
       expect(processSpy.callCount).toBe(1);
       expect(processSpy.firstCall.args[0].target).toBe(aliceDid.uri);
+    });
+
+    it('should re-derive the author and re-home the remote origin on BOTH references after a co-update', async () => {
+      // A co-update-friendly protocol: anyone may create/read/update/co-update.
+      const coUpdateProtocol: DwnProtocolDefinition = {
+        published : true,
+        protocol  : `http://co-update-protocol.xyz/${TestDataGenerator.randomString(15)}`,
+        types     : {
+          note: {
+            schema      : 'http://co-update-protocol.xyz/schema/note',
+            dataFormats : ['text/plain'],
+          },
+        },
+        structure: {
+          note: {
+            $actions: [{ who: 'anyone', can: ['create', 'read', 'update', 'co-update'] }],
+          },
+        },
+      };
+      const { status: aliceConfig, protocol } = await dwnAlice.protocols.configure({ definition: coUpdateProtocol });
+      expect(aliceConfig.code).toBe(202);
+      const { status: aliceProtocolSend } = await protocol!.send(aliceDid.uri);
+      expect(aliceProtocolSend.code).toBe(202);
+      const { status: bobConfig } = await dwnBob.protocols.configure({ definition: coUpdateProtocol });
+      expect(bobConfig.code).toBe(202);
+
+      // Data too large to inline in query results, so later reads are LAZY —
+      // which DWN they target is exactly what this test pins down.
+      const largeData = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000);
+
+      // Alice authors the note and sends it to her remote DWN.
+      const { status: writeStatus, record: alicesRecord } = await dwnAlice.records.write({
+        data         : largeData,
+        protocol     : coUpdateProtocol.protocol,
+        protocolPath : 'note',
+        schema       : coUpdateProtocol.types.note.schema,
+        dataFormat   : 'text/plain',
+      });
+      expect(writeStatus.code).toBe(202);
+      const { status: sendStatus } = await alicesRecord!.send(aliceDid.uri);
+      expect(sendStatus.code).toBe(202);
+
+      // Bob reads it from Alice's remote and stores a local copy, then
+      // re-queries LOCALLY — producing a reference with NO remote origin.
+      const bobRead = await dwnBob.records.read({
+        from   : aliceDid.uri,
+        filter : { recordId: alicesRecord!.id },
+      });
+      expect(bobRead.status.code).toBe(200);
+      const { status: storeStatus } = await bobRead.record!.store();
+      expect(storeStatus.code).toBe(202);
+
+      const bobLocalQuery = await dwnBob.records.query({ filter: { recordId: alicesRecord!.id } });
+      expect(bobLocalQuery.status.code).toBe(200);
+      const localRecord = bobLocalQuery.records[0];
+      expect(localRecord['_remoteOrigin']).toBeUndefined();
+      expect(localRecord.author).toBe(aliceDid.uri);
+
+      // Bob co-updates the ALICE-authored record cross-tenant (tags-only, so
+      // no fresh data blob masks the lazy read below).
+      const { status: updateStatus, record: updatedRecord } = await localRecord.update({
+        from : aliceDid.uri,
+        tags : { rev: 'v2' },
+      });
+      expect(updateStatus.code).toBe(202);
+
+      // The author is re-derived from the NEWLY SIGNED message on BOTH the
+      // returned record and the in-place-mutated original — old and new
+      // authors differ, and neither reference may keep reporting Alice.
+      expect(updatedRecord.author).toBe(bobDid.uri);
+      expect(localRecord.author).toBe(bobDid.uri);
+
+      // Both references now target the OWNER tenant for lazy data reads: the
+      // co-update re-homed the authoritative copy on Alice's DWN.
+      expect(updatedRecord['_remoteOrigin']).toBe(aliceDid.uri);
+      expect(localRecord['_remoteOrigin']).toBe(aliceDid.uri);
+
+      const sendSpy = sinon.spy(testHarness.agent, 'sendDwnRequest');
+      const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
+
+      expect(await localRecord.data.text()).toBe(largeData);
+      expect(await updatedRecord.data.text()).toBe(largeData);
+
+      const remoteReads = sendSpy.getCalls().filter((call) => call.args[0].messageType === DwnInterface.RecordsRead);
+      const localReads = processSpy.getCalls().filter((call) => call.args[0].messageType === DwnInterface.RecordsRead);
+      expect(remoteReads).toHaveLength(2);
+      expect(remoteReads.every((call) => call.args[0].target === aliceDid.uri)).toBe(true);
+      expect(localReads).toHaveLength(0);
     });
   });
 

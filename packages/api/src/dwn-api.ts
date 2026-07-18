@@ -151,6 +151,8 @@ export type RecordsQueryAllRequest = Omit<RecordsQueryRequest, 'pagination'> & {
   /**
    * The number of records fetched per underlying query page. Defaults to 100. Tune it down for
    * very large payload-bearing records, or up to reduce round-trips on small records.
+   *
+   * Must be a positive integer — rejected loudly at call time otherwise.
    */
   pageSize?: number;
 
@@ -158,9 +160,54 @@ export type RecordsQueryAllRequest = Omit<RecordsQueryRequest, 'pagination'> & {
    * Optional safety cap on the total number of records yielded. When set, iteration stops after
    * yielding this many records even if more pages remain — guarding accidental unbounded drains
    * of very large record sets. When omitted, the drain runs to cursor exhaustion.
+   *
+   * Counts YIELDED records only, so it cannot bound a remote that returns empty pages — that is
+   * what {@link RecordsQueryAllRequest.maxPages} and the built-in liveness guards are for.
+   *
+   * Must be a positive integer — rejected loudly at call time otherwise.
    */
   maxRecords?: number;
+
+  /**
+   * Overall page-request budget for the drain, independent of `maxRecords`. Defaults to 1000
+   * pages. Exceeding it THROWS (it is a runaway-remote guard, not a truncation knob — use
+   * `maxRecords` for intentional truncation).
+   *
+   * Two built-in liveness guards back it up regardless of this budget: a page that repeats the
+   * cursor it was requested with terminates the drain with a thrown error (a repeated cursor is
+   * never legitimate), and a run of consecutive empty-but-cursor-bearing pages beyond a small
+   * fixed budget does the same.
+   *
+   * Must be a positive integer — rejected loudly at call time otherwise.
+   */
+  maxPages?: number;
 };
+
+/**
+ * Validates the numeric options of a {@link RecordsQueryAllRequest} at CALL time — before any
+ * page is fetched — so a malformed budget (NaN, zero, negative, fractional) fails loudly instead
+ * of silently disabling a guard. Shared by the raw and typed `queryAll` entry points.
+ *
+ * @throws `Error` naming the offending option when it is not a positive integer.
+ */
+export function assertValidQueryAllOptions(
+  options: { pageSize?: number; maxRecords?: number; maxPages?: number },
+): void {
+  const numericOptions: [name: string, value: number | undefined][] = [
+    ['pageSize', options.pageSize],
+    ['maxRecords', options.maxRecords],
+    ['maxPages', options.maxPages],
+  ];
+
+  for (const [name, value] of numericOptions) {
+    if (value === undefined) {
+      continue;
+    }
+    if (!Number.isInteger(value) || value <= 0) {
+      throw new Error(`DwnApi: records.queryAll() option '${name}' must be a positive integer (got ${value}).`);
+    }
+  }
+}
 
 /**
  * Represents a request to read a specific record from a Decentralized Web Node (DWN).
@@ -359,6 +406,18 @@ export type RecordsWriteResponse = DwnResponseStatus & {
 export class DwnApi {
   /** Default per-page record count used by `records.queryAll()` when no `pageSize` is given. */
   private static readonly QUERY_ALL_DEFAULT_PAGE_SIZE = 100;
+
+  /** Default overall page-request budget for `records.queryAll()` when no `maxPages` is given. */
+  private static readonly QUERY_ALL_DEFAULT_MAX_PAGES = 1000;
+
+  /**
+   * Liveness budget for `records.queryAll()`: the maximum run of consecutive EMPTY pages that
+   * still return a pagination cursor before the drain terminates with a thrown error. A healthy
+   * remote never sustains cursor-bearing empty pages; an adversarial or buggy one can emit them
+   * forever with ever-changing cursors, which `maxRecords` (counting yielded records) would
+   * never bound.
+   */
+  private static readonly QUERY_ALL_MAX_CONSECUTIVE_EMPTY_PAGES = 3;
 
   /**
    * Holds the instance of a {@link EnboxAgent} that represents the current execution context for
@@ -947,9 +1006,14 @@ export class DwnApi {
        *
        * Returns an async generator — iterate it with `for await...of`. A page
        * that fails with a non-2xx status aborts the drain with a thrown Error
-       * (an iterator has no clean status channel).
+       * (an iterator has no clean status channel), as do the liveness guards:
+       * a repeated pagination cursor, a run of consecutive empty
+       * cursor-bearing pages, or an exceeded `maxPages` budget.
        */
       queryAll: (request: RecordsQueryAllRequest): AsyncGenerator<Record, void, undefined> => {
+        // Validated at CALL time (not first iteration) so malformed budgets
+        // fail loudly even if the generator is never consumed.
+        assertValidQueryAllOptions(request);
         return this.queryAllRecords(request);
       },
 
@@ -1295,19 +1359,46 @@ export class DwnApi {
    * results until the pagination cursor is exhausted (or the `maxRecords`
    * safety cap is reached). Backs `records.queryAll()`.
    *
-   * @throws `Error` when any underlying query page returns a non-2xx status.
+   * Liveness guards — a remote (or store) must never be able to hold the
+   * drain in an infinite loop:
+   * - a page that returns the SAME cursor it was requested with terminates
+   *   with a thrown error (a repeated cursor is never legitimate);
+   * - a run of {@link DwnApi.QUERY_ALL_MAX_CONSECUTIVE_EMPTY_PAGES}
+   *   consecutive empty-but-cursor-bearing pages terminates with a thrown
+   *   error (a page with records resets the run);
+   * - the overall `maxPages` budget (default
+   *   {@link DwnApi.QUERY_ALL_DEFAULT_MAX_PAGES}) terminates with a thrown
+   *   error independent of `maxRecords`, which only counts yielded records.
+   *
+   * @throws `Error` when any underlying query page returns a non-2xx status,
+   *   or when a liveness guard trips.
    */
   private async * queryAllRecords(request: RecordsQueryAllRequest): AsyncGenerator<Record, void, undefined> {
-    const { pageSize = DwnApi.QUERY_ALL_DEFAULT_PAGE_SIZE, maxRecords, ...queryRequest } = request;
+    const {
+      pageSize = DwnApi.QUERY_ALL_DEFAULT_PAGE_SIZE,
+      maxRecords,
+      maxPages = DwnApi.QUERY_ALL_DEFAULT_MAX_PAGES,
+      ...queryRequest
+    } = request;
 
     let cursor: DwnPaginationCursor | undefined;
+    let consecutiveEmptyPages = 0;
+    let pagesFetched = 0;
     let yielded = 0;
 
     do {
+      if (pagesFetched >= maxPages) {
+        throw new Error(
+          `DwnApi: records.queryAll() exceeded its page budget of ${maxPages} pages with results still remaining. ` +
+          'Raise maxPages for legitimately huge drains, or use maxRecords / pagination for intentional truncation.',
+        );
+      }
+
       const { status, records, cursor: nextCursor } = await this.records.query({
         ...queryRequest,
         pagination: { limit: pageSize, cursor },
       });
+      pagesFetched += 1;
 
       if (status.code < 200 || status.code > 299) {
         throw new Error(`DwnApi: records.queryAll() page failed with status ${status.code}: ${status.detail}`);
@@ -1319,6 +1410,32 @@ export class DwnApi {
         }
         yield record;
         yielded += 1;
+      }
+
+      if (nextCursor !== undefined) {
+        // A page that hands back the cursor it was requested with would make
+        // the next request identical to this one — an infinite loop, and
+        // never a legitimate server behavior.
+        if (cursor !== undefined && JSON.stringify(nextCursor) === JSON.stringify(cursor)) {
+          throw new Error(
+            'DwnApi: records.queryAll() terminated: the remote returned a repeated pagination cursor ' +
+            '(same cursor as the request that produced it), which can never make progress.',
+          );
+        }
+
+        // Empty pages that still carry a (changing) cursor never trip
+        // `maxRecords` (it counts yields), so they get their own small budget.
+        if (records.length === 0) {
+          consecutiveEmptyPages += 1;
+          if (consecutiveEmptyPages >= DwnApi.QUERY_ALL_MAX_CONSECUTIVE_EMPTY_PAGES) {
+            throw new Error(
+              `DwnApi: records.queryAll() terminated after ${consecutiveEmptyPages} consecutive empty pages ` +
+              'that still returned a pagination cursor — the remote is not making progress.',
+            );
+          }
+        } else {
+          consecutiveEmptyPages = 0;
+        }
       }
 
       cursor = nextCursor;

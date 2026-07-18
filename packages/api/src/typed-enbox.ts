@@ -45,6 +45,7 @@ import type { DateSort, ProtocolDefinition, ProtocolType, RecordsFilter } from '
 import type { DwnApi, ProtocolsConfigureResponse } from './dwn-api.js';
 import type { ProtocolPaths, SchemaMap, TypedProtocol, TypeNameAtPath } from './protocol-types.js';
 
+import { assertValidQueryAllOptions } from './dwn-api.js';
 import { TypedLiveQuery } from './typed-live-query.js';
 import { TypedRecord } from './typed-record.js';
 
@@ -508,6 +509,18 @@ export type TypedQueryAllRequest = Omit<TypedQueryRequest, 'pagination'> & {
    * cursor exhaustion.
    */
   maxRecords?: number;
+
+  /**
+   * Overall page-request budget for the drain, independent of `maxRecords`
+   * (which counts yielded records and so cannot bound empty pages).
+   * Defaults to 1000 pages; exceeding it THROWS — it is a runaway-remote
+   * guard, not a truncation knob. Must be a positive integer.
+   *
+   * Built-in liveness guards apply regardless: a repeated pagination
+   * cursor or a run of consecutive empty cursor-bearing pages terminates
+   * the drain with a thrown error.
+   */
+  maxPages?: number;
 };
 
 /**
@@ -1295,6 +1308,7 @@ export class TypedEnbox<
       protocolRole : request?.protocolRole,
       pageSize     : request?.pageSize,
       maxRecords   : request?.maxRecords,
+      maxPages     : request?.maxPages,
     });
 
     for await (const record of drain) {
@@ -1510,11 +1524,13 @@ export class TypedEnbox<
        * (`pageSize` records per underlying query, 100 by default), and the
        * optional `maxRecords` safety cap bounds the total yield. A page
        * that fails with a non-2xx status aborts iteration with a thrown
-       * Error.
+       * Error, as do the liveness guards: a repeated pagination cursor, a
+       * run of consecutive empty cursor-bearing pages, or an exceeded
+       * `maxPages` budget.
        *
        * @param path - The protocol path to drain (e.g. `'notebook'`).
-       * @param request - Optional filter/sort options plus `pageSize` and
-       *   `maxRecords`. See {@link TypedQueryAllRequest}.
+       * @param request - Optional filter/sort options plus `pageSize`,
+       *   `maxRecords`, and `maxPages`. See {@link TypedQueryAllRequest}.
        * @returns An `AsyncGenerator` yielding every matching
        *   {@link TypedRecord} in sort order.
        *
@@ -1532,6 +1548,9 @@ export class TypedEnbox<
         path: Path,
         request?: TypedQueryAllRequest,
       ): AsyncGenerator<TypedRecord<DataForPath<D, M, Path>>, void, undefined> => {
+        // Validated at CALL time (the generator body — including its inner
+        // raw queryAll call — only runs on first iteration).
+        assertValidQueryAllOptions(request ?? {});
         return this.queryAllTypedRecords(path, request);
       },
 
