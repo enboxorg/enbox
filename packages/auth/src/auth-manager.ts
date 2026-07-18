@@ -58,6 +58,7 @@ import { DwnInterface, DwnPermissionGrant, EnboxUserAgent } from '@enbox/agent';
 
 import { AuthEventEmitter } from './events.js';
 import { AuthSession } from './identity-session.js';
+import { ConnectDeniedError } from './errors.js';
 import { createDefaultStorage } from './storage/storage.js';
 import { importFromPortable } from './connect/import.js';
 import { normalizeProtocolRequests } from './permissions.js';
@@ -1432,7 +1433,7 @@ export class AuthManager {
     const result = await handler.requestAccess({ permissionRequests });
     this._assertConnectionAttemptActive(guard);
     if (!result) {
-      throw new Error('[@enbox/auth] Connect was denied or cancelled by the user.');
+      throw new ConnectDeniedError('[@enbox/auth] Connect was denied or cancelled by the user.');
     }
 
     return this._commitConnectionResult(guard, async (): Promise<AuthSession> => {
@@ -1525,7 +1526,7 @@ export class AuthManager {
     });
     this._assertConnectionAttemptActive(guard);
     if (result === undefined) {
-      throw new Error('[@enbox/auth] Refresh was denied or cancelled by the user.');
+      throw new ConnectDeniedError('[@enbox/auth] Refresh was denied or cancelled by the user.');
     }
 
     if (result.connectedDid !== connectedDid) {

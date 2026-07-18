@@ -12,6 +12,7 @@ import { Convert } from '@enbox/common';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { WalletConnect } from '../src/wallet-connect-client.js';
+import { ConnectDeniedError, isConnectDeniedError } from '../src/errors.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
 
 const OWNER_DID = 'did:dht:owner';
@@ -303,6 +304,29 @@ describe('delegated connection lifecycle', () => {
       });
 
       await expect(manager.refresh({ protocols: PROTOCOLS })).rejects.toThrow('returned no grants');
+    });
+
+    test('rejects a denied refresh with a typed ConnectDeniedError and preserves the message', async () => {
+      const identity = createMockIdentity({
+        did      : { uri: DELEGATE_DID },
+        metadata : { name: 'Delegate', tenant: 'did:dht:agent', connectedDid: OWNER_DID },
+      });
+      const manager = createTestManager(createMockAgent({ identityList: async () => [identity] }), {
+        connectHandler: {
+          requestAccess: async (): Promise<undefined> => undefined,
+        },
+      });
+
+      let caught: unknown;
+      try {
+        await manager.refresh({ protocols: PROTOCOLS });
+      } catch (error: unknown) {
+        caught = error;
+      }
+
+      expect(caught).toBeInstanceOf(ConnectDeniedError);
+      expect(isConnectDeniedError(caught)).toBe(true);
+      expect((caught as Error).message).toBe('[@enbox/auth] Refresh was denied or cancelled by the user.');
     });
 
     for (const teardown of ['lock', 'disconnect', 'shutdown'] as const) {

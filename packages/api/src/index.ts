@@ -23,6 +23,7 @@
  * @packageDocumentation
  */
 
+export * from './connection-store.js';
 export * from './define-protocol.js';
 export * from './did-api.js';
 export * from './dwn-reader-api.js';

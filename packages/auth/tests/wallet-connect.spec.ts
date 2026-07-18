@@ -8,6 +8,7 @@ import { AuthEventEmitter } from '../src/events.js';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { WalletConnect } from '../src/wallet-connect-client.js';
+import { ConnectDeniedError, isConnectDeniedError } from '../src/errors.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
 import { processConnectedGrants, walletConnect } from '../src/connect/wallet.js';
 
@@ -356,6 +357,34 @@ describe('walletConnect', () => {
         },
       )
     ).rejects.toThrow('Connection was denied by the wallet');
+  });
+
+  test('wallet denial rejects with a typed ConnectDeniedError and preserves the message', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    const agent = createMockAgent({ firstLaunch: async () => false });
+
+    initClientStub.onFirstCall().resolves(undefined);
+
+    let caught: unknown;
+    try {
+      await walletConnect(
+        { userAgent: agent, emitter, storage, defaultSync: '15s' },
+        {
+          displayName        : 'Test App',
+          connectServerUrl   : 'https://relay.example.com',
+          permissionRequests : [],
+          onWalletUriReady   : () => {},
+          validatePin        : async () => '1234',
+        },
+      );
+    } catch (error: unknown) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(ConnectDeniedError);
+    expect(isConnectDeniedError(caught)).toBe(true);
+    expect((caught as Error).message).toBe('[@enbox/auth] Connection was denied by the wallet.');
   });
 
   test('successful wallet connect creates session', async () => {

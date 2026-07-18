@@ -7,6 +7,7 @@ import { Convert } from '@enbox/common';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { PasswordProvider } from '../src/password-provider.js';
 import { STORAGE_KEYS } from '../src/types.js';
+import { ConnectDeniedError, isConnectDeniedError } from '../src/errors.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
 
 /**
@@ -610,6 +611,31 @@ describe('AuthManager', () => {
       await expect(
         manager.connect({ protocols: HANDLER_PROTOCOLS })
       ).rejects.toThrow('denied or cancelled');
+    });
+
+    test('denial rejects with a typed ConnectDeniedError and preserves the message', async () => {
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [],
+      });
+
+      const mockHandler = {
+        requestAccess: async (): Promise<undefined> => undefined,
+      };
+
+      const manager = createTestManager(agent);
+      (manager as any)._connectHandler = mockHandler;
+
+      let caught: unknown;
+      try {
+        await manager.connect({ protocols: HANDLER_PROTOCOLS });
+      } catch (error: unknown) {
+        caught = error;
+      }
+
+      expect(caught).toBeInstanceOf(ConnectDeniedError);
+      expect(isConnectDeniedError(caught)).toBe(true);
+      expect((caught as Error).message).toBe('[@enbox/auth] Connect was denied or cancelled by the user.');
     });
 
     test('allows sync off for handler connect without throwing', async () => {
