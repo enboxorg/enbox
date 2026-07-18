@@ -796,14 +796,56 @@ describe('SyncEngineLevel lifecycle', () => {
 
     // The failed destructive operation surfaces to the close() caller, while
     // the joiner that raced a half-destroyed engine still cancels cleanly:
-    // the generation bump lives in the finally, so a throwing operation
-    // cannot leave queued work runnable against partially destroyed state.
-    // Plain catch handlers pre-attach so neither rejection is ever unhandled.
+    // the disposed-scope install lives in the finally, so a throwing
+    // operation cannot leave queued work runnable against partially
+    // destroyed state. Plain catch handlers pre-attach so neither rejection
+    // is ever unhandled.
     const syncPromise = engine.sync();
     syncPromise.catch((): void => {});
     releaseClose.resolve();
 
     await expect(closePromise).rejects.toThrow('close failed');
+    await expect(syncPromise).rejects.toThrow(SyncRunCancelledError);
+    expect(getSyncTargets.called).toBe(false);
+  });
+
+  it('should trip stopped-state fences and cancel a stopped-state queued sync on the next transition', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const registeredIdentities = db.sublevel<string, string>('registeredIdentities');
+    await registeredIdentities.put('did:example:alice', JSON.stringify({ protocols: 'all' }));
+    const getSyncTargets = sinon.stub(engine as never, 'getSyncTargets').resolves([]);
+
+    // Stop the engine: the current scope is disposed but stays installed.
+    await engine.stopSync();
+    const stoppedRuntime = engine['_runtime'];
+    expect(stoppedRuntime.disposed).toBe(true);
+
+    // A fence captured in the stopped state must hold — stopped-state work
+    // (a retryRemoteNow, a queued sync) is legitimate until a transition.
+    const stoppedFence = (engine as unknown as {
+      captureTransitionFence(): () => boolean;
+    }).captureTransitionFence();
+    expect(stoppedFence()).toBe(true);
+
+    // Hold the exclusive lock (as a stopped-state retry would) and queue a
+    // sync(): its own fence is captured under the already-disposed scope.
+    expect(engine['_lifecycle'].tryAcquireSync()).toBe(true);
+    const syncPromise = engine.sync();
+    syncPromise.catch((): void => {});
+
+    // A second transition from the stopped state must still be observable:
+    // disposal alone cannot flip an already-disposed flag, so the transition
+    // installs a NEW disposed scope object.
+    const stopPromise = engine.stopSync();
+    engine['_lifecycle'].releaseSync();
+    await stopPromise;
+
+    const runtimeAfter = engine['_runtime'];
+    expect(runtimeAfter).not.toBe(stoppedRuntime);
+    expect(runtimeAfter.disposed).toBe(true);
+    expect(stoppedFence()).toBe(false);
+
+    // The queued run's fence tripped: it cancels without ever running.
     await expect(syncPromise).rejects.toThrow(SyncRunCancelledError);
     expect(getSyncTargets.called).toBe(false);
   });
