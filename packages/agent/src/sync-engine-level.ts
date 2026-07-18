@@ -683,16 +683,44 @@ export class SyncEngineLevel implements SyncEngine {
   public clear(): Promise<void> {
     return this._lifecycle.runTransition(async (): Promise<void> => {
       await this.stopSyncRuntime();
-      await this._permissionsApi.clear();
-      await this.clearSyncDb();
+      await this.runDestructivePhase(async (): Promise<void> => {
+        await this._permissionsApi.clear();
+        await this.clearSyncDb();
+      });
     });
   }
 
   public close(): Promise<void> {
     return this._lifecycle.runTransition(async (): Promise<void> => {
       await this.stopSyncRuntime();
-      await this._db.close();
+      await this.runDestructivePhase(async (): Promise<void> => {
+        await this._db.close();
+      });
     });
+  }
+
+  /**
+   * Runs a destructive lifecycle phase while holding the exclusive sync lock.
+   * `stopSyncRuntime` only waits for the lock to free — it never holds it —
+   * so without this a `sync()`, `drainTo()`, or `retryRemoteNow()` admitted
+   * after that wait could interleave with the wipe or the closed database and
+   * resurrect sync state that `clear()` guarantees is gone.
+   *
+   * The generation bump invalidates work that queued against the lock while
+   * the phase ran: those callers raced the destruction rather than following
+   * it, so they cancel through the engine's stale-work convention instead of
+   * running against wiped state or failing on closed storage. The queued
+   * join point itself is left in place — post-bump joiners must share that
+   * cancellation, not start a fresh run.
+   */
+  private async runDestructivePhase(operation: () => Promise<void>): Promise<void> {
+    await this._lifecycle.acquireSync();
+    try {
+      await operation();
+    } finally {
+      this._engineGeneration++;
+      this._lifecycle.releaseSync();
+    }
   }
 
   public registerIdentity(params: { did: string; options: SyncIdentityOptions }): Promise<void> {
@@ -1483,13 +1511,25 @@ export class SyncEngineLevel implements SyncEngine {
    * propagation settle before giving up.
    */
   private async initializeLinkTargetWithRetry(target: SyncTarget): Promise<LinkInitializationResult> {
+    const generation = this._engineGeneration;
     try {
       return await this.initializeLinkTarget(target);
     } catch (error: any) {
       if (!this.isDidResolutionFailure(error)) { throw error; }
 
       for (const delay of SyncEngineLevel.DID_RESOLUTION_RETRY_BACKOFF_MS) {
+        // A runtime transition during an attempt or the backoff tore down
+        // whatever this initialization would have joined; a retry now would
+        // re-activate a link controller and reopen subscriptions behind that
+        // teardown. Checked on both sides of the sleep so a transition during
+        // the previous attempt skips the backoff wait entirely.
+        if (this._engineGeneration !== generation) {
+          return { status: LinkInitializationStatus.Failed };
+        }
         await sleep(delay);
+        if (this._engineGeneration !== generation) {
+          return { status: LinkInitializationStatus.Failed };
+        }
         try {
           return await this.initializeLinkTarget(target);
         } catch {

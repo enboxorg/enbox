@@ -98,7 +98,7 @@ export class SyncReplicationLinkStoreLevel implements SyncReplicationLinkStore {
   public async persistCheckpoint(link: ReplicationLinkState, direction: SyncDirection): Promise<void> {
     const checkpoint = SyncReplicationLinkStoreLevel.cloneCheckpoint(link[direction]);
     await this.updateLink(link, (persistedLink): void => {
-      persistedLink[direction] = checkpoint;
+      SyncReplicationLinkStoreLevel.mergeCheckpoint(persistedLink[direction], checkpoint);
     });
   }
 
@@ -115,7 +115,10 @@ export class SyncReplicationLinkStoreLevel implements SyncReplicationLinkStore {
 
   public async resetCheckpoint(link: ReplicationLinkState, direction: SyncDirection, token?: ProgressToken): Promise<void> {
     SyncCheckpoint.reset(link[direction], token);
-    await this.persistCheckpoint(link, direction);
+    const checkpoint = SyncReplicationLinkStoreLevel.cloneCheckpoint(link[direction]);
+    await this.updateLink(link, (persistedLink): void => {
+      persistedLink[direction] = checkpoint;
+    });
   }
 
   public async setStatus(link: ReplicationLinkState, status: LinkStatus): Promise<void> {
@@ -160,6 +163,45 @@ export class SyncReplicationLinkStoreLevel implements SyncReplicationLinkStore {
 
   private static cloneCheckpoint(checkpoint: DirectionCheckpoint): DirectionCheckpoint {
     return structuredClone(checkpoint);
+  }
+
+  /**
+   * Merge an in-memory checkpoint into the persisted one without regressing
+   * within a token domain. Concurrent writers hold independent in-memory
+   * copies of one durable link (the live controller's instance and the feed
+   * reconciler's freshly loaded instance), so a routine persist from a stale
+   * copy must never move `contiguousAppliedToken` backwards. A token from a
+   * different stream or epoch replaces the checkpoint wholesale — that domain
+   * change is a deliberate feed reset. Clearing a checkpoint goes through
+   * {@link resetCheckpoint}, which overwrites explicitly.
+   */
+  private static mergeCheckpoint(persisted: DirectionCheckpoint, incoming: DirectionCheckpoint): void {
+    if (incoming.contiguousAppliedToken === undefined) {
+      SyncReplicationLinkStoreLevel.mergeReceivedToken(persisted, incoming.receivedToken);
+      return;
+    }
+
+    if (!SyncCheckpoint.validateTokenDomain(persisted, incoming.contiguousAppliedToken)) {
+      persisted.contiguousAppliedToken = incoming.contiguousAppliedToken;
+      persisted.receivedToken = incoming.receivedToken;
+      return;
+    }
+
+    SyncCheckpoint.commitContiguousToken(persisted, incoming.contiguousAppliedToken);
+    SyncReplicationLinkStoreLevel.mergeReceivedToken(persisted, incoming.receivedToken);
+  }
+
+  /**
+   * Merge a received token only within the persisted checkpoint's established
+   * domain. `setReceivedToken` compares positions alone, so a stale old-epoch
+   * token with a numerically larger position would otherwise override a
+   * newer domain's value and leave a mixed-domain checkpoint.
+   */
+  private static mergeReceivedToken(persisted: DirectionCheckpoint, token: ProgressToken | undefined): void {
+    if (token === undefined || !SyncCheckpoint.validateTokenDomain(persisted, token)) {
+      return;
+    }
+    SyncCheckpoint.setReceivedToken(persisted, token);
   }
 
   private static cloneLink(link: ReplicationLinkState): ReplicationLinkState {

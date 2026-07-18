@@ -1,0 +1,9 @@
+---
+"@enbox/agent": patch
+---
+
+fix(agent): harden sync lifecycle ahead of the runtime-scope refactor
+
+- `clear()`/`close()` now hold the exclusive sync lock through their destructive phase, so a concurrent `sync()`, `drainTo()`, or `retryRemoteNow()` can no longer interleave with the wipe (resurrecting replication links or the drain endpoint) or crash against a mid-close database. Callers that queued against the lock while the phase ran cancel through the engine's stale-work convention — they raced the destruction rather than followed it — instead of running on wiped state or surfacing a closed-storage error.
+- The DID-resolution link-init retry loop checks the runtime generation on both sides of each backoff sleep, so a retry can no longer re-activate a link controller and reopen live subscriptions after `stopSync()`/`close()` tore the runtime down.
+- `SyncReplicationLinkStoreLevel.persistCheckpoint` merges checkpoints monotonically within a token domain instead of overwriting, so a persist from a stale in-memory link instance can never regress `contiguousAppliedToken` — and a stale cross-domain `receivedToken` can no longer produce a mixed-domain checkpoint. A stream/epoch change still replaces the checkpoint (deliberate feed reset), and explicit `resetCheckpoint` still overwrites.

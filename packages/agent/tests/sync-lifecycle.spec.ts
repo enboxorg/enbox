@@ -6,6 +6,7 @@ import { Level } from 'level';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
+import { SyncRunCancelledError } from '../src/sync-runtime-errors.js';
 
 type Deferred = {
   promise: Promise<void>;
@@ -709,5 +710,143 @@ describe('SyncEngineLevel lifecycle', () => {
     }).runLiveIntegrityCheck(generation);
 
     expect(sync.called).toBe(false);
+  });
+
+  it('should exclude one-shot sync from the clear() destructive phase and cancel the joined run', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const registeredIdentities = db.sublevel<string, string>('registeredIdentities');
+    await registeredIdentities.put('did:example:alice', JSON.stringify({ protocols: 'all' }));
+
+    const wipeStarted = createDeferred();
+    const releaseWipe = createDeferred();
+    sinon.stub(engine as never, 'clearSyncDb').callsFake(async (): Promise<void> => {
+      wipeStarted.resolve();
+      await releaseWipe.promise;
+    });
+    const getSyncTargets = sinon.stub(engine as never, 'getSyncTargets').resolves([]);
+
+    const clearPromise = engine.clear();
+    await wipeStarted.promise;
+
+    // A sync admitted mid-wipe must not start its run inside the destructive
+    // phase: without the exclusive lock it would reach getSyncTargets before
+    // its first suspension.
+    const syncPromise = engine.sync();
+    expect(getSyncTargets.called).toBe(false);
+
+    releaseWipe.resolve();
+    await clearPromise;
+
+    // The joined run raced the wipe rather than following it — it cancels
+    // through the queued-run convention instead of running on wiped state.
+    await expect(syncPromise).rejects.toThrow(SyncRunCancelledError);
+    expect(getSyncTargets.called).toBe(false);
+
+    // A sync issued after clear() completes runs normally.
+    await engine.sync();
+    expect(getSyncTargets.called).toBe(true);
+  });
+
+  it('should cancel a sync joined during the close() destructive phase instead of failing on closed storage', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const registeredIdentities = db.sublevel<string, string>('registeredIdentities');
+    await registeredIdentities.put('did:example:alice', JSON.stringify({ protocols: 'all' }));
+
+    const closeStarted = createDeferred();
+    const releaseClose = createDeferred();
+    const dbClose = sinon.stub(db, 'close').callsFake(async (): Promise<void> => {
+      closeStarted.resolve();
+      await releaseClose.promise;
+      await dbClose.wrappedMethod.call(db);
+    });
+    const getSyncTargets = sinon.stub(engine as never, 'getSyncTargets').resolves([]);
+
+    const closePromise = engine.close();
+    await closeStarted.promise;
+
+    const syncPromise = engine.sync();
+    releaseClose.resolve();
+    await closePromise;
+
+    // The joined run must cancel with the typed queued-run error instead of
+    // executing against the closed database and surfacing an internal
+    // storage error to the caller.
+    await expect(syncPromise).rejects.toThrow(SyncRunCancelledError);
+    expect(getSyncTargets.called).toBe(false);
+    expect(db.status).toBe('closed');
+  });
+
+  it('should cancel a joined sync even when the destructive close() operation fails', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const registeredIdentities = db.sublevel<string, string>('registeredIdentities');
+    await registeredIdentities.put('did:example:alice', JSON.stringify({ protocols: 'all' }));
+
+    const closeStarted = createDeferred();
+    const releaseClose = createDeferred();
+    sinon.stub(db, 'close').callsFake(async (): Promise<void> => {
+      closeStarted.resolve();
+      await releaseClose.promise;
+      throw new Error('close failed');
+    });
+    const getSyncTargets = sinon.stub(engine as never, 'getSyncTargets').resolves([]);
+
+    const closePromise = engine.close();
+    closePromise.catch((): void => {});
+    await closeStarted.promise;
+
+    // The failed destructive operation surfaces to the close() caller, while
+    // the joiner that raced a half-destroyed engine still cancels cleanly:
+    // the generation bump lives in the finally, so a throwing operation
+    // cannot leave queued work runnable against partially destroyed state.
+    // Plain catch handlers pre-attach so neither rejection is ever unhandled.
+    const syncPromise = engine.sync();
+    syncPromise.catch((): void => {});
+    releaseClose.resolve();
+
+    await expect(closePromise).rejects.toThrow('close failed');
+    await expect(syncPromise).rejects.toThrow(SyncRunCancelledError);
+    expect(getSyncTargets.called).toBe(false);
+  });
+
+  it('should retry DID-resolution failures while the runtime generation is unchanged', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const originalBackoff = SyncEngineLevel['DID_RESOLUTION_RETRY_BACKOFF_MS'];
+    (SyncEngineLevel as unknown as { DID_RESOLUTION_RETRY_BACKOFF_MS: number[] }).DID_RESOLUTION_RETRY_BACKOFF_MS = [1, 1];
+    try {
+      const initializeLinkTarget = sinon.stub(engine as never, 'initializeLinkTarget')
+        .rejects(new Error('remote DWN rejected request: GetPublicKeyNotFound'));
+
+      const result = await (engine as unknown as {
+        initializeLinkTargetWithRetry(target: unknown): Promise<{ status: string }>;
+      }).initializeLinkTargetWithRetry({});
+
+      expect(result).toEqual({ status: 'failed' });
+      expect(initializeLinkTarget.callCount).toBe(3);
+    } finally {
+      (SyncEngineLevel as unknown as { DID_RESOLUTION_RETRY_BACKOFF_MS: number[] }).DID_RESOLUTION_RETRY_BACKOFF_MS = originalBackoff;
+    }
+  });
+
+  it('should stop DID-resolution init retries after a runtime transition', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const originalBackoff = SyncEngineLevel['DID_RESOLUTION_RETRY_BACKOFF_MS'];
+    (SyncEngineLevel as unknown as { DID_RESOLUTION_RETRY_BACKOFF_MS: number[] }).DID_RESOLUTION_RETRY_BACKOFF_MS = [1, 1];
+    try {
+      const initializeLinkTarget = sinon.stub(engine as never, 'initializeLinkTarget')
+        .callsFake(async (): Promise<never> => {
+          // Simulate stopSync/clear/close racing the backoff window.
+          engine['_engineGeneration'] += 1;
+          throw new Error('remote DWN rejected request: GetPublicKeyNotFound');
+        });
+
+      const result = await (engine as unknown as {
+        initializeLinkTargetWithRetry(target: unknown): Promise<{ status: string }>;
+      }).initializeLinkTargetWithRetry({});
+
+      expect(result).toEqual({ status: 'failed' });
+      expect(initializeLinkTarget.callCount).toBe(1);
+    } finally {
+      (SyncEngineLevel as unknown as { DID_RESOLUTION_RETRY_BACKOFF_MS: number[] }).DID_RESOLUTION_RETRY_BACKOFF_MS = originalBackoff;
+    }
   });
 });
