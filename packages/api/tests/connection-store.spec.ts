@@ -691,5 +691,228 @@ describe('createConnectionStore()', () => {
       expect(create.firstCall.args[0]).toEqual({ password: 'pw', sync: 'off' });
       expect(fake.restoreSession.firstCall.args[0]).toEqual({ password: 'restore-pw' });
     });
+
+    it('should shut down an orphaned store-owned manager when disposed mid-creation', async () => {
+      const fake = createFakeAuth();
+      let resolveCreate!: (auth: AuthManager) => void;
+      sinon.stub(AuthManager, 'create').returns(new Promise((resolve) => { resolveCreate = resolve; }));
+      const store = createConnectionStore({ password: 'pw' });
+
+      const initializePromise = store.initialize();
+      const beforeDispose = store.getSnapshot();
+      await store.dispose();
+      resolveCreate(asAuth(fake));
+
+      // The stale action resolves without mutating the snapshot; the freshly
+      // created manager is shut down instead of leaking storage handles.
+      const snapshot = await initializePromise;
+      expect(snapshot).toBe(beforeDispose);
+      expect(fake.shutdown.calledOnce).toBe(true);
+      expect(store.auth).toBeUndefined();
+    });
+  });
+
+  describe('edge and failure branches', () => {
+    it('should not re-run restore when initialize() follows an eager connect', async () => {
+      const fake = createFakeAuth();
+      const session = createSession();
+      fake.connect.callsFake(async (): Promise<AuthSession> => {
+        fake.session = session;
+        return session;
+      });
+      const store = createConnectionStore({ auth: asAuth(fake) });
+
+      await store.connect({ protocols: PROTOCOLS });
+      const snapshot = await store.initialize();
+
+      expect(snapshot.phase).toBe('connected');
+      expect(fake.restoreSession.called).toBe(false);
+    });
+
+    it('should keep notifying later listeners when an earlier listener throws', async () => {
+      const fake = createFakeAuth();
+      const store = createConnectionStore({ auth: asAuth(fake) });
+      await store.initialize();
+      const consoleError = console.error;
+      console.error = (): void => {};
+      try {
+        let notified = 0;
+        store.subscribe(() => { throw new Error('listener exploded'); });
+        store.subscribe(() => { notified++; });
+
+        fake.emitter.emit('vault-locked', {});
+
+        expect(notified).toBe(1);
+        expect(store.getSnapshot().vaultLocked).toBe(true);
+      } finally {
+        console.error = consoleError;
+      }
+    });
+
+    it('should stay connected without a status when the connection seed fails', async () => {
+      const fake = createFakeAuth();
+      const session = createSession({ delegateDid: DELEGATE_DID });
+      fake.connect.callsFake(async (): Promise<AuthSession> => {
+        fake.session = session;
+        return session;
+      });
+      fake.getConnectionStatus.rejects(new Error('status backend down'));
+      const store = createConnectionStore({ auth: asAuth(fake) });
+
+      const snapshot = await store.connect({ protocols: PROTOCOLS });
+
+      expect(snapshot.phase).toBe('connected');
+      expect(snapshot.connection).toBeUndefined();
+      expect(snapshot.error).toBeUndefined();
+    });
+
+    it('should flag wallet reapproval when the seeded status is already terminal', async () => {
+      const fake = createFakeAuth();
+      const session = createSession({ delegateDid: DELEGATE_DID });
+      fake.connect.callsFake(async (): Promise<AuthSession> => {
+        fake.session = session;
+        return session;
+      });
+      fake.getConnectionStatus.resolves({ ...ACTIVE_STATUS, state: 'revoked' });
+      const store = createConnectionStore({ auth: asAuth(fake) });
+
+      const snapshot = await store.connect({ protocols: PROTOCOLS });
+
+      expect(snapshot.connection?.state).toBe('revoked');
+      expect(snapshot.walletReapprovalRequired).toBe(true);
+    });
+
+    it('should clear a required reapproval when an active status is observed', async () => {
+      const fake = createFakeAuth();
+      const session = createSession({ delegateDid: DELEGATE_DID });
+      fake.connect.callsFake(async (): Promise<AuthSession> => {
+        fake.session = session;
+        return session;
+      });
+      const store = createConnectionStore({ auth: asAuth(fake) });
+      await store.connect({ protocols: PROTOCOLS });
+      fake.emitter.emit('connection-expired', { status: { ...ACTIVE_STATUS, state: 'expired' } });
+      expect(store.getSnapshot().walletReapprovalRequired).toBe(true);
+
+      fake.emitter.emit('connection-expiring', { status: { ...ACTIVE_STATUS } });
+
+      expect(store.getSnapshot().walletReapprovalRequired).toBeUndefined();
+      expect(store.getSnapshot().connection?.state).toBe('active');
+    });
+
+    it('should map a failed disconnect without a surviving session to the error phase', async () => {
+      const fake = createFakeAuth();
+      const session = createSession();
+      fake.connect.callsFake(async (): Promise<AuthSession> => {
+        fake.session = session;
+        return session;
+      });
+      fake.disconnect.callsFake(async (): Promise<void> => {
+        fake.session = undefined;
+        throw new Error('revocation delivery failed');
+      });
+      const store = createConnectionStore({ auth: asAuth(fake) });
+      await store.connect({ protocols: PROTOCOLS });
+
+      const snapshot = await store.disconnect();
+
+      expect(snapshot.phase).toBe('error');
+      expect(snapshot.error?.message).toBe('revocation delivery failed');
+    });
+
+    it('should stay connected when a failed action leaves the auth session intact', async () => {
+      const fake = createFakeAuth();
+      const session = createSession({ delegateDid: DELEGATE_DID });
+      fake.connect.callsFake(async (): Promise<AuthSession> => {
+        fake.session = session;
+        return session;
+      });
+      fake.refresh.rejects(new Error('handler transport failed'));
+      const store = createConnectionStore({ auth: asAuth(fake) });
+      await store.connect({ protocols: PROTOCOLS });
+
+      const snapshot = await store.refresh({ protocols: PROTOCOLS });
+
+      expect(snapshot.phase).toBe('connected');
+      expect(snapshot.session).toBe(session);
+      expect(snapshot.error?.message).toBe('handler transport failed');
+    });
+
+    it('should rebuild the connected fields when a failed action reveals a session the store missed', async () => {
+      const fake = createFakeAuth();
+      const sessionA = createSession({ name: 'Session A' });
+      fake.connect.callsFake(async (): Promise<AuthSession> => {
+        fake.session = sessionA;
+        return sessionA;
+      });
+      const store = createConnectionStore({ auth: asAuth(fake) });
+      await store.connect({ protocols: PROTOCOLS });
+
+      const sessionB = createSession({ did: 'did:dht:other-owner', name: 'Session B' });
+      fake.refresh.callsFake(async (): Promise<AuthSession> => {
+        fake.session = sessionB;
+        throw new Error('failed after session switch');
+      });
+
+      const snapshot = await store.refresh({ protocols: PROTOCOLS });
+
+      expect(snapshot.phase).toBe('connected');
+      expect(snapshot.session).toBe(sessionB);
+      expect(snapshot.identityDid).toBe('did:dht:other-owner');
+      expect(snapshot.identityName).toBe('Session B');
+      expect(snapshot.error?.message).toBe('failed after session switch');
+    });
+
+    it('should normalize non-Error rejections into Error instances', async () => {
+      const fake = createFakeAuth();
+      fake.connect.callsFake((): Promise<AuthSession> => Promise.reject('string rejection'));
+      const store = createConnectionStore({ auth: asAuth(fake) });
+
+      const snapshot = await store.connect({ protocols: PROTOCOLS });
+
+      expect(snapshot.phase).toBe('error');
+      expect(snapshot.error).toBeInstanceOf(Error);
+      expect(snapshot.error?.message).toBe('string rejection');
+    });
+
+    it('should resolve dispose() even when the owned manager fails to shut down', async () => {
+      const fake = createFakeAuth();
+      fake.shutdown.rejects(new Error('shutdown failed'));
+      sinon.stub(AuthManager, 'create').resolves(asAuth(fake));
+      const store = createConnectionStore({ password: 'pw' });
+      await store.initialize();
+      const consoleWarn = console.warn;
+      console.warn = (): void => {};
+      try {
+        await store.dispose();
+      } finally {
+        console.warn = consoleWarn;
+      }
+
+      expect(fake.shutdown.calledOnce).toBe(true);
+    });
+
+    it('should keep the connected snapshot when the monitor cannot start on an externally started session', async () => {
+      const fake = createFakeAuth();
+      const store = createConnectionStore({ auth: asAuth(fake) });
+      await store.initialize();
+      fake.startConnectionMonitor.throws(new RangeError('bad interval'));
+      const consoleError = console.error;
+      console.error = (): void => {};
+      try {
+        const session = createSession({ delegateDid: DELEGATE_DID });
+        fake.session = session;
+        fake.emitter.emit('session-start', {
+          session: { did: session.did, delegateDid: DELEGATE_DID, identity: session.identity },
+        });
+        // Let the rejected commit promise settle through its catch handler.
+        await Promise.resolve();
+
+        expect(store.getSnapshot().phase).toBe('connected');
+        expect(store.getSnapshot().session).toBe(session);
+      } finally {
+        console.error = consoleError;
+      }
+    });
   });
 });
