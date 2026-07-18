@@ -413,11 +413,14 @@ export type GetAudienceKeyDeliveryStatusParams = {
  * {@link AudienceKeyDeliveryStatus}), so the existence check is skipped for
  * them and a duplicate may be written. An existence check the remote cannot
  * confirm never blocks the write either — re-provisioning stays best-effort
- * and may duplicate. Concurrent calls in one agent for the same tuple and
- * recipient key are coalesced onto one execution; cross-device idempotency
- * (deterministic delivery identity) is tracked by the delivery-dedupe design
- * (#1092). Duplicates are a storage/scan cost, not a correctness break —
- * recipients try candidate deliveries until one decrypts.
+ * and may duplicate. Concurrent OWNER-authorized calls in one agent for the same
+ * tuple and recipient key are coalesced onto one execution. Calls carrying an
+ * explicit authorization context (`granteeDid`, grant material, or
+ * `protocolRole`) are deliberately NOT coalesced, so each call independently
+ * exercises its authorization against current grant/revocation state.
+ * Cross-device idempotency (deterministic delivery identity) is tracked by the
+ * delivery-dedupe design (#1092). Duplicates are a storage/scan cost, not a
+ * correctness break — recipients try candidate deliveries until one decrypts.
  *
  * Otherwise the audience key is resolved — or minted, which requires seal
  * coverage (the owner identity, or a delegate holding covering grantKey

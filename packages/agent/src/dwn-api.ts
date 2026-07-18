@@ -297,10 +297,13 @@ export class AgentDwnApi {
   });
 
   /**
-   * Coalesces concurrent {@link reprovisionAudienceKeyDelivery} calls for the same
-   * (target, protocol, rolePath, contextId, recipientDid, recipient wrap target)
-   * onto one execution, so the non-atomic check-then-write cannot race itself into
-   * duplicate delivery records within one agent. Entries are removed on settle.
+   * Coalesces concurrent owner-authorized {@link reprovisionAudienceKeyDelivery}
+   * calls for the same (target, protocol, rolePath, contextId, recipientDid,
+   * recipient wrap target) onto one execution, so the non-atomic check-then-write
+   * cannot race itself into duplicate delivery records within one agent. Calls
+   * carrying an explicit authorization context are never coalesced: each must
+   * independently exercise its grant and role authorization. Entries are removed
+   * on settle.
    */
   private readonly _reprovisionInFlight = new Map<string, Promise<AudienceKeyDeliveryOutcome>>();
 
@@ -1208,12 +1211,18 @@ export class AgentDwnApi {
       const detail = error instanceof Error ? error.message : String(error);
       return { delivered: false, reason: detail, recipientDid };
     }
+    const executionInput = { ...params, contextId, recipientRoleKeyId, recipientRolePublicKey };
+    const hasExplicitAuthorizationContext = params.granteeDid !== undefined ||
+      params.permissionGrantId !== undefined || params.delegatedGrant !== undefined || params.protocolRole !== undefined;
+    if (hasExplicitAuthorizationContext) {
+      return this.executeAudienceKeyDeliveryReprovision(executionInput);
+    }
     const flightKey = JSON.stringify([target, protocol, rolePath, contextId, recipientDid, recipientRoleKeyId]);
     const inFlight = this._reprovisionInFlight.get(flightKey);
     if (inFlight !== undefined) {
       return inFlight;
     }
-    const flight = this.executeAudienceKeyDeliveryReprovision({ ...params, contextId, recipientRoleKeyId, recipientRolePublicKey });
+    const flight = this.executeAudienceKeyDeliveryReprovision(executionInput);
     this._reprovisionInFlight.set(flightKey, flight);
     try {
       return await flight;

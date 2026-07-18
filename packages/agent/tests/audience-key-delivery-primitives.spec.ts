@@ -578,6 +578,58 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       expect(await countDeliveries(chat, bob.did.uri)).toBe(1);
     }, 30000);
 
+    it('does not coalesce delegated calls so each authorization attempt is evaluated', async () => {
+      const recipientRolePublicKey = await randomX25519PublicKey();
+      const recipientDid = 'did:jwk:delegated-flight-recipient';
+      const delegateDid = 'did:jwk:delegated-flight-actor';
+      const dwnApi = testHarness.agent.dwn as any;
+      let releaseFirstExecution: (outcome: AudienceKeyDeliveryOutcome) => void = () => {};
+      let signalFirstExecution: () => void = () => {};
+      const firstExecution = new Promise<AudienceKeyDeliveryOutcome>((resolve): void => {
+        releaseFirstExecution = resolve;
+      });
+      const firstExecutionStarted = new Promise<void>((resolve): void => {
+        signalFirstExecution = resolve;
+      });
+      let executionCount = 0;
+      const executeStub = sinon.stub(dwnApi, 'executeAudienceKeyDeliveryReprovision')
+        .callsFake((input: { recipientDid: string }): Promise<AudienceKeyDeliveryOutcome> => {
+          executionCount++;
+          if (executionCount === 1) {
+            signalFirstExecution();
+            return firstExecution;
+          }
+          return Promise.resolve({
+            delivered    : false,
+            reason       : 'the second authorization context was evaluated independently',
+            recipientDid : input.recipientDid,
+          });
+        });
+      const request = {
+        contextId  : 'delegated-flight-context',
+        granteeDid : delegateDid,
+        protocol   : `https://protocol.test/delegated-flight/${crypto.randomUUID()}`,
+        recipientDid,
+        recipientRolePublicKey,
+        rolePath   : ROLE_PATH,
+        target     : alice.did.uri,
+      };
+
+      const first = testHarness.agent.dwn.reprovisionAudienceKeyDelivery(request);
+      await firstExecutionStarted;
+      const second = testHarness.agent.dwn.reprovisionAudienceKeyDelivery(request);
+      for (let attempt = 0; attempt < 50 && executeStub.callCount < 2; attempt++) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 2));
+      }
+      const executionCountBeforeRelease = executeStub.callCount;
+      releaseFirstExecution({ delivered: true, recipientDid });
+      const [firstOutcome, secondOutcome] = await Promise.all([first, second]);
+
+      expect(executionCountBeforeRelease).toBe(2);
+      expect(firstOutcome).toEqual({ delivered: true, recipientDid });
+      expect(secondOutcome.delivered).toBe(false);
+    }, 30000);
+
     it('delivers after a failed initial provisioning and the recipient decrypts end-to-end', async () => {
       const chat = chatProtocolDefinition();
       const bob = await testHarness.createIdentity({ name: 'Bob Reprovisioned', testDwnUrls });
