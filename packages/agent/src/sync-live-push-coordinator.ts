@@ -180,15 +180,14 @@ export class SyncLivePushCoordinator {
 
   /** Feed reconciliation failures back into the same bounded live retry policy. */
   public async handleReconcileFailures(
-    linkKey: string,
-    link: ReplicationLinkState,
+    controller: SyncLinkController,
     failures: PushFailure[],
   ): Promise<void> {
-    const controller = this._operations.getController(linkKey);
-    if (controller?.isActive !== true || controller.link !== link) {
+    if (!controller.isActive) {
       return;
     }
 
+    const { link } = controller;
     await this.requeue(controller, {
       did                : link.tenantDid,
       dwnUrl             : link.remoteEndpoint,

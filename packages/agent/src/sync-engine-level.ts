@@ -436,15 +436,16 @@ export class SyncEngineLevel implements SyncEngine {
         persistCheckpoint     : (link): Promise<void> => this.ledger.persistCheckpoint(link, 'pull'),
         recordDeadLetter      : (entry): Promise<void> => this.recordDeadLetter(entry),
         reportError           : (message, error): void => { console.error(message, error); },
-        scheduleReconcile     : (linkKey, link, reason): void => {
-          this.scheduleLinkReconcile(linkKey, link, reason);
+        scheduleReconcile     : (controller, reason): void => {
+          this._linkRecoveryCoordinator.scheduleLinkReconcile(controller, reason);
         },
         setConnectivityOnline : (): void => { this._connectivityManager.setState('online'); },
         trackAppliedCids      : (messageCids, target): Promise<void> =>
           this.trackRemoteFeedAppliedCids(messageCids, target),
         transitionToPaused    : (linkKey, link): Promise<void> => this.transitionToPaused(linkKey, link),
-        transitionToRepairing : (linkKey, link): Promise<void> => this.transitionToRepairing(linkKey, link),
-        warn                  : (message): void => { console.warn(message); },
+        transitionToRepairing : (controller): Promise<void> =>
+          this._linkRecoveryCoordinator.transitionToRepairing(controller),
+        warn: (message): void => { console.warn(message); },
       },
     });
     this._livePushCoordinator = new SyncLivePushCoordinator({
@@ -475,8 +476,8 @@ export class SyncEngineLevel implements SyncEngine {
         getRuntimeScope  : (): SyncRuntimeHandle => this._runtime,
         handleDivergence : (target, result, context): Promise<boolean> =>
           this._feedConvergenceManager.handleVerifiedDivergence(target, result, context),
-        handlePushFailures: (linkKey, link, failures): Promise<void> =>
-          this._livePushCoordinator.handleReconcileFailures(linkKey, link, failures),
+        handlePushFailures: (controller, failures): Promise<void> =>
+          this._livePushCoordinator.handleReconcileFailures(controller, failures),
         openPullSubscription: (target, controller): Promise<boolean> =>
           this.openLivePullSubscription(target, controller),
         openPushSubscription: (target, controller): Promise<boolean> =>
@@ -1256,14 +1257,6 @@ export class SyncEngineLevel implements SyncEngine {
   /** Maximum age for a repeatedly deferred pull entry before it is dead-lettered and skipped. */
   private static readonly DEFERRED_PULL_DEAD_LETTER_AFTER_MS = 24 * 60 * 60 * 1000;
 
-  private transitionToRepairing(
-    linkKey: string,
-    link: ReplicationLinkState,
-    options?: { resumeToken?: ProgressToken },
-  ): Promise<void> {
-    return this._linkRecoveryCoordinator.transitionToRepairing(linkKey, link, options);
-  }
-
   private transitionToPaused(
     linkKey: string,
     link: ReplicationLinkState,
@@ -1437,7 +1430,6 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     if (error.isProgressGap && link) {
-      const linkKey = this.getReplicationLinkKey(target, link);
       console.warn(`SyncEngineLevel: ProgressGap detected for ${target.did} -> ${target.dwnUrl}, initiating repair`);
       this.emitEvent({
         type           : 'gap:detected',
@@ -1446,9 +1438,11 @@ export class SyncEngineLevel implements SyncEngine {
         ...syncEventScope(target.scope),
         reason         : 'ProgressGap'
       });
-      await this.transitionToRepairing(linkKey, link, {
-        resumeToken: error.gapInfo?.latestAvailable,
-      });
+      if (controller !== undefined) {
+        await this._linkRecoveryCoordinator.transitionToRepairing(controller, {
+          resumeToken: error.gapInfo?.latestAvailable,
+        });
+      }
       return this.createActiveLinkInitializationResult(link);
     }
 
@@ -2050,7 +2044,15 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private scheduleLinkReconcile(linkKey: string, link: ReplicationLinkState, reason: string, delayMs?: number): void {
-    this._linkRecoveryCoordinator.scheduleLinkReconcile(linkKey, link, reason, delayMs);
+    // Link-addressed callers (feed convergence, quota manager, push quota
+    // probes) can run in poll mode where no controller exists; resolving to
+    // a matching active controller here keeps those requests no-ops exactly
+    // as before, while the recovery coordinator itself is controller-addressed.
+    const controller = this.getMatchingLinkController(linkKey, link);
+    if (controller === undefined) {
+      return;
+    }
+    this._linkRecoveryCoordinator.scheduleLinkReconcile(controller, reason, delayMs);
   }
 
   private getAuthorizationGrantIds(authorization: SyncAuthorization): NonEmptyStringArray | undefined {

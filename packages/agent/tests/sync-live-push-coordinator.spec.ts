@@ -323,7 +323,7 @@ describe('SyncLivePushCoordinator', () => {
 
     const flushing = fixture.coordinator.flushLink(LINK_KEY, controller);
     await pushStarted.promise;
-    await fixture.coordinator.handleReconcileFailures(LINK_KEY, controller.link, [{
+    await fixture.coordinator.handleReconcileFailures(controller, [{
       cid    : 'reconcile-cid',
       detail : 'retry concurrently',
     }]);
@@ -348,7 +348,7 @@ describe('SyncLivePushCoordinator', () => {
       terminal : true,
     };
 
-    await fixture.coordinator.handleReconcileFailures(LINK_KEY, controller.link, [failure]);
+    await fixture.coordinator.handleReconcileFailures(controller, [failure]);
 
     expect(fixture.operations.clearQuotaBlock.calledOnceWithExactly(DID, LINK_KEY, failure.cid)).toBe(true);
     expect(fixture.operations.recordDeadLetter.firstCall.args[0]).toEqual(expect.objectContaining({
@@ -371,7 +371,7 @@ describe('SyncLivePushCoordinator', () => {
     const fixture = createFixture({ deferredReconcileDelayMs: 45_000, retryBackoffMs: [0] });
     const controller = activate(fixture);
 
-    await fixture.coordinator.handleReconcileFailures(LINK_KEY, controller.link, [{
+    await fixture.coordinator.handleReconcileFailures(controller, [{
       cid    : 'incomplete-cid',
       kind   : 'Incomplete',
       detail : 'missing dependency',
@@ -402,11 +402,14 @@ describe('SyncLivePushCoordinator', () => {
     const fixture = createFixture();
     const originalLink = link();
     const original = activate(fixture, originalLink);
+    // A replaced controller is deactivated by activateLink in production;
+    // its reconcile failures and flushes must not reach the replacement.
+    original.deactivate();
     const replacement = new SyncLinkController(LINK_KEY, link());
     fixture.controllers.set(LINK_KEY, replacement);
     original.getOrCreatePushRuntime({ did: DID, dwnUrl: REMOTE }).entries.push({ cid: 'old-cid' });
 
-    await fixture.coordinator.handleReconcileFailures(LINK_KEY, originalLink, [{ cid: 'failure' }]);
+    await fixture.coordinator.handleReconcileFailures(original, [{ cid: 'failure' }]);
     await fixture.coordinator.flushLink(LINK_KEY, original);
 
     expect(fixture.operations.pushMessages.called).toBe(false);

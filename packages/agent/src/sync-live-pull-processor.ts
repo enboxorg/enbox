@@ -46,11 +46,11 @@ export interface SyncLivePullProcessorOperations {
   persistCheckpoint(link: ReplicationLinkState): Promise<void>;
   recordDeadLetter(entry: Omit<DeadLetterEntry, 'failedAt'>): Promise<void>;
   reportError(message: string, error: unknown): void;
-  scheduleReconcile(linkKey: string, link: ReplicationLinkState, reason: string): void;
+  scheduleReconcile(controller: SyncLinkController, reason: string): void;
   setConnectivityOnline(): void;
   trackAppliedCids(messageCids: string[], target: SyncTarget): Promise<void>;
   transitionToPaused(linkKey: string, link: ReplicationLinkState): Promise<void>;
-  transitionToRepairing(linkKey: string, link: ReplicationLinkState): Promise<void>;
+  transitionToRepairing(controller: SyncLinkController): Promise<void>;
   warn(message: string): void;
 }
 
@@ -137,7 +137,7 @@ export class SyncLivePullProcessor {
     context: SyncLivePullContext,
     message: Extract<SubscriptionMessage, { type: 'eose' }>,
   ): Promise<void> {
-    const { controller, did, dwnUrl, link, linkKey, isStale } = context;
+    const { controller, did, dwnUrl, link, isStale } = context;
     if (link !== undefined) {
       if (link.status !== 'live' && link.status !== 'initializing') {
         return;
@@ -147,8 +147,8 @@ export class SyncLivePullProcessor {
         this._operations.warn(
           `SyncLivePullProcessor: Token domain mismatch on EOSE for ${did} -> ${dwnUrl}, transitioning to repairing`,
         );
-        if (!isStale()) {
-          await this._operations.transitionToRepairing(linkKey, link);
+        if (!isStale() && controller !== undefined) {
+          await this._operations.transitionToRepairing(controller);
         }
         return;
       }
@@ -182,8 +182,8 @@ export class SyncLivePullProcessor {
     this._operations.warn(
       `SyncLivePullProcessor: subscription error for ${did} -> ${dwnUrl}: ${message.error.code}`,
     );
-    if (link !== undefined && !isStale()) {
-      await this._operations.transitionToRepairing(linkKey, link);
+    if (context.controller !== undefined && !isStale()) {
+      await this._operations.transitionToRepairing(context.controller);
     }
   }
 
@@ -273,7 +273,7 @@ export class SyncLivePullProcessor {
     context: SyncLivePullContext,
     message: Extract<SubscriptionMessage, { type: 'event' }>,
   ): Promise<boolean> {
-    const { did, dwnUrl, link, linkKey, isStale } = context;
+    const { did, dwnUrl, link, isStale } = context;
     if (link !== undefined && link.status !== 'live' && link.status !== 'initializing') {
       return true;
     }
@@ -282,8 +282,8 @@ export class SyncLivePullProcessor {
       this._operations.warn(
         `SyncLivePullProcessor: Token domain mismatch for ${did} -> ${dwnUrl}, transitioning to repairing`,
       );
-      if (!isStale()) {
-        await this._operations.transitionToRepairing(linkKey, link);
+      if (!isStale() && context.controller !== undefined) {
+        await this._operations.transitionToRepairing(context.controller);
       }
       return true;
     }
@@ -298,8 +298,8 @@ export class SyncLivePullProcessor {
         this._operations.warn(
           `SyncLivePullProcessor: Unable to classify scoped pull event for ${did} -> ${dwnUrl}, transitioning to repair`,
         );
-        if (!isStale()) {
-          await this._operations.transitionToRepairing(linkKey, link);
+        if (!isStale() && context.controller !== undefined) {
+          await this._operations.transitionToRepairing(context.controller);
         }
         return true;
       }
@@ -368,8 +368,8 @@ export class SyncLivePullProcessor {
       await this.recordAdmissionFailure(context, rootCid, event, outcome);
       return { admitted: false, messageCid: rootCid };
     }
-    if (context.link !== undefined) {
-      this._operations.scheduleReconcile(context.linkKey, context.link, `pull-${outcome.kind}`);
+    if (context.controller !== undefined) {
+      this._operations.scheduleReconcile(context.controller, `pull-${outcome.kind}`);
     }
     return { admitted: false, messageCid: rootCid };
   }
@@ -429,7 +429,7 @@ export class SyncLivePullProcessor {
     cursor: ProgressToken,
     delivery: PullDelivery,
   ): Promise<void> {
-    const { did, dwnUrl, link, linkKey, isStale } = context;
+    const { did, dwnUrl, link, isStale } = context;
     if (
       link === undefined ||
       delivery.controller === undefined ||
@@ -450,7 +450,7 @@ export class SyncLivePullProcessor {
       this._operations.warn(
         `SyncLivePullProcessor: Pull in-flight overflow for ${did} -> ${dwnUrl}, transitioning to repairing`,
       );
-      await this._operations.transitionToRepairing(linkKey, link);
+      await this._operations.transitionToRepairing(delivery.controller);
     }
   }
 
@@ -463,8 +463,8 @@ export class SyncLivePullProcessor {
       `SyncLivePullProcessor: Error processing live-pull event for ${context.did}`,
       error,
     );
-    if (context.link !== undefined && !context.isStale()) {
-      await this._operations.transitionToRepairing(context.linkKey, context.link);
+    if (context.controller !== undefined && !context.isStale()) {
+      await this._operations.transitionToRepairing(context.controller);
     }
   }
 

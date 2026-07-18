@@ -111,7 +111,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const resumeToken = token('10');
     const repair = sinon.stub(fixture.coordinator, 'repair').resolves();
 
-    await fixture.coordinator.transitionToRepairing(LINK_KEY, state, { resumeToken });
+    await fixture.coordinator.transitionToRepairing(controller, { resumeToken });
     await waitForLastTask(fixture.taskRunner);
 
     expect(state.status).toBe('repairing');
@@ -125,9 +125,11 @@ describe('SyncLinkRecoveryCoordinator', () => {
       to   : 'repairing',
     })).toBe(true);
 
-    const replacement = new SyncLinkController(LINK_KEY, link());
-    fixture.controllers.set(LINK_KEY, replacement);
-    await fixture.coordinator.transitionToRepairing(LINK_KEY, state);
+    // A replaced controller is deactivated by activateLink in production;
+    // a stale transition through it must be a no-op.
+    controller.deactivate();
+    fixture.controllers.set(LINK_KEY, new SyncLinkController(LINK_KEY, link()));
+    await fixture.coordinator.transitionToRepairing(controller);
     expect(repair.calledOnce).toBe(true);
   });
 
@@ -188,7 +190,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(fixture.operations.resetPullCheckpoint.calledOnceWithExactly(state, token('4'))).toBe(true);
     expect(fixture.operations.openPullSubscription.calledOnceWithExactly(repairTarget, controller)).toBe(true);
     expect(fixture.operations.openPushSubscription.calledOnceWithExactly(repairTarget, controller)).toBe(true);
-    expect(fixture.operations.handlePushFailures.calledOnceWithExactly(LINK_KEY, state, [failure])).toBe(true);
+    expect(fixture.operations.handlePushFailures.calledOnceWithExactly(controller, [failure])).toBe(true);
     expect(state.status).toBe('live');
     expect(state.connectivity).toBe('online');
     expect(controller.repairInFlight).toBeUndefined();
@@ -357,11 +359,11 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const controller = activate(fixture);
     const reconcile = sinon.stub(fixture.coordinator, 'reconcile').resolves();
 
-    expect(fixture.coordinator.scheduleReconcile(LINK_KEY, 1000)).toBe(true);
+    expect(fixture.coordinator.scheduleReconcile(controller, 1000)).toBe(true);
     expect(fixture.operations.captureIdentityTaskRunner.calledOnceWithExactly(DID)).toBe(true);
     fixture.operations.captureIdentityTaskRunner.resetHistory();
-    expect(fixture.coordinator.scheduleReconcile(LINK_KEY, 2000)).toBe(false);
-    expect(fixture.coordinator.scheduleReconcile(LINK_KEY, 500)).toBe(true);
+    expect(fixture.coordinator.scheduleReconcile(controller, 2000)).toBe(false);
+    expect(fixture.coordinator.scheduleReconcile(controller, 500)).toBe(true);
     expect(controller.reconcileTimerDueAt).toBe(500);
     await clock.tickAsync(500);
     await waitForLastTask(fixture.taskRunner);
@@ -369,7 +371,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(reconcile.calledOnceWithExactly(controller)).toBe(true);
     expect(controller.reconcileTimer).toBeUndefined();
 
-    fixture.coordinator.scheduleReconcile(LINK_KEY, 100);
+    fixture.coordinator.scheduleReconcile(controller, 100);
     fixture.disposeScope();
     await clock.tickAsync(100);
     expect(reconcile.calledOnce).toBe(true);
@@ -407,7 +409,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const failure = { cid: 'push-cid', detail: 'retry' };
     fixture.operations.reconcileTarget.onThirdCall().resolves({ pushFailures: [failure] });
     await fixture.coordinator.reconcile(controller);
-    expect(fixture.operations.handlePushFailures.calledOnceWithExactly(LINK_KEY, state, [failure])).toBe(true);
+    expect(fixture.operations.handlePushFailures.calledOnceWithExactly(controller, [failure])).toBe(true);
     expect(fixture.operations.handleDivergence.calledOnce).toBe(true);
   });
 
