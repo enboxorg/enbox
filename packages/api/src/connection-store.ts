@@ -278,6 +278,14 @@ const SNAPSHOT_KEYS: readonly (keyof ConnectionSnapshot)[] = [
 const DISPOSED_MESSAGE =
   '[@enbox/api] ConnectionStore has been disposed and cannot be reused. Create a new store with createConnectionStore().';
 
+/**
+ * Internal sentinel thrown when an action resumes after being superseded by a
+ * newer lifecycle action (`disconnect()` or `dispose()`). Always swallowed by
+ * the generation gate in `_applyActionFailure` — it never reaches callers.
+ */
+const SUPERSEDED_MESSAGE =
+  '[@enbox/api] ConnectionStore action was superseded by a newer lifecycle action.';
+
 /** Shallow-compares two snapshots over the known key set. */
 function snapshotsEqual(a: ConnectionSnapshot, b: ConnectionSnapshot): boolean {
   return SNAPSHOT_KEYS.every((key: keyof ConnectionSnapshot): boolean => a[key] === b[key]);
@@ -294,11 +302,20 @@ function toError(cause: unknown): Error {
  * Concurrency model: connect-type actions are single-flighted through
  * `_pendingAction`; every action bumps `_actionGeneration` and applies its
  * outcome only when still current, so a superseding `disconnect()` or
- * `dispose()` silently discards a stale attempt's late result. While an
- * action is in flight the store trusts that action for phase transitions and
- * ignores `session-start`/`session-end` events (which its own flow raised);
- * outside of actions those events let the store follow auth flows driven
- * directly on the underlying `AuthManager`.
+ * `dispose()` silently discards a stale attempt's late result. Staleness is
+ * re-checked at every await resumption — in particular before a lazily
+ * created `AuthManager` runs any auth flow (`_ensureAuth`), so a superseded
+ * initialize can never call `restoreSession()` and resurrect a session the
+ * user just disconnected. Manager creation is memoized and adoption is pure
+ * resource bookkeeping (performed even for superseded actions) so the
+ * materialized manager is always owned by the store — visible to
+ * `disconnect()`/`dispose()` — rather than leaked; `disconnect()` awaits an
+ * in-flight creation and tears session state down through the materialized
+ * manager before reporting `'disconnected'`. While an action is in flight
+ * the store trusts that action for phase transitions and ignores
+ * `session-start`/`session-end` events (which its own flow raised); outside
+ * of actions those events let the store follow auth flows driven directly on
+ * the underlying `AuthManager`.
  */
 class HeadlessConnectionStore implements ConnectionStore {
   private readonly _authManagerOptions: AuthManagerOptions;
@@ -313,6 +330,7 @@ class HeadlessConnectionStore implements ConnectionStore {
   private _snapshot: ConnectionSnapshot = Object.freeze<ConnectionSnapshot>({ phase: 'initializing' });
   private _stopMonitor?: () => void;
   private _pendingAction?: Promise<ConnectionSnapshot>;
+  private _pendingAuthCreation?: Promise<AuthManager>;
   private _initialized = false;
   private _disposed = false;
   private _actionGeneration = 0;
@@ -426,10 +444,10 @@ class HeadlessConnectionStore implements ConnectionStore {
     this._apply({ error: undefined, phase: 'initializing' });
 
     try {
-      const auth = await this._ensureAuth();
+      const auth = await this._ensureAuth(generation);
       const session = await auth.restoreSession(this._restore);
       if (this._isStale(generation)) {
-        return this._snapshot;
+        return this._settleSuperseded();
       }
 
       this._initialized = true;
@@ -442,6 +460,9 @@ class HeadlessConnectionStore implements ConnectionStore {
       }
       return await this._commitConnected(auth, session, generation);
     } catch (cause: unknown) {
+      if (this._isStale(generation)) {
+        return this._settleSuperseded();
+      }
       return this._applyActionFailure(generation, cause);
     }
   }
@@ -451,10 +472,10 @@ class HeadlessConnectionStore implements ConnectionStore {
     this._apply({ error: undefined, phase: 'connecting' });
 
     try {
-      const auth = await this._ensureAuth();
+      const auth = await this._ensureAuth(generation);
       const session = await flow(auth);
       if (this._isStale(generation)) {
-        return this._snapshot;
+        return this._settleSuperseded();
       }
 
       // A completed connect implies the store is bootstrapped — a later
@@ -463,6 +484,9 @@ class HeadlessConnectionStore implements ConnectionStore {
       this._initialized = true;
       return await this._commitConnected(auth, session, generation);
     } catch (cause: unknown) {
+      if (this._isStale(generation)) {
+        return this._settleSuperseded();
+      }
       return this._applyActionFailure(generation, cause);
     }
   }
@@ -472,14 +496,30 @@ class HeadlessConnectionStore implements ConnectionStore {
     this._stopDelegateMonitor();
 
     try {
-      if (this._auth !== undefined) {
-        await this._auth.disconnect(options);
+      // A disconnect must never resolve while a manager it did not clear can
+      // still materialize: if a superseded initialize/connect is mid-creation,
+      // await the creation and perform the real teardown — clearing persisted
+      // session state per `options` — against the materialized manager. (A
+      // failed creation leaves nothing to clear.)
+      if (this._auth === undefined && this._pendingAuthCreation !== undefined) {
+        const materialized = await this._pendingAuthCreation.catch((): undefined => undefined);
+        if (materialized !== undefined && this._auth === undefined && !this._disposed) {
+          this._adoptAuth(materialized);
+        }
+      }
+
+      const auth = this._auth;
+      if (auth !== undefined) {
+        await auth.disconnect(options);
       }
       if (this._isStale(generation)) {
-        return this._snapshot;
+        return this._settleSuperseded();
       }
       return this._apply({ ...CLEARED_SESSION_FIELDS, phase: 'disconnected' });
     } catch (cause: unknown) {
+      if (this._isStale(generation)) {
+        return this._settleSuperseded();
+      }
       return this._applyActionFailure(generation, cause);
     }
   }
@@ -559,22 +599,61 @@ class HeadlessConnectionStore implements ConnectionStore {
     return this._providedAuth === undefined && this._authManagerOptions.agent === undefined;
   }
 
-  /** Lazily creates (or adopts) the `AuthManager` and wires its events, once. */
-  private async _ensureAuth(): Promise<AuthManager> {
-    if (this._auth !== undefined) {
-      return this._auth;
-    }
+  /**
+   * Lazily creates (or adopts) the `AuthManager`, then re-checks staleness at
+   * the await resumption BEFORE any auth flow can run.
+   *
+   * The staleness check lives here — after adoption — because a superseded
+   * action must release its claim without applying state, while the manager
+   * that materialized must still end up owned by the store (never leaked). A
+   * stale initialize therefore never reaches `restoreSession()`, which is
+   * what would otherwise resurrect a session the user just disconnected.
+   */
+  private async _ensureAuth(generation: number): Promise<AuthManager> {
+    let auth = this._auth;
+    if (auth === undefined) {
+      const materialized = await this._materializeAuth();
 
-    const auth = this._providedAuth ?? await AuthManager.create(this._authManagerOptions);
-    if (this._disposed) {
-      // Disposed while the manager was being created — shut the orphan down
-      // (when store-owned) instead of leaking its storage handles.
-      if (this._wouldOwnAuth) {
-        await auth.shutdown().catch((): void => {});
+      if (this._disposed) {
+        // Disposed while the manager was being created — shut the orphan down
+        // (when store-owned) instead of leaking its storage handles.
+        if (this._auth === undefined && this._wouldOwnAuth) {
+          await materialized.shutdown().catch((): void => {});
+        }
+        throw new Error(DISPOSED_MESSAGE);
       }
-      throw new Error(DISPOSED_MESSAGE);
+
+      // Adoption is resource bookkeeping, not state application — it runs
+      // even for superseded actions so the manager is owned by the store
+      // (visible to `disconnect()`/`dispose()`) rather than dangling. A
+      // concurrent disconnect may have adopted it first.
+      auth = this._auth ?? this._adoptAuth(materialized);
     }
 
+    if (this._isStale(generation)) {
+      throw new Error(SUPERSEDED_MESSAGE);
+    }
+    return auth;
+  }
+
+  /** Memoized manager materialization shared by racing actions. */
+  private _materializeAuth(): Promise<AuthManager> {
+    this._pendingAuthCreation ??= this._createAuth();
+    return this._pendingAuthCreation;
+  }
+
+  private async _createAuth(): Promise<AuthManager> {
+    try {
+      return this._providedAuth ?? await AuthManager.create(this._authManagerOptions);
+    } catch (cause: unknown) {
+      // Clear the memo so a later action can retry the creation.
+      this._pendingAuthCreation = undefined;
+      throw cause;
+    }
+  }
+
+  /** Installs the materialized manager as the store's manager and wires its events. */
+  private _adoptAuth(auth: AuthManager): AuthManager {
     this._auth = auth;
     this._ownsAuth = this._wouldOwnAuth;
     this._wireAuthEvents(auth);
@@ -701,6 +780,20 @@ class HeadlessConnectionStore implements ConnectionStore {
   /** Whether an action outcome is stale — superseded by a newer action or by disposal. */
   private _isStale(generation: number): boolean {
     return this._disposed || generation !== this._actionGeneration;
+  }
+
+  /**
+   * Resolves a superseded action with the superseding action's outcome (when
+   * one is still pending) so a superseded call never reports an intermediate
+   * snapshot. Never self-referential: a non-disposed stale action was
+   * superseded by a `disconnect()` whose `_track` already replaced
+   * `_pendingAction`, and disposal returns the snapshot directly.
+   */
+  private _settleSuperseded(): Promise<ConnectionSnapshot> | ConnectionSnapshot {
+    if (this._disposed || this._pendingAction === undefined) {
+      return this._snapshot;
+    }
+    return this._pendingAction;
   }
 
   private _assertNotDisposed(): void {

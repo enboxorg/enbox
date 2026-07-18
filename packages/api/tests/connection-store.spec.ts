@@ -583,12 +583,19 @@ describe('createConnectionStore()', () => {
     it('should supersede an in-flight connect so its late failure is discarded', async () => {
       const fake = createFakeAuth();
       let rejectConnect!: (error: Error) => void;
-      fake.connect.returns(new Promise((_resolve, reject) => { rejectConnect = reject; }));
+      let connectStarted!: () => void;
+      const started = new Promise<void>((resolve) => { connectStarted = resolve; });
+      fake.connect.callsFake((): Promise<AuthSession> => {
+        connectStarted();
+        return new Promise((_resolve, reject) => { rejectConnect = reject; });
+      });
       fake.disconnect.resolves();
       const store = createConnectionStore({ auth: asAuth(fake) });
 
       const connectPromise = store.connect({ protocols: PROTOCOLS });
       expect(store.getSnapshot().phase).toBe('connecting');
+      // Wait until the auth flow is genuinely in flight before superseding it.
+      await started;
 
       const disconnectPromise = store.disconnect();
       const disconnected = await disconnectPromise;
@@ -709,6 +716,124 @@ describe('createConnectionStore()', () => {
       expect(snapshot).toBe(beforeDispose);
       expect(fake.shutdown.calledOnce).toBe(true);
       expect(store.auth).toBeUndefined();
+    });
+  });
+
+  describe('disconnect vs. in-flight bootstrap', () => {
+    it('should keep an explicit disconnect authoritative over an initialize awaiting manager creation', async () => {
+      // Review finding (high): initialize() gated on AuthManager.create(),
+      // disconnect() during the gate. Previously the disconnect resolved
+      // without a manager to clear, and the stale initialization then adopted
+      // the manager, ran restoreSession(), and its session-start flipped the
+      // store back to 'connected' — while persisted session state survived.
+      const fake = createFakeAuth();
+      const session = createSession({ name: 'Resurrected identity' });
+      // Primed to restore a session — if the stale path ever runs restore,
+      // the store visibly (and wrongly) reconnects.
+      fake.restoreSession.callsFake(async (): Promise<AuthSession> => {
+        fake.session = session;
+        return session;
+      });
+      let resolveCreate!: (auth: AuthManager) => void;
+      const create = sinon.stub(AuthManager, 'create').returns(new Promise((resolve) => { resolveCreate = resolve; }));
+      const store = createConnectionStore({ password: 'pw' });
+
+      const initializePromise = store.initialize();
+      const disconnectPromise = store.disconnect({ clearStorage: true });
+      resolveCreate(asAuth(fake));
+
+      const disconnected = await disconnectPromise;
+      const initialized = await initializePromise;
+      // Let any stray continuations settle before the final assertions.
+      await Promise.resolve();
+
+      expect(disconnected.phase).toBe('disconnected');
+      expect(initialized.phase).toBe('disconnected');
+      expect(store.getSnapshot().phase).toBe('disconnected');
+      expect(store.getSnapshot().session).toBeUndefined();
+      // The superseded initialize never ran restore — no resurrection.
+      expect(fake.restoreSession.called).toBe(false);
+      // The disconnect tore down THROUGH the materialized manager, so
+      // AuthManager.disconnect() cleared persisted session state per its
+      // options (marker clearing is the auth suite's tested contract).
+      expect(fake.disconnect.calledOnce).toBe(true);
+      expect(fake.disconnect.firstCall.args[0]).toEqual({ clearStorage: true });
+      // The materialized manager was adopted, not leaked or discarded.
+      expect(create.calledOnce).toBe(true);
+      expect(store.auth).toBe(asAuth(fake));
+      expect(fake.shutdown.called).toBe(false);
+    });
+
+    it('should let a fresh initialize reuse the adopted manager after the racing disconnect', async () => {
+      const fake = createFakeAuth();
+      let resolveCreate!: (auth: AuthManager) => void;
+      const create = sinon.stub(AuthManager, 'create').returns(new Promise((resolve) => { resolveCreate = resolve; }));
+      const store = createConnectionStore({ password: 'pw' });
+
+      const initializePromise = store.initialize();
+      const disconnectPromise = store.disconnect();
+      resolveCreate(asAuth(fake));
+      await disconnectPromise;
+      await initializePromise;
+
+      const snapshot = await store.initialize();
+
+      expect(snapshot.phase).toBe('disconnected');
+      expect(fake.restoreSession.calledOnce).toBe(true);
+      expect(create.calledOnce).toBe(true);
+    });
+
+    it('should not resurrect a session when disconnect races an in-flight restoreSession', async () => {
+      const fake = createFakeAuth();
+      const session = createSession();
+      let restoreStarted!: () => void;
+      const started = new Promise<void>((resolve) => { restoreStarted = resolve; });
+      let resolveRestore!: (value: AuthSession) => void;
+      fake.restoreSession.callsFake((): Promise<AuthSession> => {
+        restoreStarted();
+        return new Promise((resolve) => { resolveRestore = resolve; });
+      });
+      fake.disconnect.callsFake(async (): Promise<void> => {
+        fake.session = undefined;
+      });
+      const store = createConnectionStore({ auth: asAuth(fake) });
+
+      const initializePromise = store.initialize();
+      await started;
+      const disconnectPromise = store.disconnect();
+      // A session-start emitted by the racing restore flow (the real manager
+      // emits it inside finalizeSession) must not flip the store back.
+      fake.emitter.emit('session-start', {
+        session: { did: session.did, delegateDid: undefined, identity: session.identity },
+      });
+      const disconnected = await disconnectPromise;
+      // The auth layer would reject the invalidated restore; resolving it
+      // with a session is the harsher case — the store must discard it.
+      resolveRestore(session);
+      const initialized = await initializePromise;
+      await Promise.resolve();
+
+      expect(disconnected.phase).toBe('disconnected');
+      expect(initialized.phase).toBe('disconnected');
+      expect(store.getSnapshot().phase).toBe('disconnected');
+      expect(store.getSnapshot().session).toBeUndefined();
+      expect(fake.disconnect.calledOnce).toBe(true);
+    });
+
+    it('should retry manager creation after a failed bootstrap', async () => {
+      const fake = createFakeAuth();
+      const create = sinon.stub(AuthManager, 'create');
+      create.onFirstCall().rejects(new Error('create exploded'));
+      create.onSecondCall().resolves(asAuth(fake));
+      const store = createConnectionStore({ password: 'pw' });
+
+      const failed = await store.initialize();
+      expect(failed.phase).toBe('error');
+      expect(failed.error?.message).toBe('create exploded');
+
+      const retried = await store.initialize();
+      expect(retried.phase).toBe('disconnected');
+      expect(create.callCount).toBe(2);
     });
   });
 
