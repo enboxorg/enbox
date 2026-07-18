@@ -560,6 +560,55 @@ describe('SyncEngineLevel — identity management', () => {
       ).rejects.toThrow('is not registered');
     });
 
+    // --- pending init-retry cancellation on identity mutations ---
+    // The 429 path drops the link controller before arming the Retry-After
+    // timer, so an identity mutation can find no active links and skip the
+    // live-link rebuild entirely. The pending retry captured the superseded
+    // target (old scope, old authorization epoch); it must be cancelled
+    // unconditionally, not only when links are rebuilt.
+
+    it('updateIdentityOptions should cancel a pending init retry even without an active link', async () => {
+      const clock = sinon.useFakeTimers();
+      try {
+        const engine = new SyncEngineLevel({ db });
+        await engine.registerIdentity({ did: 'did:example:staleretry', options: { protocols: 'all' } });
+
+        const initialize = sinon.stub(engine as any, 'initializeLinkTarget').resolves({ status: 'active' });
+        const linkKey = 'did:example:staleretry^https://dwn.example.com^projection-1^epoch-1';
+        (engine as any).scheduleLinkInitRetry({ did: 'did:example:staleretry' }, linkKey, 60_000);
+        expect((engine as any)._runtime.hasTimers((key: string) => key.startsWith('linkInitRetry:'))).toBe(true);
+
+        await engine.updateIdentityOptions({ did: 'did:example:staleretry', options: { protocols: 'all' } });
+
+        expect((engine as any)._runtime.hasTimers((key: string) => key.startsWith('linkInitRetry:'))).toBe(false);
+        await clock.tickAsync(120_000);
+        expect(initialize.called).toBe(false);
+      } finally {
+        clock.restore();
+      }
+    });
+
+    it('unregisterIdentity should cancel a pending init retry even without an active link', async () => {
+      const clock = sinon.useFakeTimers();
+      try {
+        const engine = new SyncEngineLevel({ db });
+        await engine.registerIdentity({ did: 'did:example:staleretry2', options: { protocols: 'all' } });
+
+        const initialize = sinon.stub(engine as any, 'initializeLinkTarget').resolves({ status: 'active' });
+        const linkKey = 'did:example:staleretry2^https://dwn.example.com^projection-1^epoch-1';
+        (engine as any).scheduleLinkInitRetry({ did: 'did:example:staleretry2' }, linkKey, 60_000);
+        expect((engine as any)._runtime.hasTimers((key: string) => key.startsWith('linkInitRetry:'))).toBe(true);
+
+        await engine.unregisterIdentity('did:example:staleretry2');
+
+        expect((engine as any)._runtime.hasTimers((key: string) => key.startsWith('linkInitRetry:'))).toBe(false);
+        await clock.tickAsync(120_000);
+        expect(initialize.called).toBe(false);
+      } finally {
+        clock.restore();
+      }
+    });
+
     // --- removeIdentityFromLiveSync subscription isolation ---
 
     it('removeIdentityFromLiveSync should close and remove subscriptions for the target DID only', async () => {
@@ -847,15 +896,13 @@ describe('SyncEngineLevel — identity management', () => {
       // The half-open link is dropped, not left live...
       expect(engine.hasActiveSubscriptions).toBe(false);
       expect((engine as any)._linkControllers.size).toBe(0);
-      // ...and exactly one Retry-After reattempt is scheduled.
-      expect((engine as any)._linkInitRetryTimers.size).toBe(1);
+      // ...and a Retry-After reattempt is scheduled (arming replaces any
+      // pending timer for the key, so a 429 burst coalesces to one).
+      expect((engine as any)._runtime.hasTimers((key: string) => key.startsWith('linkInitRetry:'))).toBe(true);
       expect(openPullStub.calledOnce).toBe(true);
 
       // Cancel the pending timer so it does not fire against a torn-down engine.
-      for (const timer of (engine as any)._linkInitRetryTimers.values()) {
-        clearTimeout(timer);
-      }
-      (engine as any)._linkInitRetryTimers.clear();
+      (engine as any)._runtime.clearTimers((key: string) => key.startsWith('linkInitRetry:'));
     });
 
     it('addIdentityToLiveSync should establish live sync when the reattempt succeeds after the Retry-After window', async () => {
@@ -894,7 +941,7 @@ describe('SyncEngineLevel — identity management', () => {
 
       expect(openPullStub.callCount).toBe(2);
       expect((engine as any)._linkControllers.size).toBe(1);
-      expect((engine as any)._linkInitRetryTimers.size).toBe(0);
+      expect((engine as any)._runtime.hasTimers((key: string) => key.startsWith('linkInitRetry:'))).toBe(false);
     });
   });
 

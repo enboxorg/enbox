@@ -358,12 +358,12 @@ describe('SyncEngineLevel late subscription callbacks', () => {
       (engine as unknown as {
         scheduleLinkInitRetry(syncTarget: typeof target, key: string, delayMs: number): void;
       }).scheduleLinkInitRetry(target, linkKey, 1_000);
-      expect(engine['_linkInitRetryTimers'].has(linkKey)).toBe(true);
+      expect(engine['_runtime'].hasTimers((key) => key === `linkInitRetry:${linkKey}`)).toBe(true);
 
       engine['activateLink'](linkKey, makeLink({ status: 'live' }) as never);
       await clock.tickAsync(1_000);
 
-      expect(engine['_linkInitRetryTimers'].has(linkKey)).toBe(false);
+      expect(engine['_runtime'].hasTimers((key) => key === `linkInitRetry:${linkKey}`)).toBe(false);
       expect(initialize.called).toBe(false);
     } finally {
       clock.restore();

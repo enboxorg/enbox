@@ -1,6 +1,7 @@
-/** One armed native interval and the token proving it still owns its key. */
-type ArmedInterval = {
-  handle: ReturnType<typeof setInterval>;
+/** One armed native timer and the token proving it still owns its key. */
+type ArmedTimer = {
+  kind: 'interval' | 'timeout';
+  handle: ReturnType<typeof setInterval> | ReturnType<typeof setTimeout>;
   token: symbol;
 };
 
@@ -13,9 +14,9 @@ type ArmedInterval = {
  *
  * Guarantee: a timer callback never STARTS once its key has been replaced or
  * the scope disposed. Cancelling the native timer alone cannot ensure this —
- * `clearInterval` does not retract a firing the event loop has already
- * queued — so every callback is wrapped in an ownership re-check that turns
- * such stale firings into no-ops.
+ * `clearInterval`/`clearTimeout` do not retract a firing the event loop has
+ * already queued — so every callback is wrapped in an ownership re-check
+ * that turns such stale firings into no-ops.
  *
  * Boundary: work that has already started — in particular an async callback
  * body suspended at an `await` — is beyond any timer scope's reach. Such
@@ -29,7 +30,7 @@ type ArmedInterval = {
  */
 export class SyncRuntime {
   private _disposed = false;
-  private readonly _intervals = new Map<string, ArmedInterval>();
+  private readonly _timers = new Map<string, ArmedTimer>();
 
   /** Whether this runtime generation has been torn down. */
   public get disposed(): boolean {
@@ -46,36 +47,86 @@ export class SyncRuntime {
     const handle = setInterval((): void => {
       // A firing queued before a replacement or disposal still reaches here;
       // the ownership check is what makes it a no-op rather than stale work.
-      if (this._disposed || this._intervals.get(key)?.token !== token) {
+      if (this._disposed || this._timers.get(key)?.token !== token) {
         return;
       }
       callback();
     }, delayMs);
-    this._intervals.set(key, { handle, token });
+    this._timers.set(key, { kind: 'interval', handle, token });
   }
 
   /** Arm a repeating timer only when the key is currently unarmed. */
   public armIntervalIfAbsent(key: string, callback: () => void, delayMs: number): void {
-    if (!this._intervals.has(key)) {
+    if (!this._timers.has(key)) {
       this.armInterval(key, callback, delayMs);
+    }
+  }
+
+  /**
+   * Arm (or replace) a one-shot timer owned by this scope. No-op once
+   * disposed. The key unarms itself immediately before the callback runs, so
+   * the callback may re-arm the same key.
+   */
+  public armTimeout(key: string, callback: () => void, delayMs: number): void {
+    if (this._disposed) {
+      return;
+    }
+    this.clearTimer(key);
+    const token = Symbol(key);
+    const handle = setTimeout((): void => {
+      // Same ownership re-check as intervals: a firing queued before a
+      // replacement or disposal must not start the callback.
+      if (this._disposed || this._timers.get(key)?.token !== token) {
+        return;
+      }
+      this._timers.delete(key);
+      callback();
+    }, delayMs);
+    this._timers.set(key, { kind: 'timeout', handle, token });
+  }
+
+  /** Whether any armed timer's key satisfies the predicate. */
+  public hasTimers(predicate: (key: string) => boolean): boolean {
+    for (const key of this._timers.keys()) {
+      if (predicate(key)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Cancel every owned timer whose key satisfies the predicate. */
+  public clearTimers(predicate: (key: string) => boolean): void {
+    for (const key of [...this._timers.keys()]) {
+      if (predicate(key)) {
+        this.clearTimer(key);
+      }
     }
   }
 
   /** Cancel one owned timer. Safe for unarmed keys and disposed scopes. */
   public clearTimer(key: string): void {
-    const armed = this._intervals.get(key);
+    const armed = this._timers.get(key);
     if (armed !== undefined) {
-      clearInterval(armed.handle);
-      this._intervals.delete(key);
+      SyncRuntime.clearNativeTimer(armed);
+      this._timers.delete(key);
     }
   }
 
   /** Cancel every owned timer and refuse further arming. Idempotent. */
   public dispose(): void {
     this._disposed = true;
-    for (const armed of this._intervals.values()) {
-      clearInterval(armed.handle);
+    for (const armed of this._timers.values()) {
+      SyncRuntime.clearNativeTimer(armed);
     }
-    this._intervals.clear();
+    this._timers.clear();
+  }
+
+  private static clearNativeTimer(armed: ArmedTimer): void {
+    if (armed.kind === 'interval') {
+      clearInterval(armed.handle);
+    } else {
+      clearTimeout(armed.handle);
+    }
   }
 }
