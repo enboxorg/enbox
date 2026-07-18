@@ -64,7 +64,6 @@ import type {
 import { AgentPermissionsApi } from './permissions-api.js';
 
 import { admitClosure } from './sync-admit-closure.js';
-import { buildSyncMessageStoreLevelKey } from './sync-message-store-level.js';
 import { DwnInterface } from './types/dwn.js';
 import { runWithCrossContextLock } from './sync-cross-context-lock.js';
 import { SyncConnectivityManager } from './sync-connectivity-manager.js';
@@ -785,13 +784,12 @@ export class SyncEngineLevel implements SyncEngine {
     // unregistered — cancel it unconditionally.
     this.cancelLinkInitRetriesForDid(did);
 
-    await this._identityStore.delete(did);
+    await this.runDeferredPullLifecycle(did, async (): Promise<void> => {
+      await this._identityStore.delete(did);
+      await this._deferredPullStore.deleteTenant(did);
+    });
     this.invalidateSyncTargetsCache();
     await this.clearQuotaBlocksForTenant(did);
-    // Deferred-pull retry state is tenant-scoped bookkeeping. Rows left
-    // behind would seed a stale firstDeferredAt after a re-registration and
-    // instantly dead-letter the first deferral of the same CID.
-    await this._deferredPullStore.deleteTenant(did);
     await this.pruneSupersededDurableLinksForIdentity(did, new Set());
   }
 
@@ -2540,7 +2538,7 @@ export class SyncEngineLevel implements SyncEngine {
   private async trackRemoteFeedAppliedCids(messageCids: string[], target: SyncTarget): Promise<void> {
     for (const cid of messageCids) {
       this._echoSuppressor.trackPulled(target.did, cid, target.dwnUrl);
-      await this.runDeferredPullLifecycle(target.did, cid, target.dwnUrl, async (): Promise<void> => {
+      await this.runDeferredPullLifecycle(target.did, async (): Promise<void> => {
         await this.clearDeferredPull(target.did, target.dwnUrl, cid);
         await this.clearFailedMessageForTenant(target.did, cid, target.dwnUrl);
       });
@@ -2558,7 +2556,7 @@ export class SyncEngineLevel implements SyncEngine {
     entry: MessagesQueryReplyEntry,
     detail: string | undefined,
   ): Promise<boolean> {
-    return this.runDeferredPullLifecycle(target.did, entry.messageCid, target.dwnUrl, async (): Promise<boolean> => {
+    return this.runDeferredPullLifecycle(target.did, async (): Promise<boolean> => {
       const state = await this.recordDeferredPull(target, entry.messageCid, detail);
       if (state === undefined) {
         return true;
@@ -2592,6 +2590,10 @@ export class SyncEngineLevel implements SyncEngine {
     messageCid: string,
     detail: string | undefined,
   ): Promise<SyncDeferredPullState | undefined> {
+    if (await this._identityStore.get(target.did) === undefined) {
+      return undefined;
+    }
+
     const now = new Date().toISOString();
     const previous = await this._deferredPullStore.get(target.did, messageCid, target.dwnUrl);
 
@@ -2615,15 +2617,12 @@ export class SyncEngineLevel implements SyncEngine {
     await this._deferredPullStore.delete(tenantDid, messageCid, dwnUrl);
   }
 
-  /** Serialize the complete deferred/dead-letter lifecycle for one remote message. */
+  /** Serialize deferred/dead-letter lifecycle mutations with tenant unregister. */
   private async runDeferredPullLifecycle<T>(
     tenantDid: string,
-    messageCid: string,
-    remoteEndpoint: string,
     operation: () => Promise<T>,
   ): Promise<T> {
-    const key = buildSyncMessageStoreLevelKey(tenantDid, messageCid, remoteEndpoint);
-    return runWithCrossContextLock(`enbox:sync-deferred-pull:${key}`, operation);
+    return runWithCrossContextLock(`enbox:sync-deferred-pull:${tenantDid}`, operation);
   }
 
   private getQuotaBlockState(target: SyncTarget, messageCid: string): Promise<SyncQuotaBlockState | undefined> {

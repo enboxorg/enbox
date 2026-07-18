@@ -155,6 +155,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
       firstDeferredAt : new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
       lastDeferredAt  : new Date().toISOString(),
     };
+    await registerTenant(tenantDid);
     await db.sublevel('deferredPulls').put(key, JSON.stringify(deferredState));
 
     const target: SyncTarget = {
@@ -201,6 +202,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
       firstDeferredAt : new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
       lastDeferredAt  : new Date().toISOString(),
     };
+    await registerTenant(tenantDid);
     await store.put(tenantDid, messageCid, remoteEndpoint, aged);
 
     const secondReadCompleted = deferred<void>();
@@ -265,6 +267,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
       firstDeferredAt : new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
       lastDeferredAt  : new Date().toISOString(),
     };
+    await registerTenant(tenantDid);
     await store.put(tenantDid, messageCid, remoteEndpoint, aged);
 
     const finalReadCompleted = deferred<void>();
@@ -340,6 +343,100 @@ describe('SyncEngineLevel dead letter tracking', () => {
     expect(await store.get('did:example:bob', 'cid-2', remoteEndpoint)).toBeDefined();
   });
 
+  it('should serialize unregister after an in-flight deferred write from another engine', async () => {
+    const messageCid = 'cid-raced-unregister';
+    const remoteEndpoint = 'https://dwn.example';
+    const tenantDid = 'did:example:alice';
+    const expiryEngine = new SyncEngineLevel({ db });
+    const unregisterEngine = new SyncEngineLevel({ db });
+    const store = (expiryEngine as unknown as { _deferredPullStore: SyncDeferredPullStore })._deferredPullStore;
+    const state: SyncDeferredPullState = {
+      attempts        : 1,
+      firstDeferredAt : new Date().toISOString(),
+      lastDeferredAt  : new Date().toISOString(),
+    };
+    await registerTenant(tenantDid);
+    await store.put(tenantDid, messageCid, remoteEndpoint, state);
+
+    const finalReadCompleted = deferred<void>();
+    const releaseFinalRead = deferred<void>();
+    const originalGet = store.get.bind(store);
+    let readCount = 0;
+    sinon.stub(store, 'get').callsFake(async (
+      did: string,
+      cid: string,
+      endpoint: string,
+    ): Promise<SyncDeferredPullState | undefined> => {
+      const current = await originalGet(did, cid, endpoint);
+      readCount++;
+      if (readCount === 2) {
+        finalReadCompleted.resolve();
+        await releaseFinalRead.promise;
+      }
+      return current;
+    });
+
+    const expiryInternal = expiryEngine as unknown as {
+      deadLetterExpiredDeferredPull(
+        target: SyncTarget,
+        entry: MessagesQueryReplyEntry,
+        detail: string | undefined,
+      ): Promise<boolean>;
+    };
+    const expiry = expiryInternal.deadLetterExpiredDeferredPull(
+      target(tenantDid),
+      { messageCid },
+      'dependency unavailable',
+    );
+    await finalReadCompleted.promise;
+
+    let unregisterCompleted = false;
+    const unregister = unregisterEngine.unregisterIdentity(tenantDid).then((): void => {
+      unregisterCompleted = true;
+    });
+    await Promise.resolve();
+
+    expect(unregisterCompleted).toBe(false);
+
+    releaseFinalRead.resolve();
+    expect(await expiry).toBe(false);
+    await unregister;
+
+    expect(await unregisterEngine.getIdentityOptions(tenantDid)).toBeUndefined();
+    expect(await store.get(tenantDid, messageCid, remoteEndpoint)).toBeUndefined();
+    expect(await syncEngine.getFailedMessages(tenantDid)).toEqual([]);
+  });
+
+  it('should reject stale deferred work from another engine after unregister', async () => {
+    const messageCid = 'cid-stale-after-unregister';
+    const remoteEndpoint = 'https://dwn.example';
+    const tenantDid = 'did:example:alice';
+    const staleEngine = new SyncEngineLevel({ db });
+    const unregisterEngine = new SyncEngineLevel({ db });
+    const staleTarget = target(tenantDid);
+    const store = (staleEngine as unknown as { _deferredPullStore: SyncDeferredPullStore })._deferredPullStore;
+    await registerTenant(tenantDid);
+
+    await unregisterEngine.unregisterIdentity(tenantDid);
+
+    const staleInternal = staleEngine as unknown as {
+      deadLetterExpiredDeferredPull(
+        target: SyncTarget,
+        entry: MessagesQueryReplyEntry,
+        detail: string | undefined,
+      ): Promise<boolean>;
+    };
+    expect(await staleInternal.deadLetterExpiredDeferredPull(
+      staleTarget,
+      { messageCid },
+      'dependency unavailable',
+    )).toBe(true);
+
+    expect(await store.get(tenantDid, messageCid, remoteEndpoint)).toBeUndefined();
+    expect(await syncEngine.getFailedMessages(tenantDid)).toEqual([]);
+    expect(await unregisterEngine.getIdentityOptions(tenantDid)).toBeUndefined();
+  });
+
   function target(did: string): SyncTarget {
     return {
       authorization      : { kind: 'owner' },
@@ -365,6 +462,10 @@ describe('SyncEngineLevel dead letter tracking', () => {
       remoteEndpoint : params.remoteEndpoint,
       tenantDid      : params.tenantDid,
     });
+  }
+
+  async function registerTenant(tenantDid: string): Promise<void> {
+    await db.sublevel('registeredIdentities').put(tenantDid, JSON.stringify({ protocols: 'all' }));
   }
 
   function deferred<Value>(): Deferred<Value> {
