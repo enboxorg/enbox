@@ -213,18 +213,25 @@ export type ProcessDwnRequest<T extends DwnInterface> = DwnRequest<T> & {
    * The recipient computes this public key locally and carries it out of band —
    * e.g. in a signed join request — for the owner to supply here.
    *
-   * Supplying this key asserts that delivery MUST succeed: if the delivery cannot
-   * be provisioned, the write throws. When omitted, delivery is best-effort — the
-   * agent resolves the recipient's key from its installed protocol definition
-   * (local, then via the recipient's DWN), and a recipient whose key cannot be
-   * resolved is reported via {@link DwnResponse.audienceKeyDelivery} with
+   * Delivery provisioning is always BEST-EFFORT. A supplied key is validated
+   * BEFORE the write (shape, usability, and that the write targets a deliverable
+   * role audience — caller misuse throws with nothing written), but once the
+   * `$role` write is accepted, a delivery that cannot be provisioned is reported
+   * via {@link DwnResponse.audienceKeyDelivery} with `delivered: false` — the
+   * accepted write is never unwound. A supplied key only chooses which key the
+   * delivery is wrapped to (skipping recipient DID resolution) and guarantees an
+   * outcome is always reported, so the caller can enforce its own delivery
+   * policy. When omitted, the agent resolves the recipient's key from its
+   * installed protocol definition (local, then via the recipient's DWN), and a
+   * recipient whose key cannot be resolved is likewise reported with
    * `delivered: false` rather than failing the write.
    *
    * The agent validates the key's shape and usability, but NOT that it truly belongs
    * to the recipient — that binding rests entirely on the out-of-band channel the
    * caller trusts (e.g. the signed join request). The caller owns key authenticity.
-   * Not supported on grant-authorized writes (`permissionGrantId`/`delegatedGrant`),
-   * which cannot roll back a strict failure.
+   * Supported on grant-authorized writes (`permissionGrantId`/`delegatedGrant`):
+   * a delivery failure is reported on the response, never thrown, so no delete
+   * authorization is ever needed to unwind the write.
    */
   recipientRolePublicKey?: PublicKeyJwk;
 };
@@ -238,11 +245,19 @@ export type SendDwnRequest<T extends DwnInterface> = DwnRequest<T> & (ProcessDwn
  */
 export type AudienceKeyDeliveryOutcome =
   | {
-      /** A `$encryption/delivery` record was written for the recipient. */
+      /** A `$encryption/delivery` record wrapping the current audience key exists for the recipient. */
       delivered: true;
 
       /** The recipient the role-audience key was delivered to. */
       recipientDid: string;
+
+      /**
+       * Set when a delivery for the CURRENT audience key already existed for the
+       * recipient, so no new record was written. Only reported by
+       * `AgentDwnApi.reprovisionAudienceKeyDelivery` (delivery provisioning on a
+       * fresh `$role` write always writes).
+       */
+      alreadyDelivered?: true;
     }
   | {
       /** No `$encryption/delivery` record was written for the recipient. */
@@ -252,11 +267,65 @@ export type AudienceKeyDeliveryOutcome =
       recipientDid: string;
 
       /**
-       * Why best-effort delivery was skipped — e.g. the recipient publishes no
-       * resolvable DWN endpoint and supplied no `recipientRolePublicKey`.
-       * Required on the failure branch. (A supplied key that fails to deliver
-       * throws rather than surfacing here.)
+       * Why best-effort delivery was skipped or failed — e.g. the recipient
+       * publishes no resolvable DWN endpoint and no `recipientRolePublicKey` was
+       * supplied, or the delivery write itself was rejected. Required on the
+       * failure branch. Supplied-key failures surface here too; only pre-write
+       * validation of a supplied key throws.
        */
+      reason: string;
+    };
+
+/**
+ * Result of `AgentDwnApi.getAudienceKeyDeliveryStatus` — whether a
+ * `$encryption/delivery` record wraps the CURRENT role-audience key of one
+ * audience tuple to one recipient.
+ */
+export type AudienceKeyDeliveryStatus =
+  | {
+      /**
+       * A delivery record wrapping the CURRENT audience key exists for the
+       * recipient. This asserts the record's existence only — not that the
+       * recipient can decrypt it (e.g. a delivery wrapped to a mistaken
+       * caller-supplied key still counts as delivered).
+       */
+      status: 'delivered';
+
+      /** The recipient the delivery status was resolved for. */
+      recipientDid: string;
+
+      /** The current audience key id the delivery record wraps. */
+      keyId: string;
+    }
+  | {
+      /** No delivery record wraps the CURRENT audience key to the recipient. */
+      status: 'not-delivered';
+
+      /** The recipient the delivery status was resolved for. */
+      recipientDid: string;
+
+      /**
+       * The current audience key id deliveries were matched against. Absent when
+       * no audience record exists for the tuple at all (nothing was ever
+       * provisioned, so nothing could have been delivered).
+       */
+      keyId?: string;
+
+      /** Why the status is not-delivered. */
+      reason: string;
+    }
+  | {
+      /**
+       * The caller operates as a delegate, whose view of third-party delivery
+       * records is visibility-filtered by the DWN — empty query results would be
+       * structural, not evidence of non-delivery — so no query was issued.
+       */
+      status: 'unverifiable';
+
+      /** The recipient the delivery status was requested for. */
+      recipientDid: string;
+
+      /** Why the status cannot be determined from this caller's context. */
       reason: string;
     };
 
@@ -268,10 +337,13 @@ export type DwnResponse<T extends DwnInterface> = {
   /**
    * Present only for accepted `$role` record writes that triggered role-audience
    * key delivery provisioning. Reports whether the recipient's
-   * `$encryption/delivery` record was written. On the best-effort path (no
-   * `recipientRolePublicKey` supplied), a recipient whose key could not be
-   * resolved is reported here with `delivered: false` instead of failing the
-   * write. A supplied key that fails to deliver throws instead of surfacing here.
+   * `$encryption/delivery` record was written — always best-effort: a delivery
+   * that cannot be provisioned (a recipient key that cannot be resolved with no
+   * key supplied, or a supplied-key delivery that fails to wrap or write) is
+   * reported here with `delivered: false` instead of failing or unwinding the
+   * accepted write. Only pre-write validation of a supplied
+   * `recipientRolePublicKey` throws; a supplied key always yields an outcome
+   * here (delivered, or a reported failure).
    */
   audienceKeyDelivery?: AudienceKeyDeliveryOutcome;
 };

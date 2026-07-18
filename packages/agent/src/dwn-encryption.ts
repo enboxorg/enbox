@@ -126,13 +126,14 @@ type HydrateAudienceKeyParams = {
   delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
 };
 
-type AudienceDeliveryReadActor = {
+/** The actor a `$encryption/delivery` query is authored as (optionally via a delegated grant). */
+export type AudienceDeliveryReadActor = {
   authorDid: string;
   delegatedGrant?: DataEncodedRecordsWriteMessage;
   granteeDid?: string;
 };
 
-type EncodedRecordsWriteMessage = RecordsWriteMessage & { encodedData?: string };
+export type EncodedRecordsWriteMessage = RecordsWriteMessage & { encodedData?: string };
 
 
 type AudienceRecordCandidate = {
@@ -1442,8 +1443,27 @@ async function hydrateAudienceKeyFromSeal(
   return undefined;
 }
 
-async function queryAudienceDeliveryMessages(
-  params: HydrateAudienceKeyParams,
+/**
+ * Queries the source tenant for `$encryption/delivery` records that wrap ONE
+ * exact audience tuple (protocol, rolePath, contextId, keyId) to `recipientDid`.
+ * Matching on the audience `keyId` is what distinguishes a delivery of the
+ * CURRENT audience key from a stale delivery of a superseded one.
+ *
+ * Visibility caveat: the DWN filters delivery records for non-tenant actors — a
+ * delegate querying its grantor's tenant can never see a third-party
+ * collaborator's delivery, so an empty result under a delegate actor is
+ * structural, not evidence of non-delivery.
+ */
+export async function queryAudienceDeliveryMessages(
+  params: {
+    agent: EnboxPlatformAgent;
+    sourceDid: string;
+    recipientDid: string;
+    protocol: string;
+    rolePath: string;
+    contextId: string;
+    keyId: string;
+  },
   deliveryReadActor: AudienceDeliveryReadActor,
 ): Promise<EncodedRecordsWriteMessage[]> {
   const { reply } = await processDwnRequestWithRemoteFallback(params.agent, {
