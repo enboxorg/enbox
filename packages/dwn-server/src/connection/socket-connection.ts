@@ -62,7 +62,9 @@ export class SocketConnection {
         // A dead peer cannot complete a close handshake — tear the socket
         // down immediately so its resources and NAT/proxy entries free up,
         // then release subscriptions and flow controllers.
-        try { this.socket.terminate(); } catch { /* best effort */ }
+        try {
+          this.socket.terminate();
+        } catch { /* best effort */ }
         void this.close();
         return;
       }
