@@ -369,4 +369,96 @@ describe('SyncDurableFeedReconciler', () => {
     expect(await fixture.reconciler.verifyConvergence(target())).toMatchObject({ converged: false });
     expect(fixture.operations.clearResolvedQuotaOmissions.called).toBe(false);
   });
+
+  // Convergence verification is a LATER observation than the pull and push
+  // phases, deliberately: writers other than this device — another device,
+  // a server-side actor, or this run's own partially-applied pushes — can
+  // move either feed while a reconciliation is in flight. The verdict, and
+  // the state-clearing side effects hanging off it, must come from fresh
+  // probes of both feeds, never from fingerprints cached earlier in the run.
+  describe('convergence verification freshness contract', () => {
+    function probeCalls(fixture: ReconcilerFixture, source?: 'local' | 'remote'): SyncDurableFeedQuery[] {
+      return fixture.queryFeed.getCalls()
+        .map(({ args }) => args[0] as SyncDurableFeedQuery)
+        .filter((query) => query.limit === 1 && (source === undefined || query.source === source));
+    }
+
+    it('should observe a remote write that lands between the pull and verification', async () => {
+      const fixture = createReconciler();
+      fixture.link.pull.contiguousAppliedToken = token(1);
+      fixture.link.push.contiguousAppliedToken = token(1);
+      fixture.queryFeed.callsFake(async ({ limit, source }: SyncDurableFeedQuery): Promise<MessagesQueryReply> => {
+        if (limit === 1) {
+          // By verification time another writer moved the remote feed.
+          return reply({ cursor: token(source === 'remote' ? 2 : 1), fingerprint: source === 'remote' ? 'B' : 'A' });
+        }
+        return reply({ cursor: token(1), fingerprint: 'A' });
+      });
+
+      const result = await fixture.reconciler.reconcile(target(), { verifyConvergence: true });
+
+      expect(probeCalls(fixture)).toHaveLength(2);
+      expect(result).toMatchObject({
+        converged         : false,
+        localFingerprint  : 'A',
+        remoteFingerprint : 'B',
+      });
+      expect(fixture.operations.clearResolvedQuotaOmissions.called).toBe(false);
+    });
+
+    it('should observe a local write that lands after the push-phase local sample', async () => {
+      const fixture = createReconciler();
+      fixture.link.pull.contiguousAppliedToken = token(1);
+      fixture.link.push.contiguousAppliedToken = token(1);
+      fixture.queryFeed.callsFake(async ({ limit, source }: SyncDurableFeedQuery): Promise<MessagesQueryReply> => {
+        if (limit === 1) {
+          // A local write landed after the push phase sampled the local feed.
+          return reply({ cursor: token(source === 'local' ? 2 : 1), fingerprint: source === 'local' ? 'B' : 'A' });
+        }
+        return reply({ cursor: token(1), fingerprint: 'A' });
+      });
+
+      const result = await fixture.reconciler.reconcile(target(), { verifyConvergence: true });
+
+      expect(probeCalls(fixture)).toHaveLength(2);
+      expect(result).toMatchObject({
+        converged         : false,
+        localFingerprint  : 'B',
+        remoteFingerprint : 'A',
+      });
+      expect(fixture.operations.clearResolvedQuotaOmissions.called).toBe(false);
+    });
+
+    it('should observe remote movement from a mixed push that reports no actionable diffs', async () => {
+      const fixture = createReconciler();
+      fixture.link.pull.contiguousAppliedToken = token(1);
+      fixture.link.push.contiguousAppliedToken = token(1);
+      fixture.queryFeed.callsFake(async ({ limit, source }: SyncDurableFeedQuery): Promise<MessagesQueryReply> => {
+        if (limit === 1) {
+          // The staged dependency applied remotely even though the root was
+          // rejected — both feeds now fingerprint at the post-write value.
+          return reply({ cursor: token(3), fingerprint: 'B' });
+        }
+        if (source === 'local') {
+          return reply({ cursor: token(2), entries: [{ messageCid: 'root' }], fingerprint: 'A' });
+        }
+        return reply({ cursor: token(1), fingerprint: 'A' });
+      });
+      // A mixed push outcome: the root entry was terminally rejected (skipped,
+      // no actionable diffs) while its staged quota-blocked dependency was
+      // applied — the remote feed changed despite the quiet aggregate result.
+      fixture.operations.pushLocalPage.resolves({ kind: 'processed', hasActionableDiffs: false });
+
+      const result = await fixture.reconciler.reconcile(target(), { verifyConvergence: true });
+
+      expect(probeCalls(fixture, 'remote')).toHaveLength(1);
+      // The verdict reflects the post-push remote state, not the pull-time
+      // snapshot ('A') a fingerprint-reuse shortcut would have compared.
+      expect(result).toMatchObject({
+        converged         : true,
+        localFingerprint  : 'B',
+        remoteFingerprint : 'B',
+      });
+    });
+  });
 });
