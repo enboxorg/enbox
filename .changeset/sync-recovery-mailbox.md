@@ -18,4 +18,9 @@ externally paused link is now a cancellation fence for an in-flight
 repair — the repair abandons the link at every checkpoint instead of
 reopening subscriptions and marking a revoked-authorization pause live
 again — and a reconcile timer that expires during a repair no longer
-produces a duplicate post-repair verification pass.
+produces a duplicate post-repair verification pass. The
+fence extends through completion and failure handling: a pause landing
+after subscriptions reopen still cancels the repair before it marks the
+link live, and repair or reconciliation I/O that rejects after an
+external pause stays quiet instead of reporting an error and rearming
+retry timers the pause just cancelled.

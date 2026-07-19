@@ -508,6 +508,77 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(fixture.operations.emitEvent.calledWithMatch({ type: 'repair:completed' })).toBe(false);
   });
 
+  it('does not revive a link paused in the gap between reopening subscriptions and completion', async () => {
+    const fixture = createFixture();
+    const state = link('repairing');
+    const controller = activate(fixture, state);
+    const pushOpened = deferred<void>();
+    fixture.operations.openPushSubscription.callsFake(async (): Promise<boolean> => {
+      pushOpened.resolve();
+      return true;
+    });
+
+    const repairing = fixture.coordinator.repair(controller);
+    await pushOpened.promise;
+    // Land the pause in the continuation gap between the reopen path's final
+    // cancellation check and completeRepair's status write — the window a
+    // terminal callback from the freshly reopened subscription occupies.
+    await Promise.resolve();
+    const pausing = fixture.coordinator.transitionToPaused(LINK_KEY, state);
+    await Promise.all([repairing, pausing]);
+
+    expect(state.status).toBe('paused');
+    expect(state.connectivity).toBe('offline');
+    expect(fixture.operations.emitEvent.calledWithMatch({ type: 'repair:completed' })).toBe(false);
+    expect(controller.reconcileTimer).toBeUndefined();
+  });
+
+  it('stays quiet when reconciliation rejects after an external pause', async () => {
+    const fixture = createFixture();
+    const state = link();
+    const controller = activate(fixture, state);
+    const started = deferred<void>();
+    const release = deferred<void>();
+    fixture.operations.reconcileTarget.callsFake(async () => {
+      started.resolve();
+      await release.promise;
+      throw new Error('socket closed by pause teardown');
+    });
+
+    const reconciling = fixture.coordinator.reconcile(controller);
+    await started.promise;
+    await fixture.coordinator.transitionToPaused(LINK_KEY, state);
+    release.resolve();
+    await reconciling;
+
+    expect(fixture.operations.reportError.notCalled).toBe(true);
+    expect(controller.reconcileTimer).toBeUndefined();
+  });
+
+  it('stays quiet when repair rejects after an external pause', async () => {
+    const fixture = createFixture();
+    const state = link('repairing');
+    const controller = activate(fixture, state);
+    const started = deferred<void>();
+    const release = deferred<void>();
+    fixture.operations.reconcileTarget.callsFake(async () => {
+      started.resolve();
+      await release.promise;
+      throw new Error('socket closed by pause teardown');
+    });
+
+    const repairing = fixture.coordinator.repair(controller);
+    await started.promise;
+    await fixture.coordinator.transitionToPaused(LINK_KEY, state);
+    release.resolve();
+    await repairing;
+
+    expect(fixture.operations.reportError.notCalled).toBe(true);
+    expect(fixture.operations.emitEvent.calledWithMatch({ type: 'repair:failed' })).toBe(false);
+    expect(controller.repairRetryTimer).toBeUndefined();
+    expect(state.status).toBe('paused');
+  });
+
   it('runs exactly one verification pass when a reconcile timer expires during repair', async () => {
     const clock = sinon.useFakeTimers();
     const fixture = createFixture({ reconcileDelayMs: 100 });

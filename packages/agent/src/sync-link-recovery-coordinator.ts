@@ -315,6 +315,9 @@ export class SyncLinkRecoveryCoordinator {
       if (!await this.reopenSubscriptions(target, controller, runtimeScope)) {
         return;
       }
+      if (this.repairCancelled(controller, runtimeScope)) {
+        return;
+      }
 
       await this.completeRepair(controller, runtimeScope, outcome.pushFailures ?? []);
     } catch (error: unknown) {
@@ -381,18 +384,25 @@ export class SyncLinkRecoveryCoordinator {
     runtimeScope: SyncRuntimeHandle,
     pushFailures: PushFailure[],
   ): Promise<void> {
+    // A pause can land in the continuation gap after the reopen path's final
+    // check — a terminal callback from the freshly reopened subscription is
+    // enough. Completion must not revive it.
+    if (this.repairCancelled(controller, runtimeScope)) {
+      return;
+    }
+
     const { link } = controller;
     controller.clearRepairProgress();
     const previousConnectivity = link.connectivity;
     link.connectivity = 'online';
     await this._operations.setStatus(link, 'live');
-    if (this.isStale(controller, runtimeScope)) {
+    if (this.repairCancelled(controller, runtimeScope)) {
       return;
     }
 
     if (pushFailures.length > 0) {
       await this._operations.handlePushFailures(controller, pushFailures);
-      if (this.isStale(controller, runtimeScope)) {
+      if (this.repairCancelled(controller, runtimeScope)) {
         return;
       }
     }
@@ -430,7 +440,10 @@ export class SyncLinkRecoveryCoordinator {
     attempts: number,
     error: unknown,
   ): Promise<void> {
-    if (this.isStale(controller, runtimeScope)) {
+    // A repair failing after an external pause is the pause tearing down the
+    // repair's I/O — stay quiet instead of reporting, emitting repair:failed,
+    // or feeding the retry ladder.
+    if (this.repairCancelled(controller, runtimeScope)) {
       return;
     }
 
@@ -511,7 +524,10 @@ export class SyncLinkRecoveryCoordinator {
         await this._operations.handleDivergence(target, outcome, { link, linkKey });
       }
     } catch (error: unknown) {
-      if (this.isStale(controller, runtimeScope)) {
+      // A rejection landing after an external pause (or a repair transition)
+      // is the teardown, not a fault: reporting it and rearming the retry
+      // timer would revive work the pause just cancelled.
+      if (!shouldContinue()) {
         return;
       }
       this._operations.reportError(
