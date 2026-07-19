@@ -534,4 +534,3 @@ function recordsWriteMessage({ dataCid }: { dataCid?: string }): GenericMessage 
     },
   } as GenericMessage;
 }
-

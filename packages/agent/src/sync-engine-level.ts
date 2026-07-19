@@ -1033,6 +1033,10 @@ export class SyncEngineLevel implements SyncEngine {
 
   private async startSyncRuntime(params: StartSyncParams): Promise<void> {
     const mode = params.mode;
+    if (mode !== 'live' && mode !== 'poll') {
+      throw new Error(`SyncEngineLevel: startSync requires mode 'live' or 'poll'.`);
+    }
+
     const intervalStr = params.interval ?? (mode === 'live' ? '5m' : '2m');
     const intervalMilliseconds = parseDurationInMilliseconds(intervalStr);
 

@@ -917,4 +917,3 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(reconcileController.mailboxBusy('reconcile')).toBe(false);
   });
 });
-

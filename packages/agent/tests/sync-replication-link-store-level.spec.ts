@@ -264,6 +264,51 @@ describe('SyncReplicationLinkStoreLevel', () => {
     expect(await store.getAllLinks()).toEqual([]);
   });
 
+  it('should keep a deleted link absent when the deletion and a checkpoint persist genuinely overlap', async () => {
+    // Ordering 1: the deletion starts first and the checkpoint persist joins
+    // mid-flight. The store serializes per link key, so starting both promises
+    // before awaiting either drives a genuine overlap.
+    const deleteFirstLink = await store.getOrCreateLink({
+      tenantDid      : 'did:example:alice',
+      remoteEndpoint : 'https://dwn.example.com',
+      scope          : { kind: 'full' },
+      ...ownerAuthorization,
+    });
+    deleteFirstLink.pull = { contiguousAppliedToken: token(1) };
+
+    const deletion = store.deleteLink(
+      deleteFirstLink.tenantDid,
+      deleteFirstLink.remoteEndpoint,
+      deleteFirstLink.projectionId,
+      deleteFirstLink.authorizationEpoch,
+    );
+    const overlappingPersist = store.persistCheckpoint(deleteFirstLink, 'pull');
+    await Promise.all([deletion, overlappingPersist]);
+
+    expect(await store.getAllLinks()).toEqual([]);
+
+    // Ordering 2: the checkpoint persist starts first and the deletion joins
+    // mid-flight. The delete must win: the update must not resurrect the link.
+    const updateFirstLink = await store.getOrCreateLink({
+      tenantDid      : 'did:example:alice',
+      remoteEndpoint : 'https://dwn.example.com',
+      scope          : { kind: 'full' },
+      ...ownerAuthorization,
+    });
+    updateFirstLink.pull = { contiguousAppliedToken: token(2) };
+
+    const leadingPersist = store.persistCheckpoint(updateFirstLink, 'pull');
+    const overlappingDeletion = store.deleteLink(
+      updateFirstLink.tenantDid,
+      updateFirstLink.remoteEndpoint,
+      updateFirstLink.projectionId,
+      updateFirstLink.authorizationEpoch,
+    );
+    await Promise.all([leadingPersist, overlappingDeletion]);
+
+    expect(await store.getAllLinks()).toEqual([]);
+  });
+
   it('should reset one direction while retaining the other checkpoint', async () => {
     const link = await store.getOrCreateLink({
       tenantDid      : 'did:example:alice',

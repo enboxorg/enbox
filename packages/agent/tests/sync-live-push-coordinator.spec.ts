@@ -589,4 +589,3 @@ describe('SyncLivePushCoordinator', () => {
     controller.deactivate();
   });
 });
-

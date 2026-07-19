@@ -3807,6 +3807,62 @@ describe('SyncEngineLevel', () => {
       await syncEngine.stopSync(5000);
       syncSpy.restore();
     });
+
+    it('should reject a missing mode before starting any runtime', async () => {
+      const syncEngine = new SyncEngineLevel({ db: testHarness.syncStore, agent: testHarness.agent });
+      const pollSpy = sinon.spy(syncEngine as any, 'startPollSync');
+      const liveSpy = sinon.spy(syncEngine as any, 'startLiveSync');
+
+      await expect(syncEngine.startSync({} as any)).rejects.toThrow(
+        `SyncEngineLevel: startSync requires mode 'live' or 'poll'.`
+      );
+
+      expect(pollSpy.notCalled).toBe(true);
+      expect(liveSpy.notCalled).toBe(true);
+      expect(syncEngine.hasActiveSubscriptions).toBe(false);
+      pollSpy.restore();
+      liveSpy.restore();
+    });
+
+    it('should reject an unsupported mode before starting any runtime', async () => {
+      const syncEngine = new SyncEngineLevel({ db: testHarness.syncStore, agent: testHarness.agent });
+      const pollSpy = sinon.spy(syncEngine as any, 'startPollSync');
+      const liveSpy = sinon.spy(syncEngine as any, 'startLiveSync');
+
+      await expect(syncEngine.startSync({ mode: 'lvie' } as any)).rejects.toThrow(
+        `SyncEngineLevel: startSync requires mode 'live' or 'poll'.`
+      );
+
+      expect(pollSpy.notCalled).toBe(true);
+      expect(liveSpy.notCalled).toBe(true);
+      expect(syncEngine.hasActiveSubscriptions).toBe(false);
+      pollSpy.restore();
+      liveSpy.restore();
+    });
+
+    it('should leave a running poll runtime untouched when a reconfiguration passes an invalid mode', async () => {
+      const syncEngine = new SyncEngineLevel({ db: testHarness.syncStore, agent: testHarness.agent });
+      const syncStub = sinon.stub(SyncEngineLevel.prototype as any, 'sync');
+      syncStub.resolves();
+      const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
+
+      await syncEngine.startSync({ mode: 'poll', interval: '500ms' });
+
+      // one sync for the initial startSync call
+      expect(syncStub.callCount).toBe(1);
+
+      await expect(syncEngine.startSync({ mode: 'lvie' } as any)).rejects.toThrow(
+        `SyncEngineLevel: startSync requires mode 'live' or 'poll'.`
+      );
+
+      // the running poll runtime's interval timer persists and keeps firing
+      await clock.tickAsync(1_400); // just under 3 intervals
+      expect(syncStub.callCount).toBe(3);
+
+      clock.restore();
+      await syncEngine.stopSync(5000);
+      syncStub.restore();
+    });
   });
 
 });
