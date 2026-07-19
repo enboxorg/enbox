@@ -32,11 +32,20 @@ undetected for 60–100s while subscriptions silently missed events.
   connection: pool mutations are ownership-checked, so a superseded
   reconnected socket closes instead of overwriting the replacement, a
   completing replacement closes the socket it displaces, and a stale close
-  cannot evict a connection it no longer owns. The losing socket's tracked
-  subscriptions transfer to the winner, resuming from their last cursors
-  with a `reconnected` notification — and a subscription caught
-  mid-resubscription re-routes to the current owner, with pending requests
-  rejected promptly on user close so the re-route is not delayed by the
+  cannot evict a connection it no longer owns. A tracked subscription is a
+  stable logical identity across every re-establishment: the caller's
+  original close() handle always targets the current transport
+  subscription, the cursor watermark carries over so resumptions never
+  fall back to an uncursored subscribe, and a late terminal error from a
+  superseded establishment cannot kill a recovered one. The losing
+  socket's subscriptions transfer to the winner (a replacement completing
+  after the endpoint already recovered is discarded in favor of the
+  recovered connection — no duplicate resubscription); a subscription
+  caught mid-resubscription re-routes to the current owner; and a failed
+  re-establishment (e.g. a 410 progress gap) never masquerades as a
+  reconnection — the consumer receives a terminal
+  `SubscriptionRecoveryFailed` error that drives repair. Requests against
+  a closed or reconnecting socket now fail fast instead of waiting out the
   response timeout.
 - `dwn-server` heartbeat now `terminate()`s a dead peer instead of initiating
   a close handshake the peer can never complete.

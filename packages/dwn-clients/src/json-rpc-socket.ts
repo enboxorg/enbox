@@ -231,8 +231,16 @@ export class JsonRpcSocket {
 
   /**
    * Sends a JSON-RPC request through the socket and waits for a single response.
+   *
+   * Rejects immediately when the socket is not connected: a request sent into
+   * a closed or reconnecting transport can never receive its response, so
+   * waiting out the response timeout only delays the inevitable failure.
    */
   public async request(request: JsonRpcRequest): Promise<JsonRpcResponse> {
+    if (!this._isConnected) {
+      throw new Error('JsonRpcSocket: request refused — socket is not connected');
+    }
+
     return new Promise((resolve, reject) => {
       request.id ??= CryptoUtils.randomUuid();
       const timeout = setTimeout(() => {

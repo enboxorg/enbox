@@ -762,6 +762,10 @@ describe('WebSocketDwnRpcClient', () => {
           target       : alice.did,
           message,
           handler      : (): void => {},
+          // Current-establishment binding: the generation guard only closes a
+          // tracked subscription whose current transport id is this one.
+          currentId    : subscriptionId,
+          closed       : false,
         };
         // add to the subscriptions map
         subscriptions.set(subscriptionId, tracked);
@@ -1591,10 +1595,11 @@ describe('WebSocketDwnRpcClient', () => {
 
         let capturedOptions: any;
         const mockSocket = {
-          request   : sinon.stub().resolves({ result: { reply: { status: { code: 200 } } } }),
-          subscribe : sinon.stub(),
-          send      : sinon.stub(),
-          close     : sinon.stub(),
+          request        : sinon.stub().resolves({ result: { reply: { status: { code: 200 } } } }),
+          subscribe      : sinon.stub(),
+          send           : sinon.stub(),
+          close          : sinon.stub(),
+          isClosedByUser : false,
         };
         const connectStub = sinon.stub(JsonRpcSocket, 'connect').callsFake(
           async (_url: string, options?: any): Promise<any> => {
@@ -1641,6 +1646,9 @@ describe('WebSocketDwnRpcClient', () => {
 
         connectStub.restore();
         connections.delete(connectionKey);
+        // The unexpected close registered the mock as reconnecting; this test
+        // never reconnects it, so drop it from the process-wide registry.
+        ((WebSocketDwnRpcClient as any)['reconnectingSockets'] as Set<any>).delete(mockSocket);
       });
     });
 

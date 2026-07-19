@@ -14,11 +14,18 @@ type RaceHarnessConnection = {
   subscriptions: Map<string, unknown>;
 };
 
-/** Seeds one tracked subscription with a cursor-capturing resubscribe factory. */
-async function seedTrackedSubscription(connection: RaceHarnessConnection): Promise<{
+/**
+ * Establishes one REAL subscription on `connection` against the live server,
+ * seeds its cursor watermark as if events had been delivered, and returns the
+ * caller-facing pieces: the stable subscription handle, the recorded
+ * notifications, and the cursor-capturing resubscribe factory (optionally
+ * gated so tests can hold a re-establishment in flight).
+ */
+async function establishSubscription(connection: RaceHarnessConnection, factoryGate?: Promise<void>): Promise<{
   factoryCursors: Array<ProgressToken | undefined>;
   received: DwnSubscriptionMessage[];
   seededCursor: ProgressToken;
+  subscriptionHandle: { close: () => Promise<void> };
 }> {
   const alice = await TestDataGenerator.generateDidKeyPersona();
   const factoryCursors: Array<ProgressToken | undefined> = [];
@@ -28,6 +35,9 @@ async function seedTrackedSubscription(connection: RaceHarnessConnection): Promi
   const handler: DwnSubscriptionHandler = (message): void => { received.push(message); };
   const resubscribeFactory = async (cursor?: ProgressToken): Promise<GenericMessage> => {
     factoryCursors.push(cursor);
+    if (factoryGate !== undefined) {
+      await factoryGate;
+    }
     const { message } = await TestDataGenerator.generateRecordsSubscribe({
       author : alice,
       filter : { schema: 'foo/bar' },
@@ -35,16 +45,28 @@ async function seedTrackedSubscription(connection: RaceHarnessConnection): Promi
     return message;
   };
 
-  connection.subscriptions.set('seeded-sub', {
-    subscription : { id: 'seeded-sub', close: async (): Promise<void> => {} },
-    target       : alice.did,
-    message      : {} as GenericMessage,
-    handler,
-    resubscribeFactory,
-    lastCursor   : seededCursor,
+  const { message } = await TestDataGenerator.generateRecordsSubscribe({
+    author : alice,
+    filter : { schema: 'foo/bar' },
   });
+  const reply = await (WebSocketDwnRpcClient as unknown as {
+    subscriptionRequest(
+      connection: unknown,
+      target: string,
+      message: GenericMessage,
+      handler: DwnSubscriptionHandler,
+      resubscribeFactory: (cursor?: ProgressToken) => Promise<GenericMessage>,
+    ): Promise<{ status: { code: number }; subscription?: { close: () => Promise<void> } }>;
+  }).subscriptionRequest(connection, alice.did, message, handler, resubscribeFactory);
+  if (reply.status.code !== 200 || reply.subscription === undefined) {
+    throw new Error(`test subscription failed: ${reply.status.code}`);
+  }
 
-  return { factoryCursors, received, seededCursor };
+  // Seed the cursor watermark as if events had been delivered.
+  const tracked = [...connection.subscriptions.values()][0] as { lastCursor?: ProgressToken };
+  tracked.lastCursor = seededCursor;
+
+  return { factoryCursors, received, seededCursor, subscriptionHandle: reply.subscription };
 }
 
 /**
@@ -271,8 +293,8 @@ describe('WebSocketDwnRpcClient wake health checks', () => {
     }).getConnection.bind(client);
 
     const first = await getConnection(dwnUrl.toString());
-    const { factoryCursors, received, seededCursor } =
-      await seedTrackedSubscription(first as unknown as RaceHarnessConnection);
+    const { factoryCursors, received, seededCursor, subscriptionHandle } =
+      await establishSubscription(first as unknown as RaceHarnessConnection);
     const firstInternals = first.socket as unknown as {
       options: { baseReconnectDelay?: number; maxReconnectDelay?: number };
       socket: WebSocket;
@@ -324,16 +346,22 @@ describe('WebSocketDwnRpcClient wake health checks', () => {
       expect(factoryCursors).toEqual([seededCursor]);
       expect((first as unknown as RaceHarnessConnection).subscriptions.size).toBe(0);
       expect(received.some((message) => message.type === 'reconnected')).toBe(true);
+
+      // The caller's ORIGINAL close handle still controls the logical
+      // subscription after the handover — closing it empties the winner.
+      await subscriptionHandle.close();
+      expect((replacement as unknown as RaceHarnessConnection).subscriptions.size).toBe(0);
     } finally {
       socketClass.createWebSocket = originalCreate;
     }
   }, 10_000);
 
-  it('should close a pooled reconnected socket displaced by a completing replacement', async () => {
+  it('should reuse a recovered connection instead of displacing it with a completing replacement', async () => {
     // Interleaving 2: the old socket reconnects and re-takes the pool while
-    // the replacement is still being established. The caller awaiting the
-    // replacement will use it, so the replacement wins the pool and the
-    // displaced socket closes — exactly one socket per endpoint survives.
+    // the replacement is still being established. The recovered connection's
+    // subscriptions are already live, so the replacement is discarded and its
+    // waiting caller resolves with the recovered pooled connection — no
+    // redundant resubscription, no duplicate reconnected notification.
     const dwnUrl = new URL(testDwnUrl);
     dwnUrl.protocol = dwnUrl.protocol === 'http:' ? 'ws:' : 'wss:';
 
@@ -344,8 +372,8 @@ describe('WebSocketDwnRpcClient wake health checks', () => {
     }).getConnection.bind(client);
 
     const first = await getConnection(dwnUrl.toString());
-    const { factoryCursors, received, seededCursor } =
-      await seedTrackedSubscription(first as unknown as RaceHarnessConnection);
+    const { factoryCursors, received, seededCursor, subscriptionHandle } =
+      await establishSubscription(first as unknown as RaceHarnessConnection);
     const firstInternals = first.socket as unknown as {
       options: { baseReconnectDelay?: number; maxReconnectDelay?: number };
       socket: WebSocket;
@@ -362,6 +390,130 @@ describe('WebSocketDwnRpcClient wake health checks', () => {
       createWebSocket(url: string, timeout: number): Promise<WebSocket>;
     };
     const originalCreate = socketClass.createWebSocket;
+    const createdSockets: WebSocket[] = [];
+    let connectCalls = 0;
+    socketClass.createWebSocket = async (url: string, timeout: number): Promise<WebSocket> => {
+      connectCalls += 1;
+      const gated = connectCalls === 1;
+      if (gated) {
+        await connectGate;
+      }
+      const socket = await originalCreate.call(JsonRpcSocket, url, timeout);
+      if (gated) {
+        createdSockets.push(socket);
+      }
+      return socket;
+    };
+
+    try {
+      // Unexpected drop, then request the endpoint while the pool is empty.
+      firstInternals.socket.close();
+      await waitFor((): boolean => pool.connections.size === 0, 'pool evicted');
+      const replacementPromise = getConnection(dwnUrl.toString());
+      await waitFor((): boolean => connectCalls === 1, 'first establishment gated');
+
+      // The old socket reconnects first, re-takes the pool, and resumes its
+      // subscription from the prior cursor.
+      await waitFor((): boolean => first.socket.isConnected && pool.connections.size === 1, 'old socket re-took pool');
+      await waitFor((): boolean => factoryCursors.length === 1, 'seeded subscription resumed');
+      expect(factoryCursors[0]).toEqual(seededCursor);
+      await waitFor(
+        (): boolean => (first as unknown as RaceHarnessConnection).subscriptions.size === 1,
+        'resumed subscription re-registered',
+      );
+
+      // The completing replacement finds the endpoint recovered — it is
+      // discarded and its caller resolves with the recovered connection.
+      releaseConnect();
+      const replacement = await replacementPromise;
+      expect(replacement.socket).toBe(first.socket);
+      expect(pool.connections.size).toBe(1);
+      expect(first.socket.isConnected).toBe(true);
+      expect(pool.reconnectingSockets.size).toBe(0);
+
+      // The redundant replacement socket was closed, not pooled.
+      await waitFor((): boolean => createdSockets.length === 1, 'redundant establishment released');
+      await waitFor((): boolean => createdSockets[0].readyState >= WebSocket.CLOSING, 'redundant socket closed');
+
+      // No adoption happened: the factory ran exactly once (the old socket's
+      // own resume from the prior cursor) and 'reconnected' fired exactly once.
+      expect(factoryCursors).toEqual([seededCursor]);
+      expect(received.filter((message) => message.type === 'reconnected')).toHaveLength(1);
+
+      // The caller's original close handle still controls the subscription.
+      await subscriptionHandle.close();
+      await waitFor(
+        (): boolean => (first as unknown as RaceHarnessConnection).subscriptions.size === 0,
+        'subscription closed via original handle',
+      );
+    } finally {
+      socketClass.createWebSocket = originalCreate;
+    }
+  }, 10_000);
+
+  it('should keep the original close handle valid across an ordinary reconnect', async () => {
+    const dwnUrl = new URL(testDwnUrl);
+    dwnUrl.protocol = dwnUrl.protocol === 'http:' ? 'ws:' : 'wss:';
+
+    const client = new WebSocketDwnRpcClient();
+    const pool = poolOf(WebSocketDwnRpcClient);
+    const connection = await (client as unknown as {
+      getConnection(url: string): Promise<{ socket: JsonRpcSocket }>;
+    }).getConnection(dwnUrl.toString());
+    const { factoryCursors, received, seededCursor, subscriptionHandle } =
+      await establishSubscription(connection as unknown as RaceHarnessConnection);
+
+    const socketInternals = connection.socket as unknown as {
+      options: { baseReconnectDelay?: number; maxReconnectDelay?: number };
+      socket: WebSocket;
+    };
+    socketInternals.options.baseReconnectDelay = 10;
+    socketInternals.options.maxReconnectDelay = 10;
+
+    // Ordinary drop → auto-reconnect → resubscription from the prior cursor.
+    socketInternals.socket.close();
+    await waitFor((): boolean => received.some((message) => message.type === 'reconnected'), 'resubscribed after reconnect');
+    expect(factoryCursors).toEqual([seededCursor]);
+    await waitFor(
+      (): boolean => (connection as unknown as RaceHarnessConnection).subscriptions.size === 1,
+      'subscription re-registered',
+    );
+
+    // The ORIGINAL handle closes the CURRENT (re-established) subscription.
+    await subscriptionHandle.close();
+    expect((connection as unknown as RaceHarnessConnection).subscriptions.size).toBe(0);
+    expect(pool.connections.size).toBe(1);
+  }, 10_000);
+
+  it('should not re-establish a subscription closed while its adoption is in flight', async () => {
+    const dwnUrl = new URL(testDwnUrl);
+    dwnUrl.protocol = dwnUrl.protocol === 'http:' ? 'ws:' : 'wss:';
+
+    const client = new WebSocketDwnRpcClient();
+    const pool = poolOf(WebSocketDwnRpcClient);
+    const getConnection = (client as unknown as {
+      getConnection(url: string): Promise<{ socket: JsonRpcSocket }>;
+    }).getConnection.bind(client);
+
+    const first = await getConnection(dwnUrl.toString());
+    let releaseFactory!: () => void;
+    const factoryGate = new Promise<void>((resolve) => { releaseFactory = resolve; });
+    const { factoryCursors, received, subscriptionHandle } =
+      await establishSubscription(first as unknown as RaceHarnessConnection, factoryGate);
+    const firstInternals = first.socket as unknown as {
+      options: { baseReconnectDelay?: number; maxReconnectDelay?: number };
+      socket: WebSocket;
+    };
+    firstInternals.options.baseReconnectDelay = 10;
+    firstInternals.options.maxReconnectDelay = 10;
+
+    // Gate the old socket's reconnect establishment so a replacement can pool.
+    let releaseConnect!: () => void;
+    const connectGate = new Promise<void>((resolve) => { releaseConnect = resolve; });
+    const socketClass = JsonRpcSocket as unknown as {
+      createWebSocket(url: string, timeout: number): Promise<WebSocket>;
+    };
+    const originalCreate = socketClass.createWebSocket;
     let connectCalls = 0;
     socketClass.createWebSocket = async (url: string, timeout: number): Promise<WebSocket> => {
       connectCalls += 1;
@@ -372,41 +524,99 @@ describe('WebSocketDwnRpcClient wake health checks', () => {
     };
 
     try {
-      // Unexpected drop, then request the endpoint while the pool is empty.
       firstInternals.socket.close();
-      await waitFor((): boolean => pool.connections.size === 0, 'pool evicted');
-      const replacementPromise = getConnection(dwnUrl.toString());
       await waitFor((): boolean => connectCalls === 1, 'first establishment gated');
+      const replacement = await getConnection(dwnUrl.toString());
+      expect(replacement.socket).not.toBe(first.socket);
 
-      // The old socket reconnects first and re-takes the pool, resuming its
-      // seeded subscription from the prior cursor.
-      await waitFor((): boolean => first.socket.isConnected && pool.connections.size === 1, 'old socket re-took pool');
-      await waitFor((): boolean => factoryCursors.length === 1, 'seeded subscription resumed');
-      expect(factoryCursors[0]).toEqual(seededCursor);
-      await waitFor(
-        (): boolean => (first as unknown as RaceHarnessConnection).subscriptions.size === 1,
-        'resumed subscription re-registered',
-      );
-
-      // The completing replacement displaces it and adopts the subscription.
+      // The old socket reconnects, loses the race, and starts adopting its
+      // subscription — held in flight by the factory gate.
       releaseConnect();
-      const replacement = await replacementPromise;
-      await waitFor((): boolean => !first.socket.isConnected, 'displaced socket closed');
-      await waitFor((): boolean => (replacement as unknown as RaceHarnessConnection).subscriptions.size === 1, 'subscription adopted by winner');
+      await waitFor((): boolean => factoryCursors.length === 1, 'adoption resubscription in flight');
 
+      // The consumer closes the logical subscription mid-adoption.
+      await subscriptionHandle.close();
+      releaseFactory();
+
+      // The adoption must observe the close and never re-establish: winner
+      // stays empty, no 'reconnected' after the close.
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      expect((replacement as unknown as RaceHarnessConnection).subscriptions.size).toBe(0);
+      expect(received.filter((message) => message.type === 'reconnected')).toHaveLength(0);
       expect(pool.connections.size).toBe(1);
-      expect(([...pool.connections.values()][0] as { socket: JsonRpcSocket }).socket).toBe(replacement.socket);
-      expect(replacement.socket.isConnected).toBe(true);
-      expect(pool.reconnectingSockets.size).toBe(0);
-
-      // The handover re-resumed the subscription on the winner: the factory
-      // ran once for the old socket's own reconnect (prior cursor) and once
-      // for the adoption, and the consumer saw 'reconnected' both times.
-      expect(factoryCursors).toHaveLength(2);
-      expect(received.filter((message) => message.type === 'reconnected')).toHaveLength(2);
-      expect((first as unknown as RaceHarnessConnection).subscriptions.size).toBe(0);
     } finally {
       socketClass.createWebSocket = originalCreate;
     }
   }, 10_000);
+
+  it('should emit a terminal recovery error when adoption gets a failed subscribe reply', async () => {
+    const received: DwnSubscriptionMessage[] = [];
+    const tracked = {
+      subscription      : { id: 'stub-sub', close: async (): Promise<void> => {} },
+      target            : 'did:example:alice',
+      message           : {} as GenericMessage,
+      handler           : ((message): void => { received.push(message); }) as DwnSubscriptionHandler,
+      lastCursor        : { streamId: 's1', epoch: 'e1', position: '5', messageCid: 'cid-5' },
+      currentId         : 'stub-sub',
+      currentConnection : { socket: {}, subscriptions: new Map(), url: 'wss://stub.example/' },
+      currentClose      : async (): Promise<void> => {},
+      closed            : false,
+    };
+    const winner = {
+      socket: {
+        subscribe: async (): Promise<unknown> => ({
+          response : { jsonrpc: '2.0', id: 'id', result: { reply: { status: { code: 410, detail: 'Progress token gap' } } } },
+          close    : async (): Promise<void> => {},
+        }),
+        send: (): void => {},
+      },
+      subscriptions : new Map(),
+      url           : 'wss://stub.example/',
+    };
+
+    (WebSocketDwnRpcClient as unknown as {
+      adoptSubscriptions(from: Map<string, unknown>, winner: unknown): void;
+    }).adoptSubscriptions(new Map([['stub-sub', tracked]]), winner);
+
+    await waitFor((): boolean => received.length === 1, 'terminal recovery error delivered');
+    const [message] = received;
+    expect(message.type).toBe('error');
+    expect((message as { error: { code: string } }).error.code).toBe('SubscriptionRecoveryFailed');
+    expect(received.some((entry) => entry.type === 'reconnected')).toBe(false);
+    expect(winner.subscriptions.size).toBe(0);
+    expect(tracked.closed).toBe(true);
+  });
+
+  it('should emit a terminal recovery error when adoption establishment throws', async () => {
+    const received: DwnSubscriptionMessage[] = [];
+    const tracked = {
+      subscription      : { id: 'stub-sub', close: async (): Promise<void> => {} },
+      target            : 'did:example:alice',
+      message           : {} as GenericMessage,
+      handler           : ((message): void => { received.push(message); }) as DwnSubscriptionHandler,
+      currentId         : 'stub-sub',
+      currentConnection : { socket: {}, subscriptions: new Map(), url: 'wss://stub.example/' },
+      currentClose      : async (): Promise<void> => {},
+      closed            : false,
+    };
+    const winner = {
+      socket: {
+        subscribe : async (): Promise<unknown> => { throw new Error('transport failed mid-adoption'); },
+        send      : (): void => {},
+      },
+      subscriptions : new Map(),
+      url           : 'wss://stub.example/',
+    };
+
+    (WebSocketDwnRpcClient as unknown as {
+      adoptSubscriptions(from: Map<string, unknown>, winner: unknown): void;
+    }).adoptSubscriptions(new Map([['stub-sub', tracked]]), winner);
+
+    await waitFor((): boolean => received.length === 1, 'terminal recovery error delivered');
+    const [message] = received;
+    expect(message.type).toBe('error');
+    expect((message as { error: { code: string } }).error.code).toBe('SubscriptionRecoveryFailed');
+    expect(received.some((entry) => entry.type === 'reconnected')).toBe(false);
+    expect(winner.subscriptions.size).toBe(0);
+  });
 });
