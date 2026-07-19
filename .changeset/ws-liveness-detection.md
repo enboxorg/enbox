@@ -32,6 +32,11 @@ undetected for 60–100s while subscriptions silently missed events.
   connection: pool mutations are ownership-checked, so a superseded
   reconnected socket closes instead of overwriting the replacement, a
   completing replacement closes the socket it displaces, and a stale close
-  cannot evict a connection it no longer owns.
+  cannot evict a connection it no longer owns. The losing socket's tracked
+  subscriptions transfer to the winner, resuming from their last cursors
+  with a `reconnected` notification — and a subscription caught
+  mid-resubscription re-routes to the current owner, with pending requests
+  rejected promptly on user close so the re-route is not delayed by the
+  response timeout.
 - `dwn-server` heartbeat now `terminate()`s a dead peer instead of initiating
   a close handshake the peer can never complete.

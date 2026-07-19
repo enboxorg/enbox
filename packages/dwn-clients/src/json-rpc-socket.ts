@@ -393,13 +393,16 @@ export class JsonRpcSocket {
       this._isConnected = false;
       this.stopHeartbeat();
 
+      // Reject all pending one-shot request handlers (non-subscription).
+      // A pending request can never complete on a closed socket, so this
+      // applies to user closes too — callers fail fast instead of hanging
+      // until the response timeout.
+      this.rejectPendingRequests();
+
       if (this.closedByUser) {
         this.options.onclose?.();
         return;
       }
-
-      // Reject all pending one-shot request handlers (non-subscription).
-      this.rejectPendingRequests();
 
       // Notify the user handler if present.
       this.options.onclose?.();

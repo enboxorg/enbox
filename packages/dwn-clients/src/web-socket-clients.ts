@@ -310,10 +310,12 @@ export class WebSocketDwnRpcClient implements DwnRpc {
           // the endpoint while this replacement was being established. The
           // caller awaiting this promise will use THIS connection, so it wins
           // the pool entry and the displaced socket closes — exactly one
-          // socket per endpoint survives the race.
+          // socket per endpoint survives the race, and the displaced socket's
+          // tracked subscriptions move onto the winner before it closes.
           const displaced = WebSocketDwnRpcClient.connections.get(key);
           WebSocketDwnRpcClient.connections.set(key, connection);
           if (displaced !== undefined && displaced.socket !== connection.socket) {
+            WebSocketDwnRpcClient.adoptSubscriptions(displaced.subscriptions, connection);
             try {
               displaced.socket.close();
             } catch { /* best effort */ }
@@ -381,9 +383,11 @@ export class WebSocketDwnRpcClient implements DwnRpc {
         // reconnecting created a replacement connection for the endpoint.
         // The pooled connection is the one with live consumers — a superseded
         // socket closes itself instead of overwriting it, so exactly one
-        // socket per endpoint survives the race.
+        // socket per endpoint survives the race. Its tracked subscriptions
+        // move onto the winner first so they keep receiving updates.
         const current = WebSocketDwnRpcClient.connections.get(key);
         if (current !== undefined && current.socket !== socket) {
+          WebSocketDwnRpcClient.adoptSubscriptions(subscriptions, current);
           try {
             socket.close();
           } catch { /* best effort */ }
@@ -598,10 +602,61 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   }
 
   /**
+   * Re-establishes one tracked subscription on `connection`, resuming from
+   * its last known cursor. Uses the `resubscribeFactory` (if provided) to
+   * construct a properly signed message with the cursor; falls back to the
+   * original message for anonymous/unsigned subscriptions. Notifies the
+   * handler once the subscription is live again.
+   */
+  private static async resubscribeTracked(
+    connection: SocketConnection,
+    tracked: TrackedSubscription,
+  ): Promise<void> {
+    let resumeMessage: GenericMessage;
+
+    if (tracked.resubscribeFactory) {
+      // Reconstruct and re-sign the message with the cursor.
+      resumeMessage = await tracked.resubscribeFactory(tracked.lastCursor);
+    } else {
+      // No factory — reuse the original message as-is.
+      // This only works for anonymous (unsigned) subscriptions.
+      resumeMessage = tracked.message;
+    }
+
+    await WebSocketDwnRpcClient.subscriptionRequest(
+      connection,
+      tracked.target,
+      resumeMessage,
+      tracked.handler,
+      tracked.resubscribeFactory,
+    );
+
+    // Notify the handler that reconnection is complete for this subscription.
+    WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'reconnected' });
+  }
+
+  /**
+   * Moves every tracked subscription from a socket that lost the endpoint-
+   * ownership race onto the winning connection, resuming each from its last
+   * cursor. The losing map is drained synchronously so the loser's close
+   * cannot double-notify the handlers adoption is re-establishing.
+   */
+  private static adoptSubscriptions(
+    from: Map<string, TrackedSubscription>,
+    winner: SocketConnection,
+  ): void {
+    const entries = [...from.values()];
+    from.clear();
+
+    for (const tracked of entries) {
+      void WebSocketDwnRpcClient.resubscribeTracked(winner, tracked).catch((): void => {
+        // Effectively lost — the handler was already notified of disconnection.
+      });
+    }
+  }
+
+  /**
    * Resubscribes all tracked subscriptions on a reconnected socket.
-   * Uses the `resubscribeFactory` (if provided) to construct a properly signed
-   * message with the last known cursor. Falls back to the original message
-   * for anonymous/unsigned subscriptions.
    */
   private static async resubscribeAll(connection: SocketConnection): Promise<void> {
     // Snapshot the current subscriptions — resubscription will re-populate the map.
@@ -610,28 +665,19 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
     for (const [, tracked] of entries) {
       try {
-        let resumeMessage: GenericMessage;
-
-        if (tracked.resubscribeFactory) {
-          // Reconstruct and re-sign the message with the cursor.
-          resumeMessage = await tracked.resubscribeFactory(tracked.lastCursor);
-        } else {
-          // No factory — reuse the original message as-is.
-          // This only works for anonymous (unsigned) subscriptions.
-          resumeMessage = tracked.message;
-        }
-
-        await WebSocketDwnRpcClient.subscriptionRequest(
-          connection,
-          tracked.target,
-          resumeMessage,
-          tracked.handler,
-          tracked.resubscribeFactory,
-        );
-
-        // Notify the handler that reconnection is complete for this subscription.
-        WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'reconnected' });
+        await WebSocketDwnRpcClient.resubscribeTracked(connection, tracked);
       } catch {
+        // The connection may have lost endpoint ownership mid-resubscription —
+        // hand the subscription to the current owner so it survives the race.
+        const owner = WebSocketDwnRpcClient.connections.get(connectionCacheKey(new URL(connection.url)));
+        if (owner !== undefined && owner !== connection) {
+          try {
+            await WebSocketDwnRpcClient.resubscribeTracked(owner, tracked);
+            continue;
+          } catch {
+            // Fall through to the lost-subscription outcome below.
+          }
+        }
         // If resubscription fails for one subscription, continue with the rest.
         // The subscription is effectively lost — the handler was already
         // notified of disconnection.
