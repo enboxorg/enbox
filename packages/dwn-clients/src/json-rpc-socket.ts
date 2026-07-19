@@ -1,7 +1,6 @@
 import type { JsonRpcId, JsonRpcRequest, JsonRpcResponse } from './json-rpc.js';
 
 import { CryptoUtils } from '@enbox/crypto';
-import { sleep } from '@enbox/common';
 import { createJsonRpcSubscriptionRequest, JsonRpcErrorCodes, parseJson } from './json-rpc.js';
 
 /**
@@ -35,6 +34,9 @@ const DEFAULT_MAX_RECONNECT_ATTEMPTS = Infinity;
 /** Default heartbeat settings. */
 const DEFAULT_HEARTBEAT_INTERVAL = 30_000;
 const DEFAULT_HEARTBEAT_TIMEOUT = 10_000;
+
+/** Default deadline for an on-demand health probe pong. */
+const DEFAULT_HEALTH_PROBE_TIMEOUT = 5_000;
 
 export interface JsonRpcSocketOptions {
   /** socket connection timeout in milliseconds */
@@ -78,6 +80,12 @@ export interface JsonRpcSocketOptions {
    * Default 10000 (10s).
    */
   heartbeatTimeout?: number;
+
+  /**
+   * How long in ms an on-demand {@link JsonRpcSocket.checkHealth} probe waits
+   * for a pong before force-closing the connection. Default 5000 (5s).
+   */
+  healthProbeTimeout?: number;
 }
 
 /**
@@ -126,6 +134,15 @@ export class JsonRpcSocket {
   /** Whether a heartbeat pong is pending. */
   private _awaitingPong = false;
 
+  /** Request id of the outstanding heartbeat ping — the active generation. */
+  private _heartbeatPingId: JsonRpcId | undefined;
+
+  /** In-flight on-demand health probe, deduplicating concurrent checks. */
+  private _healthProbe: Promise<boolean> | undefined;
+
+  /** Resolver that fast-forwards the pending reconnect backoff wait. */
+  private _backoffWake: (() => void) | undefined;
+
   private constructor(
     private socket: WebSocket,
     private readonly responseTimeout: number,
@@ -140,6 +157,11 @@ export class JsonRpcSocket {
   /** Whether the socket is currently connected. */
   public get isConnected(): boolean {
     return this._isConnected;
+  }
+
+  /** Whether {@link close} was called — a user-closed socket never reconnects. */
+  public get isClosedByUser(): boolean {
+    return this.closedByUser;
   }
 
   public static async connect(url: string, options: JsonRpcSocketOptions = {}): Promise<JsonRpcSocket> {
@@ -168,13 +190,57 @@ export class JsonRpcSocket {
     this.closedByUser = true;
     this._isConnected = false;
     this.stopHeartbeat();
+    this._backoffWake?.();
     this.socket.close();
   }
 
   /**
+   * Verifies the connection is actually alive right now.
+   *
+   * The periodic heartbeat rides on JS timers, which browsers throttle or
+   * freeze in backgrounded tabs and across system sleep — a connection can be
+   * dead for minutes before the next timer fires. Call this on wake signals
+   * (tab became visible, browser back online) to force the verdict immediately:
+   *
+   * - Connected: sends an out-of-band `rpc.ping` with a short deadline. A pong
+   *   resolves `true`; a miss force-closes the socket, which triggers the
+   *   normal auto-reconnect (and resubscription) path, and resolves `false`.
+   * - Reconnecting: fast-forwards the pending backoff wait so the next attempt
+   *   starts now instead of after a (possibly throttled) delay.
+   * - Disconnected with auto-reconnect enabled: starts a fresh reconnect loop.
+   */
+  public async checkHealth(): Promise<boolean> {
+    if (this.closedByUser) {
+      return false;
+    }
+
+    if (!this._isConnected) {
+      if (this.reconnecting) {
+        this._backoffWake?.();
+      } else if (this.options.autoReconnect ?? true) {
+        this.attemptReconnect();
+      }
+      return false;
+    }
+
+    this._healthProbe ??= this.probeConnection().finally((): void => {
+      this._healthProbe = undefined;
+    });
+    return this._healthProbe;
+  }
+
+  /**
    * Sends a JSON-RPC request through the socket and waits for a single response.
+   *
+   * Rejects immediately when the socket is not connected: a request sent into
+   * a closed or reconnecting transport can never receive its response, so
+   * waiting out the response timeout only delays the inevitable failure.
    */
   public async request(request: JsonRpcRequest): Promise<JsonRpcResponse> {
+    if (!this._isConnected) {
+      throw new Error('JsonRpcSocket: request refused — socket is not connected');
+    }
+
     return new Promise((resolve, reject) => {
       request.id ??= CryptoUtils.randomUuid();
       const timeout = setTimeout(() => {
@@ -335,13 +401,16 @@ export class JsonRpcSocket {
       this._isConnected = false;
       this.stopHeartbeat();
 
+      // Reject all pending one-shot request handlers (non-subscription).
+      // A pending request can never complete on a closed socket, so this
+      // applies to user closes too — callers fail fast instead of hanging
+      // until the response timeout.
+      this.rejectPendingRequests();
+
       if (this.closedByUser) {
         this.options.onclose?.();
         return;
       }
-
-      // Reject all pending one-shot request handlers (non-subscription).
-      this.rejectPendingRequests();
 
       // Notify the user handler if present.
       this.options.onclose?.();
@@ -400,8 +469,12 @@ export class JsonRpcSocket {
 
       this._awaitingPong = true;
 
-      // Send a lightweight JSON-RPC request as the ping.
-      const pingId = `hb-${Date.now()}`;
+      // Send a lightweight JSON-RPC request as the ping. The id doubles as
+      // the heartbeat generation: only the pong for the ACTIVE ping may
+      // mutate heartbeat state, so a late pong from a superseded ping (one a
+      // health probe cleared) cannot defuse a newer ping's deadline.
+      const pingId = `hb-${CryptoUtils.randomUuid()}`;
+      this._heartbeatPingId = pingId;
       const pingRequest: JsonRpcRequest = {
         jsonrpc : '2.0',
         id      : pingId,
@@ -410,8 +483,12 @@ export class JsonRpcSocket {
 
       // Register a one-shot handler for the pong response.
       this.messageHandlers.set(pingId, () => {
-        this._awaitingPong = false;
         this.messageHandlers.delete(pingId);
+        if (this._heartbeatPingId !== pingId) {
+          return;
+        }
+        this._heartbeatPingId = undefined;
+        this._awaitingPong = false;
         if (this._heartbeatTimeout) {
           clearTimeout(this._heartbeatTimeout);
           this._heartbeatTimeout = undefined;
@@ -423,6 +500,7 @@ export class JsonRpcSocket {
       } catch {
         // Socket may already be closing — the close handler will deal with it.
         this.messageHandlers.delete(pingId);
+        this._heartbeatPingId = undefined;
         this._awaitingPong = false;
         return;
       }
@@ -431,6 +509,7 @@ export class JsonRpcSocket {
       this._heartbeatTimeout = setTimeout(() => {
         this._heartbeatTimeout = undefined;
         this.messageHandlers.delete(pingId);
+        this._heartbeatPingId = undefined;
         this._awaitingPong = false;
 
         if (!this.closedByUser && this._isConnected) {
@@ -448,16 +527,103 @@ export class JsonRpcSocket {
       clearInterval(this._heartbeatInterval);
       this._heartbeatInterval = undefined;
     }
+    this.clearHeartbeatDeadline();
+  }
+
+  /**
+   * Clears a pending heartbeat pong deadline without stopping the interval.
+   *
+   * Also called when an on-demand health probe proves liveness: a deadline
+   * armed before a tab was frozen may otherwise fire on resume and kill a
+   * connection the probe just verified. The superseded ping's pong handler
+   * is removed with it — a late pong for a cleared ping must never mutate a
+   * newer heartbeat's state, and superseded handlers must not accumulate
+   * across wake cycles.
+   */
+  private clearHeartbeatDeadline(): void {
     if (this._heartbeatTimeout) {
       clearTimeout(this._heartbeatTimeout);
       this._heartbeatTimeout = undefined;
     }
+    if (this._heartbeatPingId !== undefined) {
+      this.messageHandlers.delete(this._heartbeatPingId);
+      this._heartbeatPingId = undefined;
+    }
     this._awaitingPong = false;
+  }
+
+  /**
+   * Sends one out-of-band `rpc.ping` and resolves whether a pong arrived
+   * within the probe deadline. A miss (or send failure) force-closes the
+   * socket so the auto-reconnect path takes over.
+   */
+  private probeConnection(): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      const probeId = `hb-probe-${CryptoUtils.randomUuid()}`;
+      const probeTimeout = this.options.healthProbeTimeout ?? DEFAULT_HEALTH_PROBE_TIMEOUT;
+
+      const forceClose = (): void => {
+        if (!this.closedByUser && this._isConnected) {
+          console.warn('JsonRpcSocket: health probe failed — closing dead connection');
+          this._isConnected = false;
+          try { this.socket.close(); } catch { /* best effort */ }
+        }
+      };
+
+      const timeout = setTimeout((): void => {
+        this.messageHandlers.delete(probeId);
+        forceClose();
+        resolve(false);
+      }, probeTimeout);
+
+      this.messageHandlers.set(probeId, (event: { data: any }): void => {
+        clearTimeout(timeout);
+        this.messageHandlers.delete(probeId);
+
+        // A close while the probe was pending synthesizes a transport-error
+        // response for every one-shot handler — that is not a pong.
+        const response = parseJson(toText(event.data)) as JsonRpcResponse | null;
+        if (response?.error !== undefined) {
+          resolve(false);
+          return;
+        }
+
+        this.clearHeartbeatDeadline();
+        resolve(true);
+      });
+
+      try {
+        this.send({ jsonrpc: '2.0', id: probeId, method: 'rpc.ping' });
+      } catch {
+        clearTimeout(timeout);
+        this.messageHandlers.delete(probeId);
+        forceClose();
+        resolve(false);
+      }
+    });
   }
 
   // ---------------------------------------------------------------------------
   // Internal: reconnection
   // ---------------------------------------------------------------------------
+
+  /**
+   * Waits for the given backoff delay, resolving early when
+   * {@link checkHealth} fast-forwards a wake signal into the loop.
+   */
+  private waitForBackoff(delayMs: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const timer = setTimeout((): void => {
+        this._backoffWake = undefined;
+        resolve();
+      }, delayMs);
+      this._backoffWake = (): void => {
+        clearTimeout(timer);
+        this._backoffWake = undefined;
+        resolve();
+      };
+    });
+  }
 
   /**
    * Exponential backoff reconnection loop with jitter.
@@ -492,7 +658,7 @@ export class JsonRpcSocket {
       const halfExpDelay = Math.floor(expDelay / 2);
       const jitteredDelay = halfExpDelay + (crypto.getRandomValues(new Uint32Array(1))[0] % (halfExpDelay || 1));
 
-      await sleep(jitteredDelay);
+      await this.waitForBackoff(jitteredDelay);
 
       if (this.closedByUser) {
         this.reconnecting = false;
@@ -501,6 +667,17 @@ export class JsonRpcSocket {
 
       try {
         const newSocket = await JsonRpcSocket.createWebSocket(this.url, connectTimeout);
+
+        // close() may have raced the connection establishment. A user-closed
+        // socket must stay closed: discard the fresh WebSocket without
+        // assigning it, wiring handlers, restarting the heartbeat, or
+        // announcing a reconnection.
+        if (this.closedByUser) {
+          this.reconnecting = false;
+          try { newSocket.close(); } catch { /* best effort */ }
+          return;
+        }
+
         this.socket = newSocket;
         this._isConnected = true;
         this.reconnecting = false;

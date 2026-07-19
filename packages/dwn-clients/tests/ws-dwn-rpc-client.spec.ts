@@ -762,6 +762,10 @@ describe('WebSocketDwnRpcClient', () => {
           target       : alice.did,
           message,
           handler      : (): void => {},
+          // Current-establishment binding: the generation guard only closes a
+          // tracked subscription whose current transport id is this one.
+          currentId    : subscriptionId,
+          closed       : false,
         };
         // add to the subscriptions map
         subscriptions.set(subscriptionId, tracked);
@@ -1452,10 +1456,11 @@ describe('WebSocketDwnRpcClient', () => {
         // Stub JsonRpcSocket.connect to capture the options with lifecycle callbacks.
         let capturedOptions: any;
         const mockSocket = {
-          request   : sinon.stub().resolves({ result: { reply: { status: { code: 200 } } } }),
-          subscribe : sinon.stub(),
-          send      : sinon.stub(),
-          close     : sinon.stub(),
+          request        : sinon.stub().resolves({ result: { reply: { status: { code: 200 } } } }),
+          subscribe      : sinon.stub(),
+          send           : sinon.stub(),
+          close          : sinon.stub(),
+          isClosedByUser : false,
         };
 
         const connectStub = sinon.stub(JsonRpcSocket, 'connect').callsFake(
@@ -1490,13 +1495,17 @@ describe('WebSocketDwnRpcClient', () => {
         // Verify the connection is in the map.
         expect(connections.has(connectionKey)).toBe(true);
 
-        // Test onclose: should delete from connections map.
+        // Test onclose: should delete from connections map and register the
+        // socket as reconnecting so wake health checks can still reach it.
+        const reconnectingSockets = (WebSocketDwnRpcClient as any)['reconnectingSockets'] as Set<any>;
         capturedOptions.onclose();
         expect(connections.has(connectionKey)).toBe(false);
+        expect(reconnectingSockets.has(mockSocket)).toBe(true);
 
-        // Test onreconnected: should re-register in the map.
+        // Test onreconnected: should re-register in the map and leave the registry.
         capturedOptions.onreconnected();
         expect(connections.has(connectionKey)).toBe(true);
+        expect(reconnectingSockets.has(mockSocket)).toBe(false);
 
         connectStub.restore();
         connections.delete(connectionKey);
@@ -1510,10 +1519,11 @@ describe('WebSocketDwnRpcClient', () => {
 
         let capturedOptions: any;
         const mockSocket = {
-          request   : sinon.stub().resolves({ result: { reply: { status: { code: 200 } } } }),
-          subscribe : sinon.stub(),
-          send      : sinon.stub(),
-          close     : sinon.stub(),
+          request        : sinon.stub().resolves({ result: { reply: { status: { code: 200 } } } }),
+          subscribe      : sinon.stub(),
+          send           : sinon.stub(),
+          close          : sinon.stub(),
+          isClosedByUser : false,
         };
 
         const connectStub = sinon.stub(JsonRpcSocket, 'connect').callsFake(
@@ -1566,6 +1576,9 @@ describe('WebSocketDwnRpcClient', () => {
 
         connectStub.restore();
         connections.delete(connectionKey);
+        // The unexpected close registered the mock as reconnecting; this test
+        // never reconnects it, so drop it to keep the process-wide registry clean.
+        ((WebSocketDwnRpcClient as any)['reconnectingSockets'] as Set<any>).delete(mockSocket);
       });
 
       it('should contain lifecycle handler failures so every subscription is still notified', async () => {
@@ -1582,10 +1595,11 @@ describe('WebSocketDwnRpcClient', () => {
 
         let capturedOptions: any;
         const mockSocket = {
-          request   : sinon.stub().resolves({ result: { reply: { status: { code: 200 } } } }),
-          subscribe : sinon.stub(),
-          send      : sinon.stub(),
-          close     : sinon.stub(),
+          request        : sinon.stub().resolves({ result: { reply: { status: { code: 200 } } } }),
+          subscribe      : sinon.stub(),
+          send           : sinon.stub(),
+          close          : sinon.stub(),
+          isClosedByUser : false,
         };
         const connectStub = sinon.stub(JsonRpcSocket, 'connect').callsFake(
           async (_url: string, options?: any): Promise<any> => {
@@ -1632,6 +1646,9 @@ describe('WebSocketDwnRpcClient', () => {
 
         connectStub.restore();
         connections.delete(connectionKey);
+        // The unexpected close registered the mock as reconnecting; this test
+        // never reconnects it, so drop it from the process-wide registry.
+        ((WebSocketDwnRpcClient as any)['reconnectingSockets'] as Set<any>).delete(mockSocket);
       });
     });
 

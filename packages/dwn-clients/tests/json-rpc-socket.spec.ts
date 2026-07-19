@@ -688,6 +688,204 @@ describe('JsonRpcSocket', () => {
       expect(client.isConnected).toBe(false);
     });
 
+    it('should resolve checkHealth true on a live connection', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl);
+
+      const healthy = await client.checkHealth();
+
+      expect(healthy).toBe(true);
+      expect(client.isConnected).toBe(true);
+      client.close();
+    });
+
+    it('should force-close a dead connection and resolve checkHealth false', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl, {
+        autoReconnect      : false,
+        healthProbeTimeout : 50,
+      });
+
+      // Drop outgoing pings — a dead connection swallows writes silently.
+      client['send'] = (): void => {};
+
+      const healthy = await client.checkHealth();
+
+      expect(healthy).toBe(false);
+      expect(client.isConnected).toBe(false);
+    });
+
+    it('should clear a stale heartbeat deadline when the health probe pongs', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl);
+
+      // Simulate a deadline armed before a tab freeze: pong still pending.
+      client['_awaitingPong'] = true;
+      client['_heartbeatTimeout'] = setTimeout((): void => {}, 60_000);
+
+      const healthy = await client.checkHealth();
+
+      expect(healthy).toBe(true);
+      expect(client['_awaitingPong']).toBe(false);
+      expect(client['_heartbeatTimeout']).toBeUndefined();
+      client.close();
+    });
+
+    it('should deduplicate concurrent health probes', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl);
+
+      const originalSend = client['send'].bind(client);
+      let pingCount = 0;
+      client['send'] = (request): void => {
+        if (request.method === 'rpc.ping') {
+          pingCount++;
+        }
+        originalSend(request);
+      };
+
+      const [first, second] = await Promise.all([client.checkHealth(), client.checkHealth()]);
+
+      expect(first).toBe(true);
+      expect(second).toBe(true);
+      expect(pingCount).toBe(1);
+      client.close();
+    });
+
+    it('should not reconnect on checkHealth after a user close', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl, { autoReconnect: true });
+      client.close();
+
+      const healthy = await client.checkHealth();
+
+      expect(healthy).toBe(false);
+      expect(client['reconnecting']).toBe(false);
+    });
+
+    it('should remove a superseded heartbeat handler and ignore its late pong', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl, {
+        heartbeatInterval : 50,
+        heartbeatTimeout  : 5_000,
+      });
+
+      // Swallow heartbeat pings (they go outstanding) but let health probes
+      // through — the frozen-tab shape: a ping stuck awaiting its pong while
+      // a wake-triggered probe verifies the connection is actually alive.
+      const originalSend = client['send'].bind(client);
+      client['send'] = (request): void => {
+        const id = String(request.id ?? '');
+        if (id.startsWith('hb-') && !id.startsWith('hb-probe-')) {
+          return;
+        }
+        originalSend(request);
+      };
+
+      // Wait for a heartbeat ping to go outstanding.
+      while (client['_awaitingPong'] !== true) {
+        await sleepWhileWaitingForEvents(10);
+      }
+      const staleId = client['_heartbeatPingId'] as string;
+      expect(staleId).toBeDefined();
+      expect(client['messageHandlers'].has(staleId)).toBe(true);
+
+      // A successful probe supersedes the outstanding heartbeat completely:
+      // deadline cleared AND the stale pong handler removed.
+      expect(await client.checkHealth()).toBe(true);
+      expect(client['messageHandlers'].has(staleId)).toBe(false);
+      expect(client['_heartbeatPingId']).toBeUndefined();
+      expect(client['_awaitingPong']).toBe(false);
+
+      // Let the next heartbeat go outstanding with a fresh deadline.
+      while (client['_awaitingPong'] !== true) {
+        await sleepWhileWaitingForEvents(10);
+      }
+      expect(client['_heartbeatTimeout']).toBeDefined();
+
+      // A late pong for the superseded ping must not defuse the newer
+      // heartbeat's deadline.
+      client['socket'].dispatchEvent(new MessageEvent('message', {
+        data: JSON.stringify({ jsonrpc: '2.0', id: staleId, result: { ok: true } }),
+      }));
+      await sleepWhileWaitingForEvents(20);
+      expect(client['_awaitingPong']).toBe(true);
+      expect(client['_heartbeatTimeout']).toBeDefined();
+
+      client.close();
+    }, 10_000);
+
+    it('should fast-forward a pending reconnect backoff on checkHealth', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl, {
+        autoReconnect      : true,
+        // Long enough that reconnection cannot happen in test time without the wake.
+        baseReconnectDelay : 60_000,
+        maxReconnectDelay  : 60_000,
+      });
+
+      // Simulate an unexpected close and let the reconnect loop arm its backoff wait.
+      client['socket'].close();
+      await sleepWhileWaitingForEvents(100);
+      expect(client.isConnected).toBe(false);
+      expect(client['reconnecting']).toBe(true);
+      expect(client['_backoffWake']).toBeDefined();
+
+      // A wake signal fast-forwards the backoff — reconnection happens now.
+      const healthy = await client.checkHealth();
+      expect(healthy).toBe(false);
+
+      await sleepWhileWaitingForEvents(500);
+      expect(client.isConnected).toBe(true);
+
+      client.close();
+    }, 10_000);
+
+    it('should stay closed when close() races an in-flight reconnect attempt', async () => {
+      const onreconnected = mock((): void => {});
+      const client = await JsonRpcSocket.connect(socketDwnUrl, {
+        autoReconnect      : true,
+        baseReconnectDelay : 10,
+        maxReconnectDelay  : 10,
+        onreconnected,
+      });
+
+      // Gate reconnect establishment so close() can land mid-connect.
+      let releaseConnect!: () => void;
+      const connectGate = new Promise<void>((resolve) => { releaseConnect = resolve; });
+      const socketClass = JsonRpcSocket as unknown as {
+        createWebSocket(url: string, timeout: number): Promise<WebSocket>;
+      };
+      const originalCreate = socketClass.createWebSocket;
+      const createdSockets: WebSocket[] = [];
+      let connectCalls = 0;
+      socketClass.createWebSocket = async (url: string, timeout: number): Promise<WebSocket> => {
+        connectCalls += 1;
+        await connectGate;
+        const socket = await originalCreate.call(JsonRpcSocket, url, timeout);
+        createdSockets.push(socket);
+        return socket;
+      };
+
+      try {
+        // Unexpected drop — the reconnect loop enters the gated establishment.
+        client['socket'].close();
+        while (connectCalls === 0) {
+          await sleepWhileWaitingForEvents(10);
+        }
+
+        // Shutdown lands while the new WebSocket is still being established.
+        client.close();
+        releaseConnect();
+        await sleepWhileWaitingForEvents(100);
+
+        // The user-closed socket must stay closed: no assignment, no
+        // heartbeat, no reconnection announcement — and the fresh WebSocket
+        // is discarded.
+        expect(client.isConnected).toBe(false);
+        expect(client['reconnecting']).toBe(false);
+        expect(onreconnected).not.toHaveBeenCalled();
+        expect(client['_heartbeatInterval']).toBeUndefined();
+        expect(createdSockets).toHaveLength(1);
+        expect(createdSockets[0].readyState).toBeGreaterThanOrEqual(WebSocket.CLOSING);
+      } finally {
+        socketClass.createWebSocket = originalCreate;
+      }
+    }, 10_000);
+
     it('should restart heartbeat after reconnection', async (): Promise<void> => {
       const client = await JsonRpcSocket.connect(socketDwnUrl, {
         heartbeatInterval : 100,

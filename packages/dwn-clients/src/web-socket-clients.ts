@@ -31,11 +31,14 @@ import { DwnRpcError, SubscriptionHandlerTerminalError } from './dwn-rpc-error.j
 const DEFAULT_MAX_WS_JSON_RPC_PAYLOAD_BYTES = maxWsJsonRpcPayloadBytes(DEFAULT_MAX_WS_RAW_RECORD_DATA_BYTES);
 
 /**
- * Metadata for a tracked subscription, including everything needed to
- * resubscribe after a reconnection.
+ * The stable identity of one logical subscription across every transport
+ * re-establishment (reconnects, ownership-race adoptions). The `subscription`
+ * handle given to the original caller never goes stale: its close() always
+ * targets the CURRENT transport subscription, and the entry — including its
+ * cursor watermark — is reused rather than recreated on resubscription.
  */
 interface TrackedSubscription {
-  /** The DWN `MessageSubscription` handle. */
+  /** The stable DWN `MessageSubscription` handle handed to the caller. */
   subscription: MessageSubscription;
 
   /** The target DID for the subscription. */
@@ -55,6 +58,21 @@ interface TrackedSubscription {
 
   /** The progress token from the most recently received subscription event. */
   lastCursor?: ProgressToken;
+
+  /** Transport subscription id of the current establishment (map key + generation guard). */
+  currentId: string;
+
+  /** The connection whose map currently tracks this subscription. */
+  currentConnection: SocketConnection;
+
+  /** Socket-level close for the current establishment. */
+  currentClose: () => Promise<void>;
+
+  /**
+   * Set when the subscription logically ends — consumer close or a terminal
+   * subscription error. Recovery must never re-establish a closed entry.
+   */
+  closed: boolean;
 }
 
 interface SocketConnection {
@@ -109,6 +127,82 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   private static readonly connections = new Map<string, SocketConnection>();
   private static readonly pendingConnections = new Map<string, Promise<SocketConnection>>();
 
+  /**
+   * Sockets evicted from the pool by an unexpected close while their
+   * auto-reconnect loop runs. The pool only holds live connections, so
+   * without this registry a wake signal could never reach exactly the
+   * sockets that need it — the ones parked in reconnect backoff. Entries
+   * move back to the pool on reconnection and leave the registry.
+   */
+  private static readonly reconnectingSockets = new Set<JsonRpcSocket>();
+
+  /** Browser wake listeners (online / tab visible), registered once per process. */
+  private static onWake: (() => void) | undefined;
+  private static onVisibilityWake: (() => void) | undefined;
+
+  /**
+   * Force an immediate liveness verdict on every pooled connection and every
+   * socket reconnecting outside the pool.
+   *
+   * Dead sockets are detected and torn down right away — triggering
+   * auto-reconnect and resubscription — and sockets parked in reconnect
+   * backoff have that wait fast-forwarded, instead of waiting out timers
+   * that browsers throttle in backgrounded tabs.
+   */
+  public static checkAllConnections(): void {
+    for (const connection of WebSocketDwnRpcClient.connections.values()) {
+      void connection.socket.checkHealth();
+    }
+    for (const socket of WebSocketDwnRpcClient.reconnectingSockets) {
+      if (socket.isClosedByUser) {
+        WebSocketDwnRpcClient.reconnectingSockets.delete(socket);
+        continue;
+      }
+      void socket.checkHealth();
+    }
+  }
+
+  /**
+   * Registers browser recovery listeners so wake signals (network back
+   * online, tab foregrounded) trigger an immediate pooled-connection health
+   * check. No-op outside browser-like environments and after the first call.
+   */
+  private static ensureWakeListeners(): void {
+    if (WebSocketDwnRpcClient.onWake !== undefined) {
+      return;
+    }
+    if (typeof globalThis.addEventListener !== 'function') {
+      return;
+    }
+
+    const onWake = (): void => { WebSocketDwnRpcClient.checkAllConnections(); };
+    WebSocketDwnRpcClient.onWake = onWake;
+    globalThis.addEventListener('online', onWake);
+
+    const visibilityDocument = typeof document === 'undefined' ? undefined : document;
+    if (visibilityDocument !== undefined) {
+      const onVisibilityWake = (): void => {
+        if (visibilityDocument.visibilityState === 'visible') {
+          onWake();
+        }
+      };
+      WebSocketDwnRpcClient.onVisibilityWake = onVisibilityWake;
+      visibilityDocument.addEventListener('visibilitychange', onVisibilityWake);
+    }
+  }
+
+  /** Removes the browser wake listeners registered by {@link ensureWakeListeners}. */
+  private static removeWakeListeners(): void {
+    if (WebSocketDwnRpcClient.onWake !== undefined && typeof globalThis.removeEventListener === 'function') {
+      globalThis.removeEventListener('online', WebSocketDwnRpcClient.onWake);
+    }
+    if (WebSocketDwnRpcClient.onVisibilityWake !== undefined && typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', WebSocketDwnRpcClient.onVisibilityWake);
+    }
+    WebSocketDwnRpcClient.onWake = undefined;
+    WebSocketDwnRpcClient.onVisibilityWake = undefined;
+  }
+
   public constructor(
     private readonly serverInfoRpc: DwnServerInfoRpc = new HttpDwnRpcClient(),
     private readonly authOptions: DwnRpcAuthOptions = {},
@@ -123,6 +217,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
    * The pool is process-wide, so this is intended for application shutdown.
    */
   public static async closeAllConnections(): Promise<void> {
+    WebSocketDwnRpcClient.removeWakeListeners();
     const pending = [...WebSocketDwnRpcClient.pendingConnections.values()];
     WebSocketDwnRpcClient.pendingConnections.clear();
     for (const pendingConnection of pending) {
@@ -146,6 +241,18 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       connection.subscriptions.clear();
       try {
         connection.socket.close();
+      } catch {
+        // Best-effort.
+      }
+    }
+
+    // Sockets mid-reconnect are outside the pool; without this they would
+    // keep reconnecting after shutdown and re-register into a cleared pool.
+    const reconnecting = [...WebSocketDwnRpcClient.reconnectingSockets];
+    WebSocketDwnRpcClient.reconnectingSockets.clear();
+    for (const socket of reconnecting) {
+      try {
+        socket.close();
       } catch {
         // Best-effort.
       }
@@ -214,8 +321,28 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
     let pending = WebSocketDwnRpcClient.pendingConnections.get(key);
     if (pending === undefined) {
+      WebSocketDwnRpcClient.ensureWakeListeners();
       pending = WebSocketDwnRpcClient.createConnection(url)
         .then((connection) => {
+          // Ownership: an evicted socket may have reconnected and re-taken
+          // the endpoint while this replacement was being established. Its
+          // subscriptions are already live there, so the recovered connection
+          // is reused and the redundant replacement discarded — no extra
+          // resubscription, no duplicate reconnected notification. Only a
+          // dead pooled entry is displaced, adopting its subscriptions.
+          const current = WebSocketDwnRpcClient.connections.get(key);
+          if (current !== undefined && current.socket !== connection.socket) {
+            if (current.socket.isConnected) {
+              try {
+                connection.socket.close();
+              } catch { /* best effort */ }
+              return current;
+            }
+            WebSocketDwnRpcClient.adoptSubscriptions(current.subscriptions, connection);
+            try {
+              current.socket.close();
+            } catch { /* best effort */ }
+          }
           WebSocketDwnRpcClient.connections.set(key, connection);
           return connection;
         })
@@ -240,8 +367,18 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
     const socket = await JsonRpcSocket.connect(url.toString(), {
       onclose: (): void => {
-        // Remove the stale connection from the map so new requests create a fresh one.
-        WebSocketDwnRpcClient.connections.delete(key);
+        // Remove the stale connection from the map so new requests create a
+        // fresh one — but only while this socket still owns the endpoint's
+        // pool entry: a stale close from a superseded socket must not evict
+        // its replacement. Register the socket as reconnecting so wake-driven
+        // health checks can still reach it and fast-forward its backoff.
+        const current = WebSocketDwnRpcClient.connections.get(key);
+        if (current?.socket === socket) {
+          WebSocketDwnRpcClient.connections.delete(key);
+        }
+        if (!socket.isClosedByUser) {
+          WebSocketDwnRpcClient.reconnectingSockets.add(socket);
+        }
 
         // Notify all subscription handlers of disconnection. Invocation is
         // normalized so one throwing handler cannot skip the rest.
@@ -257,6 +394,30 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       },
 
       onreconnected: (): void => {
+        WebSocketDwnRpcClient.reconnectingSockets.delete(socket);
+
+        // A user-closed socket must never re-enter the pool: shutdown may
+        // have raced an in-flight reconnection, and re-registering here would
+        // resurrect networking the caller believes is stopped.
+        if (socket.isClosedByUser) {
+          return;
+        }
+
+        // Ownership: a request that arrived while this socket was
+        // reconnecting created a replacement connection for the endpoint.
+        // The pooled connection is the one with live consumers — a superseded
+        // socket closes itself instead of overwriting it, so exactly one
+        // socket per endpoint survives the race. Its tracked subscriptions
+        // move onto the winner first so they keep receiving updates.
+        const current = WebSocketDwnRpcClient.connections.get(key);
+        if (current !== undefined && current.socket !== socket) {
+          WebSocketDwnRpcClient.adoptSubscriptions(subscriptions, current);
+          try {
+            socket.close();
+          } catch { /* best effort */ }
+          return;
+        }
+
         // Re-register this connection in the map (it was deleted on close).
         const conn = { socket, subscriptions, url: url.toString() };
         WebSocketDwnRpcClient.connections.set(key, conn);
@@ -336,6 +497,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     message: GenericMessage,
     handler: DwnSubscriptionHandler,
     resubscribeFactory?: ResubscribeFactory,
+    existingTracked?: TrackedSubscription,
   ): Promise<DwnRpcResponse> {
     const requestId = CryptoUtils.randomUuid();
     const subscriptionId = CryptoUtils.randomUuid();
@@ -345,15 +507,15 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
     const { socket, subscriptions } = connection;
     let terminalSubscriptionError = false;
-    const closeSubscription = (subscription: MessageSubscription): void => {
-      Promise.resolve(subscription.close()).catch(() => {});
-    };
 
     const closeTrackedSubscription = (): void => {
       terminalSubscriptionError = true;
       const tracked = subscriptions.get(subscriptionId);
-      if (tracked) {
-        closeSubscription(tracked.subscription);
+      // Generation guard: only tear the logical subscription down when THIS
+      // establishment is still its current transport binding — a late error
+      // from a superseded establishment must not kill a recovered one.
+      if (tracked && tracked.currentId === subscriptionId) {
+        Promise.resolve(tracked.subscription.close()).catch(() => {});
       }
       subscriptions.delete(subscriptionId);
     };
@@ -435,27 +597,54 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
     const { reply } = result as { reply: UnionMessageReply };
     if (reply.subscription && close) {
-      let closed = false;
-      const wrappedClose = async (): Promise<void> => {
-        if (closed) {
-          return;
-        }
-        closed = true;
-        subscriptions.delete(subscriptionId);
-        await close();
-      };
+      let tracked: TrackedSubscription;
+      if (existingTracked !== undefined) {
+        // Re-establishment: the logical subscription (its stable handle and
+        // cursor watermark) carries over; only the transport binding changes.
+        tracked = existingTracked;
+      } else {
+        tracked = {
+          subscription      : reply.subscription,
+          target,
+          message,
+          handler,
+          resubscribeFactory,
+          currentId         : subscriptionId,
+          currentConnection : connection,
+          currentClose      : close,
+          closed            : false,
+        };
+        // The stable close facade: always closes the CURRENT transport
+        // subscription and removes it from whatever map tracks it now, no
+        // matter how many re-establishments happened since the caller got
+        // this handle.
+        const stableClose = async (): Promise<void> => {
+          if (tracked.closed) {
+            return;
+          }
+          tracked.closed = true;
+          tracked.currentConnection.subscriptions.delete(tracked.currentId);
+          try {
+            await tracked.currentClose();
+          } catch {
+            // The transport already died with the subscription — closed is closed.
+          }
+        };
+        tracked.subscription = { ...reply.subscription, close: stableClose };
+      }
 
-      const tracked: TrackedSubscription = {
-        subscription: { ...reply.subscription, close: wrappedClose },
-        target,
-        message,
-        handler,
-        resubscribeFactory,
-      };
+      tracked.currentId = subscriptionId;
+      tracked.currentConnection = connection;
+      tracked.currentClose = close;
+      // Point this establishment's reply at the stable close so any holder of
+      // it closes the logical subscription, not a stale transport id.
+      reply.subscription.close = tracked.subscription.close;
 
-      reply.subscription.close = wrappedClose;
-      if (terminalSubscriptionError) {
-        Promise.resolve(wrappedClose()).catch(() => {});
+      if (terminalSubscriptionError || tracked.closed) {
+        // The subscription logically ended while this establishment was in
+        // flight — tear the fresh server-side subscription down immediately.
+        tracked.closed = true;
+        Promise.resolve(close()).catch(() => {});
       } else {
         subscriptions.set(subscriptionId, tracked);
       }
@@ -465,10 +654,111 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   }
 
   /**
+   * Re-establishes one tracked subscription on `connection`, resuming from
+   * its last known cursor. Uses the `resubscribeFactory` (if provided) to
+   * construct a properly signed message with the cursor; falls back to the
+   * original message for anonymous/unsigned subscriptions. The tracked entry
+   * is REUSED — stable close handle and cursor watermark carry over — and the
+   * handler is notified `reconnected` only after a verified success.
+   *
+   * @throws when the DWN reply is not a successful subscription (e.g. a 410
+   *         progress gap) so the caller's failure handling can drive repair.
+   */
+  private static async resubscribeTracked(
+    connection: SocketConnection,
+    tracked: TrackedSubscription,
+  ): Promise<void> {
+    if (tracked.closed) {
+      return;
+    }
+
+    let resumeMessage: GenericMessage;
+
+    if (tracked.resubscribeFactory) {
+      // Reconstruct and re-sign the message with the cursor.
+      resumeMessage = await tracked.resubscribeFactory(tracked.lastCursor);
+    } else {
+      // No factory — reuse the original message as-is.
+      // This only works for anonymous (unsigned) subscriptions.
+      resumeMessage = tracked.message;
+    }
+
+    if (tracked.closed) {
+      return;
+    }
+
+    const reply = await WebSocketDwnRpcClient.subscriptionRequest(
+      connection,
+      tracked.target,
+      resumeMessage,
+      tracked.handler,
+      tracked.resubscribeFactory,
+      tracked,
+    ) as UnionMessageReply;
+
+    // A non-success or subscription-less reply (e.g. 410 ProgressGap) is a
+    // failed recovery — it must never masquerade as a reconnection.
+    if (reply.status?.code !== 200 || reply.subscription === undefined) {
+      throw new Error(
+        `resubscription failed for ${tracked.target}: ${reply.status?.code} ${reply.status?.detail}`,
+      );
+    }
+
+    if (tracked.closed) {
+      // Closed while establishing — the fresh subscription was already torn
+      // down; do not announce a reconnection.
+      return;
+    }
+
+    // Notify the handler that reconnection is complete for this subscription.
+    WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'reconnected' });
+  }
+
+  /**
+   * Marks a subscription's recovery as terminally failed and tells its
+   * consumer with a terminal `error` message carrying the last delivered
+   * cursor, so higher layers can drive repair from a definitive signal
+   * instead of a silent gap.
+   */
+  private static notifyRecoveryFailed(tracked: TrackedSubscription, error: unknown): void {
+    if (tracked.closed) {
+      return;
+    }
+    tracked.closed = true;
+
+    const detail = error instanceof Error ? error.message : String(error);
+    WebSocketDwnRpcClient.invokeHandler(tracked.handler, {
+      type   : 'error',
+      cursor : tracked.lastCursor,
+      error  : {
+        code   : 'SubscriptionRecoveryFailed',
+        detail : `subscription could not be re-established: ${detail}`,
+      },
+    } as unknown as SubscriptionMessage);
+  }
+
+  /**
+   * Moves every tracked subscription from a socket that lost the endpoint-
+   * ownership race onto the winning connection, resuming each from its last
+   * cursor. The losing map is drained synchronously so the loser's close
+   * cannot double-notify the handlers adoption is re-establishing.
+   */
+  private static adoptSubscriptions(
+    from: Map<string, TrackedSubscription>,
+    winner: SocketConnection,
+  ): void {
+    const entries = [...from.values()];
+    from.clear();
+
+    for (const tracked of entries) {
+      void WebSocketDwnRpcClient.resubscribeTracked(winner, tracked).catch((error: unknown): void => {
+        WebSocketDwnRpcClient.notifyRecoveryFailed(tracked, error);
+      });
+    }
+  }
+
+  /**
    * Resubscribes all tracked subscriptions on a reconnected socket.
-   * Uses the `resubscribeFactory` (if provided) to construct a properly signed
-   * message with the last known cursor. Falls back to the original message
-   * for anonymous/unsigned subscriptions.
    */
   private static async resubscribeAll(connection: SocketConnection): Promise<void> {
     // Snapshot the current subscriptions — resubscription will re-populate the map.
@@ -477,31 +767,23 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
     for (const [, tracked] of entries) {
       try {
-        let resumeMessage: GenericMessage;
-
-        if (tracked.resubscribeFactory) {
-          // Reconstruct and re-sign the message with the cursor.
-          resumeMessage = await tracked.resubscribeFactory(tracked.lastCursor);
-        } else {
-          // No factory — reuse the original message as-is.
-          // This only works for anonymous (unsigned) subscriptions.
-          resumeMessage = tracked.message;
+        await WebSocketDwnRpcClient.resubscribeTracked(connection, tracked);
+      } catch (error: unknown) {
+        // The connection may have lost endpoint ownership mid-resubscription —
+        // hand the subscription to the current owner so it survives the race.
+        const owner = WebSocketDwnRpcClient.connections.get(connectionCacheKey(new URL(connection.url)));
+        if (owner !== undefined && owner !== connection) {
+          try {
+            await WebSocketDwnRpcClient.resubscribeTracked(owner, tracked);
+            continue;
+          } catch (ownerError: unknown) {
+            WebSocketDwnRpcClient.notifyRecoveryFailed(tracked, ownerError);
+            continue;
+          }
         }
-
-        await WebSocketDwnRpcClient.subscriptionRequest(
-          connection,
-          tracked.target,
-          resumeMessage,
-          tracked.handler,
-          tracked.resubscribeFactory,
-        );
-
-        // Notify the handler that reconnection is complete for this subscription.
-        WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'reconnected' });
-      } catch {
-        // If resubscription fails for one subscription, continue with the rest.
-        // The subscription is effectively lost — the handler was already
-        // notified of disconnection.
+        // Recovery failed with no other owner to try — emit the terminal
+        // signal so higher layers repair instead of silently losing events.
+        WebSocketDwnRpcClient.notifyRecoveryFailed(tracked, error);
       }
     }
   }

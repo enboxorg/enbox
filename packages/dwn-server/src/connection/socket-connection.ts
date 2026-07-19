@@ -54,11 +54,18 @@ export class SocketConnection {
     private readonly tenantRateLimiter?: RateLimiter,
     private readonly messageProcessedHooks?: MessageProcessedHook[],
   ){
-    // Bun handles ping/pong automatically at the protocol level, but we still
-    // want an application-level heartbeat to detect dead connections.
+    // Bun answers peer pings automatically at the protocol level; this loop
+    // originates our own protocol pings so dead peers are detected even when
+    // the peer's application-level timers are throttled or frozen.
     this.heartbeatInterval = setInterval(() => {
       if (this.isAlive === false) {
-        this.close();
+        // A dead peer cannot complete a close handshake — tear the socket
+        // down immediately so its resources and NAT/proxy entries free up,
+        // then release subscriptions and flow controllers.
+        try {
+          this.socket.terminate();
+        } catch { /* best effort */ }
+        void this.close();
         return;
       }
       this.isAlive = false;
