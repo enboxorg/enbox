@@ -144,6 +144,14 @@ export class SyncLinkRecoveryCoordinator {
     if (controller !== undefined && controller.link !== link) {
       return;
     }
+    if (controller?.isActive === true) {
+      // Publish the pause's generation bump synchronously, before status
+      // persistence and subscription teardown: an opener resolving while
+      // the teardown below awaits an in-flight close must be refused by
+      // the generation-fenced attach — attaching after the bump is
+      // impossible, and anything attached before it is closed below.
+      controller.clearPullInflight();
+    }
 
     await this.setOfflineStatus(link, 'paused');
     if (controller?.isActive !== true) {
@@ -151,7 +159,6 @@ export class SyncLinkRecoveryCoordinator {
     }
 
     await controller.closeSubscriptions();
-    controller.clearPullInflight();
     controller.cancelReconcileTimer();
     controller.clearPushRuntime();
     controller.clearRepairProgress();

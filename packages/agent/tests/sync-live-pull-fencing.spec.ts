@@ -306,6 +306,40 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     await controller.shutdown();
   });
 
+  it('should refuse a local install that resolves while pause teardown awaits a subscription close', async () => {
+    const fixture = createEngineFixture(db);
+    const { controller, engine } = fixture;
+    controller.link.status = 'initializing';
+    const releaseLiveClose = deferred();
+    controller.setLiveSubscription({ close: sinon.stub().callsFake(() => releaseLiveClose.promise) });
+    const subscribeStarted = deferred();
+    const releaseSubscribe = deferred();
+    const localClose = sinon.stub().resolves();
+    fixture.processRequest.callsFake(async () => {
+      subscribeStarted.resolve();
+      await releaseSubscribe.promise;
+      return { reply: { status: { code: 200 }, subscription: { close: localClose } } };
+    });
+
+    const opening = (engine as any).openLocalPushSubscription(fixture.target, controller);
+    await subscribeStarted.promise;
+    const pausing = (engine as any)._linkRecoveryCoordinator.transitionToPaused(LINK_KEY, controller.link);
+    // The pause is blocked awaiting the pull subscription's close when the
+    // pending local subscribe resolves: the attach must be refused by the
+    // pause's already-published generation, not slip into the slot the
+    // teardown has already inspected.
+    releaseSubscribe.resolve();
+    expect(await opening).toBe(false);
+    expect(localClose.calledOnce).toBe(true);
+
+    releaseLiveClose.resolve();
+    await pausing;
+    expect(controller.hasLocalSubscription).toBe(false);
+    expect(controller.link.status).toBe('paused');
+
+    await controller.shutdown();
+  });
+
   it('should keep a link paused during opening in the identity keep-set instead of failing it', async () => {
     const fixture = createEngineFixture(db);
     const { controller, engine } = fixture;
