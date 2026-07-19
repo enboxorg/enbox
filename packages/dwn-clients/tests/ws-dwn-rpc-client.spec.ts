@@ -969,6 +969,136 @@ describe('WebSocketDwnRpcClient', () => {
         expect(tracked.lastCursor).toEqual(highToken);
       });
 
+      it('should normalize synchronous handler throws into the ack flow', async () => {
+        const { message } = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : { schema: 'foo/bar' },
+        });
+
+        let subHandler: any;
+        const sentAcks: any[] = [];
+        const socket = {
+          subscribe: async (_request: any, handler: any): Promise<any> => {
+            subHandler = handler;
+            return {
+              response: {
+                jsonrpc : '2.0',
+                id      : 'id',
+                result  : {
+                  reply: {
+                    status       : { code: 200, detail: 'OK' },
+                    subscription : { id: 'sync-throw-sub', close: async (): Promise<void> => {} },
+                  },
+                },
+              },
+              close: async (): Promise<void> => {},
+            };
+          },
+          send: (request: any): void => {
+            if (request.method === 'rpc.ack') {
+              sentAcks.push(request);
+            }
+          },
+        };
+        const subscriptions = new Map();
+        const connection = { socket, subscriptions, url: socketDwnUrl };
+
+        const received: DwnSubscriptionMessage[] = [];
+        const handler: DwnSubscriptionHandler = (msg) => {
+          if ('cursor' in msg && (msg as any).cursor?.messageCid === 'cid-1') {
+            throw new Error('synchronous consumer failure');
+          }
+          received.push(msg);
+        };
+
+        await WebSocketDwnRpcClient['subscriptionRequest'](connection as any, alice.did, message, handler);
+
+        const tokenOne = { streamId: 's1', epoch: 'e1', position: '1', messageCid: 'cid-1' };
+        const tokenTwo = { streamId: 's1', epoch: 'e1', position: '2', messageCid: 'cid-2' };
+        subHandler({
+          jsonrpc : '2.0',
+          id      : 'event-1',
+          result  : { subscription: { type: 'event', cursor: tokenOne, event: { message } } },
+        });
+        subHandler({
+          jsonrpc : '2.0',
+          id      : 'event-2',
+          result  : { subscription: { type: 'event', cursor: tokenTwo, event: { message } } },
+        });
+
+        // A synchronous throw is an ordinary (non-terminal) handler failure:
+        // swallowed, acked, delivery continues, subscription stays tracked.
+        await waitForCondition(() => sentAcks.length === 2);
+        expect(sentAcks[0].params.cursor).toEqual(tokenOne);
+        expect(sentAcks[1].params.cursor).toEqual(tokenTwo);
+        expect(received).toHaveLength(1);
+        expect(subscriptions.size).toBe(1);
+      });
+
+      it('should treat an asynchronous non-terminal rejection like any handler failure', async () => {
+        const { message } = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : { schema: 'foo/bar' },
+        });
+
+        let subHandler: any;
+        const sentAcks: any[] = [];
+        const socket = {
+          subscribe: async (_request: any, handler: any): Promise<any> => {
+            subHandler = handler;
+            return {
+              response: {
+                jsonrpc : '2.0',
+                id      : 'id',
+                result  : {
+                  reply: {
+                    status       : { code: 200, detail: 'OK' },
+                    subscription : { id: 'async-reject-sub', close: async (): Promise<void> => {} },
+                  },
+                },
+              },
+              close: async (): Promise<void> => {},
+            };
+          },
+          send: (request: any): void => {
+            if (request.method === 'rpc.ack') {
+              sentAcks.push(request);
+            }
+          },
+        };
+        const subscriptions = new Map();
+        const connection = { socket, subscriptions, url: socketDwnUrl };
+
+        const received: DwnSubscriptionMessage[] = [];
+        const handler: DwnSubscriptionHandler = async (msg) => {
+          if ('cursor' in msg && (msg as any).cursor?.messageCid === 'cid-1') {
+            throw new Error('asynchronous consumer failure');
+          }
+          received.push(msg);
+        };
+
+        await WebSocketDwnRpcClient['subscriptionRequest'](connection as any, alice.did, message, handler);
+
+        const tokenOne = { streamId: 's1', epoch: 'e1', position: '1', messageCid: 'cid-1' };
+        const tokenTwo = { streamId: 's1', epoch: 'e1', position: '2', messageCid: 'cid-2' };
+        subHandler({
+          jsonrpc : '2.0',
+          id      : 'event-1',
+          result  : { subscription: { type: 'event', cursor: tokenOne, event: { message } } },
+        });
+        subHandler({
+          jsonrpc : '2.0',
+          id      : 'event-2',
+          result  : { subscription: { type: 'event', cursor: tokenTwo, event: { message } } },
+        });
+
+        await waitForCondition(() => sentAcks.length === 2);
+        expect(sentAcks[0].params.cursor).toEqual(tokenOne);
+        expect(sentAcks[1].params.cursor).toEqual(tokenTwo);
+        expect(received).toHaveLength(1);
+        expect(subscriptions.size).toBe(1);
+      });
+
       it('should send rpc.ack when cursor events arrive', async () => {
         // install the default test protocol so the DWN accepts the record
         await installDefaultTestProtocolViaHttp(httpClient, testDwnUrl, alice);
@@ -1417,18 +1547,88 @@ describe('WebSocketDwnRpcClient', () => {
           handler,
         });
 
-        // Trigger onclose — handler should receive 'disconnected'.
+        // Trigger onclose — the handler receives 'disconnected'. Lifecycle
+        // notifications deliver through the normalized promise chain, so the
+        // assertion awaits a microtask turn.
         capturedOptions.onclose();
+        await Promise.resolve();
         const disconnectMsgs = receivedMessages.filter((m) => m.type === 'disconnected');
         expect(disconnectMsgs).toHaveLength(1);
 
         // Trigger onreconnecting — handler should receive 'reconnecting' with attempt.
         capturedOptions.onreconnecting(1);
+        await Promise.resolve();
         const reconnectingMsgs = receivedMessages.filter(
           (m) => m.type === 'reconnecting'
         );
         expect(reconnectingMsgs).toHaveLength(1);
         expect((reconnectingMsgs[0] as any).attempt).toBe(1);
+
+        connectStub.restore();
+        connections.delete(connectionKey);
+      });
+
+      it('should contain lifecycle handler failures so every subscription is still notified', async () => {
+        const received: DwnSubscriptionMessage[] = [];
+        const throwingHandler: DwnSubscriptionHandler = () => {
+          throw new Error('synchronous lifecycle failure');
+        };
+        const rejectingHandler: DwnSubscriptionHandler = async () => {
+          throw new Error('asynchronous lifecycle failure');
+        };
+        const recordingHandler: DwnSubscriptionHandler = (msg) => {
+          received.push(msg);
+        };
+
+        let capturedOptions: any;
+        const mockSocket = {
+          request   : sinon.stub().resolves({ result: { reply: { status: { code: 200 } } } }),
+          subscribe : sinon.stub(),
+          send      : sinon.stub(),
+          close     : sinon.stub(),
+        };
+        const connectStub = sinon.stub(JsonRpcSocket, 'connect').callsFake(
+          async (_url: string, options?: any): Promise<any> => {
+            capturedOptions = options;
+            return mockSocket;
+          }
+        );
+
+        const connectionKey = connectionKeyForDwnUrl(socketDwnUrl);
+        const connections = (WebSocketDwnRpcClient as any)['connections'] as Map<string, any>;
+        connections.delete(connectionKey);
+
+        const { message } = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : { schema: 'foo/bar' },
+        });
+        await client.sendDwnRequest({
+          dwnUrl    : socketDwnUrl,
+          targetDid : alice.did,
+          message,
+        });
+
+        const conn = connections.get(connectionKey);
+        const trackedOf = (handler: DwnSubscriptionHandler, id: string): unknown => ({
+          subscription : { id, close: async (): Promise<void> => {} },
+          target       : alice.did,
+          message,
+          handler,
+        });
+        conn.subscriptions.set('throwing-sub', trackedOf(throwingHandler, 'throwing-sub'));
+        conn.subscriptions.set('rejecting-sub', trackedOf(rejectingHandler, 'rejecting-sub'));
+        conn.subscriptions.set('recording-sub', trackedOf(recordingHandler, 'recording-sub'));
+
+        // Neither the synchronous throw nor the asynchronous rejection may
+        // escape or prevent the remaining subscriptions from being notified.
+        capturedOptions.onclose();
+        capturedOptions.onreconnecting(2);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        expect(received.filter((m) => m.type === 'disconnected')).toHaveLength(1);
+        const reconnecting = received.filter((m) => m.type === 'reconnecting');
+        expect(reconnecting).toHaveLength(1);
+        expect((reconnecting[0] as any).attempt).toBe(2);
 
         connectStub.restore();
         connections.delete(connectionKey);

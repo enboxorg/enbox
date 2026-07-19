@@ -243,15 +243,16 @@ export class WebSocketDwnRpcClient implements DwnRpc {
         // Remove the stale connection from the map so new requests create a fresh one.
         WebSocketDwnRpcClient.connections.delete(key);
 
-        // Notify all subscription handlers of disconnection.
+        // Notify all subscription handlers of disconnection. Invocation is
+        // normalized so one throwing handler cannot skip the rest.
         for (const tracked of subscriptions.values()) {
-          tracked.handler({ type: 'disconnected' });
+          WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'disconnected' });
         }
       },
 
       onreconnecting: (attempt: number): void => {
         for (const tracked of subscriptions.values()) {
-          tracked.handler({ type: 'reconnecting', attempt });
+          WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'reconnecting', attempt });
         }
       },
 
@@ -311,6 +312,24 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     return parseReplicationApplyResult(result.result);
   }
 
+  /**
+   * Invokes a subscription handler with every failure mode normalized into
+   * the returned promise: a synchronous throw becomes a rejection instead of
+   * escaping into the socket's message dispatch, and an asynchronous
+   * rejection flows through unchanged. The rejection is pre-observed so call
+   * sites that ignore the result (transport lifecycle notifications) cannot
+   * surface it as an unhandled rejection — awaiting the returned promise
+   * still sees the failure.
+   */
+  private static invokeHandler(
+    handler: DwnSubscriptionHandler,
+    message: Parameters<DwnSubscriptionHandler>[0],
+  ): Promise<void> {
+    const handled = Promise.resolve().then((): void | Promise<void> => handler(message));
+    handled.catch((): void => {});
+    return handled;
+  }
+
   private static async subscriptionRequest(
     connection: SocketConnection,
     target: string,
@@ -360,11 +379,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       }
 
       const subscriptionMessage = result.subscription as SubscriptionMessage;
-      const handled = Promise.resolve(handler(subscriptionMessage));
-      // Observe the rejection immediately so a message that never enters the
-      // ack chain (or a chain cut short by teardown) cannot surface as an
-      // unhandled rejection; awaiting `handled` below still sees the failure.
-      handled.catch(() => {});
+      const handled = WebSocketDwnRpcClient.invokeHandler(handler, subscriptionMessage);
 
       if (subscriptionMessage.type === 'error') {
         closeTrackedSubscription();
@@ -482,7 +497,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
         );
 
         // Notify the handler that reconnection is complete for this subscription.
-        tracked.handler({ type: 'reconnected' });
+        WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'reconnected' });
       } catch {
         // If resubscription fails for one subscription, continue with the rest.
         // The subscription is effectively lost — the handler was already
