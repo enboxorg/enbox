@@ -242,3 +242,88 @@ describe('SyncLinkController', () => {
     expect(controller.reconcileInFlight).toBeUndefined();
   });
 });
+
+describe('SyncLinkController mailbox', () => {
+  const LINK_KEY = 'did:example:alice^https://dwn.example.com^projection-id^owner-epoch';
+
+  it('should serialize enqueued operations in FIFO order', async () => {
+    const controller = new SyncLinkController(LINK_KEY, createLink());
+    const order: string[] = [];
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+
+    const first = controller.enqueue(async (): Promise<void> => {
+      await firstGate;
+      order.push('first');
+    });
+    const second = controller.enqueue(async (): Promise<void> => {
+      order.push('second');
+    });
+
+    expect(controller.mailboxIdle).toBe(false);
+    releaseFirst();
+    await Promise.all([first, second]);
+
+    expect(order).toEqual(['first', 'second']);
+    expect(controller.mailboxIdle).toBe(true);
+  });
+
+  it('should refuse work enqueued after deactivation while letting in-flight work finish', async () => {
+    const controller = new SyncLinkController(LINK_KEY, createLink());
+    let releaseInflight!: () => void;
+    const inflightGate = new Promise<void>((resolve) => { releaseInflight = resolve; });
+    let signalStarted!: () => void;
+    const inflightStarted = new Promise<void>((resolve) => { signalStarted = resolve; });
+    let inflightRan = false;
+    let lateRan = false;
+
+    const inflight = controller.enqueue(async (): Promise<void> => {
+      signalStarted();
+      await inflightGate;
+      inflightRan = true;
+    });
+    // Deactivate only once the operation is genuinely in flight.
+    await inflightStarted;
+    controller.deactivate();
+    const late = controller.enqueue(async (): Promise<void> => { lateRan = true; });
+
+    releaseInflight();
+    await inflight;
+    expect(await late).toBeUndefined();
+
+    expect(inflightRan).toBe(true);
+    expect(lateRan).toBe(false);
+  });
+
+  it('should skip operations queued before deactivation that had not started', async () => {
+    const controller = new SyncLinkController(LINK_KEY, createLink());
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let queuedRan = false;
+
+    const first = controller.enqueue(async (): Promise<void> => { await firstGate; });
+    const queued = controller.enqueue(async (): Promise<void> => { queuedRan = true; });
+
+    controller.deactivate();
+    releaseFirst();
+    await first;
+    expect(await queued).toBeUndefined();
+    expect(queuedRan).toBe(false);
+  });
+
+  it('should surface a rejection to its caller without poisoning the queue', async () => {
+    const controller = new SyncLinkController(LINK_KEY, createLink());
+    let secondRan = false;
+
+    const first = controller.enqueue(async (): Promise<never> => {
+      throw new Error('operation failed');
+    });
+    const second = controller.enqueue(async (): Promise<void> => { secondRan = true; });
+
+    await expect(first).rejects.toThrow('operation failed');
+    await second;
+
+    expect(secondRan).toBe(true);
+    expect(controller.mailboxIdle).toBe(true);
+  });
+});

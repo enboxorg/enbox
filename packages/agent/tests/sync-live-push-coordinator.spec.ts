@@ -196,6 +196,53 @@ describe('SyncLivePushCoordinator', () => {
     expect(controller.pushRuntime).toBeUndefined();
   });
 
+  it('does not let a redundantly scheduled flush bypass the debounce timer', async () => {
+    const clock = sinon.useFakeTimers();
+    const fixture = createFixture({ debounceMs: 100 });
+    const controller = activate(fixture);
+    // Production task runners admit work on a microtask (sync-task-group),
+    // so two events in one synchronous window can both observe an idle
+    // mailbox and each schedule a flush before either is admitted.
+    const deferredRunner = sinon.stub().callsFake(async (operation: () => Promise<void>) => {
+      await Promise.resolve();
+      return operation();
+    });
+    fixture.operations.captureIdentityTaskRunner.returns(deferredRunner);
+
+    const releaseFirst = deferred<void>();
+    const firstStarted = deferred<void>();
+    fixture.operations.pushMessages.onFirstCall().callsFake(async ({ messageCids }) => {
+      firstStarted.resolve();
+      await releaseFirst.promise;
+      return { failed: [], succeeded: messageCids };
+    });
+
+    const firstEvent = fixture.coordinator.handleEvent(
+      target(), controller, () => false, deferredRunner, event(protocolMessage('https://protocol.example/first')));
+    const secondEvent = fixture.coordinator.handleEvent(
+      target(), controller, () => false, deferredRunner, event(protocolMessage('https://protocol.example/second')));
+    await Promise.all([firstEvent, secondEvent]);
+    await firstStarted.promise;
+
+    // A third entry arrives during the in-flight push; the first flush arms
+    // the debounce timer for it on completion.
+    await fixture.coordinator.handleEvent(
+      target(), controller, () => false, deferredRunner, event(protocolMessage('https://protocol.example/third')));
+
+    releaseFirst.resolve();
+    await clock.tickAsync(0);
+
+    // The redundant queued flush must not consume the timer-owned entry
+    // early: exactly one transport request until the debounce elapses.
+    expect(fixture.operations.pushMessages.callCount).toBe(1);
+
+    await clock.tickAsync(100);
+    expect(fixture.operations.pushMessages.callCount).toBe(2);
+
+    controller.deactivate();
+    await clock.runAllAsync();
+  });
+
   it('debounces entries that arrive during an in-flight push and drains them in a second supervised batch', async () => {
     const clock = sinon.useFakeTimers();
     const fixture = createFixture({ debounceMs: 100 });
@@ -307,7 +354,7 @@ describe('SyncLivePushCoordinator', () => {
     expect(fixture.operations.pushMessages.calledTwice).toBe(true);
   });
 
-  it('uses the retry count captured when a transport batch starts', async () => {
+  it('serializes a reconcile requeue behind an in-flight transport batch', async () => {
     const clock = sinon.useFakeTimers();
     const fixture = createFixture({ retryBackoffMs: [0, 10, 20] });
     const controller = activate(fixture);
@@ -323,17 +370,26 @@ describe('SyncLivePushCoordinator', () => {
 
     const flushing = fixture.coordinator.flushLink(LINK_KEY, controller);
     await pushStarted.promise;
-    await fixture.coordinator.handleReconcileFailures(controller, [{
+
+    // The mailbox holds the reconcile requeue outside the in-flight flush:
+    // it queues behind the transport batch instead of interleaving with it.
+    let reconcileCompleted = false;
+    const reconcile = fixture.coordinator.handleReconcileFailures(controller, [{
       cid    : 'reconcile-cid',
-      detail : 'retry concurrently',
-    }]);
-    expect(runtime.retryCount).toBe(1);
+      detail : 'retry after the batch',
+    }]).then((): void => { reconcileCompleted = true; });
+    await Promise.resolve();
+    expect(reconcileCompleted).toBe(false);
 
     releasePush.resolve();
     await flushing;
+    await reconcile;
 
+    // Serialized order: the failed batch requeues its own entry first, then
+    // the reconcile requeue appends; the retry count reflects one transport
+    // failure, not a double count.
     expect(runtime.retryCount).toBe(1);
-    expect(runtime.entries.map(({ cid }) => cid)).toEqual(['reconcile-cid', 'in-flight-cid']);
+    expect(runtime.entries.map(({ cid }) => cid)).toEqual(['in-flight-cid', 'reconcile-cid']);
     controller.deactivate();
     await clock.runAllAsync();
   });
