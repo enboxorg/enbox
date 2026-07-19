@@ -698,6 +698,34 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(order).toEqual(['pass-1', 'flush', 'pass-2']);
   });
 
+  it('lets an already-queued flush run between the turns of a sustained signal stream', async () => {
+    const fixture = createFixture();
+    const controller = activate(fixture);
+    const order: string[] = [];
+    const passStarted = deferred<void>();
+    fixture.operations.reconcileTarget.callsFake(async () => {
+      order.push(`pass-${fixture.operations.reconcileTarget.callCount}`);
+      if (fixture.operations.reconcileTarget.callCount === 1) {
+        passStarted.resolve();
+      }
+      if (fixture.operations.reconcileTarget.callCount <= 3) {
+        // Every pass is chased by another signal, sustaining the stream.
+        void fixture.coordinator.reconcile(controller);
+      }
+      return { converged: true };
+    });
+
+    const first = fixture.coordinator.reconcile(controller);
+    await passStarted.promise;
+    const flush = controller.enqueue(async (): Promise<void> => { order.push('flush'); }, 'flush');
+    await Promise.all([first, flush]);
+
+    // Each trailing pass is its own mailbox turn, so the queued flush runs
+    // right after the pass that was executing when it was queued — the
+    // stream cannot hold the mailbox and starve live push.
+    expect(order).toEqual(['pass-1', 'flush', 'pass-2', 'pass-3', 'pass-4']);
+  });
+
   it('lets a successful trailing pass subsume the failed pass retry timer', async () => {
     const clock = sinon.useFakeTimers();
     const fixture = createFixture({ reconcileRetryDelayMs: 5000 });
