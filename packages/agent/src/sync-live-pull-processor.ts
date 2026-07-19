@@ -3,7 +3,6 @@ import type { GenericMessage, MessageEvent, ProgressToken, SubscriptionMessage }
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
 import type { SyncEchoSuppressor } from './sync-echo-suppressor.js';
-import type { SyncLinkController } from './sync-link-controller.js';
 import type { SyncMessageEntry } from './sync-messages.js';
 import type { SyncTarget } from './sync-target-resolver.js';
 import type { AdmitClosureDeps, AdmitOutcome, SyncFreshEntry } from './sync-admit-closure.js';
@@ -14,6 +13,7 @@ import type {
   SyncEvent,
   SyncEventScope,
 } from './types/sync.js';
+import type { SyncLinkController, SyncPullDeliveryTicket } from './sync-link-controller.js';
 
 import { Encoder, Message } from '@enbox/dwn-sdk-js';
 
@@ -67,7 +67,7 @@ export type SyncLivePullFetchMessages = typeof fetchRemoteMessages;
 
 type PullDelivery = {
   controller?: SyncLinkController;
-  ordinal: number;
+  ticket?: SyncPullDeliveryTicket;
 };
 
 type LivePullProcessResult =
@@ -192,11 +192,49 @@ export class SyncLivePullProcessor {
     context: SyncLivePullContext,
     message: Extract<SubscriptionMessage, { type: 'event' }>,
   ): Promise<void> {
-    if (await this.shouldSkipEvent(context, message) || context.isStale()) {
+    const { did, dwnUrl, link, isStale } = context;
+    if (link !== undefined && link.status !== 'live' && link.status !== 'initializing') {
       return;
     }
 
+    if (link !== undefined && !SyncCheckpoint.validateTokenDomain(link.pull, message.cursor)) {
+      this._operations.warn(
+        `SyncLivePullProcessor: Token domain mismatch for ${did} -> ${dwnUrl}, transitioning to repairing`,
+      );
+      if (!isStale() && context.controller !== undefined) {
+        await this._operations.transitionToRepairing(context.controller);
+      }
+      return;
+    }
+
+    const classification = link === undefined
+      ? undefined
+      : classifySyncEventScope(message.event, link.scope);
+    if (classification === 'unknown') {
+      this._operations.warn(
+        `SyncLivePullProcessor: Unable to classify scoped pull event for ${did} -> ${dwnUrl}, transitioning to repair`,
+      );
+      if (!isStale() && context.controller !== undefined) {
+        await this._operations.transitionToRepairing(context.controller);
+      }
+      return;
+    }
+    if (isStale()) {
+      return;
+    }
+
+    // Every guard above is synchronous, so the ordering ticket is claimed in
+    // arrival order before any asynchronous work. An out-of-scope event is
+    // acknowledged through the ordinal tracker like any other delivery — a
+    // direct checkpoint advance would persist its cursor as contiguous while
+    // an earlier covered delivery is still admitting, and a crash in that
+    // window would resume past the never-applied earlier event.
     const delivery = this.startDelivery(context, message.cursor);
+    if (classification === 'out-of-scope') {
+      await this.commitDelivery(context, message.cursor, delivery);
+      return;
+    }
+
     try {
       const messageCid = await Message.getCid(message.event.message);
       if (this._echoSuppressor.hasRecentlyPushed(context.did, messageCid, context.dwnUrl)) {
@@ -269,62 +307,12 @@ export class SyncLivePullProcessor {
     }
   }
 
-  private async shouldSkipEvent(
-    context: SyncLivePullContext,
-    message: Extract<SubscriptionMessage, { type: 'event' }>,
-  ): Promise<boolean> {
-    const { did, dwnUrl, link, isStale } = context;
-    if (link !== undefined && link.status !== 'live' && link.status !== 'initializing') {
-      return true;
-    }
-
-    if (link !== undefined && !SyncCheckpoint.validateTokenDomain(link.pull, message.cursor)) {
-      this._operations.warn(
-        `SyncLivePullProcessor: Token domain mismatch for ${did} -> ${dwnUrl}, transitioning to repairing`,
-      );
-      if (!isStale() && context.controller !== undefined) {
-        await this._operations.transitionToRepairing(context.controller);
-      }
-      return true;
-    }
-
-    if (link !== undefined) {
-      const classification = classifySyncEventScope(message.event, link.scope);
-      if (classification === 'out-of-scope') {
-        await this.skipOutOfScopeEvent(link, message.cursor, isStale);
-        return true;
-      }
-      if (classification === 'unknown') {
-        this._operations.warn(
-          `SyncLivePullProcessor: Unable to classify scoped pull event for ${did} -> ${dwnUrl}, transitioning to repair`,
-        );
-        if (!isStale() && context.controller !== undefined) {
-          await this._operations.transitionToRepairing(context.controller);
-        }
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  private async skipOutOfScopeEvent(
-    link: ReplicationLinkState,
-    cursor: ProgressToken,
-    isStale: () => boolean,
-  ): Promise<void> {
-    if (isStale()) { return; }
-    SyncCheckpoint.setReceivedToken(link.pull, cursor);
-    SyncCheckpoint.commitContiguousToken(link.pull, cursor);
-    await this._operations.persistCheckpoint(link);
-  }
-
   private startDelivery(context: SyncLivePullContext, cursor: ProgressToken): PullDelivery {
     const deliveryController = context.controller?.isActive === true && context.link === context.controller.link
       ? context.controller
       : undefined;
-    const ordinal = deliveryController?.startPullDelivery(cursor) ?? -1;
-    return { controller: deliveryController, ordinal };
+    const ticket = deliveryController?.startPullDelivery(cursor);
+    return { controller: deliveryController, ticket };
   }
 
   private async processEvent(
@@ -433,13 +421,14 @@ export class SyncLivePullProcessor {
     if (
       link === undefined ||
       delivery.controller === undefined ||
+      delivery.ticket === undefined ||
       (link.status !== 'live' && link.status !== 'initializing') ||
       isStale()
     ) {
       return;
     }
 
-    const drained = delivery.controller.commitPullDelivery(delivery.ordinal, cursor);
+    const drained = delivery.controller.commitPullDelivery(delivery.ticket, cursor);
     if (drained > 0) {
       await this._operations.persistCheckpoint(link);
       if (isStale()) { return; }
@@ -455,7 +444,7 @@ export class SyncLivePullProcessor {
   }
 
   private async handleProcessingError(context: SyncLivePullContext, error: unknown): Promise<void> {
-    if (error instanceof SyncPullAbortedError) {
+    if (error instanceof SyncPullAbortedError || context.isStale()) {
       return;
     }
 
@@ -463,7 +452,7 @@ export class SyncLivePullProcessor {
       `SyncLivePullProcessor: Error processing live-pull event for ${context.did}`,
       error,
     );
-    if (context.controller !== undefined && !context.isStale()) {
+    if (context.controller !== undefined) {
       await this._operations.transitionToRepairing(context.controller);
     }
   }

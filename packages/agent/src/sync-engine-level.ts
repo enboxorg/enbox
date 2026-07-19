@@ -1364,12 +1364,20 @@ export class SyncEngineLevel implements SyncEngine {
         return this.createActiveLinkInitializationResult(link);
       }
 
-      const subscriptionResult = await this.openLinkSubscriptions({ ...target, linkKey }, controller);
+      const openGeneration = controller.pullEpoch;
+      const subscriptionResult = await this.openLinkSubscriptions({ ...target, linkKey }, controller, openGeneration);
       if (subscriptionResult === LinkSubscriptionOpenResult.Inactive || !controller.isActive) {
+        // A pause or repair takeover superseded the opening attempt. The
+        // durable link now belongs to that transition: reporting Failed
+        // here would drop it from the identity's keep-set and let the
+        // superseded-link prune delete a fail-safe pause's record.
+        if (controller.isActive && (controller.link.status === 'paused' || controller.link.status === 'repairing')) {
+          return this.createActiveLinkInitializationResult(link);
+        }
         return { status: LinkInitializationStatus.Failed };
       }
       if (subscriptionResult === LinkSubscriptionOpenResult.ReadyForLive) {
-        await this.markLinkLive(target, controller);
+        await this.markLinkLive(target, controller, openGeneration);
         if (!controller.isActive) {
           return { status: LinkInitializationStatus.Failed };
         }
@@ -1401,33 +1409,59 @@ export class SyncEngineLevel implements SyncEngine {
   private async openLinkSubscriptions(
     target: LinkSyncTarget,
     controller: SyncLinkController,
+    openGeneration = controller.pullEpoch,
   ): Promise<LinkSubscriptionOpenResult> {
-    const pullOpened = await this.openLivePullSubscription(target, controller);
+    // Cleanup is owned by this opening attempt: once a pause or repair has
+    // bumped the generation, the transition owns teardown and the fenced
+    // attach kept this attempt from installing anything — a controller-wide
+    // close here would tear down the replacement generation's pair.
+    const closeOwnAttempt = async (): Promise<void> => {
+      if (controller.pullEpoch === openGeneration) {
+        await controller.closeSubscriptions();
+      }
+    };
+
+    const pullOpened = await this.openLivePullSubscription(target, controller, openGeneration);
     if (pullOpened === false || !controller.isActive) {
-      await controller.closeSubscriptions();
+      await closeOwnAttempt();
       return LinkSubscriptionOpenResult.Inactive;
     }
     if (controller.link.status === 'repairing') {
       await controller.closeLiveSubscription();
       return LinkSubscriptionOpenResult.Repairing;
     }
+    // One generation owns the whole pair: a pause (or any reset) landing
+    // between the two halves must stop the attempt here — opening the local
+    // half under a newer generation would install a subscription the
+    // transition's teardown can never have seen.
+    if (controller.pullEpoch !== openGeneration || controller.link.status === 'paused') {
+      await closeOwnAttempt();
+      return LinkSubscriptionOpenResult.Inactive;
+    }
 
     try {
-      const pushOpened = await this.openLocalPushSubscription(target, controller);
+      const pushOpened = await this.openLocalPushSubscription(target, controller, openGeneration);
       if (pushOpened === false || !controller.isActive) {
-        await controller.closeSubscriptions();
+        await closeOwnAttempt();
         return LinkSubscriptionOpenResult.Inactive;
       }
     } catch (error) {
-      await controller.closeSubscriptions();
+      await closeOwnAttempt();
       throw error;
     }
     return LinkSubscriptionOpenResult.ReadyForLive;
   }
 
-  private async markLinkLive(target: SyncTarget, controller: SyncLinkController): Promise<void> {
-    if (!controller.isActive) { return; }
+  private async markLinkLive(
+    target: SyncTarget,
+    controller: SyncLinkController,
+    expectedGeneration?: number,
+  ): Promise<void> {
     const { link } = controller;
+    // A pause or repair takeover during subscription opening owns the link's
+    // phase now — completing initialization must not override it.
+    if (!controller.isActive || link.status === 'paused' || link.status === 'repairing') { return; }
+    if (expectedGeneration !== undefined && controller.pullEpoch !== expectedGeneration) { return; }
     this.emitEvent({
       type           : 'link:status-change',
       tenantDid      : target.did,
@@ -1742,15 +1776,52 @@ export class SyncEngineLevel implements SyncEngine {
   private async openLivePullSubscription(
     target: LinkSyncTarget,
     controller: SyncLinkController,
+    expectedGeneration?: number,
+  ): Promise<boolean> {
+    if (!controller.isActive || controller.linkKey !== target.linkKey) { return false; }
+    // Pin the pull generation before the first await — the caller's pair
+    // generation when opening both halves, else the current one: a repair
+    // or pause that resets the pull runtime while this open is in flight
+    // supersedes the subscription being built, and it must not be installed.
+    const subscriptionPullEpoch = expectedGeneration ?? controller.pullEpoch;
+    return this.runGenerationFencedOpen(controller, subscriptionPullEpoch, (): Promise<boolean> =>
+      this.openLivePullSubscriptionAttempt(target, controller, subscriptionPullEpoch));
+  }
+
+  /**
+   * Run one subscription-opening attempt pinned to a pull generation. A
+   * rejection belonging to a superseded attempt is that attempt's teardown,
+   * not the link's failure — it must not reach initialization error
+   * handling, which could repair or clean up the current generation's
+   * controller. Current-generation failures propagate unchanged.
+   */
+  private async runGenerationFencedOpen(
+    controller: SyncLinkController,
+    subscriptionPullEpoch: number,
+    attempt: () => Promise<boolean>,
+  ): Promise<boolean> {
+    try {
+      return await attempt();
+    } catch (error: unknown) {
+      if (!controller.isActive || controller.pullEpoch !== subscriptionPullEpoch) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  private async openLivePullSubscriptionAttempt(
+    target: LinkSyncTarget,
+    controller: SyncLinkController,
+    subscriptionPullEpoch: number,
   ): Promise<boolean> {
     const { did, delegateDid, dwnUrl } = target;
     const eventScope = syncEventScope(target.scope);
 
     const cursorKey = target.linkKey;
-    if (!controller.isActive || controller.linkKey !== cursorKey) { return false; }
     const { link } = controller;
     const cursor = await this.getInitialPullCursor({ did, dwnUrl, link });
-    if (!controller.isActive || controller.linkKey !== cursorKey) { return false; }
+    if (!controller.isActive || controller.linkKey !== cursorKey || controller.pullEpoch !== subscriptionPullEpoch) { return false; }
 
     const filters = target.scope.kind === 'protocolSet'
       ? target.scope.protocols.map(protocol => ({ protocol }))
@@ -1763,8 +1834,11 @@ export class SyncEngineLevel implements SyncEngine {
     // so multiple handlers can be in-flight concurrently. The ordinal tracker
     // ensures the checkpoint advances only when all earlier deliveries are committed.
     // Capture the controller lifetime so remove+re-add invalidates callbacks
-    // even when the replacement uses the same durable link key.
-    const isStale = this.createLinkStalePredicate(controller, runtimeScope);
+    // even when the replacement uses the same durable link key, and the pull
+    // generation so callbacks from a subscription superseded by a repair reset
+    // cannot touch checkpoints or trigger repairs after the link recovers.
+    const linkStale = this.createLinkStalePredicate(controller, runtimeScope);
+    const isStale = (): boolean => linkStale() || controller.pullEpoch !== subscriptionPullEpoch;
     const pullContext: SyncLivePullContext = {
       did,
       dwnUrl,
@@ -1795,6 +1869,7 @@ export class SyncEngineLevel implements SyncEngine {
     };
 
     const { message } = await this.agent.dwn.processRequest(subscribeRequest);
+    if (!controller.isActive || controller.pullEpoch !== subscriptionPullEpoch) { return false; }
     if (!message) {
       throw new Error(`SyncEngineLevel: Failed to construct MessagesSubscribe for ${dwnUrl}`);
     }
@@ -1834,6 +1909,10 @@ export class SyncEngineLevel implements SyncEngine {
         resubscribeFactory,
       },
     }) as MessagesSubscribeReply;
+    // No stale-reply handling here: a superseded 200 is refused by the
+    // generation-fenced attach below (and closed by its refusal path), and
+    // a superseded 410 or error throw is converted to `false` by the
+    // generation-fenced wrapper.
     if (reply.status.code === 410) {
       // ProgressGap — the cursor is no longer replayable. The link needs repair.
       const gapError = new Error(`SyncEngineLevel: ProgressGap for ${did} -> ${dwnUrl}: ${reply.status.detail}`);
@@ -1846,7 +1925,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     const close = async (): Promise<void> => { await reply.subscription!.close(); };
-    if (!controller.setLiveSubscription({ close })) {
+    if (!controller.setLiveSubscription({ close }, subscriptionPullEpoch)) {
       try {
         await close();
       } catch {
@@ -1958,6 +2037,20 @@ export class SyncEngineLevel implements SyncEngine {
   private async openLocalPushSubscription(
     target: LinkSyncTarget,
     controller: SyncLinkController,
+    expectedGeneration?: number,
+  ): Promise<boolean> {
+    if (!controller.isActive || controller.linkKey !== target.linkKey) { return false; }
+    // Same generation ownership as the pull side: a pause or repair that
+    // lands while the local subscribe is pending supersedes this attempt.
+    const subscriptionPullEpoch = expectedGeneration ?? controller.pullEpoch;
+    return this.runGenerationFencedOpen(controller, subscriptionPullEpoch, (): Promise<boolean> =>
+      this.openLocalPushSubscriptionAttempt(target, controller, subscriptionPullEpoch));
+  }
+
+  private async openLocalPushSubscriptionAttempt(
+    target: LinkSyncTarget,
+    controller: SyncLinkController,
+    subscriptionPullEpoch: number,
   ): Promise<boolean> {
     const { did, delegateDid } = target;
 
@@ -1967,10 +2060,10 @@ export class SyncEngineLevel implements SyncEngine {
 
     const runtimeScope = this._runtime;
 
-    if (!controller.isActive || controller.linkKey !== target.linkKey) { return false; }
     const isPushStale = (): boolean =>
       runtimeScope.disposed ||
-      !controller.isActive;
+      !controller.isActive ||
+      controller.pullEpoch !== subscriptionPullEpoch;
     const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(did);
 
     // Subscribe to the local DWN's EventLog.
@@ -2001,7 +2094,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     const close = async (): Promise<void> => { await reply.subscription!.close(); };
-    if (!controller.setLocalSubscription({ close })) {
+    if (!controller.setLocalSubscription({ close }, subscriptionPullEpoch)) {
       try {
         await close();
       } catch {

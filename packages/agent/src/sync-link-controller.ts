@@ -38,6 +38,17 @@ type InFlightPullCommit = {
 };
 
 /**
+ * One in-flight pull delivery's ordering claim. The epoch pins the claim to
+ * the pull generation that issued it: clearing or resetting the pull runtime
+ * starts a new generation, and commits carrying a superseded ticket are
+ * ignored instead of colliding with a fresh delivery's ordinal.
+ */
+export type SyncPullDeliveryTicket = {
+  epoch: number;
+  ordinal: number;
+};
+
+/**
  * Serialization lanes multiplexed onto one link mailbox. Every enqueued
  * operation runs FIFO regardless of lane; lanes only let callers observe
  * pending work of one kind (`mailboxBusy`) and coalesce shared operations
@@ -65,6 +76,7 @@ export class SyncLinkController {
   private _nextPullCommitOrdinal = 0;
   private _nextPullDeliveryOrdinal = 0;
   private readonly _pullInflight: Map<number, InFlightPullCommit> = new Map();
+  private _pullEpoch = 0;
   private _pushRuntime?: SyncPushRuntimeState;
   private _reconcileTimer?: ReturnType<typeof setTimeout>;
   private _reconcileTimerDueAt?: number;
@@ -187,6 +199,11 @@ export class SyncLinkController {
     }
   }
 
+  /** The current pull generation; superseded delivery tickets are ignored. */
+  public get pullEpoch(): number {
+    return this._pullEpoch;
+  }
+
   /** Number of pull deliveries still waiting to become contiguously committed. */
   public get pullInflightCount(): number {
     return this._pullInflight.size;
@@ -224,19 +241,26 @@ export class SyncLinkController {
     return this._localSubscription !== undefined;
   }
 
-  /** Assign an ordinal before asynchronous pull admission begins. */
-  public startPullDelivery(token: ProgressToken): number {
+  /** Claim an ordinal in the current pull generation before admission begins. */
+  public startPullDelivery(token: ProgressToken): SyncPullDeliveryTicket {
     const ordinal = this._nextPullDeliveryOrdinal++;
     this._pullInflight.set(ordinal, { token, committed: false });
-    return ordinal;
+    return { epoch: this._pullEpoch, ordinal };
   }
 
   /**
    * Mark a pull delivery committed and advance only the contiguous prefix.
-   * Returns the number of newly drained deliveries.
+   * Returns the number of newly drained deliveries. A ticket issued before
+   * the pull runtime was cleared or reset belongs to a superseded generation
+   * and commits nothing — its ordinal may have been reissued to a fresh
+   * delivery, and its token predates the re-established pull boundary.
    */
-  public commitPullDelivery(ordinal: number, token: ProgressToken): number {
-    const entry = this._pullInflight.get(ordinal);
+  public commitPullDelivery(ticket: SyncPullDeliveryTicket, token: ProgressToken): number {
+    if (ticket.epoch !== this._pullEpoch) {
+      return 0;
+    }
+
+    const entry = this._pullInflight.get(ticket.ordinal);
     if (entry !== undefined) {
       entry.committed = true;
     }
@@ -266,12 +290,14 @@ export class SyncLinkController {
 
   /** Discard incomplete pull deliveries while preserving future ordinal order. */
   public clearPullInflight(): void {
+    this._pullEpoch++;
     this._pullInflight.clear();
     this._nextPullCommitOrdinal = this._nextPullDeliveryOrdinal;
   }
 
   /** Reset pull delivery ordering when a repair establishes a fresh boundary. */
   public resetPullRuntime(): void {
+    this._pullEpoch++;
     this._pullInflight.clear();
     this._nextPullCommitOrdinal = 0;
     this._nextPullDeliveryOrdinal = 0;
@@ -331,18 +357,35 @@ export class SyncLinkController {
     pushRuntime.timer = undefined;
   }
 
-  /** Attach a remote pull subscription only while this link lifetime is active. */
-  public setLiveSubscription(subscription: SyncLinkSubscription): boolean {
+  /**
+   * Attach a remote pull subscription only while this link lifetime is
+   * active — and, when the caller pins the pull generation it opened the
+   * subscription for, only while that generation is still current. A
+   * subscription opened across a generation reset would be installed
+   * permanently fenced: every callback discarded as stale while the slot
+   * blocks the replacement.
+   */
+  public setLiveSubscription(subscription: SyncLinkSubscription, expectedPullEpoch?: number): boolean {
     if (!this._active || this._liveSubscription !== undefined) {
+      return false;
+    }
+    if (expectedPullEpoch !== undefined && expectedPullEpoch !== this._pullEpoch) {
       return false;
     }
     this._liveSubscription = subscription;
     return true;
   }
 
-  /** Attach a local push subscription only while this link lifetime is active. */
-  public setLocalSubscription(subscription: SyncLinkSubscription): boolean {
+  /**
+   * Attach a local push subscription only while this link lifetime is
+   * active — and, when the caller pins the pull generation it opened the
+   * subscription for, only while that generation is still current.
+   */
+  public setLocalSubscription(subscription: SyncLinkSubscription, expectedPullEpoch?: number): boolean {
     if (!this._active || this._localSubscription !== undefined) {
+      return false;
+    }
+    if (expectedPullEpoch !== undefined && expectedPullEpoch !== this._pullEpoch) {
       return false;
     }
     this._localSubscription = subscription;

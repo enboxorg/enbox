@@ -388,6 +388,98 @@ describe('SyncLivePullProcessor', () => {
     expect(context.controller?.pullInflightCount).toBe(0);
   });
 
+  it('orders an out-of-scope acknowledgement behind an earlier in-flight covered delivery', async () => {
+    const coveredStarted = deferred<void>();
+    const releaseCovered = deferred<void>();
+    const { admit, operations, processor } = createFixture();
+    const scope = { kind: 'protocolSet' as const, protocols: ['https://protocol.example/covered'] as [string] };
+    const state = link(scope);
+    const context = contextFor(state);
+    admit.onFirstCall().callsFake(async () => {
+      coveredStarted.resolve();
+      await releaseCovered.promise;
+      return { kind: 'admitted', appliedCids: ['covered'], freshEntries: [] };
+    });
+
+    const covered = processor.handleEvent(context, event(token('1'), protocolMessage('https://protocol.example/covered')));
+    await coveredStarted.promise;
+    await processor.handleEvent(context, event(token('2'), protocolMessage('https://protocol.example/outside')));
+
+    // The out-of-scope acknowledgement must wait in the ordinal queue: a
+    // direct advance would persist position 2 as contiguous while the
+    // position-1 delivery is still admitting, and a crash in that window
+    // would resume past the never-applied earlier event.
+    expect(operations.persistCheckpoint.notCalled).toBe(true);
+    expect(state.pull.contiguousAppliedToken).toBeUndefined();
+
+    releaseCovered.resolve();
+    await covered;
+
+    expect(state.pull.contiguousAppliedToken).toEqual(token('2'));
+    expect(operations.persistCheckpoint.calledOnceWithExactly(state)).toBe(true);
+  });
+
+  it('does not report or repair when event processing rejects after the delivery went stale', async () => {
+    const { admit, operations, processor } = createFixture();
+    const state = link();
+    let stale = false;
+    const context = contextFor(state, () => stale);
+    admit.callsFake(async () => {
+      // The teardown that made the delivery stale is also what kills its
+      // in-flight admission I/O.
+      stale = true;
+      throw new Error('socket closed by teardown');
+    });
+
+    await processor.handleEvent(context, event(token('1')));
+
+    expect(operations.reportError.notCalled).toBe(true);
+    expect(operations.transitionToRepairing.notCalled).toBe(true);
+  });
+
+  it('ignores a delivery that commits across a pull-runtime reset', async () => {
+    const staleStarted = deferred<void>();
+    const releaseStale = deferred<void>();
+    const freshStarted = deferred<void>();
+    const releaseFresh = deferred<void>();
+    const { admit, operations, processor } = createFixture();
+    const state = link();
+    const context = contextFor(state);
+    admit.onFirstCall().callsFake(async () => {
+      staleStarted.resolve();
+      await releaseStale.promise;
+      return { kind: 'admitted', appliedCids: ['stale'], freshEntries: [] };
+    });
+    admit.onSecondCall().callsFake(async () => {
+      freshStarted.resolve();
+      await releaseFresh.promise;
+      return { kind: 'admitted', appliedCids: ['fresh'], freshEntries: [] };
+    });
+
+    const stale = processor.handleEvent(context, event(token('5'), protocolMessage('https://protocol.example/stale')));
+    await staleStarted.promise;
+
+    // A repair re-establishes the pull boundary while the delivery admits.
+    context.controller?.resetPullRuntime();
+    const fresh = processor.handleEvent(context, event(token('6'), protocolMessage('https://protocol.example/fresh')));
+    await freshStarted.promise;
+
+    releaseStale.resolve();
+    await stale;
+
+    // The superseded delivery reuses ordinal 0 of the new generation; its
+    // commit must not mark the still-admitting fresh delivery as applied.
+    expect(operations.persistCheckpoint.notCalled).toBe(true);
+    expect(state.pull.contiguousAppliedToken).toBeUndefined();
+    expect(state.pull.receivedToken).toBeUndefined();
+
+    releaseFresh.resolve();
+    await fresh;
+
+    expect(state.pull.contiguousAppliedToken).toEqual(token('6'));
+    expect(operations.persistCheckpoint.calledOnceWithExactly(state)).toBe(true);
+  });
+
   it('repairs a link when concurrent deliveries exceed the bounded backlog', async () => {
     const firstStarted = deferred<void>();
     const releaseFirst = deferred<void>();
