@@ -15,7 +15,7 @@ import type {
 } from './types/sync.js';
 import type { SyncLinkController, SyncPullDeliveryTicket } from './sync-link-controller.js';
 
-import { Message } from '@enbox/dwn-sdk-js';
+import { Encoder, Message } from '@enbox/dwn-sdk-js';
 
 import { admitClosure } from './sync-admit-closure.js';
 import { classifySyncEventScope } from './sync-scope-acceptance.js';
@@ -23,7 +23,7 @@ import { isRecordsWrite } from './utils.js';
 import { isTerminalSyncAuthorizationFailure } from './sync-runtime-errors.js';
 import { SyncCheckpoint } from './sync-checkpoint.js';
 import { syncTargetFromLink } from './sync-target-resolver.js';
-import { fetchRemoteMessages, syncMessageDescriptor, SyncPullAbortedError } from './sync-messages.js';
+import { dataStreamFromBytes, fetchRemoteMessages, syncMessageDescriptor, SyncPullAbortedError } from './sync-messages.js';
 
 export type SyncLivePullContext = {
   controller: SyncLinkController;
@@ -304,7 +304,7 @@ export class SyncLivePullProcessor {
     rootCid: string,
   ): Promise<LivePullProcessResult | undefined> {
     const event = message.event;
-    const dataStreamFactory = await this.createDataStreamFactory(context, event);
+    const dataStreamFactory = await this.createDataStreamFactory(context, message);
     const prefetched: SyncMessageEntry[] = [{
       message           : event.message,
       dataStreamFactory,
@@ -361,10 +361,19 @@ export class SyncLivePullProcessor {
 
   private async createDataStreamFactory(
     context: SyncLivePullContext,
-    event: MessageEvent,
+    message: Extract<SubscriptionMessage, { type: 'event' }>,
   ): Promise<LivePullDataStreamFactory> {
+    const event = message.event;
     if (!isRecordsWrite(event)) {
       return async () => undefined;
+    }
+
+    // DurableEventLog delivers inline record data beside the message payload,
+    // as the subscription event's top-level `encodedData`. Serve it directly —
+    // a network re-fetch is only needed for detached (large) payloads.
+    if (message.encodedData !== undefined) {
+      const bytes = Encoder.base64UrlToBytes(message.encodedData);
+      return async () => dataStreamFromBytes(bytes);
     }
 
     const recordsWriteEvent = event as LivePullRecordsWriteEvent;
