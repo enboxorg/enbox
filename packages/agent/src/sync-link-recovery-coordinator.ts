@@ -186,25 +186,32 @@ export class SyncLinkRecoveryCoordinator {
       return Promise.resolve();
     }
 
+    controller.requestSharedRun('repair');
     return controller.enqueueShared('repair', async (): Promise<void> => {
-      try {
-        await this.repairExclusive(controller);
-      } finally {
-        // A reconcile already queued behind this repair (a timer that
-        // expired while the repair held the mailbox) provides the
-        // verification pass — arming the post-repair timer too would run
-        // a duplicate full pass against the remote.
-        if (
-          controller.isActive &&
-          controller.link.status === 'live' &&
-          !controller.mailboxBusy('reconcile')
-        ) {
-          this.scheduleLinkReconcile(
-            controller,
-            'post-repair-gap',
-            this._postRepairReconcileDelayMs,
-          );
+      // A repair transition that arrives while a repair is already executing
+      // is not a duplicate caller — it carries fresher state, such as a new
+      // resume token. One request mark is consumed per pass, so a burst of
+      // transitions yields exactly one trailing repair after the current one.
+      while (controller.consumeSharedRunRequest('repair')) {
+        if (this.repairCancelled(controller, this._operations.getRuntimeScope())) {
+          return;
         }
+        await this.repairExclusive(controller);
+      }
+
+      // A reconcile already queued behind this repair (a timer that expired
+      // while the repair held the mailbox) provides the verification pass —
+      // arming the post-repair timer too would run a duplicate full pass.
+      if (
+        controller.isActive &&
+        controller.link.status === 'live' &&
+        !controller.mailboxBusy('reconcile')
+      ) {
+        this.scheduleLinkReconcile(
+          controller,
+          'post-repair-gap',
+          this._postRepairReconcileDelayMs,
+        );
       }
     });
   }
@@ -258,9 +265,19 @@ export class SyncLinkRecoveryCoordinator {
     return true;
   }
 
-  /** Coalesce reconciliation callers onto one queued-or-running mailbox pass. */
+  /**
+   * Coalesce reconciliation callers onto the shared mailbox lane. Callers
+   * arriving before the pass takes its remote snapshot join it; a signal
+   * arriving after the snapshot is news that pass cannot have seen, so it
+   * runs as one trailing pass instead of being silently absorbed.
+   */
   public reconcile(controller: SyncLinkController): Promise<void> {
-    return controller.enqueueShared('reconcile', (): Promise<void> => this.reconcileExclusive(controller));
+    controller.requestSharedRun('reconcile');
+    return controller.enqueueShared('reconcile', async (): Promise<void> => {
+      while (controller.consumeSharedRunRequest('reconcile')) {
+        await this.reconcileExclusive(controller);
+      }
+    });
   }
 
   private startSupervisedRepair(

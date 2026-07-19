@@ -497,6 +497,62 @@ describe('SyncLivePushCoordinator', () => {
     expect(fixture.operations.pushMessages.called).toBe(false);
   });
 
+  it('drops a retryable push result that lands after the link was paused', async () => {
+    const fixture = createFixture();
+    const controller = activate(fixture);
+    const runtime = controller.getOrCreatePushRuntime({ did: DID, dwnUrl: REMOTE });
+    runtime.entries.push({ cid: 'paused-cid' });
+    const pushStarted = deferred<void>();
+    const releasePush = deferred<void>();
+    fixture.operations.pushMessages.callsFake(async () => {
+      pushStarted.resolve();
+      await releasePush.promise;
+      return { failed: [{ cid: 'paused-cid', detail: 'retry' }], succeeded: [] };
+    });
+    fixture.operations.transitionPushResult.resolves({
+      quotaBlocked      : false,
+      retryableFailures : [{ cid: 'paused-cid', detail: 'retry' }],
+      terminalFailures  : [],
+    });
+
+    const flushing = fixture.coordinator.flushLink(LINK_KEY, controller);
+    await pushStarted.promise;
+    // The pause path parks the link and clears the push runtime while the
+    // batch is in flight; the late result must not recreate any of it.
+    controller.link.status = 'paused';
+    controller.clearPushRuntime();
+    releasePush.resolve();
+    await flushing;
+
+    expect(controller.pushRuntime).toBeUndefined();
+    expect(fixture.operations.transitionPushResult.notCalled).toBe(true);
+    expect(fixture.operations.scheduleReconcile.notCalled).toBe(true);
+  });
+
+  it('stays quiet when a push rejects after the link was paused', async () => {
+    const fixture = createFixture();
+    const controller = activate(fixture);
+    const runtime = controller.getOrCreatePushRuntime({ did: DID, dwnUrl: REMOTE });
+    runtime.entries.push({ cid: 'paused-cid' });
+    const pushStarted = deferred<void>();
+    const releasePush = deferred<void>();
+    fixture.operations.pushMessages.callsFake(async () => {
+      pushStarted.resolve();
+      await releasePush.promise;
+      throw new Error('socket closed by pause teardown');
+    });
+
+    const flushing = fixture.coordinator.flushLink(LINK_KEY, controller);
+    await pushStarted.promise;
+    controller.link.status = 'paused';
+    controller.clearPushRuntime();
+    releasePush.resolve();
+    await flushing;
+
+    expect(fixture.operations.reportError.notCalled).toBe(true);
+    expect(controller.pushRuntime).toBeUndefined();
+  });
+
   it('starts a flush behind a busy non-flush mailbox operation instead of stalling entries', async () => {
     const fixture = createFixture();
     const controller = activate(fixture);

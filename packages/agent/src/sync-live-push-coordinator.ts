@@ -226,7 +226,7 @@ export class SyncLivePushCoordinator {
 
   /** The requeue body. Runs only inside the controller's mailbox. */
   private async requeueExclusive(controller: SyncLinkController, pending: SyncLivePushPendingBatch): Promise<void> {
-    if (!controller.isActive) {
+    if (!controller.isActive || controller.link.status !== 'live') {
       return;
     }
 
@@ -299,8 +299,13 @@ export class SyncLivePushCoordinator {
     }
 
     // At most one flush is in flight per link by construction: the mailbox
-    // serializes this body, so no in-flight flag is needed.
-    return { controller, entries, isStale: () => !controller.isActive, runtime };
+    // serializes this body, so no in-flight flag is needed. The batch dies
+    // with its runtime, its live phase, or its controller — a pause clears
+    // the push runtime and an in-flight result landing afterwards must not
+    // fold transitions, requeue entries, or recreate what the pause cleared.
+    const isStale = (): boolean =>
+      !controller.isActive || controller.pushRuntime !== runtime || controller.link.status !== 'live';
+    return { controller, entries, isStale, runtime };
   }
 
   private async handleBatchResult(linkKey: string, batch: PushFlushBatch, result: PushResult): Promise<void> {

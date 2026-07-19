@@ -59,6 +59,7 @@ export class SyncLinkController {
   private _mailboxDepth = 0;
   private readonly _mailboxKindDepths: Map<SyncLinkMailboxKind, number> = new Map();
   private readonly _mailboxShared: Map<SyncLinkMailboxKind, Promise<unknown>> = new Map();
+  private readonly _sharedRunRequests: Set<SyncLinkMailboxKind> = new Set();
   private _mailboxTail: Promise<void> = Promise.resolve();
   private _liveSubscription?: SyncLinkSubscription;
   private _localSubscription?: SyncLinkSubscription;
@@ -156,6 +157,29 @@ export class SyncLinkController {
   /** Whether an operation of `kind` is queued or in flight in the mailbox. */
   public mailboxBusy(kind: SyncLinkMailboxKind): boolean {
     return (this._mailboxKindDepths.get(kind) ?? 0) > 0;
+  }
+
+  /**
+   * Record that a fresh run of the shared `kind` lane is wanted. A request
+   * that arrives while a run is already executing is not a duplicate caller
+   * — it postdates that run's snapshot of the world — so the lane's loop
+   * consumes one mark per pass and runs exactly one trailing pass for a
+   * burst of requests.
+   */
+  public requestSharedRun(kind: SyncLinkMailboxKind): void {
+    if (this._active) {
+      this._sharedRunRequests.add(kind);
+    }
+  }
+
+  /** Consume the pending run request for `kind`, if any. */
+  public consumeSharedRunRequest(kind: SyncLinkMailboxKind): boolean {
+    return this._sharedRunRequests.delete(kind);
+  }
+
+  /** Whether a run request for `kind` is pending. */
+  public sharedRunRequested(kind: SyncLinkMailboxKind): boolean {
+    return this._sharedRunRequests.has(kind);
   }
 
   /** Number of pull deliveries still waiting to become contiguously committed. */
@@ -369,7 +393,11 @@ export class SyncLinkController {
 
   public clearRepairProgress(): void {
     this._repairAttempts = 0;
-    this._repairResumeToken = undefined;
+    // A pending repair request owns the freshest resume token — completing
+    // the pass it supersedes must not discard it.
+    if (!this._sharedRunRequests.has('repair')) {
+      this._repairResumeToken = undefined;
+    }
     this.cancelRepairRetry();
   }
 
@@ -436,6 +464,7 @@ export class SyncLinkController {
     this.cancelReconcileTimer();
     this.resetPullRuntime();
     this._mailboxShared.clear();
+    this._sharedRunRequests.clear();
     this._repairAttempts = 0;
     this._repairResumeToken = undefined;
   }

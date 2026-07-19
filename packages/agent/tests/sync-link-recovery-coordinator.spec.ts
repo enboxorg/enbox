@@ -609,6 +609,62 @@ describe('SyncLinkRecoveryCoordinator', () => {
     controller.deactivate();
   });
 
+  it('runs one trailing repair with the newest resume token when a transition lands mid-repair', async () => {
+    const clock = sinon.useFakeTimers();
+    const fixture = createFixture();
+    const state = link('repairing');
+    const controller = activate(fixture, state);
+    const pullOpening = deferred<void>();
+    const releasePull = deferred<void>();
+    fixture.operations.openPullSubscription.onFirstCall().callsFake(async (): Promise<boolean> => {
+      pullOpening.resolve();
+      await releasePull.promise;
+      return true;
+    });
+
+    const repairing = fixture.coordinator.repair(controller);
+    await pullOpening.promise;
+    // A fresh gap is detected while the first repair is reopening: the new
+    // transition carries a newer resume token and must not be absorbed by
+    // the repair already executing.
+    const newerToken = token('42');
+    await fixture.coordinator.transitionToRepairing(controller, { resumeToken: newerToken });
+    releasePull.resolve();
+    await repairing;
+
+    expect(fixture.operations.reconcileTarget.callCount).toBe(2);
+    expect(fixture.operations.resetPullCheckpoint.secondCall.args[1]).toEqual(newerToken);
+    expect(state.status).toBe('live');
+    controller.deactivate();
+    await clock.runAllAsync();
+  });
+
+  it('runs one trailing reconciliation pass for signals arriving after the snapshot', async () => {
+    const fixture = createFixture();
+    const state = link();
+    const controller = activate(fixture, state);
+    const snapshotTaken = deferred<void>();
+    const releasePass = deferred<void>();
+    fixture.operations.reconcileTarget.onFirstCall().callsFake(async () => {
+      snapshotTaken.resolve();
+      await releasePass.promise;
+      return { converged: true };
+    });
+    fixture.operations.reconcileTarget.resolves({ converged: true });
+
+    const reconciling = fixture.coordinator.reconcile(controller);
+    await snapshotTaken.promise;
+    // Two signals land after the running pass queried the remote feed: they
+    // are news it cannot have seen, and must coalesce into exactly one
+    // trailing pass rather than being absorbed or each running its own.
+    const second = fixture.coordinator.reconcile(controller);
+    const third = fixture.coordinator.reconcile(controller);
+    releasePass.resolve();
+    await Promise.all([reconciling, second, third]);
+
+    expect(fixture.operations.reconcileTarget.callCount).toBe(2);
+  });
+
   it('deduplicates concurrent repair and reconciliation without leaking in-flight state', async () => {
     const fixture = createFixture();
     const repairController = activate(fixture, link('repairing'));
