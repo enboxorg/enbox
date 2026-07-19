@@ -18,7 +18,6 @@ type TestOperationsState = {
   integrityChecks: number;
   linksMarkedOffline: number;
   runBackgroundImmediately: boolean;
-  syncInProgress: boolean;
 };
 
 class TestConnectivityEnvironment implements SyncConnectivityEnvironment {
@@ -121,11 +120,6 @@ describe('SyncConnectivityManager', () => {
     const { manager, state } = setupManager({ environment });
     manager.start();
 
-    state.syncInProgress = true;
-    environment.dispatch('online');
-    expect(state.integrityChecks).toBe(0);
-
-    state.syncInProgress = false;
     environment.dispatch('online');
     environment.dispatch('visibilitychange');
     environment.dispatch('online');
@@ -141,7 +135,7 @@ describe('SyncConnectivityManager', () => {
     manager.stop();
   });
 
-  it('suppresses a recovery signal that follows a completed check inside the cooldown', async () => {
+  it('defers a recovery signal that follows a completed check inside the cooldown', async () => {
     const clock = sinon.useFakeTimers();
     const environment = new TestConnectivityEnvironment();
     environment.visibilityState = 'visible';
@@ -154,9 +148,81 @@ describe('SyncConnectivityManager', () => {
 
     await clock.tickAsync(3_000);
     environment.dispatch('visibilitychange');
-    await clock.tickAsync(10_000);
-
+    await clock.tickAsync(6_999);
     expect(state.integrityChecks).toBe(1);
+
+    await clock.tickAsync(1);
+    expect(state.integrityChecks).toBe(2);
+    manager.stop();
+  });
+
+  it('runs online recovery immediately after offline resets the cooldown', async () => {
+    const clock = sinon.useFakeTimers();
+    const environment = new TestConnectivityEnvironment();
+    environment.visibilityState = 'visible';
+    const { manager, state } = setupManager({ environment });
+    manager.start();
+
+    environment.dispatch('online');
+    await clock.tickAsync(0);
+    expect(state.integrityChecks).toBe(1);
+
+    await clock.tickAsync(3_000);
+    environment.dispatch('offline');
+    await clock.tickAsync(1_000);
+    environment.dispatch('online');
+    await clock.tickAsync(0);
+
+    expect(state.integrityChecks).toBe(2);
+    manager.stop();
+  });
+
+  it('cancels deferred recovery and resets its cooldown on stop', async () => {
+    const clock = sinon.useFakeTimers();
+    const environment = new TestConnectivityEnvironment();
+    environment.visibilityState = 'visible';
+    const { manager, state } = setupManager({ environment });
+    manager.start();
+
+    environment.dispatch('online');
+    await clock.tickAsync(0);
+    await clock.tickAsync(3_000);
+    environment.dispatch('visibilitychange');
+
+    manager.stop();
+    await clock.tickAsync(7_000);
+    expect(state.integrityChecks).toBe(1);
+
+    manager.start();
+    environment.dispatch('online');
+    await clock.tickAsync(0);
+    expect(state.integrityChecks).toBe(2);
+    manager.stop();
+  });
+
+  it('logs a deferred recovery only when its integrity check starts', async () => {
+    const clock = sinon.useFakeTimers();
+    const environment = new TestConnectivityEnvironment();
+    environment.visibilityState = 'visible';
+    const { manager } = setupManager({ environment });
+    const log = sinon.stub(console, 'info');
+    manager.start();
+
+    environment.dispatch('online');
+    await clock.tickAsync(0);
+    expect(log.args).toEqual([[
+      'SyncConnectivityManager: browser online — starting integrity check',
+    ]]);
+
+    await clock.tickAsync(3_000);
+    environment.dispatch('visibilitychange');
+    expect(log.callCount).toBe(1);
+
+    await clock.tickAsync(7_000);
+    expect(log.args).toEqual([
+      ['SyncConnectivityManager: browser online — starting integrity check'],
+      ['SyncConnectivityManager: page visible — starting integrity check'],
+    ]);
     manager.stop();
   });
 
@@ -286,11 +352,9 @@ function setupManager(options: {
     integrityChecks          : 0,
     linksMarkedOffline       : 0,
     runBackgroundImmediately : options.runBackgroundImmediately ?? true,
-    syncInProgress           : false,
   };
   const operations: SyncConnectivityManagerOperations = {
     getRuntimeScope        : (): SyncRuntime => state.scope,
-    isSyncInProgress       : (): boolean => state.syncInProgress,
     markActiveLinksOffline : (): void => { state.linksMarkedOffline++; },
     runBackgroundTask      : async (operation): Promise<void> => {
       if (state.runBackgroundImmediately) {

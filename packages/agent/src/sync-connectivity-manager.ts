@@ -18,9 +18,9 @@ export interface SyncConnectivityRuntimeScope extends SyncRuntimeHandle {
 
 export interface SyncConnectivityManagerOperations {
   getRuntimeScope(): SyncConnectivityRuntimeScope;
-  isSyncInProgress(): boolean;
   markActiveLinksOffline(): void;
   runBackgroundTask(operation: () => Promise<void>): Promise<void>;
+  /** Run or queue one full integrity check, coalescing with exclusive sync work. */
   runIntegrityCheck(): Promise<void>;
 }
 
@@ -183,7 +183,6 @@ export class SyncConnectivityManager {
       return;
     }
 
-    console.info('SyncConnectivityManager: browser online — triggering immediate integrity check');
     this.scheduleIntegrityCheck('online');
   }
 
@@ -222,7 +221,6 @@ export class SyncConnectivityManager {
       return;
     }
 
-    console.info('SyncConnectivityManager: page became visible — triggering integrity check');
     this.scheduleIntegrityCheck('visibility');
   }
 
@@ -241,20 +239,24 @@ export class SyncConnectivityManager {
       return;
     }
 
-    if (this._operations.isSyncInProgress()) {
-      return;
-    }
-
     const elapsed = this._lastIntegrityCheckStartedAt === undefined
       ? Number.POSITIVE_INFINITY
       : this._now() - this._lastIntegrityCheckStartedAt;
     if (elapsed < this._recoveryCooldownMilliseconds) {
+      this.scheduleTrailingIntegrityCheck(scope, trigger);
       return;
     }
 
     const check = { scope };
+    // This check observes every signal received before it starts. Consume any
+    // pending trigger and its timer only after the check has actually committed;
+    // paths that cannot start yet leave both intact for a later attempt.
+    this._pendingIntegrityTrigger = undefined;
+    scope.clearTimer(SyncConnectivityManager.RECOVERY_TIMER);
     this._activeIntegrityCheck = check;
     this._lastIntegrityCheckStartedAt = this._now();
+    const reason = trigger === 'online' ? 'browser online' : 'page visible';
+    console.info(`SyncConnectivityManager: ${reason} — starting integrity check`);
     const task = this._operations.runBackgroundTask(async (): Promise<void> => {
       if (scope.disposed) {
         return;
@@ -263,6 +265,9 @@ export class SyncConnectivityManager {
       try {
         await this._operations.runIntegrityCheck();
       } catch (error: unknown) {
+        if (scope.disposed) {
+          return;
+        }
         console.error(`SyncConnectivityManager: post-${trigger} sync failed`, error);
       }
     });
@@ -291,9 +296,7 @@ export class SyncConnectivityManager {
       return;
     }
 
-    const trigger = this._pendingIntegrityTrigger;
-    this._pendingIntegrityTrigger = undefined;
-    this.scheduleIntegrityCheck(trigger);
+    this.scheduleIntegrityCheck(this._pendingIntegrityTrigger);
   }
 
   private scheduleTrailingIntegrityCheck(
