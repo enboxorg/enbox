@@ -923,7 +923,7 @@ export class SyncEngineLevel implements SyncEngine {
         this._pendingSyncRun = undefined;
       }
       try {
-        // A runtime transition (stopSync/clear/close/mode switch) invalidated
+        // A runtime transition (startSync/stopSync/clear/close) invalidated
         // this queued run while it waited for the lock. Reject rather than
         // resolve: a resolved sync() must always mean a run covering the
         // request completed (callers like recovery read state right after).
@@ -1032,8 +1032,15 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async startSyncRuntime(params: StartSyncParams): Promise<void> {
-    // An invalid interval rejects here, before any runtime is torn down.
-    const intervalMilliseconds = parseDurationInMilliseconds(params.interval ?? '5m');
+    // An invalid interval rejects here, before any runtime is torn down. The
+    // parsed value is clamped: the floor prevents a tight settle-check loop
+    // ('0s' would tick every macrotask), and the ceiling stays within the
+    // 32-bit native timer range (an overflowing delay silently clamps to
+    // ~1ms — also a tight loop).
+    const intervalMilliseconds = Math.min(
+      Math.max(parseDurationInMilliseconds(params.interval ?? '5m'), SyncEngineLevel.MIN_SYNC_INTERVAL_MS),
+      SyncEngineLevel.MAX_SYNC_INTERVAL_MS,
+    );
 
     const hadLiveRuntime = this.hasLiveSyncRuntime();
     this.prepareForSyncRuntimeTransition();
@@ -1063,7 +1070,7 @@ export class SyncEngineLevel implements SyncEngine {
    *
    * @param timeout - Maximum milliseconds to wait for in-progress sync work
    *   to finish. Non-finite values (`NaN`, `Infinity`) are
-   *   coerced to the default to avoid a tight poll loop or never-exit
+   *   coerced to the default to avoid a tight busy-wait loop or never-exit
    *   condition.
    */
   public stopSync(timeout: number = 2000): Promise<void> {
@@ -1142,6 +1149,12 @@ export class SyncEngineLevel implements SyncEngine {
   /** Runtime-scope timer key for the periodic durable feed settle check. */
   private static readonly SYNC_INTERVAL_TIMER = 'syncInterval';
 
+  /** Settle-check cadence floor — prevents a tight reconciliation loop. */
+  private static readonly MIN_SYNC_INTERVAL_MS = 1_000;
+
+  /** Settle-check cadence ceiling — the 32-bit native timer maximum. */
+  private static readonly MAX_SYNC_INTERVAL_MS = 2 ** 31 - 1;
+
   /** Wrap a scheduled operation so each tick runs as supervised background work. */
   private supervisedTick(operation: () => Promise<void>): () => void {
     return (): void => {
@@ -1163,33 +1176,37 @@ export class SyncEngineLevel implements SyncEngine {
     // on network switch, sleep/wake, or tab foregrounding. No-op in Node.
     this._connectivityManager.start();
 
-    // Step 1: Schedule the periodic durable feed settle check before any
-    // fallible startup work — it is the recovery mechanism for everything
-    // below. DID endpoint discovery can be transiently unavailable, and a
-    // live runtime must never be left without its settle pass.
-    const integrityCheck = async (): Promise<void> => this.runLiveIntegrityCheck(runtime);
-    runtime.armInterval(SyncEngineLevel.SYNC_INTERVAL_TIMER, this.supervisedTick(integrityCheck), intervalMilliseconds);
-
-    // Step 2: Initial durable feed catch-up (best-effort).
+    // Startup work is best-effort and the settle check is its recovery
+    // mechanism: each settle pass re-runs durable feed reconciliation AND
+    // re-initializes links for targets without an active controller. The
+    // timer is armed in the finally below, so it is guaranteed even when
+    // DID endpoint discovery throws — but only after startup settles, so a
+    // short interval cannot start a second reconciliation wave while
+    // subscriptions are still opening. (armInterval no-ops on a disposed
+    // runtime, covering stopSync racing startup.)
     try {
-      await this.sync();
-    } catch (error) {
-      // A queued run cancelled by teardown is expected, not an error.
-      if (!(error instanceof SyncRunCancelledError)) {
-        console.error('SyncEngineLevel: Error during initial live-sync catch-up', error);
+      // Step 1: Initial durable feed catch-up (best-effort).
+      try {
+        await this.sync();
+      } catch (error) {
+        // A queued run cancelled by teardown is expected, not an error.
+        if (!(error instanceof SyncRunCancelledError)) {
+          console.error('SyncEngineLevel: Error during initial live-sync catch-up', error);
+        }
       }
-    }
 
-    // Step 3: Initialize replication links and open live subscriptions.
-    // Each target's link initialization is independent — process
-    // concurrently, and treat planning as best-effort: a transient
-    // discovery failure must not reject startSync or strand the runtime,
-    // and the armed settle check retries the durable work.
-    try {
+      // Step 2: Initialize replication links and open live subscriptions.
+      // Each target's link initialization is independent — process
+      // concurrently; a transient discovery failure must not reject
+      // startSync or strand the runtime.
       const syncTargets = await this.getSyncTargets();
       await Promise.allSettled(syncTargets.map(t => this.initializeLinkTarget(t)));
     } catch (error) {
-      console.error('SyncEngineLevel: Live-sync startup planning failed; the settle check will retry', error);
+      console.error('SyncEngineLevel: Live-sync startup planning failed; the settle check retries link initialization', error);
+    } finally {
+      // Step 3: Schedule the periodic durable feed settle check.
+      const integrityCheck = async (): Promise<void> => this.runLiveIntegrityCheck(runtime);
+      runtime.armInterval(SyncEngineLevel.SYNC_INTERVAL_TIMER, this.supervisedTick(integrityCheck), intervalMilliseconds);
     }
   }
 
@@ -1205,6 +1222,21 @@ export class SyncEngineLevel implements SyncEngine {
       if (!(error instanceof SyncRunCancelledError)) {
         console.error('SyncEngineLevel: Error during durable feed settle check', error);
       }
+    }
+
+    if (runtime.disposed) {
+      return;
+    }
+
+    // Re-initialize live links for any target left without an active
+    // controller — startup planning that failed at discovery, or a hot-add
+    // whose discovery was transiently unavailable. Owned links return early
+    // from initializeLinkTarget, so this only touches orphaned targets.
+    try {
+      const syncTargets = await this.getSyncTargets();
+      await Promise.allSettled(syncTargets.map(t => this.initializeLinkTarget(t)));
+    } catch (error) {
+      console.error('SyncEngineLevel: Error during settle-check link re-initialization', error);
     }
   }
 
@@ -1289,6 +1321,18 @@ export class SyncEngineLevel implements SyncEngine {
         return { status: LinkInitializationStatus.Failed };
       }
       const linkKey = this.getReplicationLinkKey(target, link);
+
+      // Idempotence: an ACTIVE controller for this key means live, repair,
+      // or pause ownership already exists. The settle-check re-init and the
+      // rate-limit retry may both request initialization for a link that
+      // another path already owns — returning its current state here keeps
+      // those requests from clobbering a mid-repair link or resurrecting a
+      // paused one.
+      const ownedController = this.getLinkController(linkKey);
+      if (ownedController?.isActive) {
+        return this.createActiveLinkInitializationResult(ownedController.link);
+      }
+
       controller = this.activateLink(linkKey, link);
       if (link.status === 'paused') {
         if (!controller.isActive) {
@@ -1605,13 +1649,21 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Hot-add a single identity to the active live sync session. */
   private async addIdentityToLiveSync(did: string, options: SyncIdentityOptions): Promise<Set<string>> {
-    const dwnEndpointUrls = await this.targetResolver.getEndpointUrls(did);
-    if (dwnEndpointUrls.length === 0) { return new Set(); }
-
+    // Target planning is best-effort: DID endpoint discovery can be
+    // transiently unavailable, and a registration that has already persisted
+    // must not reject over it — the settle check re-initializes links for
+    // targets left without an active controller.
     const targets: SyncTarget[] = [];
-    for (const dwnUrl of dwnEndpointUrls) {
-      targets.push(...await this.targetResolver.buildTargetsForEndpoint(did, dwnUrl, options));
+    try {
+      const dwnEndpointUrls = await this.targetResolver.getEndpointUrls(did);
+      for (const dwnUrl of dwnEndpointUrls) {
+        targets.push(...await this.targetResolver.buildTargetsForEndpoint(did, dwnUrl, options));
+      }
+    } catch (error) {
+      console.error(`SyncEngineLevel: Live-sync hot-add planning failed for ${did}; the settle check retries link initialization`, error);
+      return new Set();
     }
+    if (targets.length === 0) { return new Set(); }
 
     const results = await Promise.allSettled(targets.map(t => this.initializeLinkTargetWithRetry(t)));
     const currentIdentityKeys = new Set<string>();
@@ -2654,8 +2706,8 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /**
-   * Capture a fence that reports whether a runtime transition (start, stop,
-   * clear, close, mode switch) has happened since capture. Valid from any
+   * Capture a fence that reports whether a runtime transition (`startSync`,
+   * `stopSync`, `clear`, `close`) has happened since capture. Valid from any
    * state: an active scope trips the fence when it is disposed, and an
    * already-disposed scope trips it when a new runtime replaces it.
    */

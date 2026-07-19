@@ -536,7 +536,8 @@ describe('walletConnect', () => {
     );
 
     expect(syncCalls).toHaveLength(1);
-    expect(syncCalls[0].interval).toBe('5m');
+    // No interval — the engine's default settle-check cadence applies.
+    expect(syncCalls[0].interval).toBeUndefined();
   });
 
   test('bare-interval sync option sets the settle-check cadence', async () => {

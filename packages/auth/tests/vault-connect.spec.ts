@@ -733,9 +733,10 @@ describe('vaultConnect', () => {
       { password: 'test-pass' },
     );
 
-    // startSync should have been called because sync is not running yet.
+    // startSync should have been called because sync is not running yet,
+    // deferring the settle-check interval to the engine default.
     expect(startSyncCalls).toHaveLength(1);
-    expect(startSyncCalls[0]).toEqual({ interval: '5m' });
+    expect(startSyncCalls[0]).toEqual({});
   });
 
   test('empty-string password fires the security warning (regression for #12)', async () => {

@@ -103,7 +103,7 @@ type ConnectionAttemptGuard = {
  * ```ts
  * import { AuthManager } from '@enbox/auth';
  *
- * const auth = await AuthManager.create({ sync: '15s' });
+ * const auth = await AuthManager.create();
  *
  * // First time: creates a new identity
  * // Subsequent times: restores the previous session

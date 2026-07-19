@@ -523,6 +523,25 @@ describe('SyncEngineLevel — identity management', () => {
       expect(options!.protocols).toBe('all');
     });
 
+    it('should resolve registerIdentity and keep the identity when hot-add discovery fails', async () => {
+      const engine = new SyncEngineLevel({ db });
+      (engine as any)._runtime = new SyncRuntime(true);
+
+      // DID endpoint discovery is transiently unavailable during the
+      // hot-add: planning is best-effort, so a registration that has
+      // already persisted must resolve rather than reject — the settle
+      // check re-initializes the missing links later.
+      sinon.stub((engine as any).targetResolver, 'getEndpointUrls').rejects(new Error('endpoint discovery unavailable'));
+      const consoleErrorStub = sinon.stub(console, 'error');
+
+      await engine.registerIdentity({ did: 'did:example:hotadd-discovery-fail', options: { protocols: 'all' } });
+
+      const options = await engine.getIdentityOptions('did:example:hotadd-discovery-fail');
+      expect(options).toBeDefined();
+      expect(options!.protocols).toBe('all');
+      expect(consoleErrorStub.calledOnce).toBe(true);
+    });
+
     // --- unregisterIdentity hot-remove triggers ---
 
     it('should call removeIdentityFromLiveSync when unregistering during active live sync', async () => {

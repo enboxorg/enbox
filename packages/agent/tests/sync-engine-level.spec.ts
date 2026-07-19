@@ -2171,9 +2171,9 @@ describe('SyncEngineLevel', () => {
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
-        await testHarness.agent.sync.startSync({ interval: '500ms' });
+        await testHarness.agent.sync.startSync({ interval: '1s' });
 
-        await clock.tickAsync(1_400); // just under 3 intervals
+        await clock.tickAsync(2_800); // just under 3 intervals
         syncSpy.restore();
         getSyncTargetsStub.restore();
         clock.restore();
@@ -2190,27 +2190,79 @@ describe('SyncEngineLevel', () => {
 
         const syncSpy = sinon.stub(SyncEngineLevel.prototype as any, 'sync');
         syncSpy.resolves();
+        const initStub = sinon.stub(SyncEngineLevel.prototype as any, 'initializeLinkTarget');
+        initStub.resolves({ status: 'active', durableLinkIdentityKey: 'key' });
 
         // DID endpoint discovery is transiently unavailable at startup: the
-        // settle timer must already be armed, and startSync must resolve —
-        // planning is best-effort and the settle pass is the recovery path.
+        // settle timer is still armed (in the finally after planning fails)
+        // and startSync must resolve — planning is best-effort and the
+        // settle pass is the recovery path.
+        const recoveredTarget = { did: alice.did.uri } as never;
         const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
         getSyncTargetsStub.onFirstCall().rejects(new Error('endpoint discovery unavailable'));
-        getSyncTargetsStub.resolves([]);
+        getSyncTargetsStub.resolves([recoveredTarget]);
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
-        await testHarness.agent.sync.startSync({ interval: '500ms' });
+        await testHarness.agent.sync.startSync({ interval: '1s' });
 
         const callsAfterStart = syncSpy.callCount;
-        await clock.tickAsync(500);
+        const initCallsAfterStart = initStub.callCount;
+        await clock.tickAsync(1_000);
         syncSpy.restore();
+        initStub.restore();
         getSyncTargetsStub.restore();
         clock.restore();
 
         // The initial catch-up ran, and the settle check still fired after
         // the discovery failure.
         expect(callsAfterStart).toBe(1);
+        expect(syncSpy.callCount).toBe(2);
+        expect(syncSpy.lastCall.args[1]).toEqual({ verifyConvergence: true });
+
+        // Startup planning failed before reaching link initialization; the
+        // settle pass re-initialized the orphaned target.
+        expect(initCallsAfterStart).toBe(0);
+        expect(initStub.calledOnce).toBe(true);
+        expect(initStub.firstCall.args[0]).toBe(recoveredTarget);
+      });
+
+      it('does not start a settle pass while startup initialization is still open', async () => {
+        await testHarness.agent.sync.registerIdentity({
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
+        });
+
+        const syncSpy = sinon.stub(SyncEngineLevel.prototype as any, 'sync');
+        syncSpy.resolves();
+        let releaseInit!: () => void;
+        const initGate = new Promise<void>((resolve) => { releaseInit = resolve; });
+        const initStub = sinon.stub(SyncEngineLevel.prototype as any, 'initializeLinkTarget');
+        initStub.callsFake(async () => {
+          await initGate;
+          return { status: 'active', durableLinkIdentityKey: 'key' };
+        });
+        const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
+        getSyncTargetsStub.resolves([{} as never]);
+
+        const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
+
+        // Subscription opening outlives several intervals (a 15s cadence is
+        // shorter than the WebSocket response timeout): no settle pass may
+        // start a second reconciliation wave while startup is in flight.
+        const starting = testHarness.agent.sync.startSync({ interval: '1s' });
+        await clock.tickAsync(2_400);
+        expect(syncSpy.callCount).toBe(1);
+
+        releaseInit();
+        await starting;
+        await clock.tickAsync(1_000);
+        syncSpy.restore();
+        initStub.restore();
+        getSyncTargetsStub.restore();
+        clock.restore();
+
+        // The settle check begins only after initialization finished.
         expect(syncSpy.callCount).toBe(2);
         expect(syncSpy.lastCall.args[1]).toEqual({ verifyConvergence: true });
       });
@@ -2257,7 +2309,7 @@ describe('SyncEngineLevel', () => {
 
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
 
-        const startPromise = testHarness.agent.sync.startSync({ interval: '500ms' });
+        const startPromise = testHarness.agent.sync.startSync({ interval: '1s' });
 
         await clock.tickAsync(0);
         await startPromise;
@@ -2265,11 +2317,11 @@ describe('SyncEngineLevel', () => {
         // only the initial live catch-up so far
         expect(syncSpy.callCount).toBe(1);
 
-        await clock.tickAsync(500); // the first settle check starts and stays pending
+        await clock.tickAsync(1_000); // the first settle check starts and stays pending
 
         expect(syncSpy.callCount).toBe(2);
 
-        await clock.tickAsync(1_000); // further intervals fire while it holds the lock
+        await clock.tickAsync(2_000); // further intervals fire while it holds the lock
 
         // those ticks are skipped because sync work is already in progress
         expect(syncSpy.callCount).toBe(2);
@@ -2303,26 +2355,26 @@ describe('SyncEngineLevel', () => {
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
-        await testHarness.agent.sync.startSync({ interval: '500ms' });
+        await testHarness.agent.sync.startSync({ interval: '2s' });
 
         // one initial catch-up when starting
         expect(syncSpy.callCount).toBe(1);
 
-        await clock.tickAsync(1_001); // two settle intervals
+        await clock.tickAsync(4_001); // two settle intervals
 
         expect(syncSpy.callCount).toBe(3);
 
-        await testHarness.agent.sync.startSync({ interval: '200ms' });
+        await testHarness.agent.sync.startSync({ interval: '1s' });
 
         // the restart runs its own initial catch-up
         expect(syncSpy.callCount).toBe(4);
 
-        await clock.tickAsync(401); // two intervals at the new cadence
+        await clock.tickAsync(2_001); // two intervals at the new cadence
 
         expect(syncSpy.callCount).toBe(6);
 
-        // only the 200ms timer remains: one more tick, not a stale 500ms one
-        await clock.tickAsync(200);
+        // only the 1s timer remains: one more tick, not a stale 2s one
+        await clock.tickAsync(1_000);
         expect(syncSpy.callCount).toBe(7);
 
         syncSpy.restore();
@@ -2351,10 +2403,10 @@ describe('SyncEngineLevel', () => {
         // spy on console.error to check if the error message is logged
         const consoleErrorSpy = sinon.stub(console, 'error').resolves();
 
-        await testHarness.agent.sync.startSync({ interval: '500ms' });
+        await testHarness.agent.sync.startSync({ interval: '1s' });
 
         // three intervals
-        await clock.tickAsync(1_601);
+        await clock.tickAsync(3_201);
 
         // this should equal 4, once for the initial call and once for each interval call
         expect(syncSpy.callCount).toBe(4);
@@ -2367,6 +2419,72 @@ describe('SyncEngineLevel', () => {
         getSyncTargetsStub.restore();
         consoleErrorSpy.restore();
         clock.restore();
+      });
+
+      it('returns the owned link from re-initialization without reopening subscriptions', async () => {
+        const link = {
+          authorization      : { kind: 'owner' },
+          authorizationEpoch : 'owner-epoch',
+          connectivity       : 'online',
+          projectionId       : 'projection-id',
+          pull               : {},
+          push               : {},
+          remoteEndpoint     : 'https://dwn.example.com',
+          scope              : { kind: 'full' },
+          status             : 'live',
+          tenantDid          : alice.did.uri,
+        } as any;
+
+        syncEngine['_runtime'] = new SyncRuntime(true);
+        const controller = (syncEngine as any).activateLink('owned-link-key', link);
+        expect(controller.isActive).toBe(true);
+
+        sinon.stub(syncEngine as any, 'getOrCreateReplicationLink').resolves({ ...link });
+        sinon.stub(syncEngine as any, 'getReplicationLinkKey').returns('owned-link-key');
+        const openSubscriptions = sinon.stub(syncEngine as any, 'openLinkSubscriptions');
+
+        const result = await (syncEngine as any).initializeLinkTarget({
+          did    : alice.did.uri,
+          dwnUrl : 'https://dwn.example.com',
+        });
+
+        // An ACTIVE controller means live/repair/pause ownership already
+        // exists: the settle-pass re-init returns its current state instead
+        // of clobbering the owned link.
+        expect(result.status).toBe('active');
+        expect(openSubscriptions.notCalled).toBe(true);
+        expect((syncEngine as any).getLinkController('owned-link-key')).toBe(controller);
+
+        (syncEngine as any).removeLinkController('owned-link-key', controller);
+      });
+
+      it('clamps a sub-second settle-check interval to the one-second floor', async () => {
+        await testHarness.agent.sync.registerIdentity({
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
+        });
+
+        const syncSpy = sinon.stub(SyncEngineLevel.prototype as any, 'sync');
+        syncSpy.resolves();
+        const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
+        getSyncTargetsStub.resolves([]);
+
+        const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
+
+        // '0s' parses to 0ms, which would tick every macrotask — the engine
+        // clamps the settle-check cadence to the one-second floor instead.
+        await testHarness.agent.sync.startSync({ interval: '0s' });
+
+        await clock.tickAsync(999);
+        expect(syncSpy.callCount).toBe(1); // the initial catch-up only — no tight loop
+
+        await clock.tickAsync(1);
+        syncSpy.restore();
+        getSyncTargetsStub.restore();
+        clock.restore();
+
+        // the first settle check fires at the clamped floor
+        expect(syncSpy.callCount).toBe(2);
       });
     });
 
@@ -2390,7 +2508,7 @@ describe('SyncEngineLevel', () => {
 
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
 
-        const startPromise = testHarness.agent.sync.startSync({ interval: '500ms' });
+        const startPromise = testHarness.agent.sync.startSync({ interval: '1s' });
 
         // expect the immediate sync call
         expect(syncSpy.callCount).toBe(1);
@@ -2398,14 +2516,14 @@ describe('SyncEngineLevel', () => {
         await clock.tickAsync(10);
         await startPromise;
 
-        await clock.tickAsync(1_100); // two interval rounds after the immediate sync
+        await clock.tickAsync(2_100); // two interval rounds after the immediate sync
 
         // expect 2 sync interval calls + initial sync
         expect(syncSpy.callCount).toBe(3);
 
         await testHarness.agent.sync.stopSync();
 
-        await clock.tickAsync(1_000); // 2 intervals
+        await clock.tickAsync(2_000); // 2 intervals
 
         // sync calls remain unchanged
         expect(syncSpy.callCount).toBe(3);
@@ -2433,7 +2551,7 @@ describe('SyncEngineLevel', () => {
 
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
 
-        const startPromise = testHarness.agent.sync.startSync({ interval: '500ms' });
+        const startPromise = testHarness.agent.sync.startSync({ interval: '1s' });
 
         // expect the immediate sync call
         expect(syncSpy.callCount).toBe(1);
@@ -2441,14 +2559,15 @@ describe('SyncEngineLevel', () => {
         await clock.tickAsync(10);
         await startPromise;
 
-        // cause getSyncTargets to take longer
+        // cause getSyncTargets to take longer (the timer starts now, so the
+        // delay must outlive the settle tick that starts one interval later)
         getSyncTargetsStub.returns(new Promise<any[]>((resolve) => {
           clock.setTimeout(() => {
             resolve([]);
-          }, 1_000);
+          }, 2_000);
         }));
 
-        await clock.tickAsync(501); // Enough time for the next interval to start
+        await clock.tickAsync(1_001); // Enough time for the next interval to start
 
         // next interval was called
         expect(syncSpy.callCount).toBe(2);
@@ -2494,7 +2613,7 @@ describe('SyncEngineLevel', () => {
 
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
 
-        const startPromise = testHarness.agent.sync.startSync({ interval: '500ms' });
+        const startPromise = testHarness.agent.sync.startSync({ interval: '1s' });
 
         // expect the immediate sync call
         expect(syncSpy.callCount).toBe(1);
@@ -2503,13 +2622,14 @@ describe('SyncEngineLevel', () => {
         await startPromise;
 
         // cause getSyncTargets to take longer than the 2 second timeout
+        // (measured from stopSync, which starts one settle interval later)
         getSyncTargetsStub.returns(new Promise<any[]>((resolve) => {
           clock.setTimeout(() => {
             resolve([]);
-          }, 2_700); // longer than the 2 seconds
+          }, 3_700); // longer than the 2 seconds
         }));
 
-        await clock.tickAsync(501); // Enough time for the next interval to start
+        await clock.tickAsync(1_001); // Enough time for the next interval to start
 
         // next interval was called
         expect(syncSpy.callCount).toBe(2);
@@ -2558,7 +2678,7 @@ describe('SyncEngineLevel', () => {
 
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
 
-        testHarness.agent.sync.startSync({ interval: '500ms' });
+        testHarness.agent.sync.startSync({ interval: '1s' });
 
         // expect the immediate sync call
         expect(syncSpy.callCount).toBe(1);
@@ -2572,7 +2692,7 @@ describe('SyncEngineLevel', () => {
           }, 2_700); // longer than the 2 seconds
         }));
 
-        await clock.tickAsync(501); // Enough time for the next interval to start
+        await clock.tickAsync(1_001); // Enough time for the next interval to start
 
         // next interval was called
         expect(syncSpy.callCount).toBe(2);
@@ -3830,7 +3950,7 @@ describe('SyncEngineLevel', () => {
       getSyncTargetsStub.resolves([]);
       const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
-      await syncEngine.startSync({ interval: '500ms' });
+      await syncEngine.startSync({ interval: '1s' });
 
       // one sync for the initial startSync catch-up
       expect(syncStub.callCount).toBe(1);
@@ -3840,7 +3960,7 @@ describe('SyncEngineLevel', () => {
       );
 
       // the running runtime's settle-check timer persists and keeps firing
-      await clock.tickAsync(1_400); // just under 3 intervals
+      await clock.tickAsync(2_800); // just under 3 intervals
       expect(syncStub.callCount).toBe(3);
 
       clock.restore();

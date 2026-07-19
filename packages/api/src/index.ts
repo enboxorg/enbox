@@ -14,7 +14,6 @@
  *
  * const { enbox } = await Enbox.connect({
  *   createIdentity: true,
- *   sync: '15s',
  * });
  * ```
  *

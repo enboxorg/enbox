@@ -4,14 +4,14 @@ import { createMockAgent } from './helpers/mock-agent.js';
 import { resolveSyncOption, startSyncIfEnabled } from '../src/connect/lifecycle.js';
 
 describe('resolveSyncOption', () => {
-  test('should resolve undefined and "live" to the default settle-check interval', () => {
-    expect(resolveSyncOption(undefined)).toEqual({ interval: '5m' });
-    expect(resolveSyncOption('live')).toEqual({ interval: '5m' });
+  test('should resolve undefined and "live" to the engine-default settle-check interval', () => {
+    expect(resolveSyncOption(undefined)).toEqual({});
+    expect(resolveSyncOption('live')).toEqual({});
   });
 
-  test('should resolve the explicit object form with the default interval fallback', () => {
+  test('should resolve the explicit object form, deferring a missing interval to the engine', () => {
     expect(resolveSyncOption({ interval: '30s' })).toEqual({ interval: '30s' });
-    expect(resolveSyncOption({})).toEqual({ interval: '5m' });
+    expect(resolveSyncOption({})).toEqual({});
   });
 
   test('should resolve a bare interval string to that settle-check interval', () => {
@@ -32,7 +32,7 @@ describe('startSyncIfEnabled', () => {
     await startSyncIfEnabled(agent, { interval: '90s' });
 
     expect(startSyncCalls).toEqual([
-      { interval: '5m' },
+      {},
       { interval: '90s' },
     ]);
   });
@@ -48,7 +48,7 @@ describe('startSyncIfEnabled', () => {
     expect(startSyncCalls).toHaveLength(0);
   });
 
-  test('should call startSync with the default interval when sync is undefined', async () => {
+  test('should call startSync with the engine-default interval when sync is undefined', async () => {
     const startSyncCalls: any[] = [];
     const agent = createMockAgent({
       syncStartSync              : async (params) => { startSyncCalls.push(params); },
@@ -58,7 +58,7 @@ describe('startSyncIfEnabled', () => {
     await startSyncIfEnabled(agent, undefined);
 
     expect(startSyncCalls).toHaveLength(1);
-    expect(startSyncCalls[0]).toEqual({ interval: '5m' });
+    expect(startSyncCalls[0]).toEqual({});
   });
 
   test('should call startSync with the given settle-check cadence when sync is a string interval', async () => {

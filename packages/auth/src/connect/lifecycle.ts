@@ -192,7 +192,8 @@ export async function ensureVaultReady(params: {
 /**
  * Resolve a {@link SyncOption} into explicit `startSync` parameters. Sync is
  * always live; the interval only paces the engine's periodic durable feed
- * settle check.
+ * settle check. No interval is defaulted here — omitting it defers to the
+ * engine's default, keeping that value defined in one place.
  *
  * - `undefined` / `'live'` → the engine's default settle-check interval.
  * - `{ interval? }` → the given settle-check interval, if any.
@@ -202,13 +203,13 @@ export async function ensureVaultReady(params: {
  */
 export function resolveSyncOption(
   sync: Exclude<SyncOption, 'off'> | undefined,
-): { interval: string } {
+): { interval?: string } {
   if (sync === undefined || sync === 'live') {
-    return { interval: '5m' };
+    return {};
   }
 
   if (typeof sync === 'object') {
-    return { interval: sync.interval ?? '5m' };
+    return sync.interval === undefined ? {} : { interval: sync.interval };
   }
 
   return { interval: sync };

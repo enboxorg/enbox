@@ -21,7 +21,7 @@ by `AuthManager` can be passed into the API layer:
 import { Enbox } from '@enbox/api';
 import { AuthManager } from '@enbox/auth';
 
-const auth = await AuthManager.create({ sync: '15s' });
+const auth = await AuthManager.create();
 const session = await auth.restoreSession() ?? await auth.connectVault({ createIdentity: true });
 
 const enbox = Enbox.fromSession(session);
@@ -35,7 +35,6 @@ import { Enbox } from '@enbox/api';
 const { auth, enbox, session } = await Enbox.connect({
   password      : userPassword,
   createIdentity: true,
-  sync          : '15s',
 });
 ```
 

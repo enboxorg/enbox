@@ -406,6 +406,8 @@ export type StartSyncParams = {
    * long offline windows).
    *
    * Accepts duration strings such as `'30s'`, `'2m'`, `'10m'`, or `'1 hour'`.
+   * The parsed value is clamped to a one-second floor and the 32-bit native
+   * timer ceiling (~24.8 days).
    *
    * Default: `'5m'`.
    */
