@@ -15,7 +15,7 @@ import type {
 import sinon from 'sinon';
 
 import { describe, expect, it } from 'bun:test';
-import { DwnInterfaceName, DwnMethodName, Message } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, Encoder, Message } from '@enbox/dwn-sdk-js';
 
 import { isTerminalSyncAuthorizationFailure } from '../src/sync-runtime-errors.js';
 import { SyncEchoSuppressor } from '../src/sync-echo-suppressor.js';
@@ -487,6 +487,51 @@ describe('SyncLivePullProcessor', () => {
 
     releaseFirst.resolve();
     await first;
+  });
+
+  it('serves inline record data from the subscription event without re-fetching it', async () => {
+    const { admit, fetchMessages, processor } = createFixture();
+    const context = contextFor();
+    const bytes = new Uint8Array([1, 2, 3]);
+    const inline = recordsWriteMessage({ dataCid: 'bafy-inline' });
+    let inlineFactory: (() => Promise<ReadableStream<Uint8Array> | undefined>) | undefined;
+    admit.callsFake(async (_rootCid, deps) => {
+      inlineFactory = deps.prefetched?.[0].dataStreamFactory;
+      return { kind: 'admitted', appliedCids: ['inline'], freshEntries: [] };
+    });
+
+    // DurableEventLog delivers inline data as the subscription event's
+    // top-level `encodedData`, beside — not inside — the message.
+    await processor.handleEvent(context, {
+      ...event(token('1'), inline),
+      encodedData: Encoder.bytesToBase64Url(bytes),
+    });
+
+    expect(inlineFactory).toBeDefined();
+    const firstStream = await inlineFactory?.();
+    expect((await firstStream!.getReader().read()).value).toEqual(bytes);
+    const secondStream = await inlineFactory?.();
+    expect((await secondStream!.getReader().read()).value).toEqual(bytes);
+    expect(fetchMessages.notCalled).toBe(true);
+  });
+
+  it('ignores inline data on a non-RecordsWrite event', async () => {
+    const { admit, fetchMessages, processor } = createFixture();
+    const context = contextFor();
+    let factory: (() => Promise<ReadableStream<Uint8Array> | undefined>) | undefined;
+    admit.callsFake(async (_rootCid, deps) => {
+      factory = deps.prefetched?.[0].dataStreamFactory;
+      return { kind: 'admitted', appliedCids: ['configure'], freshEntries: [] };
+    });
+
+    await processor.handleEvent(context, {
+      ...event(token('1'), protocolMessage()),
+      encodedData: Encoder.bytesToBase64Url(new Uint8Array([9])),
+    });
+
+    expect(factory).toBeDefined();
+    expect(await factory?.()).toBeUndefined();
+    expect(fetchMessages.notCalled).toBe(true);
   });
 
   it('yields no data stream without a dataCid and re-fetches large record data for every admission attempt', async () => {

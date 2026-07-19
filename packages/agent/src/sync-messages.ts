@@ -170,7 +170,8 @@ export async function getMessageCid(message: GenericMessage): Promise<string> {
   }
 }
 
-function dataStreamFromBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
+/** Build a single-chunk readable stream over one in-memory byte payload. */
+export function dataStreamFromBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
     start(controller): void {
       controller.enqueue(bytes);
