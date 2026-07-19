@@ -273,6 +273,15 @@ export class SyncLivePushCoordinator {
       return undefined;
     }
 
+    // An armed timer owns the queued entries. Two concurrent events can both
+    // observe an idle mailbox before either scheduled flush is admitted (the
+    // task runner defers to a microtask), so a redundant flush can reach
+    // here while the first flush's debounce or retry timer is already armed
+    // — it must not consume the timer's entries early.
+    if (runtime.timer !== undefined) {
+      return undefined;
+    }
+
     const entries = runtime.entries;
     runtime.entries = [];
     if (entries.length === 0) {
