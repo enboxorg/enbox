@@ -482,6 +482,62 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await clock.runAllAsync();
   });
 
+  it('abandons an in-flight repair when the link is paused externally', async () => {
+    const fixture = createFixture();
+    const state = link('repairing');
+    const controller = activate(fixture, state);
+    const reconcileStarted = deferred<void>();
+    const releaseReconcile = deferred<void>();
+    fixture.operations.reconcileTarget.callsFake(async () => {
+      reconcileStarted.resolve();
+      await releaseReconcile.promise;
+      return { converged: true };
+    });
+
+    const repairing = fixture.coordinator.repair(controller);
+    await reconcileStarted.promise;
+    // A terminal subscription error pauses the link while the repair's
+    // durable reconciliation is still in flight.
+    await fixture.coordinator.transitionToPaused(LINK_KEY, state);
+    releaseReconcile.resolve();
+    await repairing;
+
+    expect(state.status).toBe('paused');
+    expect(fixture.operations.openPullSubscription.notCalled).toBe(true);
+    expect(fixture.operations.openPushSubscription.notCalled).toBe(true);
+    expect(fixture.operations.emitEvent.calledWithMatch({ type: 'repair:completed' })).toBe(false);
+  });
+
+  it('runs exactly one verification pass when a reconcile timer expires during repair', async () => {
+    const clock = sinon.useFakeTimers();
+    const fixture = createFixture({ reconcileDelayMs: 100 });
+    const state = link('repairing');
+    const controller = activate(fixture, state);
+    const repairStarted = deferred<void>();
+    const releaseRepair = deferred<void>();
+    fixture.operations.reconcileTarget.onFirstCall().callsFake(async () => {
+      repairStarted.resolve();
+      await releaseRepair.promise;
+      return { converged: true };
+    });
+    fixture.operations.reconcileTarget.resolves({ converged: true });
+
+    const repairing = fixture.coordinator.repair(controller);
+    await repairStarted.promise;
+    // An already-armed reconcile timer expires while the repair holds the
+    // mailbox, queueing a verification pass right behind it.
+    fixture.coordinator.scheduleReconcile(controller);
+    await clock.tickAsync(100);
+    releaseRepair.resolve();
+    await repairing;
+    await clock.runAllAsync();
+
+    const verificationPasses = fixture.operations.reconcileTarget.getCalls()
+      .filter((call) => (call.args[1] as { verifyConvergence?: boolean } | undefined)?.verifyConvergence === true);
+    expect(verificationPasses.length).toBe(1);
+    controller.deactivate();
+  });
+
   it('deduplicates concurrent repair and reconciliation without leaking in-flight state', async () => {
     const fixture = createFixture();
     const repairController = activate(fixture, link('repairing'));

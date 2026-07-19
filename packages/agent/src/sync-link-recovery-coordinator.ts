@@ -122,8 +122,11 @@ export class SyncLinkRecoveryCoordinator {
 
   /**
    * Park a link and discard every transient runtime owned by its controller.
-   * Never enters the mailbox: poll-mode links have no controller, and repair
-   * failure paths invoke this from inside a mailbox operation.
+   * Never enters the mailbox — poll-mode links have no controller, repair
+   * failure paths invoke this from inside a mailbox operation, and pausing
+   * must take effect promptly. Instead of serializing, the paused status is
+   * a cancellation fence: an in-flight repair observes it at every
+   * checkpoint and abandons the link rather than overwriting the pause.
    */
   public async transitionToPaused(linkKey: string, link: ReplicationLinkState): Promise<void> {
     if (link.status === 'paused') {
@@ -187,7 +190,15 @@ export class SyncLinkRecoveryCoordinator {
       try {
         await this.repairExclusive(controller);
       } finally {
-        if (controller.isActive && controller.link.status === 'live') {
+        // A reconcile already queued behind this repair (a timer that
+        // expired while the repair held the mailbox) provides the
+        // verification pass — arming the post-repair timer too would run
+        // a duplicate full pass against the remote.
+        if (
+          controller.isActive &&
+          controller.link.status === 'live' &&
+          !controller.mailboxBusy('reconcile')
+        ) {
           this.scheduleLinkReconcile(
             controller,
             'post-repair-gap',
@@ -279,7 +290,7 @@ export class SyncLinkRecoveryCoordinator {
     });
 
     await controller.closeSubscriptions();
-    if (this.isStale(controller, runtimeScope)) {
+    if (this.repairCancelled(controller, runtimeScope)) {
       return;
     }
     controller.resetPullRuntime();
@@ -289,16 +300,16 @@ export class SyncLinkRecoveryCoordinator {
       const outcome = await this._operations.reconcileTarget(
         target,
         undefined,
-        () => !this.isStale(controller, runtimeScope),
+        () => !this.repairCancelled(controller, runtimeScope),
       );
-      if (outcome.aborted || this.isStale(controller, runtimeScope)) {
+      if (outcome.aborted || this.repairCancelled(controller, runtimeScope)) {
         return;
       }
       this.emitApplied(link, outcome.admittedCids);
 
       const resumeToken = controller.repairResumeToken ?? link.pull.contiguousAppliedToken;
       await this._operations.resetPullCheckpoint(link, resumeToken);
-      if (this.isStale(controller, runtimeScope)) {
+      if (this.repairCancelled(controller, runtimeScope)) {
         return;
       }
       if (!await this.reopenSubscriptions(target, controller, runtimeScope)) {
@@ -320,7 +331,7 @@ export class SyncLinkRecoveryCoordinator {
     if (!pullOpened) {
       return false;
     }
-    if (this.isStale(controller, runtimeScope)) {
+    if (this.repairCancelled(controller, runtimeScope)) {
       await controller.closeSubscriptions();
       return false;
     }
@@ -335,7 +346,7 @@ export class SyncLinkRecoveryCoordinator {
       throw error;
     }
 
-    if (!this.isStale(controller, runtimeScope)) {
+    if (!this.repairCancelled(controller, runtimeScope)) {
       return true;
     }
     await controller.closeSubscriptions();
@@ -358,7 +369,7 @@ export class SyncLinkRecoveryCoordinator {
         `SyncLinkRecoveryCoordinator: Stale pull resume token for ${target.did} -> ${target.dwnUrl}, resetting to start fresh`,
       );
       await this._operations.resetPullCheckpoint(controller.link);
-      if (this.isStale(controller, runtimeScope)) {
+      if (this.repairCancelled(controller, runtimeScope)) {
         return false;
       }
       return this._operations.openPullSubscription(target, controller);
@@ -478,7 +489,7 @@ export class SyncLinkRecoveryCoordinator {
         { verifyConvergence: true },
         shouldContinue,
       );
-      if (outcome.aborted || this.isStale(controller, runtimeScope)) {
+      if (outcome.aborted || this.isStale(controller, runtimeScope) || link.status !== 'live') {
         return;
       }
       this.emitApplied(link, outcome.admittedCids);
@@ -568,6 +579,18 @@ export class SyncLinkRecoveryCoordinator {
 
   private isStale(controller: SyncLinkController, scope: SyncRuntimeHandle): boolean {
     return scope.disposed || !controller.isActive;
+  }
+
+  /**
+   * Whether an in-flight repair lost its mandate. Pausing is deliberately
+   * prompt and mailbox-free, so an external pause lands while a repair is
+   * mid-flight; the repair must observe the paused status at every
+   * checkpoint and abandon the link instead of reopening subscriptions and
+   * marking it live again — a pause caused by revoked authorization must
+   * stay failed-safe until an explicit reconnect.
+   */
+  private repairCancelled(controller: SyncLinkController, scope: SyncRuntimeHandle): boolean {
+    return this.isStale(controller, scope) || controller.link.status === 'paused';
   }
 
   private static targetFromController(controller: SyncLinkController): SyncLinkRecoveryTarget {

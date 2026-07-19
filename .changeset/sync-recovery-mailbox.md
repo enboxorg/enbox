@@ -13,4 +13,9 @@ handles: concurrent callers coalesce onto one queued-or-running operation
 per lane. Local push events observed while a repair or reconcile occupies
 the mailbox queue a flush behind it instead of stalling until the next
 event, and reconcile-failure requeues issued from inside repair/reconcile
-operations fold into the retry policy without re-entering the mailbox.
+operations fold into the retry policy without re-entering the mailbox. An
+externally paused link is now a cancellation fence for an in-flight
+repair — the repair abandons the link at every checkpoint instead of
+reopening subscriptions and marking a revoked-authorization pause live
+again — and a reconcile timer that expires during a repair no longer
+produces a duplicate post-repair verification pass.
