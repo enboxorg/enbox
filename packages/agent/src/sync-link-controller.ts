@@ -56,7 +56,6 @@ export type SyncLinkMailboxKind = 'flush' | 'repair' | 'reconcile';
  */
 export class SyncLinkController {
   private _active = true;
-  private _mailboxDepth = 0;
   private readonly _mailboxKindDepths: Map<SyncLinkMailboxKind, number> = new Map();
   private readonly _mailboxShared: Map<SyncLinkMailboxKind, Promise<unknown>> = new Map();
   private readonly _sharedRunRequests: Set<SyncLinkMailboxKind> = new Set();
@@ -100,7 +99,6 @@ export class SyncLinkController {
     if (!this._active) {
       return Promise.resolve(undefined);
     }
-    this._mailboxDepth++;
     if (kind !== undefined) {
       this._mailboxKindDepths.set(kind, (this._mailboxKindDepths.get(kind) ?? 0) + 1);
     }
@@ -111,7 +109,6 @@ export class SyncLinkController {
       return operation();
     });
     const settle = (): void => {
-      this._mailboxDepth--;
       if (kind === undefined) {
         return;
       }
@@ -149,11 +146,6 @@ export class SyncLinkController {
     return run;
   }
 
-  /** Whether no mailbox operation is queued or in flight. */
-  public get mailboxIdle(): boolean {
-    return this._mailboxDepth === 0;
-  }
-
   /** Whether an operation of `kind` is queued or in flight in the mailbox. */
   public mailboxBusy(kind: SyncLinkMailboxKind): boolean {
     return (this._mailboxKindDepths.get(kind) ?? 0) > 0;
@@ -172,14 +164,27 @@ export class SyncLinkController {
     }
   }
 
-  /** Consume the pending run request for `kind`, if any. */
-  public consumeSharedRunRequest(kind: SyncLinkMailboxKind): boolean {
-    return this._sharedRunRequests.delete(kind);
-  }
-
   /** Whether a run request for `kind` is pending. */
   public sharedRunRequested(kind: SyncLinkMailboxKind): boolean {
     return this._sharedRunRequests.has(kind);
+  }
+
+  /**
+   * Run shared `kind` turns until no run request is pending. Each turn is
+   * one mailbox operation that consumes one request mark, so a request
+   * arriving while a turn executes yields exactly one trailing turn at the
+   * mailbox tail — behind any work already queued — and a burst of further
+   * requests coalesces into it.
+   */
+  public async drainSharedRuns(kind: SyncLinkMailboxKind, run: () => Promise<void>): Promise<void> {
+    while (this._sharedRunRequests.has(kind)) {
+      await this.enqueueShared(kind, async (): Promise<void> => {
+        if (!this._sharedRunRequests.delete(kind)) {
+          return;
+        }
+        await run();
+      });
+    }
   }
 
   /** Number of pull deliveries still waiting to become contiguously committed. */

@@ -186,51 +186,31 @@ export class SyncLinkRecoveryCoordinator {
    * subscriptions or pull ordering underneath another link operation.
    */
   public repair(controller: SyncLinkController): Promise<void> {
-    if (!controller.isActive) {
-      return Promise.resolve();
-    }
-
     controller.requestSharedRun('repair');
-    return this.drainRepairRequests(controller);
-  }
+    return controller.drainSharedRuns('repair', async (): Promise<void> => {
+      if (this.repairCancelled(controller, this._operations.getRuntimeScope())) {
+        return;
+      }
+      await this.repairExclusive(controller);
 
-  /**
-   * Run shared repair turns until no request is pending. Each turn is one
-   * mailbox operation: a request arriving while a turn executes (a fresh
-   * transition carrying a newer resume token) yields exactly one trailing
-   * turn enqueued at the mailbox tail — behind any flush or reconciliation
-   * already queued — never an extra pass inside the current turn.
-   */
-  private async drainRepairRequests(controller: SyncLinkController): Promise<void> {
-    while (controller.sharedRunRequested('repair')) {
-      await controller.enqueueShared('repair', async (): Promise<void> => {
-        if (!controller.consumeSharedRunRequest('repair')) {
-          return;
-        }
-        if (this.repairCancelled(controller, this._operations.getRuntimeScope())) {
-          return;
-        }
-        await this.repairExclusive(controller);
-
-        // A reconcile already queued behind this repair (a timer that
-        // expired while the repair held the mailbox) provides the
-        // verification pass — arming the post-repair timer too would run a
-        // duplicate full pass. Likewise, a trailing repair request owns the
-        // link's recovery from here.
-        if (
-          !controller.sharedRunRequested('repair') &&
-          controller.isActive &&
-          controller.link.status === 'live' &&
-          !controller.mailboxBusy('reconcile')
-        ) {
-          this.scheduleLinkReconcile(
-            controller,
-            'post-repair-gap',
-            this._postRepairReconcileDelayMs,
-          );
-        }
-      });
-    }
+      // A reconcile already queued behind this repair (a timer that expired
+      // while the repair held the mailbox) provides the verification pass —
+      // arming the post-repair timer too would run a duplicate full pass.
+      // Likewise, a trailing repair request owns the link's recovery from
+      // here.
+      if (
+        !controller.sharedRunRequested('repair') &&
+        controller.isActive &&
+        controller.link.status === 'live' &&
+        !controller.mailboxBusy('reconcile')
+      ) {
+        this.scheduleLinkReconcile(
+          controller,
+          'post-repair-gap',
+          this._postRepairReconcileDelayMs,
+        );
+      }
+    });
   }
 
   /** Emit and coalesce a named durable-reconciliation request for a live link. */
@@ -290,19 +270,7 @@ export class SyncLinkRecoveryCoordinator {
    */
   public reconcile(controller: SyncLinkController): Promise<void> {
     controller.requestSharedRun('reconcile');
-    return this.drainReconcileRequests(controller);
-  }
-
-  /** Run shared reconciliation turns until no request is pending. */
-  private async drainReconcileRequests(controller: SyncLinkController): Promise<void> {
-    while (controller.sharedRunRequested('reconcile')) {
-      await controller.enqueueShared('reconcile', async (): Promise<void> => {
-        if (!controller.consumeSharedRunRequest('reconcile')) {
-          return;
-        }
-        await this.reconcileExclusive(controller);
-      });
-    }
+    return controller.drainSharedRuns('reconcile', (): Promise<void> => this.reconcileExclusive(controller));
   }
 
   private startSupervisedRepair(
@@ -357,10 +325,6 @@ export class SyncLinkRecoveryCoordinator {
       if (!await this.reopenSubscriptions(target, controller, runtimeScope)) {
         return;
       }
-      if (this.repairSuperseded(controller, runtimeScope)) {
-        return;
-      }
-
       await this.completeRepair(controller, runtimeScope, outcome.pushFailures ?? []);
     } catch (error: unknown) {
       await this.handleRepairFailure(controller, runtimeScope, attempts, error);
@@ -545,7 +509,7 @@ export class SyncLinkRecoveryCoordinator {
         { verifyConvergence: true },
         shouldContinue,
       );
-      if (outcome.aborted || this.isStale(controller, runtimeScope) || link.status !== 'live') {
+      if (outcome.aborted || !shouldContinue()) {
         return;
       }
       this.emitApplied(link, outcome.admittedCids);

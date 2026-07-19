@@ -235,12 +235,10 @@ describe('SyncLinkController mailbox', () => {
       order.push('second');
     });
 
-    expect(controller.mailboxIdle).toBe(false);
     releaseFirst();
     await Promise.all([first, second]);
 
     expect(order).toEqual(['first', 'second']);
-    expect(controller.mailboxIdle).toBe(true);
   });
 
   it('should refuse work enqueued after deactivation while letting in-flight work finish', async () => {
@@ -303,7 +301,6 @@ describe('SyncLinkController mailbox', () => {
 
     expect(controller.mailboxBusy('flush')).toBe(false);
     expect(controller.mailboxBusy('repair')).toBe(false);
-    expect(controller.mailboxIdle).toBe(true);
   });
 
   it('should coalesce shared operations per lane and release the handle on settlement', async () => {
@@ -360,6 +357,5 @@ describe('SyncLinkController mailbox', () => {
     await second;
 
     expect(secondRan).toBe(true);
-    expect(controller.mailboxIdle).toBe(true);
   });
 });
