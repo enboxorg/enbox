@@ -1763,8 +1763,12 @@ export class SyncEngineLevel implements SyncEngine {
     // so multiple handlers can be in-flight concurrently. The ordinal tracker
     // ensures the checkpoint advances only when all earlier deliveries are committed.
     // Capture the controller lifetime so remove+re-add invalidates callbacks
-    // even when the replacement uses the same durable link key.
-    const isStale = this.createLinkStalePredicate(controller, runtimeScope);
+    // even when the replacement uses the same durable link key, and the pull
+    // generation so callbacks from a subscription superseded by a repair reset
+    // cannot touch checkpoints or trigger repairs after the link recovers.
+    const linkStale = this.createLinkStalePredicate(controller, runtimeScope);
+    const subscriptionPullEpoch = controller.pullEpoch;
+    const isStale = (): boolean => linkStale() || controller.pullEpoch !== subscriptionPullEpoch;
     const pullContext: SyncLivePullContext = {
       did,
       dwnUrl,

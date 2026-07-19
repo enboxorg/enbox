@@ -3,7 +3,6 @@ import type { GenericMessage, MessageEvent, ProgressToken, SubscriptionMessage }
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
 import type { SyncEchoSuppressor } from './sync-echo-suppressor.js';
-import type { SyncLinkController } from './sync-link-controller.js';
 import type { SyncMessageEntry } from './sync-messages.js';
 import type { SyncTarget } from './sync-target-resolver.js';
 import type { AdmitClosureDeps, AdmitOutcome, SyncFreshEntry } from './sync-admit-closure.js';
@@ -14,6 +13,7 @@ import type {
   SyncEvent,
   SyncEventScope,
 } from './types/sync.js';
+import type { SyncLinkController, SyncPullDeliveryTicket } from './sync-link-controller.js';
 
 import { Encoder, Message } from '@enbox/dwn-sdk-js';
 
@@ -67,7 +67,7 @@ export type SyncLivePullFetchMessages = typeof fetchRemoteMessages;
 
 type PullDelivery = {
   controller?: SyncLinkController;
-  ordinal: number;
+  ticket?: SyncPullDeliveryTicket;
 };
 
 type LivePullProcessResult =
@@ -323,8 +323,8 @@ export class SyncLivePullProcessor {
     const deliveryController = context.controller?.isActive === true && context.link === context.controller.link
       ? context.controller
       : undefined;
-    const ordinal = deliveryController?.startPullDelivery(cursor) ?? -1;
-    return { controller: deliveryController, ordinal };
+    const ticket = deliveryController?.startPullDelivery(cursor);
+    return { controller: deliveryController, ticket };
   }
 
   private async processEvent(
@@ -433,13 +433,14 @@ export class SyncLivePullProcessor {
     if (
       link === undefined ||
       delivery.controller === undefined ||
+      delivery.ticket === undefined ||
       (link.status !== 'live' && link.status !== 'initializing') ||
       isStale()
     ) {
       return;
     }
 
-    const drained = delivery.controller.commitPullDelivery(delivery.ordinal, cursor);
+    const drained = delivery.controller.commitPullDelivery(delivery.ticket, cursor);
     if (drained > 0) {
       await this._operations.persistCheckpoint(link);
       if (isStale()) { return; }

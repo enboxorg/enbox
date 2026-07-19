@@ -62,7 +62,7 @@ describe('SyncLinkController', () => {
     controller.clearPullInflight();
     const next = controller.startPullDelivery(token(2));
 
-    expect(next).toBe(1);
+    expect(next.ordinal).toBe(1);
     expect(controller.commitPullDelivery(next, token(2))).toBe(1);
     expect(link.pull.contiguousAppliedToken).toEqual(token(2));
   });
@@ -76,10 +76,40 @@ describe('SyncLinkController', () => {
     controller.resetPullRuntime();
     const next = controller.startPullDelivery(token(3));
 
-    expect(next).toBe(0);
+    expect(next.ordinal).toBe(0);
     expect(controller.pullInflightCount).toBe(1);
     expect(controller.commitPullDelivery(next, token(3))).toBe(1);
     expect(link.pull.contiguousAppliedToken).toEqual(token(3));
+  });
+
+  it('should ignore commits carrying a superseded pull-generation ticket', () => {
+    const link = createLink();
+    const controller = new SyncLinkController('link-key', link);
+    const stale = controller.startPullDelivery(token(9));
+
+    controller.resetPullRuntime();
+    const fresh = controller.startPullDelivery(token(2));
+
+    // The stale ticket's ordinal collides with the fresh delivery's ordinal
+    // in the new generation; its commit must not mark the fresh delivery
+    // committed or move either checkpoint token.
+    expect(controller.commitPullDelivery(stale, token(9))).toBe(0);
+    expect(link.pull.contiguousAppliedToken).toBeUndefined();
+    expect(link.pull.receivedToken).toBeUndefined();
+
+    expect(controller.commitPullDelivery(fresh, token(2))).toBe(1);
+    expect(link.pull.contiguousAppliedToken).toEqual(token(2));
+  });
+
+  it('should ignore commits abandoned by clearPullInflight', () => {
+    const link = createLink();
+    const controller = new SyncLinkController('link-key', link);
+    const abandoned = controller.startPullDelivery(token(1));
+
+    controller.clearPullInflight();
+
+    expect(controller.commitPullDelivery(abandoned, token(1))).toBe(0);
+    expect(link.pull.receivedToken).toBeUndefined();
   });
 
   it('should not let an old push batch clear or consume a replacement queue', () => {

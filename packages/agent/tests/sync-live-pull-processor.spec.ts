@@ -388,6 +388,49 @@ describe('SyncLivePullProcessor', () => {
     expect(context.controller?.pullInflightCount).toBe(0);
   });
 
+  it('ignores a delivery that commits across a pull-runtime reset', async () => {
+    const staleStarted = deferred<void>();
+    const releaseStale = deferred<void>();
+    const freshStarted = deferred<void>();
+    const releaseFresh = deferred<void>();
+    const { admit, operations, processor } = createFixture();
+    const state = link();
+    const context = contextFor(state);
+    admit.onFirstCall().callsFake(async () => {
+      staleStarted.resolve();
+      await releaseStale.promise;
+      return { kind: 'admitted', appliedCids: ['stale'], freshEntries: [] };
+    });
+    admit.onSecondCall().callsFake(async () => {
+      freshStarted.resolve();
+      await releaseFresh.promise;
+      return { kind: 'admitted', appliedCids: ['fresh'], freshEntries: [] };
+    });
+
+    const stale = processor.handleEvent(context, event(token('5'), protocolMessage('https://protocol.example/stale')));
+    await staleStarted.promise;
+
+    // A repair re-establishes the pull boundary while the delivery admits.
+    context.controller?.resetPullRuntime();
+    const fresh = processor.handleEvent(context, event(token('6'), protocolMessage('https://protocol.example/fresh')));
+    await freshStarted.promise;
+
+    releaseStale.resolve();
+    await stale;
+
+    // The superseded delivery reuses ordinal 0 of the new generation; its
+    // commit must not mark the still-admitting fresh delivery as applied.
+    expect(operations.persistCheckpoint.notCalled).toBe(true);
+    expect(state.pull.contiguousAppliedToken).toBeUndefined();
+    expect(state.pull.receivedToken).toBeUndefined();
+
+    releaseFresh.resolve();
+    await fresh;
+
+    expect(state.pull.contiguousAppliedToken).toEqual(token('6'));
+    expect(operations.persistCheckpoint.calledOnceWithExactly(state)).toBe(true);
+  });
+
   it('repairs a link when concurrent deliveries exceed the bounded backlog', async () => {
     const firstStarted = deferred<void>();
     const releaseFirst = deferred<void>();
