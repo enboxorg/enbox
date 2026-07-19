@@ -132,7 +132,7 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
 
     // Start live sync FIRST — this opens real subscriptions via the shim.
     // Without a prior cursor, the subscription is live-only (no catch-up).
-    await syncEngine.startSync({ mode: 'live', interval: '30s' });
+    await syncEngine.startSync({ interval: '30s' });
 
     const { reply: protoReply } = await testHarness.agent.dwn.processRequest({
       author        : tenant,
@@ -192,7 +192,7 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
     });
 
     // Start sync first, then write — so the event fires as a live event.
-    await syncEngine.startSync({ mode: 'live', interval: '30s' });
+    await syncEngine.startSync({ interval: '30s' });
 
     await testHarness.agent.dwn.processRequest({
       author        : tenant,

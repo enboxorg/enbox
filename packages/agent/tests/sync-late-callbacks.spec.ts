@@ -112,7 +112,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
       },
     });
 
-    await engine.startSync({ mode: 'live', interval: '30s' });
+    await engine.startSync({ interval: '30s' });
 
     const handler = getRemoteHandler();
     expect(handler).toBeDefined();
@@ -155,7 +155,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
       },
     });
 
-    await engine.startSync({ mode: 'live', interval: '30s' });
+    await engine.startSync({ interval: '30s' });
 
     const handler = getRemoteHandler();
     expect(handler).toBeDefined();
@@ -197,7 +197,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
       },
     });
 
-    await engine.startSync({ mode: 'live', interval: '30s' });
+    await engine.startSync({ interval: '30s' });
 
     const handler = getLocalHandler();
     const [controller] = engine['_linkControllers'].values();

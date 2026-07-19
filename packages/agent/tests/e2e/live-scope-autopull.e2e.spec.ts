@@ -274,7 +274,7 @@ describe('E2E: live-sync auto-pull of a newly-registered identity scope', () => 
         did     : wallet.agent.agentDid.uri,
         options : { protocols: agentDidSyncProtocols },
       });
-      await wallet.agent.sync.startSync({ mode: 'live', interval: '30s' });
+      await wallet.agent.sync.startSync({ interval: '30s' });
     }
     expect(walletA.agent.sync.hasActiveSubscriptions).toBe(true);
     expect(walletB.agent.sync.hasActiveSubscriptions).toBe(true);

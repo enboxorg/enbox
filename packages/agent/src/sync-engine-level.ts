@@ -747,7 +747,7 @@ export class SyncEngineLevel implements SyncEngine {
     this.invalidateSyncTargetsCache();
 
     // If live sync is active, hot-add subscriptions for this identity.
-    if (this._runtime.mode === 'live') {
+    if (this._runtime.live) {
       const currentIdentityKeys = await this.addIdentityToLiveSync(did, options);
       if (currentIdentityKeys.size > 0) {
         await this.pruneSupersededDurableLinksForIdentity(did, currentIdentityKeys);
@@ -768,7 +768,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     // If live sync is active, hot-remove subscriptions for this identity.
-    if (this._runtime.mode === 'live') {
+    if (this._runtime.live) {
       await this.removeIdentityFromLiveSync(did);
     }
 
@@ -837,7 +837,7 @@ export class SyncEngineLevel implements SyncEngine {
     const hadPriorLiveRuntime = hadPendingLinkInitRetry ||
       identityTaskGroup.size > 0 ||
       this.hasActiveLinksForDid(did);
-    const rebuildLiveLinks = this._runtime.mode === 'live' && hadPriorLiveRuntime;
+    const rebuildLiveLinks = this._runtime.live && hadPriorLiveRuntime;
     if (hadPriorLiveRuntime) {
       await this.removeIdentityFromLiveSync(did);
     }
@@ -1000,7 +1000,7 @@ export class SyncEngineLevel implements SyncEngine {
    * so writes that race the drain continue to be delivered after parity.
    */
   private async prepareDrainLiveTarget(target: SyncTarget): Promise<void> {
-    if (this._runtime.mode !== 'live') {
+    if (!this._runtime.live) {
       return;
     }
 
@@ -1025,20 +1025,15 @@ export class SyncEngineLevel implements SyncEngine {
   // startSync / stopSync
   // ---------------------------------------------------------------------------
 
-  public startSync(params: StartSyncParams): Promise<void> {
+  public startSync(params: StartSyncParams = {}): Promise<void> {
     return this._lifecycle.runTransition(async (): Promise<void> => {
       await this.startSyncRuntime(params);
     });
   }
 
   private async startSyncRuntime(params: StartSyncParams): Promise<void> {
-    const mode = params.mode;
-    if (mode !== 'live' && mode !== 'poll') {
-      throw new Error(`SyncEngineLevel: startSync requires mode 'live' or 'poll'.`);
-    }
-
-    const intervalStr = params.interval ?? (mode === 'live' ? '5m' : '2m');
-    const intervalMilliseconds = parseDurationInMilliseconds(intervalStr);
+    // An invalid interval rejects here, before any runtime is torn down.
+    const intervalMilliseconds = parseDurationInMilliseconds(params.interval ?? '5m');
 
     const hadLiveRuntime = this.hasLiveSyncRuntime();
     this.prepareForSyncRuntimeTransition();
@@ -1055,15 +1050,11 @@ export class SyncEngineLevel implements SyncEngine {
     this._lifecycle.resumeTaskAdmission();
 
     // The previous generation's scope was disposed by the transition above;
-    // the new generation gets a fresh scope — carrying its mode — once its
-    // predecessor's work has fully settled.
-    this._runtime = new SyncRuntime(mode);
+    // the new generation gets a fresh live scope once its predecessor's work
+    // has fully settled.
+    this._runtime = new SyncRuntime(true);
 
-    if (mode === 'live') {
-      await this.startLiveSync(intervalMilliseconds);
-    } else {
-      await this.startPollSync(intervalMilliseconds);
-    }
+    await this.startLiveSync(intervalMilliseconds);
   }
 
   /**
@@ -1082,7 +1073,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private hasLiveSyncRuntime(): boolean {
-    return this._runtime.mode === 'live' ||
+    return this._runtime.live ||
       this._linkControllers.size > 0 ||
       this._runtime.hasTimers(SyncEngineLevel.isLinkInitRetryTimerKey) ||
       this.hasActiveSubscriptions;
@@ -1145,56 +1136,11 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   // ---------------------------------------------------------------------------
-  // Poll-mode sync
+  // Live sync
   // ---------------------------------------------------------------------------
 
-  /** Runtime-scope timer key for the poll interval / live settle check. */
+  /** Runtime-scope timer key for the periodic durable feed settle check. */
   private static readonly SYNC_INTERVAL_TIMER = 'syncInterval';
-
-  private async startPollSync(intervalMilliseconds: number): Promise<void> {
-    const runtime = this._runtime;
-    const intervalSync = async (): Promise<void> => {
-      if (runtime.disposed) { return; }
-      if (this._lifecycle.isSyncInProgress) {
-        return;
-      }
-
-      runtime.clearTimer(SyncEngineLevel.SYNC_INTERVAL_TIMER);
-
-      try {
-        await this.sync(undefined, { verifyConvergence: true });
-      } catch (error) {
-        // A queued run cancelled by teardown is expected, not an error.
-        if (!(error instanceof SyncRunCancelledError)) {
-          console.error('SyncEngineLevel: Error during sync operation', error);
-        }
-      }
-
-      const effectiveInterval = this._connectivityManager.getPollInterval(intervalMilliseconds);
-
-      // Failure backoff re-arms with a widened interval; a concurrent tick
-      // that already re-armed wins. A disposed runtime refuses the arm.
-      runtime.armIntervalIfAbsent(
-        SyncEngineLevel.SYNC_INTERVAL_TIMER,
-        this.supervisedTick(intervalSync),
-        effectiveInterval,
-      );
-    };
-
-    runtime.armInterval(SyncEngineLevel.SYNC_INTERVAL_TIMER, this.supervisedTick(intervalSync), intervalMilliseconds);
-
-    // Initiate an immediate sync.
-    if (!this._lifecycle.isSyncInProgress) {
-      try {
-        await this.sync(undefined, { verifyConvergence: true });
-      } catch (error) {
-        // A queued run cancelled by teardown is expected, not an error.
-        if (!(error instanceof SyncRunCancelledError)) {
-          console.error('SyncEngineLevel: Error during initial poll sync', error);
-        }
-      }
-    }
-  }
 
   /** Wrap a scheduled operation so each tick runs as supervised background work. */
   private supervisedTick(operation: () => Promise<void>): () => void {
@@ -1202,10 +1148,6 @@ export class SyncEngineLevel implements SyncEngine {
       void this._lifecycle.runBackgroundTask(operation);
     };
   }
-
-  // ---------------------------------------------------------------------------
-  // Live-mode sync
-  // ---------------------------------------------------------------------------
 
   /**
    * Starts live sync:
@@ -1986,7 +1928,8 @@ export class SyncEngineLevel implements SyncEngine {
 
   /**
    * Subscribes to the local DWN's EventLog so that writes by the user are
-   * immediately pushed to the remote DWN instead of waiting for the next poll.
+   * immediately pushed to the remote DWN instead of waiting for the next
+   * settle check.
    */
   private async openLocalPushSubscription(
     target: LinkSyncTarget,
@@ -2103,9 +2046,13 @@ export class SyncEngineLevel implements SyncEngine {
 
   private scheduleLinkReconcile(linkKey: string, link: ReplicationLinkState, reason: string, delayMs?: number): void {
     // Link-addressed callers (feed convergence, quota manager, push quota
-    // probes) can run in poll mode where no controller exists; resolving to
-    // a matching active controller here keeps those requests no-ops exactly
-    // as before, while the recovery coordinator itself is controller-addressed.
+    // probes) can reach here for links that have no active controller: a
+    // one-shot sync() or drain reconciles durable links without a live
+    // runtime, and even under live sync the controller can be removed
+    // across a caller's await (hot-remove, pause, a rate-limited init
+    // retry). Resolving to a matching active controller keeps those
+    // requests no-ops, while the recovery coordinator itself is
+    // controller-addressed.
     const controller = this.getMatchingLinkController(linkKey, link);
     if (controller === undefined) {
       return;

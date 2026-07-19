@@ -54,7 +54,7 @@ describe('SyncConnectivityManager', () => {
     sinon.restore();
   });
 
-  it('folds active-link connectivity with online precedence and poll-state fallback', () => {
+  it('folds active-link connectivity with online precedence and engine-state fallback', () => {
     const { manager } = setupManager();
 
     expect(manager.getState([])).toBe('unknown');
@@ -66,25 +66,17 @@ describe('SyncConnectivityManager', () => {
     expect(manager.getState(['offline', 'online'])).toBe('online');
   });
 
-  it('tracks sync outcomes and caps exponential poll backoff', () => {
+  it('tracks sync outcomes, preserving unknown until reachability was established', () => {
     const { manager } = setupManager();
 
     manager.recordFailure();
     expect(manager.getState([])).toBe('unknown');
-    expect(manager.getPollInterval(100)).toBe(200);
 
     manager.recordSuccess();
     expect(manager.getState([])).toBe('online');
-    expect(manager.getPollInterval(100)).toBe(100);
 
     manager.recordFailure();
     expect(manager.getState([])).toBe('offline');
-    expect(manager.getPollInterval(100)).toBe(200);
-
-    manager.recordFailure();
-    expect(manager.getPollInterval(100)).toBe(400);
-    manager.recordFailure();
-    expect(manager.getPollInterval(100)).toBe(400);
   });
 
   it('marks connectivity offline and owns browser listener replacement and teardown', () => {

@@ -895,11 +895,11 @@ describe('SyncEngineLevel', () => {
         sinon.stub(syncEngine as any, 'getReplicationLinkKey').returns('link-key');
         const initialize = sinon.stub(syncEngine as any, 'initializeLinkTargetWithRetry').resolves();
 
-        syncEngine['_runtime'] = new SyncRuntime('poll');
+        syncEngine['_runtime'] = new SyncRuntime();
         await (syncEngine as any).prepareDrainLiveTarget(target);
         expect(getLink.notCalled).toBe(true);
 
-        syncEngine['_runtime'] = new SyncRuntime('live');
+        syncEngine['_runtime'] = new SyncRuntime(true);
         await (syncEngine as any).prepareDrainLiveTarget(target);
         expect(initialize.calledOnceWithExactly(target)).toBe(true);
 
@@ -2156,7 +2156,7 @@ describe('SyncEngineLevel', () => {
     });
 
     describe('startSync()', () => {
-      it('calls sync() in each interval', async () => {
+      it('runs the durable feed settle check at each interval', async () => {
         await testHarness.agent.sync.registerIdentity({
           did     : alice.did.uri,
           options : { protocols: 'all' },
@@ -2165,19 +2165,24 @@ describe('SyncEngineLevel', () => {
         const syncSpy = sinon.stub(SyncEngineLevel.prototype as any, 'sync');
         syncSpy.resolves();
 
+        // Live link initialization is not under test — resolve no targets.
+        const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
+        getSyncTargetsStub.resolves([]);
+
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
-        testHarness.agent.sync.startSync({ mode: 'poll', interval: '500ms' });
+        await testHarness.agent.sync.startSync({ interval: '500ms' });
 
         await clock.tickAsync(1_400); // just under 3 intervals
         syncSpy.restore();
+        getSyncTargetsStub.restore();
         clock.restore();
 
-        // one when starting the sync, and another for each interval
+        // one initial catch-up when starting, and one settle check per interval
         expect(syncSpy.callCount).toBe(3);
       });
 
-      it('does not call sync() again until a sync round finishes', async () => {
+      it('skips settle checks while sync work is already in progress', async () => {
         await testHarness.agent.sync.registerIdentity({
           did     : alice.did.uri,
           options : { protocols: 'all' },
@@ -2185,17 +2190,18 @@ describe('SyncEngineLevel', () => {
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
-        let resolveFirstPull!: (result: object) => void;
-        const firstPull = new Promise<object>((resolve) => {
-          resolveFirstPull = resolve;
+        let resolveSettlePull!: (result: object) => void;
+        const settlePull = new Promise<object>((resolve) => {
+          resolveSettlePull = resolve;
         });
 
-        // Stub a feed phase so the real sync() manages _syncLock, while the first
-        // sync remains pending until the test explicitly releases it.
+        // Stub a feed phase so the real sync() manages the exclusive sync
+        // lock, while the first settle check's pull remains pending until the
+        // test explicitly releases it.
         const durableFeedReconciler = (testHarness.agent.sync as any)._durableFeedReconciler;
         const pullRemoteFeedStub = sinon.stub(durableFeedReconciler, 'pull');
-        pullRemoteFeedStub.onFirstCall().returns(firstPull);
         pullRemoteFeedStub.resolves({});
+        pullRemoteFeedStub.onSecondCall().returns(settlePull);
 
         const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
         getSyncTargetsStub.resolves([{
@@ -2206,6 +2212,10 @@ describe('SyncEngineLevel', () => {
           authorizationEpoch : 'test-owner-epoch',
         }]);
 
+        // Live subscription opening is not under test — skip its I/O.
+        const initializeLinkTargetStub = sinon.stub(testHarness.agent.sync as any, 'initializeLinkTarget');
+        initializeLinkTargetStub.resolves({ status: 'failed' });
+
         const pushLocalFeedStub = sinon.stub(durableFeedReconciler, 'push');
         pushLocalFeedStub.resolves({});
 
@@ -2214,122 +2224,80 @@ describe('SyncEngineLevel', () => {
 
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
 
-        const startPromise = testHarness.agent.sync.startSync({ mode: 'poll', interval: '500ms' });
+        const startPromise = testHarness.agent.sync.startSync({ interval: '500ms' });
 
-        await clock.tickAsync(0);
-
-        // only once for when starting the sync
-        expect(syncSpy.callCount).toBe(1);
-
-        await clock.tickAsync(2_000); // multiple intervals fire while the first sync is still running
-
-        // still only once because interval ticks are skipped while sync is running
-        expect(syncSpy.callCount).toBe(1);
-
-        resolveFirstPull({});
         await clock.tickAsync(0);
         await startPromise;
 
-        // completing the first sync does not retroactively run skipped intervals
+        // only the initial live catch-up so far
         expect(syncSpy.callCount).toBe(1);
+
+        await clock.tickAsync(500); // the first settle check starts and stays pending
+
+        expect(syncSpy.callCount).toBe(2);
+
+        await clock.tickAsync(1_000); // further intervals fire while it holds the lock
+
+        // those ticks are skipped because sync work is already in progress
+        expect(syncSpy.callCount).toBe(2);
+
+        resolveSettlePull({});
+        await clock.tickAsync(0);
+
+        // completing the settle check does not retroactively run skipped intervals
+        expect(syncSpy.callCount).toBe(2);
 
         syncSpy.restore();
         verifyFeedConvergenceStub.restore();
+        initializeLinkTargetStub.restore();
         getSyncTargetsStub.restore();
         pullRemoteFeedStub.restore();
         pushLocalFeedStub.restore();
         clock.restore();
       });
 
-      it('calls sync once per interval with the latest interval timer being respected', async () => {
+      it('should replace the settle-check interval when startSync is called again', async () => {
         await testHarness.agent.sync.registerIdentity({
           did     : alice.did.uri,
           options : { protocols: 'all' },
         });
 
+        const syncSpy = sinon.stub(SyncEngineLevel.prototype as any, 'sync');
+        syncSpy.resolves();
+
+        const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
+        getSyncTargetsStub.resolves([]);
+
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
-        const syncSpy = sinon.stub(SyncEngineLevel.prototype as any, 'sync');
-        // set to be a sync time longer than the interval
-        syncSpy.returns(new Promise<void>((resolve) => {
-          clock.setTimeout(() => {
-            resolve();
-          }, 1_000);
-        }));
+        await testHarness.agent.sync.startSync({ interval: '500ms' });
 
-        testHarness.agent.sync.startSync({ mode: 'poll', interval: '500ms' });
+        // one initial catch-up when starting
+        expect(syncSpy.callCount).toBe(1);
 
-        await clock.tickAsync(1_400); // less than the initial interval + the sync time
+        await clock.tickAsync(1_001); // two settle intervals
 
-        // once for the initial call and once for each interval call
-        expect(syncSpy.callCount).toBe(2);
+        expect(syncSpy.callCount).toBe(3);
 
-        // set to be a short sync time
-        syncSpy.returns(new Promise<void>((resolve) => {
-          clock.setTimeout(() => {
-            resolve();
-          }, 15);
-        }));
+        await testHarness.agent.sync.startSync({ interval: '200ms' });
 
-        testHarness.agent.sync.startSync({ mode: 'poll', interval: '300ms' });
-
-        await clock.tickAsync(301); // exactly the new interval + 1
-
-        // one for the initial 'startSync' call and one for each interval call
+        // the restart runs its own initial catch-up
         expect(syncSpy.callCount).toBe(4);
 
-
-        await clock.tickAsync(601); // two more intervals
+        await clock.tickAsync(401); // two intervals at the new cadence
 
         expect(syncSpy.callCount).toBe(6);
 
+        // only the 200ms timer remains: one more tick, not a stale 500ms one
+        await clock.tickAsync(200);
+        expect(syncSpy.callCount).toBe(7);
+
         syncSpy.restore();
+        getSyncTargetsStub.restore();
         clock.restore();
       });
 
-      it('should replace the interval timer with the latest interval timer', async () => {
-
-        await testHarness.agent.sync.registerIdentity({
-          did     : alice.did.uri,
-          options : { protocols: 'all' },
-        });
-
-        const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
-
-        const syncSpy = sinon.stub(SyncEngineLevel.prototype as any, 'sync');
-        // set to be a sync time longer than the interval
-        syncSpy.returns(new Promise<void>((resolve) => {
-          clock.setTimeout(() => {
-            resolve();
-          }, 100);
-        }));
-
-        testHarness.agent.sync.startSync({ mode: 'poll', interval: '500ms' });
-
-        // two intervals
-        await clock.tickAsync(1_101);
-
-        // this should equal 3: once for the initial call and once for each completed interval round
-        expect(syncSpy.callCount).toBe(3);
-
-        syncSpy.resetHistory();
-        testHarness.agent.sync.startSync({ mode: 'poll', interval: '200ms' });
-
-        await clock.tickAsync(501); // two interval rounds including sync duration
-
-        // one for the initial 'startSync' call and one for each interval call
-        expect(syncSpy.callCount).toBe(3);
-
-        await clock.tickAsync(401); // two more intervals
-
-        // one additional calls for each interval
-        expect(syncSpy.callCount).toBe(5);
-
-        syncSpy.restore();
-        clock.restore();
-      });
-
-      it('should log sync errors, but continue syncing the next interval', async () => {
+      it('should log settle check errors, but continue at the next interval', async () => {
         await testHarness.agent.sync.registerIdentity({
           did     : alice.did.uri,
           options : { protocols: 'all' },
@@ -2337,21 +2305,20 @@ describe('SyncEngineLevel', () => {
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
         const syncSpy = sinon.stub(SyncEngineLevel.prototype as any, 'sync');
+        syncSpy.resolves();
 
-        syncSpy.returns(new Promise<void>((resolve, _reject) => {
-          clock.setTimeout(() => {
-            resolve();
-          }, 100);
-        }));
-
-        // first call is the initial sync, 2nd and onward are the intervals
-        // on the 2nd interval (3rd call), we reject the promise, a 4th call should be made
+        // first call is the initial catch-up, 2nd and onward are settle
+        // checks; the 2nd settle check (3rd call) rejects, a 4th call should
+        // still be made
         syncSpy.onThirdCall().rejects(new Error('Sync error'));
+
+        const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
+        getSyncTargetsStub.resolves([]);
 
         // spy on console.error to check if the error message is logged
         const consoleErrorSpy = sinon.stub(console, 'error').resolves();
 
-        testHarness.agent.sync.startSync({ mode: 'poll', interval: '500ms' });
+        await testHarness.agent.sync.startSync({ interval: '500ms' });
 
         // three intervals
         await clock.tickAsync(1_601);
@@ -2361,9 +2328,10 @@ describe('SyncEngineLevel', () => {
 
         // check if the error message is logged
         expect(consoleErrorSpy.callCount).toBe(1);
-        expect(consoleErrorSpy.args[0][0]).toContain('SyncEngineLevel: Error during sync operation');
+        expect(consoleErrorSpy.args[0][0]).toContain('SyncEngineLevel: Error during durable feed settle check');
 
         syncSpy.restore();
+        getSyncTargetsStub.restore();
         consoleErrorSpy.restore();
         clock.restore();
       });
@@ -2389,12 +2357,12 @@ describe('SyncEngineLevel', () => {
 
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
 
-        const startPromise = testHarness.agent.sync.startSync({ mode: 'poll', interval: '500ms' });
+        const startPromise = testHarness.agent.sync.startSync({ interval: '500ms' });
 
         // expect the immediate sync call
         expect(syncSpy.callCount).toBe(1);
 
-        await clock.tickAsync(3);
+        await clock.tickAsync(10);
         await startPromise;
 
         await clock.tickAsync(1_100); // two interval rounds after the immediate sync
@@ -2432,12 +2400,12 @@ describe('SyncEngineLevel', () => {
 
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
 
-        const startPromise = testHarness.agent.sync.startSync({ mode: 'poll', interval: '500ms' });
+        const startPromise = testHarness.agent.sync.startSync({ interval: '500ms' });
 
         // expect the immediate sync call
         expect(syncSpy.callCount).toBe(1);
 
-        await clock.tickAsync(3);
+        await clock.tickAsync(10);
         await startPromise;
 
         // cause getSyncTargets to take longer
@@ -2493,12 +2461,12 @@ describe('SyncEngineLevel', () => {
 
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
 
-        const startPromise = testHarness.agent.sync.startSync({ mode: 'poll', interval: '500ms' });
+        const startPromise = testHarness.agent.sync.startSync({ interval: '500ms' });
 
         // expect the immediate sync call
         expect(syncSpy.callCount).toBe(1);
 
-        await clock.tickAsync(3);
+        await clock.tickAsync(10);
         await startPromise;
 
         // cause getSyncTargets to take longer than the 2 second timeout
@@ -2557,7 +2525,7 @@ describe('SyncEngineLevel', () => {
 
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
 
-        testHarness.agent.sync.startSync({ mode: 'poll', interval: '500ms' });
+        testHarness.agent.sync.startSync({ interval: '500ms' });
 
         // expect the immediate sync call
         expect(syncSpy.callCount).toBe(1);
@@ -3595,7 +3563,7 @@ describe('SyncEngineLevel', () => {
             options: { protocols: 'all', delegateDid: 'did:example:old-delegate' },
           });
 
-          syncEngine['_runtime'] = new SyncRuntime('live');
+          syncEngine['_runtime'] = new SyncRuntime(true);
 
           const ledger = syncEngine['ledger'];
           const link = await ledger.getOrCreateLink({
@@ -3641,7 +3609,7 @@ describe('SyncEngineLevel', () => {
           const did = alice.did.uri;
 
           await syncEngine.registerIdentity({ did, options: { protocols: 'all' } });
-          syncEngine['_runtime'] = new SyncRuntime('live');
+          syncEngine['_runtime'] = new SyncRuntime(true);
 
           const ledger = syncEngine['ledger'];
           const link = await ledger.getOrCreateLink({
@@ -3677,7 +3645,7 @@ describe('SyncEngineLevel', () => {
           const did = alice.did.uri;
 
           await syncEngine.registerIdentity({ did, options: { protocols: 'all' } });
-          syncEngine['_runtime'] = new SyncRuntime('live');
+          syncEngine['_runtime'] = new SyncRuntime(true);
 
           const ledger = syncEngine['ledger'];
           const link = await ledger.getOrCreateLink({
@@ -3737,7 +3705,7 @@ describe('SyncEngineLevel', () => {
           const did = alice.did.uri;
 
           await syncEngine.registerIdentity({ did, options: { protocols: 'all' } });
-          syncEngine['_runtime'] = new SyncRuntime('live');
+          syncEngine['_runtime'] = new SyncRuntime(true);
 
           const ledger = syncEngine['ledger'];
           const originalLink = await ledger.getOrCreateLink({
@@ -3777,28 +3745,13 @@ describe('SyncEngineLevel', () => {
     });
   });
 
-  describe('startSync with mode parameter', () => {
-    it('should accept explicit poll mode', async () => {
-      const syncEngine = new SyncEngineLevel({ db: testHarness.syncStore, agent: testHarness.agent });
-      const syncSpy = sinon.spy(syncEngine as any, 'startPollSync');
-
-      try {
-        await syncEngine.startSync({ mode: 'poll', interval: '30s' });
-      } catch {
-        // May fail during sync.
-      }
-
-      expect(syncSpy.calledOnce).toBe(true);
-      await syncEngine.stopSync(5000);
-      syncSpy.restore();
-    });
-
-    it('should accept explicit live mode', async () => {
+  describe('startSync parameters', () => {
+    it('should start the live runtime', async () => {
       const syncEngine = new SyncEngineLevel({ db: testHarness.syncStore, agent: testHarness.agent });
       const syncSpy = sinon.spy(syncEngine as any, 'startLiveSync');
 
       try {
-        await syncEngine.startSync({ mode: 'live', interval: '5m' });
+        await syncEngine.startSync({ interval: '5m' });
       } catch {
         // May fail during live setup (no remote DWN subscriptions).
       }
@@ -3808,60 +3761,59 @@ describe('SyncEngineLevel', () => {
       syncSpy.restore();
     });
 
-    it('should reject a missing mode before starting any runtime', async () => {
+    it('should default the settle-check interval when none is given', async () => {
       const syncEngine = new SyncEngineLevel({ db: testHarness.syncStore, agent: testHarness.agent });
-      const pollSpy = sinon.spy(syncEngine as any, 'startPollSync');
+      const syncSpy = sinon.spy(syncEngine as any, 'startLiveSync');
+
+      try {
+        await syncEngine.startSync();
+      } catch {
+        // May fail during live setup (no remote DWN subscriptions).
+      }
+
+      expect(syncSpy.calledOnceWithExactly(300_000)).toBe(true);
+      await syncEngine.stopSync(5000);
+      syncSpy.restore();
+    });
+
+    it('should reject an invalid interval before starting any runtime', async () => {
+      const syncEngine = new SyncEngineLevel({ db: testHarness.syncStore, agent: testHarness.agent });
       const liveSpy = sinon.spy(syncEngine as any, 'startLiveSync');
 
-      await expect(syncEngine.startSync({} as any)).rejects.toThrow(
-        `SyncEngineLevel: startSync requires mode 'live' or 'poll'.`
+      await expect(syncEngine.startSync({ interval: 'not-a-duration' })).rejects.toThrow(
+        `Invalid duration: 'not-a-duration'`
       );
 
-      expect(pollSpy.notCalled).toBe(true);
       expect(liveSpy.notCalled).toBe(true);
       expect(syncEngine.hasActiveSubscriptions).toBe(false);
-      pollSpy.restore();
       liveSpy.restore();
     });
 
-    it('should reject an unsupported mode before starting any runtime', async () => {
-      const syncEngine = new SyncEngineLevel({ db: testHarness.syncStore, agent: testHarness.agent });
-      const pollSpy = sinon.spy(syncEngine as any, 'startPollSync');
-      const liveSpy = sinon.spy(syncEngine as any, 'startLiveSync');
-
-      await expect(syncEngine.startSync({ mode: 'lvie' } as any)).rejects.toThrow(
-        `SyncEngineLevel: startSync requires mode 'live' or 'poll'.`
-      );
-
-      expect(pollSpy.notCalled).toBe(true);
-      expect(liveSpy.notCalled).toBe(true);
-      expect(syncEngine.hasActiveSubscriptions).toBe(false);
-      pollSpy.restore();
-      liveSpy.restore();
-    });
-
-    it('should leave a running poll runtime untouched when a reconfiguration passes an invalid mode', async () => {
+    it('should leave a running runtime untouched when a reconfiguration passes an invalid interval', async () => {
       const syncEngine = new SyncEngineLevel({ db: testHarness.syncStore, agent: testHarness.agent });
       const syncStub = sinon.stub(SyncEngineLevel.prototype as any, 'sync');
       syncStub.resolves();
+      const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
+      getSyncTargetsStub.resolves([]);
       const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
-      await syncEngine.startSync({ mode: 'poll', interval: '500ms' });
+      await syncEngine.startSync({ interval: '500ms' });
 
-      // one sync for the initial startSync call
+      // one sync for the initial startSync catch-up
       expect(syncStub.callCount).toBe(1);
 
-      await expect(syncEngine.startSync({ mode: 'lvie' } as any)).rejects.toThrow(
-        `SyncEngineLevel: startSync requires mode 'live' or 'poll'.`
+      await expect(syncEngine.startSync({ interval: 'not-a-duration' })).rejects.toThrow(
+        `Invalid duration: 'not-a-duration'`
       );
 
-      // the running poll runtime's interval timer persists and keeps firing
+      // the running runtime's settle-check timer persists and keeps firing
       await clock.tickAsync(1_400); // just under 3 intervals
       expect(syncStub.callCount).toBe(3);
 
       clock.restore();
       await syncEngine.stopSync(5000);
       syncStub.restore();
+      getSyncTargetsStub.restore();
     });
   });
 

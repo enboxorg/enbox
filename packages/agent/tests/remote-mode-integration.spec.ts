@@ -204,7 +204,7 @@ describe('Agent remote mode integration', () => {
       did     : alice.did.uri,
       options : { protocols: [notesProtocol.protocol] },
     });
-    await testHarness.agent.sync.startSync({ mode: 'live', interval: '30s' });
+    await testHarness.agent.sync.startSync({ interval: '30s' });
 
     expect(testHarness.agent.sync.hasActiveSubscriptions).toBe(true);
 
@@ -237,7 +237,7 @@ describe('Agent remote mode integration', () => {
       did     : alice.did.uri,
       options : { protocols: [notesProtocol.protocol] },
     });
-    await testHarness.agent.sync.startSync({ mode: 'live', interval: '30s' });
+    await testHarness.agent.sync.startSync({ interval: '30s' });
 
     const beforeLinks = await syncEngine.ledger.getLinksForTenant(alice.did.uri);
     const before = beforeLinks.find((candidate: any): boolean => candidate.remoteEndpoint === remoteServer.httpUrl);

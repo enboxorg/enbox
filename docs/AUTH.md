@@ -170,7 +170,7 @@ intentionally sync every protocol for an identity.
 | Value | Behavior |
 |---|---|
 | omitted | Live WebSocket sync where available. |
-| `'15s'`, `'2m'`, `'1h'` | Poll at the requested interval. |
+| `'15s'`, `'2m'`, `'1h'` | Live sync with the periodic settle check at the requested interval. |
 | `'off'` | Disable sync. |
 
 ## Registration

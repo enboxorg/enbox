@@ -64,31 +64,6 @@ describe('SyncRuntime', () => {
     expect(second).toBeGreaterThan(0);
   });
 
-  it('should not replace an armed interval through armIntervalIfAbsent', async () => {
-    const runtime = new SyncRuntime();
-    let first = 0;
-    let second = 0;
-    runtime.armInterval('tick', () => { first++; }, 5);
-    runtime.armIntervalIfAbsent('tick', () => { second++; }, 5);
-
-    await sleep(25);
-    runtime.dispose();
-
-    expect(first).toBeGreaterThan(0);
-    expect(second).toBe(0);
-  });
-
-  it('should arm through armIntervalIfAbsent when the key is unarmed', async () => {
-    const runtime = new SyncRuntime();
-    let ticks = 0;
-    runtime.armIntervalIfAbsent('tick', () => { ticks++; }, 5);
-
-    await sleep(20);
-    runtime.dispose();
-
-    expect(ticks).toBeGreaterThan(0);
-  });
-
   it('should cancel every owned timer on dispose and refuse further arming', async () => {
     const runtime = new SyncRuntime();
     let ticks = 0;
@@ -99,23 +74,22 @@ describe('SyncRuntime', () => {
     expect(runtime.disposed).toBe(true);
 
     runtime.armInterval('c', () => { ticks++; }, 5);
-    runtime.armIntervalIfAbsent('d', () => { ticks++; }, 5);
 
     await sleep(25);
     expect(ticks).toBe(0);
   });
 
-  it('should carry its mode for the generation and lose it on disposal', () => {
-    const modeless = new SyncRuntime();
-    expect(modeless.mode).toBeUndefined();
+  it('should carry its liveness for the generation and lose it on disposal', () => {
+    const idle = new SyncRuntime();
+    expect(idle.live).toBe(false);
 
-    const runtime = new SyncRuntime('live');
-    expect(runtime.mode).toBe('live');
+    const runtime = new SyncRuntime(true);
+    expect(runtime.live).toBe(true);
 
-    // Mode is a property of the generation: a disposed scope has none,
-    // exactly as the engine between runtimes has none.
+    // Liveness is a property of the generation: a disposed scope is never
+    // live, exactly as the engine between runtimes is not.
     runtime.dispose();
-    expect(runtime.mode).toBeUndefined();
+    expect(runtime.live).toBe(false);
   });
 
   it('should tolerate clearing unarmed keys, double dispose, and clears after dispose', () => {
@@ -146,9 +120,8 @@ describe('SyncRuntime', () => {
     let staleRan = 0;
     let currentRan = 0;
 
-    // The stale callback behaves like the engine's poll tick: it clears its
-    // own key. Delivered after replacement, it must neither run nor clear
-    // the replacement timer.
+    // The stale callback clears its own key. Delivered after replacement,
+    // it must neither run nor clear the replacement timer.
     runtime.armInterval('tick', () => {
       staleRan++;
       runtime.clearTimer('tick');

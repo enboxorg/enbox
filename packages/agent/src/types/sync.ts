@@ -34,12 +34,6 @@ export type SyncIdentityOptions = {
  */
 export type SyncConnectivityState = 'online' | 'offline' | 'unknown';
 
-/**
- * Describes the sync mode: `'poll'` for periodic durable feed reconciliation,
- * `'live'` for `MessagesSubscribe`-based real-time sync with feed repair.
- */
-export type SyncMode = 'poll' | 'live';
-
 // ---------------------------------------------------------------------------
 // Sync scope and scope identity
 // ---------------------------------------------------------------------------
@@ -405,26 +399,15 @@ export function pushBatchReconcileReason(entries: Array<{ lastFailure?: PushFail
  */
 export type StartSyncParams = {
   /**
-   * The sync mode to use.
+   * The cadence of the periodic durable feed settle check — live sync's
+   * degraded-network safety net. Each tick runs a convergence-verifying feed
+   * reconciliation that repairs anything the real-time subscriptions missed
+   * (dropped events, links waiting on a rate-limited subscription open,
+   * long offline windows).
    *
-   * - `'live'`: Opens `MessagesSubscribe` WebSocket subscriptions to remote
-   *   DWNs for real-time pull, and listens to the local EventLog for immediate
-   *   push. Falls back to durable feed reconciliation on cold start or long
-   *   disconnect. An infrequent durable feed settle check still runs at `interval`.
-   *
-   * - `'poll'`: Performs durable feed reconciliation on a
-   *   fixed interval. No WebSocket subscriptions are used.
-   */
-  mode: SyncMode;
-
-  /**
-   * The interval at which the sync operation should be performed.
    * Accepts duration strings such as `'30s'`, `'2m'`, `'10m'`, or `'1 hour'`.
    *
-   * In `'live'` mode this controls the frequency of the durable feed settle check.
-   * In `'poll'` mode this controls the polling frequency.
-   *
-   * Default: `'2m'` (in poll mode), `'5m'` (in live mode).
+   * Default: `'5m'`.
    */
   interval?: string;
 };
@@ -694,11 +677,11 @@ export interface SyncEngine {
   /**
    * Whether at least one live pull or push subscription is open.
    *
-   * This is specifically about live-mode subscriptions — it is `false` in
-   * poll mode and `false` when only the integrity timer remains (e.g. after
-   * the last identity was removed). Callers use this to avoid calling
-   * `startSync()` when live subscriptions are active, which would tear
-   * them all down and rebuild from scratch.
+   * This is specifically about live subscriptions — it is `false` when only
+   * the settle-check timer remains (e.g. after the last identity was
+   * removed). Callers use this to avoid calling `startSync()` when live
+   * subscriptions are active, which would tear them all down and rebuild
+   * from scratch.
    */
   readonly hasActiveSubscriptions: boolean;
 
@@ -739,7 +722,7 @@ export interface SyncEngine {
    * share that run's outcome, and their requested directions/scopes are
    * merged (differing directions widen to both; differing scopes widen to
    * unscoped) so the follow-up covers every joined request. A runtime
-   * transition (`stopSync`/`clear`/`close`/mode switch) while the follow-up
+   * transition (`startSync`/`stopSync`/`clear`/`close`) while the follow-up
    * is still queued cancels it — joined callers reject with
    * `SyncRunCancelledError`, keeping "resolved ⇒ a covering run completed"
    * true for every caller.
@@ -758,7 +741,7 @@ export interface SyncEngine {
    *
    * This is a one-shot eject primitive: it creates or resumes durable
    * replication links for `endpoint`, persists it as a supplemental target
-   * for later poll/live sync, replays local and remote feeds, and requires two
+   * for later live sync, replays local and remote feeds, and requires two
    * stable cids-only convergence snapshots before marking a target complete.
    * Empty plans, paused links, cancellation, or registration changes produce
    * an incomplete result that callers may safely retry.
@@ -767,24 +750,29 @@ export interface SyncEngine {
    */
   drainTo(endpoint: string, options?: SyncDrainOptions): Promise<SyncDrainResult>;
   /**
-   * Starts sync. In `'live'` mode opens real-time subscriptions with durable
-   * feed repair; in `'poll'` mode uses periodic durable feed reconciliation.
+   * Starts live sync: opens `MessagesSubscribe` WebSocket subscriptions to
+   * remote DWNs for real-time pull, listens to the local EventLog for
+   * immediate push, and runs a periodic durable feed settle check at
+   * `interval` to repair anything the subscriptions missed.
    *
-   * Subsequent calls update the mode/interval. Calling with a different mode
-   * tears down the previous mode's resources before starting the new one.
+   * Subsequent calls update the interval, tearing down the previous
+   * runtime's resources before starting the new one.
    *
-   * The returned promise resolves after the initial durable-feed catch-up and
-   * (in live mode) after link subscriptions have been opened for identities
-   * registered before the call — so `await startSync(...)` is the
-   * "initially caught up" signal for those identities, best-effort: individual
-   * link failures schedule repair rather than rejecting. Identities hot-added
-   * later report their own catch-up through
-   * {@link SyncEngine.getReplicationLinks} (all links `'live'`) and the
-   * `link:status-change` event.
+   * The returned promise resolves after the initial durable-feed catch-up
+   * and after link subscriptions have been opened for identities registered
+   * before the call — so `await startSync(...)` is the "initially caught up"
+   * signal for those identities, best-effort: individual link failures
+   * schedule repair rather than rejecting. Identities hot-added later report
+   * their own catch-up through {@link SyncEngine.getReplicationLinks} (all
+   * links `'live'`) and the `link:status-change` event.
+   *
+   * Userland polling needs no engine mode: the one-shot {@link SyncEngine.sync}
+   * runs the same durable feed reconciliation on demand, e.g.
+   * `setInterval(() => agent.sync.sync(), ms)`.
    */
-  startSync(params: StartSyncParams): Promise<void>;
+  startSync(params?: StartSyncParams): Promise<void>;
   /**
-   * Stops the periodic sync operation, will complete the current sync operation if one is already in progress.
+   * Stops the sync runtime, will complete the current sync operation if one is already in progress.
    *
    * @param timeout the maximum amount of time, in milliseconds, to wait for the current sync operation to complete. Default is 2000 (2 seconds).
    * @throws {Error} if the sync operation fails to stop before the timeout.
