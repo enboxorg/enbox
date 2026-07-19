@@ -193,7 +193,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(fixture.operations.handlePushFailures.calledOnceWithExactly(controller, [failure])).toBe(true);
     expect(state.status).toBe('live');
     expect(state.connectivity).toBe('online');
-    expect(controller.repairInFlight).toBeUndefined();
+    expect(controller.mailboxBusy('repair')).toBe(false);
     expect(controller.repairAttempts).toBe(0);
     expect(controller.reconcileTimerDueAt).toBe(500);
     expect(fixture.operations.emitEvent.calledWithMatch({
@@ -442,6 +442,46 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await clock.runAllAsync();
   });
 
+  it('serializes a repair behind an in-flight mailbox flush instead of tearing it down mid-push', async () => {
+    const fixture = createFixture();
+    const controller = activate(fixture, link('repairing'));
+    const releaseFlush = deferred<void>();
+    const flush = controller.enqueue(async (): Promise<void> => {
+      await releaseFlush.promise;
+    }, 'flush');
+
+    const repairing = fixture.coordinator.repair(controller);
+    await Promise.resolve();
+    expect(controller.mailboxBusy('repair')).toBe(true);
+    expect(fixture.operations.reconcileTarget.called).toBe(false);
+
+    releaseFlush.resolve();
+    await Promise.all([flush, repairing]);
+    expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
+
+    controller.deactivate();
+  });
+
+  it('skips a reconciliation pass when a repair is queued behind it', async () => {
+    const clock = sinon.useFakeTimers();
+    const fixture = createFixture();
+    const controller = activate(fixture, link());
+    const releaseGate = deferred<void>();
+    const gate = controller.enqueue(async (): Promise<void> => {
+      await releaseGate.promise;
+    });
+
+    const reconciling = fixture.coordinator.reconcile(controller);
+    const repairing = fixture.coordinator.repair(controller);
+    releaseGate.resolve();
+    await Promise.all([gate, reconciling, repairing]);
+
+    expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
+    expect(fixture.operations.reconcileTarget.firstCall.args[1]).toBeUndefined();
+    controller.deactivate();
+    await clock.runAllAsync();
+  });
+
   it('deduplicates concurrent repair and reconciliation without leaking in-flight state', async () => {
     const fixture = createFixture();
     const repairController = activate(fixture, link('repairing'));
@@ -459,7 +499,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await repairStarted.promise;
     releaseRepair.resolve();
     await firstRepair;
-    expect(repairController.repairInFlight).toBeUndefined();
+    expect(repairController.mailboxBusy('repair')).toBe(false);
 
     const reconcileController = new SyncLinkController(LINK_KEY, link());
     fixture.controllers.set(LINK_KEY, reconcileController);
@@ -476,7 +516,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await reconcileStarted.promise;
     releaseReconcile.resolve();
     await firstReconcile;
-    expect(reconcileController.reconcileInFlight).toBeUndefined();
+    expect(reconcileController.mailboxBusy('reconcile')).toBe(false);
   });
 });
 

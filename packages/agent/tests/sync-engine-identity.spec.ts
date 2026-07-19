@@ -786,12 +786,26 @@ describe('SyncEngineLevel — identity management', () => {
       const bobController = activateTestLink(engine, 'did:example:bob^https://dwn.example.com^scope1', 'did:example:bob');
       aliceController.setReconcileTimer(aliceReconcileTimer, Date.now() + 60_000);
       bobController.setReconcileTimer(bobReconcileTimer, Date.now() + 60_000);
-      aliceController.setReconcileInFlight(Promise.resolve());
+      let releaseBlocker!: () => void;
+      let blockerStarted!: () => void;
+      const blockerStartedGate = new Promise<void>((resolve) => { blockerStarted = resolve; });
+      const blocker = aliceController.enqueue(async (): Promise<void> => {
+        blockerStarted();
+        await new Promise<void>((resolve) => { releaseBlocker = resolve; });
+      });
+      let queuedReconcileRan = false;
+      const queuedReconcile = aliceController.enqueueShared('reconcile', async (): Promise<void> => {
+        queuedReconcileRan = true;
+      });
 
+      await blockerStartedGate;
       await (engine as any).removeIdentityFromLiveSync('did:example:alice');
+      releaseBlocker();
+      await Promise.all([blocker, queuedReconcile]);
 
       expect(aliceController.reconcileTimer).toBeUndefined();
-      expect(aliceController.reconcileInFlight).toBeUndefined();
+      expect(queuedReconcileRan).toBe(false);
+      expect(aliceController.mailboxBusy('reconcile')).toBe(false);
       expect(bobController.reconcileTimer).toBeDefined();
       expect((engine as any)._linkControllers.has(aliceController.linkKey)).toBe(false);
 
@@ -1234,14 +1248,33 @@ describe('SyncEngineLevel — identity management', () => {
       const bobKey = 'did:example:bob^https://dwn.example.com^scope1';
       const aliceController = activateTestLink(engine, aliceKey, 'did:example:alice');
       const bobController = activateTestLink(engine, bobKey, 'did:example:bob');
-      aliceController.setRepairInFlight(Promise.resolve());
-      const bobRepair = Promise.resolve();
-      bobController.setRepairInFlight(bobRepair);
+      let releaseAlice!: () => void;
+      let aliceStarted!: () => void;
+      const aliceStartedGate = new Promise<void>((resolve) => { aliceStarted = resolve; });
+      const aliceRepair = aliceController.enqueueShared('repair', async (): Promise<void> => {
+        aliceStarted();
+        await new Promise<void>((resolve) => { releaseAlice = resolve; });
+      });
+      let releaseBob!: () => void;
+      let bobStarted!: () => void;
+      const bobStartedGate = new Promise<void>((resolve) => { bobStarted = resolve; });
+      const bobRepair = bobController.enqueueShared('repair', async (): Promise<void> => {
+        bobStarted();
+        await new Promise<void>((resolve) => { releaseBob = resolve; });
+      });
 
+      await Promise.all([aliceStartedGate, bobStartedGate]);
       await (engine as any).removeIdentityFromLiveSync('did:example:alice');
 
       expect((engine as any)._linkControllers.has(aliceKey)).toBe(false);
-      expect((engine as any)._linkControllers.get(bobKey)?.repairInFlight).toBe(bobRepair);
+      const survivingBob = (engine as any)._linkControllers.get(bobKey);
+      let joinedRan = false;
+      expect(survivingBob.enqueueShared('repair', async (): Promise<void> => { joinedRan = true; })).toBe(bobRepair);
+
+      releaseAlice();
+      releaseBob();
+      await Promise.all([aliceRepair, bobRepair]);
+      expect(joinedRan).toBe(false);
     });
 
     it('should discard the target DID controller with its repair context', async () => {

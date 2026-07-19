@@ -120,7 +120,11 @@ export class SyncLinkRecoveryCoordinator {
     this.startSupervisedRepair(controller, runIdentityTask);
   }
 
-  /** Park a link and discard every transient runtime owned by its controller. */
+  /**
+   * Park a link and discard every transient runtime owned by its controller.
+   * Never enters the mailbox: poll-mode links have no controller, and repair
+   * failure paths invoke this from inside a mailbox operation.
+   */
   public async transitionToPaused(linkKey: string, link: ReplicationLinkState): Promise<void> {
     if (link.status === 'paused') {
       return;
@@ -168,29 +172,30 @@ export class SyncLinkRecoveryCoordinator {
     controller.setRepairRetryTimer(timer);
   }
 
-  /** Deduplicate repair callers for one link lifetime. */
+  /**
+   * Coalesce repair callers onto one queued-or-running mailbox repair.
+   * The mailbox serializes the repair behind any in-flight push flush or
+   * reconciliation for the same link, so repair never tears down
+   * subscriptions or pull ordering underneath another link operation.
+   */
   public repair(controller: SyncLinkController): Promise<void> {
     if (!controller.isActive) {
       return Promise.resolve();
     }
 
-    const existing = controller.repairInFlight;
-    if (existing !== undefined) {
-      return existing;
-    }
-
-    const promise = this.runRepair(controller).finally(() => {
-      controller.clearRepairInFlight(promise);
-      if (controller.isActive && controller.link.status === 'live') {
-        this.scheduleLinkReconcile(
-          controller,
-          'post-repair-gap',
-          this._postRepairReconcileDelayMs,
-        );
+    return controller.enqueueShared('repair', async (): Promise<void> => {
+      try {
+        await this.repairExclusive(controller);
+      } finally {
+        if (controller.isActive && controller.link.status === 'live') {
+          this.scheduleLinkReconcile(
+            controller,
+            'post-repair-gap',
+            this._postRepairReconcileDelayMs,
+          );
+        }
       }
     });
-    controller.setRepairInFlight(promise);
-    return promise;
   }
 
   /** Emit and coalesce a named durable-reconciliation request for a live link. */
@@ -218,10 +223,6 @@ export class SyncLinkRecoveryCoordinator {
 
   /** Schedule the earliest requested reconciliation for an exact link lifetime. */
   public scheduleReconcile(controller: SyncLinkController, delayMs = this._reconcileDelayMs): boolean {
-    if (controller.repairInFlight !== undefined) {
-      return false;
-    }
-
     const normalizedDelay = Math.max(0, delayMs);
     const dueAt = Date.now() + normalizedDelay;
     if (!this.replaceLaterReconcileTimer(controller, dueAt)) {
@@ -238,7 +239,7 @@ export class SyncLinkRecoveryCoordinator {
         try {
           await this.reconcile(controller);
         } catch {
-          // runReconcile reports failures before rejecting.
+          // reconcileExclusive reports failures before rejecting.
         }
       });
     }, normalizedDelay);
@@ -246,18 +247,9 @@ export class SyncLinkRecoveryCoordinator {
     return true;
   }
 
-  /** Deduplicate durable reconciliation callers for one link lifetime. */
+  /** Coalesce reconciliation callers onto one queued-or-running mailbox pass. */
   public reconcile(controller: SyncLinkController): Promise<void> {
-    const existing = controller.reconcileInFlight;
-    if (existing !== undefined) {
-      return existing;
-    }
-
-    const promise = this.runReconcile(controller).finally(() => {
-      controller.clearReconcileInFlight(promise);
-    });
-    controller.setReconcileInFlight(promise);
-    return promise;
+    return controller.enqueueShared('reconcile', (): Promise<void> => this.reconcileExclusive(controller));
   }
 
   private startSupervisedRepair(
@@ -273,7 +265,8 @@ export class SyncLinkRecoveryCoordinator {
     });
   }
 
-  private async runRepair(controller: SyncLinkController): Promise<void> {
+  /** The repair body. Runs only inside the controller's mailbox. */
+  private async repairExclusive(controller: SyncLinkController): Promise<void> {
     const { link } = controller;
     const runtimeScope = this._operations.getRuntimeScope();
     const attempts = controller.incrementRepairAttempts();
@@ -465,9 +458,13 @@ export class SyncLinkRecoveryCoordinator {
     throw error;
   }
 
-  private async runReconcile(controller: SyncLinkController): Promise<void> {
+  /** The reconciliation body. Runs only inside the controller's mailbox. */
+  private async reconcileExclusive(controller: SyncLinkController): Promise<void> {
     const { link, linkKey } = controller;
-    if (!controller.isActive || link.status !== 'live' || controller.repairInFlight !== undefined) {
+    // A busy repair lane here can only mean a repair queued behind this
+    // pass (a running repair would occupy the mailbox instead of us) —
+    // skip the pass and let the repair's own reconciliation cover it.
+    if (!controller.isActive || link.status !== 'live' || controller.mailboxBusy('repair')) {
       return;
     }
 
