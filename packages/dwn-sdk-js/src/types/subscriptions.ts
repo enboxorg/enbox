@@ -141,8 +141,13 @@ export type SubscriptionMessage = SubscriptionEvent | SubscriptionEose | Subscri
 /**
  * Callback for {@link EventLog.subscribe}. Receives events, catch-up EOSE
  * markers, or subscription-level errors that stop delivery.
+ *
+ * A listener may return a promise to signal when the message has been fully
+ * processed; transports that support backpressure (e.g. the WebSocket client)
+ * gate their acknowledgements on it. Emitters that cannot exert backpressure
+ * simply ignore the returned value.
  */
-export type SubscriptionListener = (message: SubscriptionMessage) => void;
+export type SubscriptionListener = (message: SubscriptionMessage) => void | Promise<void>;
 
 /**
  * Options for {@link EventLog.subscribe}.

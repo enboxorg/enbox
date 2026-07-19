@@ -29,6 +29,7 @@
 // The high-level Enbox API: DWN records, protocols, repositories.
 
 export {
+  AudienceDecryptError,
   createConnectionStore,
   Enbox,
   defineProtocol,
@@ -36,6 +37,8 @@ export {
 } from '@enbox/api';
 
 export type {
+  AudienceDecryptFailureCause,
+  AudienceKeyDeliveryOutcome,
   ConnectionPhase,
   ConnectionSnapshot,
   ConnectionSnapshotListener,

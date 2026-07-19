@@ -18,7 +18,6 @@ import type {
 } from '@enbox/dwn-sdk-js';
 
 import { CryptoUtils } from '@enbox/crypto';
-import { DwnRpcError } from './dwn-rpc-error.js';
 import { HttpDwnRpcClient } from './http-dwn-rpc-client.js';
 import { JsonRpcSocket } from './json-rpc-socket.js';
 import { parseReplicationApplyResult } from './replication-apply-result.js';
@@ -27,6 +26,7 @@ import { withLocalNodeTokenQuery } from './rpc-auth.js';
 import { createJsonRpcAck, createJsonRpcRequest, createJsonRpcSubscriptionRequest, JsonRpcErrorCodes } from './json-rpc.js';
 import { DataStream, Encoder } from '@enbox/dwn-sdk-js';
 import { DEFAULT_MAX_WS_RAW_RECORD_DATA_BYTES, maxWsJsonRpcPayloadBytes } from './ws-payload-size.js';
+import { DwnRpcError, SubscriptionHandlerTerminalError } from './dwn-rpc-error.js';
 
 const DEFAULT_MAX_WS_JSON_RPC_PAYLOAD_BYTES = maxWsJsonRpcPayloadBytes(DEFAULT_MAX_WS_RAW_RECORD_DATA_BYTES);
 
@@ -243,15 +243,16 @@ export class WebSocketDwnRpcClient implements DwnRpc {
         // Remove the stale connection from the map so new requests create a fresh one.
         WebSocketDwnRpcClient.connections.delete(key);
 
-        // Notify all subscription handlers of disconnection.
+        // Notify all subscription handlers of disconnection. Invocation is
+        // normalized so one throwing handler cannot skip the rest.
         for (const tracked of subscriptions.values()) {
-          tracked.handler({ type: 'disconnected' });
+          WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'disconnected' });
         }
       },
 
       onreconnecting: (attempt: number): void => {
         for (const tracked of subscriptions.values()) {
-          tracked.handler({ type: 'reconnecting', attempt });
+          WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'reconnecting', attempt });
         }
       },
 
@@ -311,6 +312,24 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     return parseReplicationApplyResult(result.result);
   }
 
+  /**
+   * Invokes a subscription handler with every failure mode normalized into
+   * the returned promise: a synchronous throw becomes a rejection instead of
+   * escaping into the socket's message dispatch, and an asynchronous
+   * rejection flows through unchanged. The rejection is pre-observed so call
+   * sites that ignore the result (transport lifecycle notifications) cannot
+   * surface it as an unhandled rejection — awaiting the returned promise
+   * still sees the failure.
+   */
+  private static invokeHandler(
+    handler: DwnSubscriptionHandler,
+    message: Parameters<DwnSubscriptionHandler>[0],
+  ): Promise<void> {
+    const handled = Promise.resolve().then((): void | Promise<void> => handler(message));
+    handled.catch((): void => {});
+    return handled;
+  }
+
   private static async subscriptionRequest(
     connection: SocketConnection,
     target: string,
@@ -339,7 +358,20 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       subscriptions.delete(subscriptionId);
     };
 
+    // Acks are chained per subscription: each fires only after its event's
+    // handler has fully processed (a promise-returning handler, e.g. the
+    // agent's decrypting wrapper, gates it), and in arrival order — so the
+    // server's flow-control window cannot outrun slow processing. The
+    // reconnect cursor advances on the same completion: an event the consumer
+    // never fully processed must be replayed by a resubscription, never
+    // skipped, so cursor and ack move together or not at all.
+    let ackChain: Promise<void> = Promise.resolve();
+    let terminalHandlerFailure = false;
     const { response, close } = await socket.subscribe(request, (response) => {
+      if (terminalHandlerFailure) {
+        return;
+      }
+
       const { result, error } = response;
       if (error) {
         closeTrackedSubscription();
@@ -347,22 +379,46 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       }
 
       const subscriptionMessage = result.subscription as SubscriptionMessage;
-      handler(subscriptionMessage);
+      const handled = WebSocketDwnRpcClient.invokeHandler(handler, subscriptionMessage);
 
       if (subscriptionMessage.type === 'error') {
         closeTrackedSubscription();
         return;
       }
 
-      // Track the latest cursor for reconnection.
       if ('cursor' in subscriptionMessage && subscriptionMessage.cursor) {
-        const tracked = subscriptions.get(subscriptionId);
-        if (tracked && shouldReplaceLastCursor(tracked.lastCursor, subscriptionMessage.cursor)) {
-          tracked.lastCursor = subscriptionMessage.cursor;
-        }
+        const cursor = subscriptionMessage.cursor;
+        ackChain = ackChain
+          .then(async (): Promise<void> => {
+            if (terminalHandlerFailure) {
+              return;
+            }
+            try {
+              await handled;
+            } catch (handlerError: unknown) {
+              if (handlerError instanceof SubscriptionHandlerTerminalError) {
+                // The consumer pipeline is terminally failed from this event
+                // on: close out the subscription and leave this event — and
+                // every later one — unacknowledged and cursor-untracked so a
+                // resubscription replays them. The thrower already informed
+                // its own consumer.
+                terminalHandlerFailure = true;
+                closeTrackedSubscription();
+                return;
+              }
+              // Ordinary handler failures keep the plain-handler convention:
+              // swallowed, acknowledged, delivery continues.
+            }
 
-        // Send rpc.ack to advance the server's flow-control window.
-        socket.send(createJsonRpcAck(subscriptionId, subscriptionMessage.cursor));
+            const tracked = subscriptions.get(subscriptionId);
+            if (tracked && shouldReplaceLastCursor(tracked.lastCursor, cursor)) {
+              tracked.lastCursor = cursor;
+            }
+
+            // Send rpc.ack to advance the server's flow-control window.
+            socket.send(createJsonRpcAck(subscriptionId, cursor));
+          })
+          .catch(() => {});
       }
     });
 
@@ -441,7 +497,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
         );
 
         // Notify the handler that reconnection is complete for this subscription.
-        tracked.handler({ type: 'reconnected' });
+        WebSocketDwnRpcClient.invokeHandler(tracked.handler, { type: 'reconnected' });
       } catch {
         // If resubscription fails for one subscription, continue with the rest.
         // The subscription is effectively lost — the handler was already

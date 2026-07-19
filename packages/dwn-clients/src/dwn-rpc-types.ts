@@ -50,8 +50,14 @@ export type DwnSubscriptionMessage = SubscriptionMessage | TransportMessage;
 
 /**
  * Callback that receives subscription messages including transport lifecycle events.
+ *
+ * A handler may return a promise to signal when the message has been fully
+ * processed; the WebSocket transport gates its acknowledgement and reconnect
+ * cursor on it. A rejection with {@link SubscriptionHandlerTerminalError}
+ * (see `dwn-rpc-error.js`) terminates the tracked subscription without
+ * acknowledging the triggering or any later event.
  */
-export type DwnSubscriptionHandler = (message: DwnSubscriptionMessage) => void;
+export type DwnSubscriptionHandler = (message: DwnSubscriptionMessage) => void | Promise<void>;
 
 /**
  * A factory callback that reconstructs and re-signs a subscribe message with a
