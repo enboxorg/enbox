@@ -251,10 +251,11 @@ export class SyncEngineLevel implements SyncEngine {
     this._deferredPullStore = new SyncDeferredPullStoreLevel(this._db);
     this._connectivityManager = new SyncConnectivityManager({
       operations: {
-        getRuntimeScope        : (): SyncRuntimeHandle => this._runtime,
-        isSyncInProgress       : (): boolean => this._lifecycle.isSyncInProgress,
+        getRuntimeScope        : (): SyncRuntime => this._runtime,
         markActiveLinksOffline : (): void => { this.markActiveLinksOffline(); },
         runBackgroundTask      : (operation): Promise<void> => this._lifecycle.runBackgroundTask(operation),
+        // sync() widens a queued follow-up to an unscoped convergence check if
+        // scoped or full sync work already owns the exclusive lifecycle lock.
         runIntegrityCheck      : (): Promise<void> => this.sync(undefined, { verifyConvergence: true }),
       },
     });

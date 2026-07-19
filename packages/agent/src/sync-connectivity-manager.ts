@@ -10,46 +10,70 @@ export interface SyncConnectivityEnvironment {
   removeEventListener(type: SyncConnectivityEventType, listener: () => void): void;
 }
 
+/** Runtime timer boundary used to keep recovery work inside one sync generation. */
+export interface SyncConnectivityRuntimeScope extends SyncRuntimeHandle {
+  armTimeout(key: string, callback: () => void, delayMs: number): void;
+  clearTimer(key: string): void;
+}
+
 export interface SyncConnectivityManagerOperations {
-  getRuntimeScope(): SyncRuntimeHandle;
-  isSyncInProgress(): boolean;
+  getRuntimeScope(): SyncConnectivityRuntimeScope;
   markActiveLinksOffline(): void;
   runBackgroundTask(operation: () => Promise<void>): Promise<void>;
+  /** Run or queue one full integrity check, coalescing with exclusive sync work. */
   runIntegrityCheck(): Promise<void>;
 }
 
 export type SyncConnectivityManagerParams = {
   environment?: SyncConnectivityEnvironment;
   maxBackoffMultiplier?: number;
+  minimumHiddenDurationMilliseconds?: number;
+  now?: () => number;
   operations: SyncConnectivityManagerOperations;
+  recoveryCooldownMilliseconds?: number;
 };
 
 type SyncIntegrityTrigger = 'online' | 'visibility';
+type ActiveIntegrityCheck = { scope: SyncConnectivityRuntimeScope };
 
 /**
  * Owns sync connectivity state, poll backoff, per-link state folding, and
  * browser recovery listeners without depending on a persistence backend.
  */
 export class SyncConnectivityManager {
+  private static readonly RECOVERY_TIMER = 'connectivity-recovery';
   private readonly _configuredEnvironment: SyncConnectivityEnvironment | undefined;
   private readonly _maxBackoffMultiplier: number;
+  private readonly _minimumHiddenDurationMilliseconds: number;
+  private readonly _now: () => number;
   private readonly _operations: SyncConnectivityManagerOperations;
+  private readonly _recoveryCooldownMilliseconds: number;
   private _activeEnvironment?: SyncConnectivityEnvironment;
+  private _activeIntegrityCheck?: ActiveIntegrityCheck;
   private _consecutiveFailures = 0;
-  private _scope?: SyncRuntimeHandle;
+  private _hiddenAt?: number;
+  private _lastIntegrityCheckStartedAt?: number;
   private _onOffline?: () => void;
   private _onOnline?: () => void;
   private _onVisibilityChange?: () => void;
+  private _pendingIntegrityTrigger?: SyncIntegrityTrigger;
+  private _scope?: SyncConnectivityRuntimeScope;
   private _state: SyncConnectivityState = 'unknown';
 
   public constructor({
     environment,
     maxBackoffMultiplier = 4,
+    minimumHiddenDurationMilliseconds = 5_000,
+    now = Date.now,
     operations,
+    recoveryCooldownMilliseconds = 10_000,
   }: SyncConnectivityManagerParams) {
     this._configuredEnvironment = environment;
     this._maxBackoffMultiplier = maxBackoffMultiplier;
+    this._minimumHiddenDurationMilliseconds = Math.max(0, minimumHiddenDurationMilliseconds);
+    this._now = now;
     this._operations = operations;
+    this._recoveryCooldownMilliseconds = Math.max(0, recoveryCooldownMilliseconds);
   }
 
   /** Fold active-link connectivity, falling back to global poll-mode state. */
@@ -116,6 +140,7 @@ export class SyncConnectivityManager {
 
     this._activeEnvironment = environment;
     this._scope = this._operations.getRuntimeScope();
+    this._hiddenAt = environment.getVisibilityState() === 'hidden' ? this._now() : undefined;
     this._onOnline = (): void => { this.handleOnline(); };
     this._onOffline = (): void => { this.handleOffline(); };
     this._onVisibilityChange = (): void => { this.handleVisibilityChange(); };
@@ -127,6 +152,8 @@ export class SyncConnectivityManager {
 
   /** Remove browser recovery listeners from the environment used by start(). */
   public stop(): void {
+    this._scope?.clearTimer(SyncConnectivityManager.RECOVERY_TIMER);
+
     const environment = this._activeEnvironment;
     if (environment !== undefined) {
       if (this._onOnline !== undefined) {
@@ -141,10 +168,14 @@ export class SyncConnectivityManager {
     }
 
     this._activeEnvironment = undefined;
+    this._activeIntegrityCheck = undefined;
+    this._hiddenAt = undefined;
+    this._lastIntegrityCheckStartedAt = undefined;
     this._scope = undefined;
     this._onOnline = undefined;
     this._onOffline = undefined;
     this._onVisibilityChange = undefined;
+    this._pendingIntegrityTrigger = undefined;
   }
 
   private handleOnline(): void {
@@ -152,7 +183,6 @@ export class SyncConnectivityManager {
       return;
     }
 
-    console.info('SyncConnectivityManager: browser online — triggering immediate integrity check');
     this.scheduleIntegrityCheck('online');
   }
 
@@ -163,18 +193,34 @@ export class SyncConnectivityManager {
 
     console.info('SyncConnectivityManager: browser offline');
     this._state = 'offline';
+    this._lastIntegrityCheckStartedAt = undefined;
+    this._pendingIntegrityTrigger = undefined;
+    this._scope?.clearTimer(SyncConnectivityManager.RECOVERY_TIMER);
     this._operations.markActiveLinksOffline();
   }
 
   private handleVisibilityChange(): void {
+    if (!this.isCurrentScope()) {
+      return;
+    }
+
+    const visibilityState = this._activeEnvironment?.getVisibilityState();
+    if (visibilityState !== 'visible') {
+      if (visibilityState !== undefined) {
+        this._hiddenAt ??= this._now();
+      }
+      return;
+    }
+
+    const hiddenAt = this._hiddenAt;
+    this._hiddenAt = undefined;
     if (
-      !this.isCurrentScope() ||
-      this._activeEnvironment?.getVisibilityState() !== 'visible'
+      hiddenAt !== undefined &&
+      this._now() - hiddenAt < this._minimumHiddenDurationMilliseconds
     ) {
       return;
     }
 
-    console.info('SyncConnectivityManager: page became visible — triggering integrity check');
     this.scheduleIntegrityCheck('visibility');
   }
 
@@ -183,22 +229,95 @@ export class SyncConnectivityManager {
   }
 
   private scheduleIntegrityCheck(trigger: SyncIntegrityTrigger): void {
-    if (this._operations.isSyncInProgress()) {
+    const scope = this._scope;
+    if (scope === undefined || scope.disposed) {
       return;
     }
 
-    const scope = this._scope;
-    void this._operations.runBackgroundTask(async (): Promise<void> => {
-      if (scope === undefined || scope.disposed) {
+    if (this._activeIntegrityCheck?.scope === scope) {
+      this.scheduleTrailingIntegrityCheck(scope, trigger);
+      return;
+    }
+
+    const elapsed = this._lastIntegrityCheckStartedAt === undefined
+      ? Number.POSITIVE_INFINITY
+      : this._now() - this._lastIntegrityCheckStartedAt;
+    if (elapsed < this._recoveryCooldownMilliseconds) {
+      this.scheduleTrailingIntegrityCheck(scope, trigger);
+      return;
+    }
+
+    const check = { scope };
+    // This check observes every signal received before it starts. Consume any
+    // pending trigger and its timer only after the check has actually committed;
+    // paths that cannot start yet leave both intact for a later attempt.
+    this._pendingIntegrityTrigger = undefined;
+    scope.clearTimer(SyncConnectivityManager.RECOVERY_TIMER);
+    this._activeIntegrityCheck = check;
+    this._lastIntegrityCheckStartedAt = this._now();
+    const reason = trigger === 'online' ? 'browser online' : 'page visible';
+    console.info(`SyncConnectivityManager: ${reason} — starting integrity check`);
+    const task = this._operations.runBackgroundTask(async (): Promise<void> => {
+      if (scope.disposed) {
         return;
       }
 
       try {
         await this._operations.runIntegrityCheck();
       } catch (error: unknown) {
+        if (scope.disposed) {
+          return;
+        }
         console.error(`SyncConnectivityManager: post-${trigger} sync failed`, error);
       }
     });
+    const complete = (): void => { this.completeIntegrityCheck(check); };
+    void task.then(complete, complete);
+  }
+
+  private completeIntegrityCheck(check: ActiveIntegrityCheck): void {
+    if (this._scope !== check.scope || this._activeIntegrityCheck !== check) {
+      return;
+    }
+
+    this._activeIntegrityCheck = undefined;
+    if (this._pendingIntegrityTrigger !== undefined) {
+      this.scheduleTrailingIntegrityCheck(check.scope, this._pendingIntegrityTrigger);
+    }
+  }
+
+  private flushTrailingIntegrityCheck(scope: SyncConnectivityRuntimeScope): void {
+    if (
+      this._scope !== scope ||
+      scope.disposed ||
+      this._activeIntegrityCheck?.scope === scope ||
+      this._pendingIntegrityTrigger === undefined
+    ) {
+      return;
+    }
+
+    this.scheduleIntegrityCheck(this._pendingIntegrityTrigger);
+  }
+
+  private scheduleTrailingIntegrityCheck(
+    scope: SyncConnectivityRuntimeScope,
+    trigger: SyncIntegrityTrigger,
+  ): void {
+    this._pendingIntegrityTrigger ??= trigger;
+
+    const elapsed = this._lastIntegrityCheckStartedAt === undefined
+      ? this._recoveryCooldownMilliseconds
+      : this._now() - this._lastIntegrityCheckStartedAt;
+    const delay = Math.max(0, this._recoveryCooldownMilliseconds - elapsed);
+    if (delay === 0 && this._activeIntegrityCheck?.scope === scope) {
+      return;
+    }
+
+    scope.armTimeout(
+      SyncConnectivityManager.RECOVERY_TIMER,
+      (): void => { this.flushTrailingIntegrityCheck(scope); },
+      delay,
+    );
   }
 }
 
