@@ -376,9 +376,16 @@ export class SyncLinkController {
     return true;
   }
 
-  /** Attach a local push subscription only while this link lifetime is active. */
-  public setLocalSubscription(subscription: SyncLinkSubscription): boolean {
+  /**
+   * Attach a local push subscription only while this link lifetime is
+   * active — and, when the caller pins the pull generation it opened the
+   * subscription for, only while that generation is still current.
+   */
+  public setLocalSubscription(subscription: SyncLinkSubscription, expectedPullEpoch?: number): boolean {
     if (!this._active || this._localSubscription !== undefined) {
+      return false;
+    }
+    if (expectedPullEpoch !== undefined && expectedPullEpoch !== this._pullEpoch) {
       return false;
     }
     this._localSubscription = subscription;

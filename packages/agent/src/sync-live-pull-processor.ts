@@ -444,7 +444,7 @@ export class SyncLivePullProcessor {
   }
 
   private async handleProcessingError(context: SyncLivePullContext, error: unknown): Promise<void> {
-    if (error instanceof SyncPullAbortedError) {
+    if (error instanceof SyncPullAbortedError || context.isStale()) {
       return;
     }
 

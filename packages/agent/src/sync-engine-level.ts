@@ -1402,9 +1402,20 @@ export class SyncEngineLevel implements SyncEngine {
     target: LinkSyncTarget,
     controller: SyncLinkController,
   ): Promise<LinkSubscriptionOpenResult> {
+    const openGeneration = controller.pullEpoch;
+    // Cleanup is owned by this opening attempt: once a pause or repair has
+    // bumped the generation, the transition owns teardown and the fenced
+    // attach kept this attempt from installing anything — a controller-wide
+    // close here would tear down the replacement generation's pair.
+    const closeOwnAttempt = async (): Promise<void> => {
+      if (controller.pullEpoch === openGeneration) {
+        await controller.closeSubscriptions();
+      }
+    };
+
     const pullOpened = await this.openLivePullSubscription(target, controller);
     if (pullOpened === false || !controller.isActive) {
-      await controller.closeSubscriptions();
+      await closeOwnAttempt();
       return LinkSubscriptionOpenResult.Inactive;
     }
     if (controller.link.status === 'repairing') {
@@ -1415,19 +1426,21 @@ export class SyncEngineLevel implements SyncEngine {
     try {
       const pushOpened = await this.openLocalPushSubscription(target, controller);
       if (pushOpened === false || !controller.isActive) {
-        await controller.closeSubscriptions();
+        await closeOwnAttempt();
         return LinkSubscriptionOpenResult.Inactive;
       }
     } catch (error) {
-      await controller.closeSubscriptions();
+      await closeOwnAttempt();
       throw error;
     }
     return LinkSubscriptionOpenResult.ReadyForLive;
   }
 
   private async markLinkLive(target: SyncTarget, controller: SyncLinkController): Promise<void> {
-    if (!controller.isActive) { return; }
     const { link } = controller;
+    // A pause or repair takeover during subscription opening owns the link's
+    // phase now — completing initialization must not override it.
+    if (!controller.isActive || link.status === 'paused' || link.status === 'repairing') { return; }
     this.emitEvent({
       type           : 'link:status-change',
       tenantDid      : target.did,
@@ -1743,15 +1756,34 @@ export class SyncEngineLevel implements SyncEngine {
     target: LinkSyncTarget,
     controller: SyncLinkController,
   ): Promise<boolean> {
-    const { did, delegateDid, dwnUrl } = target;
-    const eventScope = syncEventScope(target.scope);
-
-    const cursorKey = target.linkKey;
-    if (!controller.isActive || controller.linkKey !== cursorKey) { return false; }
+    if (!controller.isActive || controller.linkKey !== target.linkKey) { return false; }
     // Capture the pull generation before the first await: a repair or pause
     // that resets the pull runtime while this open is in flight supersedes
     // the subscription being built, and it must not be installed.
     const subscriptionPullEpoch = controller.pullEpoch;
+    try {
+      return await this.openLivePullSubscriptionAttempt(target, controller, subscriptionPullEpoch);
+    } catch (error: unknown) {
+      // A rejection belonging to a superseded attempt is that attempt's
+      // teardown, not this link's failure — it must not reach initialization
+      // error handling, which could repair or clean up the current
+      // generation's controller.
+      if (!controller.isActive || controller.pullEpoch !== subscriptionPullEpoch) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  private async openLivePullSubscriptionAttempt(
+    target: LinkSyncTarget,
+    controller: SyncLinkController,
+    subscriptionPullEpoch: number,
+  ): Promise<boolean> {
+    const { did, delegateDid, dwnUrl } = target;
+    const eventScope = syncEventScope(target.scope);
+
+    const cursorKey = target.linkKey;
     const { link } = controller;
     const cursor = await this.getInitialPullCursor({ did, dwnUrl, link });
     if (!controller.isActive || controller.linkKey !== cursorKey || controller.pullEpoch !== subscriptionPullEpoch) { return false; }
@@ -1802,10 +1834,10 @@ export class SyncEngineLevel implements SyncEngine {
     };
 
     const { message } = await this.agent.dwn.processRequest(subscribeRequest);
+    if (!controller.isActive || controller.pullEpoch !== subscriptionPullEpoch) { return false; }
     if (!message) {
       throw new Error(`SyncEngineLevel: Failed to construct MessagesSubscribe for ${dwnUrl}`);
     }
-    if (!controller.isActive || controller.pullEpoch !== subscriptionPullEpoch) { return false; }
 
     // Build a resubscribe factory so the WebSocket client can resume with
     // a fresh cursor-stamped message after reconnection.
@@ -1981,6 +2013,25 @@ export class SyncEngineLevel implements SyncEngine {
     target: LinkSyncTarget,
     controller: SyncLinkController,
   ): Promise<boolean> {
+    if (!controller.isActive || controller.linkKey !== target.linkKey) { return false; }
+    // Same generation ownership as the pull side: a pause or repair that
+    // lands while the local subscribe is pending supersedes this attempt.
+    const subscriptionPullEpoch = controller.pullEpoch;
+    try {
+      return await this.openLocalPushSubscriptionAttempt(target, controller, subscriptionPullEpoch);
+    } catch (error: unknown) {
+      if (!controller.isActive || controller.pullEpoch !== subscriptionPullEpoch) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  private async openLocalPushSubscriptionAttempt(
+    target: LinkSyncTarget,
+    controller: SyncLinkController,
+    subscriptionPullEpoch: number,
+  ): Promise<boolean> {
     const { did, delegateDid } = target;
 
     const filters = target.scope.kind === 'protocolSet'
@@ -1989,7 +2040,6 @@ export class SyncEngineLevel implements SyncEngine {
 
     const runtimeScope = this._runtime;
 
-    if (!controller.isActive || controller.linkKey !== target.linkKey) { return false; }
     const isPushStale = (): boolean =>
       runtimeScope.disposed ||
       !controller.isActive;
@@ -2018,12 +2068,22 @@ export class SyncEngineLevel implements SyncEngine {
     });
 
     const reply = response.reply as MessagesSubscribeReply;
+    if (!controller.isActive || controller.pullEpoch !== subscriptionPullEpoch) {
+      if (reply.status.code === 200 && reply.subscription) {
+        try {
+          await reply.subscription.close();
+        } catch {
+          // Best-effort cleanup of a subscription opened for a stale generation.
+        }
+      }
+      return false;
+    }
     if (reply.status.code !== 200 || !reply.subscription) {
       throw new Error(`SyncEngineLevel: Local MessagesSubscribe failed for ${did}: ${reply.status.code} ${reply.status.detail}`);
     }
 
     const close = async (): Promise<void> => { await reply.subscription!.close(); };
-    if (!controller.setLocalSubscription({ close })) {
+    if (!controller.setLocalSubscription({ close }, subscriptionPullEpoch)) {
       try {
         await close();
       } catch {

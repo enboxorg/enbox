@@ -419,6 +419,24 @@ describe('SyncLivePullProcessor', () => {
     expect(operations.persistCheckpoint.calledOnceWithExactly(state)).toBe(true);
   });
 
+  it('does not report or repair when event processing rejects after the delivery went stale', async () => {
+    const { admit, operations, processor } = createFixture();
+    const state = link();
+    let stale = false;
+    const context = contextFor(state, () => stale);
+    admit.callsFake(async () => {
+      // The teardown that made the delivery stale is also what kills its
+      // in-flight admission I/O.
+      stale = true;
+      throw new Error('socket closed by teardown');
+    });
+
+    await processor.handleEvent(context, event(token('1')));
+
+    expect(operations.reportError.notCalled).toBe(true);
+    expect(operations.transitionToRepairing.notCalled).toBe(true);
+  });
+
   it('ignores a delivery that commits across a pull-runtime reset', async () => {
     const staleStarted = deferred<void>();
     const releaseStale = deferred<void>();

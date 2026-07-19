@@ -172,6 +172,86 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     await fixture.controller.shutdown();
   });
 
+  it('should leave a link paused when the pause lands while the local subscription is opening', async () => {
+    const fixture = createEngineFixture(db);
+    const { controller, engine } = fixture;
+    controller.link.status = 'initializing';
+    const subscribeStarted = deferred();
+    const releaseSubscribe = deferred();
+    const close = sinon.stub().resolves();
+    fixture.processRequest.callsFake(async () => {
+      subscribeStarted.resolve();
+      await releaseSubscribe.promise;
+      return { reply: { status: { code: 200 }, subscription: { close } } };
+    });
+
+    const opening = (engine as any).openLocalPushSubscription(fixture.target, controller);
+    await subscribeStarted.promise;
+    // A terminal authorization failure pauses the link while the local
+    // subscribe is pending — the fail-safe must win over the installer.
+    await (engine as any)._linkRecoveryCoordinator.transitionToPaused(LINK_KEY, controller.link);
+    releaseSubscribe.resolve();
+
+    expect(await opening).toBe(false);
+    expect(close.calledOnce).toBe(true);
+    expect(controller.hasLocalSubscription).toBe(false);
+    expect(controller.link.status).toBe('paused');
+
+    // Completing initialization afterwards must not override the pause.
+    await (engine as any).markLinkLive(fixture.target, controller);
+    expect(controller.link.status).toBe('paused');
+
+    await controller.shutdown();
+  });
+
+  it('should swallow a superseded attempt failure but propagate a current-generation failure', async () => {
+    const fixture = createEngineFixture(db);
+    const requestStarted = deferred();
+    const releaseRequest = deferred();
+    fixture.sendDwnRequest.callsFake(async () => {
+      requestStarted.resolve();
+      await releaseRequest.promise;
+      throw new Error('transport failed');
+    });
+
+    const opening = openSubscription(fixture);
+    await requestStarted.promise;
+    fixture.controller.resetPullRuntime();
+    releaseRequest.resolve();
+    // The superseded attempt's rejection is its own teardown, not this
+    // link's failure.
+    expect(await opening).toBe(false);
+
+    // The same failure in the current generation still surfaces.
+    fixture.sendDwnRequest.rejects(new Error('transport failed'));
+    await expect(openSubscription(fixture)).rejects.toThrow('transport failed');
+
+    await fixture.controller.shutdown();
+  });
+
+  it('should not let a superseded attempt close the replacement subscription pair', async () => {
+    const fixture = createEngineFixture(db);
+    const { controller, engine } = fixture;
+    const replacementClose = sinon.stub().resolves();
+    sinon.stub(engine as any, 'openLivePullSubscription').callsFake(async (): Promise<boolean> => {
+      // A repair supersedes the attempt and its replacement generation
+      // attaches a fresh pair before the old attempt resumes.
+      controller.resetPullRuntime();
+      controller.setLiveSubscription({ close: replacementClose });
+      controller.setLocalSubscription({ close: replacementClose });
+      return false;
+    });
+
+    const result = await (engine as any).openLinkSubscriptions(fixture.target, controller);
+
+    expect(result).toBe('inactive');
+    expect(replacementClose.notCalled).toBe(true);
+    expect(controller.hasLiveSubscription).toBe(true);
+    expect(controller.hasLocalSubscription).toBe(true);
+
+    await controller.shutdown();
+  });
+
   it('should discard a stale ProgressGap reply instead of repairing the superseded generation', async () => {
     const fixture = createEngineFixture(db);
     const requestStarted = deferred();
