@@ -306,6 +306,35 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     await controller.shutdown();
   });
 
+  it('should keep a link paused during opening in the identity keep-set instead of failing it', async () => {
+    const fixture = createEngineFixture(db);
+    const { controller, engine } = fixture;
+    controller.link.status = 'initializing';
+    sinon.stub(engine as any, 'getOrCreateReplicationLink').resolves(controller.link);
+    sinon.stub(engine as any, 'activateLink').returns(controller);
+    sinon.stub(engine as any, 'openLinkSubscriptions').callsFake(async (): Promise<string> => {
+      // A terminal callback pauses the link while the pair is opening.
+      await (engine as any)._linkRecoveryCoordinator.transitionToPaused(LINK_KEY, controller.link);
+      return 'inactive';
+    });
+
+    const result = await (engine as any).initializeLinkTarget({
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'owner-epoch',
+      did                : DID,
+      dwnUrl             : REMOTE,
+      scope              : { kind: 'full' },
+    });
+
+    // Failing the initialization would drop the paused link from the
+    // identity's keep-set, and the superseded-link prune would then delete
+    // the fail-safe pause's durable record.
+    expect(result.status).toBe('active');
+    expect(controller.link.status).toBe('paused');
+
+    await controller.shutdown();
+  });
+
   it('should discard a stale ProgressGap reply instead of repairing the superseded generation', async () => {
     const fixture = createEngineFixture(db);
     const requestStarted = deferred();

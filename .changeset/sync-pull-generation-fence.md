@@ -23,7 +23,9 @@ a link bumps the generation synchronously, before any await, and:
   while an open is in flight closes the returned subscription instead
   of installing a permanently fenced slot, a stale ProgressGap or
   rejection is that attempt's teardown rather than a fresh failure,
-  and completing initialization cannot mark a paused link live;
+  completing initialization cannot mark a paused link live, and a link
+  paused or taken over for repair while opening stays in its identity's
+  keep-set instead of being failed and pruned;
 - cleanup is attempt-owned: a superseded opener no longer closes the
   replacement generation's subscription pair;
 - callbacks and processing rejections from a superseded subscription —

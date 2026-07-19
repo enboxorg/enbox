@@ -452,7 +452,7 @@ export class SyncLivePullProcessor {
       `SyncLivePullProcessor: Error processing live-pull event for ${context.did}`,
       error,
     );
-    if (context.controller !== undefined && !context.isStale()) {
+    if (context.controller !== undefined) {
       await this._operations.transitionToRepairing(context.controller);
     }
   }

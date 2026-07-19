@@ -1367,6 +1367,13 @@ export class SyncEngineLevel implements SyncEngine {
       const openGeneration = controller.pullEpoch;
       const subscriptionResult = await this.openLinkSubscriptions({ ...target, linkKey }, controller, openGeneration);
       if (subscriptionResult === LinkSubscriptionOpenResult.Inactive || !controller.isActive) {
+        // A pause or repair takeover superseded the opening attempt. The
+        // durable link now belongs to that transition: reporting Failed
+        // here would drop it from the identity's keep-set and let the
+        // superseded-link prune delete a fail-safe pause's record.
+        if (controller.isActive && (controller.link.status === 'paused' || controller.link.status === 'repairing')) {
+          return this.createActiveLinkInitializationResult(link);
+        }
         return { status: LinkInitializationStatus.Failed };
       }
       if (subscriptionResult === LinkSubscriptionOpenResult.ReadyForLive) {
@@ -1777,14 +1784,25 @@ export class SyncEngineLevel implements SyncEngine {
     // or pause that resets the pull runtime while this open is in flight
     // supersedes the subscription being built, and it must not be installed.
     const subscriptionPullEpoch = expectedGeneration ?? controller.pullEpoch;
-    if (controller.pullEpoch !== subscriptionPullEpoch) { return false; }
+    return this.runGenerationFencedOpen(controller, subscriptionPullEpoch, (): Promise<boolean> =>
+      this.openLivePullSubscriptionAttempt(target, controller, subscriptionPullEpoch));
+  }
+
+  /**
+   * Run one subscription-opening attempt pinned to a pull generation. A
+   * rejection belonging to a superseded attempt is that attempt's teardown,
+   * not the link's failure — it must not reach initialization error
+   * handling, which could repair or clean up the current generation's
+   * controller. Current-generation failures propagate unchanged.
+   */
+  private async runGenerationFencedOpen(
+    controller: SyncLinkController,
+    subscriptionPullEpoch: number,
+    attempt: () => Promise<boolean>,
+  ): Promise<boolean> {
     try {
-      return await this.openLivePullSubscriptionAttempt(target, controller, subscriptionPullEpoch);
+      return await attempt();
     } catch (error: unknown) {
-      // A rejection belonging to a superseded attempt is that attempt's
-      // teardown, not this link's failure — it must not reach initialization
-      // error handling, which could repair or clean up the current
-      // generation's controller.
       if (!controller.isActive || controller.pullEpoch !== subscriptionPullEpoch) {
         return false;
       }
@@ -1891,20 +1909,10 @@ export class SyncEngineLevel implements SyncEngine {
         resubscribeFactory,
       },
     }) as MessagesSubscribeReply;
-    if (!controller.isActive || controller.pullEpoch !== subscriptionPullEpoch) {
-      // The generation that requested this subscription is gone. Discard the
-      // reply — including a stale 410 ProgressGap, which must not throw the
-      // superseded generation's link back into repair — and close anything
-      // the server opened for it.
-      if (reply.status.code === 200 && reply.subscription) {
-        try {
-          await reply.subscription.close();
-        } catch {
-          // Best-effort cleanup of a subscription opened for a stale generation.
-        }
-      }
-      return false;
-    }
+    // No stale-reply handling here: a superseded 200 is refused by the
+    // generation-fenced attach below (and closed by its refusal path), and
+    // a superseded 410 or error throw is converted to `false` by the
+    // generation-fenced wrapper.
     if (reply.status.code === 410) {
       // ProgressGap — the cursor is no longer replayable. The link needs repair.
       const gapError = new Error(`SyncEngineLevel: ProgressGap for ${did} -> ${dwnUrl}: ${reply.status.detail}`);
@@ -2035,15 +2043,8 @@ export class SyncEngineLevel implements SyncEngine {
     // Same generation ownership as the pull side: a pause or repair that
     // lands while the local subscribe is pending supersedes this attempt.
     const subscriptionPullEpoch = expectedGeneration ?? controller.pullEpoch;
-    if (controller.pullEpoch !== subscriptionPullEpoch) { return false; }
-    try {
-      return await this.openLocalPushSubscriptionAttempt(target, controller, subscriptionPullEpoch);
-    } catch (error: unknown) {
-      if (!controller.isActive || controller.pullEpoch !== subscriptionPullEpoch) {
-        return false;
-      }
-      throw error;
-    }
+    return this.runGenerationFencedOpen(controller, subscriptionPullEpoch, (): Promise<boolean> =>
+      this.openLocalPushSubscriptionAttempt(target, controller, subscriptionPullEpoch));
   }
 
   private async openLocalPushSubscriptionAttempt(
@@ -2088,16 +2089,6 @@ export class SyncEngineLevel implements SyncEngine {
     });
 
     const reply = response.reply as MessagesSubscribeReply;
-    if (!controller.isActive || controller.pullEpoch !== subscriptionPullEpoch) {
-      if (reply.status.code === 200 && reply.subscription) {
-        try {
-          await reply.subscription.close();
-        } catch {
-          // Best-effort cleanup of a subscription opened for a stale generation.
-        }
-      }
-      return false;
-    }
     if (reply.status.code !== 200 || !reply.subscription) {
       throw new Error(`SyncEngineLevel: Local MessagesSubscribe failed for ${did}: ${reply.status.code} ${reply.status.detail}`);
     }
