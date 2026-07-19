@@ -17,6 +17,8 @@ import { SyncEchoSuppressor } from '../src/sync-echo-suppressor.js';
 import { SyncLinkController } from '../src/sync-link-controller.js';
 import { SyncLivePushCoordinator } from '../src/sync-live-push-coordinator.js';
 
+import { deferred } from './utils/deferred.js';
+
 type PushOperationStubs = {
   [Operation in keyof SyncLivePushCoordinatorOperations]: SinonStub;
 };
@@ -80,7 +82,6 @@ function event(message: GenericMessage = protocolMessage()): Extract<Subscriptio
 }
 
 function createFixture(options: {
-  debounceMs?: number;
   deferredReconcileDelayMs?: number;
   retryBackoffMs?: readonly number[];
 } = {}): PushFixture {
@@ -198,7 +199,7 @@ describe('SyncLivePushCoordinator', () => {
 
   it('does not let a redundantly scheduled flush bypass the debounce timer', async () => {
     const clock = sinon.useFakeTimers();
-    const fixture = createFixture({ debounceMs: 100 });
+    const fixture = createFixture();
     const controller = activate(fixture);
     // Production task runners admit work on a microtask (sync-task-group),
     // so two events in one synchronous window can both observe an idle
@@ -245,7 +246,7 @@ describe('SyncLivePushCoordinator', () => {
 
   it('debounces entries that arrive during an in-flight push and drains them in a second supervised batch', async () => {
     const clock = sinon.useFakeTimers();
-    const fixture = createFixture({ debounceMs: 100 });
+    const fixture = createFixture();
     const controller = activate(fixture);
     const releaseFirst = deferred<void>();
     const firstStarted = deferred<void>();
@@ -411,7 +412,6 @@ describe('SyncLivePushCoordinator', () => {
 
     expect(fixture.operations.clearQuotaBlock.calledOnceWithExactly(DID, LINK_KEY, failure.cid)).toBe(true);
     expect(fixture.operations.recordDeadLetter.firstCall.args[0]).toEqual(expect.objectContaining({
-      category       : 'admit-failed',
       errorCode      : 'Invalid',
       errorDetail    : failure.detail,
       messageCid     : failure.cid,
@@ -590,13 +590,3 @@ describe('SyncLivePushCoordinator', () => {
   });
 });
 
-function deferred<Value>(): {
-  promise: Promise<Value>;
-  resolve(value?: Value): void;
-  } {
-  let resolve!: (value?: Value) => void;
-  const promise = new Promise<Value>((complete) => {
-    resolve = complete;
-  });
-  return { promise, resolve };
-}

@@ -15,7 +15,7 @@ import type {
 } from './types/sync.js';
 import type { SyncLinkController, SyncPullDeliveryTicket } from './sync-link-controller.js';
 
-import { Encoder, Message } from '@enbox/dwn-sdk-js';
+import { Message } from '@enbox/dwn-sdk-js';
 
 import { admitClosure } from './sync-admit-closure.js';
 import { classifySyncEventScope } from './sync-scope-acceptance.js';
@@ -26,19 +26,18 @@ import { syncTargetFromLink } from './sync-target-resolver.js';
 import { fetchRemoteMessages, syncMessageDescriptor, SyncPullAbortedError } from './sync-messages.js';
 
 export type SyncLivePullContext = {
-  controller?: SyncLinkController;
+  controller: SyncLinkController;
   delegateDid?: string;
   did: string;
   dwnUrl: string;
   eventScope: SyncEventScope;
   isStale: () => boolean;
-  link?: ReplicationLinkState;
+  link: ReplicationLinkState;
   linkKey: string;
   permissionGrantIds?: NonEmptyStringArray;
 };
 
 export interface SyncLivePullProcessorOperations {
-  clearFailedMessage(tenantDid: string, messageCid: string, remoteEndpoint: string): Promise<void>;
   emitCheckpointAdvance(link: ReplicationLinkState): void;
   emitEvent(event: SyncEvent): void;
   getAgent(): EnboxPlatformAgent;
@@ -47,7 +46,6 @@ export interface SyncLivePullProcessorOperations {
   recordDeadLetter(entry: Omit<DeadLetterEntry, 'failedAt'>): Promise<void>;
   reportError(message: string, error: unknown): void;
   scheduleReconcile(controller: SyncLinkController, reason: string): void;
-  setConnectivityOnline(): void;
   trackAppliedCids(messageCids: string[], target: SyncTarget): Promise<void>;
   transitionToPaused(linkKey: string, link: ReplicationLinkState): Promise<void>;
   transitionToRepairing(controller: SyncLinkController): Promise<void>;
@@ -138,27 +136,24 @@ export class SyncLivePullProcessor {
     message: Extract<SubscriptionMessage, { type: 'eose' }>,
   ): Promise<void> {
     const { controller, did, dwnUrl, link, isStale } = context;
-    if (link !== undefined) {
-      if (link.status !== 'live' && link.status !== 'initializing') {
-        return;
-      }
-
-      if (!SyncCheckpoint.validateTokenDomain(link.pull, message.cursor)) {
-        this._operations.warn(
-          `SyncLivePullProcessor: Token domain mismatch on EOSE for ${did} -> ${dwnUrl}, transitioning to repairing`,
-        );
-        if (!isStale() && controller !== undefined) {
-          await this._operations.transitionToRepairing(controller);
-        }
-        return;
-      }
-
-      SyncCheckpoint.setReceivedToken(link.pull, message.cursor);
-      controller?.drainCommittedPull();
-      if (isStale()) { return; }
-      await this._operations.persistCheckpoint(link);
-      if (isStale()) { return; }
+    if (link.status !== 'live' && link.status !== 'initializing') {
+      return;
     }
+
+    if (!SyncCheckpoint.validateTokenDomain(link.pull, message.cursor)) {
+      this._operations.warn(
+        `SyncLivePullProcessor: Token domain mismatch on EOSE for ${did} -> ${dwnUrl}, transitioning to repairing`,
+      );
+      if (!isStale()) {
+        await this._operations.transitionToRepairing(controller);
+      }
+      return;
+    }
+
+    controller.drainCommittedPull();
+    if (isStale()) { return; }
+    await this._operations.persistCheckpoint(link);
+    if (isStale()) { return; }
 
     this.markLinkOnline(context);
   }
@@ -173,7 +168,7 @@ export class SyncLivePullProcessor {
       this._operations.warn(
         `SyncLivePullProcessor: sync authorization for ${did} -> ${dwnUrl} was revoked or expired — pausing link (reconnect to resume).`,
       );
-      if (link !== undefined && !isStale()) {
+      if (!isStale()) {
         await this._operations.transitionToPaused(linkKey, link);
       }
       return;
@@ -182,7 +177,7 @@ export class SyncLivePullProcessor {
     this._operations.warn(
       `SyncLivePullProcessor: subscription error for ${did} -> ${dwnUrl}: ${message.error.code}`,
     );
-    if (context.controller !== undefined && !isStale()) {
+    if (!isStale()) {
       await this._operations.transitionToRepairing(context.controller);
     }
   }
@@ -193,28 +188,26 @@ export class SyncLivePullProcessor {
     message: Extract<SubscriptionMessage, { type: 'event' }>,
   ): Promise<void> {
     const { did, dwnUrl, link, isStale } = context;
-    if (link !== undefined && link.status !== 'live' && link.status !== 'initializing') {
+    if (link.status !== 'live' && link.status !== 'initializing') {
       return;
     }
 
-    if (link !== undefined && !SyncCheckpoint.validateTokenDomain(link.pull, message.cursor)) {
+    if (!SyncCheckpoint.validateTokenDomain(link.pull, message.cursor)) {
       this._operations.warn(
         `SyncLivePullProcessor: Token domain mismatch for ${did} -> ${dwnUrl}, transitioning to repairing`,
       );
-      if (!isStale() && context.controller !== undefined) {
+      if (!isStale()) {
         await this._operations.transitionToRepairing(context.controller);
       }
       return;
     }
 
-    const classification = link === undefined
-      ? undefined
-      : classifySyncEventScope(message.event, link.scope);
+    const classification = classifySyncEventScope(message.event, link.scope);
     if (classification === 'unknown') {
       this._operations.warn(
         `SyncLivePullProcessor: Unable to classify scoped pull event for ${did} -> ${dwnUrl}, transitioning to repair`,
       );
-      if (!isStale() && context.controller !== undefined) {
+      if (!isStale()) {
         await this._operations.transitionToRepairing(context.controller);
       }
       return;
@@ -231,14 +224,14 @@ export class SyncLivePullProcessor {
     // window would resume past the never-applied earlier event.
     const delivery = this.startDelivery(context, message.cursor);
     if (classification === 'out-of-scope') {
-      await this.commitDelivery(context, message.cursor, delivery);
+      await this.commitDelivery(context, delivery);
       return;
     }
 
     try {
       const messageCid = await Message.getCid(message.event.message);
       if (this._echoSuppressor.hasRecentlyPushed(context.did, messageCid, context.dwnUrl)) {
-        await this.commitDelivery(context, message.cursor, delivery);
+        await this.commitDelivery(context, delivery);
         return;
       }
 
@@ -246,15 +239,10 @@ export class SyncLivePullProcessor {
       if (result === undefined) { return; }
 
       if (result.admitted) {
-        if (context.link === undefined) {
-          this._echoSuppressor.trackPulled(context.did, result.messageCid, context.dwnUrl);
-          await this._operations.clearFailedMessage(context.did, result.messageCid, context.dwnUrl);
-        } else {
-          await this._operations.trackAppliedCids(
-            result.appliedCids,
-            syncTargetFromLink(context.link),
-          );
-        }
+        await this._operations.trackAppliedCids(
+          result.appliedCids,
+          syncTargetFromLink(context.link),
+        );
         // Fresh only: a Duplicate/Superseded apply (an echo of a message this
         // store already held, e.g. our own push looping back via another
         // endpoint) is not a remote change and must not signal consumers.
@@ -265,7 +253,7 @@ export class SyncLivePullProcessor {
           this.emitDeliveryApplied(context, freshEntry.message, freshEntry.messageCid);
         }
       }
-      await this.commitDelivery(context, message.cursor, delivery);
+      await this.commitDelivery(context, delivery);
     } catch (error: unknown) {
       await this.handleProcessingError(context, error);
     }
@@ -288,11 +276,6 @@ export class SyncLivePullProcessor {
   }
 
   private markLinkOnline({ did, dwnUrl, eventScope, link }: SyncLivePullContext): void {
-    if (link === undefined) {
-      this._operations.setConnectivityOnline();
-      return;
-    }
-
     const previous = link.connectivity;
     link.connectivity = 'online';
     if (previous !== 'online') {
@@ -308,7 +291,7 @@ export class SyncLivePullProcessor {
   }
 
   private startDelivery(context: SyncLivePullContext, cursor: ProgressToken): PullDelivery {
-    const deliveryController = context.controller?.isActive === true && context.link === context.controller.link
+    const deliveryController = context.controller.isActive && context.link === context.controller.link
       ? context.controller
       : undefined;
     const ticket = deliveryController?.startPullDelivery(cursor);
@@ -336,7 +319,7 @@ export class SyncLivePullProcessor {
       dwnUrl             : context.dwnUrl,
       delegateDid        : context.delegateDid,
       permissionGrantIds : context.permissionGrantIds,
-      scope              : context.link?.scope,
+      scope              : context.link.scope,
       agent              : this._operations.getAgent(),
       permissionsApi     : this._operations.getPermissionsApi(),
       prefetched,
@@ -356,9 +339,7 @@ export class SyncLivePullProcessor {
       await this.recordAdmissionFailure(context, rootCid, event, outcome);
       return { admitted: false, messageCid: rootCid };
     }
-    if (context.controller !== undefined) {
-      this._operations.scheduleReconcile(context.controller, `pull-${outcome.kind}`);
-    }
+    this._operations.scheduleReconcile(context.controller, `pull-${outcome.kind}`);
     return { admitted: false, messageCid: rootCid };
   }
 
@@ -373,7 +354,6 @@ export class SyncLivePullProcessor {
       tenantDid      : context.did,
       remoteEndpoint : context.dwnUrl,
       protocol       : (event.message.descriptor as Record<string, unknown>).protocol as string | undefined,
-      category       : 'admit-failed',
       errorCode      : outcome.reason,
       errorDetail    : outcome.detail ?? 'replicated message admission failed',
     });
@@ -388,12 +368,6 @@ export class SyncLivePullProcessor {
     }
 
     const recordsWriteEvent = event as LivePullRecordsWriteEvent;
-    const { encodedData } = recordsWriteEvent.message;
-    if (encodedData) {
-      delete recordsWriteEvent.message.encodedData;
-      const bytes = Encoder.base64UrlToBytes(encodedData);
-      return async () => SyncLivePullProcessor.dataStreamFromBytes(bytes);
-    }
     if (recordsWriteEvent.message.descriptor.dataCid === undefined) {
       return async () => undefined;
     }
@@ -414,12 +388,10 @@ export class SyncLivePullProcessor {
 
   private async commitDelivery(
     context: SyncLivePullContext,
-    cursor: ProgressToken,
     delivery: PullDelivery,
   ): Promise<void> {
     const { did, dwnUrl, link, isStale } = context;
     if (
-      link === undefined ||
       delivery.controller === undefined ||
       delivery.ticket === undefined ||
       (link.status !== 'live' && link.status !== 'initializing') ||
@@ -428,7 +400,7 @@ export class SyncLivePullProcessor {
       return;
     }
 
-    const drained = delivery.controller.commitPullDelivery(delivery.ticket, cursor);
+    const drained = delivery.controller.commitPullDelivery(delivery.ticket);
     if (drained > 0) {
       await this._operations.persistCheckpoint(link);
       if (isStale()) { return; }
@@ -452,17 +424,6 @@ export class SyncLivePullProcessor {
       `SyncLivePullProcessor: Error processing live-pull event for ${context.did}`,
       error,
     );
-    if (context.controller !== undefined) {
-      await this._operations.transitionToRepairing(context.controller);
-    }
-  }
-
-  private static dataStreamFromBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
-    return new ReadableStream<Uint8Array>({
-      start(controller): void {
-        controller.enqueue(bytes);
-        controller.close();
-      },
-    });
+    await this._operations.transitionToRepairing(context.controller);
   }
 }

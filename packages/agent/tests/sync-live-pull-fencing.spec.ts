@@ -12,6 +12,8 @@ import type { SyncLinkController } from '../src/sync-link-controller.js';
 
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 
+import { deferred } from './utils/deferred.js';
+
 const DID = 'did:example:alice';
 const REMOTE = 'https://dwn.example.com';
 const LINK_KEY = `${DID}^${REMOTE}^projection-id^owner-epoch`;
@@ -20,6 +22,7 @@ type EngineFixture = {
   controller: SyncLinkController;
   engine: SyncEngineLevel;
   handlers: Array<(message: unknown) => Promise<void>>;
+  persistCheckpoint: SinonStub;
   processRequest: SinonStub;
   repairing: SinonStub;
   sendDwnRequest: SinonStub;
@@ -51,7 +54,7 @@ function createEngineFixture(db: Level<string, string>): EngineFixture {
     return { status: { code: 200 }, subscription: { close: sinon.stub().resolves() } };
   });
   (engine as any)._agent = { dwn: { processRequest }, rpc: { sendDwnRequest } };
-  sinon.stub((engine as any).ledger, 'persistCheckpoint').resolves();
+  const persistCheckpoint = sinon.stub((engine as any).ledger, 'persistCheckpoint').resolves();
   const repairing = sinon.stub((engine as any)._linkRecoveryCoordinator, 'transitionToRepairing').resolves();
   const target = {
     authorization      : { kind: 'owner' as const },
@@ -62,19 +65,11 @@ function createEngineFixture(db: Level<string, string>): EngineFixture {
     projectionId       : 'projection-id',
     scope              : { kind: 'full' as const },
   };
-  return { controller, engine, handlers, processRequest, repairing, sendDwnRequest, target };
+  return { controller, engine, handlers, persistCheckpoint, processRequest, repairing, sendDwnRequest, target };
 }
 
 function openSubscription(fixture: EngineFixture): Promise<boolean> {
   return (fixture.engine as any).openLivePullSubscription(fixture.target, fixture.controller);
-}
-
-function deferred(): { promise: Promise<void>; resolve(): void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((complete) => {
-    resolve = complete;
-  });
-  return { promise, resolve };
 }
 
 describe('SyncEngineLevel — live-pull generation fencing', () => {
@@ -113,11 +108,11 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     // that sends the freshly repaired link straight back into repair.
     await staleHandler({ type: 'eose', cursor: tokenIn('stream-1', 'epoch-1', '9') });
     expect(fixture.repairing.notCalled).toBe(true);
-    expect(controller.link.pull.receivedToken).toBeUndefined();
+    expect(fixture.persistCheckpoint.notCalled).toBe(true);
 
     // The replacement subscription's callbacks flow normally.
     await freshHandler({ type: 'eose', cursor: tokenIn('stream-2', 'epoch-2', '2') });
-    expect(controller.link.pull.receivedToken).toEqual(tokenIn('stream-2', 'epoch-2', '2'));
+    expect(fixture.persistCheckpoint.calledOnce).toBe(true);
 
     await controller.shutdown();
   });
@@ -198,7 +193,7 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     expect(controller.link.status).toBe('paused');
 
     // Completing initialization afterwards must not override the pause.
-    await (engine as any).markLinkLive(fixture.target, controller);
+    await (engine as any).markLinkLive(fixture.target, controller, controller.pullEpoch);
     expect(controller.link.status).toBe('paused');
 
     await controller.shutdown();
@@ -242,7 +237,7 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
       return false;
     });
 
-    const result = await (engine as any).openLinkSubscriptions(fixture.target, controller);
+    const result = await (engine as any).openLinkSubscriptions(fixture.target, controller, controller.pullEpoch);
 
     expect(result).toBe('inactive');
     expect(replacementClose.notCalled).toBe(true);

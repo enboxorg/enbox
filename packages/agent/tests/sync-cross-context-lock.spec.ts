@@ -2,10 +2,7 @@ import { describe, expect, it } from 'bun:test';
 
 import { runWithCrossContextLock } from '../src/sync-cross-context-lock.js';
 
-type Deferred<Value> = {
-  promise: Promise<Value>;
-  resolve: (value: Value | PromiseLike<Value>) => void;
-};
+import { deferred } from './utils/deferred.js';
 
 describe('runWithCrossContextLock', () => {
   it('serializes operations using one lock name', async () => {
@@ -61,11 +58,4 @@ describe('runWithCrossContextLock', () => {
     expect(order).toEqual(['second', 'third']);
   });
 
-  function deferred<Value>(): Deferred<Value> {
-    let resolve!: (value: Value | PromiseLike<Value>) => void;
-    const promise = new Promise<Value>((promiseResolve) => {
-      resolve = promiseResolve;
-    });
-    return { promise, resolve };
-  }
 });

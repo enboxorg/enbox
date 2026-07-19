@@ -99,7 +99,7 @@ export function syncMessageDescriptor(message: GenericMessage): SyncMessageDescr
   };
 }
 
-export type MessageFeedQuery = {
+type MessageFeedQuery = {
   did: string;
   delegateDid?: string;
   permissionGrantIds?: string[];
@@ -129,10 +129,14 @@ type PushRootOutcome =
   | { kind: 'succeeded'; cid: string }
   | { kind: 'failed'; failure: PushFailure };
 
-// Match the pull-side admission budget. Replication apply reports bounded,
-// structured missing dependencies, while this cap prevents remote cycles from
-// turning into unbounded local query/apply loops.
-const MAX_PUSH_ADMISSION_PASSES = 128;
+/**
+ * Shared push/pull admission budget. Replication apply reports the full set of
+ * missing ancestors in a single bounded, structured result, so a well-formed
+ * closure converges in a handful of passes; this cap prevents remote cycles
+ * and malformed or adversarial remotes from turning into unbounded local
+ * query/apply loops.
+ */
+export const MAX_ADMISSION_PASSES = 128;
 
 /** Raised when an in-flight pull is cancelled before local apply can continue. */
 export class SyncPullAbortedError extends Error {
@@ -173,6 +177,47 @@ function dataStreamFromBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
       controller.close();
     }
   });
+}
+
+/** Resolve the record id of a RecordsWrite or RecordsDelete message, if any. */
+export function recordIdForRecordsMessage(message: GenericMessage | undefined): string | undefined {
+  if (
+    message?.descriptor.interface !== DwnInterfaceName.Records ||
+    (
+      message.descriptor.method !== DwnMethodName.Write &&
+      message.descriptor.method !== DwnMethodName.Delete
+    )
+  ) {
+    return undefined;
+  }
+
+  const recordId = (message as { recordId?: unknown }).recordId ??
+    (message.descriptor as { recordId?: unknown }).recordId;
+  return typeof recordId === 'string' ? recordId : undefined;
+}
+
+/** Whether the message is the initial RecordsWrite for the given record. */
+export function isInitialWriteForRecord(message: GenericMessage, recordId: string): boolean {
+  if (!isRecordsWriteForRecord(message, recordId)) {
+    return false;
+  }
+
+  const recordsWrite = message as GenericMessage & {
+    descriptor: GenericMessage['descriptor'] & { dateCreated?: string };
+  };
+  return recordsWrite.descriptor.dateCreated === recordsWrite.descriptor.messageTimestamp;
+}
+
+/** Whether the message is a RecordsWrite addressing the given record. */
+export function isRecordsWriteForRecord(message: GenericMessage, recordId: string): boolean {
+  if (
+    message.descriptor.interface !== DwnInterfaceName.Records ||
+    message.descriptor.method !== DwnMethodName.Write
+  ) {
+    return false;
+  }
+
+  return (message as GenericMessage & { recordId?: string }).recordId === recordId;
 }
 
 export function capRecordsWriteDataStream(
@@ -601,7 +646,7 @@ class RemoteApplyPushContext {
   private async pushRoot(rootCid: string, rootEntry: SyncMessageEntry): Promise<PushRootOutcome> {
     let pending = [rootEntry];
     let rootResolution: PushSuccessResolution | undefined;
-    for (let pass = 0; pass < MAX_PUSH_ADMISSION_PASSES && pending.length > 0; pass++) {
+    for (let pass = 0; pass < MAX_ADMISSION_PASSES && pending.length > 0; pass++) {
       const retry: SyncMessageEntry[] = [];
       for (const entry of orderMessagesForAdmission(pending)) {
         const result = await this.pushEntry(rootCid, entry);
@@ -1079,7 +1124,7 @@ class RemoteApplyPushContext {
     }
 
     const messageWithEncodedData = { ...entry.message } as GenericMessage & { encodedData?: string };
-    const encodedData = entry.encodedData ?? messageWithEncodedData.encodedData;
+    const encodedData = entry.encodedData;
     delete messageWithEncodedData.encodedData;
 
     const syncEntry: SyncMessageEntry = {

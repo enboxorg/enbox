@@ -59,7 +59,7 @@ export function missingDependencyDetail(refs: DependencyRef[]): string {
 }
 
 /** Type guard for a `ProtocolsConfigure` message. */
-export function isProtocolsConfigureMessage(message: GenericMessage): message is ProtocolsConfigureMessage {
+function isProtocolsConfigureMessage(message: GenericMessage): message is ProtocolsConfigureMessage {
   return message.descriptor.interface === DwnInterfaceName.Protocols &&
     message.descriptor.method === DwnMethodName.Configure &&
     (message.descriptor as { definition?: unknown }).definition !== undefined;

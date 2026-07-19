@@ -5,26 +5,15 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 
-type CapturedSubscriptionHandler = ((message: unknown) => Promise<void>) | undefined;
+import { deferred as createDeferred } from './utils/deferred.js';
 
-type Deferred = {
-  promise: Promise<void>;
-  resolve: () => void;
-};
+type CapturedSubscriptionHandler = ((message: unknown) => Promise<void>) | undefined;
 
 type LiveMockAgent = {
   agent: unknown;
   getLocalHandler: () => CapturedSubscriptionHandler;
   getRemoteHandler: () => CapturedSubscriptionHandler;
 };
-
-function createDeferred(): Deferred {
-  let resolve!: () => void;
-  const promise = new Promise<void>((resolvePromise) => {
-    resolve = resolvePromise;
-  });
-  return { promise, resolve };
-}
 
 function createLiveMockAgent(): LiveMockAgent {
   let localHandler: CapturedSubscriptionHandler;
@@ -394,9 +383,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     });
     const requeueSpy = sinon.spy(engine['_livePushCoordinator'], 'requeue');
 
-    const flushing = (engine as unknown as {
-      flushPendingPushesForLink(key: string): Promise<void>;
-    }).flushPendingPushesForLink(linkKey);
+    const flushing = engine['_livePushCoordinator'].flushLink(linkKey);
     await transitionStarted.promise;
     const replacement = engine['activateLink'](linkKey, makeLink({ status: 'live' }) as never);
     releaseTransition.resolve();
@@ -423,11 +410,13 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     });
 
     const handling = (engine as unknown as {
-      handleLivePullEose(
-        context: Record<string, unknown>,
-        message: { type: 'eose'; cursor: { epoch: string; position: string; streamId: string } },
-      ): Promise<void>;
-    }).handleLivePullEose({
+      _livePullProcessor: {
+        handleEose(
+          context: Record<string, unknown>,
+          message: { type: 'eose'; cursor: { epoch: string; position: string; streamId: string } },
+        ): Promise<void>;
+      };
+    })._livePullProcessor.handleEose({
       controller,
       did        : link.tenantDid,
       dwnUrl     : link.remoteEndpoint,

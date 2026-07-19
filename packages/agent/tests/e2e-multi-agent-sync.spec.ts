@@ -29,24 +29,13 @@ import {
 } from '@enbox/connect';
 import { DataStream, DwnInterfaceName, DwnMethodName, ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH, EncryptionProtocol, Time } from '@enbox/dwn-sdk-js';
 
-const testDwnUrls: string[] = [testDwnUrl];
+import { deferred as createDeferred } from './utils/deferred.js';
 
-type Deferred = {
-  promise: Promise<void>;
-  resolve: () => void;
-};
+const testDwnUrls: string[] = [testDwnUrl];
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function createDeferred(): Deferred {
-  let resolve!: () => void;
-  const promise = new Promise<void>((resolvePromise) => {
-    resolve = resolvePromise;
-  });
-  return { promise, resolve };
-}
 
 /**
  * Polls the target agent's local DWN until a record matching `recordId`

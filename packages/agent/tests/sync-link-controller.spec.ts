@@ -45,11 +45,11 @@ describe('SyncLinkController', () => {
     const first = controller.startPullDelivery(token(1));
     const second = controller.startPullDelivery(token(2));
 
-    expect(controller.commitPullDelivery(second, token(2))).toBe(0);
+    expect(controller.commitPullDelivery(second)).toBe(0);
     expect(link.pull.contiguousAppliedToken).toBeUndefined();
     expect(controller.pullInflightCount).toBe(2);
 
-    expect(controller.commitPullDelivery(first, token(1))).toBe(2);
+    expect(controller.commitPullDelivery(first)).toBe(2);
     expect(link.pull.contiguousAppliedToken).toEqual(token(2));
     expect(controller.pullInflightCount).toBe(0);
   });
@@ -63,7 +63,7 @@ describe('SyncLinkController', () => {
     const next = controller.startPullDelivery(token(2));
 
     expect(next.ordinal).toBe(1);
-    expect(controller.commitPullDelivery(next, token(2))).toBe(1);
+    expect(controller.commitPullDelivery(next)).toBe(1);
     expect(link.pull.contiguousAppliedToken).toEqual(token(2));
   });
 
@@ -78,7 +78,7 @@ describe('SyncLinkController', () => {
 
     expect(next.ordinal).toBe(0);
     expect(controller.pullInflightCount).toBe(1);
-    expect(controller.commitPullDelivery(next, token(3))).toBe(1);
+    expect(controller.commitPullDelivery(next)).toBe(1);
     expect(link.pull.contiguousAppliedToken).toEqual(token(3));
   });
 
@@ -93,11 +93,10 @@ describe('SyncLinkController', () => {
     // The stale ticket's ordinal collides with the fresh delivery's ordinal
     // in the new generation; its commit must not mark the fresh delivery
     // committed or move either checkpoint token.
-    expect(controller.commitPullDelivery(stale, token(9))).toBe(0);
+    expect(controller.commitPullDelivery(stale)).toBe(0);
     expect(link.pull.contiguousAppliedToken).toBeUndefined();
-    expect(link.pull.receivedToken).toBeUndefined();
 
-    expect(controller.commitPullDelivery(fresh, token(2))).toBe(1);
+    expect(controller.commitPullDelivery(fresh)).toBe(1);
     expect(link.pull.contiguousAppliedToken).toEqual(token(2));
   });
 
@@ -108,8 +107,8 @@ describe('SyncLinkController', () => {
 
     controller.clearPullInflight();
 
-    expect(controller.commitPullDelivery(abandoned, token(1))).toBe(0);
-    expect(link.pull.receivedToken).toBeUndefined();
+    expect(controller.commitPullDelivery(abandoned)).toBe(0);
+    expect(link.pull.contiguousAppliedToken).toBeUndefined();
   });
 
   it('should not let an old push batch clear or consume a replacement queue', () => {

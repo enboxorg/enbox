@@ -29,7 +29,7 @@ export class SyncDeadLetterStoreLevel implements SyncDeadLetterStore {
     );
   }
 
-  public async deleteExact(tenantDid: string, messageCid: string, remoteEndpoint?: string): Promise<void> {
+  public async deleteExact(tenantDid: string, messageCid: string, remoteEndpoint: string): Promise<void> {
     await this.deadLetters.del(buildSyncMessageStoreLevelKey(tenantDid, messageCid, remoteEndpoint));
   }
 
@@ -37,7 +37,7 @@ export class SyncDeadLetterStoreLevel implements SyncDeadLetterStore {
     await this.deleteWhere((entry): boolean => entry.tenantDid === tenantDid);
   }
 
-  public async get(tenantDid: string, messageCid: string, remoteEndpoint?: string): Promise<DeadLetterEntry | undefined> {
+  public async get(tenantDid: string, messageCid: string, remoteEndpoint: string): Promise<DeadLetterEntry | undefined> {
     try {
       const value = await this.deadLetters.get(buildSyncMessageStoreLevelKey(tenantDid, messageCid, remoteEndpoint));
       return JSON.parse(value) as DeadLetterEntry;

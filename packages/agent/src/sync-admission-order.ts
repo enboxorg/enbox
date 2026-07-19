@@ -205,7 +205,7 @@ function isRecordObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-export function getSignaturePayload(message: GenericMessage): GenericSignaturePayload | undefined {
+function getSignaturePayload(message: GenericMessage): GenericSignaturePayload | undefined {
   if (message.authorization === undefined) {
     return undefined;
   }

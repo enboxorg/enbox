@@ -10,6 +10,8 @@ import { describe, expect, it } from 'bun:test';
 
 import { SyncRunCoordinator } from '../src/sync-run-coordinator.js';
 
+import { deferred } from './utils/deferred.js';
+
 type RunFixtureOperations = {
   [Operation in keyof SyncRunCoordinatorOperations]: SinonStub;
 };
@@ -17,11 +19,6 @@ type RunFixtureOperations = {
 type RunFixture = {
   coordinator: SyncRunCoordinator;
   operations: RunFixtureOperations;
-};
-
-type Deferred<Value> = {
-  promise: Promise<Value>;
-  resolve: (value: Value) => void;
 };
 
 function ownerTarget(did: string, dwnUrl: string): SyncTarget {
@@ -42,14 +39,6 @@ function reconciled(converged = true): SyncDurableFeedReconcileResult {
     pushFailures      : [],
     remoteFingerprint : converged ? 'fingerprint' : 'remote-fingerprint',
   };
-}
-
-function deferred<Value>(): Deferred<Value> {
-  let resolve!: (value: Value) => void;
-  const promise = new Promise<Value>((complete) => {
-    resolve = complete;
-  });
-  return { promise, resolve };
 }
 
 function createFixture(targets: SyncTarget[] = [

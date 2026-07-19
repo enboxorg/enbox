@@ -204,6 +204,11 @@ export class SyncLinkController {
     return this._pullEpoch;
   }
 
+  /** Whether this controller is still active and owns the given pull generation. */
+  public isPullEpochCurrent(epoch: number): boolean {
+    return this._active && this._pullEpoch === epoch;
+  }
+
   /** Number of pull deliveries still waiting to become contiguously committed. */
   public get pullInflightCount(): number {
     return this._pullInflight.size;
@@ -255,7 +260,7 @@ export class SyncLinkController {
    * and commits nothing — its ordinal may have been reissued to a fresh
    * delivery, and its token predates the re-established pull boundary.
    */
-  public commitPullDelivery(ticket: SyncPullDeliveryTicket, token: ProgressToken): number {
+  public commitPullDelivery(ticket: SyncPullDeliveryTicket): number {
     if (ticket.epoch !== this._pullEpoch) {
       return 0;
     }
@@ -265,7 +270,6 @@ export class SyncLinkController {
       entry.committed = true;
     }
 
-    SyncCheckpoint.setReceivedToken(this.link.pull, token);
     return this.drainCommittedPull();
   }
 
@@ -279,7 +283,6 @@ export class SyncLinkController {
       }
 
       SyncCheckpoint.commitContiguousToken(this.link.pull, entry.token);
-      SyncCheckpoint.setReceivedToken(this.link.pull, entry.token);
       this._pullInflight.delete(this._nextPullCommitOrdinal);
       this._nextPullCommitOrdinal++;
       drained++;

@@ -12,13 +12,13 @@ export interface SyncDeadLetterStore {
   deleteForMessage(messageCid: string, remoteEndpoint?: string): Promise<number>;
 
   /** Remove one exact tenant, message, and remote entry. */
-  deleteExact(tenantDid: string, messageCid: string, remoteEndpoint?: string): Promise<void>;
+  deleteExact(tenantDid: string, messageCid: string, remoteEndpoint: string): Promise<void>;
 
   /** Remove every entry for one tenant. */
   deleteForTenant(tenantDid: string): Promise<void>;
 
   /** Read one exact tenant, message, and remote entry. */
-  get(tenantDid: string, messageCid: string, remoteEndpoint?: string): Promise<DeadLetterEntry | undefined>;
+  get(tenantDid: string, messageCid: string, remoteEndpoint: string): Promise<DeadLetterEntry | undefined>;
 
   /** Read every persisted dead-letter entry. */
   getAll(): Promise<DeadLetterEntry[]>;

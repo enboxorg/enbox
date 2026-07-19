@@ -9,18 +9,7 @@ import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { SyncRunCancelledError } from '../src/sync-runtime-errors.js';
 import { SyncRuntime } from '../src/sync-runtime.js';
 
-type Deferred = {
-  promise: Promise<void>;
-  resolve: () => void;
-};
-
-function createDeferred(): Deferred {
-  let resolve!: () => void;
-  const promise = new Promise<void>((resolvePromise) => {
-    resolve = resolvePromise;
-  });
-  return { promise, resolve };
-}
+import { deferred as createDeferred } from './utils/deferred.js';
 
 function getScopeClosureValidator(engine: SyncEngineLevel): SyncScopeClosureValidator {
   return (engine as unknown as { _scopeClosureValidator: SyncScopeClosureValidator })._scopeClosureValidator;
@@ -145,10 +134,10 @@ describe('SyncEngineLevel lifecycle', () => {
     sinon.stub(engine as never, 'hasAdmissionDeadLetter').resolves(false);
     sinon.stub(engine as never, 'getQuotaBlockState').resolves(undefined);
     sinon.stub(engine as never, 'getQuotaBlockedInitialCidsForFeedEntry').resolves([]);
-    sinon.stub(engine as never, 'pushMessages').callsFake(async (): Promise<{ failed: never[]; succeeded: string[] }> => {
+    sinon.stub(engine as never, 'pushMessages').callsFake(async (): Promise<{ acknowledged: never[]; failed: never[]; succeeded: string[] }> => {
       pushStarted.resolve();
       await releasePush.promise;
-      return { failed: [], succeeded: ['cid-1'] };
+      return { acknowledged: [], failed: [], succeeded: ['cid-1'] };
     });
     sinon.stub(durableFeedReconciler, 'push').callsFake(async (
       runTarget: typeof target,

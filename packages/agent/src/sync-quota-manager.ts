@@ -12,6 +12,7 @@ import type {
 import { DwnInterfaceName, DwnMethodName, Message } from '@enbox/dwn-sdk-js';
 
 import { buildLinkId } from './sync-link-id.js';
+import { isInitialWriteForRecord, isRecordsWriteForRecord, recordIdForRecordsMessage } from './sync-messages.js';
 import { isQuotaBlockedPushFailure, isTerminalPushFailure, lexicographicalCompare, protocolsForSyncScope } from './types/sync.js';
 
 /** One quota row paired with the CID used by feed policy. */
@@ -163,7 +164,7 @@ export class SyncQuotaManager {
       terminalFailures  : [],
     };
     const acknowledgementsByCid = new Map<string, PushAcknowledgement>(
-      (result.acknowledged ?? []).map((acknowledgement) => [acknowledgement.cid, acknowledgement] as const),
+      result.acknowledged.map((acknowledgement) => [acknowledgement.cid, acknowledgement] as const),
     );
     for (const cid of result.succeeded) {
       if (!acknowledgementsByCid.has(cid)) {
@@ -370,8 +371,8 @@ export class SyncQuotaManager {
     acknowledgement: GenericMessage,
     blocked: GenericMessage,
   ): Promise<boolean> {
-    const recordId = SyncQuotaManager.recordIdForRecordsMessage(acknowledgement);
-    if (recordId === undefined || !SyncQuotaManager.isRecordsWriteForRecord(blocked, recordId)) {
+    const recordId = recordIdForRecordsMessage(acknowledgement);
+    if (recordId === undefined || !isRecordsWriteForRecord(blocked, recordId)) {
       return false;
     }
 
@@ -380,7 +381,7 @@ export class SyncQuotaManager {
     }
 
     return acknowledgement.descriptor.method === DwnMethodName.Write &&
-      !SyncQuotaManager.isInitialWriteForRecord(acknowledgement, recordId) &&
+      !isInitialWriteForRecord(acknowledgement, recordId) &&
       await Message.isNewer(acknowledgement, blocked);
   }
 
@@ -528,7 +529,7 @@ export class SyncQuotaManager {
     }
 
     const blockedDependencyEntry =
-      localEntry !== undefined && state.blockedCid !== undefined && state.blockedCid !== messageCid
+      localEntry !== undefined && state.blockedCid !== messageCid
         ? await this._operations.getLocalMessage(target, state.blockedCid)
         : undefined;
     if (SyncQuotaManager.shouldAbort(shouldContinue)) { return; }
@@ -571,8 +572,7 @@ export class SyncQuotaManager {
     remoteCids: Set<string>,
   ): Promise<void> {
     const blockedCid = block.state.blockedCid;
-    const blockedDependencyIsLocalOnly = blockedCid !== undefined &&
-      blockedCid !== block.messageCid &&
+    const blockedDependencyIsLocalOnly = blockedCid !== block.messageCid &&
       localCids.has(blockedCid) &&
       !remoteCids.has(blockedCid);
 
@@ -599,7 +599,7 @@ export class SyncQuotaManager {
     for (const { messageCid, state } of blocks) {
       if (state.source === 'permission-grant') { continue; }
       omittedCids.add(messageCid);
-      if (state.blockedCid !== undefined && localCids.has(state.blockedCid)) {
+      if (localCids.has(state.blockedCid)) {
         omittedCids.add(state.blockedCid);
       }
     }
@@ -616,44 +616,6 @@ export class SyncQuotaManager {
       current.lastBlockedAt !== expected.lastBlockedAt;
   }
 
-  private static recordIdForRecordsMessage(message: GenericMessage | undefined): string | undefined {
-    if (
-      message?.descriptor.interface !== DwnInterfaceName.Records ||
-      (
-        message.descriptor.method !== DwnMethodName.Write &&
-        message.descriptor.method !== DwnMethodName.Delete
-      )
-    ) {
-      return undefined;
-    }
-
-    const recordId = (message as { recordId?: unknown }).recordId ??
-      (message.descriptor as { recordId?: unknown }).recordId;
-    return typeof recordId === 'string' ? recordId : undefined;
-  }
-
-  private static isInitialWriteForRecord(message: GenericMessage, recordId: string): boolean {
-    if (!SyncQuotaManager.isRecordsWriteForRecord(message, recordId)) {
-      return false;
-    }
-
-    const recordsWrite = message as GenericMessage & {
-      descriptor: GenericMessage['descriptor'] & { dateCreated?: string };
-    };
-    return recordsWrite.descriptor.dateCreated === recordsWrite.descriptor.messageTimestamp;
-  }
-
-  private static isRecordsWriteForRecord(message: GenericMessage, recordId: string): boolean {
-    if (
-      message.descriptor.interface !== DwnInterfaceName.Records ||
-      message.descriptor.method !== DwnMethodName.Write
-    ) {
-      return false;
-    }
-
-    return (message as GenericMessage & { recordId?: string }).recordId === recordId;
-  }
-
   private static hasUnmaterializedRecordsWriteData(entry: SyncMessageEntry): boolean {
     const { descriptor } = entry.message;
     const dataSize = (descriptor as { dataSize?: unknown }).dataSize;
@@ -666,9 +628,7 @@ export class SyncQuotaManager {
       return false;
     }
 
-    return entry.dataStream === undefined &&
-      entry.bufferedData === undefined &&
-      typeof (entry.message as { encodedData?: unknown }).encodedData !== 'string';
+    return entry.dataStream === undefined && entry.bufferedData === undefined;
   }
 
   private static earliestTimestamp(current: string | undefined, candidate: string): string {

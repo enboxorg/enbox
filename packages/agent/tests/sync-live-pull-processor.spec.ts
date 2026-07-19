@@ -15,12 +15,14 @@ import type {
 import sinon from 'sinon';
 
 import { describe, expect, it } from 'bun:test';
-import { DwnInterfaceName, DwnMethodName, Encoder, Message } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, Message } from '@enbox/dwn-sdk-js';
 
 import { isTerminalSyncAuthorizationFailure } from '../src/sync-runtime-errors.js';
 import { SyncEchoSuppressor } from '../src/sync-echo-suppressor.js';
 import { SyncLinkController } from '../src/sync-link-controller.js';
 import { SyncLivePullProcessor } from '../src/sync-live-pull-processor.js';
+
+import { deferred } from './utils/deferred.js';
 
 type PullOperationStubs = {
   [Operation in keyof SyncLivePullProcessorOperations]: SinonStub;
@@ -102,7 +104,6 @@ function createFixture(maxInFlightDeliveries?: number): PullFixture {
   const agent = {} as EnboxPlatformAgent;
   const permissionsApi = {} as PermissionsApi;
   const operations: PullOperationStubs = {
-    clearFailedMessage    : sinon.stub().resolves(),
     emitCheckpointAdvance : sinon.stub(),
     emitEvent             : sinon.stub(),
     getAgent              : sinon.stub().returns(agent),
@@ -111,7 +112,6 @@ function createFixture(maxInFlightDeliveries?: number): PullFixture {
     recordDeadLetter      : sinon.stub().resolves(),
     reportError           : sinon.stub(),
     scheduleReconcile     : sinon.stub(),
-    setConnectivityOnline : sinon.stub(),
     trackAppliedCids      : sinon.stub().resolves(),
     transitionToPaused    : sinon.stub().resolves(),
     transitionToRepairing : sinon.stub().resolves(),
@@ -228,7 +228,6 @@ describe('SyncLivePullProcessor', () => {
     await processor.handleEose(context, { type: 'eose', cursor: token('1') });
 
     expect(operations.persistCheckpoint.calledOnceWithExactly(state)).toBe(true);
-    expect(state.pull.receivedToken).toEqual(token('1'));
     expect(state.connectivity).toBe('online');
     expect(operations.emitEvent.calledOnceWithMatch({
       type : 'link:connectivity-change',
@@ -253,7 +252,6 @@ describe('SyncLivePullProcessor', () => {
 
     expect(operations.transitionToRepairing.calledOnceWithExactly(context.controller)).toBe(true);
     expect(operations.persistCheckpoint.notCalled).toBe(true);
-    expect(state.pull.receivedToken).toBeUndefined();
   });
 
   it('advances out-of-scope events but repairs an unclassifiable scoped delete', async () => {
@@ -311,30 +309,20 @@ describe('SyncLivePullProcessor', () => {
     expect(operations.persistCheckpoint.calledOnceWithExactly(state)).toBe(true);
   });
 
-  it('tracks and clears an admitted non-ledger delivery while deferring reconciliation for durable omissions', async () => {
-    const { admit, echoSuppressor, operations, processor } = createFixture();
-    const context: SyncLivePullContext = {
-      did        : DID,
-      dwnUrl     : REMOTE,
-      eventScope : {},
-      isStale    : () => false,
-      linkKey    : 'legacy-link',
-    };
+  it('defers reconciliation for durable omissions while still committing the delivery ticket', async () => {
+    const { admit, operations, processor } = createFixture();
     const message = protocolMessage();
     const messageCid = await Message.getCid(message);
 
-    await processor.handleEvent(context, event(token('1'), message));
-
-    expect(echoSuppressor.hasRecentlyPulled(DID, messageCid, REMOTE)).toBe(true);
-    expect(operations.clearFailedMessage.calledOnceWithExactly(DID, messageCid, REMOTE)).toBe(true);
-
     const durableContext = contextFor();
     admit.resolves({ kind: 'deferred', rootCid: messageCid, detail: 'missing dependency' });
-    await processor.handleEvent(durableContext, event(token('2'), message));
+    await processor.handleEvent(durableContext, event(token('1'), message));
+
     expect(operations.scheduleReconcile.calledOnceWithExactly(
       durableContext.controller,
       'pull-deferred',
     )).toBe(true);
+    expect(operations.trackAppliedCids.notCalled).toBe(true);
   });
 
   it('records terminal admission failures and treats unexpected processing errors as repairable', async () => {
@@ -347,7 +335,6 @@ describe('SyncLivePullProcessor', () => {
     expect(operations.recordDeadLetter.calledOnceWithMatch({
       tenantDid      : DID,
       remoteEndpoint : REMOTE,
-      category       : 'admit-failed',
       errorCode      : 'invalid',
       errorDetail    : 'bad signature',
     })).toBe(true);
@@ -471,7 +458,6 @@ describe('SyncLivePullProcessor', () => {
     // commit must not mark the still-admitting fresh delivery as applied.
     expect(operations.persistCheckpoint.notCalled).toBe(true);
     expect(state.pull.contiguousAppliedToken).toBeUndefined();
-    expect(state.pull.receivedToken).toBeUndefined();
 
     releaseFresh.resolve();
     await fresh;
@@ -503,22 +489,20 @@ describe('SyncLivePullProcessor', () => {
     await first;
   });
 
-  it('creates replayable inline streams and re-fetches large record data for every admission attempt', async () => {
+  it('yields no data stream without a dataCid and re-fetches large record data for every admission attempt', async () => {
     const { admit, fetchMessages, operations, processor } = createFixture();
     const context = contextFor();
-    const bytes = new Uint8Array([1, 2, 3]);
-    const inline = recordsWriteMessage({ encodedData: Encoder.bytesToBase64Url(bytes) });
-    let inlineFactory: (() => Promise<ReadableStream<Uint8Array> | undefined>) | undefined;
+    const dataless = recordsWriteMessage({});
+    let datalessFactory: (() => Promise<ReadableStream<Uint8Array> | undefined>) | undefined;
     admit.callsFake(async (_rootCid, deps) => {
-      inlineFactory = deps.prefetched?.[0].dataStreamFactory;
-      return { kind: 'admitted', appliedCids: ['inline'], freshEntries: [] };
+      datalessFactory = deps.prefetched?.[0].dataStreamFactory;
+      return { kind: 'admitted', appliedCids: ['dataless'], freshEntries: [] };
     });
 
-    await processor.handleEvent(context, event(token('1'), inline));
-    const inlineStream = await inlineFactory?.();
-    expect(inlineStream).toBeDefined();
-    expect((await inlineStream!.getReader().read()).value).toEqual(bytes);
-    expect('encodedData' in inline).toBe(false);
+    await processor.handleEvent(context, event(token('1'), dataless));
+    expect(datalessFactory).toBeDefined();
+    expect(await datalessFactory?.()).toBeUndefined();
+    expect(fetchMessages.notCalled).toBe(true);
 
     const large = recordsWriteMessage({ dataCid: 'bafy-data' });
     const firstStream = new ReadableStream<Uint8Array>();
@@ -539,7 +523,7 @@ describe('SyncLivePullProcessor', () => {
   });
 });
 
-function recordsWriteMessage({ encodedData, dataCid }: { encodedData?: string; dataCid?: string }): GenericMessage {
+function recordsWriteMessage({ dataCid }: { dataCid?: string }): GenericMessage {
   return {
     descriptor: {
       interface        : DwnInterfaceName.Records,
@@ -548,17 +532,6 @@ function recordsWriteMessage({ encodedData, dataCid }: { encodedData?: string; d
       recordId         : 'record-id',
       ...(dataCid === undefined ? {} : { dataCid }),
     },
-    ...(encodedData === undefined ? {} : { encodedData }),
   } as GenericMessage;
 }
 
-function deferred<Value>(): {
-  promise: Promise<Value>;
-  resolve(value?: Value): void;
-  } {
-  let resolve!: (value?: Value) => void;
-  const promise = new Promise<Value>((complete) => {
-    resolve = complete;
-  });
-  return { promise, resolve };
-}

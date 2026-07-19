@@ -5,7 +5,7 @@ import type { SyncTarget } from './sync-target-resolver.js';
 import type { PushFailure, ReplicationLinkState, SyncDirection } from './types/sync.js';
 
 import { buildLinkId } from './sync-link-id.js';
-import { SyncCheckpoint } from './sync-checkpoint.js';
+import { isValidProgressToken, SyncCheckpoint } from './sync-checkpoint.js';
 
 /** Options controlling one durable-feed reconciliation cycle. */
 export type SyncDurableFeedReconcileOptions = {
@@ -625,7 +625,6 @@ export class SyncDurableFeedReconciler {
       target.dwnUrl,
       direction,
     );
-    SyncCheckpoint.setReceivedToken(checkpoint, reply.cursor);
     SyncCheckpoint.commitContiguousToken(checkpoint, reply.cursor);
     await this._operations.getLinkStore().persistCheckpoint(link, direction);
     this._operations.onCheckpointAdvanced(link, direction);
@@ -655,7 +654,7 @@ export class SyncDurableFeedReconciler {
     dwnUrl: string,
     direction: SyncDirection,
   ): void {
-    if (!SyncDurableFeedReconciler.isValidToken(nextCursor)) {
+    if (!isValidProgressToken(nextCursor)) {
       throw new Error(
         `SyncEngineLevel: ${direction} MessagesQuery returned an invalid cursor for ${link.tenantDid} -> ${dwnUrl}`,
       );
@@ -719,10 +718,6 @@ export class SyncDurableFeedReconciler {
       result.localFingerprint === result.remoteFingerprint;
   }
 
-  private static isValidToken(token: ProgressToken): boolean {
-    return Boolean(token.streamId && token.epoch && token.position);
-  }
-
   private static mergeResult(
     target: SyncDurableFeedReconcileResult,
     source: SyncDurableFeedReconcileResult,
@@ -759,7 +754,7 @@ export class SyncDurableFeedReconciler {
       );
     }
 
-    if (!SyncDurableFeedReconciler.isValidToken(reply.cursor)) {
+    if (!isValidProgressToken(reply.cursor)) {
       throw new Error(
         `SyncEngineLevel: ${source} MessagesQuery returned an invalid cursor for ${target.did} -> ${target.dwnUrl}`,
       );

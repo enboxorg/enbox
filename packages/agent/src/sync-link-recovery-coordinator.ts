@@ -6,19 +6,16 @@ import type { SyncLinkController } from './sync-link-controller.js';
 import type { SyncRuntimeHandle } from './sync-runtime.js';
 import type { SyncTarget } from './sync-target-resolver.js';
 import type {
-  NonEmptyStringArray,
   PushFailure,
   ReplicationLinkState,
   SyncEvent,
-  SyncEventScope,
-  SyncScope,
 } from './types/sync.js';
 import type {
   SyncDurableFeedReconcileOptions,
   SyncDurableFeedReconcileResult,
 } from './sync-durable-feed-reconciler.js';
 
-import { protocolsForSyncScope } from './types/sync.js';
+import { syncEventScope as eventScope } from './types/sync.js';
 import { syncTargetFromLink } from './sync-target-resolver.js';
 import { isSyncProgressGapError, isTerminalSyncAuthorizationFailure, syncErrorMessage } from './sync-runtime-errors.js';
 
@@ -52,9 +49,7 @@ export interface SyncLinkRecoveryCoordinatorOperations {
 export type SyncLinkRecoveryCoordinatorParams = {
   maxRepairAttempts?: number;
   operations: SyncLinkRecoveryCoordinatorOperations;
-  postRepairReconcileDelayMs?: number;
   reconcileDelayMs?: number;
-  reconcileRetryDelayMs?: number;
   repairBackoffMs?: readonly number[];
 };
 
@@ -63,9 +58,9 @@ export type SyncRepairTransitionOptions = {
 };
 
 const DEFAULT_MAX_REPAIR_ATTEMPTS = 3;
-const DEFAULT_POST_REPAIR_RECONCILE_DELAY_MS = 500;
+const POST_REPAIR_RECONCILE_DELAY_MS = 500;
 const DEFAULT_RECONCILE_DELAY_MS = 1500;
-const DEFAULT_RECONCILE_RETRY_DELAY_MS = 5000;
+const RECONCILE_RETRY_DELAY_MS = 5000;
 const DEFAULT_REPAIR_BACKOFF_MS = [1000, 3000, 10_000] as const;
 
 /**
@@ -76,24 +71,18 @@ const DEFAULT_REPAIR_BACKOFF_MS = [1000, 3000, 10_000] as const;
 export class SyncLinkRecoveryCoordinator {
   private readonly _maxRepairAttempts: number;
   private readonly _operations: SyncLinkRecoveryCoordinatorOperations;
-  private readonly _postRepairReconcileDelayMs: number;
   private readonly _reconcileDelayMs: number;
-  private readonly _reconcileRetryDelayMs: number;
   private readonly _repairBackoffMs: readonly number[];
 
   public constructor({
     maxRepairAttempts = DEFAULT_MAX_REPAIR_ATTEMPTS,
     operations,
-    postRepairReconcileDelayMs = DEFAULT_POST_REPAIR_RECONCILE_DELAY_MS,
     reconcileDelayMs = DEFAULT_RECONCILE_DELAY_MS,
-    reconcileRetryDelayMs = DEFAULT_RECONCILE_RETRY_DELAY_MS,
     repairBackoffMs = DEFAULT_REPAIR_BACKOFF_MS,
   }: SyncLinkRecoveryCoordinatorParams) {
     this._maxRepairAttempts = maxRepairAttempts;
     this._operations = operations;
-    this._postRepairReconcileDelayMs = postRepairReconcileDelayMs;
     this._reconcileDelayMs = reconcileDelayMs;
-    this._reconcileRetryDelayMs = reconcileRetryDelayMs;
     this._repairBackoffMs = repairBackoffMs;
   }
 
@@ -223,7 +212,7 @@ export class SyncLinkRecoveryCoordinator {
         this.scheduleLinkReconcile(
           controller,
           'post-repair-gap',
-          this._postRepairReconcileDelayMs,
+          POST_REPAIR_RECONCILE_DELAY_MS,
         );
       }
     });
@@ -562,7 +551,7 @@ export class SyncLinkRecoveryCoordinator {
       // A trailing pass is already requested: it subsumes this retry, so
       // arming a timer as well would run a third full pass later.
       if (!controller.sharedRunRequested('reconcile')) {
-        this.scheduleReconcile(controller, this._reconcileRetryDelayMs);
+        this.scheduleReconcile(controller, RECONCILE_RETRY_DELAY_MS);
       }
     }
   }
@@ -655,19 +644,4 @@ export class SyncLinkRecoveryCoordinator {
       linkKey: controller.linkKey,
     };
   }
-}
-
-function eventScope(scope: SyncScope | undefined): SyncEventScope {
-  if (scope === undefined) {
-    return {};
-  }
-  const coveredProtocols = protocolsForSyncScope(scope);
-  if (coveredProtocols === undefined) {
-    return {};
-  }
-
-  const protocols = [...coveredProtocols] as NonEmptyStringArray;
-  return protocols.length === 1
-    ? { protocol: protocols[0], protocols }
-    : { protocols };
 }

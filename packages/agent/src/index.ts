@@ -13,7 +13,6 @@ export {
   singleProtocolForSyncScope,
   syncScopeFromProtocols,
 } from './types/sync.js';
-export { ReplicationLedger } from './sync-replication-ledger.js';
 export { SyncRunCancelledError } from './sync-runtime-errors.js';
 export type * from './types/vc.js';
 

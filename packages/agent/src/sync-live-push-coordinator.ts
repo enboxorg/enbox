@@ -46,7 +46,6 @@ export interface SyncLivePushCoordinatorOperations {
 }
 
 export type SyncLivePushCoordinatorParams = {
-  debounceMs?: number;
   deferredReconcileDelayMs?: number;
   echoSuppressor: SyncEchoSuppressor;
   operations: SyncLivePushCoordinatorOperations;
@@ -71,7 +70,7 @@ export type SyncLivePushPendingBatch = {
   scope?: SyncScope;
 };
 
-const DEFAULT_DEBOUNCE_MS = 100;
+const DEBOUNCE_MS = 100;
 const DEFAULT_DEFERRED_RECONCILE_DELAY_MS = 30_000;
 const DEFAULT_RETRY_BACKOFF_MS = [0, 250, 1000, 2000] as const;
 
@@ -82,20 +81,17 @@ const DEFAULT_RETRY_BACKOFF_MS = [0, 250, 1000, 2000] as const;
  * injected effects.
  */
 export class SyncLivePushCoordinator {
-  private readonly _debounceMs: number;
   private readonly _deferredReconcileDelayMs: number;
   private readonly _echoSuppressor: SyncEchoSuppressor;
   private readonly _operations: SyncLivePushCoordinatorOperations;
   private readonly _retryBackoffMs: readonly number[];
 
   public constructor({
-    debounceMs = DEFAULT_DEBOUNCE_MS,
     deferredReconcileDelayMs = DEFAULT_DEFERRED_RECONCILE_DELAY_MS,
     echoSuppressor,
     operations,
     retryBackoffMs = DEFAULT_RETRY_BACKOFF_MS,
   }: SyncLivePushCoordinatorParams) {
-    this._debounceMs = debounceMs;
     this._deferredReconcileDelayMs = deferredReconcileDelayMs;
     this._echoSuppressor = echoSuppressor;
     this._operations = operations;
@@ -356,7 +352,7 @@ export class SyncLivePushCoordinator {
         return;
       }
       this.startSupervisedFlush(controller, runIdentityTask);
-    }, this._debounceMs);
+    }, DEBOUNCE_MS);
     controller.setPushTimer(runtime, timer);
   }
 
@@ -378,7 +374,6 @@ export class SyncLivePushCoordinator {
         tenantDid      : pending.did,
         remoteEndpoint : pending.dwnUrl,
         protocol       : pending.protocol,
-        category       : 'admit-failed',
         errorCode      : failure.kind ?? 'Invalid',
         errorDetail    : failure.detail ?? 'terminal push failure',
       });

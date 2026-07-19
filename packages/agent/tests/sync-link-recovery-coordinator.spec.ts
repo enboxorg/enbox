@@ -13,6 +13,8 @@ import { SyncLinkController } from '../src/sync-link-controller.js';
 import { SyncLinkRecoveryCoordinator } from '../src/sync-link-recovery-coordinator.js';
 import { SyncRuntime } from '../src/sync-runtime.js';
 
+import { deferred } from './utils/deferred.js';
+
 type RecoveryOperationStubs = {
   [Operation in keyof SyncLinkRecoveryCoordinatorOperations]: SinonStub;
 };
@@ -51,9 +53,7 @@ function token(position = '1'): ProgressToken {
 
 function createFixture(options: {
   maxRepairAttempts?: number;
-  postRepairReconcileDelayMs?: number;
   reconcileDelayMs?: number;
-  reconcileRetryDelayMs?: number;
   repairBackoffMs?: readonly number[];
 } = {}): RecoveryFixture {
   let scope = new SyncRuntime();
@@ -181,7 +181,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
 
   it('repairs through durable feeds, restores subscriptions, folds push failures, and schedules the repair-window gap', async () => {
     const clock = sinon.useFakeTimers();
-    const fixture = createFixture({ postRepairReconcileDelayMs: 500 });
+    const fixture = createFixture();
     const state = link('repairing');
     state.pull.contiguousAppliedToken = token('4');
     const controller = activate(fixture, state);
@@ -433,7 +433,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
 
   it('reports reconciliation failures, schedules retry, and suppresses both after staleness', async () => {
     const clock = sinon.useFakeTimers();
-    const fixture = createFixture({ reconcileRetryDelayMs: 5000 });
+    const fixture = createFixture();
     const controller = activate(fixture);
     fixture.operations.reconcileTarget.rejects(new Error('offline'));
 
@@ -828,7 +828,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
 
   it('lets a successful trailing pass subsume the failed pass retry timer', async () => {
     const clock = sinon.useFakeTimers();
-    const fixture = createFixture({ reconcileRetryDelayMs: 5000 });
+    const fixture = createFixture();
     const controller = activate(fixture);
     const snapshotTaken = deferred<void>();
     const releasePass = deferred<void>();
@@ -918,13 +918,3 @@ describe('SyncLinkRecoveryCoordinator', () => {
   });
 });
 
-function deferred<Value>(): {
-  promise: Promise<Value>;
-  resolve(value?: Value): void;
-  } {
-  let resolve!: (value?: Value) => void;
-  const promise = new Promise<Value>((complete) => {
-    resolve = complete;
-  });
-  return { promise, resolve };
-}

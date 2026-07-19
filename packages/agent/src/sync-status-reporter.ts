@@ -63,14 +63,7 @@ export class SyncStatusReporter {
 
   /** Summarize current terminal failures, quota blocks, and degraded links. */
   public async getHealth(): Promise<SyncHealthSummary> {
-    let failedMessageCount = 0;
-    let admissionFailureCount = 0;
-    for (const entry of await this._operations.getDeadLetters()) {
-      failedMessageCount++;
-      if (entry.category === 'admit-failed') {
-        admissionFailureCount++;
-      }
-    }
+    const failedMessageCount = (await this._operations.getDeadLetters()).length;
 
     const currentQuotaLinkKeys = await this._operations.getCurrentQuotaLinkKeys();
     let quotaBlockedMessageCount = 0;
@@ -94,7 +87,6 @@ export class SyncStatusReporter {
     return {
       connectivity : this._operations.getConnectivityState(),
       failedMessageCount,
-      admissionFailureCount,
       degradedLinkCount,
       quotaBlockedMessageCount,
       syncHealthy  : failedMessageCount === 0 && degradedLinkCount === 0 && quotaBlockedMessageCount === 0,
@@ -196,7 +188,7 @@ export class SyncStatusReporter {
     tenantDid: string | undefined,
   ): Promise<void> {
     for (const entry of await this._operations.getDeadLetters()) {
-      if (!SyncStatusReporter.matchesTenant(entry.tenantDid, tenantDid) || entry.remoteEndpoint === undefined) {
+      if (!SyncStatusReporter.matchesTenant(entry.tenantDid, tenantDid)) {
         continue;
       }
 

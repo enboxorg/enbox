@@ -73,7 +73,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
       JSON.stringify({
         attempts       : 1,
         authorizationEpoch,
-        blockedCid,
+        blockedCid     : blockedCid ?? cid,
         detail,
         firstBlockedAt : stamp,
         lastBlockedAt,
@@ -106,7 +106,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
         authorizationEpoch,
         scope,
         authorization  : { kind: 'owner' },
-        status         : 'polling',
+        status         : 'initializing',
         connectivity   : params.connectivity,
         pull           : {},
         push           : {},
@@ -182,7 +182,6 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
 
   it('reports terminal-only remote failures as degraded with their error', async () => {
     await syncEngine.recordDeadLetter({
-      category       : 'admit-failed',
       errorCode      : 'Invalid',
       errorDetail    : 'terminal rejection',
       messageCid     : 'dl-1',
@@ -330,8 +329,9 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     };
     sinon.stub(internal, 'getLocalMessageForTarget').resolves(undefined);
     const pushStub = sinon.stub(internal, 'pushMessages').callsFake(async ({ messageCids }): Promise<PushResult> => ({
-      succeeded : [],
-      failed    : [{
+      acknowledged : [],
+      succeeded    : [],
+      failed       : [{
         cid          : messageCids[0],
         kind         : 'Deferred',
         reason       : 'storage',
@@ -579,7 +579,6 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     const internal = syncEngine as unknown as {
       collectLocalFeedCids(target: unknown): Promise<Set<string> | undefined>;
       collectRemoteFeedCids(target: unknown): Promise<Set<string> | undefined>;
-      getQuotaStatesForTarget(target: unknown): Promise<Array<{ messageCid: string; state: { supersededAt?: string } }>>;
       isFeedDivergenceExplainedByQuotaBlocks(target: unknown, result: unknown): Promise<boolean>;
     };
     sinon.stub(internal, 'collectLocalFeedCids').callsFake(async () => localCids);
@@ -594,7 +593,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     };
 
     expect(await internal.isFeedDivergenceExplainedByQuotaBlocks(target, {})).toBe(true);
-    expect(await internal.getQuotaStatesForTarget(target)).toEqual([
+    expect(await (syncEngine as any)._quotaManager.getStatesForTarget(target)).toEqual([
       expect.objectContaining({
         messageCid : 'update-cid',
         state      : expect.objectContaining({ supersededAt }),
@@ -607,14 +606,14 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     localCids = new Set(['initial-cid']);
     remoteCids = new Set();
     expect(await internal.isFeedDivergenceExplainedByQuotaBlocks(target, {})).toBe(true);
-    expect(await internal.getQuotaStatesForTarget(target)).toHaveLength(1);
+    expect(await (syncEngine as any)._quotaManager.getStatesForTarget(target)).toHaveLength(1);
 
     // Once the remote accounts for both the root and its attributed dependency,
     // the explanatory row is no longer needed.
     localCids = new Set(['initial-cid', 'update-cid']);
     remoteCids = new Set(['initial-cid', 'update-cid']);
     await internal.isFeedDivergenceExplainedByQuotaBlocks(target, {});
-    expect(await internal.getQuotaStatesForTarget(target)).toHaveLength(0);
+    expect(await (syncEngine as any)._quotaManager.getStatesForTarget(target)).toHaveLength(0);
   });
 
   it('uses delete-wins and strict same-record ordering when resolving blocked writes', async () => {
@@ -681,8 +680,9 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
       authorizationEpoch : 'owner',
       projectionId,
     }, {
-      succeeded : [],
-      failed    : [{ cid: 'cid-1', kind: 'Invalid', terminal: true, detail: 'terminal now' }],
+      acknowledged : [],
+      succeeded    : [],
+      failed       : [{ cid: 'cid-1', kind: 'Invalid', terminal: true, detail: 'terminal now' }],
     });
     unsubscribe();
 
@@ -695,7 +695,6 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     await seedQuotaBlock({ cid: 'cid-1', nextProbeAt: new Date(0).toISOString() });
     const internal = syncEngine as unknown as {
       transitionPushResult(target: unknown, result: PushResult): Promise<{ quotaBlocked: boolean }>;
-      getQuotaStatesForTarget(target: unknown): Promise<unknown[]>;
     };
     const target = {
       did                : TENANT,
@@ -719,7 +718,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     });
 
     expect(transition.quotaBlocked).toBe(false);
-    expect(await internal.getQuotaStatesForTarget(target)).toHaveLength(0);
+    expect(await (syncEngine as any)._quotaManager.getStatesForTarget(target)).toHaveLength(0);
     expect(await db.sublevel('quotaBlocks').values().all()).toHaveLength(0);
   });
 
@@ -730,7 +729,6 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     const internal = syncEngine as unknown as {
       transitionPushResult(target: unknown, result: PushResult): Promise<unknown>;
       getQuotaBlocksForTarget(target: unknown): Promise<unknown[]>;
-      getQuotaStatesForTarget(target: unknown): Promise<Array<{ state: { attempts: number; supersededAt?: string } }>>;
     };
     const target = {
       did                : TENANT,
@@ -747,13 +745,14 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
       failed       : [],
     });
 
-    const [resolved] = await internal.getQuotaStatesForTarget(target);
+    const [resolved] = await (syncEngine as any)._quotaManager.getStatesForTarget(target);
     expect(resolved.state).toMatchObject({ attempts: 1, supersededAt: expect.any(String) });
     expect(await internal.getQuotaBlocksForTarget(target)).toHaveLength(0);
 
     await internal.transitionPushResult(target, {
-      succeeded : [],
-      failed    : [{
+      acknowledged : [],
+      succeeded    : [],
+      failed       : [{
         cid          : 'cid-1',
         detail       : 'stale over-quota result',
         kind         : 'Deferred',
@@ -762,8 +761,9 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
       }],
     });
     await internal.transitionPushResult(target, {
-      succeeded : [],
-      failed    : [{ cid: 'cid-1', kind: 'Invalid', terminal: true, detail: 'stale terminal result' }],
+      acknowledged : [],
+      succeeded    : [],
+      failed       : [{ cid: 'cid-1', kind: 'Invalid', terminal: true, detail: 'stale terminal result' }],
     });
     unsubscribe();
 
@@ -774,7 +774,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     }));
     expect(events.some((event) => event.type === 'push:quota-blocked')).toBe(false);
     expect(await syncEngine.getFailedMessages(TENANT)).toHaveLength(0);
-    expect(await internal.getQuotaStatesForTarget(target)).toEqual([
+    expect(await (syncEngine as any)._quotaManager.getStatesForTarget(target)).toEqual([
       expect.objectContaining({
         state: expect.objectContaining({
           attempts     : 1,
@@ -789,7 +789,6 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     await seedQuotaBlock({ cid: 'cid-1', nextProbeAt: new Date(0).toISOString() });
     const internal = syncEngine as unknown as {
       transitionPushResult(target: unknown, result: PushResult): Promise<unknown>;
-      getQuotaStatesForTarget(target: unknown): Promise<unknown[]>;
     };
     const target = {
       did                : TENANT,
@@ -806,7 +805,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
       failed       : [],
     });
 
-    expect(await internal.getQuotaStatesForTarget(target)).toHaveLength(0);
+    expect(await (syncEngine as any)._quotaManager.getStatesForTarget(target)).toHaveLength(0);
     expect(await db.sublevel('quotaBlocks').values().all()).toHaveLength(0);
   });
 
@@ -827,8 +826,9 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
 
     const before = Date.now();
     const transition = await internal.transitionPushResult(target, {
-      succeeded : [],
-      failed    : [{
+      acknowledged : [],
+      succeeded    : [],
+      failed       : [{
         cid          : 'cid-1',
         detail       : 'tenant over storage quota',
         kind         : 'Deferred',
@@ -861,7 +861,6 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
   it('extends the re-probe backoff along the 30s/1m/5m/15m/30m ladder and clamps at 30m', async () => {
     const internal = syncEngine as unknown as {
       transitionPushResult(target: unknown, result: PushResult): Promise<unknown>;
-      getQuotaStatesForTarget(target: unknown): Promise<Array<{ state: { lastBlockedAt: string; nextProbeAt: string } }>>;
     };
     const target = {
       did                : TENANT,
@@ -877,8 +876,9 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     // One extra block past the ladder must clamp at the final 30m rung.
     for (let attempt = 0; attempt < ladder.length + 1; attempt++) {
       await internal.transitionPushResult(target, {
-        succeeded : [],
-        failed    : [{
+        acknowledged : [],
+        succeeded    : [],
+        failed       : [{
           cid          : 'cid-1',
           detail       : 'still over quota',
           kind         : 'Deferred',
@@ -886,7 +886,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
           reason       : 'storage',
         }],
       });
-      const [{ state }] = await internal.getQuotaStatesForTarget(target);
+      const [{ state }] = await (syncEngine as any)._quotaManager.getStatesForTarget(target);
       // nextProbeAt and lastBlockedAt derive from the same instant, so their
       // delta is exactly the backoff delay recorded for that attempt.
       observed.push(Date.parse(state.nextProbeAt) - Date.parse(state.lastBlockedAt));
