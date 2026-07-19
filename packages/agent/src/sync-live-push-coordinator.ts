@@ -138,19 +138,31 @@ export class SyncLivePushCoordinator {
     });
     runtime.entries.push({ cid });
 
-    if (!runtime.flushing && runtime.timer === undefined) {
+    // A busy mailbox means a flush (or requeue) is queued or in flight:
+    // entries appended now ride with it, or with the debounce timer it arms
+    // on completion. Only an idle, untimed queue starts a fresh flush.
+    if (controller.mailboxIdle && runtime.timer === undefined) {
       this.startSupervisedFlush(controller, runIdentityTask);
     }
   }
 
   /** Flush the current queue for one exact active link lifetime. */
   public async flushLink(linkKey: string, expectedController?: SyncLinkController): Promise<void> {
-    const batch = this.takeBatch(linkKey, expectedController);
+    const controller = this._operations.getController(linkKey);
+    if (controller === undefined || (expectedController !== undefined && controller !== expectedController)) {
+      return;
+    }
+    await controller.enqueue((): Promise<void> => this.flushExclusive(controller));
+  }
+
+  /** The flush body. Runs only inside the controller's mailbox. */
+  private async flushExclusive(controller: SyncLinkController): Promise<void> {
+    const batch = this.takeBatch(controller);
     if (batch === undefined) {
       return;
     }
 
-    const { controller, entries, isStale, runtime } = batch;
+    const { entries, isStale, runtime } = batch;
     const batchRetryCount = runtime.retryCount;
     try {
       const result = await this._operations.pushMessages({
@@ -160,14 +172,14 @@ export class SyncLivePushCoordinator {
         permissionGrantIds : runtime.permissionGrantIds,
         messageCids        : entries.map(({ cid }) => cid),
       });
-      await this.handleBatchResult(linkKey, batch, result);
+      await this.handleBatchResult(controller.linkKey, batch, result);
     } catch (error: unknown) {
       if (!isStale()) {
         this._operations.reportError(
           `SyncLivePushCoordinator: Push batch failed for ${runtime.did} -> ${runtime.dwnUrl}`,
           error,
         );
-        await this.requeue(controller, {
+        await this.requeueExclusive(controller, {
           ...SyncLivePushCoordinator.pendingFromRuntime(runtime),
           entries,
           retryCount: batchRetryCount + 1,
@@ -202,6 +214,11 @@ export class SyncLivePushCoordinator {
 
   /** Requeue a failed batch, or hand it to durable reconciliation when needed. */
   public async requeue(controller: SyncLinkController, pending: SyncLivePushPendingBatch): Promise<void> {
+    await controller.enqueue((): Promise<void> => this.requeueExclusive(controller, pending));
+  }
+
+  /** The requeue body. Runs only inside the controller's mailbox. */
+  private async requeueExclusive(controller: SyncLinkController, pending: SyncLivePushPendingBatch): Promise<void> {
     if (!controller.isActive) {
       return;
     }
@@ -245,11 +262,7 @@ export class SyncLivePushCoordinator {
     this._operations.scheduleReconcile(linkKey, link, 'push-quota-probe', delay);
   }
 
-  private takeBatch(linkKey: string, expectedController?: SyncLinkController): PushFlushBatch | undefined {
-    const controller = this._operations.getController(linkKey);
-    if (controller === undefined || (expectedController !== undefined && controller !== expectedController)) {
-      return undefined;
-    }
+  private takeBatch(controller: SyncLinkController): PushFlushBatch | undefined {
     if (controller.link.status !== 'live') {
       controller.clearPushRuntime();
       return undefined;
@@ -263,13 +276,14 @@ export class SyncLivePushCoordinator {
     const entries = runtime.entries;
     runtime.entries = [];
     if (entries.length === 0) {
-      if (runtime.timer === undefined && !runtime.flushing && runtime.retryCount === 0) {
+      if (runtime.timer === undefined && runtime.retryCount === 0) {
         controller.clearPushRuntime(runtime);
       }
       return undefined;
     }
 
-    runtime.flushing = true;
+    // At most one flush is in flight per link by construction: the mailbox
+    // serializes this body, so no in-flight flag is needed.
     return { controller, entries, isStale: () => !controller.isActive, runtime };
   }
 
@@ -292,7 +306,7 @@ export class SyncLivePushCoordinator {
       this.scheduleQuotaProbe(linkKey, controller.link, transition.nextQuotaProbeAt);
     }
     if (transition.retryableFailures.length > 0) {
-      await this.requeue(controller, {
+      await this.requeueExclusive(controller, {
         ...SyncLivePushCoordinator.pendingFromRuntime(runtime),
         entries: transition.retryableFailures.map((failure) => ({
           cid         : failure.cid,
@@ -310,7 +324,6 @@ export class SyncLivePushCoordinator {
   }
 
   private finishFlush(controller: SyncLinkController, runtime: SyncPushRuntimeState): void {
-    runtime.flushing = false;
     const current = controller.pushRuntime;
     if (!controller.isActive || current !== runtime || current.entries.length === 0 || current.timer !== undefined) {
       return;
@@ -374,6 +387,8 @@ export class SyncLivePushCoordinator {
     controller: SyncLinkController,
     runIdentityTask: SyncIdentityTaskRunner,
   ): void {
+    // Supervised task context, outside any mailbox operation: flushLink
+    // enqueues the exclusive flush behind whatever is already queued.
     void runIdentityTask(() => this.flushLink(controller.linkKey, controller));
   }
 

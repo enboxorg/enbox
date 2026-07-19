@@ -307,7 +307,7 @@ describe('SyncLivePushCoordinator', () => {
     expect(fixture.operations.pushMessages.calledTwice).toBe(true);
   });
 
-  it('uses the retry count captured when a transport batch starts', async () => {
+  it('serializes a reconcile requeue behind an in-flight transport batch', async () => {
     const clock = sinon.useFakeTimers();
     const fixture = createFixture({ retryBackoffMs: [0, 10, 20] });
     const controller = activate(fixture);
@@ -323,17 +323,26 @@ describe('SyncLivePushCoordinator', () => {
 
     const flushing = fixture.coordinator.flushLink(LINK_KEY, controller);
     await pushStarted.promise;
-    await fixture.coordinator.handleReconcileFailures(controller, [{
+
+    // The mailbox holds the reconcile requeue outside the in-flight flush:
+    // it queues behind the transport batch instead of interleaving with it.
+    let reconcileCompleted = false;
+    const reconcile = fixture.coordinator.handleReconcileFailures(controller, [{
       cid    : 'reconcile-cid',
-      detail : 'retry concurrently',
-    }]);
-    expect(runtime.retryCount).toBe(1);
+      detail : 'retry after the batch',
+    }]).then((): void => { reconcileCompleted = true; });
+    await Promise.resolve();
+    expect(reconcileCompleted).toBe(false);
 
     releasePush.resolve();
     await flushing;
+    await reconcile;
 
+    // Serialized order: the failed batch requeues its own entry first, then
+    // the reconcile requeue appends; the retry count reflects one transport
+    // failure, not a double count.
     expect(runtime.retryCount).toBe(1);
-    expect(runtime.entries.map(({ cid }) => cid)).toEqual(['reconcile-cid', 'in-flight-cid']);
+    expect(runtime.entries.map(({ cid }) => cid)).toEqual(['in-flight-cid', 'reconcile-cid']);
     controller.deactivate();
     await clock.runAllAsync();
   });

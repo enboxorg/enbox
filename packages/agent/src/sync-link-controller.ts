@@ -30,8 +30,6 @@ export type SyncPushRuntimeState = SyncPushRuntimeParams & {
   entries: SyncPushRuntimeEntry[];
   retryCount: number;
   timer?: ReturnType<typeof setTimeout>;
-  /** True while a push HTTP request is in flight for this link. */
-  flushing?: boolean;
 };
 
 type InFlightPullCommit = {
@@ -50,6 +48,8 @@ type InFlightPullCommit = {
  */
 export class SyncLinkController {
   private _active = true;
+  private _mailboxDepth = 0;
+  private _mailboxTail: Promise<void> = Promise.resolve();
   private _liveSubscription?: SyncLinkSubscription;
   private _localSubscription?: SyncLinkSubscription;
   private _nextPullCommitOrdinal = 0;
@@ -72,6 +72,42 @@ export class SyncLinkController {
   /** Whether this controller still owns callbacks for its active-link lifetime. */
   public get isActive(): boolean {
     return this._active;
+  }
+
+  /**
+   * Run link-scoped work serialized behind every previously enqueued
+   * operation for this controller lifetime — the link's mailbox. Work
+   * enqueued after deactivation resolves `undefined` without running (the
+   * convention paused task groups use), while an operation already running
+   * continues to completion. A rejected operation surfaces to its caller
+   * without poisoning the queue.
+   *
+   * Do not await a nested `enqueue` from inside an enqueued operation — the
+   * inner operation is ordered after the outer one and the await would
+   * deadlock. Internal helpers that already run inside the mailbox must call
+   * their exclusive bodies directly.
+   */
+  public enqueue<T>(operation: () => Promise<T>): Promise<T | undefined> {
+    if (!this._active) {
+      return Promise.resolve(undefined);
+    }
+    this._mailboxDepth++;
+    const run = this._mailboxTail.then(async (): Promise<T | undefined> => {
+      if (!this._active) {
+        return undefined;
+      }
+      return operation();
+    });
+    this._mailboxTail = run.then(
+      (): void => { this._mailboxDepth--; },
+      (): void => { this._mailboxDepth--; },
+    );
+    return run;
+  }
+
+  /** Whether no mailbox operation is queued or in flight. */
+  public get mailboxIdle(): boolean {
+    return this._mailboxDepth === 0;
   }
 
   /** Number of pull deliveries still waiting to become contiguously committed. */
