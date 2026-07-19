@@ -1748,9 +1748,13 @@ export class SyncEngineLevel implements SyncEngine {
 
     const cursorKey = target.linkKey;
     if (!controller.isActive || controller.linkKey !== cursorKey) { return false; }
+    // Capture the pull generation before the first await: a repair or pause
+    // that resets the pull runtime while this open is in flight supersedes
+    // the subscription being built, and it must not be installed.
+    const subscriptionPullEpoch = controller.pullEpoch;
     const { link } = controller;
     const cursor = await this.getInitialPullCursor({ did, dwnUrl, link });
-    if (!controller.isActive || controller.linkKey !== cursorKey) { return false; }
+    if (!controller.isActive || controller.linkKey !== cursorKey || controller.pullEpoch !== subscriptionPullEpoch) { return false; }
 
     const filters = target.scope.kind === 'protocolSet'
       ? target.scope.protocols.map(protocol => ({ protocol }))
@@ -1767,7 +1771,6 @@ export class SyncEngineLevel implements SyncEngine {
     // generation so callbacks from a subscription superseded by a repair reset
     // cannot touch checkpoints or trigger repairs after the link recovers.
     const linkStale = this.createLinkStalePredicate(controller, runtimeScope);
-    const subscriptionPullEpoch = controller.pullEpoch;
     const isStale = (): boolean => linkStale() || controller.pullEpoch !== subscriptionPullEpoch;
     const pullContext: SyncLivePullContext = {
       did,
@@ -1802,6 +1805,7 @@ export class SyncEngineLevel implements SyncEngine {
     if (!message) {
       throw new Error(`SyncEngineLevel: Failed to construct MessagesSubscribe for ${dwnUrl}`);
     }
+    if (!controller.isActive || controller.pullEpoch !== subscriptionPullEpoch) { return false; }
 
     // Build a resubscribe factory so the WebSocket client can resume with
     // a fresh cursor-stamped message after reconnection.
@@ -1838,6 +1842,20 @@ export class SyncEngineLevel implements SyncEngine {
         resubscribeFactory,
       },
     }) as MessagesSubscribeReply;
+    if (!controller.isActive || controller.pullEpoch !== subscriptionPullEpoch) {
+      // The generation that requested this subscription is gone. Discard the
+      // reply — including a stale 410 ProgressGap, which must not throw the
+      // superseded generation's link back into repair — and close anything
+      // the server opened for it.
+      if (reply.status.code === 200 && reply.subscription) {
+        try {
+          await reply.subscription.close();
+        } catch {
+          // Best-effort cleanup of a subscription opened for a stale generation.
+        }
+      }
+      return false;
+    }
     if (reply.status.code === 410) {
       // ProgressGap — the cursor is no longer replayable. The link needs repair.
       const gapError = new Error(`SyncEngineLevel: ProgressGap for ${did} -> ${dwnUrl}: ${reply.status.detail}`);
@@ -1850,7 +1868,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     const close = async (): Promise<void> => { await reply.subscription!.close(); };
-    if (!controller.setLiveSubscription({ close })) {
+    if (!controller.setLiveSubscription({ close }, subscriptionPullEpoch)) {
       try {
         await close();
       } catch {

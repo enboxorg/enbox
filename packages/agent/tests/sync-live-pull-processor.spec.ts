@@ -388,6 +388,37 @@ describe('SyncLivePullProcessor', () => {
     expect(context.controller?.pullInflightCount).toBe(0);
   });
 
+  it('orders an out-of-scope acknowledgement behind an earlier in-flight covered delivery', async () => {
+    const coveredStarted = deferred<void>();
+    const releaseCovered = deferred<void>();
+    const { admit, operations, processor } = createFixture();
+    const scope = { kind: 'protocolSet' as const, protocols: ['https://protocol.example/covered'] as [string] };
+    const state = link(scope);
+    const context = contextFor(state);
+    admit.onFirstCall().callsFake(async () => {
+      coveredStarted.resolve();
+      await releaseCovered.promise;
+      return { kind: 'admitted', appliedCids: ['covered'], freshEntries: [] };
+    });
+
+    const covered = processor.handleEvent(context, event(token('1'), protocolMessage('https://protocol.example/covered')));
+    await coveredStarted.promise;
+    await processor.handleEvent(context, event(token('2'), protocolMessage('https://protocol.example/outside')));
+
+    // The out-of-scope acknowledgement must wait in the ordinal queue: a
+    // direct advance would persist position 2 as contiguous while the
+    // position-1 delivery is still admitting, and a crash in that window
+    // would resume past the never-applied earlier event.
+    expect(operations.persistCheckpoint.notCalled).toBe(true);
+    expect(state.pull.contiguousAppliedToken).toBeUndefined();
+
+    releaseCovered.resolve();
+    await covered;
+
+    expect(state.pull.contiguousAppliedToken).toEqual(token('2'));
+    expect(operations.persistCheckpoint.calledOnceWithExactly(state)).toBe(true);
+  });
+
   it('ignores a delivery that commits across a pull-runtime reset', async () => {
     const staleStarted = deferred<void>();
     const releaseStale = deferred<void>();

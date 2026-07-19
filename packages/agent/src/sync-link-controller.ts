@@ -357,9 +357,19 @@ export class SyncLinkController {
     pushRuntime.timer = undefined;
   }
 
-  /** Attach a remote pull subscription only while this link lifetime is active. */
-  public setLiveSubscription(subscription: SyncLinkSubscription): boolean {
+  /**
+   * Attach a remote pull subscription only while this link lifetime is
+   * active — and, when the caller pins the pull generation it opened the
+   * subscription for, only while that generation is still current. A
+   * subscription opened across a generation reset would be installed
+   * permanently fenced: every callback discarded as stale while the slot
+   * blocks the replacement.
+   */
+  public setLiveSubscription(subscription: SyncLinkSubscription, expectedPullEpoch?: number): boolean {
     if (!this._active || this._liveSubscription !== undefined) {
+      return false;
+    }
+    if (expectedPullEpoch !== undefined && expectedPullEpoch !== this._pullEpoch) {
       return false;
     }
     this._liveSubscription = subscription;
