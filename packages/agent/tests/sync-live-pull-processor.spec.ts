@@ -515,6 +515,25 @@ describe('SyncLivePullProcessor', () => {
     expect(fetchMessages.notCalled).toBe(true);
   });
 
+  it('ignores inline data on a non-RecordsWrite event', async () => {
+    const { admit, fetchMessages, processor } = createFixture();
+    const context = contextFor();
+    let factory: (() => Promise<ReadableStream<Uint8Array> | undefined>) | undefined;
+    admit.callsFake(async (_rootCid, deps) => {
+      factory = deps.prefetched?.[0].dataStreamFactory;
+      return { kind: 'admitted', appliedCids: ['configure'], freshEntries: [] };
+    });
+
+    await processor.handleEvent(context, {
+      ...event(token('1'), protocolMessage()),
+      encodedData: Encoder.bytesToBase64Url(new Uint8Array([9])),
+    });
+
+    expect(factory).toBeDefined();
+    expect(await factory?.()).toBeUndefined();
+    expect(fetchMessages.notCalled).toBe(true);
+  });
+
   it('yields no data stream without a dataCid and re-fetches large record data for every admission attempt', async () => {
     const { admit, fetchMessages, operations, processor } = createFixture();
     const context = contextFor();
