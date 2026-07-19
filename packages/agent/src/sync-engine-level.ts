@@ -1364,12 +1364,13 @@ export class SyncEngineLevel implements SyncEngine {
         return this.createActiveLinkInitializationResult(link);
       }
 
-      const subscriptionResult = await this.openLinkSubscriptions({ ...target, linkKey }, controller);
+      const openGeneration = controller.pullEpoch;
+      const subscriptionResult = await this.openLinkSubscriptions({ ...target, linkKey }, controller, openGeneration);
       if (subscriptionResult === LinkSubscriptionOpenResult.Inactive || !controller.isActive) {
         return { status: LinkInitializationStatus.Failed };
       }
       if (subscriptionResult === LinkSubscriptionOpenResult.ReadyForLive) {
-        await this.markLinkLive(target, controller);
+        await this.markLinkLive(target, controller, openGeneration);
         if (!controller.isActive) {
           return { status: LinkInitializationStatus.Failed };
         }
@@ -1401,8 +1402,8 @@ export class SyncEngineLevel implements SyncEngine {
   private async openLinkSubscriptions(
     target: LinkSyncTarget,
     controller: SyncLinkController,
+    openGeneration = controller.pullEpoch,
   ): Promise<LinkSubscriptionOpenResult> {
-    const openGeneration = controller.pullEpoch;
     // Cleanup is owned by this opening attempt: once a pause or repair has
     // bumped the generation, the transition owns teardown and the fenced
     // attach kept this attempt from installing anything — a controller-wide
@@ -1413,7 +1414,7 @@ export class SyncEngineLevel implements SyncEngine {
       }
     };
 
-    const pullOpened = await this.openLivePullSubscription(target, controller);
+    const pullOpened = await this.openLivePullSubscription(target, controller, openGeneration);
     if (pullOpened === false || !controller.isActive) {
       await closeOwnAttempt();
       return LinkSubscriptionOpenResult.Inactive;
@@ -1422,9 +1423,17 @@ export class SyncEngineLevel implements SyncEngine {
       await controller.closeLiveSubscription();
       return LinkSubscriptionOpenResult.Repairing;
     }
+    // One generation owns the whole pair: a pause (or any reset) landing
+    // between the two halves must stop the attempt here — opening the local
+    // half under a newer generation would install a subscription the
+    // transition's teardown can never have seen.
+    if (controller.pullEpoch !== openGeneration || controller.link.status === 'paused') {
+      await closeOwnAttempt();
+      return LinkSubscriptionOpenResult.Inactive;
+    }
 
     try {
-      const pushOpened = await this.openLocalPushSubscription(target, controller);
+      const pushOpened = await this.openLocalPushSubscription(target, controller, openGeneration);
       if (pushOpened === false || !controller.isActive) {
         await closeOwnAttempt();
         return LinkSubscriptionOpenResult.Inactive;
@@ -1436,11 +1445,16 @@ export class SyncEngineLevel implements SyncEngine {
     return LinkSubscriptionOpenResult.ReadyForLive;
   }
 
-  private async markLinkLive(target: SyncTarget, controller: SyncLinkController): Promise<void> {
+  private async markLinkLive(
+    target: SyncTarget,
+    controller: SyncLinkController,
+    expectedGeneration?: number,
+  ): Promise<void> {
     const { link } = controller;
     // A pause or repair takeover during subscription opening owns the link's
     // phase now — completing initialization must not override it.
     if (!controller.isActive || link.status === 'paused' || link.status === 'repairing') { return; }
+    if (expectedGeneration !== undefined && controller.pullEpoch !== expectedGeneration) { return; }
     this.emitEvent({
       type           : 'link:status-change',
       tenantDid      : target.did,
@@ -1755,12 +1769,15 @@ export class SyncEngineLevel implements SyncEngine {
   private async openLivePullSubscription(
     target: LinkSyncTarget,
     controller: SyncLinkController,
+    expectedGeneration?: number,
   ): Promise<boolean> {
     if (!controller.isActive || controller.linkKey !== target.linkKey) { return false; }
-    // Capture the pull generation before the first await: a repair or pause
-    // that resets the pull runtime while this open is in flight supersedes
-    // the subscription being built, and it must not be installed.
-    const subscriptionPullEpoch = controller.pullEpoch;
+    // Pin the pull generation before the first await — the caller's pair
+    // generation when opening both halves, else the current one: a repair
+    // or pause that resets the pull runtime while this open is in flight
+    // supersedes the subscription being built, and it must not be installed.
+    const subscriptionPullEpoch = expectedGeneration ?? controller.pullEpoch;
+    if (controller.pullEpoch !== subscriptionPullEpoch) { return false; }
     try {
       return await this.openLivePullSubscriptionAttempt(target, controller, subscriptionPullEpoch);
     } catch (error: unknown) {
@@ -2012,11 +2029,13 @@ export class SyncEngineLevel implements SyncEngine {
   private async openLocalPushSubscription(
     target: LinkSyncTarget,
     controller: SyncLinkController,
+    expectedGeneration?: number,
   ): Promise<boolean> {
     if (!controller.isActive || controller.linkKey !== target.linkKey) { return false; }
     // Same generation ownership as the pull side: a pause or repair that
     // lands while the local subscribe is pending supersedes this attempt.
-    const subscriptionPullEpoch = controller.pullEpoch;
+    const subscriptionPullEpoch = expectedGeneration ?? controller.pullEpoch;
+    if (controller.pullEpoch !== subscriptionPullEpoch) { return false; }
     try {
       return await this.openLocalPushSubscriptionAttempt(target, controller, subscriptionPullEpoch);
     } catch (error: unknown) {
@@ -2042,7 +2061,8 @@ export class SyncEngineLevel implements SyncEngine {
 
     const isPushStale = (): boolean =>
       runtimeScope.disposed ||
-      !controller.isActive;
+      !controller.isActive ||
+      controller.pullEpoch !== subscriptionPullEpoch;
     const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(did);
 
     // Subscribe to the local DWN's EventLog.

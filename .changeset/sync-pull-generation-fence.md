@@ -16,15 +16,17 @@ a link bumps the generation synchronously, before any await, and:
 - out-of-scope events acknowledge through the ordinal tracker instead
   of directly persisting their cursor, so they cannot skip past an
   earlier covered delivery still admitting;
-- a subscription attempt (pull and local push) validates the generation
-  after every await and attaches through a generation-fenced install: a
-  pause or repair landing while the open is in flight closes the
-  returned subscription instead of installing a permanently fenced
-  slot, a stale ProgressGap or rejection is that attempt's teardown
-  rather than a fresh failure, and completing initialization cannot
-  mark a paused link live;
+- one generation is captured for the whole subscription pair: both
+  opener halves validate it after every await and attach through a
+  generation-fenced install, a pause landing between the halves stops
+  the attempt before the local half opens, a pause or repair landing
+  while an open is in flight closes the returned subscription instead
+  of installing a permanently fenced slot, a stale ProgressGap or
+  rejection is that attempt's teardown rather than a fresh failure,
+  and completing initialization cannot mark a paused link live;
 - cleanup is attempt-owned: a superseded opener no longer closes the
   replacement generation's subscription pair;
-- callbacks and processing rejections from a superseded subscription
-  are discarded silently instead of writing checkpoints, spamming error
+- callbacks and processing rejections from a superseded subscription —
+  remote pull and local push alike — are discarded silently instead of
+  writing checkpoints, enqueueing redundant pushes, spamming error
   reports, or re-triggering repair on a healthy link.

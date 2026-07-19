@@ -252,6 +252,60 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     await controller.shutdown();
   });
 
+  it('should stop the pair when a pause lands between the pull and local halves', async () => {
+    const fixture = createEngineFixture(db);
+    const { controller, engine } = fixture;
+    controller.link.status = 'initializing';
+    const openGeneration = controller.pullEpoch;
+    sinon.stub(engine as any, 'openLivePullSubscription').callsFake(async (): Promise<boolean> => {
+      // A terminal callback queued at attachment pauses the link before the
+      // caller resumes — the pause bumps the generation and tears down.
+      await (engine as any)._linkRecoveryCoordinator.transitionToPaused(LINK_KEY, controller.link);
+      return true;
+    });
+    const localOpen = sinon.spy(engine as any, 'openLocalPushSubscription');
+
+    const result = await (engine as any).openLinkSubscriptions(fixture.target, controller, openGeneration);
+
+    expect(result).toBe('inactive');
+    expect(localOpen.notCalled).toBe(true);
+    expect(controller.hasLocalSubscription).toBe(false);
+    expect(controller.link.status).toBe('paused');
+
+    await controller.shutdown();
+  });
+
+  it('should fence local subscription callbacks issued before a generation reset', async () => {
+    const fixture = createEngineFixture(db);
+    const { controller, engine } = fixture;
+    const handleEvent = sinon.stub((engine as any)._livePushCoordinator, 'handleEvent').resolves();
+    const localHandlers: Array<(message: unknown) => Promise<void>> = [];
+    const close = sinon.stub().resolves();
+    fixture.processRequest.callsFake(async (request: any) => {
+      localHandlers.push(request.subscriptionHandler);
+      return { reply: { status: { code: 200 }, subscription: { close } } };
+    });
+
+    expect(await (engine as any).openLocalPushSubscription(fixture.target, controller)).toBe(true);
+    // A repair resets the generation and reopens the local subscription.
+    controller.resetPullRuntime();
+    await controller.closeLocalSubscription();
+    expect(await (engine as any).openLocalPushSubscription(fixture.target, controller)).toBe(true);
+
+    const message = { type: 'event' };
+    await localHandlers[0](message);
+    await localHandlers[1](message);
+
+    // The superseded subscription's callback reports itself stale; the
+    // replacement generation's callback flows.
+    const staleForOld = handleEvent.firstCall.args[2] as () => boolean;
+    const staleForNew = handleEvent.secondCall.args[2] as () => boolean;
+    expect(staleForOld()).toBe(true);
+    expect(staleForNew()).toBe(false);
+
+    await controller.shutdown();
+  });
+
   it('should discard a stale ProgressGap reply instead of repairing the superseded generation', async () => {
     const fixture = createEngineFixture(db);
     const requestStarted = deferred();
