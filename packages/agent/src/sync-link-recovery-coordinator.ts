@@ -107,6 +107,10 @@ export class SyncLinkRecoveryCoordinator {
       return;
     }
 
+    // Mark the repair request synchronously, before the first await: an
+    // executing repair pass observes the supersession at its very next
+    // checkpoint instead of completing over this newer transition.
+    controller.requestSharedRun('repair');
     await this.setOfflineStatus(link, 'repairing');
     if (!controller.isActive) {
       return;
@@ -187,33 +191,46 @@ export class SyncLinkRecoveryCoordinator {
     }
 
     controller.requestSharedRun('repair');
-    return controller.enqueueShared('repair', async (): Promise<void> => {
-      // A repair transition that arrives while a repair is already executing
-      // is not a duplicate caller — it carries fresher state, such as a new
-      // resume token. One request mark is consumed per pass, so a burst of
-      // transitions yields exactly one trailing repair after the current one.
-      while (controller.consumeSharedRunRequest('repair')) {
+    return this.drainRepairRequests(controller);
+  }
+
+  /**
+   * Run shared repair turns until no request is pending. Each turn is one
+   * mailbox operation: a request arriving while a turn executes (a fresh
+   * transition carrying a newer resume token) yields exactly one trailing
+   * turn enqueued at the mailbox tail — behind any flush or reconciliation
+   * already queued — never an extra pass inside the current turn.
+   */
+  private async drainRepairRequests(controller: SyncLinkController): Promise<void> {
+    while (controller.sharedRunRequested('repair')) {
+      await controller.enqueueShared('repair', async (): Promise<void> => {
+        if (!controller.consumeSharedRunRequest('repair')) {
+          return;
+        }
         if (this.repairCancelled(controller, this._operations.getRuntimeScope())) {
           return;
         }
         await this.repairExclusive(controller);
-      }
 
-      // A reconcile already queued behind this repair (a timer that expired
-      // while the repair held the mailbox) provides the verification pass —
-      // arming the post-repair timer too would run a duplicate full pass.
-      if (
-        controller.isActive &&
-        controller.link.status === 'live' &&
-        !controller.mailboxBusy('reconcile')
-      ) {
-        this.scheduleLinkReconcile(
-          controller,
-          'post-repair-gap',
-          this._postRepairReconcileDelayMs,
-        );
-      }
-    });
+        // A reconcile already queued behind this repair (a timer that
+        // expired while the repair held the mailbox) provides the
+        // verification pass — arming the post-repair timer too would run a
+        // duplicate full pass. Likewise, a trailing repair request owns the
+        // link's recovery from here.
+        if (
+          !controller.sharedRunRequested('repair') &&
+          controller.isActive &&
+          controller.link.status === 'live' &&
+          !controller.mailboxBusy('reconcile')
+        ) {
+          this.scheduleLinkReconcile(
+            controller,
+            'post-repair-gap',
+            this._postRepairReconcileDelayMs,
+          );
+        }
+      });
+    }
   }
 
   /** Emit and coalesce a named durable-reconciliation request for a live link. */
@@ -273,11 +290,19 @@ export class SyncLinkRecoveryCoordinator {
    */
   public reconcile(controller: SyncLinkController): Promise<void> {
     controller.requestSharedRun('reconcile');
-    return controller.enqueueShared('reconcile', async (): Promise<void> => {
-      while (controller.consumeSharedRunRequest('reconcile')) {
+    return this.drainReconcileRequests(controller);
+  }
+
+  /** Run shared reconciliation turns until no request is pending. */
+  private async drainReconcileRequests(controller: SyncLinkController): Promise<void> {
+    while (controller.sharedRunRequested('reconcile')) {
+      await controller.enqueueShared('reconcile', async (): Promise<void> => {
+        if (!controller.consumeSharedRunRequest('reconcile')) {
+          return;
+        }
         await this.reconcileExclusive(controller);
-      }
-    });
+      });
+    }
   }
 
   private startSupervisedRepair(
@@ -307,7 +332,7 @@ export class SyncLinkRecoveryCoordinator {
     });
 
     await controller.closeSubscriptions();
-    if (this.repairCancelled(controller, runtimeScope)) {
+    if (this.repairSuperseded(controller, runtimeScope)) {
       return;
     }
     controller.resetPullRuntime();
@@ -317,22 +342,22 @@ export class SyncLinkRecoveryCoordinator {
       const outcome = await this._operations.reconcileTarget(
         target,
         undefined,
-        () => !this.repairCancelled(controller, runtimeScope),
+        () => !this.repairSuperseded(controller, runtimeScope),
       );
-      if (outcome.aborted || this.repairCancelled(controller, runtimeScope)) {
+      if (outcome.aborted || this.repairSuperseded(controller, runtimeScope)) {
         return;
       }
       this.emitApplied(link, outcome.admittedCids);
 
       const resumeToken = controller.repairResumeToken ?? link.pull.contiguousAppliedToken;
       await this._operations.resetPullCheckpoint(link, resumeToken);
-      if (this.repairCancelled(controller, runtimeScope)) {
+      if (this.repairSuperseded(controller, runtimeScope)) {
         return;
       }
       if (!await this.reopenSubscriptions(target, controller, runtimeScope)) {
         return;
       }
-      if (this.repairCancelled(controller, runtimeScope)) {
+      if (this.repairSuperseded(controller, runtimeScope)) {
         return;
       }
 
@@ -351,7 +376,7 @@ export class SyncLinkRecoveryCoordinator {
     if (!pullOpened) {
       return false;
     }
-    if (this.repairCancelled(controller, runtimeScope)) {
+    if (this.repairSuperseded(controller, runtimeScope)) {
       await controller.closeSubscriptions();
       return false;
     }
@@ -366,7 +391,7 @@ export class SyncLinkRecoveryCoordinator {
       throw error;
     }
 
-    if (!this.repairCancelled(controller, runtimeScope)) {
+    if (!this.repairSuperseded(controller, runtimeScope)) {
       return true;
     }
     await controller.closeSubscriptions();
@@ -389,7 +414,7 @@ export class SyncLinkRecoveryCoordinator {
         `SyncLinkRecoveryCoordinator: Stale pull resume token for ${target.did} -> ${target.dwnUrl}, resetting to start fresh`,
       );
       await this._operations.resetPullCheckpoint(controller.link);
-      if (this.repairCancelled(controller, runtimeScope)) {
+      if (this.repairSuperseded(controller, runtimeScope)) {
         return false;
       }
       return this._operations.openPullSubscription(target, controller);
@@ -401,10 +426,11 @@ export class SyncLinkRecoveryCoordinator {
     runtimeScope: SyncRuntimeHandle,
     pushFailures: PushFailure[],
   ): Promise<void> {
-    // A pause can land in the continuation gap after the reopen path's final
-    // check — a terminal callback from the freshly reopened subscription is
-    // enough. Completion must not revive it.
-    if (this.repairCancelled(controller, runtimeScope)) {
+    // A pause or a newer repair request can land in the continuation gap
+    // after the reopen path's final check — a terminal callback from the
+    // freshly reopened subscription is enough. A superseded pass must not
+    // clear progress, write the live status, or emit completion.
+    if (this.repairSuperseded(controller, runtimeScope)) {
       return;
     }
 
@@ -413,13 +439,13 @@ export class SyncLinkRecoveryCoordinator {
     const previousConnectivity = link.connectivity;
     link.connectivity = 'online';
     await this._operations.setStatus(link, 'live');
-    if (this.repairCancelled(controller, runtimeScope)) {
+    if (this.repairSuperseded(controller, runtimeScope)) {
       return;
     }
 
     if (pushFailures.length > 0) {
       await this._operations.handlePushFailures(controller, pushFailures);
-      if (this.repairCancelled(controller, runtimeScope)) {
+      if (this.repairSuperseded(controller, runtimeScope)) {
         return;
       }
     }
@@ -551,7 +577,11 @@ export class SyncLinkRecoveryCoordinator {
         `SyncLinkRecoveryCoordinator: Reconciliation failed for ${link.tenantDid} -> ${link.remoteEndpoint}`,
         error,
       );
-      this.scheduleReconcile(controller, this._reconcileRetryDelayMs);
+      // A trailing pass is already requested: it subsumes this retry, so
+      // arming a timer as well would run a third full pass later.
+      if (!controller.sharedRunRequested('reconcile')) {
+        this.scheduleReconcile(controller, this._reconcileRetryDelayMs);
+      }
     }
   }
 
@@ -624,6 +654,17 @@ export class SyncLinkRecoveryCoordinator {
    */
   private repairCancelled(controller: SyncLinkController, scope: SyncRuntimeHandle): boolean {
     return this.isStale(controller, scope) || controller.link.status === 'paused';
+  }
+
+  /**
+   * Whether the executing repair pass has been superseded: cancelled, or a
+   * newer repair request has taken ownership of the link's recovery. The
+   * superseded pass must not reopen subscriptions, clear progress, write
+   * the live status, or emit completion — the trailing turn begins with the
+   * link still repairing so its failures feed the normal retry ladder.
+   */
+  private repairSuperseded(controller: SyncLinkController, scope: SyncRuntimeHandle): boolean {
+    return this.repairCancelled(controller, scope) || controller.sharedRunRequested('repair');
   }
 
   private static targetFromController(controller: SyncLinkController): SyncLinkRecoveryTarget {

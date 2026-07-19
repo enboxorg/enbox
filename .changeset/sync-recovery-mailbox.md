@@ -8,11 +8,14 @@ Repair and durable-reconciliation passes now run on the same per-link
 mailbox that serializes live-push flushes, with three ownership rules
 replacing the old scattered in-flight bookkeeping:
 
-- Shared lanes with trailing runs: concurrent repair or reconcile
+- Shared lanes with trailing turns: concurrent repair or reconcile
   requests coalesce onto one execution, and a request arriving while a
   pass is already executing (a fresh gap with a newer resume token, a
   signal postdating the pass's remote snapshot) runs exactly one
-  trailing pass instead of being silently absorbed. The
+  trailing pass — enqueued as a new mailbox turn behind already-queued
+  work, never inline. A superseded repair pass does not complete, clear
+  progress, or mark the link live over the newer request, and a
+  requested trailing pass subsumes the failed pass's retry timer. The
   `repairInFlight`/`reconcileInFlight` handles are gone.
 - Pause is a cancellation fence: pausing stays prompt and mailbox-free
   (it is the fail-safe for revoked authorization), and every repair

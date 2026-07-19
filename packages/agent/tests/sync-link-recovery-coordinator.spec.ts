@@ -639,6 +639,92 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await clock.runAllAsync();
   });
 
+  it('does not let a superseded repair complete over a newer repair request', async () => {
+    const clock = sinon.useFakeTimers();
+    const fixture = createFixture({ repairBackoffMs: [1000] });
+    const state = link('repairing');
+    const controller = activate(fixture, state);
+    fixture.operations.reconcileTarget.onSecondCall().rejects(new Error('offline'));
+    const pushOpened = deferred<void>();
+    fixture.operations.openPushSubscription.onFirstCall().callsFake(async (): Promise<boolean> => {
+      pushOpened.resolve();
+      return true;
+    });
+
+    await fixture.coordinator.transitionToRepairing(controller);
+    const firstTask = fixture.taskRunner.firstCall.returnValue;
+    await pushOpened.promise;
+    // A newer transition takes ownership in the reopen→completion gap. The
+    // older pass must not clear progress, write live, or emit completion —
+    // the trailing turn begins with the link still repairing so its
+    // transient failure feeds the normal retry ladder.
+    await Promise.resolve();
+    const newerToken = token('42');
+    void fixture.coordinator.transitionToRepairing(controller, { resumeToken: newerToken });
+    await Promise.all(fixture.taskRunner.getCalls().map((call) => call.returnValue));
+    await firstTask;
+
+    expect(state.status).toBe('repairing');
+    expect(controller.repairRetryTimer).toBeDefined();
+    expect(controller.repairResumeToken).toEqual(newerToken);
+    expect(fixture.operations.emitEvent.calledWithMatch({ type: 'repair:completed' })).toBe(false);
+    expect(fixture.operations.emitEvent.calledWithMatch({ from: 'repairing', to: 'live' })).toBe(false);
+    controller.deactivate();
+    await clock.runAllAsync();
+  });
+
+  it('runs a trailing reconciliation as a new mailbox turn behind an already-queued flush', async () => {
+    const fixture = createFixture();
+    const controller = activate(fixture);
+    const order: string[] = [];
+    const releasePass = deferred<void>();
+    fixture.operations.reconcileTarget.callsFake(async () => {
+      order.push(`pass-${fixture.operations.reconcileTarget.callCount}`);
+      if (fixture.operations.reconcileTarget.callCount === 1) {
+        await releasePass.promise;
+      }
+      return { converged: true };
+    });
+
+    const first = fixture.coordinator.reconcile(controller);
+    await Promise.resolve();
+    const flush = controller.enqueue(async (): Promise<void> => { order.push('flush'); }, 'flush');
+    // The signal lands after the flush was queued: its trailing pass must
+    // not jump the mailbox queue.
+    const second = fixture.coordinator.reconcile(controller);
+    releasePass.resolve();
+    await Promise.all([first, flush, second]);
+
+    expect(order).toEqual(['pass-1', 'flush', 'pass-2']);
+  });
+
+  it('lets a successful trailing pass subsume the failed pass retry timer', async () => {
+    const clock = sinon.useFakeTimers();
+    const fixture = createFixture({ reconcileRetryDelayMs: 5000 });
+    const controller = activate(fixture);
+    const snapshotTaken = deferred<void>();
+    const releasePass = deferred<void>();
+    fixture.operations.reconcileTarget.onFirstCall().callsFake(async () => {
+      snapshotTaken.resolve();
+      await releasePass.promise;
+      throw new Error('offline');
+    });
+    fixture.operations.reconcileTarget.resolves({ converged: true });
+
+    const first = fixture.coordinator.reconcile(controller);
+    await snapshotTaken.promise;
+    const second = fixture.coordinator.reconcile(controller);
+    releasePass.resolve();
+    await Promise.all([first, second]);
+
+    // The trailing pass already covered the failed pass — after the retry
+    // deadline there must be no third full reconciliation.
+    await clock.tickAsync(5000);
+    await clock.runAllAsync();
+    expect(fixture.operations.reconcileTarget.callCount).toBe(2);
+    expect(controller.reconcileTimer).toBeUndefined();
+  });
+
   it('runs one trailing reconciliation pass for signals arriving after the snapshot', async () => {
     const fixture = createFixture();
     const state = link();
@@ -678,10 +764,10 @@ describe('SyncLinkRecoveryCoordinator', () => {
 
     const firstRepair = fixture.coordinator.repair(repairController);
     const secondRepair = fixture.coordinator.repair(repairController);
-    expect(secondRepair).toBe(firstRepair);
     await repairStarted.promise;
     releaseRepair.resolve();
-    await firstRepair;
+    await Promise.all([firstRepair, secondRepair]);
+    expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
     expect(repairController.mailboxBusy('repair')).toBe(false);
 
     const reconcileController = new SyncLinkController(LINK_KEY, link());
@@ -693,12 +779,13 @@ describe('SyncLinkRecoveryCoordinator', () => {
       await releaseReconcile.promise;
       return { converged: true };
     });
+    fixture.operations.reconcileTarget.resetHistory();
     const firstReconcile = fixture.coordinator.reconcile(reconcileController);
     const secondReconcile = fixture.coordinator.reconcile(reconcileController);
-    expect(secondReconcile).toBe(firstReconcile);
     await reconcileStarted.promise;
     releaseReconcile.resolve();
-    await firstReconcile;
+    await Promise.all([firstReconcile, secondReconcile]);
+    expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
     expect(reconcileController.mailboxBusy('reconcile')).toBe(false);
   });
 });
