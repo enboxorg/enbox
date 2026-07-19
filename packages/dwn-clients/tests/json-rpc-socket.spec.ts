@@ -834,6 +834,58 @@ describe('JsonRpcSocket', () => {
       client.close();
     }, 10_000);
 
+    it('should stay closed when close() races an in-flight reconnect attempt', async () => {
+      const onreconnected = mock((): void => {});
+      const client = await JsonRpcSocket.connect(socketDwnUrl, {
+        autoReconnect      : true,
+        baseReconnectDelay : 10,
+        maxReconnectDelay  : 10,
+        onreconnected,
+      });
+
+      // Gate reconnect establishment so close() can land mid-connect.
+      let releaseConnect!: () => void;
+      const connectGate = new Promise<void>((resolve) => { releaseConnect = resolve; });
+      const socketClass = JsonRpcSocket as unknown as {
+        createWebSocket(url: string, timeout: number): Promise<WebSocket>;
+      };
+      const originalCreate = socketClass.createWebSocket;
+      const createdSockets: WebSocket[] = [];
+      let connectCalls = 0;
+      socketClass.createWebSocket = async (url: string, timeout: number): Promise<WebSocket> => {
+        connectCalls += 1;
+        await connectGate;
+        const socket = await originalCreate.call(JsonRpcSocket, url, timeout);
+        createdSockets.push(socket);
+        return socket;
+      };
+
+      try {
+        // Unexpected drop — the reconnect loop enters the gated establishment.
+        client['socket'].close();
+        while (connectCalls === 0) {
+          await sleepWhileWaitingForEvents(10);
+        }
+
+        // Shutdown lands while the new WebSocket is still being established.
+        client.close();
+        releaseConnect();
+        await sleepWhileWaitingForEvents(100);
+
+        // The user-closed socket must stay closed: no assignment, no
+        // heartbeat, no reconnection announcement — and the fresh WebSocket
+        // is discarded.
+        expect(client.isConnected).toBe(false);
+        expect(client['reconnecting']).toBe(false);
+        expect(onreconnected).not.toHaveBeenCalled();
+        expect(client['_heartbeatInterval']).toBeUndefined();
+        expect(createdSockets).toHaveLength(1);
+        expect(createdSockets[0].readyState).toBeGreaterThanOrEqual(WebSocket.CLOSING);
+      } finally {
+        socketClass.createWebSocket = originalCreate;
+      }
+    }, 10_000);
+
     it('should restart heartbeat after reconnection', async (): Promise<void> => {
       const client = await JsonRpcSocket.connect(socketDwnUrl, {
         heartbeatInterval : 100,

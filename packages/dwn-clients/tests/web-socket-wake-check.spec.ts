@@ -1,7 +1,6 @@
-import type { JsonRpcSocket } from '../src/json-rpc-socket.js';
-
 import { afterEach, describe, expect, it } from 'bun:test';
 
+import { JsonRpcSocket } from '../src/json-rpc-socket.js';
 import { WebSocketDwnRpcClient } from '../src/web-socket-clients.js';
 
 const testDwnUrl = process.env.TEST_DWN_URL || 'http://localhost:3000';
@@ -152,5 +151,66 @@ describe('WebSocketDwnRpcClient wake health checks', () => {
     await waitFor((): boolean => connection.socket.isConnected);
     await waitFor((): boolean => pool.connections.size === 1);
     expect(pool.reconnectingSockets.size).toBe(0);
+  }, 10_000);
+
+  it('should not resurrect a pooled connection when shutdown races an in-flight reconnect', async () => {
+    // The shutdown race: a dropped socket is already past its backoff and
+    // awaiting a fresh WebSocket when closeAllConnections() runs. The pending
+    // establishment must not undo the shutdown — the fresh socket is
+    // discarded and both the pool and the reconnecting registry stay empty.
+    const dwnUrl = new URL(testDwnUrl);
+    dwnUrl.protocol = dwnUrl.protocol === 'http:' ? 'ws:' : 'wss:';
+
+    const client = new WebSocketDwnRpcClient();
+    const pool = poolOf(WebSocketDwnRpcClient);
+    const connection = await (client as unknown as {
+      getConnection(url: string): Promise<{ socket: JsonRpcSocket }>;
+    }).getConnection(dwnUrl.toString());
+
+    const socketInternals = connection.socket as unknown as {
+      options: { baseReconnectDelay?: number; maxReconnectDelay?: number };
+      socket: WebSocket;
+    };
+    socketInternals.options.baseReconnectDelay = 10;
+    socketInternals.options.maxReconnectDelay = 10;
+
+    // Gate reconnect establishment so shutdown can land mid-connect.
+    let releaseConnect!: () => void;
+    const connectGate = new Promise<void>((resolve) => { releaseConnect = resolve; });
+    const socketClass = JsonRpcSocket as unknown as {
+      createWebSocket(url: string, timeout: number): Promise<WebSocket>;
+    };
+    const originalCreate = socketClass.createWebSocket;
+    const createdSockets: WebSocket[] = [];
+    let connectCalls = 0;
+    socketClass.createWebSocket = async (url: string, timeout: number): Promise<WebSocket> => {
+      connectCalls += 1;
+      await connectGate;
+      const socket = await originalCreate.call(JsonRpcSocket, url, timeout);
+      createdSockets.push(socket);
+      return socket;
+    };
+
+    try {
+      // Unexpected drop: pool eviction, registry entry, gated establishment.
+      socketInternals.socket.close();
+      await waitFor((): boolean => connectCalls > 0);
+      expect(pool.reconnectingSockets.has(connection.socket)).toBe(true);
+
+      await WebSocketDwnRpcClient.closeAllConnections();
+      expect(pool.connections.size).toBe(0);
+      expect(pool.reconnectingSockets.size).toBe(0);
+
+      // Releasing the pending establishment must not resurrect anything.
+      releaseConnect();
+      await waitFor((): boolean => createdSockets.length === 1);
+      await waitFor((): boolean => createdSockets[0].readyState >= WebSocket.CLOSING);
+
+      expect(pool.connections.size).toBe(0);
+      expect(pool.reconnectingSockets.size).toBe(0);
+      expect(connection.socket.isConnected).toBe(false);
+    } finally {
+      socketClass.createWebSocket = originalCreate;
+    }
   }, 10_000);
 });

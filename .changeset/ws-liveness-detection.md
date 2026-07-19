@@ -24,6 +24,9 @@ undetected for 60–100s while subscriptions silently missed events.
   parked in backoff are exactly the ones a wake must reach. Recovery starts
   the moment the page wakes instead of at the next throttled timer tick.
   `closeAllConnections()` removes the listeners and also closes reconnecting
-  sockets so none survive shutdown to re-register into a cleared pool.
+  sockets so none survive shutdown to re-register into a cleared pool — and a
+  reconnect already past its backoff cannot undo a close that raced it:
+  establishment re-checks closure, discards the fresh WebSocket, and a
+  user-closed socket is never re-registered by `onreconnected`.
 - `dwn-server` heartbeat now `terminate()`s a dead peer instead of initiating
   a close handshake the peer can never complete.

@@ -352,8 +352,16 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       },
 
       onreconnected: (): void => {
-        // Re-register this connection in the map (it was deleted on close).
         WebSocketDwnRpcClient.reconnectingSockets.delete(socket);
+
+        // A user-closed socket must never re-enter the pool: shutdown may
+        // have raced an in-flight reconnection, and re-registering here would
+        // resurrect networking the caller believes is stopped.
+        if (socket.isClosedByUser) {
+          return;
+        }
+
+        // Re-register this connection in the map (it was deleted on close).
         const conn = { socket, subscriptions, url: url.toString() };
         WebSocketDwnRpcClient.connections.set(key, conn);
 

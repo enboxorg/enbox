@@ -656,6 +656,17 @@ export class JsonRpcSocket {
 
       try {
         const newSocket = await JsonRpcSocket.createWebSocket(this.url, connectTimeout);
+
+        // close() may have raced the connection establishment. A user-closed
+        // socket must stay closed: discard the fresh WebSocket without
+        // assigning it, wiring handlers, restarting the heartbeat, or
+        // announcing a reconnection.
+        if (this.closedByUser) {
+          this.reconnecting = false;
+          try { newSocket.close(); } catch { /* best effort */ }
+          return;
+        }
+
         this.socket = newSocket;
         this._isConnected = true;
         this.reconnecting = false;
