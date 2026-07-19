@@ -809,8 +809,7 @@ class IdentityRuntimeController implements IdentityRuntime {
 
     if (!this._authPromise) {
       this._authPromise = AuthManager.create({
-        sync             : '15s',
-        localDwnStrategy : 'prefer',
+        localDwnStrategy: 'prefer',
       }).then((auth) => {
         this._auth = auth;
         this._wireAuthListeners(auth);

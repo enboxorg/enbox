@@ -2182,6 +2182,39 @@ describe('SyncEngineLevel', () => {
         expect(syncSpy.callCount).toBe(3);
       });
 
+      it('arms the settle check and resolves startSync when startup target discovery fails', async () => {
+        await testHarness.agent.sync.registerIdentity({
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
+        });
+
+        const syncSpy = sinon.stub(SyncEngineLevel.prototype as any, 'sync');
+        syncSpy.resolves();
+
+        // DID endpoint discovery is transiently unavailable at startup: the
+        // settle timer must already be armed, and startSync must resolve —
+        // planning is best-effort and the settle pass is the recovery path.
+        const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
+        getSyncTargetsStub.onFirstCall().rejects(new Error('endpoint discovery unavailable'));
+        getSyncTargetsStub.resolves([]);
+
+        const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
+
+        await testHarness.agent.sync.startSync({ interval: '500ms' });
+
+        const callsAfterStart = syncSpy.callCount;
+        await clock.tickAsync(500);
+        syncSpy.restore();
+        getSyncTargetsStub.restore();
+        clock.restore();
+
+        // The initial catch-up ran, and the settle check still fired after
+        // the discovery failure.
+        expect(callsAfterStart).toBe(1);
+        expect(syncSpy.callCount).toBe(2);
+        expect(syncSpy.lastCall.args[1]).toEqual({ verifyConvergence: true });
+      });
+
       it('skips settle checks while sync work is already in progress', async () => {
         await testHarness.agent.sync.registerIdentity({
           did     : alice.did.uri,

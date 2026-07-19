@@ -364,10 +364,12 @@ export interface AuthManagerOptions {
   passwordProvider?: PasswordProvider;
 
   /**
-   * Sync interval for DWN synchronization.
+   * Sync configuration for DWN synchronization. Sync is always live
+   * (WebSocket subscriptions); an interval string sets the cadence of the
+   * periodic durable-feed settle check, not a polling loop.
    * - `'off'` — disable sync
-   * - `'15s'`, `'1m'`, etc. — poll at interval
-   * - `undefined` — live WebSocket sync
+   * - `'15s'`, `'1m'`, etc. — live sync with this settle-check cadence
+   * - `undefined` — live sync with the default settle-check cadence
    */
   sync?: SyncOption;
 

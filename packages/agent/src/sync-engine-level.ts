@@ -1163,7 +1163,14 @@ export class SyncEngineLevel implements SyncEngine {
     // on network switch, sleep/wake, or tab foregrounding. No-op in Node.
     this._connectivityManager.start();
 
-    // Step 1: Initial durable feed catch-up.
+    // Step 1: Schedule the periodic durable feed settle check before any
+    // fallible startup work — it is the recovery mechanism for everything
+    // below. DID endpoint discovery can be transiently unavailable, and a
+    // live runtime must never be left without its settle pass.
+    const integrityCheck = async (): Promise<void> => this.runLiveIntegrityCheck(runtime);
+    runtime.armInterval(SyncEngineLevel.SYNC_INTERVAL_TIMER, this.supervisedTick(integrityCheck), intervalMilliseconds);
+
+    // Step 2: Initial durable feed catch-up (best-effort).
     try {
       await this.sync();
     } catch (error) {
@@ -1173,15 +1180,17 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
 
-    // Step 2: Initialize replication links and open live subscriptions.
-    // Each target's link initialization is independent — process concurrently.
-    const syncTargets = await this.getSyncTargets();
-    await Promise.allSettled(syncTargets.map(t => this.initializeLinkTarget(t)));
-
-    // Step 3: Schedule infrequent durable feed settle check.
-    const integrityCheck = async (): Promise<void> => this.runLiveIntegrityCheck(runtime);
-
-    runtime.armInterval(SyncEngineLevel.SYNC_INTERVAL_TIMER, this.supervisedTick(integrityCheck), intervalMilliseconds);
+    // Step 3: Initialize replication links and open live subscriptions.
+    // Each target's link initialization is independent — process
+    // concurrently, and treat planning as best-effort: a transient
+    // discovery failure must not reject startSync or strand the runtime,
+    // and the armed settle check retries the durable work.
+    try {
+      const syncTargets = await this.getSyncTargets();
+      await Promise.allSettled(syncTargets.map(t => this.initializeLinkTarget(t)));
+    } catch (error) {
+      console.error('SyncEngineLevel: Live-sync startup planning failed; the settle check will retry', error);
+    }
   }
 
   private async runLiveIntegrityCheck(runtime: SyncRuntime): Promise<void> {

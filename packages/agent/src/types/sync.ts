@@ -768,7 +768,7 @@ export interface SyncEngine {
    *
    * Userland polling needs no engine mode: the one-shot {@link SyncEngine.sync}
    * runs the same durable feed reconciliation on demand, e.g.
-   * `setInterval(() => agent.sync.sync(), ms)`.
+   * `setInterval(() => { agent.sync.sync().catch(console.error); }, ms)`.
    */
   startSync(params?: StartSyncParams): Promise<void>;
   /**
