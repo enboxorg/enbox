@@ -354,7 +354,7 @@ describe('SyncLivePushCoordinator', () => {
     expect(fixture.operations.pushMessages.calledTwice).toBe(true);
   });
 
-  it('serializes a reconcile requeue behind an in-flight transport batch', async () => {
+  it('serializes an external requeue behind an in-flight transport batch', async () => {
     const clock = sinon.useFakeTimers();
     const fixture = createFixture({ retryBackoffMs: [0, 10, 20] });
     const controller = activate(fixture);
@@ -371,25 +371,28 @@ describe('SyncLivePushCoordinator', () => {
     const flushing = fixture.coordinator.flushLink(LINK_KEY, controller);
     await pushStarted.promise;
 
-    // The mailbox holds the reconcile requeue outside the in-flight flush:
-    // it queues behind the transport batch instead of interleaving with it.
-    let reconcileCompleted = false;
-    const reconcile = fixture.coordinator.handleReconcileFailures(controller, [{
-      cid    : 'reconcile-cid',
-      detail : 'retry after the batch',
-    }]).then((): void => { reconcileCompleted = true; });
+    // The mailbox holds an externally requested requeue outside the
+    // in-flight flush: it queues behind the transport batch instead of
+    // interleaving with it.
+    let requeueCompleted = false;
+    const requeued = fixture.coordinator.requeue(controller, {
+      did        : DID,
+      dwnUrl     : REMOTE,
+      entries    : [{ cid: 'requeue-cid', lastFailure: { cid: 'requeue-cid', detail: 'retry after the batch' } }],
+      retryCount : 1,
+    }).then((): void => { requeueCompleted = true; });
     await Promise.resolve();
-    expect(reconcileCompleted).toBe(false);
+    expect(requeueCompleted).toBe(false);
 
     releasePush.resolve();
     await flushing;
-    await reconcile;
+    await requeued;
 
     // Serialized order: the failed batch requeues its own entry first, then
-    // the reconcile requeue appends; the retry count reflects one transport
+    // the external requeue appends; the retry count reflects one transport
     // failure, not a double count.
     expect(runtime.retryCount).toBe(1);
-    expect(runtime.entries.map(({ cid }) => cid)).toEqual(['in-flight-cid', 'reconcile-cid']);
+    expect(runtime.entries.map(({ cid }) => cid)).toEqual(['in-flight-cid', 'requeue-cid']);
     controller.deactivate();
     await clock.runAllAsync();
   });
@@ -492,6 +495,98 @@ describe('SyncLivePushCoordinator', () => {
     expect(fixture.operations.captureIdentityTaskRunner.notCalled).toBe(true);
     expect(fixture.taskRunner.called).toBe(false);
     expect(fixture.operations.pushMessages.called).toBe(false);
+  });
+
+  it('drops a retryable push result that lands after the link was paused', async () => {
+    const fixture = createFixture();
+    const controller = activate(fixture);
+    const runtime = controller.getOrCreatePushRuntime({ did: DID, dwnUrl: REMOTE });
+    runtime.entries.push({ cid: 'paused-cid' });
+    const pushStarted = deferred<void>();
+    const releasePush = deferred<void>();
+    fixture.operations.pushMessages.callsFake(async () => {
+      pushStarted.resolve();
+      await releasePush.promise;
+      return { failed: [{ cid: 'paused-cid', detail: 'retry' }], succeeded: [] };
+    });
+    fixture.operations.transitionPushResult.resolves({
+      quotaBlocked      : false,
+      retryableFailures : [{ cid: 'paused-cid', detail: 'retry' }],
+      terminalFailures  : [],
+    });
+
+    const flushing = fixture.coordinator.flushLink(LINK_KEY, controller);
+    await pushStarted.promise;
+    // The pause path parks the link and clears the push runtime while the
+    // batch is in flight; the late result must not recreate any of it.
+    controller.link.status = 'paused';
+    controller.clearPushRuntime();
+    releasePush.resolve();
+    await flushing;
+
+    expect(controller.pushRuntime).toBeUndefined();
+    expect(fixture.operations.transitionPushResult.notCalled).toBe(true);
+    expect(fixture.operations.scheduleReconcile.notCalled).toBe(true);
+  });
+
+  it('stays quiet when a push rejects after the link was paused', async () => {
+    const fixture = createFixture();
+    const controller = activate(fixture);
+    const runtime = controller.getOrCreatePushRuntime({ did: DID, dwnUrl: REMOTE });
+    runtime.entries.push({ cid: 'paused-cid' });
+    const pushStarted = deferred<void>();
+    const releasePush = deferred<void>();
+    fixture.operations.pushMessages.callsFake(async () => {
+      pushStarted.resolve();
+      await releasePush.promise;
+      throw new Error('socket closed by pause teardown');
+    });
+
+    const flushing = fixture.coordinator.flushLink(LINK_KEY, controller);
+    await pushStarted.promise;
+    controller.link.status = 'paused';
+    controller.clearPushRuntime();
+    releasePush.resolve();
+    await flushing;
+
+    expect(fixture.operations.reportError.notCalled).toBe(true);
+    expect(controller.pushRuntime).toBeUndefined();
+  });
+
+  it('starts a flush behind a busy non-flush mailbox operation instead of stalling entries', async () => {
+    const fixture = createFixture();
+    const controller = activate(fixture);
+    const message = protocolMessage();
+    const cid = await Message.getCid(message);
+    const releaseRepair = deferred<void>();
+    const repair = controller.enqueue(async (): Promise<void> => {
+      await releaseRepair.promise;
+    }, 'repair');
+
+    await fixture.coordinator.handleEvent(target(), controller, () => false, fixture.taskRunner, event(message));
+
+    expect(controller.mailboxBusy('flush')).toBe(true);
+    expect(fixture.operations.pushMessages.called).toBe(false);
+
+    releaseRepair.resolve();
+    await repair;
+    await waitForLastTask(fixture.taskRunner);
+
+    expect(fixture.operations.pushMessages.calledOnce).toBe(true);
+    expect(fixture.operations.pushMessages.firstCall.args[0].messageCids).toEqual([cid]);
+  });
+
+  it('folds reconcile failures into the retry policy from inside a mailbox operation without re-entering it', async () => {
+    const fixture = createFixture({ retryBackoffMs: [0, 250] });
+    const controller = activate(fixture);
+    const failure = { cid: 'reconcile-cid', detail: 'transient' };
+
+    await controller.enqueue((): Promise<void> =>
+      fixture.coordinator.handleReconcileFailures(controller, [failure]), 'reconcile');
+
+    expect(controller.pushRuntime?.entries).toEqual([{ cid: 'reconcile-cid', lastFailure: failure }]);
+    expect(controller.pushRuntime?.timer).toBeDefined();
+    controller.deactivate();
   });
 });
 

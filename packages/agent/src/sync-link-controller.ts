@@ -38,6 +38,14 @@ type InFlightPullCommit = {
 };
 
 /**
+ * Serialization lanes multiplexed onto one link mailbox. Every enqueued
+ * operation runs FIFO regardless of lane; lanes only let callers observe
+ * pending work of one kind (`mailboxBusy`) and coalesce shared operations
+ * (`enqueueShared`) without extra in-flight bookkeeping.
+ */
+export type SyncLinkMailboxKind = 'flush' | 'repair' | 'reconcile';
+
+/**
  * Owns all ephemeral state associated with one active replication link.
  *
  * The controller is persistence- and transport-backend neutral. The enclosing
@@ -48,7 +56,9 @@ type InFlightPullCommit = {
  */
 export class SyncLinkController {
   private _active = true;
-  private _mailboxDepth = 0;
+  private readonly _mailboxKindDepths: Map<SyncLinkMailboxKind, number> = new Map();
+  private readonly _mailboxShared: Map<SyncLinkMailboxKind, Promise<unknown>> = new Map();
+  private readonly _sharedRunRequests: Set<SyncLinkMailboxKind> = new Set();
   private _mailboxTail: Promise<void> = Promise.resolve();
   private _liveSubscription?: SyncLinkSubscription;
   private _localSubscription?: SyncLinkSubscription;
@@ -56,11 +66,9 @@ export class SyncLinkController {
   private _nextPullDeliveryOrdinal = 0;
   private readonly _pullInflight: Map<number, InFlightPullCommit> = new Map();
   private _pushRuntime?: SyncPushRuntimeState;
-  private _reconcileInFlight?: Promise<void>;
   private _reconcileTimer?: ReturnType<typeof setTimeout>;
   private _reconcileTimerDueAt?: number;
   private _repairAttempts = 0;
-  private _repairInFlight?: Promise<void>;
   private _repairResumeToken?: ProgressToken;
   private _repairRetryTimer?: ReturnType<typeof setTimeout>;
 
@@ -87,27 +95,96 @@ export class SyncLinkController {
    * deadlock. Internal helpers that already run inside the mailbox must call
    * their exclusive bodies directly.
    */
-  public enqueue<T>(operation: () => Promise<T>): Promise<T | undefined> {
+  public enqueue<T>(operation: () => Promise<T>, kind?: SyncLinkMailboxKind): Promise<T | undefined> {
     if (!this._active) {
       return Promise.resolve(undefined);
     }
-    this._mailboxDepth++;
+    if (kind !== undefined) {
+      this._mailboxKindDepths.set(kind, (this._mailboxKindDepths.get(kind) ?? 0) + 1);
+    }
     const run = this._mailboxTail.then(async (): Promise<T | undefined> => {
       if (!this._active) {
         return undefined;
       }
       return operation();
     });
-    this._mailboxTail = run.then(
-      (): void => { this._mailboxDepth--; },
-      (): void => { this._mailboxDepth--; },
-    );
+    const settle = (): void => {
+      if (kind === undefined) {
+        return;
+      }
+      const depth = (this._mailboxKindDepths.get(kind) ?? 1) - 1;
+      if (depth <= 0) {
+        this._mailboxKindDepths.delete(kind);
+      } else {
+        this._mailboxKindDepths.set(kind, depth);
+      }
+    };
+    this._mailboxTail = run.then(settle, settle);
     return run;
   }
 
-  /** Whether no mailbox operation is queued or in flight. */
-  public get mailboxIdle(): boolean {
-    return this._mailboxDepth === 0;
+  /**
+   * Join the queued-or-running shared operation of `kind`, or enqueue
+   * `operation` as the new one. Callers coalesce onto a single execution
+   * per kind at a time — the mailbox form of an in-flight dedup handle —
+   * and the handle releases itself when that execution settles.
+   */
+  public enqueueShared<T>(kind: SyncLinkMailboxKind, operation: () => Promise<T>): Promise<T | undefined> {
+    const existing = this._mailboxShared.get(kind);
+    if (existing !== undefined) {
+      return existing as Promise<T | undefined>;
+    }
+
+    const run = this.enqueue(operation, kind);
+    this._mailboxShared.set(kind, run);
+    const release = (): void => {
+      if (this._mailboxShared.get(kind) === run) {
+        this._mailboxShared.delete(kind);
+      }
+    };
+    run.then(release, release);
+    return run;
+  }
+
+  /** Whether an operation of `kind` is queued or in flight in the mailbox. */
+  public mailboxBusy(kind: SyncLinkMailboxKind): boolean {
+    return (this._mailboxKindDepths.get(kind) ?? 0) > 0;
+  }
+
+  /**
+   * Record that a fresh run of the shared `kind` lane is wanted. A request
+   * that arrives while a run is already executing is not a duplicate caller
+   * — it postdates that run's snapshot of the world — so the lane's loop
+   * consumes one mark per pass and runs exactly one trailing pass for a
+   * burst of requests.
+   */
+  public requestSharedRun(kind: SyncLinkMailboxKind): void {
+    if (this._active) {
+      this._sharedRunRequests.add(kind);
+    }
+  }
+
+  /** Whether a run request for `kind` is pending. */
+  public sharedRunRequested(kind: SyncLinkMailboxKind): boolean {
+    return this._sharedRunRequests.has(kind);
+  }
+
+  /**
+   * Run shared `kind` turns until no run request is pending. Each turn is
+   * one mailbox operation that consumes one request mark, so a request
+   * arriving while a turn executes yields exactly one trailing turn at the
+   * mailbox tail — behind any work already queued — and a burst of further
+   * requests coalesces into it.
+   */
+  public async drainSharedRuns(kind: SyncLinkMailboxKind, run: () => Promise<void>): Promise<void> {
+    while (this._sharedRunRequests.has(kind)) {
+      await this.enqueueShared(kind, async (): Promise<void> => {
+        if (!this._sharedRunRequests.delete(kind)) {
+          return;
+        }
+        await run();
+      });
+    }
   }
 
   /** Number of pull deliveries still waiting to become contiguously committed. */
@@ -117,10 +194,6 @@ export class SyncLinkController {
 
   public get pushRuntime(): SyncPushRuntimeState | undefined {
     return this._pushRuntime;
-  }
-
-  public get reconcileInFlight(): Promise<void> | undefined {
-    return this._reconcileInFlight;
   }
 
   public get reconcileTimer(): ReturnType<typeof setTimeout> | undefined {
@@ -133,10 +206,6 @@ export class SyncLinkController {
 
   public get repairAttempts(): number {
     return this._repairAttempts;
-  }
-
-  public get repairInFlight(): Promise<void> | undefined {
-    return this._repairInFlight;
   }
 
   public get repairResumeToken(): ProgressToken | undefined {
@@ -329,18 +398,12 @@ export class SyncLinkController {
 
   public clearRepairProgress(): void {
     this._repairAttempts = 0;
-    this._repairResumeToken = undefined;
-    this.cancelRepairRetry();
-  }
-
-  public setRepairInFlight(operation: Promise<void>): void {
-    this._repairInFlight = operation;
-  }
-
-  public clearRepairInFlight(operation: Promise<void>): void {
-    if (this._repairInFlight === operation) {
-      this._repairInFlight = undefined;
+    // A pending repair request owns the freshest resume token — completing
+    // the pass it supersedes must not discard it.
+    if (!this._sharedRunRequests.has('repair')) {
+      this._repairResumeToken = undefined;
     }
+    this.cancelRepairRetry();
   }
 
   public setRepairRetryTimer(timer: ReturnType<typeof setTimeout>): void {
@@ -362,16 +425,6 @@ export class SyncLinkController {
     if (this._repairRetryTimer !== undefined) {
       clearTimeout(this._repairRetryTimer);
       this._repairRetryTimer = undefined;
-    }
-  }
-
-  public setReconcileInFlight(operation: Promise<void>): void {
-    this._reconcileInFlight = operation;
-  }
-
-  public clearReconcileInFlight(operation: Promise<void>): void {
-    if (this._reconcileInFlight === operation) {
-      this._reconcileInFlight = undefined;
     }
   }
 
@@ -415,9 +468,9 @@ export class SyncLinkController {
     this.cancelRepairRetry();
     this.cancelReconcileTimer();
     this.resetPullRuntime();
-    this._reconcileInFlight = undefined;
+    this._mailboxShared.clear();
+    this._sharedRunRequests.clear();
     this._repairAttempts = 0;
-    this._repairInFlight = undefined;
     this._repairResumeToken = undefined;
   }
 

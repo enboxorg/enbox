@@ -138,10 +138,13 @@ export class SyncLivePushCoordinator {
     });
     runtime.entries.push({ cid });
 
-    // A busy mailbox means a flush (or requeue) is queued or in flight:
+    // A busy flush lane means a flush or requeue is queued or in flight:
     // entries appended now ride with it, or with the debounce timer it arms
-    // on completion. Only an idle, untimed queue starts a fresh flush.
-    if (controller.mailboxIdle && runtime.timer === undefined) {
+    // on completion. Repair and reconciliation occupy the mailbox too, so
+    // gate on the flush lane rather than mailbox idleness — a flush queued
+    // behind a running repair keeps these entries from stalling until the
+    // next event arrives.
+    if (!controller.mailboxBusy('flush') && runtime.timer === undefined) {
       this.startSupervisedFlush(controller, runIdentityTask);
     }
   }
@@ -152,7 +155,7 @@ export class SyncLivePushCoordinator {
     if (controller === undefined || (expectedController !== undefined && controller !== expectedController)) {
       return;
     }
-    await controller.enqueue((): Promise<void> => this.flushExclusive(controller));
+    await controller.enqueue((): Promise<void> => this.flushExclusive(controller), 'flush');
   }
 
   /** The flush body. Runs only inside the controller's mailbox. */
@@ -190,7 +193,11 @@ export class SyncLivePushCoordinator {
     }
   }
 
-  /** Feed reconciliation failures back into the same bounded live retry policy. */
+  /**
+   * Feed reconciliation failures back into the same bounded live retry
+   * policy. Called from repair and reconciliation mailbox operations, so it
+   * requeues exclusively instead of re-entering the mailbox.
+   */
   public async handleReconcileFailures(
     controller: SyncLinkController,
     failures: PushFailure[],
@@ -200,7 +207,7 @@ export class SyncLivePushCoordinator {
     }
 
     const { link } = controller;
-    await this.requeue(controller, {
+    await this.requeueExclusive(controller, {
       did                : link.tenantDid,
       dwnUrl             : link.remoteEndpoint,
       delegateDid        : link.delegateDid,
@@ -214,12 +221,12 @@ export class SyncLivePushCoordinator {
 
   /** Requeue a failed batch, or hand it to durable reconciliation when needed. */
   public async requeue(controller: SyncLinkController, pending: SyncLivePushPendingBatch): Promise<void> {
-    await controller.enqueue((): Promise<void> => this.requeueExclusive(controller, pending));
+    await controller.enqueue((): Promise<void> => this.requeueExclusive(controller, pending), 'flush');
   }
 
   /** The requeue body. Runs only inside the controller's mailbox. */
   private async requeueExclusive(controller: SyncLinkController, pending: SyncLivePushPendingBatch): Promise<void> {
-    if (!controller.isActive) {
+    if (!controller.isActive || controller.link.status !== 'live') {
       return;
     }
 
@@ -292,8 +299,13 @@ export class SyncLivePushCoordinator {
     }
 
     // At most one flush is in flight per link by construction: the mailbox
-    // serializes this body, so no in-flight flag is needed.
-    return { controller, entries, isStale: () => !controller.isActive, runtime };
+    // serializes this body, so no in-flight flag is needed. The batch dies
+    // with its runtime, its live phase, or its controller — a pause clears
+    // the push runtime and an in-flight result landing afterwards must not
+    // fold transitions, requeue entries, or recreate what the pause cleared.
+    const isStale = (): boolean =>
+      !controller.isActive || controller.pushRuntime !== runtime || controller.link.status !== 'live';
+    return { controller, entries, isStale, runtime };
   }
 
   private async handleBatchResult(linkKey: string, batch: PushFlushBatch, result: PushResult): Promise<void> {

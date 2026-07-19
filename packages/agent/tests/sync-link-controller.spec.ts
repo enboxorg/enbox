@@ -204,8 +204,6 @@ describe('SyncLinkController', () => {
     controller.setReconcileTimer(reconcileTimer, Date.now() + 10);
     controller.incrementRepairAttempts();
     controller.setRepairResumeToken(token(1));
-    controller.setRepairInFlight(Promise.resolve());
-    controller.setReconcileInFlight(Promise.resolve());
 
     controller.deactivate();
     await clock.tickAsync(10);
@@ -216,30 +214,7 @@ describe('SyncLinkController', () => {
     expect(controller.reconcileTimer).toBeUndefined();
     expect(controller.repairAttempts).toBe(0);
     expect(controller.repairResumeToken).toBeUndefined();
-    expect(controller.repairInFlight).toBeUndefined();
-    expect(controller.reconcileInFlight).toBeUndefined();
     expect(fired.called).toBe(false);
-  });
-
-  it('should clear only the matching in-flight operation', async () => {
-    const controller = new SyncLinkController('link-key', createLink());
-    const firstRepair = Promise.resolve();
-    const secondRepair = Promise.resolve();
-    const firstReconcile = Promise.resolve();
-    const secondReconcile = Promise.resolve();
-
-    controller.setRepairInFlight(firstRepair);
-    controller.clearRepairInFlight(secondRepair);
-    controller.setReconcileInFlight(firstReconcile);
-    controller.clearReconcileInFlight(secondReconcile);
-
-    expect(controller.repairInFlight).toBe(firstRepair);
-    expect(controller.reconcileInFlight).toBe(firstReconcile);
-
-    controller.clearRepairInFlight(firstRepair);
-    controller.clearReconcileInFlight(firstReconcile);
-    expect(controller.repairInFlight).toBeUndefined();
-    expect(controller.reconcileInFlight).toBeUndefined();
   });
 });
 
@@ -260,12 +235,10 @@ describe('SyncLinkController mailbox', () => {
       order.push('second');
     });
 
-    expect(controller.mailboxIdle).toBe(false);
     releaseFirst();
     await Promise.all([first, second]);
 
     expect(order).toEqual(['first', 'second']);
-    expect(controller.mailboxIdle).toBe(true);
   });
 
   it('should refuse work enqueued after deactivation while letting in-flight work finish', async () => {
@@ -311,6 +284,66 @@ describe('SyncLinkController mailbox', () => {
     expect(queuedRan).toBe(false);
   });
 
+  it('should track lane business for queued and running operations independently', async () => {
+    const controller = new SyncLinkController(LINK_KEY, createLink());
+    let releaseFlush!: () => void;
+    const flushGate = new Promise<void>((resolve) => { releaseFlush = resolve; });
+
+    const flush = controller.enqueue(async (): Promise<void> => { await flushGate; }, 'flush');
+    const repair = controller.enqueue(async (): Promise<void> => {}, 'repair');
+
+    expect(controller.mailboxBusy('flush')).toBe(true);
+    expect(controller.mailboxBusy('repair')).toBe(true);
+    expect(controller.mailboxBusy('reconcile')).toBe(false);
+
+    releaseFlush();
+    await Promise.all([flush, repair]);
+
+    expect(controller.mailboxBusy('flush')).toBe(false);
+    expect(controller.mailboxBusy('repair')).toBe(false);
+  });
+
+  it('should coalesce shared operations per lane and release the handle on settlement', async () => {
+    const controller = new SyncLinkController(LINK_KEY, createLink());
+    let releaseRepair!: () => void;
+    const repairGate = new Promise<void>((resolve) => { releaseRepair = resolve; });
+    let repairRuns = 0;
+    let reconcileRuns = 0;
+    let joinedRan = false;
+
+    const repair = controller.enqueueShared('repair', async (): Promise<void> => {
+      repairRuns++;
+      await repairGate;
+    });
+    const joined = controller.enqueueShared('repair', async (): Promise<void> => { joinedRan = true; });
+    const reconcile = controller.enqueueShared('reconcile', async (): Promise<void> => { reconcileRuns++; });
+
+    expect(joined).toBe(repair);
+    releaseRepair();
+    await Promise.all([repair, reconcile]);
+
+    expect(repairRuns).toBe(1);
+    expect(joinedRan).toBe(false);
+    expect(reconcileRuns).toBe(1);
+
+    await controller.enqueueShared('repair', async (): Promise<void> => { repairRuns++; });
+    expect(repairRuns).toBe(2);
+  });
+
+  it('should release a shared handle whose operation rejected', async () => {
+    const controller = new SyncLinkController(LINK_KEY, createLink());
+    let retried = false;
+
+    const failing = controller.enqueueShared('repair', async (): Promise<void> => {
+      throw new Error('repair failed');
+    });
+    await expect(failing).rejects.toThrow('repair failed');
+
+    await controller.enqueueShared('repair', async (): Promise<void> => { retried = true; });
+    expect(retried).toBe(true);
+    expect(controller.mailboxBusy('repair')).toBe(false);
+  });
+
   it('should surface a rejection to its caller without poisoning the queue', async () => {
     const controller = new SyncLinkController(LINK_KEY, createLink());
     let secondRan = false;
@@ -324,6 +357,5 @@ describe('SyncLinkController mailbox', () => {
     await second;
 
     expect(secondRan).toBe(true);
-    expect(controller.mailboxIdle).toBe(true);
   });
 });
