@@ -2,18 +2,7 @@ import { describe, expect, it } from 'bun:test';
 
 import { SyncTaskGroup } from '../src/sync-task-group.js';
 
-type Deferred = {
-  promise: Promise<void>;
-  resolve: () => void;
-};
-
-function createDeferred(): Deferred {
-  let resolve!: () => void;
-  const promise = new Promise<void>((resolvePromise) => {
-    resolve = resolvePromise;
-  });
-  return { promise, resolve };
-}
+import { deferred as createDeferred } from './utils/deferred.js';
 
 describe('SyncTaskGroup', () => {
   it('should wait for owned work and tasks it starts before becoming idle', async () => {

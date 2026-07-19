@@ -219,13 +219,6 @@ export async function computeAuthorizationEpoch(input:
  */
 export type DirectionCheckpoint = {
   /**
-   * The latest token received from the source (pull) or confirmed by the
-   * remote (push). May be ahead of `contiguousAppliedToken` when events
-   * arrive out of order. Used for observability.
-   */
-  receivedToken?: ProgressToken;
-
-  /**
    * The highest token such that all earlier delivered tokens for this link
    * have been durably applied. This is the resume point after crash/reconnect.
    *
@@ -261,11 +254,10 @@ export type SyncRunOptions = {
  *
  * - `initializing` — link created, no subscriptions open yet.
  * - `live` — actively receiving events via subscription.
- * - `polling` — current link is reconciled by periodic durable feed sync; live subscription is not supported for its scope.
  * - `repairing` — gap detected or pending overflow; running durable feed repair.
  * - `paused` — link retries are stopped until the app updates registration or recreates the link.
  */
-export type LinkStatus = 'initializing' | 'live' | 'polling' | 'repairing' | 'paused';
+export type LinkStatus = 'initializing' | 'live' | 'repairing' | 'paused';
 
 /**
  * Durable state of a single replication link. Persisted to LevelDB and
@@ -367,10 +359,10 @@ export type PushResult = {
   succeeded: string[];
   /**
    * Deduplicated acknowledgement metadata for successful roots and dependencies.
-   * Optional so existing PushResult producers remain source-compatible; consumers
-   * may treat an omitted root entry as `applied` when its CID is in `succeeded`.
+   * Consumers may treat an omitted root entry as `applied` when its CID is in
+   * `succeeded`.
    */
-  acknowledged?: PushAcknowledgement[];
+  acknowledged: PushAcknowledgement[];
   /** Requested root messageCids that failed and should be retried or reconciled. */
   failed: PushFailure[];
 };
@@ -413,7 +405,7 @@ export function pushBatchReconcileReason(entries: Array<{ lastFailure?: PushFail
  */
 export type StartSyncParams = {
   /**
-   * The sync mode to use. Default: `'poll'`.
+   * The sync mode to use.
    *
    * - `'live'`: Opens `MessagesSubscribe` WebSocket subscriptions to remote
    *   DWNs for real-time pull, and listens to the local EventLog for immediate
@@ -423,7 +415,7 @@ export type StartSyncParams = {
    * - `'poll'`: Performs durable feed reconciliation on a
    *   fixed interval. No WebSocket subscriptions are used.
    */
-  mode?: SyncMode;
+  mode: SyncMode;
 
   /**
    * The interval at which the sync operation should be performed.
@@ -490,6 +482,23 @@ export type SyncEventScope = {
   /** Present when the event belongs to a protocol-set link. */
   protocols?: NonEmptyStringArray;
 };
+
+/** Project a link scope into the scope metadata attached to observability events. */
+export function syncEventScope(scope: SyncScope | undefined): SyncEventScope {
+  if (scope === undefined) {
+    return {};
+  }
+
+  const coveredProtocols = protocolsForSyncScope(scope);
+  if (coveredProtocols === undefined) {
+    return {};
+  }
+
+  const protocols = [...coveredProtocols] as NonEmptyStringArray;
+  return protocols.length === 1
+    ? { protocol: protocols[0], protocols }
+    : { protocols };
+}
 
 type SyncEventBase = {
   tenantDid: string;
@@ -563,21 +572,16 @@ export type SyncEventListener = (event: SyncEvent) => void;
 // Dead letter tracking
 // ---------------------------------------------------------------------------
 
-/** Category of sync failure for dead letter entries. */
-export type DeadLetterCategory = 'admit-failed';
-
 /** A message that permanently failed to sync. */
 export type DeadLetterEntry = {
   /** The message CID that failed. */
   messageCid: string;
   /** The tenant DID the message belongs to. */
   tenantDid: string;
-  /** The remote DWN endpoint involved (for push failures). */
-  remoteEndpoint?: string;
+  /** The remote DWN endpoint involved. */
+  remoteEndpoint: string;
   /** The protocol URI, if applicable. */
   protocol?: string;
-  /** What kind of failure occurred. */
-  category: DeadLetterCategory;
   /** Machine-readable error code (for example, an HTTP status or admission reason). */
   errorCode?: string;
   /** Human-readable error detail. */
@@ -601,12 +605,6 @@ export type SyncHealthSummary = {
    * the engine self-heals — entries are auto-cleared on later success.
    */
   failedMessageCount: number;
-  /**
-   * Number of current admission failures. A link can have matching sync roots
-   * while still rejecting specific roots; this count keeps that state visible
-   * to callers.
-   */
-  admissionFailureCount: number;
   /** Number of current sync links in `repairing` or `paused` status. */
   degradedLinkCount: number;
   /**

@@ -19,16 +19,13 @@ import type { SyncMessageEntry } from './sync-messages.js';
 import type { SyncReplicationLinkStore } from './sync-replication-link-store.js';
 import type { SyncRuntimeHandle } from './sync-runtime.js';
 import type {
-  DeadLetterCategory,
   DeadLetterEntry,
-  NonEmptyStringArray,
   PushFailure,
   PushResult,
   RemoteSyncStatus,
   ReplicationLinkSnapshot,
   ReplicationLinkState,
   StartSyncParams,
-  SyncAuthorization,
   SyncConnectivityState,
   SyncDirection,
   SyncDrainOptions,
@@ -36,7 +33,6 @@ import type {
   SyncEngine,
   SyncEvent,
   SyncEventListener,
-  SyncEventScope,
   SyncHealthSummary,
   SyncIdentityOptions,
   SyncRunOptions,
@@ -65,6 +61,7 @@ import { AgentPermissionsApi } from './permissions-api.js';
 
 import { admitClosure } from './sync-admit-closure.js';
 import { DwnInterface } from './types/dwn.js';
+import { isValidProgressToken } from './sync-checkpoint.js';
 import { runWithCrossContextLock } from './sync-cross-context-lock.js';
 import { SyncConnectivityManager } from './sync-connectivity-manager.js';
 import { SyncDeadLetterStoreLevel } from './sync-dead-letter-store-level.js';
@@ -90,8 +87,8 @@ import { SyncScopeClosureValidator } from './sync-scope-closure-validator.js';
 import { SyncStatusReporter } from './sync-status-reporter.js';
 import { SyncTargetPlanner } from './sync-target-planner.js';
 import { buildDurableLinkIdentityKey, buildLinkId, LINK_ID_SEPARATOR } from './sync-link-id.js';
-import { computeProjectionId, isTerminalPushFailure, lexicographicalCompare, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
-import { fetchRemoteMessages, getLocalMessage, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed } from './sync-messages.js';
+import { computeProjectionId, isTerminalPushFailure, lexicographicalCompare, singleProtocolForSyncScope, syncEventScope, syncScopeFromProtocols } from './types/sync.js';
+import { fetchRemoteMessages, getLocalMessage, isInitialWriteForRecord, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, recordIdForRecordsMessage } from './sync-messages.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
 import { normalizeDwnEndpoint, SyncTargetResolver } from './sync-target-resolver.js';
 
@@ -142,22 +139,6 @@ type PendingSyncRun = {
   fence: () => boolean;
   promise: Promise<void>;
 };
-
-function syncEventScope(scope: SyncScope | undefined): SyncEventScope {
-  if (scope === undefined) {
-    return {};
-  }
-
-  const coveredProtocols = protocolsForSyncScope(scope);
-  if (coveredProtocols === undefined) {
-    return {};
-  }
-
-  const protocols = [...coveredProtocols] as NonEmptyStringArray;
-  return protocols.length === 1
-    ? { protocol: protocols[0], protocols }
-    : { protocols };
-}
 
 export class SyncEngineLevel implements SyncEngine {
   /**
@@ -426,8 +407,6 @@ export class SyncEngineLevel implements SyncEngine {
     this._livePullProcessor = new SyncLivePullProcessor({
       echoSuppressor : this._echoSuppressor,
       operations     : {
-        clearFailedMessage: (tenantDid, messageCid, remoteEndpoint): Promise<void> =>
-          this.clearFailedMessageForTenant(tenantDid, messageCid, remoteEndpoint),
         emitCheckpointAdvance : (link): void => { this.emitCheckpointAdvance(link, 'pull'); },
         emitEvent             : (event): void => { this.emitEvent(event); },
         getAgent              : (): EnboxPlatformAgent => this.agent,
@@ -438,8 +417,7 @@ export class SyncEngineLevel implements SyncEngine {
         scheduleReconcile     : (controller, reason): void => {
           this._linkRecoveryCoordinator.scheduleLinkReconcile(controller, reason);
         },
-        setConnectivityOnline : (): void => { this._connectivityManager.setState('online'); },
-        trackAppliedCids      : (messageCids, target): Promise<void> =>
+        trackAppliedCids: (messageCids, target): Promise<void> =>
           this.trackRemoteFeedAppliedCids(messageCids, target),
         transitionToPaused    : (linkKey, link): Promise<void> => this.transitionToPaused(linkKey, link),
         transitionToRepairing : (controller): Promise<void> =>
@@ -1054,7 +1032,11 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async startSyncRuntime(params: StartSyncParams): Promise<void> {
-    const mode = params.mode ?? 'poll';
+    const mode = params.mode;
+    if (mode !== 'live' && mode !== 'poll') {
+      throw new Error(`SyncEngineLevel: startSync requires mode 'live' or 'poll'.`);
+    }
+
     const intervalStr = params.interval ?? (mode === 'live' ? '5m' : '2m');
     const intervalMilliseconds = parseDurationInMilliseconds(intervalStr);
 
@@ -1409,7 +1391,7 @@ export class SyncEngineLevel implements SyncEngine {
   private async openLinkSubscriptions(
     target: LinkSyncTarget,
     controller: SyncLinkController,
-    openGeneration = controller.pullEpoch,
+    openGeneration: number,
   ): Promise<LinkSubscriptionOpenResult> {
     // Cleanup is owned by this opening attempt: once a pause or repair has
     // bumped the generation, the transition owns teardown and the fenced
@@ -1455,13 +1437,13 @@ export class SyncEngineLevel implements SyncEngine {
   private async markLinkLive(
     target: SyncTarget,
     controller: SyncLinkController,
-    expectedGeneration?: number,
+    expectedGeneration: number,
   ): Promise<void> {
     const { link } = controller;
     // A pause or repair takeover during subscription opening owns the link's
     // phase now — completing initialization must not override it.
     if (!controller.isActive || link.status === 'paused' || link.status === 'repairing') { return; }
-    if (expectedGeneration !== undefined && controller.pullEpoch !== expectedGeneration) { return; }
+    if (controller.pullEpoch !== expectedGeneration) { return; }
     this.emitEvent({
       type           : 'link:status-change',
       tenantDid      : target.did,
@@ -1803,7 +1785,7 @@ export class SyncEngineLevel implements SyncEngine {
     try {
       return await attempt();
     } catch (error: unknown) {
-      if (!controller.isActive || controller.pullEpoch !== subscriptionPullEpoch) {
+      if (!controller.isPullEpochCurrent(subscriptionPullEpoch)) {
         return false;
       }
       throw error;
@@ -1821,7 +1803,7 @@ export class SyncEngineLevel implements SyncEngine {
     const cursorKey = target.linkKey;
     const { link } = controller;
     const cursor = await this.getInitialPullCursor({ did, dwnUrl, link });
-    if (!controller.isActive || controller.linkKey !== cursorKey || controller.pullEpoch !== subscriptionPullEpoch) { return false; }
+    if (!controller.isPullEpochCurrent(subscriptionPullEpoch) || controller.linkKey !== cursorKey) { return false; }
 
     const filters = target.scope.kind === 'protocolSet'
       ? target.scope.protocols.map(protocol => ({ protocol }))
@@ -1837,8 +1819,7 @@ export class SyncEngineLevel implements SyncEngine {
     // even when the replacement uses the same durable link key, and the pull
     // generation so callbacks from a subscription superseded by a repair reset
     // cannot touch checkpoints or trigger repairs after the link recovers.
-    const linkStale = this.createLinkStalePredicate(controller, runtimeScope);
-    const isStale = (): boolean => linkStale() || controller.pullEpoch !== subscriptionPullEpoch;
+    const isStale = (): boolean => runtimeScope.disposed || !controller.isPullEpochCurrent(subscriptionPullEpoch);
     const pullContext: SyncLivePullContext = {
       did,
       dwnUrl,
@@ -1869,7 +1850,7 @@ export class SyncEngineLevel implements SyncEngine {
     };
 
     const { message } = await this.agent.dwn.processRequest(subscribeRequest);
-    if (!controller.isActive || controller.pullEpoch !== subscriptionPullEpoch) { return false; }
+    if (!controller.isPullEpochCurrent(subscriptionPullEpoch)) { return false; }
     if (!message) {
       throw new Error(`SyncEngineLevel: Failed to construct MessagesSubscribe for ${dwnUrl}`);
     }
@@ -1881,7 +1862,7 @@ export class SyncEngineLevel implements SyncEngine {
       // the transport's last-delivered cursor. The transport may have delivered
       // an event that has not been locally applied yet.
       let effectiveCursor = link?.pull.contiguousAppliedToken ?? cursor;
-      if (effectiveCursor && (!effectiveCursor.streamId || !effectiveCursor.epoch || !effectiveCursor.position)) {
+      if (effectiveCursor && !isValidProgressToken(effectiveCursor)) {
         effectiveCursor = undefined;
       }
       const resumeRequest = {
@@ -1957,7 +1938,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     const cursor = link.pull.contiguousAppliedToken;
-    if (!cursor || this.isValidProgressToken(cursor)) {
+    if (!cursor || isValidProgressToken(cursor)) {
       return cursor;
     }
 
@@ -1969,39 +1950,12 @@ export class SyncEngineLevel implements SyncEngine {
     return undefined;
   }
 
-  private isValidProgressToken(token: ProgressToken): boolean {
-    return !!(token.streamId && token.epoch && token.position);
-  }
-
-  private createLinkStalePredicate(
-    controller: SyncLinkController | undefined,
-    runtimeScope: SyncRuntimeHandle,
-  ): () => boolean {
-    return (): boolean =>
-      runtimeScope.disposed ||
-      controller?.isActive !== true;
-  }
-
   /** Thin transport boundary retained for lifecycle task tracking and tests. */
   private handleLivePullMessage(
     context: SyncLivePullContext,
     subMessage: SubscriptionMessage,
   ): Promise<void> {
     return this._livePullProcessor.handleMessage(context, subMessage);
-  }
-
-  private handleLivePullEose(
-    context: SyncLivePullContext,
-    subMessage: Extract<SubscriptionMessage, { type: 'eose' }>,
-  ): Promise<void> {
-    return this._livePullProcessor.handleEose(context, subMessage);
-  }
-
-  private handleLivePullEvent(
-    context: SyncLivePullContext,
-    subMessage: Extract<SubscriptionMessage, { type: 'event' }>,
-  ): Promise<void> {
-    return this._livePullProcessor.handleEvent(context, subMessage);
   }
 
   private emitCheckpointAdvance(link: ReplicationLinkState, direction: SyncDirection): void {
@@ -2061,9 +2015,7 @@ export class SyncEngineLevel implements SyncEngine {
     const runtimeScope = this._runtime;
 
     const isPushStale = (): boolean =>
-      runtimeScope.disposed ||
-      !controller.isActive ||
-      controller.pullEpoch !== subscriptionPullEpoch;
+      runtimeScope.disposed || !controller.isPullEpochCurrent(subscriptionPullEpoch);
     const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(did);
 
     // Subscribe to the local DWN's EventLog.
@@ -2105,16 +2057,6 @@ export class SyncEngineLevel implements SyncEngine {
     return true;
   }
 
-  /**
-   * Flushes accumulated push CIDs to remote DWNs.
-   */
-  private flushPendingPushesForLink(
-    linkKey: string,
-    expectedController?: SyncLinkController,
-  ): Promise<void> {
-    return this._livePushCoordinator.flushLink(linkKey, expectedController);
-  }
-
   private scheduleQuotaProbeForActiveLink(
     linkKey: string,
     link: ReplicationLinkState,
@@ -2140,7 +2082,6 @@ export class SyncEngineLevel implements SyncEngine {
         tenantDid      : target.did,
         remoteEndpoint : target.dwnUrl,
         protocol       : failure.protocol ?? singleProtocolForSyncScope(target.scope),
-        category       : 'admit-failed',
         errorCode      : failure.kind ?? 'Invalid',
         errorDetail    : failure.detail ?? 'push rejected during sync reconciliation',
       });
@@ -2155,7 +2096,6 @@ export class SyncEngineLevel implements SyncEngine {
       tenantDid      : target.did,
       remoteEndpoint : target.dwnUrl,
       protocol       : failure.protocol ?? singleProtocolForSyncScope(target.scope),
-      category       : 'admit-failed',
       errorCode      : failure.kind ?? 'Invalid',
       errorDetail    : failure.detail ?? 'push rejected during sync reconciliation',
     });
@@ -2171,10 +2111,6 @@ export class SyncEngineLevel implements SyncEngine {
       return;
     }
     this._linkRecoveryCoordinator.scheduleLinkReconcile(controller, reason, delayMs);
-  }
-
-  private getAuthorizationGrantIds(authorization: SyncAuthorization): NonEmptyStringArray | undefined {
-    return authorization.kind === 'delegate' ? authorization.permissionGrantIds : undefined;
   }
 
   private syncTargetWithDurableFeeds(
@@ -2541,14 +2477,14 @@ export class SyncEngineLevel implements SyncEngine {
     if (recordId === undefined) { return []; }
 
     const initialCids: string[] = [];
-    for (const { messageCid, state } of dataBlocks) {
-      const blockedCid = state.blockedCid ?? messageCid;
+    for (const { state } of dataBlocks) {
+      const blockedCid = state.blockedCid;
       if (blockedCid === entry.messageCid || initialCids.includes(blockedCid)) { continue; }
       const local = await this.getLocalMessageForTarget(target, blockedCid);
       if (
         local !== undefined &&
         local.dataStream === undefined &&
-        SyncEngineLevel.isInitialWriteForRecord(local.message, recordId)
+        isInitialWriteForRecord(local.message, recordId)
       ) {
         initialCids.push(blockedCid);
       }
@@ -2568,49 +2504,11 @@ export class SyncEngineLevel implements SyncEngine {
     target: SyncTarget,
     entry: MessagesQueryReplyEntry,
   ): Promise<string | undefined> {
-    const fromEntry = SyncEngineLevel.recordIdForRecordsMessage(entry.message);
+    const fromEntry = recordIdForRecordsMessage(entry.message);
     if (fromEntry !== undefined) { return fromEntry; }
 
     const local = await this.getLocalMessageForTarget(target, entry.messageCid);
-    return SyncEngineLevel.recordIdForRecordsMessage(local?.message);
-  }
-
-  private static recordIdForRecordsMessage(message: GenericMessage | undefined): string | undefined {
-    if (
-      message?.descriptor.interface !== DwnInterfaceName.Records ||
-      (
-        message.descriptor.method !== DwnMethodName.Write &&
-        message.descriptor.method !== DwnMethodName.Delete
-      )
-    ) {
-      return undefined;
-    }
-
-    const recordId = (message as { recordId?: unknown }).recordId ??
-      (message.descriptor as { recordId?: unknown }).recordId;
-    return typeof recordId === 'string' ? recordId : undefined;
-  }
-
-  private static isInitialWriteForRecord(message: GenericMessage, recordId: string): boolean {
-    if (!SyncEngineLevel.isRecordsWriteForRecord(message, recordId)) {
-      return false;
-    }
-
-    const recordsWrite = message as GenericMessage & {
-      descriptor: GenericMessage['descriptor'] & { dateCreated?: string };
-    };
-    return recordsWrite.descriptor.dateCreated === recordsWrite.descriptor.messageTimestamp;
-  }
-
-  private static isRecordsWriteForRecord(message: GenericMessage, recordId: string): boolean {
-    if (
-      message.descriptor.interface !== DwnInterfaceName.Records ||
-      message.descriptor.method !== DwnMethodName.Write
-    ) {
-      return false;
-    }
-
-    return (message as GenericMessage & { recordId?: string }).recordId === recordId;
+    return recordIdForRecordsMessage(local?.message);
   }
 
   private async admitRemoteFeedPage(
@@ -2689,7 +2587,6 @@ export class SyncEngineLevel implements SyncEngine {
         tenantDid      : target.did,
         remoteEndpoint : target.dwnUrl,
         protocol       : entry.protocol ?? SyncEngineLevel.protocolFromDescriptor(entry.message?.descriptor),
-        category       : 'admit-failed',
         errorCode      : 'Deferred',
         errorDetail    : detail ?? 'pull admission deferred beyond retry window',
       });
@@ -2767,17 +2664,6 @@ export class SyncEngineLevel implements SyncEngine {
     return this._quotaManager.resolveBlocksSupersededByAcknowledgement(target, acknowledgedCid);
   }
 
-  private recordQuotaBlock(
-    target: SyncTarget,
-    messageCid: string,
-    protocol: string | undefined,
-    detail: string | undefined,
-    source: SyncQuotaBlockSource = 'feed',
-    blockedCid = messageCid,
-  ): Promise<SyncQuotaBlockState> {
-    return this._quotaManager.recordBlock(target, messageCid, protocol, detail, source, blockedCid);
-  }
-
   private clearQuotaBlock(target: SyncTarget, messageCid: string): Promise<boolean> {
     return this._quotaManager.clearBlock(target, messageCid);
   }
@@ -2838,10 +2724,6 @@ export class SyncEngineLevel implements SyncEngine {
     return this._quotaManager.getActiveBlocksForTarget(target);
   }
 
-  private getQuotaStatesForTarget(target: SyncTarget): Promise<SyncQuotaBlockEntry[]> {
-    return this._quotaManager.getStatesForTarget(target);
-  }
-
   private clearResolvedQuotaOmissionsForTarget(target: SyncTarget): Promise<void> {
     return this._quotaManager.clearResolvedOmissionsForTarget(target);
   }
@@ -2897,7 +2779,6 @@ export class SyncEngineLevel implements SyncEngine {
       tenantDid      : target.did,
       remoteEndpoint : target.dwnUrl,
       protocol       : SyncEngineLevel.protocolFromFeedEntry(entry, prefetched),
-      category       : 'admit-failed',
       errorCode      : outcome.reason,
       errorDetail    : outcome.detail ?? 'replicated message admission failed',
     });
@@ -2924,13 +2805,12 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     const message = { ...entry.message };
-    const messageEncodedData = message.encodedData;
     delete message.encodedData;
     const syncEntry: SyncMessageEntry = {
       message,
       isLatestBaseState: entry.isLatestBaseState,
     };
-    const encodedData = entry.encodedData ?? messageEncodedData;
+    const encodedData = entry.encodedData;
     if (encodedData !== undefined) {
       syncEntry.bufferedData = Encoder.base64UrlToBytes(encodedData);
     } else if (SyncEngineLevel.recordsWriteRequiresRemoteData(message)) {
@@ -3020,9 +2900,8 @@ export class SyncEngineLevel implements SyncEngine {
   public async recordDeadLetter(params: {
     messageCid : string;
     tenantDid : string;
-    remoteEndpoint? : string;
+    remoteEndpoint : string;
     protocol? : string;
-    category : DeadLetterCategory;
     errorCode? : string;
     errorDetail : string;
   }): Promise<void> {
@@ -3046,7 +2925,7 @@ export class SyncEngineLevel implements SyncEngine {
     messageCid: string,
   ): Promise<boolean> {
     const entry = await this._deadLetterStore.get(tenantDid, messageCid, remoteEndpoint);
-    return entry?.tenantDid === tenantDid && entry.category === 'admit-failed';
+    return entry?.tenantDid === tenantDid;
   }
 
   public async getFailedMessages(tenantDid?: string): Promise<DeadLetterEntry[]> {
@@ -3143,8 +3022,7 @@ export class SyncEngineLevel implements SyncEngine {
     transitionFence: () => boolean,
     topologyGeneration: number,
   ): Promise<void> {
-    const linkKey = this._quotaManager.getLinkKey(target);
-    const key = `${linkKey}|__retry-target__`;
+    const key = this._quotaManager.getLinkKey(target);
     const existing = this._quotaRetryInFlight.get(key);
     if (existing !== undefined) {
       await existing;

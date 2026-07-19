@@ -33,7 +33,6 @@ type SyncStatusReporterState = {
 describe('SyncStatusReporter', () => {
   it('reports an empty online snapshot as healthy', async () => {
     await expect(createReporter().getHealth()).resolves.toEqual({
-      admissionFailureCount    : 0,
       connectivity             : 'online',
       degradedLinkCount        : 0,
       failedMessageCount       : 0,
@@ -54,7 +53,7 @@ describe('SyncStatusReporter', () => {
       currentQuotaLinkKeys : new Set(['quota-current']),
       deadLetters          : [
         deadLetter({ messageCid: 'failed-a' }),
-        deadLetter({ messageCid: 'failed-b', remoteEndpoint: undefined }),
+        deadLetter({ messageCid: 'failed-b', remoteEndpoint: REMOTE_B }),
       ],
       links: [
         pausedLink,
@@ -69,7 +68,6 @@ describe('SyncStatusReporter', () => {
     });
 
     await expect(reporter.getHealth()).resolves.toEqual({
-      admissionFailureCount    : 2,
       connectivity             : 'offline',
       degradedLinkCount        : 1,
       failedMessageCount       : 2,
@@ -189,7 +187,6 @@ describe('SyncStatusReporter', () => {
         quotaBlock({ tenantDid: BOB, remoteEndpoint: REMOTE_C, messageCid: 'bob-quota' }),
       ],
       deadLetters: [
-        deadLetter({ remoteEndpoint: undefined }),
         deadLetter({ tenantDid: BOB, remoteEndpoint: REMOTE_C, messageCid: 'bob-failure' }),
       ],
     });
@@ -267,7 +264,6 @@ function quotaBlock(overrides: Partial<SyncQuotaBlockState> = {}): SyncQuotaBloc
 
 function deadLetter(overrides: Partial<DeadLetterEntry> = {}): DeadLetterEntry {
   return {
-    category       : 'admit-failed',
     errorDetail    : 'terminal failure',
     failedAt       : timestamp(3),
     messageCid     : 'failed',

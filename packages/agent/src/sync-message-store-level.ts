@@ -8,9 +8,9 @@ export type SyncMessageStoreLevelDelete = { type: 'del'; key: string };
 export function buildSyncMessageStoreLevelKey(
   tenantDid: string,
   messageCid: string,
-  remoteEndpoint?: string,
+  remoteEndpoint: string,
 ): string {
-  return `${tenantDid}|${messageCid}|${remoteEndpoint ?? ''}`;
+  return `${tenantDid}|${messageCid}|${remoteEndpoint}`;
 }
 
 export function isSyncMessageStoreLevelNotFound(error: unknown): boolean {

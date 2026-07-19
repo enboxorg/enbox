@@ -7,18 +7,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { SyncRunCancelledError } from '../src/sync-runtime-errors.js';
 
-type Deferred = {
-  promise: Promise<void>;
-  resolve: () => void;
-};
-
-function createDeferred(): Deferred {
-  let resolve!: () => void;
-  const promise = new Promise<void>((resolvePromise) => {
-    resolve = resolvePromise;
-  });
-  return { promise, resolve };
-}
+import { deferred as createDeferred } from './utils/deferred.js';
 
 function createEngine(registeredDids: string[] = []): { engine: SyncEngineLevel; run: SinonStub } {
   const engine = new SyncEngineLevel({ agent: {} as any, db: {} as any });

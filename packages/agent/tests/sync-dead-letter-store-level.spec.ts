@@ -69,15 +69,6 @@ describe('SyncDeadLetterStoreLevel', () => {
     expect(await store.getForTenant(alice.tenantDid)).toEqual([alice]);
   });
 
-  it('preserves entries without a remote endpoint', async () => {
-    const entry = deadLetter({ remoteEndpoint: undefined });
-
-    await store.put(entry);
-
-    expect(await db.sublevel('deadLetters').get(`${entry.tenantDid}|${entry.messageCid}|`)).toBe(JSON.stringify(entry));
-    expect(await store.get(entry.tenantDid, entry.messageCid)).toEqual(entry);
-  });
-
   it('surfaces corrupt persisted entries', async () => {
     const entry = deadLetter();
     const key = `${entry.tenantDid}|${entry.messageCid}|${entry.remoteEndpoint}`;
@@ -101,7 +92,6 @@ describe('SyncDeadLetterStoreLevel', () => {
 
 function deadLetter(overrides: Partial<DeadLetterEntry> = {}): DeadLetterEntry {
   return {
-    category       : 'admit-failed',
     errorCode      : 'Invalid',
     errorDetail    : 'terminal failure',
     failedAt       : '2026-01-01T00:00:00.000Z',

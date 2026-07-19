@@ -24,6 +24,7 @@ import {
   capRecordsWriteDataStream,
   fetchRemoteMessages,
   getMessageCid,
+  MAX_ADMISSION_PASSES,
   queryRemoteMessageFeed,
   SyncDataSizeLimitExceededError,
   SyncPullAbortedError,
@@ -83,12 +84,6 @@ type AdmissionEntryResult =
   | { kind: 'done'; outcome: AdmitOutcome };
 
 type ScopeCheckResult = 'in-scope' | 'out-of-scope' | 'unknown';
-
-// applyReplicatedMessage reports the full set of missing ancestors in a single
-// Incomplete, so a well-formed closure converges in a handful of passes. Keep a
-// high cap anyway as a safety bound against malformed or adversarial remotes (and
-// dependencies that only become fetchable across passes).
-const MAX_ADMISSION_PASSES = 128;
 
 /**
  * Applies a sync root and any dependencies it discovers through the DWN's
@@ -508,7 +503,7 @@ class AdmitClosureContext {
     }
 
     const messageWithEncodedData = { ...entry.message } as GenericMessage & { encodedData?: string };
-    const encodedData = entry.encodedData ?? messageWithEncodedData.encodedData;
+    const encodedData = entry.encodedData;
     delete messageWithEncodedData.encodedData;
 
     const syncEntry: SyncMessageEntry = {

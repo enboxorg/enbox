@@ -141,7 +141,7 @@ describe('SyncEngineLevel', () => {
       internal._echoSuppressor.trackPushed(context.did, messageCid, dwnUrl);
 
       try {
-        await internal.handleLivePullEvent(context, {
+        await internal._livePullProcessor.handleEvent(context, {
           cursor,
           event : { message },
           type  : 'event',
@@ -2167,7 +2167,7 @@ describe('SyncEngineLevel', () => {
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
-        testHarness.agent.sync.startSync({ interval: '500ms' });
+        testHarness.agent.sync.startSync({ mode: 'poll', interval: '500ms' });
 
         await clock.tickAsync(1_400); // just under 3 intervals
         syncSpy.restore();
@@ -2214,7 +2214,7 @@ describe('SyncEngineLevel', () => {
 
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
 
-        const startPromise = testHarness.agent.sync.startSync({ interval: '500ms' });
+        const startPromise = testHarness.agent.sync.startSync({ mode: 'poll', interval: '500ms' });
 
         await clock.tickAsync(0);
 
@@ -2257,7 +2257,7 @@ describe('SyncEngineLevel', () => {
           }, 1_000);
         }));
 
-        testHarness.agent.sync.startSync({ interval: '500ms' });
+        testHarness.agent.sync.startSync({ mode: 'poll', interval: '500ms' });
 
         await clock.tickAsync(1_400); // less than the initial interval + the sync time
 
@@ -2271,7 +2271,7 @@ describe('SyncEngineLevel', () => {
           }, 15);
         }));
 
-        testHarness.agent.sync.startSync({ interval: '300ms' });
+        testHarness.agent.sync.startSync({ mode: 'poll', interval: '300ms' });
 
         await clock.tickAsync(301); // exactly the new interval + 1
 
@@ -2304,7 +2304,7 @@ describe('SyncEngineLevel', () => {
           }, 100);
         }));
 
-        testHarness.agent.sync.startSync({ interval: '500ms' });
+        testHarness.agent.sync.startSync({ mode: 'poll', interval: '500ms' });
 
         // two intervals
         await clock.tickAsync(1_101);
@@ -2313,7 +2313,7 @@ describe('SyncEngineLevel', () => {
         expect(syncSpy.callCount).toBe(3);
 
         syncSpy.resetHistory();
-        testHarness.agent.sync.startSync({ interval: '200ms' });
+        testHarness.agent.sync.startSync({ mode: 'poll', interval: '200ms' });
 
         await clock.tickAsync(501); // two interval rounds including sync duration
 
@@ -2351,7 +2351,7 @@ describe('SyncEngineLevel', () => {
         // spy on console.error to check if the error message is logged
         const consoleErrorSpy = sinon.stub(console, 'error').resolves();
 
-        testHarness.agent.sync.startSync({ interval: '500ms' });
+        testHarness.agent.sync.startSync({ mode: 'poll', interval: '500ms' });
 
         // three intervals
         await clock.tickAsync(1_601);
@@ -2389,7 +2389,7 @@ describe('SyncEngineLevel', () => {
 
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
 
-        const startPromise = testHarness.agent.sync.startSync({ interval: '500ms' });
+        const startPromise = testHarness.agent.sync.startSync({ mode: 'poll', interval: '500ms' });
 
         // expect the immediate sync call
         expect(syncSpy.callCount).toBe(1);
@@ -2432,7 +2432,7 @@ describe('SyncEngineLevel', () => {
 
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
 
-        const startPromise = testHarness.agent.sync.startSync({ interval: '500ms' });
+        const startPromise = testHarness.agent.sync.startSync({ mode: 'poll', interval: '500ms' });
 
         // expect the immediate sync call
         expect(syncSpy.callCount).toBe(1);
@@ -2493,7 +2493,7 @@ describe('SyncEngineLevel', () => {
 
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
 
-        const startPromise = testHarness.agent.sync.startSync({ interval: '500ms' });
+        const startPromise = testHarness.agent.sync.startSync({ mode: 'poll', interval: '500ms' });
 
         // expect the immediate sync call
         expect(syncSpy.callCount).toBe(1);
@@ -2557,7 +2557,7 @@ describe('SyncEngineLevel', () => {
 
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
 
-        testHarness.agent.sync.startSync({ interval: '500ms' });
+        testHarness.agent.sync.startSync({ mode: 'poll', interval: '500ms' });
 
         // expect the immediate sync call
         expect(syncSpy.callCount).toBe(1);
@@ -3496,7 +3496,7 @@ describe('SyncEngineLevel', () => {
       it('should reset durable checkpoints and reconcile the live link until identical mismatches pause it', async () => {
         const { link, linkKey, target } = await createConvergenceTarget(alice.did.uri);
         link.status = 'live';
-        link.pull.receivedToken = { epoch: 'epoch-1', messageCid: 'bafy-checkpoint', position: '5', streamId: 'pull-stream' };
+        link.pull.contiguousAppliedToken = { epoch: 'epoch-1', messageCid: 'bafy-checkpoint', position: '5', streamId: 'pull-stream' };
         await syncEngine['ledger'].persistCheckpoint(link, 'pull');
         syncEngine['activateLink'](linkKey, link);
 
@@ -3504,7 +3504,6 @@ describe('SyncEngineLevel', () => {
         const reconcileStub = sinon.stub(syncEngine as any, 'scheduleLinkReconcile');
         const pauseStub = sinon.stub(syncEngine as any, 'transitionToPaused').resolves();
         await syncEngine['_deadLetterStore'].put({
-          category       : 'admit-failed',
           errorDetail    : 'admission failed',
           failedAt       : '2026-01-01T00:00:00.000Z',
           messageCid     : 'bafy-admit-failed',
@@ -3516,8 +3515,8 @@ describe('SyncEngineLevel', () => {
         await syncEngine['_feedConvergenceManager'].handleVerifiedDivergence(target, feedDivergence());
 
         const persisted = await createConvergenceTarget(alice.did.uri);
-        expect(link.pull.receivedToken).toBeUndefined();
-        expect(persisted.link.pull.receivedToken).toBeUndefined();
+        expect(link.pull.contiguousAppliedToken).toBeUndefined();
+        expect(persisted.link.pull.contiguousAppliedToken).toBeUndefined();
         expect(reconcileStub.calledTwice).toBe(true);
         expect(reconcileStub.alwaysCalledWithExactly(linkKey, link, 'feed-fingerprint-mismatch', 0)).toBe(true);
         expect(pauseStub.notCalled).toBe(true);
@@ -3525,7 +3524,6 @@ describe('SyncEngineLevel', () => {
         // A new admission dead letter for this remote changes the failure
         // signature, so the attempt count restarts instead of pausing.
         await syncEngine['_deadLetterStore'].put({
-          category       : 'admit-failed',
           errorDetail    : 'admission failed',
           failedAt       : '2026-01-01T00:02:00.000Z',
           messageCid     : 'bafy-admit-failed-2',
@@ -3666,11 +3664,11 @@ describe('SyncEngineLevel', () => {
           // Hot-remove.
           await syncEngine['removeIdentityFromLiveSync'](did);
 
-          // Try to flush — the guard in flushPendingPushesForLink should bail.
+          // Try to flush — the guard in the coordinator's flushLink should bail.
           const pushStub = sinon.stub(syncEngine as any, 'pushMessages');
-          pushStub.resolves({ succeeded: [], failed: [] });
+          pushStub.resolves({ acknowledged: [], succeeded: [], failed: [] });
 
-          await syncEngine['flushPendingPushesForLink'](linkKey);
+          await syncEngine['_livePushCoordinator'].flushLink(linkKey);
 
           expect(pushStub.called).toBe(false);
         });
@@ -3718,7 +3716,7 @@ describe('SyncEngineLevel', () => {
           // (if it weren't for the stale check).
           const rpcStub = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').resolves({ status: { code: 500 } } as any);
 
-          await syncEngine['flushPendingPushesForLink'](linkKey);
+          await syncEngine['_livePushCoordinator'].flushLink(linkKey);
 
           // Requeue should NOT have been called — the stale-result
           // check after pushMessages detected the replacement and bailed.
@@ -3780,23 +3778,6 @@ describe('SyncEngineLevel', () => {
   });
 
   describe('startSync with mode parameter', () => {
-    it('should accept poll mode with interval and default to poll', async () => {
-      // The existing `startSync({ interval })` signature should default to poll mode.
-      const syncEngine = new SyncEngineLevel({ db: testHarness.syncStore, agent: testHarness.agent });
-      const syncSpy = sinon.spy(syncEngine as any, 'startPollSync');
-
-      // Call with only interval (no mode) — should default to poll mode.
-      try {
-        await syncEngine.startSync({ interval: '30s' });
-      } catch {
-        // May fail during sync — we only care that poll mode was selected.
-      }
-
-      expect(syncSpy.calledOnce).toBe(true);
-      await syncEngine.stopSync(5000);
-      syncSpy.restore();
-    });
-
     it('should accept explicit poll mode', async () => {
       const syncEngine = new SyncEngineLevel({ db: testHarness.syncStore, agent: testHarness.agent });
       const syncSpy = sinon.spy(syncEngine as any, 'startPollSync');
@@ -3825,6 +3806,62 @@ describe('SyncEngineLevel', () => {
       expect(syncSpy.calledOnce).toBe(true);
       await syncEngine.stopSync(5000);
       syncSpy.restore();
+    });
+
+    it('should reject a missing mode before starting any runtime', async () => {
+      const syncEngine = new SyncEngineLevel({ db: testHarness.syncStore, agent: testHarness.agent });
+      const pollSpy = sinon.spy(syncEngine as any, 'startPollSync');
+      const liveSpy = sinon.spy(syncEngine as any, 'startLiveSync');
+
+      await expect(syncEngine.startSync({} as any)).rejects.toThrow(
+        `SyncEngineLevel: startSync requires mode 'live' or 'poll'.`
+      );
+
+      expect(pollSpy.notCalled).toBe(true);
+      expect(liveSpy.notCalled).toBe(true);
+      expect(syncEngine.hasActiveSubscriptions).toBe(false);
+      pollSpy.restore();
+      liveSpy.restore();
+    });
+
+    it('should reject an unsupported mode before starting any runtime', async () => {
+      const syncEngine = new SyncEngineLevel({ db: testHarness.syncStore, agent: testHarness.agent });
+      const pollSpy = sinon.spy(syncEngine as any, 'startPollSync');
+      const liveSpy = sinon.spy(syncEngine as any, 'startLiveSync');
+
+      await expect(syncEngine.startSync({ mode: 'lvie' } as any)).rejects.toThrow(
+        `SyncEngineLevel: startSync requires mode 'live' or 'poll'.`
+      );
+
+      expect(pollSpy.notCalled).toBe(true);
+      expect(liveSpy.notCalled).toBe(true);
+      expect(syncEngine.hasActiveSubscriptions).toBe(false);
+      pollSpy.restore();
+      liveSpy.restore();
+    });
+
+    it('should leave a running poll runtime untouched when a reconfiguration passes an invalid mode', async () => {
+      const syncEngine = new SyncEngineLevel({ db: testHarness.syncStore, agent: testHarness.agent });
+      const syncStub = sinon.stub(SyncEngineLevel.prototype as any, 'sync');
+      syncStub.resolves();
+      const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
+
+      await syncEngine.startSync({ mode: 'poll', interval: '500ms' });
+
+      // one sync for the initial startSync call
+      expect(syncStub.callCount).toBe(1);
+
+      await expect(syncEngine.startSync({ mode: 'lvie' } as any)).rejects.toThrow(
+        `SyncEngineLevel: startSync requires mode 'live' or 'poll'.`
+      );
+
+      // the running poll runtime's interval timer persists and keeps firing
+      await clock.tickAsync(1_400); // just under 3 intervals
+      expect(syncStub.callCount).toBe(3);
+
+      clock.restore();
+      await syncEngine.stopSync(5000);
+      syncStub.restore();
     });
   });
 

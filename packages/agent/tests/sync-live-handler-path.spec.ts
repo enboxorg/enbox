@@ -181,9 +181,6 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
     expect(activeLink.pull.contiguousAppliedToken.position).toBeDefined();
     expect(activeLink.pull.contiguousAppliedToken.messageCid).toBeDefined();
 
-    // receivedToken should also be set (for observability).
-    expect(activeLink.pull.receivedToken).toBeDefined();
-
     await syncEngine.stopSync();
   });
 

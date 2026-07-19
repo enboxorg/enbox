@@ -513,7 +513,6 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
   async function expectHealthySync(device: Device): Promise<void> {
     const health = await device.harness.agent.sync.getSyncHealth();
     expect(health.failedMessageCount).toBe(0);
-    expect(health.admissionFailureCount).toBe(0);
     expect(health.syncHealthy).toBe(true);
   }
 

@@ -532,7 +532,6 @@ describe('SyncEngineLevel durable feed convergence', () => {
     const [target] = await internal.getSyncTargets();
     const link = await internal.getOrCreateReplicationLink(target);
     link.push.contiguousAppliedToken = undefined;
-    link.push.receivedToken = undefined;
     await internal.ledger.persistCheckpoint(link, 'push');
 
     // Quota is now available. Even though the diff enumeration omits the message,
@@ -565,16 +564,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
       getSyncTargets(): Promise<any[]>;
       getOrCreateReplicationLink(target: any): Promise<any>;
       getQuotaBlocksForTarget(target: any): Promise<Array<{ messageCid: string }>>;
-      getQuotaStatesForTarget(target: any): Promise<Array<{ messageCid: string; state: { supersededAt?: string } }>>;
       ledger: { persistCheckpoint(link: any, direction: 'push'): Promise<void> };
-      recordQuotaBlock(
-        target: any,
-        messageCid: string,
-        protocol: string,
-        detail: string,
-        source: 'feed',
-        blockedCid: string,
-      ): Promise<unknown>;
     };
     const [target] = await internal.getSyncTargets();
     const localHead = await queryLocalMessageFeed({
@@ -586,10 +576,9 @@ describe('SyncEngineLevel durable feed convergence', () => {
     });
     expect(localHead.cursor).toBeDefined();
     const link = await internal.getOrCreateReplicationLink(target);
-    link.push.receivedToken = localHead.cursor;
     link.push.contiguousAppliedToken = localHead.cursor;
     await internal.ledger.persistCheckpoint(link, 'push');
-    await internal.recordQuotaBlock(
+    await (syncEngine as any)._quotaManager.recordBlock(
       target,
       updateCid,
       feedHarnessProtocolV1.protocol,
@@ -638,7 +627,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
       resolution     : 'superseded',
     }));
     expect(await internal.getQuotaBlocksForTarget(target)).toHaveLength(0);
-    expect(await internal.getQuotaStatesForTarget(target)).toEqual([
+    expect(await (syncEngine as any)._quotaManager.getStatesForTarget(target)).toEqual([
       expect.objectContaining({
         messageCid : updateCid,
         state      : expect.objectContaining({ supersededAt: expect.any(String) }),

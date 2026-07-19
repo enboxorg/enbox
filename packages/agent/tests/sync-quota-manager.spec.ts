@@ -11,6 +11,8 @@ import { afterEach, describe, expect, it } from 'bun:test';
 
 import { SyncQuotaManager } from '../src/sync-quota-manager.js';
 
+import { deferred } from './utils/deferred.js';
+
 type SyncQuotaOperationStubs = {
   [Method in keyof SyncQuotaManagerOperations]: SinonStub;
 };
@@ -19,11 +21,6 @@ type SyncQuotaManagerHarness = {
   manager: SyncQuotaManager;
   operations: SyncQuotaOperationStubs;
   store: MemoryQuotaStore;
-};
-
-type Deferred<T> = {
-  promise: Promise<T>;
-  resolve(value: T): void;
 };
 
 describe('SyncQuotaManager', () => {
@@ -37,8 +34,9 @@ describe('SyncQuotaManager', () => {
 
     try {
       const first = await manager.transitionPushResult(target(), {
-        failed    : [{ cid: 'cid-1', detail: 'over quota', quotaBlocked: true }],
-        succeeded : [],
+        acknowledged : [],
+        failed       : [{ cid: 'cid-1', detail: 'over quota', quotaBlocked: true }],
+        succeeded    : [],
       });
 
       expect(first).toEqual({
@@ -56,8 +54,9 @@ describe('SyncQuotaManager', () => {
 
       await clock.tickAsync(1_000);
       await manager.transitionPushResult(target(), {
-        failed    : [{ cid: 'cid-1', quotaBlocked: true }],
-        succeeded : [],
+        acknowledged : [],
+        failed       : [{ cid: 'cid-1', quotaBlocked: true }],
+        succeeded    : [],
       });
 
       expect(await manager.getState(target(), 'cid-1')).toMatchObject({
@@ -108,12 +107,12 @@ describe('SyncQuotaManager', () => {
     operations.pushMessages.callsFake(async () => {
       transportStarted.resolve();
       await releaseTransport.promise;
-      return { failed: [{ cid: 'cid-1', quotaBlocked: true }], succeeded: [] };
+      return { acknowledged: [], failed: [{ cid: 'cid-1', quotaBlocked: true }], succeeded: [] };
     });
 
     const probing = manager.probeBlocksForTarget(target(), true);
     await transportStarted.promise;
-    await manager.transitionPushResult(target(), { failed: [], succeeded: ['cid-1'] });
+    await manager.transitionPushResult(target(), { acknowledged: [], failed: [], succeeded: ['cid-1'] });
     releaseTransport.resolve();
     await probing;
 
@@ -130,7 +129,7 @@ describe('SyncQuotaManager', () => {
     operations.pushMessages.callsFake(async () => {
       transportStarted.resolve();
       await releaseTransport.promise;
-      return { failed: [], succeeded: ['cid-1'] };
+      return { acknowledged: [], failed: [], succeeded: ['cid-1'] };
     });
 
     const first = manager.probeBlocksForTarget(target(), true);
@@ -200,7 +199,7 @@ describe('SyncQuotaManager', () => {
     operations.pushMessages.callsFake(async () => {
       transportStarted.resolve();
       await releaseTransport.promise;
-      return { failed: [], succeeded: ['cid-1'] };
+      return { acknowledged: [], failed: [], succeeded: ['cid-1'] };
     });
     await manager.recordBlock(target(), 'cid-1', undefined, 'over quota');
 
@@ -301,8 +300,8 @@ function createOperations(): SyncQuotaOperationStubs {
     getLocalMessage       : sinon.stub().resolves(undefined),
     onQuotaBlocked        : sinon.stub(),
     onQuotaCleared        : sinon.stub(),
-    pushEntries           : sinon.stub().resolves({ failed: [], succeeded: [] }),
-    pushMessages          : sinon.stub().resolves({ failed: [], succeeded: [] }),
+    pushEntries           : sinon.stub().resolves({ acknowledged: [], failed: [], succeeded: [] }),
+    pushMessages          : sinon.stub().resolves({ acknowledged: [], failed: [], succeeded: [] }),
     recordTerminalFailure : sinon.stub().resolves(),
   } satisfies SyncQuotaManagerOperations;
 }
@@ -317,12 +316,6 @@ function target(overrides: Partial<SyncTarget> = {}): SyncTarget {
     scope              : { kind: 'full' },
     ...overrides,
   };
-}
-
-function deferred<T>(): Deferred<T> {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => { resolve = res; });
-  return { promise, resolve };
 }
 
 function messageEntry(recordId: string): SyncMessageEntry {

@@ -10,7 +10,7 @@ export type SyncQuotaBlockSource = 'feed' | 'permission-grant';
 export type SyncQuotaBlockState = {
   attempts: number;
   authorizationEpoch: string;
-  blockedCid?: string;
+  blockedCid: string;
   detail?: string;
   firstBlockedAt: string;
   lastBlockedAt: string;
@@ -20,7 +20,7 @@ export type SyncQuotaBlockState = {
   projectionId: string;
   protocol?: string;
   remoteEndpoint: string;
-  source?: SyncQuotaBlockSource;
+  source: SyncQuotaBlockSource;
   /** Retained only to explain an intentional feed omission. Never probed or surfaced as blocked. */
   supersededAt?: string;
   tenantDid: string;

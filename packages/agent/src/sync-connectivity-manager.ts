@@ -26,11 +26,7 @@ export interface SyncConnectivityManagerOperations {
 
 export type SyncConnectivityManagerParams = {
   environment?: SyncConnectivityEnvironment;
-  maxBackoffMultiplier?: number;
-  minimumHiddenDurationMilliseconds?: number;
-  now?: () => number;
   operations: SyncConnectivityManagerOperations;
-  recoveryCooldownMilliseconds?: number;
 };
 
 type SyncIntegrityTrigger = 'online' | 'visibility';
@@ -42,12 +38,11 @@ type ActiveIntegrityCheck = { scope: SyncConnectivityRuntimeScope };
  */
 export class SyncConnectivityManager {
   private static readonly RECOVERY_TIMER = 'connectivity-recovery';
+  private static readonly MAX_BACKOFF_MULTIPLIER = 4;
+  private static readonly MINIMUM_HIDDEN_DURATION_MILLISECONDS = 5_000;
+  private static readonly RECOVERY_COOLDOWN_MILLISECONDS = 10_000;
   private readonly _configuredEnvironment: SyncConnectivityEnvironment | undefined;
-  private readonly _maxBackoffMultiplier: number;
-  private readonly _minimumHiddenDurationMilliseconds: number;
-  private readonly _now: () => number;
   private readonly _operations: SyncConnectivityManagerOperations;
-  private readonly _recoveryCooldownMilliseconds: number;
   private _activeEnvironment?: SyncConnectivityEnvironment;
   private _activeIntegrityCheck?: ActiveIntegrityCheck;
   private _consecutiveFailures = 0;
@@ -60,20 +55,9 @@ export class SyncConnectivityManager {
   private _scope?: SyncConnectivityRuntimeScope;
   private _state: SyncConnectivityState = 'unknown';
 
-  public constructor({
-    environment,
-    maxBackoffMultiplier = 4,
-    minimumHiddenDurationMilliseconds = 5_000,
-    now = Date.now,
-    operations,
-    recoveryCooldownMilliseconds = 10_000,
-  }: SyncConnectivityManagerParams) {
+  public constructor({ environment, operations }: SyncConnectivityManagerParams) {
     this._configuredEnvironment = environment;
-    this._maxBackoffMultiplier = maxBackoffMultiplier;
-    this._minimumHiddenDurationMilliseconds = Math.max(0, minimumHiddenDurationMilliseconds);
-    this._now = now;
     this._operations = operations;
-    this._recoveryCooldownMilliseconds = Math.max(0, recoveryCooldownMilliseconds);
   }
 
   /** Fold active-link connectivity, falling back to global poll-mode state. */
@@ -105,7 +89,7 @@ export class SyncConnectivityManager {
 
     const backoffMultiplier = Math.min(
       Math.pow(2, this._consecutiveFailures),
-      this._maxBackoffMultiplier,
+      SyncConnectivityManager.MAX_BACKOFF_MULTIPLIER,
     );
     return intervalMilliseconds * backoffMultiplier;
   }
@@ -140,7 +124,7 @@ export class SyncConnectivityManager {
 
     this._activeEnvironment = environment;
     this._scope = this._operations.getRuntimeScope();
-    this._hiddenAt = environment.getVisibilityState() === 'hidden' ? this._now() : undefined;
+    this._hiddenAt = environment.getVisibilityState() === 'hidden' ? Date.now() : undefined;
     this._onOnline = (): void => { this.handleOnline(); };
     this._onOffline = (): void => { this.handleOffline(); };
     this._onVisibilityChange = (): void => { this.handleVisibilityChange(); };
@@ -207,7 +191,7 @@ export class SyncConnectivityManager {
     const visibilityState = this._activeEnvironment?.getVisibilityState();
     if (visibilityState !== 'visible') {
       if (visibilityState !== undefined) {
-        this._hiddenAt ??= this._now();
+        this._hiddenAt ??= Date.now();
       }
       return;
     }
@@ -216,7 +200,7 @@ export class SyncConnectivityManager {
     this._hiddenAt = undefined;
     if (
       hiddenAt !== undefined &&
-      this._now() - hiddenAt < this._minimumHiddenDurationMilliseconds
+      Date.now() - hiddenAt < SyncConnectivityManager.MINIMUM_HIDDEN_DURATION_MILLISECONDS
     ) {
       return;
     }
@@ -241,8 +225,8 @@ export class SyncConnectivityManager {
 
     const elapsed = this._lastIntegrityCheckStartedAt === undefined
       ? Number.POSITIVE_INFINITY
-      : this._now() - this._lastIntegrityCheckStartedAt;
-    if (elapsed < this._recoveryCooldownMilliseconds) {
+      : Date.now() - this._lastIntegrityCheckStartedAt;
+    if (elapsed < SyncConnectivityManager.RECOVERY_COOLDOWN_MILLISECONDS) {
       this.scheduleTrailingIntegrityCheck(scope, trigger);
       return;
     }
@@ -254,7 +238,7 @@ export class SyncConnectivityManager {
     this._pendingIntegrityTrigger = undefined;
     scope.clearTimer(SyncConnectivityManager.RECOVERY_TIMER);
     this._activeIntegrityCheck = check;
-    this._lastIntegrityCheckStartedAt = this._now();
+    this._lastIntegrityCheckStartedAt = Date.now();
     const reason = trigger === 'online' ? 'browser online' : 'page visible';
     console.info(`SyncConnectivityManager: ${reason} — starting integrity check`);
     const task = this._operations.runBackgroundTask(async (): Promise<void> => {
@@ -306,9 +290,9 @@ export class SyncConnectivityManager {
     this._pendingIntegrityTrigger ??= trigger;
 
     const elapsed = this._lastIntegrityCheckStartedAt === undefined
-      ? this._recoveryCooldownMilliseconds
-      : this._now() - this._lastIntegrityCheckStartedAt;
-    const delay = Math.max(0, this._recoveryCooldownMilliseconds - elapsed);
+      ? SyncConnectivityManager.RECOVERY_COOLDOWN_MILLISECONDS
+      : Date.now() - this._lastIntegrityCheckStartedAt;
+    const delay = Math.max(0, SyncConnectivityManager.RECOVERY_COOLDOWN_MILLISECONDS - elapsed);
     if (delay === 0 && this._activeIntegrityCheck?.scope === scope) {
       return;
     }

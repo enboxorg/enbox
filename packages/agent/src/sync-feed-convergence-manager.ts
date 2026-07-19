@@ -160,7 +160,6 @@ export class SyncFeedConvergenceManager {
     for (const entry of await this._operations.getDeadLettersForTenant(target.did)) {
       if (
         entry.remoteEndpoint === target.dwnUrl &&
-        entry.category === 'admit-failed' &&
         SyncFeedConvergenceManager.deadLetterMatchesScope(entry, target.scope)
       ) {
         messageCids.add(entry.messageCid);

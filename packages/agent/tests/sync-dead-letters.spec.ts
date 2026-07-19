@@ -13,10 +13,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 
-type Deferred<Value> = {
-  promise: Promise<Value>;
-  resolve: (value: Value | PromiseLike<Value>) => void;
-};
+import { deferred } from './utils/deferred.js';
 
 describe('SyncEngineLevel dead letter tracking', () => {
   let db: Level<string, string>;
@@ -110,10 +107,10 @@ describe('SyncEngineLevel dead letter tracking', () => {
       } as never,
     });
     const params = {
-      category    : 'admit-failed' as const,
-      errorDetail : 'test failure',
-      messageCid  : 'cid',
-      tenantDid   : 'did:example:alice',
+      errorDetail    : 'test failure',
+      messageCid     : 'cid',
+      remoteEndpoint : 'https://dwn.example',
+      tenantDid      : 'did:example:alice',
     };
 
     put.rejects(Object.assign(new Error('database closed'), { code: 'LEVEL_DATABASE_NOT_OPEN' }));
@@ -135,7 +132,6 @@ describe('SyncEngineLevel dead letter tracking', () => {
 
   it('should report unhealthy sync while failures are recorded', async () => {
     await recordDeadLetter({
-      category   : 'admit-failed',
       messageCid : 'cid-admit',
       tenantDid  : 'did:example:alice',
     });
@@ -143,7 +139,6 @@ describe('SyncEngineLevel dead letter tracking', () => {
     const health = await syncEngine.getSyncHealth();
 
     expect(health.failedMessageCount).toBe(1);
-    expect(health.admissionFailureCount).toBe(1);
     expect(health.syncHealthy).toBe(false);
   });
 
@@ -168,8 +163,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
     expect(promoted).toBe(true);
     expect(await db.sublevel('deferredPulls').values().all()).toEqual([]);
     expect(await syncEngine.getFailedMessages(tenantDid)).toMatchObject([{
-      category  : 'admit-failed',
-      errorCode : 'Deferred',
+      errorCode: 'Deferred',
       messageCid,
       remoteEndpoint,
       tenantDid,
@@ -309,17 +303,15 @@ describe('SyncEngineLevel dead letter tracking', () => {
   }
 
   async function recordDeadLetter(params: {
-    category?: 'admit-failed';
     messageCid: string;
     remoteEndpoint?: string;
     tenantDid: string;
   }): Promise<void> {
     await syncEngine.recordDeadLetter({
-      category       : params.category ?? 'admit-failed',
       errorCode      : 'test',
       errorDetail    : 'test failure',
       messageCid     : params.messageCid,
-      remoteEndpoint : params.remoteEndpoint,
+      remoteEndpoint : params.remoteEndpoint ?? 'https://dwn.example',
       tenantDid      : params.tenantDid,
     });
   }
@@ -490,11 +482,4 @@ describe('SyncEngineLevel dead letter tracking', () => {
     await db.sublevel('registeredIdentities').put(tenantDid, JSON.stringify({ protocols: 'all' }));
   }
 
-  function deferred<Value>(): Deferred<Value> {
-    let resolve!: (value: Value | PromiseLike<Value>) => void;
-    const promise = new Promise<Value>((promiseResolve) => {
-      resolve = promiseResolve;
-    });
-    return { promise, resolve };
-  }
 });

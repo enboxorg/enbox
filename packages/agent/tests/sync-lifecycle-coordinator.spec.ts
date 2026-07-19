@@ -4,18 +4,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 
 import { SyncLifecycleCoordinator } from '../src/sync-lifecycle-coordinator.js';
 
-type Deferred = {
-  promise: Promise<void>;
-  resolve: () => void;
-};
-
-function createDeferred(): Deferred {
-  let resolve!: () => void;
-  const promise = new Promise<void>((resolvePromise) => {
-    resolve = resolvePromise;
-  });
-  return { promise, resolve };
-}
+import { deferred as createDeferred } from './utils/deferred.js';
 
 describe('SyncLifecycleCoordinator', () => {
   afterEach(() => {

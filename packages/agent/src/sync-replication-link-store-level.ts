@@ -128,17 +128,6 @@ export class SyncReplicationLinkStoreLevel implements SyncReplicationLinkStore {
     });
   }
 
-  /** Replace a complete link for the public ReplicationLedger compatibility API. */
-  protected async replaceLink(link: ReplicationLinkState): Promise<void> {
-    const key = SyncReplicationLinkStoreLevel.buildKeyForLink(link);
-    const lastActivityAt = new Date().toISOString();
-    link.lastActivityAt = lastActivityAt;
-    const snapshot = SyncReplicationLinkStoreLevel.cloneLink(link);
-    await this.runForLink(key, async (): Promise<void> => {
-      await this._links.put(key, JSON.stringify(snapshot));
-    });
-  }
-
   private static buildKey(
     tenantDid: string,
     remoteEndpoint: string,
@@ -192,35 +181,15 @@ export class SyncReplicationLinkStoreLevel implements SyncReplicationLinkStore {
    */
   private static mergeCheckpoint(persisted: DirectionCheckpoint, incoming: DirectionCheckpoint): void {
     if (incoming.contiguousAppliedToken === undefined) {
-      SyncReplicationLinkStoreLevel.mergeReceivedToken(persisted, incoming.receivedToken);
       return;
     }
 
     if (!SyncCheckpoint.validateTokenDomain(persisted, incoming.contiguousAppliedToken)) {
       persisted.contiguousAppliedToken = incoming.contiguousAppliedToken;
-      persisted.receivedToken = incoming.receivedToken;
       return;
     }
 
     SyncCheckpoint.commitContiguousToken(persisted, incoming.contiguousAppliedToken);
-    SyncReplicationLinkStoreLevel.mergeReceivedToken(persisted, incoming.receivedToken);
-  }
-
-  /**
-   * Merge a received token only within the persisted checkpoint's established
-   * domain. `setReceivedToken` compares positions alone, so a stale old-epoch
-   * token with a numerically larger position would otherwise override a
-   * newer domain's value and leave a mixed-domain checkpoint.
-   */
-  private static mergeReceivedToken(persisted: DirectionCheckpoint, token: ProgressToken | undefined): void {
-    if (token === undefined || !SyncCheckpoint.validateTokenDomain(persisted, token)) {
-      return;
-    }
-    SyncCheckpoint.setReceivedToken(persisted, token);
-  }
-
-  private static cloneLink(link: ReplicationLinkState): ReplicationLinkState {
-    return structuredClone(link);
   }
 
   private async getLink(key: string): Promise<ReplicationLinkState | undefined> {
@@ -235,18 +204,20 @@ export class SyncReplicationLinkStoreLevel implements SyncReplicationLinkStore {
   }
 
   /**
-   * Merge a domain mutation into the latest stored link. The complete active
-   * link is retained only as a missing-record fallback, matching the legacy
-   * saveLink behavior without using it to replace unrelated persisted fields.
+   * Merge a domain mutation into the latest stored link. A mutation whose
+   * stored record is gone is dropped silently: a checkpoint persist racing a
+   * deliberate superseded-link prune must not resurrect the deleted link.
    */
   private async updateLink(link: ReplicationLinkState, mutate: (persistedLink: ReplicationLinkState) => void): Promise<void> {
     const key = SyncReplicationLinkStoreLevel.buildKeyForLink(link);
-    const fallback = SyncReplicationLinkStoreLevel.cloneLink(link);
     const lastActivityAt = new Date().toISOString();
     link.lastActivityAt = lastActivityAt;
 
     await this.runForLink(key, async (): Promise<void> => {
-      const persistedLink = await this.getLink(key) ?? fallback;
+      const persistedLink = await this.getLink(key);
+      if (persistedLink === undefined) {
+        return;
+      }
       mutate(persistedLink);
       persistedLink.lastActivityAt = lastActivityAt;
       await this._links.put(key, JSON.stringify(persistedLink));

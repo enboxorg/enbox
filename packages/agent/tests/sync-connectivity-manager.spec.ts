@@ -67,7 +67,7 @@ describe('SyncConnectivityManager', () => {
   });
 
   it('tracks sync outcomes and caps exponential poll backoff', () => {
-    const { manager } = setupManager({ maxBackoffMultiplier: 4 });
+    const { manager } = setupManager();
 
     manager.recordFailure();
     expect(manager.getState([])).toBe('unknown');
@@ -342,7 +342,6 @@ function setupManager(options: {
   environment?: SyncConnectivityEnvironment;
   integrityError?: Error;
   integrityOperation?: () => Promise<void>;
-  maxBackoffMultiplier?: number;
   runBackgroundImmediately?: boolean;
 } = {}): { manager: SyncConnectivityManager; state: TestOperationsState } {
   const state: TestOperationsState = {
@@ -373,8 +372,7 @@ function setupManager(options: {
   };
   return {
     manager: new SyncConnectivityManager({
-      environment          : options.environment,
-      maxBackoffMultiplier : options.maxBackoffMultiplier,
+      environment: options.environment,
       operations,
     }),
     state,

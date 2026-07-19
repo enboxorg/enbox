@@ -89,7 +89,6 @@ function deadLetter(
   overrides: Partial<DeadLetterEntry> = {},
 ): DeadLetterEntry {
   return {
-    category       : 'admit-failed',
     errorDetail    : 'admission failed',
     failedAt       : '2026-01-01T00:00:00.000Z',
     messageCid,
@@ -161,7 +160,7 @@ describe('SyncFeedConvergenceManager', () => {
 
   it('does not schedule a quota probe without a next deadline or a live active link', async () => {
     const syncTarget = target();
-    const pollingLink = linkFor(syncTarget, 'polling');
+    const pollingLink = linkFor(syncTarget, 'initializing');
     const context = contextFor(syncTarget, pollingLink);
     const { manager, operations } = createFixture({ activeLink: pollingLink, syncTarget });
     operations.isDivergenceExplained.resolves(true);
@@ -268,8 +267,8 @@ describe('SyncFeedConvergenceManager', () => {
     const syncTarget = target();
     const ledgerLink = linkFor(syncTarget);
     const activeLink = linkFor(syncTarget);
-    ledgerLink.pull = { receivedToken: { streamId: 'pull', position: '1' } };
-    ledgerLink.push = { receivedToken: { streamId: 'push', position: '2' } };
+    ledgerLink.pull = { contiguousAppliedToken: { epoch: 'epoch', position: '1', streamId: 'pull' } };
+    ledgerLink.push = { contiguousAppliedToken: { epoch: 'epoch', position: '2', streamId: 'push' } };
     const context = contextFor(syncTarget, ledgerLink);
     const { manager, operations } = createFixture({ activeLink, ledgerLink, syncTarget });
 
@@ -293,7 +292,7 @@ describe('SyncFeedConvergenceManager', () => {
 
   it('resets a durable polling link without scheduling live reconciliation', async () => {
     const syncTarget = target();
-    const ledgerLink = linkFor(syncTarget, 'polling');
+    const ledgerLink = linkFor(syncTarget, 'initializing');
     const context = contextFor(syncTarget, ledgerLink);
     const { manager, operations } = createFixture({ ledgerLink, syncTarget });
     operations.getActiveLink.returns(undefined);
