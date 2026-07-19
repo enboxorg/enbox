@@ -17,6 +17,13 @@ replacing the old scattered in-flight bookkeeping:
   progress, or mark the link live over the newer request, and a
   requested trailing pass subsumes the failed pass's retry timer. The
   `repairInFlight`/`reconcileInFlight` handles are gone.
+- Transitions publish atomically: a repair transition writes its resume
+  token, run request, generation fence, and in-memory status in one
+  synchronous block before any await, so a pass consuming the request —
+  trailing turn or fresh supervision — always observes the complete
+  transition, and a superseded pass's failure hands off quietly to the
+  trailing repair instead of reporting, arming retries, or burning the
+  attempt budget into a pause.
 - Pause is a cancellation fence: pausing stays prompt and mailbox-free
   (it is the fail-safe for revoked authorization), and every repair
   checkpoint, completion step, and late failure handler observes the

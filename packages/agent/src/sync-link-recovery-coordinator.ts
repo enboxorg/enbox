@@ -107,21 +107,24 @@ export class SyncLinkRecoveryCoordinator {
       return;
     }
 
-    // Mark the repair request synchronously, before the first await: an
-    // executing repair pass observes the supersession at its very next
-    // checkpoint instead of completing over this newer transition.
+    // Publish the entire transition in one synchronous block — abandoned
+    // pull deliveries, the resume token, the run request, and the in-memory
+    // repairing status (setOfflineStatus writes it before its first await).
+    // Whoever consumes the request afterwards, whether an already-executing
+    // pass's trailing turn or the supervision below, observes the complete
+    // transition; only durability and supervision trail the block.
+    controller.clearPullInflight();
+    if (options?.resumeToken !== undefined) {
+      controller.setRepairResumeToken(options.resumeToken);
+    }
     controller.requestSharedRun('repair');
     await this.setOfflineStatus(link, 'repairing');
     if (!controller.isActive) {
       return;
     }
-    if (options?.resumeToken !== undefined) {
-      controller.setRepairResumeToken(options.resumeToken);
-    }
-    controller.clearPullInflight();
 
     const runIdentityTask = this._operations.captureIdentityTaskRunner(link.tenantDid);
-    this.startSupervisedRepair(controller, runIdentityTask);
+    this.superviseRepairDrain(controller, runIdentityTask);
   }
 
   /**
@@ -174,7 +177,8 @@ export class SyncLinkRecoveryCoordinator {
       if (this.isStale(controller, runtimeScope) || link.status !== 'repairing') {
         return;
       }
-      this.startSupervisedRepair(controller, runIdentityTask);
+      controller.requestSharedRun('repair');
+      this.superviseRepairDrain(controller, runIdentityTask);
     }, delayMs);
     controller.setRepairRetryTimer(timer);
   }
@@ -187,6 +191,11 @@ export class SyncLinkRecoveryCoordinator {
    */
   public repair(controller: SyncLinkController): Promise<void> {
     controller.requestSharedRun('repair');
+    return this.drainRepairs(controller);
+  }
+
+  /** Run pending repair requests; requests are marked by their transitions. */
+  private drainRepairs(controller: SyncLinkController): Promise<void> {
     return controller.drainSharedRuns('repair', async (): Promise<void> => {
       if (this.repairCancelled(controller, this._operations.getRuntimeScope())) {
         return;
@@ -273,13 +282,13 @@ export class SyncLinkRecoveryCoordinator {
     return controller.drainSharedRuns('reconcile', (): Promise<void> => this.reconcileExclusive(controller));
   }
 
-  private startSupervisedRepair(
+  private superviseRepairDrain(
     controller: SyncLinkController,
     runIdentityTask: SyncIdentityTaskRunner,
   ): void {
     void runIdentityTask(async (): Promise<void> => {
       try {
-        await this.repair(controller);
+        await this.drainRepairs(controller);
       } catch {
         this.scheduleRepairRetry(controller);
       }
@@ -447,10 +456,12 @@ export class SyncLinkRecoveryCoordinator {
     attempts: number,
     error: unknown,
   ): Promise<void> {
-    // A repair failing after an external pause is the pause tearing down the
-    // repair's I/O — stay quiet instead of reporting, emitting repair:failed,
-    // or feeding the retry ladder.
-    if (this.repairCancelled(controller, runtimeScope)) {
+    // A repair failing after it was superseded — an external pause tearing
+    // down its I/O, or a newer repair request taking ownership — is a quiet
+    // handoff: no report, no repair:failed, no rethrow into the retry
+    // ladder, so the trailing turn (if any) runs immediately with the
+    // newest transition state instead of inheriting this pass's failure.
+    if (this.repairSuperseded(controller, runtimeScope)) {
       return;
     }
 

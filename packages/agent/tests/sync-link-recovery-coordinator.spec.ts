@@ -109,7 +109,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const controller = activate(fixture, state);
     controller.startPullDelivery(token());
     const resumeToken = token('10');
-    const repair = sinon.stub(fixture.coordinator, 'repair').resolves();
+    const drain = sinon.stub(fixture.coordinator as any, 'drainRepairs').resolves();
 
     await fixture.coordinator.transitionToRepairing(controller, { resumeToken });
     await waitForLastTask(fixture.taskRunner);
@@ -117,8 +117,11 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(state.status).toBe('repairing');
     expect(state.connectivity).toBe('offline');
     expect(controller.pullInflightCount).toBe(0);
+    // The transition publishes the runnable request and its token together;
+    // the supervised drain runs it without re-marking.
     expect(controller.repairResumeToken).toEqual(resumeToken);
-    expect(repair.calledOnceWithExactly(controller)).toBe(true);
+    expect(controller.sharedRunRequested('repair')).toBe(true);
+    expect(drain.calledOnceWithExactly(controller)).toBe(true);
     expect(fixture.operations.emitEvent.calledWithMatch({
       type : 'link:status-change',
       from : 'live',
@@ -130,7 +133,20 @@ describe('SyncLinkRecoveryCoordinator', () => {
     controller.deactivate();
     fixture.controllers.set(LINK_KEY, new SyncLinkController(LINK_KEY, link()));
     await fixture.coordinator.transitionToRepairing(controller);
-    expect(repair.calledOnce).toBe(true);
+    expect(drain.calledOnce).toBe(true);
+  });
+
+  it('does not publish any repair state for a paused link', async () => {
+    const fixture = createFixture();
+    const state = link('paused');
+    const controller = activate(fixture, state);
+
+    await fixture.coordinator.transitionToRepairing(controller, { resumeToken: token('9') });
+
+    expect(controller.sharedRunRequested('repair')).toBe(false);
+    expect(controller.repairResumeToken).toBeUndefined();
+    expect(fixture.taskRunner.called).toBe(false);
+    expect(state.status).toBe('paused');
   });
 
   it('pauses a link once and clears subscriptions, timers, pull ordering, repair state, and push state', async () => {
@@ -335,21 +351,23 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const clock = sinon.useFakeTimers();
     const fixture = createFixture({ repairBackoffMs: [1000] });
     const controller = activate(fixture, link('repairing'));
-    const repair = sinon.stub(fixture.coordinator, 'repair').resolves();
+    const drain = sinon.stub(fixture.coordinator as any, 'drainRepairs').resolves();
 
     fixture.coordinator.scheduleRepairRetry(controller);
     expect(fixture.operations.captureIdentityTaskRunner.calledOnceWithExactly(DID)).toBe(true);
     fixture.operations.captureIdentityTaskRunner.resetHistory();
     fixture.disposeScope();
     await clock.tickAsync(1000);
-    expect(repair.called).toBe(false);
+    expect(drain.called).toBe(false);
+    expect(controller.sharedRunRequested('repair')).toBe(false);
     expect(fixture.operations.captureIdentityTaskRunner.notCalled).toBe(true);
     expect(controller.repairRetryTimer).toBeUndefined();
 
     fixture.coordinator.scheduleRepairRetry(controller);
     await clock.tickAsync(1000);
     await waitForLastTask(fixture.taskRunner);
-    expect(repair.calledOnceWithExactly(controller)).toBe(true);
+    expect(controller.sharedRunRequested('repair')).toBe(true);
+    expect(drain.calledOnceWithExactly(controller)).toBe(true);
     expect(controller.repairRetryTimer).toBeUndefined();
   });
 
@@ -606,6 +624,88 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const verificationPasses = fixture.operations.reconcileTarget.getCalls()
       .filter((call) => (call.args[1] as { verifyConvergence?: boolean } | undefined)?.verifyConvergence === true);
     expect(verificationPasses.length).toBe(1);
+    controller.deactivate();
+  });
+
+  it('runs exactly two passes when a transition lands mid-repair, even while its status write is pending', async () => {
+    const clock = sinon.useFakeTimers();
+    const fixture = createFixture();
+    const state = link('repairing');
+    const controller = activate(fixture, state);
+    const reconcileStarted = deferred<void>();
+    const releaseReconcile = deferred<void>();
+    fixture.operations.reconcileTarget.onFirstCall().callsFake(async () => {
+      reconcileStarted.resolve();
+      await releaseReconcile.promise;
+      return { converged: true };
+    });
+    fixture.operations.reconcileTarget.resolves({ converged: true });
+
+    const repairing = fixture.coordinator.repair(controller);
+    await reconcileStarted.promise;
+    // The newer transition's status persistence is slow: the trailing turn
+    // must nevertheless observe the complete transition — token included —
+    // because the transition publishes everything before its first await.
+    const releaseStatus = deferred<void>();
+    fixture.operations.setStatus.callsFake(async (target: ReplicationLinkState, status: string) => {
+      target.status = status as ReplicationLinkState['status'];
+      if (status === 'repairing') {
+        await releaseStatus.promise;
+      }
+    });
+    const newerToken = token('42');
+    const transitioning = fixture.coordinator.transitionToRepairing(controller, { resumeToken: newerToken });
+    releaseReconcile.resolve();
+    await repairing;
+
+    expect(fixture.operations.reconcileTarget.callCount).toBe(2);
+    // The superseded pass stopped before touching the checkpoint; only the
+    // trailing pass reset it, and with the newest token.
+    expect(fixture.operations.resetPullCheckpoint.calledOnce).toBe(true);
+    expect(fixture.operations.resetPullCheckpoint.firstCall.args[1]).toEqual(newerToken);
+
+    // Once the transition's persistence resolves, its supervision finds the
+    // request already served — no third repair pass (the later scheduled
+    // pass is the designed post-repair verification, not a repair).
+    releaseStatus.resolve();
+    await transitioning;
+    expect(state.status).toBe('live');
+    controller.deactivate();
+    await clock.runAllAsync();
+    const repairPasses = fixture.operations.reconcileTarget.getCalls()
+      .filter((call) => call.args[1] === undefined);
+    expect(repairPasses.length).toBe(2);
+  });
+
+  it('hands a superseded pass failure to the trailing repair without burning the attempt budget', async () => {
+    const fixture = createFixture({ maxRepairAttempts: 1 });
+    const state = link('repairing');
+    const controller = activate(fixture, state);
+    const reconcileStarted = deferred<void>();
+    const releaseReconcile = deferred<void>();
+    fixture.operations.reconcileTarget.onFirstCall().callsFake(async () => {
+      reconcileStarted.resolve();
+      await releaseReconcile.promise;
+      throw new Error('socket closed by supersession teardown');
+    });
+    fixture.operations.reconcileTarget.resolves({ converged: true });
+
+    const repairing = fixture.coordinator.repair(controller);
+    await reconcileStarted.promise;
+    const newerToken = token('43');
+    const transitioning = fixture.coordinator.transitionToRepairing(controller, { resumeToken: newerToken });
+    releaseReconcile.resolve();
+    await Promise.all([repairing, transitioning]);
+
+    // The stale failure is a quiet handoff: the trailing repair runs
+    // immediately with the newest token, and even at maxRepairAttempts 1
+    // the old failure cannot report, arm a retry, or pause the link.
+    expect(fixture.operations.reconcileTarget.callCount).toBe(2);
+    expect(fixture.operations.resetPullCheckpoint.firstCall.args[1]).toEqual(newerToken);
+    expect(fixture.operations.reportError.notCalled).toBe(true);
+    expect(fixture.operations.emitEvent.calledWithMatch({ type: 'repair:failed' })).toBe(false);
+    expect(controller.repairRetryTimer).toBeUndefined();
+    expect(state.status).toBe('live');
     controller.deactivate();
   });
 

@@ -209,7 +209,7 @@ describe('SyncEngineLevel lifecycle', () => {
     sinon.stub(engine['ledger'], 'setStatus').callsFake(async (): Promise<void> => {
       link.status = 'repairing';
     });
-    sinon.stub(engine['_linkRecoveryCoordinator'], 'repair').callsFake(async (): Promise<void> => {
+    sinon.stub(engine['_linkRecoveryCoordinator'] as any, 'drainRepairs').callsFake(async (): Promise<void> => {
       repairStarted.resolve();
       await releaseRepair.promise;
     });
@@ -469,7 +469,7 @@ describe('SyncEngineLevel lifecycle', () => {
     sinon.stub(engine['ledger'], 'setStatus').callsFake(async (): Promise<void> => {
       link.status = 'repairing';
     });
-    sinon.stub(engine['_linkRecoveryCoordinator'], 'repair').callsFake(async (): Promise<void> => {
+    sinon.stub(engine['_linkRecoveryCoordinator'] as any, 'drainRepairs').callsFake(async (): Promise<void> => {
       repairStarted.resolve();
       await releaseRepair.promise;
     });
@@ -526,7 +526,7 @@ describe('SyncEngineLevel lifecycle', () => {
     sinon.stub(engine['ledger'], 'setStatus').callsFake(async (): Promise<void> => {
       bobLink.status = 'repairing';
     });
-    sinon.stub(engine['_linkRecoveryCoordinator'], 'repair').callsFake(async (): Promise<void> => {
+    sinon.stub(engine['_linkRecoveryCoordinator'] as any, 'drainRepairs').callsFake(async (): Promise<void> => {
       repairStarted.resolve();
       await releaseRepair.promise;
     });
