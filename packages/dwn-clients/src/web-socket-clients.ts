@@ -306,7 +306,18 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       WebSocketDwnRpcClient.ensureWakeListeners();
       pending = WebSocketDwnRpcClient.createConnection(url)
         .then((connection) => {
+          // Ownership: an evicted socket may have reconnected and re-taken
+          // the endpoint while this replacement was being established. The
+          // caller awaiting this promise will use THIS connection, so it wins
+          // the pool entry and the displaced socket closes — exactly one
+          // socket per endpoint survives the race.
+          const displaced = WebSocketDwnRpcClient.connections.get(key);
           WebSocketDwnRpcClient.connections.set(key, connection);
+          if (displaced !== undefined && displaced.socket !== connection.socket) {
+            try {
+              displaced.socket.close();
+            } catch { /* best effort */ }
+          }
           return connection;
         })
         .catch((error: unknown) => {
@@ -331,9 +342,14 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     const socket = await JsonRpcSocket.connect(url.toString(), {
       onclose: (): void => {
         // Remove the stale connection from the map so new requests create a
-        // fresh one — and register the socket as reconnecting so wake-driven
+        // fresh one — but only while this socket still owns the endpoint's
+        // pool entry: a stale close from a superseded socket must not evict
+        // its replacement. Register the socket as reconnecting so wake-driven
         // health checks can still reach it and fast-forward its backoff.
-        WebSocketDwnRpcClient.connections.delete(key);
+        const current = WebSocketDwnRpcClient.connections.get(key);
+        if (current?.socket === socket) {
+          WebSocketDwnRpcClient.connections.delete(key);
+        }
         if (!socket.isClosedByUser) {
           WebSocketDwnRpcClient.reconnectingSockets.add(socket);
         }
@@ -358,6 +374,19 @@ export class WebSocketDwnRpcClient implements DwnRpc {
         // have raced an in-flight reconnection, and re-registering here would
         // resurrect networking the caller believes is stopped.
         if (socket.isClosedByUser) {
+          return;
+        }
+
+        // Ownership: a request that arrived while this socket was
+        // reconnecting created a replacement connection for the endpoint.
+        // The pooled connection is the one with live consumers — a superseded
+        // socket closes itself instead of overwriting it, so exactly one
+        // socket per endpoint survives the race.
+        const current = WebSocketDwnRpcClient.connections.get(key);
+        if (current !== undefined && current.socket !== socket) {
+          try {
+            socket.close();
+          } catch { /* best effort */ }
           return;
         }
 

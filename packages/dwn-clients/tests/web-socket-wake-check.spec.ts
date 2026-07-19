@@ -213,4 +213,131 @@ describe('WebSocketDwnRpcClient wake health checks', () => {
       socketClass.createWebSocket = originalCreate;
     }
   }, 10_000);
+
+  it('should close a reconnected socket that lost its endpoint to a replacement connection', async () => {
+    // Interleaving 1: the old socket's reconnect completes AFTER a request
+    // already created a replacement for the endpoint. The replacement owns
+    // the pool; the reconnected socket must close instead of overwriting it —
+    // exactly one socket per endpoint survives.
+    const dwnUrl = new URL(testDwnUrl);
+    dwnUrl.protocol = dwnUrl.protocol === 'http:' ? 'ws:' : 'wss:';
+
+    const client = new WebSocketDwnRpcClient();
+    const pool = poolOf(WebSocketDwnRpcClient);
+    const getConnection = (client as unknown as {
+      getConnection(url: string): Promise<{ socket: JsonRpcSocket }>;
+    }).getConnection.bind(client);
+
+    const first = await getConnection(dwnUrl.toString());
+    const firstInternals = first.socket as unknown as {
+      options: { baseReconnectDelay?: number; maxReconnectDelay?: number };
+      socket: WebSocket;
+    };
+    firstInternals.options.baseReconnectDelay = 10;
+    firstInternals.options.maxReconnectDelay = 10;
+
+    // Gate only the FIRST establishment (the old socket's reconnect); the
+    // replacement's own connect passes straight through.
+    let releaseConnect!: () => void;
+    const connectGate = new Promise<void>((resolve) => { releaseConnect = resolve; });
+    const socketClass = JsonRpcSocket as unknown as {
+      createWebSocket(url: string, timeout: number): Promise<WebSocket>;
+    };
+    const originalCreate = socketClass.createWebSocket;
+    let connectCalls = 0;
+    socketClass.createWebSocket = async (url: string, timeout: number): Promise<WebSocket> => {
+      connectCalls += 1;
+      if (connectCalls === 1) {
+        await connectGate;
+      }
+      return originalCreate.call(JsonRpcSocket, url, timeout);
+    };
+
+    try {
+      // Unexpected drop: eviction + registry; reconnect parks in the gate.
+      firstInternals.socket.close();
+      await waitFor((): boolean => connectCalls === 1);
+      expect(pool.connections.size).toBe(0);
+
+      // A request meanwhile creates the replacement, which takes the pool.
+      const replacement = await getConnection(dwnUrl.toString());
+      expect(pool.connections.size).toBe(1);
+      expect(replacement.socket).not.toBe(first.socket);
+
+      // The old socket's reconnect completes — and must lose the race.
+      releaseConnect();
+      await waitFor((): boolean => !first.socket.isConnected && pool.reconnectingSockets.size === 0);
+
+      expect(pool.connections.size).toBe(1);
+      expect(([...pool.connections.values()][0] as { socket: JsonRpcSocket }).socket).toBe(replacement.socket);
+      expect(replacement.socket.isConnected).toBe(true);
+      expect(first.socket.isConnected).toBe(false);
+    } finally {
+      socketClass.createWebSocket = originalCreate;
+    }
+  }, 10_000);
+
+  it('should close a pooled reconnected socket displaced by a completing replacement', async () => {
+    // Interleaving 2: the old socket reconnects and re-takes the pool while
+    // the replacement is still being established. The caller awaiting the
+    // replacement will use it, so the replacement wins the pool and the
+    // displaced socket closes — exactly one socket per endpoint survives.
+    const dwnUrl = new URL(testDwnUrl);
+    dwnUrl.protocol = dwnUrl.protocol === 'http:' ? 'ws:' : 'wss:';
+
+    const client = new WebSocketDwnRpcClient();
+    const pool = poolOf(WebSocketDwnRpcClient);
+    const getConnection = (client as unknown as {
+      getConnection(url: string): Promise<{ socket: JsonRpcSocket }>;
+    }).getConnection.bind(client);
+
+    const first = await getConnection(dwnUrl.toString());
+    const firstInternals = first.socket as unknown as {
+      options: { baseReconnectDelay?: number; maxReconnectDelay?: number };
+      socket: WebSocket;
+    };
+    // Slow enough that the replacement's establishment starts first.
+    firstInternals.options.baseReconnectDelay = 200;
+    firstInternals.options.maxReconnectDelay = 200;
+
+    // Gate only the FIRST establishment (the replacement); the old socket's
+    // reconnect passes straight through and re-takes the pool.
+    let releaseConnect!: () => void;
+    const connectGate = new Promise<void>((resolve) => { releaseConnect = resolve; });
+    const socketClass = JsonRpcSocket as unknown as {
+      createWebSocket(url: string, timeout: number): Promise<WebSocket>;
+    };
+    const originalCreate = socketClass.createWebSocket;
+    let connectCalls = 0;
+    socketClass.createWebSocket = async (url: string, timeout: number): Promise<WebSocket> => {
+      connectCalls += 1;
+      if (connectCalls === 1) {
+        await connectGate;
+      }
+      return originalCreate.call(JsonRpcSocket, url, timeout);
+    };
+
+    try {
+      // Unexpected drop, then request the endpoint while the pool is empty.
+      firstInternals.socket.close();
+      await waitFor((): boolean => pool.connections.size === 0);
+      const replacementPromise = getConnection(dwnUrl.toString());
+      await waitFor((): boolean => connectCalls === 1);
+
+      // The old socket reconnects first and re-takes the pool.
+      await waitFor((): boolean => first.socket.isConnected && pool.connections.size === 1);
+
+      // The completing replacement displaces it.
+      releaseConnect();
+      const replacement = await replacementPromise;
+      await waitFor((): boolean => !first.socket.isConnected);
+
+      expect(pool.connections.size).toBe(1);
+      expect(([...pool.connections.values()][0] as { socket: JsonRpcSocket }).socket).toBe(replacement.socket);
+      expect(replacement.socket.isConnected).toBe(true);
+      expect(pool.reconnectingSockets.size).toBe(0);
+    } finally {
+      socketClass.createWebSocket = originalCreate;
+    }
+  }, 10_000);
 });

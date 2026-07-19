@@ -28,5 +28,10 @@ undetected for 60–100s while subscriptions silently missed events.
   reconnect already past its backoff cannot undo a close that raced it:
   establishment re-checks closure, discards the fresh WebSocket, and a
   user-closed socket is never re-registered by `onreconnected`.
+- Exactly one socket per endpoint survives a reconnect racing a replacement
+  connection: pool mutations are ownership-checked, so a superseded
+  reconnected socket closes instead of overwriting the replacement, a
+  completing replacement closes the socket it displaces, and a stale close
+  cannot evict a connection it no longer owns.
 - `dwn-server` heartbeat now `terminate()`s a dead peer instead of initiating
   a close handshake the peer can never complete.
