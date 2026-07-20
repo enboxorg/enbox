@@ -134,6 +134,11 @@ type RecordEncryptionPolicy = {
   ruleSet: ProtocolRuleSet;
 };
 
+type PreparedDwnData = {
+  data?: Blob;
+  readableStream?: ReadableStream<Uint8Array>;
+};
+
 type ProtocolDefinitionSource = 'local' | 'remote';
 
 /** Re-provision inputs after normalization: the audience context id and the resolved recipient wrap target. */
@@ -1918,18 +1923,7 @@ export class AgentDwnApi {
       );
     }
 
-    let plaintextBytes: Uint8Array;
-    if (messageParams.data !== undefined) {
-      plaintextBytes = messageParams.data instanceof Uint8Array
-        ? messageParams.data
-        : new TextEncoder().encode(String(messageParams.data));
-    } else if (request.dataStream instanceof Blob) {
-      plaintextBytes = new Uint8Array(await request.dataStream.arrayBuffer());
-    } else if (request.dataStream instanceof ReadableStream) {
-      plaintextBytes = await DataStream.toBytes(request.dataStream);
-    } else {
-      throw new TypeError('AgentDwnApi: Data must be provided for encrypted records.');
-    }
+    const plaintextBytes = await AgentDwnApi.readRecordPlaintext(request);
 
     const contentEncryptionAlgorithm = ContentEncryptionAlgorithm.A256CTR;
     const dataEncryptionKey = crypto.getRandomValues(new Uint8Array(32));
@@ -1967,69 +1961,13 @@ export class AgentDwnApi {
       contentEncryptionAlgorithm,
     );
 
-    if (roleAudienceInputs.pendingAudienceRecords.length > 0) {
-      messageParams.dateCreated ??= Time.getCurrentTimestamp();
-      messageParams.messageTimestamp ??= messageParams.dateCreated;
-      if (messageParams.published === true) {
-        messageParams.datePublished ??= messageParams.dateCreated;
-      }
-      if (request.granteeDid && messageParams.permissionGrantId && !messageParams.delegatedGrant) {
-        await this.populateDelegatedGrantForWrite(request.author, request.granteeDid, messageParams);
-      }
-      messageParams.recordId ??= await RecordsWrite.getEntryId(
-        request.author,
-        await this.buildPendingAudienceRecordDescriptor({ dataCid, dataSize, messageParams }),
-      );
-
-      for (const pending of roleAudienceInputs.pendingAudienceRecords) {
-        const sourceContextId = messageParams.parentContextId === undefined
-          ? messageParams.recordId
-          : `${messageParams.parentContextId}/${messageParams.recordId}`;
-        const contextId = getRoleAudienceContextId(pending.rolePath, sourceContextId);
-        if (contextId === undefined) {
-          throw new Error(`AgentDwnApi: Unable to determine role audience context for '${pending.rolePath}'.`);
-        }
-
-        await this.assertAudienceSealCoverage({
-          contextId,
-          granteeDid : request.granteeDid,
-          protocol   : pending.audienceKey.protocol,
-          rolePath   : pending.audienceKey.rolePath,
-          sourceDid  : request.target,
-        });
-
-        const audienceKey: AudienceKeyPayload = { ...pending.audienceKey, contextId };
-        await createAudienceRecordFn({
-          agent             : this.agent,
-          audienceKey,
-          authorDid         : request.author,
-          contextId,
-          delegatedGrant    : messageParams.delegatedGrant,
-          granteeDid        : request.granteeDid,
-          permissionGrantId : messageParams.permissionGrantId,
-          protocol          : audienceKey.protocol,
-          protocolRole      : messageParams.protocolRole,
-          rolePath          : audienceKey.rolePath,
-          sealingPublicKey  : pending.sealingPublicKey,
-          sourceDid         : request.target,
-        });
-        this._audienceDecryptionKeyCache.set(getAudienceDecryptionKeyCacheKey({
-          contextId,
-          keyId        : audienceKey.keyId,
-          protocol     : audienceKey.protocol,
-          recipientDid : request.author,
-          rolePath     : audienceKey.rolePath,
-          sourceDid    : request.target,
-        }), {
-          contextId,
-          keyMaterial  : audienceKey.keyMaterial,
-          protocol     : audienceKey.protocol,
-          recipientDid : request.author,
-          rolePath     : audienceKey.rolePath,
-          sourceDid    : request.target,
-        });
-      }
-    }
+    await this.provisionPendingRoleAudienceRecords({
+      dataCid,
+      dataSize,
+      messageParams,
+      pendingAudienceRecords: roleAudienceInputs.pendingAudienceRecords,
+      request,
+    });
 
     messageParams.dataCid = dataCid;
     messageParams.dataSize = dataSize;
@@ -2043,144 +1981,329 @@ export class AgentDwnApi {
     };
   }
 
+  /** Reads the caller's plaintext from the one supported RecordsWrite data source. */
+  private static async readRecordPlaintext(
+    request: ProcessDwnRequest<DwnInterface.RecordsWrite>,
+  ): Promise<Uint8Array> {
+    const messageData = request.messageParams?.data;
+    if (messageData !== undefined) {
+      return messageData instanceof Uint8Array
+        ? messageData
+        : new TextEncoder().encode(String(messageData));
+    }
+
+    if (request.dataStream instanceof Blob) {
+      return new Uint8Array(await request.dataStream.arrayBuffer());
+    }
+
+    if (request.dataStream instanceof ReadableStream) {
+      return DataStream.toBytes(request.dataStream);
+    }
+
+    throw new TypeError('AgentDwnApi: Data must be provided for encrypted records.');
+  }
+
+  /** Creates newly-needed role-audience records after the source record identity is stable. */
+  private async provisionPendingRoleAudienceRecords(params: {
+    dataCid: string;
+    dataSize: number;
+    messageParams: DwnMessageParams[DwnInterface.RecordsWrite];
+    pendingAudienceRecords: PendingAudienceRecord[];
+    request: ProcessDwnRequest<DwnInterface.RecordsWrite>;
+  }): Promise<void> {
+    if (params.pendingAudienceRecords.length === 0) {
+      return;
+    }
+
+    await this.preparePendingAudienceSourceRecord(params.request, params.messageParams, params.dataCid, params.dataSize);
+    for (const pending of params.pendingAudienceRecords) {
+      await this.provisionPendingRoleAudienceRecord(params.request, params.messageParams, pending);
+    }
+  }
+
+  /** Populates fields needed to derive the identity and context of a pending source record. */
+  private async preparePendingAudienceSourceRecord(
+    request: ProcessDwnRequest<DwnInterface.RecordsWrite>,
+    messageParams: DwnMessageParams[DwnInterface.RecordsWrite],
+    dataCid: string,
+    dataSize: number,
+  ): Promise<void> {
+    messageParams.dateCreated ??= Time.getCurrentTimestamp();
+    messageParams.messageTimestamp ??= messageParams.dateCreated;
+    if (messageParams.published === true) {
+      messageParams.datePublished ??= messageParams.dateCreated;
+    }
+    if (request.granteeDid !== undefined) {
+      await this.populateDelegatedGrantForWrite(request.author, request.granteeDid, messageParams);
+    }
+    messageParams.recordId ??= await RecordsWrite.getEntryId(
+      request.author,
+      await this.buildPendingAudienceRecordDescriptor({ dataCid, dataSize, messageParams }),
+    );
+  }
+
+  /** Persists one role-audience record and seeds its locally-authorized decryption key. */
+  private async provisionPendingRoleAudienceRecord(
+    request: ProcessDwnRequest<DwnInterface.RecordsWrite>,
+    messageParams: DwnMessageParams[DwnInterface.RecordsWrite],
+    pending: PendingAudienceRecord,
+  ): Promise<void> {
+    const sourceContextId = messageParams.parentContextId === undefined
+      ? messageParams.recordId
+      : `${messageParams.parentContextId}/${messageParams.recordId}`;
+    const contextId = getRoleAudienceContextId(pending.rolePath, sourceContextId);
+    if (contextId === undefined) {
+      throw new Error(`AgentDwnApi: Unable to determine role audience context for '${pending.rolePath}'.`);
+    }
+
+    await this.assertAudienceSealCoverage({
+      contextId,
+      granteeDid : request.granteeDid,
+      protocol   : pending.audienceKey.protocol,
+      rolePath   : pending.audienceKey.rolePath,
+      sourceDid  : request.target,
+    });
+
+    const audienceKey: AudienceKeyPayload = { ...pending.audienceKey, contextId };
+    await createAudienceRecordFn({
+      agent             : this.agent,
+      audienceKey,
+      authorDid         : request.author,
+      contextId,
+      delegatedGrant    : messageParams.delegatedGrant,
+      granteeDid        : request.granteeDid,
+      permissionGrantId : messageParams.permissionGrantId,
+      protocol          : audienceKey.protocol,
+      protocolRole      : messageParams.protocolRole,
+      rolePath          : audienceKey.rolePath,
+      sealingPublicKey  : pending.sealingPublicKey,
+      sourceDid         : request.target,
+    });
+    this._audienceDecryptionKeyCache.set(getAudienceDecryptionKeyCacheKey({
+      contextId,
+      keyId        : audienceKey.keyId,
+      protocol     : audienceKey.protocol,
+      recipientDid : request.author,
+      rolePath     : audienceKey.rolePath,
+      sourceDid    : request.target,
+    }), {
+      contextId,
+      keyMaterial  : audienceKey.keyMaterial,
+      protocol     : audienceKey.protocol,
+      recipientDid : request.author,
+      rolePath     : audienceKey.rolePath,
+      sourceDid    : request.target,
+    });
+  }
+
   private async constructDwnMessage<T extends DwnInterface>({ request, protocolDefinitionSource }: {
     request: ProcessDwnRequest<T>;
     protocolDefinitionSource: ProtocolDefinitionSource;
   }): Promise<DwnMessageWithData<T>> {
-    // if the request has a granteeDid, ensure the messageParams include the proper grant parameters
     if (request.granteeDid && !this.hasGrantParams(request.messageParams)) {
       throw new Error('AgentDwnApi: Requested to sign with a permission but no grant messageParams were provided in the request');
     }
 
-    const rawMessage = request.rawMessage;
-    let readableStream: ReadableStream<Uint8Array> | undefined;
-    let data: Blob | undefined;
-
     if (isDwnRequest(request, DwnInterface.ProtocolsConfigure)) {
-      const messageParams = request.messageParams;
-      if (rawMessage === undefined && messageParams !== undefined) {
-        const hasEncryptedTypes = Object.values(messageParams.definition.types)
-          .some((type: ProtocolType): boolean => type.encryptionRequired === true);
-        if (hasEncryptedTypes) {
-          const keyDeriver = await getEncryptionKeyDeriverFn(this.agent, request.author);
-          messageParams.definition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-            messageParams.definition,
-            keyDeriver,
-          );
-        }
-      }
+      await this.prepareProtocolsConfigureDefinition(request);
     }
 
-    if (isDwnRequest(request, DwnInterface.RecordsWrite) && rawMessage === undefined) {
-      const encryptionPolicy = await this.resolveRecordEncryptionPolicy(request, protocolDefinitionSource);
-      if (encryptionPolicy?.encryptionRequired === true) {
-        if (request.messageParams?.encryption !== undefined) {
-          if (request.messageParams.data !== undefined || request.dataStream !== undefined) {
-            throw new Error(
-              'AgentDwnApi: A pre-built encryption envelope can only be reused when record data is unchanged.'
-            );
-          }
-        } else {
-          ({ data, readableStream } = await this.encryptRecordDataForProtocol(request, encryptionPolicy));
-        }
-      } else if (encryptionPolicy !== undefined && request.messageParams?.encryption !== undefined) {
-        throw new Error(
-          `AgentDwnApi: Protocol type at '${request.messageParams.protocolPath}' requires plaintext; ` +
-          'a pre-built encryption envelope is not allowed.'
-        );
-      }
+    let preparedData: PreparedDwnData = {};
+    if (isDwnRequest(request, DwnInterface.RecordsWrite)) {
+      preparedData = await this.prepareRecordsWriteData(request, protocolDefinitionSource);
     }
 
-    // Normalize a caller data stream after policy-driven encryption. Encrypted
-    // records have already replaced the plaintext input with stored ciphertext.
-    if (isDwnRequest(request, DwnInterface.RecordsWrite) && readableStream === undefined) {
-      const messageParams = request.messageParams;
-      if (request.dataStream && !messageParams?.data) {
-        const { dataStream } = request;
-        let forCid: ReadableStream<Uint8Array>;
-
-        if (dataStream instanceof Blob) {
-          forCid = dataStream.stream() as ReadableStream<Uint8Array>;
-          readableStream = dataStream.stream() as ReadableStream<Uint8Array>;
-          data = dataStream;
-        } else {
-          const [ cidCopy, processCopy ] = dataStream.tee();
-          forCid = cidCopy;
-          readableStream = processCopy;
-        }
-
-        if (rawMessage) {
-          const recordsWriteMessage = rawMessage as RecordsWriteMessage;
-          // A one-shot stream is intentionally validated in full before dispatch while caller-supplied
-          // plaintext can still reach this path. Once transmission is sourced exclusively from stored
-          // bytes, this integrity check can move into the outbound ciphertext stream without plaintext egress.
-          const { dataCid, dataSize } = await AgentDwnApi.computeDataCidAndSize(forCid);
-
-          RecordsWrite.validateDataIntegrity(
-            recordsWriteMessage.descriptor.dataCid,
-            recordsWriteMessage.descriptor.dataSize,
-            dataCid,
-            dataSize,
-          );
-        } else if (messageParams) {
-          messageParams.dataCid = await Cid.computeDagPbCidFromStream(forCid);
-          if (messageParams.dataSize === undefined && dataStream instanceof Blob) {
-            messageParams.dataSize = dataStream.size;
-          }
-        }
-      }
-    }
-
-    let dwnMessage: DwnMessageInstance[T];
-    const dwnMessageConstructor = dwnMessageConstructors[request.messageType];
-
-    // if a raw message is provided, parse it; otherwise create a new dwn message
-    if (rawMessage) {
-      dwnMessage = await dwnMessageConstructor.parse(rawMessage);
-      if (isRecordsWrite(dwnMessage) && request.signAsOwner) {
-        // if we are signing as owner, we use the author's signer
-        const signer = await this.getSigner(request.author);
-        await dwnMessage.signAsOwner(signer);
-      } else if (request.granteeDid && isRecordsWrite(dwnMessage) && request.signAsOwnerDelegate) {
-        // if we are signing as owner delegate, we use the grantee's signer and the provided delegated grant
-        const signer = await this.getSigner(request.granteeDid);
-
-        //if we have reached here, the presence of the grant params has already been checked
-        const messageParams = request.messageParams as DwnMessageParams[DwnInterface.RecordsWrite];
-        await dwnMessage.signAsOwnerDelegate(signer, messageParams.delegatedGrant!);
-      }
-    } else {
-      if (request.messageParams === undefined) {
-        throw new Error('AgentDwnApi: messageParams must be provided when rawMessage is not given.');
-      }
-
-      // If we need to sign as an author delegate or with permissions we need to get the grantee's signer.
-      // The messageParams should include either a permission grant invocation or a delegatedGrant message.
-      const signer = request.granteeDid ?
-        await this.getSigner(request.granteeDid) :
-        await this.getSigner(request.author);
-
-      // When signing as a delegate with a permissionGrantId, fetch the full
-      // grant message and pass it as `delegatedGrant` so the DWN SDK correctly
-      // sets `authorization.authorDelegatedGrant` and resolves the logical
-      // author to the grantor (owner) rather than the signer (delegate).
-      const params = { ...request.messageParams } as any;
-      if (request.granteeDid && params.permissionGrantId && !params.delegatedGrant && isDwnRequest(request, DwnInterface.RecordsWrite)) {
-        await this.populateDelegatedGrantForWrite(request.author, request.granteeDid, params);
-      }
-
-      dwnMessage = await dwnMessageConstructor.create({
-        ...params,
-        signer
-      });
-
-    }
+    const dwnMessage = await this.constructDwnMessageInstance(request);
 
     return {
       message    : dwnMessage.message as DwnMessage[T],
-      dataStream : readableStream,
-      data,
+      dataStream : preparedData.readableStream,
+      data       : preparedData.data,
     };
+  }
+
+  /** Injects public encryption keys only when constructing a new encrypted protocol definition. */
+  private async prepareProtocolsConfigureDefinition(
+    request: ProcessDwnRequest<DwnInterface.ProtocolsConfigure>,
+  ): Promise<void> {
+    const messageParams = request.messageParams;
+    if (request.rawMessage !== undefined || messageParams === undefined) {
+      return;
+    }
+
+    const hasEncryptedTypes = Object.values(messageParams.definition.types)
+      .some((type: ProtocolType): boolean => type.encryptionRequired === true);
+    if (!hasEncryptedTypes) {
+      return;
+    }
+
+    const keyDeriver = await getEncryptionKeyDeriverFn(this.agent, request.author);
+    messageParams.definition = await Protocols.deriveAndInjectPublicEncryptionKeys(
+      messageParams.definition,
+      keyDeriver,
+    );
+  }
+
+  /** Applies protocol encryption, then normalizes the authoritative bytes for message construction. */
+  private async prepareRecordsWriteData(
+    request: ProcessDwnRequest<DwnInterface.RecordsWrite>,
+    protocolDefinitionSource: ProtocolDefinitionSource,
+  ): Promise<PreparedDwnData> {
+    const encryptedData = await this.applyRecordEncryptionPolicy(request, protocolDefinitionSource);
+    return this.normalizeRecordsWriteData(request, encryptedData);
+  }
+
+  /** Applies the resolved protocol policy without allowing plaintext fallback on lookup failure. */
+  private async applyRecordEncryptionPolicy(
+    request: ProcessDwnRequest<DwnInterface.RecordsWrite>,
+    protocolDefinitionSource: ProtocolDefinitionSource,
+  ): Promise<PreparedDwnData> {
+    if (request.rawMessage !== undefined) {
+      return {};
+    }
+
+    const encryptionPolicy = await this.resolveRecordEncryptionPolicy(request, protocolDefinitionSource);
+    if (encryptionPolicy === undefined) {
+      return {};
+    }
+
+    const encryptionEnvelope = request.messageParams?.encryption;
+    if (!encryptionPolicy.encryptionRequired) {
+      if (encryptionEnvelope !== undefined) {
+        throw new Error(
+          `AgentDwnApi: Protocol type at '${request.messageParams?.protocolPath}' requires plaintext; ` +
+          'a pre-built encryption envelope is not allowed.'
+        );
+      }
+      return {};
+    }
+
+    if (encryptionEnvelope === undefined) {
+      return this.encryptRecordDataForProtocol(request, encryptionPolicy);
+    }
+
+    if (request.messageParams?.data !== undefined || request.dataStream !== undefined) {
+      throw new Error(
+        'AgentDwnApi: A pre-built encryption envelope can only be reused when record data is unchanged.'
+      );
+    }
+
+    return {};
+  }
+
+  /** Normalizes caller bytes after policy-driven encryption has had first ownership of the payload. */
+  private async normalizeRecordsWriteData(
+    request: ProcessDwnRequest<DwnInterface.RecordsWrite>,
+    preparedData: PreparedDwnData,
+  ): Promise<PreparedDwnData> {
+    if (preparedData.readableStream !== undefined || request.dataStream === undefined || request.messageParams?.data !== undefined) {
+      return preparedData;
+    }
+
+    const streams = AgentDwnApi.prepareRecordDataStreams(request.dataStream);
+    await AgentDwnApi.validateOrSetRecordsWriteDataMetadata(request, streams.forCid);
+    return {
+      data           : streams.data,
+      readableStream : streams.readableStream,
+    };
+  }
+
+  /** Produces independent Blob streams or tee branches for CID validation and message processing. */
+  private static prepareRecordDataStreams(dataStream: Blob | ReadableStream): {
+    data?: Blob;
+    forCid: ReadableStream<Uint8Array>;
+    readableStream: ReadableStream<Uint8Array>;
+  } {
+    if (dataStream instanceof Blob) {
+      return {
+        data           : dataStream,
+        forCid         : dataStream.stream() as ReadableStream<Uint8Array>,
+        readableStream : dataStream.stream() as ReadableStream<Uint8Array>,
+      };
+    }
+
+    const [ forCid, readableStream ] = dataStream.tee();
+    return { forCid, readableStream };
+  }
+
+  /** Validates raw-message bytes or fills CID metadata for a newly-created RecordsWrite. */
+  private static async validateOrSetRecordsWriteDataMetadata(
+    request: ProcessDwnRequest<DwnInterface.RecordsWrite>,
+    forCid: ReadableStream<Uint8Array>,
+  ): Promise<void> {
+    if (request.rawMessage !== undefined) {
+      // A one-shot stream is intentionally validated in full before dispatch while caller-supplied
+      // plaintext can still reach this path. Once transmission is sourced exclusively from stored
+      // bytes, this integrity check can move into the outbound ciphertext stream without plaintext egress.
+      const { dataCid, dataSize } = await AgentDwnApi.computeDataCidAndSize(forCid);
+      RecordsWrite.validateDataIntegrity(
+        request.rawMessage.descriptor.dataCid,
+        request.rawMessage.descriptor.dataSize,
+        dataCid,
+        dataSize,
+      );
+      return;
+    }
+
+    const messageParams = request.messageParams;
+    if (messageParams === undefined) {
+      return;
+    }
+
+    messageParams.dataCid = await Cid.computeDagPbCidFromStream(forCid);
+    if (messageParams.dataSize === undefined && request.dataStream instanceof Blob) {
+      messageParams.dataSize = request.dataStream.size;
+    }
+  }
+
+  /** Parses a raw message or creates and signs a new message from parameters. */
+  private async constructDwnMessageInstance<T extends DwnInterface>(
+    request: ProcessDwnRequest<T>,
+  ): Promise<DwnMessageInstance[T]> {
+    if (request.rawMessage !== undefined) {
+      return this.parseAndSignRawDwnMessage(request, request.rawMessage);
+    }
+
+    return this.createDwnMessageFromParams(request);
+  }
+
+  /** Parses a caller-provided message and adds the requested owner signature. */
+  private async parseAndSignRawDwnMessage<T extends DwnInterface>(
+    request: ProcessDwnRequest<T>,
+    rawMessage: DwnMessage[T],
+  ): Promise<DwnMessageInstance[T]> {
+    const dwnMessage = await dwnMessageConstructors[request.messageType].parse(rawMessage);
+    if (isRecordsWrite(dwnMessage) && request.signAsOwner) {
+      await dwnMessage.signAsOwner(await this.getSigner(request.author));
+      return dwnMessage;
+    }
+
+    if (request.granteeDid && isRecordsWrite(dwnMessage) && request.signAsOwnerDelegate) {
+      const messageParams = request.messageParams as DwnMessageParams[DwnInterface.RecordsWrite];
+      await dwnMessage.signAsOwnerDelegate(
+        await this.getSigner(request.granteeDid),
+        messageParams.delegatedGrant!,
+      );
+    }
+
+    return dwnMessage;
+  }
+
+  /** Creates a new message with the author or delegate signer selected by the request. */
+  private async createDwnMessageFromParams<T extends DwnInterface>(
+    request: ProcessDwnRequest<T>,
+  ): Promise<DwnMessageInstance[T]> {
+    if (request.messageParams === undefined) {
+      throw new Error('AgentDwnApi: messageParams must be provided when rawMessage is not given.');
+    }
+
+    const signer = await this.getSigner(request.granteeDid ?? request.author);
+    const params = { ...request.messageParams } as any;
+    if (request.granteeDid && isDwnRequest(request, DwnInterface.RecordsWrite)) {
+      await this.populateDelegatedGrantForWrite(request.author, request.granteeDid, params);
+    }
+
+    return dwnMessageConstructors[request.messageType].create({ ...params, signer });
   }
 
   /** Invalidates cached policy after a target accepts or already has a protocol message. */
