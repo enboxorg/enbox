@@ -134,6 +134,8 @@ type RecordEncryptionPolicy = {
   ruleSet: ProtocolRuleSet;
 };
 
+type ProtocolDefinitionSource = 'local' | 'remote';
+
 /** Re-provision inputs after normalization: the audience context id and the resolved recipient wrap target. */
 type ExecuteAudienceKeyDeliveryReprovisionInput = Omit<ReprovisionAudienceKeyDeliveryParams, 'contextId' | 'recipientRolePublicKey'> & {
   contextId: string;
@@ -652,8 +654,10 @@ export class AgentDwnApi {
 
     // Constructs a DWN message. and if there is a data payload, prepares the data as a
     // Web ReadableStream.
-    const { message, dataStream, data } =
-      await this.constructDwnMessage({ request });
+    const { message, dataStream, data } = await this.constructDwnMessage({
+      request,
+      protocolDefinitionSource: 'local',
+    });
 
     const subscriptionHandler = request.subscriptionHandler;
 
@@ -977,7 +981,10 @@ export class AgentDwnApi {
 
     } else {
       // Otherwise, construct a new message.
-      ({ message, dataStream: data, data: responseData } = await this.constructDwnMessage({ request }));
+      ({ message, dataStream: data, data: responseData } = await this.constructDwnMessage({
+        request,
+        protocolDefinitionSource: 'remote',
+      }));
       subscriptionHandler = request.subscriptionHandler;
     }
 
@@ -992,7 +999,10 @@ export class AgentDwnApi {
           : { ...request.messageParams, cursor } as DwnMessageParams[T];
 
         const resumeRequest: ProcessDwnRequest<T> = { ...request, messageParams: resumeParams };
-        const { message: resumeMessage } = await this.constructDwnMessage({ request: resumeRequest });
+        const { message: resumeMessage } = await this.constructDwnMessage({
+          request                  : resumeRequest,
+          protocolDefinitionSource : 'remote',
+        });
         return resumeMessage;
       };
     }
@@ -1783,6 +1793,7 @@ export class AgentDwnApi {
   /** Resolves the target DWN's protocol-owned encryption policy for one write. */
   private async resolveRecordEncryptionPolicy(
     request: ProcessDwnRequest<DwnInterface.RecordsWrite>,
+    protocolDefinitionSource: ProtocolDefinitionSource,
   ): Promise<RecordEncryptionPolicy | undefined> {
     const messageParams = request.messageParams;
     if (messageParams === undefined) {
@@ -1803,9 +1814,9 @@ export class AgentDwnApi {
     }
 
     const protocolDefinition = await this.resolveTargetProtocolDefinition({
-      authorDid  : request.author,
       granteeDid : request.granteeDid,
       protocol,
+      source     : protocolDefinitionSource,
       targetDid  : request.target,
     });
     const ruleSet = getRuleSetAtPath(protocolPath, protocolDefinition.structure);
@@ -1831,9 +1842,9 @@ export class AgentDwnApi {
       }
 
       const referencedDefinition = await this.resolveTargetProtocolDefinition({
-        authorDid  : request.author,
         granteeDid : request.granteeDid,
         protocol   : referencedProtocol,
+        source     : protocolDefinitionSource,
         targetDid  : request.target,
       });
       protocolTypes = referencedDefinition.types;
@@ -1857,9 +1868,9 @@ export class AgentDwnApi {
 
   /** Fetches the exact target tenant's installed definition, preserving lookup failures. */
   private async resolveTargetProtocolDefinition(params: {
-    authorDid: string;
     granteeDid?: string;
     protocol: string;
+    source: ProtocolDefinitionSource;
     targetDid: string;
   }): Promise<ProtocolDefinition> {
     if (params.protocol === PermissionsProtocol.uri) {
@@ -1867,7 +1878,7 @@ export class AgentDwnApi {
     }
 
     try {
-      const definition = params.targetDid === params.authorDid
+      const definition = params.source === 'local'
         ? await this.getProtocolDefinition(params.targetDid, params.protocol, params.granteeDid)
         : await this.fetchRemoteProtocolDefinition(params.targetDid, params.protocol);
       if (definition === undefined) {
@@ -2026,8 +2037,9 @@ export class AgentDwnApi {
     };
   }
 
-  private async constructDwnMessage<T extends DwnInterface>({ request }: {
-    request: ProcessDwnRequest<T>
+  private async constructDwnMessage<T extends DwnInterface>({ request, protocolDefinitionSource }: {
+    request: ProcessDwnRequest<T>;
+    protocolDefinitionSource: ProtocolDefinitionSource;
   }): Promise<DwnMessageWithData<T>> {
     // if the request has a granteeDid, ensure the messageParams include the proper grant parameters
     if (request.granteeDid && !this.hasGrantParams(request.messageParams)) {
@@ -2054,7 +2066,7 @@ export class AgentDwnApi {
     }
 
     if (isDwnRequest(request, DwnInterface.RecordsWrite) && rawMessage === undefined) {
-      const encryptionPolicy = await this.resolveRecordEncryptionPolicy(request);
+      const encryptionPolicy = await this.resolveRecordEncryptionPolicy(request, protocolDefinitionSource);
       if (encryptionPolicy?.encryptionRequired === true) {
         if (request.messageParams?.encryption !== undefined) {
           if (request.messageParams.data !== undefined || request.dataStream !== undefined) {

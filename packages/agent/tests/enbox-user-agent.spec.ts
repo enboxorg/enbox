@@ -350,7 +350,7 @@ describe('EnboxUserAgent', () => {
             });
           });
 
-          it('processes a Records Write request', async () => {
+          it('resolves the remote protocol before sending a Records Write request', async () => {
             // Create test data to write.
             const dataBytes = Convert.string('Hello, world!').toUint8Array();
 
