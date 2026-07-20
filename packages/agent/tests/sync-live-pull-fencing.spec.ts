@@ -341,6 +341,10 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     controller.link.status = 'initializing';
     sinon.stub(engine as any, 'getOrCreateReplicationLink').resolves(controller.link);
     sinon.stub(engine as any, 'activateLink').returns(controller);
+    // This test emulates the ORIGINAL initializing call, whose own
+    // activateLink registers the controller; the fixture's pre-registration
+    // would instead trip the owned-link idempotence guard and skip opening.
+    (engine as any)._linkControllers.delete(LINK_KEY);
     sinon.stub(engine as any, 'openLinkSubscriptions').callsFake(async (): Promise<string> => {
       // A terminal callback pauses the link while the pair is opening.
       await (engine as any)._linkRecoveryCoordinator.transitionToPaused(LINK_KEY, controller.link);

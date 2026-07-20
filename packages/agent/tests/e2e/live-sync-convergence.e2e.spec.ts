@@ -169,7 +169,7 @@ describe('E2E: live sync convergence', () => {
       did     : aliceDid,
       options : { protocols: [chatProtocol.protocol] },
     });
-    await harness.agent.sync.startSync({ mode: 'live', interval: '30s' });
+    await harness.agent.sync.startSync({ interval: '30s' });
     expect(harness.agent.sync.hasActiveSubscriptions).toBe(true);
   }, 30_000);
 

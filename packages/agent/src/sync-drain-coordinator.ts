@@ -305,8 +305,8 @@ export class SyncDrainCoordinator {
       return;
     }
     // An interrupted drain — caller cancellation or a topology change — says
-    // nothing about remote reachability: it must not mark the engine offline
-    // or widen the poll backoff. Only genuine target failures may.
+    // nothing about remote reachability: it must not mark the engine
+    // offline. Only genuine target failures may.
     if (interrupted) {
       return;
     }

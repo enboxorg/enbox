@@ -1,5 +1,3 @@
-import type { SyncMode } from './types/sync.js';
-
 /** One armed native timer and the token proving it still owns its key. */
 type ArmedTimer = {
   kind: 'interval' | 'timeout';
@@ -43,11 +41,11 @@ export interface SyncRuntimeHandle {
  */
 export class SyncRuntime implements SyncRuntimeHandle {
   private _disposed = false;
-  private readonly _mode?: SyncMode;
+  private readonly _live: boolean;
   private readonly _timers = new Map<string, ArmedTimer>();
 
-  public constructor(mode?: SyncMode) {
-    this._mode = mode;
+  public constructor(live = false) {
+    this._live = live;
   }
 
   /** Whether this runtime generation has been torn down. */
@@ -56,12 +54,12 @@ export class SyncRuntime implements SyncRuntimeHandle {
   }
 
   /**
-   * The sync mode this runtime generation runs in. Mode is a property of the
-   * generation: a disposed scope has no mode, exactly as the engine between
-   * runtimes has none.
+   * Whether this generation is a started live-sync runtime. Liveness is a
+   * property of the generation: a disposed scope is never live, exactly as
+   * the engine between runtimes is not.
    */
-  public get mode(): SyncMode | undefined {
-    return this._disposed ? undefined : this._mode;
+  public get live(): boolean {
+    return !this._disposed && this._live;
   }
 
   /** Arm (or replace) a repeating timer owned by this scope. No-op once disposed. */
@@ -80,13 +78,6 @@ export class SyncRuntime implements SyncRuntimeHandle {
       callback();
     }, delayMs);
     this._timers.set(key, { kind: 'interval', handle, token });
-  }
-
-  /** Arm a repeating timer only when the key is currently unarmed. */
-  public armIntervalIfAbsent(key: string, callback: () => void, delayMs: number): void {
-    if (!this._timers.has(key)) {
-      this.armInterval(key, callback, delayMs);
-    }
   }
 
   /**

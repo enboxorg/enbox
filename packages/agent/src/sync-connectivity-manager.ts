@@ -33,19 +33,17 @@ type SyncIntegrityTrigger = 'online' | 'visibility';
 type ActiveIntegrityCheck = { scope: SyncConnectivityRuntimeScope };
 
 /**
- * Owns sync connectivity state, poll backoff, per-link state folding, and
- * browser recovery listeners without depending on a persistence backend.
+ * Owns sync connectivity state, per-link state folding, and browser
+ * recovery listeners without depending on a persistence backend.
  */
 export class SyncConnectivityManager {
   private static readonly RECOVERY_TIMER = 'connectivity-recovery';
-  private static readonly MAX_BACKOFF_MULTIPLIER = 4;
   private static readonly MINIMUM_HIDDEN_DURATION_MILLISECONDS = 5_000;
   private static readonly RECOVERY_COOLDOWN_MILLISECONDS = 10_000;
   private readonly _configuredEnvironment: SyncConnectivityEnvironment | undefined;
   private readonly _operations: SyncConnectivityManagerOperations;
   private _activeEnvironment?: SyncConnectivityEnvironment;
   private _activeIntegrityCheck?: ActiveIntegrityCheck;
-  private _consecutiveFailures = 0;
   private _hiddenAt?: number;
   private _lastIntegrityCheckStartedAt?: number;
   private _onOffline?: () => void;
@@ -60,7 +58,7 @@ export class SyncConnectivityManager {
     this._operations = operations;
   }
 
-  /** Fold active-link connectivity, falling back to global poll-mode state. */
+  /** Fold active-link connectivity, falling back to the global one-shot sync state. */
   public getState(linkStates: Iterable<SyncConnectivityState>): SyncConnectivityState {
     let hasLinks = false;
     let hasOffline = false;
@@ -81,34 +79,19 @@ export class SyncConnectivityManager {
     return hasOffline ? 'offline' : 'unknown';
   }
 
-  /** Return the current poll interval after bounded exponential backoff. */
-  public getPollInterval(intervalMilliseconds: number): number {
-    if (this._consecutiveFailures === 0) {
-      return intervalMilliseconds;
-    }
-
-    const backoffMultiplier = Math.min(
-      Math.pow(2, this._consecutiveFailures),
-      SyncConnectivityManager.MAX_BACKOFF_MULTIPLIER,
-    );
-    return intervalMilliseconds * backoffMultiplier;
-  }
-
-  /** Record a successful sync and reset poll-mode failure backoff. */
+  /** Record a successful sync. */
   public recordSuccess(): void {
-    this._consecutiveFailures = 0;
     this._state = 'online';
   }
 
   /** Record a failed sync, preserving unknown until reachability was established. */
   public recordFailure(): void {
-    this._consecutiveFailures++;
     if (this._state === 'online') {
       this._state = 'offline';
     }
   }
 
-  /** Update connectivity without changing poll-mode failure history. */
+  /** Update connectivity directly. */
   public setState(state: SyncConnectivityState): void {
     this._state = state;
   }

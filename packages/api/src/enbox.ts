@@ -72,7 +72,6 @@ const inflightConnects = new Map<string, Promise<unknown>>();
  *
  * const { enbox } = await Enbox.connect({
  *   createIdentity: true,
- *   sync: '15s',
  * });
  *
  * const social = enbox.using(SocialProtocol);

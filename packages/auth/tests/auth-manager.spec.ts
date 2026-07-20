@@ -1184,7 +1184,7 @@ describe('AuthManager', () => {
       expect(events[0].session.did).toBe('did:dht:testuser123');
     });
 
-    test('starts sync in poll mode', async () => {
+    test('starts sync with a bare-interval settle-check cadence', async () => {
       const syncCalls: any[] = [];
       const identity = createMockIdentity();
       const agent = createMockAgent({
@@ -1196,7 +1196,7 @@ describe('AuthManager', () => {
       await manager.switchIdentity('did:dht:testuser123');
 
       expect(syncCalls).toHaveLength(1);
-      expect(syncCalls[0].mode).toBe('poll');
+      expect(syncCalls[0].interval).toBe('10s');
     });
 
     test('skips sync when off', async () => {

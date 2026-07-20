@@ -2,7 +2,7 @@ import { DwnErrorCode } from '@enbox/dwn-sdk-js';
 
 /**
  * A queued `sync()` follow-up was invalidated by an engine runtime transition
- * (`stopSync`/`clear`/`close`/mode switch) before it could run. Rejecting —
+ * (`startSync`/`stopSync`/`clear`/`close`) before it could run. Rejecting —
  * rather than resolving silently — keeps the `sync()` contract honest: a
  * resolved call always means a run covering the request completed. Callers
  * racing teardown by design can catch this error specifically.

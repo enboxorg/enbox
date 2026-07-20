@@ -216,7 +216,7 @@ describe('restoreSession', () => {
     expect(session!.delegateDid).toBe('did:dht:storeddelegate');
   });
 
-  test('starts sync in poll mode when interval is set', async () => {
+  test('starts sync with the bare-interval settle-check cadence when set', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
@@ -230,7 +230,6 @@ describe('restoreSession', () => {
     await restoreSession({ userAgent: agent, emitter, storage, defaultSync: '30s' });
 
     expect(syncCalls).toHaveLength(1);
-    expect(syncCalls[0].mode).toBe('poll');
     expect(syncCalls[0].interval).toBe('30s');
   });
 

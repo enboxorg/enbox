@@ -347,10 +347,10 @@ describe('E2E Multi-Agent Sync', () => {
   });
 
   // =========================================================================
-  // Poll-mode multi-agent sync
+  // One-shot multi-agent sync
   // =========================================================================
 
-  describe('poll-mode multi-agent sync', () => {
+  describe('one-shot multi-agent sync', () => {
     beforeEach(async () => {
       await primaryHarness.agent.sync.stopSync();
       await deviceHarness.agent.sync.stopSync();
@@ -1276,8 +1276,8 @@ describe('E2E Multi-Agent Sync', () => {
       });
 
       // Start live sync on BOTH agents.
-      await primaryHarness.agent.sync.startSync({ mode: 'live', interval: '60s' });
-      await deviceHarness.agent.sync.startSync({ mode: 'live', interval: '60s' });
+      await primaryHarness.agent.sync.startSync({ interval: '60s' });
+      await deviceHarness.agent.sync.startSync({ interval: '60s' });
 
       // Give subscriptions a moment to establish.
       await new Promise(r => setTimeout(r, 500));
@@ -1326,8 +1326,8 @@ describe('E2E Multi-Agent Sync', () => {
           delegateDid : aliceDevice.did.uri,
         },
       });
-      await primaryHarness.agent.sync.startSync({ mode: 'live', interval: '60s' });
-      await deviceHarness.agent.sync.startSync({ mode: 'live', interval: '60s' });
+      await primaryHarness.agent.sync.startSync({ interval: '60s' });
+      await deviceHarness.agent.sync.startSync({ interval: '60s' });
       await new Promise(r => setTimeout(r, 500));
 
       // Write 3 records in quick succession.
@@ -1386,7 +1386,7 @@ describe('E2E Multi-Agent Sync', () => {
 
     it('should drain an in-flight live push before unregistering its identity', async () => {
       await primaryHarness.agent.sync.registerIdentity({ did: alice.did.uri, options: { protocols: 'all' } });
-      await primaryHarness.agent.sync.startSync({ mode: 'live', interval: '60s' });
+      await primaryHarness.agent.sync.startSync({ interval: '60s' });
       await new Promise<void>((resolve) => { setTimeout(resolve, 500); });
 
       const pushStarted = createDeferred();
@@ -1463,8 +1463,8 @@ describe('E2E Multi-Agent Sync', () => {
           delegateDid : aliceDevice.did.uri,
         },
       });
-      await primaryHarness.agent.sync.startSync({ mode: 'live', interval: '60s' });
-      await deviceHarness.agent.sync.startSync({ mode: 'live', interval: '60s' });
+      await primaryHarness.agent.sync.startSync({ interval: '60s' });
+      await deviceHarness.agent.sync.startSync({ interval: '60s' });
       await new Promise(r => setTimeout(r, 500));
 
       // Write to notes protocol.
@@ -1600,7 +1600,7 @@ describe('E2E Multi-Agent Sync', () => {
         did     : carol.did.uri,
         options : { protocols: [protocolInbox.protocol] },
       });
-      await primaryHarness.agent.sync.startSync({ mode: 'live', interval: '60s' });
+      await primaryHarness.agent.sync.startSync({ interval: '60s' });
       await new Promise(r => setTimeout(r, 500));
 
       // Capture the engine's per-delivery events: a freshly admitted live
@@ -1680,7 +1680,7 @@ describe('E2E Multi-Agent Sync', () => {
     it('should deliver to an identity hot-added after live sync started', async () => {
       // The wallet-app ordering: sync starts agent-wide first, the profile is
       // registered later (on wallet open), relying on hot-add semantics.
-      await primaryHarness.agent.sync.startSync({ mode: 'live', interval: '60s' });
+      await primaryHarness.agent.sync.startSync({ interval: '60s' });
       await new Promise(r => setTimeout(r, 300));
       await primaryHarness.agent.sync.registerIdentity({
         did     : carol.did.uri,

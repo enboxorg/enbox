@@ -74,7 +74,7 @@ describe('importFromPortable', () => {
     expect(syncRegCalls).toHaveLength(1);
     expect(syncRegCalls[0].options.protocols).toEqual(['https://proto.example/profile']);
     expect(syncStartCalls).toHaveLength(1);
-    expect(syncStartCalls[0].mode).toBe('poll');
+    expect(syncStartCalls[0].interval).toBe('30s');
   });
 
   test('leaves local sync registration to the application when no identity scope is provided', async () => {

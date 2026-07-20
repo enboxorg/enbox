@@ -160,9 +160,9 @@ describe('SyncFeedConvergenceManager', () => {
 
   it('does not schedule a quota probe without a next deadline or a live active link', async () => {
     const syncTarget = target();
-    const pollingLink = linkFor(syncTarget, 'initializing');
-    const context = contextFor(syncTarget, pollingLink);
-    const { manager, operations } = createFixture({ activeLink: pollingLink, syncTarget });
+    const initializingLink = linkFor(syncTarget, 'initializing');
+    const context = contextFor(syncTarget, initializingLink);
+    const { manager, operations } = createFixture({ activeLink: initializingLink, syncTarget });
     operations.isDivergenceExplained.resolves(true);
 
     await manager.handleVerifiedDivergence(syncTarget, divergence(), context);
@@ -290,7 +290,7 @@ describe('SyncFeedConvergenceManager', () => {
     expect(operations.transitionToPaused.calledOnceWithExactly(context.linkKey, activeLink)).toBe(true);
   });
 
-  it('resets a durable polling link without scheduling live reconciliation', async () => {
+  it('resets a controller-less durable link without scheduling live reconciliation', async () => {
     const syncTarget = target();
     const ledgerLink = linkFor(syncTarget, 'initializing');
     const context = contextFor(syncTarget, ledgerLink);

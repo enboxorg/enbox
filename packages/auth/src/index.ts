@@ -9,7 +9,7 @@
  * ```ts
  * import { AuthManager } from '@enbox/auth';
  *
- * const auth = await AuthManager.create({ sync: '15s' });
+ * const auth = await AuthManager.create();
  * const session = await auth.connectVault({ password: userPin, createIdentity: true });
  * ```
  *

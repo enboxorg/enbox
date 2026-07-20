@@ -118,11 +118,14 @@ export class SyncLinkRecoveryCoordinator {
 
   /**
    * Park a link and discard every transient runtime owned by its controller.
-   * Never enters the mailbox — poll-mode links have no controller, repair
-   * failure paths invoke this from inside a mailbox operation, and pausing
-   * must take effect promptly. Instead of serializing, the paused status is
-   * a cancellation fence: an in-flight repair observes it at every
-   * checkpoint and abandons the link rather than overwriting the pause.
+   * Never enters the mailbox — a durable link may have no controller (a
+   * one-shot sync() or drain reconciles links without a live runtime, and a
+   * rate-limited subscription open leaves a live link controller-less until
+   * its init retry), repair failure paths invoke this from inside a mailbox
+   * operation, and pausing must take effect promptly. Instead of
+   * serializing, the paused status is a cancellation fence: an in-flight
+   * repair observes it at every checkpoint and abandons the link rather
+   * than overwriting the pause.
    */
   public async transitionToPaused(linkKey: string, link: ReplicationLinkState): Promise<void> {
     if (link.status === 'paused') {

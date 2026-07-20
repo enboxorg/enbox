@@ -459,7 +459,7 @@ describe('SyncEngineLevel — identity management', () => {
 
     it('should call addIdentityToLiveSync when registering during active live sync', async () => {
       const engine = new SyncEngineLevel({ db });
-      (engine as any)._runtime = new SyncRuntime('live');
+      (engine as any)._runtime = new SyncRuntime(true);
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
@@ -472,7 +472,7 @@ describe('SyncEngineLevel — identity management', () => {
 
     it('should pass options to addIdentityToLiveSync when protocols is all', async () => {
       const engine = new SyncEngineLevel({ db });
-      (engine as any)._runtime = new SyncRuntime('live');
+      (engine as any)._runtime = new SyncRuntime(true);
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
@@ -482,20 +482,20 @@ describe('SyncEngineLevel — identity management', () => {
       expect(hotAddStub.firstCall.args[1]).toEqual({ protocols: 'all' });
     });
 
-    it('should not call addIdentityToLiveSync when sync mode is poll', async () => {
+    it('should not call addIdentityToLiveSync when live sync is not running', async () => {
       const engine = new SyncEngineLevel({ db });
-      (engine as any)._runtime = new SyncRuntime('poll');
+      (engine as any)._runtime = new SyncRuntime();
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
-      await engine.registerIdentity({ did: 'did:example:nohot-poll', options: { protocols: 'all' } });
+      await engine.registerIdentity({ did: 'did:example:nohot-idle', options: { protocols: 'all' } });
 
       expect(hotAddStub.called).toBe(false);
     });
 
     it('should call addIdentityToLiveSync when live mode has no active subscriptions (e.g. after last identity removed)', async () => {
       const engine = new SyncEngineLevel({ db });
-      (engine as any)._runtime = new SyncRuntime('live');
+      (engine as any)._runtime = new SyncRuntime(true);
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
@@ -509,7 +509,7 @@ describe('SyncEngineLevel — identity management', () => {
 
     it('should still persist identity even if addIdentityToLiveSync throws', async () => {
       const engine = new SyncEngineLevel({ db });
-      (engine as any)._runtime = new SyncRuntime('live');
+      (engine as any)._runtime = new SyncRuntime(true);
 
       sinon.stub(engine as any, 'addIdentityToLiveSync').rejects(new Error('hot-add boom'));
 
@@ -523,13 +523,171 @@ describe('SyncEngineLevel — identity management', () => {
       expect(options!.protocols).toBe('all');
     });
 
+    it('should resolve registerIdentity and keep the identity when hot-add discovery fails', async () => {
+      const engine = new SyncEngineLevel({ db });
+      (engine as any)._runtime = new SyncRuntime(true);
+
+      // DID endpoint discovery is transiently unavailable during the
+      // hot-add: planning is best-effort, so a registration that has
+      // already persisted must resolve rather than reject — the settle
+      // check re-initializes the missing links later.
+      sinon.stub((engine as any).targetResolver, 'getEndpointUrls').rejects(new Error('endpoint discovery unavailable'));
+      const consoleErrorStub = sinon.stub(console, 'error');
+
+      await engine.registerIdentity({ did: 'did:example:hotadd-discovery-fail', options: { protocols: 'all' } });
+
+      const options = await engine.getIdentityOptions('did:example:hotadd-discovery-fail');
+      expect(options).toBeDefined();
+      expect(options!.protocols).toBe('all');
+      expect(consoleErrorStub.calledOnce).toBe(true);
+    });
+
+    it('should serialize unregisterIdentity behind an in-flight settle re-initialization', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const did = 'did:example:settle-unregister-race';
+      await engine.registerIdentity({ did, options: { protocols: 'all' } });
+      (engine as any)._runtime = new SyncRuntime(true);
+
+      const target = {
+        did,
+        dwnUrl             : 'https://dwn.example.com',
+        scope              : { kind: 'full' },
+        authorization      : { kind: 'owner' },
+        authorizationEpoch : 'owner-epoch',
+        projectionId       : 'projection-id',
+      };
+      sinon.stub((engine as any)._runCoordinator, 'run').resolves();
+      sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
+      sinon.stub(engine as any, 'openLinkSubscriptions').resolves('readyForLive');
+      sinon.stub(engine as any, 'markLinkLive').resolves();
+
+      // Park the settle re-initialization inside link storage.
+      let releaseLinkStorage!: () => void;
+      const linkStorageGate = new Promise<void>((resolve) => { releaseLinkStorage = resolve; });
+      let reachedLinkStorage!: () => void;
+      const linkStorageReached = new Promise<void>((resolve) => { reachedLinkStorage = resolve; });
+      sinon.stub(engine as any, 'getOrCreateReplicationLink').callsFake(async (): Promise<any> => {
+        reachedLinkStorage();
+        await linkStorageGate;
+        return {
+          tenantDid          : did,
+          remoteEndpoint     : 'https://dwn.example.com',
+          projectionId       : 'projection-id',
+          authorizationEpoch : 'owner-epoch',
+          scope              : { kind: 'full' },
+          authorization      : { kind: 'owner' },
+          status             : 'initializing',
+          connectivity       : 'unknown',
+          pull               : {},
+          push               : {},
+        };
+      });
+
+      const settlePass = (engine as any).runLiveIntegrityCheck((engine as any)._runtime);
+      await linkStorageReached;
+
+      // The re-initialization holds the exclusive sync lock, so the
+      // unregister cannot complete mid-initialization and be resurrected.
+      let unregisterSettled = false;
+      const unregisterPromise = engine.unregisterIdentity(did).then((): void => { unregisterSettled = true; });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(unregisterSettled).toBe(false);
+
+      releaseLinkStorage();
+      await settlePass;
+      await unregisterPromise;
+
+      // The unregister ran after the pass: no controller or subscription
+      // survives, and the identity stays deleted.
+      expect(unregisterSettled).toBe(true);
+      expect((engine as any)._linkControllers.size).toBe(0);
+      expect(await engine.getIdentityOptions(did)).toBeUndefined();
+    });
+
+    it('should rebuild only the new scope when updateIdentityOptions races a settle re-initialization', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const did = 'did:example:settle-update-race';
+      await engine.registerIdentity({ did, options: { protocols: ['https://old.example/proto'] } });
+      (engine as any)._runtime = new SyncRuntime(true);
+
+      const oldTarget = {
+        did,
+        dwnUrl             : 'https://dwn.example.com',
+        scope              : { kind: 'protocols', protocols: ['https://old.example/proto'] },
+        authorization      : { kind: 'owner' },
+        authorizationEpoch : 'owner-epoch',
+        projectionId       : 'projection-old',
+      };
+      const newTarget = {
+        did,
+        dwnUrl             : 'https://dwn.example.com',
+        scope              : { kind: 'protocols', protocols: ['https://new.example/proto'] },
+        authorization      : { kind: 'owner' },
+        authorizationEpoch : 'owner-epoch',
+        projectionId       : 'projection-new',
+      };
+      sinon.stub((engine as any)._runCoordinator, 'run').resolves();
+      sinon.stub(engine as any, 'getSyncTargets').resolves([oldTarget]);
+      sinon.stub(engine as any, 'openLinkSubscriptions').resolves('readyForLive');
+      sinon.stub(engine as any, 'markLinkLive').resolves();
+      sinon.stub((engine as any).targetResolver, 'getEndpointUrls').resolves(['https://dwn.example.com']);
+      sinon.stub((engine as any).targetResolver, 'buildTargetsForEndpoint').resolves([newTarget]);
+
+      // Gate only the settle pass's link-storage read; the rebuild's later
+      // reads resolve immediately.
+      let releaseLinkStorage!: () => void;
+      const linkStorageGate = new Promise<void>((resolve) => { releaseLinkStorage = resolve; });
+      let reachedLinkStorage!: () => void;
+      const linkStorageReached = new Promise<void>((resolve) => { reachedLinkStorage = resolve; });
+      let firstLinkRead = true;
+      sinon.stub(engine as any, 'getOrCreateReplicationLink').callsFake(async (requested: any): Promise<any> => {
+        if (firstLinkRead) {
+          firstLinkRead = false;
+          reachedLinkStorage();
+          await linkStorageGate;
+        }
+        return {
+          tenantDid          : requested.did,
+          remoteEndpoint     : requested.dwnUrl,
+          projectionId       : requested.projectionId,
+          authorizationEpoch : requested.authorizationEpoch,
+          scope              : requested.scope,
+          authorization      : requested.authorization,
+          status             : 'initializing',
+          connectivity       : 'unknown',
+          pull               : {},
+          push               : {},
+        };
+      });
+
+      const settlePass = (engine as any).runLiveIntegrityCheck((engine as any)._runtime);
+      await linkStorageReached;
+
+      let updateSettled = false;
+      const updatePromise = engine
+        .updateIdentityOptions({ did, options: { protocols: ['https://new.example/proto'] } })
+        .then((): void => { updateSettled = true; });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(updateSettled).toBe(false);
+
+      releaseLinkStorage();
+      await settlePass;
+      await updatePromise;
+
+      // The update's teardown-and-rebuild ran after the pass: only the new
+      // scope's link remains.
+      const controllerKeys = [...(engine as any)._linkControllers.keys()];
+      expect(controllerKeys).toHaveLength(1);
+      expect(controllerKeys[0]).toContain('projection-new');
+    });
+
     // --- unregisterIdentity hot-remove triggers ---
 
     it('should call removeIdentityFromLiveSync when unregistering during active live sync', async () => {
       const engine = new SyncEngineLevel({ db });
       await engine.registerIdentity({ did: 'did:example:hotrem1', options: { protocols: 'all' } });
 
-      (engine as any)._runtime = new SyncRuntime('live');
+      (engine as any)._runtime = new SyncRuntime(true);
 
       const hotRemoveStub = sinon.stub(engine as any, 'removeIdentityFromLiveSync').resolves();
 
@@ -539,22 +697,22 @@ describe('SyncEngineLevel — identity management', () => {
       expect(hotRemoveStub.firstCall.args[0]).toBe('did:example:hotrem1');
     });
 
-    it('should not call removeIdentityFromLiveSync when sync mode is poll', async () => {
+    it('should not call removeIdentityFromLiveSync when live sync is not running', async () => {
       const engine = new SyncEngineLevel({ db });
-      await engine.registerIdentity({ did: 'did:example:nohotrem-poll', options: { protocols: 'all' } });
+      await engine.registerIdentity({ did: 'did:example:nohotrem-idle', options: { protocols: 'all' } });
 
-      (engine as any)._runtime = new SyncRuntime('poll');
+      (engine as any)._runtime = new SyncRuntime();
 
       const hotRemoveStub = sinon.stub(engine as any, 'removeIdentityFromLiveSync').resolves();
 
-      await engine.unregisterIdentity('did:example:nohotrem-poll');
+      await engine.unregisterIdentity('did:example:nohotrem-idle');
 
       expect(hotRemoveStub.called).toBe(false);
     });
 
     it('should still throw when unregistering a non-registered identity during live sync', async () => {
       const engine = new SyncEngineLevel({ db });
-      (engine as any)._runtime = new SyncRuntime('live');
+      (engine as any)._runtime = new SyncRuntime(true);
 
       await expect(
         engine.unregisterIdentity('did:example:never-registered-live')
@@ -593,7 +751,7 @@ describe('SyncEngineLevel — identity management', () => {
       const engine = new SyncEngineLevel({ db });
       const did = 'did:example:replacementretry';
       await engine.registerIdentity({ did, options: { protocols: 'all' } });
-      (engine as any)._runtime = new SyncRuntime('live');
+      (engine as any)._runtime = new SyncRuntime(true);
 
       const initializeReplacement = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
       const linkKey = `${did}^https://dwn.example.com^projection-1^epoch-1`;
@@ -632,7 +790,7 @@ describe('SyncEngineLevel — identity management', () => {
       const engine = new SyncEngineLevel({ db });
       const did = 'did:example:startedretry';
       await engine.registerIdentity({ did, options: { protocols: 'all' } });
-      (engine as any)._runtime = new SyncRuntime('live');
+      (engine as any)._runtime = new SyncRuntime(true);
 
       let releaseRetry!: () => void;
       const retryGate = new Promise<void>((resolve) => { releaseRetry = resolve; });
@@ -1115,7 +1273,7 @@ describe('SyncEngineLevel — identity management', () => {
       const engine = new SyncEngineLevel({ db });
       await engine.registerIdentity({ did: 'did:example:update1', options: { protocols: 'all' } });
 
-      (engine as any)._runtime = new SyncRuntime('live');
+      (engine as any)._runtime = new SyncRuntime(true);
       activateTestLink(engine, 'did:example:update1^https://dwn.example.com', 'did:example:update1');
 
       const hotRemoveStub = sinon.stub(engine as any, 'removeIdentityFromLiveSync').resolves();
@@ -1133,14 +1291,14 @@ describe('SyncEngineLevel — identity management', () => {
 
     it('should not hot-remove/add when updating options while sync is not live', async () => {
       const engine = new SyncEngineLevel({ db });
-      await engine.registerIdentity({ did: 'did:example:update-poll', options: { protocols: 'all' } });
+      await engine.registerIdentity({ did: 'did:example:update-idle', options: { protocols: 'all' } });
 
-      (engine as any)._runtime = new SyncRuntime('poll');
+      (engine as any)._runtime = new SyncRuntime();
 
       const hotRemoveStub = sinon.stub(engine as any, 'removeIdentityFromLiveSync').resolves();
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
-      await engine.updateIdentityOptions({ did: 'did:example:update-poll', options: { protocols: ['https://new.example'] } });
+      await engine.updateIdentityOptions({ did: 'did:example:update-idle', options: { protocols: ['https://new.example'] } });
 
       expect(hotRemoveStub.called).toBe(false);
       expect(hotAddStub.called).toBe(false);
@@ -1150,7 +1308,7 @@ describe('SyncEngineLevel — identity management', () => {
       const engine = new SyncEngineLevel({ db });
       await engine.registerIdentity({ did: 'did:example:update-nolinks', options: { protocols: 'all' } });
 
-      (engine as any)._runtime = new SyncRuntime('live');
+      (engine as any)._runtime = new SyncRuntime(true);
       // No active links for this DID
 
       const hotRemoveStub = sinon.stub(engine as any, 'removeIdentityFromLiveSync').resolves();
@@ -1181,7 +1339,7 @@ describe('SyncEngineLevel — identity management', () => {
   describe('remove last identity, then add new one', () => {
     it('should hot-add the new identity even when no subscriptions remain', async () => {
       const engine = new SyncEngineLevel({ db });
-      (engine as any)._runtime = new SyncRuntime('live');
+      (engine as any)._runtime = new SyncRuntime(true);
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
@@ -1211,7 +1369,7 @@ describe('SyncEngineLevel — identity management', () => {
       const engine = new SyncEngineLevel({ db });
 
       // Simulate a live sync session that was explicitly stopped.
-      (engine as any)._runtime = new SyncRuntime('live');
+      (engine as any)._runtime = new SyncRuntime(true);
       await engine.stopSync();
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
@@ -1226,7 +1384,7 @@ describe('SyncEngineLevel — identity management', () => {
       const engine = new SyncEngineLevel({ db });
       await engine.registerIdentity({ did: 'did:example:stop-then-unreg', options: { protocols: 'all' } });
 
-      (engine as any)._runtime = new SyncRuntime('live');
+      (engine as any)._runtime = new SyncRuntime(true);
       await engine.stopSync();
 
       const hotRemoveStub = sinon.stub(engine as any, 'removeIdentityFromLiveSync').resolves();

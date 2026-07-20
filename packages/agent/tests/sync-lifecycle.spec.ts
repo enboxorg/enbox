@@ -453,7 +453,7 @@ describe('SyncEngineLevel lifecycle', () => {
     };
 
     await engine.registerIdentity({ did, options: { protocols: 'all' } });
-    engine['_runtime'] = new SyncRuntime('live');
+    engine['_runtime'] = new SyncRuntime(true);
     engine['activateLink'](linkKey, link as never);
     sinon.stub(engine['ledger'], 'setStatus').callsFake(async (): Promise<void> => {
       link.status = 'repairing';
@@ -564,7 +564,7 @@ describe('SyncEngineLevel lifecycle', () => {
     };
 
     await engine.registerIdentity({ did, options: { protocols: 'all' } });
-    engine['_runtime'] = new SyncRuntime('live');
+    engine['_runtime'] = new SyncRuntime(true);
     const controller = engine['activateLink'](linkKey, link as never);
     const recoveryCoordinator = engine['_linkRecoveryCoordinator'];
     sinon.stub(recoveryCoordinator, 'reconcile').callsFake(async (): Promise<void> => {
@@ -628,7 +628,7 @@ describe('SyncEngineLevel lifecycle', () => {
     });
 
     await engine.registerIdentity({ did, options: { protocols: 'all' } });
-    engine['_runtime'] = new SyncRuntime('live');
+    engine['_runtime'] = new SyncRuntime(true);
     const livePushCoordinator = engine['_livePushCoordinator'];
     sinon.stub(livePushCoordinator, 'flushLink').callsFake(async (): Promise<void> => {
       pushStarted.resolve();
@@ -673,7 +673,7 @@ describe('SyncEngineLevel lifecycle', () => {
       await releaseStart.promise;
     });
 
-    const startPromise = engine.startSync({ interval: '5m', mode: 'live' });
+    const startPromise = engine.startSync({ interval: '5m' });
     await startEntered.promise;
 
     let stopCompleted = false;
@@ -681,12 +681,12 @@ describe('SyncEngineLevel lifecycle', () => {
     await Promise.resolve();
 
     expect(stopCompleted).toBe(false);
-    expect(engine['_runtime'].mode).toBe('live');
+    expect(engine['_runtime'].live).toBe(true);
 
     releaseStart.resolve();
     await Promise.all([startPromise, stopPromise]);
 
-    expect(engine['_runtime'].mode).toBeUndefined();
+    expect(engine['_runtime'].live).toBe(false);
   });
 
   it('should ignore a stale live integrity callback after stop', async () => {
@@ -700,6 +700,103 @@ describe('SyncEngineLevel lifecycle', () => {
     }).runLiveIntegrityCheck(staleRuntime);
 
     expect(sync.called).toBe(false);
+  });
+
+  it('should skip a settle tick entirely while the pass, including its re-initialization, is in flight', async () => {
+    const engine = new SyncEngineLevel({ db });
+    engine['_runtime'] = new SyncRuntime(true);
+
+    const runStub = sinon.stub((engine as any)._runCoordinator, 'run').resolves();
+    sinon.stub(engine as any, 'getSyncTargets').resolves([{
+      did                : 'did:example:settle-skip',
+      dwnUrl             : 'https://dwn.example.com',
+      scope              : { kind: 'full' },
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'owner-epoch',
+      projectionId       : 'projection-id',
+    }]);
+    sinon.stub(engine as any, 'openLinkSubscriptions').resolves('readyForLive');
+    sinon.stub(engine as any, 'markLinkLive').resolves();
+
+    const reachedLinkStorage = createDeferred();
+    const releaseLinkStorage = createDeferred();
+    sinon.stub(engine as any, 'getOrCreateReplicationLink').callsFake(async (): Promise<any> => {
+      reachedLinkStorage.resolve();
+      await releaseLinkStorage.promise;
+      return {
+        tenantDid          : 'did:example:settle-skip',
+        remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-id',
+        authorizationEpoch : 'owner-epoch',
+        scope              : { kind: 'full' },
+        authorization      : { kind: 'owner' },
+        status             : 'initializing',
+        connectivity       : 'unknown',
+        pull               : {},
+        push               : {},
+      };
+    });
+
+    const firstPass = (engine as unknown as {
+      runLiveIntegrityCheck(runtime: unknown): Promise<void>;
+    }).runLiveIntegrityCheck(engine['_runtime']);
+    await reachedLinkStorage.promise;
+
+    // The pass holds the exclusive sync lock through the re-initialization:
+    // a second settle tick arriving now must skip entirely rather than
+    // start another convergence run.
+    await (engine as unknown as {
+      runLiveIntegrityCheck(runtime: unknown): Promise<void>;
+    }).runLiveIntegrityCheck(engine['_runtime']);
+    expect(runStub.callCount).toBe(1);
+
+    releaseLinkStorage.resolve();
+    await firstPass;
+    expect(runStub.callCount).toBe(1);
+
+    await engine.stopSync();
+  });
+
+  it('should leave a rate-limited link to its Retry-After ladder instead of re-attempting from the settle pass', async () => {
+    const engine = new SyncEngineLevel({ db });
+    engine['_runtime'] = new SyncRuntime(true);
+    const did = 'did:example:settle-ratelimited';
+    const target = {
+      did,
+      dwnUrl             : 'https://dwn.example.com',
+      scope              : { kind: 'full' },
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'owner-epoch',
+      projectionId       : 'projection-id',
+    };
+    const linkKey = `${did}^https://dwn.example.com^projection-id^owner-epoch`;
+
+    sinon.stub((engine as any)._runCoordinator, 'run').resolves();
+    sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
+    const initStub = sinon.stub(engine as any, 'initializeLinkTarget');
+    initStub.resolves({ status: 'active', durableLinkIdentityKey: 'key' });
+
+    const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
+
+    // A 429 with Retry-After 60s parked this link on the retry ladder.
+    (engine as any).scheduleLinkInitRetry(target, linkKey, 60_000);
+
+    await (engine as unknown as {
+      runLiveIntegrityCheck(runtime: unknown): Promise<void>;
+    }).runLiveIntegrityCheck(engine['_runtime']);
+
+    // The pending Retry-After ladder owns the link: the settle pass must
+    // neither re-attempt it nor cancel the retry timer.
+    expect(initStub.notCalled).toBe(true);
+    expect((engine as any).hasLinkInitRetriesForDid(did)).toBe(true);
+
+    await clock.tickAsync(60_000);
+    clock.restore();
+
+    // Exactly the ladder's retry fires once the window elapses.
+    expect(initStub.calledOnce).toBe(true);
+    expect(initStub.firstCall.args[0]).toBe(target);
+    expect((engine as any).hasLinkInitRetriesForDid(did)).toBe(false);
   });
 
   it('should exclude one-shot sync from the clear() destructive phase and cancel the joined run', async () => {

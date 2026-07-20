@@ -536,11 +536,11 @@ describe('walletConnect', () => {
     );
 
     expect(syncCalls).toHaveLength(1);
-    expect(syncCalls[0].mode).toBe('live');
-    expect(syncCalls[0].interval).toBe('5m');
+    // No interval — the engine's default settle-check cadence applies.
+    expect(syncCalls[0].interval).toBeUndefined();
   });
 
-  test('poll sync mode when interval specified', async () => {
+  test('bare-interval sync option sets the settle-check cadence', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     const syncCalls: any[] = [];
@@ -569,7 +569,6 @@ describe('walletConnect', () => {
     );
 
     expect(syncCalls).toHaveLength(1);
-    expect(syncCalls[0].mode).toBe('poll');
     expect(syncCalls[0].interval).toBe('30s');
   });
 
