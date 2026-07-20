@@ -1767,9 +1767,8 @@ export class AgentDwnApi {
         let forCid: ReadableStream<Uint8Array>;
 
         if (dataStream instanceof Blob) {
-          const [ cidCopy, processCopy ] = (dataStream.stream() as ReadableStream<Uint8Array>).tee();
-          forCid = cidCopy;
-          readableStream = processCopy;
+          forCid = dataStream.stream() as ReadableStream<Uint8Array>;
+          readableStream = dataStream.stream() as ReadableStream<Uint8Array>;
 
         } else if (dataStream instanceof ReadableStream) {
           const [ cidCopy, processCopy ] = dataStream.tee();
@@ -1777,7 +1776,20 @@ export class AgentDwnApi {
           readableStream = processCopy;
         }
 
-        if (!rawMessage && messageParams) {
+        if (rawMessage) {
+          const recordsWriteMessage = rawMessage as RecordsWriteMessage;
+          // A one-shot stream is intentionally validated in full before dispatch while caller-supplied
+          // plaintext can still reach this path. Once transmission is sourced exclusively from stored
+          // bytes, this integrity check can move into the outbound ciphertext stream without plaintext egress.
+          const { dataCid, dataSize } = await AgentDwnApi.computeDataCidAndSize(forCid!);
+
+          RecordsWrite.validateDataIntegrity(
+            recordsWriteMessage.descriptor.dataCid,
+            recordsWriteMessage.descriptor.dataSize,
+            dataCid,
+            dataSize,
+          );
+        } else if (messageParams) {
           messageParams.dataCid = await Cid.computeDagPbCidFromStream(forCid!);
           // Compute data size by consuming forCid (already consumed by computeDagPbCidFromStream)
           // and using the Blob/stream size if available.
@@ -2038,6 +2050,22 @@ export class AgentDwnApi {
       message    : dwnMessage.message as DwnMessage[T],
       dataStream : readableStream,
     };
+  }
+
+  private static async computeDataCidAndSize(dataStream: ReadableStream<Uint8Array>): Promise<{
+    dataCid: string;
+    dataSize: number;
+  }> {
+    let dataSize = 0;
+    const countingStream = dataStream.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller): void {
+        dataSize += chunk.byteLength;
+        controller.enqueue(chunk);
+      },
+    }));
+    const dataCid = await Cid.computeDagPbCidFromStream(countingStream);
+
+    return { dataCid, dataSize };
   }
 
   private async populateDelegatedGrantForWrite(
