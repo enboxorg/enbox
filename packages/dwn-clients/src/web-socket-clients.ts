@@ -25,7 +25,7 @@ import { RateLimitError } from './rate-limit-error.js';
 import { withLocalNodeTokenQuery } from './rpc-auth.js';
 import { createJsonRpcAck, createJsonRpcRequest, createJsonRpcSubscriptionRequest, JsonRpcErrorCodes } from './json-rpc.js';
 import { DataStream, Encoder } from '@enbox/dwn-sdk-js';
-import { DEFAULT_MAX_WS_RAW_RECORD_DATA_BYTES, maxWsJsonRpcPayloadBytes } from './ws-payload-size.js';
+import { DEFAULT_MAX_WS_RAW_RECORD_DATA_BYTES, maxWsJsonRpcPayloadBytes, utf8ByteLength } from './ws-payload-size.js';
 import { DwnRpcError, SubscriptionHandlerTerminalError } from './dwn-rpc-error.js';
 
 const DEFAULT_MAX_WS_JSON_RPC_PAYLOAD_BYTES = maxWsJsonRpcPayloadBytes(DEFAULT_MAX_WS_RAW_RECORD_DATA_BYTES);
@@ -290,6 +290,18 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
   async getServerInfo(dwnUrl: string): Promise<ServerInfo> {
     return this.serverInfoRpc.getServerInfo(httpUrlForWsDwnUrl(dwnUrl));
+  }
+
+  /**
+   * Whether the pool already holds a connected socket for `dwnUrl` under
+   * this client's transport authentication. Routing layers use this to
+   * prefer the socket only when it costs nothing to establish — a missing
+   * or reconnecting socket falls back to HTTP rather than waiting.
+   */
+  public hasHealthyConnection(dwnUrl: string): boolean {
+    const url = withLocalNodeTokenQuery(dwnUrl, this.authOptions);
+    const connection = WebSocketDwnRpcClient.connections.get(connectionCacheKey(url));
+    return connection !== undefined && connection.socket.isConnected;
   }
 
   private async maxPayloadBytesForReplicatedApply(request: DwnReplicationApplyRequest): Promise<number> {
@@ -849,9 +861,7 @@ function estimatedJsonRpcPayloadBytes(request: ReturnType<typeof createJsonRpcRe
   return utf8ByteLength(JSON.stringify(requestWithoutData)) + encodedData.length;
 }
 
-function utf8ByteLength(text: string): number {
-  return new TextEncoder().encode(text).byteLength;
-}
+
 
 async function dataToBase64Url(data: DwnReplicationApplyRequest['data']): Promise<string> {
   if (data instanceof Blob) {

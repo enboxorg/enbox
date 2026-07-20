@@ -8,6 +8,7 @@ import { CryptoUtils } from '@enbox/crypto';
 import { HttpDwnRpcClient } from './http-dwn-rpc-client.js';
 import { normalizeDwnRpcAuthEndpoint } from './rpc-auth.js';
 import { WebSocketDwnRpcClient } from './web-socket-clients.js';
+import { DEFAULT_MAX_WS_RAW_RECORD_DATA_BYTES, maxWsJsonRpcPayloadBytes, utf8ByteLength } from './ws-payload-size.js';
 
 /**
  * Interface that can be implemented to communicate with {@link EnboxAgent | Enbox Agent}
@@ -61,6 +62,9 @@ export interface EnboxRpc extends DwnRpc, DidRpc, DwnServerInfoRpc {
 export type EnboxRpcClientOptions = {
   auth?: DwnRpcAuthOptions;
 };
+
+/** Outbound socket frame budget for preferring the pooled WebSocket transport. */
+const SOCKET_ROUTE_BUDGET_BYTES = maxWsJsonRpcPayloadBytes(DEFAULT_MAX_WS_RAW_RECORD_DATA_BYTES);
 
 /**
  * Client used to communicate with Dwn Servers
@@ -160,6 +164,11 @@ export class EnboxRpcClient implements EnboxRpc {
     // will throw if url is invalid
     const url = new URL(request.dwnUrl);
 
+    const socketRoute = this.resolveSocketRoute(request, url);
+    if (socketRoute !== undefined) {
+      return socketRoute;
+    }
+
     const transportClient = this.getTransportClient(url, request.dwnUrl);
     if (!transportClient) {
       const error = new Error(`no ${url.protocol} transport client available`);
@@ -169,6 +178,57 @@ export class EnboxRpcClient implements EnboxRpc {
     }
 
     return transportClient.sendDwnRequest(request);
+  }
+
+  /**
+   * Prefer the pooled WebSocket transport for an `http(s)` endpoint when it
+   * can serve the request with full reply parity:
+   *
+   * - a subscription requires the socket transport, so it always routes there
+   *   (the pool establishes the connection on demand);
+   * - a request carrying a raw data payload stays on HTTP — the socket
+   *   `dwn.processMessage` framing does not carry request data;
+   * - a `Read` message stays on HTTP — its reply may stream record data,
+   *   which only the HTTP transport surfaces as a stream;
+   * - otherwise the request rides an ALREADY-HEALTHY pooled socket when its
+   *   frame fits the socket budget. No socket, or an oversized frame, falls
+   *   through to ordinary scheme routing.
+   *
+   * Socket preference only engages for the built-in WebSocket transport; a
+   * caller-supplied override for `ws:`/`wss:` keeps plain scheme routing.
+   */
+  private resolveSocketRoute(request: DwnRpcRequest, url: URL): Promise<DwnRpcResponse> | undefined {
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return undefined;
+    }
+
+    const socketUrl = new URL(request.dwnUrl);
+    socketUrl.protocol = url.protocol === 'http:' ? 'ws:' : 'wss:';
+    const socketClient = this.getTransportClient(socketUrl, request.dwnUrl);
+    if (!(socketClient instanceof WebSocketEnboxRpcClient)) {
+      return undefined;
+    }
+
+    const socketRequest: DwnRpcRequest = { ...request, dwnUrl: socketUrl.toString() };
+    if (request.subscription !== undefined) {
+      return socketClient.sendDwnRequest(socketRequest);
+    }
+
+    if (request.data !== undefined) {
+      return undefined;
+    }
+    const descriptor = (request.message as { descriptor?: { method?: string } }).descriptor;
+    if (descriptor?.method === 'Read') {
+      return undefined;
+    }
+    if (!socketClient.hasHealthyConnection(socketUrl.toString())) {
+      return undefined;
+    }
+    if (utf8ByteLength(JSON.stringify(request.message)) > SOCKET_ROUTE_BUDGET_BYTES) {
+      return undefined;
+    }
+
+    return socketClient.sendDwnRequest(socketRequest);
   }
 
   applyReplicatedMessage(request: DwnReplicationApplyRequest): Promise<ReplicationApplyResult> {

@@ -12,3 +12,8 @@ export function estimatedWsJsonRpcPayloadBytes(rawDataSize: number): number {
 export function maxWsJsonRpcPayloadBytes(maxRecordDataSize: number): number {
   return estimatedWsJsonRpcPayloadBytes(maxRecordDataSize);
 }
+
+/** Byte length of `text` when UTF-8 encoded. */
+export function utf8ByteLength(text: string): number {
+  return new TextEncoder().encode(text).byteLength;
+}
