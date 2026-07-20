@@ -44,6 +44,22 @@ Consequences:
   `store: false` and never persisted — transmission **fails closed** with an
   actionable error rather than falling back to plaintext.
 
+Additional integrity guards:
+
+- `Record.update()` now **rejects** changing the encryption mode without
+  supplying `data` (e.g. `update({ encryption: false })` on an encrypted record).
+  The stored payload cannot be decrypted (nor a plaintext one encrypted) in
+  place, and allowing it produced a record whose message and stored data
+  disagreed — which a later send would egress the wrong bytes for. Pass `data`
+  to re-write under the new mode.
+- The non-decrypting fallback read now **verifies the read version's `dataCid`
+  matches this record** before returning its bytes, so a `send()`/`store()`
+  cannot ship a different stored version's data (a newer write, or a
+  `store: false` version) under this record's message.
+- A **local** `update()` (no `from`) now clears `remoteOrigin`, so a
+  remote-read-then-locally-updated record sources its newly stored **local**
+  bytes instead of a stale remote version.
+
 Known gap (tracked separately): an encrypted `write({ store: false })` cannot be
 sent, because the ciphertext is never persisted for the fresh read to find. The
 durable fix is for the encrypting write to return the ciphertext so `Record` can

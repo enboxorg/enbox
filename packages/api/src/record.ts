@@ -573,6 +573,20 @@ export class Record implements RecordModel {
     // caller didn't explicitly set `encryption`, default to re-encrypting.
     const shouldEncrypt = encryption ?? (this._encryption !== undefined);
 
+    // Changing a record's encryption mode requires re-writing its data: the
+    // stored payload cannot be decrypted (nor a plaintext one encrypted) in
+    // place by flipping the flag. Reject a metadata-only mode change so it can
+    // never produce a record whose message and stored data disagree (an
+    // unencrypted envelope over ciphertext, or vice versa) — which a later
+    // send/store would otherwise egress the wrong bytes for.
+    if (data === undefined && encryption !== undefined && encryption !== (this._encryption !== undefined)) {
+      throw new Error(
+        'Record: cannot change encryption mode without providing new data. An encrypted record\'s ' +
+        'stored payload cannot be decrypted (nor a plaintext one encrypted) in place — pass `data` ' +
+        'to re-write the record under the new encryption mode.',
+      );
+    }
+
     // if there is a parentId, we remove it from the descriptor and set a parentContextId
     const { parentId, ...descriptor } = this._recordsWriteDescriptor;
     const parentContextId = parentId ? this._contextId.split('/').slice(0, -1).join('/') : undefined;
@@ -658,7 +672,11 @@ export class Record implements RecordModel {
     // whoever signed this update, which may differ from the previous author.
     const msg = responseMessage as DwnMessage[DwnInterface.RecordsWrite];
     const updatedAuthor = getRecordAuthor(msg) ?? this._author;
-    const updatedRemoteOrigin = from ?? this._remoteOrigin;
+    // The authoritative copy lives wherever the update was dispatched: a
+    // cross-tenant update (`from`) homes it on that remote; a LOCAL dispatch
+    // homes it locally, so it must NOT keep targeting the old remote origin —
+    // otherwise a later read/transmission fetches a stale remote version.
+    const updatedRemoteOrigin = isRemote ? from : undefined;
 
     const updatedRecord = new Record(this._agent, {
       author           : updatedAuthor,
@@ -970,7 +988,8 @@ export class Record implements RecordModel {
    * @beta
    */
   private async readRecordData(
-    { target, isRemote, decrypt = true }: { target: string, isRemote: boolean, decrypt?: boolean },
+    { target, isRemote, decrypt = true, expectedDataCid }:
+      { target: string, isRemote: boolean, decrypt?: boolean, expectedDataCid?: string },
   ): Promise<ReadableStream> {
     const readRequest: ProcessDwnRequest<DwnInterface.RecordsRead> = {
       author        : this._connectedDid,
@@ -1007,6 +1026,21 @@ export class Record implements RecordModel {
         throw new Error(`${status.code}: ${status.detail}`);
       }
 
+      // Version guard for the transmission path: a `RecordsRead` returns the
+      // LATEST stored write for the recordId, which may not be THIS instance's
+      // version — a newer write may have landed, or this version may have been
+      // created with `store: false`. Shipping another version's bytes under
+      // this message is wrong (and only rejected post-egress), so require the
+      // read's dataCid to match this record's before returning its stream.
+      if (expectedDataCid !== undefined) {
+        const readDataCid = entry.recordsWrite?.descriptor.dataCid;
+        if (readDataCid !== expectedDataCid) {
+          throw new Error(
+            `stored version mismatch: read dataCid '${readDataCid}' does not match this record's '${expectedDataCid}'`,
+          );
+        }
+      }
+
       // DWN SDK now returns Web ReadableStream natively.
       return entry.data;
 
@@ -1022,23 +1056,27 @@ export class Record implements RecordModel {
    * SECURITY-CRITICAL: the decrypted plaintext of an encrypted record must
    * never be transmitted. Wire bytes come from exactly two safe sources:
    *
-   * 1. A cache whose provenance is AT-REST ({@link _cachedDataAtRest}) — an
-   *    unencrypted plaintext payload, or ciphertext from a NON-decrypting
+   * 1. A cache whose provenance is verified AT-REST ({@link _cachedDataAtRest}) —
+   *    an unencrypted plaintext payload, or ciphertext from a NON-decrypting
    *    read/query/subscription. Reused as-is, so inline query/read data does not
    *    trigger an extra `RecordsRead`, and a delegate holding ciphertext without
    *    a read grant can still transmit it.
-   * 2. For an encrypted record whose cache is the DECRYPTED payload (or absent),
-   *    a fresh NON-decrypting read of the stored ciphertext ({@link readAtRestData}).
+   * 2. Otherwise, a fresh NON-decrypting read of the stored bytes for THIS
+   *    version ({@link readAtRestData}, which verifies the read `dataCid`).
    *
-   * The decrypted in-memory cache and the decrypting `data` getter are never a
-   * source on the encrypted path. If the ciphertext cannot be retrieved (e.g. a
-   * `store: false` record that was never persisted, or an unreachable origin),
-   * this fails closed rather than falling back to plaintext.
+   * The current encryption envelope is NOT a proxy for cache safety — a
+   * metadata-only encryption opt-out leaves a decrypted cache under an
+   * unencrypted message — so provenance is the sole authority. The decrypted
+   * cache and the decrypting `data` getter are never a transmission source. If
+   * the bytes cannot be retrieved (a `store: false` record that was never
+   * persisted, an unreachable origin, or a version no longer at rest), this
+   * fails closed rather than falling back to plaintext.
    */
   private async getWireDataStream(): Promise<ReadableStream> {
-    // Source 1: a cache known to hold the at-rest bytes (unencrypted, or
-    // ciphertext from a non-decrypting read/query) is transmit-safe as-is.
-    if (this._encryption === undefined || this._cachedDataAtRest) {
+    // A cache may be transmitted as-is ONLY when its provenance is verified
+    // at-rest. Gating on `_encryption === undefined` instead would leak the
+    // decrypted cache a metadata-only encryption opt-out leaves behind.
+    if (this._cachedDataAtRest) {
       if (this._encodedData !== undefined) {
         return Stream.fromBlob(this._encodedData);
       }
@@ -1049,22 +1087,19 @@ export class Record implements RecordModel {
       }
     }
 
-    // Unencrypted with no cached bytes: a plain read returns the at-rest plaintext.
-    if (this._encryption === undefined) {
-      return await this.data.stream();
-    }
-
-    // Source 2: encrypted, cache is the decrypted payload (or absent) — re-read
-    // the raw ciphertext. NEVER the decrypted cache nor the decrypting `data`
-    // path. Fail closed if the ciphertext is unavailable.
+    // No at-rest cache: re-read the stored bytes WITHOUT decryption — plaintext
+    // for an unencrypted record, ciphertext for an encrypted one, and always the
+    // exact bytes THIS version's `dataCid` commits to (verified by the read).
+    // NEVER the decrypted cache nor the decrypting `data` path. Fail closed if
+    // the bytes are unavailable rather than fall back to plaintext.
     try {
       return await this.readAtRestData();
     } catch (error) {
       throw new Error(
-        `Record: cannot source the at-rest ciphertext of encrypted record '${this._recordId}' for ` +
-        'transmission — its encrypted data is not available where the record is homed. An encrypted ' +
-        'record must be persisted (write with `store: true`) and its origin DWN reachable before it ' +
-        'can be sent or stored elsewhere; the decrypted payload is never transmitted. ' +
+        `Record: cannot source the at-rest bytes of record '${this._recordId}' for transmission — ` +
+        'this version\'s stored data is not available where the record is homed. A record must be ' +
+        'persisted (write with `store: true`) and its origin DWN reachable before it can be sent or ' +
+        'stored elsewhere; an encrypted record\'s decrypted payload is never transmitted. ' +
         `Cause: ${error.message}`,
       );
     }
@@ -1077,9 +1112,12 @@ export class Record implements RecordModel {
    * bytes `dataCid` commits to.
    */
   private async readAtRestData(): Promise<ReadableStream> {
+    // Guard against reading a different stored version than this instance
+    // represents (see readRecordData's dataCid check).
+    const expectedDataCid = this.dataCid;
     return this._remoteOrigin
-      ? this.readRecordData({ target: this._remoteOrigin, isRemote: true, decrypt: false })
-      : this.readRecordData({ target: this._connectedDid, isRemote: false, decrypt: false });
+      ? this.readRecordData({ target: this._remoteOrigin, isRemote: true, decrypt: false, expectedDataCid })
+      : this.readRecordData({ target: this._connectedDid, isRemote: false, decrypt: false, expectedDataCid });
   }
 
   /**

@@ -63,10 +63,13 @@ function createRecordOptions(overrides: Record<string, unknown> = {}): any {
       recipient        : 'did:example:bob',
       schema           : 'https://example.com/schemas/post',
     },
-    authorization : createValidAuthorization(),
-    attestation   : { payload: 'attest' },
-    encryption    : undefined,
-    encodedData   : new Blob([JSON.stringify({ hello: 'world' })], { type: 'application/json' }),
+    authorization    : createValidAuthorization(),
+    attestation      : { payload: 'attest' },
+    encryption       : undefined,
+    encodedData      : new Blob([JSON.stringify({ hello: 'world' })], { type: 'application/json' }),
+    // Unencrypted records carry at-rest provenance (as the real api sets), so
+    // transmission reuses the cache rather than re-reading.
+    cachedDataAtRest : true,
     ...overrides,
   };
 }

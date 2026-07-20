@@ -5055,7 +5055,7 @@ describe('Record', () => {
 
       // The rejection must name the actual condition, not surface an unrelated failure.
       await expect(record!.send(aliceDid.uri)).rejects.toThrow(
-        /cannot source the at-rest ciphertext/,
+        /cannot source the at-rest bytes/,
       );
 
       expect(sendSpy.called).toBe(false);
@@ -5217,15 +5217,16 @@ describe('Record', () => {
       expect(writeStatus.code).toBe(202);
       const atRestBytes = await rawCiphertext(written!.id);
 
-      // Decrypting read → the record's cached stream holds PLAINTEXT.
+      // Decrypting read → the record's cached stream (_readableStream) holds PLAINTEXT.
       const { status: readStatus, record: read } = await dwnAlice.records.read({
         protocol,
         filter     : { recordId: written!.id },
         encryption : true,
       });
       expect(readStatus.code).toBe(200);
-      expect(await read!.data.text()).toBe(plaintext);
 
+      // Send BEFORE consuming record.data, so the unconsumed plaintext stream is
+      // still in hand — the security-critical branch: transmission must NOT grab it.
       const sendStub = sinon.stub(testHarness.agent, 'sendDwnRequest')
         .resolves({ reply: { status: { code: 202, detail: 'OK' } } } as any);
       await read!.send(bobDid.uri);
@@ -5235,6 +5236,9 @@ describe('Record', () => {
       const wireBytes = await Stream.consumeToBytes({ readableStream: writeCall!.args[0].dataStream });
       expect(new TextDecoder().decode(wireBytes)).not.toBe(plaintext);
       expect(wireBytes).toEqual(atRestBytes);
+
+      // The cached decrypted stream was untouched by send and still reads plaintext.
+      expect(await read!.data.text()).toBe(plaintext);
     });
 
     it('transmits ciphertext for an encrypted record that was updated', async () => {
@@ -5263,6 +5267,247 @@ describe('Record', () => {
       const wireBytes = await Stream.consumeToBytes({ readableStream: writeCall!.args[0].dataStream });
       expect(new TextDecoder().decode(wireBytes)).not.toBe('v2 secret');
       expect(wireBytes).toEqual(atRestBytes);
+    });
+
+    it('rejects a metadata-only encryption-mode change and dispatches nothing (Finding 1)', async () => {
+      const protocol = await installEncryptedProtocol();
+      const { status: writeStatus, record } = await dwnAlice.records.write({
+        data         : 'secret',
+        protocol,
+        protocolPath : 'note',
+        schema       : 'https://schemas.xyz/note',
+        dataFormat   : 'text/plain',
+        encryption   : true,
+      });
+      expect(writeStatus.code).toBe(202);
+
+      const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
+      await expect(record!.update({ encryption: false })).rejects.toThrow(
+        /cannot change encryption mode without providing new data/,
+      );
+      // The incoherent record is never even created — no write dispatched.
+      const writes = processSpy.getCalls().filter((c: any) => c.args[0].messageType === DwnInterface.RecordsWrite);
+      expect(writes).toHaveLength(0);
+    });
+
+    it('allows update({ data, encryption: false }) — re-writing an encrypted record as plaintext', async () => {
+      const protocol = await installEncryptedProtocol();
+      const { status: writeStatus, record } = await dwnAlice.records.write({
+        data         : 'secret',
+        protocol,
+        protocolPath : 'note',
+        schema       : 'https://schemas.xyz/note',
+        dataFormat   : 'text/plain',
+        encryption   : true,
+      });
+      expect(writeStatus.code).toBe(202);
+
+      const { status: updateStatus } = await record!.update({ data: 'now plaintext', encryption: false });
+      expect(updateStatus.code).toBe(202);
+      expect(await record!.data.text()).toBe('now plaintext');
+    });
+
+    it('fails closed when the version to send was never persisted (update store:false → send) (Finding 2)', async () => {
+      const protocol = await installEncryptedProtocol();
+      const { status: writeStatus, record } = await dwnAlice.records.write({
+        data         : 'v1 secret',
+        protocol,
+        protocolPath : 'note',
+        schema       : 'https://schemas.xyz/note',
+        dataFormat   : 'text/plain',
+        encryption   : true,
+      });
+      expect(writeStatus.code).toBe(202);
+
+      // v2 created but NOT stored — its ciphertext exists nowhere at rest.
+      const { status: updateStatus, record: v2 } = await record!.update({ data: 'v2 secret', store: false });
+      expect(updateStatus.code).toBe(202);
+
+      const sendSpy = sinon.stub(testHarness.agent, 'sendDwnRequest')
+        .resolves({ reply: { status: { code: 202, detail: 'OK' } } } as any);
+
+      // The fallback read finds v1; its dataCid != v2's, so send fails closed rather
+      // than shipping v1's ciphertext under v2's message. (The initial-write envelope
+      // for v1 may be sent — that carries no data; what must never happen is a
+      // DATA-bearing transport call for the wrong version.)
+      await expect(v2.send(bobDid.uri)).rejects.toThrow(/version mismatch/);
+      const dataSends = sendSpy.getCalls().filter((c: any) => c.args[0].dataStream !== undefined);
+      expect(dataSends).toHaveLength(0);
+    });
+
+    it('fails closed for a stale record reference after a newer version is stored (Finding 2)', async () => {
+      const protocol = await installEncryptedProtocol();
+      const { status: writeStatus, record: v1 } = await dwnAlice.records.write({
+        data         : 'v1 secret',
+        protocol,
+        protocolPath : 'note',
+        schema       : 'https://schemas.xyz/note',
+        dataFormat   : 'text/plain',
+        encryption   : true,
+      });
+      expect(writeStatus.code).toBe(202);
+
+      // Store v2 through a different reference.
+      const { record: ref2 } = await dwnAlice.records.read({ protocol, filter: { recordId: v1!.id } });
+      const { status: v2Status } = await ref2!.update({ data: 'v2 secret' });
+      expect(v2Status.code).toBe(202);
+
+      const sendSpy = sinon.stub(testHarness.agent, 'sendDwnRequest')
+        .resolves({ reply: { status: { code: 202, detail: 'OK' } } } as any);
+
+      // The stale v1 reference: the store now holds v2, whose dataCid != v1's.
+      await expect(v1!.send(bobDid.uri)).rejects.toThrow(/version mismatch/);
+      expect(sendSpy.called).toBe(false);
+    });
+
+    it('sends the newly stored LOCAL ciphertext after a remote-read record is updated locally (Finding 3)', async () => {
+      const encProtocol: DwnProtocolDefinition = {
+        published : true,
+        protocol  : `http://encrypted-send.xyz/${TestDataGenerator.randomString(15)}`,
+        types     : { note: { schema: 'https://schemas.xyz/note', dataFormats: ['text/plain'] } },
+        structure : { note: {} },
+      };
+      const { status: cfgStatus, protocol } = await dwnAlice.protocols.configure({
+        definition : encProtocol,
+        encryption : true,
+      });
+      expect(cfgStatus.code).toBe(202);
+      expect((await protocol!.send(aliceDid.uri)).status.code).toBe(202);
+
+      const { record: written } = await dwnAlice.records.write({
+        data         : 'v1 remote',
+        protocol     : encProtocol.protocol,
+        protocolPath : 'note',
+        schema       : 'https://schemas.xyz/note',
+        dataFormat   : 'text/plain',
+        encryption   : true,
+      });
+      expect((await written!.send(aliceDid.uri)).status.code).toBe(202); // push v1 to the remote
+
+      // Read it back FROM the remote (decrypting) → remoteOrigin = aliceDid.uri.
+      const { status: readStatus, record: remoteRead } = await dwnAlice.records.read({
+        from       : aliceDid.uri,
+        protocol   : encProtocol.protocol,
+        filter     : { recordId: written!.id },
+        encryption : true,
+      });
+      expect(readStatus.code).toBe(200);
+
+      // Update LOCALLY (no `from`) → new version stored locally; remoteOrigin must clear.
+      const { status: updateStatus } = await remoteRead!.update({ data: 'v2 local' });
+      expect(updateStatus.code).toBe(202);
+      const atRestBytes = await rawCiphertext(written!.id); // local v2 ciphertext
+
+      // The ciphertext read must go LOCAL (processDwnRequest), not the stale remote.
+      const original = testHarness.agent.processDwnRequest.bind(testHarness.agent);
+      const localReads: any[] = [];
+      sinon.stub(testHarness.agent, 'processDwnRequest').callsFake(async (req: any) => {
+        if (req.messageType === DwnInterface.RecordsRead) {localReads.push(req);}
+        return original(req);
+      });
+      const remoteReads = sinon.stub(testHarness.agent, 'sendDwnRequest')
+        .resolves({ reply: { status: { code: 202, detail: 'OK' } } } as any);
+
+      await remoteRead!.send(bobDid.uri);
+
+      // The ciphertext came from the local store, matching the new v2.
+      expect(localReads.length).toBeGreaterThanOrEqual(1);
+      const remoteReadCalls = remoteReads.getCalls().filter((c: any) => c.args[0].messageType === DwnInterface.RecordsRead);
+      expect(remoteReadCalls).toHaveLength(0);
+      const writeCall = remoteReads.getCalls().find((c: any) =>
+        c.args[0].messageType === DwnInterface.RecordsWrite && c.args[0].dataStream !== undefined);
+      const wireBytes = await Stream.consumeToBytes({ readableStream: writeCall!.args[0].dataStream });
+      expect(new TextDecoder().decode(wireBytes)).not.toBe('v2 local');
+      expect(wireBytes).toEqual(atRestBytes);
+    });
+
+    it('re-reads ciphertext for a record obtained via a DECRYPTING query', async () => {
+      const protocol = await installEncryptedProtocol();
+      const plaintext = 'decrypted query then send';
+      const { status: writeStatus, record: written } = await dwnAlice.records.write({
+        data         : plaintext,
+        protocol,
+        protocolPath : 'note',
+        schema       : 'https://schemas.xyz/note',
+        dataFormat   : 'text/plain',
+        encryption   : true,
+      });
+      expect(writeStatus.code).toBe(202);
+      const atRestBytes = await rawCiphertext(written!.id);
+
+      const { status: queryStatus, records } = await dwnAlice.records.query({
+        filter     : { protocol, protocolPath: 'note' },
+        encryption : true,
+      });
+      expect(queryStatus.code).toBe(200);
+      expect(records).toHaveLength(1);
+      const queried = records[0];
+      expect(await queried.data.text()).toBe(plaintext); // decrypted cache
+
+      const sendStub = sinon.stub(testHarness.agent, 'sendDwnRequest')
+        .resolves({ reply: { status: { code: 202, detail: 'OK' } } } as any);
+      await queried.send(bobDid.uri);
+
+      const writeCall = sendStub.getCalls().find((c: any) =>
+        c.args[0].messageType === DwnInterface.RecordsWrite && c.args[0].dataStream !== undefined);
+      const wireBytes = await Stream.consumeToBytes({ readableStream: writeCall!.args[0].dataStream });
+      expect(new TextDecoder().decode(wireBytes)).not.toBe(plaintext);
+      expect(wireBytes).toEqual(atRestBytes);
+    });
+
+    it('re-reads ciphertext for records from a DECRYPTING subscription (snapshot and live event)', async () => {
+      const protocol = await installEncryptedProtocol();
+
+      const { record: snapshotWrite } = await dwnAlice.records.write({
+        data         : 'snapshot secret',
+        protocol,
+        protocolPath : 'note',
+        schema       : 'https://schemas.xyz/note',
+        dataFormat   : 'text/plain',
+        encryption   : true,
+      });
+      const snapshotAtRest = await rawCiphertext(snapshotWrite!.id);
+
+      const { status: subStatus, liveQuery } = await dwnAlice.records.subscribe({
+        filter     : { protocol, protocolPath: 'note' },
+        encryption : true,
+      });
+      expect(subStatus.code).toBe(200);
+      expect(liveQuery!.records).toHaveLength(1);
+      const snapshotRecord = liveQuery!.records[0];
+      expect(await snapshotRecord.data.text()).toBe('snapshot secret'); // decrypted snapshot
+
+      const created: any[] = [];
+      liveQuery!.on('create', (r: any) => { created.push(r); });
+
+      const { record: eventWrite } = await dwnAlice.records.write({
+        data         : 'event secret',
+        protocol,
+        protocolPath : 'note',
+        schema       : 'https://schemas.xyz/note',
+        dataFormat   : 'text/plain',
+        encryption   : true,
+      });
+      await Poller.pollUntilSuccessOrTimeout(async () => { expect(created).toHaveLength(1); });
+      const eventRecord = created[0];
+      const eventAtRest = await rawCiphertext(eventWrite!.id);
+
+      const sendStub = sinon.stub(testHarness.agent, 'sendDwnRequest')
+        .resolves({ reply: { status: { code: 202, detail: 'OK' } } } as any);
+      await snapshotRecord.send(bobDid.uri);
+      await eventRecord.send(bobDid.uri);
+
+      const writes = sendStub.getCalls().filter((c: any) =>
+        c.args[0].messageType === DwnInterface.RecordsWrite && c.args[0].dataStream !== undefined);
+      expect(writes).toHaveLength(2);
+      const snapBytes = await Stream.consumeToBytes({ readableStream: writes[0].args[0].dataStream });
+      const evBytes = await Stream.consumeToBytes({ readableStream: writes[1].args[0].dataStream });
+      expect(new TextDecoder().decode(snapBytes)).not.toBe('snapshot secret');
+      expect(snapBytes).toEqual(snapshotAtRest);
+      expect(new TextDecoder().decode(evBytes)).not.toBe('event secret');
+      expect(evBytes).toEqual(eventAtRest);
+
+      await liveQuery!.close();
     });
   });
 });
