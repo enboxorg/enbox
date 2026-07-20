@@ -542,6 +542,23 @@ export class Record implements RecordModel {
   }
 
   /**
+   * Guards {@link update} against a metadata-only encryption-mode change. The
+   * stored payload of an encrypted record cannot be decrypted (nor a plaintext
+   * one encrypted) in place by flipping the flag; allowing it would leave the
+   * message and the stored data disagreeing, which a later send/store would
+   * egress the wrong bytes for. Requires `data` to accompany any mode change.
+   */
+  private assertEncryptionModeChangeSuppliesData(data: unknown, encryption: boolean | undefined): void {
+    if (data === undefined && encryption !== undefined && encryption !== (this._encryption !== undefined)) {
+      throw new Error(
+        'Record: cannot change encryption mode without providing new data. An encrypted record\'s ' +
+        'stored payload cannot be decrypted (nor a plaintext one encrypted) in place — pass `data` ' +
+        'to re-write the record under the new encryption mode.',
+      );
+    }
+  }
+
+  /**
    * Update the current record on the DWN.
    *
    * On success, **both** a new `Record` instance is returned *and* the
@@ -573,19 +590,9 @@ export class Record implements RecordModel {
     // caller didn't explicitly set `encryption`, default to re-encrypting.
     const shouldEncrypt = encryption ?? (this._encryption !== undefined);
 
-    // Changing a record's encryption mode requires re-writing its data: the
-    // stored payload cannot be decrypted (nor a plaintext one encrypted) in
-    // place by flipping the flag. Reject a metadata-only mode change so it can
-    // never produce a record whose message and stored data disagree (an
-    // unencrypted envelope over ciphertext, or vice versa) — which a later
-    // send/store would otherwise egress the wrong bytes for.
-    if (data === undefined && encryption !== undefined && encryption !== (this._encryption !== undefined)) {
-      throw new Error(
-        'Record: cannot change encryption mode without providing new data. An encrypted record\'s ' +
-        'stored payload cannot be decrypted (nor a plaintext one encrypted) in place — pass `data` ' +
-        'to re-write the record under the new encryption mode.',
-      );
-    }
+    // A metadata-only encryption-mode change is incoherent (see the guard) and
+    // is rejected before any work is done.
+    this.assertEncryptionModeChangeSuppliesData(data, encryption);
 
     // if there is a parentId, we remove it from the descriptor and set a parentContextId
     const { parentId, ...descriptor } = this._recordsWriteDescriptor;
