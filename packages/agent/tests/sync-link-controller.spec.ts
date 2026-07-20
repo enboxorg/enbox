@@ -466,6 +466,51 @@ describe('SyncLinkController mailbox', () => {
       expect(busy.isStreamCurrent).toBe(true);
     });
 
+    it('should be stale while a push batch is queued or flushing', async () => {
+      const queued = currentController();
+      queued.getOrCreatePushQueue({ did: 'did:example:alice', dwnUrl: 'https://dwn.example.com' });
+      expect(queued.isStreamCurrent).toBe(false);
+      queued.clearPushQueue();
+      expect(queued.isStreamCurrent).toBe(true);
+
+      const flushing = currentController();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const running = flushing.enqueue(async (): Promise<void> => gate, 'flush');
+      expect(flushing.isStreamCurrent).toBe(false);
+      release();
+      await running;
+      expect(flushing.isStreamCurrent).toBe(true);
+    });
+
+    it('should be stale while the transport reports the live stream detached', () => {
+      const controller = currentController();
+      expect(controller.isLiveStreamAttached).toBe(true);
+
+      controller.markLiveStreamDetached();
+      expect(controller.isLiveStreamAttached).toBe(false);
+      expect(controller.isStreamCurrent).toBe(false);
+
+      controller.markLiveStreamAttached();
+      expect(controller.isLiveStreamAttached).toBe(true);
+      expect(controller.isStreamCurrent).toBe(true);
+    });
+
+    it('should not report attachment without a live subscription handle', async () => {
+      const link = createLink();
+      link.connectivity = 'online';
+      const controller = new SyncLinkController('stream-link-key', link);
+
+      controller.markLiveStreamAttached();
+      expect(controller.isLiveStreamAttached).toBe(false);
+
+      controller.setLiveSubscription({ close: async (): Promise<void> => {} });
+      expect(controller.isLiveStreamAttached).toBe(true);
+
+      await controller.closeLiveSubscription();
+      expect(controller.isLiveStreamAttached).toBe(false);
+    });
+
     it('should be stale after disposal', () => {
       const controller = currentController();
       controller.dispose();

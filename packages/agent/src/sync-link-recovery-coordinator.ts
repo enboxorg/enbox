@@ -538,6 +538,7 @@ export class SyncLinkRecoveryCoordinator {
       }
       if (outcome.converged) {
         this._operations.clearConvergence(linkKey);
+        this.restoreLinkConnectivity(link);
         this._operations.emitEvent({
           type           : 'reconcile:completed',
           tenantDid      : link.tenantDid,
@@ -576,6 +577,31 @@ export class SyncLinkRecoveryCoordinator {
       remoteEndpoint : link.remoteEndpoint,
       ...eventScope(link.scope),
       messageCids,
+    });
+  }
+
+  /**
+   * A verified convergence just round-tripped the endpoint, so reachability
+   * is proven — restore link connectivity for the stream-health gate. This
+   * deliberately restores only connectivity: stream ATTACHMENT is tracked
+   * separately from the transport lifecycle, so a link whose socket is
+   * still down stays non-current (and keeps receiving targeted wake
+   * recovery) even while the endpoint is reachable over HTTP.
+   */
+  private restoreLinkConnectivity(link: ReplicationLinkState): void {
+    const previous = link.connectivity;
+    if (previous === 'online') {
+      return;
+    }
+
+    link.connectivity = 'online';
+    this._operations.emitEvent({
+      type           : 'link:connectivity-change',
+      tenantDid      : link.tenantDid,
+      remoteEndpoint : link.remoteEndpoint,
+      ...eventScope(link.scope),
+      from           : previous,
+      to             : 'online',
     });
   }
 

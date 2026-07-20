@@ -1,6 +1,6 @@
 import type { AbstractLevel } from 'abstract-level';
 
-import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
+import type { DwnSubscriptionHandler, DwnSubscriptionMessage, ResubscribeFactory } from '@enbox/dwn-clients';
 import type { GenericMessage, MessagesFilter, MessagesQueryReply, MessagesQueryReplyEntry, MessagesSubscribeReply, ProgressToken, RecordsQueryReply, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
 import { Level } from 'level';
@@ -2012,7 +2012,7 @@ export class SyncEngineLevel implements SyncEngine {
     };
     const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(did);
 
-    const subscriptionHandler = (subMessage: SubscriptionMessage): Promise<void> =>
+    const subscriptionHandler = (subMessage: DwnSubscriptionMessage): Promise<void> =>
       runIdentityTask(() => this.handleLivePullMessage(pullContext, subMessage));
 
     // Construct the subscribe message and send it directly to the specific
@@ -2132,7 +2132,7 @@ export class SyncEngineLevel implements SyncEngine {
   /** Thin transport boundary retained for lifecycle task tracking and tests. */
   private handleLivePullMessage(
     context: SyncLivePullContext,
-    subMessage: SubscriptionMessage,
+    subMessage: DwnSubscriptionMessage,
   ): Promise<void> {
     return this._livePullProcessor.handleMessage(context, subMessage);
   }
@@ -3338,15 +3338,27 @@ export class SyncEngineLevel implements SyncEngine {
    *
    * A link whose replication stream is current needs nothing from a wake
    * signal: live deliveries commit durable cursors contiguously, a gap is a
-   * repair rather than a silent miss, and the transport layer probes socket
-   * liveness on the same wake signals independently — so its pull checkpoint
-   * already sits at the remote head. Only links that cannot make that
-   * promise get work, as a targeted reconcile on their own mailbox lane. A
-   * topology the live runtime is not fully operating (a target with no
-   * active controller) cannot be gated and falls back to the full verified
-   * `sync()`. Periodic full verification remains the settle check's job.
+   * repair rather than a silent miss, push batches gate currency until they
+   * drain, and the transport layer probes socket liveness on the same wake
+   * signals — detaching the stream while its socket is down — so a current
+   * link owes no gap in either direction. Only links that cannot make that
+   * promise get work, as a targeted reconcile on their own mailbox lane,
+   * supervised by the identity task group and endpoint-grouped like a full
+   * run. A topology the live runtime is not fully operating (a target with
+   * no active controller) cannot be gated and falls back to the full
+   * verified `sync()`. Periodic full verification remains the settle
+   * check's job.
    */
   private async runConvergenceCheck(): Promise<void> {
+    // An in-flight sync() is already reconciling every target under the
+    // exclusive sync queue; targeted lanes beside it would duplicate that
+    // same work. Skipping IS the coalescing — the settle check skips
+    // identically, and the connectivity manager's trailing flush re-runs
+    // a check that arrives while one is active.
+    if (this._runtime.disposed || this._lifecycle.isSyncInProgress) {
+      return;
+    }
+
     const targets = await this.getSyncTargets();
     if (targets.length === 0) {
       return;
@@ -3381,12 +3393,32 @@ export class SyncEngineLevel implements SyncEngine {
     console.info(
       `SyncEngineLevel: convergence check — reconciling ${staleControllers.length} of ${controllers.size} link(s) with stale streams`,
     );
-    // Targeted reconciliation: each stale link runs on its own mailbox lane.
-    // The lane reports its own failures before rejecting, so a rejection here
-    // needs no additional handling beyond letting every lane finish.
-    await Promise.allSettled(
-      staleControllers.map((controller) => this._linkRecoveryCoordinator.reconcile(controller)),
-    );
+    // Targeted reconciliation mirrors the full run's dispatch policies:
+    // every pass runs under its identity task group (identity removal
+    // pauses the group and waits for in-flight passes before discarding
+    // link state), endpoints are reconciled concurrently but links sharing
+    // one endpoint sequentially, and each link coalesces callers on its
+    // reconcile mailbox lane. The lane reports its own failures before
+    // rejecting, so a rejection needs no handling beyond letting every
+    // lane finish.
+    const staleByEndpoint = new Map<string, SyncLinkController[]>();
+    for (const controller of staleControllers) {
+      const group = staleByEndpoint.get(controller.link.remoteEndpoint) ?? [];
+      group.push(controller);
+      staleByEndpoint.set(controller.link.remoteEndpoint, group);
+    }
+    await Promise.allSettled([...staleByEndpoint.values()].map(async (group): Promise<void> => {
+      for (const controller of group) {
+        const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(controller.link.tenantDid);
+        await runIdentityTask(async (): Promise<void> => {
+          try {
+            await this._linkRecoveryCoordinator.reconcile(controller);
+          } catch {
+            // reconcileExclusive reports failures before rejecting.
+          }
+        });
+      }
+    }));
   }
 
 }

@@ -1,3 +1,4 @@
+import type { DwnSubscriptionMessage } from '@enbox/dwn-clients';
 import type { GenericMessage, MessageEvent, ProgressToken, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
@@ -111,9 +112,22 @@ export class SyncLivePullProcessor {
   /** Route one remote subscription delivery through its typed handler. */
   public async handleMessage(
     context: SyncLivePullContext,
-    message: SubscriptionMessage,
+    message: DwnSubscriptionMessage,
   ): Promise<void> {
     if (context.isStale()) {
+      return;
+    }
+
+    // Transport lifecycle: a lost socket detaches the stream so the
+    // connectivity-driven convergence check stops treating the link as
+    // current; a verified resubscription restores it. Terminal recovery
+    // failures arrive separately as `error` messages and drive repair.
+    if (message.type === 'disconnected' || message.type === 'reconnecting') {
+      context.controller.markLiveStreamDetached();
+      return;
+    }
+    if (message.type === 'reconnected') {
+      this.markStreamReattached(context);
       return;
     }
 
@@ -128,6 +142,17 @@ export class SyncLivePullProcessor {
     if (message.type === 'event') {
       await this.handleEvent(context, message);
     }
+  }
+
+  /**
+   * Restore stream attachment and link connectivity after the transport
+   * verified a resubscription: `reconnected` is emitted per subscription
+   * only once its resume request returned a live subscription, so the
+   * stream is provably attached and the endpoint provably reachable.
+   */
+  private markStreamReattached(context: SyncLivePullContext): void {
+    context.controller.markLiveStreamAttached();
+    this.markLinkOnline(context);
   }
 
   /** Persist a validated catch-up boundary and mark the pull path online. */

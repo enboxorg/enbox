@@ -10,7 +10,7 @@ import sinon from 'sinon';
 import { AbstractLevel } from 'abstract-level';
 import { Convert } from '@enbox/common';
 import { CryptoUtils } from '@enbox/crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, Message, Time } from '@enbox/dwn-sdk-js';
 
 import { buildLinkKey } from '../src/sync-link-key.js';
@@ -2158,6 +2158,27 @@ describe('SyncEngineLevel', () => {
     });
 
     describe('runConvergenceCheck() stream-health gate', () => {
+      // The convergence check runs only inside a started live-sync runtime:
+      // a wake landing after teardown must no-op. Mirror the started state —
+      // a live runtime scope with task intake open — and restore the
+      // disposed idle scope afterwards.
+      let idleRuntime: any;
+
+      beforeEach(() => {
+        const engine = testHarness.agent.sync as any;
+        idleRuntime = engine._runtime;
+        engine._runtime = new SyncRuntime(true);
+        engine._lifecycle.resumeTaskIntake();
+      });
+
+      afterEach(() => {
+        const engine = testHarness.agent.sync as any;
+        engine._lifecycle.pauseTaskIntake();
+        engine._lifecycle.clearIdentityTaskGroups();
+        engine._runtime.dispose();
+        engine._runtime = idleRuntime;
+      });
+
       const GATE_TARGET = {
         authorization      : { kind: 'owner' as const },
         authorizationEpoch : 'owner-epoch',
@@ -2298,6 +2319,147 @@ describe('SyncEngineLevel', () => {
           getTargets.restore();
           fullSync.restore();
           reconcile.restore();
+        }
+      });
+
+      it('coalesces into an in-flight sync run instead of racing it', async () => {
+        const engine = testHarness.agent.sync as any;
+        const getTargets = sinon.stub(engine, 'getSyncTargets').resolves([GATE_TARGET]);
+        const fullSync = sinon.stub(engine, 'sync').resolves();
+        const reconcile = sinon.stub(engine._linkRecoveryCoordinator, 'reconcile').resolves();
+        engine._lifecycle._syncInProgress = true;
+        seedController(engine, GATE_TARGET, false);
+
+        try {
+          await engine.runConvergenceCheck();
+          // The active run already reconciles every target; the check must
+          // neither start targeted lanes nor queue a second full sync.
+          expect(getTargets.called).toBe(false);
+          expect(fullSync.called).toBe(false);
+          expect(reconcile.called).toBe(false);
+        } finally {
+          engine._lifecycle._syncInProgress = false;
+          cleanupControllers(engine, [GATE_TARGET]);
+          getTargets.restore();
+          fullSync.restore();
+          reconcile.restore();
+        }
+      });
+
+      it('reconciles links sharing an endpoint sequentially and endpoints concurrently', async () => {
+        const engine = testHarness.agent.sync as any;
+        const sharedA = { ...GATE_TARGET, did: 'did:example:gate-a1' };
+        const sharedB = { ...GATE_TARGET, did: 'did:example:gate-a2' };
+        const otherEndpoint = { ...GATE_TARGET, did: 'did:example:gate-b1', dwnUrl: 'https://gate-b.dwn.example.com' };
+        const targets = [sharedA, sharedB, otherEndpoint];
+        const getTargets = sinon.stub(engine, 'getSyncTargets').resolves(targets);
+        const fullSync = sinon.stub(engine, 'sync').resolves();
+
+        const activeByEndpoint = new Map<string, number>();
+        let maxConcurrentSameEndpoint = 0;
+        let observedCrossEndpointOverlap = false;
+        const reconcile = sinon.stub(engine._linkRecoveryCoordinator, 'reconcile');
+        reconcile.callsFake(async (controller: SyncLinkController): Promise<void> => {
+          const endpoint = controller.link.remoteEndpoint;
+          activeByEndpoint.set(endpoint, (activeByEndpoint.get(endpoint) ?? 0) + 1);
+          maxConcurrentSameEndpoint = Math.max(maxConcurrentSameEndpoint, activeByEndpoint.get(endpoint)!);
+          if (activeByEndpoint.size > 1) {
+            observedCrossEndpointOverlap = true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 15));
+          const remaining = activeByEndpoint.get(endpoint)! - 1;
+          if (remaining === 0) {
+            activeByEndpoint.delete(endpoint);
+          } else {
+            activeByEndpoint.set(endpoint, remaining);
+          }
+        });
+        for (const target of targets) {
+          seedController(engine, target, false);
+        }
+
+        try {
+          await engine.runConvergenceCheck();
+          expect(reconcile.callCount).toBe(3);
+          expect(maxConcurrentSameEndpoint).toBe(1);
+          expect(observedCrossEndpointOverlap).toBe(true);
+        } finally {
+          cleanupControllers(engine, targets);
+          getTargets.restore();
+          fullSync.restore();
+          reconcile.restore();
+        }
+      });
+
+      it('waits for an in-flight targeted reconcile before identity removal and refuses later passes', async () => {
+        const engine = testHarness.agent.sync as any;
+        const first = { ...GATE_TARGET, did: 'did:example:gate-carol' };
+        const second = { ...GATE_TARGET, did: 'did:example:gate-carol', projectionId: 'gate-projection-2' };
+        const getTargets = sinon.stub(engine, 'getSyncTargets').resolves([first, second]);
+        const fullSync = sinon.stub(engine, 'sync').resolves();
+
+        const events: string[] = [];
+        const reconcile = sinon.stub(engine._linkRecoveryCoordinator, 'reconcile');
+        reconcile.callsFake(async (): Promise<void> => {
+          events.push('reconcile-start');
+          await new Promise((resolve) => setTimeout(resolve, 25));
+          events.push('reconcile-end');
+        });
+        seedController(engine, first, false);
+        seedController(engine, second, false);
+
+        try {
+          const check = engine.runConvergenceCheck();
+          // Let the first identity-supervised pass start before removing.
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          const removal = engine.removeIdentityFromLiveSync('did:example:gate-carol').then((): void => {
+            events.push('removal-done');
+          });
+          await Promise.all([check, removal]);
+
+          // Removal waited for the in-flight pass, and the pass queued after
+          // the pause was refused by the identity task group.
+          expect(events.indexOf('removal-done')).toBeGreaterThan(events.indexOf('reconcile-end'));
+          expect(reconcile.callCount).toBe(1);
+        } finally {
+          cleanupControllers(engine, [first, second]);
+          getTargets.restore();
+          fullSync.restore();
+          reconcile.restore();
+        }
+      });
+
+      it('restores link connectivity after a verified convergence so later checks are no-ops', async () => {
+        const engine = testHarness.agent.sync as any;
+        const getTargets = sinon.stub(engine, 'getSyncTargets').resolves([GATE_TARGET]);
+        const fullSync = sinon.stub(engine, 'sync').resolves();
+        const reconcileTarget = sinon.stub(engine, 'reconcileTarget').resolves({
+          admittedCids       : [],
+          converged          : true,
+          hasActionableDiffs : false,
+          pushFailures       : [],
+        });
+        const controller = seedController(engine, GATE_TARGET, true);
+        // A browser offline event marked the link offline; the socket
+        // survived, so no resubscription will restore connectivity.
+        controller.link.connectivity = 'offline';
+
+        try {
+          await engine.runConvergenceCheck();
+          expect(reconcileTarget.callCount).toBe(1);
+          expect(controller.link.connectivity).toBe('online');
+          expect(controller.isStreamCurrent).toBe(true);
+
+          // The restored link is current — the next focus produces zero
+          // reconciliation RPCs.
+          await engine.runConvergenceCheck();
+          expect(reconcileTarget.callCount).toBe(1);
+          expect(fullSync.called).toBe(false);
+        } finally {
+          cleanupControllers(engine, [GATE_TARGET]);
+          getTargets.restore();
+          fullSync.restore();
+          reconcileTarget.restore();
         }
       });
     });
