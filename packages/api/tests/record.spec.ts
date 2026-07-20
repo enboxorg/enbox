@@ -4928,4 +4928,114 @@ describe('Record', () => {
       processSpy.restore();
     });
   });
+
+  describe('encrypted send/store — no plaintext egress', () => {
+    async function installEncryptedProtocol(): Promise<string> {
+      const encProtocol: DwnProtocolDefinition = {
+        published : true,
+        protocol  : `http://encrypted-send.xyz/${TestDataGenerator.randomString(15)}`,
+        types     : { note: { schema: 'https://schemas.xyz/note', dataFormats: ['text/plain'] } },
+        structure : { note: {} },
+      };
+      const { status } = await dwnAlice.protocols.configure({ definition: encProtocol, encryption: true });
+      expect(status.code).toBe(202);
+      return encProtocol.protocol;
+    }
+
+    it('transmits the at-rest ciphertext of an encrypted record on send(), never the plaintext', async () => {
+      const protocol = await installEncryptedProtocol();
+      const plaintext = 'super secret payload';
+
+      const { status: writeStatus, record } = await dwnAlice.records.write({
+        data         : plaintext,
+        protocol,
+        protocolPath : 'note',
+        schema       : 'https://schemas.xyz/note',
+        dataFormat   : 'text/plain',
+        encryption   : true,
+      });
+      expect(writeStatus.code).toBe(202);
+
+      // Stub the transport so the assertion does not depend on a live remote and
+      // captures exactly what send() hands it. The at-rest ciphertext fetch uses
+      // processDwnRequest (local), which is deliberately NOT stubbed.
+      const sendStub = sinon.stub(testHarness.agent, 'sendDwnRequest')
+        .resolves({ reply: { status: { code: 202, detail: 'OK' } } } as any);
+
+      const { status: sendStatus } = await record!.send(aliceDid.uri);
+      expect(sendStatus.code).toBe(202);
+
+      const writeCall = sendStub.getCalls().find((call) =>
+        call.args[0].messageType === DwnInterface.RecordsWrite && call.args[0].dataStream !== undefined);
+      expect(writeCall).toBeDefined();
+      const wireBytes = await Stream.consumeToBytes({ readableStream: writeCall!.args[0].dataStream });
+
+      // The transmitted bytes are NOT the plaintext.
+      expect(new TextDecoder().decode(wireBytes)).not.toBe(plaintext);
+
+      // They are EXACTLY the ciphertext at rest (confirmed via a raw, non-decrypting read).
+      const { reply: rawRead } = await testHarness.agent.processDwnRequest({
+        author        : aliceDid.uri,
+        target        : aliceDid.uri,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : { filter: { recordId: record!.id } },
+      });
+      expect(rawRead.status.code).toBe(200);
+      const atRestBytes = await Stream.consumeToBytes({ readableStream: rawRead.entry!.data });
+      expect(wireBytes).toEqual(atRestBytes);
+
+      // Cacheability preserved: the record still serves decrypted plaintext.
+      expect(await record!.data.text()).toBe(plaintext);
+    });
+
+    it('makes encrypted record.send() succeed against a remote (ciphertext matches dataCid)', async () => {
+      const encProtocol: DwnProtocolDefinition = {
+        published : true,
+        protocol  : `http://encrypted-send.xyz/${TestDataGenerator.randomString(15)}`,
+        types     : { note: { schema: 'https://schemas.xyz/note', dataFormats: ['text/plain'] } },
+        structure : { note: {} },
+      };
+      const { status: cfgStatus, protocol } = await dwnAlice.protocols.configure({
+        definition : encProtocol,
+        encryption : true,
+      });
+      expect(cfgStatus.code).toBe(202);
+      const { status: cfgSendStatus } = await protocol!.send(aliceDid.uri);
+      expect(cfgSendStatus.code).toBe(202);
+
+      const { status: writeStatus, record } = await dwnAlice.records.write({
+        data         : 'remote secret',
+        protocol     : encProtocol.protocol,
+        protocolPath : 'note',
+        schema       : 'https://schemas.xyz/note',
+        dataFormat   : 'text/plain',
+        encryption   : true,
+      });
+      expect(writeStatus.code).toBe(202);
+
+      // Previously failed with 400 RecordsWriteDataCidMismatch because send()
+      // transmitted the plaintext; now it ships the ciphertext dataCid commits to.
+      const { status: sendStatus } = await record!.send(aliceDid.uri);
+      expect(sendStatus.code).toBe(202);
+    });
+
+    it('fails closed (never plaintext) when an encrypted record has no at-rest copy to source', async () => {
+      const protocol = await installEncryptedProtocol();
+
+      // `store: false` never persists the ciphertext, so there is nothing safe to
+      // transmit — send() must fail rather than fall back to the plaintext.
+      const { status: writeStatus, record } = await dwnAlice.records.write({
+        data         : 'never stored',
+        protocol,
+        protocolPath : 'note',
+        schema       : 'https://schemas.xyz/note',
+        dataFormat   : 'text/plain',
+        encryption   : true,
+        store        : false,
+      });
+      expect(writeStatus.code).toBe(202);
+
+      await expect(record!.send(aliceDid.uri)).rejects.toThrow();
+    });
+  });
 });

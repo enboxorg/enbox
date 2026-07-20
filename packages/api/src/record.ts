@@ -453,7 +453,9 @@ export class Record implements RecordModel {
         messageType : DwnInterface.RecordsWrite,
         author      : this._connectedDid,
         target      : target,
-        dataStream  : this._encodedData ?? await this.data.stream(),
+        // At-rest bytes only (ciphertext for encrypted records) — never the
+        // decrypted read cache. See {@link getWireDataStream}.
+        dataStream  : await this.getWireDataStream(),
         rawMessage  : { ...this.rawMessage }
       };
     }
@@ -908,7 +910,9 @@ export class Record implements RecordModel {
         rawMessage  : this.rawMessage,
         author      : this._connectedDid,
         target      : this._connectedDid,
-        dataStream  : this._encodedData ?? await this.data.stream(),
+        // At-rest bytes only (ciphertext for encrypted records) — never the
+        // decrypted read cache. See {@link getWireDataStream}.
+        dataStream  : await this.getWireDataStream(),
         signAsOwner : signAsOwnerValue,
         signAsOwnerDelegate,
         store,
@@ -949,15 +953,18 @@ export class Record implements RecordModel {
    *
    * @beta
    */
-  private async readRecordData({ target, isRemote }: { target: string, isRemote: boolean }): Promise<ReadableStream> {
+  private async readRecordData(
+    { target, isRemote, decrypt = true }: { target: string, isRemote: boolean, decrypt?: boolean },
+  ): Promise<ReadableStream> {
     const readRequest: ProcessDwnRequest<DwnInterface.RecordsRead> = {
       author        : this._connectedDid,
       messageParams : { filter: { recordId: this.id }, protocolRole: this._protocolRole },
       messageType   : DwnInterface.RecordsRead,
       target,
-      // If the record is encrypted, enable auto-decryption so re-fetched
-      // data is returned as plaintext rather than ciphertext.
-      ...(this._encryption ? { encryption: true } : {}),
+      // Auto-decryption is for the READ path only. Transmission
+      // ({@link getWireDataStream}) passes `decrypt: false` so it re-reads the
+      // ciphertext at rest — the bytes `dataCid` commits to — never plaintext.
+      ...(this._encryption && decrypt ? { encryption: true } : {}),
     };
 
     if (this._delegateDid) {
@@ -990,6 +997,42 @@ export class Record implements RecordModel {
     } catch (error) {
       throw new Error(`Error encountered while attempting to read data: ${error.message}`);
     }
+  }
+
+  /**
+   * Returns the record's AT-REST bytes for transmission (`send`) or storage
+   * (`store`/`import`) — the bytes committed to by `descriptor.dataCid`.
+   *
+   * SECURITY-CRITICAL: for an encrypted record these are the CIPHERTEXT, and
+   * are ALWAYS sourced by re-reading the stored record WITHOUT decryption. This
+   * method deliberately never reads the decrypted in-memory cache
+   * (`_encodedData`) nor the decrypting `data` getter — transmitting either
+   * would leak the plaintext of an encrypted record to the target DWN (and fail
+   * its `dataCid` check). Reads keep their fast decrypted cache; transmission
+   * never touches it. If the ciphertext cannot be retrieved (e.g. the record was
+   * created with `store: false` and never persisted), this fails closed rather
+   * than falling back to plaintext.
+   *
+   * For an unencrypted record the at-rest bytes ARE the plaintext, so the
+   * in-memory cache / read stream is exactly what must be transmitted.
+   */
+  private async getWireDataStream(): Promise<ReadableStream> {
+    if (this._encryption === undefined) {
+      return this._encodedData ? Stream.fromBlob(this._encodedData) : await this.data.stream();
+    }
+    return this.readAtRestData();
+  }
+
+  /**
+   * Re-reads the record's raw stored bytes (ciphertext for an encrypted record)
+   * WITHOUT decryption, from wherever the record's authoritative copy lives.
+   * Used only by {@link getWireDataStream} so transmission always ships the
+   * bytes `dataCid` commits to.
+   */
+  private async readAtRestData(): Promise<ReadableStream> {
+    return this._remoteOrigin
+      ? this.readRecordData({ target: this._remoteOrigin, isRemote: true, decrypt: false })
+      : this.readRecordData({ target: this._connectedDid, isRemote: false, decrypt: false });
   }
 
   /**
