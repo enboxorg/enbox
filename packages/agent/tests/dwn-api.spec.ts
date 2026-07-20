@@ -1364,8 +1364,12 @@ describe('AgentDwnApi', () => {
       expect(writeResponse.reply.status.code).toBe(202);
       expect(writeResponse.reply.status.detail).toBe('Accepted');
 
-      // dwnProcessMessage should not have been called
-      expect(processMessageSpy).not.toHaveBeenCalled();
+      // Policy resolution may query the local DWN, but store:false must not
+      // dispatch the constructed RecordsWrite.
+      const dispatchedWrite = processMessageSpy.mock.calls.some(([, message]): boolean =>
+        isDwnMessage(DwnInterface.RecordsWrite, message)
+      );
+      expect(dispatchedWrite).toBe(false);
     });
 
     it('handles RecordsWrite messages to sign as owner', async () => {
@@ -2955,6 +2959,30 @@ describe('Encryption Callback Factories', () => {
         note: {}
       }
     };
+
+    afterEach(() => { sinon.restore(); });
+
+    it('should not dispatch record data when remote protocol resolution fails', async () => {
+      const dwnApi = testHarness.agent.dwn;
+      sinon.stub(dwnApi as any, 'getDwnEndpointUrlsForTarget').resolves(['https://dwn.example']);
+      sinon.stub(dwnApi as any, 'fetchRemoteProtocolDefinition').rejects(new Error('target unavailable'));
+      const dispatchSpy = sinon.spy(testHarness.agent.rpc, 'sendDwnRequest');
+
+      await expect(dwnApi.sendRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          dataFormat   : 'text/plain',
+          protocol     : encryptedProtocolDefinition.protocol,
+          protocolPath : 'note',
+          schema       : 'https://schemas.xyz/note',
+        },
+        dataStream: new Blob([Convert.string('must remain local').toUint8Array()]),
+      })).rejects.toThrow('Unable to resolve protocol');
+
+      expect(dispatchSpy.called).toBe(false);
+    });
 
     it('should auto-inject $keyAgreement on ProtocolsConfigure', async () => {
       // The definition itself requests encryption; configuration derives the keys.

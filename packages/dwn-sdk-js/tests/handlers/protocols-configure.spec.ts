@@ -1,6 +1,5 @@
 import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../../src/types/subscriptions.js';
-import type { GenerateProtocolsConfigureOutput } from '../utils/test-data-generator.js';
 import type {
   DataStore,
   MessageStore,
@@ -9,6 +8,7 @@ import type {
   ProtocolsConfigureDescriptor,
   ResumableTaskStore,
 } from '../../src/index.js';
+import type { GenerateProtocolsConfigureOutput, GenerateRecordsWriteOutput, Persona } from '../utils/test-data-generator.js';
 
 import dexProtocolDefinition from '../vectors/protocol-definitions/dex.json' with { type: 'json' };
 import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' with { type: 'json' };
@@ -26,9 +26,49 @@ import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { Time } from '../../src/utils/time.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { ContentEncryptionAlgorithm, DataStream, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Encryption, Jws, KeyAgreementAlgorithm, KeyDerivationScheme, PermissionGrant, PermissionsProtocol, Protocols, RecordsDelete, RecordsRead, RecordsWrite } from '../../src/index.js';
+import { ContentEncryptionAlgorithm, DataStream, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Encryption, getRuleSetAtPath, Jws, KeyAgreementAlgorithm, KeyDerivationScheme, PermissionGrant, PermissionsProtocol, Protocols, RecordsDelete, RecordsRead, RecordsWrite } from '../../src/index.js';
 import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
+
+async function generateEncryptedRecordsWrite(params: {
+  author: Persona;
+  definition: ProtocolDefinition;
+  protocolPath: string;
+  timestamp: string;
+}): Promise<GenerateRecordsWriteOutput> {
+  const dataEncryptionKey = TestDataGenerator.randomBytes(32);
+  const initializationVector = TestDataGenerator.randomBytes(16);
+  const ciphertext = await Encryption.encrypt(
+    ContentEncryptionAlgorithm.A256CTR,
+    dataEncryptionKey,
+    initializationVector,
+    Encoder.stringToBytes('secret'),
+  );
+  const publicKey = getRuleSetAtPath(params.protocolPath, params.definition.structure)!.$keyAgreement!.publicKeyJwk;
+  const typeName = params.protocolPath.split('/').at(-1)!;
+  const protocolType = params.definition.types[typeName];
+
+  return TestDataGenerator.generateRecordsWrite({
+    author          : params.author,
+    data            : ciphertext,
+    dataFormat      : protocolType.dataFormats?.[0],
+    dateCreated     : params.timestamp,
+    encryptionInput : {
+      initializationVector,
+      key                 : dataEncryptionKey,
+      keyEncryptionInputs : [{
+        algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+        derivationScheme : KeyDerivationScheme.ProtocolPath,
+        keyId            : await Encryption.getKeyId(publicKey),
+        publicKey,
+      }],
+    },
+    messageTimestamp : params.timestamp,
+    protocol         : params.definition.protocol,
+    protocolPath     : params.protocolPath,
+    schema           : protocolType.schema,
+  });
+}
 
 export function testProtocolsConfigureHandler(): void {
   describe('ProtocolsConfigureHandler.handle()', () => {
@@ -223,7 +263,17 @@ export function testProtocolsConfigureHandler(): void {
           messageTimestamp   : '2025-01-04T00:00:00.000000Z',
           protocolDefinition : changedUnusedDefinition,
         });
+        const querySpy = sinon.spy(messageStore, 'query');
         expect((await dwn.processMessage(alice.did, changedUnusedConfigure.message)).status.code).toBe(202);
+
+        const recordsWriteScans = querySpy.getCalls().filter((call): boolean => {
+          const filters = call.args[1] as Array<Record<string, unknown>>;
+          return filters.length === 1 &&
+            filters[0].interface === DwnInterfaceName.Records &&
+            filters[0].method === DwnMethodName.Write &&
+            filters[0].protocol === protocol;
+        });
+        expect(recordsWriteScans).toHaveLength(1);
       });
 
       it('should reject removing encryption from a path with existing encrypted records', async () => {
@@ -250,34 +300,11 @@ export function testProtocolsConfigureHandler(): void {
         });
         expect((await dwn.processMessage(alice.did, initialConfigure.message)).status.code).toBe(202);
 
-        const plaintext = Encoder.stringToBytes('secret');
-        const dataEncryptionKey = TestDataGenerator.randomBytes(32);
-        const initializationVector = TestDataGenerator.randomBytes(16);
-        const ciphertext = await Encryption.encrypt(
-          ContentEncryptionAlgorithm.A256CTR,
-          dataEncryptionKey,
-          initializationVector,
-          plaintext,
-        );
-        const publicKey = encryptedDefinition.structure.secret.$keyAgreement!.publicKeyJwk;
-        const encryptedWrite = await TestDataGenerator.generateRecordsWrite({
-          author          : alice,
-          data            : ciphertext,
-          dataFormat      : 'text/plain',
-          dateCreated     : '2025-02-02T00:00:00.000000Z',
-          encryptionInput : {
-            initializationVector,
-            key                 : dataEncryptionKey,
-            keyEncryptionInputs : [{
-              algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-              derivationScheme : KeyDerivationScheme.ProtocolPath,
-              keyId            : await Encryption.getKeyId(publicKey),
-              publicKey,
-            }],
-          },
-          messageTimestamp : '2025-02-02T00:00:00.000000Z',
-          protocol,
-          protocolPath     : 'secret',
+        const encryptedWrite = await generateEncryptedRecordsWrite({
+          author       : alice,
+          definition   : encryptedDefinition,
+          protocolPath : 'secret',
+          timestamp    : '2025-02-02T00:00:00.000000Z',
         });
         expect((await dwn.processMessage(
           alice.did,
@@ -296,6 +323,60 @@ export function testProtocolsConfigureHandler(): void {
         const plaintextReply = await dwn.processMessage(alice.did, plaintextConfigure.message);
         expect(plaintextReply.status.code).toBe(400);
         expect(plaintextReply.status.detail).toContain(DwnErrorCode.ProtocolsConfigureEncryptionPolicyImmutable);
+      });
+
+      it('should allow removing an encrypted type and preserve its historical records', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const protocol = 'http://config-validity.example/encrypted-type-removal';
+        const authoredDefinition: ProtocolDefinition = {
+          protocol,
+          published : true,
+          types     : {
+            public : { dataFormats: ['text/plain'] },
+            secret : { dataFormats: ['text/plain'], encryptionRequired: true },
+          },
+          structure: {
+            public : {},
+            secret : {},
+          },
+        };
+        const encryptedDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
+          authoredDefinition,
+          TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk),
+        );
+        const initialConfigure = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          messageTimestamp   : '2025-03-01T00:00:00.000000Z',
+          protocolDefinition : encryptedDefinition,
+        });
+        expect((await dwn.processMessage(alice.did, initialConfigure.message)).status.code).toBe(202);
+
+        const encryptedWrite = await generateEncryptedRecordsWrite({
+          author       : alice,
+          definition   : encryptedDefinition,
+          protocolPath : 'secret',
+          timestamp    : '2025-03-02T00:00:00.000000Z',
+        });
+        expect((await dwn.processMessage(
+          alice.did,
+          encryptedWrite.message,
+          { dataStream: encryptedWrite.dataStream },
+        )).status.code).toBe(202);
+
+        const typeRemovedConfigure = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          messageTimestamp   : '2025-03-03T00:00:00.000000Z',
+          protocolDefinition : {
+            protocol,
+            published : true,
+            types     : { public: { dataFormats: ['text/plain'] } },
+            structure : { public: {} },
+          },
+        });
+        expect((await dwn.processMessage(alice.did, typeRemovedConfigure.message)).status.code).toBe(202);
+
+        const removedRecord = await messageStore.query(alice.did, [{ recordId: encryptedWrite.message.recordId }]);
+        expect(removedRecord.messages).toHaveLength(1);
       });
 
       it('should store all protocol versions with identical timestamps and query should only return the newest (by CID tiebreak)', async () => {

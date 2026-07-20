@@ -847,7 +847,7 @@ describe('E2E Multi-Agent Sync', () => {
           filter: {
             recipient    : delegateDid,
             protocol     : EncryptionProtocol.uri,
-            protocolPath : EncryptionProtocol.wrappedGrantKeyPath,
+            protocolPath : EncryptionProtocol.grantKeyPath,
             tags         : { protocol: encryptedProtocol.protocol },
           },
         },
@@ -892,7 +892,7 @@ describe('E2E Multi-Agent Sync', () => {
           filter: {
             recipient    : delegateDid,
             protocol     : EncryptionProtocol.uri,
-            protocolPath : EncryptionProtocol.wrappedGrantKeyPath,
+            protocolPath : EncryptionProtocol.grantKeyPath,
             tags         : { protocol: encryptedProtocol.protocol },
           },
         },

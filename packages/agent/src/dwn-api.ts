@@ -1866,7 +1866,13 @@ export class AgentDwnApi {
     };
   }
 
-  /** Fetches the exact target tenant's installed definition, preserving lookup failures. */
+  /**
+   * Fetches the exact target tenant's installed definition.
+   *
+   * Resolution failures are fatal before record data is dispatched. Falling
+   * back to plaintext would expose application bytes to a remote endpoint
+   * before that endpoint could reject an encryption-required write.
+   */
   private async resolveTargetProtocolDefinition(params: {
     granteeDid?: string;
     protocol: string;

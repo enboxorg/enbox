@@ -10,8 +10,8 @@ import { Stream } from '@enbox/common';
 
 import {
   createPermissionGrants, DwnConstant, DwnContentEncryptionAlgorithm, DwnDateSort, DwnInterface, DwnKeyAgreementAlgorithm,
-  DwnKeyDerivationScheme, dwnMessageConstructors, EnboxUserAgent, getRecordAuthor,
-  getRecordProtocolRole,
+  DwnKeyDerivationScheme, dwnMessageConstructors, EnboxUserAgent, getRecordAuthor, getRecordProtocolRole,
+  isDwnMessage,
 } from '@enbox/agent';
 import { DwnErrorCode, Jws, Message, Poller, Time } from '@enbox/dwn-sdk-js';
 import { processConnectedGrants, WalletConnect } from '@enbox/auth';
@@ -4415,15 +4415,22 @@ describe('Record', () => {
       // check that the record is in a deleted state
       expect(deletedRecord.deleted).toBe(true);
 
-      // check that processMessage has not been called yet, as the records have not been stored
-      expect(processMessageSpy.callCount).toBe(0);
+      const storedRecordCallCount = (): number => processMessageSpy.getCalls()
+        .filter((call): boolean =>
+          isDwnMessage(DwnInterface.RecordsWrite, call.args[1]) ||
+          isDwnMessage(DwnInterface.RecordsDelete, call.args[1])
+        ).length;
+
+      // Policy resolution may query the local DWN, but neither record message
+      // has been stored yet.
+      expect(storedRecordCallCount()).toBe(0);
 
       // store the record
       const { status: storeStatus } = await deletedRecord.store();
       expect(storeStatus.code).toBe(202);
 
       // check that it was called once for initial write and once for the delete
-      expect(processMessageSpy.callCount).toBe(2);
+      expect(storedRecordCallCount()).toBe(2);
     });
 
     it('stores a deleted record as owner to the local DWN from an external signer', async () => {

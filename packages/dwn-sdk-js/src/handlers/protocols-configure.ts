@@ -94,19 +94,20 @@ export class ProtocolsConfigureHandler implements MethodHandler {
       }
     }
 
+    let newestMessage = await Message.getNewestMessage(existingMessages) as ProtocolsConfigureMessage | undefined;
+    let prefetchedRecordsWrites: RecordsWriteMessage[] | undefined;
     try {
-      await this.validateEncryptionPolicyIsImmutable(
+      prefetchedRecordsWrites = await this.validateEncryptionPolicyIsImmutable(
         tenant,
         message.descriptor.definition,
         message.descriptor.messageTimestamp,
-        existingMessages as ProtocolsConfigureMessage[],
+        newestMessage,
       );
     } catch (e) {
       return messageReplyFromError(e, 400);
     }
 
     // find newest message, and if the incoming message is the newest
-    let newestMessage = await Message.getNewestMessage(existingMessages);
     let incomingMessageIsNewest = false;
     if (newestMessage === undefined || await Message.isNewer(message, newestMessage)) {
       incomingMessageIsNewest = true;
@@ -149,7 +150,11 @@ export class ProtocolsConfigureHandler implements MethodHandler {
       }
     }
 
-    await this.purgeRecordsInvalidatedByProtocolConfig(tenant, message.descriptor.definition.protocol);
+    await this.purgeRecordsInvalidatedByProtocolConfig(
+      tenant,
+      message.descriptor.definition.protocol,
+      prefetchedRecordsWrites,
+    );
 
     return messageReply;
   };
@@ -207,10 +212,13 @@ export class ProtocolsConfigureHandler implements MethodHandler {
     tenant: string,
     incomingDefinition: ProtocolDefinition,
     incomingTimestamp: string,
-    existingConfigurations: ProtocolsConfigureMessage[],
-  ): Promise<void> {
-    if (existingConfigurations.length === 0) {
-      return;
+    previousConfiguration: ProtocolsConfigureMessage | undefined,
+  ): Promise<RecordsWriteMessage[] | undefined> {
+    if (previousConfiguration === undefined || !ProtocolsConfigureHandler.hasEncryptionPolicyChange(
+      previousConfiguration.descriptor.definition,
+      incomingDefinition,
+    )) {
+      return undefined;
     }
 
     const { messages } = await this.deps.messageStore.query(tenant, [{
@@ -218,11 +226,17 @@ export class ProtocolsConfigureHandler implements MethodHandler {
       method    : DwnMethodName.Write,
       protocol  : incomingDefinition.protocol,
     }]);
+    const recordsWrites = messages as RecordsWriteMessage[];
     const incomingPolicyByPath = new Map<string, boolean>();
-    for (const storedMessage of messages) {
-      const recordsWrite = storedMessage as RecordsWriteMessage;
+    for (const recordsWrite of recordsWrites) {
       const { protocolPath } = recordsWrite.descriptor;
       if (isEncryptionControlPath(protocolPath)) {
+        continue;
+      }
+
+      // Removing a path does not change its representation policy. Existing
+      // records remain governed by the configuration active at their timestamp.
+      if (getRuleSetAtPath(protocolPath, incomingDefinition.structure) === undefined) {
         continue;
       }
 
@@ -249,23 +263,73 @@ export class ProtocolsConfigureHandler implements MethodHandler {
         'install the changed definition under a new protocol URI.'
       );
     }
+
+    return recordsWrites;
   }
 
-  private async purgeRecordsInvalidatedByProtocolConfig(tenant: string, protocol: string): Promise<void> {
+  /** Returns true when a configure can change a path's stored representation. */
+  private static hasEncryptionPolicyChange(
+    previousDefinition: ProtocolDefinition,
+    incomingDefinition: ProtocolDefinition,
+  ): boolean {
+    const typeNames = new Set([
+      ...Object.keys(previousDefinition.types),
+      ...Object.keys(incomingDefinition.types),
+    ]);
+    for (const typeName of typeNames) {
+      const previousRequired = previousDefinition.types[typeName]?.encryptionRequired === true;
+      const incomingRequired = incomingDefinition.types[typeName]?.encryptionRequired === true;
+      if (previousRequired !== incomingRequired) {
+        return true;
+      }
+    }
+
+    return ProtocolsConfigureHandler.getCompositionEncryptionPolicySignature(previousDefinition) !==
+      ProtocolsConfigureHandler.getCompositionEncryptionPolicySignature(incomingDefinition);
+  }
+
+  /** Captures only composition fields that can redirect a path to another type policy. */
+  private static getCompositionEncryptionPolicySignature(definition: ProtocolDefinition): string {
+    const references: string[] = [];
+    const visit = (ruleSet: ProtocolRuleSet, parentPath: string): void => {
+      for (const [typeName, value] of Object.entries(ruleSet)) {
+        if (typeName.startsWith('$')) {
+          continue;
+        }
+
+        const childRuleSet = value as ProtocolRuleSet;
+        const protocolPath = parentPath === '' ? typeName : `${parentPath}/${typeName}`;
+        if (childRuleSet.$ref !== undefined) {
+          references.push(`${protocolPath}=${childRuleSet.$ref}`);
+        }
+        visit(childRuleSet, protocolPath);
+      }
+    };
+    visit(definition.structure as ProtocolRuleSet, '');
+
+    const uses = Object.entries(definition.uses ?? {})
+      .sort(([left], [right]): number => left.localeCompare(right));
+    return JSON.stringify({ references: references.sort(), uses });
+  }
+
+  private async purgeRecordsInvalidatedByProtocolConfig(
+    tenant: string,
+    protocol: string,
+    prefetchedRecordsWrites?: RecordsWriteMessage[],
+  ): Promise<void> {
     const dataStore = this.deps.dataStore;
     if (dataStore === undefined) {
       return;
     }
 
-    const { messages } = await this.deps.messageStore.query(tenant, [{
+    const recordsWrites = prefetchedRecordsWrites ?? (await this.deps.messageStore.query(tenant, [{
       interface : DwnInterfaceName.Records,
       method    : DwnMethodName.Write,
       protocol,
-    }]);
+    }])).messages as RecordsWriteMessage[];
 
     const checkedRecordIds = new Set<string>();
-    for (const message of messages) {
-      const recordsWriteMessage = message as RecordsWriteMessage;
+    for (const recordsWriteMessage of recordsWrites) {
       if (checkedRecordIds.has(recordsWriteMessage.recordId)) {
         continue;
       }
