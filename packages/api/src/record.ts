@@ -685,6 +685,13 @@ export class Record implements RecordModel {
     // otherwise a later read/transmission fetches a stale remote version.
     const updatedRemoteOrigin = isRemote ? from : undefined;
 
+    // A data update replaces the cache with fresh plaintext (at-rest only when
+    // not re-encrypted); a metadata-only update keeps the prior cache and
+    // provenance. Computed once for both the returned record and the in-place
+    // mutation below.
+    const nextEncodedData = data === undefined ? this._encodedData : dataBlob;
+    const nextCachedDataAtRest = data === undefined ? this._cachedDataAtRest : shouldEncrypt !== true;
+
     const updatedRecord = new Record(this._agent, {
       author           : updatedAuthor,
       connectedDid     : this._connectedDid,
@@ -692,10 +699,8 @@ export class Record implements RecordModel {
       remoteOrigin     : updatedRemoteOrigin,
       protocolRole     : protocolRole ?? this._protocolRole,
       initialWrite,
-      encodedData      : data === undefined ? this._encodedData : dataBlob,
-      // A data update replaces the cache with fresh plaintext (at-rest only when
-      // not re-encrypted); a metadata-only update keeps the prior provenance.
-      cachedDataAtRest : data === undefined ? this._cachedDataAtRest : shouldEncrypt !== true,
+      encodedData      : nextEncodedData,
+      cachedDataAtRest : nextCachedDataAtRest,
       ...msg,
     }, this._permissionsApi);
 
@@ -716,8 +721,8 @@ export class Record implements RecordModel {
     this._protocolRole = protocolRole ?? this._protocolRole;
     this._author = updatedAuthor;
     this._remoteOrigin = updatedRemoteOrigin;
-    this._encodedData = data === undefined ? this._encodedData : dataBlob;
-    this._cachedDataAtRest = data === undefined ? this._cachedDataAtRest : shouldEncrypt !== true;
+    this._encodedData = nextEncodedData;
+    this._cachedDataAtRest = nextCachedDataAtRest;
     this._readableStream = undefined; // Invalidate any consumed stream.
     this._rawMessageDirty = true; // Force rawMessage cache rebuild.
 
