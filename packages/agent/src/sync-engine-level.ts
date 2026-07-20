@@ -183,8 +183,9 @@ export class SyncEngineLevel implements SyncEngine {
   private _targetResolver?: SyncTargetResolver;
 
   /**
-   * Durable replication ledger — persists per-link checkpoint state.
-   * Used by live sync to track pull progression per link.
+   * Durable replication ledger — holds per-link pull AND push checkpoints
+   * plus link status. Shared by live sync, one-shot reconciliation, drain,
+   * superseded-link pruning, and health reporting.
    * Lazily initialized on first use to avoid sublevel() calls on mock dbs.
    */
   private _ledger?: SyncReplicationLinkStore;
@@ -193,9 +194,8 @@ export class SyncEngineLevel implements SyncEngine {
   private readonly _linkControllers: Map<string, SyncLinkController> = new Map();
 
   // ---------------------------------------------------------------------------
-  // Live sync state
+  // Engine-lifetime state (survives every start/stop cycle)
   // ---------------------------------------------------------------------------
-
 
   /**
    * The queued follow-up run shared by `sync()` callers that arrived while
@@ -205,9 +205,12 @@ export class SyncEngineLevel implements SyncEngine {
   private _pendingSyncRun?: PendingSyncRun;
 
   /**
-   * Storage-instance discriminator folded into cross-context lock names, so
-   * engines over DIFFERENT stores on one origin or in one process never
-   * contend on each other's locks. Mirrors the wake-channel naming.
+   * Storage-location discriminator folded into cross-context lock names, so
+   * engines over different `dataPath`s never contend on each other's locks.
+   * Keys off `dataPath` like the wake channel does, but with its own
+   * fallback: engines constructed with an injected `db` and no `dataPath`
+   * all share the `'default'` scope. Acceptable because that path is
+   * single-process (tests, embedded hosts), not a shared origin.
    */
   private readonly _lockScope: string;
 
@@ -567,9 +570,12 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /**
-   * Drop the resolved sync-targets cache so the next tick re-resolves. Any
-   * field that gates cache reuse must be reset here, in one place, so the reset
-   * cannot drift across the many call sites that mutate sync configuration.
+   * Advance the target planner's topology generation and drop its cached
+   * plan, so the next `getSyncTargets()` re-resolves. Every call site that
+   * mutates sync configuration routes through here — agent swap, identity
+   * register/update/unregister, supplemental endpoint registration, and
+   * every runtime transition. Cache-reuse gating itself lives in
+   * {@link SyncTargetPlanner}, not on this class.
    */
   private invalidateSyncTargetsCache(): void {
     this._targetPlanner.invalidate();
@@ -918,7 +924,9 @@ export class SyncEngineLevel implements SyncEngine {
     };
     followUp.promise = (async (): Promise<void> => {
       await this._lifecycle.acquireSync();
-      // Snapshot and detach: joiners from here on start a new follow-up.
+      // Detach the join point: callers arriving from here on queue a fresh
+      // follow-up. `merged` stays the live object this run reads below — the
+      // detach is what stops later joiners from mutating it mid-run.
       if (this._pendingSyncRun === followUp) {
         this._pendingSyncRun = undefined;
       }
@@ -1375,7 +1383,8 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   // ---------------------------------------------------------------------------
-  // Per-target link initialization (shared by startLiveSync + addIdentityToLiveSync)
+  // Per-target link initialization
+  // (startup, hot-add, drain handoff, settle-check re-init, rate-limit retry)
   // ---------------------------------------------------------------------------
 
   /**
@@ -1573,6 +1582,11 @@ export class SyncEngineLevel implements SyncEngine {
     if (link) {
       this.cleanupFailedLinkInitialization(this.getReplicationLinkKey(target, link), controller);
     }
+    // The ONLY error class that escapes this method: rethrow so
+    // initializeLinkTargetWithRetry can run the DHT-propagation backoff
+    // ladder. Callers without that wrapper absorb it via Promise.allSettled.
+    // Everything else is already reported and reduced to Failed — remove
+    // this rethrow and the retry ladder silently stops working.
     if (this.isDidResolutionFailure(error)) {
       throw error;
     }
@@ -1589,6 +1603,8 @@ export class SyncEngineLevel implements SyncEngine {
   private cleanupFailedLinkInitialization(linkKey: string, controller?: SyncLinkController): void {
     this.removeLinkController(linkKey, controller);
 
+    // With no subscriptions left there is no signal either way — 'unknown',
+    // not 'offline', so one failed open does not report the network as down.
     if (!this.hasActiveSubscriptions) {
       this._connectivityManager.setState('unknown');
     }
@@ -1718,7 +1734,15 @@ export class SyncEngineLevel implements SyncEngine {
     return false;
   }
 
-  /** Hot-add a single identity to the active live sync session. */
+  /**
+   * Hot-add a single identity to the active live sync session.
+   *
+   * @returns The durable link identity keys that initialized successfully —
+   *   the keep-set for {@link pruneSupersededDurableLinksForIdentity}. EMPTY
+   *   when target planning failed, so callers MUST treat empty as "do not
+   *   prune": pruning against an empty keep-set deletes every durable link
+   *   for the identity. Both call sites enforce that with a `size > 0` guard.
+   */
   private async addIdentityToLiveSync(did: string, options: SyncIdentityOptions): Promise<Set<string>> {
     // Target planning is best-effort: DID endpoint discovery can be
     // transiently unavailable, and a registration that has already persisted
@@ -1811,6 +1835,13 @@ export class SyncEngineLevel implements SyncEngine {
     return keys;
   }
 
+  /**
+   * DESTRUCTIVE: delete every durable link for `did` whose identity key is
+   * NOT in `currentIdentityKeys`. An empty keep-set therefore deletes them
+   * all — which is exactly what `doUnregisterIdentity` wants (it passes
+   * `new Set()`), and exactly what a failed hot-add must avoid. See
+   * {@link addIdentityToLiveSync} for the empty-set contract.
+   */
   private async pruneSupersededDurableLinksForIdentity(did: string, currentIdentityKeys: Set<string>): Promise<void> {
     const links = await this.ledger.getLinksForTenant(did);
     await Promise.all(links.map(async link => {
@@ -2590,6 +2621,17 @@ export class SyncEngineLevel implements SyncEngine {
     return recordIdForRecordsMessage(local?.message);
   }
 
+  /**
+   * Admit one page of remote feed entries, in feed order.
+   *
+   * A deferred entry STOPS the page: its dependencies are not local yet, and
+   * later entries in feed order may depend on it, so the caller holds the
+   * checkpoint at that CID and the next pass retries. The one exception is a
+   * deferred entry that has aged past
+   * {@link DEFERRED_PULL_DEAD_LETTER_AFTER_MS}: it is dead-lettered and the
+   * page continues, so a single permanently unresolvable message cannot
+   * wedge the link forever.
+   */
   private async admitRemoteFeedPage(
     target: SyncTarget,
     entries: MessagesQueryReplyEntry[],
@@ -2765,10 +2807,10 @@ export class SyncEngineLevel implements SyncEngine {
     forceProbeCids?: Set<string>,
     shouldContinue?: () => boolean,
   ): Promise<void> {
-    // The quota manager fences its awaits with the shouldContinue it is
-    // given; compose a transition fence in so probes abort on start/stop/
-    // clear/close exactly as the old internal engine-generation reads did —
-    // including for one-shot callers running without a live runtime.
+    // The quota manager fences its awaits with the `shouldContinue` it is
+    // given; compose a transition fence in so probes abort on startSync/
+    // stopSync/clear/close — including for one-shot callers running without
+    // a live runtime, which have no other staleness signal.
     const transitionFence = this.captureTransitionFence();
     const composed = shouldContinue === undefined
       ? transitionFence
@@ -2777,10 +2819,12 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /**
-   * Capture a fence that reports whether a runtime transition (`startSync`,
-   * `stopSync`, `clear`, `close`) has happened since capture. Valid from any
-   * state: an active scope trips the fence when it is disposed, and an
-   * already-disposed scope trips it when a new runtime replaces it.
+   * Capture a predicate that reports whether the runtime is STILL the one
+   * observed at capture: `true` means no transition has happened and the
+   * captured work may proceed; `false` means `startSync`, `stopSync`,
+   * `clear`, or `close` has since run and the work is stale. Valid from any
+   * state — an active scope trips when it is disposed, and an
+   * already-disposed scope trips when a new runtime replaces it.
    */
   private captureTransitionFence(): () => boolean {
     const runtime = this._runtime;
@@ -3183,7 +3227,12 @@ export class SyncEngineLevel implements SyncEngine {
   // Sync targets
   // ---------------------------------------------------------------------------
 
-  /** Return the cached or freshly planned canonical targets for every registration. */
+  /**
+   * Return the cached or freshly planned canonical targets for every
+   * registration. NOT a pure read: on a cache miss the fresh plan also
+   * prunes quota blocks for targets that no longer exist, via the planner's
+   * `beforeCache` hook.
+   */
   private getSyncTargets(): Promise<SyncTarget[]> {
     return this._targetPlanner.getTargets({
       beforeCache: (targets, generation): Promise<void> =>

@@ -120,7 +120,12 @@ export class SyncDurableFeedReconciler {
     this._operations = operations;
   }
 
-  /** Reconcile one target, serializing work only with the same complete link. */
+  /**
+   * Reconcile one target. Runs serialize per full link identity
+   * `(did, dwnUrl, projectionId, authorizationEpoch)` — a different
+   * projection or authorization epoch is a different queue and runs
+   * concurrently.
+   */
   public async reconcile(
     target: SyncTarget,
     options?: SyncDurableFeedReconcileOptions,
@@ -638,6 +643,10 @@ export class SyncDurableFeedReconciler {
     direction: SyncDirection,
     alreadyReset: boolean,
   ): Promise<boolean> {
+    // 410 = ProgressGap: the stored token is no longer replayable, so reset
+    // the checkpoint and restart from the diff path. Only once per loop —
+    // `alreadyReset` makes a remote that keeps reporting gaps fall through
+    // to assertQuerySucceeded and surface as an error instead of spinning.
     if (reply.status.code !== 410 || alreadyReset) {
       return false;
     }

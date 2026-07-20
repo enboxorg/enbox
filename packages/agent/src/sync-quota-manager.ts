@@ -513,8 +513,7 @@ export class SyncQuotaManager {
   ): Promise<void> {
     // Staleness across the awaits below is the CALLER's fence: the engine
     // composes a runtime-transition check into every shouldContinue it
-    // threads down, so probes abort mid-flight on start/stop/clear exactly
-    // as the old internal engine-generation reads did.
+    // threads down, so probes abort mid-flight on start/stop/clear.
     if (SyncQuotaManager.shouldAbort(shouldContinue)) { return; }
     const state = await this.getState(target, messageCid);
     if (state === undefined || state.source === 'permission-grant' || state.supersededAt !== undefined) { return; }

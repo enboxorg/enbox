@@ -56,9 +56,17 @@ type DependencyIndexes<T> = {
   sourceAudienceIndex: Map<string, number>;
 };
 
+/**
+ * Edge direction, stated once so call sites do not have to reverse-engineer
+ * it from Kahn's algorithm: `addEdge(from, to)` means `from` must be admitted
+ * BEFORE `to`.
+ */
 type DependencyEdges = {
+  /** from → the dependents that must be admitted after it. */
   edges: Map<number, Set<number>>;
+  /** The inverse of `edges`: to → its prerequisites. */
   dependenciesByIndex: Map<number, Set<number>>;
+  /** inDegree[i] = number of unsatisfied prerequisites of entry `i`. */
   inDegree: number[];
 };
 
@@ -293,12 +301,17 @@ function getSourceAudienceKeysFromEncryption(message: GenericMessage): string[] 
  * Builds a dependency graph from the fetched messages and returns them in
  * dependency order so that dependencies are processed before dependents.
  *
- * Dependencies:
+ * Dependencies — one bullet per edge kind added by
+ * {@link addDependencyEdgesForMessage}; keep the two in step:
  * - ProtocolsConfigure must come before any RecordsWrite using that protocol
  * - Composed ProtocolsConfigure must come after ProtocolsConfigure messages for protocols in `uses`
  * - Parent record must come before child record (via parentId)
  * - Initial write must come before update writes (same recordId, not initial)
+ * - Initial write must come before a RecordsDelete for the same recordId
  * - Permission grants must come before messages that invoke them
+ * - A permission grant must come before the encryption grantKey record tagged with its grantId
+ * - Source-audience and delivery-role records must come before messages whose encryption references them
+ * - A role record must come before any message invoking that role
  */
 export function orderMessagesForAdmission<T extends { message: GenericMessage }>(
   messages: T[]
@@ -661,6 +674,13 @@ function decrementNeighborDegrees(
   }
 }
 
+/**
+ * Kahn's algorithm cannot drain a dependency cycle, so it stops early and
+ * leaves the cyclic remainder unsorted. Rather than fail the whole batch,
+ * append that remainder in feed order and let admission sort it out: the
+ * DWN's Incomplete/Deferred results drive the retry passes that eventually
+ * resolve them. The ordering guarantee is deliberately abandoned here.
+ */
 function appendCyclicEntries<T>(messages: T[], byIndex: Map<number, T>, sorted: T[]): void {
   if (sorted.length >= messages.length) {
     return;
