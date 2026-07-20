@@ -1,5 +1,12 @@
 # @enbox/dwn-clients
 
+## 0.4.22
+
+### Patch Changes
+
+- Updated dependencies [[`7267cf1`](https://github.com/enboxorg/enbox/commit/7267cf1e406484d3361d926368a97e2b0353a9a3)]:
+  - @enbox/dwn-sdk-js@0.4.15
+
 ## 0.4.21
 
 ### Patch Changes
