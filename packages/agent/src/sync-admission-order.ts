@@ -41,11 +41,6 @@ type SourceAudienceTags = {
   keyId: string;
 };
 
-type MessageDependencyGraph<T> = {
-  sorted: T[];
-  dependencies: Map<T, T[]>;
-};
-
 type DependencyIndexes<T> = {
   byIndex: Map<number, T>;
   protocolConfigureIndex: Map<string, number>;
@@ -64,8 +59,6 @@ type DependencyIndexes<T> = {
 type DependencyEdges = {
   /** from → the dependents that must be admitted after it. */
   edges: Map<number, Set<number>>;
-  /** The inverse of `edges`: to → its prerequisites. */
-  dependenciesByIndex: Map<number, Set<number>>;
   /** inDegree[i] = number of unsatisfied prerequisites of entry `i`. */
   inDegree: number[];
 };
@@ -316,27 +309,17 @@ function getSourceAudienceKeysFromEncryption(message: GenericMessage): string[] 
 export function orderMessagesForAdmission<T extends { message: GenericMessage }>(
   messages: T[]
 ): T[] {
-  return buildMessageDependencyGraph(messages).sorted;
+  return topologicallySortMessages(messages);
 }
 
-function buildMessageDependencyGraph<T extends { message: GenericMessage }>(
-  messages: T[]
-): MessageDependencyGraph<T> {
+function topologicallySortMessages<T extends { message: GenericMessage }>(messages: T[]): T[] {
   if (messages.length <= 1) {
-    return {
-      sorted       : messages,
-      dependencies : new Map(messages.map(message => [message, []])),
-    };
+    return messages;
   }
 
   const indexes = buildDependencyIndexes(messages);
   const dependencyEdges = buildDependencyEdges(messages, indexes);
-  const sorted = sortDependencyGraph(messages, indexes.byIndex, dependencyEdges.edges, dependencyEdges.inDegree);
-
-  return {
-    sorted,
-    dependencies: entriesByIndexDependencies(messages, dependencyEdges.dependenciesByIndex),
-  };
+  return sortDependencyGraph(messages, indexes.byIndex, dependencyEdges.edges, dependencyEdges.inDegree);
 }
 
 function buildDependencyIndexes<T extends { message: GenericMessage }>(messages: T[]): DependencyIndexes<T> {
@@ -407,9 +390,8 @@ function buildDependencyEdges<T extends { message: GenericMessage }>(
   indexes: DependencyIndexes<T>,
 ): DependencyEdges {
   const dependencyEdges: DependencyEdges = {
-    edges               : new Map(),
-    dependenciesByIndex : new Map(),
-    inDegree            : new Array(messages.length).fill(0) as number[],
+    edges    : new Map(),
+    inDegree : new Array(messages.length).fill(0) as number[],
   };
   const addEdge: AddDependencyEdge = (from, to): void => {
     addDependencyEdge(dependencyEdges, from, to);
@@ -437,18 +419,9 @@ function addDependencyEdge(dependencyEdges: DependencyEdges, from: number, to: n
   }
 
   edgeSet.add(to);
-  addIndexDependency(dependencyEdges, from, to);
-}
-
-function addIndexDependency(dependencyEdges: DependencyEdges, from: number, to: number): void {
-  let dependencies = dependencyEdges.dependenciesByIndex.get(to);
-  if (dependencies === undefined) {
-    dependencies = new Set();
-    dependencyEdges.dependenciesByIndex.set(to, dependencies);
-  }
-  dependencies.add(from);
   dependencyEdges.inDegree[to]++;
 }
+
 
 function addDependencyEdgesForMessage<T>(
   index: number,
@@ -695,14 +668,3 @@ function appendCyclicEntries<T>(messages: T[], byIndex: Map<number, T>, sorted: 
   }
 }
 
-function entriesByIndexDependencies<T>(
-  messages: T[],
-  dependenciesByIndex: Map<number, Set<number>>,
-): Map<T, T[]> {
-  const dependencies = new Map<T, T[]>();
-  for (let i = 0; i < messages.length; i++) {
-    const indexDependencies = dependenciesByIndex.get(i) ?? new Set();
-    dependencies.set(messages[i], [...indexDependencies].map(index => messages[index]));
-  }
-  return dependencies;
-}

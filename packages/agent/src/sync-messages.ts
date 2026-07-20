@@ -581,7 +581,6 @@ async function readLocalMessage({ author, delegateDid, permissionGrantIds, messa
 }
 
 class RemoteApplyPushContext {
-  private readonly entriesByCid = new Map<string, SyncMessageEntry>();
   private readonly entryCids = new WeakMap<SyncMessageEntry, string>();
   private readonly fetchedDependencyEntries = new Map<string, SyncMessageEntry[]>();
   private readonly fetchedRefs = new Set<string>();
@@ -1196,7 +1195,6 @@ class RemoteApplyPushContext {
 
     const cid = await Message.getCid(entry.message);
     this.entryCids.set(entry, cid);
-    this.entriesByCid.set(cid, entry);
     return cid;
   }
 }
