@@ -1,5 +1,15 @@
 # @enbox/auth
 
+## 0.6.77
+
+### Patch Changes
+
+- Updated dependencies [[`bad337e`](https://github.com/enboxorg/enbox/commit/bad337e27a7f5e1029780401a419bc5c313c03ff), [`7267cf1`](https://github.com/enboxorg/enbox/commit/7267cf1e406484d3361d926368a97e2b0353a9a3), [`6688e32`](https://github.com/enboxorg/enbox/commit/6688e327e27d52a55d6daabdcfe1195f2954a67a)]:
+  - @enbox/agent@0.8.31
+  - @enbox/dwn-sdk-js@0.4.15
+  - @enbox/connect@0.1.11
+  - @enbox/dwn-clients@0.4.22
+
 ## 0.6.76
 
 ### Patch Changes

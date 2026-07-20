@@ -1,5 +1,11 @@
 # @enbox/dwn-sdk-js
 
+## 0.4.15
+
+### Patch Changes
+
+- [#1383](https://github.com/enboxorg/enbox/pull/1383) [`7267cf1`](https://github.com/enboxorg/enbox/commit/7267cf1e406484d3361d926368a97e2b0353a9a3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Make protocol definitions the sole source of record encryption policy and remove caller-controlled encryption switches. Reject records whose stored representation does not match their type policy, prevent used paths from changing representation under the same protocol URI, and separate encrypted `grantKey` records from plaintext `wrappedGrantKey` envelopes in the core encryption protocol.
+
 ## 0.4.14
 
 ### Patch Changes

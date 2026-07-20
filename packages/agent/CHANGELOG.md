@@ -1,5 +1,20 @@
 # @enbox/agent
 
+## 0.8.31
+
+### Patch Changes
+
+- [#1382](https://github.com/enboxorg/enbox/pull/1382) [`bad337e`](https://github.com/enboxorg/enbox/commit/bad337e27a7f5e1029780401a419bc5c313c03ff) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Keep low-level record reads, queries, subscriptions, and writes on the raw bytes stored by the DWN, and lazily decrypt the application view from each RecordsWrite encryption envelope. Decryption failures now surface when `record.data` is consumed instead of failing the containing read, query, or subscription.
+
+- [#1383](https://github.com/enboxorg/enbox/pull/1383) [`7267cf1`](https://github.com/enboxorg/enbox/commit/7267cf1e406484d3361d926368a97e2b0353a9a3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Make protocol definitions the sole source of record encryption policy and remove caller-controlled encryption switches. Reject records whose stored representation does not match their type policy, prevent used paths from changing representation under the same protocol URI, and separate encrypted `grantKey` records from plaintext `wrappedGrantKey` envelopes in the core encryption protocol.
+
+- [#1380](https://github.com/enboxorg/enbox/pull/1380) [`6688e32`](https://github.com/enboxorg/enbox/commit/6688e327e27d52a55d6daabdcfe1195f2954a67a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Reject raw RecordsWrite payloads whose CID or size does not match the signed message before local processing or remote transmission. One-shot streams are currently validated over the whole payload before dispatch so plaintext can never leave under a ciphertext-committing message; a later stored-byte streaming pass can make this incremental without exposing plaintext.
+
+- Updated dependencies [[`7267cf1`](https://github.com/enboxorg/enbox/commit/7267cf1e406484d3361d926368a97e2b0353a9a3)]:
+  - @enbox/dwn-sdk-js@0.4.15
+  - @enbox/connect@0.1.11
+  - @enbox/dwn-clients@0.4.22
+
 ## 0.8.30
 
 ### Patch Changes
