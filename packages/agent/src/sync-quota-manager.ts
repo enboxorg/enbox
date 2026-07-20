@@ -391,7 +391,7 @@ export class SyncQuotaManager {
     expected: SyncQuotaBlockState,
   ): Promise<void> {
     const current = await this.getState(target, messageCid);
-    if (SyncQuotaManager.blockChangedSince(current, expected) || current === undefined) {
+    if (SyncQuotaManager.hasBlockChanged(current, expected) || current === undefined) {
       return;
     }
 
@@ -543,7 +543,7 @@ export class SyncQuotaManager {
       return;
     }
     const currentState = await this.getState(target, messageCid);
-    if (SyncQuotaManager.blockChangedSince(currentState, state)) {
+    if (SyncQuotaManager.hasBlockChanged(currentState, state)) {
       return;
     }
     await this.transitionPushResult(target, result, { protocol: state.protocol, source: state.source });
@@ -555,7 +555,7 @@ export class SyncQuotaManager {
     state: SyncQuotaBlockState,
   ): Promise<void> {
     const currentState = await this.getState(target, messageCid);
-    if (SyncQuotaManager.blockChangedSince(currentState, state)) {
+    if (SyncQuotaManager.hasBlockChanged(currentState, state)) {
       return;
     }
 
@@ -605,7 +605,7 @@ export class SyncQuotaManager {
     return omittedCids;
   }
 
-  private static blockChangedSince(
+  private static hasBlockChanged(
     current: SyncQuotaBlockState | undefined,
     expected: SyncQuotaBlockState,
   ): boolean {

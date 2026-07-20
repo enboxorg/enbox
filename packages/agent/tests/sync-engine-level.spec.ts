@@ -3673,7 +3673,7 @@ describe('SyncEngineLevel', () => {
         await manager.handleVerifiedDivergence(bobContext.target, feedDivergence());
         await manager.handleVerifiedDivergence(bobContext.target, feedDivergence());
 
-        syncEngine['clearIdentityRuntimeState'](alice.did.uri);
+        syncEngine['discardIdentityLinkState'](alice.did.uri);
 
         // Alice's attempt count restarted after identity cleanup; Bob's did not.
         await manager.handleVerifiedDivergence(aliceContext.target, feedDivergence());
@@ -3776,11 +3776,11 @@ describe('SyncEngineLevel', () => {
           const controller = syncEngine['activateLink'](linkKey, link);
 
           // Manually inject a push runtime to simulate pending pushes.
-          const pushRuntime = controller.getOrCreatePushRuntime({
+          const pushQueue = controller.getOrCreatePushQueue({
             did,
             dwnUrl: testDwnUrls[0],
           });
-          pushRuntime.entries.push({ cid: 'cid-1' });
+          pushQueue.entries.push({ cid: 'cid-1' });
 
           // Hot-remove.
           await syncEngine['removeIdentityFromLiveSync'](did);
@@ -3811,12 +3811,12 @@ describe('SyncEngineLevel', () => {
           link.status = 'live';
           const controller = syncEngine['activateLink'](linkKey, link);
 
-          const pushRuntime = controller.getOrCreatePushRuntime({
+          const pushQueue = controller.getOrCreatePushQueue({
             did,
             dwnUrl: testDwnUrls[0],
           });
-          pushRuntime.entries.push({ cid: 'cid-1' });
-          pushRuntime.retryCount = 1;
+          pushQueue.entries.push({ cid: 'cid-1' });
+          pushQueue.retryCount = 1;
 
           // The live-push coordinator ultimately calls the imported pushMessages
           // helper. Stub its underlying agent request and replace the link mid-flight.

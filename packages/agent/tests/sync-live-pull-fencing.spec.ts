@@ -114,7 +114,7 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     await freshHandler({ type: 'eose', cursor: tokenIn('stream-2', 'epoch-2', '2') });
     expect(fixture.persistCheckpoint.calledOnce).toBe(true);
 
-    await controller.shutdown();
+    await controller.dispose();
   });
 
   it('should not install a subscription whose pull generation reset while the request was in flight', async () => {
@@ -142,7 +142,7 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     expect(close.calledOnce).toBe(true);
     expect(fixture.controller.hasLiveSubscription).toBe(false);
 
-    await fixture.controller.shutdown();
+    await fixture.controller.dispose();
   });
 
   it('should abandon an open whose pull generation resets during cursor resolution', async () => {
@@ -164,7 +164,7 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     expect(fixture.processRequest.notCalled).toBe(true);
     expect(fixture.sendDwnRequest.notCalled).toBe(true);
 
-    await fixture.controller.shutdown();
+    await fixture.controller.dispose();
   });
 
   it('should leave a link paused when the pause lands while the local subscription is opening', async () => {
@@ -196,7 +196,7 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     await (engine as any).markLinkLive(fixture.target, controller, controller.pullGeneration);
     expect(controller.link.status).toBe('paused');
 
-    await controller.shutdown();
+    await controller.dispose();
   });
 
   it('should swallow a superseded attempt failure but propagate a current-generation failure', async () => {
@@ -221,7 +221,7 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     fixture.sendDwnRequest.rejects(new Error('transport failed'));
     await expect(openSubscription(fixture)).rejects.toThrow('transport failed');
 
-    await fixture.controller.shutdown();
+    await fixture.controller.dispose();
   });
 
   it('should not let a superseded attempt close the replacement subscription pair', async () => {
@@ -244,7 +244,7 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     expect(controller.hasLiveSubscription).toBe(true);
     expect(controller.hasLocalSubscription).toBe(true);
 
-    await controller.shutdown();
+    await controller.dispose();
   });
 
   it('should stop the pair when a pause lands between the pull and local halves', async () => {
@@ -267,7 +267,7 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     expect(controller.hasLocalSubscription).toBe(false);
     expect(controller.link.status).toBe('paused');
 
-    await controller.shutdown();
+    await controller.dispose();
   });
 
   it('should fence local subscription callbacks issued before a generation reset', async () => {
@@ -298,7 +298,7 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     expect(staleForOld()).toBe(true);
     expect(staleForNew()).toBe(false);
 
-    await controller.shutdown();
+    await controller.dispose();
   });
 
   it('should refuse a local install that resolves while pause teardown awaits a subscription close', async () => {
@@ -332,7 +332,7 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     expect(controller.hasLocalSubscription).toBe(false);
     expect(controller.link.status).toBe('paused');
 
-    await controller.shutdown();
+    await controller.dispose();
   });
 
   it('should keep a link paused during opening in the identity keep-set instead of failing it', async () => {
@@ -365,7 +365,7 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     expect(result.status).toBe('active');
     expect(controller.link.status).toBe('paused');
 
-    await controller.shutdown();
+    await controller.dispose();
   });
 
   it('should discard a stale ProgressGap reply instead of repairing the superseded generation', async () => {
@@ -390,6 +390,6 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     expect(await opening).toBe(false);
     expect(fixture.repairing.notCalled).toBe(true);
 
-    await fixture.controller.shutdown();
+    await fixture.controller.dispose();
   });
 });

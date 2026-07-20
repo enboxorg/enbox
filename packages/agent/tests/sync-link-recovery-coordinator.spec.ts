@@ -109,7 +109,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const controller = activate(fixture, state);
     controller.startPullDelivery(token());
     const resumeToken = token('10');
-    const drain = sinon.stub(fixture.coordinator as any, 'drainRepairs').resolves();
+    const drain = sinon.stub(fixture.coordinator as any, 'runPendingRepairs').resolves();
 
     await fixture.coordinator.transitionToRepairing(controller, { resumeToken });
     await waitForLastTask(fixture.taskRunner);
@@ -120,7 +120,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     // The transition publishes the runnable request and its token together;
     // the supervised drain runs it without re-marking.
     expect(controller.repairResumeToken).toEqual(resumeToken);
-    expect(controller.sharedRunRequested('repair')).toBe(true);
+    expect(controller.isPassRequested('repair')).toBe(true);
     expect(drain.calledOnceWithExactly(controller)).toBe(true);
     expect(fixture.operations.emitEvent.calledWithMatch({
       type : 'link:status-change',
@@ -143,7 +143,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
 
     await fixture.coordinator.transitionToRepairing(controller, { resumeToken: token('9') });
 
-    expect(controller.sharedRunRequested('repair')).toBe(false);
+    expect(controller.isPassRequested('repair')).toBe(false);
     expect(controller.repairResumeToken).toBeUndefined();
     expect(fixture.taskRunner.called).toBe(false);
     expect(state.status).toBe('paused');
@@ -159,7 +159,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     controller.setLiveSubscription({ close: closePull });
     controller.setLocalSubscription({ close: closePush });
     controller.startPullDelivery(token());
-    const runtime = controller.getOrCreatePushRuntime({ did: DID, dwnUrl: REMOTE });
+    const runtime = controller.getOrCreatePushQueue({ did: DID, dwnUrl: REMOTE });
     runtime.entries.push({ cid: 'push-cid' });
     controller.setPushTimer(runtime, setTimeout(() => undefined, 1000));
     controller.setRepairRetryTimer(setTimeout(() => undefined, 1000));
@@ -172,7 +172,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(closePull.calledOnce).toBe(true);
     expect(closePush.calledOnce).toBe(true);
     expect(controller.pullInflightCount).toBe(0);
-    expect(controller.pushRuntime).toBeUndefined();
+    expect(controller.pushQueue).toBeUndefined();
     expect(controller.repairRetryTimer).toBeUndefined();
     expect(controller.reconcileTimer).toBeUndefined();
     expect(fixture.operations.setStatus.calledOnce).toBe(true);
@@ -209,7 +209,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(fixture.operations.handlePushFailures.calledOnceWithExactly(controller, [failure])).toBe(true);
     expect(state.status).toBe('live');
     expect(state.connectivity).toBe('online');
-    expect(controller.mailboxBusy('repair')).toBe(false);
+    expect(controller.isMailboxBusy('repair')).toBe(false);
     expect(controller.repairAttempts).toBe(0);
     expect(controller.reconcileTimerDueAt).toBe(500);
     expect(fixture.operations.emitEvent.calledWithMatch({
@@ -351,7 +351,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const clock = sinon.useFakeTimers();
     const fixture = createFixture({ repairBackoffMs: [1000] });
     const controller = activate(fixture, link('repairing'));
-    const drain = sinon.stub(fixture.coordinator as any, 'drainRepairs').resolves();
+    const drain = sinon.stub(fixture.coordinator as any, 'runPendingRepairs').resolves();
 
     fixture.coordinator.scheduleRepairRetry(controller);
     expect(fixture.operations.captureIdentityTaskRunner.calledOnceWithExactly(DID)).toBe(true);
@@ -359,14 +359,14 @@ describe('SyncLinkRecoveryCoordinator', () => {
     fixture.disposeScope();
     await clock.tickAsync(1000);
     expect(drain.called).toBe(false);
-    expect(controller.sharedRunRequested('repair')).toBe(false);
+    expect(controller.isPassRequested('repair')).toBe(false);
     expect(fixture.operations.captureIdentityTaskRunner.notCalled).toBe(true);
     expect(controller.repairRetryTimer).toBeUndefined();
 
     fixture.coordinator.scheduleRepairRetry(controller);
     await clock.tickAsync(1000);
     await waitForLastTask(fixture.taskRunner);
-    expect(controller.sharedRunRequested('repair')).toBe(true);
+    expect(controller.isPassRequested('repair')).toBe(true);
     expect(drain.calledOnceWithExactly(controller)).toBe(true);
     expect(controller.repairRetryTimer).toBeUndefined();
   });
@@ -470,7 +470,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
 
     const repairing = fixture.coordinator.repair(controller);
     await Promise.resolve();
-    expect(controller.mailboxBusy('repair')).toBe(true);
+    expect(controller.isMailboxBusy('repair')).toBe(true);
     expect(fixture.operations.reconcileTarget.called).toBe(false);
 
     releaseFlush.resolve();
@@ -896,7 +896,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     releaseRepair.resolve();
     await Promise.all([firstRepair, secondRepair]);
     expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
-    expect(repairController.mailboxBusy('repair')).toBe(false);
+    expect(repairController.isMailboxBusy('repair')).toBe(false);
 
     const reconcileController = new SyncLinkController(LINK_KEY, link());
     fixture.controllers.set(LINK_KEY, reconcileController);
@@ -914,6 +914,6 @@ describe('SyncLinkRecoveryCoordinator', () => {
     releaseReconcile.resolve();
     await Promise.all([firstReconcile, secondReconcile]);
     expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
-    expect(reconcileController.mailboxBusy('reconcile')).toBe(false);
+    expect(reconcileController.isMailboxBusy('reconcile')).toBe(false);
   });
 });

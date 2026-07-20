@@ -10,13 +10,13 @@ export type SyncLinkSubscription = {
 };
 
 /** One queued live-push entry and its most recent failure, if any. */
-export type SyncPushRuntimeEntry = {
+export type SyncPushQueueEntry = {
   cid: string;
   lastFailure?: PushFailure;
 };
 
 /** Configuration captured when a live-push queue is first created. */
-export type SyncPushRuntimeParams = {
+export type SyncPushQueueParams = {
   did: string;
   dwnUrl: string;
   delegateDid?: string;
@@ -26,8 +26,8 @@ export type SyncPushRuntimeParams = {
 };
 
 /** Mutable batching and retry state for a link's opportunistic push path. */
-export type SyncPushRuntimeState = SyncPushRuntimeParams & {
-  entries: SyncPushRuntimeEntry[];
+export type SyncPushQueueState = SyncPushQueueParams & {
+  entries: SyncPushQueueEntry[];
   retryCount: number;
   timer?: ReturnType<typeof setTimeout>;
 };
@@ -56,9 +56,14 @@ export type SyncPullDeliveryTicket = {
 
 /**
  * Serialization lanes multiplexed onto one link mailbox. Every enqueued
- * operation runs FIFO regardless of lane; lanes only let callers observe
- * pending work of one kind (`mailboxBusy`) and coalesce shared operations
- * (`enqueueShared`) without extra in-flight bookkeeping.
+ * operation runs FIFO regardless of lane. A lane does three things:
+ *
+ * 1. lets callers observe pending work of one kind (`isMailboxBusy`);
+ * 2. coalesces shared operations (`enqueueShared`) without extra in-flight
+ *    bookkeeping;
+ * 3. carries a pending-pass mark (`requestPass` / `isPassRequested`) that
+ *    lives OUTSIDE the queue — a mark is not queued work, it is a note that
+ *    one more pass is owed once the current one finishes.
  */
 export type SyncLinkMailboxKind = 'flush' | 'repair' | 'reconcile';
 
@@ -75,7 +80,7 @@ export class SyncLinkController {
   private _active = true;
   private readonly _mailboxKindDepths: Map<SyncLinkMailboxKind, number> = new Map();
   private readonly _mailboxShared: Map<SyncLinkMailboxKind, Promise<unknown>> = new Map();
-  private readonly _sharedRunRequests: Set<SyncLinkMailboxKind> = new Set();
+  private readonly _requestedPasses: Set<SyncLinkMailboxKind> = new Set();
   private _mailboxTail: Promise<void> = Promise.resolve();
   private _liveSubscription?: SyncLinkSubscription;
   private _localSubscription?: SyncLinkSubscription;
@@ -83,7 +88,7 @@ export class SyncLinkController {
   private _nextPullDeliveryOrdinal = 0;
   private readonly _pullInflight: Map<number, InFlightPullCommit> = new Map();
   private _pullGeneration = 0;
-  private _pushRuntime?: SyncPushRuntimeState;
+  private _pushQueue?: SyncPushQueueState;
   private _reconcileTimer?: ReturnType<typeof setTimeout>;
   private _reconcileTimerDueAt?: number;
   private _repairAttempts = 0;
@@ -165,7 +170,7 @@ export class SyncLinkController {
   }
 
   /** Whether an operation of `kind` is queued or in flight in the mailbox. */
-  public mailboxBusy(kind: SyncLinkMailboxKind): boolean {
+  public isMailboxBusy(kind: SyncLinkMailboxKind): boolean {
     return (this._mailboxKindDepths.get(kind) ?? 0) > 0;
   }
 
@@ -176,15 +181,15 @@ export class SyncLinkController {
    * consumes one mark per pass and runs exactly one trailing pass for a
    * burst of requests.
    */
-  public requestSharedRun(kind: SyncLinkMailboxKind): void {
+  public requestPass(kind: SyncLinkMailboxKind): void {
     if (this._active) {
-      this._sharedRunRequests.add(kind);
+      this._requestedPasses.add(kind);
     }
   }
 
   /** Whether a run request for `kind` is pending. */
-  public sharedRunRequested(kind: SyncLinkMailboxKind): boolean {
-    return this._sharedRunRequests.has(kind);
+  public isPassRequested(kind: SyncLinkMailboxKind): boolean {
+    return this._requestedPasses.has(kind);
   }
 
   /**
@@ -194,10 +199,10 @@ export class SyncLinkController {
    * mailbox tail — behind any work already queued — and a burst of further
    * requests coalesces into it.
    */
-  public async drainSharedRuns(kind: SyncLinkMailboxKind, run: () => Promise<void>): Promise<void> {
-    while (this._sharedRunRequests.has(kind)) {
+  public async runRequestedPasses(kind: SyncLinkMailboxKind, run: () => Promise<void>): Promise<void> {
+    while (this._requestedPasses.has(kind)) {
       await this.enqueueShared(kind, async (): Promise<void> => {
-        if (!this._sharedRunRequests.delete(kind)) {
+        if (!this._requestedPasses.delete(kind)) {
           return;
         }
         await run();
@@ -220,8 +225,8 @@ export class SyncLinkController {
     return this._pullInflight.size;
   }
 
-  public get pushRuntime(): SyncPushRuntimeState | undefined {
-    return this._pushRuntime;
+  public get pushQueue(): SyncPushQueueState | undefined {
+    return this._pushQueue;
   }
 
   public get reconcileTimer(): ReturnType<typeof setTimeout> | undefined {
@@ -276,11 +281,11 @@ export class SyncLinkController {
       entry.committed = true;
     }
 
-    return this.drainCommittedPull();
+    return this.advanceContiguousPullCommits();
   }
 
   /** Advance the link checkpoint through every contiguously committed delivery. */
-  public drainCommittedPull(): number {
+  public advanceContiguousPullCommits(): number {
     let drained = 0;
     while (true) {
       const entry = this._pullInflight.get(this._nextPullCommitOrdinal);
@@ -322,57 +327,57 @@ export class SyncLinkController {
   }
 
   /** Return the existing push queue or initialize it for this link lifetime. */
-  public getOrCreatePushRuntime(params: SyncPushRuntimeParams): SyncPushRuntimeState {
-    this._pushRuntime ??= {
+  public getOrCreatePushQueue(params: SyncPushQueueParams): SyncPushQueueState {
+    this._pushQueue ??= {
       ...params,
       entries    : [],
       retryCount : 0,
     };
-    return this._pushRuntime;
+    return this._pushQueue;
   }
 
   /** Cancel and discard the current push queue when it is still the expected queue. */
-  public clearPushRuntime(expected?: SyncPushRuntimeState): void {
-    if (expected !== undefined && this._pushRuntime !== expected) {
+  public clearPushQueue(expected?: SyncPushQueueState): void {
+    if (expected !== undefined && this._pushQueue !== expected) {
       return;
     }
 
-    if (this._pushRuntime !== undefined) {
-      this.cancelPushTimer(this._pushRuntime);
+    if (this._pushQueue !== undefined) {
+      this.cancelPushTimer(this._pushQueue);
     }
-    this._pushRuntime = undefined;
+    this._pushQueue = undefined;
   }
 
   /** Attach a timer only while its push queue is current and active. */
-  public setPushTimer(pushRuntime: SyncPushRuntimeState, timer: ReturnType<typeof setTimeout>): boolean {
-    if (!this._active || this._pushRuntime !== pushRuntime) {
+  public setPushTimer(pushQueue: SyncPushQueueState, timer: ReturnType<typeof setTimeout>): boolean {
+    if (!this._active || this._pushQueue !== pushQueue) {
       clearTimeout(timer);
       return false;
     }
 
-    this.cancelPushTimer(pushRuntime);
-    pushRuntime.timer = timer;
+    this.cancelPushTimer(pushQueue);
+    pushQueue.timer = timer;
     return true;
   }
 
   /** Consume the current push timer without disturbing a newer replacement. */
-  public consumePushTimer(pushRuntime: SyncPushRuntimeState, timer: ReturnType<typeof setTimeout>): boolean {
-    if (this._pushRuntime !== pushRuntime || pushRuntime.timer !== timer) {
+  public consumePushTimer(pushQueue: SyncPushQueueState, timer: ReturnType<typeof setTimeout>): boolean {
+    if (this._pushQueue !== pushQueue || pushQueue.timer !== timer) {
       return false;
     }
 
-    pushRuntime.timer = undefined;
+    pushQueue.timer = undefined;
     return true;
   }
 
   /** Cancel a timer only while its push queue is current. */
-  public cancelPushTimer(pushRuntime: SyncPushRuntimeState): void {
-    if (this._pushRuntime !== pushRuntime || pushRuntime.timer === undefined) {
+  public cancelPushTimer(pushQueue: SyncPushQueueState): void {
+    if (this._pushQueue !== pushQueue || pushQueue.timer === undefined) {
       return;
     }
 
-    clearTimeout(pushRuntime.timer);
-    pushRuntime.timer = undefined;
+    clearTimeout(pushQueue.timer);
+    pushQueue.timer = undefined;
   }
 
   /**
@@ -461,7 +466,7 @@ export class SyncLinkController {
     this._repairAttempts = 0;
     // A pending repair request owns the freshest resume token — completing
     // the pass it supersedes must not discard it.
-    if (!this._sharedRunRequests.has('repair')) {
+    if (!this._requestedPasses.has('repair')) {
       this._repairResumeToken = undefined;
     }
     this.cancelRepairRetry();
@@ -525,18 +530,18 @@ export class SyncLinkController {
     }
 
     this._active = false;
-    this.clearPushRuntime();
+    this.clearPushQueue();
     this.cancelRepairRetry();
     this.cancelReconcileTimer();
     this.resetPullGeneration();
     this._mailboxShared.clear();
-    this._sharedRunRequests.clear();
+    this._requestedPasses.clear();
     this._repairAttempts = 0;
     this._repairResumeToken = undefined;
   }
 
   /** Deactivate the link and close its transport subscriptions. */
-  public async shutdown(): Promise<void> {
+  public async dispose(): Promise<void> {
     this.deactivate();
     await this.closeSubscriptions();
   }

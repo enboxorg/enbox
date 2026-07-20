@@ -150,7 +150,7 @@ export class SyncLivePullProcessor {
       return;
     }
 
-    controller.drainCommittedPull();
+    controller.advanceContiguousPullCommits();
     if (isStale()) { return; }
     await this._operations.persistCheckpoint(link);
     if (isStale()) { return; }

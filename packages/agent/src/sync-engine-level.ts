@@ -679,7 +679,7 @@ export class SyncEngineLevel implements SyncEngine {
     if (existing !== undefined) {
       // Closing starts synchronously; the controller absorbs transport teardown
       // errors while the replacement lifetime is installed.
-      void existing.shutdown();
+      void existing.dispose();
     }
     const controller = new SyncLinkController(linkKey, link);
     this._linkControllers.set(linkKey, controller);
@@ -710,7 +710,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     // Removal is synchronous for callback invalidation; subscription teardown
     // is best effort and cannot reject from the controller.
-    void controller.shutdown();
+    void controller.dispose();
     this._linkControllers.delete(linkKey);
   }
 
@@ -1851,21 +1851,21 @@ export class SyncEngineLevel implements SyncEngine {
 
     // Stop queued work first, but retain its runtime state until callbacks that
     // are already in flight finish using it.
-    this.cancelIdentityRuntimeTimers(did);
+    this.cancelIdentityTimers(did);
     await taskGroup.settle();
 
     // A running task may have armed a follow-up timer before observing the
     // paused group. Cancel that timer before discarding the link state.
-    this.cancelIdentityRuntimeTimers(did);
-    this.clearIdentityRuntimeState(did);
+    this.cancelIdentityTimers(did);
+    this.discardIdentityLinkState(did);
 
     this._lifecycle.deleteIdentityTaskGroup(did, taskGroup);
   }
 
-  private cancelIdentityRuntimeTimers(did: string): void {
+  private cancelIdentityTimers(did: string): void {
     for (const controller of this._linkControllers.values()) {
       if (controller.link.tenantDid === did) {
-        const runtime = controller.pushRuntime;
+        const runtime = controller.pushQueue;
         if (runtime?.timer !== undefined) {
           controller.cancelPushTimer(runtime);
         }
@@ -1876,7 +1876,7 @@ export class SyncEngineLevel implements SyncEngine {
     this.cancelLinkInitRetriesForDid(did);
   }
 
-  private clearIdentityRuntimeState(did: string): void {
+  private discardIdentityLinkState(did: string): void {
     for (const [linkKey, controller] of this._linkControllers) {
       if (controller.link.tenantDid === did) {
         this.removeLinkController(linkKey, controller);
