@@ -1,3 +1,4 @@
+import type { Filter } from '../types/query-types.js';
 import type { GenericMessageReply } from '../types/message-types.js';
 import type { ProgressToken } from '../types/subscriptions.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
@@ -6,12 +7,14 @@ import type { HandlerDependencies, MethodHandler } from '../types/method-handler
 import type { ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureMessage } from '../types/protocols-types.js';
 
 import { authenticate } from '../core/auth.js';
+import { isEncryptionControlPath } from '../core/constants.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
 import { ProtocolsConfigure } from '../interfaces/protocols-configure.js';
 import { ProtocolsGrantAuthorization } from '../core/protocols-grant-authorization.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
+import { resolveProtocolTypesForPath } from '../core/protocol-authorization-validation.js';
 import { StorageController } from '../store/storage-controller.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
@@ -22,6 +25,7 @@ type StoredInitialWriteConfigValidity = 'valid' | 'invalid' | 'unknown';
 const STORED_INITIAL_WRITE_CONFIG_INVALID_CODES = new Set<string>([
   DwnErrorCode.EncryptionControlValidateAudienceRolePathInvalid,
   DwnErrorCode.EncryptionControlValidateAudienceSealKeyIdMismatch,
+  DwnErrorCode.ProtocolAuthorizationEncryptionNotAllowed,
   DwnErrorCode.ProtocolAuthorizationEncryptionRequired,
   DwnErrorCode.ProtocolAuthorizationIncorrectDataFormat,
   DwnErrorCode.ProtocolAuthorizationInitialWriteRevalidationNotInitial,
@@ -91,8 +95,20 @@ export class ProtocolsConfigureHandler implements MethodHandler {
       }
     }
 
+    let newestMessage = await Message.getNewestMessage(existingMessages) as ProtocolsConfigureMessage | undefined;
+    let prefetchedRecordsWrites: RecordsWriteMessage[] | undefined;
+    try {
+      prefetchedRecordsWrites = await this.validateEncryptionPolicyIsImmutable(
+        tenant,
+        message.descriptor.definition,
+        message.descriptor.messageTimestamp,
+        newestMessage,
+      );
+    } catch (e) {
+      return messageReplyFromError(e, 400);
+    }
+
     // find newest message, and if the incoming message is the newest
-    let newestMessage = await Message.getNewestMessage(existingMessages);
     let incomingMessageIsNewest = false;
     if (newestMessage === undefined || await Message.isNewer(message, newestMessage)) {
       incomingMessageIsNewest = true;
@@ -135,7 +151,11 @@ export class ProtocolsConfigureHandler implements MethodHandler {
       }
     }
 
-    await this.purgeRecordsInvalidatedByProtocolConfig(tenant, message.descriptor.definition.protocol);
+    await this.purgeRecordsInvalidatedByProtocolConfig(
+      tenant,
+      message.descriptor.definition.protocol,
+      prefetchedRecordsWrites,
+    );
 
     return messageReply;
   };
@@ -183,21 +203,230 @@ export class ProtocolsConfigureHandler implements MethodHandler {
     }
   }
 
-  private async purgeRecordsInvalidatedByProtocolConfig(tenant: string, protocol: string): Promise<void> {
-    const dataStore = this.deps.dataStore;
-    if (dataStore === undefined) {
-      return;
+  /**
+   * Prevents a protocol URI from changing the at-rest representation of a path
+   * after records have been admitted under that path. A policy migration must use
+   * a new protocol URI so one store never contains both plaintext and ciphertext
+   * records governed by the same protocol version.
+   */
+  private async validateEncryptionPolicyIsImmutable(
+    tenant: string,
+    incomingDefinition: ProtocolDefinition,
+    incomingTimestamp: string,
+    previousConfiguration: ProtocolsConfigureMessage | undefined,
+  ): Promise<RecordsWriteMessage[] | undefined> {
+    if (previousConfiguration === undefined || !ProtocolsConfigureHandler.hasEncryptionPolicyChange(
+      previousConfiguration.descriptor.definition,
+      incomingDefinition,
+    )) {
+      return undefined;
     }
 
     const { messages } = await this.deps.messageStore.query(tenant, [{
       interface : DwnInterfaceName.Records,
       method    : DwnMethodName.Write,
-      protocol,
+      protocol  : incomingDefinition.protocol,
     }]);
+    const recordsWrites = messages as RecordsWriteMessage[];
+    const incomingPolicyByPath = new Map<string, boolean>();
+    for (const recordsWrite of recordsWrites) {
+      const { protocolPath } = recordsWrite.descriptor;
+      if (isEncryptionControlPath(protocolPath)) {
+        continue;
+      }
+
+      // Removing a path does not change its representation policy. Existing
+      // records remain governed by the configuration active at their timestamp.
+      if (getRuleSetAtPath(protocolPath, incomingDefinition.structure) === undefined) {
+        continue;
+      }
+
+      let incomingEncryptionRequired = incomingPolicyByPath.get(protocolPath);
+      if (incomingEncryptionRequired === undefined) {
+        const incomingTypes = await resolveProtocolTypesForPath(
+          tenant,
+          protocolPath,
+          incomingDefinition,
+          this.deps.validationStateReader,
+          incomingTimestamp,
+        );
+        incomingEncryptionRequired = incomingTypes[getTypeName(protocolPath)]?.encryptionRequired === true;
+        incomingPolicyByPath.set(protocolPath, incomingEncryptionRequired);
+      }
+
+      if ((recordsWrite.encryption !== undefined) === incomingEncryptionRequired) {
+        continue;
+      }
+
+      throw new DwnError(
+        DwnErrorCode.ProtocolsConfigureEncryptionPolicyImmutable,
+        `cannot change encryption policy for protocol path '${protocolPath}' after records exist; ` +
+        'install the changed definition under a new protocol URI.'
+      );
+    }
+
+    await this.validateComposedEncryptionPolicyIsImmutable(tenant, incomingDefinition);
+    return recordsWrites;
+  }
+
+  /** Prevents a referenced protocol from changing the representation of records stored by composing protocols. */
+  private async validateComposedEncryptionPolicyIsImmutable(
+    tenant: string,
+    incomingDefinition: ProtocolDefinition,
+  ): Promise<void> {
+    const { messages: configurationMessages } = await this.deps.messageStore.query(tenant, [{
+      interface         : DwnInterfaceName.Protocols,
+      isLatestBaseState : true,
+      method            : DwnMethodName.Configure,
+    }]);
+    const policiesByProtocol = ProtocolsConfigureHandler.getComposedPathPolicies(
+      configurationMessages as ProtocolsConfigureMessage[],
+      incomingDefinition,
+    );
+    if (policiesByProtocol.size === 0) {
+      return;
+    }
+
+    const { messages: dependentRecordsWrites } = await this.deps.messageStore.query(
+      tenant,
+      [...policiesByProtocol.keys()].map((protocol): Filter => ({
+        interface : DwnInterfaceName.Records,
+        method    : DwnMethodName.Write,
+        protocol,
+      })),
+    );
+    for (const message of dependentRecordsWrites) {
+      const recordsWrite = message as RecordsWriteMessage;
+      const { protocol, protocolPath } = recordsWrite.descriptor;
+      if (protocol === undefined) {
+        continue;
+      }
+
+      const encryptionRequired = policiesByProtocol.get(protocol)?.get(protocolPath);
+      if (encryptionRequired === undefined || (recordsWrite.encryption !== undefined) === encryptionRequired) {
+        continue;
+      }
+
+      throw new DwnError(
+        DwnErrorCode.ProtocolsConfigureEncryptionPolicyImmutable,
+        `cannot change encryption policy for protocol path '${protocolPath}' imported by protocol '${protocol}' ` +
+        `after records exist; install the changed definition under a new protocol URI.`
+      );
+    }
+  }
+
+  /** Maps each installed composing protocol to root `$ref` paths whose policy comes from the incoming definition. */
+  private static getComposedPathPolicies(
+    configurations: ProtocolsConfigureMessage[],
+    incomingDefinition: ProtocolDefinition,
+  ): Map<string, Map<string, boolean>> {
+    const policiesByProtocol = new Map<string, Map<string, boolean>>();
+    for (const configuration of configurations) {
+      const composingDefinition = configuration.descriptor.definition;
+      const pathPolicies = ProtocolsConfigureHandler.getImportedPathPolicies(
+        composingDefinition,
+        incomingDefinition,
+      );
+      if (pathPolicies.size > 0) {
+        policiesByProtocol.set(composingDefinition.protocol, pathPolicies);
+      }
+    }
+
+    return policiesByProtocol;
+  }
+
+  /** Resolves the effective policy for root `$ref` paths that import one definition. */
+  private static getImportedPathPolicies(
+    composingDefinition: ProtocolDefinition,
+    incomingDefinition: ProtocolDefinition,
+  ): Map<string, boolean> {
+    const pathPolicies = new Map<string, boolean>();
+    const importedAliases = new Set(
+      Object.entries(composingDefinition.uses ?? {})
+        .filter(([, protocol]): boolean => protocol === incomingDefinition.protocol)
+        .map(([alias]): string => alias),
+    );
+    if (importedAliases.size === 0) {
+      return pathPolicies;
+    }
+
+    for (const [protocolPath, ruleSet] of Object.entries(composingDefinition.structure)) {
+      const reference = ruleSet.$ref === undefined ? undefined : parseCrossProtocolRef(ruleSet.$ref);
+      if (reference === undefined || !importedAliases.has(reference.alias)) {
+        continue;
+      }
+
+      const typeName = getTypeName(protocolPath);
+      pathPolicies.set(protocolPath, incomingDefinition.types[typeName]?.encryptionRequired === true);
+    }
+
+    return pathPolicies;
+  }
+
+  /** Returns true when a configure can change a path's stored representation. */
+  private static hasEncryptionPolicyChange(
+    previousDefinition: ProtocolDefinition,
+    incomingDefinition: ProtocolDefinition,
+  ): boolean {
+    const typeNames = new Set([
+      ...Object.keys(previousDefinition.types),
+      ...Object.keys(incomingDefinition.types),
+    ]);
+    for (const typeName of typeNames) {
+      const previousRequired = previousDefinition.types[typeName]?.encryptionRequired === true;
+      const incomingRequired = incomingDefinition.types[typeName]?.encryptionRequired === true;
+      if (previousRequired !== incomingRequired) {
+        return true;
+      }
+    }
+
+    return ProtocolsConfigureHandler.getCompositionEncryptionPolicySignature(previousDefinition) !==
+      ProtocolsConfigureHandler.getCompositionEncryptionPolicySignature(incomingDefinition);
+  }
+
+  /** Captures only composition fields that can redirect a path to another type policy. */
+  private static getCompositionEncryptionPolicySignature(definition: ProtocolDefinition): string {
+    const references: string[] = [];
+    const visit = (ruleSet: ProtocolRuleSet, parentPath: string): void => {
+      for (const [typeName, value] of Object.entries(ruleSet)) {
+        if (typeName.startsWith('$')) {
+          continue;
+        }
+
+        const childRuleSet = value as ProtocolRuleSet;
+        const protocolPath = parentPath === '' ? typeName : `${parentPath}/${typeName}`;
+        if (childRuleSet.$ref !== undefined) {
+          references.push(`${protocolPath}=${childRuleSet.$ref}`);
+        }
+        visit(childRuleSet, protocolPath);
+      }
+    };
+    visit(definition.structure as ProtocolRuleSet, '');
+
+    const uses = Object.entries(definition.uses ?? {})
+      .sort(([left], [right]): number => left.localeCompare(right));
+    references.sort((left, right): number => left.localeCompare(right));
+    return JSON.stringify({ references, uses });
+  }
+
+  private async purgeRecordsInvalidatedByProtocolConfig(
+    tenant: string,
+    protocol: string,
+    prefetchedRecordsWrites?: RecordsWriteMessage[],
+  ): Promise<void> {
+    const dataStore = this.deps.dataStore;
+    if (dataStore === undefined) {
+      return;
+    }
+
+    const recordsWrites = prefetchedRecordsWrites ?? (await this.deps.messageStore.query(tenant, [{
+      interface : DwnInterfaceName.Records,
+      method    : DwnMethodName.Write,
+      protocol,
+    }])).messages as RecordsWriteMessage[];
 
     const checkedRecordIds = new Set<string>();
-    for (const message of messages) {
-      const recordsWriteMessage = message as RecordsWriteMessage;
+    for (const recordsWriteMessage of recordsWrites) {
       if (checkedRecordIds.has(recordsWriteMessage.recordId)) {
         continue;
       }

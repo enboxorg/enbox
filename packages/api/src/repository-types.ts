@@ -271,5 +271,5 @@ export type Repository<
       : never;
 } & {
   /** Install (configure) the protocol. Idempotent — no-op if already installed. */
-  configure(options?: { encryption?: boolean }): Promise<DwnResponseStatus>;
+  configure(): Promise<DwnResponseStatus>;
 };

@@ -118,8 +118,7 @@ describe('AgentDwnApi role-audience delivery to remote-only recipients', () => {
         protocolPath    : 'thread/chat',
         schema          : chat.types.chat.schema,
       },
-      dataStream : new Blob([chatText]),
-      encryption : true,
+      dataStream: new Blob([chatText]),
     });
     expect(chatWrite.reply.status.code).toBe(202);
 
@@ -189,7 +188,6 @@ describe('AgentDwnApi role-audience delivery to remote-only recipients', () => {
       target        : recipientDid,
       messageType   : DwnInterface.ProtocolsConfigure,
       messageParams : { definition: chat },
-      encryption    : true,
     });
     expect([202, 409]).toContain(configure.reply.status.code);
     const query = await recipientHarness.agent.dwn.processRequest({
@@ -232,7 +230,6 @@ describe('AgentDwnApi role-audience delivery to remote-only recipients', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.ProtocolsConfigure as const,
         messageParams : { definition: chat },
-        encryption    : true as const,
       };
       const res = remote ? await ownerHarness.agent.dwn.sendRequest(req) : await ownerHarness.agent.dwn.processRequest(req);
       expect([202, 409]).toContain(res.reply.status.code);
@@ -260,7 +257,6 @@ describe('AgentDwnApi role-audience delivery to remote-only recipients', () => {
       target        : carol.did.uri,
       messageType   : DwnInterface.ProtocolsConfigure,
       messageParams : { definition: chat },
-      encryption    : true,
     });
     expect([202, 409]).toContain(carolRemoteConfigure.reply.status.code);
 

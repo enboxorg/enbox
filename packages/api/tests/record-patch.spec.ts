@@ -204,8 +204,9 @@ describe('Record.patch()', () => {
       protocol  : protocolUri,
       types     : {
         note: {
-          schema      : `${protocolUri}/schemas/note`,
-          dataFormats : ['application/json'],
+          schema             : `${protocolUri}/schemas/note`,
+          dataFormats        : ['application/json'],
+          encryptionRequired : true,
         },
       },
       structure: {
@@ -214,8 +215,7 @@ describe('Record.patch()', () => {
     };
 
     const { status: configStatus } = await dwnAlice.protocols.configure({
-      definition : encProtocol,
-      encryption : true,
+      definition: encProtocol,
     });
     expect(configStatus.code).toBe(202);
 
@@ -225,7 +225,6 @@ describe('Record.patch()', () => {
       protocolPath : 'note',
       schema       : `${protocolUri}/schemas/note`,
       dataFormat   : 'application/json',
-      encryption   : true,
     });
     expect(writeStatus.code).toBe(202);
     expect(record!.encryption).toBeDefined();

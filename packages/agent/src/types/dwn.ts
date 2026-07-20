@@ -185,18 +185,7 @@ export type DwnResponseStatus = {
   status: Status;
 };
 
-type EncryptionRequestOption<T extends DwnInterface> = T extends
-  DwnInterface.ProtocolsConfigure | DwnInterface.RecordsWrite
-  ? {
-      /**
-       * If true, encrypts a RecordsWrite payload or injects protocol
-       * `$keyAgreement` material during ProtocolsConfigure.
-       */
-      encryption?: boolean;
-    }
-  : { encryption?: never };
-
-export type ProcessDwnRequest<T extends DwnInterface> = DwnRequest<T> & EncryptionRequestOption<T> & {
+export type ProcessDwnRequest<T extends DwnInterface> = DwnRequest<T> & {
   dataStream?: Blob | ReadableStream;
   rawMessage?: DwnMessage[T];
   messageParams?: DwnMessageParams[T];

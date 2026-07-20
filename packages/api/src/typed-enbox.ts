@@ -282,13 +282,6 @@ export type TypedCreateRequest<
    */
   store?: boolean;
 
-  /**
-   * Whether to auto-encrypt the record.
-   *
-   * If omitted, encryption follows the protocol definition. Set to `true`
-   * to force encryption or `false` to skip it.
-   */
-  encryption?: boolean;
 };
 
 /**
@@ -867,9 +860,6 @@ export class TypedEnbox<
    * `records.create()`, `records.query()`, etc. will throw if the protocol
    * has not been configured.
    *
-   * @param options - Optional configuration overrides.
-   * @param options.encryption - Whether to enable auto-encryption for the
-   *   protocol. If omitted, follows the protocol definition defaults.
    * @returns The DWN response status and the installed protocol object.
    *
    * @example
@@ -882,7 +872,7 @@ export class TypedEnbox<
    * // Now you can use records.create(), records.query(), etc.
    * ```
    */
-  public async configure(options?: { encryption?: boolean }): Promise<DwnResponseStatus & { protocol?: Protocol }> {
+  public async configure(): Promise<DwnResponseStatus & { protocol?: Protocol }> {
     // Query for an existing installation of this protocol.
     const { protocols } = await this._dwn.protocols.query({
       filter: { protocol: this._definition.protocol },
@@ -914,11 +904,8 @@ export class TypedEnbox<
       );
     }
 
-    const needsEncryption = !this._dwn.isDelegate && this._hasEncryptedTypes;
-
     const result = await this._dwn.protocols.configure({
-      definition : this._definition,
-      encryption : options?.encryption ?? (needsEncryption || undefined),
+      definition: this._definition,
     });
 
     if (result.status.code === 202) {
@@ -1195,13 +1182,8 @@ export class TypedEnbox<
       );
     }
 
-    // Owner path: derive encryption keys locally when any type needs them.
-    const needsEncryption = Object.values(this._definition.types)
-      .some((type) => (type as ProtocolType)?.encryptionRequired === true);
-
     const result = await this._dwn.protocols.configure({
-      definition : this._definition,
-      encryption : needsEncryption || undefined,
+      definition: this._definition,
     });
 
     if (result.status.code === 202) {
@@ -1380,18 +1362,10 @@ export class TypedEnbox<
         const typeName = lastSegment(normalizedPath);
         const typeEntry = this._definition.types[typeName];
 
-        // Auto-enable encryption when the type requires it.
-        // Delegates CAN encrypt because the $keyAgreement public keys in the
-        // synced protocol definition are sufficient for ProtocolPath
-        // encryption — no private key access is needed for writes.
-        const autoEncryption = typeEntry?.encryptionRequired === true
-          ? true : undefined;
-
         const { status, record, audienceKeyDelivery } = await this._dwn.records.write({
           data                   : request.data,
           from                   : request.from,
           store                  : request.store,
-          encryption             : request.encryption ?? autoEncryption,
           parentContextId        : request.parentContextId,
           published              : request.published,
           datePublished          : request.datePublished,
@@ -1742,8 +1716,8 @@ function deriveChildScopeFilter<T extends Record<string, unknown>>(
  * Compares two protocol definitions for **logical** equality using
  * deterministic JSON serialization with runtime encryption metadata stripped.
  *
- * When a protocol is installed with `encryption: true`, the agent injects
- * public key agreement blocks into the `structure`. These blocks are operational
+ * When a protocol declares encrypted types, the agent injects public key
+ * agreement blocks into the `structure`. These blocks are operational
  * metadata — not part of the developer-authored definition — so they must be
  * ignored during equality checks.
  *

@@ -2104,6 +2104,7 @@ export function testRecordsWriteHandler(): void {
             expect(retainedCids).not.toContain(deletedMessageCid);
           });
         });
+
       });
 
       describe('protocol based writes', () => {
@@ -4425,7 +4426,7 @@ export function testRecordsWriteHandler(): void {
           expect(writeReply.status.code).toBe(202);
         });
 
-        it('should allow plaintext writes for protocol types without encryptionRequired', async () => {
+        it('should require plaintext for protocol types without encryptionRequired', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
           const protocolDefinition: ProtocolDefinition = {
@@ -4464,6 +4465,40 @@ export function testRecordsWriteHandler(): void {
 
           const writeReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream: recordsWrite.dataStream });
           expect(writeReply.status.code).toBe(202);
+
+          const dataEncryptionKey = TestDataGenerator.randomBytes(32);
+          const initializationVector = TestDataGenerator.randomBytes(16);
+          const encryptedData = await Encryption.encrypt(
+            ContentEncryptionAlgorithm.A256CTR,
+            dataEncryptionKey,
+            initializationVector,
+            data,
+          );
+          const publicPathKey = encryptedProtocolDefinition.structure.public.$keyAgreement!.publicKeyJwk;
+          const encryptedWrite = await TestDataGenerator.generateRecordsWrite({
+            author          : alice,
+            data            : encryptedData,
+            encryptionInput : {
+              initializationVector,
+              key                 : dataEncryptionKey,
+              keyEncryptionInputs : [{
+                algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+                derivationScheme : KeyDerivationScheme.ProtocolPath,
+                keyId            : await Encryption.getKeyId(publicPathKey),
+                publicKey        : publicPathKey,
+              }],
+            },
+            protocol     : protocolDefinition.protocol,
+            protocolPath : 'public',
+          });
+
+          const encryptedReply = await dwn.processMessage(
+            alice.did,
+            encryptedWrite.message,
+            { dataStream: encryptedWrite.dataStream },
+          );
+          expect(encryptedReply.status.code).toBe(400);
+          expect(encryptedReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationEncryptionNotAllowed);
         });
 
         it('should fail authorization if record schema is not allowed at the hierarchical level attempted for the RecordsWrite', async () => {

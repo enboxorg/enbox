@@ -7,6 +7,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 
 import { EnboxUserAgent } from '@enbox/agent';
 import { PlatformAgentTestHarness } from '@enbox/agent/test';
+import { ProtocolsConfigure } from '@enbox/dwn-sdk-js';
 
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi as DwnApiClass } from '../src/dwn-api.js';
@@ -208,8 +209,8 @@ describe('TypedEnbox.verifyInstalled()', () => {
       // The engine fail-closes on keys missing at the root or at ENCRYPTED
       // paths, but accepts an install whose non-encrypted paths lack keys —
       // while the injection covers EVERY path. Install exactly that
-      // engine-accepted, partially-keyed state by supplying keys manually
-      // (no `encryption` flag, so nothing is injected).
+      // engine-accepted, partially-keyed state as a pre-constructed raw
+      // ProtocolsConfigure so the agent does not derive the missing keys.
       const keyAgreement = {
         publicKeyJwk: { kty: 'OKP', crv: 'X25519', x: 'hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr066SpjqqbTmo' },
       };
@@ -234,8 +235,17 @@ describe('TypedEnbox.verifyInstalled()', () => {
         },
       } as unknown as ProtocolDefinition;
 
-      const { status } = await dwnAlice.protocols.configure({ definition: partiallyKeyedDefinition });
-      expect(status.code).toBe(202);
+      const didSigner = await aliceDid.getSigner();
+      const protocolsConfigure = await ProtocolsConfigure.create({
+        definition : partiallyKeyedDefinition,
+        signer     : {
+          algorithm : didSigner.algorithm,
+          keyId     : didSigner.keyId,
+          sign      : async (data: Uint8Array): Promise<Uint8Array> => didSigner.sign({ data }),
+        },
+      });
+      const rawReply = await testHarness.agent.dwn.processRawMessage(aliceDid.uri, protocolsConfigure.message);
+      expect(rawReply.status.code).toBe(202);
 
       const typed = new TypedEnbox(dwnAlice, defineProtocol(codeDefinition, {}));
       const result = await typed.verifyInstalled();

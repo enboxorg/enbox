@@ -811,10 +811,12 @@ async function createGrantKeyMessage(input: {
       }],
     },
     protocol     : EncryptionProtocol.uri,
-    protocolPath : EncryptionProtocol.grantKeyPath,
-    recipient    : input.recipient,
-    signer       : input.signer,
-    tags         : tags,
+    protocolPath : input.encrypted === false
+      ? EncryptionProtocol.wrappedGrantKeyPath
+      : EncryptionProtocol.grantKeyPath,
+    recipient : input.recipient,
+    signer    : input.signer,
+    tags      : tags,
   });
 
   return recordsWrite.message;

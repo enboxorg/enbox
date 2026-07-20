@@ -551,7 +551,8 @@ function addEncryptionProtocolEdges<T>(
     return;
   }
 
-  if (desc.protocolPath === EncryptionProtocol.grantKeyPath) {
+  if (desc.protocolPath === EncryptionProtocol.grantKeyPath ||
+      desc.protocolPath === EncryptionProtocol.wrappedGrantKeyPath) {
     const grantId = getStringTag(message, 'grantId');
     const grantIndex = grantId === undefined ? undefined : indexes.grantIndex.get(grantId);
     if (grantIndex !== undefined) {
@@ -667,4 +668,3 @@ function appendCyclicEntries<T>(messages: T[], byIndex: Map<number, T>, sorted: 
     }
   }
 }
-

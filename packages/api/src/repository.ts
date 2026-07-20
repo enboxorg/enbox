@@ -407,8 +407,8 @@ export function repository<
 
       // configure() method
       if (prop === 'configure') {
-        return async (options?: { encryption?: boolean }): Promise<DwnResponseStatus> => {
-          const result = await typed.configure(options);
+        return async (): Promise<DwnResponseStatus> => {
+          const result = await typed.configure();
           return result;
         };
       }

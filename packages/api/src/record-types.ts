@@ -198,15 +198,6 @@ export type RecordUpdateParams = {
   tags?: DwnMessageDescriptor[DwnInterface.RecordsWrite]['tags'];
 
   /**
-   * Controls whether the updated record should be auto-encrypted.
-   *
-   * If omitted, auto-detected from the original record: if the record was
-   * originally encrypted, the update is automatically re-encrypted with a
-   * fresh DEK. Set to `false` explicitly to skip encryption on the update.
-   */
-  encryption?: boolean;
-
-  /**
    * The recipient's role-path public key for this update, forwarded to the
    * agent at the top level of the request (never into the message
    * descriptor) when updating a `$role` record with a `recipient`.

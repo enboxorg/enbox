@@ -528,20 +528,12 @@ export class Record implements RecordModel {
    * @beta
    */
   async update(
-    { timestamp, data, encryption, protocolRole, store = true, recipientRolePublicKey, from, ...params }: RecordUpdateParams
+    { timestamp, data, protocolRole, store = true, recipientRolePublicKey, from, ...params }: RecordUpdateParams
   ): Promise<RecordUpdateResult> {
 
     if (this.deleted) {
       throw new Error('Record: Cannot revive a deleted record.');
     }
-
-    if (data === undefined && encryption !== undefined && encryption !== (this._encryption !== undefined)) {
-      throw new Error('Record: Changing a record\'s encryption mode requires replacement data.');
-    }
-
-    // Auto-detect encryption: if the record was originally encrypted and the
-    // caller didn't explicitly set `encryption`, default to re-encrypting.
-    const shouldEncrypt = encryption ?? (this._encryption !== undefined);
 
     // if there is a parentId, we remove it from the descriptor and set a parentContextId
     const { parentId, ...descriptor } = this._recordsWriteDescriptor;
@@ -557,6 +549,13 @@ export class Record implements RecordModel {
       recordId         : this._recordId
     };
 
+    // Metadata-only updates retain the exact encryption envelope and stored data
+    // version. Updates with replacement data receive a fresh envelope from the
+    // target protocol's policy-driven encryption pipeline.
+    if (data === undefined && this._encryption !== undefined) {
+      updateMessage.encryption = this._encryption;
+    }
+
     // NOTE: The original Record's tags are copied to the update message, so that the tags are not lost.
     // However if a user passes new tags in the `RecordUpdateParams` object, they will overwrite the original tags.
     // If the updated tag object is empty or set to null, we remove the tags property to avoid schema validation errors in the DWN SDK.
@@ -564,7 +563,7 @@ export class Record implements RecordModel {
       delete updateMessage.tags;
     }
 
-    let dataBlob: Blob;
+    let dataBlob: Blob | undefined;
     if (data !== undefined) {
       // If `data` is being updated then `dataCid` and `dataSize` must be undefined and the `data`
       // value must be converted to a Blob and later passed as a top-level property to
@@ -597,7 +596,6 @@ export class Record implements RecordModel {
       messageType   : DwnInterface.RecordsWrite,
       target        : from ?? this._connectedDid,
       store,
-      encryption    : shouldEncrypt || undefined,
       recipientRolePublicKey,
     };
 

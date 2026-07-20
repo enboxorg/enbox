@@ -19,6 +19,8 @@ export const PERMISSIONS_PROTOCOL_URI = 'https://identity.foundation/dwn/permiss
  * The DWN Encryption protocol URI.
  */
 export const ENCRYPTION_PROTOCOL_URI = 'https://identity.foundation/dwn/protocols/encryption';
+export const ENCRYPTION_PROTOCOL_GRANT_KEY_PATH = 'grantKey';
+export const ENCRYPTION_PROTOCOL_WRAPPED_GRANT_KEY_PATH = 'wrappedGrantKey';
 
 /**
  * Reserved virtual protocol path root for source-protocol-native encryption

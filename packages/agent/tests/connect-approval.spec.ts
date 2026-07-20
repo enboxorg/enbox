@@ -1060,13 +1060,11 @@ describe('connect approval ceremony', () => {
       expect(sendRequestSpy.callCount).toBe(0);
     });
 
-    it('should pass encryption: true to the LOCAL ProtocolsConfigure when the protocol has encryptionRequired types', async () => {
+    it('should leave encryption policy on the protocol definition during the local configure', async () => {
       // Scenario: the ceremony's safety-fallback installs a protocol whose types
-      // declare `encryptionRequired: true`. The LOCAL configure (via
-      // `processDwnRequest`) must carry `encryption: true` so the local DWN
-      // derives and injects `$keyAgreement` keys from the owner's X25519 root.
-      // The remote fan-out then re-uses the resulting raw message — no
-      // `encryption` flag is needed on the per-endpoint sends.
+      // declare `encryptionRequired: true`. AgentDwnApi derives and injects the
+      // owner's `$keyAgreement` keys from that definition before signing. The
+      // ceremony must not add a second caller-controlled encryption switch.
 
       const encryptedProtocol: DwnProtocolDefinition = {
         protocol  : 'http://encrypted-protocol.xyz',
@@ -1119,12 +1117,13 @@ describe('connect approval ceremony', () => {
         }),
       });
 
-      // Verify the LOCAL ProtocolsConfigure carried `encryption: true`.
+      // Verify the local configure carries only the definition-owned policy.
       const configureCall = processDwnRequestStub.getCalls().find(
         (call) => call.args[0].messageType === DwnInterface.ProtocolsConfigure,
       );
       expect(configureCall).toBeDefined();
-      expect((configureCall!.args[0] as any).encryption).toBe(true);
+      expect((configureCall!.args[0] as Record<string, unknown>).encryption).toBeUndefined();
+      expect((configureCall!.args[0] as any).messageParams.definition.types.secret.encryptionRequired).toBe(true);
     });
 
     it('should use durable grantKey records instead of in-band decryption keys for mixed encrypted protocols', async () => {
@@ -1281,7 +1280,7 @@ describe('connect approval ceremony', () => {
           method       : 'Write',
           recipient    : delegateBearerDid.uri,
           protocol     : EncryptionProtocol.uri,
-          protocolPath : EncryptionProtocol.grantKeyPath,
+          protocolPath : EncryptionProtocol.wrappedGrantKeyPath,
           dataFormat   : 'application/json',
           tags         : { protocol: encryptedProtocol.protocol },
         },
@@ -1369,7 +1368,7 @@ describe('connect approval ceremony', () => {
           method       : 'Write',
           recipient    : delegateBearerDid.uri,
           protocol     : EncryptionProtocol.uri,
-          protocolPath : EncryptionProtocol.grantKeyPath,
+          protocolPath : EncryptionProtocol.wrappedGrantKeyPath,
           dataFormat   : 'application/json',
           tags         : { protocol: encryptedProtocol.protocol },
         },

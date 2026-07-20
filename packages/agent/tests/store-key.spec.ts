@@ -473,35 +473,18 @@ describe('KeyStore', () => {
     });
 
     describe('protocol re-initialization', () => {
-      it('should detect $keyAgreement from an already-installed protocol after cache clear', async () => {
-        // First call — installs the protocol with $keyAgreement.
-        await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
-
-        // Verify encryption is active.
-        const tenantDid = testHarness.agent.agentDid.uri;
-        expect((keyStore as any).isEncryptionActive(tenantDid)).toBe(true);
-
-        // Clear the protocol initialization cache (simulating agent restart).
-        (keyStore as DwnDataStore<Jwk>)['_protocolInitializedCache']?.clear();
-        // Also clear the encryption active cache so it must be re-detected.
-        (keyStore as any)._tenantEncryptionActive?.clear();
-
-        // Second call — protocol is already installed, should detect $keyAgreement.
-        await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
-
-        // Encryption should still be detected as active.
-        expect((keyStore as any).isEncryptionActive(tenantDid)).toBe(true);
-      });
-
-      it('should reject an encrypted protocol without $keyAgreement', async () => {
+      it('should derive $keyAgreement when configuring an encrypted protocol', async () => {
         const tenantDid = testHarness.agent.agentDid.uri;
 
-        await expect(testHarness.agent.dwn.processRequest({
+        const { message, reply } = await testHarness.agent.dwn.processRequest({
           author        : tenantDid,
           target        : tenantDid,
           messageType   : DwnInterface.ProtocolsConfigure,
           messageParams : { definition: JwkProtocolDefinition },
-        })).rejects.toThrow('ProtocolsConfigureMissingTopLevelKeyAgreement');
+        });
+
+        expect(reply.status.code).toBe(202);
+        expect(message.descriptor.definition.structure.privateJwk.$keyAgreement).toBeDefined();
       });
 
       it('should still decrypt old records after re-initialization', async () => {
@@ -517,9 +500,8 @@ describe('KeyStore', () => {
 
         // Clear the protocol initialization cache (simulating agent restart).
         (keyStore as DwnDataStore<Jwk>)['_protocolInitializedCache']?.clear();
-        (keyStore as any)._tenantEncryptionActive?.clear();
 
-        // Re-initialize — should detect the existing protocol, not re-install.
+        // Re-initialize — should recognize the existing protocol, not re-install.
         await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
 
         // The previously written encrypted record should still be readable.
@@ -529,81 +511,21 @@ describe('KeyStore', () => {
         expect(storedKeyAfter!.kid).toBe(storedKeyBefore!.kid);
       });
 
-      it('should re-derive encryption state after natural TTL expiry', async () => {
+      it('should re-query protocol after the initialization cache expires', async () => {
         const { TtlCache } = await import('@enbox/common');
 
-        // First call — installs the protocol with $keyAgreement.
+        // First call installs the protocol and caches initialization.
         await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
 
         const tenantDid = testHarness.agent.agentDid.uri;
-        expect((keyStore as any).isEncryptionActive(tenantDid)).toBe(true);
-
-        // Replace both caches with short-TTL versions. Use staggered
-        // TTLs (1ms vs 50ms) to simulate the real-world scenario where
-        // the encryption cache and protocol-init cache are populated at
-        // slightly different times during initialize(), so one expires
-        // before the other. This is the actual failure mode: the init
-        // cache survives while the encryption cache has already expired,
-        // causing initialize() to short-circuit without re-deriving
-        // encryption state.
-        const shortEncCache = new TtlCache<string, boolean>({ ttl: 1, max: 100 });
-        const shortInitCache = new TtlCache<string, boolean>({ ttl: 50, max: 100 });
-        shortEncCache.set(tenantDid, true);
-        shortInitCache.set(tenantDid, true);
-        (keyStore as any)._tenantEncryptionActive = shortEncCache;
-        (keyStore as DwnDataStore<Jwk>)['_protocolInitializedCache'] = shortInitCache;
-
-        // Wait for the encryption cache to expire but not the init cache.
-        await new Promise<void>(resolve => setTimeout(resolve, 10));
-
-        // Encryption cache expired, but init cache still alive.
-        expect(shortEncCache.has(tenantDid)).toBe(false);
-        expect(shortInitCache.has(tenantDid)).toBe(true);
-
-        // Re-initialize — the init cache still has the entry, so
-        // initialize() will return early. But because both caches are
-        // set atomically at the end of initialize() (not staggered),
-        // the only way the encryption cache can be missing while the
-        // init cache is present is if they were populated at different
-        // times — which is what this test simulates.
-        //
-        // The production fix ensures both caches are always set at the
-        // same instant, so if one expires, the other does too.
-        await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
-
-        // With the fix in place, the init cache short-circuits, and
-        // encryption state was set at the same time as the init cache,
-        // so it's still valid. Verify via isEncryptionActive:
-        // If both caches expired together (the fixed behavior), this
-        // would re-derive. If only encryption expired (the bug), this
-        // would return false.
-        expect((keyStore as any).isEncryptionActive(tenantDid)).toBe(true);
-      });
-
-      it('should re-query protocol after both caches expire together', async () => {
-        const { TtlCache } = await import('@enbox/common');
-
-        // First call — installs the protocol with $keyAgreement.
-        await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
-
-        const tenantDid = testHarness.agent.agentDid.uri;
-        expect((keyStore as any).isEncryptionActive(tenantDid)).toBe(true);
-
-        // Replace both caches with 1ms-TTL versions — same TTL so they
-        // expire together (the production behavior after the fix).
         const shortInitCache = new TtlCache<string, boolean>({ ttl: 1, max: 100 });
-        const shortEncCache = new TtlCache<string, boolean>({ ttl: 1, max: 100 });
         shortInitCache.set(tenantDid, true);
-        shortEncCache.set(tenantDid, true);
         (keyStore as DwnDataStore<Jwk>)['_protocolInitializedCache'] = shortInitCache;
-        (keyStore as any)._tenantEncryptionActive = shortEncCache;
 
-        // Wait for both to expire.
+        // Let the cache expire, then verify initialization checks the DWN again.
         await new Promise<void>(resolve => setTimeout(resolve, 10));
         expect(shortInitCache.has(tenantDid)).toBe(false);
-        expect(shortEncCache.has(tenantDid)).toBe(false);
 
-        // Spy to verify a ProtocolsQuery is issued (not short-circuited).
         const processRequestSpy = spyOn(testHarness.agent.dwn, 'processRequest');
 
         await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
@@ -612,7 +534,6 @@ describe('KeyStore', () => {
           (args: any[]) => args[0]?.messageType === DwnInterface.ProtocolsQuery
         );
         expect(protocolsQueryCall).toBeDefined();
-        expect((keyStore as any).isEncryptionActive(tenantDid)).toBe(true);
 
         processRequestSpy.mockRestore();
       });

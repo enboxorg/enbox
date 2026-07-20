@@ -614,7 +614,6 @@ describe('E2E Multi-Agent Sync', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.ProtocolsConfigure,
         messageParams : { definition: encryptedProtocol },
-        encryption    : true,
       });
       expect(localProtocolConfigure.reply.status.code).toBe(202);
 
@@ -623,7 +622,6 @@ describe('E2E Multi-Agent Sync', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.ProtocolsConfigure,
         messageParams : { definition: encryptedProtocol },
-        encryption    : true,
       });
       expect([202, 409]).toContain(remoteProtocolConfigure.reply.status.code);
 
@@ -667,8 +665,7 @@ describe('E2E Multi-Agent Sync', () => {
           protocolPath : 'note',
           schema       : encryptedProtocol.types.note.schema,
         },
-        dataStream : new Blob([noteText]),
-        encryption : true,
+        dataStream: new Blob([noteText]),
       });
       expect(writeResult.reply.status.code).toBe(202);
       const recordId = writeResult.message!.recordId;
@@ -869,8 +866,7 @@ describe('E2E Multi-Agent Sync', () => {
           protocolPath : 'note',
           schema       : encryptedProtocol.types.note.schema,
         },
-        dataStream : new Blob([noteText]),
-        encryption : true,
+        dataStream: new Blob([noteText]),
       });
       expect(writeResult.reply.status.code).toBe(202);
       const recordId = writeResult.message!.recordId;
@@ -958,7 +954,6 @@ describe('E2E Multi-Agent Sync', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.ProtocolsConfigure,
         messageParams : { definition: chatProtocol },
-        encryption    : true,
       });
       expect(aliceProtocolConfigure.reply.status.code).toBe(202);
 
@@ -967,7 +962,6 @@ describe('E2E Multi-Agent Sync', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.ProtocolsConfigure,
         messageParams : { definition: chatProtocol },
-        encryption    : true,
       });
       expect([202, 409]).toContain(aliceRemoteProtocolConfigure.reply.status.code);
 
@@ -976,7 +970,6 @@ describe('E2E Multi-Agent Sync', () => {
         target        : bobParticipant.did.uri,
         messageType   : DwnInterface.ProtocolsConfigure,
         messageParams : { definition: chatProtocol },
-        encryption    : true,
       });
       expect(bobProtocolConfigure.reply.status.code).toBe(202);
 
@@ -985,7 +978,6 @@ describe('E2E Multi-Agent Sync', () => {
         target        : bobParticipant.did.uri,
         messageType   : DwnInterface.ProtocolsConfigure,
         messageParams : { definition: chatProtocol },
-        encryption    : true,
       });
       expect([202, 409]).toContain(bobRemoteProtocolConfigure.reply.status.code);
 
@@ -1089,8 +1081,7 @@ describe('E2E Multi-Agent Sync', () => {
           protocolPath    : 'thread/chat',
           schema          : chatProtocol.types.chat.schema,
         },
-        dataStream : new Blob([chatText]),
-        encryption : true,
+        dataStream: new Blob([chatText]),
       });
       expect(chatWrite.reply.status.code).toBe(202);
 
