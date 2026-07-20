@@ -2275,10 +2275,7 @@ export class AgentDwnApi {
     const dwnMessage = await dwnMessageConstructors[request.messageType].parse(rawMessage);
     if (isRecordsWrite(dwnMessage) && request.signAsOwner) {
       await dwnMessage.signAsOwner(await this.getSigner(request.author));
-      return dwnMessage;
-    }
-
-    if (request.granteeDid && isRecordsWrite(dwnMessage) && request.signAsOwnerDelegate) {
+    } else if (request.granteeDid && isRecordsWrite(dwnMessage) && request.signAsOwnerDelegate) {
       const messageParams = request.messageParams as DwnMessageParams[DwnInterface.RecordsWrite];
       await dwnMessage.signAsOwnerDelegate(
         await this.getSigner(request.granteeDid),
