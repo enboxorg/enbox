@@ -627,7 +627,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
       resolution     : 'superseded',
     }));
     expect(await internal.getQuotaBlocksForTarget(target)).toHaveLength(0);
-    expect(await (syncEngine as any)._quotaManager.getStatesForTarget(target)).toEqual([
+    expect(await (syncEngine as any)._quotaManager.getBlocksForTarget(target)).toEqual([
       expect.objectContaining({
         messageCid : updateCid,
         state      : expect.objectContaining({ supersededAt: expect.any(String) }),
@@ -802,7 +802,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     }));
     const [status] = await syncEngine.getRemoteSyncStatus(tenantDid);
     expect(status.quotaBlockedMessageCount).toBe(0);
-    expect(await syncEngine.getFailedMessages(tenantDid)).toHaveLength(0);
+    expect(await syncEngine.getDeadLetters(tenantDid)).toHaveLength(0);
   });
 
   it('retires a quota block when its targeted retry becomes terminal', async () => {
@@ -826,7 +826,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
 
     expect(gate.attempts()).toBe(2);
     expect(consoleError.calledOnce).toBe(true);
-    const failed = await syncEngine.getFailedMessages(tenantDid);
+    const failed = await syncEngine.getDeadLetters(tenantDid);
     expect(failed).toHaveLength(1);
     expect(failed[0]).toMatchObject({
       messageCid     : blockedCid,
@@ -908,7 +908,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
       { data: 'note after remote update', protocolPath: 'note', recordId: noteToUpdate.message!.recordId },
     ]);
     expect(await harnessFingerprint()).toBe(await remoteHarnessFingerprint());
-    expect(await syncEngine.getFailedMessages(tenantDid)).toHaveLength(0);
+    expect(await syncEngine.getDeadLetters(tenantDid)).toHaveLength(0);
   });
 
   async function expectLocalRecordCount(recordId: string, count: number): Promise<void> {

@@ -59,7 +59,7 @@ describe('SyncLinkController', () => {
     const controller = new SyncLinkController('link-key', link);
     controller.startPullDelivery(token(1));
 
-    controller.clearPullInflight();
+    controller.startNewPullGeneration();
     const next = controller.startPullDelivery(token(2));
 
     expect(next.ordinal).toBe(1);
@@ -73,7 +73,7 @@ describe('SyncLinkController', () => {
     controller.startPullDelivery(token(1));
     controller.startPullDelivery(token(2));
 
-    controller.resetPullRuntime();
+    controller.resetPullGeneration();
     const next = controller.startPullDelivery(token(3));
 
     expect(next.ordinal).toBe(0);
@@ -87,7 +87,7 @@ describe('SyncLinkController', () => {
     const controller = new SyncLinkController('link-key', link);
     const stale = controller.startPullDelivery(token(9));
 
-    controller.resetPullRuntime();
+    controller.resetPullGeneration();
     const fresh = controller.startPullDelivery(token(2));
 
     // The stale ticket's ordinal collides with the fresh delivery's ordinal
@@ -100,12 +100,12 @@ describe('SyncLinkController', () => {
     expect(link.pull.contiguousAppliedToken).toEqual(token(2));
   });
 
-  it('should ignore commits abandoned by clearPullInflight', () => {
+  it('should ignore commits abandoned by startNewPullGeneration', () => {
     const link = createLink();
     const controller = new SyncLinkController('link-key', link);
     const abandoned = controller.startPullDelivery(token(1));
 
-    controller.clearPullInflight();
+    controller.startNewPullGeneration();
 
     expect(controller.commitPullDelivery(abandoned)).toBe(0);
     expect(link.pull.contiguousAppliedToken).toBeUndefined();
@@ -113,39 +113,39 @@ describe('SyncLinkController', () => {
 
   it('should not let an old push batch clear or consume a replacement queue', () => {
     const controller = new SyncLinkController('link-key', createLink());
-    const first = controller.getOrCreatePushRuntime({
+    const first = controller.getOrCreatePushQueue({
       did    : 'did:example:alice',
       dwnUrl : 'https://dwn.example.com',
     });
     const firstTimer = setTimeout(() => {}, 60_000);
     controller.setPushTimer(first, firstTimer);
-    controller.clearPushRuntime(first);
-    const replacement = controller.getOrCreatePushRuntime({
+    controller.clearPushQueue(first);
+    const replacement = controller.getOrCreatePushQueue({
       did    : 'did:example:alice',
       dwnUrl : 'https://dwn.example.com',
     });
     const replacementTimer = setTimeout(() => {}, 60_000);
     controller.setPushTimer(replacement, replacementTimer);
 
-    controller.clearPushRuntime(first);
+    controller.clearPushQueue(first);
 
-    expect(controller.pushRuntime).toBe(replacement);
+    expect(controller.pushQueue).toBe(replacement);
     expect(controller.consumePushTimer(first, firstTimer)).toBe(false);
-    expect(controller.pushRuntime?.timer).toBe(replacementTimer);
+    expect(controller.pushQueue?.timer).toBe(replacementTimer);
 
-    controller.clearPushRuntime(replacement);
+    controller.clearPushQueue(replacement);
   });
 
   it('should reject and cancel push timers for stale or inactive runtimes', async () => {
     const clock = sinon.useFakeTimers();
     const controller = new SyncLinkController('link-key', createLink());
     const fired = sinon.stub();
-    const stale = controller.getOrCreatePushRuntime({
+    const stale = controller.getOrCreatePushQueue({
       did    : 'did:example:alice',
       dwnUrl : 'https://dwn.example.com',
     });
-    controller.clearPushRuntime(stale);
-    const current = controller.getOrCreatePushRuntime({
+    controller.clearPushQueue(stale);
+    const current = controller.getOrCreatePushQueue({
       did    : 'did:example:alice',
       dwnUrl : 'https://dwn.example.com',
     });
@@ -221,14 +221,14 @@ describe('SyncLinkController', () => {
     const clock = sinon.useFakeTimers();
     const controller = new SyncLinkController('link-key', createLink());
     const fired = sinon.stub();
-    const pushRuntime = controller.getOrCreatePushRuntime({
+    const pushQueue = controller.getOrCreatePushQueue({
       did    : 'did:example:alice',
       dwnUrl : 'https://dwn.example.com',
     });
     const pushTimer = setTimeout(fired, 10) as unknown as SyncLinkTimer;
     const repairTimer = setTimeout(fired, 10) as unknown as SyncLinkTimer;
     const reconcileTimer = setTimeout(fired, 10) as unknown as SyncLinkTimer;
-    controller.setPushTimer(pushRuntime, pushTimer);
+    controller.setPushTimer(pushQueue, pushTimer);
     controller.setRepairRetryTimer(repairTimer);
     controller.setReconcileTimer(reconcileTimer, Date.now() + 10);
     controller.incrementRepairAttempts();
@@ -238,7 +238,7 @@ describe('SyncLinkController', () => {
     await clock.tickAsync(10);
 
     expect(controller.isActive).toBe(false);
-    expect(controller.pushRuntime).toBeUndefined();
+    expect(controller.pushQueue).toBeUndefined();
     expect(controller.repairRetryTimer).toBeUndefined();
     expect(controller.reconcileTimer).toBeUndefined();
     expect(controller.repairAttempts).toBe(0);
@@ -321,15 +321,15 @@ describe('SyncLinkController mailbox', () => {
     const flush = controller.enqueue(async (): Promise<void> => { await flushGate; }, 'flush');
     const repair = controller.enqueue(async (): Promise<void> => {}, 'repair');
 
-    expect(controller.mailboxBusy('flush')).toBe(true);
-    expect(controller.mailboxBusy('repair')).toBe(true);
-    expect(controller.mailboxBusy('reconcile')).toBe(false);
+    expect(controller.isMailboxBusy('flush')).toBe(true);
+    expect(controller.isMailboxBusy('repair')).toBe(true);
+    expect(controller.isMailboxBusy('reconcile')).toBe(false);
 
     releaseFlush();
     await Promise.all([flush, repair]);
 
-    expect(controller.mailboxBusy('flush')).toBe(false);
-    expect(controller.mailboxBusy('repair')).toBe(false);
+    expect(controller.isMailboxBusy('flush')).toBe(false);
+    expect(controller.isMailboxBusy('repair')).toBe(false);
   });
 
   it('should coalesce shared operations per lane and release the handle on settlement', async () => {
@@ -370,7 +370,7 @@ describe('SyncLinkController mailbox', () => {
 
     await controller.enqueueShared('repair', async (): Promise<void> => { retried = true; });
     expect(retried).toBe(true);
-    expect(controller.mailboxBusy('repair')).toBe(false);
+    expect(controller.isMailboxBusy('repair')).toBe(false);
   });
 
   it('should surface a rejection to its caller without poisoning the queue', async () => {

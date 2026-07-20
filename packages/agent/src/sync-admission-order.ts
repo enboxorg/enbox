@@ -41,11 +41,6 @@ type SourceAudienceTags = {
   keyId: string;
 };
 
-type MessageDependencyGraph<T> = {
-  sorted: T[];
-  dependencies: Map<T, T[]>;
-};
-
 type DependencyIndexes<T> = {
   byIndex: Map<number, T>;
   protocolConfigureIndex: Map<string, number>;
@@ -56,9 +51,15 @@ type DependencyIndexes<T> = {
   sourceAudienceIndex: Map<string, number>;
 };
 
+/**
+ * Edge direction, stated once so call sites do not have to reverse-engineer
+ * it from Kahn's algorithm: `addEdge(from, to)` means `from` must be admitted
+ * BEFORE `to`.
+ */
 type DependencyEdges = {
+  /** from → the dependents that must be admitted after it. */
   edges: Map<number, Set<number>>;
-  dependenciesByIndex: Map<number, Set<number>>;
+  /** inDegree[i] = number of unsatisfied prerequisites of entry `i`. */
   inDegree: number[];
 };
 
@@ -293,37 +294,32 @@ function getSourceAudienceKeysFromEncryption(message: GenericMessage): string[] 
  * Builds a dependency graph from the fetched messages and returns them in
  * dependency order so that dependencies are processed before dependents.
  *
- * Dependencies:
+ * Dependencies — one bullet per edge kind added by
+ * {@link addDependencyEdgesForMessage}; keep the two in step:
  * - ProtocolsConfigure must come before any RecordsWrite using that protocol
  * - Composed ProtocolsConfigure must come after ProtocolsConfigure messages for protocols in `uses`
  * - Parent record must come before child record (via parentId)
  * - Initial write must come before update writes (same recordId, not initial)
+ * - Initial write must come before a RecordsDelete for the same recordId
  * - Permission grants must come before messages that invoke them
+ * - A permission grant must come before the encryption grantKey record tagged with its grantId
+ * - Source-audience and delivery-role records must come before messages whose encryption references them
+ * - A role record must come before any message invoking that role
  */
 export function orderMessagesForAdmission<T extends { message: GenericMessage }>(
   messages: T[]
 ): T[] {
-  return buildMessageDependencyGraph(messages).sorted;
+  return topologicallySortMessages(messages);
 }
 
-function buildMessageDependencyGraph<T extends { message: GenericMessage }>(
-  messages: T[]
-): MessageDependencyGraph<T> {
+function topologicallySortMessages<T extends { message: GenericMessage }>(messages: T[]): T[] {
   if (messages.length <= 1) {
-    return {
-      sorted       : messages,
-      dependencies : new Map(messages.map(message => [message, []])),
-    };
+    return messages;
   }
 
   const indexes = buildDependencyIndexes(messages);
   const dependencyEdges = buildDependencyEdges(messages, indexes);
-  const sorted = sortDependencyGraph(messages, indexes.byIndex, dependencyEdges.edges, dependencyEdges.inDegree);
-
-  return {
-    sorted,
-    dependencies: entriesByIndexDependencies(messages, dependencyEdges.dependenciesByIndex),
-  };
+  return sortDependencyGraph(messages, indexes.byIndex, dependencyEdges.edges, dependencyEdges.inDegree);
 }
 
 function buildDependencyIndexes<T extends { message: GenericMessage }>(messages: T[]): DependencyIndexes<T> {
@@ -394,9 +390,8 @@ function buildDependencyEdges<T extends { message: GenericMessage }>(
   indexes: DependencyIndexes<T>,
 ): DependencyEdges {
   const dependencyEdges: DependencyEdges = {
-    edges               : new Map(),
-    dependenciesByIndex : new Map(),
-    inDegree            : new Array(messages.length).fill(0) as number[],
+    edges    : new Map(),
+    inDegree : new Array(messages.length).fill(0) as number[],
   };
   const addEdge: AddDependencyEdge = (from, to): void => {
     addDependencyEdge(dependencyEdges, from, to);
@@ -424,18 +419,9 @@ function addDependencyEdge(dependencyEdges: DependencyEdges, from: number, to: n
   }
 
   edgeSet.add(to);
-  addIndexDependency(dependencyEdges, from, to);
-}
-
-function addIndexDependency(dependencyEdges: DependencyEdges, from: number, to: number): void {
-  let dependencies = dependencyEdges.dependenciesByIndex.get(to);
-  if (dependencies === undefined) {
-    dependencies = new Set();
-    dependencyEdges.dependenciesByIndex.set(to, dependencies);
-  }
-  dependencies.add(from);
   dependencyEdges.inDegree[to]++;
 }
+
 
 function addDependencyEdgesForMessage<T>(
   index: number,
@@ -661,6 +647,13 @@ function decrementNeighborDegrees(
   }
 }
 
+/**
+ * Kahn's algorithm cannot drain a dependency cycle, so it stops early and
+ * leaves the cyclic remainder unsorted. Rather than fail the whole batch,
+ * append that remainder in feed order and let admission sort it out: the
+ * DWN's Incomplete/Deferred results drive the retry passes that eventually
+ * resolve them. The ordering guarantee is deliberately abandoned here.
+ */
 function appendCyclicEntries<T>(messages: T[], byIndex: Map<number, T>, sorted: T[]): void {
   if (sorted.length >= messages.length) {
     return;
@@ -675,14 +668,3 @@ function appendCyclicEntries<T>(messages: T[], byIndex: Map<number, T>, sorted: 
   }
 }
 
-function entriesByIndexDependencies<T>(
-  messages: T[],
-  dependenciesByIndex: Map<number, Set<number>>,
-): Map<T, T[]> {
-  const dependencies = new Map<T, T[]>();
-  for (let i = 0; i < messages.length; i++) {
-    const indexDependencies = dependenciesByIndex.get(i) ?? new Set();
-    dependencies.set(messages[i], [...indexDependencies].map(index => messages[index]));
-  }
-  return dependencies;
-}

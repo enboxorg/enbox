@@ -138,12 +138,12 @@ describe('SyncLifecycleCoordinator', () => {
     let backgroundCalls = 0;
     let identityCalls = 0;
 
-    coordinator.pauseTaskAdmission();
+    coordinator.pauseTaskIntake();
     await coordinator.runBackgroundTask(async (): Promise<void> => { backgroundCalls++; });
     await coordinator.runIdentityTask(oldIdentityGroup, async (): Promise<void> => { identityCalls++; });
 
     coordinator.clearIdentityTaskGroups();
-    coordinator.resumeTaskAdmission();
+    coordinator.resumeTaskIntake();
     const newIdentityGroup = coordinator.getIdentityTaskGroup('did:example:alice');
     await coordinator.runBackgroundTask(async (): Promise<void> => { backgroundCalls++; });
     await coordinator.runIdentityTask(oldIdentityGroup, async (): Promise<void> => { identityCalls++; });

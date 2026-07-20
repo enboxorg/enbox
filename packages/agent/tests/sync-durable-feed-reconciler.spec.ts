@@ -109,7 +109,7 @@ function createReconciler(syncTarget = target()): ReconcilerFixture {
     admitRemotePage                 : sinon.stub().resolves({ kind: 'processed', admittedCids: [], hasActionableDiffs: false }),
     bootstrapRemotePermissionGrants : sinon.stub().resolves({ kind: 'processed', failures: [], hasActionableDiffs: false, quotaBlocked: false }),
     clearResolvedQuotaOmissions     : sinon.stub().resolves(),
-    getLinkStore                    : sinon.stub().returns(linkStore),
+    getReplicationLinkStore         : sinon.stub().returns(linkStore),
     getOrCreateLink                 : sinon.stub().resolves(link),
     getQuotaBlockCids               : sinon.stub().resolves([]),
     onCheckpointAdvanced            : sinon.stub(),
@@ -240,6 +240,25 @@ describe('SyncDurableFeedReconciler', () => {
     });
   });
 
+  it('should report a paused link as paused rather than converged', async () => {
+    const { reconciler, link } = createReconciler();
+    link.status = 'paused';
+    const pull = sinon.stub(reconciler, 'pull').resolves({});
+    const push = sinon.stub(reconciler, 'push').resolves({});
+    const verify = sinon.stub(reconciler, 'verifyConvergence').resolves({});
+
+    const result = await reconciler.reconcile(target(), { verifyConvergence: true });
+
+    // Nothing ran, so nothing was compared. Convergence must be ABSENT —
+    // reporting `converged: true` here would let a post-repair verification
+    // emit reconcile:completed for a link it never checked.
+    expect(result.paused).toBe(true);
+    expect(result.converged).toBeUndefined();
+    expect(pull.called).toBe(false);
+    expect(push.called).toBe(false);
+    expect(verify.called).toBe(false);
+  });
+
   it('should abort between phases without starting push or verification', async () => {
     const { reconciler } = createReconciler();
     let active = true;
@@ -296,7 +315,7 @@ describe('SyncDurableFeedReconciler', () => {
     fixture.queryFeed.resolves(reply({ cursor: token(1), drained: false }));
 
     await expect(fixture.reconciler.pull(target())).rejects.toThrow(
-      'SyncEngineLevel: pull MessagesQuery cursor did not advance',
+      'SyncDurableFeedReconciler: pull MessagesQuery cursor did not advance',
     );
     expect(fixture.persistCheckpoint.called).toBe(false);
     expect(fixture.operations.onCheckpointAdvanced.called).toBe(false);
@@ -318,7 +337,7 @@ describe('SyncDurableFeedReconciler', () => {
     });
 
     await expect(fixture.reconciler.pull(target())).rejects.toThrow(
-      'SyncEngineLevel: pull deferred for deferred: dependency missing',
+      'SyncDurableFeedReconciler: pull deferred for deferred: dependency missing',
     );
     expect(fixture.operations.onReconcileApplied.calledOnceWith(target(), ['applied'])).toBe(true);
     expect(fixture.persistCheckpoint.called).toBe(false);

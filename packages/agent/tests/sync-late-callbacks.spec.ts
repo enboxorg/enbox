@@ -207,7 +207,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
       throw new Error('Expected live sync to activate a link controller');
     }
 
-    const enqueueSpy = sinon.spy(controller, 'getOrCreatePushRuntime');
+    const enqueueSpy = sinon.spy(controller, 'getOrCreatePushQueue');
 
     await engine.stopSync();
 
@@ -218,7 +218,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     });
 
     expect(enqueueSpy.called).toBe(false);
-    expect(controller.pushRuntime).toBeUndefined();
+    expect(controller.pushQueue).toBeUndefined();
   });
 
   it('should close a remote subscription that resolves after its link lifetime ends', async () => {
@@ -363,18 +363,18 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     const engine = new SyncEngineLevel({ db });
     const linkKey = 'did:example:alice^https://dwn.example.com^projection-1^authorization-1';
     const original = engine['activateLink'](linkKey, makeLink({ status: 'live' }) as never);
-    const pushRuntime = original.getOrCreatePushRuntime({
+    const pushQueue = original.getOrCreatePushQueue({
       did    : target.did,
       dwnUrl : target.dwnUrl,
     });
-    pushRuntime.entries.push({ cid: 'cid-1' });
+    pushQueue.entries.push({ cid: 'cid-1' });
     const transitionStarted = createDeferred();
     const releaseTransition = createDeferred();
     sinon.stub(engine as never, 'pushMessages').resolves({
       failed    : [{ cid: 'cid-1', kind: 'Deferred' }],
       succeeded : [],
     });
-    sinon.stub(engine as never, 'transitionPushResult').callsFake(async () => {
+    sinon.stub(engine as never, 'applyPushResult').callsFake(async () => {
       transitionStarted.resolve();
       await releaseTransition.promise;
       return {
@@ -390,7 +390,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     await flushing;
 
     expect(requeueSpy.called).toBe(false);
-    expect(replacement.pushRuntime).toBeUndefined();
+    expect(replacement.pushQueue).toBeUndefined();
   });
 
   it('should not mark a link online when its lifetime ends during checkpoint persistence', async () => {

@@ -9,7 +9,7 @@ import type {
   SyncHealthSummary,
 } from './types/sync.js';
 
-import { buildDurableLinkIdentityKey } from './sync-link-id.js';
+import { buildDurableLinkIdentityKey } from './sync-link-key.js';
 import { lexicographicalCompare } from './types/sync.js';
 
 /** Current durable identities, or `undefined` when resolution was incomplete. */

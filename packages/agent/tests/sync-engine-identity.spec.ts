@@ -583,7 +583,7 @@ describe('SyncEngineLevel — identity management', () => {
         };
       });
 
-      const settlePass = (engine as any).runLiveIntegrityCheck((engine as any)._runtime);
+      const settlePass = (engine as any).runSettleCheck((engine as any)._runtime);
       await linkStorageReached;
 
       // The re-initialization holds the exclusive sync lock, so the
@@ -660,7 +660,7 @@ describe('SyncEngineLevel — identity management', () => {
         };
       });
 
-      const settlePass = (engine as any).runLiveIntegrityCheck((engine as any)._runtime);
+      const settlePass = (engine as any).runSettleCheck((engine as any)._runtime);
       await linkStorageReached;
 
       let updateSettled = false;
@@ -903,13 +903,13 @@ describe('SyncEngineLevel — identity management', () => {
       const bobTimer = setTimeout(() => {}, 60_000);
       const aliceController = activateTestLink(engine, 'did:example:alice^https://dwn.example.com', 'did:example:alice');
       const bobController = activateTestLink(engine, 'did:example:bob^https://dwn.example.com', 'did:example:bob');
-      aliceController.getOrCreatePushRuntime({ did: 'did:example:alice', dwnUrl: 'https://dwn.example.com' }).timer = aliceTimer;
-      bobController.getOrCreatePushRuntime({ did: 'did:example:bob', dwnUrl: 'https://dwn.example.com' }).timer = bobTimer;
+      aliceController.getOrCreatePushQueue({ did: 'did:example:alice', dwnUrl: 'https://dwn.example.com' }).timer = aliceTimer;
+      bobController.getOrCreatePushQueue({ did: 'did:example:bob', dwnUrl: 'https://dwn.example.com' }).timer = bobTimer;
 
       await (engine as any).removeIdentityFromLiveSync('did:example:alice');
 
-      expect(aliceController.pushRuntime).toBeUndefined();
-      expect(bobController.pushRuntime).toBeDefined();
+      expect(aliceController.pushQueue).toBeUndefined();
+      expect(bobController.pushQueue).toBeDefined();
 
       clearTimeout(bobTimer);
     });
@@ -963,7 +963,7 @@ describe('SyncEngineLevel — identity management', () => {
 
       expect(aliceController.reconcileTimer).toBeUndefined();
       expect(queuedReconcileRan).toBe(false);
-      expect(aliceController.mailboxBusy('reconcile')).toBe(false);
+      expect(aliceController.isMailboxBusy('reconcile')).toBe(false);
       expect(bobController.reconcileTimer).toBeDefined();
       expect((engine as any)._linkControllers.has(aliceController.linkKey)).toBe(false);
 
@@ -1178,7 +1178,7 @@ describe('SyncEngineLevel — identity management', () => {
       expect(openPullStub.calledOnce).toBe(true);
 
       // Cancel the pending timer so it does not fire against a torn-down engine.
-      (engine as any)._runtime.clearTimers((key: string) => key.startsWith('linkInitRetry:'));
+      (engine as any)._runtime.cancelTimers((key: string) => key.startsWith('linkInitRetry:'));
     });
 
     it('addIdentityToLiveSync should establish live sync when the reattempt succeeds after the Retry-After window', async () => {

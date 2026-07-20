@@ -13,7 +13,7 @@ export interface SyncConnectivityEnvironment {
 /** Runtime timer boundary used to keep recovery work inside one sync generation. */
 export interface SyncConnectivityRuntimeScope extends SyncRuntimeHandle {
   armTimeout(key: string, callback: () => void, delayMs: number): void;
-  clearTimer(key: string): void;
+  cancelTimer(key: string): void;
 }
 
 export interface SyncConnectivityManagerOperations {
@@ -21,7 +21,7 @@ export interface SyncConnectivityManagerOperations {
   markActiveLinksOffline(): void;
   runBackgroundTask(operation: () => Promise<void>): Promise<void>;
   /** Run or queue one full integrity check, coalescing with exclusive sync work. */
-  runIntegrityCheck(): Promise<void>;
+  runConvergenceCheck(): Promise<void>;
 }
 
 export type SyncConnectivityManagerParams = {
@@ -29,8 +29,8 @@ export type SyncConnectivityManagerParams = {
   operations: SyncConnectivityManagerOperations;
 };
 
-type SyncIntegrityTrigger = 'online' | 'visibility';
-type ActiveIntegrityCheck = { scope: SyncConnectivityRuntimeScope };
+type SyncConvergenceTrigger = 'online' | 'visibility';
+type ActiveConvergenceCheck = { scope: SyncConnectivityRuntimeScope };
 
 /**
  * Owns sync connectivity state, per-link state folding, and browser
@@ -43,13 +43,13 @@ export class SyncConnectivityManager {
   private readonly _configuredEnvironment: SyncConnectivityEnvironment | undefined;
   private readonly _operations: SyncConnectivityManagerOperations;
   private _activeEnvironment?: SyncConnectivityEnvironment;
-  private _activeIntegrityCheck?: ActiveIntegrityCheck;
+  private _activeConvergenceCheck?: ActiveConvergenceCheck;
   private _hiddenAt?: number;
-  private _lastIntegrityCheckStartedAt?: number;
+  private _lastConvergenceCheckStartedAt?: number;
   private _onOffline?: () => void;
   private _onOnline?: () => void;
   private _onVisibilityChange?: () => void;
-  private _pendingIntegrityTrigger?: SyncIntegrityTrigger;
+  private _pendingConvergenceTrigger?: SyncConvergenceTrigger;
   private _scope?: SyncConnectivityRuntimeScope;
   private _state: SyncConnectivityState = 'unknown';
 
@@ -119,7 +119,7 @@ export class SyncConnectivityManager {
 
   /** Remove browser recovery listeners from the environment used by start(). */
   public stop(): void {
-    this._scope?.clearTimer(SyncConnectivityManager.RECOVERY_TIMER);
+    this._scope?.cancelTimer(SyncConnectivityManager.RECOVERY_TIMER);
 
     const environment = this._activeEnvironment;
     if (environment !== undefined) {
@@ -135,14 +135,14 @@ export class SyncConnectivityManager {
     }
 
     this._activeEnvironment = undefined;
-    this._activeIntegrityCheck = undefined;
+    this._activeConvergenceCheck = undefined;
     this._hiddenAt = undefined;
-    this._lastIntegrityCheckStartedAt = undefined;
+    this._lastConvergenceCheckStartedAt = undefined;
     this._scope = undefined;
     this._onOnline = undefined;
     this._onOffline = undefined;
     this._onVisibilityChange = undefined;
-    this._pendingIntegrityTrigger = undefined;
+    this._pendingConvergenceTrigger = undefined;
   }
 
   private handleOnline(): void {
@@ -150,7 +150,7 @@ export class SyncConnectivityManager {
       return;
     }
 
-    this.scheduleIntegrityCheck('online');
+    this.scheduleConvergenceCheck('online');
   }
 
   private handleOffline(): void {
@@ -160,9 +160,9 @@ export class SyncConnectivityManager {
 
     console.info('SyncConnectivityManager: browser offline');
     this._state = 'offline';
-    this._lastIntegrityCheckStartedAt = undefined;
-    this._pendingIntegrityTrigger = undefined;
-    this._scope?.clearTimer(SyncConnectivityManager.RECOVERY_TIMER);
+    this._lastConvergenceCheckStartedAt = undefined;
+    this._pendingConvergenceTrigger = undefined;
+    this._scope?.cancelTimer(SyncConnectivityManager.RECOVERY_TIMER);
     this._operations.markActiveLinksOffline();
   }
 
@@ -188,29 +188,29 @@ export class SyncConnectivityManager {
       return;
     }
 
-    this.scheduleIntegrityCheck('visibility');
+    this.scheduleConvergenceCheck('visibility');
   }
 
   private isCurrentScope(): boolean {
     return this._scope !== undefined && !this._scope.disposed;
   }
 
-  private scheduleIntegrityCheck(trigger: SyncIntegrityTrigger): void {
+  private scheduleConvergenceCheck(trigger: SyncConvergenceTrigger): void {
     const scope = this._scope;
     if (scope === undefined || scope.disposed) {
       return;
     }
 
-    if (this._activeIntegrityCheck?.scope === scope) {
-      this.scheduleTrailingIntegrityCheck(scope, trigger);
+    if (this._activeConvergenceCheck?.scope === scope) {
+      this.scheduleTrailingConvergenceCheck(scope, trigger);
       return;
     }
 
-    const elapsed = this._lastIntegrityCheckStartedAt === undefined
+    const elapsed = this._lastConvergenceCheckStartedAt === undefined
       ? Number.POSITIVE_INFINITY
-      : Date.now() - this._lastIntegrityCheckStartedAt;
+      : Date.now() - this._lastConvergenceCheckStartedAt;
     if (elapsed < SyncConnectivityManager.RECOVERY_COOLDOWN_MILLISECONDS) {
-      this.scheduleTrailingIntegrityCheck(scope, trigger);
+      this.scheduleTrailingConvergenceCheck(scope, trigger);
       return;
     }
 
@@ -218,10 +218,10 @@ export class SyncConnectivityManager {
     // This check observes every signal received before it starts. Consume any
     // pending trigger and its timer only after the check has actually committed;
     // paths that cannot start yet leave both intact for a later attempt.
-    this._pendingIntegrityTrigger = undefined;
-    scope.clearTimer(SyncConnectivityManager.RECOVERY_TIMER);
-    this._activeIntegrityCheck = check;
-    this._lastIntegrityCheckStartedAt = Date.now();
+    this._pendingConvergenceTrigger = undefined;
+    scope.cancelTimer(SyncConnectivityManager.RECOVERY_TIMER);
+    this._activeConvergenceCheck = check;
+    this._lastConvergenceCheckStartedAt = Date.now();
     const reason = trigger === 'online' ? 'browser online' : 'page visible';
     console.info(`SyncConnectivityManager: ${reason} — starting integrity check`);
     const task = this._operations.runBackgroundTask(async (): Promise<void> => {
@@ -230,7 +230,7 @@ export class SyncConnectivityManager {
       }
 
       try {
-        await this._operations.runIntegrityCheck();
+        await this._operations.runConvergenceCheck();
       } catch (error: unknown) {
         if (scope.disposed) {
           return;
@@ -242,14 +242,14 @@ export class SyncConnectivityManager {
     void task.then(complete, complete);
   }
 
-  private completeIntegrityCheck(check: ActiveIntegrityCheck): void {
-    if (this._scope !== check.scope || this._activeIntegrityCheck !== check) {
+  private completeIntegrityCheck(check: ActiveConvergenceCheck): void {
+    if (this._scope !== check.scope || this._activeConvergenceCheck !== check) {
       return;
     }
 
-    this._activeIntegrityCheck = undefined;
-    if (this._pendingIntegrityTrigger !== undefined) {
-      this.scheduleTrailingIntegrityCheck(check.scope, this._pendingIntegrityTrigger);
+    this._activeConvergenceCheck = undefined;
+    if (this._pendingConvergenceTrigger !== undefined) {
+      this.scheduleTrailingConvergenceCheck(check.scope, this._pendingConvergenceTrigger);
     }
   }
 
@@ -257,26 +257,26 @@ export class SyncConnectivityManager {
     if (
       this._scope !== scope ||
       scope.disposed ||
-      this._activeIntegrityCheck?.scope === scope ||
-      this._pendingIntegrityTrigger === undefined
+      this._activeConvergenceCheck?.scope === scope ||
+      this._pendingConvergenceTrigger === undefined
     ) {
       return;
     }
 
-    this.scheduleIntegrityCheck(this._pendingIntegrityTrigger);
+    this.scheduleConvergenceCheck(this._pendingConvergenceTrigger);
   }
 
-  private scheduleTrailingIntegrityCheck(
+  private scheduleTrailingConvergenceCheck(
     scope: SyncConnectivityRuntimeScope,
-    trigger: SyncIntegrityTrigger,
+    trigger: SyncConvergenceTrigger,
   ): void {
-    this._pendingIntegrityTrigger ??= trigger;
+    this._pendingConvergenceTrigger ??= trigger;
 
-    const elapsed = this._lastIntegrityCheckStartedAt === undefined
+    const elapsed = this._lastConvergenceCheckStartedAt === undefined
       ? SyncConnectivityManager.RECOVERY_COOLDOWN_MILLISECONDS
-      : Date.now() - this._lastIntegrityCheckStartedAt;
+      : Date.now() - this._lastConvergenceCheckStartedAt;
     const delay = Math.max(0, SyncConnectivityManager.RECOVERY_COOLDOWN_MILLISECONDS - elapsed);
-    if (delay === 0 && this._activeIntegrityCheck?.scope === scope) {
+    if (delay === 0 && this._activeConvergenceCheck?.scope === scope) {
       return;
     }
 

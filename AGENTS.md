@@ -658,6 +658,10 @@ Subclasses override: `name`, `_recordProtocolDefinition`, `_recordProperties`, `
 
 The **agent DID** (`agent.agentDid`) is the agent's own identity. The **tenant DID** is the context for store operations. Multi-tenancy is resolved via `getDataStoreTenant()` with priority: explicit tenant > agent DID > DID URI parameter. Store keys use `TENANT_SEPARATOR` (`^`).
 
+## Sync engine vocabulary
+
+The sync subsystem has a canonical vocabulary — one name per concept, one meaning per word — in [`docs/architecture/sync-vocabulary.md`](docs/architecture/sync-vocabulary.md). Read it before adding to or renaming anything in `packages/agent/src/sync-*.ts`. It also records the two splits left knowingly unconverged, and why. A synonym you find in the code is a bug in the code, not a missing entry in the table.
+
 ## SQL schema migrations
 
 Conventions and patterns for Kysely-backed schema changes (DWN store domain + server store domain) live in [`docs/MIGRATIONS.md`](docs/MIGRATIONS.md). Read it before adding a migration, editing `packages/dwn-sql-store/src/migrations/` or `packages/dwn-server/src/migrations/`, or changing any store's `open()` / `initialize()` flow.

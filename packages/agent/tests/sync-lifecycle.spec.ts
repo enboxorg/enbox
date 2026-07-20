@@ -131,7 +131,7 @@ describe('SyncEngineLevel lifecycle', () => {
     const durableFeedReconciler = engine['_durableFeedReconciler'];
     sinon.stub(engine as never, 'getSyncTargets').resolves([target]);
     sinon.stub(durableFeedReconciler, 'pull').resolves({});
-    sinon.stub(engine as never, 'hasAdmissionDeadLetter').resolves(false);
+    sinon.stub(engine as never, 'hasDeadLetter').resolves(false);
     sinon.stub(engine as never, 'getQuotaBlockState').resolves(undefined);
     sinon.stub(engine as never, 'getQuotaBlockedInitialCidsForFeedEntry').resolves([]);
     sinon.stub(engine as never, 'pushMessages').callsFake(async (): Promise<{ acknowledged: never[]; failed: never[]; succeeded: string[] }> => {
@@ -153,7 +153,7 @@ describe('SyncEngineLevel lifecycle', () => {
       }
       return { hasActionableDiffs: result.kind === 'pushed', pushFailures: [] };
     });
-    const transitionPushResult = sinon.spy(engine as never, 'transitionPushResult');
+    const applyPushResult = sinon.spy(engine as never, 'applyPushResult');
 
     const syncPromise = engine.sync();
     await pushStarted.promise;
@@ -164,7 +164,7 @@ describe('SyncEngineLevel lifecycle', () => {
 
     try {
       expect(engine['_linkControllers'].size).toBe(0);
-      expect(transitionPushResult.called).toBe(false);
+      expect(applyPushResult.called).toBe(false);
       expect(closeCompleted).toBe(false);
       expect(db.status).toBe('open');
     } finally {
@@ -172,7 +172,7 @@ describe('SyncEngineLevel lifecycle', () => {
       await Promise.all([syncPromise, closePromise]);
     }
 
-    expect(transitionPushResult.calledOnce).toBe(true);
+    expect(applyPushResult.calledOnce).toBe(true);
     expect(db.status).toBe('closed');
   });
 
@@ -198,7 +198,7 @@ describe('SyncEngineLevel lifecycle', () => {
     sinon.stub(engine['ledger'], 'setStatus').callsFake(async (): Promise<void> => {
       link.status = 'repairing';
     });
-    sinon.stub(engine['_linkRecoveryCoordinator'] as any, 'drainRepairs').callsFake(async (): Promise<void> => {
+    sinon.stub(engine['_linkRecoveryCoordinator'] as any, 'runPendingRepairs').callsFake(async (): Promise<void> => {
       repairStarted.resolve();
       await releaseRepair.promise;
     });
@@ -278,7 +278,7 @@ describe('SyncEngineLevel lifecycle', () => {
       status             : 'live',
       tenantDid          : 'did:example:alice',
     });
-    const pushRuntime = controller.getOrCreatePushRuntime({
+    const pushQueue = controller.getOrCreatePushQueue({
       did    : 'did:example:alice',
       dwnUrl : 'https://dwn.example.com',
     });
@@ -290,8 +290,8 @@ describe('SyncEngineLevel lifecycle', () => {
     });
 
     await livePushCoordinator.requeue(controller, {
-      did        : pushRuntime.did,
-      dwnUrl     : pushRuntime.dwnUrl,
+      did        : pushQueue.did,
+      dwnUrl     : pushQueue.dwnUrl,
       entries    : [{ cid: 'cid-1' }],
       retryCount : 0,
     });
@@ -458,7 +458,7 @@ describe('SyncEngineLevel lifecycle', () => {
     sinon.stub(engine['ledger'], 'setStatus').callsFake(async (): Promise<void> => {
       link.status = 'repairing';
     });
-    sinon.stub(engine['_linkRecoveryCoordinator'] as any, 'drainRepairs').callsFake(async (): Promise<void> => {
+    sinon.stub(engine['_linkRecoveryCoordinator'] as any, 'runPendingRepairs').callsFake(async (): Promise<void> => {
       repairStarted.resolve();
       await releaseRepair.promise;
     });
@@ -515,7 +515,7 @@ describe('SyncEngineLevel lifecycle', () => {
     sinon.stub(engine['ledger'], 'setStatus').callsFake(async (): Promise<void> => {
       bobLink.status = 'repairing';
     });
-    sinon.stub(engine['_linkRecoveryCoordinator'] as any, 'drainRepairs').callsFake(async (): Promise<void> => {
+    sinon.stub(engine['_linkRecoveryCoordinator'] as any, 'runPendingRepairs').callsFake(async (): Promise<void> => {
       repairStarted.resolve();
       await releaseRepair.promise;
     });
@@ -622,7 +622,7 @@ describe('SyncEngineLevel lifecycle', () => {
       status             : 'live',
       tenantDid          : did,
     });
-    const pushRuntime = controller.getOrCreatePushRuntime({
+    const pushQueue = controller.getOrCreatePushQueue({
       did,
       dwnUrl: 'https://dwn.example.com',
     });
@@ -642,8 +642,8 @@ describe('SyncEngineLevel lifecycle', () => {
     });
 
     await livePushCoordinator.requeue(controller, {
-      did        : pushRuntime.did,
-      dwnUrl     : pushRuntime.dwnUrl,
+      did        : pushQueue.did,
+      dwnUrl     : pushQueue.dwnUrl,
       entries    : [{ cid: 'cid-1' }],
       retryCount : 0,
     });
@@ -653,7 +653,7 @@ describe('SyncEngineLevel lifecycle', () => {
     await removeStarted.promise;
 
     try {
-      expect(engine['_linkControllers'].get(linkKey)?.pushRuntime).toBe(pushRuntime);
+      expect(engine['_linkControllers'].get(linkKey)?.pushQueue).toBe(pushQueue);
       expect(await engine.getIdentityOptions(did)).toBeDefined();
     } finally {
       releasePush.resolve();
@@ -696,8 +696,8 @@ describe('SyncEngineLevel lifecycle', () => {
 
     await engine.stopSync();
     await (engine as unknown as {
-      runLiveIntegrityCheck(runtime: unknown): Promise<void>;
-    }).runLiveIntegrityCheck(staleRuntime);
+      runSettleCheck(runtime: unknown): Promise<void>;
+    }).runSettleCheck(staleRuntime);
 
     expect(sync.called).toBe(false);
   });
@@ -738,16 +738,16 @@ describe('SyncEngineLevel lifecycle', () => {
     });
 
     const firstPass = (engine as unknown as {
-      runLiveIntegrityCheck(runtime: unknown): Promise<void>;
-    }).runLiveIntegrityCheck(engine['_runtime']);
+      runSettleCheck(runtime: unknown): Promise<void>;
+    }).runSettleCheck(engine['_runtime']);
     await reachedLinkStorage.promise;
 
     // The pass holds the exclusive sync lock through the re-initialization:
     // a second settle tick arriving now must skip entirely rather than
     // start another convergence run.
     await (engine as unknown as {
-      runLiveIntegrityCheck(runtime: unknown): Promise<void>;
-    }).runLiveIntegrityCheck(engine['_runtime']);
+      runSettleCheck(runtime: unknown): Promise<void>;
+    }).runSettleCheck(engine['_runtime']);
     expect(runStub.callCount).toBe(1);
 
     releaseLinkStorage.resolve();
@@ -782,8 +782,8 @@ describe('SyncEngineLevel lifecycle', () => {
     (engine as any).scheduleLinkInitRetry(target, linkKey, 60_000);
 
     await (engine as unknown as {
-      runLiveIntegrityCheck(runtime: unknown): Promise<void>;
-    }).runLiveIntegrityCheck(engine['_runtime']);
+      runSettleCheck(runtime: unknown): Promise<void>;
+    }).runSettleCheck(engine['_runtime']);
 
     // The pending Retry-After ladder owns the link: the settle pass must
     // neither re-attempt it nor cancel the retry timer.

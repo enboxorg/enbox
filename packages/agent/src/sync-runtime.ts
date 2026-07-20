@@ -67,7 +67,7 @@ export class SyncRuntime implements SyncRuntimeHandle {
     if (this._disposed) {
       return;
     }
-    this.clearTimer(key);
+    this.cancelTimer(key);
     const token = Symbol(key);
     const handle = setInterval((): void => {
       // A firing queued before a replacement or disposal still reaches here;
@@ -89,7 +89,7 @@ export class SyncRuntime implements SyncRuntimeHandle {
     if (this._disposed) {
       return;
     }
-    this.clearTimer(key);
+    this.cancelTimer(key);
     const token = Symbol(key);
     const handle = setTimeout((): void => {
       // Same ownership re-check as intervals: a firing queued before a
@@ -114,16 +114,16 @@ export class SyncRuntime implements SyncRuntimeHandle {
   }
 
   /** Cancel every owned timer whose key satisfies the predicate. */
-  public clearTimers(predicate: (key: string) => boolean): void {
+  public cancelTimers(predicate: (key: string) => boolean): void {
     for (const key of [...this._timers.keys()]) {
       if (predicate(key)) {
-        this.clearTimer(key);
+        this.cancelTimer(key);
       }
     }
   }
 
   /** Cancel one owned timer. Safe for unarmed keys and disposed scopes. */
-  public clearTimer(key: string): void {
+  public cancelTimer(key: string): void {
     const armed = this._timers.get(key);
     if (armed !== undefined) {
       SyncRuntime.clearNativeTimer(armed);

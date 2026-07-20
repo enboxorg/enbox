@@ -19,9 +19,24 @@ export interface SyncEndpointDiscovery {
   getRemoteDwnEndpointUrls(did: string): Promise<string[]>;
 }
 
-/** A canonical replication target for one identity, endpoint, scope, and authorization epoch. */
+/**
+ * A canonical replication target for one identity, endpoint, scope, and
+ * authorization epoch.
+ *
+ * Naming caveat, because it costs readers time: this type and the durable
+ * {@link ReplicationLinkState} describe the same tenant and endpoint under
+ * different field names — `did` here is `tenantDid` there, and `dwnUrl`
+ * here is `remoteEndpoint` there. {@link syncTargetFromLink} is that
+ * mapping and nothing more. The names are NOT converged because `did` and
+ * `dwnUrl` are also the field names on the push-request and push-queue
+ * types, so renaming only this type's fields would need per-site judgment
+ * across ~500 occurrences, many of them in untyped test literals the
+ * compiler cannot check.
+ */
 export type SyncTarget = {
+  /** Tenant DID. Same value as `ReplicationLinkState.tenantDid`. */
   did: string;
+  /** Remote DWN URL. Same value as `ReplicationLinkState.remoteEndpoint`. */
   dwnUrl: string;
   delegateDid?: string;
   projectionId: string;

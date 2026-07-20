@@ -148,7 +148,7 @@ export class SyncPullAbortedError extends Error {
 
 export class SyncDataSizeLimitExceededError extends Error {
   public constructor(dataSize: number) {
-    super(`SyncEngineLevel: RecordsWrite data exceeded descriptor dataSize ${dataSize}.`);
+    super(`SyncMessages: RecordsWrite data exceeded descriptor dataSize ${dataSize}.`);
     this.name = 'SyncDataSizeLimitExceededError';
   }
 }
@@ -292,7 +292,7 @@ async function bufferDataStream(entry: SyncMessageEntry, shouldContinue?: () => 
       assertShouldContinue(shouldContinue);
       totalSize += value.byteLength;
       if (totalSize > MAX_BUFFER_SIZE) {
-        throw new Error('SyncEngineLevel: unexpected large stream while buffering push data.');
+        throw new Error('SyncMessages: unexpected large stream while buffering push data.');
       }
       chunks.push(value);
     }
@@ -433,7 +433,7 @@ export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, permission
           message   : messagesRead.message,
         }) as MessagesReadReply;
       } catch (error: any) {
-        console.error(`SyncEngineLevel: pull - failed to read ${messageCid} from ${dwnUrl}:`, error.message ?? error);
+        console.error(`SyncMessages: pull - failed to read ${messageCid} from ${dwnUrl}:`, error.message ?? error);
         return undefined;
       }
 
@@ -581,7 +581,6 @@ async function readLocalMessage({ author, delegateDid, permissionGrantIds, messa
 }
 
 class RemoteApplyPushContext {
-  private readonly entriesByCid = new Map<string, SyncMessageEntry>();
   private readonly entryCids = new WeakMap<SyncMessageEntry, string>();
   private readonly fetchedDependencyEntries = new Map<string, SyncMessageEntry[]>();
   private readonly fetchedRefs = new Set<string>();
@@ -688,7 +687,7 @@ class RemoteApplyPushContext {
       await bufferSmallStreams([entry]);
     } catch (error: any) {
       const detail = error.message ?? String(error);
-      console.error(`SyncEngineLevel: push error for ${cid}: ${detail}`);
+      console.error(`SyncMessages: push error for ${cid}: ${detail}`);
       if (error instanceof SyncDataSizeLimitExceededError) {
         return {
           kind    : 'failed',
@@ -700,7 +699,7 @@ class RemoteApplyPushContext {
 
     let result: ReplicationApplyResult;
     try {
-      const data = await pushData(entry);
+      const data = await resolvePushPayload(entry);
       this.deps.onBeforeApply?.(cid);
       result = await this.deps.agent.rpc.applyReplicatedMessage({
         dwnUrl    : this.deps.dwnUrl,
@@ -711,7 +710,7 @@ class RemoteApplyPushContext {
     } catch (error: any) {
       const detail = error.message ?? String(error);
       if (error instanceof SyncDataSizeLimitExceededError) {
-        console.error(`SyncEngineLevel: push error for ${cid}: ${detail}`);
+        console.error(`SyncMessages: push error for ${cid}: ${detail}`);
         return { kind: 'failed', failure: this.terminalFailure(rootCid, cid, detail, { kind: 'Invalid', reason: detail }) };
       }
       if (error instanceof DwnRpcError && isQuotaExceededError(error.message, error.data)) {
@@ -722,7 +721,7 @@ class RemoteApplyPushContext {
         // this is an expected, surfaced condition, not an error.
         return { kind: 'failed', failure: this.quotaBlockedFailure(rootCid, cid, detail) };
       }
-      console.error(`SyncEngineLevel: push error for ${cid}: ${detail}`);
+      console.error(`SyncMessages: push error for ${cid}: ${detail}`);
       if (error instanceof DwnRpcError && error.terminal) {
         return { kind: 'failed', failure: this.terminalFailure(rootCid, cid, detail, { kind: 'Invalid', reason: detail }) };
       }
@@ -1121,7 +1120,7 @@ class RemoteApplyPushContext {
 
   private async entryForMessageFeedEntry(entry: NonNullable<MessagesQueryReply['entries']>[number]): Promise<SyncMessageEntry> {
     if (entry.message === undefined) {
-      throw new Error(`SyncEngineLevel: local feed entry ${entry.messageCid} did not include a message.`);
+      throw new Error(`SyncMessages: local feed entry ${entry.messageCid} did not include a message.`);
     }
 
     const messageWithEncodedData = { ...entry.message } as GenericMessage & { encodedData?: string };
@@ -1196,12 +1195,11 @@ class RemoteApplyPushContext {
 
     const cid = await Message.getCid(entry.message);
     this.entryCids.set(entry, cid);
-    this.entriesByCid.set(cid, entry);
     return cid;
   }
 }
 
-async function pushData(entry: SyncMessageEntry): Promise<Blob | ReadableStream<Uint8Array> | undefined> {
+async function resolvePushPayload(entry: SyncMessageEntry): Promise<Blob | ReadableStream<Uint8Array> | undefined> {
   if (entry.bufferedData !== undefined) {
     return new Blob([entry.bufferedData] as BlobPart[], { type: 'application/octet-stream' });
   }
@@ -1233,5 +1231,5 @@ function isRecordsWriteMessage(message: GenericMessage): message is RecordsWrite
 }
 
 function unreachable(value: never): never {
-  throw new Error(`SyncEngineLevel: unreachable sync push branch ${JSON.stringify(value)}`);
+  throw new Error(`SyncMessages: unreachable sync push branch ${JSON.stringify(value)}`);
 }

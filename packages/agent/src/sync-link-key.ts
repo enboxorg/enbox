@@ -1,5 +1,5 @@
 /** Separator used in compound replication link identifiers. */
-export const LINK_ID_SEPARATOR = '^';
+export const LINK_KEY_SEPARATOR = '^';
 
 /**
  * Build the endpoint-independent identity of a durable replication link.
@@ -12,7 +12,7 @@ export function buildDurableLinkIdentityKey(
   projectionId: string,
   authorizationEpoch: string,
 ): string {
-  return `${tenantDid}${LINK_ID_SEPARATOR}${projectionId}${LINK_ID_SEPARATOR}${authorizationEpoch}`;
+  return `${tenantDid}${LINK_KEY_SEPARATOR}${projectionId}${LINK_KEY_SEPARATOR}${authorizationEpoch}`;
 }
 
 /**
@@ -20,11 +20,11 @@ export function buildDurableLinkIdentityKey(
  *
  * Runtime identity is `(tenantDid, remoteEndpoint, projectionId, authorizationEpoch)`.
  */
-export function buildLinkId(
+export function buildLinkKey(
   tenantDid: string,
   remoteEndpoint: string,
   projectionId: string,
   authorizationEpoch: string,
 ): string {
-  return `${tenantDid}${LINK_ID_SEPARATOR}${remoteEndpoint}${LINK_ID_SEPARATOR}${projectionId}${LINK_ID_SEPARATOR}${authorizationEpoch}`;
+  return `${tenantDid}${LINK_KEY_SEPARATOR}${remoteEndpoint}${LINK_KEY_SEPARATOR}${projectionId}${LINK_KEY_SEPARATOR}${authorizationEpoch}`;
 }

@@ -170,7 +170,7 @@ describe('SyncEngineLevel', () => {
       internal._echoSuppressor.trackPulled(tenantDid, messageCid, remoteEndpoint);
       internal._echoSuppressor.trackPushed(tenantDid, messageCid, remoteEndpoint);
 
-      await internal.teardownLiveSync();
+      await internal.stopLiveSync();
 
       expect(internal._echoSuppressor.hasRecentlyPulled(tenantDid, messageCid, remoteEndpoint)).toBe(false);
       expect(internal._echoSuppressor.hasRecentlyPushed(tenantDid, messageCid, remoteEndpoint)).toBe(false);
@@ -218,7 +218,7 @@ describe('SyncEngineLevel', () => {
           throw new Error('stale target resolution was pruned');
         }
       });
-      sinon.stub(internal._quotaManager, 'pruneForCurrentTargets').callsFake(prune);
+      sinon.stub(internal._quotaManager, 'pruneStaleLinkBlocks').callsFake(prune);
 
       const resolution = internal.getSyncTargets();
       await iteratorStarted;
@@ -274,7 +274,7 @@ describe('SyncEngineLevel', () => {
       const pushGate = new Promise<void>((resolve) => { releasePush = resolve; });
       const pushStarted = new Promise<void>((resolve) => { resolvePushStarted = resolve; });
 
-      sinon.stub(internal, 'hasAdmissionDeadLetter').resolves(false);
+      sinon.stub(internal, 'hasDeadLetter').resolves(false);
       sinon.stub(internal, 'getQuotaBlockState').resolves(undefined);
       sinon.stub(internal, 'getQuotaBlockedInitialCidsForFeedEntry').resolves([]);
       sinon.stub(internal, 'pushMessages').callsFake(async () => {
@@ -285,7 +285,7 @@ describe('SyncEngineLevel', () => {
           failed    : [{ cid: 'cid-1', kind: 'Deferred', quotaBlocked: true, reason: 'storage' }],
         };
       });
-      const transition = sinon.stub(internal, 'transitionPushResult');
+      const transition = sinon.stub(internal, 'applyPushResult');
 
       const result = internal.pushLocalFeedPage(target, [{ messageCid: 'cid-1' }], (): boolean => current);
       await pushStarted;
@@ -319,7 +319,7 @@ describe('SyncEngineLevel', () => {
           failed    : [{ cid: 'grant-cid', kind: 'Deferred', quotaBlocked: true, reason: 'messages' }],
         };
       });
-      const transition = sinon.stub(internal, 'transitionPushResult');
+      const transition = sinon.stub(internal, 'applyPushResult');
 
       const result = internal.bootstrapRemotePermissionGrants(grantTarget, (): boolean => current, true);
       await pushStarted;
@@ -368,7 +368,7 @@ describe('SyncEngineLevel', () => {
         db    : {} as any,
       });
       sinon.stub(syncEngine as any, 'getQuotaBlockState').resolves(undefined);
-      const transition = sinon.stub(syncEngine as any, 'transitionPushResult').resolves({
+      const transition = sinon.stub(syncEngine as any, 'applyPushResult').resolves({
         quotaBlocked      : false,
         retryableFailures : [],
         terminalFailures  : [],
@@ -3622,7 +3622,7 @@ describe('SyncEngineLevel', () => {
         syncEngine['activateLink'](linkKey, link);
 
         sinon.stub(syncEngine as any, 'isFeedDivergenceExplainedByQuotaBlocks').resolves(false);
-        const reconcileStub = sinon.stub(syncEngine as any, 'scheduleLinkReconcile');
+        const reconcileStub = sinon.stub(syncEngine as any, 'scheduleLinkReconcileByKey');
         const pauseStub = sinon.stub(syncEngine as any, 'transitionToPaused').resolves();
         await syncEngine['_deadLetterStore'].put({
           errorDetail    : 'admission failed',
@@ -3673,7 +3673,7 @@ describe('SyncEngineLevel', () => {
         await manager.handleVerifiedDivergence(bobContext.target, feedDivergence());
         await manager.handleVerifiedDivergence(bobContext.target, feedDivergence());
 
-        syncEngine['clearIdentityRuntimeState'](alice.did.uri);
+        syncEngine['discardIdentityLinkState'](alice.did.uri);
 
         // Alice's attempt count restarted after identity cleanup; Bob's did not.
         await manager.handleVerifiedDivergence(aliceContext.target, feedDivergence());
@@ -3776,11 +3776,11 @@ describe('SyncEngineLevel', () => {
           const controller = syncEngine['activateLink'](linkKey, link);
 
           // Manually inject a push runtime to simulate pending pushes.
-          const pushRuntime = controller.getOrCreatePushRuntime({
+          const pushQueue = controller.getOrCreatePushQueue({
             did,
             dwnUrl: testDwnUrls[0],
           });
-          pushRuntime.entries.push({ cid: 'cid-1' });
+          pushQueue.entries.push({ cid: 'cid-1' });
 
           // Hot-remove.
           await syncEngine['removeIdentityFromLiveSync'](did);
@@ -3811,12 +3811,12 @@ describe('SyncEngineLevel', () => {
           link.status = 'live';
           const controller = syncEngine['activateLink'](linkKey, link);
 
-          const pushRuntime = controller.getOrCreatePushRuntime({
+          const pushQueue = controller.getOrCreatePushQueue({
             did,
             dwnUrl: testDwnUrls[0],
           });
-          pushRuntime.entries.push({ cid: 'cid-1' });
-          pushRuntime.retryCount = 1;
+          pushQueue.entries.push({ cid: 'cid-1' });
+          pushQueue.retryCount = 1;
 
           // The live-push coordinator ultimately calls the imported pushMessages
           // helper. Stub its underlying agent request and replace the link mid-flight.

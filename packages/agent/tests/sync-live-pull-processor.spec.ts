@@ -447,7 +447,7 @@ describe('SyncLivePullProcessor', () => {
     await staleStarted.promise;
 
     // A repair re-establishes the pull boundary while the delivery admits.
-    context.controller?.resetPullRuntime();
+    context.controller?.resetPullGeneration();
     const fresh = processor.handleEvent(context, event(token('6'), protocolMessage('https://protocol.example/fresh')));
     await freshStarted.promise;
 

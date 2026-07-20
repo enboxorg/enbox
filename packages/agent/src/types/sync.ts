@@ -9,9 +9,7 @@ export function lexicographicalCompare(a: string, b: string): number {
   return 0;
 }
 
-/**
- * The SyncEngine is responsible for syncing messages between the agent and the platform.
- */
+/** Per-identity sync configuration: what to replicate, and under whose authority. */
 export type SyncIdentityOptions = {
   /**
    * The delegate DID that should be used to sign the sync messages.
@@ -121,7 +119,14 @@ export function singleProtocolForSyncScope(scope: SyncScope): string | undefined
   return scope.kind === 'protocolSet' && scope.protocols.length === 1 ? scope.protocols[0] : undefined;
 }
 
-/** Stable base64url SHA-256 hash for canonical JSON objects. */
+/**
+ * Stable base64url SHA-256 hash for canonical JSON objects.
+ *
+ * Callers MUST pass keys in alphabetical order. `JSON.stringify` preserves
+ * insertion order, so key order changes the hash — and these hashes are
+ * persisted as projection IDs and authorization epochs, which means a
+ * reordered literal silently invalidates every stored link identity.
+ */
 async function hashCanonicalObject(value: Record<string, unknown>): Promise<string> {
   const json = JSON.stringify(value);
   const bytes = new TextEncoder().encode(json);
@@ -300,18 +305,17 @@ export type ReplicationLinkState = {
 // Push result (per-CID outcome tracking)
 // ---------------------------------------------------------------------------
 
-/**
- * Result of a batch push operation. Replaces the previous throw-on-first-failure
- * pattern so callers can retry transient failures, dead-letter terminal
- * failures, and mark links for later reconciliation.
- */
-/** A failed push root with diagnostic info from the latest attempt. */
+/** Why a push root failed to converge, as classified by the remote's apply result. */
 export type PushFailureKind = 'Invalid' | 'Deferred' | 'Incomplete';
 
+/** A failed push root with diagnostic info from the latest attempt. */
 export type PushFailure = {
   /** Requested root CID whose push did not converge. */
   cid: string;
-  /** Root protocol URI, when known from the local feed entry. */
+  /**
+   * Root protocol URI. The push path never sets this — it is filled in
+   * downstream from the link scope or the quota-probe options.
+   */
   protocol?: string;
   /** Non-root dependency CID that caused this root to fail, when applicable. */
   dependencyCid?: string;
@@ -348,6 +352,11 @@ export type PushAcknowledgement = {
   resolution: PushSuccessResolution;
 };
 
+/**
+ * Result of a batch push operation. Replaces the previous throw-on-first-failure
+ * pattern so callers can retry transient failures, dead-letter terminal
+ * failures, and mark links for later reconciliation.
+ */
 export type PushResult = {
   /** Requested root messageCids that reached Applied, Duplicate, or Superseded. */
   succeeded: string[];
@@ -805,7 +814,7 @@ export interface SyncEngine {
    * (via push or pull), so the list reflects current health — not historical
    * incidents. Sorted newest-first by `failedAt`.
    */
-  getFailedMessages(tenantDid?: string): Promise<DeadLetterEntry[]>;
+  getDeadLetters(tenantDid?: string): Promise<DeadLetterEntry[]>;
 
   /**
    * Remove dead letter entries for a CID. When `remoteEndpoint` is provided,
@@ -813,12 +822,12 @@ export interface SyncEngine {
    * it, all entries for the CID (across all remotes) are removed. Returns
    * `true` if at least one entry was found and removed.
    */
-  clearFailedMessage(messageCid: string, remoteEndpoint?: string): Promise<boolean>;
+  clearDeadLetter(messageCid: string, remoteEndpoint?: string): Promise<boolean>;
 
   /**
    * Clear all dead letter entries, optionally scoped to a tenant.
    */
-  clearAllFailedMessages(tenantDid?: string): Promise<void>;
+  clearAllDeadLetters(tenantDid?: string): Promise<void>;
 
   /**
    * Returns a summary of sync health: connectivity, failed message count,

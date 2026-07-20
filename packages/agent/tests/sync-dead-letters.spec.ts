@@ -40,7 +40,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
     await recordDeadLetter({ messageCid: 'cid-1', tenantDid: 'did:example:alice' });
     await recordDeadLetter({ messageCid: 'cid-2', tenantDid: 'did:example:bob' });
 
-    const aliceFailures = await syncEngine.getFailedMessages('did:example:alice');
+    const aliceFailures = await syncEngine.getDeadLetters('did:example:alice');
 
     expect(aliceFailures).toHaveLength(1);
     expect(aliceFailures[0].messageCid).toBe('cid-1');
@@ -51,10 +51,10 @@ describe('SyncEngineLevel dead letter tracking', () => {
     await recordDeadLetter({ messageCid: 'cid-shared', remoteEndpoint: 'https://a.example', tenantDid: 'did:example:alice' });
     await recordDeadLetter({ messageCid: 'cid-shared', remoteEndpoint: 'https://b.example', tenantDid: 'did:example:alice' });
 
-    const cleared = await syncEngine.clearFailedMessage('cid-shared', 'https://a.example');
+    const cleared = await syncEngine.clearDeadLetter('cid-shared', 'https://a.example');
 
     expect(cleared).toBe(true);
-    expect(await syncEngine.getFailedMessages('did:example:alice')).toMatchObject([
+    expect(await syncEngine.getDeadLetters('did:example:alice')).toMatchObject([
       { messageCid: 'cid-shared', remoteEndpoint: 'https://b.example' },
     ]);
   });
@@ -76,8 +76,8 @@ describe('SyncEngineLevel dead letter tracking', () => {
       scope              : { kind: 'full' },
     });
 
-    expect(await syncEngine.getFailedMessages('did:example:alice')).toHaveLength(0);
-    expect(await syncEngine.getFailedMessages('did:example:bob')).toMatchObject([
+    expect(await syncEngine.getDeadLetters('did:example:alice')).toHaveLength(0);
+    expect(await syncEngine.getDeadLetters('did:example:bob')).toMatchObject([
       { messageCid: 'cid-shared', remoteEndpoint },
     ]);
   });
@@ -89,14 +89,14 @@ describe('SyncEngineLevel dead letter tracking', () => {
         sublevel: (): { del: typeof del } => ({ del }),
       } as never,
     }) as unknown as {
-      clearFailedMessageForTenant(tenantDid: string, messageCid: string, remoteEndpoint: string): Promise<void>;
+      clearDeadLetterForTenant(tenantDid: string, messageCid: string, remoteEndpoint: string): Promise<void>;
     };
 
     del.rejects(Object.assign(new Error('database closed'), { code: 'LEVEL_DATABASE_NOT_OPEN' }));
-    await expect(internal.clearFailedMessageForTenant('did:example:alice', 'cid', 'https://dwn.example')).resolves.toBeUndefined();
+    await expect(internal.clearDeadLetterForTenant('did:example:alice', 'cid', 'https://dwn.example')).resolves.toBeUndefined();
 
     del.rejects(Object.assign(new Error('write failed'), { code: 'LEVEL_IO_ERROR' }));
-    await expect(internal.clearFailedMessageForTenant('did:example:alice', 'cid', 'https://dwn.example')).rejects.toThrow('write failed');
+    await expect(internal.clearDeadLetterForTenant('did:example:alice', 'cid', 'https://dwn.example')).rejects.toThrow('write failed');
   });
 
   it('should suppress only the expected database-close race while recording a failure', async () => {
@@ -124,10 +124,10 @@ describe('SyncEngineLevel dead letter tracking', () => {
     await recordDeadLetter({ messageCid: 'cid-1', tenantDid: 'did:example:alice' });
     await recordDeadLetter({ messageCid: 'cid-2', tenantDid: 'did:example:bob' });
 
-    await syncEngine.clearAllFailedMessages('did:example:alice');
+    await syncEngine.clearAllDeadLetters('did:example:alice');
 
-    expect(await syncEngine.getFailedMessages('did:example:alice')).toHaveLength(0);
-    expect(await syncEngine.getFailedMessages('did:example:bob')).toHaveLength(1);
+    expect(await syncEngine.getDeadLetters('did:example:alice')).toHaveLength(0);
+    expect(await syncEngine.getDeadLetters('did:example:bob')).toHaveLength(1);
   });
 
   it('should report unhealthy sync while failures are recorded', async () => {
@@ -162,7 +162,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
 
     expect(promoted).toBe(true);
     expect(await db.sublevel('deferredPulls').values().all()).toEqual([]);
-    expect(await syncEngine.getFailedMessages(tenantDid)).toMatchObject([{
+    expect(await syncEngine.getDeadLetters(tenantDid)).toMatchObject([{
       errorCode: 'Deferred',
       messageCid,
       remoteEndpoint,
@@ -209,7 +209,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
     // The expiry promoted the aged deferral; the serialized admission then
     // cleaned both the retry state and the dead letter it had just written.
     expect(await store.get(tenantDid, messageCid, remoteEndpoint)).toBeUndefined();
-    expect(await syncEngine.getFailedMessages(tenantDid)).toEqual([]);
+    expect(await syncEngine.getDeadLetters(tenantDid)).toEqual([]);
   });
 
   it('should clear deferred-pull retry state when an identity is unregistered', async () => {
@@ -258,7 +258,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
 
     expect(await unregisterEngine.getIdentityOptions(tenantDid)).toBeUndefined();
     expect(await store.get(tenantDid, messageCid, remoteEndpoint)).toBeUndefined();
-    expect(await syncEngine.getFailedMessages(tenantDid)).toEqual([]);
+    expect(await syncEngine.getDeadLetters(tenantDid)).toEqual([]);
   });
 
   it('should reject stale deferred work from another engine after unregister', async () => {
@@ -274,20 +274,20 @@ describe('SyncEngineLevel dead letter tracking', () => {
     await unregisterEngine.unregisterIdentity(tenantDid);
 
     const staleInternal = staleEngine as unknown as {
-      deadLetterExpiredDeferredPull(
+      tryRetireDeferredPull(
         target: SyncTarget,
         entry: MessagesQueryReplyEntry,
         detail: string | undefined,
       ): Promise<boolean>;
     };
-    expect(await staleInternal.deadLetterExpiredDeferredPull(
+    expect(await staleInternal.tryRetireDeferredPull(
       staleTarget,
       { messageCid },
       'dependency unavailable',
     )).toBe(true);
 
     expect(await store.get(tenantDid, messageCid, remoteEndpoint)).toBeUndefined();
-    expect(await syncEngine.getFailedMessages(tenantDid)).toEqual([]);
+    expect(await syncEngine.getDeadLetters(tenantDid)).toEqual([]);
     expect(await unregisterEngine.getIdentityOptions(tenantDid)).toBeUndefined();
   });
 
@@ -436,13 +436,13 @@ describe('SyncEngineLevel dead letter tracking', () => {
     detail: string | undefined,
   ) => Promise<boolean> {
     const internal = engine as unknown as {
-      deadLetterExpiredDeferredPull(
+      tryRetireDeferredPull(
         target: SyncTarget,
         entry: MessagesQueryReplyEntry,
         detail: string | undefined,
       ): Promise<boolean>;
     };
-    return internal.deadLetterExpiredDeferredPull.bind(internal);
+    return internal.tryRetireDeferredPull.bind(internal);
   }
 
   function deferredState({ attempts = 1, aged = false, detail }: {

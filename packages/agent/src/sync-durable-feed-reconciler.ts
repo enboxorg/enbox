@@ -4,7 +4,7 @@ import type { SyncReplicationLinkStore } from './sync-replication-link-store.js'
 import type { SyncTarget } from './sync-target-resolver.js';
 import type { PushFailure, ReplicationLinkState, SyncDirection } from './types/sync.js';
 
-import { buildLinkId } from './sync-link-id.js';
+import { buildLinkKey } from './sync-link-key.js';
 import { isValidProgressToken, SyncCheckpoint } from './sync-checkpoint.js';
 
 /** Options controlling one durable-feed reconciliation cycle. */
@@ -18,9 +18,21 @@ export type SyncDurableFeedReconcileOptions = {
 export type SyncDurableFeedReconcileResult = {
   aborted?: boolean;
   admittedCids?: string[];
+  /**
+   * Tri-state, and callers must treat it as such: `true` means fingerprints
+   * were compared and matched, `false` means they were compared and did not,
+   * and ABSENT means convergence was never established — the cycle did not
+   * verify, or never ran at all (see {@link paused}). Never infer
+   * convergence from a missing `false`.
+   */
   converged?: boolean;
   hasActionableDiffs?: boolean;
   localFingerprint?: string;
+  /**
+   * The link was parked, so the cycle returned without reconciling anything.
+   * Distinct from converged and from divergent: nothing was compared.
+   */
+  paused?: boolean;
   pushFailures?: PushFailure[];
   quotaBlocked?: boolean;
   remoteFingerprint?: string;
@@ -68,7 +80,7 @@ export interface SyncDurableFeedReconcilerOperations {
 
   clearResolvedQuotaOmissions(target: SyncTarget): Promise<void>;
 
-  getLinkStore(): SyncReplicationLinkStore;
+  getReplicationLinkStore(): SyncReplicationLinkStore;
 
   getOrCreateLink(target: SyncTarget): Promise<ReplicationLinkState>;
 
@@ -120,19 +132,24 @@ export class SyncDurableFeedReconciler {
     this._operations = operations;
   }
 
-  /** Reconcile one target, serializing work only with the same complete link. */
+  /**
+   * Reconcile one target. Runs serialize per full link identity
+   * `(did, dwnUrl, projectionId, authorizationEpoch)` — a different
+   * projection or authorization epoch is a different queue and runs
+   * concurrently.
+   */
   public async reconcile(
     target: SyncTarget,
     options?: SyncDurableFeedReconcileOptions,
     shouldContinue?: () => boolean,
   ): Promise<SyncDurableFeedReconcileResult> {
-    const linkKey = buildLinkId(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
+    const linkKey = buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
     const previous = this._runs.get(linkKey) ?? Promise.resolve();
     const run = previous.catch((): void => {
       // A failed predecessor must not poison this link's queue.
     }).then(async (): Promise<SyncDurableFeedReconcileResult> => {
       if (SyncDurableFeedReconciler.shouldAbort(shouldContinue)) {
-        return { ...SyncDurableFeedReconciler.emptyResult(options), aborted: true };
+        return { ...SyncDurableFeedReconciler.initialResult(options), aborted: true };
       }
       return this.reconcileTarget(target, options, shouldContinue);
     });
@@ -241,11 +258,17 @@ export class SyncDurableFeedReconciler {
     options?: SyncDurableFeedReconcileOptions,
     shouldContinue?: () => boolean,
   ): Promise<SyncDurableFeedReconcileResult> {
-    const result = SyncDurableFeedReconciler.emptyResult(options);
     const link = await this._operations.getOrCreateLink(target);
     if (link.status === 'paused') {
-      return result;
+      // Parked: nothing is reconciled and no fingerprints are compared, so
+      // convergence is UNKNOWN — report it as such rather than inheriting
+      // the optimistic seed. Claiming `converged: true` here let a
+      // post-repair verification emit `reconcile:completed` for a link it
+      // never checked. Built without options so no `converged` key exists.
+      return { ...SyncDurableFeedReconciler.initialResult(), paused: true };
     }
+
+    const result = SyncDurableFeedReconciler.initialResult(options);
 
     const pullResult = await this.pull(target, options, shouldContinue);
     SyncDurableFeedReconciler.mergeResult(result, pullResult, options);
@@ -323,7 +346,7 @@ export class SyncDurableFeedReconciler {
       }
 
       hasActionableDiffs ||= pageResult.hasActionableDiffs;
-      const cursorAdvance = await this.advanceCursor(link, 'pull', cursor, reply, target);
+      const cursorAdvance = await this.commitPageProgress(link, 'pull', cursor, reply, target);
       if (cursorAdvance.drained) {
         return { admittedCids, hasActionableDiffs, remoteFingerprint: reply.fingerprint };
       }
@@ -384,7 +407,7 @@ export class SyncDurableFeedReconciler {
       }
 
       hasActionableDiffs ||= pageResult.hasActionableDiffs;
-      const cursorAdvance = await this.advanceCursor(link, 'pull', cursor, reply, target);
+      const cursorAdvance = await this.commitPageProgress(link, 'pull', cursor, reply, target);
       if (cursorAdvance.drained) {
         return { admittedCids, hasActionableDiffs, remoteFingerprint: reply.fingerprint };
       }
@@ -432,7 +455,7 @@ export class SyncDurableFeedReconciler {
         return { hasActionableDiffs, pushFailures: pageResult.failures };
       }
 
-      const cursorAdvance = await this.advanceCursor(link, 'push', cursor, reply, target);
+      const cursorAdvance = await this.commitPageProgress(link, 'push', cursor, reply, target);
       if (cursorAdvance.drained) {
         return { hasActionableDiffs, localFingerprint: reply.fingerprint, pushFailures: [] };
       }
@@ -514,7 +537,7 @@ export class SyncDurableFeedReconciler {
         remoteCids.add(entry.messageCid);
       }
 
-      const cursorAdvance = await this.advanceCursor(link, 'push', cursor, reply, target);
+      const cursorAdvance = await this.commitPageProgress(link, 'push', cursor, reply, target);
       if (cursorAdvance.drained) {
         return { hasActionableDiffs, localFingerprint: reply.fingerprint, pushFailures: [] };
       }
@@ -591,14 +614,14 @@ export class SyncDurableFeedReconciler {
         this._operations.onReconcileApplied(target, admittedCids);
       }
       throw new Error(
-        `SyncEngineLevel: pull deferred for ${pageResult.messageCid}: ${pageResult.detail ?? 'dependency unavailable'}`,
+        `SyncDurableFeedReconciler: pull deferred for ${pageResult.messageCid}: ${pageResult.detail ?? 'dependency unavailable'}`,
       );
     }
 
     return { kind: 'processed', hasActionableDiffs: pageResult.hasActionableDiffs };
   }
 
-  private async advanceCursor(
+  private async commitPageProgress(
     link: ReplicationLinkState,
     direction: SyncDirection,
     previousCursor: ProgressToken | undefined,
@@ -613,7 +636,7 @@ export class SyncDurableFeedReconciler {
       }
       const label = direction === 'push' ? 'local MessagesQuery' : 'MessagesQuery';
       throw new Error(
-        `SyncEngineLevel: ${label} for ${target.did} -> ${target.dwnUrl} returned no cursor before drain`,
+        `SyncDurableFeedReconciler: ${label} for ${target.did} -> ${target.dwnUrl} returned no cursor before drain`,
       );
     }
 
@@ -626,7 +649,7 @@ export class SyncDurableFeedReconciler {
       direction,
     );
     SyncCheckpoint.commitContiguousToken(checkpoint, reply.cursor);
-    await this._operations.getLinkStore().persistCheckpoint(link, direction);
+    await this._operations.getReplicationLinkStore().persistCheckpoint(link, direction);
     this._operations.onCheckpointAdvanced(link, direction);
 
     return drained ? { drained: true } : { cursor: reply.cursor, drained: false };
@@ -638,11 +661,15 @@ export class SyncDurableFeedReconciler {
     direction: SyncDirection,
     alreadyReset: boolean,
   ): Promise<boolean> {
+    // 410 = ProgressGap: the stored token is no longer replayable, so reset
+    // the checkpoint and restart from the diff path. Only once per loop —
+    // `alreadyReset` makes a remote that keeps reporting gaps fall through
+    // to assertQuerySucceeded and surface as an error instead of spinning.
     if (reply.status.code !== 410 || alreadyReset) {
       return false;
     }
 
-    await this._operations.getLinkStore().resetCheckpoint(link, direction);
+    await this._operations.getReplicationLinkStore().resetCheckpoint(link, direction);
     return true;
   }
 
@@ -656,13 +683,13 @@ export class SyncDurableFeedReconciler {
   ): void {
     if (!isValidProgressToken(nextCursor)) {
       throw new Error(
-        `SyncEngineLevel: ${direction} MessagesQuery returned an invalid cursor for ${link.tenantDid} -> ${dwnUrl}`,
+        `SyncDurableFeedReconciler: ${direction} MessagesQuery returned an invalid cursor for ${link.tenantDid} -> ${dwnUrl}`,
       );
     }
 
     if (!SyncCheckpoint.validateTokenDomain(link[direction], nextCursor)) {
       throw new Error(
-        `SyncEngineLevel: ${direction} MessagesQuery token domain mismatch for ${link.tenantDid} -> ${dwnUrl}`,
+        `SyncDurableFeedReconciler: ${direction} MessagesQuery token domain mismatch for ${link.tenantDid} -> ${dwnUrl}`,
       );
     }
 
@@ -673,7 +700,7 @@ export class SyncDurableFeedReconciler {
     const comparison = SyncCheckpoint.comparePosition(nextCursor, previousCursor);
     if (comparison < 0 || (comparison === 0 && !drained)) {
       throw new Error(
-        `SyncEngineLevel: ${direction} MessagesQuery cursor did not advance for ${link.tenantDid} -> ${dwnUrl}`,
+        `SyncDurableFeedReconciler: ${direction} MessagesQuery cursor did not advance for ${link.tenantDid} -> ${dwnUrl}`,
       );
     }
   }
@@ -686,13 +713,22 @@ export class SyncDurableFeedReconciler {
     if (reply.status.code !== 200) {
       const label = direction === 'push' ? 'local MessagesQuery' : 'MessagesQuery';
       throw new Error(
-        `SyncEngineLevel: ${label} failed for ${target.did} -> ${target.dwnUrl}: ` +
+        `SyncDurableFeedReconciler: ${label} failed for ${target.did} -> ${target.dwnUrl}: ` +
         `${reply.status.code} ${reply.status.detail}`,
       );
     }
   }
 
-  private static emptyResult(options?: SyncDurableFeedReconcileOptions): SyncDurableFeedReconcileResult {
+  /**
+   * The neutral result a cycle starts from and merges into.
+   *
+   * `converged` starts OPTIMISTIC when convergence verification is
+   * requested: only `mergeResult` ever drives it to `false`. A path that
+   * returns this untouched therefore reports convergence without having
+   * compared fingerprints — which is what a paused link does deliberately,
+   * since it has nothing to reconcile.
+   */
+  private static initialResult(options?: SyncDurableFeedReconcileOptions): SyncDurableFeedReconcileResult {
     return {
       admittedCids       : [],
       ...(options?.verifyConvergence === true ? { converged: true } : {}),
@@ -750,13 +786,13 @@ export class SyncDurableFeedReconciler {
         return { drained: true };
       }
       throw new Error(
-        `SyncEngineLevel: ${source} MessagesQuery for ${target.did} -> ${target.dwnUrl} returned no cursor before drain`,
+        `SyncDurableFeedReconciler: ${source} MessagesQuery for ${target.did} -> ${target.dwnUrl} returned no cursor before drain`,
       );
     }
 
     if (!isValidProgressToken(reply.cursor)) {
       throw new Error(
-        `SyncEngineLevel: ${source} MessagesQuery returned an invalid cursor for ${target.did} -> ${target.dwnUrl}`,
+        `SyncDurableFeedReconciler: ${source} MessagesQuery returned an invalid cursor for ${target.did} -> ${target.dwnUrl}`,
       );
     }
 

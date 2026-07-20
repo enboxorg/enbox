@@ -863,7 +863,7 @@ describe('E2E Multi-Agent Sync', () => {
         },
       });
       await deviceHarness.agent.sync.sync('pull');
-      expect(await deviceHarness.agent.sync.getFailedMessages(alice.did.uri)).toEqual([]);
+      expect(await deviceHarness.agent.sync.getDeadLetters(alice.did.uri)).toEqual([]);
 
       const localGrantKeyQuery = await deviceHarness.agent.dwn.processRequest({
         author        : delegateDid,
@@ -1110,7 +1110,7 @@ describe('E2E Multi-Agent Sync', () => {
         },
       });
       await deviceHarness.agent.sync.sync('pull');
-      expect(await deviceHarness.agent.sync.getFailedMessages(alice.did.uri)).toEqual([]);
+      expect(await deviceHarness.agent.sync.getDeadLetters(alice.did.uri)).toEqual([]);
 
       const localFeedQuery = await deviceHarness.agent.dwn.processRequest({
         author        : alice.did.uri,

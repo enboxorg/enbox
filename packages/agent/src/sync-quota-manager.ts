@@ -11,7 +11,7 @@ import type {
 
 import { DwnInterfaceName, DwnMethodName, Message } from '@enbox/dwn-sdk-js';
 
-import { buildLinkId } from './sync-link-id.js';
+import { buildLinkKey } from './sync-link-key.js';
 import { isInitialWriteForRecord, isRecordsWriteForRecord, recordIdForRecordsMessage } from './sync-messages.js';
 import { isQuotaBlockedPushFailure, isTerminalPushFailure, lexicographicalCompare, protocolsForSyncScope } from './types/sync.js';
 
@@ -22,7 +22,7 @@ export type SyncQuotaBlockEntry = {
 };
 
 /** Folded quota and failure state produced by one push result. */
-export type SyncQuotaPushResultTransition = {
+export type SyncQuotaPushResultOutcome = {
   nextQuotaProbeAt?: string;
   quotaBlocked: boolean;
   retryableFailures: PushFailure[];
@@ -37,7 +37,7 @@ export type SyncQuotaPushTransitionOptions = {
 
 /** Engine-owned effects required by backend-neutral quota policy. */
 export interface SyncQuotaManagerOperations {
-  clearFailedMessage(target: SyncTarget, messageCid: string): Promise<void>;
+  clearDeadLetterForTenant(target: SyncTarget, messageCid: string): Promise<void>;
 
   collectLocalFeedCids(target: SyncTarget): Promise<Set<string> | undefined>;
 
@@ -91,12 +91,12 @@ export class SyncQuotaManager {
     return this._store.deleteForTenant(tenantDid);
   }
 
-  public getAllStates(): Promise<SyncQuotaBlockState[]> {
+  public getAllBlockStates(): Promise<SyncQuotaBlockState[]> {
     return this._store.getAll();
   }
 
   public getLinkKey(target: SyncTarget): string {
-    return buildLinkId(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
+    return buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
   }
 
   public getState(target: SyncTarget, messageCid: string): Promise<SyncQuotaBlockState | undefined> {
@@ -153,12 +153,12 @@ export class SyncQuotaManager {
   }
 
   /** Apply push outcomes consistently for feed, live, bootstrap, and direct probes. */
-  public async transitionPushResult(
+  public async applyPushResult(
     target: SyncTarget,
     result: PushResult,
     options?: SyncQuotaPushTransitionOptions,
-  ): Promise<SyncQuotaPushResultTransition> {
-    const transition: SyncQuotaPushResultTransition = {
+  ): Promise<SyncQuotaPushResultOutcome> {
+    const transition: SyncQuotaPushResultOutcome = {
       quotaBlocked      : false,
       retryableFailures : [],
       terminalFailures  : [],
@@ -218,7 +218,7 @@ export class SyncQuotaManager {
     }
   }
 
-  public async pruneForCurrentTargets(
+  public async pruneStaleLinkBlocks(
     targets: SyncTarget[],
     isCurrent: () => boolean,
   ): Promise<void> {
@@ -234,12 +234,12 @@ export class SyncQuotaManager {
   }
 
   public async getActiveBlocksForTarget(target: SyncTarget): Promise<SyncQuotaBlockEntry[]> {
-    return (await this.getStatesForTarget(target))
+    return (await this.getBlocksForTarget(target))
       .filter(({ state }) => state.supersededAt === undefined);
   }
 
   /** Includes resolved omissions retained solely for exact feed-divergence accounting. */
-  public async getStatesForTarget(target: SyncTarget): Promise<SyncQuotaBlockEntry[]> {
+  public async getBlocksForTarget(target: SyncTarget): Promise<SyncQuotaBlockEntry[]> {
     const linkKey = this.getLinkKey(target);
     const targetProtocols = protocolsForSyncScope(target.scope);
     const states = await this._store.getForTenant(target.did);
@@ -250,7 +250,7 @@ export class SyncQuotaManager {
   }
 
   public async clearResolvedOmissionsForTarget(target: SyncTarget): Promise<void> {
-    for (const { messageCid, state } of await this.getStatesForTarget(target)) {
+    for (const { messageCid, state } of await this.getBlocksForTarget(target)) {
       if (state.supersededAt !== undefined) {
         await this.clearBlock(target, messageCid);
       }
@@ -278,11 +278,11 @@ export class SyncQuotaManager {
    * Return whether every exact feed difference is explained by this link's
    * durable quota omissions, reconciling locally retired rows along the way.
    */
-  public async isFeedDivergenceExplained(
+  public async reconcileAndExplainFeedDivergence(
     target: SyncTarget,
     result: { quotaBlocked?: boolean },
   ): Promise<boolean> {
-    let blocks = await this.getStatesForTarget(target);
+    let blocks = await this.getBlocksForTarget(target);
     if (blocks.length === 0) { return false; }
 
     if (result.quotaBlocked === true && blocks.some(({ state }) => state.source === 'permission-grant')) {
@@ -299,7 +299,7 @@ export class SyncQuotaManager {
       await this.reconcileBlockAgainstFeed(target, block, localCids, remoteCids);
     }
 
-    blocks = await this.getStatesForTarget(target);
+    blocks = await this.getBlocksForTarget(target);
     if (blocks.length === 0) {
       return localCids.size === remoteCids.size &&
         [...localCids].every((cid) => remoteCids.has(cid));
@@ -313,7 +313,7 @@ export class SyncQuotaManager {
       localOnly.every((cid) => omittedCids.has(cid));
   }
 
-  private async clearBlockWithResolution(
+  private async resolveBlock(
     target: SyncTarget,
     messageCid: string,
     resolution: PushSuccessResolution,
@@ -391,7 +391,7 @@ export class SyncQuotaManager {
     expected: SyncQuotaBlockState,
   ): Promise<void> {
     const current = await this.getState(target, messageCid);
-    if (SyncQuotaManager.blockChangedSince(current, expected) || current === undefined) {
+    if (SyncQuotaManager.hasBlockChanged(current, expected) || current === undefined) {
       return;
     }
 
@@ -405,8 +405,8 @@ export class SyncQuotaManager {
   ): Promise<void> {
     const hasActiveBlocks = (await this.getActiveBlocksForTarget(target)).length > 0;
     for (const acknowledgement of acknowledgementsByCid.values()) {
-      await this._operations.clearFailedMessage(target, acknowledgement.cid);
-      await this.clearBlockWithResolution(
+      await this._operations.clearDeadLetterForTenant(target, acknowledgement.cid);
+      await this.resolveBlock(
         target,
         acknowledgement.cid,
         acknowledgement.resolution,
@@ -422,7 +422,7 @@ export class SyncQuotaManager {
     target: SyncTarget,
     failure: PushFailure,
     source: SyncQuotaBlockSource | undefined,
-    transition: SyncQuotaPushResultTransition,
+    transition: SyncQuotaPushResultOutcome,
   ): Promise<void> {
     if (isQuotaBlockedPushFailure(failure)) {
       const state = await this.recordBlock(
@@ -444,7 +444,7 @@ export class SyncQuotaManager {
       return;
     }
     if (failure.localMissing === true && previousBlock !== undefined) {
-      await this.clearBlockWithResolution(target, failure.cid, 'superseded');
+      await this.resolveBlock(target, failure.cid, 'superseded');
       return;
     }
 
@@ -473,7 +473,7 @@ export class SyncQuotaManager {
   }
 
   private static markTransitionQuotaBlocked(
-    transition: SyncQuotaPushResultTransition,
+    transition: SyncQuotaPushResultOutcome,
     state: SyncQuotaBlockState,
   ): void {
     transition.quotaBlocked = true;
@@ -513,8 +513,7 @@ export class SyncQuotaManager {
   ): Promise<void> {
     // Staleness across the awaits below is the CALLER's fence: the engine
     // composes a runtime-transition check into every shouldContinue it
-    // threads down, so probes abort mid-flight on start/stop/clear exactly
-    // as the old internal engine-generation reads did.
+    // threads down, so probes abort mid-flight on start/stop/clear.
     if (SyncQuotaManager.shouldAbort(shouldContinue)) { return; }
     const state = await this.getState(target, messageCid);
     if (state === undefined || state.source === 'permission-grant' || state.supersededAt !== undefined) { return; }
@@ -544,10 +543,10 @@ export class SyncQuotaManager {
       return;
     }
     const currentState = await this.getState(target, messageCid);
-    if (SyncQuotaManager.blockChangedSince(currentState, state)) {
+    if (SyncQuotaManager.hasBlockChanged(currentState, state)) {
       return;
     }
-    await this.transitionPushResult(target, result, { protocol: state.protocol, source: state.source });
+    await this.applyPushResult(target, result, { protocol: state.protocol, source: state.source });
   }
 
   private async deferUnmaterializedProbe(
@@ -556,7 +555,7 @@ export class SyncQuotaManager {
     state: SyncQuotaBlockState,
   ): Promise<void> {
     const currentState = await this.getState(target, messageCid);
-    if (SyncQuotaManager.blockChangedSince(currentState, state)) {
+    if (SyncQuotaManager.hasBlockChanged(currentState, state)) {
       return;
     }
 
@@ -587,7 +586,7 @@ export class SyncQuotaManager {
     if (!localCids.has(block.messageCid) && blockedDependencyIsLocalOnly) {
       await this.markBlockAsSupersededOmission(target, block.messageCid, block.state);
     } else if (!localCids.has(block.messageCid)) {
-      await this.clearBlockWithResolution(target, block.messageCid, 'superseded');
+      await this.resolveBlock(target, block.messageCid, 'superseded');
     }
   }
 
@@ -606,7 +605,7 @@ export class SyncQuotaManager {
     return omittedCids;
   }
 
-  private static blockChangedSince(
+  private static hasBlockChanged(
     current: SyncQuotaBlockState | undefined,
     expected: SyncQuotaBlockState,
   ): boolean {

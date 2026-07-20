@@ -97,7 +97,7 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
 
     // A repair resets the pull runtime, re-establishes the boundary on a new
     // stream domain, and reopens the subscription.
-    controller.resetPullRuntime();
+    controller.resetPullGeneration();
     controller.link.pull.contiguousAppliedToken = tokenIn('stream-2', 'epoch-2', '1');
     await controller.closeLiveSubscription();
     expect(await openSubscription(fixture)).toBe(true);
@@ -114,7 +114,7 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     await freshHandler({ type: 'eose', cursor: tokenIn('stream-2', 'epoch-2', '2') });
     expect(fixture.persistCheckpoint.calledOnce).toBe(true);
 
-    await controller.shutdown();
+    await controller.dispose();
   });
 
   it('should not install a subscription whose pull generation reset while the request was in flight', async () => {
@@ -135,21 +135,21 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     // pending: the eventual subscription belongs to a superseded generation
     // and must be closed, not installed as a permanently fenced slot that
     // blocks the replacement.
-    fixture.controller.resetPullRuntime();
+    fixture.controller.resetPullGeneration();
     releaseRequest.resolve();
 
     expect(await opening).toBe(false);
     expect(close.calledOnce).toBe(true);
     expect(fixture.controller.hasLiveSubscription).toBe(false);
 
-    await fixture.controller.shutdown();
+    await fixture.controller.dispose();
   });
 
   it('should abandon an open whose pull generation resets during cursor resolution', async () => {
     const fixture = createEngineFixture(db);
     const cursorStarted = deferred();
     const releaseCursor = deferred();
-    sinon.stub(fixture.engine as any, 'getInitialPullCursor').callsFake(async () => {
+    sinon.stub(fixture.engine as any, 'resolveInitialPullCursor').callsFake(async () => {
       cursorStarted.resolve();
       await releaseCursor.promise;
       return undefined;
@@ -157,14 +157,14 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
 
     const opening = openSubscription(fixture);
     await cursorStarted.promise;
-    fixture.controller.resetPullRuntime();
+    fixture.controller.resetPullGeneration();
     releaseCursor.resolve();
 
     expect(await opening).toBe(false);
     expect(fixture.processRequest.notCalled).toBe(true);
     expect(fixture.sendDwnRequest.notCalled).toBe(true);
 
-    await fixture.controller.shutdown();
+    await fixture.controller.dispose();
   });
 
   it('should leave a link paused when the pause lands while the local subscription is opening', async () => {
@@ -193,10 +193,10 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     expect(controller.link.status).toBe('paused');
 
     // Completing initialization afterwards must not override the pause.
-    await (engine as any).markLinkLive(fixture.target, controller, controller.pullEpoch);
+    await (engine as any).markLinkLive(fixture.target, controller, controller.pullGeneration);
     expect(controller.link.status).toBe('paused');
 
-    await controller.shutdown();
+    await controller.dispose();
   });
 
   it('should swallow a superseded attempt failure but propagate a current-generation failure', async () => {
@@ -211,7 +211,7 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
 
     const opening = openSubscription(fixture);
     await requestStarted.promise;
-    fixture.controller.resetPullRuntime();
+    fixture.controller.resetPullGeneration();
     releaseRequest.resolve();
     // The superseded attempt's rejection is its own teardown, not this
     // link's failure.
@@ -221,7 +221,7 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     fixture.sendDwnRequest.rejects(new Error('transport failed'));
     await expect(openSubscription(fixture)).rejects.toThrow('transport failed');
 
-    await fixture.controller.shutdown();
+    await fixture.controller.dispose();
   });
 
   it('should not let a superseded attempt close the replacement subscription pair', async () => {
@@ -231,27 +231,27 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     sinon.stub(engine as any, 'openLivePullSubscription').callsFake(async (): Promise<boolean> => {
       // A repair supersedes the attempt and its replacement generation
       // attaches a fresh pair before the old attempt resumes.
-      controller.resetPullRuntime();
+      controller.resetPullGeneration();
       controller.setLiveSubscription({ close: replacementClose });
       controller.setLocalSubscription({ close: replacementClose });
       return false;
     });
 
-    const result = await (engine as any).openLinkSubscriptions(fixture.target, controller, controller.pullEpoch);
+    const result = await (engine as any).openLinkSubscriptions(fixture.target, controller, controller.pullGeneration);
 
     expect(result).toBe('inactive');
     expect(replacementClose.notCalled).toBe(true);
     expect(controller.hasLiveSubscription).toBe(true);
     expect(controller.hasLocalSubscription).toBe(true);
 
-    await controller.shutdown();
+    await controller.dispose();
   });
 
   it('should stop the pair when a pause lands between the pull and local halves', async () => {
     const fixture = createEngineFixture(db);
     const { controller, engine } = fixture;
     controller.link.status = 'initializing';
-    const openGeneration = controller.pullEpoch;
+    const openPullGeneration = controller.pullGeneration;
     sinon.stub(engine as any, 'openLivePullSubscription').callsFake(async (): Promise<boolean> => {
       // A terminal callback queued at attachment pauses the link before the
       // caller resumes — the pause bumps the generation and tears down.
@@ -260,14 +260,14 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     });
     const localOpen = sinon.spy(engine as any, 'openLocalPushSubscription');
 
-    const result = await (engine as any).openLinkSubscriptions(fixture.target, controller, openGeneration);
+    const result = await (engine as any).openLinkSubscriptions(fixture.target, controller, openPullGeneration);
 
     expect(result).toBe('inactive');
     expect(localOpen.notCalled).toBe(true);
     expect(controller.hasLocalSubscription).toBe(false);
     expect(controller.link.status).toBe('paused');
 
-    await controller.shutdown();
+    await controller.dispose();
   });
 
   it('should fence local subscription callbacks issued before a generation reset', async () => {
@@ -283,7 +283,7 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
 
     expect(await (engine as any).openLocalPushSubscription(fixture.target, controller)).toBe(true);
     // A repair resets the generation and reopens the local subscription.
-    controller.resetPullRuntime();
+    controller.resetPullGeneration();
     await controller.closeLocalSubscription();
     expect(await (engine as any).openLocalPushSubscription(fixture.target, controller)).toBe(true);
 
@@ -298,7 +298,7 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     expect(staleForOld()).toBe(true);
     expect(staleForNew()).toBe(false);
 
-    await controller.shutdown();
+    await controller.dispose();
   });
 
   it('should refuse a local install that resolves while pause teardown awaits a subscription close', async () => {
@@ -332,7 +332,7 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     expect(controller.hasLocalSubscription).toBe(false);
     expect(controller.link.status).toBe('paused');
 
-    await controller.shutdown();
+    await controller.dispose();
   });
 
   it('should keep a link paused during opening in the identity keep-set instead of failing it', async () => {
@@ -365,7 +365,7 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     expect(result.status).toBe('active');
     expect(controller.link.status).toBe('paused');
 
-    await controller.shutdown();
+    await controller.dispose();
   });
 
   it('should discard a stale ProgressGap reply instead of repairing the superseded generation', async () => {
@@ -381,7 +381,7 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
 
     const opening = openSubscription(fixture);
     await requestStarted.promise;
-    fixture.controller.resetPullRuntime();
+    fixture.controller.resetPullGeneration();
     releaseRequest.resolve();
 
     // The 410 belongs to the superseded generation's cursor: resolving false
@@ -390,6 +390,6 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     expect(await opening).toBe(false);
     expect(fixture.repairing.notCalled).toBe(true);
 
-    await fixture.controller.shutdown();
+    await fixture.controller.dispose();
   });
 });

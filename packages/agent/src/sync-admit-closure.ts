@@ -87,9 +87,18 @@ type ScopeCheckResult = 'in-scope' | 'out-of-scope' | 'unknown';
 
 /**
  * Applies a sync root and any dependencies it discovers through the DWN's
- * structured replication result. The DWN decides whether a message is applied,
- * duplicate, superseded, incomplete, invalid, or deferred; this module only
- * fetches missing dependencies and retries in dependency order.
+ * structured replication result.
+ *
+ * A **closure** is one root message plus the transitive set of dependency
+ * messages — protocol configs, initial writes, parents, grants, role
+ * records, encryption-control records, record data — that must be applied
+ * for the root to become applicable.
+ *
+ * The DWN decides whether a message is applied, duplicate, superseded,
+ * incomplete, invalid, or deferred. On top of that, this module fetches
+ * missing dependencies and retries in dependency order, AND enforces its own
+ * admission policy: sync-scope gating on the root, data availability before
+ * apply, the data-size limit, and a bounded pass budget.
  */
 export async function admitClosure(rootCid: string, deps: AdmitClosureDeps): Promise<AdmitOutcome> {
   const context = new AdmitClosureContext(deps);
@@ -160,6 +169,10 @@ class AdmitClosureContext {
 
   private async admitEntry(rootCid: string, entry: SyncMessageEntry): Promise<AdmissionEntryResult> {
     const cid = await this.rememberEntry(entry);
+    // Only the ROOT is scope-gated. Dependencies are asserted in-scope by
+    // construction: they were fetched because an in-scope root requires
+    // them, so they inherit its admissibility. Re-checking them here would
+    // reject legitimate cross-protocol prerequisites.
     const rootScope = cid === rootCid ? await this.checkRootScope(entry) : 'in-scope';
     if (rootScope !== 'in-scope') {
       return {
@@ -282,7 +295,7 @@ class AdmitClosureContext {
     }
 
     for (const entry of this.entriesByCid.values()) {
-      if (isInitialWriteForRecord(entry.message, recordId)) {
+      if (isInitialWriteEnvelopeForRecord(entry.message, recordId)) {
         return entry.message;
       }
     }
@@ -499,7 +512,7 @@ class AdmitClosureContext {
 
   private entryFromMessageFeedEntry(entry: NonNullable<MessagesQueryReply['entries']>[number]): SyncMessageEntry {
     if (entry.message === undefined) {
-      throw new Error(`SyncEngineLevel: remote feed entry ${entry.messageCid} did not include a message.`);
+      throw new Error(`AdmitClosure: remote feed entry ${entry.messageCid} did not include a message.`);
     }
 
     const messageWithEncodedData = { ...entry.message } as GenericMessage & { encodedData?: string };
@@ -620,7 +633,7 @@ class AdmitClosureContext {
 
   private findInitialWriteEntry(recordId: string): SyncMessageEntry | undefined {
     for (const entry of this.entriesByCid.values()) {
-      if (isInitialWriteForRecord(entry.message, recordId)) {
+      if (isInitialWriteEnvelopeForRecord(entry.message, recordId)) {
         return entry;
       }
     }
@@ -663,7 +676,13 @@ async function dedupeEntries(entries: SyncMessageEntry[]): Promise<SyncMessageEn
   return [...byCid.values()];
 }
 
-function isInitialWriteForRecord(message: GenericMessage, recordId: string): message is RecordsWriteMessage {
+/**
+ * Whether `message` is the initial RecordsWrite for `recordId`, matching on
+ * the ENVELOPE recordId only. Deliberately distinct from
+ * `sync-messages.ts`'s exported `isInitialWriteForRecord`, which also
+ * accepts a descriptor recordId.
+ */
+function isInitialWriteEnvelopeForRecord(message: GenericMessage, recordId: string): message is RecordsWriteMessage {
   if (
     message.descriptor.interface !== DwnInterfaceName.Records ||
     message.descriptor.method !== DwnMethodName.Write

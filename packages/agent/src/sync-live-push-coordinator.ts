@@ -11,8 +11,8 @@ import type {
   ReplicationLinkState,
   SyncScope,
 } from './types/sync.js';
-import type { SyncLinkController, SyncPushRuntimeEntry, SyncPushRuntimeState } from './sync-link-controller.js';
-import type { SyncQuotaPushResultTransition, SyncQuotaPushTransitionOptions } from './sync-quota-manager.js';
+import type { SyncLinkController, SyncPushQueueEntry, SyncPushQueueState } from './sync-link-controller.js';
+import type { SyncQuotaPushResultOutcome, SyncQuotaPushTransitionOptions } from './sync-quota-manager.js';
 
 import { Message } from '@enbox/dwn-sdk-js';
 
@@ -38,11 +38,11 @@ export interface SyncLivePushCoordinatorOperations {
   recordDeadLetter(entry: Omit<DeadLetterEntry, 'failedAt'>): Promise<void>;
   reportError(message: string, error: unknown): void;
   scheduleReconcile(linkKey: string, link: ReplicationLinkState, reason: string, delayMs?: number): void;
-  transitionPushResult(
+  applyPushResult(
     target: SyncTarget,
     result: PushResult,
     options: SyncQuotaPushTransitionOptions,
-  ): Promise<SyncQuotaPushResultTransition>;
+  ): Promise<SyncQuotaPushResultOutcome>;
 }
 
 export type SyncLivePushCoordinatorParams = {
@@ -54,16 +54,16 @@ export type SyncLivePushCoordinatorParams = {
 
 type PushFlushBatch = {
   controller: SyncLinkController;
-  entries: SyncPushRuntimeEntry[];
+  entries: SyncPushQueueEntry[];
   isStale: () => boolean;
-  runtime: SyncPushRuntimeState;
+  runtime: SyncPushQueueState;
 };
 
 export type SyncLivePushPendingBatch = {
   delegateDid?: string;
   did: string;
   dwnUrl: string;
-  entries: SyncPushRuntimeEntry[];
+  entries: SyncPushQueueEntry[];
   permissionGrantIds?: NonEmptyStringArray;
   protocol?: string;
   retryCount: number;
@@ -124,7 +124,7 @@ export class SyncLivePushCoordinator {
       return;
     }
 
-    const runtime = controller.getOrCreatePushRuntime({
+    const runtime = controller.getOrCreatePushQueue({
       did                : target.did,
       dwnUrl             : target.dwnUrl,
       delegateDid        : target.delegateDid,
@@ -140,7 +140,7 @@ export class SyncLivePushCoordinator {
     // gate on the flush lane rather than mailbox idleness — a flush queued
     // behind a running repair keeps these entries from stalling until the
     // next event arrives.
-    if (!controller.mailboxBusy('flush') && runtime.timer === undefined) {
+    if (!controller.isMailboxBusy('flush') && runtime.timer === undefined) {
       this.startSupervisedFlush(controller, runIdentityTask);
     }
   }
@@ -227,7 +227,7 @@ export class SyncLivePushCoordinator {
     }
 
     const { link, linkKey } = controller;
-    const runtime = controller.getOrCreatePushRuntime(pending);
+    const runtime = controller.getOrCreatePushQueue(pending);
     const entries = await this.removeTerminalFailures(linkKey, pending);
     if (!controller.isActive) {
       return;
@@ -267,11 +267,11 @@ export class SyncLivePushCoordinator {
 
   private takeBatch(controller: SyncLinkController): PushFlushBatch | undefined {
     if (controller.link.status !== 'live') {
-      controller.clearPushRuntime();
+      controller.clearPushQueue();
       return undefined;
     }
 
-    const runtime = controller.pushRuntime;
+    const runtime = controller.pushQueue;
     if (runtime === undefined) {
       return undefined;
     }
@@ -289,7 +289,7 @@ export class SyncLivePushCoordinator {
     runtime.entries = [];
     if (entries.length === 0) {
       if (runtime.timer === undefined && runtime.retryCount === 0) {
-        controller.clearPushRuntime(runtime);
+        controller.clearPushQueue(runtime);
       }
       return undefined;
     }
@@ -300,7 +300,7 @@ export class SyncLivePushCoordinator {
     // the push runtime and an in-flight result landing afterwards must not
     // fold transitions, requeue entries, or recreate what the pause cleared.
     const isStale = (): boolean =>
-      !controller.isActive || controller.pushRuntime !== runtime || controller.link.status !== 'live';
+      !controller.isActive || controller.pushQueue !== runtime || controller.link.status !== 'live';
     return { controller, entries, isStale, runtime };
   }
 
@@ -311,7 +311,7 @@ export class SyncLivePushCoordinator {
 
     const { controller, runtime } = batch;
     const target = syncTargetFromLink(controller.link);
-    const transition = await this._operations.transitionPushResult(target, result, {
+    const transition = await this._operations.applyPushResult(target, result, {
       protocol : runtime.protocol,
       source   : 'feed',
     });
@@ -336,12 +336,12 @@ export class SyncLivePushCoordinator {
 
     runtime.retryCount = 0;
     if (runtime.timer === undefined && runtime.entries.length === 0) {
-      controller.clearPushRuntime(runtime);
+      controller.clearPushQueue(runtime);
     }
   }
 
-  private finishFlush(controller: SyncLinkController, runtime: SyncPushRuntimeState): void {
-    const current = controller.pushRuntime;
+  private finishFlush(controller: SyncLinkController, runtime: SyncPushQueueState): void {
+    const current = controller.pushQueue;
     if (!controller.isActive || current !== runtime || current.entries.length === 0 || current.timer !== undefined) {
       return;
     }
@@ -359,8 +359,8 @@ export class SyncLivePushCoordinator {
   private async removeTerminalFailures(
     linkKey: string,
     pending: SyncLivePushPendingBatch,
-  ): Promise<SyncPushRuntimeEntry[]> {
-    const retryable: SyncPushRuntimeEntry[] = [];
+  ): Promise<SyncPushQueueEntry[]> {
+    const retryable: SyncPushQueueEntry[] = [];
     for (const entry of pending.entries) {
       const failure = entry.lastFailure;
       if (failure === undefined || !isTerminalPushFailure(failure)) {
@@ -383,7 +383,7 @@ export class SyncLivePushCoordinator {
 
   private scheduleRetry(
     controller: SyncLinkController,
-    runtime: SyncPushRuntimeState,
+    runtime: SyncPushQueueState,
     pending: Pick<SyncLivePushPendingBatch, 'entries' | 'retryCount'>,
   ): void {
     runtime.entries.push(...pending.entries);
@@ -408,12 +408,12 @@ export class SyncLivePushCoordinator {
     void runIdentityTask(() => this.flushLink(controller.linkKey, controller));
   }
 
-  private stopRuntime(controller: SyncLinkController, runtime: SyncPushRuntimeState): void {
-    controller.clearPushRuntime(runtime);
+  private stopRuntime(controller: SyncLinkController, runtime: SyncPushQueueState): void {
+    controller.clearPushQueue(runtime);
   }
 
   private static pendingFromRuntime(
-    runtime: SyncPushRuntimeState,
+    runtime: SyncPushQueueState,
   ): Omit<SyncLivePushPendingBatch, 'entries' | 'retryCount'> {
     return {
       did                : runtime.did,
