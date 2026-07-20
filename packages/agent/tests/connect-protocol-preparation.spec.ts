@@ -229,10 +229,10 @@ describe('connect protocol preparation', () => {
 
       await prepareProtocol('did:example:owner', agent, encryptedProtocol);
 
-      // The upgrade re-configures locally WITH encryption derivation.
+      // The upgrade re-configures locally from the definition-owned policy.
       const configures = configureCalls(processDwnRequest);
       expect(configures).toHaveLength(1);
-      expect((configures[0].args[0] as { encryption?: boolean }).encryption).toBe(true);
+      expect((configures[0].args[0] as Record<string, unknown>).encryption).toBeUndefined();
 
       // The freshly signed configure is fanned out to the behind endpoint.
       const sends = remoteConfigureSends(sendDwnRequest);
@@ -351,7 +351,7 @@ describe('connect protocol preparation', () => {
 
       const configures = configureCalls(processDwnRequest);
       expect(configures).toHaveLength(1);
-      expect((configures[0].args[0] as { encryption?: boolean }).encryption).toBe(true);
+      expect((configures[0].args[0] as Record<string, unknown>).encryption).toBeUndefined();
       expect(sendDwnRequest.callCount).toBe(0);
     });
 

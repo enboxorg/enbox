@@ -56,7 +56,6 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       target        : tenantDid,
       messageType   : DwnInterface.ProtocolsConfigure,
       messageParams : { definition },
-      encryption    : true,
     });
     expect(reply.status.code).toBe(202);
   }
@@ -506,8 +505,7 @@ describe('AgentDwnApi audience key delivery primitives', () => {
           protocolPath    : 'thread/chat',
           schema          : chat.types.chat.schema,
         },
-        dataStream : new Blob([chatText]),
-        encryption : true,
+        dataStream: new Blob([chatText]),
       });
       expect(chatWrite.reply.status.code).toBe(202);
       const read = await testHarness.agent.dwn.processRequest({
@@ -690,8 +688,7 @@ describe('AgentDwnApi audience key delivery primitives', () => {
           protocolPath    : 'thread/chat',
           schema          : chat.types.chat.schema,
         },
-        dataStream : new Blob([chatText]),
-        encryption : true,
+        dataStream: new Blob([chatText]),
       });
       expect(chatWrite.reply.status.code).toBe(202);
 

@@ -881,14 +881,11 @@ async function configureProtocolLocally(
   protocolDefinition: DwnProtocolDefinition,
 ): Promise<ProtocolConfigureEntry> {
   logger.log(`Configuring protocol locally: ${protocolDefinition.protocol}`);
-  const needsEncryption = hasEncryptedProtocolTypes(protocolDefinition);
-
   const { reply, message } = await agent.processDwnRequest({
     author        : selectedDid,
     target        : selectedDid,
     messageType   : DwnInterface.ProtocolsConfigure,
     messageParams : { definition: protocolDefinition },
-    encryption    : needsEncryption || undefined,
   });
 
   if (reply.status.code !== 202 && reply.status.code !== 409) {

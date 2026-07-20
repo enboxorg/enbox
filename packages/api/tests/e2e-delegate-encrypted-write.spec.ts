@@ -193,8 +193,7 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
   }> {
     // 1. Wallet installs the protocol WITH encryption (derives `$keyAgreement` keys).
     const { status: configStatus, protocol: walletProtocol } = await walletDwn.protocols.configure({
-      definition : protocolDef,
-      encryption : true,
+      definition: protocolDef,
     });
     expect(configStatus.code).toBe(202);
 
@@ -553,8 +552,7 @@ class InProcessWalletHandler implements ConnectHandler {
       // Install the protocol with encryption on the wallet agent (local + remote).
       const { status: configStatus, protocol: walletProtocol } =
         await this.walletDwn.protocols.configure({
-          definition : protocolDefinition,
-          encryption : true,
+          definition: protocolDefinition,
         });
       if (configStatus.code !== 202) {
         throw new Error(
@@ -679,7 +677,7 @@ async function queryWrappedGrantKeyEnvelope(params: {
     messageParams : {
       filter: {
         protocol     : EncryptionProtocol.uri,
-        protocolPath : EncryptionProtocol.grantKeyPath,
+        protocolPath : EncryptionProtocol.wrappedGrantKeyPath,
         recipient    : params.delegateDid,
         tags         : { protocol: params.protocol },
       },
@@ -925,7 +923,6 @@ describe('E2E: AuthManager.connect() with encrypted protocol', () => {
         author        : walletDid.uri,
         target        : walletDid.uri,
         messageType   : DwnInterface.RecordsWrite,
-        encryption    : true,
         messageParams : {
           protocol     : protocolUri,
           protocolPath : 'transaction',

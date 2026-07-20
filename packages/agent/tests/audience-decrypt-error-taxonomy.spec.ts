@@ -71,7 +71,6 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
       target        : tenantDid,
       messageType   : DwnInterface.ProtocolsConfigure,
       messageParams : { definition },
-      encryption    : true,
     });
     expect(reply.status.code).toBe(202);
   }
@@ -111,7 +110,6 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
         protocolPath : 'note',
         published    : true,
       },
-      encryption: true,
     });
     expect(reply.status.code).toBe(202);
     return message as RecordsWriteMessage;

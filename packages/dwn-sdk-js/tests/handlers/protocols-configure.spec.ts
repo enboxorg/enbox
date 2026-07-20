@@ -26,8 +26,8 @@ import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { Time } from '../../src/utils/time.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { ContentEncryptionAlgorithm, DataStream, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Encryption, Jws, KeyAgreementAlgorithm, KeyDerivationScheme, PermissionGrant, PermissionsProtocol, Protocols, RecordsDelete, RecordsRead, RecordsWrite } from '../../src/index.js';
 import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
-import { DataStream, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Jws, PermissionGrant, PermissionsProtocol, Protocols, RecordsDelete, RecordsRead, RecordsWrite } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
 export function testProtocolsConfigureHandler(): void {
@@ -156,6 +156,146 @@ export function testProtocolsConfigureHandler(): void {
 
         expect(queryReply.status.code).toBe(200);
         expect(queryReply.entries).toHaveLength(1);
+      });
+
+      it('should reject an encryption-policy change for a used path but allow it for an unused path', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const protocol = 'http://config-validity.example/encryption-policy';
+        const initialDefinition: ProtocolDefinition = {
+          protocol,
+          published : true,
+          types     : {
+            public : { dataFormats: ['text/plain'] },
+            unused : { dataFormats: ['text/plain'] },
+          },
+          structure: {
+            public : {},
+            unused : {},
+          },
+        };
+        const initialConfigure = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          messageTimestamp   : '2025-01-01T00:00:00.000000Z',
+          protocolDefinition : initialDefinition,
+        });
+        expect((await dwn.processMessage(alice.did, initialConfigure.message)).status.code).toBe(202);
+
+        const publicWrite = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          data             : Encoder.stringToBytes('public'),
+          dataFormat       : 'text/plain',
+          dateCreated      : '2025-01-02T00:00:00.000000Z',
+          messageTimestamp : '2025-01-02T00:00:00.000000Z',
+          protocol,
+          protocolPath     : 'public',
+        });
+        expect((await dwn.processMessage(
+          alice.did,
+          publicWrite.message,
+          { dataStream: publicWrite.dataStream },
+        )).status.code).toBe(202);
+
+        const changedUsedDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys({
+          ...initialDefinition,
+          types: {
+            public : { dataFormats: ['text/plain'], encryptionRequired: true },
+            unused : { dataFormats: ['text/plain'], encryptionRequired: true },
+          },
+        }, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk));
+        const changedUsedConfigure = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          messageTimestamp   : '2025-01-03T00:00:00.000000Z',
+          protocolDefinition : changedUsedDefinition,
+        });
+        const changedUsedReply = await dwn.processMessage(alice.did, changedUsedConfigure.message);
+        expect(changedUsedReply.status.code).toBe(400);
+        expect(changedUsedReply.status.detail).toContain(DwnErrorCode.ProtocolsConfigureEncryptionPolicyImmutable);
+
+        const changedUnusedDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys({
+          ...initialDefinition,
+          types: {
+            public : { dataFormats: ['text/plain'] },
+            unused : { dataFormats: ['text/plain'], encryptionRequired: true },
+          },
+        }, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk));
+        const changedUnusedConfigure = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          messageTimestamp   : '2025-01-04T00:00:00.000000Z',
+          protocolDefinition : changedUnusedDefinition,
+        });
+        expect((await dwn.processMessage(alice.did, changedUnusedConfigure.message)).status.code).toBe(202);
+      });
+
+      it('should reject removing encryption from a path with existing encrypted records', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const protocol = 'http://config-validity.example/encryption-removal';
+        const authoredDefinition: ProtocolDefinition = {
+          protocol,
+          published : true,
+          types     : {
+            secret: { dataFormats: ['text/plain'], encryptionRequired: true },
+          },
+          structure: {
+            secret: {},
+          },
+        };
+        const encryptedDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
+          authoredDefinition,
+          TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk),
+        );
+        const initialConfigure = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          messageTimestamp   : '2025-02-01T00:00:00.000000Z',
+          protocolDefinition : encryptedDefinition,
+        });
+        expect((await dwn.processMessage(alice.did, initialConfigure.message)).status.code).toBe(202);
+
+        const plaintext = Encoder.stringToBytes('secret');
+        const dataEncryptionKey = TestDataGenerator.randomBytes(32);
+        const initializationVector = TestDataGenerator.randomBytes(16);
+        const ciphertext = await Encryption.encrypt(
+          ContentEncryptionAlgorithm.A256CTR,
+          dataEncryptionKey,
+          initializationVector,
+          plaintext,
+        );
+        const publicKey = encryptedDefinition.structure.secret.$keyAgreement!.publicKeyJwk;
+        const encryptedWrite = await TestDataGenerator.generateRecordsWrite({
+          author          : alice,
+          data            : ciphertext,
+          dataFormat      : 'text/plain',
+          dateCreated     : '2025-02-02T00:00:00.000000Z',
+          encryptionInput : {
+            initializationVector,
+            key                 : dataEncryptionKey,
+            keyEncryptionInputs : [{
+              algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+              derivationScheme : KeyDerivationScheme.ProtocolPath,
+              keyId            : await Encryption.getKeyId(publicKey),
+              publicKey,
+            }],
+          },
+          messageTimestamp : '2025-02-02T00:00:00.000000Z',
+          protocol,
+          protocolPath     : 'secret',
+        });
+        expect((await dwn.processMessage(
+          alice.did,
+          encryptedWrite.message,
+          { dataStream: encryptedWrite.dataStream },
+        )).status.code).toBe(202);
+
+        const plaintextConfigure = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          messageTimestamp   : '2025-02-03T00:00:00.000000Z',
+          protocolDefinition : {
+            ...authoredDefinition,
+            types: { secret: { dataFormats: ['text/plain'] } },
+          },
+        });
+        const plaintextReply = await dwn.processMessage(alice.did, plaintextConfigure.message);
+        expect(plaintextReply.status.code).toBe(400);
+        expect(plaintextReply.status.detail).toContain(DwnErrorCode.ProtocolsConfigureEncryptionPolicyImmutable);
       });
 
       it('should store all protocol versions with identical timestamps and query should only return the newest (by CID tiebreak)', async () => {

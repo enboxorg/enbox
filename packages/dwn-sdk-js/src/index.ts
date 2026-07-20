@@ -25,6 +25,8 @@ export {
   ENCRYPTION_CONTROL_PATHS,
   ENCRYPTION_CONTROL_ROOT_PATH,
   ENCRYPTION_PROTOCOL_URI,
+  ENCRYPTION_PROTOCOL_GRANT_KEY_PATH,
+  ENCRYPTION_PROTOCOL_WRAPPED_GRANT_KEY_PATH,
   PERMISSIONS_REVOCATION_PATH,
   isEncryptionControlPath,
 } from './core/constants.js';
@@ -98,6 +100,7 @@ export {
   getRoleAudienceContextId,
   getRoleContextPrefix,
   getRuleSetAtPath,
+  getTypeName,
   isCrossProtocolRef,
   parseCrossProtocolRef,
 } from './utils/protocols.js';

@@ -226,7 +226,6 @@ describe('e2e: two-layer encryption recovery', () => {
         target        : originalAgentDidUri,
         messageType   : DwnInterface.ProtocolsConfigure,
         messageParams : { definition: audienceRecoveryProtocol },
-        encryption    : true,
       });
       expect(protocolConfigure.reply.status.code).toBe(202);
 
@@ -240,7 +239,6 @@ describe('e2e: two-layer encryption recovery', () => {
           dataFormat   : 'text/plain',
           data         : new TextEncoder().encode('sealed audience recovery note'),
         },
-        encryption: true,
       });
       expect(reply.status.code).toBe(202);
 

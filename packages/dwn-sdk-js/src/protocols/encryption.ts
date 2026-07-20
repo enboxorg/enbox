@@ -10,12 +10,16 @@ import type { ContentEncryptionAlgorithm, X25519KeyEncryptionBase } from '../uti
 
 import { DwnConstant } from '../core/dwn-constant.js';
 import { Encoder } from '../utils/encoder.js';
-import { ENCRYPTION_PROTOCOL_URI } from '../core/constants.js';
 import { FilterUtility } from '../utils/filter.js';
 import { Message } from '../core/message.js';
 import { Records } from '../utils/records.js';
 import { validateJsonSchema } from '../schema-validator.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
+import {
+  ENCRYPTION_PROTOCOL_GRANT_KEY_PATH,
+  ENCRYPTION_PROTOCOL_URI,
+  ENCRYPTION_PROTOCOL_WRAPPED_GRANT_KEY_PATH,
+} from '../core/constants.js';
 import { grantKeyScopeCoversDeliveredScope, isGrantKeyEligibleRecordsScope, isGrantKeyRecordsScope } from '../utils/grant-key-coverage.js';
 
 export const WRAPPED_GRANT_KEY_FORMAT = 'enbox/wrapped-grant-key@1';
@@ -44,15 +48,21 @@ export function assertWrappedGrantKeyEnvelope(envelope: unknown): asserts envelo
 
 export class EncryptionProtocol implements CoreProtocol {
   public static readonly uri = ENCRYPTION_PROTOCOL_URI;
-  public static readonly grantKeyPath = 'grantKey';
+  public static readonly grantKeyPath = ENCRYPTION_PROTOCOL_GRANT_KEY_PATH;
+  public static readonly wrappedGrantKeyPath = ENCRYPTION_PROTOCOL_WRAPPED_GRANT_KEY_PATH;
 
   public static readonly definition: ProtocolDefinition = {
     published : true,
     protocol  : EncryptionProtocol.uri,
     types     : {
       grantKey: {
+        dataFormats        : ['application/json'],
+        encryptionRequired : true,
+        schema             : 'https://identity.foundation/dwn/json-schemas/encryption/grant-key.json',
+      },
+      wrappedGrantKey: {
         dataFormats : ['application/json'],
-        schema      : 'https://identity.foundation/dwn/json-schemas/encryption/grant-key.json',
+        schema      : 'https://identity.foundation/dwn/json-schemas/encryption/wrapped-grant-key-envelope.json',
       },
     },
     structure: {
@@ -60,6 +70,21 @@ export class EncryptionProtocol implements CoreProtocol {
         $actions: [
           { can: ['create'], who: 'anyone' },
           { can: ['read'], of: 'grantKey', who: 'recipient' },
+        ],
+        $immutable : true,
+        $tags      : {
+          $allowUndefinedTags : false,
+          $requiredTags       : ['grantId', 'protocol', 'keyId'],
+          grantId             : { type: 'string' },
+          keyId               : { maxLength: 43, minLength: 43, pattern: '^[A-Za-z0-9_-]{43}$', type: 'string' },
+          protocol            : { type: 'string' },
+          protocolPath        : { type: 'string' },
+        },
+      },
+      wrappedGrantKey: {
+        $actions: [
+          { can: ['create'], who: 'anyone' },
+          { can: ['read'], of: 'wrappedGrantKey', who: 'recipient' },
         ],
         $immutable : true,
         $tags      : {
@@ -87,13 +112,13 @@ export class EncryptionProtocol implements CoreProtocol {
     message: RecordsWriteMessage,
     validationStateReader: ValidationStateReader,
   ): Promise<void> {
-    if (message.descriptor.protocolPath === EncryptionProtocol.grantKeyPath) {
+    if (EncryptionProtocol.isGrantKeyPath(message.descriptor.protocolPath)) {
       await EncryptionProtocol.preProcessGrantKey(tenant, message, validationStateReader);
     }
   }
 
   public async validateRecord(message: RecordsWriteMessage, dataBytes: Uint8Array): Promise<void> {
-    if (message.descriptor.protocolPath === EncryptionProtocol.grantKeyPath) {
+    if (EncryptionProtocol.isGrantKeyPath(message.descriptor.protocolPath)) {
       EncryptionProtocol.verifyGrantKeyDelivery(message, dataBytes);
       return;
     }
@@ -109,7 +134,7 @@ export class EncryptionProtocol implements CoreProtocol {
     message: RecordsWriteMessage,
     validationStateReader: ValidationStateReader,
   ): Promise<void> {
-    EncryptionProtocol.verifyInlineWrappedGrantKeyDelivery(message);
+    EncryptionProtocol.verifyGrantKeyRepresentation(message);
 
     const grantId = EncryptionProtocol.getRequiredStringTag(message, 'grantId');
     const protocol = EncryptionProtocol.getRequiredStringTag(message, 'protocol');
@@ -130,21 +155,34 @@ export class EncryptionProtocol implements CoreProtocol {
     });
   }
 
-  private static verifyInlineWrappedGrantKeyDelivery(message: RecordsWriteMessage): void {
-    if (message.encryption !== undefined) {
+  private static verifyGrantKeyRepresentation(message: RecordsWriteMessage): void {
+    if (message.descriptor.protocolPath === EncryptionProtocol.grantKeyPath) {
+      if (message.encryption === undefined) {
+        throw new DwnError(
+          DwnErrorCode.EncryptionProtocolValidateEncryptedDeliveryMissingEncryption,
+          'grantKey records must be encrypted.'
+        );
+      }
       return;
+    }
+
+    if (message.encryption !== undefined) {
+      throw new DwnError(
+        DwnErrorCode.ProtocolAuthorizationEncryptionNotAllowed,
+        'wrappedGrantKey records must be plaintext at the DWN record level.'
+      );
     }
 
     if (message.descriptor.dataSize > DwnConstant.maxDataSizeAllowedToBeEncoded) {
       throw new DwnError(
         DwnErrorCode.EncryptionProtocolValidateEncryptedDeliveryMissingEncryption,
-        'plaintext grantKey records must carry an inline wrapped grantKey envelope.'
+        'wrappedGrantKey records must carry an inline wrapped grantKey envelope.'
       );
     }
   }
 
   private static verifyGrantKeyDelivery(message: RecordsWriteMessage, dataBytes: Uint8Array): void {
-    if (message.encryption !== undefined) {
+    if (message.descriptor.protocolPath === EncryptionProtocol.grantKeyPath) {
       return;
     }
 
@@ -159,9 +197,14 @@ export class EncryptionProtocol implements CoreProtocol {
       const detail = error instanceof Error ? error.message : String(error);
       throw new DwnError(
         DwnErrorCode.EncryptionProtocolValidateEncryptedDeliveryMissingEncryption,
-        `${message.descriptor.protocolPath} records must be encrypted or carry a valid wrapped grantKey envelope: ${detail}`
+        `${message.descriptor.protocolPath} records must carry a valid wrapped grantKey envelope: ${detail}`
       );
     }
+  }
+
+  private static isGrantKeyPath(protocolPath: string): boolean {
+    return protocolPath === EncryptionProtocol.grantKeyPath ||
+      protocolPath === EncryptionProtocol.wrappedGrantKeyPath;
   }
 
   private static getRequiredStringTag(message: RecordsWriteMessage, tag: string): string {

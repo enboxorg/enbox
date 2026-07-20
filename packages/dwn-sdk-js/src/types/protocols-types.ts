@@ -53,7 +53,8 @@ export type ProtocolType = {
    * DID must have an X25519 keyAgreement key; protocol installation will
    * fail if it does not.
    *
-   * When `false` or omitted, encryption is not required for this type.
+   * When `false` or omitted, records of this type **must** be plaintext at the
+   * DWN record level. Applications cannot override this protocol policy per write.
    */
   encryptionRequired?: boolean,
 };

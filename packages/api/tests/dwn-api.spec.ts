@@ -2643,16 +2643,16 @@ describe('DwnApi', () => {
             protocol  : `http://encrypted-notes.xyz/${TestDataGenerator.randomString(15)}`,
             types     : {
               note: {
-                schema      : 'https://schemas.xyz/note',
-                dataFormats : ['text/plain'],
+                schema             : 'https://schemas.xyz/note',
+                dataFormats        : ['text/plain'],
+                encryptionRequired : true,
               },
             },
             structure: { note: {} },
           };
 
           const { status } = await dwnAlice.protocols.configure({
-            definition : encProtocol,
-            encryption : true,
+            definition: encProtocol,
           });
           expect(status.code).toBe(202);
 
@@ -2667,7 +2667,6 @@ describe('DwnApi', () => {
             protocolPath : 'note',
             schema       : 'https://schemas.xyz/note',
             dataFormat   : 'text/plain',
-            encryption   : true,
           });
           expect(status.code).toBe(202);
           return record!;

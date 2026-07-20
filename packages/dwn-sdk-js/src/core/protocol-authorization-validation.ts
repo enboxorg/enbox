@@ -9,6 +9,7 @@ import { Records } from '../utils/records.js';
 import { validateProtocolTags } from '../utils/protocol-tags.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 import { Encryption, ROLE_AUDIENCE_DERIVATION_SCHEME } from '../utils/encryption.js';
+import { ENCRYPTION_PROTOCOL_GRANT_KEY_PATH, ENCRYPTION_PROTOCOL_URI } from './constants.js';
 import { getRoleAudienceContextId, getRuleSetAtPath, getTypeName, parseCrossProtocolRef } from '../utils/protocols.js';
 import { ProtocolAction, ProtocolRecordLimitStrategy } from '../types/protocols-types.js';
 
@@ -275,6 +276,13 @@ export function verifyType(
     );
   }
 
+  if (protocolType.encryptionRequired !== true && inboundMessage.encryption !== undefined) {
+    throw new DwnError(
+      DwnErrorCode.ProtocolAuthorizationEncryptionNotAllowed,
+      `type '${declaredTypeName}' requires plaintext but message has encryption metadata`
+    );
+  }
+
   return protocolType;
 }
 
@@ -291,6 +299,12 @@ async function verifyProtocolPathEncryptionIfNeeded(
 
   const ruleSet = getRuleSetAtPath(inboundMessage.descriptor.protocolPath, protocolDefinition.structure);
   if (ruleSet?.$keyAgreement?.publicKeyJwk === undefined) {
+    const usesDynamicCoreRecipientKey = protocolDefinition.protocol === ENCRYPTION_PROTOCOL_URI &&
+      inboundMessage.descriptor.protocolPath === ENCRYPTION_PROTOCOL_GRANT_KEY_PATH;
+    if (usesDynamicCoreRecipientKey) {
+      return;
+    }
+
     throw new DwnError(
       DwnErrorCode.ProtocolAuthorizationEncryptionKeyAgreementMissing,
       `encrypted protocol path '${inboundMessage.descriptor.protocolPath}' has no $keyAgreement`

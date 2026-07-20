@@ -58,10 +58,7 @@ export type FetchGrantsRequest = Omit<FetchPermissionsParams, 'author' | 'target
  *
  * This request type is used to specify the configuration options for the protocol.
  */
-export type ProtocolsConfigureRequest = Omit<DwnMessageParams[DwnInterface.ProtocolsConfigure], 'signer'> & {
-  /** When true, derives and injects $keyAgreement public keys into the protocol definition. */
-  encryption?: boolean;
-};
+export type ProtocolsConfigureRequest = Omit<DwnMessageParams[DwnInterface.ProtocolsConfigure], 'signer'>;
 
 /**
  * Encapsulates the response from a protocol configuration request to a Decentralized Web Node (DWN).
@@ -281,7 +278,10 @@ export type MessagesSubscribeResponse = DwnResponseStatus & {
  * additional message parameters required for the write operation, and an optional flag to indicate
  * whether the record should be immediately stored.
  */
-export type RecordsWriteRequest = Omit<Partial<DwnMessageParams[DwnInterface.RecordsWrite]>, 'signer' | 'data' | 'protocol' | 'protocolPath' | 'encryption'> &
+export type RecordsWriteRequest = Omit<
+  Partial<DwnMessageParams[DwnInterface.RecordsWrite]>,
+  'signer' | 'data' | 'protocol' | 'protocolPath' | 'encryption' | 'encryptionInput'
+> &
   Pick<DwnMessageParams[DwnInterface.RecordsWrite], 'protocol' | 'protocolPath'> & {
   /** The data payload for the record, which can be of any type. */
   data: unknown;
@@ -312,9 +312,6 @@ export type RecordsWriteRequest = Omit<Partial<DwnMessageParams[DwnInterface.Rec
    * signed, and returned but not persisted.
    */
   store?: boolean;
-
-  /** When true, automatically encrypts the record data using the protocol's encryption keys. */
-  encryption?: boolean;
 
   /**
    * The recipient's role-path public key for this write, forwarded to the agent when writing a
@@ -660,21 +657,18 @@ export class DwnApi {
        * Configure method, used to setup a new protocol (or update) with the passed definitions
        */
       configure: async (request: ProtocolsConfigureRequest): Promise<ProtocolsConfigureResponse> => {
-        const { encryption, ...messageParams } = request;
-
         const agentRequest: ProcessDwnRequest<DwnInterface.ProtocolsConfigure> = {
-          author      : this.connectedDid,
-          messageParams,
-          messageType : DwnInterface.ProtocolsConfigure,
-          target      : this.connectedDid,
-          encryption,
+          author        : this.connectedDid,
+          messageParams : request,
+          messageType   : DwnInterface.ProtocolsConfigure,
+          target        : this.connectedDid,
         };
 
         if (this.delegateDid) {
           const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
             connectedDid : this.connectedDid,
             delegateDid  : this.delegateDid,
-            protocol     : messageParams.definition.protocol,
+            protocol     : request.definition.protocol,
             delegate     : true,
             cached       : true,
             messageType  : agentRequest.messageType
@@ -1300,7 +1294,7 @@ export class DwnApi {
        * requires fetching from the DWN datastore.
        */
       write: async (request: RecordsWriteRequest): Promise<RecordsWriteResponse> => {
-        const { data, from, store, encryption, recipientRolePublicKey, ...restParams } = request;
+        const { data, from, store, recipientRolePublicKey, ...restParams } = request;
         const { dataBlob, dataFormat } = dataToBlob(data, restParams.dataFormat);
 
         const messageParams = { ...restParams, dataFormat };
@@ -1321,7 +1315,6 @@ export class DwnApi {
            */
           target      : from ?? this.connectedDid,
           dataStream  : dataBlob,
-          encryption,
           /**
            * Forwarded verbatim on both paths: the agent REJECTS a supplied key on the remote
            * (`sendDwnRequest`) path — role-audience key delivery is provisioned via local

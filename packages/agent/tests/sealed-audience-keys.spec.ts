@@ -89,7 +89,6 @@ describe('AgentDwnApi sealed audience keys', () => {
       target        : tenantDid,
       messageType   : DwnInterface.ProtocolsConfigure,
       messageParams : { definition: protocolDefinition },
-      encryption    : true,
     });
     expect(reply.status.code).toBe(202);
   }
@@ -206,7 +205,6 @@ describe('AgentDwnApi sealed audience keys', () => {
         dataFormat   : 'text/plain',
         data         : new TextEncoder().encode(data),
       },
-      encryption: true,
     });
 
     expect(reply.status.code).toBe(202);
@@ -295,7 +293,6 @@ describe('AgentDwnApi sealed audience keys', () => {
         data         : new TextEncoder().encode('root chat'),
         published    : true,
       },
-      encryption: true,
     });
 
     expect(reply.status.code).toBe(202);
@@ -348,7 +345,6 @@ describe('AgentDwnApi sealed audience keys', () => {
         dataFormat      : 'text/plain',
         data            : new TextEncoder().encode('thread body'),
       },
-      encryption: true,
     });
 
     expect(threadReply.status.code).toBe(202);
@@ -499,7 +495,6 @@ describe('AgentDwnApi sealed audience keys', () => {
         dataFormat     : 'text/plain',
         data           : new TextEncoder().encode('delegate sealed note'),
       },
-      encryption: true,
     })).rejects.toThrow('without seal coverage');
   });
 

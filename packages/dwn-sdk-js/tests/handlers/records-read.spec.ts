@@ -2043,7 +2043,8 @@ export function testRecordsReadHandler(): void {
           TestStubGenerator.stubDidResolver(didResolver, [alice, bob]);
 
           // Alice configures email protocol with encryption
-          const protocolDefinition: ProtocolDefinition = emailProtocolDefinition as ProtocolDefinition;
+          const protocolDefinition = structuredClone(emailProtocolDefinition) as ProtocolDefinition;
+          protocolDefinition.types.email.encryptionRequired = true;
           const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
             protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
           );

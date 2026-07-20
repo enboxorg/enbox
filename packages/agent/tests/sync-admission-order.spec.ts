@@ -464,25 +464,27 @@ describe('orderMessagesForAdmission', () => {
         recordId: 'grant-rec-id',
       } as unknown as GenericMessage,
     };
-    const grantKey: SortEntry = {
-      message: {
-        ...makeMessage({
-          protocol     : EncryptionProtocol.uri,
-          protocolPath : EncryptionProtocol.grantKeyPath,
-          tags         : {
-            grantId  : 'grant-rec-id',
-            protocol : 'https://example.com/encrypted-chat',
-            keyId    : 'key-1',
-          },
-        }),
-        recordId: 'grant-key',
-      } as unknown as GenericMessage,
-    };
+    for (const protocolPath of [EncryptionProtocol.grantKeyPath, EncryptionProtocol.wrappedGrantKeyPath]) {
+      const grantKey: SortEntry = {
+        message: {
+          ...makeMessage({
+            protocol : EncryptionProtocol.uri,
+            protocolPath,
+            tags     : {
+              grantId  : 'grant-rec-id',
+              protocol : 'https://example.com/encrypted-chat',
+              keyId    : 'key-1',
+            },
+          }),
+          recordId: `grant-key-${protocolPath}`,
+        } as unknown as GenericMessage,
+      };
 
-    const result = orderMessagesForAdmission([grantKey, grant]);
+      const result = orderMessagesForAdmission([grantKey, grant]);
 
-    expect(result[0]).toBe(grant);
-    expect(result[1]).toBe(grantKey);
+      expect(result[0]).toBe(grant);
+      expect(result[1]).toBe(grantKey);
+    }
   });
 
   it('should handle self-referencing edge (from === to) without infinite loop', () => {

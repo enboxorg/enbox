@@ -209,13 +209,12 @@ describe('e2e: encrypted data survives sync round-trip', () => {
   }
 
   it('should install the encrypted protocol locally with $keyAgreement keys', async () => {
-    // Configure the protocol locally with encryption enabled.
+    // Configure the protocol locally; its type definition requires encryption.
     const { reply } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.ProtocolsConfigure,
       messageParams : { definition: encryptedNoteProtocol },
-      encryption    : true,
     });
     expect(reply.status.code).toBe(202);
 
@@ -249,8 +248,7 @@ describe('e2e: encrypted data survives sync round-trip', () => {
           dataFormat   : 'text/plain',
           schema       : 'https://schemas.xyz/note',
         },
-        dataStream : new Blob([new TextEncoder().encode(text)]),
-        encryption : true,
+        dataStream: new Blob([new TextEncoder().encode(text)]),
       });
       expect(reply.status.code).toBe(202);
     }
@@ -543,7 +541,6 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       target        : did,
       messageType   : DwnInterface.ProtocolsConfigure,
       messageParams : { definition: chatProtocol },
-      encryption    : true,
     });
     expect(reply.status.code).toBe(202);
 
@@ -552,7 +549,6 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       target        : did,
       messageType   : DwnInterface.ProtocolsConfigure,
       messageParams : { definition: chatProtocol },
-      encryption    : true,
     }));
     expect([202, 409]).toContain(remoteReply.status.code);
   }
@@ -708,8 +704,7 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
         dataFormat      : 'text/plain',
         schema          : 'https://schemas.xyz/chat',
       },
-      dataStream : new Blob([new TextEncoder().encode(chatText)]),
-      encryption : true,
+      dataStream: new Blob([new TextEncoder().encode(chatText)]),
     });
     expect(preRoleChatReply.status.code).toBe(202);
 
@@ -755,8 +750,7 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
         dataFormat      : 'text/plain',
         schema          : 'https://schemas.xyz/chat',
       },
-      dataStream : new Blob([new TextEncoder().encode(chatText)]),
-      encryption : true,
+      dataStream: new Blob([new TextEncoder().encode(chatText)]),
     });
     expect(chatReply.status.code).toBe(202);
 
@@ -847,8 +841,7 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
         dataFormat      : 'text/plain',
         schema          : 'https://schemas.xyz/chat',
       },
-      dataStream : new Blob([new TextEncoder().encode(chatText)]),
-      encryption : true,
+      dataStream: new Blob([new TextEncoder().encode(chatText)]),
     });
     expect(chatReply.status.code).toBe(202);
 

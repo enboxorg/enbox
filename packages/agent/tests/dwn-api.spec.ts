@@ -263,6 +263,41 @@ describe('AgentDwnApi', () => {
       expect(rpcSendStub.firstCall.args[0].dwnUrl).toBe('http://127.0.0.1:55557');
     });
 
+    it('invalidates cached protocol policy after an accepted raw configure', async () => {
+      const rpcSendStub = sinon.stub().resolves({
+        status: { code: 202, detail: 'Accepted' },
+      });
+      const mockAgent: any = {
+        rpc: {
+          getServerInfo  : sinon.stub().resolves({ server: '@enbox/dwn-server', webSocketSupport: false }),
+          sendDwnRequest : rpcSendStub,
+        },
+      };
+      const dwnApi = new AgentDwnApi({
+        agent            : mockAgent,
+        localDwnEndpoint : 'http://127.0.0.1:55557',
+      });
+      const tenant = 'did:dht:testtenant';
+      const protocol = 'https://example.com/protocol-cache';
+      const cacheKeys = [`${tenant}~${protocol}`, `remote~${tenant}~${protocol}`];
+      const protocolCache = (dwnApi as any)._protocolDefinitionCache;
+      for (const cacheKey of cacheKeys) {
+        protocolCache.set(cacheKey, { protocol });
+      }
+
+      await dwnApi.processRawMessage(tenant, {
+        descriptor: {
+          interface  : 'Protocols',
+          method     : 'Configure',
+          definition : { protocol },
+        },
+      } as any);
+
+      for (const cacheKey of cacheKeys) {
+        expect(protocolCache.has(cacheKey)).toBe(false);
+      }
+    });
+
     it('processRawMessage streams data through RPC in remote mode', async () => {
       const rpcSendStub = sinon.stub().resolves({
         status: { code: 202, detail: 'Accepted' },
@@ -342,6 +377,56 @@ describe('AgentDwnApi', () => {
       });
       expect(rpcApplyStub.firstCall.args[0].data).toBe(dataStream);
       expect(mockAgent.rpc.sendDwnRequest.called).toBe(false);
+    });
+
+    it('invalidates cached protocol policy only for successful replication outcomes', async () => {
+      const rpcApplyStub = sinon.stub();
+      const mockAgent: any = {
+        rpc: {
+          applyReplicatedMessage : rpcApplyStub,
+          getServerInfo          : sinon.stub().resolves({ server: '@enbox/dwn-server', webSocketSupport: false }),
+          sendDwnRequest         : sinon.stub(),
+        },
+      };
+      const dwnApi = new AgentDwnApi({
+        agent            : mockAgent,
+        localDwnEndpoint : 'http://127.0.0.1:55557',
+      });
+      const tenant = 'did:dht:testtenant';
+      const protocol = 'https://example.com/protocol-cache';
+      const cacheKeys = [`${tenant}~${protocol}`, `remote~${tenant}~${protocol}`];
+      const protocolCache = (dwnApi as any)._protocolDefinitionCache;
+      const protocolMessage = {
+        descriptor: {
+          interface  : 'Protocols',
+          method     : 'Configure',
+          definition : { protocol },
+        },
+      } as any;
+
+      for (const result of [{ kind: 'Applied' }, { kind: 'Duplicate' }, { kind: 'Superseded' }]) {
+        for (const cacheKey of cacheKeys) {
+          protocolCache.set(cacheKey, { protocol });
+        }
+        rpcApplyStub.resolves(result);
+
+        await dwnApi.applyReplicatedMessage(tenant, protocolMessage);
+
+        for (const cacheKey of cacheKeys) {
+          expect(protocolCache.has(cacheKey)).toBe(false);
+        }
+      }
+
+      for (const cacheKey of cacheKeys) {
+        protocolCache.set(cacheKey, { protocol });
+      }
+      rpcApplyStub.resolves({ kind: 'Invalid', reason: 'rejected' });
+
+      await dwnApi.applyReplicatedMessage(tenant, protocolMessage);
+
+      for (const cacheKey of cacheKeys) {
+        expect(protocolCache.has(cacheKey)).toBe(true);
+      }
     });
 
     it('sendRequest streams constructed data through RPC in remote mode', async () => {
@@ -2861,8 +2946,9 @@ describe('Encryption Callback Factories', () => {
       protocol  : 'https://protocol.xyz/encrypted-notes',
       types     : {
         note: {
-          schema      : 'https://schemas.xyz/note',
-          dataFormats : ['text/plain', 'application/json']
+          schema             : 'https://schemas.xyz/note',
+          dataFormats        : ['text/plain', 'application/json'],
+          encryptionRequired : true,
         }
       },
       structure: {
@@ -2871,15 +2957,14 @@ describe('Encryption Callback Factories', () => {
     };
 
     it('should auto-inject $keyAgreement on ProtocolsConfigure', async () => {
-      // Configure protocol with encryption: true
+      // The definition itself requests encryption; configuration derives the keys.
       const { reply: { status } } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.ProtocolsConfigure,
         messageParams : {
           definition: encryptedProtocolDefinition
-        },
-        encryption: true
+        }
       });
       expect(status.code).toBe(202);
 
@@ -2912,8 +2997,7 @@ describe('Encryption Callback Factories', () => {
         messageType   : DwnInterface.ProtocolsConfigure,
         messageParams : {
           definition: encryptedProtocolDefinition
-        },
-        encryption: true
+        }
       });
 
       // Write an encrypted record
@@ -2930,8 +3014,7 @@ describe('Encryption Callback Factories', () => {
           dataFormat   : 'text/plain',
           schema       : 'https://schemas.xyz/note',
         },
-        dataStream : new Blob([dataBytes]),
-        encryption : true
+        dataStream: new Blob([dataBytes])
       });
 
       expect(writeStatus.code).toBe(202);
@@ -2970,8 +3053,7 @@ describe('Encryption Callback Factories', () => {
         messageType   : DwnInterface.ProtocolsConfigure,
         messageParams : {
           definition: encryptedProtocolDefinition
-        },
-        encryption: true
+        }
       });
 
       const plaintextString = 'This is my secret note for reading';
@@ -2987,8 +3069,7 @@ describe('Encryption Callback Factories', () => {
           dataFormat   : 'text/plain',
           schema       : 'https://schemas.xyz/note',
         },
-        dataStream : new Blob([dataBytes]),
-        encryption : true
+        dataStream: new Blob([dataBytes])
       });
 
       const recordsWriteMessage = writeMessage as RecordsWriteMessage;
@@ -3025,8 +3106,7 @@ describe('Encryption Callback Factories', () => {
         messageType   : DwnInterface.ProtocolsConfigure,
         messageParams : {
           definition: encryptedProtocolDefinition
-        },
-        encryption: true
+        }
       });
 
       const plaintextString = 'Small secret';
@@ -3042,8 +3122,7 @@ describe('Encryption Callback Factories', () => {
           dataFormat   : 'text/plain',
           schema       : 'https://schemas.xyz/note',
         },
-        dataStream : new Blob([dataBytes]),
-        encryption : true
+        dataStream: new Blob([dataBytes])
       });
 
       // Query replies stay raw so one undecryptable record cannot fail the whole query.
@@ -3091,47 +3170,50 @@ describe('Encryption Callback Factories', () => {
             protocolPath : 'note',
             dataFormat   : 'text/plain',
           },
-          dataStream : new Blob([dataBytes]),
-          encryption : true
+          dataStream: new Blob([dataBytes])
         });
         throw new Error('Expected an error to be thrown');
       } catch (error: any) {
-        expect(error.message).toContain('not installed');
+        expect(error.message).toContain('Unable to resolve protocol');
       }
     });
 
-    it('should throw if protocol path has no $keyAgreement configured', async () => {
-      // Install protocol WITHOUT encryption
-      await testHarness.agent.dwn.processRequest({
+    it('should keep a plaintext protocol type plaintext', async () => {
+      const plaintextProtocolDefinition = {
+        ...encryptedProtocolDefinition,
+        protocol : 'https://protocol.xyz/plaintext-notes',
+        types    : {
+          note: {
+            schema      : 'https://schemas.xyz/note',
+            dataFormats : ['text/plain'],
+          },
+        },
+      };
+      const { reply: configureReply } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.ProtocolsConfigure,
-        messageParams : {
-          definition: encryptedProtocolDefinition
-        }
-        // No encryption: true, so no $keyAgreement injected
+        messageParams : { definition: plaintextProtocolDefinition },
       });
+      expect(configureReply.status.code).toBe(202);
 
       const dataBytes = Convert.string('secret').toUint8Array();
+      const { data, message, reply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          dataFormat   : 'text/plain',
+          protocol     : plaintextProtocolDefinition.protocol,
+          protocolPath : 'note',
+          schema       : 'https://schemas.xyz/note',
+        },
+        dataStream: new Blob([dataBytes]),
+      });
 
-      try {
-        await testHarness.agent.dwn.processRequest({
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.RecordsWrite,
-          messageParams : {
-            protocol     : encryptedProtocolDefinition.protocol,
-            protocolPath : 'note',
-            dataFormat   : 'text/plain',
-            schema       : 'https://schemas.xyz/note',
-          },
-          dataStream : new Blob([dataBytes]),
-          encryption : true
-        });
-        throw new Error('Expected an error to be thrown');
-      } catch (error: any) {
-        expect(error.message).toContain('does not have encryption configured');
-      }
+      expect(reply.status.code).toBe(202);
+      expect((message as RecordsWriteMessage).encryption).toBeUndefined();
+      expect(new Uint8Array(await data!.arrayBuffer())).toEqual(dataBytes);
     });
 
     it('should handle Uint8Array data input for encryption', async () => {
@@ -3142,8 +3224,7 @@ describe('Encryption Callback Factories', () => {
         messageType   : DwnInterface.ProtocolsConfigure,
         messageParams : {
           definition: encryptedProtocolDefinition
-        },
-        encryption: true
+        }
       });
 
       const plaintextString = 'Direct Uint8Array data';
@@ -3160,8 +3241,7 @@ describe('Encryption Callback Factories', () => {
           dataFormat   : 'text/plain',
           schema       : 'https://schemas.xyz/note',
           data         : dataBytes,
-        },
-        encryption: true
+        }
       });
 
       expect(writeStatus.code).toBe(202);
@@ -3192,6 +3272,109 @@ describe('Encryption Callback Factories', () => {
       expect(Convert.uint8Array(decryptedBytes).toString()).toBe(plaintextString);
     });
 
+    it('should consume a ReadableStream once and store decryptable ciphertext', async () => {
+      await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: encryptedProtocolDefinition },
+      });
+
+      const plaintextString = 'Streamed secret split across chunks';
+      const plaintextBytes = Convert.string(plaintextString).toUint8Array();
+      const splitIndex = 17;
+      const dataStream = new ReadableStream<Uint8Array>({
+        start(controller): void {
+          controller.enqueue(plaintextBytes.slice(0, splitIndex));
+          controller.enqueue(plaintextBytes.slice(splitIndex));
+          controller.close();
+        },
+      });
+
+      const { message, reply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          dataFormat   : 'text/plain',
+          protocol     : encryptedProtocolDefinition.protocol,
+          protocolPath : 'note',
+          schema       : 'https://schemas.xyz/note',
+        },
+        dataStream,
+      });
+
+      expect(reply.status.code).toBe(202);
+      expect((message as RecordsWriteMessage).encryption).toBeDefined();
+
+      const { reply: readReply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : { filter: { recordId: message!.recordId } },
+      });
+      const decryptedBytes = await decryptStoredData(
+        testHarness.agent.dwn,
+        alice.did.uri,
+        alice.did.uri,
+        readReply.entry!.recordsWrite,
+        readReply.entry!.data!,
+      );
+      expect(Convert.uint8Array(decryptedBytes).toString()).toBe(plaintextString);
+    });
+
+    it('should reject caller-supplied encryption input for application records', async () => {
+      await expect(testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          dataFormat      : 'text/plain',
+          encryptionInput : {} as any,
+          protocol        : encryptedProtocolDefinition.protocol,
+          protocolPath    : 'note',
+          schema          : 'https://schemas.xyz/note',
+        },
+        dataStream: new Blob([Convert.string('secret').toUint8Array()]),
+      })).rejects.toThrow('caller-supplied encryptionInput is not supported');
+    });
+
+    it('should reject reusing a pre-built envelope with replacement data', async () => {
+      await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: encryptedProtocolDefinition },
+      });
+      const { message } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          dataFormat   : 'text/plain',
+          protocol     : encryptedProtocolDefinition.protocol,
+          protocolPath : 'note',
+          schema       : 'https://schemas.xyz/note',
+        },
+        dataStream: new Blob([Convert.string('original').toUint8Array()]),
+      });
+      const encryption = (message as RecordsWriteMessage).encryption!;
+
+      await expect(testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          dataFormat   : 'text/plain',
+          encryption,
+          protocol     : encryptedProtocolDefinition.protocol,
+          protocolPath : 'note',
+          schema       : 'https://schemas.xyz/note',
+        },
+        dataStream: new Blob([Convert.string('replacement').toUint8Array()]),
+      })).rejects.toThrow('pre-built encryption envelope can only be reused when record data is unchanged');
+    });
+
     it('should invalidate protocol definition cache on ProtocolsConfigure', async () => {
       // Configure protocol with encryption
       await testHarness.agent.dwn.processRequest({
@@ -3200,8 +3383,7 @@ describe('Encryption Callback Factories', () => {
         messageType   : DwnInterface.ProtocolsConfigure,
         messageParams : {
           definition: encryptedProtocolDefinition
-        },
-        encryption: true
+        }
       });
 
       // Populate cache
@@ -3219,8 +3401,7 @@ describe('Encryption Callback Factories', () => {
         messageType   : DwnInterface.ProtocolsConfigure,
         messageParams : {
           definition: encryptedProtocolDefinition
-        },
-        encryption: true
+        }
       });
 
       // Fetch again - should be the fresh definition, not the old cached one
@@ -3238,12 +3419,14 @@ describe('Encryption Callback Factories', () => {
         protocol  : 'https://protocol.xyz/nested-encrypted',
         types     : {
           thread: {
-            schema      : 'https://schemas.xyz/thread',
-            dataFormats : ['application/json']
+            schema             : 'https://schemas.xyz/thread',
+            dataFormats        : ['application/json'],
+            encryptionRequired : true,
           },
           message: {
-            schema      : 'https://schemas.xyz/message',
-            dataFormats : ['text/plain']
+            schema             : 'https://schemas.xyz/message',
+            dataFormats        : ['text/plain'],
+            encryptionRequired : true,
           }
         },
         structure: {
@@ -3260,8 +3443,7 @@ describe('Encryption Callback Factories', () => {
         messageType   : DwnInterface.ProtocolsConfigure,
         messageParams : {
           definition: nestedProtocol
-        },
-        encryption: true
+        }
       });
       expect(status.code).toBe(202);
 
@@ -3293,8 +3475,7 @@ describe('Encryption Callback Factories', () => {
         messageType   : DwnInterface.ProtocolsConfigure,
         messageParams : {
           definition: encryptedProtocolDefinition
-        },
-        encryption: true
+        }
       });
 
       // 2. Write encrypted record
@@ -3311,8 +3492,7 @@ describe('Encryption Callback Factories', () => {
           dataFormat   : 'text/plain',
           schema       : 'https://schemas.xyz/note',
         },
-        dataStream : new Blob([dataBytes]),
-        encryption : true
+        dataStream: new Blob([dataBytes])
       });
 
       const recordsWriteMessage = writeMessage as RecordsWriteMessage;
@@ -3371,8 +3551,7 @@ describe('Encryption Callback Factories', () => {
         messageType   : DwnInterface.ProtocolsConfigure,
         messageParams : {
           definition: encryptedProtocolDefinition
-        },
-        encryption: true
+        }
       });
 
       // Write initial encrypted record
@@ -3389,15 +3568,14 @@ describe('Encryption Callback Factories', () => {
           dataFormat   : 'text/plain',
           schema       : 'https://schemas.xyz/note',
         },
-        dataStream : new Blob([initialDataBytes]),
-        encryption : true
+        dataStream: new Blob([initialDataBytes])
       });
 
       const recordsWriteMessage = writeMessage as RecordsWriteMessage;
       const initialEncryption = recordsWriteMessage.encryption;
       expect(initialEncryption).toBeDefined();
 
-      // Update the record with new data and encryption: true
+      // The encrypted type receives a fresh envelope for replacement data.
       const updatedPlaintext = 'Updated secret note content';
       const updatedDataBytes = Convert.string(updatedPlaintext).toUint8Array();
 
@@ -3413,8 +3591,7 @@ describe('Encryption Callback Factories', () => {
           recordId     : recordsWriteMessage.recordId,
           dateCreated  : recordsWriteMessage.descriptor.dateCreated,
         },
-        dataStream : new Blob([updatedDataBytes]),
-        encryption : true
+        dataStream: new Blob([updatedDataBytes])
       });
 
       expect(updateStatus.code).toBe(202);
@@ -3455,9 +3632,9 @@ describe('Encryption Callback Factories', () => {
         published : true,
         protocol  : 'https://protocol.xyz/mp-update-test',
         types     : {
-          thread      : { schema: 'https://schemas.xyz/thread', dataFormats: ['application/json'] },
-          participant : { schema: 'https://schemas.xyz/participant', dataFormats: ['application/json'] },
-          chat        : { schema: 'https://schemas.xyz/chat', dataFormats: ['text/plain'] }
+          thread      : { schema: 'https://schemas.xyz/thread', dataFormats: ['application/json'], encryptionRequired: true },
+          participant : { schema: 'https://schemas.xyz/participant', dataFormats: ['application/json'], encryptionRequired: true },
+          chat        : { schema: 'https://schemas.xyz/chat', dataFormats: ['text/plain'], encryptionRequired: true }
         },
         structure: {
           thread: {
@@ -3472,8 +3649,7 @@ describe('Encryption Callback Factories', () => {
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.ProtocolsConfigure,
-        messageParams : { definition: multiPartyDef },
-        encryption    : true
+        messageParams : { definition: multiPartyDef }
       });
 
       // Write root record (thread)
@@ -3487,8 +3663,7 @@ describe('Encryption Callback Factories', () => {
           dataFormat   : 'application/json',
           schema       : 'https://schemas.xyz/thread',
         },
-        dataStream : new Blob([Convert.string('thread root').toUint8Array()]),
-        encryption : true
+        dataStream: new Blob([Convert.string('thread root').toUint8Array()])
       });
 
       const threadContextId = (threadMessage as RecordsWriteMessage).contextId!;
@@ -3506,8 +3681,7 @@ describe('Encryption Callback Factories', () => {
           dataFormat      : 'text/plain',
           schema          : 'https://schemas.xyz/chat',
         },
-        dataStream : new Blob([Convert.string(initialChat).toUint8Array()]),
-        encryption : true
+        dataStream: new Blob([Convert.string(initialChat).toUint8Array()])
       });
 
       const chatWriteMessage = chatMessage as RecordsWriteMessage;
@@ -3531,8 +3705,7 @@ describe('Encryption Callback Factories', () => {
           recordId        : chatRecordId,
           dateCreated     : chatWriteMessage.descriptor.dateCreated,
         },
-        dataStream : new Blob([Convert.string(updatedChat).toUint8Array()]),
-        encryption : true
+        dataStream: new Blob([Convert.string(updatedChat).toUint8Array()])
       });
 
       expect(status.code).toBe(202);
@@ -3571,16 +3744,19 @@ describe('Encryption Callback Factories', () => {
       protocol  : 'https://protocol.xyz/multi-party-chat',
       types     : {
         thread: {
-          schema      : 'https://schemas.xyz/thread',
-          dataFormats : ['application/json']
+          schema             : 'https://schemas.xyz/thread',
+          dataFormats        : ['application/json'],
+          encryptionRequired : true,
         },
         participant: {
-          schema      : 'https://schemas.xyz/participant',
-          dataFormats : ['application/json']
+          schema             : 'https://schemas.xyz/participant',
+          dataFormats        : ['application/json'],
+          encryptionRequired : true,
         },
         chat: {
-          schema      : 'https://schemas.xyz/chat',
-          dataFormats : ['text/plain']
+          schema             : 'https://schemas.xyz/chat',
+          dataFormats        : ['text/plain'],
+          encryptionRequired : true,
         }
       },
       structure: {
@@ -3597,8 +3773,9 @@ describe('Encryption Callback Factories', () => {
       protocol  : 'https://protocol.xyz/single-party-notes',
       types     : {
         note: {
-          schema      : 'https://schemas.xyz/note',
-          dataFormats : ['text/plain']
+          schema             : 'https://schemas.xyz/note',
+          dataFormats        : ['text/plain'],
+          encryptionRequired : true,
         }
       },
       structure: {
@@ -3614,8 +3791,7 @@ describe('Encryption Callback Factories', () => {
         messageType   : DwnInterface.ProtocolsConfigure,
         messageParams : {
           definition: multiPartyProtocolDefinition
-        },
-        encryption: true
+        }
       });
 
       // Write a root record (thread).
@@ -3632,8 +3808,7 @@ describe('Encryption Callback Factories', () => {
           dataFormat   : 'application/json',
           schema       : 'https://schemas.xyz/thread',
         },
-        dataStream : new Blob([dataBytes]),
-        encryption : true
+        dataStream: new Blob([dataBytes])
       });
 
       expect(writeStatus.code).toBe(202);
@@ -3655,8 +3830,7 @@ describe('Encryption Callback Factories', () => {
         messageType   : DwnInterface.ProtocolsConfigure,
         messageParams : {
           definition: multiPartyProtocolDefinition
-        },
-        encryption: true
+        }
       });
 
       // Write root record first to get a contextId
@@ -3670,8 +3844,7 @@ describe('Encryption Callback Factories', () => {
           dataFormat   : 'application/json',
           schema       : 'https://schemas.xyz/thread',
         },
-        dataStream : new Blob([Convert.string('thread root').toUint8Array()]),
-        encryption : true
+        dataStream: new Blob([Convert.string('thread root').toUint8Array()])
       });
 
       const threadContextId = (threadMessage as RecordsWriteMessage).contextId!;
@@ -3691,8 +3864,7 @@ describe('Encryption Callback Factories', () => {
           dataFormat      : 'text/plain',
           schema          : 'https://schemas.xyz/chat',
         },
-        dataStream : new Blob([dataBytes]),
-        encryption : true
+        dataStream: new Blob([dataBytes])
       });
 
       expect(chatStatus.code).toBe(202);
@@ -3711,8 +3883,7 @@ describe('Encryption Callback Factories', () => {
         messageType   : DwnInterface.ProtocolsConfigure,
         messageParams : {
           definition: singlePartyProtocolDefinition
-        },
-        encryption: true
+        }
       });
 
       const dataBytes = Convert.string('single-party note').toUint8Array();
@@ -3727,8 +3898,7 @@ describe('Encryption Callback Factories', () => {
           dataFormat   : 'text/plain',
           schema       : 'https://schemas.xyz/note',
         },
-        dataStream : new Blob([dataBytes]),
-        encryption : true
+        dataStream: new Blob([dataBytes])
       });
 
       expect(status.code).toBe(202);
@@ -3746,8 +3916,7 @@ describe('Encryption Callback Factories', () => {
         messageType   : DwnInterface.ProtocolsConfigure,
         messageParams : {
           definition: multiPartyProtocolDefinition
-        },
-        encryption: true
+        }
       });
 
       const plaintextString = 'Secret thread content';
@@ -3764,8 +3933,7 @@ describe('Encryption Callback Factories', () => {
           dataFormat   : 'application/json',
           schema       : 'https://schemas.xyz/thread',
         },
-        dataStream : new Blob([dataBytes]),
-        encryption : true
+        dataStream: new Blob([dataBytes])
       });
 
       const recordsWriteMessage = writeMessage as RecordsWriteMessage;
@@ -3800,8 +3968,7 @@ describe('Encryption Callback Factories', () => {
         messageType   : DwnInterface.ProtocolsConfigure,
         messageParams : {
           definition: multiPartyProtocolDefinition
-        },
-        encryption: true
+        }
       });
 
       // 1. Write root record (thread)
@@ -3816,8 +3983,7 @@ describe('Encryption Callback Factories', () => {
           dataFormat   : 'application/json',
           schema       : 'https://schemas.xyz/thread',
         },
-        dataStream : new Blob([Convert.string(threadPlaintext).toUint8Array()]),
-        encryption : true
+        dataStream: new Blob([Convert.string(threadPlaintext).toUint8Array()])
       });
 
       const threadContextId = (threadMessage as RecordsWriteMessage).contextId!;
@@ -3836,8 +4002,7 @@ describe('Encryption Callback Factories', () => {
           dataFormat      : 'text/plain',
           schema          : 'https://schemas.xyz/chat',
         },
-        dataStream : new Blob([Convert.string(chatPlaintext).toUint8Array()]),
-        encryption : true
+        dataStream: new Blob([Convert.string(chatPlaintext).toUint8Array()])
       });
 
       const chatRecordId = (chatMessage as RecordsWriteMessage).recordId;
@@ -3909,7 +4074,7 @@ describe('Encryption Callback Factories', () => {
       expect(Convert.uint8Array(decodedBytes).toString()).toBe(chatPlaintext);
     });
 
-    it('raw read without encryption flag should return encrypted data', async () => {
+    it('should return stored ciphertext from a raw read', async () => {
       // Configure protocol
       await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
@@ -3917,8 +4082,7 @@ describe('Encryption Callback Factories', () => {
         messageType   : DwnInterface.ProtocolsConfigure,
         messageParams : {
           definition: multiPartyProtocolDefinition
-        },
-        encryption: true
+        }
       });
 
       const plaintextString = 'Should be encrypted at rest';
@@ -3934,8 +4098,7 @@ describe('Encryption Callback Factories', () => {
           dataFormat   : 'application/json',
           schema       : 'https://schemas.xyz/thread',
         },
-        dataStream : new Blob([dataBytes]),
-        encryption : true
+        dataStream: new Blob([dataBytes])
       });
 
       const recordsWriteMessage = writeMessage as RecordsWriteMessage;
@@ -3988,15 +4151,25 @@ describe('Role record write behavior', () => {
     published : true,
     protocol  : 'https://protocol.xyz/chat',
     types     : {
-      thread      : { schema: 'https://schemas.xyz/thread', dataFormats: ['application/json'] },
-      participant : { schema: 'https://schemas.xyz/participant', dataFormats: ['application/json'] },
-      chat        : { schema: 'https://schemas.xyz/chat', dataFormats: ['text/plain'] }
+      thread      : { schema: 'https://schemas.xyz/thread', dataFormats: ['application/json'], encryptionRequired: true },
+      participant : { schema: 'https://schemas.xyz/participant', dataFormats: ['application/json'], encryptionRequired: true },
+      chat        : { schema: 'https://schemas.xyz/chat', dataFormats: ['text/plain'], encryptionRequired: true }
     },
     structure: {
       thread: {
         participant : { $role: true },
         chat        : {},
       },
+    },
+  };
+
+  const plaintextChatProtocol: ProtocolDefinition = {
+    ...chatProtocol,
+    protocol : 'https://protocol.xyz/plaintext-chat',
+    types    : {
+      thread      : { schema: 'https://schemas.xyz/thread', dataFormats: ['application/json'] },
+      participant : { schema: 'https://schemas.xyz/participant', dataFormats: ['application/json'] },
+      chat        : { schema: 'https://schemas.xyz/chat', dataFormats: ['text/plain'] },
     },
   };
 
@@ -4009,14 +4182,12 @@ describe('Role record write behavior', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.ProtocolsConfigure,
       messageParams : { definition: chatProtocol },
-      encryption    : true,
     });
     await testHarness.agent.dwn.processRequest({
       author        : bob.did.uri,
       target        : bob.did.uri,
       messageType   : DwnInterface.ProtocolsConfigure,
       messageParams : { definition: chatProtocol },
-      encryption    : true,
     });
 
     // Create thread
@@ -4030,8 +4201,7 @@ describe('Role record write behavior', () => {
         dataFormat   : 'application/json',
         schema       : 'https://schemas.xyz/thread',
       },
-      dataStream : new Blob([new TextEncoder().encode('{"title":"Test"}')]),
-      encryption : true,
+      dataStream: new Blob([new TextEncoder().encode('{"title":"Test"}')]),
     });
 
     const threadContextId = (threadMessage as RecordsWriteMessage).contextId!;
@@ -4050,8 +4220,7 @@ describe('Role record write behavior', () => {
         schema          : 'https://schemas.xyz/participant',
         recipient       : bob.did.uri,
       },
-      dataStream : new Blob([new TextEncoder().encode(participantData)]),
-      encryption : true,
+      dataStream: new Blob([new TextEncoder().encode(participantData)]),
     });
 
     // Read the participant record back and verify user data is preserved
@@ -4089,7 +4258,6 @@ describe('Role record write behavior', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.ProtocolsConfigure,
       messageParams : { definition: chatProtocol },
-      encryption    : true,
     });
 
     const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
@@ -4102,8 +4270,7 @@ describe('Role record write behavior', () => {
         dataFormat   : 'application/json',
         schema       : 'https://schemas.xyz/thread',
       },
-      dataStream : new Blob([new TextEncoder().encode('{"title":"BestEffort"}')]),
-      encryption : true,
+      dataStream: new Blob([new TextEncoder().encode('{"title":"BestEffort"}')]),
     });
 
     // No `recipientRolePublicKey` supplied and the recipient's key cannot be
@@ -4124,8 +4291,7 @@ describe('Role record write behavior', () => {
         dataFormat      : 'application/json',
         schema          : 'https://schemas.xyz/participant',
       },
-      dataStream : new Blob([new TextEncoder().encode('{"name":"Bob"}')]),
-      encryption : true,
+      dataStream: new Blob([new TextEncoder().encode('{"name":"Bob"}')]),
     });
 
     expect(roleWrite.reply.status.code).toBe(202);
@@ -4147,7 +4313,6 @@ describe('Role record write behavior', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.ProtocolsConfigure,
       messageParams : { definition: chatProtocol },
-      encryption    : true,
     });
     const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -4155,7 +4320,6 @@ describe('Role record write behavior', () => {
       messageType   : DwnInterface.RecordsWrite,
       messageParams : { protocol: chatProtocol.protocol, protocolPath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
       dataStream    : new Blob([new TextEncoder().encode('{"title":"EdKey"}')]),
-      encryption    : true,
     });
 
     const roleParamsWithKey = (key: any): any => ({
@@ -4214,7 +4378,6 @@ describe('Role record write behavior', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.ProtocolsConfigure,
       messageParams : { definition: chatProtocol },
-      encryption    : true,
     });
 
     // sendRequest never provisions delivery — reject the option instead of dropping it.
@@ -4260,7 +4423,6 @@ describe('Role record write behavior', () => {
       messageType   : DwnInterface.RecordsWrite,
       messageParams : { protocol: chatProtocol.protocol, protocolPath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
       dataStream    : new Blob([new TextEncoder().encode('{"title":"StoreFalse"}')]),
-      encryption    : true,
     });
     await expect(testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -4291,7 +4453,6 @@ describe('Role record write behavior', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.ProtocolsConfigure,
       messageParams : { definition: chatProtocol },
-      encryption    : true,
     });
     const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -4299,7 +4460,6 @@ describe('Role record write behavior', () => {
       messageType   : DwnInterface.RecordsWrite,
       messageParams : { protocol: chatProtocol.protocol, protocolPath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
       dataStream    : new Blob([new TextEncoder().encode('{"title":"Supplied"}')]),
-      encryption    : true,
     });
 
     const roleWrite = await testHarness.agent.dwn.processRequest({
@@ -4339,7 +4499,6 @@ describe('Role record write behavior', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.ProtocolsConfigure,
       messageParams : { definition: chatProtocol },
-      encryption    : true,
     });
     const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -4347,7 +4506,6 @@ describe('Role record write behavior', () => {
       messageType   : DwnInterface.RecordsWrite,
       messageParams : { protocol: chatProtocol.protocol, protocolPath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
       dataStream    : new Blob([new TextEncoder().encode('{"title":"BestEffortFail"}')]),
-      encryption    : true,
     });
 
     // Force delivery provisioning to fail. A supplied key does NOT make this fatal:
@@ -4409,7 +4567,6 @@ describe('Role record write behavior', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.ProtocolsConfigure,
       messageParams : { definition: chatProtocol },
-      encryption    : true,
     });
     const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -4417,7 +4574,6 @@ describe('Role record write behavior', () => {
       messageType   : DwnInterface.RecordsWrite,
       messageParams : { protocol: chatProtocol.protocol, protocolPath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
       dataStream    : new Blob([new TextEncoder().encode('{"title":"Delegated"}')]),
-      encryption    : true,
     });
 
     // Alice delegates Records/Write on the chat protocol to a session device (the
@@ -4480,7 +4636,6 @@ describe('Role record write behavior', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.ProtocolsConfigure,
       messageParams : { definition: chatProtocol },
-      encryption    : true,
     });
 
     // A missing recipient: a $role grant must name who it is granted to.
@@ -4500,7 +4655,6 @@ describe('Role record write behavior', () => {
       messageType   : DwnInterface.RecordsWrite,
       messageParams : { protocol: chatProtocol.protocol, protocolPath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
       dataStream    : new Blob([new TextEncoder().encode('{"title":"Preflight"}')]),
-      encryption    : true,
     });
     await expect(testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -4526,7 +4680,7 @@ describe('Role record write behavior', () => {
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: chatProtocol },
+      messageParams : { definition: plaintextChatProtocol },
     });
 
     const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
@@ -4534,7 +4688,7 @@ describe('Role record write behavior', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : chatProtocol.protocol,
+        protocol     : plaintextChatProtocol.protocol,
         protocolPath : 'thread',
         dataFormat   : 'application/json',
         schema       : 'https://schemas.xyz/thread',
@@ -4548,7 +4702,7 @@ describe('Role record write behavior', () => {
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
         recipient       : bob.did.uri,
-        protocol        : chatProtocol.protocol,
+        protocol        : plaintextChatProtocol.protocol,
         protocolPath    : 'thread/participant',
         parentContextId : (threadMessage as RecordsWriteMessage).contextId,
         dataFormat      : 'application/json',
@@ -4564,7 +4718,7 @@ describe('Role record write behavior', () => {
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
         filter: {
-          protocol     : chatProtocol.protocol,
+          protocol     : plaintextChatProtocol.protocol,
           protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
         },
       },
@@ -4600,9 +4754,9 @@ describe('Owner encrypted read behavior', () => {
     published : true,
     protocol  : 'https://protocol.xyz/chat-prd',
     types     : {
-      thread      : { schema: 'https://schemas.xyz/thread', dataFormats: ['application/json'] },
-      participant : { schema: 'https://schemas.xyz/participant', dataFormats: ['application/json'] },
-      chat        : { schema: 'https://schemas.xyz/chat', dataFormats: ['text/plain'] }
+      thread      : { schema: 'https://schemas.xyz/thread', dataFormats: ['application/json'], encryptionRequired: true },
+      participant : { schema: 'https://schemas.xyz/participant', dataFormats: ['application/json'], encryptionRequired: true },
+      chat        : { schema: 'https://schemas.xyz/chat', dataFormats: ['text/plain'], encryptionRequired: true }
     },
     structure: {
       thread: {
@@ -4619,7 +4773,6 @@ describe('Owner encrypted read behavior', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.ProtocolsConfigure,
       messageParams : { definition: chatProtocol },
-      encryption    : true,
     });
 
     // Create thread (root record)
@@ -4633,8 +4786,7 @@ describe('Owner encrypted read behavior', () => {
         dataFormat   : 'application/json',
         schema       : 'https://schemas.xyz/thread',
       },
-      dataStream : new Blob([new TextEncoder().encode('{"title":"Secret Thread"}')]),
-      encryption : true,
+      dataStream: new Blob([new TextEncoder().encode('{"title":"Secret Thread"}')]),
     });
 
     const threadContextId = (threadMessage as RecordsWriteMessage).contextId!;
@@ -4652,8 +4804,7 @@ describe('Owner encrypted read behavior', () => {
         dataFormat      : 'text/plain',
         schema          : 'https://schemas.xyz/chat',
       },
-      dataStream : new Blob([new TextEncoder().encode(chatText)]),
-      encryption : true,
+      dataStream: new Blob([new TextEncoder().encode(chatText)]),
     });
 
     // Query raw inline data and decrypt it through the owner's protocol-path key.
@@ -4731,8 +4882,8 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     published : true,
     protocol  : 'http://email-protocol.xyz/pre',
     types     : {
-      thread : { schema: 'http://email-protocol.xyz/schema/thread', dataFormats: ['text/plain'] },
-      email  : { schema: 'http://email-protocol.xyz/schema/email', dataFormats: ['text/plain'] },
+      thread : { schema: 'http://email-protocol.xyz/schema/thread', dataFormats: ['text/plain'], encryptionRequired: true },
+      email  : { schema: 'http://email-protocol.xyz/schema/email', dataFormats: ['text/plain'], encryptionRequired: true },
     },
     structure: {
       thread: {
@@ -4760,7 +4911,23 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.ProtocolsConfigure,
       messageParams : { definition: emailProtocol },
-      encryption    : true,
+    });
+
+    // Install the same URI as plaintext for Bob. The write must follow Alice's
+    // target policy, never the external author's local definition.
+    await testHarness.agent.dwn.processRequest({
+      author        : bob.did.uri,
+      target        : bob.did.uri,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : {
+        definition: {
+          ...emailProtocol,
+          types: {
+            email  : { schema: 'http://email-protocol.xyz/schema/email', dataFormats: ['text/plain'] },
+            thread : { schema: 'http://email-protocol.xyz/schema/thread', dataFormats: ['text/plain'] },
+          },
+        },
+      },
     });
 
     // Bob writes a root record to Alice's DWN (cross-DWN).
@@ -4782,8 +4949,7 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
         schema       : 'http://email-protocol.xyz/schema/thread',
         recipient    : alice.did.uri,
       },
-      dataStream : new Blob([new TextEncoder().encode(threadText)]),
-      encryption : true,
+      dataStream: new Blob([new TextEncoder().encode(threadText)]),
     });
 
     expect(writeReply.status.code).toBe(202);
@@ -4803,7 +4969,6 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.ProtocolsConfigure,
       messageParams : { definition: emailProtocol },
-      encryption    : true,
     });
 
     // Bob writes a root record to Alice's DWN
@@ -4819,8 +4984,7 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
         schema       : 'http://email-protocol.xyz/schema/thread',
         recipient    : alice.did.uri,
       },
-      dataStream : new Blob([new TextEncoder().encode(threadText)]),
-      encryption : true,
+      dataStream: new Blob([new TextEncoder().encode(threadText)]),
     });
 
     const recordId = (threadMessage as RecordsWriteMessage).recordId;

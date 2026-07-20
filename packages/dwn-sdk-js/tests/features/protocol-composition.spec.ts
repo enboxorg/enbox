@@ -2429,7 +2429,8 @@ export function testProtocolComposition(): void {
 
         // Inject encryption keys into the composing protocol
         const encryptedComments = await Protocols.deriveAndInjectPublicEncryptionKeys(
-          commentsProtocol, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk),
+          commentsProtocol,
+          TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk),
         );
 
         // $ref node should not have $keyAgreement
@@ -2462,9 +2463,15 @@ export function testProtocolComposition(): void {
         const threadsReply = await dwn.processMessage(alice.did, threadsConfigure.message);
         expect(threadsReply.status.code).toBe(202);
 
+        const encryptionRequiredComments = structuredClone(commentsProtocol);
+        encryptionRequiredComments.types.comment.encryptionRequired = true;
+        const commentRuleSet = encryptionRequiredComments.structure.thread.comment as ProtocolRuleSet;
+        commentRuleSet.$actions = [{ who: 'anyone', can: ['create'] }];
+
         // 2. Install the comments protocol with encryption keys
         const encryptedComments = await Protocols.deriveAndInjectPublicEncryptionKeys(
-          commentsProtocol, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk),
+          encryptionRequiredComments,
+          TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk),
         );
         const commentsConfigure = await ProtocolsConfigure.create({
           definition : encryptedComments,

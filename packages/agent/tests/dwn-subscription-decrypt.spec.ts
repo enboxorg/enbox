@@ -54,8 +54,9 @@ describe('AgentDwnApi — raw subscription data', () => {
       protocol  : `https://protocol.xyz/encrypted-notes-${TestDataGenerator.randomString(15)}`,
       types     : {
         note: {
-          schema      : 'https://schemas.xyz/note',
-          dataFormats : ['text/plain'],
+          schema             : 'https://schemas.xyz/note',
+          dataFormats        : ['text/plain'],
+          encryptionRequired : true,
         },
       },
       structure: { note: {} },
@@ -63,7 +64,6 @@ describe('AgentDwnApi — raw subscription data', () => {
 
     const { reply } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
-      encryption    : true,
       messageParams : { definition },
       messageType   : DwnInterface.ProtocolsConfigure,
       target        : alice.did.uri,
@@ -77,7 +77,6 @@ describe('AgentDwnApi — raw subscription data', () => {
     const { message, reply } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       dataStream    : new Blob([Convert.string(plaintext).toUint8Array()]),
-      encryption    : true,
       messageParams : {
         dataFormat   : 'text/plain',
         protocol,

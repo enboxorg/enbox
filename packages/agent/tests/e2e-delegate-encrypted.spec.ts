@@ -154,7 +154,6 @@ async function installProtocol(
     target        : tenantDid,
     messageType   : DwnInterface.ProtocolsConfigure,
     messageParams : { definition },
-    encryption    : true,
   });
   expect(reply.status.code).toBe(202);
 }
@@ -204,7 +203,11 @@ async function createReadGrantAndGrantKey(params: {
   });
   expect(grantKeyRecords).toHaveLength(1);
   expect(grantKeyRecords[0].descriptor.protocol).toBe(EncryptionProtocol.uri);
-  expect(grantKeyRecords[0].descriptor.protocolPath).toBe(EncryptionProtocol.grantKeyPath);
+  expect(grantKeyRecords[0].descriptor.protocolPath).toBe(
+    params.delegateX25519PrivateKey === undefined
+      ? EncryptionProtocol.wrappedGrantKeyPath
+      : EncryptionProtocol.grantKeyPath,
+  );
   expect(grantKeyRecords[0].descriptor.recipient).toBe(params.delegateDid);
   await applyDataEncodedRecord(
     params.delegateHarness,
@@ -290,7 +293,6 @@ describe('e2e: delegate + encrypted protocol', () => {
         dataFormat   : 'text/plain',
         data         : new TextEncoder().encode('This is a secret delegate note'),
       },
-      encryption: true,
     });
     expect(reply.status.code).toBe(202);
 
@@ -319,7 +321,6 @@ describe('e2e: delegate + encrypted protocol', () => {
         dataFormat   : 'text/plain',
         data         : new TextEncoder().encode(noteData),
       },
-      encryption: true,
     });
 
     const { delegateDid, delegateX25519PrivateKey } = await createImportedDelegateDid(delegateHarness);
@@ -412,7 +413,6 @@ describe('e2e: delegate + encrypted protocol', () => {
         dataFormat   : 'text/plain',
         data         : new TextEncoder().encode(noteData),
       },
-      encryption: true,
     });
 
     const { delegateDid } = await createImportedDelegateDid(delegateHarness);
@@ -469,7 +469,6 @@ describe('e2e: delegate + encrypted protocol', () => {
         dataFormat   : 'text/plain',
         data         : new TextEncoder().encode(noteData),
       },
-      encryption: true,
     });
 
     const { delegateDid, delegateX25519PrivateKey } = await createImportedDelegateDid(delegateHarness);
@@ -522,7 +521,6 @@ describe('e2e: delegate + encrypted protocol', () => {
         dataFormat   : 'text/plain',
         data         : new TextEncoder().encode(noteData),
       },
-      encryption: true,
     });
     expect(writeReply.status.code).toBe(202);
 

@@ -6,12 +6,14 @@ import type { HandlerDependencies, MethodHandler } from '../types/method-handler
 import type { ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureMessage } from '../types/protocols-types.js';
 
 import { authenticate } from '../core/auth.js';
+import { isEncryptionControlPath } from '../core/constants.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
 import { ProtocolsConfigure } from '../interfaces/protocols-configure.js';
 import { ProtocolsGrantAuthorization } from '../core/protocols-grant-authorization.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
+import { resolveProtocolTypesForPath } from '../core/protocol-authorization-validation.js';
 import { StorageController } from '../store/storage-controller.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
@@ -22,6 +24,7 @@ type StoredInitialWriteConfigValidity = 'valid' | 'invalid' | 'unknown';
 const STORED_INITIAL_WRITE_CONFIG_INVALID_CODES = new Set<string>([
   DwnErrorCode.EncryptionControlValidateAudienceRolePathInvalid,
   DwnErrorCode.EncryptionControlValidateAudienceSealKeyIdMismatch,
+  DwnErrorCode.ProtocolAuthorizationEncryptionNotAllowed,
   DwnErrorCode.ProtocolAuthorizationEncryptionRequired,
   DwnErrorCode.ProtocolAuthorizationIncorrectDataFormat,
   DwnErrorCode.ProtocolAuthorizationInitialWriteRevalidationNotInitial,
@@ -89,6 +92,17 @@ export class ProtocolsConfigureHandler implements MethodHandler {
       if (await Message.getCid(existing) === incomingCid) {
         return { status: { code: 409, detail: 'Conflict' } };
       }
+    }
+
+    try {
+      await this.validateEncryptionPolicyIsImmutable(
+        tenant,
+        message.descriptor.definition,
+        message.descriptor.messageTimestamp,
+        existingMessages as ProtocolsConfigureMessage[],
+      );
+    } catch (e) {
+      return messageReplyFromError(e, 400);
     }
 
     // find newest message, and if the incoming message is the newest
@@ -180,6 +194,60 @@ export class ProtocolsConfigureHandler implements MethodHandler {
       });
     } else {
       throw new DwnError(DwnErrorCode.ProtocolsConfigureAuthorizationFailed, 'message failed authorization');
+    }
+  }
+
+  /**
+   * Prevents a protocol URI from changing the at-rest representation of a path
+   * after records have been admitted under that path. A policy migration must use
+   * a new protocol URI so one store never contains both plaintext and ciphertext
+   * records governed by the same protocol version.
+   */
+  private async validateEncryptionPolicyIsImmutable(
+    tenant: string,
+    incomingDefinition: ProtocolDefinition,
+    incomingTimestamp: string,
+    existingConfigurations: ProtocolsConfigureMessage[],
+  ): Promise<void> {
+    if (existingConfigurations.length === 0) {
+      return;
+    }
+
+    const { messages } = await this.deps.messageStore.query(tenant, [{
+      interface : DwnInterfaceName.Records,
+      method    : DwnMethodName.Write,
+      protocol  : incomingDefinition.protocol,
+    }]);
+    const incomingPolicyByPath = new Map<string, boolean>();
+    for (const storedMessage of messages) {
+      const recordsWrite = storedMessage as RecordsWriteMessage;
+      const { protocolPath } = recordsWrite.descriptor;
+      if (isEncryptionControlPath(protocolPath)) {
+        continue;
+      }
+
+      let incomingEncryptionRequired = incomingPolicyByPath.get(protocolPath);
+      if (incomingEncryptionRequired === undefined) {
+        const incomingTypes = await resolveProtocolTypesForPath(
+          tenant,
+          protocolPath,
+          incomingDefinition,
+          this.deps.validationStateReader,
+          incomingTimestamp,
+        );
+        incomingEncryptionRequired = incomingTypes[getTypeName(protocolPath)]?.encryptionRequired === true;
+        incomingPolicyByPath.set(protocolPath, incomingEncryptionRequired);
+      }
+
+      if ((recordsWrite.encryption !== undefined) === incomingEncryptionRequired) {
+        continue;
+      }
+
+      throw new DwnError(
+        DwnErrorCode.ProtocolsConfigureEncryptionPolicyImmutable,
+        `cannot change encryption policy for protocol path '${protocolPath}' after records exist; ` +
+        'install the changed definition under a new protocol URI.'
+      );
     }
   }
 

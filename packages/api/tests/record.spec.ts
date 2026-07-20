@@ -2208,15 +2208,15 @@ describe('Record', () => {
           published : true,
           types     : {
             note: {
-              dataFormats : ['text/plain'],
-              schema      : 'https://schemas.xyz/encrypted-store-false-note',
+              dataFormats        : ['text/plain'],
+              schema             : 'https://schemas.xyz/encrypted-store-false-note',
+              encryptionRequired : true,
             },
           },
           structure: { note: {} },
         };
         const { status: configureStatus, protocol } = await dwnAlice.protocols.configure({
-          definition : encryptedProtocol,
-          encryption : true,
+          definition: encryptedProtocol,
         });
         expect(configureStatus.code).toBe(202);
         expect((await protocol!.send(aliceDid.uri)).status.code).toBe(202);
@@ -2225,7 +2225,6 @@ describe('Record', () => {
         const writeResult = await dwnAlice.records.write({
           data         : plaintext,
           dataFormat   : 'text/plain',
-          encryption   : true,
           protocol     : encryptedProtocol.protocol,
           protocolPath : 'note',
           schema       : encryptedProtocol.types.note.schema,
@@ -3352,8 +3351,9 @@ describe('Record', () => {
         protocol  : `http://encrypted-notes.xyz/${TestDataGenerator.randomString(15)}`,
         types     : {
           note: {
-            schema      : 'https://schemas.xyz/note',
-            dataFormats : ['text/plain']
+            schema             : 'https://schemas.xyz/note',
+            dataFormats        : ['text/plain'],
+            encryptionRequired : true,
           }
         },
         structure: {
@@ -3363,8 +3363,7 @@ describe('Record', () => {
 
       // Configure with encryption
       const { status: configStatus } = await dwnAlice.protocols.configure({
-        definition : encProtocol,
-        encryption : true,
+        definition: encProtocol,
       });
       expect(configStatus.code).toBe(202);
 
@@ -3376,7 +3375,6 @@ describe('Record', () => {
         protocolPath : 'note',
         dataFormat   : 'text/plain',
         schema       : 'https://schemas.xyz/note',
-        encryption   : true,
       });
       expect(writeStatus.code).toBe(202);
       expect(record).toBeDefined();
@@ -3405,7 +3403,44 @@ describe('Record', () => {
       expect(decryptedText).toBe(updatedPlaintext);
     });
 
-    it('should not encrypt updates when encryption is explicitly set to false', async () => {
+    it('should retain the stored data and envelope for metadata-only encrypted updates', async () => {
+      const encProtocol: DwnProtocolDefinition = {
+        published : true,
+        protocol  : `http://encrypted-metadata.xyz/${TestDataGenerator.randomString(15)}`,
+        types     : {
+          note: {
+            schema             : 'https://schemas.xyz/encrypted-metadata-note',
+            dataFormats        : ['text/plain'],
+            encryptionRequired : true,
+          },
+        },
+        structure: { note: {} },
+      };
+      expect((await dwnAlice.protocols.configure({ definition: encProtocol })).status.code).toBe(202);
+
+      const plaintext = 'metadata-only encrypted update';
+      const { status: writeStatus, record } = await dwnAlice.records.write({
+        data         : plaintext,
+        dataFormat   : 'text/plain',
+        protocol     : encProtocol.protocol,
+        protocolPath : 'note',
+        schema       : encProtocol.types.note.schema,
+      });
+      expect(writeStatus.code).toBe(202);
+
+      const originalDataCid = record!.dataCid;
+      const originalEncryption = structuredClone(record!.encryption);
+      const { status: updateStatus, record: updatedRecord } = await record!.update({
+        tags: { state: 'reviewed' },
+      });
+
+      expect(updateStatus.code).toBe(202);
+      expect(updatedRecord.dataCid).toBe(originalDataCid);
+      expect(updatedRecord.encryption).toEqual(originalEncryption);
+      expect(await updatedRecord.data.text()).toBe(plaintext);
+    });
+
+    it('should keep updates plaintext when the protocol type requires plaintext', async () => {
       // Write a non-encrypted record
       const { status: writeStatus, record } = await dwnAlice.records.write({
         data         : 'Not encrypted',
@@ -3440,8 +3475,9 @@ describe('Record', () => {
         protocol  : `http://encrypted-notes.xyz/${TestDataGenerator.randomString(15)}`,
         types     : {
           note: {
-            schema      : 'https://schemas.xyz/note',
-            dataFormats : ['text/plain']
+            schema             : 'https://schemas.xyz/note',
+            dataFormats        : ['text/plain'],
+            encryptionRequired : true,
           }
         },
         structure: {
@@ -3451,8 +3487,7 @@ describe('Record', () => {
 
       // Configure with encryption
       const { status: configStatus } = await dwnAlice.protocols.configure({
-        definition : encProtocol,
-        encryption : true,
+        definition: encProtocol,
       });
       expect(configStatus.code).toBe(202);
 
@@ -3464,7 +3499,6 @@ describe('Record', () => {
         protocolPath : 'note',
         dataFormat   : 'text/plain',
         schema       : 'https://schemas.xyz/note',
-        encryption   : true,
       });
       expect(writeStatus.code).toBe(202);
       expect(record).toBeDefined();

@@ -1441,9 +1441,9 @@ describe('dwn-encryption', () => {
             data         : dataBytes,
             dataFormat   : 'application/json',
             protocol     : EncryptionProtocol.uri,
-            protocolPath : EncryptionProtocol.grantKeyPath,
+            protocolPath : request.messageParams.protocolPath,
             recipient    : delegateDid.uri,
-            schema       : EncryptionProtocol.definition.types.grantKey.schema,
+            schema       : request.messageParams.schema,
             tags         : request.messageParams.tags,
           });
 
@@ -1472,6 +1472,7 @@ describe('dwn-encryption', () => {
 
         expect(grantKeyRecords).toHaveLength(1);
         expect(grantKeyRecords[0].encryption).toBeUndefined();
+        expect(grantKeyRecords[0].descriptor.protocolPath).toBe(EncryptionProtocol.wrappedGrantKeyPath);
         const envelope = Encoder.bytesToObject(Encoder.base64UrlToBytes(grantKeyRecords[0].encodedData)) as any;
         expect(envelope.format).toBe(WRAPPED_GRANT_KEY_FORMAT);
         expect(envelope.keyEncryption.keyId).toBe(await Encryption.getKeyId(delegateKeyInfo.publicKeyJwk));
@@ -1586,6 +1587,7 @@ describe('dwn-encryption', () => {
       grantRevoked = false,
       protocolDefinition,
       grantKeyRemoteOnly = false,
+      grantKeyEncrypted = true,
       mutatePayload,
       mutateRecordTags,
     }: {
@@ -1597,6 +1599,7 @@ describe('dwn-encryption', () => {
       grantRevoked?: boolean;
       protocolDefinition?: ProtocolDefinition;
       grantKeyRemoteOnly?: boolean;
+      grantKeyEncrypted?: boolean;
       mutatePayload?: (payload: any) => void;
       mutateRecordTags?: (tags: Record<string, string>) => void;
     } = {}): Promise<{
@@ -1666,11 +1669,11 @@ describe('dwn-encryption', () => {
       });
       const grantKeyMessage = {
         ...grantKeyWrite.message,
-        encryption: {
+        ...(grantKeyEncrypted ? { encryption: {
           algorithm            : ContentEncryptionAlgorithm.A256CTR,
           initializationVector : Encoder.bytesToBase64Url(new Uint8Array(16)),
           keyEncryption        : [],
-        },
+        } } : {}),
         ...(includeEncodedData ? { encodedData: Encoder.bytesToBase64Url(grantKeyWrite.dataBytes!) } : {}),
       } as RecordsWriteMessage & { encodedData?: string };
 
@@ -2046,14 +2049,31 @@ describe('dwn-encryption', () => {
 
       expect(mockAgent.processDwnRequest.calledOnce).toBe(true);
       expect(mockAgent.processDwnRequest.firstCall.args[0].messageParams.filter).toEqual({
-        recipient    : 'did:example:delegate',
-        protocol     : EncryptionProtocol.uri,
-        protocolPath : EncryptionProtocol.grantKeyPath,
-        tags         : { protocol: 'https://proto.example.com' },
+        recipient : 'did:example:delegate',
+        protocol  : EncryptionProtocol.uri,
+        tags      : { protocol: 'https://proto.example.com' },
       });
       expect(mockAgent.sendDwnRequest.calledOnce).toBe(true);
       expect(delegateCache.set.called).toBe(false);
       expect(mockAgent.keyManager.getKeyUri.called).toBe(false);
+    });
+
+    it('should reject plaintext bytes at the encrypted grantKey path', async () => {
+      const { mockAgent, delegateCache, recordsWrite } = await makeGrantKeyResolverFixture({
+        grantKeyEncrypted: false,
+      });
+
+      await expect(resolveKeyDecrypter({
+        agent                      : mockAgent,
+        authorDid                  : 'did:example:delegate',
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite,
+        targetDid                  : 'did:example:alice',
+      })).rejects.toThrow('no delivered decryption key covers encrypted record');
+
+      expect(delegateCache.set.called).toBe(false);
+      expect((Records.decrypt as sinon.SinonStub).called).toBe(false);
     });
 
     it('should hydrate and cache a path-scoped durable grantKey for descendant records', async () => {
@@ -2158,10 +2178,9 @@ describe('dwn-encryption', () => {
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
       expect(mockAgent.sendDwnRequest.calledOnce).toBe(true);
       expect(mockAgent.sendDwnRequest.firstCall.args[0].messageParams.filter).toEqual({
-        recipient    : 'did:example:delegate',
-        protocol     : EncryptionProtocol.uri,
-        protocolPath : EncryptionProtocol.grantKeyPath,
-        tags         : { protocol: 'https://proto.example.com' },
+        recipient : 'did:example:delegate',
+        protocol  : EncryptionProtocol.uri,
+        tags      : { protocol: 'https://proto.example.com' },
       });
       expect(delegateCache.set.calledOnce).toBe(true);
     });

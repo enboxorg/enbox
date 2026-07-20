@@ -34,19 +34,19 @@ const testDwnUrls: string[] = [testDwnUrl];
 const VALID_X25519_KEY: DwnPublicKeyJwk = { kty: 'OKP', crv: 'X25519', x: '11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo' };
 
 // Multi-party protocol with root (`admin`) and nested (`thread/participant`)
-// `$role` paths plus a `settings` singleton. Installed with `encryption: true`
-// so the role paths carry a `$keyAgreement` audience, which is what makes
-// role-audience key delivery provisioning run.
+// `$role` paths plus a `settings` singleton. Each type requires encryption so
+// the role paths carry a `$keyAgreement` audience, which makes role-audience
+// key delivery provisioning run.
 const chatDefinitionTemplate = {
   published : true,
   protocol  : 'https://protocol.xyz/api-chat' as string,
   types     : {
-    admin       : { schema: 'https://schemas.xyz/admin', dataFormats: ['application/json'] },
-    thread      : { schema: 'https://schemas.xyz/thread', dataFormats: ['application/json'] },
-    participant : { schema: 'https://schemas.xyz/participant', dataFormats: ['application/json'] },
-    chat        : { schema: 'https://schemas.xyz/chat', dataFormats: ['text/plain'] },
-    settings    : { schema: 'https://schemas.xyz/settings', dataFormats: ['application/json'] },
-    meta        : { schema: 'https://schemas.xyz/meta', dataFormats: ['application/json'] },
+    admin       : { schema: 'https://schemas.xyz/admin', dataFormats: ['application/json'], encryptionRequired: true },
+    thread      : { schema: 'https://schemas.xyz/thread', dataFormats: ['application/json'], encryptionRequired: true },
+    participant : { schema: 'https://schemas.xyz/participant', dataFormats: ['application/json'], encryptionRequired: true },
+    chat        : { schema: 'https://schemas.xyz/chat', dataFormats: ['text/plain'], encryptionRequired: true },
+    settings    : { schema: 'https://schemas.xyz/settings', dataFormats: ['application/json'], encryptionRequired: true },
+    meta        : { schema: 'https://schemas.xyz/meta', dataFormats: ['application/json'], encryptionRequired: true },
   },
   structure: {
     admin  : { $role: true },
@@ -125,7 +125,6 @@ describe('audience key delivery propagation', () => {
 
     const { status: configureStatus } = await dwnAlice.protocols.configure({
       definition,
-      encryption: true,
     });
     expect(configureStatus.code).toBe(202);
 
@@ -310,7 +309,7 @@ describe('audience key delivery propagation', () => {
       const definition = makeChatDefinition();
       const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {} as ChatSchemaMap));
 
-      const { status: configureStatus } = await typed.configure({ encryption: true });
+      const { status: configureStatus } = await typed.configure();
       expect(configureStatus.code).toBe(202);
 
       const { record: thread } = await typed.records.create('thread', { data: { title: 'Typed Thread' } });
@@ -342,7 +341,7 @@ describe('audience key delivery propagation', () => {
       const definition = makeChatDefinition();
       const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {} as ChatSchemaMap));
 
-      const { status: configureStatus } = await typed.configure({ encryption: true });
+      const { status: configureStatus } = await typed.configure();
       expect(configureStatus.code).toBe(202);
 
       const { record: thread } = await typed.records.create('thread', { data: { title: 'Typed Thread' } });
@@ -375,7 +374,7 @@ describe('audience key delivery propagation', () => {
       const definition = makeChatDefinition();
       const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {} as ChatSchemaMap));
 
-      const { status: configureStatus } = await typed.configure({ encryption: true });
+      const { status: configureStatus } = await typed.configure();
       expect(configureStatus.code).toBe(202);
 
       const { record: thread } = await typed.records.create('thread', { data: { title: 'Typed Thread' } });
@@ -407,7 +406,7 @@ describe('audience key delivery propagation', () => {
       const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {} as ChatSchemaMap));
       const repo = repository(typed);
 
-      const { status: configureStatus } = await repo.configure({ encryption: true });
+      const { status: configureStatus } = await repo.configure();
       expect(configureStatus.code).toBe(202);
 
       const result = await repo.admin.create({
@@ -426,7 +425,7 @@ describe('audience key delivery propagation', () => {
       const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {} as ChatSchemaMap));
       const repo = repository(typed);
 
-      const { status: configureStatus } = await repo.configure({ encryption: true });
+      const { status: configureStatus } = await repo.configure();
       expect(configureStatus.code).toBe(202);
 
       const threadResult = await repo.thread.create({ data: { title: 'Repo Thread' } });
@@ -448,7 +447,7 @@ describe('audience key delivery propagation', () => {
       const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {} as ChatSchemaMap));
       const repo = repository(typed);
 
-      const { status: configureStatus } = await repo.configure({ encryption: true });
+      const { status: configureStatus } = await repo.configure();
       expect(configureStatus.code).toBe(202);
 
       // Inject an outcome at the agent boundary for every stored `settings`
@@ -481,7 +480,7 @@ describe('audience key delivery propagation', () => {
       const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {} as ChatSchemaMap));
       const repo = repository(typed);
 
-      const { status: configureStatus } = await repo.configure({ encryption: true });
+      const { status: configureStatus } = await repo.configure();
       expect(configureStatus.code).toBe(202);
 
       const first = await repo.settings.set({ data: { theme: 'dark' } });
@@ -526,7 +525,7 @@ describe('audience key delivery propagation', () => {
       const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {} as ChatSchemaMap));
       const repo = repository(typed);
 
-      const { status: configureStatus } = await repo.configure({ encryption: true });
+      const { status: configureStatus } = await repo.configure();
       expect(configureStatus.code).toBe(202);
 
       const threadResult = await repo.thread.create({ data: { title: 'Meta Thread' } });

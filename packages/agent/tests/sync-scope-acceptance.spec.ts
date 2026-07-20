@@ -120,39 +120,43 @@ describe('sync-scope-acceptance', () => {
   });
 
   it('accepts encryption records tagged for a covered protocol', () => {
-    const message = {
-      recordId   : 'grant-key-record',
-      descriptor : {
-        interface    : DwnInterfaceName.Records,
-        method       : DwnMethodName.Write,
-        protocol     : EncryptionProtocol.uri,
-        protocolPath : EncryptionProtocol.grantKeyPath,
-        tags         : { protocol: profileProtocol },
-      },
-      authorization: { signature: { payload: '', signatures: [] } },
-    } as unknown as GenericMessage;
+    for (const protocolPath of [EncryptionProtocol.grantKeyPath, EncryptionProtocol.wrappedGrantKeyPath]) {
+      const message = {
+        recordId   : `grant-key-record-${protocolPath}`,
+        descriptor : {
+          interface : DwnInterfaceName.Records,
+          method    : DwnMethodName.Write,
+          protocol  : EncryptionProtocol.uri,
+          protocolPath,
+          tags      : { protocol: profileProtocol },
+        },
+        authorization: { signature: { payload: '', signatures: [] } },
+      } as unknown as GenericMessage;
 
-    const classification = classifySyncMessageScope({ message, scope: profileScope });
+      const classification = classifySyncMessageScope({ message, scope: profileScope });
 
-    expect(classification).toBe('in-scope');
+      expect(classification).toBe('in-scope');
+    }
   });
 
   it('rejects encryption records tagged for a sibling protocol', () => {
-    const message = {
-      recordId   : 'grant-key-record',
-      descriptor : {
-        interface    : DwnInterfaceName.Records,
-        method       : DwnMethodName.Write,
-        protocol     : EncryptionProtocol.uri,
-        protocolPath : EncryptionProtocol.grantKeyPath,
-        tags         : { protocol: socialProtocol },
-      },
-      authorization: { signature: { payload: '', signatures: [] } },
-    } as unknown as GenericMessage;
+    for (const protocolPath of [EncryptionProtocol.grantKeyPath, EncryptionProtocol.wrappedGrantKeyPath]) {
+      const message = {
+        recordId   : `grant-key-record-${protocolPath}`,
+        descriptor : {
+          interface : DwnInterfaceName.Records,
+          method    : DwnMethodName.Write,
+          protocol  : EncryptionProtocol.uri,
+          protocolPath,
+          tags      : { protocol: socialProtocol },
+        },
+        authorization: { signature: { payload: '', signatures: [] } },
+      } as unknown as GenericMessage;
 
-    const classification = classifySyncMessageScope({ message, scope: profileScope });
+      const classification = classifySyncMessageScope({ message, scope: profileScope });
 
-    expect(classification).toBe('out-of-scope');
+      expect(classification).toBe('out-of-scope');
+    }
   });
 
 });

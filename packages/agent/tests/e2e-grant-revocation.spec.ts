@@ -112,7 +112,6 @@ describe('e2e: grant revocation stops future delivery', () => {
       target        : ownerDid,
       messageType   : DwnInterface.ProtocolsConfigure,
       messageParams : { definition: chatProtocol },
-      encryption    : true,
     });
 
     const delegateBearerDid = await DidJwk.create();
@@ -141,7 +140,6 @@ describe('e2e: grant revocation stops future delivery', () => {
         dataFormat   : 'application/json',
         data         : new TextEncoder().encode(JSON.stringify({ topic: 'Revocation authorization check' })),
       },
-      encryption: true,
     });
 
     const readParams = {
@@ -197,7 +195,6 @@ describe('e2e: grant revocation stops future delivery', () => {
         target        : ownerDid,
         messageType   : DwnInterface.ProtocolsConfigure,
         messageParams : { definition: chatProtocol },
-        encryption    : true,
       });
 
       const delegateBearerDid = await DidJwk.create();
@@ -395,7 +392,6 @@ describe('e2e: grant revocation stops future delivery', () => {
       target        : ownerDid,
       messageType   : DwnInterface.ProtocolsConfigure,
       messageParams : { definition: chatProtocol },
-      encryption    : true,
     });
 
     const delegateBearerDid = await DidJwk.create();
@@ -567,7 +563,6 @@ describe('e2e: grant revocation stops future delivery', () => {
       target        : ownerDid,
       messageType   : DwnInterface.ProtocolsConfigure,
       messageParams : { definition: chatProtocol },
-      encryption    : true,
     });
 
     const delegateBearerDid = await DidJwk.create();

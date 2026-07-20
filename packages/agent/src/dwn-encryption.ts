@@ -764,13 +764,17 @@ async function createGrantKeyRecordForPayload(params: {
     messageParams : {
       recipient    : params.granteeDid,
       protocol     : EncryptionProtocol.uri,
-      protocolPath : EncryptionProtocol.grantKeyPath,
-      schema       : EncryptionProtocol.definition.types.grantKey.schema,
-      dataFormat   : 'application/json',
-      dataCid      : recordData.dataCid,
-      dataSize     : recordData.dataSize,
+      protocolPath : recordData.encryptionInput === undefined
+        ? EncryptionProtocol.wrappedGrantKeyPath
+        : EncryptionProtocol.grantKeyPath,
+      schema: recordData.encryptionInput === undefined
+        ? EncryptionProtocol.definition.types.wrappedGrantKey.schema
+        : EncryptionProtocol.definition.types.grantKey.schema,
+      dataFormat : 'application/json',
+      dataCid    : recordData.dataCid,
+      dataSize   : recordData.dataSize,
       ...(recordData.encryptionInput !== undefined ? { encryptionInput: recordData.encryptionInput } : {}),
-      tags         : buildGrantKeyRecordTags(params.grant, params.payload),
+      tags       : buildGrantKeyRecordTags(params.grant, params.payload),
     },
     dataStream: DataStream.fromBytes(recordData.dataBytes),
   });
@@ -2748,10 +2752,9 @@ async function resolveGrantKeyRecords(params: ResolveGrantKeyRecordsParams): Pro
     messageType   : DwnInterface.RecordsQuery,
     messageParams : {
       filter: {
-        recipient    : params.granteeDid,
-        protocol     : EncryptionProtocol.uri,
-        protocolPath : EncryptionProtocol.grantKeyPath,
-        tags         : { protocol: params.protocol },
+        recipient : params.granteeDid,
+        protocol  : EncryptionProtocol.uri,
+        tags      : { protocol: params.protocol },
       },
     },
   }, hasRecordsQueryEntries);
@@ -2804,6 +2807,11 @@ async function resolveGrantKeyRecord(params: ResolveGrantKeyRecordParams): Promi
     return undefined;
   }
 
+  if (grantKeyMessage.descriptor.protocolPath !== EncryptionProtocol.grantKeyPath &&
+      grantKeyMessage.descriptor.protocolPath !== EncryptionProtocol.wrappedGrantKeyPath) {
+    return undefined;
+  }
+
   const encryptedData = await getGrantKeyEncryptedData(params.agent, params.granteeDid, params.grantorDid, grantKeyMessage);
   if (encryptedData === undefined) {
     return undefined;
@@ -2831,9 +2839,18 @@ async function readGrantKeyPayload(
   params: ResolveGrantKeyRecordParams,
   encryptedData: Uint8Array,
 ): Promise<GrantKeyPayload> {
-  return params.grantKeyMessage.encryption === undefined
-    ? unwrapGrantKeyPayload(params.agent, params.granteeWrappedGrantKeyRecipient, encryptedData)
-    : decryptGrantKeyPayload(params.grantKeyMessage, params.granteeDecrypter, encryptedData);
+  const { grantKeyMessage } = params;
+  if (grantKeyMessage.descriptor.protocolPath === EncryptionProtocol.grantKeyPath) {
+    if (grantKeyMessage.encryption === undefined) {
+      throw new Error('AgentDwnApi: encrypted grantKey record is missing its encryption envelope.');
+    }
+    return decryptGrantKeyPayload(grantKeyMessage, params.granteeDecrypter, encryptedData);
+  }
+
+  if (grantKeyMessage.encryption !== undefined) {
+    throw new Error('AgentDwnApi: wrappedGrantKey record has unexpected DWN encryption metadata.');
+  }
+  return unwrapGrantKeyPayload(params.agent, params.granteeWrappedGrantKeyRecipient, encryptedData);
 }
 
 function buildDelegateDecryptionKeyEntry(grantorDid: string, payload: GrantKeyPayload): DelegateDecryptionKeyEntry {
