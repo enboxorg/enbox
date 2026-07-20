@@ -583,7 +583,7 @@ describe('SyncEngineLevel — identity management', () => {
         };
       });
 
-      const settlePass = (engine as any).runLiveIntegrityCheck((engine as any)._runtime);
+      const settlePass = (engine as any).runSettleCheck((engine as any)._runtime);
       await linkStorageReached;
 
       // The re-initialization holds the exclusive sync lock, so the
@@ -660,7 +660,7 @@ describe('SyncEngineLevel — identity management', () => {
         };
       });
 
-      const settlePass = (engine as any).runLiveIntegrityCheck((engine as any)._runtime);
+      const settlePass = (engine as any).runSettleCheck((engine as any)._runtime);
       await linkStorageReached;
 
       let updateSettled = false;

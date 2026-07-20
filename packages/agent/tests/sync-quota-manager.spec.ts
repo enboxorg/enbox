@@ -33,7 +33,7 @@ describe('SyncQuotaManager', () => {
     const { manager, operations } = createHarness();
 
     try {
-      const first = await manager.transitionPushResult(target(), {
+      const first = await manager.applyPushResult(target(), {
         acknowledged : [],
         failed       : [{ cid: 'cid-1', detail: 'over quota', quotaBlocked: true }],
         succeeded    : [],
@@ -53,7 +53,7 @@ describe('SyncQuotaManager', () => {
       });
 
       await clock.tickAsync(1_000);
-      await manager.transitionPushResult(target(), {
+      await manager.applyPushResult(target(), {
         acknowledged : [],
         failed       : [{ cid: 'cid-1', quotaBlocked: true }],
         succeeded    : [],
@@ -75,7 +75,7 @@ describe('SyncQuotaManager', () => {
     const { manager, operations } = createHarness();
     await manager.recordBlock(target(), 'blocked-cid', undefined, 'over quota');
 
-    const transition = await manager.transitionPushResult(target(), {
+    const transition = await manager.applyPushResult(target(), {
       acknowledged : [{ cid: 'blocked-cid', resolution: 'superseded' }],
       failed       : [
         { cid: 'blocked-cid', quotaBlocked: true },
@@ -91,7 +91,7 @@ describe('SyncQuotaManager', () => {
       terminalFailures  : [{ cid: 'terminal-cid', kind: 'Invalid', terminal: true }],
     });
     expect(await manager.getActiveBlocksForTarget(target())).toEqual([]);
-    expect(await manager.getStatesForTarget(target())).toEqual([
+    expect(await manager.getBlocksForTarget(target())).toEqual([
       { messageCid: 'blocked-cid', state: expect.objectContaining({ supersededAt: expect.any(String) }) },
     ]);
     expect(operations.clearFailedMessage.calledOnceWith(target(), 'blocked-cid')).toBe(true);
@@ -112,7 +112,7 @@ describe('SyncQuotaManager', () => {
 
     const probing = manager.probeBlocksForTarget(target(), true);
     await transportStarted.promise;
-    await manager.transitionPushResult(target(), { acknowledged: [], failed: [], succeeded: ['cid-1'] });
+    await manager.applyPushResult(target(), { acknowledged: [], failed: [], succeeded: ['cid-1'] });
     releaseTransport.resolve();
     await probing;
 
@@ -226,11 +226,11 @@ describe('SyncQuotaManager', () => {
     ]);
 
     await manager.pruneStaleLinkBlocks([current], () => false);
-    expect(await manager.getAllStates()).toHaveLength(3);
+    expect(await manager.getAllBlockStates()).toHaveLength(3);
 
     await manager.pruneStaleLinkBlocks([current], () => true);
 
-    expect((await manager.getAllStates()).map(({ messageCid }) => messageCid).sort()).toEqual([
+    expect((await manager.getAllBlockStates()).map(({ messageCid }) => messageCid).sort()).toEqual([
       'current-cid',
       'other-cid',
     ]);
@@ -277,7 +277,7 @@ describe('SyncQuotaManager', () => {
     operations.collectRemoteFeedCids.resolves(new Set());
 
     expect(await manager.reconcileAndExplainFeedDivergence(target(), {})).toBe(true);
-    expect(await manager.getStatesForTarget(target())).toEqual([]);
+    expect(await manager.getBlocksForTarget(target())).toEqual([]);
     expect(operations.onQuotaCleared.calledOnceWith(target(), 'retired-cid', 'superseded')).toBe(true);
   });
 });

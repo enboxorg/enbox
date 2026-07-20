@@ -48,7 +48,7 @@ import type {
 } from './sync-durable-feed-reconciler.js';
 import type { SyncDeferredPullState, SyncDeferredPullStore } from './sync-deferred-pull-store.js';
 import type { SyncEndpointDiscovery, SyncTarget } from './sync-target-resolver.js';
-import type { SyncQuotaBlockEntry, SyncQuotaPushResultTransition } from './sync-quota-manager.js';
+import type { SyncQuotaBlockEntry, SyncQuotaPushResultOutcome } from './sync-quota-manager.js';
 import type { SyncQuotaBlockSource, SyncQuotaBlockState } from './sync-quota-store.js';
 import type {
   SyncScopeClosureGrantQuery,
@@ -86,7 +86,7 @@ import { SyncRuntime } from './sync-runtime.js';
 import { SyncScopeClosureValidator } from './sync-scope-closure-validator.js';
 import { SyncStatusReporter } from './sync-status-reporter.js';
 import { SyncTargetPlanner } from './sync-target-planner.js';
-import { buildDurableLinkIdentityKey, buildLinkId, LINK_ID_SEPARATOR } from './sync-link-id.js';
+import { buildDurableLinkIdentityKey, buildLinkKey, LINK_KEY_SEPARATOR } from './sync-link-key.js';
 import { computeProjectionId, isTerminalPushFailure, lexicographicalCompare, singleProtocolForSyncScope, syncEventScope, syncScopeFromProtocols } from './types/sync.js';
 import { fetchRemoteMessages, getLocalMessage, isInitialWriteForRecord, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, recordIdForRecordsMessage } from './sync-messages.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
@@ -268,7 +268,7 @@ export class SyncEngineLevel implements SyncEngine {
         runBackgroundTask      : (operation): Promise<void> => this._lifecycle.runBackgroundTask(operation),
         // sync() widens a queued follow-up to an unscoped convergence check if
         // scoped or full sync work already owns the exclusive lifecycle lock.
-        runIntegrityCheck      : (): Promise<void> => this.sync(undefined, { verifyConvergence: true }),
+        runConvergenceCheck    : (): Promise<void> => this.sync(undefined, { verifyConvergence: true }),
       },
     });
   }
@@ -290,7 +290,7 @@ export class SyncEngineLevel implements SyncEngine {
         onReconcileApplied : (target, messageCids): void => { this.emitReconcileApplied(target, messageCids); },
         prepareLiveTarget  : (target): Promise<void> => this.prepareDrainLiveTarget(target),
         reconcileTarget    : (target, options, shouldContinue): Promise<SyncReconcileResult> =>
-          this.syncTargetWithDurableFeeds(target, options, shouldContinue),
+          this.reconcileTarget(target, options, shouldContinue),
         recordConnectivityFailure : (): void => { this._connectivityManager.recordFailure(); },
         recordConnectivitySuccess : (): void => { this._connectivityManager.recordSuccess(); },
         recordPushFailures        : async (target, failures): Promise<void> => {
@@ -316,7 +316,7 @@ export class SyncEngineLevel implements SyncEngine {
         },
         onReconcileApplied : (target, messageCids): void => { this.emitReconcileApplied(target, messageCids); },
         reconcileTarget    : (target, direction, verifyConvergence): Promise<SyncReconcileResult> =>
-          this.syncTargetWithDurableFeeds(target, { direction, verifyConvergence }),
+          this.reconcileTarget(target, { direction, verifyConvergence }),
         recordConnectivityFailure : (): void => { this._connectivityManager.recordFailure(); },
         recordConnectivitySuccess : (): void => { this._connectivityManager.recordSuccess(); },
         recordPushFailures        : (target, failures): Promise<number> =>
@@ -429,8 +429,8 @@ export class SyncEngineLevel implements SyncEngine {
         this.bootstrapRemotePermissionGrants(target, shouldContinue, forceQuotaProbe),
       clearResolvedQuotaOmissions: (target): Promise<void> =>
         this.clearResolvedQuotaOmissionsForTarget(target),
-      getLinkStore    : (): SyncReplicationLinkStore => this.ledger,
-      getOrCreateLink : (target): Promise<ReplicationLinkState> =>
+      getReplicationLinkStore : (): SyncReplicationLinkStore => this.ledger,
+      getOrCreateLink         : (target): Promise<ReplicationLinkState> =>
         this.getOrCreateReplicationLink(target),
       getQuotaBlockCids: async (target): Promise<string[]> =>
         (await this.getQuotaBlocksForTarget(target)).map(({ messageCid }) => messageCid),
@@ -462,7 +462,7 @@ export class SyncEngineLevel implements SyncEngine {
         getCurrentQuotaLinkKeys    : (): Promise<Set<string> | undefined> => this.getCurrentQuotaLinkKeys(),
         getDeadLetters             : (): Promise<DeadLetterEntry[]> => this._deadLetterStore.getAll(),
         getLinks                   : (): Promise<ReplicationLinkState[]> => this.ledger.getAllLinks(),
-        getQuotaBlocks             : (): Promise<SyncQuotaBlockState[]> => this._quotaManager.getAllStates(),
+        getQuotaBlocks             : (): Promise<SyncQuotaBlockState[]> => this._quotaManager.getAllBlockStates(),
       },
     });
   }
@@ -508,8 +508,8 @@ export class SyncEngineLevel implements SyncEngine {
         scheduleReconcile : (linkKey, link, reason, delayMs): void => {
           this.scheduleLinkReconcile(linkKey, link, reason, delayMs);
         },
-        transitionPushResult: (target, result, options): Promise<SyncQuotaPushResultTransition> =>
-          this.transitionPushResult(target, result, options),
+        applyPushResult: (target, result, options): Promise<SyncQuotaPushResultOutcome> =>
+          this.applyPushResult(target, result, options),
       },
     });
   }
@@ -533,7 +533,7 @@ export class SyncEngineLevel implements SyncEngine {
         openPushSubscription: (target, controller): Promise<boolean> =>
           this.openLocalPushSubscription(target, controller),
         reconcileTarget: (target, options, shouldContinue): Promise<SyncReconcileResult> =>
-          this.syncTargetWithDurableFeeds(target, options, shouldContinue),
+          this.reconcileTarget(target, options, shouldContinue),
         reportError         : (message, error): void => { console.error(message, error); },
         resetPullCheckpoint : (link, resumeToken): Promise<void> =>
           this.ledger.resetCheckpoint(link, 'pull', resumeToken),
@@ -1226,7 +1226,7 @@ export class SyncEngineLevel implements SyncEngine {
   // ---------------------------------------------------------------------------
 
   /** Runtime-scope timer key for the periodic durable feed settle check. */
-  private static readonly SYNC_INTERVAL_TIMER = 'syncInterval';
+  private static readonly SETTLE_CHECK_TIMER = 'syncInterval';
 
   /** Settle-check cadence floor — prevents a tight reconciliation loop. */
   private static readonly MIN_SYNC_INTERVAL_MS = 1_000;
@@ -1284,8 +1284,8 @@ export class SyncEngineLevel implements SyncEngine {
       console.error('SyncEngineLevel: Live-sync startup planning failed; the settle check retries link initialization', error);
     } finally {
       // Step 3: Schedule the periodic durable feed settle check.
-      const integrityCheck = async (): Promise<void> => this.runLiveIntegrityCheck(runtime);
-      runtime.armInterval(SyncEngineLevel.SYNC_INTERVAL_TIMER, this.supervisedTick(integrityCheck), intervalMilliseconds);
+      const integrityCheck = async (): Promise<void> => this.runSettleCheck(runtime);
+      runtime.armInterval(SyncEngineLevel.SETTLE_CHECK_TIMER, this.supervisedTick(integrityCheck), intervalMilliseconds);
     }
   }
 
@@ -1297,7 +1297,7 @@ export class SyncEngineLevel implements SyncEngine {
    * acquire the same lock through `runIdentityMutation`, can never complete
    * in the middle of either phase.
    */
-  private async runLiveIntegrityCheck(runtime: SyncRuntime): Promise<void> {
+  private async runSettleCheck(runtime: SyncRuntime): Promise<void> {
     if (runtime.disposed || this._lifecycle.isSyncInProgress) {
       return;
     }
@@ -1385,7 +1385,7 @@ export class SyncEngineLevel implements SyncEngine {
    */
   private hasPendingLinkInitRetryForTarget(target: SyncTarget): boolean {
     const timerKey = SyncEngineLevel.linkInitRetryTimerKey(
-      buildLinkId(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch),
+      buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch),
     );
     return this._runtime.hasTimers((key: string): boolean => key === timerKey);
   }
@@ -1531,7 +1531,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private getReplicationLinkKey(target: SyncTarget, link: ReplicationLinkState): string {
-    return buildLinkId(target.did, target.dwnUrl, link.projectionId, link.authorizationEpoch);
+    return buildLinkKey(target.did, target.dwnUrl, link.projectionId, link.authorizationEpoch);
   }
 
   private async openLinkSubscriptions(
@@ -1788,13 +1788,13 @@ export class SyncEngineLevel implements SyncEngine {
 
   /**
    * Check whether a link key belongs to a given DID. Link keys always join
-   * segments with {@link LINK_ID_SEPARATOR}, which cannot appear in a DID.
+   * segments with {@link LINK_KEY_SEPARATOR}, which cannot appear in a DID.
    * Matching must use exactly that delimiter: underscores ARE valid DID
    * characters, so a looser prefix match would let one DID claim the keys of
    * another DID that merely extends it (e.g. `…alice` vs `…alice_extra`).
    */
   private isLinkKeyForDid(key: string, did: string): boolean {
-    return key.startsWith(did + LINK_ID_SEPARATOR);
+    return key.startsWith(did + LINK_KEY_SEPARATOR);
   }
 
   /** Check whether this DID has any active links. */
@@ -2302,7 +2302,7 @@ export class SyncEngineLevel implements SyncEngine {
     this._linkRecoveryCoordinator.scheduleLinkReconcile(controller, reason, delayMs);
   }
 
-  private syncTargetWithDurableFeeds(
+  private reconcileTarget(
     target: SyncTarget,
     options?: SyncReconcileOptions,
     shouldContinue?: () => boolean,
@@ -2381,7 +2381,7 @@ export class SyncEngineLevel implements SyncEngine {
     if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
       return { kind: 'aborted' };
     }
-    const transition = await this.transitionPushResult(target, result, { source: 'permission-grant' });
+    const transition = await this.applyPushResult(target, result, { source: 'permission-grant' });
     return {
       kind               : 'processed',
       failures           : [...transition.retryableFailures, ...transition.terminalFailures],
@@ -2596,7 +2596,7 @@ export class SyncEngineLevel implements SyncEngine {
       entry.messageCid,
       quotaBlockedInitialCids,
     );
-    const transition = await this.transitionPushResult(target, attributedResult, {
+    const transition = await this.applyPushResult(target, attributedResult, {
       protocol : entry.protocol,
       source   : 'feed',
     });
@@ -2883,12 +2883,12 @@ export class SyncEngineLevel implements SyncEngine {
     return this._quotaManager.clearBlockByLinkKey(tenantDid, linkKey, messageCid);
   }
 
-  private transitionPushResult(
+  private applyPushResult(
     target: SyncTarget,
     result: PushResult,
     options?: { protocol?: string; source?: SyncQuotaBlockSource },
-  ): Promise<SyncQuotaPushResultTransition> {
-    return this._quotaManager.transitionPushResult(target, result, options);
+  ): Promise<SyncQuotaPushResultOutcome> {
+    return this._quotaManager.applyPushResult(target, result, options);
   }
 
   private probeQuotaBlocksForTarget(
@@ -3256,7 +3256,7 @@ export class SyncEngineLevel implements SyncEngine {
       // remaining direct probes. A later delete/update can therefore replay a
       // retained dataless ancestor as its dependency instead of exposing that
       // ancestor as standalone remote state.
-      await this.syncTargetWithDurableFeeds(
+      await this.reconcileTarget(
         target,
         { direction: 'push', forceQuotaProbe: true },
         (): boolean =>

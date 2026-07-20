@@ -12,7 +12,7 @@ import type {
   SyncScope,
 } from './types/sync.js';
 import type { SyncLinkController, SyncPushQueueEntry, SyncPushQueueState } from './sync-link-controller.js';
-import type { SyncQuotaPushResultTransition, SyncQuotaPushTransitionOptions } from './sync-quota-manager.js';
+import type { SyncQuotaPushResultOutcome, SyncQuotaPushTransitionOptions } from './sync-quota-manager.js';
 
 import { Message } from '@enbox/dwn-sdk-js';
 
@@ -38,11 +38,11 @@ export interface SyncLivePushCoordinatorOperations {
   recordDeadLetter(entry: Omit<DeadLetterEntry, 'failedAt'>): Promise<void>;
   reportError(message: string, error: unknown): void;
   scheduleReconcile(linkKey: string, link: ReplicationLinkState, reason: string, delayMs?: number): void;
-  transitionPushResult(
+  applyPushResult(
     target: SyncTarget,
     result: PushResult,
     options: SyncQuotaPushTransitionOptions,
-  ): Promise<SyncQuotaPushResultTransition>;
+  ): Promise<SyncQuotaPushResultOutcome>;
 }
 
 export type SyncLivePushCoordinatorParams = {
@@ -311,7 +311,7 @@ export class SyncLivePushCoordinator {
 
     const { controller, runtime } = batch;
     const target = syncTargetFromLink(controller.link);
-    const transition = await this._operations.transitionPushResult(target, result, {
+    const transition = await this._operations.applyPushResult(target, result, {
       protocol : runtime.protocol,
       source   : 'feed',
     });

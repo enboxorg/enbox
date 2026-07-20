@@ -95,7 +95,7 @@ function createFixture(options: {
     recordDeadLetter          : sinon.stub().resolves(),
     reportError               : sinon.stub(),
     scheduleReconcile         : sinon.stub(),
-    transitionPushResult      : sinon.stub().resolves({
+    applyPushResult           : sinon.stub().resolves({
       quotaBlocked      : false,
       retryableFailures : [],
       terminalFailures  : [],
@@ -183,8 +183,8 @@ describe('SyncLivePushCoordinator', () => {
       messageCids        : [cid],
       permissionGrantIds : undefined,
     })).toBe(true);
-    expect(fixture.operations.transitionPushResult.calledOnce).toBe(true);
-    expect(fixture.operations.transitionPushResult.firstCall.args).toEqual([
+    expect(fixture.operations.applyPushResult.calledOnce).toBe(true);
+    expect(fixture.operations.applyPushResult.firstCall.args).toEqual([
       expect.objectContaining({
         authorizationEpoch : 'owner-epoch',
         did                : DID,
@@ -297,7 +297,7 @@ describe('SyncLivePushCoordinator', () => {
     releasePush.resolve();
     await waitForLastTask(fixture.taskRunner);
 
-    expect(fixture.operations.transitionPushResult.called).toBe(false);
+    expect(fixture.operations.applyPushResult.called).toBe(false);
     expect(fixture.operations.scheduleReconcile.called).toBe(false);
     expect(fixture.operations.reportError.called).toBe(false);
   });
@@ -312,7 +312,7 @@ describe('SyncLivePushCoordinator', () => {
     const secondCid = await Message.getCid(second);
     fixture.taskRunner.resetBehavior();
     fixture.taskRunner.resolves();
-    fixture.operations.transitionPushResult.onFirstCall().resolves({
+    fixture.operations.applyPushResult.onFirstCall().resolves({
       nextQuotaProbeAt  : '2026-07-17T00:00:30.000Z',
       quotaBlocked      : false,
       retryableFailures : [{ cid: secondCid, detail: 'retry' }],
@@ -509,7 +509,7 @@ describe('SyncLivePushCoordinator', () => {
       await releasePush.promise;
       return { failed: [{ cid: 'paused-cid', detail: 'retry' }], succeeded: [] };
     });
-    fixture.operations.transitionPushResult.resolves({
+    fixture.operations.applyPushResult.resolves({
       quotaBlocked      : false,
       retryableFailures : [{ cid: 'paused-cid', detail: 'retry' }],
       terminalFailures  : [],
@@ -525,7 +525,7 @@ describe('SyncLivePushCoordinator', () => {
     await flushing;
 
     expect(controller.pushQueue).toBeUndefined();
-    expect(fixture.operations.transitionPushResult.notCalled).toBe(true);
+    expect(fixture.operations.applyPushResult.notCalled).toBe(true);
     expect(fixture.operations.scheduleReconcile.notCalled).toBe(true);
   });
 

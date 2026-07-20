@@ -153,7 +153,7 @@ describe('SyncEngineLevel lifecycle', () => {
       }
       return { hasActionableDiffs: result.kind === 'pushed', pushFailures: [] };
     });
-    const transitionPushResult = sinon.spy(engine as never, 'transitionPushResult');
+    const applyPushResult = sinon.spy(engine as never, 'applyPushResult');
 
     const syncPromise = engine.sync();
     await pushStarted.promise;
@@ -164,7 +164,7 @@ describe('SyncEngineLevel lifecycle', () => {
 
     try {
       expect(engine['_linkControllers'].size).toBe(0);
-      expect(transitionPushResult.called).toBe(false);
+      expect(applyPushResult.called).toBe(false);
       expect(closeCompleted).toBe(false);
       expect(db.status).toBe('open');
     } finally {
@@ -172,7 +172,7 @@ describe('SyncEngineLevel lifecycle', () => {
       await Promise.all([syncPromise, closePromise]);
     }
 
-    expect(transitionPushResult.calledOnce).toBe(true);
+    expect(applyPushResult.calledOnce).toBe(true);
     expect(db.status).toBe('closed');
   });
 
@@ -696,8 +696,8 @@ describe('SyncEngineLevel lifecycle', () => {
 
     await engine.stopSync();
     await (engine as unknown as {
-      runLiveIntegrityCheck(runtime: unknown): Promise<void>;
-    }).runLiveIntegrityCheck(staleRuntime);
+      runSettleCheck(runtime: unknown): Promise<void>;
+    }).runSettleCheck(staleRuntime);
 
     expect(sync.called).toBe(false);
   });
@@ -738,16 +738,16 @@ describe('SyncEngineLevel lifecycle', () => {
     });
 
     const firstPass = (engine as unknown as {
-      runLiveIntegrityCheck(runtime: unknown): Promise<void>;
-    }).runLiveIntegrityCheck(engine['_runtime']);
+      runSettleCheck(runtime: unknown): Promise<void>;
+    }).runSettleCheck(engine['_runtime']);
     await reachedLinkStorage.promise;
 
     // The pass holds the exclusive sync lock through the re-initialization:
     // a second settle tick arriving now must skip entirely rather than
     // start another convergence run.
     await (engine as unknown as {
-      runLiveIntegrityCheck(runtime: unknown): Promise<void>;
-    }).runLiveIntegrityCheck(engine['_runtime']);
+      runSettleCheck(runtime: unknown): Promise<void>;
+    }).runSettleCheck(engine['_runtime']);
     expect(runStub.callCount).toBe(1);
 
     releaseLinkStorage.resolve();
@@ -782,8 +782,8 @@ describe('SyncEngineLevel lifecycle', () => {
     (engine as any).scheduleLinkInitRetry(target, linkKey, 60_000);
 
     await (engine as unknown as {
-      runLiveIntegrityCheck(runtime: unknown): Promise<void>;
-    }).runLiveIntegrityCheck(engine['_runtime']);
+      runSettleCheck(runtime: unknown): Promise<void>;
+    }).runSettleCheck(engine['_runtime']);
 
     // The pending Retry-After ladder owns the link: the settle pass must
     // neither re-attempt it nor cancel the retry timer.

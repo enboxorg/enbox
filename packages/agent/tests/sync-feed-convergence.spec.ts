@@ -627,7 +627,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
       resolution     : 'superseded',
     }));
     expect(await internal.getQuotaBlocksForTarget(target)).toHaveLength(0);
-    expect(await (syncEngine as any)._quotaManager.getStatesForTarget(target)).toEqual([
+    expect(await (syncEngine as any)._quotaManager.getBlocksForTarget(target)).toEqual([
       expect.objectContaining({
         messageCid : updateCid,
         state      : expect.objectContaining({ supersededAt: expect.any(String) }),

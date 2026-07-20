@@ -4,7 +4,7 @@ import type { SyncReplicationLinkStore } from './sync-replication-link-store.js'
 import type { SyncTarget } from './sync-target-resolver.js';
 import type { PushFailure, ReplicationLinkState, SyncDirection } from './types/sync.js';
 
-import { buildLinkId } from './sync-link-id.js';
+import { buildLinkKey } from './sync-link-key.js';
 import { isValidProgressToken, SyncCheckpoint } from './sync-checkpoint.js';
 
 /** Options controlling one durable-feed reconciliation cycle. */
@@ -68,7 +68,7 @@ export interface SyncDurableFeedReconcilerOperations {
 
   clearResolvedQuotaOmissions(target: SyncTarget): Promise<void>;
 
-  getLinkStore(): SyncReplicationLinkStore;
+  getReplicationLinkStore(): SyncReplicationLinkStore;
 
   getOrCreateLink(target: SyncTarget): Promise<ReplicationLinkState>;
 
@@ -131,7 +131,7 @@ export class SyncDurableFeedReconciler {
     options?: SyncDurableFeedReconcileOptions,
     shouldContinue?: () => boolean,
   ): Promise<SyncDurableFeedReconcileResult> {
-    const linkKey = buildLinkId(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
+    const linkKey = buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
     const previous = this._runs.get(linkKey) ?? Promise.resolve();
     const run = previous.catch((): void => {
       // A failed predecessor must not poison this link's queue.
@@ -631,7 +631,7 @@ export class SyncDurableFeedReconciler {
       direction,
     );
     SyncCheckpoint.commitContiguousToken(checkpoint, reply.cursor);
-    await this._operations.getLinkStore().persistCheckpoint(link, direction);
+    await this._operations.getReplicationLinkStore().persistCheckpoint(link, direction);
     this._operations.onCheckpointAdvanced(link, direction);
 
     return drained ? { drained: true } : { cursor: reply.cursor, drained: false };
@@ -651,7 +651,7 @@ export class SyncDurableFeedReconciler {
       return false;
     }
 
-    await this._operations.getLinkStore().resetCheckpoint(link, direction);
+    await this._operations.getReplicationLinkStore().resetCheckpoint(link, direction);
     return true;
   }
 

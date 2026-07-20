@@ -285,7 +285,7 @@ describe('SyncEngineLevel', () => {
           failed    : [{ cid: 'cid-1', kind: 'Deferred', quotaBlocked: true, reason: 'storage' }],
         };
       });
-      const transition = sinon.stub(internal, 'transitionPushResult');
+      const transition = sinon.stub(internal, 'applyPushResult');
 
       const result = internal.pushLocalFeedPage(target, [{ messageCid: 'cid-1' }], (): boolean => current);
       await pushStarted;
@@ -319,7 +319,7 @@ describe('SyncEngineLevel', () => {
           failed    : [{ cid: 'grant-cid', kind: 'Deferred', quotaBlocked: true, reason: 'messages' }],
         };
       });
-      const transition = sinon.stub(internal, 'transitionPushResult');
+      const transition = sinon.stub(internal, 'applyPushResult');
 
       const result = internal.bootstrapRemotePermissionGrants(grantTarget, (): boolean => current, true);
       await pushStarted;
@@ -368,7 +368,7 @@ describe('SyncEngineLevel', () => {
         db    : {} as any,
       });
       sinon.stub(syncEngine as any, 'getQuotaBlockState').resolves(undefined);
-      const transition = sinon.stub(syncEngine as any, 'transitionPushResult').resolves({
+      const transition = sinon.stub(syncEngine as any, 'applyPushResult').resolves({
         quotaBlocked      : false,
         retryableFailures : [],
         terminalFailures  : [],

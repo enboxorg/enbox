@@ -354,7 +354,7 @@ function setupManager(options: {
         state.backgroundOperations.push(operation);
       }
     },
-    runIntegrityCheck: async (): Promise<void> => {
+    runConvergenceCheck: async (): Promise<void> => {
       state.integrityChecks++;
       if (state.integrityError !== undefined) {
         throw state.integrityError;

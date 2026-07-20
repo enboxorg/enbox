@@ -374,7 +374,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
       failed    : [{ cid: 'cid-1', kind: 'Deferred' }],
       succeeded : [],
     });
-    sinon.stub(engine as never, 'transitionPushResult').callsFake(async () => {
+    sinon.stub(engine as never, 'applyPushResult').callsFake(async () => {
       transitionStarted.resolve();
       await releaseTransition.promise;
       return {

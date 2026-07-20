@@ -11,7 +11,7 @@ import type {
 
 import { describe, expect, it } from 'bun:test';
 
-import { buildDurableLinkIdentityKey } from '../src/sync-link-id.js';
+import { buildDurableLinkIdentityKey } from '../src/sync-link-key.js';
 import { SyncStatusReporter } from '../src/sync-status-reporter.js';
 
 const ALICE = 'did:example:alice';

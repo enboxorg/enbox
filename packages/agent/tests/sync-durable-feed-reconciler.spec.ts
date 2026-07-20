@@ -109,7 +109,7 @@ function createReconciler(syncTarget = target()): ReconcilerFixture {
     admitRemotePage                 : sinon.stub().resolves({ kind: 'processed', admittedCids: [], hasActionableDiffs: false }),
     bootstrapRemotePermissionGrants : sinon.stub().resolves({ kind: 'processed', failures: [], hasActionableDiffs: false, quotaBlocked: false }),
     clearResolvedQuotaOmissions     : sinon.stub().resolves(),
-    getLinkStore                    : sinon.stub().returns(linkStore),
+    getReplicationLinkStore         : sinon.stub().returns(linkStore),
     getOrCreateLink                 : sinon.stub().resolves(link),
     getQuotaBlockCids               : sinon.stub().resolves([]),
     onCheckpointAdvanced            : sinon.stub(),
