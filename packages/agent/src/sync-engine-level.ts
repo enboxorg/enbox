@@ -343,8 +343,8 @@ export class SyncEngineLevel implements SyncEngine {
     return new SyncQuotaManager({
       store      : new SyncQuotaStoreLevel(this._db),
       operations : {
-        clearFailedMessage: (target, messageCid): Promise<void> =>
-          this.clearFailedMessageForTenant(target.did, messageCid, target.dwnUrl),
+        clearDeadLetterForTenant: (target, messageCid): Promise<void> =>
+          this.clearDeadLetterForTenant(target.did, messageCid, target.dwnUrl),
         collectLocalFeedCids  : (target): Promise<Set<string> | undefined> => this.collectLocalFeedCids(target),
         collectRemoteFeedCids : (target): Promise<Set<string> | undefined> => this.collectRemoteFeedCids(target),
         getLocalMessage       : (target, messageCid): Promise<SyncMessageEntry | undefined> =>
@@ -669,7 +669,7 @@ export class SyncEngineLevel implements SyncEngine {
   private activateLink(linkKey: string, link: ReplicationLinkState): SyncLinkController {
     // A link activated through another path (e.g. drain) supersedes any
     // pending rate-limit init retry for the same key.
-    this._runtime.clearTimer(SyncEngineLevel.linkInitRetryTimerKey(linkKey));
+    this._runtime.cancelTimer(SyncEngineLevel.linkInitRetryTimerKey(linkKey));
 
     const existing = this._linkControllers.get(linkKey);
     if (existing?.link === link && existing.isActive) {
@@ -1124,7 +1124,7 @@ export class SyncEngineLevel implements SyncEngine {
     const hadLiveRuntime = this.hasLiveSyncRuntime();
     this.prepareForSyncRuntimeTransition();
     if (hadLiveRuntime) {
-      await this.teardownLiveSync();
+      await this.stopLiveSync();
     }
     if (this._lifecycle.isSyncInProgress) {
       await this.waitForSyncCompletion();
@@ -1190,7 +1190,7 @@ export class SyncEngineLevel implements SyncEngine {
   private async stopSyncRuntime(timeout?: number): Promise<void> {
     const safeTimeout = SyncEngineLevel.coerceStopSyncTimeout(timeout);
     this.prepareForSyncRuntimeTransition();
-    await this.teardownLiveSync();
+    await this.stopLiveSync();
     const [syncCompletion, backgroundCompletion] = await Promise.allSettled([
       this.waitForSyncCompletion(safeTimeout),
       this.waitForBackgroundTasks(safeTimeout),
@@ -1427,7 +1427,7 @@ export class SyncEngineLevel implements SyncEngine {
   // Teardown
   // ---------------------------------------------------------------------------
 
-  private async teardownLiveSync(): Promise<void> {
+  private async stopLiveSync(): Promise<void> {
     // Remove browser connectivity listeners before tearing down.
     this._connectivityManager.stop();
 
@@ -1447,7 +1447,7 @@ export class SyncEngineLevel implements SyncEngine {
     // Clear pending rate-limit link-init retries. The runtime scope is
     // normally already disposed here; the explicit clear keeps this teardown
     // correct for any caller that runs it against a live scope.
-    this._runtime.clearTimers(SyncEngineLevel.isLinkInitRetryTimerKey);
+    this._runtime.cancelTimers(SyncEngineLevel.isLinkInitRetryTimerKey);
 
     this._echoSuppressor.clear();
 
@@ -1644,14 +1644,14 @@ export class SyncEngineLevel implements SyncEngine {
       // server-provided Retry-After window instead of failing permanently.
       // Durable feed reconciliation still runs via the periodic settle check,
       // so no data is lost while the live subscription is deferred.
-      this.cleanupFailedLinkInitialization(linkKey, controller);
+      this.retireFailedLinkAttempt(linkKey, controller);
       this.scheduleLinkInitRetry(target, linkKey, retryAfterSec * 1000);
       return { status: LinkInitializationStatus.Failed };
     }
 
     console.error(`SyncEngineLevel: Failed to open live subscription for ${target.did} -> ${target.dwnUrl}`, error);
     if (link) {
-      this.cleanupFailedLinkInitialization(this.getReplicationLinkKey(target, link), controller);
+      this.retireFailedLinkAttempt(this.getReplicationLinkKey(target, link), controller);
     }
     // The ONLY error class that escapes this method: rethrow so
     // initializeLinkTargetWithRetry can run the DHT-propagation backoff
@@ -1671,7 +1671,7 @@ export class SyncEngineLevel implements SyncEngine {
     };
   }
 
-  private cleanupFailedLinkInitialization(linkKey: string, controller?: SyncLinkController): void {
+  private retireFailedLinkAttempt(linkKey: string, controller?: SyncLinkController): void {
     this.removeLinkController(linkKey, controller);
 
     // With no subscriptions left there is no signal either way — 'unknown',
@@ -1707,7 +1707,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Cancel pending rate-limit init retries whose captured targets belong to an identity. */
   private cancelLinkInitRetriesForDid(did: string): void {
-    this._runtime.clearTimers((timerKey: string): boolean => this.isLinkInitRetryTimerKeyForDid(timerKey, did));
+    this._runtime.cancelTimers((timerKey: string): boolean => this.isLinkInitRetryTimerKeyForDid(timerKey, did));
   }
 
   private isRateLimitError(error: unknown): error is RateLimitError {
@@ -1869,7 +1869,7 @@ export class SyncEngineLevel implements SyncEngine {
         if (runtime?.timer !== undefined) {
           controller.cancelPushTimer(runtime);
         }
-        controller.cancelRepairRetry();
+        controller.cancelRepairRetryTimer();
         controller.cancelReconcileTimer();
       }
     }
@@ -2565,7 +2565,7 @@ export class SyncEngineLevel implements SyncEngine {
     entry: MessagesQueryReplyEntry,
     shouldContinue?: () => boolean,
   ): Promise<FeedPushEntryResult> {
-    if (await this.hasAdmissionDeadLetter(target.did, target.dwnUrl, entry.messageCid)) {
+    if (await this.hasDeadLetter(target.did, target.dwnUrl, entry.messageCid)) {
       return { kind: 'skipped' };
     }
 
@@ -2720,7 +2720,7 @@ export class SyncEngineLevel implements SyncEngine {
     let hasActionableDiffs = false;
 
     for (const entry of entries) {
-      if (await this.hasAdmissionDeadLetter(target.did, target.dwnUrl, entry.messageCid)) {
+      if (await this.hasDeadLetter(target.did, target.dwnUrl, entry.messageCid)) {
         continue;
       }
 
@@ -2752,7 +2752,7 @@ export class SyncEngineLevel implements SyncEngine {
       this._echoSuppressor.trackPulled(target.did, cid, target.dwnUrl);
       await this.runDeferredPullLifecycle(target.did, async (): Promise<void> => {
         await this.clearDeferredPull(target.did, target.dwnUrl, cid);
-        await this.clearFailedMessageForTenant(target.did, cid, target.dwnUrl);
+        await this.clearDeadLetterForTenant(target.did, cid, target.dwnUrl);
       });
       // A pull admission only proves that the signed message exists remotely.
       // The remote may retain a RecordsWrite CID as dataless ancestry, while
@@ -3132,7 +3132,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  private async hasAdmissionDeadLetter(
+  private async hasDeadLetter(
     tenantDid: string,
     remoteEndpoint: string,
     messageCid: string,
@@ -3141,7 +3141,7 @@ export class SyncEngineLevel implements SyncEngine {
     return entry?.tenantDid === tenantDid;
   }
 
-  public async getFailedMessages(tenantDid?: string): Promise<DeadLetterEntry[]> {
+  public async getDeadLetters(tenantDid?: string): Promise<DeadLetterEntry[]> {
     const entries = (await this._deadLetterStore.getAll())
       .filter((entry): boolean => !tenantDid || entry.tenantDid === tenantDid);
     // Deterministic ordering: newest first so apps see the most recent failures.
@@ -3150,7 +3150,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /** Clear the exact dead letter resolved by an internal tenant sync outcome. */
-  private async clearFailedMessageForTenant(tenantDid: string, messageCid: string, remoteEndpoint: string): Promise<void> {
+  private async clearDeadLetterForTenant(tenantDid: string, messageCid: string, remoteEndpoint: string): Promise<void> {
     try {
       await this._deadLetterStore.deleteExact(tenantDid, messageCid, remoteEndpoint);
     } catch (error) {
@@ -3167,7 +3167,7 @@ export class SyncEngineLevel implements SyncEngine {
       (error as { code?: string }).code === 'LEVEL_DATABASE_NOT_OPEN';
   }
 
-  public async clearFailedMessage(messageCid: string, remoteEndpoint?: string): Promise<boolean> {
+  public async clearDeadLetter(messageCid: string, remoteEndpoint?: string): Promise<boolean> {
     // The durable key includes tenant, but this API intentionally clears by
     // message CID and optional remote regardless of tenant, matching the
     // previous public contract.
@@ -3175,7 +3175,7 @@ export class SyncEngineLevel implements SyncEngine {
     return deleted > 0;
   }
 
-  public async clearAllFailedMessages(tenantDid?: string): Promise<void> {
+  public async clearAllDeadLetters(tenantDid?: string): Promise<void> {
     if (!tenantDid) {
       await this._deadLetterStore.clear();
       return;

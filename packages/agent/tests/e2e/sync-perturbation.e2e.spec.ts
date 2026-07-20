@@ -435,8 +435,8 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
         feedCids('remote'),
         deviceA.harness.agent.sync.getSyncHealth(),
         deviceB.harness.agent.sync.getSyncHealth(),
-        deviceA.harness.agent.sync.getFailedMessages(aliceDid),
-        deviceB.harness.agent.sync.getFailedMessages(aliceDid),
+        deviceA.harness.agent.sync.getDeadLetters(aliceDid),
+        deviceB.harness.agent.sync.getDeadLetters(aliceDid),
       ]);
       throw new Error(`fingerprints diverged: ${JSON.stringify({
         feeds        : { a: aFeed, b: bFeed, remote: remoteFeed },

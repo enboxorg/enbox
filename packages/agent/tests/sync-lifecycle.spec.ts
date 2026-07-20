@@ -131,7 +131,7 @@ describe('SyncEngineLevel lifecycle', () => {
     const durableFeedReconciler = engine['_durableFeedReconciler'];
     sinon.stub(engine as never, 'getSyncTargets').resolves([target]);
     sinon.stub(durableFeedReconciler, 'pull').resolves({});
-    sinon.stub(engine as never, 'hasAdmissionDeadLetter').resolves(false);
+    sinon.stub(engine as never, 'hasDeadLetter').resolves(false);
     sinon.stub(engine as never, 'getQuotaBlockState').resolves(undefined);
     sinon.stub(engine as never, 'getQuotaBlockedInitialCidsForFeedEntry').resolves([]);
     sinon.stub(engine as never, 'pushMessages').callsFake(async (): Promise<{ acknowledged: never[]; failed: never[]; succeeded: string[] }> => {

@@ -170,7 +170,7 @@ describe('SyncEngineLevel', () => {
       internal._echoSuppressor.trackPulled(tenantDid, messageCid, remoteEndpoint);
       internal._echoSuppressor.trackPushed(tenantDid, messageCid, remoteEndpoint);
 
-      await internal.teardownLiveSync();
+      await internal.stopLiveSync();
 
       expect(internal._echoSuppressor.hasRecentlyPulled(tenantDid, messageCid, remoteEndpoint)).toBe(false);
       expect(internal._echoSuppressor.hasRecentlyPushed(tenantDid, messageCid, remoteEndpoint)).toBe(false);
@@ -274,7 +274,7 @@ describe('SyncEngineLevel', () => {
       const pushGate = new Promise<void>((resolve) => { releasePush = resolve; });
       const pushStarted = new Promise<void>((resolve) => { resolvePushStarted = resolve; });
 
-      sinon.stub(internal, 'hasAdmissionDeadLetter').resolves(false);
+      sinon.stub(internal, 'hasDeadLetter').resolves(false);
       sinon.stub(internal, 'getQuotaBlockState').resolves(undefined);
       sinon.stub(internal, 'getQuotaBlockedInitialCidsForFeedEntry').resolves([]);
       sinon.stub(internal, 'pushMessages').callsFake(async () => {

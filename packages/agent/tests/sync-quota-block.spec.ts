@@ -773,7 +773,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
       resolution : 'superseded',
     }));
     expect(events.some((event) => event.type === 'push:quota-blocked')).toBe(false);
-    expect(await syncEngine.getFailedMessages(TENANT)).toHaveLength(0);
+    expect(await syncEngine.getDeadLetters(TENANT)).toHaveLength(0);
     expect(await (syncEngine as any)._quotaManager.getBlocksForTarget(target)).toEqual([
       expect.objectContaining({
         state: expect.objectContaining({

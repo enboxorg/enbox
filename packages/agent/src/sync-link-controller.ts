@@ -469,11 +469,11 @@ export class SyncLinkController {
     if (!this._requestedPasses.has('repair')) {
       this._repairResumeToken = undefined;
     }
-    this.cancelRepairRetry();
+    this.cancelRepairRetryTimer();
   }
 
   public setRepairRetryTimer(timer: ReturnType<typeof setTimeout>): void {
-    this.cancelRepairRetry();
+    this.cancelRepairRetryTimer();
     this._repairRetryTimer = timer;
   }
 
@@ -487,7 +487,7 @@ export class SyncLinkController {
     return true;
   }
 
-  public cancelRepairRetry(): void {
+  public cancelRepairRetryTimer(): void {
     if (this._repairRetryTimer !== undefined) {
       clearTimeout(this._repairRetryTimer);
       this._repairRetryTimer = undefined;
@@ -531,7 +531,7 @@ export class SyncLinkController {
 
     this._active = false;
     this.clearPushQueue();
-    this.cancelRepairRetry();
+    this.cancelRepairRetryTimer();
     this.cancelReconcileTimer();
     this.resetPullGeneration();
     this._mailboxShared.clear();

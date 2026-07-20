@@ -814,7 +814,7 @@ export interface SyncEngine {
    * (via push or pull), so the list reflects current health — not historical
    * incidents. Sorted newest-first by `failedAt`.
    */
-  getFailedMessages(tenantDid?: string): Promise<DeadLetterEntry[]>;
+  getDeadLetters(tenantDid?: string): Promise<DeadLetterEntry[]>;
 
   /**
    * Remove dead letter entries for a CID. When `remoteEndpoint` is provided,
@@ -822,12 +822,12 @@ export interface SyncEngine {
    * it, all entries for the CID (across all remotes) are removed. Returns
    * `true` if at least one entry was found and removed.
    */
-  clearFailedMessage(messageCid: string, remoteEndpoint?: string): Promise<boolean>;
+  clearDeadLetter(messageCid: string, remoteEndpoint?: string): Promise<boolean>;
 
   /**
    * Clear all dead letter entries, optionally scoped to a tenant.
    */
-  clearAllFailedMessages(tenantDid?: string): Promise<void>;
+  clearAllDeadLetters(tenantDid?: string): Promise<void>;
 
   /**
    * Returns a summary of sync health: connectivity, failed message count,

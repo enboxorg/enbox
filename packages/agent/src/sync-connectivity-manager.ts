@@ -13,7 +13,7 @@ export interface SyncConnectivityEnvironment {
 /** Runtime timer boundary used to keep recovery work inside one sync generation. */
 export interface SyncConnectivityRuntimeScope extends SyncRuntimeHandle {
   armTimeout(key: string, callback: () => void, delayMs: number): void;
-  clearTimer(key: string): void;
+  cancelTimer(key: string): void;
 }
 
 export interface SyncConnectivityManagerOperations {
@@ -119,7 +119,7 @@ export class SyncConnectivityManager {
 
   /** Remove browser recovery listeners from the environment used by start(). */
   public stop(): void {
-    this._scope?.clearTimer(SyncConnectivityManager.RECOVERY_TIMER);
+    this._scope?.cancelTimer(SyncConnectivityManager.RECOVERY_TIMER);
 
     const environment = this._activeEnvironment;
     if (environment !== undefined) {
@@ -162,7 +162,7 @@ export class SyncConnectivityManager {
     this._state = 'offline';
     this._lastConvergenceCheckStartedAt = undefined;
     this._pendingConvergenceTrigger = undefined;
-    this._scope?.clearTimer(SyncConnectivityManager.RECOVERY_TIMER);
+    this._scope?.cancelTimer(SyncConnectivityManager.RECOVERY_TIMER);
     this._operations.markActiveLinksOffline();
   }
 
@@ -219,7 +219,7 @@ export class SyncConnectivityManager {
     // pending trigger and its timer only after the check has actually committed;
     // paths that cannot start yet leave both intact for a later attempt.
     this._pendingConvergenceTrigger = undefined;
-    scope.clearTimer(SyncConnectivityManager.RECOVERY_TIMER);
+    scope.cancelTimer(SyncConnectivityManager.RECOVERY_TIMER);
     this._activeConvergenceCheck = check;
     this._lastConvergenceCheckStartedAt = Date.now();
     const reason = trigger === 'online' ? 'browser online' : 'page visible';

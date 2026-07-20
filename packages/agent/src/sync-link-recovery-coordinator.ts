@@ -529,6 +529,13 @@ export class SyncLinkRecoveryCoordinator {
         await this._operations.handlePushFailures(controller, pushFailures);
         return;
       }
+      // A pause took the link before the cycle ran, so nothing was compared.
+      // It is neither converged nor divergent: completing the repair would
+      // claim a verification that never happened, and handling divergence
+      // would fight the pause. The pause owns the link now.
+      if (outcome.paused === true) {
+        return;
+      }
       if (outcome.converged) {
         this._operations.clearConvergence(linkKey);
         this._operations.emitEvent({

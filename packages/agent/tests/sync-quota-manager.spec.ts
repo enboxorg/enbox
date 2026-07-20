@@ -94,7 +94,7 @@ describe('SyncQuotaManager', () => {
     expect(await manager.getBlocksForTarget(target())).toEqual([
       { messageCid: 'blocked-cid', state: expect.objectContaining({ supersededAt: expect.any(String) }) },
     ]);
-    expect(operations.clearFailedMessage.calledOnceWith(target(), 'blocked-cid')).toBe(true);
+    expect(operations.clearDeadLetterForTenant.calledOnceWith(target(), 'blocked-cid')).toBe(true);
     expect(operations.recordTerminalFailure.calledOnce).toBe(true);
     expect(operations.onQuotaCleared.calledOnceWith(target(), 'blocked-cid', 'superseded')).toBe(true);
   });
@@ -210,7 +210,7 @@ describe('SyncQuotaManager', () => {
     await probing;
 
     expect(await manager.getState(target(), 'cid-1')).toBeDefined();
-    expect(operations.clearFailedMessage.called).toBe(false);
+    expect(operations.clearDeadLetterForTenant.called).toBe(false);
     expect(operations.onQuotaCleared.called).toBe(false);
   });
 
@@ -294,15 +294,15 @@ function createHarness(): SyncQuotaManagerHarness {
 
 function createOperations(): SyncQuotaOperationStubs {
   return {
-    clearFailedMessage    : sinon.stub().resolves(),
-    collectLocalFeedCids  : sinon.stub().resolves(new Set<string>()),
-    collectRemoteFeedCids : sinon.stub().resolves(new Set<string>()),
-    getLocalMessage       : sinon.stub().resolves(undefined),
-    onQuotaBlocked        : sinon.stub(),
-    onQuotaCleared        : sinon.stub(),
-    pushEntries           : sinon.stub().resolves({ acknowledged: [], failed: [], succeeded: [] }),
-    pushMessages          : sinon.stub().resolves({ acknowledged: [], failed: [], succeeded: [] }),
-    recordTerminalFailure : sinon.stub().resolves(),
+    clearDeadLetterForTenant : sinon.stub().resolves(),
+    collectLocalFeedCids     : sinon.stub().resolves(new Set<string>()),
+    collectRemoteFeedCids    : sinon.stub().resolves(new Set<string>()),
+    getLocalMessage          : sinon.stub().resolves(undefined),
+    onQuotaBlocked           : sinon.stub(),
+    onQuotaCleared           : sinon.stub(),
+    pushEntries              : sinon.stub().resolves({ acknowledged: [], failed: [], succeeded: [] }),
+    pushMessages             : sinon.stub().resolves({ acknowledged: [], failed: [], succeeded: [] }),
+    recordTerminalFailure    : sinon.stub().resolves(),
   } satisfies SyncQuotaManagerOperations;
 }
 

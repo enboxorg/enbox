@@ -1178,7 +1178,7 @@ describe('SyncEngineLevel — identity management', () => {
       expect(openPullStub.calledOnce).toBe(true);
 
       // Cancel the pending timer so it does not fire against a torn-down engine.
-      (engine as any)._runtime.clearTimers((key: string) => key.startsWith('linkInitRetry:'));
+      (engine as any)._runtime.cancelTimers((key: string) => key.startsWith('linkInitRetry:'));
     });
 
     it('addIdentityToLiveSync should establish live sync when the reattempt succeeds after the Retry-After window', async () => {

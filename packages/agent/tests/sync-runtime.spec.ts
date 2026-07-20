@@ -41,7 +41,7 @@ describe('SyncRuntime', () => {
     runtime.armInterval('tick', () => { ticks++; }, 5);
 
     await sleep(20);
-    runtime.clearTimer('tick');
+    runtime.cancelTimer('tick');
     const ticksAtClear = ticks;
     expect(ticksAtClear).toBeGreaterThan(0);
 
@@ -94,10 +94,10 @@ describe('SyncRuntime', () => {
 
   it('should tolerate clearing unarmed keys, double dispose, and clears after dispose', () => {
     const runtime = new SyncRuntime();
-    runtime.clearTimer('never-armed');
+    runtime.cancelTimer('never-armed');
     runtime.dispose();
     runtime.dispose();
-    runtime.clearTimer('never-armed');
+    runtime.cancelTimer('never-armed');
     expect(runtime.disposed).toBe(true);
   });
 
@@ -124,7 +124,7 @@ describe('SyncRuntime', () => {
     // it must neither run nor clear the replacement timer.
     runtime.armInterval('tick', () => {
       staleRan++;
-      runtime.clearTimer('tick');
+      runtime.cancelTimer('tick');
     }, 5);
     runtime.armInterval('tick', () => { currentRan++; }, 5);
 
@@ -214,7 +214,7 @@ describe('SyncRuntime', () => {
     runtime.armInterval('syncInterval', () => {}, 5);
 
     expect(runtime.hasTimers((key) => key.startsWith('linkInitRetry:'))).toBe(true);
-    runtime.clearTimers((key) => key.startsWith('linkInitRetry:did:example:alice^'));
+    runtime.cancelTimers((key) => key.startsWith('linkInitRetry:did:example:alice^'));
 
     expect(runtime.hasTimers((key) => key.startsWith('linkInitRetry:did:example:alice^'))).toBe(false);
     expect(runtime.hasTimers((key) => key.startsWith('linkInitRetry:did:example:bob^'))).toBe(true);

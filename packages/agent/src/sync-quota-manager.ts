@@ -37,7 +37,7 @@ export type SyncQuotaPushTransitionOptions = {
 
 /** Engine-owned effects required by backend-neutral quota policy. */
 export interface SyncQuotaManagerOperations {
-  clearFailedMessage(target: SyncTarget, messageCid: string): Promise<void>;
+  clearDeadLetterForTenant(target: SyncTarget, messageCid: string): Promise<void>;
 
   collectLocalFeedCids(target: SyncTarget): Promise<Set<string> | undefined>;
 
@@ -405,7 +405,7 @@ export class SyncQuotaManager {
   ): Promise<void> {
     const hasActiveBlocks = (await this.getActiveBlocksForTarget(target)).length > 0;
     for (const acknowledgement of acknowledgementsByCid.values()) {
-      await this._operations.clearFailedMessage(target, acknowledgement.cid);
+      await this._operations.clearDeadLetterForTenant(target, acknowledgement.cid);
       await this.resolveBlock(
         target,
         acknowledgement.cid,

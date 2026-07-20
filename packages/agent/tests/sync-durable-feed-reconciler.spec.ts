@@ -240,6 +240,25 @@ describe('SyncDurableFeedReconciler', () => {
     });
   });
 
+  it('should report a paused link as paused rather than converged', async () => {
+    const { reconciler, link } = createReconciler();
+    link.status = 'paused';
+    const pull = sinon.stub(reconciler, 'pull').resolves({});
+    const push = sinon.stub(reconciler, 'push').resolves({});
+    const verify = sinon.stub(reconciler, 'verifyConvergence').resolves({});
+
+    const result = await reconciler.reconcile(target(), { verifyConvergence: true });
+
+    // Nothing ran, so nothing was compared. Convergence must be ABSENT —
+    // reporting `converged: true` here would let a post-repair verification
+    // emit reconcile:completed for a link it never checked.
+    expect(result.paused).toBe(true);
+    expect(result.converged).toBeUndefined();
+    expect(pull.called).toBe(false);
+    expect(push.called).toBe(false);
+    expect(verify.called).toBe(false);
+  });
+
   it('should abort between phases without starting push or verification', async () => {
     const { reconciler } = createReconciler();
     let active = true;

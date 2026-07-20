@@ -23,7 +23,7 @@ describe('SyncEngineLevel quota routing', () => {
       scope              : { kind: 'full' },
     };
     const admittedCids = ['dependency-cid', 'successor-cid'];
-    sinon.stub(internal, 'clearFailedMessageForTenant').resolves();
+    sinon.stub(internal, 'clearDeadLetterForTenant').resolves();
     sinon.stub(internal, 'clearDeferredPull').resolves();
     const resolveSuperseded = sinon.stub(
       internal,

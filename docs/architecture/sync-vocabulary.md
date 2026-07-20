@@ -22,7 +22,9 @@ the code, not an entry missing from this table.
 | Target-plan version | **`topologyGeneration`** / `expectedTopologyGeneration` | bare `generation`, `expectedGeneration` |
 | Per-link push batching state | **`pushQueue`** — `SyncPushQueueState/Params/Entry` | `pushRuntime`, `SyncPushRuntime*` |
 | Folding a push result into quota state | **`applyPushResult`** | `transitionPushResult` |
-| Permanently-failed message record | **dead letter** — `DeadLetterEntry`, `recordDeadLetter` | `failedMessage` on the *public* read API — see [Known remaining split](#known-remaining-split) |
+| Permanently-failed message record | **dead letter** — `DeadLetterEntry`, `getDeadLetters`, `clearDeadLetter`, `clearAllDeadLetters`, `recordDeadLetter`, `hasDeadLetter` | `getFailedMessages`, `clearFailedMessage`, `clearAllFailedMessages`, `hasAdmissionDeadLetter` |
+| Clearing one exact `(tenant, cid, remote)` dead letter | **`clearDeadLetterForTenant`** | the quota ops key `clearFailedMessage`, which shared a name with the across-tenants public method |
+| A cycle that did not run because the link is parked | **`paused`** on the reconcile result | reporting `converged: true` for a link nothing compared |
 
 ## One meaning per word
 
@@ -58,18 +60,32 @@ the code, not an entry missing from this table.
 Booleans are `is*` / `has*`; `should*` is reserved for policy predicates passed
 downward (`shouldContinue` — `true` means *proceed*).
 
+## Teardown verbs
+
+One verb per kind of ending, because these had four overlapping spellings:
+
+| Verb | Ends | Example |
+|---|---|---|
+| `dispose` | An owned lifetime, irreversibly | `SyncRuntime.dispose`, `SyncLinkController.dispose` |
+| `close` | One external resource | `closeLiveSubscription`, `SyncEngineLevel.close` |
+| `stop` | A restartable activity | `stopSync`, `stopLiveSync` |
+| `cancel*Timer` | A scheduled timer | `cancelTimer`, `cancelRepairRetryTimer` |
+| `clear` | Durable storage, wiped | `clear()`, `clearSyncDb` |
+| `remove` / `delete` | One entry in a registry or store | `removeLinkController` |
+| `prune` | A supersession sweep | `pruneStaleLinkBlocks` |
+| `retire` | An attempt abandoned mid-flight | `retireFailedLinkAttempt` |
+
+`teardown*` and `cleanup*` are retired — they were synonyms of `stop` and
+`retire` respectively.
+
 ## Known remaining split
 
-Two knowingly-unconverged names, both because the fix costs more than the
-confusion:
+One knowingly-unconverged name, because the fix costs more than the confusion:
 
 - **`SyncTarget.did` / `.dwnUrl`** are the same values as
   `ReplicationLinkState.tenantDid` / `.remoteEndpoint`, and `syncTargetFromLink`
   is purely that mapping. Converging them means per-site judgment across ~500
   occurrences — `did` and `dwnUrl` are also fields on the push-request and
   push-queue types — including ~149 untyped test literals the compiler cannot
-  check. Documented on the type instead.
-- **The public dead-letter read API** (`getFailedMessages`, `clearFailedMessage`,
-  `clearAllFailedMessages`) says "failed message" while returning
-  `DeadLetterEntry`, and the store, the writer, and every collaborator say "dead
-  letter". Converging it is a breaking API change and belongs in its own PR.
+  check, and 33 `as any` stubs where a wrong rename fails silently rather than
+  loudly. Documented on the type instead.

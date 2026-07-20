@@ -18,9 +18,21 @@ export type SyncDurableFeedReconcileOptions = {
 export type SyncDurableFeedReconcileResult = {
   aborted?: boolean;
   admittedCids?: string[];
+  /**
+   * Tri-state, and callers must treat it as such: `true` means fingerprints
+   * were compared and matched, `false` means they were compared and did not,
+   * and ABSENT means convergence was never established — the cycle did not
+   * verify, or never ran at all (see {@link paused}). Never infer
+   * convergence from a missing `false`.
+   */
   converged?: boolean;
   hasActionableDiffs?: boolean;
   localFingerprint?: string;
+  /**
+   * The link was parked, so the cycle returned without reconciling anything.
+   * Distinct from converged and from divergent: nothing was compared.
+   */
+  paused?: boolean;
   pushFailures?: PushFailure[];
   quotaBlocked?: boolean;
   remoteFingerprint?: string;
@@ -246,11 +258,17 @@ export class SyncDurableFeedReconciler {
     options?: SyncDurableFeedReconcileOptions,
     shouldContinue?: () => boolean,
   ): Promise<SyncDurableFeedReconcileResult> {
-    const result = SyncDurableFeedReconciler.initialResult(options);
     const link = await this._operations.getOrCreateLink(target);
     if (link.status === 'paused') {
-      return result;
+      // Parked: nothing is reconciled and no fingerprints are compared, so
+      // convergence is UNKNOWN — report it as such rather than inheriting
+      // the optimistic seed. Claiming `converged: true` here let a
+      // post-repair verification emit `reconcile:completed` for a link it
+      // never checked. Built without options so no `converged` key exists.
+      return { ...SyncDurableFeedReconciler.initialResult(), paused: true };
     }
+
+    const result = SyncDurableFeedReconciler.initialResult(options);
 
     const pullResult = await this.pull(target, options, shouldContinue);
     SyncDurableFeedReconciler.mergeResult(result, pullResult, options);
