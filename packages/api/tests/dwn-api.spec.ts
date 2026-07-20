@@ -98,8 +98,9 @@ describe('DwnApi', () => {
       expect(protocolSendStatus.code).toBe(202);
 
       const { status, liveQuery } = await dwnAlice.messages.subscribe({
-        from    : aliceDid.uri,
-        filters : [{ protocol: protocolDefinition.protocol }],
+        from           : aliceDid.uri,
+        filters        : [{ protocol: protocolDefinition.protocol }],
+        includeRecords : true,
       });
       expect(status.code).toBe(200);
       expect(liveQuery).toBeDefined();
@@ -108,8 +109,9 @@ describe('DwnApi', () => {
       const events: MessageChange[] = [];
       liveQuery!.on('event', (change): void => { events.push(change); });
 
+      const remoteData = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000);
       const { status: writeStatus, record } = await dwnAlice.records.write({
-        data         : 'remote hello',
+        data         : remoteData,
         protocol     : protocolDefinition.protocol,
         protocolPath : 'thread',
         schema       : protocolDefinition.types.thread.schema,
@@ -126,6 +128,8 @@ describe('DwnApi', () => {
       const change = events.find(event => event.descriptor.recordId === record.id)!;
       expect(change.descriptor.protocol).toBe(protocolDefinition.protocol);
       expect(change.descriptor.author).toBe(aliceDid.uri);
+      expect(change.record).toBeDefined();
+      expect(await change.record!.data.text()).toBe(remoteData);
 
       await liveQuery!.close();
     });
@@ -238,8 +242,16 @@ describe('DwnApi', () => {
 
     describe('messages', () => {
       it('should subscribe with an auto-resolved Messages.Read grant and receive delegated writes', async () => {
+        const { grant: messagesReadGrant } = await (delegateDwn as any).permissionsApi.getPermissionForRequest({
+          connectedDid : aliceDid.uri,
+          delegateDid  : delegateDid.uri,
+          protocol     : notesProtocol.protocol,
+          cached       : true,
+          messageType  : DwnInterface.MessagesSubscribe,
+        });
         const { status, liveQuery } = await delegateDwn.messages.subscribe({
-          filters: [{ protocol: notesProtocol.protocol }],
+          filters        : [{ protocol: notesProtocol.protocol }],
+          includeRecords : true,
         });
         expect(status.code).toBe(200);
         expect(liveQuery).toBeDefined();
@@ -247,8 +259,9 @@ describe('DwnApi', () => {
         const events: MessageChange[] = [];
         liveQuery!.on('event', (change): void => { events.push(change); });
 
+        const data = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000);
         const { status: writeStatus, record } = await delegateDwn.records.write({
-          data         : 'delegated note',
+          data,
           protocol     : notesProtocol.protocol,
           protocolPath : 'note',
           schema       : notesProtocol.types.note.schema,
@@ -264,6 +277,16 @@ describe('DwnApi', () => {
         expect(change.descriptor.protocol).toBe(notesProtocol.protocol);
         // Alice is the author; the delegate only signed on her behalf.
         expect(change.descriptor.author).toBe(aliceDid.uri);
+        expect(change.record).toBeDefined();
+
+        const processSpy = sinon.spy(delegateHarness.agent, 'processDwnRequest');
+        expect(await change.record!.data.text()).toBe(data);
+        const messagesReadCalls = processSpy.getCalls().filter(
+          call => call.args[0].messageType === DwnInterface.MessagesRead
+        );
+        expect(messagesReadCalls).toHaveLength(1);
+        expect(messagesReadCalls[0].args[0].messageParams.permissionGrantIds).toEqual([messagesReadGrant.id]);
+        expect(processSpy.getCalls().some(call => call.args[0].messageType === DwnInterface.RecordsRead)).toBe(false);
 
         await liveQuery!.close();
       });
