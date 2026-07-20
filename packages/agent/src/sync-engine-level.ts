@@ -3357,7 +3357,7 @@ export class SyncEngineLevel implements SyncEngine {
     for (const target of targets) {
       const linkKey = buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
       const controller = this._linkControllers.get(linkKey);
-      if (controller === undefined || !controller.isActive) {
+      if (controller?.isActive !== true) {
         uncontrolledTargets += 1;
         continue;
       }
