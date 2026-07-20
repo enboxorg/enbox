@@ -596,7 +596,7 @@ export class SyncDurableFeedReconciler {
         this._operations.onReconcileApplied(target, admittedCids);
       }
       throw new Error(
-        `SyncEngineLevel: pull deferred for ${pageResult.messageCid}: ${pageResult.detail ?? 'dependency unavailable'}`,
+        `SyncDurableFeedReconciler: pull deferred for ${pageResult.messageCid}: ${pageResult.detail ?? 'dependency unavailable'}`,
       );
     }
 
@@ -618,7 +618,7 @@ export class SyncDurableFeedReconciler {
       }
       const label = direction === 'push' ? 'local MessagesQuery' : 'MessagesQuery';
       throw new Error(
-        `SyncEngineLevel: ${label} for ${target.did} -> ${target.dwnUrl} returned no cursor before drain`,
+        `SyncDurableFeedReconciler: ${label} for ${target.did} -> ${target.dwnUrl} returned no cursor before drain`,
       );
     }
 
@@ -665,13 +665,13 @@ export class SyncDurableFeedReconciler {
   ): void {
     if (!isValidProgressToken(nextCursor)) {
       throw new Error(
-        `SyncEngineLevel: ${direction} MessagesQuery returned an invalid cursor for ${link.tenantDid} -> ${dwnUrl}`,
+        `SyncDurableFeedReconciler: ${direction} MessagesQuery returned an invalid cursor for ${link.tenantDid} -> ${dwnUrl}`,
       );
     }
 
     if (!SyncCheckpoint.validateTokenDomain(link[direction], nextCursor)) {
       throw new Error(
-        `SyncEngineLevel: ${direction} MessagesQuery token domain mismatch for ${link.tenantDid} -> ${dwnUrl}`,
+        `SyncDurableFeedReconciler: ${direction} MessagesQuery token domain mismatch for ${link.tenantDid} -> ${dwnUrl}`,
       );
     }
 
@@ -682,7 +682,7 @@ export class SyncDurableFeedReconciler {
     const comparison = SyncCheckpoint.comparePosition(nextCursor, previousCursor);
     if (comparison < 0 || (comparison === 0 && !drained)) {
       throw new Error(
-        `SyncEngineLevel: ${direction} MessagesQuery cursor did not advance for ${link.tenantDid} -> ${dwnUrl}`,
+        `SyncDurableFeedReconciler: ${direction} MessagesQuery cursor did not advance for ${link.tenantDid} -> ${dwnUrl}`,
       );
     }
   }
@@ -695,7 +695,7 @@ export class SyncDurableFeedReconciler {
     if (reply.status.code !== 200) {
       const label = direction === 'push' ? 'local MessagesQuery' : 'MessagesQuery';
       throw new Error(
-        `SyncEngineLevel: ${label} failed for ${target.did} -> ${target.dwnUrl}: ` +
+        `SyncDurableFeedReconciler: ${label} failed for ${target.did} -> ${target.dwnUrl}: ` +
         `${reply.status.code} ${reply.status.detail}`,
       );
     }
@@ -768,13 +768,13 @@ export class SyncDurableFeedReconciler {
         return { drained: true };
       }
       throw new Error(
-        `SyncEngineLevel: ${source} MessagesQuery for ${target.did} -> ${target.dwnUrl} returned no cursor before drain`,
+        `SyncDurableFeedReconciler: ${source} MessagesQuery for ${target.did} -> ${target.dwnUrl} returned no cursor before drain`,
       );
     }
 
     if (!isValidProgressToken(reply.cursor)) {
       throw new Error(
-        `SyncEngineLevel: ${source} MessagesQuery returned an invalid cursor for ${target.did} -> ${target.dwnUrl}`,
+        `SyncDurableFeedReconciler: ${source} MessagesQuery returned an invalid cursor for ${target.did} -> ${target.dwnUrl}`,
       );
     }
 

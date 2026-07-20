@@ -19,7 +19,7 @@ export interface SyncFeedConvergenceManagerOperations {
   ): Promise<boolean>;
   isLinkKeyForTenant(linkKey: string, tenantDid: string): boolean;
   resetCheckpoints(link: ReplicationLinkState): Promise<void>;
-  scheduleLinkReconcile(
+  scheduleLinkReconcileByKey(
     linkKey: string,
     link: ReplicationLinkState,
     reason: string,
@@ -146,7 +146,7 @@ export class SyncFeedConvergenceManager {
 
     await this._operations.resetCheckpoints(link);
     if (activeLink?.status === 'live') {
-      this._operations.scheduleLinkReconcile(
+      this._operations.scheduleLinkReconcileByKey(
         resolved.linkKey,
         activeLink,
         FEED_FINGERPRINT_MISMATCH,

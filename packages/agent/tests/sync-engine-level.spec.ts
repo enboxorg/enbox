@@ -3622,7 +3622,7 @@ describe('SyncEngineLevel', () => {
         syncEngine['activateLink'](linkKey, link);
 
         sinon.stub(syncEngine as any, 'isFeedDivergenceExplainedByQuotaBlocks').resolves(false);
-        const reconcileStub = sinon.stub(syncEngine as any, 'scheduleLinkReconcile');
+        const reconcileStub = sinon.stub(syncEngine as any, 'scheduleLinkReconcileByKey');
         const pauseStub = sinon.stub(syncEngine as any, 'transitionToPaused').resolves();
         await syncEngine['_deadLetterStore'].put({
           errorDetail    : 'admission failed',

@@ -212,7 +212,7 @@ export class SyncLinkRecoveryCoordinator {
         controller.link.status === 'live' &&
         !controller.isMailboxBusy('reconcile')
       ) {
-        this.scheduleLinkReconcile(
+        this.scheduleLinkReconcileByKey(
           controller,
           'post-repair-gap',
           POST_REPAIR_RECONCILE_DELAY_MS,
@@ -222,7 +222,7 @@ export class SyncLinkRecoveryCoordinator {
   }
 
   /** Emit and coalesce a named durable-reconciliation request for a live link. */
-  public scheduleLinkReconcile(
+  public scheduleLinkReconcileByKey(
     controller: SyncLinkController,
     reason: string,
     delayMs?: number,

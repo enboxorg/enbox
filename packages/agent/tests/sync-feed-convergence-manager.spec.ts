@@ -120,10 +120,10 @@ function createFixture({
     isLinkKeyForTenant      : sinon.stub().callsFake(
       (value: string, tenantDid: string) => value.startsWith(`${tenantDid}^`),
     ),
-    resetCheckpoints      : sinon.stub().resolves(),
-    scheduleLinkReconcile : sinon.stub(),
-    scheduleQuotaProbe    : sinon.stub(),
-    transitionToPaused    : sinon.stub().resolves(),
+    resetCheckpoints           : sinon.stub().resolves(),
+    scheduleLinkReconcileByKey : sinon.stub(),
+    scheduleQuotaProbe         : sinon.stub(),
+    transitionToPaused         : sinon.stub().resolves(),
   };
 
   return {
@@ -222,7 +222,7 @@ describe('SyncFeedConvergenceManager', () => {
     }
 
     expect(operations.resetCheckpoints.callCount).toBe(4);
-    expect(operations.scheduleLinkReconcile.callCount).toBe(4);
+    expect(operations.scheduleLinkReconcileByKey.callCount).toBe(4);
     expect(operations.transitionToPaused.calledOnceWithExactly(context.linkKey, context.link)).toBe(true);
   });
 
@@ -280,8 +280,8 @@ describe('SyncFeedConvergenceManager', () => {
     expect(activeLink.push).toBe(ledgerLink.push);
     expect(operations.resetCheckpoints.calledTwice).toBe(true);
     expect(operations.resetCheckpoints.alwaysCalledWithExactly(activeLink)).toBe(true);
-    expect(operations.scheduleLinkReconcile.calledTwice).toBe(true);
-    expect(operations.scheduleLinkReconcile.alwaysCalledWithExactly(
+    expect(operations.scheduleLinkReconcileByKey.calledTwice).toBe(true);
+    expect(operations.scheduleLinkReconcileByKey.alwaysCalledWithExactly(
       context.linkKey,
       activeLink,
       'feed-fingerprint-mismatch',
@@ -300,7 +300,7 @@ describe('SyncFeedConvergenceManager', () => {
     await manager.handleVerifiedDivergence(syncTarget, divergence(), context);
 
     expect(operations.resetCheckpoints.calledOnceWithExactly(ledgerLink)).toBe(true);
-    expect(operations.scheduleLinkReconcile.notCalled).toBe(true);
+    expect(operations.scheduleLinkReconcileByKey.notCalled).toBe(true);
   });
 
   it('resolves a link only when clear is called without an existing context', async () => {

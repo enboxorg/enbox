@@ -138,7 +138,7 @@ export class SyncLifecycleCoordinator {
   }
 
   /** Prevents new global and per-identity background work from starting. */
-  public pauseTaskAdmission(): void {
+  public pauseTaskIntake(): void {
     this._backgroundTasks.pause();
     for (const taskGroup of this._identityTaskGroups.values()) {
       taskGroup.pause();
@@ -146,7 +146,7 @@ export class SyncLifecycleCoordinator {
   }
 
   /** Reopens global background-task admission for a new runtime generation. */
-  public resumeTaskAdmission(): void {
+  public resumeTaskIntake(): void {
     this._backgroundTasks.resume();
   }
 

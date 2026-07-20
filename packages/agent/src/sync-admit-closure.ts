@@ -295,7 +295,7 @@ class AdmitClosureContext {
     }
 
     for (const entry of this.entriesByCid.values()) {
-      if (isInitialWriteForRecord(entry.message, recordId)) {
+      if (isInitialWriteEnvelopeForRecord(entry.message, recordId)) {
         return entry.message;
       }
     }
@@ -512,7 +512,7 @@ class AdmitClosureContext {
 
   private entryFromMessageFeedEntry(entry: NonNullable<MessagesQueryReply['entries']>[number]): SyncMessageEntry {
     if (entry.message === undefined) {
-      throw new Error(`SyncEngineLevel: remote feed entry ${entry.messageCid} did not include a message.`);
+      throw new Error(`AdmitClosure: remote feed entry ${entry.messageCid} did not include a message.`);
     }
 
     const messageWithEncodedData = { ...entry.message } as GenericMessage & { encodedData?: string };
@@ -633,7 +633,7 @@ class AdmitClosureContext {
 
   private findInitialWriteEntry(recordId: string): SyncMessageEntry | undefined {
     for (const entry of this.entriesByCid.values()) {
-      if (isInitialWriteForRecord(entry.message, recordId)) {
+      if (isInitialWriteEnvelopeForRecord(entry.message, recordId)) {
         return entry;
       }
     }
@@ -676,7 +676,13 @@ async function dedupeEntries(entries: SyncMessageEntry[]): Promise<SyncMessageEn
   return [...byCid.values()];
 }
 
-function isInitialWriteForRecord(message: GenericMessage, recordId: string): message is RecordsWriteMessage {
+/**
+ * Whether `message` is the initial RecordsWrite for `recordId`, matching on
+ * the ENVELOPE recordId only. Deliberately distinct from
+ * `sync-messages.ts`'s exported `isInitialWriteForRecord`, which also
+ * accepts a descriptor recordId.
+ */
+function isInitialWriteEnvelopeForRecord(message: GenericMessage, recordId: string): message is RecordsWriteMessage {
   if (
     message.descriptor.interface !== DwnInterfaceName.Records ||
     message.descriptor.method !== DwnMethodName.Write

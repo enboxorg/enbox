@@ -403,10 +403,10 @@ export class SyncEngineLevel implements SyncEngine {
           this.getNextQuotaProbeAtForTarget(target),
         isDivergenceExplained: (target, result): Promise<boolean> =>
           this.isFeedDivergenceExplainedByQuotaBlocks(target, result),
-        isLinkKeyForTenant    : (linkKey, tenantDid): boolean => this.isLinkKeyForDid(linkKey, tenantDid),
-        resetCheckpoints      : (link): Promise<void> => this.ledger.resetCheckpoints(link),
-        scheduleLinkReconcile : (linkKey, link, reason, delayMs): void => {
-          this.scheduleLinkReconcile(linkKey, link, reason, delayMs);
+        isLinkKeyForTenant         : (linkKey, tenantDid): boolean => this.isLinkKeyForDid(linkKey, tenantDid),
+        resetCheckpoints           : (link): Promise<void> => this.ledger.resetCheckpoints(link),
+        scheduleLinkReconcileByKey : (linkKey, link, reason, delayMs): void => {
+          this.scheduleLinkReconcileByKey(linkKey, link, reason, delayMs);
         },
         scheduleQuotaProbe: (linkKey, link, nextProbeAt): void => {
           this.scheduleQuotaProbeForActiveLink(linkKey, link, nextProbeAt);
@@ -480,7 +480,7 @@ export class SyncEngineLevel implements SyncEngine {
         recordDeadLetter      : (entry): Promise<void> => this.recordDeadLetter(entry),
         reportError           : (message, error): void => { console.error(message, error); },
         scheduleReconcile     : (controller, reason): void => {
-          this._linkRecoveryCoordinator.scheduleLinkReconcile(controller, reason);
+          this._linkRecoveryCoordinator.scheduleLinkReconcileByKey(controller, reason);
         },
         trackAppliedCids: (messageCids, target): Promise<void> =>
           this.trackRemoteFeedAppliedCids(messageCids, target),
@@ -506,7 +506,7 @@ export class SyncEngineLevel implements SyncEngine {
         recordDeadLetter  : (entry): Promise<void> => this.recordDeadLetter(entry),
         reportError       : (message, error): void => { console.error(message, error); },
         scheduleReconcile : (linkKey, link, reason, delayMs): void => {
-          this.scheduleLinkReconcile(linkKey, link, reason, delayMs);
+          this.scheduleLinkReconcileByKey(linkKey, link, reason, delayMs);
         },
         applyPushResult: (target, result, options): Promise<SyncQuotaPushResultOutcome> =>
           this.applyPushResult(target, result, options),
@@ -1133,7 +1133,7 @@ export class SyncEngineLevel implements SyncEngine {
       await this.waitForBackgroundTasks();
     }
     this._lifecycle.clearIdentityTaskGroups();
-    this._lifecycle.resumeTaskAdmission();
+    this._lifecycle.resumeTaskIntake();
 
     // The previous generation's scope was disposed by the transition above;
     // the new generation gets a fresh live scope once its predecessor's work
@@ -1169,7 +1169,7 @@ export class SyncEngineLevel implements SyncEngine {
     // Drop the queued follow-up join point: the blocked run wakes later, its
     // transition fence trips, and it cancels without running.
     this._pendingSyncRun = undefined;
-    this._lifecycle.pauseTaskAdmission();
+    this._lifecycle.pauseTaskIntake();
     this._runtime.dispose();
     this.installDisposedRuntimeScope();
     this.invalidateSyncTargetsCache();
@@ -2286,7 +2286,7 @@ export class SyncEngineLevel implements SyncEngine {
     });
   }
 
-  private scheduleLinkReconcile(linkKey: string, link: ReplicationLinkState, reason: string, delayMs?: number): void {
+  private scheduleLinkReconcileByKey(linkKey: string, link: ReplicationLinkState, reason: string, delayMs?: number): void {
     // Link-addressed callers (feed convergence, quota manager, push quota
     // probes) can reach here for links that have no active controller: a
     // one-shot sync() or drain reconciles durable links without a live
@@ -2299,7 +2299,7 @@ export class SyncEngineLevel implements SyncEngine {
     if (controller === undefined) {
       return;
     }
-    this._linkRecoveryCoordinator.scheduleLinkReconcile(controller, reason, delayMs);
+    this._linkRecoveryCoordinator.scheduleLinkReconcileByKey(controller, reason, delayMs);
   }
 
   private reconcileTarget(

@@ -296,7 +296,7 @@ describe('SyncDurableFeedReconciler', () => {
     fixture.queryFeed.resolves(reply({ cursor: token(1), drained: false }));
 
     await expect(fixture.reconciler.pull(target())).rejects.toThrow(
-      'SyncEngineLevel: pull MessagesQuery cursor did not advance',
+      'SyncDurableFeedReconciler: pull MessagesQuery cursor did not advance',
     );
     expect(fixture.persistCheckpoint.called).toBe(false);
     expect(fixture.operations.onCheckpointAdvanced.called).toBe(false);
@@ -318,7 +318,7 @@ describe('SyncDurableFeedReconciler', () => {
     });
 
     await expect(fixture.reconciler.pull(target())).rejects.toThrow(
-      'SyncEngineLevel: pull deferred for deferred: dependency missing',
+      'SyncDurableFeedReconciler: pull deferred for deferred: dependency missing',
     );
     expect(fixture.operations.onReconcileApplied.calledOnceWith(target(), ['applied'])).toBe(true);
     expect(fixture.persistCheckpoint.called).toBe(false);
