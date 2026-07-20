@@ -1,5 +1,11 @@
 # @enbox/api
 
+## 0.6.70
+
+### Patch Changes
+
+- [#1384](https://github.com/enboxorg/enbox/pull/1384) [`f688ea7`](https://github.com/enboxorg/enbox/commit/f688ea711b3bb3547e47f8f1697e3af54c441b2c) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: optionally hydrate message subscription record events with version-pinned stored data
+
 ## 0.6.69
 
 ### Patch Changes
