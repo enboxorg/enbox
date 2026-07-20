@@ -542,6 +542,145 @@ describe('SyncEngineLevel — identity management', () => {
       expect(consoleErrorStub.calledOnce).toBe(true);
     });
 
+    it('should serialize unregisterIdentity behind an in-flight settle re-initialization', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const did = 'did:example:settle-unregister-race';
+      await engine.registerIdentity({ did, options: { protocols: 'all' } });
+      (engine as any)._runtime = new SyncRuntime(true);
+
+      const target = {
+        did,
+        dwnUrl             : 'https://dwn.example.com',
+        scope              : { kind: 'full' },
+        authorization      : { kind: 'owner' },
+        authorizationEpoch : 'owner-epoch',
+        projectionId       : 'projection-id',
+      };
+      sinon.stub((engine as any)._runCoordinator, 'run').resolves();
+      sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
+      sinon.stub(engine as any, 'openLinkSubscriptions').resolves('readyForLive');
+      sinon.stub(engine as any, 'markLinkLive').resolves();
+
+      // Park the settle re-initialization inside link storage.
+      let releaseLinkStorage!: () => void;
+      const linkStorageGate = new Promise<void>((resolve) => { releaseLinkStorage = resolve; });
+      let reachedLinkStorage!: () => void;
+      const linkStorageReached = new Promise<void>((resolve) => { reachedLinkStorage = resolve; });
+      sinon.stub(engine as any, 'getOrCreateReplicationLink').callsFake(async (): Promise<any> => {
+        reachedLinkStorage();
+        await linkStorageGate;
+        return {
+          tenantDid          : did,
+          remoteEndpoint     : 'https://dwn.example.com',
+          projectionId       : 'projection-id',
+          authorizationEpoch : 'owner-epoch',
+          scope              : { kind: 'full' },
+          authorization      : { kind: 'owner' },
+          status             : 'initializing',
+          connectivity       : 'unknown',
+          pull               : {},
+          push               : {},
+        };
+      });
+
+      const settlePass = (engine as any).runLiveIntegrityCheck((engine as any)._runtime);
+      await linkStorageReached;
+
+      // The re-initialization holds the exclusive sync lock, so the
+      // unregister cannot complete mid-initialization and be resurrected.
+      let unregisterSettled = false;
+      const unregisterPromise = engine.unregisterIdentity(did).then((): void => { unregisterSettled = true; });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(unregisterSettled).toBe(false);
+
+      releaseLinkStorage();
+      await settlePass;
+      await unregisterPromise;
+
+      // The unregister ran after the pass: no controller or subscription
+      // survives, and the identity stays deleted.
+      expect(unregisterSettled).toBe(true);
+      expect((engine as any)._linkControllers.size).toBe(0);
+      expect(await engine.getIdentityOptions(did)).toBeUndefined();
+    });
+
+    it('should rebuild only the new scope when updateIdentityOptions races a settle re-initialization', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const did = 'did:example:settle-update-race';
+      await engine.registerIdentity({ did, options: { protocols: ['https://old.example/proto'] } });
+      (engine as any)._runtime = new SyncRuntime(true);
+
+      const oldTarget = {
+        did,
+        dwnUrl             : 'https://dwn.example.com',
+        scope              : { kind: 'protocols', protocols: ['https://old.example/proto'] },
+        authorization      : { kind: 'owner' },
+        authorizationEpoch : 'owner-epoch',
+        projectionId       : 'projection-old',
+      };
+      const newTarget = {
+        did,
+        dwnUrl             : 'https://dwn.example.com',
+        scope              : { kind: 'protocols', protocols: ['https://new.example/proto'] },
+        authorization      : { kind: 'owner' },
+        authorizationEpoch : 'owner-epoch',
+        projectionId       : 'projection-new',
+      };
+      sinon.stub((engine as any)._runCoordinator, 'run').resolves();
+      sinon.stub(engine as any, 'getSyncTargets').resolves([oldTarget]);
+      sinon.stub(engine as any, 'openLinkSubscriptions').resolves('readyForLive');
+      sinon.stub(engine as any, 'markLinkLive').resolves();
+      sinon.stub((engine as any).targetResolver, 'getEndpointUrls').resolves(['https://dwn.example.com']);
+      sinon.stub((engine as any).targetResolver, 'buildTargetsForEndpoint').resolves([newTarget]);
+
+      // Gate only the settle pass's link-storage read; the rebuild's later
+      // reads resolve immediately.
+      let releaseLinkStorage!: () => void;
+      const linkStorageGate = new Promise<void>((resolve) => { releaseLinkStorage = resolve; });
+      let reachedLinkStorage!: () => void;
+      const linkStorageReached = new Promise<void>((resolve) => { reachedLinkStorage = resolve; });
+      let firstLinkRead = true;
+      sinon.stub(engine as any, 'getOrCreateReplicationLink').callsFake(async (requested: any): Promise<any> => {
+        if (firstLinkRead) {
+          firstLinkRead = false;
+          reachedLinkStorage();
+          await linkStorageGate;
+        }
+        return {
+          tenantDid          : requested.did,
+          remoteEndpoint     : requested.dwnUrl,
+          projectionId       : requested.projectionId,
+          authorizationEpoch : requested.authorizationEpoch,
+          scope              : requested.scope,
+          authorization      : requested.authorization,
+          status             : 'initializing',
+          connectivity       : 'unknown',
+          pull               : {},
+          push               : {},
+        };
+      });
+
+      const settlePass = (engine as any).runLiveIntegrityCheck((engine as any)._runtime);
+      await linkStorageReached;
+
+      let updateSettled = false;
+      const updatePromise = engine
+        .updateIdentityOptions({ did, options: { protocols: ['https://new.example/proto'] } })
+        .then((): void => { updateSettled = true; });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(updateSettled).toBe(false);
+
+      releaseLinkStorage();
+      await settlePass;
+      await updatePromise;
+
+      // The update's teardown-and-rebuild ran after the pass: only the new
+      // scope's link remains.
+      const controllerKeys = [...(engine as any)._linkControllers.keys()];
+      expect(controllerKeys).toHaveLength(1);
+      expect(controllerKeys[0]).toContain('projection-new');
+    });
+
     // --- unregisterIdentity hot-remove triggers ---
 
     it('should call removeIdentityFromLiveSync when unregistering during active live sync', async () => {

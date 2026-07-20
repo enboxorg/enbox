@@ -1210,6 +1210,14 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
+  /**
+   * One settle pass: a convergence-verifying durable feed reconciliation
+   * followed by re-initialization of orphaned live links. Both phases run
+   * under the exclusive sync lock — the reconciliation through `sync()`
+   * itself, the re-init through its own hold — so identity mutations, which
+   * acquire the same lock through `runIdentityMutation`, can never complete
+   * in the middle of either phase.
+   */
   private async runLiveIntegrityCheck(runtime: SyncRuntime): Promise<void> {
     if (runtime.disposed || this._lifecycle.isSyncInProgress) {
       return;
@@ -1224,20 +1232,83 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
 
+    // A transition disposed this scope while the sync ran — its teardown
+    // owns every link now.
     if (runtime.disposed) {
       return;
     }
 
-    // Re-initialize live links for any target left without an active
-    // controller — startup planning that failed at discovery, or a hot-add
-    // whose discovery was transiently unavailable. Owned links return early
-    // from initializeLinkTarget, so this only touches orphaned targets.
+    await this.reinitializeOrphanedLinkTargets(runtime);
+  }
+
+  /**
+   * Re-initialize live links for ORPHANED targets only: no active
+   * controller (live, repairing, and paused links all keep one — the
+   * owned-link guard in {@link initializeLinkTarget} returns those
+   * untouched) and no pending rate-limit init retry (the Retry-After ladder
+   * owns that link; re-attempting here would hammer a rate-limiting DWN and
+   * cancel the legitimate retry). Startup planning that failed at discovery
+   * and hot-adds whose discovery was transiently unavailable land here.
+   *
+   * Runs under its own hold of the exclusive sync lock — the same lock
+   * every identity mutation wraps its work in — so an unregister or scope
+   * change can never complete mid-initialization and have its outcome
+   * resurrected by the stale attempt. The target plan is read INSIDE the
+   * hold, so a mutation that landed between the settle phases is fully
+   * reflected before any link work starts. A busy lock skips the phase
+   * entirely (the next settle tick retries), preserving the settle pass's
+   * skip-when-busy semantics.
+   *
+   * The lock is NOT reentrant — `acquireSync` spins on `tryAcquireSync` —
+   * so nothing in the awaited graph below may take it. That holds
+   * structurally today: `SyncLifecycleCoordinator` is engine-private, and
+   * the only lifecycle surface link initialization reaches is background
+   * task admission. Keep it that way; an awaited `acquireSync` under this
+   * hold would self-deadlock rather than merely queue.
+   */
+  private async reinitializeOrphanedLinkTargets(runtime: SyncRuntime): Promise<void> {
+    if (!this._lifecycle.tryAcquireSync()) {
+      return;
+    }
     try {
+      if (runtime.disposed) {
+        return;
+      }
       const syncTargets = await this.getSyncTargets();
-      await Promise.allSettled(syncTargets.map(t => this.initializeLinkTarget(t)));
+      // Re-check after the plan await: a transition that disposed this scope
+      // owns every link now, and its teardown already installed a
+      // replacement. Returning here also establishes `this._runtime ===
+      // runtime` for the rest of the phase — a live scope cannot be swapped
+      // out from under a lock holder — which is what lets the retry-ledger
+      // probe below read the current scope.
+      if (runtime.disposed) {
+        return;
+      }
+      const orphanedTargets = syncTargets.filter(target => !this.hasPendingLinkInitRetryForTarget(target));
+      await Promise.allSettled(orphanedTargets.map(t => this.initializeLinkTarget(t)));
     } catch (error) {
       console.error('SyncEngineLevel: Error during settle-check link re-initialization', error);
+    } finally {
+      this._lifecycle.releaseSync();
     }
+  }
+
+  /**
+   * Whether a pending rate-limit init retry owns this target's link. Exact
+   * timer-key matching is sound: the ledger derives `projectionId` with the
+   * same `computeProjectionId` the target resolver uses (superseded-link
+   * pruning already relies on that equality), and the authorization epoch
+   * passes through verbatim.
+   *
+   * A pending retry never hides an active link: the 429 path drops the
+   * controller before arming the timer, and {@link activateLink} clears the
+   * timer whenever a link is activated through any other path.
+   */
+  private hasPendingLinkInitRetryForTarget(target: SyncTarget): boolean {
+    const timerKey = SyncEngineLevel.linkInitRetryTimerKey(
+      buildLinkId(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch),
+    );
+    return this._runtime.hasTimers((key: string): boolean => key === timerKey);
   }
 
   // ---------------------------------------------------------------------------
