@@ -257,6 +257,31 @@ export class SyncLinkController {
     return this._localSubscription !== undefined;
   }
 
+  /**
+   * Whether this link's replication stream provably covers everything a
+   * connectivity-driven convergence check would otherwise fetch: the link is
+   * live and online, both subscription halves are attached, and no repair or
+   * reconciliation work is pending, scheduled, or in flight. Live deliveries
+   * commit durable cursors contiguously and a gap surfaces as repair, so a
+   * current stream means the pull checkpoint already sits at the remote head.
+   * Deliveries still admitting and push batches still flushing are healthy
+   * live operation, not staleness.
+   */
+  public get isStreamCurrent(): boolean {
+    return this._active
+      && this.link.status === 'live'
+      && this.link.connectivity === 'online'
+      && this._liveSubscription !== undefined
+      && this._localSubscription !== undefined
+      && this._repairResumeToken === undefined
+      && this._repairRetryTimer === undefined
+      && this._reconcileTimer === undefined
+      && !this.isMailboxBusy('repair')
+      && !this.isPassRequested('repair')
+      && !this.isMailboxBusy('reconcile')
+      && !this.isPassRequested('reconcile');
+  }
+
   /** Claim an ordinal in the current pull generation before admission begins. */
   public startPullDelivery(token: ProgressToken): SyncPullDeliveryTicket {
     const ordinal = this._nextPullDeliveryOrdinal++;

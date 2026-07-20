@@ -203,7 +203,7 @@ describe('SyncConnectivityManager', () => {
     environment.dispatch('online');
     await clock.tickAsync(0);
     expect(log.args).toEqual([[
-      'SyncConnectivityManager: browser online — starting integrity check',
+      'SyncConnectivityManager: browser online — checking replication streams',
     ]]);
 
     await clock.tickAsync(3_000);
@@ -212,8 +212,8 @@ describe('SyncConnectivityManager', () => {
 
     await clock.tickAsync(7_000);
     expect(log.args).toEqual([
-      ['SyncConnectivityManager: browser online — starting integrity check'],
-      ['SyncConnectivityManager: page visible — starting integrity check'],
+      ['SyncConnectivityManager: browser online — checking replication streams'],
+      ['SyncConnectivityManager: page visible — checking replication streams'],
     ]);
     manager.stop();
   });

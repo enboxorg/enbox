@@ -223,7 +223,7 @@ export class SyncConnectivityManager {
     this._activeConvergenceCheck = check;
     this._lastConvergenceCheckStartedAt = Date.now();
     const reason = trigger === 'online' ? 'browser online' : 'page visible';
-    console.info(`SyncConnectivityManager: ${reason} — starting integrity check`);
+    console.info(`SyncConnectivityManager: ${reason} — checking replication streams`);
     const task = this._operations.runBackgroundTask(async (): Promise<void> => {
       if (scope.disposed) {
         return;
@@ -238,11 +238,11 @@ export class SyncConnectivityManager {
         console.error(`SyncConnectivityManager: post-${trigger} sync failed`, error);
       }
     });
-    const complete = (): void => { this.completeIntegrityCheck(check); };
+    const complete = (): void => { this.completeConvergenceCheck(check); };
     void task.then(complete, complete);
   }
 
-  private completeIntegrityCheck(check: ActiveConvergenceCheck): void {
+  private completeConvergenceCheck(check: ActiveConvergenceCheck): void {
     if (this._scope !== check.scope || this._activeConvergenceCheck !== check) {
       return;
     }
@@ -253,7 +253,7 @@ export class SyncConnectivityManager {
     }
   }
 
-  private flushTrailingIntegrityCheck(scope: SyncConnectivityRuntimeScope): void {
+  private flushTrailingConvergenceCheck(scope: SyncConnectivityRuntimeScope): void {
     if (
       this._scope !== scope ||
       scope.disposed ||
@@ -282,7 +282,7 @@ export class SyncConnectivityManager {
 
     scope.armTimeout(
       SyncConnectivityManager.RECOVERY_TIMER,
-      (): void => { this.flushTrailingIntegrityCheck(scope); },
+      (): void => { this.flushTrailingConvergenceCheck(scope); },
       delay,
     );
   }

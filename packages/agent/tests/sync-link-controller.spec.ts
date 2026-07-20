@@ -387,4 +387,89 @@ describe('SyncLinkController mailbox', () => {
 
     expect(secondRan).toBe(true);
   });
+
+  describe('isStreamCurrent', () => {
+    function currentController(): SyncLinkController {
+      const link = createLink();
+      link.connectivity = 'online';
+      const controller = new SyncLinkController('stream-link-key', link);
+      controller.setLiveSubscription({ close: async (): Promise<void> => {} });
+      controller.setLocalSubscription({ close: async (): Promise<void> => {} });
+      return controller;
+    }
+
+    it('should be current when live, online, fully subscribed, and idle', () => {
+      expect(currentController().isStreamCurrent).toBe(true);
+    });
+
+    it('should be stale when the link is not live and online', () => {
+      const offline = currentController();
+      offline.link.connectivity = 'offline';
+      expect(offline.isStreamCurrent).toBe(false);
+
+      const unknown = currentController();
+      unknown.link.connectivity = 'unknown';
+      expect(unknown.isStreamCurrent).toBe(false);
+
+      const paused = currentController();
+      paused.link.status = 'paused';
+      expect(paused.isStreamCurrent).toBe(false);
+    });
+
+    it('should be stale without both subscription halves', () => {
+      const link = createLink();
+      link.connectivity = 'online';
+
+      const noLive = new SyncLinkController('stream-link-key', link);
+      noLive.setLocalSubscription({ close: async (): Promise<void> => {} });
+      expect(noLive.isStreamCurrent).toBe(false);
+
+      const noLocal = new SyncLinkController('stream-link-key', createLink());
+      noLocal.link.connectivity = 'online';
+      noLocal.setLiveSubscription({ close: async (): Promise<void> => {} });
+      expect(noLocal.isStreamCurrent).toBe(false);
+    });
+
+    it('should be stale while repair or reconciliation is owed, scheduled, or mid-flight', async () => {
+      const repairRequested = currentController();
+      repairRequested.requestPass('repair');
+      expect(repairRequested.isStreamCurrent).toBe(false);
+
+      const reconcileRequested = currentController();
+      reconcileRequested.requestPass('reconcile');
+      expect(reconcileRequested.isStreamCurrent).toBe(false);
+
+      const midRepair = currentController();
+      midRepair.setRepairResumeToken(token(1));
+      expect(midRepair.isStreamCurrent).toBe(false);
+
+      const retryScheduled = currentController();
+      const retryTimer = setTimeout((): void => {}, 60_000) as SyncLinkTimer;
+      retryScheduled.setRepairRetryTimer(retryTimer);
+      expect(retryScheduled.isStreamCurrent).toBe(false);
+      retryScheduled.cancelRepairRetryTimer();
+
+      const reconcileScheduled = currentController();
+      const reconcileTimer = setTimeout((): void => {}, 60_000);
+      reconcileScheduled.setReconcileTimer(reconcileTimer, Date.now() + 60_000);
+      expect(reconcileScheduled.isStreamCurrent).toBe(false);
+      expect(reconcileScheduled.consumeReconcileTimer(reconcileTimer)).toBe(true);
+      clearTimeout(reconcileTimer);
+
+      const busy = currentController();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const running = busy.enqueue(async (): Promise<void> => gate, 'repair');
+      expect(busy.isStreamCurrent).toBe(false);
+      release();
+      await running;
+      expect(busy.isStreamCurrent).toBe(true);
+    });
+
+    it('should be stale after disposal', () => {
+      const controller = currentController();
+      controller.dispose();
+      expect(controller.isStreamCurrent).toBe(false);
+    });
+  });
 });

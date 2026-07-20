@@ -266,9 +266,12 @@ export class SyncEngineLevel implements SyncEngine {
         getRuntimeScope        : (): SyncRuntime => this._runtime,
         markActiveLinksOffline : (): void => { this.markActiveLinksOffline(); },
         runBackgroundTask      : (operation): Promise<void> => this._lifecycle.runBackgroundTask(operation),
-        // sync() widens a queued follow-up to an unscoped convergence check if
-        // scoped or full sync work already owns the exclusive lifecycle lock.
-        runConvergenceCheck    : (): Promise<void> => this.sync(undefined, { verifyConvergence: true }),
+        // Stream-health gated: current links are skipped, stale links get a
+        // targeted per-link reconcile, and an unoperated topology falls back
+        // to the full verified sync() — which widens a queued follow-up to an
+        // unscoped convergence check if scoped or full sync work already owns
+        // the exclusive lifecycle lock.
+        runConvergenceCheck    : (): Promise<void> => this.runConvergenceCheck(),
       },
     });
   }
@@ -3328,6 +3331,62 @@ export class SyncEngineLevel implements SyncEngine {
       beforeCache: (targets, generation): Promise<void> =>
         this.pruneQuotaBlocksForCurrentTargets(targets, generation),
     });
+  }
+
+  /**
+   * The connectivity-driven convergence check, gated on stream health.
+   *
+   * A link whose replication stream is current needs nothing from a wake
+   * signal: live deliveries commit durable cursors contiguously, a gap is a
+   * repair rather than a silent miss, and the transport layer probes socket
+   * liveness on the same wake signals independently — so its pull checkpoint
+   * already sits at the remote head. Only links that cannot make that
+   * promise get work, as a targeted reconcile on their own mailbox lane. A
+   * topology the live runtime is not fully operating (a target with no
+   * active controller) cannot be gated and falls back to the full verified
+   * `sync()`. Periodic full verification remains the settle check's job.
+   */
+  private async runConvergenceCheck(): Promise<void> {
+    const targets = await this.getSyncTargets();
+    if (targets.length === 0) {
+      return;
+    }
+
+    const controllers = new Set<SyncLinkController>();
+    let uncontrolledTargets = 0;
+    for (const target of targets) {
+      const linkKey = buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
+      const controller = this._linkControllers.get(linkKey);
+      if (controller === undefined || !controller.isActive) {
+        uncontrolledTargets += 1;
+        continue;
+      }
+      controllers.add(controller);
+    }
+
+    if (uncontrolledTargets > 0) {
+      console.info(
+        `SyncEngineLevel: convergence check — ${uncontrolledTargets} target(s) without an active link; running full verified sync`,
+      );
+      await this.sync(undefined, { verifyConvergence: true });
+      return;
+    }
+
+    const staleControllers = [...controllers].filter((controller) => !controller.isStreamCurrent);
+    if (staleControllers.length === 0) {
+      console.info('SyncEngineLevel: convergence check — all replication streams current; nothing to reconcile');
+      return;
+    }
+
+    console.info(
+      `SyncEngineLevel: convergence check — reconciling ${staleControllers.length} of ${controllers.size} link(s) with stale streams`,
+    );
+    // Targeted reconciliation: each stale link runs on its own mailbox lane.
+    // The lane reports its own failures before rejecting, so a rejection here
+    // needs no additional handling beyond letting every lane finish.
+    await Promise.allSettled(
+      staleControllers.map((controller) => this._linkRecoveryCoordinator.reconcile(controller)),
+    );
   }
 
 }

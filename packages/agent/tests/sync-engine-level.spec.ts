@@ -13,9 +13,11 @@ import { CryptoUtils } from '@enbox/crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, Message, Time } from '@enbox/dwn-sdk-js';
 
+import { buildLinkKey } from '../src/sync-link-key.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
+import { SyncLinkController } from '../src/sync-link-controller.js';
 import { SyncRuntime } from '../src/sync-runtime.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
@@ -2152,6 +2154,151 @@ describe('SyncEngineLevel', () => {
 
         // The local update should be the winner (later timestamp).
         expect(localCid).toBe(localUpdateCid);
+      });
+    });
+
+    describe('runConvergenceCheck() stream-health gate', () => {
+      const GATE_TARGET = {
+        authorization      : { kind: 'owner' as const },
+        authorizationEpoch : 'owner-epoch',
+        did                : 'did:example:gate-alice',
+        dwnUrl             : 'https://gate.dwn.example.com',
+        projectionId       : 'gate-projection',
+        scope              : { kind: 'full' as const },
+      };
+
+      function gateLink(): any {
+        return {
+          authorization      : GATE_TARGET.authorization,
+          authorizationEpoch : GATE_TARGET.authorizationEpoch,
+          connectivity       : 'online',
+          projectionId       : GATE_TARGET.projectionId,
+          pull               : {},
+          push               : {},
+          remoteEndpoint     : GATE_TARGET.dwnUrl,
+          scope              : GATE_TARGET.scope,
+          status             : 'live',
+          tenantDid          : GATE_TARGET.did,
+        };
+      }
+
+      function seedController(engine: any, target: typeof GATE_TARGET, current: boolean): SyncLinkController {
+        const linkKey = buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
+        const link = gateLink();
+        link.tenantDid = target.did;
+        link.remoteEndpoint = target.dwnUrl;
+        link.projectionId = target.projectionId;
+        const controller = new SyncLinkController(linkKey, link);
+        controller.setLiveSubscription({ close: async (): Promise<void> => {} });
+        controller.setLocalSubscription({ close: async (): Promise<void> => {} });
+        if (!current) {
+          controller.requestPass('reconcile');
+        }
+        engine._linkControllers.set(linkKey, controller);
+        return controller;
+      }
+
+      function cleanupControllers(engine: any, targets: Array<typeof GATE_TARGET>): void {
+        for (const target of targets) {
+          engine._linkControllers.delete(
+            buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch),
+          );
+        }
+      }
+
+      it('does nothing when every replication stream is current', async () => {
+        const engine = testHarness.agent.sync as any;
+        const getTargets = sinon.stub(engine, 'getSyncTargets').resolves([GATE_TARGET]);
+        const fullSync = sinon.stub(engine, 'sync').resolves();
+        const reconcile = sinon.stub(engine._linkRecoveryCoordinator, 'reconcile').resolves();
+        seedController(engine, GATE_TARGET, true);
+
+        try {
+          await engine.runConvergenceCheck();
+          expect(fullSync.called).toBe(false);
+          expect(reconcile.called).toBe(false);
+        } finally {
+          cleanupControllers(engine, [GATE_TARGET]);
+          getTargets.restore();
+          fullSync.restore();
+          reconcile.restore();
+        }
+      });
+
+      it('reconciles only the links with stale streams', async () => {
+        const engine = testHarness.agent.sync as any;
+        const staleTarget = { ...GATE_TARGET, did: 'did:example:gate-bob' };
+        const getTargets = sinon.stub(engine, 'getSyncTargets').resolves([GATE_TARGET, staleTarget]);
+        const fullSync = sinon.stub(engine, 'sync').resolves();
+        const reconcile = sinon.stub(engine._linkRecoveryCoordinator, 'reconcile').resolves();
+        seedController(engine, GATE_TARGET, true);
+        const staleController = seedController(engine, staleTarget, false);
+
+        try {
+          await engine.runConvergenceCheck();
+          expect(fullSync.called).toBe(false);
+          expect(reconcile.calledOnce).toBe(true);
+          expect(reconcile.firstCall.args[0]).toBe(staleController);
+        } finally {
+          cleanupControllers(engine, [GATE_TARGET, staleTarget]);
+          getTargets.restore();
+          fullSync.restore();
+          reconcile.restore();
+        }
+      });
+
+      it('falls back to the full verified sync when a target has no active controller', async () => {
+        const engine = testHarness.agent.sync as any;
+        const getTargets = sinon.stub(engine, 'getSyncTargets').resolves([GATE_TARGET]);
+        const fullSync = sinon.stub(engine, 'sync').resolves();
+        const reconcile = sinon.stub(engine._linkRecoveryCoordinator, 'reconcile').resolves();
+
+        try {
+          await engine.runConvergenceCheck();
+          expect(fullSync.calledOnceWith(undefined, { verifyConvergence: true })).toBe(true);
+          expect(reconcile.called).toBe(false);
+        } finally {
+          getTargets.restore();
+          fullSync.restore();
+          reconcile.restore();
+        }
+      });
+
+      it('treats a disposed controller as an unoperated target', async () => {
+        const engine = testHarness.agent.sync as any;
+        const getTargets = sinon.stub(engine, 'getSyncTargets').resolves([GATE_TARGET]);
+        const fullSync = sinon.stub(engine, 'sync').resolves();
+        const reconcile = sinon.stub(engine._linkRecoveryCoordinator, 'reconcile').resolves();
+        const controller = seedController(engine, GATE_TARGET, true);
+        controller.dispose();
+
+        try {
+          await engine.runConvergenceCheck();
+          expect(fullSync.calledOnceWith(undefined, { verifyConvergence: true })).toBe(true);
+          expect(reconcile.called).toBe(false);
+        } finally {
+          cleanupControllers(engine, [GATE_TARGET]);
+          getTargets.restore();
+          fullSync.restore();
+          reconcile.restore();
+        }
+      });
+
+      it('does nothing when no targets are registered', async () => {
+        const engine = testHarness.agent.sync as any;
+        const getTargets = sinon.stub(engine, 'getSyncTargets').resolves([]);
+        const fullSync = sinon.stub(engine, 'sync').resolves();
+        const reconcile = sinon.stub(engine._linkRecoveryCoordinator, 'reconcile').resolves();
+
+        try {
+          await engine.runConvergenceCheck();
+          expect(fullSync.called).toBe(false);
+          expect(reconcile.called).toBe(false);
+        } finally {
+          getTargets.restore();
+          fullSync.restore();
+          reconcile.restore();
+        }
       });
     });
 

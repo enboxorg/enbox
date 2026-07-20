@@ -13,7 +13,7 @@ the code, not an entry missing from this table.
 | Concept | Canonical name | Retired aliases |
 |---|---|---|
 | The periodic pass that reconciles durable feeds *and* re-initializes orphaned links | **settle check** — `runSettleCheck`, `SETTLE_CHECK_TIMER` | `runLiveIntegrityCheck`, `SYNC_INTERVAL_TIMER` |
-| A convergence-verifying `sync()` with *no* orphan re-init, driven by connectivity | **convergence check** — `runConvergenceCheck`, `scheduleConvergenceCheck` | `runIntegrityCheck`, `scheduleIntegrityCheck` |
+| The connectivity-driven recovery check: skips links whose replication stream is current (`isStreamCurrent`), reconciles stale links on their mailbox lanes, and falls back to a full verifying `sync()` only when a target has no active controller. No orphan re-init. | **convergence check** — `runConvergenceCheck`, `scheduleConvergenceCheck` | `runIntegrityCheck`, `scheduleIntegrityCheck` |
 | Reconciling one target's durable feeds | **`reconcileTarget`** | `syncTargetWithDurableFeeds` |
 | Runtime identifier of a replication link | **`linkKey`** — `buildLinkKey`, `LINK_KEY_SEPARATOR` | `buildLinkId`, `LINK_ID_SEPARATOR` |
 | Endpoint-independent link identity | **`durableLinkIdentityKey`** | — |
