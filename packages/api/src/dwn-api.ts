@@ -21,9 +21,8 @@ import type {
 
 import type { DwnSubscriptionMessage } from '@enbox/dwn-clients';
 
-import { AgentPermissionsApi, DwnInterface, getRecordAuthor } from '@enbox/agent';
-
 import { Records } from '@enbox/dwn-sdk-js';
+import { AgentPermissionsApi, DwnInterface, getRecordAuthor } from '@enbox/agent';
 
 import { dataToBlob } from './utils.js';
 import { LiveQuery } from './live-query.js';
@@ -292,13 +291,13 @@ export type MessagesSubscribeRequest = Omit<DwnMessageParams[DwnInterface.Messag
   /** Optional DID specifying the remote target DWN tenant to subscribe from. */
   from?: string;
   /**
-   * When true, each `RecordsWrite` event is delivered with a hydrated
-   * {@link MessageChange.record}, and its small inline payload is auto-decrypted
-   * (mirroring `records.subscribe({ encryption: true })`) so the consumer reads
-   * plaintext from `record.data` without a re-read. Non-`RecordsWrite` events
-   * are unaffected. A record that cannot be decrypted never kills the feed —
-   * its inline ciphertext is withheld and the record's lazy read surfaces the
-   * error on access.
+   * When true, the small inline payload of each `RecordsWrite` event is
+   * auto-decrypted (mirroring `records.subscribe({ encryption: true })`) so the
+   * consumer reads plaintext from {@link MessageChange.record}`.data` without a
+   * re-read. This flag governs only decryption, not hydration: `RecordsWrite`
+   * events are hydrated into a `record` regardless. A record that cannot be
+   * decrypted never kills the feed — its inline ciphertext is withheld and the
+   * record's lazy read surfaces the error on access.
    */
   encryption?: boolean;
 };
@@ -779,6 +778,32 @@ export class DwnApi {
   }
 
   /**
+   * Hydrates a `RecordsWrite` subscription event into a {@link Record}, shared
+   * by `records.subscribe()` and `messages.subscribe()` so their construction —
+   * and the encryption-gated inline-payload attachment — cannot drift. Pass
+   * `encodedData` only when the agent has decrypted it (encryption enabled);
+   * otherwise the record's lazy read decrypts on access.
+   */
+  private buildEventRecord(params: {
+    message: DwnMessage[DwnInterface.RecordsWrite];
+    initialWrite?: DwnMessage[DwnInterface.RecordsWrite];
+    encodedData?: string;
+    remoteOrigin?: string;
+    protocolRole?: string;
+  }): Record {
+    return new Record(this.agent, {
+      ...params.message,
+      author       : getRecordAuthor(params.message),
+      connectedDid : this.connectedDid,
+      remoteOrigin : params.remoteOrigin,
+      initialWrite : params.initialWrite,
+      protocolRole : params.protocolRole,
+      delegateDid  : this.delegateDid,
+      ...(params.encodedData === undefined ? {} : { encodedData: params.encodedData }),
+    }, this.permissionsApi);
+  }
+
+  /**
    * API to observe the DWN's message-level change feed
    * (e.g., `dwn.messages.subscribe()`).
    */
@@ -840,24 +865,18 @@ export class DwnApi {
           }
 
           const { message } = msg.event;
-          // With encryption enabled, hydrate a full Record for RecordsWrite
-          // events so `record.data` serves the agent-decrypted inline payload
-          // without a read — the multi-interface analogue of records.subscribe
-          // decryption. Other message types (deletes, protocol configures)
-          // carry no record.
-          const record = encryption && Records.isRecordsWrite(message)
-            ? new Record(this.agent, {
-              ...(message as DwnMessage[DwnInterface.RecordsWrite]),
-              author       : getRecordAuthor(message as DwnMessage[DwnInterface.RecordsWrite]),
-              connectedDid : this.connectedDid,
+          // Every RecordsWrite event hydrates a Record (the multi-interface
+          // analogue of records.subscribe, which always yields Records);
+          // `encryption` controls ONLY whether the inline payload is
+          // pre-decrypted and served without a read. Non-RecordsWrite events
+          // (deletes, protocol configures) carry no record.
+          const record = Records.isRecordsWrite(message)
+            ? this.buildEventRecord({
+              message      : message as DwnMessage[DwnInterface.RecordsWrite],
+              initialWrite : msg.event.initialWrite as DwnMessage[DwnInterface.RecordsWrite] | undefined,
+              encodedData  : encryption ? msg.encodedData : undefined,
               remoteOrigin : from,
-              initialWrite : msg.event.initialWrite,
-              delegateDid  : this.delegateDid,
-              // Inline payload already decrypted by the agent's subscription
-              // wrapper; absent when too large to inline or ciphertext withheld
-              // after a decryption failure, and the lazy read decrypts instead.
-              ...(msg.encodedData !== undefined ? { encodedData: msg.encodedData } : {}),
-            }, this.permissionsApi)
+            })
             : undefined;
 
           liveQuery.handleEvent({
@@ -1253,21 +1272,18 @@ export class DwnApi {
           }
 
           const { message, initialWrite } = msg.event;
-          const record = new Record(this.agent, {
-            ...message as DwnMessage[DwnInterface.RecordsWrite],
-            author       : getRecordAuthor(message as DwnMessage[DwnInterface.RecordsWrite]),
-            connectedDid : this.connectedDid,
-            remoteOrigin,
-            initialWrite : initialWrite,
-            protocolRole,
-            delegateDid  : this.delegateDid,
-            // Only when subscription decryption is enabled: attach the event's
-            // inline payload (already decrypted by the agent) so `record.data`
-            // serves plaintext without a read round-trip. When absent — data
-            // too large to inline, or ciphertext withheld after a decryption
+          const record = this.buildEventRecord({
+            message      : message as DwnMessage[DwnInterface.RecordsWrite],
+            initialWrite : initialWrite as DwnMessage[DwnInterface.RecordsWrite] | undefined,
+            // Attach the event's inline payload (already decrypted by the agent)
+            // only when subscription decryption is enabled, so `record.data`
+            // serves plaintext without a read round-trip. When absent — data too
+            // large to inline, or ciphertext withheld after a decryption
             // failure — the lazy read path decrypts on access instead.
-            ...(encryption && msg.encodedData !== undefined ? { encodedData: msg.encodedData } : {}),
-          }, this.permissionsApi);
+            encodedData  : encryption ? msg.encodedData : undefined,
+            remoteOrigin,
+            protocolRole,
+          });
 
           liveQuery?.handleEvent(record);
         };

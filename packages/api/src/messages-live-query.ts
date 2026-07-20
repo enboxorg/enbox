@@ -77,17 +77,15 @@ export type MessageChange = {
   /** Routing summary extracted from the message. */
   descriptor: MessageDescriptor;
   /**
-   * The delivered message hydrated as a full {@link Record}, present only for
-   * `RecordsWrite` events on a subscription opened with `encryption: true`.
-   * When the write's data was small enough to inline, its already-decrypted
-   * payload rides along so `record.data` serves plaintext without a read
-   * round-trip — the multi-interface analogue of what
-   * `records.subscribe({ encryption: true })` delivers for one filter. Absent
-   * for non-`RecordsWrite` events and on subscriptions opened without
-   * `encryption`. A record whose data could not be decrypted still hydrates,
-   * with its inline ciphertext withheld, so `record.data` falls back to the
-   * lazy read (which surfaces the decryption error, or resolves once a key
-   * arrives).
+   * The delivered message hydrated as a full {@link Record}, present for every
+   * `RecordsWrite` event and absent for all other message types — the
+   * multi-interface analogue of what `records.subscribe()` yields for one
+   * filter. On a subscription opened with `encryption: true` a small inline
+   * payload rides along already decrypted, so `record.data` serves plaintext
+   * without a read round-trip. Without `encryption` — or when the data was too
+   * large to inline, or its ciphertext was withheld after a decryption failure
+   * — `record.data` falls back to the lazy read, which decrypts on access (or
+   * surfaces the decryption error, or resolves once a key arrives).
    */
   record?: Record;
   /**

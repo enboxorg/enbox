@@ -195,7 +195,7 @@ describe('DwnApi', () => {
       await liveQuery!.close();
     });
 
-    it('does not hydrate a record when encryption is not requested', async () => {
+    it('hydrates a Record for RecordsWrite even without encryption, decrypting on the lazy read', async () => {
       const protocol = await installEncryptedProtocol();
 
       const { liveQuery } = await dwnAlice.messages.subscribe({ filters: [{ protocol }] });
@@ -204,14 +204,20 @@ describe('DwnApi', () => {
       const events: MessageChange[] = [];
       liveQuery!.on('event', (change): void => { events.push(change); });
 
-      const written = await writeEncryptedNote(protocol, 'live secret');
+      const written = await writeEncryptedNote(protocol, 'lazy secret');
 
       await Poller.pollUntilSuccessOrTimeout(async () => {
         expect(events.some((event) => event.descriptor.recordId === written.id)).toBe(true);
       });
 
       const change = events.find((event) => event.descriptor.recordId === written.id)!;
-      expect(change.record).toBeUndefined();
+      // Hydration is unconditional for RecordsWrite; without encryption the
+      // inline payload is not pre-decrypted, so data access falls back to the
+      // lazy decrypting read.
+      expect(change.record).toBeDefined();
+      const processDwnRequestSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
+      expect(await change.record!.data.text()).toBe('lazy secret');
+      expect(countRecordsReads(processDwnRequestSpy)).toBeGreaterThanOrEqual(1);
 
       await liveQuery!.close();
     });
@@ -245,6 +251,80 @@ describe('DwnApi', () => {
       await expect(change.record!.data.text()).rejects.toThrow('Failed to decrypt record');
 
       unwrapStub.restore();
+      await liveQuery!.close();
+    });
+
+    it('hydrates no record for non-RecordsWrite events (a RecordsDelete)', async () => {
+      const protocol = await installEncryptedProtocol();
+      const written = await writeEncryptedNote(protocol, 'to be deleted');
+
+      const { liveQuery } = await dwnAlice.messages.subscribe({
+        filters    : [{ protocol }],
+        encryption : true,
+      });
+      expect(liveQuery).toBeDefined();
+
+      const events: MessageChange[] = [];
+      liveQuery!.on('event', (change): void => { events.push(change); });
+
+      const { status: deleteStatus } = await dwnAlice.records.delete({ recordId: written.id });
+      expect(deleteStatus.code).toBe(202);
+
+      await Poller.pollUntilSuccessOrTimeout(async () => {
+        expect(events.some((event) =>
+          event.descriptor.recordId === written.id && event.descriptor.method === 'Delete')).toBe(true);
+      });
+
+      const deleteChange = events.find((event) =>
+        event.descriptor.recordId === written.id && event.descriptor.method === 'Delete')!;
+      expect(deleteChange.record).toBeUndefined();
+
+      await liveQuery!.close();
+    });
+
+    it('routes and hydrates RecordsWrite over a remote (from) subscription', async () => {
+      // The remote `from` path with encryption enabled on the subscription.
+      // The record is plaintext: encrypted-record replication to a remote needs
+      // sync (record.send transmits cached plaintext, mismatching the ciphertext
+      // dataCid), so decrypt-over-remote is covered by the agent-level
+      // sendRequest test; here we assert the socket delivers a RecordsWrite that
+      // hydrates into a record whose data is served over the remote path.
+      const { status: configStatus, protocol } = await dwnAlice.protocols.configure({ definition: protocolDefinition });
+      expect(configStatus.code).toBe(202);
+      const { status: protocolSendStatus } = await protocol!.send(aliceDid.uri);
+      expect(protocolSendStatus.code).toBe(202);
+
+      const { status, liveQuery } = await dwnAlice.messages.subscribe({
+        from       : aliceDid.uri,
+        filters    : [{ protocol: protocolDefinition.protocol }],
+        encryption : true,
+      });
+      expect(status.code).toBe(200);
+      expect(liveQuery).toBeDefined();
+
+      const events: MessageChange[] = [];
+      liveQuery!.on('event', (change): void => { events.push(change); });
+
+      const { status: writeStatus, record } = await dwnAlice.records.write({
+        data         : 'remote hydrated note',
+        protocol     : protocolDefinition.protocol,
+        protocolPath : 'thread',
+        schema       : protocolDefinition.types.thread.schema,
+        dataFormat   : 'application/json',
+      });
+      expect(writeStatus.code).toBe(202);
+      const { status: recordSendStatus } = await record.send(aliceDid.uri);
+      expect(recordSendStatus.code).toBe(202);
+
+      await Poller.pollUntilSuccessOrTimeout(async () => {
+        expect(events.some((event) => event.descriptor.recordId === record.id)).toBe(true);
+      });
+
+      const change = events.find((event) => event.descriptor.recordId === record.id)!;
+      expect(change.record).toBeDefined();
+      expect(change.record!.id).toBe(record.id);
+      expect(await change.record!.data.text()).toBe('remote hydrated note');
+
       await liveQuery!.close();
     });
   });
