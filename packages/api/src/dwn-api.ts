@@ -1034,23 +1034,26 @@ export class DwnApi {
              * Extract the `author` DID from the record entry since records may be signed by the
              * tenant owner or any other entity.
              */
-            author       : getRecordAuthor(entry),
+            author           : getRecordAuthor(entry),
             /**
              * Set the `connectedDid` to currently connected DID so that subsequent calls to
              * {@link Record} instance methods, such as `record.update()` are executed on the
              * local DWN even if the record was returned by a query of a remote DWN.
              */
-            connectedDid : this.connectedDid,
+            connectedDid     : this.connectedDid,
             /**
              * If the record was returned by a query of a remote DWN, set the `remoteOrigin` to
              * the DID of the DWN that returned the record. The `remoteOrigin` property will be used
              * to determine which DWN to send subsequent read requests to in the event the data
              * payload exceeds the threshold for being returned with queries.
              */
-            remoteOrigin : from,
-            delegateDid  : this.delegateDid,
-            protocolRole : agentRequest.messageParams.protocolRole,
-            ...entry as DwnMessage[DwnInterface.RecordsWrite]
+            remoteOrigin     : from,
+            delegateDid      : this.delegateDid,
+            protocolRole     : agentRequest.messageParams.protocolRole,
+            ...entry as DwnMessage[DwnInterface.RecordsWrite],
+            // Non-decrypting query → inline `encodedData` is at-rest (ciphertext
+            // for an encrypted record); a decrypting query caches plaintext.
+            cachedDataAtRest : encryption !== true,
           };
           const record = new Record(this.agent, recordOptions, this.permissionsApi);
           return record;
@@ -1144,24 +1147,27 @@ export class DwnApi {
              * Extract the `author` DID from the record since records may be signed by the
              * tenant owner or any other entity.
              */
-            author       : getRecordAuthor(entry.recordsWrite),
+            author           : getRecordAuthor(entry.recordsWrite),
             /**
              * Set the `connectedDid` to currently connected DID so that subsequent calls to
              * {@link Record} instance methods, such as `record.update()` are executed on the
              * local DWN even if the record was read from a remote DWN.
              */
-            connectedDid : this.connectedDid,
+            connectedDid     : this.connectedDid,
             /**
              * If the record was returned by reading from a remote DWN, set the `remoteOrigin` to
              * the DID of the DWN that returned the record. The `remoteOrigin` property will be used
              * to determine which DWN to send subsequent read requests to in the event the data
              * payload must be read again (e.g., if the data stream is consumed).
              */
-            remoteOrigin : from,
-            delegateDid  : this.delegateDid,
-            data         : entry.data,
-            initialWrite : entry.initialWrite,
+            remoteOrigin     : from,
+            delegateDid      : this.delegateDid,
+            data             : entry.data,
+            initialWrite     : entry.initialWrite,
             ...entry.recordsWrite,
+            // Non-decrypting read → `data` is the at-rest stream (ciphertext for
+            // an encrypted record); a decrypting read yields plaintext.
+            cachedDataAtRest : encryption !== true,
           };
 
           record = new Record(this.agent, recordOptions, this.permissionsApi);
@@ -1221,18 +1227,21 @@ export class DwnApi {
           const { message, initialWrite } = msg.event;
           const record = new Record(this.agent, {
             ...message as DwnMessage[DwnInterface.RecordsWrite],
-            author       : getRecordAuthor(message as DwnMessage[DwnInterface.RecordsWrite]),
-            connectedDid : this.connectedDid,
+            author           : getRecordAuthor(message as DwnMessage[DwnInterface.RecordsWrite]),
+            connectedDid     : this.connectedDid,
             remoteOrigin,
-            initialWrite : initialWrite,
+            initialWrite     : initialWrite,
             protocolRole,
-            delegateDid  : this.delegateDid,
+            delegateDid      : this.delegateDid,
             // Only when subscription decryption is enabled: attach the event's
             // inline payload (already decrypted by the agent) so `record.data`
             // serves plaintext without a read round-trip. When absent — data
             // too large to inline, or ciphertext withheld after a decryption
             // failure — the lazy read path decrypts on access instead.
             ...(encryption && msg.encodedData !== undefined ? { encodedData: msg.encodedData } : {}),
+            // A decrypting subscription attaches plaintext; a non-decrypting
+            // one's inline data is at-rest ciphertext.
+            cachedDataAtRest : encryption !== true,
           }, this.permissionsApi);
 
           liveQuery?.handleEvent(record);
@@ -1296,6 +1305,7 @@ export class DwnApi {
             initialEntries : entries,
             cursor,
             subscription,
+            encryption,
           });
         }
 
@@ -1381,27 +1391,31 @@ export class DwnApi {
              * with the connected DID's key — for cross-tenant writes, the grantee authors the
              * record in the owner's tenant.
              */
-            author       : this.connectedDid,
+            author           : this.connectedDid,
             /**
              * Set the `connectedDid` to currently connected DID so that subsequent calls to
              * {@link Record} instance methods, such as `record.update()` are executed on the
              * local DWN.
              */
-            connectedDid : this.connectedDid,
+            connectedDid     : this.connectedDid,
             /**
              * If the record was written to a remote DWN, set the `remoteOrigin` to the DID of the
              * target tenant so that subsequent data reads (e.g. `record.data`) are dispatched to
              * the owner tenant that actually stores the record.
              */
-            remoteOrigin : from,
+            remoteOrigin     : from,
             /**
              * Stamp the invoked role so follow-up operations on the returned record (data
              * re-reads, updates) carry the same authorization the write used — mirroring how
              * query/read/subscribe results are stamped.
              */
-            protocolRole : messageParams.protocolRole,
-            encodedData  : dataBlob,
-            delegateDid  : this.delegateDid,
+            protocolRole     : messageParams.protocolRole,
+            encodedData      : dataBlob,
+            delegateDid      : this.delegateDid,
+            // The cache is the caller's plaintext. At-rest only when the write
+            // was NOT encrypted; an encrypted write's at-rest form is ciphertext,
+            // so the cache must never be transmitted (transmission re-reads it).
+            cachedDataAtRest : encryption !== true,
             ...responseMessage,
           };
 

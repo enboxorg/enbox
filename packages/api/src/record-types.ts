@@ -95,6 +95,17 @@ export type RecordOptions = DwnMessage[DwnInterface.RecordsWrite | DwnInterface.
    */
   data?: ReadableStream;
 
+  /**
+   * Whether the cached `encodedData` / `data` hold the record's AT-REST bytes
+   * (the bytes `descriptor.dataCid` commits to) and are therefore safe to
+   * transmit or store as-is. True for unencrypted plaintext and for ciphertext
+   * from a NON-decrypting read/query/subscription. False — the default —
+   * marks a decrypted payload that must NEVER be transmitted; transmission
+   * re-reads the raw ciphertext instead. Unknown provenance defaults to false
+   * (fail closed).
+   */
+  cachedDataAtRest?: boolean;
+
   /** The initial `RecordsWriteMessage` that represents the initial state/version of the record. */
   initialWrite?: DwnMessage[DwnInterface.RecordsWrite];
 

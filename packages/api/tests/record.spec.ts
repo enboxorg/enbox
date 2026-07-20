@@ -4942,6 +4942,20 @@ describe('Record', () => {
       return encProtocol.protocol;
     }
 
+    /** Reads a record's raw stored bytes (ciphertext for an encrypted record) without decryption. */
+    async function rawCiphertext(recordId: string): Promise<Uint8Array> {
+      const { reply } = await testHarness.agent.processDwnRequest({
+        author        : aliceDid.uri,
+        target        : aliceDid.uri,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : { filter: { recordId } },
+      });
+      if (reply.status.code !== 200 || reply.entry?.data === undefined) {
+        throw new Error(`rawCiphertext read failed: ${reply.status.code}`);
+      }
+      return Stream.consumeToBytes({ readableStream: reply.entry.data });
+    }
+
     it('transmits the at-rest ciphertext of an encrypted record on send(), never the plaintext', async () => {
       const protocol = await installEncryptedProtocol();
       const plaintext = 'super secret payload';
@@ -5035,7 +5049,220 @@ describe('Record', () => {
       });
       expect(writeStatus.code).toBe(202);
 
-      await expect(record!.send(aliceDid.uri)).rejects.toThrow();
+      // The transport must never be reached — nothing (plaintext or otherwise) leaves the process.
+      const sendSpy = sinon.stub(testHarness.agent, 'sendDwnRequest')
+        .resolves({ reply: { status: { code: 202, detail: 'OK' } } } as any);
+
+      // The rejection must name the actual condition, not surface an unrelated failure.
+      await expect(record!.send(aliceDid.uri)).rejects.toThrow(
+        /cannot source the at-rest ciphertext/,
+      );
+
+      expect(sendSpy.called).toBe(false);
+    });
+
+    it('store() transmits the at-rest ciphertext of an encrypted record, not the plaintext', async () => {
+      const protocol = await installEncryptedProtocol();
+      const plaintext = 'stored secret';
+      const { status: writeStatus, record } = await dwnAlice.records.write({
+        data         : plaintext,
+        protocol,
+        protocolPath : 'note',
+        schema       : 'https://schemas.xyz/note',
+        dataFormat   : 'text/plain',
+        encryption   : true,
+      });
+      expect(writeStatus.code).toBe(202);
+
+      const { reply: rawRead } = await testHarness.agent.processDwnRequest({
+        author        : aliceDid.uri,
+        target        : aliceDid.uri,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : { filter: { recordId: record!.id } },
+      });
+      const atRestBytes = await Stream.consumeToBytes({ readableStream: rawRead.entry!.data });
+
+      // Intercept the store's RecordsWrite to capture what it transmits, while
+      // letting the ciphertext read (RecordsRead, no dataStream) run for real.
+      const original = testHarness.agent.processDwnRequest.bind(testHarness.agent);
+      let storeWrite: any;
+      sinon.stub(testHarness.agent, 'processDwnRequest').callsFake(async (req: any) => {
+        if (req.messageType === DwnInterface.RecordsWrite && req.dataStream !== undefined) {
+          storeWrite = req;
+          return { message: req.rawMessage ?? {}, reply: { status: { code: 202, detail: 'OK' } } };
+        }
+        return original(req);
+      });
+
+      await record!.store();
+      expect(storeWrite).toBeDefined();
+
+      const wireBytes = await Stream.consumeToBytes({ readableStream: storeWrite.dataStream });
+      expect(new TextDecoder().decode(wireBytes)).not.toBe(plaintext);
+      expect(wireBytes).toEqual(atRestBytes);
+    });
+
+    it('import() transmits the at-rest ciphertext of an encrypted record, not the plaintext', async () => {
+      const protocol = await installEncryptedProtocol();
+      const plaintext = 'imported secret';
+      const { status: writeStatus, record } = await dwnAlice.records.write({
+        data         : plaintext,
+        protocol,
+        protocolPath : 'note',
+        schema       : 'https://schemas.xyz/note',
+        dataFormat   : 'text/plain',
+        encryption   : true,
+      });
+      expect(writeStatus.code).toBe(202);
+      const atRestBytes = await rawCiphertext(record!.id);
+
+      const original = testHarness.agent.processDwnRequest.bind(testHarness.agent);
+      let importWrite: any;
+      sinon.stub(testHarness.agent, 'processDwnRequest').callsFake(async (req: any) => {
+        if (req.messageType === DwnInterface.RecordsWrite && req.dataStream !== undefined) {
+          importWrite = req;
+          return { message: req.rawMessage ?? {}, reply: { status: { code: 202, detail: 'OK' } } };
+        }
+        return original(req);
+      });
+
+      await record!.import();
+      expect(importWrite).toBeDefined();
+      const wireBytes = await Stream.consumeToBytes({ readableStream: importWrite.dataStream });
+      expect(new TextDecoder().decode(wireBytes)).not.toBe(plaintext);
+      expect(wireBytes).toEqual(atRestBytes);
+    });
+
+    it('reuses at-rest ciphertext from a non-decrypting query and issues no RecordsRead on send()', async () => {
+      const protocol = await installEncryptedProtocol();
+      const plaintext = 'inline ciphertext reuse';
+      const { status: writeStatus } = await dwnAlice.records.write({
+        data         : plaintext,
+        protocol,
+        protocolPath : 'note',
+        schema       : 'https://schemas.xyz/note',
+        dataFormat   : 'text/plain',
+        encryption   : true,
+      });
+      expect(writeStatus.code).toBe(202);
+
+      // Non-decrypting query → the record carries inline ciphertext (at-rest provenance).
+      const { status: queryStatus, records } = await dwnAlice.records.query({
+        filter: { protocol, protocolPath: 'note' },
+      });
+      expect(queryStatus.code).toBe(200);
+      expect(records.length).toBe(1);
+      const queried = records[0];
+
+      const sendStub = sinon.stub(testHarness.agent, 'sendDwnRequest')
+        .resolves({ reply: { status: { code: 202, detail: 'OK' } } } as any);
+      const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
+
+      await queried.send(bobDid.uri);
+
+      // The cached ciphertext was reused — NO extra RecordsRead round-trip.
+      const reads = processSpy.getCalls().filter((c: any) => c.args[0].messageType === DwnInterface.RecordsRead);
+      expect(reads.length).toBe(0);
+
+      // And what reached the wire is the ciphertext, not the plaintext.
+      const writeCall = sendStub.getCalls().find((c: any) =>
+        c.args[0].messageType === DwnInterface.RecordsWrite && c.args[0].dataStream !== undefined);
+      expect(writeCall).toBeDefined();
+      const wireBytes = await Stream.consumeToBytes({ readableStream: writeCall!.args[0].dataStream });
+      expect(new TextDecoder().decode(wireBytes)).not.toBe(plaintext);
+    });
+
+    it('sends a non-decrypting query result even when the record source is unreachable', async () => {
+      const protocol = await installEncryptedProtocol();
+      const { status: writeStatus } = await dwnAlice.records.write({
+        data         : 'offline reuse',
+        protocol,
+        protocolPath : 'note',
+        schema       : 'https://schemas.xyz/note',
+        dataFormat   : 'text/plain',
+        encryption   : true,
+      });
+      expect(writeStatus.code).toBe(202);
+
+      const { records } = await dwnAlice.records.query({ filter: { protocol, protocolPath: 'note' } });
+      const queried = records[0];
+
+      // Simulate the source becoming unreachable: any RecordsRead now fails.
+      const original = testHarness.agent.processDwnRequest.bind(testHarness.agent);
+      sinon.stub(testHarness.agent, 'processDwnRequest').callsFake(async (req: any) => {
+        if (req.messageType === DwnInterface.RecordsRead) {
+          throw new Error('source unreachable');
+        }
+        return original(req);
+      });
+      sinon.stub(testHarness.agent, 'sendDwnRequest')
+        .resolves({ reply: { status: { code: 202, detail: 'OK' } } } as any);
+
+      // Succeeds anyway — the ciphertext was already in hand, no re-read needed.
+      const { status } = await queried.send(bobDid.uri);
+      expect(status.code).toBe(202);
+    });
+
+    it('re-reads ciphertext for a record obtained via a DECRYPTING read (never the plaintext stream)', async () => {
+      const protocol = await installEncryptedProtocol();
+      const plaintext = 'decrypted read then send';
+      const { status: writeStatus, record: written } = await dwnAlice.records.write({
+        data         : plaintext,
+        protocol,
+        protocolPath : 'note',
+        schema       : 'https://schemas.xyz/note',
+        dataFormat   : 'text/plain',
+        encryption   : true,
+      });
+      expect(writeStatus.code).toBe(202);
+      const atRestBytes = await rawCiphertext(written!.id);
+
+      // Decrypting read → the record's cached stream holds PLAINTEXT.
+      const { status: readStatus, record: read } = await dwnAlice.records.read({
+        protocol,
+        filter     : { recordId: written!.id },
+        encryption : true,
+      });
+      expect(readStatus.code).toBe(200);
+      expect(await read!.data.text()).toBe(plaintext);
+
+      const sendStub = sinon.stub(testHarness.agent, 'sendDwnRequest')
+        .resolves({ reply: { status: { code: 202, detail: 'OK' } } } as any);
+      await read!.send(bobDid.uri);
+
+      const writeCall = sendStub.getCalls().find((c: any) =>
+        c.args[0].messageType === DwnInterface.RecordsWrite && c.args[0].dataStream !== undefined);
+      const wireBytes = await Stream.consumeToBytes({ readableStream: writeCall!.args[0].dataStream });
+      expect(new TextDecoder().decode(wireBytes)).not.toBe(plaintext);
+      expect(wireBytes).toEqual(atRestBytes);
+    });
+
+    it('transmits ciphertext for an encrypted record that was updated', async () => {
+      const protocol = await installEncryptedProtocol();
+      const { status: writeStatus, record } = await dwnAlice.records.write({
+        data         : 'v1 secret',
+        protocol,
+        protocolPath : 'note',
+        schema       : 'https://schemas.xyz/note',
+        dataFormat   : 'text/plain',
+        encryption   : true,
+      });
+      expect(writeStatus.code).toBe(202);
+
+      const { status: updateStatus } = await record!.update({ data: 'v2 secret' });
+      expect(updateStatus.code).toBe(202);
+      expect(await record!.data.text()).toBe('v2 secret'); // cache is the new plaintext
+      const atRestBytes = await rawCiphertext(record!.id);
+
+      const sendStub = sinon.stub(testHarness.agent, 'sendDwnRequest')
+        .resolves({ reply: { status: { code: 202, detail: 'OK' } } } as any);
+      await record!.send(bobDid.uri);
+
+      const writeCall = sendStub.getCalls().find((c: any) =>
+        c.args[0].messageType === DwnInterface.RecordsWrite && c.args[0].dataStream !== undefined);
+      const wireBytes = await Stream.consumeToBytes({ readableStream: writeCall!.args[0].dataStream });
+      expect(new TextDecoder().decode(wireBytes)).not.toBe('v2 secret');
+      expect(wireBytes).toEqual(atRestBytes);
     });
   });
 });

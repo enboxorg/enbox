@@ -79,6 +79,13 @@ export type LiveQueryOptions = {
 
   /** The underlying DWN subscription handle. */
   subscription: DwnMessageSubscription;
+
+  /**
+   * Whether the subscription decrypts (mirrors the `encryption` request flag).
+   * When false, the snapshot entries' inline data is at-rest (ciphertext for an
+   * encrypted record) and safe to transmit; when true it is decrypted plaintext.
+   */
+  encryption?: boolean;
 };
 
 /**
@@ -194,6 +201,7 @@ export class LiveQuery extends EventTarget {
       permissionsApi,
       initialEntries,
       subscription,
+      encryption,
     } = options;
 
     this._subscription = subscription;
@@ -201,12 +209,15 @@ export class LiveQuery extends EventTarget {
 
     // Build Record objects from the initial snapshot entries (same logic as records.query()).
     this.records = initialEntries.map((entry) => new Record(agent, {
-      author: getRecordAuthor(entry),
+      author           : getRecordAuthor(entry),
       connectedDid,
       remoteOrigin,
       delegateDid,
       protocolRole,
       ...entry,
+      // Non-decrypting snapshot → inline data is at-rest ciphertext; a
+      // decrypting snapshot caches plaintext.
+      cachedDataAtRest : encryption !== true,
     }, permissionsApi));
 
     // Seed the known-records map with recordId -> messageTimestamp for dedup.

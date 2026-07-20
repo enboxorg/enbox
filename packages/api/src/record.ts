@@ -115,6 +115,13 @@ export class Record implements RecordModel {
   /** Stream of the record's data (Web ReadableStream for cross-platform compatibility). */
   private _readableStream?: ReadableStream;
   /**
+   * Whether {@link _encodedData}/{@link _readableStream} hold the AT-REST bytes
+   * (safe to transmit/store as-is) versus a decrypted payload that must never
+   * be transmitted. See {@link getWireDataStream}. Defaults to false (fail
+   * closed) so unknown provenance is treated as plaintext.
+   */
+  private _cachedDataAtRest: boolean;
+  /**
    * The origin DID if the record was fetched from — or updated on — a remote DWN.
    *
    * Mutable for exactly one reason: a cross-tenant `update({ from })` re-homes the record's
@@ -331,6 +338,11 @@ export class Record implements RecordModel {
       // The DWN SDK now returns Web ReadableStream natively.
       this._readableStream = options.data;
     }
+
+    // Provenance of the cached payload — default false (fail closed): an
+    // unmarked cache on an encrypted record is treated as decrypted plaintext
+    // and never transmitted.
+    this._cachedDataAtRest = options.cachedDataAtRest ?? false;
   }
 
   /**
@@ -649,13 +661,16 @@ export class Record implements RecordModel {
     const updatedRemoteOrigin = from ?? this._remoteOrigin;
 
     const updatedRecord = new Record(this._agent, {
-      author       : updatedAuthor,
-      connectedDid : this._connectedDid,
-      delegateDid  : this._delegateDid,
-      remoteOrigin : updatedRemoteOrigin,
-      protocolRole : protocolRole ?? this._protocolRole,
+      author           : updatedAuthor,
+      connectedDid     : this._connectedDid,
+      delegateDid      : this._delegateDid,
+      remoteOrigin     : updatedRemoteOrigin,
+      protocolRole     : protocolRole ?? this._protocolRole,
       initialWrite,
-      encodedData  : data === undefined ? this._encodedData : dataBlob,
+      encodedData      : data === undefined ? this._encodedData : dataBlob,
+      // A data update replaces the cache with fresh plaintext (at-rest only when
+      // not re-encrypted); a metadata-only update keeps the prior provenance.
+      cachedDataAtRest : data === undefined ? this._cachedDataAtRest : shouldEncrypt !== true,
       ...msg,
     }, this._permissionsApi);
 
@@ -677,6 +692,7 @@ export class Record implements RecordModel {
     this._author = updatedAuthor;
     this._remoteOrigin = updatedRemoteOrigin;
     this._encodedData = data === undefined ? this._encodedData : dataBlob;
+    this._cachedDataAtRest = data === undefined ? this._cachedDataAtRest : shouldEncrypt !== true;
     this._readableStream = undefined; // Invalidate any consumed stream.
     this._rawMessageDirty = true; // Force rawMessage cache rebuild.
 
@@ -1003,24 +1019,55 @@ export class Record implements RecordModel {
    * Returns the record's AT-REST bytes for transmission (`send`) or storage
    * (`store`/`import`) — the bytes committed to by `descriptor.dataCid`.
    *
-   * SECURITY-CRITICAL: for an encrypted record these are the CIPHERTEXT, and
-   * are ALWAYS sourced by re-reading the stored record WITHOUT decryption. This
-   * method deliberately never reads the decrypted in-memory cache
-   * (`_encodedData`) nor the decrypting `data` getter — transmitting either
-   * would leak the plaintext of an encrypted record to the target DWN (and fail
-   * its `dataCid` check). Reads keep their fast decrypted cache; transmission
-   * never touches it. If the ciphertext cannot be retrieved (e.g. the record was
-   * created with `store: false` and never persisted), this fails closed rather
-   * than falling back to plaintext.
+   * SECURITY-CRITICAL: the decrypted plaintext of an encrypted record must
+   * never be transmitted. Wire bytes come from exactly two safe sources:
    *
-   * For an unencrypted record the at-rest bytes ARE the plaintext, so the
-   * in-memory cache / read stream is exactly what must be transmitted.
+   * 1. A cache whose provenance is AT-REST ({@link _cachedDataAtRest}) — an
+   *    unencrypted plaintext payload, or ciphertext from a NON-decrypting
+   *    read/query/subscription. Reused as-is, so inline query/read data does not
+   *    trigger an extra `RecordsRead`, and a delegate holding ciphertext without
+   *    a read grant can still transmit it.
+   * 2. For an encrypted record whose cache is the DECRYPTED payload (or absent),
+   *    a fresh NON-decrypting read of the stored ciphertext ({@link readAtRestData}).
+   *
+   * The decrypted in-memory cache and the decrypting `data` getter are never a
+   * source on the encrypted path. If the ciphertext cannot be retrieved (e.g. a
+   * `store: false` record that was never persisted, or an unreachable origin),
+   * this fails closed rather than falling back to plaintext.
    */
   private async getWireDataStream(): Promise<ReadableStream> {
-    if (this._encryption === undefined) {
-      return this._encodedData ? Stream.fromBlob(this._encodedData) : await this.data.stream();
+    // Source 1: a cache known to hold the at-rest bytes (unencrypted, or
+    // ciphertext from a non-decrypting read/query) is transmit-safe as-is.
+    if (this._encryption === undefined || this._cachedDataAtRest) {
+      if (this._encodedData !== undefined) {
+        return Stream.fromBlob(this._encodedData);
+      }
+      if (this._readableStream !== undefined) {
+        const stream = this._readableStream;
+        this._readableStream = undefined;
+        return stream;
+      }
     }
-    return this.readAtRestData();
+
+    // Unencrypted with no cached bytes: a plain read returns the at-rest plaintext.
+    if (this._encryption === undefined) {
+      return await this.data.stream();
+    }
+
+    // Source 2: encrypted, cache is the decrypted payload (or absent) — re-read
+    // the raw ciphertext. NEVER the decrypted cache nor the decrypting `data`
+    // path. Fail closed if the ciphertext is unavailable.
+    try {
+      return await this.readAtRestData();
+    } catch (error) {
+      throw new Error(
+        `Record: cannot source the at-rest ciphertext of encrypted record '${this._recordId}' for ` +
+        'transmission — its encrypted data is not available where the record is homed. An encrypted ' +
+        'record must be persisted (write with `store: true`) and its origin DWN reachable before it ' +
+        'can be sent or stored elsewhere; the decrypted payload is never transmitted. ' +
+        `Cause: ${error.message}`,
+      );
+    }
   }
 
   /**
