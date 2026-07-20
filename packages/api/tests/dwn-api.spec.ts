@@ -131,6 +131,124 @@ describe('DwnApi', () => {
     });
   });
 
+  describe('messages.subscribe() encryption', () => {
+    /** Installs a fresh encrypted-notes protocol under a random URI and returns the protocol URI. */
+    async function installEncryptedProtocol(): Promise<string> {
+      const encProtocol: DwnProtocolDefinition = {
+        published : true,
+        protocol  : `http://encrypted-notes.xyz/${TestDataGenerator.randomString(15)}`,
+        types     : { note: { schema: 'https://schemas.xyz/note', dataFormats: ['text/plain'] } },
+        structure : { note: {} },
+      };
+      const { status } = await dwnAlice.protocols.configure({ definition: encProtocol, encryption: true });
+      expect(status.code).toBe(202);
+      return encProtocol.protocol;
+    }
+
+    /** Writes an encrypted note and returns the created record. */
+    async function writeEncryptedNote(protocol: string, plaintext: string): Promise<Record> {
+      const { status, record } = await dwnAlice.records.write({
+        data         : plaintext,
+        protocol,
+        protocolPath : 'note',
+        schema       : 'https://schemas.xyz/note',
+        dataFormat   : 'text/plain',
+        encryption   : true,
+      });
+      expect(status.code).toBe(202);
+      return record!;
+    }
+
+    /** Counts the RecordsRead requests issued through the given processDwnRequest spy. */
+    function countRecordsReads(spy: sinon.SinonSpy): number {
+      return spy.getCalls().filter((call) => call.args[0].messageType === DwnInterface.RecordsRead).length;
+    }
+
+    it('hydrates a decrypted Record on RecordsWrite events without a read round-trip when enabled', async () => {
+      const protocol = await installEncryptedProtocol();
+
+      const { status, liveQuery } = await dwnAlice.messages.subscribe({
+        filters    : [{ protocol }],
+        encryption : true,
+      });
+      expect(status.code).toBe(200);
+      expect(liveQuery).toBeDefined();
+
+      const events: MessageChange[] = [];
+      liveQuery!.on('event', (change): void => { events.push(change); });
+
+      const written = await writeEncryptedNote(protocol, 'live secret');
+
+      await Poller.pollUntilSuccessOrTimeout(async () => {
+        expect(events.some((event) => event.descriptor.recordId === written.id)).toBe(true);
+      });
+
+      const change = events.find((event) => event.descriptor.recordId === written.id)!;
+      expect(change.record).toBeDefined();
+
+      // Spy AFTER delivery so only the data access below is observed.
+      const processDwnRequestSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
+      expect(await change.record!.data.text()).toBe('live secret');
+      // Plaintext served from the inline (agent-decrypted) payload — no read.
+      expect(countRecordsReads(processDwnRequestSpy)).toBe(0);
+
+      await liveQuery!.close();
+    });
+
+    it('does not hydrate a record when encryption is not requested', async () => {
+      const protocol = await installEncryptedProtocol();
+
+      const { liveQuery } = await dwnAlice.messages.subscribe({ filters: [{ protocol }] });
+      expect(liveQuery).toBeDefined();
+
+      const events: MessageChange[] = [];
+      liveQuery!.on('event', (change): void => { events.push(change); });
+
+      const written = await writeEncryptedNote(protocol, 'live secret');
+
+      await Poller.pollUntilSuccessOrTimeout(async () => {
+        expect(events.some((event) => event.descriptor.recordId === written.id)).toBe(true);
+      });
+
+      const change = events.find((event) => event.descriptor.recordId === written.id)!;
+      expect(change.record).toBeUndefined();
+
+      await liveQuery!.close();
+    });
+
+    it('keeps the feed alive and rejects data access for an event that fails to decrypt', async () => {
+      const protocol = await installEncryptedProtocol();
+
+      const { liveQuery } = await dwnAlice.messages.subscribe({
+        filters    : [{ protocol }],
+        encryption : true,
+      });
+      expect(liveQuery).toBeDefined();
+
+      const events: MessageChange[] = [];
+      liveQuery!.on('event', (change): void => { events.push(change); });
+
+      // Make key unwrapping fail so the event's payload cannot be decrypted.
+      const unwrapStub = sinon.stub(testHarness.agent.keyManager, 'unwrapContentKey')
+        .rejects(new Error('test-induced key unwrap failure'));
+
+      const failed = await writeEncryptedNote(protocol, 'cannot read me');
+
+      await Poller.pollUntilSuccessOrTimeout(async () => {
+        expect(events.some((event) => event.descriptor.recordId === failed.id)).toBe(true);
+      });
+
+      const change = events.find((event) => event.descriptor.recordId === failed.id)!;
+      // The record still hydrates with its inline ciphertext withheld, so data
+      // access falls back to the lazy decrypting read, which rejects.
+      expect(change.record).toBeDefined();
+      await expect(change.record!.data.text()).rejects.toThrow('Failed to decrypt record');
+
+      unwrapStub.restore();
+      await liveQuery!.close();
+    });
+  });
+
   describe('as delegateDid', () => {
     let delegateHarness: PlatformAgentTestHarness;
     let delegateDid: PortableDid;

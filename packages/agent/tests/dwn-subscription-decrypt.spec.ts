@@ -484,4 +484,75 @@ describe('AgentDwnApi — subscription event decryption', () => {
     });
     expect(asEvent(received[1]).encodedData).toBe(controlCiphertext);
   });
+
+  it('should decrypt RecordsWrite event payloads on an encrypted MessagesSubscribe, leaving control records untouched', async () => {
+    const protocol = await installEncryptedProtocol();
+
+    // Produce a REAL encrypted event payload: write an encrypted record and
+    // read back its raw ciphertext without decryption.
+    const writeMessage = await writeEncryptedNote(protocol, 'secret via messages');
+    const { reply: rawReadReply } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsRead,
+      messageParams : { filter: { recordId: writeMessage.recordId } },
+    });
+    expect(rawReadReply.status.code).toBe(200);
+    const cipherBytes = await DataStream.toBytes(rawReadReply.entry!.data! as ReadableStream<Uint8Array>);
+
+    // Capture the wrapped handler that sendRequest hands the RPC client — the
+    // decrypting wrapper, now also installed for MessagesSubscribe.
+    let capturedHandler: ((message: SubscriptionMessage) => void) | undefined;
+    sinon.stub(testHarness.agent.rpc, 'sendDwnRequest')
+      .callsFake(async (params: any): Promise<any> => {
+        capturedHandler = params.subscription?.handler;
+        return { status: { code: 200, detail: 'OK' }, subscription: { id: 'test-subscription', close: async (): Promise<void> => {} } };
+      });
+    sinon.stub(testHarness.agent.rpc, 'getServerInfo').resolves({ webSocketSupport: true } as any);
+
+    const received: SubscriptionMessage[] = [];
+    const { reply } = await testHarness.agent.dwn.sendRequest({
+      author              : alice.did.uri,
+      target              : alice.did.uri,
+      messageType         : DwnInterface.MessagesSubscribe,
+      messageParams       : { filters: [{ protocol }] },
+      subscriptionHandler : (message: SubscriptionMessage): void => { received.push(message); },
+      encryption          : true,
+    });
+    expect(reply.status.code).toBe(200);
+    expect(capturedHandler).toBeDefined();
+
+    // A RecordsWrite event's inline payload is decrypted by the wrapper.
+    capturedHandler!({
+      type        : 'event',
+      cursor      : { streamId: 'stream-1', epoch: 'epoch-1', position: '1' },
+      event       : { message: writeMessage },
+      encodedData : Encoder.bytesToBase64Url(cipherBytes),
+    });
+
+    await Poller.pollUntilSuccessOrTimeout(async () => {
+      expect(received).toHaveLength(1);
+    });
+    expect(decodeEventData(asEvent(received[0]).encodedData!)).toBe('secret via messages');
+
+    // Encryption-control records on the same feed are never auto-decrypted:
+    // their inline data passes through untouched (heterogeneous-feed safety).
+    const controlCiphertext = Encoder.bytesToBase64Url(cipherBytes);
+    capturedHandler!({
+      type   : 'event',
+      cursor : { streamId: 'stream-1', epoch: 'epoch-1', position: '2' },
+      event  : {
+        message: {
+          ...writeMessage,
+          descriptor: { ...writeMessage.descriptor, protocolPath: ENCRYPTION_CONTROL_DELIVERY_PATH },
+        },
+      },
+      encodedData: controlCiphertext,
+    });
+
+    await Poller.pollUntilSuccessOrTimeout(async () => {
+      expect(received).toHaveLength(2);
+    });
+    expect(asEvent(received[1]).encodedData).toBe(controlCiphertext);
+  });
 });

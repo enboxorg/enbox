@@ -3,6 +3,7 @@ import type { GenericMessage, ProgressToken } from '@enbox/dwn-sdk-js';
 
 import { Message } from '@enbox/dwn-sdk-js';
 
+import type { Record } from './record.js';
 import type { LiveQueryError, LiveQueryLifecycleEvent } from './live-query.js';
 
 /**
@@ -75,6 +76,20 @@ export type MessageChange = {
   message: GenericMessage;
   /** Routing summary extracted from the message. */
   descriptor: MessageDescriptor;
+  /**
+   * The delivered message hydrated as a full {@link Record}, present only for
+   * `RecordsWrite` events on a subscription opened with `encryption: true`.
+   * When the write's data was small enough to inline, its already-decrypted
+   * payload rides along so `record.data` serves plaintext without a read
+   * round-trip — the multi-interface analogue of what
+   * `records.subscribe({ encryption: true })` delivers for one filter. Absent
+   * for non-`RecordsWrite` events and on subscriptions opened without
+   * `encryption`. A record whose data could not be decrypted still hydrates,
+   * with its inline ciphertext withheld, so `record.data` falls back to the
+   * lazy read (which surfaces the decryption error, or resolves once a key
+   * arrives).
+   */
+  record?: Record;
   /**
    * CID of the delivered message. Present on durable-log deliveries; when a
    * transport omits it, compute one via `Message.getCid(change.message)`.

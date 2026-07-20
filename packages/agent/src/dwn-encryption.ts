@@ -1619,11 +1619,14 @@ async function decryptSubscriptionEventData(
 }
 
 /**
- * Wraps a `RecordsSubscribe` request's subscription handler so event-inline
- * record payloads are auto-decrypted BEFORE events reach the caller, mirroring
- * what {@link maybeDecryptReply} does for read/query replies. Returns the
- * request's handler unchanged (possibly `undefined`) unless the request is a
- * `RecordsSubscribe` with `encryption` enabled and a handler present.
+ * Wraps a `RecordsSubscribe` or `MessagesSubscribe` request's subscription
+ * handler so event-inline record payloads are auto-decrypted BEFORE events
+ * reach the caller, mirroring what {@link maybeDecryptReply} does for
+ * read/query replies. Returns the request's handler unchanged (possibly
+ * `undefined`) unless the request is a `RecordsSubscribe`/`MessagesSubscribe`
+ * with `encryption` enabled and a handler present. On the heterogeneous
+ * message feed only `RecordsWrite` events are decrypted; everything else is
+ * forwarded untouched.
  *
  * Subscription listeners are synchronous while decryption is not, so the
  * wrapper serializes delivery through a promise chain: events are decrypted
@@ -1648,8 +1651,16 @@ export function maybeWrapSubscriptionHandlerForDecryption<T extends DwnInterface
   audienceDecryptionKeyCache?: AudienceDecryptionKeyCache,
 ): MessageHandler[T] | undefined {
   const handler = request.subscriptionHandler;
-  if (handler === undefined || !request.encryption
-      || !isDwnRequest(request as ProcessDwnRequest<DwnInterface>, DwnInterface.RecordsSubscribe)) {
+  // Both `RecordsSubscribe` and `MessagesSubscribe` deliver EventLog
+  // `SubscriptionEvent`s carrying inline `encodedData`; the per-event decrypt
+  // below is message-content driven (only a `RecordsWrite` with an encryption
+  // envelope is touched), so it is safe on the heterogeneous message feed,
+  // where `RecordsDelete`, `ProtocolsConfigure`, and unencrypted events all
+  // pass through untouched.
+  const decryptableSubscribe =
+    isDwnRequest(request as ProcessDwnRequest<DwnInterface>, DwnInterface.RecordsSubscribe)
+    || isDwnRequest(request as ProcessDwnRequest<DwnInterface>, DwnInterface.MessagesSubscribe);
+  if (handler === undefined || !request.encryption || !decryptableSubscribe) {
     return handler;
   }
 
