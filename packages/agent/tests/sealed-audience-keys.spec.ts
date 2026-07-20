@@ -503,7 +503,7 @@ describe('AgentDwnApi sealed audience keys', () => {
     })).rejects.toThrow('without seal coverage');
   });
 
-  it('does not auto-decrypt source-protocol delivery records in broad encrypted queries', async () => {
+  it('returns raw source-protocol delivery records in broad queries', async () => {
     const { deliveryRecord } = await createRoleHolderDelivery();
     await writeEncryptedNote('query with source-protocol delivery');
 
@@ -512,7 +512,6 @@ describe('AgentDwnApi sealed audience keys', () => {
       target        : ownerDid,
       messageType   : DwnInterface.RecordsQuery,
       messageParams : { filter: { protocol: PROTOCOL_URI } },
-      encryption    : true,
     });
 
     expect(reply.status.code).toBe(200);

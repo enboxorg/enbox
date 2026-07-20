@@ -26,6 +26,7 @@ import { Record } from '../src/record.js';
 
 function createAgentStub(): sinon.SinonStubbedInstance<EnboxAgent> {
   return {
+    decryptRecordData : sinon.stub().callsFake(async ({ dataStream }): Promise<ReadableStream<Uint8Array>> => dataStream),
     processDwnRequest : sinon.stub(),
     sendDwnRequest    : sinon.stub(),
   } as unknown as sinon.SinonStubbedInstance<EnboxAgent>;
@@ -46,9 +47,14 @@ function createRecordOptions(overrides: Record<string, unknown> = {}): any {
   return {
     author       : 'did:example:alice',
     connectedDid : 'did:example:alice',
-    recordId     : 'rec-001',
-    contextId    : 'ctx-001',
-    descriptor   : {
+    dataAccess   : {
+      author : 'did:example:alice',
+      remote : false,
+      target : 'did:example:alice',
+    },
+    recordId   : 'rec-001',
+    contextId  : 'ctx-001',
+    descriptor : {
       interface        : 'Records',
       method           : 'Write',
       dataCid          : 'bafyrei-cid',
@@ -66,7 +72,7 @@ function createRecordOptions(overrides: Record<string, unknown> = {}): any {
     authorization : createValidAuthorization(),
     attestation   : { payload: 'attest' },
     encryption    : undefined,
-    encodedData   : new Blob([JSON.stringify({ hello: 'world' })], { type: 'application/json' }),
+    storedData    : new Blob([JSON.stringify({ hello: 'world' })], { type: 'application/json' }),
     ...overrides,
   };
 }
@@ -114,9 +120,9 @@ describe('Record — coverage gaps (stubbed)', () => {
       };
 
       const options = createRecordOptions({
-        descriptor  : createDeleteDescriptor('rec-001'),
+        descriptor : createDeleteDescriptor('rec-001'),
         initialWrite,
-        encodedData : undefined,
+        storedData : undefined,
       });
 
       const record = new Record(agentStub as unknown as EnboxAgent, options);
@@ -199,9 +205,9 @@ describe('Record — coverage gaps (stubbed)', () => {
       expect(call.args[0].target).toBe('did:example:myDid');
     });
 
-    it('should pass record data as a stream when encoded data is not already available', async () => {
+    it('should pass a one-shot stored data stream without decrypting it', async () => {
       const dataStream = createDataStream();
-      const options = createRecordOptions({ encodedData: undefined, data: dataStream });
+      const options = createRecordOptions({ storedData: dataStream });
       const record = new Record(agentStub as unknown as EnboxAgent, options);
 
       agentStub.sendDwnRequest.resolves({
@@ -214,6 +220,7 @@ describe('Record — coverage gaps (stubbed)', () => {
 
       const call = agentStub.sendDwnRequest.firstCall;
       expect(call.args[0].dataStream).toBe(dataStream);
+      expect(agentStub.decryptRecordData.called).toBe(false);
     });
   });
 
@@ -236,9 +243,9 @@ describe('Record — coverage gaps (stubbed)', () => {
       expect(record.authorization).toEqual(newAuth);
     });
 
-    it('should pass record data as a stream when storing without encoded data', async () => {
+    it('should pass a one-shot stored data stream without decrypting it', async () => {
       const dataStream = createDataStream();
-      const options = createRecordOptions({ encodedData: undefined, data: dataStream });
+      const options = createRecordOptions({ storedData: dataStream });
       const record = new Record(agentStub as unknown as EnboxAgent, options);
 
       agentStub.processDwnRequest.resolves({
@@ -252,6 +259,7 @@ describe('Record — coverage gaps (stubbed)', () => {
 
       const call = agentStub.processDwnRequest.firstCall;
       expect(call.args[0].dataStream).toBe(dataStream);
+      expect(agentStub.decryptRecordData.called).toBe(false);
     });
   });
 
@@ -265,9 +273,9 @@ describe('Record — coverage gaps (stubbed)', () => {
       };
 
       const options = createRecordOptions({
-        descriptor  : createDeleteDescriptor('rec-001'),
+        descriptor : createDeleteDescriptor('rec-001'),
         initialWrite,
-        encodedData : undefined,
+        storedData : undefined,
       });
 
       const record = new Record(agentStub as unknown as EnboxAgent, options);
@@ -291,11 +299,15 @@ describe('Record — coverage gaps (stubbed)', () => {
   });
 
   describe('readRecordData() — remote branch', () => {
-    it('should use sendDwnRequest when remoteOrigin is set', async () => {
+    it('should use sendDwnRequest when the captured data access is remote', async () => {
       const options = createRecordOptions({
+        dataAccess: {
+          author : 'did:example:alice',
+          remote : true,
+          target : 'did:example:remote',
+        },
         remoteOrigin : 'did:example:remote',
-        encodedData  : undefined,
-        data         : undefined,
+        storedData   : undefined,
       });
 
       const record = new Record(agentStub as unknown as EnboxAgent, options);
@@ -312,7 +324,7 @@ describe('Record — coverage gaps (stubbed)', () => {
         message    : {},
         reply      : {
           status : { code: 200, detail: 'OK' },
-          entry  : { data: mockStream },
+          entry  : { data: mockStream, recordsWrite: record.rawMessage },
         },
       } as any);
 
@@ -325,8 +337,7 @@ describe('Record — coverage gaps (stubbed)', () => {
   describe('readRecordData() — local branch (no remoteOrigin)', () => {
     it('should use processDwnRequest when no remoteOrigin is set', async () => {
       const options = createRecordOptions({
-        encodedData : undefined,
-        data        : undefined,
+        storedData: undefined,
       });
 
       const record = new Record(agentStub as unknown as EnboxAgent, options);
@@ -343,7 +354,7 @@ describe('Record — coverage gaps (stubbed)', () => {
         message    : {},
         reply      : {
           status : { code: 200, detail: 'OK' },
-          entry  : { data: mockStream },
+          entry  : { data: mockStream, recordsWrite: record.rawMessage },
         },
       } as any);
 
@@ -353,17 +364,21 @@ describe('Record — coverage gaps (stubbed)', () => {
     });
   });
 
-  describe('readRecordData() — delegate grant fallback', () => {
-    it('should fall back to delegate DID when grant lookup fails', async () => {
+  describe('readRecordData() — captured delegate access', () => {
+    it('should reuse the delegate author that obtained the record without resolving a new grant', async () => {
       const mockPermissionsApi = {
         agent                   : agentStub,
         getPermissionForRequest : sinon.stub().rejects(new Error('No grant found')),
       };
 
       const options = createRecordOptions({
+        dataAccess: {
+          author : 'did:example:delegate',
+          remote : false,
+          target : 'did:example:alice',
+        },
         delegateDid : 'did:example:delegate',
-        encodedData : undefined,
-        data        : undefined,
+        storedData  : undefined,
       });
 
       const record = new Record(agentStub as unknown as EnboxAgent, options, mockPermissionsApi as any);
@@ -380,7 +395,7 @@ describe('Record — coverage gaps (stubbed)', () => {
         message    : {},
         reply      : {
           status : { code: 200, detail: 'OK' },
-          entry  : { data: mockStream },
+          entry  : { data: mockStream, recordsWrite: record.rawMessage },
         },
       } as any);
 
@@ -390,15 +405,15 @@ describe('Record — coverage gaps (stubbed)', () => {
       // Verify the request used the delegate DID as author (fallback).
       const call = agentStub.processDwnRequest.firstCall;
       expect(call.args[0].author).toBe('did:example:delegate');
+      expect(mockPermissionsApi.getPermissionForRequest.called).toBe(false);
     });
   });
 
-  describe('readRecordData() — encrypted record includes encryption flag', () => {
-    it('should include encryption: true when record has encryption', async () => {
+  describe('readRecordData() — envelope-driven decryption', () => {
+    it('should keep the low-level read raw and decrypt only when data is consumed', async () => {
       const options = createRecordOptions({
-        encryption  : { algorithm: 'A256GCM', initializationVector: 'iv', keyEncryption: [] },
-        encodedData : undefined,
-        data        : undefined,
+        encryption : { algorithm: 'A256GCM', initializationVector: 'iv', keyEncryption: [] },
+        storedData : undefined,
       });
 
       const record = new Record(agentStub as unknown as EnboxAgent, options);
@@ -415,16 +430,17 @@ describe('Record — coverage gaps (stubbed)', () => {
         message    : {},
         reply      : {
           status : { code: 200, detail: 'OK' },
-          entry  : { data: mockStream },
+          entry  : { data: mockStream, recordsWrite: record.rawMessage },
         },
       } as any);
 
       const text = await record.data.text();
       expect(text).toBe('encrypted data');
 
-      // Verify the request includes the encryption flag.
       const call = agentStub.processDwnRequest.firstCall;
-      expect(call.args[0].encryption).toBe(true);
+      expect(call.args[0].encryption).toBeUndefined();
+      expect(agentStub.decryptRecordData.calledOnce).toBe(true);
+      expect(agentStub.decryptRecordData.firstCall.args[0].recordsWrite.encryption).toEqual(options.encryption);
     });
   });
 
@@ -452,7 +468,7 @@ describe('Record — coverage gaps (stubbed)', () => {
           descriptor    : createRecordOptions().descriptor,
           authorization : createValidAuthorization(),
         },
-        encodedData: undefined,
+        storedData: undefined,
       });
 
       const record = new Record(agentStub as unknown as EnboxAgent, options);
@@ -463,12 +479,12 @@ describe('Record — coverage gaps (stubbed)', () => {
     });
   });
 
-  describe('data accessor — encodedData as base64url string', () => {
-    it('should decode base64url string encodedData', async () => {
+  describe('data accessor — inline stored bytes as base64url string', () => {
+    it('should decode base64url stored data', async () => {
       // Convert "hello" to base64url.
       const base64url = btoa('hello').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
       const options = createRecordOptions({
-        encodedData: base64url,
+        storedData: base64url,
       });
 
       const record = new Record(agentStub as unknown as EnboxAgent, options);
@@ -487,8 +503,7 @@ describe('Record — coverage gaps (stubbed)', () => {
       });
 
       const options = createRecordOptions({
-        encodedData : undefined,
-        data        : stream,
+        storedData: stream,
       });
 
       const record = new Record(agentStub as unknown as EnboxAgent, options);
@@ -510,12 +525,88 @@ describe('Record — coverage gaps (stubbed)', () => {
         message    : {},
         reply      : {
           status : { code: 200, detail: 'OK' },
-          entry  : { data: mockStream },
+          entry  : { data: mockStream, recordsWrite: record.rawMessage },
         },
       } as any);
 
       const text2 = await record.data.text();
       expect(text2).toBe('refetched');
+    });
+  });
+
+  describe('version-pinned stored data', () => {
+    it('should reject a supplied source for a different data CID', () => {
+      const options = createRecordOptions({
+        storedData: {
+          dataCid : 'bafyrei-other-version',
+          open    : async (): Promise<ReadableStream<Uint8Array>> => createDataStream(),
+        },
+      });
+
+      expect(() => new Record(agentStub as unknown as EnboxAgent, options))
+        .toThrow('Stored data source CID \'bafyrei-other-version\' does not match record data CID \'bafyrei-cid\'');
+    });
+
+    it('should reject backing reads that return a different data version', async () => {
+      const options = createRecordOptions({ storedData: undefined });
+      const record = new Record(agentStub as unknown as EnboxAgent, options);
+      agentStub.processDwnRequest.resolves({
+        messageCid : 'cid-1',
+        message    : {},
+        reply      : {
+          status : { code: 200, detail: 'OK' },
+          entry  : {
+            data         : createDataStream(),
+            recordsWrite : {
+              ...record.rawMessage,
+              descriptor: { ...record.rawMessage.descriptor, dataCid: 'bafyrei-newer-version' },
+            },
+          },
+        },
+      } as any);
+
+      await expect(record.data.bytes())
+        .rejects.toThrow('the DWN returned data CID \'bafyrei-newer-version\' for source CID \'bafyrei-cid\'');
+      expect(agentStub.decryptRecordData.called).toBe(false);
+    });
+
+    it('should keep a lazy source pinned to the access context that created it', async () => {
+      const options = createRecordOptions({
+        dataAccess: {
+          author : 'did:example:original-author',
+          remote : false,
+          target : 'did:example:original-target',
+        },
+        protocolRole : 'post/original-role',
+        storedData   : undefined,
+      });
+      const record = new Record(agentStub as unknown as EnboxAgent, options);
+
+      record['_dataAccess'] = {
+        author : 'did:example:updated-author',
+        remote : true,
+        target : 'did:example:updated-target',
+      };
+      record['_protocolRole'] = 'post/updated-role';
+
+      agentStub.processDwnRequest.resolves({
+        messageCid : 'cid-1',
+        message    : {},
+        reply      : {
+          status : { code: 200, detail: 'OK' },
+          entry  : { data: createDataStream(), recordsWrite: record.rawMessage },
+        },
+      } as any);
+
+      await record.data.bytes();
+
+      expect(agentStub.sendDwnRequest.called).toBe(false);
+      expect(agentStub.processDwnRequest.calledOnce).toBe(true);
+      expect(agentStub.processDwnRequest.firstCall.args[0]).toMatchObject({
+        author        : 'did:example:original-author',
+        target        : 'did:example:original-target',
+        messageParams : { protocolRole: 'post/original-role' },
+      });
     });
   });
 
@@ -528,7 +619,7 @@ describe('Record — coverage gaps (stubbed)', () => {
           descriptor    : createRecordOptions().descriptor,
           authorization : createValidAuthorization(),
         },
-        encodedData: undefined,
+        storedData: undefined,
       });
 
       const record = new Record(agentStub as unknown as EnboxAgent, options);

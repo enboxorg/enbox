@@ -20,6 +20,7 @@ import type {
   ProcessDwnRequest } from '@enbox/agent';
 
 import type { DwnSubscriptionMessage } from '@enbox/dwn-clients';
+import type { RecordDataAccess } from './record-types.js';
 
 import { AgentPermissionsApi, DwnInterface, getRecordAuthor } from '@enbox/agent';
 
@@ -122,9 +123,6 @@ export type RecordsDeleteRequest = Omit<DwnMessageParams[DwnInterface.RecordsDel
 export type RecordsQueryRequest = Omit<DwnMessageParams[DwnInterface.RecordsQuery], 'signer'> & {
   /** Optional DID specifying the remote target DWN tenant to query from and return results. */
   from?: string;
-
-  /** When true, automatically decrypts encrypted records in the query results. */
-  encryption?: boolean;
 };
 
 /**
@@ -222,9 +220,6 @@ export type RecordsReadRequest = Omit<DwnMessageParams[DwnInterface.RecordsRead]
 
   /** Protocol URI for permission grant resolution. */
   protocol?: string;
-
-  /** When true, automatically decrypts the encrypted record data. */
-  encryption?: boolean;
 };
 
 /**
@@ -249,24 +244,6 @@ export type RecordsReadResponse = DwnResponseStatus & {
 export type RecordsSubscribeRequest = Omit<DwnMessageParams[DwnInterface.RecordsSubscribe], 'signer'> & {
   /** Optional DID specifying the remote target DWN tenant to subscribe from. */
   from?: string;
-
-  /**
-   * When true, automatically decrypts encrypted records delivered by the
-   * subscription — both the initial snapshot and live change events.
-   *
-   * Small record payloads are delivered inline with the event and decrypted
-   * before the event reaches the {@link LiveQuery}, so `record.data` serves
-   * plaintext without a further read round-trip. Records whose data is too
-   * large to be inlined carry no event payload — their `data` accessor lazily
-   * reads (and decrypts) from the DWN on access, as it always has.
-   *
-   * A record that cannot be decrypted (e.g. no delivered key covers it) never
-   * terminates the subscription: its change event is still delivered, with the
-   * undecryptable inline ciphertext withheld, so `record.data` falls back to
-   * the lazy read — which rejects with the decryption error, or succeeds later
-   * once a usable key has arrived.
-   */
-  encryption?: boolean;
 };
 
 /** Encapsulates the response from a DWN RecordsSubscribeRequest. */
@@ -316,8 +293,8 @@ export type RecordsWriteRequest = Omit<Partial<DwnMessageParams[DwnInterface.Rec
    * `sendDwnRequest`, mirroring how remote reads and queries dispatch) instead of the connected
    * DID's local DWN. The author stays the connected (grantee) DID — the grantee signs as
    * themselves — and the remote DWN authorizes the write via `protocolRole` (role-invocation) or
-   * grant parameters (`permissionGrantId`/`delegatedGrant`). The returned {@link Record} is
-   * stamped with `remoteOrigin` so subsequent data reads target the owner tenant.
+   * grant parameters (`permissionGrantId`/`delegatedGrant`). The returned {@link Record} captures
+   * the successful request's remote routing and authorization context for later data reads.
    *
    * Remote-path boundaries:
    * - {@link RecordsWriteRequest.recipientRolePublicKey} is NOT supported with `from` — the
@@ -476,6 +453,21 @@ export class DwnApi {
       );
     }
     return nextEmptyPageCount;
+  }
+
+  /** Captures the exact authorization and routing context used for record data access. */
+  private static getRecordDataAccess<T extends DwnInterface>(
+    request: ProcessDwnRequest<T>,
+    remote: boolean,
+  ): RecordDataAccess {
+    const messageParams = request.messageParams as { delegatedGrant?: RecordDataAccess['delegatedGrant'] } | undefined;
+    return {
+      author : request.author,
+      remote,
+      target : request.target,
+      ...(request.granteeDid === undefined ? {} : { granteeDid: request.granteeDid }),
+      ...(messageParams?.delegatedGrant === undefined ? {} : { delegatedGrant: messageParams.delegatedGrant }),
+    };
   }
 
   /**
@@ -971,7 +963,7 @@ export class DwnApi {
        * Query a single or multiple records based on the given filter
        */
       query: async (request: RecordsQueryRequest): Promise<RecordsQueryResponse> => {
-        const { from, encryption, ...messageParams } = request;
+        const { from, ...messageParams } = request;
 
         const agentRequest: ProcessDwnRequest<DwnInterface.RecordsQuery> = {
           /**
@@ -985,9 +977,8 @@ export class DwnApi {
            * The `target` is the DID of the DWN tenant under which the query will be executed.
            * If `from` is provided, the query operation will be executed on a remote DWN.
            * Otherwise, the local DWN will be queried.
-           */
+          */
           target      : from || this.connectedDid,
-          encryption,
         };
 
         if (this.delegateDid) {
@@ -1028,7 +1019,9 @@ export class DwnApi {
         const reply = agentResponse.reply;
         const { entries = [], status, cursor } = reply;
 
+        const dataAccess = DwnApi.getRecordDataAccess(agentRequest, from !== undefined);
         const records = entries.map((entry) => {
+          const { encodedData, ...recordsWrite } = entry;
           const recordOptions = {
             /**
              * Extract the `author` DID from the record entry since records may be signed by the
@@ -1042,15 +1035,15 @@ export class DwnApi {
              */
             connectedDid : this.connectedDid,
             /**
-             * If the record was returned by a query of a remote DWN, set the `remoteOrigin` to
-             * the DID of the DWN that returned the record. The `remoteOrigin` property will be used
-             * to determine which DWN to send subsequent read requests to in the event the data
-             * payload exceeds the threshold for being returned with queries.
+             * Retain the remote tenant as provenance. `dataAccess` below carries the exact
+             * routing and authorization context for any later backing read.
              */
             remoteOrigin : from,
             delegateDid  : this.delegateDid,
+            dataAccess,
             protocolRole : agentRequest.messageParams.protocolRole,
-            ...entry as DwnMessage[DwnInterface.RecordsWrite]
+            storedData   : encodedData,
+            ...recordsWrite as DwnMessage[DwnInterface.RecordsWrite]
           };
           const record = new Record(this.agent, recordOptions, this.permissionsApi);
           return record;
@@ -1080,7 +1073,7 @@ export class DwnApi {
        * Read a single record based on the given filter
        */
       read: async (request: RecordsReadRequest): Promise<RecordsReadResponse> => {
-        const { from, protocol, encryption, ...messageParams } = request;
+        const { from, protocol, ...messageParams } = request;
 
         const agentRequest: ProcessDwnRequest<DwnInterface.RecordsRead> = {
           /**
@@ -1094,9 +1087,8 @@ export class DwnApi {
            * The `target` is the DID of the DWN tenant under which the read will be executed.
            * If `from` is provided, the read operation will be executed on a remote DWN.
            * Otherwise, the read will occur on the local DWN.
-           */
+          */
           target      : from || this.connectedDid,
-          encryption,
         };
 
         if (this.delegateDid) {
@@ -1139,6 +1131,7 @@ export class DwnApi {
 
         let record: Record | undefined;
         if (200 <= status.code && status.code <= 299) {
+          const dataAccess = DwnApi.getRecordDataAccess(agentRequest, from !== undefined);
           const recordOptions = {
             /**
              * Extract the `author` DID from the record since records may be signed by the
@@ -1152,14 +1145,13 @@ export class DwnApi {
              */
             connectedDid : this.connectedDid,
             /**
-             * If the record was returned by reading from a remote DWN, set the `remoteOrigin` to
-             * the DID of the DWN that returned the record. The `remoteOrigin` property will be used
-             * to determine which DWN to send subsequent read requests to in the event the data
-             * payload must be read again (e.g., if the data stream is consumed).
+             * Retain the remote tenant as provenance. `dataAccess` below carries the exact
+             * routing and authorization context if the data stream must be opened again.
              */
             remoteOrigin : from,
             delegateDid  : this.delegateDid,
-            data         : entry.data,
+            dataAccess,
+            storedData   : entry.data,
             initialWrite : entry.initialWrite,
             ...entry.recordsWrite,
           };
@@ -1178,7 +1170,7 @@ export class DwnApi {
        * typed change events (`create`, `update`, `delete`).
        */
       subscribe: async (request: RecordsSubscribeRequest): Promise<RecordsSubscribeResponse> => {
-        const { from, encryption, ...messageParams } = request;
+        const { from, ...messageParams } = request;
 
         // Build a DWN-level subscription handler that wraps raw RecordEvents
         // into Record objects and feeds them into the LiveQuery.
@@ -1223,16 +1215,12 @@ export class DwnApi {
             ...message as DwnMessage[DwnInterface.RecordsWrite],
             author       : getRecordAuthor(message as DwnMessage[DwnInterface.RecordsWrite]),
             connectedDid : this.connectedDid,
+            dataAccess   : DwnApi.getRecordDataAccess(agentRequest, from !== undefined),
             remoteOrigin,
             initialWrite : initialWrite,
             protocolRole,
             delegateDid  : this.delegateDid,
-            // Only when subscription decryption is enabled: attach the event's
-            // inline payload (already decrypted by the agent) so `record.data`
-            // serves plaintext without a read round-trip. When absent — data
-            // too large to inline, or ciphertext withheld after a decryption
-            // failure — the lazy read path decrypts on access instead.
-            ...(encryption && msg.encodedData !== undefined ? { encodedData: msg.encodedData } : {}),
+            storedData   : msg.encodedData,
           }, this.permissionsApi);
 
           liveQuery?.handleEvent(record);
@@ -1244,7 +1232,6 @@ export class DwnApi {
           messageType : DwnInterface.RecordsSubscribe,
           target      : from || this.connectedDid,
           subscriptionHandler,
-          encryption,
         };
 
         if (this.delegateDid) {
@@ -1292,6 +1279,7 @@ export class DwnApi {
             delegateDid    : this.delegateDid,
             protocolRole,
             remoteOrigin,
+            dataAccess     : DwnApi.getRecordDataAccess(agentRequest, from !== undefined),
             permissionsApi : this.permissionsApi,
             initialEntries : entries,
             cursor,
@@ -1371,7 +1359,7 @@ export class DwnApi {
 
         // NOTE: `audienceKeyDelivery` is populated by local processing only — the remote
         // (`sendDwnRequest`) branch never reports one, and none is ever fabricated for it.
-        const { message: responseMessage, reply: { status }, audienceKeyDelivery } = agentResponse;
+        const { message: responseMessage, reply: { status }, audienceKeyDelivery, data: responseData } = agentResponse;
 
         let record: Record | undefined;
         if (200 <= status.code && status.code <= 299) {
@@ -1389,18 +1377,18 @@ export class DwnApi {
              */
             connectedDid : this.connectedDid,
             /**
-             * If the record was written to a remote DWN, set the `remoteOrigin` to the DID of the
-             * target tenant so that subsequent data reads (e.g. `record.data`) are dispatched to
-             * the owner tenant that actually stores the record.
+             * Retain the remote target as provenance. `dataAccess` below is authoritative for
+             * subsequent backing reads from the tenant that accepted the write.
              */
             remoteOrigin : from,
+            dataAccess   : DwnApi.getRecordDataAccess(dwnRequestParams, from !== undefined),
             /**
              * Stamp the invoked role so follow-up operations on the returned record (data
              * re-reads, updates) carry the same authorization the write used — mirroring how
              * query/read/subscribe results are stamped.
-             */
+            */
             protocolRole : messageParams.protocolRole,
-            encodedData  : dataBlob,
+            storedData   : responseData,
             delegateDid  : this.delegateDid,
             ...responseMessage,
           };

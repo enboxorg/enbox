@@ -2,14 +2,13 @@ import type { BearerDid } from '@enbox/dids';
 import type { Jwk } from '@enbox/crypto';
 import type { AgentDataStore, DwnDataStore } from '../src/store-data.js';
 
-import { Convert } from '@enbox/common';
 import { DwnInterface } from '../src/types/dwn.js';
 import { JwkProtocolDefinition } from '../src/store-data-protocols.js';
 import { LocalKeyManager } from '../src/local-key-manager.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
-import { ContentEncryptionAlgorithm, Encoder, KeyDerivationScheme, PrivateKeySigner, RecordsWrite } from '@enbox/dwn-sdk-js';
+import { ContentEncryptionAlgorithm, DwnConstant, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
 import { DidDht, DidJwk } from '@enbox/dids';
 import { DwnKeyStore, InMemoryKeyStore } from '../src/store-key.js';
 
@@ -246,43 +245,28 @@ describe('KeyStore', () => {
         expect(storedKeys).toHaveLength(0);
       });
 
-      it('throws an error if legacy unencrypted records exceed DWN max data size for query results', async () => {
-        // Inject an oversized unencrypted record directly into the message store
-        // (bypassing the handler which now enforces encryptionRequired) to simulate
-        // a legacy record whose encodedData is missing from query results.
-        const keyBytes = Convert.string(new Array(102400 + 1).join('0')).toUint8Array();
-
-        // Initialize the storage protocol (which now includes $keyAgreement keys).
-        await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
-
-        // Build an unencrypted RecordsWrite and inject it directly into the
-        // message store to simulate a pre-existing legacy record. The oversized
-        // payload means encodedData will be absent from query results.
-        const tenant = testHarness.agent.agentDid.uri;
-        const portableDid = await testHarness.agent.agentDid.export();
-        const signer = new PrivateKeySigner({
-          privateJwk : portableDid.privateKeys![0] as any,
-          keyId      : portableDid.document.verificationMethod![0].id,
+      it('reads encrypted key data that is too large for query inlining', async () => {
+        const largeKey: Jwk = {
+          alg : 'EdDSA',
+          crv : 'Ed25519',
+          d   : 'test-private-value',
+          kid : 'large-encrypted-key',
+          kty : 'OKP',
+          x   : 'A'.repeat(DwnConstant.maxDataSizeAllowedToBeEncoded + 1),
+        };
+        await keyStore.set({
+          agent : testHarness.agent,
+          data  : largeKey,
+          id    : 'urn:jwk:large-encrypted-key',
         });
-        const recordsWrite = await RecordsWrite.create({
-          dataFormat   : 'application/json',
-          protocol     : JwkProtocolDefinition.protocol,
-          protocolPath : 'privateJwk',
-          schema       : JwkProtocolDefinition.types.privateJwk.schema,
-          signer,
-          data         : keyBytes,
-        });
-        const { messageStore } = testHarness.agent.dwn.node.storage;
-        const indexes = await recordsWrite.constructIndexes(true);
-        await messageStore.put(tenant, recordsWrite.message, indexes);
+        const processRequestSpy = spyOn(testHarness.agent.dwn, 'processRequest');
 
-        try {
-          await keyStore.list({ agent: testHarness.agent });
-          throw new Error('Expected an error to be thrown');
+        const storedKeys = await keyStore.list({ agent: testHarness.agent });
 
-        } catch (error: any) {
-          expect(error.message).toContain(`Expected 'encodedData' to be present in the DWN query result entry`);
-        }
+        expect(storedKeys).toEqual([largeKey]);
+        expect(processRequestSpy.mock.calls.some(
+          (args: any[]): boolean => args[0]?.messageType === DwnInterface.RecordsRead
+        )).toBe(true);
       });
     });
 
@@ -639,104 +623,51 @@ describe('KeyStore', () => {
         mock.restore();
       });
 
-      it('should throw when an encrypted record read returns no data', async () => {
-        // Store an encrypted key first.
+      it('should throw when neither a query entry nor its backing read supplies stored data', async () => {
         await testHarness.agent.keyManager.generateKey({ algorithm: 'Ed25519' });
 
-        // Stub processRequest to return a successful query (with encryption
-        // metadata) followed by a RecordsRead that returns no data.
         const originalProcessRequest = testHarness.agent.dwn.processRequest.bind(testHarness.agent.dwn);
-        let queryCallCount = 0;
         spyOn(testHarness.agent.dwn, 'processRequest').mockImplementation(async (request: any): Promise<any> => {
-          // Let the RecordsQuery pass through normally.
           if (request.messageType === DwnInterface.RecordsQuery) {
-            queryCallCount++;
-            return originalProcessRequest(request);
+            const result = await originalProcessRequest(request);
+            return {
+              ...result,
+              reply: {
+                ...result.reply,
+                entries: result.reply.entries.map((entry: any): any => ({ ...entry, encodedData: undefined })),
+              },
+            };
           }
-
-          // For RecordsRead with encryption, return a reply with no data.
-          if (request.messageType === DwnInterface.RecordsRead && request.encryption) {
+          if (request.messageType === DwnInterface.RecordsRead) {
             return {
               messageCid : 'test-cid',
               message    : {},
               reply      : {
+                entry  : { data: undefined, recordsWrite: {} },
                 status : { code: 200, detail: 'OK' },
-                entry  : { recordsWrite: {}, data: undefined }
-              }
+              },
             };
           }
-
-          // Everything else passes through.
           return originalProcessRequest(request);
         });
 
-        // Clear the index so getAllRecords() is called on the next list().
         (keyStore as any)._index.clear();
-
-        try {
-          await keyStore.list({ agent: testHarness.agent });
-          throw new Error('Expected an error to be thrown');
-        } catch (error: any) {
-          expect(error.message).toContain('Failed to read encrypted key record');
-        }
-
-        expect(queryCallCount).toBeGreaterThan(0);
+        await expect(keyStore.list({ agent: testHarness.agent }))
+          .rejects.toThrow('Failed to read stored key record');
       });
 
-      it('should handle mixed encrypted and unencrypted records', async () => {
-        // Step 1: Inject an unencrypted record directly into the message store
-        // (bypassing the handler which now enforces encryptionRequired) to
-        // simulate a pre-existing legacy record.
-        await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
-        const legacyKey: Jwk = {
-          kid : 'legacy-key-1',
-          kty : 'OKP',
-          crv : 'Ed25519',
-          alg : 'EdDSA',
-          x   : 'testx',
-          d   : 'testd',
-        };
-        const legacyBytes = Convert.object(legacyKey).toUint8Array();
-        const tenant = testHarness.agent.agentDid.uri;
-        const portableDid = await testHarness.agent.agentDid.export();
-        const signer = new PrivateKeySigner({
-          privateJwk : portableDid.privateKeys![0] as any,
-          keyId      : portableDid.document.verificationMethod![0].id,
-        });
-        const legacyWrite = await RecordsWrite.create({
-          dataFormat   : 'application/json',
-          protocol     : JwkProtocolDefinition.protocol,
-          protocolPath : 'privateJwk',
-          schema       : JwkProtocolDefinition.types.privateJwk.schema,
-          signer,
-          data         : legacyBytes,
-        });
-        const { messageStore } = testHarness.agent.dwn.node.storage;
-        const legacyIndexes = await legacyWrite.constructIndexes(true);
-        // Inline encodedData so the record is returned with data in query results.
-        const legacyMessage = legacyWrite.message as any;
-        legacyMessage.encodedData = Encoder.bytesToBase64Url(legacyBytes);
-        await messageStore.put(tenant, legacyMessage, legacyIndexes);
+      it('should decrypt inline encrypted keys without additional RecordsRead requests', async () => {
+        await testHarness.agent.keyManager.generateKey({ algorithm: 'Ed25519' });
+        await testHarness.agent.keyManager.generateKey({ algorithm: 'Ed25519' });
+        const processRequestSpy = spyOn(testHarness.agent.dwn, 'processRequest');
 
-        // Step 2: Write an encrypted record through the store API.
-        const encryptedKeyUri = await testHarness.agent.keyManager.generateKey({
-          algorithm: 'Ed25519'
-        });
-
-        // Step 3: List all records — should include both legacy (unencrypted)
-        // and new (encrypted) records.
+        (keyStore as any)._index.clear();
         const storedKeys = await keyStore.list({ agent: testHarness.agent });
-        expect(storedKeys.length).toBeGreaterThanOrEqual(2);
 
-        const kids = storedKeys.map((k: Jwk): string | undefined => k.kid);
-        expect(kids).toContain('legacy-key-1');
-
-        // Verify the encrypted key is also present.
-        const encryptedKey = storedKeys.find(
-          (k: Jwk): boolean => `urn:jwk:${k.kid}` === encryptedKeyUri
-        );
-        expect(encryptedKey).toBeDefined();
-        expect(encryptedKey).toHaveProperty('d');
+        expect(storedKeys).toHaveLength(2);
+        expect(processRequestSpy.mock.calls.some(
+          (args: any[]): boolean => args[0]?.messageType === DwnInterface.RecordsRead
+        )).toBe(false);
       });
     });
   });

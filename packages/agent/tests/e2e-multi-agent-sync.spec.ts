@@ -73,6 +73,24 @@ async function waitForRecord(
   throw new Error(`waitForRecord: record ${recordId} not found within ${timeoutMs}ms`);
 }
 
+/** Opens application-readable bytes from one raw RecordsRead entry. */
+async function decryptReadEntry(
+  harness: PlatformAgentTestHarness,
+  author: string,
+  target: string,
+  entry: { data: ReadableStream<Uint8Array>; recordsWrite: RecordsWriteMessage },
+  granteeDid?: string,
+): Promise<Uint8Array> {
+  const decrypted = await harness.agent.dwn.decryptRecordData({
+    author,
+    dataStream   : entry.data,
+    granteeDid,
+    recordsWrite : entry.recordsWrite,
+    target,
+  });
+  return DataStream.toBytes(decrypted);
+}
+
 // ---------------------------------------------------------------------------
 // Protocol definitions
 // ---------------------------------------------------------------------------
@@ -695,12 +713,17 @@ describe('E2E Multi-Agent Sync', () => {
           filter            : { recordId },
           permissionGrantId : recordsReadGrantId,
         },
-        encryption: true,
       });
       expect(readResult.reply.status.code).toBe(200);
       expect(readResult.reply.entry?.data).toBeDefined();
 
-      const decryptedBytes = await DataStream.toBytes(readResult.reply.entry!.data!);
+      const decryptedBytes = await decryptReadEntry(
+        deviceHarness,
+        aliceDevice.did.uri,
+        alice.did.uri,
+        readResult.reply.entry!,
+        aliceDevice.did.uri,
+      );
       expect(new TextDecoder().decode(decryptedBytes)).toBe(noteText);
     }, 60_000);
 
@@ -893,12 +916,17 @@ describe('E2E Multi-Agent Sync', () => {
           filter            : { recordId },
           permissionGrantId : recordsReadGrant!.recordId,
         },
-        encryption: true,
       });
       expect(readResult.reply.status.code).toBe(200);
       expect(readResult.reply.entry?.data).toBeDefined();
 
-      const decryptedBytes = await DataStream.toBytes(readResult.reply.entry!.data!);
+      const decryptedBytes = await decryptReadEntry(
+        deviceHarness,
+        delegateDid,
+        alice.did.uri,
+        readResult.reply.entry!,
+        delegateDid,
+      );
       expect(new TextDecoder().decode(decryptedBytes)).toBe(noteText);
     }, 90_000);
 
@@ -1177,12 +1205,16 @@ describe('E2E Multi-Agent Sync', () => {
           filter       : { recordId: (chatWrite.message as RecordsWriteMessage).recordId },
           protocolRole : 'thread/participant',
         },
-        encryption: true,
       });
       expect(readResult.reply.status.code).toBe(200);
       expect(readResult.reply.entry?.data).toBeDefined();
 
-      const decryptedBytes = await DataStream.toBytes(readResult.reply.entry!.data!);
+      const decryptedBytes = await decryptReadEntry(
+        deviceHarness,
+        bobParticipant.did.uri,
+        alice.did.uri,
+        readResult.reply.entry!,
+      );
       expect(new TextDecoder().decode(decryptedBytes)).toBe(chatText);
 
       const nonParticipantDeliveryQuery = await deviceHarness.agent.dwn.processRequest({
@@ -1213,7 +1245,6 @@ describe('E2E Multi-Agent Sync', () => {
           filter       : { recordId: (chatWrite.message as RecordsWriteMessage).recordId },
           protocolRole : 'thread/participant',
         },
-        encryption: true,
       });
       expect(nonParticipantRead.reply.status.code).toBe(401);
     }, 90_000);

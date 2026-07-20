@@ -709,7 +709,7 @@ describe('TypedProtocol API', () => {
         return spy.getCalls().filter((call) => call.args[0].messageType === DwnInterface.RecordsRead).length;
       }
 
-      it('should auto-enable decryption on encryptionRequired paths', async () => {
+      it('should lazily decrypt encryptionRequired records without a caller flag', async () => {
         // Snapshot record: written (auto-encrypted) before subscribing.
         const { status: createStatus, record } = await secure.records.create('note', {
           data: { text: 'snapshot secret' },
@@ -717,8 +717,10 @@ describe('TypedProtocol API', () => {
         expect(createStatus.code).toBe(202);
         expect(record.encryption).toBeDefined();
 
-        // Subscribe WITHOUT an explicit encryption option — auto-enabled by the
-        // type's encryptionRequired declaration.
+        const processDwnRequestSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
+
+        // Decryption is inferred from each record's envelope, not requested on
+        // the low-level subscription.
         const { status, liveQuery } = await secure.records.subscribe('note');
         expect(status.code).toBe(200);
         expect(liveQuery).toBeDefined();
@@ -734,8 +736,9 @@ describe('TypedProtocol API', () => {
           expect(created).toHaveLength(1);
         });
 
-        // Spy AFTER delivery so only the data accesses below are observed.
-        const processDwnRequestSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
+        const subscribeRequest = processDwnRequestSpy.getCalls()
+          .find((call) => call.args[0].messageType === DwnInterface.RecordsSubscribe)!;
+        expect(subscribeRequest.args[0].encryption).toBeUndefined();
 
         const snapshotData = await liveQuery!.records[0].data.json();
         expect(snapshotData.text).toBe('snapshot secret');
@@ -743,35 +746,9 @@ describe('TypedProtocol API', () => {
         const eventData = await created[0].data.json();
         expect(eventData.text).toBe('live secret');
 
-        // Both payloads were served from the inline pre-decrypted data — no
+        // Both payloads were decrypted from inline stored data, so no
         // RecordsRead round-trip was needed.
         expect(countRecordsReads(processDwnRequestSpy)).toBe(0);
-
-        await liveQuery!.close();
-      });
-
-      it('should honor an explicit encryption: false opt-out', async () => {
-        const { status, liveQuery } = await secure.records.subscribe('note', {
-          encryption: false,
-        });
-        expect(status.code).toBe(200);
-
-        const created: TypedRecord<SecureNotesSchemaMap['note']>[] = [];
-        liveQuery!.on('create', (typedRecord) => { created.push(typedRecord); });
-
-        await secure.records.create('note', { data: { text: 'opted out' } });
-
-        await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(created).toHaveLength(1);
-        });
-
-        // With decryption opted out, no inline payload is attached to event
-        // records — data access re-reads from the DWN (decrypting lazily, as
-        // the record carries an encryption envelope).
-        const processDwnRequestSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
-        const eventData = await created[0].data.json();
-        expect(eventData.text).toBe('opted out');
-        expect(countRecordsReads(processDwnRequestSpy)).toBeGreaterThanOrEqual(1);
 
         await liveQuery!.close();
       });

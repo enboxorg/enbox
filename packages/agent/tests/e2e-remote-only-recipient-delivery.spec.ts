@@ -128,9 +128,9 @@ describe('AgentDwnApi role-audience delivery to remote-only recipients', () => {
     return { chatRecordId: (chatWrite.message as RecordsWriteMessage).recordId!, chatText, roleDelivery };
   }
 
-  // The recipient reads its delivery + the encrypted chat message straight from
-  // the anchor (remote-only: it holds no local copy). The agent auto-decrypts via
-  // the recipient's delivery record (resolved from the anchor) and its own root.
+  // The recipient reads its delivery + raw encrypted chat data straight from
+  // the anchor (remote-only: it holds no local copy), then opens the application
+  // view using the delivery record and its own root.
   async function recipientReads(recipientDid: string, chatRecordId: string): Promise<{ deliveryCount: number; text: string }> {
     const deliveryQuery = await recipientHarness.agent.dwn.sendRequest({
       author        : recipientDid,
@@ -152,10 +152,15 @@ describe('AgentDwnApi role-audience delivery to remote-only recipients', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsRead,
       messageParams : { filter: { recordId: chatRecordId }, protocolRole: ROLE_PATH },
-      encryption    : true,
     });
     expect(read.reply.status.code).toBe(200);
-    const bytes = await DataStream.toBytes(read.reply.entry!.data!);
+    const decrypted = await recipientHarness.agent.dwn.decryptRecordData({
+      author       : recipientDid,
+      dataStream   : read.reply.entry!.data!,
+      recordsWrite : read.reply.entry!.recordsWrite,
+      target       : alice.did.uri,
+    });
+    const bytes = await DataStream.toBytes(decrypted);
     return { deliveryCount: deliveryQuery.reply.entries?.length ?? 0, text: new TextDecoder().decode(bytes) };
   }
 

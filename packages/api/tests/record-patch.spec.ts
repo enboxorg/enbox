@@ -241,8 +241,7 @@ describe('Record.patch()', () => {
     // Read back decrypted from the DWN: the omitted field survived because
     // patch wrote the FULL merged payload (encrypted updates require it).
     const { status: readStatus, record: readRecord } = await dwnAlice.records.read({
-      filter     : { recordId: record!.id },
-      encryption : true,
+      filter: { recordId: record!.id },
     });
     expect(readStatus.code).toBe(200);
     expect(await readRecord!.data.json()).toEqual({ title: 'secret v2', body: 'confidential body' });

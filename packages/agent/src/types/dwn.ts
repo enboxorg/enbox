@@ -185,7 +185,18 @@ export type DwnResponseStatus = {
   status: Status;
 };
 
-export type ProcessDwnRequest<T extends DwnInterface> = DwnRequest<T> & {
+type EncryptionRequestOption<T extends DwnInterface> = T extends
+  DwnInterface.ProtocolsConfigure | DwnInterface.RecordsWrite
+  ? {
+      /**
+       * If true, encrypts a RecordsWrite payload or injects protocol
+       * `$keyAgreement` material during ProtocolsConfigure.
+       */
+      encryption?: boolean;
+    }
+  : { encryption?: never };
+
+export type ProcessDwnRequest<T extends DwnInterface> = DwnRequest<T> & EncryptionRequestOption<T> & {
   dataStream?: Blob | ReadableStream;
   rawMessage?: DwnMessage[T];
   messageParams?: DwnMessageParams[T];
@@ -194,21 +205,6 @@ export type ProcessDwnRequest<T extends DwnInterface> = DwnRequest<T> & {
   signAsOwnerDelegate?: boolean;
   granteeDid?: string;
   subscriptionHandler?: MessageHandler[T];
-  /**
-   * If true, automatically encrypt protocol records and inject $keyAgreement keys.
-   * Requires the identity to have an X25519 keyAgreement key.
-   *
-   * On read paths the same flag enables auto-DECRYPTION: `RecordsRead` and
-   * `RecordsQuery` replies are decrypted in place, and for `RecordsSubscribe`
-   * both the reply's initial snapshot entries and each event's inline
-   * `encodedData` payload are decrypted before delivery. Events whose data was
-   * too large to be inlined carry no payload to decrypt — the per-record lazy
-   * read (with decryption) remains the data path for those. A snapshot entry
-   * or event that cannot be decrypted never fails the subscribe or kills the
-   * subscription: its inline ciphertext is withheld instead, leaving the lazy
-   * read to surface the decryption error on data access.
-   */
-  encryption?: boolean;
   /**
    * The recipient's role-path public key for this write, at the record's own
    * `protocolPath`. When writing a `$role` record with a `recipient`, the agent
@@ -243,6 +239,25 @@ export type ProcessDwnRequest<T extends DwnInterface> = DwnRequest<T> & {
    * authorization is ever needed to unwind the write.
    */
   recipientRolePublicKey?: PublicKeyJwk;
+};
+
+/**
+ * Parameters for decrypting the raw stored bytes of one RecordsWrite message.
+ * The message encryption envelope determines whether decryption is required.
+ */
+export type DecryptRecordDataParams = {
+  /** DID authorizing application access to the record data. */
+  author: string;
+  /** DID of the DWN tenant that supplied the stored record data. */
+  target: string;
+  /** RecordsWrite message whose encryption envelope describes the stored bytes. */
+  recordsWrite: RecordsWriteMessage;
+  /** Raw bytes committed to by the RecordsWrite descriptor dataCid. */
+  dataStream: ReadableStream<Uint8Array>;
+  /** Delegate operating on behalf of author, when applicable. */
+  granteeDid?: string;
+  /** Delegated grant that authorized the operation which returned the record. */
+  delegatedGrant?: DataEncodedRecordsWriteMessage;
 };
 
 export type SendDwnRequest<T extends DwnInterface> = DwnRequest<T> & (ProcessDwnRequest<T> | { messageCid: string });
@@ -490,6 +505,12 @@ export type DwnResponse<T extends DwnInterface> = {
   reply: DwnMessageReply[T];
 
   /**
+   * Raw record bytes produced for a RecordsWrite, matching the returned
+   * message descriptor's dataCid. Encrypted writes return ciphertext.
+   */
+  data?: Blob;
+
+  /**
    * Present only for accepted `$role` record writes that triggered role-audience
    * key delivery provisioning. Reports whether the recipient's
    * `$encryption/delivery` record was written — always best-effort: a delivery
@@ -549,6 +570,7 @@ export interface DwnMessageInstance {
 export type DwnMessageWithData<T extends DwnInterface> = {
   message: DwnMessage[T];
   dataStream?: ReadableStream<Uint8Array>;
+  data?: Blob;
 };
 
 // The following types are exported by the DWN SDK and are re-exported here so that dependent

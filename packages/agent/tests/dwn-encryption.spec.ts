@@ -16,6 +16,7 @@ import {
   buildKmsDecryptCallback,
   buildProtocolPathSubtreeDecrypter,
   createGrantKeyRecordsForGrants,
+  decryptRecordData,
   encryptAndComputeCid,
   generateAudienceKey,
   getEncryptionKeyDeriver,
@@ -23,7 +24,6 @@ import {
   getKeyDecrypter,
   hasAudienceSealCoverage,
   ivLength,
-  maybeDecryptReply,
   resolveAudienceDecryptionKey,
   resolveKeyDecrypter,
 } from '../src/dwn-encryption.js';
@@ -153,26 +153,8 @@ describe('dwn-encryption', () => {
     });
   });
 
-  describe('maybeDecryptReply', () => {
-    it('should return immediately when request has no encryption flag', async () => {
-      const request = { author: 'did:example:alice', target: 'did:example:alice' } as any;
-      const reply = {} as any;
-
-      // No encryption flag: it returns immediately without mutating the reply.
-      await maybeDecryptReply(request, reply, {} as any);
-      expect(reply).toEqual({});
-    });
-
-    it('should return immediately when encryption is false', async () => {
-      const request = { author: 'did:example:alice', target: 'did:example:alice', encryption: false } as any;
-      const reply = {} as any;
-
-      // encryption:false short-circuits the same way — the reply is left untouched.
-      await maybeDecryptReply(request, reply, {} as any);
-      expect(reply).toEqual({});
-    });
-
-    it('should throw wrapped error when RecordsRead decryption fails', async () => {
+  describe('decryptRecordData', () => {
+    it('should throw a wrapped error when record decryption fails', async () => {
       const dwnSdk = await import('@enbox/dwn-sdk-js');
       sinon.stub(dwnSdk.Records, 'decrypt').rejects(new Error('bad cipher'));
 
@@ -198,73 +180,34 @@ describe('dwn-encryption', () => {
         },
       } as any;
 
-      const request = {
-        author      : 'did:example:alice',
-        target      : 'did:example:alice',
-        encryption  : true,
-        messageType : 'RecordsRead',
-      } as any;
-
-      const reply = {
-        status : { code: 200 },
-        entry  : {
-          recordsWrite: {
-            recordId   : 'rec-fail-read',
-            descriptor : { protocol: 'https://example.com/proto' },
-            encryption : {
-              recipients: [{
-                header: {
-                  derivationScheme : KeyDerivationScheme.ProtocolPath,
-                  kid              : 'did:example:alice#enc',
-                },
-              }],
+      const recordsWrite = {
+        recordId   : 'rec-fail-read',
+        descriptor : { protocol: 'https://example.com/proto' },
+        encryption : {
+          recipients: [{
+            header: {
+              derivationScheme : KeyDerivationScheme.ProtocolPath,
+              kid              : 'did:example:alice#enc',
             },
-          },
-          data: new ReadableStream(),
+          }],
         },
       } as any;
 
       await expect(
-        maybeDecryptReply(
-          request, reply, mockAgent,
-        )
+        decryptRecordData({
+          agent      : mockAgent,
+          author     : 'did:example:alice',
+          dataStream : new ReadableStream(),
+          recordsWrite,
+          target     : 'did:example:alice',
+        })
       ).rejects.toThrow('AgentDwnApi: Failed to decrypt record \'rec-fail-read\'');
     });
 
-    it('should skip decryption for encryption-control RecordsRead replies', async () => {
-      const decryptStub = sinon.stub(Records, 'decrypt').rejects(new Error('control records are not app data'));
-      const request = {
-        author      : 'did:example:alice',
-        target      : 'did:example:alice',
-        encryption  : true,
-        messageType : DwnInterface.RecordsRead,
-      } as any;
-      const reply = {
-        status : { code: 200 },
-        entry  : {
-          recordsWrite: {
-            recordId   : 'delivery-record',
-            descriptor : {
-              protocol     : 'https://example.com/proto',
-              protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
-            },
-            encryption: {
-              keyEncryption: [],
-            },
-          },
-          data: DataStream.fromBytes(new Uint8Array([1, 2, 3])),
-        },
-      } as any;
-
-      await maybeDecryptReply(request, reply, {} as any);
-
-      expect(decryptStub.called).toBe(false);
-    });
-
-    it('should throw wrapped error when RecordsQuery entry decryption fails', async () => {
-      const dwnSdk = await import('@enbox/dwn-sdk-js');
-      sinon.stub(dwnSdk.Records, 'decrypt').rejects(new Error('bad cipher'));
-
+    it('should decrypt an encryption-control record when its message carries an envelope', async () => {
+      const storedBytes = new Uint8Array([1, 2, 3]);
+      const decryptedBytes = new Uint8Array([4, 5, 6]);
+      const decryptStub = sinon.stub(Records, 'decrypt').resolves(DataStream.fromBytes(decryptedBytes));
       const mockAgent = {
         did: {
           resolve: sinon.stub().resolves({
@@ -286,36 +229,48 @@ describe('dwn-encryption', () => {
           unwrapContentKey : sinon.stub(),
         },
       } as any;
-
-      const request = {
-        author      : 'did:example:alice',
-        target      : 'did:example:alice',
-        encryption  : true,
-        messageType : 'RecordsQuery',
+      const recordsWrite = {
+        recordId   : 'delivery-record',
+        descriptor : {
+          protocol     : 'https://example.com/proto',
+          protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+        },
+        encryption: {
+          recipients: [{
+            header: {
+              derivationScheme : KeyDerivationScheme.ProtocolPath,
+              kid              : 'did:example:alice#enc',
+            },
+          }],
+        },
       } as any;
 
-      const reply = {
-        status  : { code: 200 },
-        entries : [{
-          recordId    : 'rec-fail-query',
-          encodedData : 'AAAA', // base64url-encoded
-          descriptor  : { protocol: 'https://example.com/proto' },
-          encryption  : {
-            recipients: [{
-              header: {
-                derivationScheme : KeyDerivationScheme.ProtocolPath,
-                kid              : 'did:example:alice#enc',
-              },
-            }],
-          },
-        }],
-      } as any;
+      const dataStream = await decryptRecordData({
+        agent      : mockAgent,
+        author     : 'did:example:alice',
+        dataStream : DataStream.fromBytes(storedBytes),
+        recordsWrite,
+        target     : 'did:example:alice',
+      });
 
-      await expect(
-        maybeDecryptReply(
-          request, reply, mockAgent,
-        )
-      ).rejects.toThrow('AgentDwnApi: Failed to decrypt record \'rec-fail-query\'');
+      expect(decryptStub.calledOnce).toBe(true);
+      expect(await DataStream.toBytes(dataStream)).toEqual(decryptedBytes);
+    });
+
+    it('should pass plaintext records through unchanged', async () => {
+      const storedBytes = new Uint8Array([4, 5, 6]);
+      const dataStream = await decryptRecordData({
+        agent        : {} as any,
+        author       : 'did:example:alice',
+        dataStream   : DataStream.fromBytes(storedBytes),
+        recordsWrite : {
+          recordId   : 'plaintext-record',
+          descriptor : { protocol: 'https://example.com/proto', protocolPath: 'note' },
+        } as any,
+        target: 'did:example:alice',
+      });
+
+      expect(await DataStream.toBytes(dataStream)).toEqual(storedBytes);
     });
 
     describe('audience decrypt failure taxonomy for role-wrapped records', () => {
@@ -442,17 +397,23 @@ describe('dwn-encryption', () => {
         return sinon.stub().rejects(new Error('AgentDwnApi: DID Service is missing or malformed in DID Document.'));
       }
 
-      const recipientReadRequest = {
-        author      : 'did:example:bob',
-        target      : 'did:example:alice',
-        encryption  : true,
-        messageType : 'RecordsRead',
+      const recipientDataAccess = {
+        author : 'did:example:bob',
+        target : 'did:example:alice',
       } as any;
 
-      async function catchDecryptErrorForReply(mockAgent: any, reply: any, request: any = recipientReadRequest): Promise<AudienceDecryptError> {
+      async function catchDecryptErrorForData(mockAgent: any, reply: any, dataAccess: any = recipientDataAccess): Promise<AudienceDecryptError> {
         let caught: unknown;
         try {
-          await maybeDecryptReply(request, reply, mockAgent);
+          await decryptRecordData({
+            agent          : mockAgent,
+            author         : dataAccess.author,
+            dataStream     : reply.entry.data,
+            delegatedGrant : dataAccess.delegatedGrant,
+            granteeDid     : dataAccess.granteeDid,
+            recordsWrite   : reply.entry.recordsWrite,
+            target         : dataAccess.target,
+          });
         } catch (error) {
           caught = error;
         }
@@ -461,7 +422,7 @@ describe('dwn-encryption', () => {
       }
 
       async function catchDecryptError(mockAgent: any, keyId?: string): Promise<AudienceDecryptError> {
-        return catchDecryptErrorForReply(mockAgent, makeRoleWrappedReadReply(keyId));
+        return catchDecryptErrorForData(mockAgent, makeRoleWrappedReadReply(keyId));
       }
 
       async function stubDecryptRejection(): Promise<void> {
@@ -667,7 +628,7 @@ describe('dwn-encryption', () => {
 
         it('should report remote-unverifiable when one route is definitive and another is unverifiable', async () => {
           await stubDecryptRejection();
-          const decryptError = await catchDecryptErrorForReply(makeReviewerReproAgent(), makeMultiRoleWrappedReadReply([
+          const decryptError = await catchDecryptErrorForData(makeReviewerReproAgent(), makeMultiRoleWrappedReadReply([
             { keyId: K1, rolePath: 'collaborator' },
             { keyId: K2, rolePath: 'viewer' },
           ]));
@@ -680,7 +641,7 @@ describe('dwn-encryption', () => {
 
         it('should report remote-unverifiable in the reverse entry order too', async () => {
           await stubDecryptRejection();
-          const decryptError = await catchDecryptErrorForReply(makeReviewerReproAgent(), makeMultiRoleWrappedReadReply([
+          const decryptError = await catchDecryptErrorForData(makeReviewerReproAgent(), makeMultiRoleWrappedReadReply([
             { keyId: K2, rolePath: 'viewer' },
             { keyId: K1, rolePath: 'collaborator' },
           ]));
@@ -712,7 +673,7 @@ describe('dwn-encryption', () => {
           );
           await stubDecryptRejection();
 
-          const decryptError = await catchDecryptErrorForReply(mockAgent, makeMultiRoleWrappedReadReply([
+          const decryptError = await catchDecryptErrorForData(mockAgent, makeMultiRoleWrappedReadReply([
             { keyId: K1, rolePath: 'collaborator' },
             { keyId: K2, rolePath: 'viewer' },
           ]));
@@ -793,14 +754,12 @@ describe('dwn-encryption', () => {
             processDwnRequest : sinon.stub().resolves({ reply: { status: { code: 200, detail: 'OK' }, entries: [] } }),
             sendDwnRequest    : noRemoteServiceStub(),
           };
-          const ownerReadRequest = {
-            author      : 'did:example:alice',
-            target      : 'did:example:alice',
-            encryption  : true,
-            messageType : 'RecordsRead',
+          const ownerDataAccess = {
+            author : 'did:example:alice',
+            target : 'did:example:alice',
           } as any;
 
-          const decryptError = await catchDecryptErrorForReply(mockAgent, makeRoleWrappedReadReply(), ownerReadRequest);
+          const decryptError = await catchDecryptErrorForData(mockAgent, makeRoleWrappedReadReply(), ownerDataAccess);
 
           expect(decryptError.cause).toBe('unknown');
           expect(decryptError.message).toContain('Failed to decrypt record');
@@ -809,7 +768,7 @@ describe('dwn-encryption', () => {
       });
     });
 
-    it('should decrypt RecordsRead replies using delivered delegate keys without owner KMS fallback', async () => {
+    it('should decrypt record data using delivered delegate keys without owner KMS fallback', async () => {
       const owner = await TestDataGenerator.generateDidKeyPersona();
       const protocol = 'https://example.com/delegate-delivered-key';
       const plaintext = Encoder.stringToBytes('delivered key plaintext');
@@ -853,20 +812,6 @@ describe('dwn-encryption', () => {
         protocol,
         protocolPath : 'note',
       });
-      const request = {
-        author      : owner.did,
-        encryption  : true,
-        granteeDid  : 'did:example:delegate',
-        messageType : DwnInterface.RecordsRead,
-        target      : owner.did,
-      } as any;
-      const reply = {
-        status : { code: 200 },
-        entry  : {
-          recordsWrite : recordsWrite.message,
-          data         : DataStream.fromBytes(encryptedData),
-        },
-      } as any;
       const mockAgent = {
         keyManager: {
           getKeyUri        : sinon.stub().rejects(new Error('owner KMS fallback should not be used')),
@@ -882,16 +827,19 @@ describe('dwn-encryption', () => {
         }]),
       };
 
-      await maybeDecryptReply(
-        request,
-        reply,
-        mockAgent,
-        delegateCache,
-      );
+      const decryptedData = await decryptRecordData({
+        agent                      : mockAgent,
+        author                     : owner.did,
+        dataStream                 : DataStream.fromBytes(encryptedData),
+        delegateDecryptionKeyCache : delegateCache,
+        granteeDid                 : 'did:example:delegate',
+        recordsWrite               : recordsWrite.message,
+        target                     : owner.did,
+      });
 
       expect(mockAgent.keyManager.getKeyUri.called).toBe(false);
       expect(mockAgent.keyManager.unwrapContentKey.called).toBe(false);
-      expect(Encoder.bytesToString(await DataStream.toBytes(reply.entry.data))).toBe('delivered key plaintext');
+      expect(Encoder.bytesToString(await DataStream.toBytes(decryptedData))).toBe('delivered key plaintext');
     });
   });
 

@@ -518,10 +518,15 @@ describe('AgentDwnApi audience key delivery primitives', () => {
           filter       : { recordId: (chatWrite.message as RecordsWriteMessage).recordId },
           protocolRole : ROLE_PATH,
         },
-        encryption: true,
       });
       expect(read.reply.status.code).toBe(200);
-      const decrypted = new TextDecoder().decode(await DataStream.toBytes(read.reply.entry!.data!));
+      const decryptedStream = await testHarness.agent.dwn.decryptRecordData({
+        author       : bob.did.uri,
+        dataStream   : read.reply.entry!.data!,
+        recordsWrite : read.reply.entry!.recordsWrite,
+        target       : alice.did.uri,
+      });
+      const decrypted = new TextDecoder().decode(await DataStream.toBytes(decryptedStream));
       expect(decrypted).toBe(chatText);
     }, 30000);
 
@@ -698,10 +703,15 @@ describe('AgentDwnApi audience key delivery primitives', () => {
           filter       : { recordId: (chatWrite.message as RecordsWriteMessage).recordId },
           protocolRole : ROLE_PATH,
         },
-        encryption: true,
       });
       expect(read.reply.status.code).toBe(200);
-      const decrypted = new TextDecoder().decode(await DataStream.toBytes(read.reply.entry!.data!));
+      const decryptedStream = await testHarness.agent.dwn.decryptRecordData({
+        author       : bob.did.uri,
+        dataStream   : read.reply.entry!.data!,
+        recordsWrite : read.reply.entry!.recordsWrite,
+        target       : alice.did.uri,
+      });
+      const decrypted = new TextDecoder().decode(await DataStream.toBytes(decryptedStream));
       expect(decrypted).toBe(chatText);
     }, 30000);
 

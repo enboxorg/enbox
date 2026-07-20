@@ -547,6 +547,11 @@ describe('Record', () => {
       const privateRecordOptions = {
         author       : getRecordAuthor(aliceRecord!.rawMessage),
         connectedDid : aliceDid.uri,
+        dataAccess   : {
+          author : delegateDid.uri,
+          remote : true,
+          target : aliceDid.uri,
+        },
         remoteOrigin : aliceDid.uri,
         delegateDid  : delegateDid.uri,
         ...aliceRecord!.rawMessage,
@@ -557,7 +562,7 @@ describe('Record', () => {
         await record.data.bytes();
         throw new Error('Expected unauthorized data read to fail.');
       } catch (error:any) {
-        expect(error.message).toContain('Error encountered while attempting to read data:');
+        expect(error.message).toContain('Record: Unable to read stored data:');
       }
     });
   });
@@ -748,9 +753,10 @@ describe('Record', () => {
     // Create record using test RecordsWriteMessage.
     const record = new Record(testHarness.agent, {
       ...recordsWrite.message,
-      encodedData  : dataBlob,
+      storedData   : dataBlob,
       author       : aliceDid.uri,
-      connectedDid : aliceDid.uri
+      connectedDid : aliceDid.uri,
+      dataAccess   : { author: aliceDid.uri, remote: false, target: aliceDid.uri },
     });
 
     // Retained Record properties
@@ -2196,6 +2202,52 @@ describe('Record', () => {
     });
 
     describe('with store: false', () => {
+      it('sends encrypted ciphertext returned by a non-stored write without re-reading', async () => {
+        const encryptedProtocol: DwnProtocolDefinition = {
+          protocol  : `http://encrypted-store-false.xyz/${TestDataGenerator.randomString(15)}`,
+          published : true,
+          types     : {
+            note: {
+              dataFormats : ['text/plain'],
+              schema      : 'https://schemas.xyz/encrypted-store-false-note',
+            },
+          },
+          structure: { note: {} },
+        };
+        const { status: configureStatus, protocol } = await dwnAlice.protocols.configure({
+          definition : encryptedProtocol,
+          encryption : true,
+        });
+        expect(configureStatus.code).toBe(202);
+        expect((await protocol!.send(aliceDid.uri)).status.code).toBe(202);
+
+        const plaintext = 'ciphertext must be the repeatable stored source';
+        const writeResult = await dwnAlice.records.write({
+          data         : plaintext,
+          dataFormat   : 'text/plain',
+          encryption   : true,
+          protocol     : encryptedProtocol.protocol,
+          protocolPath : 'note',
+          schema       : encryptedProtocol.types.note.schema,
+          store        : false,
+        });
+        expect(writeResult.status.code).toBe(202);
+        expect(writeResult.record!.encryption).toBeDefined();
+
+        const processRequestSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
+        expect((await writeResult.record!.send(aliceDid.uri)).status.code).toBe(202);
+        expect(processRequestSpy.getCalls().some(
+          (call) => call.args[0].messageType === DwnInterface.RecordsRead
+        )).toBe(false);
+
+        const remoteRead = await dwnAlice.records.read({
+          from   : aliceDid.uri,
+          filter : { recordId: writeResult.record!.id },
+        });
+        expect(remoteRead.status.code).toBe(200);
+        expect(await remoteRead.record!.data.text()).toBe(plaintext);
+      });
+
       it('writes records to your own remote DWN but not your local DWN', async () => {
         // Alice creates a record but does not store it on her local DWN with `store: false`.
         const dataString = 'Hello, world!';
@@ -2435,9 +2487,10 @@ describe('Record', () => {
       // Create record using test RecordsWriteMessage.
       const record = new Record(testHarness.agent, {
         ...recordsWrite.message,
-        encodedData  : dataBlob,
+        storedData   : dataBlob,
         author       : aliceDid.uri,
         connectedDid : aliceDid.uri,
+        dataAccess   : { author: aliceDid.uri, remote: false, target: aliceDid.uri },
       });
 
       // Call toJSON() method.
@@ -3343,8 +3396,7 @@ describe('Record', () => {
 
       // Read back with decryption to verify the updated plaintext
       const { status: readStatus, record: readRecord } = await dwnAlice.records.read({
-        filter     : { recordId: record!.id },
-        encryption : true,
+        filter: { recordId: record!.id },
       });
       expect(readStatus.code).toBe(200);
       expect(readRecord).toBeDefined();
@@ -3420,8 +3472,7 @@ describe('Record', () => {
 
       // Read back with decryption
       const { status: readStatus, record: readRecord } = await dwnAlice.records.read({
-        filter     : { recordId: record!.id },
-        encryption : true,
+        filter: { recordId: record!.id },
       });
       expect(readStatus.code).toBe(200);
       expect(readRecord).toBeDefined();
@@ -3431,8 +3482,7 @@ describe('Record', () => {
 
       // Query back with decryption
       const { status: queryStatus, records: queryRecords } = await dwnAlice.records.query({
-        filter     : { protocol: encProtocol.protocol },
-        encryption : true,
+        filter: { protocol: encProtocol.protocol },
       });
       expect(queryStatus.code).toBe(200);
       expect(queryRecords).toHaveLength(1);
@@ -4840,19 +4890,22 @@ describe('Record', () => {
       });
       expect(writeStatus.code).toBe(202);
 
-      // Clear the in-memory data so the next data access triggers readRecordData().
-      record['_encodedData'] = undefined;
-      record['_readableStream'] = undefined;
+      const lazyRecord = new Record(testHarness.agent, {
+        ...record.rawMessage,
+        author       : record.author,
+        connectedDid : aliceDid.uri,
+        dataAccess   : { author: aliceDid.uri, remote: false, target: aliceDid.uri },
+      });
 
       // Stub processDwnRequest to throw an error.
       const stub = sinon.stub(testHarness.agent, 'processDwnRequest');
       stub.rejects(new Error('simulated network failure'));
 
       try {
-        await record.data.text();
+        await lazyRecord.data.text();
         throw new Error('Expected an exception to be thrown');
       } catch (error: any) {
-        expect(error.message).toContain('Error encountered while attempting to read data');
+        expect(error.message).toContain('Record: Unable to read stored data');
         expect(error.message).toContain('simulated network failure');
       }
 
@@ -4869,9 +4922,12 @@ describe('Record', () => {
       });
       expect(writeStatus.code).toBe(202);
 
-      // Clear in-memory data so readRecordData() is invoked.
-      record['_encodedData'] = undefined;
-      record['_readableStream'] = undefined;
+      const lazyRecord = new Record(testHarness.agent, {
+        ...record.rawMessage,
+        author       : record.author,
+        connectedDid : aliceDid.uri,
+        dataAccess   : { author: aliceDid.uri, remote: false, target: aliceDid.uri },
+      });
 
       // Stub processDwnRequest to return a non-200 status.
       const stub = sinon.stub(testHarness.agent, 'processDwnRequest');
@@ -4882,10 +4938,10 @@ describe('Record', () => {
       } as any);
 
       try {
-        await record.data.text();
+        await lazyRecord.data.text();
         throw new Error('Expected an exception to be thrown');
       } catch (error: any) {
-        expect(error.message).toContain('Error encountered while attempting to read data');
+        expect(error.message).toContain('Record: Unable to read stored data');
         expect(error.message).toContain('404');
       }
 

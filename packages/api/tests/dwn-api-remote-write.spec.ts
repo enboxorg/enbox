@@ -344,6 +344,7 @@ describe('cross-tenant writes (#973)', () => {
       expect(sendSpy.callCount).toBe(0);
       expect(processSpy.callCount).toBe(1);
       expect(processSpy.firstCall.args[0].target).toBe(aliceDid.uri);
+      expect(remoteOriginRecord['_remoteOrigin']).toBeUndefined();
     });
 
     it('should re-derive the author and re-home the remote origin on BOTH references after a co-update', async () => {

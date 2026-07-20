@@ -12,31 +12,21 @@ import type {
   KeyDecrypterDerivationScheme,
   PermissionGrant,
   ProtocolDefinition,
-  RecordsQueryReply,
-  RecordsQueryReplyEntry,
-  RecordsReadReply,
-  RecordsSubscribeReply,
   RecordsWriteMessage,
   RoleAudienceKeyMaterial,
-  SubscriptionEose,
-  SubscriptionEvent,
-  SubscriptionListener,
-  SubscriptionMessage,
   WrappedGrantKeyEnvelope,
 } from '@enbox/dwn-sdk-js';
 import type { PrivateKeyJwk, PublicKeyJwk } from '@enbox/crypto';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type {
+  DecryptRecordDataParams,
   DwnMessageReply,
   DwnResponse,
-  MessageHandler,
   ProcessDwnRequest,
-  SendDwnRequest,
 } from './types/dwn.js';
 
 import { logger } from '@enbox/common';
-import { SubscriptionHandlerTerminalError } from '@enbox/dwn-clients';
 import {
   assertWrappedGrantKeyEnvelope,
   Cid,
@@ -57,7 +47,6 @@ import {
   getRoleContextPrefix,
   grantKeyScopeCoversDeliveredScope,
   HdKey,
-  isEncryptionControlPath,
   isGrantKeyEligibleRecordsScope,
   KeyAgreementAlgorithm,
   KeyDerivationScheme,
@@ -73,7 +62,6 @@ import { Ed25519, X25519 } from '@enbox/crypto';
 import type { RemoteReadOutcome } from './dwn-read-through.js';
 
 import { DwnInterface } from './types/dwn.js';
-import { isDwnRequest } from './dwn-type-guards.js';
 import {
   processDwnRequestWithRemoteFallback as processDwnReadThrough,
   processDwnRequestWithRemoteFallbackDetailed as processDwnReadThroughDetailed,
@@ -208,8 +196,8 @@ export type AudienceDecryptFailureCause =
   | 'unknown';
 
 /**
- * Typed recipient-side decrypt failure raised by the auto-decrypt pipeline
- * (`maybeDecryptReply` and `resolveKeyDecrypter`). Carries the most specific
+ * Typed recipient-side decrypt failure raised while resolving application
+ * record data (`decryptRecordData` and `resolveKeyDecrypter`). Carries the most specific
  * {@link AudienceDecryptFailureCause} observed while resolving the record's decryption key, plus the
  * record coordinates apps need to attribute the failure. Non-role decrypt failures that flow through
  * the same wrap sites surface as cause `'unknown'` with the original detail preserved.
@@ -1352,399 +1340,60 @@ function recordHasRoleAudienceKeyEncryption(recordsWrite: RecordsWriteMessage): 
   ) === true;
 }
 
-/** Bundled `resolveKeyDecrypter` inputs shared by every entry decrypted within one `maybeDecryptReply` call. */
-type RecordDecryptionContext = {
-  agent: EnboxPlatformAgent;
-  authorDid: string;
-  targetDid: string;
-  granteeDid: string | undefined;
-  delegatedGrant: DataEncodedRecordsWriteMessage | undefined;
-  delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
-  audienceDecryptionKeyCache?: AudienceDecryptionKeyCache;
-};
-
 /**
- * Auto-decrypts a `RecordsRead` reply's data in place, when the entry is
- * encrypted, carries data, and is not itself an encryption-control record.
- *
- * @throws Error wrapping the underlying decryption failure with the record ID.
+ * Returns application-readable data for one RecordsWrite message. Plaintext
+ * records pass through unchanged; encrypted records are decrypted lazily from
+ * the message envelope and the caller's authorization context.
  */
-async function decryptRecordsReadReply(
-  readReply: RecordsReadReply,
-  context: RecordDecryptionContext,
-): Promise<void> {
-  const { agent, authorDid, targetDid, granteeDid, delegatedGrant, delegateDecryptionKeyCache, audienceDecryptionKeyCache } = context;
+export async function decryptRecordData(
+  params: DecryptRecordDataParams & {
+    agent: EnboxPlatformAgent;
+    delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
+    audienceDecryptionKeyCache?: AudienceDecryptionKeyCache;
+  },
+): Promise<ReadableStream<Uint8Array>> {
+  const {
+    agent,
+    audienceDecryptionKeyCache,
+    author,
+    dataStream,
+    delegatedGrant,
+    delegateDecryptionKeyCache,
+    granteeDid,
+    recordsWrite,
+    target,
+  } = params;
 
-  if (readReply.status.code !== 200
-      || !readReply.entry?.recordsWrite?.encryption
-      || !readReply.entry?.data
-      || isEncryptionControlPath(readReply.entry.recordsWrite.descriptor.protocolPath)) {
-    return;
+  if (recordsWrite.encryption === undefined) {
+    return dataStream;
   }
 
-  // Boundary guarantee: no raw error may reach callers from the role-audience decrypt path —
-  // resolution and decryption failures alike surface as AudienceDecryptError.
   const failureAccumulator = new AudienceDecryptFailureAccumulator();
   try {
     const keyDecrypter = await resolveKeyDecrypter({
       agent,
       audienceDecryptionKeyCache,
-      authorDid,
+      authorDid : author,
       delegatedGrant,
       delegateDecryptionKeyCache,
       failureAccumulator,
       granteeDid,
-      recordsWrite: readReply.entry.recordsWrite,
-      targetDid,
+      recordsWrite,
+      targetDid : target,
     });
-    readReply.entry.data = await Records.decrypt(
-      readReply.entry.recordsWrite,
-      keyDecrypter,
-      readReply.entry.data,
-    );
+
+    return await Records.decrypt(recordsWrite, keyDecrypter, dataStream);
   } catch (error: any) {
     if (error instanceof AudienceDecryptError) {
       throw error;
     }
     throw failureAccumulator.toError({
       fallbackDetail : `Original error: ${error.message}`,
-      protocol       : readReply.entry.recordsWrite.descriptor.protocol,
-      recipientDid   : authorDid,
-      recordId       : readReply.entry.recordsWrite.recordId,
+      protocol       : recordsWrite.descriptor.protocol,
+      recipientDid   : author,
+      recordId       : recordsWrite.recordId,
     });
   }
-}
-
-/**
- * Auto-decrypts one `RecordsQuery` reply entry's `encodedData` in place, when the
- * entry is encrypted, carries `encodedData`, and is not itself an
- * encryption-control record.
- *
- * @throws Error wrapping the underlying decryption failure with the record ID.
- */
-async function decryptRecordsQueryEntry(
-  entry: RecordsQueryReplyEntry,
-  context: RecordDecryptionContext,
-): Promise<void> {
-  const { agent, authorDid, targetDid, granteeDid, delegatedGrant, delegateDecryptionKeyCache, audienceDecryptionKeyCache } = context;
-
-  if (!entry.encryption || !entry.encodedData || isEncryptionControlPath(entry.descriptor.protocolPath)) {
-    return;
-  }
-
-  // Boundary guarantee: no raw error may reach callers from the role-audience decrypt path —
-  // resolution and decryption failures alike surface as AudienceDecryptError.
-  const failureAccumulator = new AudienceDecryptFailureAccumulator();
-  try {
-    const keyDecrypter = await resolveKeyDecrypter({
-      agent,
-      audienceDecryptionKeyCache,
-      authorDid,
-      delegatedGrant,
-      delegateDecryptionKeyCache,
-      failureAccumulator,
-      granteeDid,
-      recordsWrite: entry as RecordsWriteMessage,
-      targetDid,
-    });
-    const cipherBytes = Encoder.base64UrlToBytes(entry.encodedData);
-    const cipherStream = DataStream.fromBytes(cipherBytes);
-    const plainStream = await Records.decrypt(
-      entry as RecordsWriteMessage, keyDecrypter, cipherStream,
-    );
-    const plainBytes = await DataStream.toBytes(plainStream);
-    entry.encodedData = Encoder.bytesToBase64Url(plainBytes);
-  } catch (error: any) {
-    if (error instanceof AudienceDecryptError) {
-      throw error;
-    }
-    throw failureAccumulator.toError({
-      fallbackDetail : `Original error: ${error.message}`,
-      protocol       : entry.descriptor.protocol,
-      recipientDid   : authorDid,
-      recordId       : entry.recordId,
-    });
-  }
-}
-
-/** Auto-decrypts every eligible entry of a `RecordsQuery` reply (small records inline as `encodedData`), in place. */
-async function decryptRecordsQueryReply(
-  queryReply: RecordsQueryReply,
-  context: RecordDecryptionContext,
-): Promise<void> {
-  if (queryReply.status.code !== 200 || !queryReply.entries) {
-    return;
-  }
-
-  for (const entry of queryReply.entries) {
-    await decryptRecordsQueryEntry(entry, context);
-  }
-}
-
-/**
- * Auto-decrypts every eligible initial-snapshot entry of a `RecordsSubscribe`
- * reply (small records inline as `encodedData`), in place.
- *
- * Unlike the `RecordsQuery` counterpart this NEVER throws: by the time the
- * reply is post-processed the live subscription inside it is already
- * registered, so a thrown decryption error would both discard the caller's
- * only handle to close that subscription and fail a subscribe that is
- * otherwise healthy. An entry that cannot be decrypted has its inline
- * ciphertext withheld instead — the per-record lazy read surfaces (or, once a
- * usable key has arrived, resolves) the decryption failure on data access.
- */
-async function decryptRecordsSubscribeReply(
-  subscribeReply: RecordsSubscribeReply,
-  context: RecordDecryptionContext,
-): Promise<void> {
-  if (subscribeReply.status.code !== 200 || !subscribeReply.entries) {
-    return;
-  }
-
-  for (const entry of subscribeReply.entries) {
-    try {
-      await decryptRecordsQueryEntry(entry, context);
-    } catch (error: any) {
-      delete entry.encodedData;
-      logger.log(
-        `AgentDwnApi: withholding undecryptable subscription snapshot data for record ` +
-        `'${entry.recordId}'. Original error: ${error.message}`
-      );
-    }
-  }
-}
-
-/**
- * Post-processes a DWN reply, auto-decrypting data if encryption is enabled.
- * Delegates to the SDK's Records.decrypt() with the appropriate KeyDecrypter —
- * resolveKeyDecrypter() selects either a delivered delegate key or KMS.
- *
- * @param request - The original DWN request
- * @param reply - The DWN reply to process
- * @param agent - The platform agent
- * @param delegateDecryptionKeyCache - Cache for scope-aware delegate decryption keys
- */
-export async function maybeDecryptReply<T extends DwnInterface>(
-  request: ProcessDwnRequest<T> | SendDwnRequest<T>,
-  reply: DwnMessageReply[T],
-  agent: EnboxPlatformAgent,
-  delegateDecryptionKeyCache?: DelegateDecryptionKeyCache,
-  audienceDecryptionKeyCache?: AudienceDecryptionKeyCache,
-): Promise<void> {
-  if (!('encryption' in request) || !request.encryption) {
-    return;
-  }
-
-  // `request` here is the encrypted-write variant — `'encryption' in` has
-  // eliminated the `{ messageCid }`-only arm of `SendDwnRequest`, leaving
-  // the `ProcessDwnRequest<T>` shape which declares the optional
-  // `granteeDid` field. Narrow once at the top so neither branch below
-  // needs to repeat the cast.
-  const encryptedRequest = request as ProcessDwnRequest<T>;
-  const context: RecordDecryptionContext = {
-    agent,
-    authorDid      : encryptedRequest.author,
-    targetDid      : encryptedRequest.target,
-    granteeDid     : encryptedRequest.granteeDid,
-    delegatedGrant : getDelegatedGrantFromRequest(encryptedRequest),
-    delegateDecryptionKeyCache,
-    audienceDecryptionKeyCache,
-  };
-
-  // Auto-decrypt RecordsRead replies
-  if (isDwnRequest(encryptedRequest as ProcessDwnRequest<DwnInterface>, DwnInterface.RecordsRead)) {
-    await decryptRecordsReadReply(reply as RecordsReadReply, context);
-  }
-
-  // Auto-decrypt RecordsQuery replies (small records inline as encodedData)
-  if (isDwnRequest(encryptedRequest as ProcessDwnRequest<DwnInterface>, DwnInterface.RecordsQuery)) {
-    await decryptRecordsQueryReply(reply as RecordsQueryReply, context);
-  }
-
-  // Auto-decrypt RecordsSubscribe initial snapshot entries (small records inline as encodedData)
-  if (isDwnRequest(encryptedRequest as ProcessDwnRequest<DwnInterface>, DwnInterface.RecordsSubscribe)) {
-    await decryptRecordsSubscribeReply(reply as RecordsSubscribeReply, context);
-  }
-}
-
-/**
- * Auto-decrypts one subscription event's inline `encodedData` in place, when
- * the event carries a `RecordsWrite` with an `encryption` envelope, inline
- * data, and is not an encryption-control record. Every other event —
- * `RecordsDelete`, unencrypted records, and events whose data was too large to
- * be inlined — passes through untouched; for the non-inlined case the
- * per-record lazy read (with decryption) remains the data path.
- *
- * A decryption failure NEVER propagates (one undecryptable record must not
- * kill the subscription): the inline ciphertext is withheld from the event
- * instead, so the record's data access falls back to the lazy read, which
- * rejects with the decryption error — or succeeds, once a usable key arrives.
- */
-async function decryptSubscriptionEventData(
-  subscriptionEvent: SubscriptionEvent,
-  context: RecordDecryptionContext,
-): Promise<void> {
-  const { message } = subscriptionEvent.event;
-  if (subscriptionEvent.encodedData === undefined
-      || !Records.isRecordsWrite(message)
-      || message.encryption === undefined
-      || isEncryptionControlPath(message.descriptor.protocolPath)) {
-    return;
-  }
-
-  try {
-    const keyDecrypter = await resolveKeyDecrypter({
-      agent                      : context.agent,
-      audienceDecryptionKeyCache : context.audienceDecryptionKeyCache,
-      authorDid                  : context.authorDid,
-      delegatedGrant             : context.delegatedGrant,
-      delegateDecryptionKeyCache : context.delegateDecryptionKeyCache,
-      granteeDid                 : context.granteeDid,
-      recordsWrite               : message,
-      targetDid                  : context.targetDid,
-    });
-
-    const cipherBytes = Encoder.base64UrlToBytes(subscriptionEvent.encodedData);
-    const cipherStream = DataStream.fromBytes(cipherBytes);
-    const plainStream = await Records.decrypt(message, keyDecrypter, cipherStream);
-    const plainBytes = await DataStream.toBytes(plainStream);
-    subscriptionEvent.encodedData = Encoder.bytesToBase64Url(plainBytes);
-  } catch (error: any) {
-    delete subscriptionEvent.encodedData;
-    logger.log(
-      `AgentDwnApi: withholding undecryptable subscription event data for record ` +
-      `'${message.recordId}'. Original error: ${error.message}`
-    );
-  }
-}
-
-/**
- * Wraps a `RecordsSubscribe` request's subscription handler so event-inline
- * record payloads are auto-decrypted BEFORE events reach the caller, mirroring
- * what {@link maybeDecryptReply} does for read/query replies. Returns the
- * request's handler unchanged (possibly `undefined`) unless the request is a
- * `RecordsSubscribe` with `encryption` enabled and a handler present.
- *
- * Subscription listeners are synchronous while decryption is not, so the
- * wrapper serializes delivery through a promise chain: events are decrypted
- * and forwarded strictly in arrival order, and non-event messages (EOSE,
- * subscription errors, transport lifecycle notifications) flow through the
- * same chain to preserve their ordering relative to events. The terminal
- * `.catch` keeps a throwing downstream handler from wedging the chain,
- * matching the SDK's own subscription delivery-queue convention.
- */
-/**
- * Bound on events queued behind in-flight subscription decryption before the
- * wrapper terminates the subscription with a synthetic `error` message. The
- * WebSocket transport's handler-gated acks keep real backlogs far below this;
- * the bound exists for transports that cannot exert backpressure.
- */
-export const MAX_PENDING_SUBSCRIPTION_DECRYPTS = 256;
-
-export function maybeWrapSubscriptionHandlerForDecryption<T extends DwnInterface>(
-  request: ProcessDwnRequest<T>,
-  agent: EnboxPlatformAgent,
-  delegateDecryptionKeyCache?: DelegateDecryptionKeyCache,
-  audienceDecryptionKeyCache?: AudienceDecryptionKeyCache,
-): MessageHandler[T] | undefined {
-  const handler = request.subscriptionHandler;
-  if (handler === undefined || !request.encryption
-      || !isDwnRequest(request as ProcessDwnRequest<DwnInterface>, DwnInterface.RecordsSubscribe)) {
-    return handler;
-  }
-
-  const context: RecordDecryptionContext = {
-    agent,
-    authorDid      : request.author,
-    targetDid      : request.target,
-    granteeDid     : request.granteeDid,
-    delegatedGrant : getDelegatedGrantFromRequest(request),
-    delegateDecryptionKeyCache,
-    audienceDecryptionKeyCache,
-  };
-
-  const listener = handler as SubscriptionListener;
-  let deliveryQueue: Promise<void> = Promise.resolve();
-  let pendingDecrypts = 0;
-  let overflowed = false;
-  let lastDeliveredCursor: SubscriptionEose['cursor'] | undefined;
-
-  const overflowDetail =
-    `subscription decryption fell more than ${MAX_PENDING_SUBSCRIPTION_DECRYPTS} events behind; ` +
-    'the subscription is terminated — resubscribe from the last delivered cursor to replay the gap.';
-
-  // A terminal rejection tells an ack-coupled transport to close the tracked
-  // subscription and withhold the ack for this and every later event. The
-  // rejection is pre-observed so emitters that ignore listener return values
-  // (the local DWN event stream) cannot surface it as an unhandled rejection.
-  const terminalRejection = (): Promise<void> => {
-    const rejection = Promise.reject(new SubscriptionHandlerTerminalError(overflowDetail));
-    rejection.catch((): void => {});
-    return rejection;
-  };
-
-  // Returns the event's own completion promise so transports that support
-  // backpressure (the WebSocket client awaits the handler before acking) can
-  // gate their flow-control window on decryption AND consumer processing
-  // actually finishing.
-  const decryptingListener = (subscriptionMessage: SubscriptionMessage): Promise<void> => {
-    if (overflowed) {
-      return terminalRejection();
-    }
-
-    if (pendingDecrypts >= MAX_PENDING_SUBSCRIPTION_DECRYPTS) {
-      // The bound is the backstop for transports without ack coupling: fail
-      // the subscription loudly instead of accumulating ciphertext without
-      // limit. The overflowing event is dropped, so the synthetic error —
-      // delivered only after every queued event has drained — carries the
-      // cursor of the last event actually delivered: resubscribing from it
-      // replays the dropped event and everything after it. No event is
-      // silently skipped.
-      overflowed = true;
-      const errorTurn = deliveryQueue.then(async (): Promise<void> => {
-        const overflowError: SubscriptionMessage = {
-          type   : 'error',
-          cursor : lastDeliveredCursor as SubscriptionEose['cursor'],
-          error  : {
-            code   : 'SubscriptionDecryptBackpressureExceeded',
-            detail : overflowDetail,
-          },
-        };
-        await listener(overflowError);
-      });
-      deliveryQueue = errorTurn.catch((): void => {});
-      return terminalRejection();
-    }
-
-    pendingDecrypts += 1;
-    const turn = deliveryQueue.then(async (): Promise<void> => {
-      if (subscriptionMessage.type === 'event') {
-        await decryptSubscriptionEventData(subscriptionMessage, context);
-      }
-      await listener(subscriptionMessage);
-      // Only an event the consumer fully processed moves the delivered
-      // watermark; a throwing consumer leaves it in place.
-      if ('cursor' in subscriptionMessage && subscriptionMessage.cursor !== undefined) {
-        lastDeliveredCursor = subscriptionMessage.cursor;
-      }
-    });
-    deliveryQueue = turn.catch((): void => {});
-    void turn
-      .finally((): void => {
-        pendingDecrypts -= 1;
-      })
-      .catch((): void => {});
-    return turn;
-  };
-
-  return decryptingListener as unknown as MessageHandler[T];
-}
-
-function getDelegatedGrantFromRequest<T extends DwnInterface>(
-  request: ProcessDwnRequest<T>,
-): DataEncodedRecordsWriteMessage | undefined {
-  const messageParams = request.messageParams as { delegatedGrant?: DataEncodedRecordsWriteMessage } | undefined;
-  return messageParams?.delegatedGrant;
 }
 
 async function resolveRoleAudienceDecrypter(params: {

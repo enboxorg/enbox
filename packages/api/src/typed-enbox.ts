@@ -447,13 +447,6 @@ export type TypedQueryRequest = {
    */
   protocolRole?: string;
 
-  /**
-   * When `true`, automatically decrypts encrypted records in the results.
-   *
-   * If omitted, encrypted records are returned as-is (data accessors will
-   * return encrypted bytes).
-   */
-  encryption?: boolean;
 };
 
 /**
@@ -565,12 +558,6 @@ export type TypedReadRequest = {
     parentContextId?: string;
   };
 
-  /**
-   * When `true`, automatically decrypts the record if it is encrypted.
-   *
-   * If omitted, encrypted records are returned as-is.
-   */
-  encryption?: boolean;
 };
 
 /**
@@ -665,16 +652,6 @@ export type TypedSubscribeRequest = {
    */
   protocolRole?: string;
 
-  /**
-   * When `true`, automatically decrypts encrypted records delivered by the
-   * subscription — both the initial snapshot and inline event payloads.
-   * Events whose data is too large to be delivered inline fall back to a
-   * lazy (decrypting) read on `record.data` access.
-   *
-   * Defaults to `true` when the subscribed type declares
-   * `encryptionRequired`; set `false` to opt out.
-   */
-  encryption?: boolean;
 };
 
 /**
@@ -1288,17 +1265,12 @@ export class TypedEnbox<
     const normalizedPath = normalizePath(path);
     await this._ensureReady(normalizedPath);
     const typeName = lastSegment(normalizedPath);
+    const drainFilter = deriveChildScopeFilter(request?.filter, normalizedPath);
     const typeEntry = this._definition.types[typeName];
 
-    const drainFilter = deriveChildScopeFilter(request?.filter, normalizedPath);
-    // Auto-enable decryption when the type requires it — same policy as query().
-    const autoEncryption = typeEntry?.encryptionRequired === true
-      ? true : undefined;
-
     const drain = this._dwn.records.queryAll({
-      from       : request?.from,
-      encryption : request?.encryption ?? autoEncryption,
-      filter     : {
+      from   : request?.from,
+      filter : {
         ...drainFilter,
         protocol     : this._definition.protocol,
         protocolPath : normalizedPath,
@@ -1488,16 +1460,9 @@ export class TypedEnbox<
         const typeEntry = this._definition.types[typeName];
 
         const queryFilter = deriveChildScopeFilter(request?.filter, normalizedPath);
-        // Auto-enable decryption when the type requires it. Delegates use
-        // delivered ProtocolPath keys from the connect flow; the agent layer
-        // resolves the correct key decrypter automatically.
-        const autoEncryption = typeEntry?.encryptionRequired === true
-          ? true : undefined;
-
         const { status, records, cursor } = await this._dwn.records.query({
-          from       : request?.from,
-          encryption : request?.encryption ?? autoEncryption,
-          filter     : {
+          from   : request?.from,
+          filter : {
             ...queryFilter,
             protocol     : this._definition.protocol,
             protocolPath : normalizedPath,
@@ -1586,16 +1551,10 @@ export class TypedEnbox<
         const typeEntry = this._definition.types[typeName];
 
         const readFilter = deriveChildScopeFilter(request.filter, normalizedPath);
-        // Auto-enable decryption when the type requires it. See query()
-        // comment for delegate decryption details.
-        const autoEncryption = typeEntry?.encryptionRequired === true
-          ? true : undefined;
-
         const { status, record } = await this._dwn.records.read({
-          from       : request.from,
-          encryption : request.encryption ?? autoEncryption,
-          protocol   : this._definition.protocol,
-          filter     : {
+          from     : request.from,
+          protocol : this._definition.protocol,
+          filter   : {
             ...readFilter,
             protocol     : this._definition.protocol,
             protocolPath : normalizedPath,
@@ -1691,15 +1650,9 @@ export class TypedEnbox<
         const typeEntry = this._definition.types[typeName];
 
         const subFilter = deriveChildScopeFilter(request?.filter, normalizedPath);
-        // Auto-enable decryption when the type requires it. See query()
-        // comment for delegate decryption details.
-        const autoEncryption = typeEntry?.encryptionRequired === true
-          ? true : undefined;
-
         const { status, liveQuery } = await this._dwn.records.subscribe({
-          from       : request?.from,
-          encryption : request?.encryption ?? autoEncryption,
-          filter     : {
+          from   : request?.from,
+          filter : {
             ...subFilter,
             protocol     : this._definition.protocol,
             protocolPath : normalizedPath,

@@ -7,11 +7,38 @@
  */
 
 import type {
+  DecryptRecordDataParams,
   DwnInterface,
   DwnMessage,
   DwnMessageDescriptor,
   DwnPublicKeyJwk,
 } from '@enbox/agent';
+
+/** Authorization and routing context used when opening a record's raw stored bytes. */
+export type RecordDataAccess = Pick<
+  DecryptRecordDataParams,
+  'author' | 'target' | 'granteeDid' | 'delegatedGrant'
+> & {
+  /** Whether reads for this source are dispatched to a remote DWN. */
+  remote: boolean;
+};
+
+/**
+ * Repeatable, version-pinned access to raw record bytes as stored by a DWN.
+ * The bytes are ciphertext when the RecordsWrite carries an encryption envelope.
+ *
+ * @internal
+ */
+export type StoredRecordDataSource = {
+  /** CID committed to by the RecordsWrite message that owns this source. */
+  dataCid: string;
+
+  /** Opens the raw stored bytes. Implementations may re-read them from the DWN. */
+  open(): Promise<ReadableStream<Uint8Array>>;
+};
+
+/** Raw stored bytes supplied when constructing a {@link Record}. */
+export type StoredRecordData = string | Blob | ReadableStream<Uint8Array> | StoredRecordDataSource;
 
 /**
  * Represents Immutable Record properties that cannot be changed after the record is created.
@@ -82,18 +109,11 @@ export type RecordOptions = DwnMessage[DwnInterface.RecordsWrite | DwnInterface.
   /** The optional DID that will sign the records on behalf of the connectedDid  */
   delegateDid?: string;
 
-  /** The data of the record, either as a Base64 URL encoded string or a Blob. */
-  encodedData?: string | Blob;
+  /** Raw bytes as stored by the DWN, or a version-pinned source that can reopen them. */
+  storedData?: StoredRecordData;
 
-  /**
-   * A stream of data, conforming to the Web `ReadableStream` interface, providing a mechanism
-   * to read the record's data sequentially. This is particularly useful for handling large
-   * datasets that should not be loaded entirely in memory, allowing for efficient, chunked
-   * processing of the record's data.
-   *
-   * The DWN SDK now returns Web `ReadableStream` natively, so no conversion is needed.
-   */
-  data?: ReadableStream;
+  /** Authorization and routing context under which the raw bytes were obtained. */
+  dataAccess: RecordDataAccess;
 
   /** The initial `RecordsWriteMessage` that represents the initial state/version of the record. */
   initialWrite?: DwnMessage[DwnInterface.RecordsWrite];
@@ -132,9 +152,9 @@ export type RecordUpdateParams = {
    * that was merely *read* from a remote tenant still updates **locally**
    * unless `from` is passed explicitly.
    *
-   * The returned record is stamped with `remoteOrigin` (from `from`, falling
-   * back to the record's existing remote origin) so its subsequent data
-   * re-reads target the owner tenant.
+   * A successful cross-tenant update stamps the returned record with the
+   * explicit `from` origin so subsequent data re-reads target that tenant.
+   * A local update clears any origin inherited from an earlier remote read.
    *
    * Remote-path boundaries:
    * - {@link RecordUpdateParams.recipientRolePublicKey} is NOT supported with
