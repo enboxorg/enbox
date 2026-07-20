@@ -1767,9 +1767,8 @@ export class AgentDwnApi {
         let forCid: ReadableStream<Uint8Array>;
 
         if (dataStream instanceof Blob) {
-          const [ cidCopy, processCopy ] = (dataStream.stream() as ReadableStream<Uint8Array>).tee();
-          forCid = cidCopy;
-          readableStream = processCopy;
+          forCid = dataStream.stream() as ReadableStream<Uint8Array>;
+          readableStream = dataStream.stream() as ReadableStream<Uint8Array>;
 
         } else if (dataStream instanceof ReadableStream) {
           const [ cidCopy, processCopy ] = dataStream.tee();
@@ -1777,7 +1776,21 @@ export class AgentDwnApi {
           readableStream = processCopy;
         }
 
-        if (!rawMessage && messageParams) {
+        if (rawMessage) {
+          const recordsWriteMessage = rawMessage as RecordsWriteMessage;
+          const [ dataCidStream, dataSizeStream ] = DataStream.duplicateDataStream(forCid!, 2);
+          const [ dataCid, dataSize ] = await Promise.all([
+            Cid.computeDagPbCidFromStream(dataCidStream),
+            AgentDwnApi.getDataStreamByteLength(dataSizeStream),
+          ]);
+
+          RecordsWrite.validateDataIntegrity(
+            recordsWriteMessage.descriptor.dataCid,
+            recordsWriteMessage.descriptor.dataSize,
+            dataCid,
+            dataSize,
+          );
+        } else if (messageParams) {
           messageParams.dataCid = await Cid.computeDagPbCidFromStream(forCid!);
           // Compute data size by consuming forCid (already consumed by computeDagPbCidFromStream)
           // and using the Blob/stream size if available.
@@ -2038,6 +2051,15 @@ export class AgentDwnApi {
       message    : dwnMessage.message as DwnMessage[T],
       dataStream : readableStream,
     };
+  }
+
+  private static async getDataStreamByteLength(dataStream: ReadableStream<Uint8Array>): Promise<number> {
+    let byteLength = 0;
+    for await (const chunk of DataStream.asAsyncIterable(dataStream)) {
+      byteLength += chunk.length;
+    }
+
+    return byteLength;
   }
 
   private async populateDelegatedGrantForWrite(
