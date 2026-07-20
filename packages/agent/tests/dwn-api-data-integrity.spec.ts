@@ -1,7 +1,15 @@
 import type { Dwn } from '@enbox/dwn-sdk-js';
 import type { SinonStub } from 'sinon';
 
-import { DataStream, DwnErrorCode, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import {
+  ContentEncryptionAlgorithm,
+  DataStream,
+  DwnErrorCode,
+  Encryption,
+  KeyAgreementAlgorithm,
+  KeyDerivationScheme,
+  TestDataGenerator,
+} from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
@@ -17,7 +25,7 @@ describe('AgentDwnApi raw RecordsWrite data integrity', () => {
     sinon.restore();
   });
 
-  it('forwards a matching caller-supplied stream after validating it', async () => {
+  it('forwards a matching caller-supplied Blob after validating it', async () => {
     const dataBytes = new TextEncoder().encode('expected record data');
     const { author, message } = await TestDataGenerator.generateRecordsWrite({ data: dataBytes });
     const sendDwnRequest = sinon.stub().callsFake(async ({ data }): Promise<object> => {
@@ -31,6 +39,28 @@ describe('AgentDwnApi raw RecordsWrite data integrity', () => {
       target      : author.did,
       messageType : DwnInterface.RecordsWrite,
       rawMessage  : message,
+      dataStream  : new Blob([dataBytes]),
+    });
+
+    expect(reply.status.code).toBe(202);
+    expect(sendDwnRequest.calledOnce).toBe(true);
+  });
+
+  it('forwards a matching caller-supplied stream through sendRequest after validating it', async () => {
+    const dataBytes = new TextEncoder().encode('expected record data');
+    const { author, message } = await TestDataGenerator.generateRecordsWrite({ data: dataBytes });
+    const sendDwnRequest = sinon.stub().callsFake(async ({ data }): Promise<object> => {
+      expect(await DataStream.toBytes(data)).toEqual(dataBytes);
+      return { status: { code: 202, detail: 'Accepted' } };
+    });
+    const dwnApi = createRemoteDwnApi(sendDwnRequest);
+    sinon.stub(dwnApi, 'getDwnEndpointUrlsForTarget').resolves(['https://remote-dwn.example']);
+
+    const { reply } = await dwnApi.sendRequest({
+      author      : author.did,
+      target      : author.did,
+      messageType : DwnInterface.RecordsWrite,
+      rawMessage  : message,
       dataStream  : DataStream.fromBytes(dataBytes),
     });
 
@@ -38,21 +68,45 @@ describe('AgentDwnApi raw RecordsWrite data integrity', () => {
     expect(sendDwnRequest.calledOnce).toBe(true);
   });
 
-  it('rejects a mismatched data CID before invoking the remote transport', async () => {
-    const expectedBytes = new TextEncoder().encode('expected record data');
-    const suppliedBytes = new TextEncoder().encode('different record data');
-    const { author, message } = await TestDataGenerator.generateRecordsWrite({ data: expectedBytes });
+  it('rejects plaintext supplied for an encrypted raw message before sendRequest dispatch', async () => {
+    const author = await TestDataGenerator.generatePersona();
+    const plaintext = new TextEncoder().encode('private record data');
+    const dataEncryptionKey = crypto.getRandomValues(new Uint8Array(32));
+    const initializationVector = crypto.getRandomValues(new Uint8Array(16));
+    const ciphertext = await Encryption.encrypt(
+      ContentEncryptionAlgorithm.A256CTR,
+      dataEncryptionKey,
+      initializationVector,
+      plaintext,
+    );
+    const publicKey = author.encryptionKeyPair.publicJwk;
+    const { message } = await TestDataGenerator.generateRecordsWrite({
+      author,
+      data            : ciphertext,
+      encryptionInput : {
+        initializationVector,
+        key                 : dataEncryptionKey,
+        keyEncryptionInputs : [{
+          algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+          derivationScheme : KeyDerivationScheme.ProtocolPath,
+          keyId            : await Encryption.getKeyId(publicKey),
+          publicKey,
+        }],
+      },
+    });
     const sendDwnRequest = sinon.stub();
     const dwnApi = createRemoteDwnApi(sendDwnRequest);
+    sinon.stub(dwnApi, 'getDwnEndpointUrlsForTarget').resolves(['https://remote-dwn.example']);
 
-    const request = dwnApi.processRequest({
+    const request = dwnApi.sendRequest({
       author      : author.did,
       target      : author.did,
       messageType : DwnInterface.RecordsWrite,
       rawMessage  : message,
-      dataStream  : new Blob([suppliedBytes]),
+      dataStream  : new Blob([plaintext]),
     });
 
+    expect(message.encryption).toBeDefined();
     await expect(request).rejects.toThrow(DwnErrorCode.RecordsWriteDataCidMismatch);
     expect(sendDwnRequest.called).toBe(false);
   });

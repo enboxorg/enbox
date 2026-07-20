@@ -1778,11 +1778,10 @@ export class AgentDwnApi {
 
         if (rawMessage) {
           const recordsWriteMessage = rawMessage as RecordsWriteMessage;
-          const [ dataCidStream, dataSizeStream ] = DataStream.duplicateDataStream(forCid!, 2);
-          const [ dataCid, dataSize ] = await Promise.all([
-            Cid.computeDagPbCidFromStream(dataCidStream),
-            AgentDwnApi.getDataStreamByteLength(dataSizeStream),
-          ]);
+          // A one-shot stream is intentionally validated in full before dispatch while caller-supplied
+          // plaintext can still reach this path. Once transmission is sourced exclusively from stored
+          // bytes, this integrity check can move into the outbound ciphertext stream without plaintext egress.
+          const { dataCid, dataSize } = await AgentDwnApi.computeDataCidAndSize(forCid!);
 
           RecordsWrite.validateDataIntegrity(
             recordsWriteMessage.descriptor.dataCid,
@@ -2053,13 +2052,20 @@ export class AgentDwnApi {
     };
   }
 
-  private static async getDataStreamByteLength(dataStream: ReadableStream<Uint8Array>): Promise<number> {
-    let byteLength = 0;
-    for await (const chunk of DataStream.asAsyncIterable(dataStream)) {
-      byteLength += chunk.length;
-    }
+  private static async computeDataCidAndSize(dataStream: ReadableStream<Uint8Array>): Promise<{
+    dataCid: string;
+    dataSize: number;
+  }> {
+    let dataSize = 0;
+    const countingStream = dataStream.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller): void {
+        dataSize += chunk.byteLength;
+        controller.enqueue(chunk);
+      },
+    }));
+    const dataCid = await Cid.computeDagPbCidFromStream(countingStream);
 
-    return byteLength;
+    return { dataCid, dataSize };
   }
 
   private async populateDelegatedGrantForWrite(
