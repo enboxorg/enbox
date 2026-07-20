@@ -227,13 +227,41 @@ export class SyncEngineLevel implements SyncEngine {
   private static readonly DID_RESOLUTION_RETRY_BACKOFF_MS = [2000, 4000, 8000];
 
   constructor({ agent, dataPath, db }: SyncEngineLevelParams) {
-    this._lockScope = dataPath ?? 'default';
     this._agent = agent;
     this._permissionsApi = new AgentPermissionsApi({ agent });
+    this._lockScope = dataPath ?? 'default';
     this._db = db ?? new Level<string, string>(dataPath ?? 'DATA/AGENT/SYNC_STORE');
+
+    // Durable stores. Every collaborator below reads through one of these,
+    // so they must exist first.
     this._deadLetterStore = new SyncDeadLetterStoreLevel(this._db);
     this._deferredPullStore = new SyncDeferredPullStoreLevel(this._db);
-    this._connectivityManager = new SyncConnectivityManager({
+    this._endpointStore = new SyncEndpointStoreLevel(this._db);
+    this._identityStore = new SyncIdentityStoreLevel(this._db);
+
+    // Collaborators. Each is handed an `operations` adapter of arrow
+    // functions that resolve `this.…` at CALL time, not here — which is why
+    // this list does not have to be in dependency order. The drain
+    // coordinator names the feed-convergence manager, and both live
+    // processors name the link-recovery coordinator, all of which are
+    // constructed further down. Keep the adapters lazy and that stays true.
+    this._connectivityManager = this.createConnectivityManager();
+    this._drainCoordinator = this.createDrainCoordinator();
+    this._runCoordinator = this.createRunCoordinator();
+    this._scopeClosureValidator = this.createScopeClosureValidator();
+    this._quotaManager = this.createQuotaManager();
+    this._feedConvergenceManager = this.createFeedConvergenceManager();
+    this._durableFeedReconciler = this.createDurableFeedReconciler();
+    this._targetPlanner = this.createTargetPlanner();
+    this._statusReporter = this.createStatusReporter();
+    this._livePullProcessor = this.createLivePullProcessor();
+    this._livePushCoordinator = this.createLivePushCoordinator();
+    this._linkRecoveryCoordinator = this.createLinkRecoveryCoordinator();
+  }
+
+  /** Wire SyncConnectivityManager to this engine. */
+  private createConnectivityManager(): SyncConnectivityManager {
+    return new SyncConnectivityManager({
       operations: {
         getRuntimeScope        : (): SyncRuntime => this._runtime,
         markActiveLinksOffline : (): void => { this.markActiveLinksOffline(); },
@@ -243,9 +271,11 @@ export class SyncEngineLevel implements SyncEngine {
         runIntegrityCheck      : (): Promise<void> => this.sync(undefined, { verifyConvergence: true }),
       },
     });
-    this._endpointStore = new SyncEndpointStoreLevel(this._db);
-    this._identityStore = new SyncIdentityStoreLevel(this._db);
-    this._drainCoordinator = new SyncDrainCoordinator({
+  }
+
+  /** Wire SyncDrainCoordinator to this engine. */
+  private createDrainCoordinator(): SyncDrainCoordinator {
+    return new SyncDrainCoordinator({
       identityStore : this._identityStore,
       operations    : {
         buildTargetsForEndpoint: (did, remoteEndpoint, options): Promise<SyncTarget[]> =>
@@ -272,7 +302,11 @@ export class SyncEngineLevel implements SyncEngine {
           this.verifyFeedConvergence(target, shouldContinue),
       },
     });
-    this._runCoordinator = new SyncRunCoordinator({
+  }
+
+  /** Wire SyncRunCoordinator to this engine. */
+  private createRunCoordinator(): SyncRunCoordinator {
+    return new SyncRunCoordinator({
       operations: {
         clearFeedConvergenceFailure: (target): Promise<void> =>
           this._feedConvergenceManager.clear(target),
@@ -290,7 +324,11 @@ export class SyncEngineLevel implements SyncEngine {
         reportError: (message, error): void => { console.error(message, error); },
       },
     });
-    this._scopeClosureValidator = new SyncScopeClosureValidator({
+  }
+
+  /** Wire SyncScopeClosureValidator to this engine. */
+  private createScopeClosureValidator(): SyncScopeClosureValidator {
+    return new SyncScopeClosureValidator({
       operations: {
         queryProtocolHistory: (query): Promise<SyncScopeProtocolHistoryPage> =>
           this.queryScopeProtocolHistory(query),
@@ -298,7 +336,11 @@ export class SyncEngineLevel implements SyncEngine {
           this.resolveScopeClosurePermissionGrantIds(query),
       },
     });
-    this._quotaManager = new SyncQuotaManager({
+  }
+
+  /** Wire SyncQuotaManager to this engine. */
+  private createQuotaManager(): SyncQuotaManager {
+    return new SyncQuotaManager({
       store      : new SyncQuotaStoreLevel(this._db),
       operations : {
         clearFailedMessage: (target, messageCid): Promise<void> =>
@@ -346,7 +388,11 @@ export class SyncEngineLevel implements SyncEngine {
           this.recordTerminalQuotaFailure(target, failure),
       },
     });
-    this._feedConvergenceManager = new SyncFeedConvergenceManager({
+  }
+
+  /** Wire SyncFeedConvergenceManager to this engine. */
+  private createFeedConvergenceManager(): SyncFeedConvergenceManager {
+    return new SyncFeedConvergenceManager({
       operations: {
         getActiveLink           : (linkKey): ReplicationLinkState | undefined => this.getActiveLink(linkKey),
         getDeadLettersForTenant : (tenantDid): Promise<DeadLetterEntry[]> =>
@@ -368,7 +414,11 @@ export class SyncEngineLevel implements SyncEngine {
         transitionToPaused: (linkKey, link): Promise<void> => this.transitionToPaused(linkKey, link),
       },
     });
-    this._durableFeedReconciler = new SyncDurableFeedReconciler({
+  }
+
+  /** Wire SyncDurableFeedReconciler to this engine. */
+  private createDurableFeedReconciler(): SyncDurableFeedReconciler {
+    return new SyncDurableFeedReconciler({
       admitRemotePage: (target, entries, shouldContinue): Promise<FeedPageAdmissionResult> =>
         this.admitRemoteFeedPage(target, entries, shouldContinue),
       bootstrapRemotePermissionGrants: (
@@ -392,12 +442,20 @@ export class SyncEngineLevel implements SyncEngine {
         this.pushLocalFeedPage(target, entries, shouldContinue),
       queryFeed: (query): Promise<MessagesQueryReply> => this.queryDurableFeed(query),
     });
-    this._targetPlanner = new SyncTargetPlanner({
+  }
+
+  /** Wire SyncTargetPlanner to this engine. */
+  private createTargetPlanner(): SyncTargetPlanner {
+    return new SyncTargetPlanner({
       getTargetResolver : (): SyncTargetResolver => this.targetResolver,
       identityStore     : this._identityStore,
       warn              : (message, error): void => { console.warn(message, error); },
     });
-    this._statusReporter = new SyncStatusReporter({
+  }
+
+  /** Wire SyncStatusReporter to this engine. */
+  private createStatusReporter(): SyncStatusReporter {
+    return new SyncStatusReporter({
       operations: {
         getConnectivityState       : (): SyncConnectivityState => this.connectivityState,
         getCurrentLinkIdentityKeys : (): Promise<Set<string> | undefined> => this.getCurrentDurableLinkIdentityKeys(),
@@ -407,7 +465,11 @@ export class SyncEngineLevel implements SyncEngine {
         getQuotaBlocks             : (): Promise<SyncQuotaBlockState[]> => this._quotaManager.getAllStates(),
       },
     });
-    this._livePullProcessor = new SyncLivePullProcessor({
+  }
+
+  /** Wire SyncLivePullProcessor to this engine. */
+  private createLivePullProcessor(): SyncLivePullProcessor {
+    return new SyncLivePullProcessor({
       echoSuppressor : this._echoSuppressor,
       operations     : {
         emitCheckpointAdvance : (link): void => { this.emitCheckpointAdvance(link, 'pull'); },
@@ -428,7 +490,11 @@ export class SyncEngineLevel implements SyncEngine {
         warn: (message): void => { console.warn(message); },
       },
     });
-    this._livePushCoordinator = new SyncLivePushCoordinator({
+  }
+
+  /** Wire SyncLivePushCoordinator to this engine. */
+  private createLivePushCoordinator(): SyncLivePushCoordinator {
+    return new SyncLivePushCoordinator({
       echoSuppressor : this._echoSuppressor,
       operations     : {
         captureIdentityTaskRunner: (tenantDid): SyncIdentityTaskRunner =>
@@ -446,7 +512,11 @@ export class SyncEngineLevel implements SyncEngine {
           this.transitionPushResult(target, result, options),
       },
     });
-    this._linkRecoveryCoordinator = new SyncLinkRecoveryCoordinator({
+  }
+
+  /** Wire SyncLinkRecoveryCoordinator to this engine. */
+  private createLinkRecoveryCoordinator(): SyncLinkRecoveryCoordinator {
+    return new SyncLinkRecoveryCoordinator({
       operations: {
         captureIdentityTaskRunner: (tenantDid): SyncIdentityTaskRunner =>
           this._lifecycle.captureIdentityTaskRunner(tenantDid),
@@ -472,6 +542,7 @@ export class SyncEngineLevel implements SyncEngine {
       },
     });
   }
+
 
   /** Lazy accessor for the replication ledger. */
   private get ledger(): SyncReplicationLinkStore {
