@@ -102,7 +102,7 @@ export class SyncLinkRecoveryCoordinator {
     // Whoever consumes the request afterwards, whether an already-executing
     // pass's trailing turn or the supervision below, observes the complete
     // transition; only durability and supervision trail the block.
-    controller.clearPullInflight();
+    controller.startNewPullGeneration();
     if (options?.resumeToken !== undefined) {
       controller.setRepairResumeToken(options.resumeToken);
     }
@@ -142,7 +142,7 @@ export class SyncLinkRecoveryCoordinator {
       // the teardown below awaits an in-flight close must be refused by
       // the generation-fenced attach — attaching after the bump is
       // impossible, and anything attached before it is closed below.
-      controller.clearPullInflight();
+      controller.startNewPullGeneration();
     }
 
     await this.setOfflineStatus(link, 'paused');

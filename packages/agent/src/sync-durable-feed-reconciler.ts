@@ -137,7 +137,7 @@ export class SyncDurableFeedReconciler {
       // A failed predecessor must not poison this link's queue.
     }).then(async (): Promise<SyncDurableFeedReconcileResult> => {
       if (SyncDurableFeedReconciler.shouldAbort(shouldContinue)) {
-        return { ...SyncDurableFeedReconciler.emptyResult(options), aborted: true };
+        return { ...SyncDurableFeedReconciler.initialResult(options), aborted: true };
       }
       return this.reconcileTarget(target, options, shouldContinue);
     });
@@ -246,7 +246,7 @@ export class SyncDurableFeedReconciler {
     options?: SyncDurableFeedReconcileOptions,
     shouldContinue?: () => boolean,
   ): Promise<SyncDurableFeedReconcileResult> {
-    const result = SyncDurableFeedReconciler.emptyResult(options);
+    const result = SyncDurableFeedReconciler.initialResult(options);
     const link = await this._operations.getOrCreateLink(target);
     if (link.status === 'paused') {
       return result;
@@ -328,7 +328,7 @@ export class SyncDurableFeedReconciler {
       }
 
       hasActionableDiffs ||= pageResult.hasActionableDiffs;
-      const cursorAdvance = await this.advanceCursor(link, 'pull', cursor, reply, target);
+      const cursorAdvance = await this.commitPageProgress(link, 'pull', cursor, reply, target);
       if (cursorAdvance.drained) {
         return { admittedCids, hasActionableDiffs, remoteFingerprint: reply.fingerprint };
       }
@@ -389,7 +389,7 @@ export class SyncDurableFeedReconciler {
       }
 
       hasActionableDiffs ||= pageResult.hasActionableDiffs;
-      const cursorAdvance = await this.advanceCursor(link, 'pull', cursor, reply, target);
+      const cursorAdvance = await this.commitPageProgress(link, 'pull', cursor, reply, target);
       if (cursorAdvance.drained) {
         return { admittedCids, hasActionableDiffs, remoteFingerprint: reply.fingerprint };
       }
@@ -437,7 +437,7 @@ export class SyncDurableFeedReconciler {
         return { hasActionableDiffs, pushFailures: pageResult.failures };
       }
 
-      const cursorAdvance = await this.advanceCursor(link, 'push', cursor, reply, target);
+      const cursorAdvance = await this.commitPageProgress(link, 'push', cursor, reply, target);
       if (cursorAdvance.drained) {
         return { hasActionableDiffs, localFingerprint: reply.fingerprint, pushFailures: [] };
       }
@@ -519,7 +519,7 @@ export class SyncDurableFeedReconciler {
         remoteCids.add(entry.messageCid);
       }
 
-      const cursorAdvance = await this.advanceCursor(link, 'push', cursor, reply, target);
+      const cursorAdvance = await this.commitPageProgress(link, 'push', cursor, reply, target);
       if (cursorAdvance.drained) {
         return { hasActionableDiffs, localFingerprint: reply.fingerprint, pushFailures: [] };
       }
@@ -603,7 +603,7 @@ export class SyncDurableFeedReconciler {
     return { kind: 'processed', hasActionableDiffs: pageResult.hasActionableDiffs };
   }
 
-  private async advanceCursor(
+  private async commitPageProgress(
     link: ReplicationLinkState,
     direction: SyncDirection,
     previousCursor: ProgressToken | undefined,
@@ -701,7 +701,16 @@ export class SyncDurableFeedReconciler {
     }
   }
 
-  private static emptyResult(options?: SyncDurableFeedReconcileOptions): SyncDurableFeedReconcileResult {
+  /**
+   * The neutral result a cycle starts from and merges into.
+   *
+   * `converged` starts OPTIMISTIC when convergence verification is
+   * requested: only `mergeResult` ever drives it to `false`. A path that
+   * returns this untouched therefore reports convergence without having
+   * compared fingerprints — which is what a paused link does deliberately,
+   * since it has nothing to reconcile.
+   */
+  private static initialResult(options?: SyncDurableFeedReconcileOptions): SyncDurableFeedReconcileResult {
     return {
       admittedCids       : [],
       ...(options?.verifyConvergence === true ? { converged: true } : {}),

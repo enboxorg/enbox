@@ -292,7 +292,16 @@ export class SyncLinkController {
   }
 
   /** Discard incomplete pull deliveries while preserving future ordinal order. */
-  public clearPullInflight(): void {
+  /**
+   * Begin a new pull generation: bump the counter so outstanding delivery
+   * tickets and in-flight subscription attaches are fenced off, discard
+   * incomplete deliveries, and rebase the commit cursor onto the next
+   * unissued ordinal.
+   *
+   * The bump is the point — both callers rely on it to publish a pause or
+   * repair transition synchronously, before any await.
+   */
+  public startNewPullGeneration(): void {
     this._pullEpoch++;
     this._pullInflight.clear();
     this._nextPullCommitOrdinal = this._nextPullDeliveryOrdinal;

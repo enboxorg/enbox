@@ -274,13 +274,13 @@ describe('SyncEngineLevel dead letter tracking', () => {
     await unregisterEngine.unregisterIdentity(tenantDid);
 
     const staleInternal = staleEngine as unknown as {
-      deadLetterExpiredDeferredPull(
+      tryRetireDeferredPull(
         target: SyncTarget,
         entry: MessagesQueryReplyEntry,
         detail: string | undefined,
       ): Promise<boolean>;
     };
-    expect(await staleInternal.deadLetterExpiredDeferredPull(
+    expect(await staleInternal.tryRetireDeferredPull(
       staleTarget,
       { messageCid },
       'dependency unavailable',
@@ -436,13 +436,13 @@ describe('SyncEngineLevel dead letter tracking', () => {
     detail: string | undefined,
   ) => Promise<boolean> {
     const internal = engine as unknown as {
-      deadLetterExpiredDeferredPull(
+      tryRetireDeferredPull(
         target: SyncTarget,
         entry: MessagesQueryReplyEntry,
         detail: string | undefined,
       ): Promise<boolean>;
     };
-    return internal.deadLetterExpiredDeferredPull.bind(internal);
+    return internal.tryRetireDeferredPull.bind(internal);
   }
 
   function deferredState({ attempts = 1, aged = false, detail }: {

@@ -699,7 +699,7 @@ class RemoteApplyPushContext {
 
     let result: ReplicationApplyResult;
     try {
-      const data = await pushData(entry);
+      const data = await resolvePushPayload(entry);
       this.deps.onBeforeApply?.(cid);
       result = await this.deps.agent.rpc.applyReplicatedMessage({
         dwnUrl    : this.deps.dwnUrl,
@@ -1199,7 +1199,7 @@ class RemoteApplyPushContext {
   }
 }
 
-async function pushData(entry: SyncMessageEntry): Promise<Blob | ReadableStream<Uint8Array> | undefined> {
+async function resolvePushPayload(entry: SyncMessageEntry): Promise<Blob | ReadableStream<Uint8Array> | undefined> {
   if (entry.bufferedData !== undefined) {
     return new Blob([entry.bufferedData] as BlobPart[], { type: 'application/octet-stream' });
   }

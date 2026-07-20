@@ -149,7 +149,7 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     const fixture = createEngineFixture(db);
     const cursorStarted = deferred();
     const releaseCursor = deferred();
-    sinon.stub(fixture.engine as any, 'getInitialPullCursor').callsFake(async () => {
+    sinon.stub(fixture.engine as any, 'resolveInitialPullCursor').callsFake(async () => {
       cursorStarted.resolve();
       await releaseCursor.promise;
       return undefined;

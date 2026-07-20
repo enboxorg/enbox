@@ -264,7 +264,7 @@ export class SyncEngineLevel implements SyncEngine {
         recordConnectivityFailure : (): void => { this._connectivityManager.recordFailure(); },
         recordConnectivitySuccess : (): void => { this._connectivityManager.recordSuccess(); },
         recordPushFailures        : async (target, failures): Promise<void> => {
-          await this.recordTerminalSyncPushFailures(target, failures);
+          await this.recordTerminalPushFailures(target, failures);
         },
         registerEndpoint: (remoteEndpoint): Promise<void> =>
           this.registerSupplementalDwnEndpoint(remoteEndpoint),
@@ -286,7 +286,7 @@ export class SyncEngineLevel implements SyncEngine {
         recordConnectivityFailure : (): void => { this._connectivityManager.recordFailure(); },
         recordConnectivitySuccess : (): void => { this._connectivityManager.recordSuccess(); },
         recordPushFailures        : (target, failures): Promise<number> =>
-          this.recordTerminalSyncPushFailures(target, failures),
+          this.recordTerminalPushFailures(target, failures),
         reportError: (message, error): void => { console.error(message, error); },
       },
     });
@@ -1907,7 +1907,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     const cursorKey = target.linkKey;
     const { link } = controller;
-    const cursor = await this.getInitialPullCursor({ did, dwnUrl, link });
+    const cursor = await this.resolveInitialPullCursor({ did, dwnUrl, link });
     if (!controller.isPullEpochCurrent(subscriptionPullEpoch) || controller.linkKey !== cursorKey) { return false; }
 
     const filters = target.scope.kind === 'protocolSet'
@@ -2032,7 +2032,7 @@ export class SyncEngineLevel implements SyncEngine {
     return true;
   }
 
-  private async getInitialPullCursor({ did, dwnUrl, link }: {
+  private async resolveInitialPullCursor({ did, dwnUrl, link }: {
     did: string;
     dwnUrl: string;
     link?: ReplicationLinkState;
@@ -2171,7 +2171,15 @@ export class SyncEngineLevel implements SyncEngine {
     this._livePushCoordinator.scheduleQuotaProbe(linkKey, link, nextProbeAt);
   }
 
-  private async recordTerminalSyncPushFailures(
+  /**
+   * Dead-letter every TERMINAL failure in `failures` and clear its quota
+   * block.
+   *
+   * @returns The number of RETRYABLE failures — the ones deliberately left
+   *   untouched for a later pass. Note the asymmetry: this method acts on
+   *   terminal failures and reports on the others.
+   */
+  private async recordTerminalPushFailures(
     target: SyncTarget,
     failures: PushFailure[],
   ): Promise<number> {
@@ -2651,7 +2659,7 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       if (outcome.kind === 'deferred') {
-        if (!await this.deadLetterExpiredDeferredPull(target, entry, outcome.detail)) {
+        if (!await this.tryRetireDeferredPull(target, entry, outcome.detail)) {
           return { kind: 'deferred', admittedCids, detail: outcome.detail, hasActionableDiffs, messageCid: entry.messageCid };
         }
         hasActionableDiffs = true;
@@ -2684,7 +2692,18 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  private async deadLetterExpiredDeferredPull(
+  /**
+   * Retire a deferred pull entry if it can no longer make progress.
+   *
+   * @returns `true` when the caller should SKIP this entry and continue the
+   *   page — either because it aged past
+   *   {@link DEFERRED_PULL_DEAD_LETTER_AFTER_MS} and was dead-lettered, or
+   *   because the tenant was unregistered underneath us (in which case
+   *   nothing is dead-lettered and the deferred work is simply abandoned).
+   *   `false` means the entry is still within its retry window and the page
+   *   must stop on it.
+   */
+  private async tryRetireDeferredPull(
     target: SyncTarget,
     entry: MessagesQueryReplyEntry,
     detail: string | undefined,
@@ -2837,7 +2856,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private pruneQuotaBlocksForCurrentTargets(targets: SyncTarget[], expectedGeneration: number): Promise<void> {
-    return this._quotaManager.pruneForCurrentTargets(
+    return this._quotaManager.pruneStaleLinkBlocks(
       targets,
       (): boolean => this._targetPlanner.generation === expectedGeneration,
     );
@@ -2859,7 +2878,7 @@ export class SyncEngineLevel implements SyncEngine {
     target: SyncTarget,
     result: SyncReconcileResult,
   ): Promise<boolean> {
-    return this._quotaManager.isFeedDivergenceExplained(target, result);
+    return this._quotaManager.reconcileAndExplainFeedDivergence(target, result);
   }
 
   private async admitRemoteFeedEntry(

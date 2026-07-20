@@ -225,10 +225,10 @@ describe('SyncQuotaManager', () => {
       manager.recordBlock(otherTenant, 'other-cid', undefined, undefined),
     ]);
 
-    await manager.pruneForCurrentTargets([current], () => false);
+    await manager.pruneStaleLinkBlocks([current], () => false);
     expect(await manager.getAllStates()).toHaveLength(3);
 
-    await manager.pruneForCurrentTargets([current], () => true);
+    await manager.pruneStaleLinkBlocks([current], () => true);
 
     expect((await manager.getAllStates()).map(({ messageCid }) => messageCid).sort()).toEqual([
       'current-cid',
@@ -242,10 +242,10 @@ describe('SyncQuotaManager', () => {
     operations.collectLocalFeedCids.resolves(new Set(['blocked-cid']));
     operations.collectRemoteFeedCids.resolves(new Set());
 
-    expect(await manager.isFeedDivergenceExplained(target(), {})).toBe(true);
+    expect(await manager.reconcileAndExplainFeedDivergence(target(), {})).toBe(true);
 
     operations.collectRemoteFeedCids.resolves(new Set(['unexpected-remote-cid']));
-    expect(await manager.isFeedDivergenceExplained(target(), {})).toBe(false);
+    expect(await manager.reconcileAndExplainFeedDivergence(target(), {})).toBe(false);
   });
 
   it('uses the earliest feed probe and latest grant probe when folding a target schedule', async () => {
@@ -276,7 +276,7 @@ describe('SyncQuotaManager', () => {
     operations.collectLocalFeedCids.resolves(new Set());
     operations.collectRemoteFeedCids.resolves(new Set());
 
-    expect(await manager.isFeedDivergenceExplained(target(), {})).toBe(true);
+    expect(await manager.reconcileAndExplainFeedDivergence(target(), {})).toBe(true);
     expect(await manager.getStatesForTarget(target())).toEqual([]);
     expect(operations.onQuotaCleared.calledOnceWith(target(), 'retired-cid', 'superseded')).toBe(true);
   });

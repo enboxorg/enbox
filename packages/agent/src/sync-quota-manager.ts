@@ -218,7 +218,7 @@ export class SyncQuotaManager {
     }
   }
 
-  public async pruneForCurrentTargets(
+  public async pruneStaleLinkBlocks(
     targets: SyncTarget[],
     isCurrent: () => boolean,
   ): Promise<void> {
@@ -278,7 +278,7 @@ export class SyncQuotaManager {
    * Return whether every exact feed difference is explained by this link's
    * durable quota omissions, reconciling locally retired rows along the way.
    */
-  public async isFeedDivergenceExplained(
+  public async reconcileAndExplainFeedDivergence(
     target: SyncTarget,
     result: { quotaBlocked?: boolean },
   ): Promise<boolean> {
@@ -313,7 +313,7 @@ export class SyncQuotaManager {
       localOnly.every((cid) => omittedCids.has(cid));
   }
 
-  private async clearBlockWithResolution(
+  private async resolveBlock(
     target: SyncTarget,
     messageCid: string,
     resolution: PushSuccessResolution,
@@ -406,7 +406,7 @@ export class SyncQuotaManager {
     const hasActiveBlocks = (await this.getActiveBlocksForTarget(target)).length > 0;
     for (const acknowledgement of acknowledgementsByCid.values()) {
       await this._operations.clearFailedMessage(target, acknowledgement.cid);
-      await this.clearBlockWithResolution(
+      await this.resolveBlock(
         target,
         acknowledgement.cid,
         acknowledgement.resolution,
@@ -444,7 +444,7 @@ export class SyncQuotaManager {
       return;
     }
     if (failure.localMissing === true && previousBlock !== undefined) {
-      await this.clearBlockWithResolution(target, failure.cid, 'superseded');
+      await this.resolveBlock(target, failure.cid, 'superseded');
       return;
     }
 
@@ -586,7 +586,7 @@ export class SyncQuotaManager {
     if (!localCids.has(block.messageCid) && blockedDependencyIsLocalOnly) {
       await this.markBlockAsSupersededOmission(target, block.messageCid, block.state);
     } else if (!localCids.has(block.messageCid)) {
-      await this.clearBlockWithResolution(target, block.messageCid, 'superseded');
+      await this.resolveBlock(target, block.messageCid, 'superseded');
     }
   }
 

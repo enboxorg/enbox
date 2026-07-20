@@ -218,7 +218,7 @@ describe('SyncEngineLevel', () => {
           throw new Error('stale target resolution was pruned');
         }
       });
-      sinon.stub(internal._quotaManager, 'pruneForCurrentTargets').callsFake(prune);
+      sinon.stub(internal._quotaManager, 'pruneStaleLinkBlocks').callsFake(prune);
 
       const resolution = internal.getSyncTargets();
       await iteratorStarted;

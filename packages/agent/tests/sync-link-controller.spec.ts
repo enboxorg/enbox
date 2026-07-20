@@ -59,7 +59,7 @@ describe('SyncLinkController', () => {
     const controller = new SyncLinkController('link-key', link);
     controller.startPullDelivery(token(1));
 
-    controller.clearPullInflight();
+    controller.startNewPullGeneration();
     const next = controller.startPullDelivery(token(2));
 
     expect(next.ordinal).toBe(1);
@@ -100,12 +100,12 @@ describe('SyncLinkController', () => {
     expect(link.pull.contiguousAppliedToken).toEqual(token(2));
   });
 
-  it('should ignore commits abandoned by clearPullInflight', () => {
+  it('should ignore commits abandoned by startNewPullGeneration', () => {
     const link = createLink();
     const controller = new SyncLinkController('link-key', link);
     const abandoned = controller.startPullDelivery(token(1));
 
-    controller.clearPullInflight();
+    controller.startNewPullGeneration();
 
     expect(controller.commitPullDelivery(abandoned)).toBe(0);
     expect(link.pull.contiguousAppliedToken).toBeUndefined();
