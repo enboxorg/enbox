@@ -5151,7 +5151,7 @@ describe('Record', () => {
         filter: { protocol, protocolPath: 'note' },
       });
       expect(queryStatus.code).toBe(200);
-      expect(records.length).toBe(1);
+      expect(records).toHaveLength(1);
       const queried = records[0];
 
       const sendStub = sinon.stub(testHarness.agent, 'sendDwnRequest')
@@ -5162,7 +5162,7 @@ describe('Record', () => {
 
       // The cached ciphertext was reused — NO extra RecordsRead round-trip.
       const reads = processSpy.getCalls().filter((c: any) => c.args[0].messageType === DwnInterface.RecordsRead);
-      expect(reads.length).toBe(0);
+      expect(reads).toHaveLength(0);
 
       // And what reached the wire is the ciphertext, not the plaintext.
       const writeCall = sendStub.getCalls().find((c: any) =>
