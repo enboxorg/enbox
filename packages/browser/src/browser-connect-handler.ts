@@ -48,8 +48,8 @@ export const DEFAULT_WALLETS: WalletOption[] = [
     description : 'A fresh approach to digital identity',
   },
   {
-    name        : 'Onyx',
-    url         : 'https://onyx-wallet.pages.dev',
+    name        : 'Sumi',
+    url         : 'https://sumi-wallet.pages.dev',
     description : 'A refined home for your digital identity',
   },
   {
@@ -61,6 +61,16 @@ export const DEFAULT_WALLETS: WalletOption[] = [
     name        : 'Astoria',
     url         : 'https://astoria-wallet.pages.dev',
     description : 'A grand home for your digital identity',
+  },
+  {
+    name        : 'Quay',
+    url         : 'https://quay-id.pages.dev',
+    description : 'A safe harbor for your digital identity',
+  },
+  {
+    name        : 'Quoin',
+    url         : 'https://quoin-id.pages.dev',
+    description : 'A cornerstone for your digital identity',
   },
 ];
 
