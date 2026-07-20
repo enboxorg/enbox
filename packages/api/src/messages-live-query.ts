@@ -3,6 +3,7 @@ import type { GenericMessage, ProgressToken } from '@enbox/dwn-sdk-js';
 
 import { Message } from '@enbox/dwn-sdk-js';
 
+import type { Record } from './record.js';
 import type { LiveQueryError, LiveQueryLifecycleEvent } from './live-query.js';
 
 /**
@@ -76,6 +77,12 @@ export type MessageChange = {
   /** Routing summary extracted from the message. */
   descriptor: MessageDescriptor;
   /**
+   * Hydrated record requested with `includeRecords`, present only for
+   * `RecordsWrite` events. Its stored source is pinned to this message version;
+   * application data is decrypted lazily when consumed.
+   */
+  record?: Record;
+  /**
    * CID of the delivered message. Present on durable-log deliveries; when a
    * transport omits it, compute one via `Message.getCid(change.message)`.
    */
@@ -96,7 +103,9 @@ export type MessagesLiveQueryEventType = 'event' | LiveQueryLifecycleEvent | 'er
  * `messages.subscribe()` is the lightweight change signal — multiple filters
  * per subscription, each event carrying the raw message plus a routing
  * {@link MessageDescriptor} — designed for cache invalidation and reactive
- * reads over the local store (which sync keeps populated).
+ * reads over the local store (which sync keeps populated). Callers that opt
+ * into `includeRecords` also receive a hydrated {@link MessageChange.record}
+ * for each `RecordsWrite` event.
  *
  * ### Events
  *

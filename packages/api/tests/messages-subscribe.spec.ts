@@ -1,4 +1,5 @@
 import type { BearerDid } from '@enbox/dids';
+import type { DwnProtocolDefinition } from '@enbox/agent';
 import type { MessageChange } from '../src/messages-live-query.js';
 
 import sinon from 'sinon';
@@ -6,8 +7,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 
 import { PlatformAgentTestHarness } from '@enbox/agent/test';
 
-import { EnboxUserAgent } from '@enbox/agent';
-import { DwnInterfaceName, DwnMethodName, Poller } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnConstant, DwnInterfaceName, DwnMethodName, Poller } from '@enbox/dwn-sdk-js';
+import { DwnInterface, EnboxUserAgent } from '@enbox/agent';
 
 import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' with { type: 'json' };
 
@@ -52,6 +53,30 @@ describe('DwnApi.messages', () => {
   });
 
   describe('subscribe()', () => {
+    async function configureNoteProtocol(encryptionRequired: boolean = false): Promise<DwnProtocolDefinition> {
+      const definition: DwnProtocolDefinition = {
+        published : true,
+        protocol  : protocolUri,
+        types     : {
+          note: {
+            dataFormats : ['text/plain'],
+            schema      : 'https://example.com/schemas/note',
+            ...(encryptionRequired ? { encryptionRequired: true } : {}),
+          },
+        },
+        structure: { note: {} },
+      };
+      expect((await dwnAlice.protocols.configure({ definition })).status.code).toBe(202);
+      return definition;
+    }
+
+    async function waitForRecordEvent(events: MessageChange[], recordId: string): Promise<MessageChange> {
+      await Poller.pollUntilSuccessOrTimeout(async () => {
+        expect(events.some(event => event.descriptor.recordId === recordId)).toBe(true);
+      });
+      return events.find(event => event.descriptor.recordId === recordId)!;
+    }
+
     it('should deliver every message on the tenant log when no filters are given', async () => {
       const definition = { ...emailProtocolDefinition, protocol: protocolUri };
 
@@ -91,6 +116,7 @@ describe('DwnApi.messages', () => {
       expect(writeChange.descriptor.author).toBe(aliceDid.uri);
       expect(writeChange.messageCid).toBeDefined();
       expect(writeChange.cursor.position).toBeDefined();
+      expect(writeChange.record).toBeUndefined();
 
       // After close, further writes must not dispatch.
       await liveQuery!.close();
@@ -158,6 +184,157 @@ describe('DwnApi.messages', () => {
       // The unmatched protocol never reaches this subscription.
       await new Promise(resolve => setTimeout(resolve, 100));
       expect(events.some(event => event.descriptor.recordId === recordInOther)).toBe(false);
+
+      await liveQuery!.close();
+    });
+
+    it('should hydrate an inline encrypted record without a backing read or plaintext egress', async () => {
+      const definition = await configureNoteProtocol(true);
+
+      const { status, liveQuery } = await dwnAlice.messages.subscribe({
+        filters        : [{ protocol: definition.protocol }],
+        includeRecords : true,
+      });
+      expect(status.code).toBe(200);
+
+      const events: MessageChange[] = [];
+      liveQuery!.on('event', (change): void => { events.push(change); });
+
+      const plaintext = 'inline encrypted message event';
+      const { status: writeStatus, record: written } = await dwnAlice.records.write({
+        data         : plaintext,
+        dataFormat   : 'text/plain',
+        protocol     : definition.protocol,
+        protocolPath : 'note',
+        schema       : definition.types.note.schema,
+      });
+      expect(writeStatus.code).toBe(202);
+
+      const change = await waitForRecordEvent(events, written!.id);
+      expect(change.record).toBeDefined();
+
+      const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
+      expect(await change.record!.data.text()).toBe(plaintext);
+      expect(processSpy.getCalls().some(call =>
+        call.args[0].messageType === DwnInterface.MessagesRead ||
+        call.args[0].messageType === DwnInterface.RecordsRead
+      )).toBe(false);
+
+      const sendStub = sinon.stub(testHarness.agent, 'sendDwnRequest')
+        .resolves({ reply: { status: { code: 202, detail: 'Accepted' } } } as any);
+      expect((await change.record!.send('did:example:remote')).status.code).toBe(202);
+      const dataStream = sendStub.firstCall.args[0].dataStream as ReadableStream<Uint8Array>;
+      const sentBytes = await DataStream.toBytes(dataStream);
+      expect(new TextDecoder().decode(sentBytes)).not.toBe(plaintext);
+
+      await liveQuery!.close();
+    });
+
+    it('should reopen large event data by message CID without using RecordsRead', async () => {
+      const definition = await configureNoteProtocol();
+
+      const { liveQuery } = await dwnAlice.messages.subscribe({
+        filters        : [{ protocol: definition.protocol }],
+        includeRecords : true,
+      });
+      const events: MessageChange[] = [];
+      liveQuery!.on('event', (change): void => { events.push(change); });
+
+      const data = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000);
+      const { record: written } = await dwnAlice.records.write({
+        data,
+        dataFormat   : 'text/plain',
+        protocol     : definition.protocol,
+        protocolPath : 'note',
+        schema       : definition.types.note.schema,
+      });
+      const change = await waitForRecordEvent(events, written!.id);
+
+      const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
+      expect(await change.record!.data.text()).toBe(data);
+      const messagesReads = processSpy.getCalls().filter(
+        call => call.args[0].messageType === DwnInterface.MessagesRead
+      );
+      expect(messagesReads).toHaveLength(1);
+      expect(messagesReads[0].args[0].messageParams.messageCid).toBe(change.messageCid);
+      expect(processSpy.getCalls().some(call => call.args[0].messageType === DwnInterface.RecordsRead)).toBe(false);
+
+      await liveQuery!.close();
+    });
+
+    it('should reject large data returned for a different message version', async () => {
+      const definition = await configureNoteProtocol();
+      const { liveQuery } = await dwnAlice.messages.subscribe({
+        filters        : [{ protocol: definition.protocol }],
+        includeRecords : true,
+      });
+      const events: MessageChange[] = [];
+      liveQuery!.on('event', (change): void => { events.push(change); });
+
+      const data = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000);
+      const { record } = await dwnAlice.records.write({
+        data,
+        dataFormat   : 'text/plain',
+        protocol     : definition.protocol,
+        protocolPath : 'note',
+        schema       : definition.types.note.schema,
+      });
+      const change = await waitForRecordEvent(events, record!.id);
+
+      const processRequest = testHarness.agent.processDwnRequest.bind(testHarness.agent);
+      sinon.stub(testHarness.agent, 'processDwnRequest').callsFake(async (request: any): Promise<any> => {
+        const response = await processRequest(request);
+        if (request.messageType !== DwnInterface.MessagesRead) {
+          return response;
+        }
+        const mismatchedMessage = structuredClone(response.reply.entry.message);
+        mismatchedMessage.descriptor.dataCid = 'bafyreidifferentmessageversion';
+        return {
+          ...response,
+          reply: {
+            ...response.reply,
+            entry: { ...response.reply.entry, message: mismatchedMessage },
+          },
+        };
+      });
+
+      await expect(change.record!.data.text()).rejects.toThrow('MessagesRead returned a different message');
+      await liveQuery!.close();
+    });
+
+    it('should surface decryption failure on record data without terminating the feed', async () => {
+      const definition = await configureNoteProtocol(true);
+
+      const { liveQuery } = await dwnAlice.messages.subscribe({
+        filters        : [{ protocol: definition.protocol }],
+        includeRecords : true,
+      });
+      const events: MessageChange[] = [];
+      liveQuery!.on('event', (change): void => { events.push(change); });
+
+      const first = await dwnAlice.records.write({
+        data         : 'unreadable',
+        dataFormat   : 'text/plain',
+        protocol     : definition.protocol,
+        protocolPath : 'note',
+        schema       : definition.types.note.schema,
+      });
+      const firstChange = await waitForRecordEvent(events, first.record!.id);
+
+      const decryptStub = sinon.stub(testHarness.agent, 'decryptRecordData')
+        .rejects(new Error('test-induced decryption failure'));
+      await expect(firstChange.record!.data.text()).rejects.toThrow('test-induced decryption failure');
+      decryptStub.restore();
+
+      const second = await dwnAlice.records.write({
+        data         : 'still delivered',
+        dataFormat   : 'text/plain',
+        protocol     : definition.protocol,
+        protocolPath : 'note',
+        schema       : definition.types.note.schema,
+      });
+      const secondChange = await waitForRecordEvent(events, second.record!.id);
+      expect(await secondChange.record!.data.text()).toBe('still delivered');
 
       await liveQuery!.close();
     });
@@ -243,7 +420,8 @@ describe('DwnApi.messages', () => {
       });
 
       const { liveQuery } = await dwnAlice.messages.subscribe({
-        filters: [{ protocol: definition.protocol }],
+        filters        : [{ protocol: definition.protocol }],
+        includeRecords : true,
       });
       const events: MessageChange[] = [];
       liveQuery!.on('event', (change): void => { events.push(change); });
@@ -260,6 +438,11 @@ describe('DwnApi.messages', () => {
           event.descriptor.recordId === record!.id,
         )).toBe(true);
       });
+
+      const deleteChange = events.find(event =>
+        event.descriptor.method === DwnMethodName.Delete && event.descriptor.recordId === record!.id
+      )!;
+      expect(deleteChange.record).toBeUndefined();
 
       await liveQuery!.close();
     });

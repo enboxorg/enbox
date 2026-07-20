@@ -20,9 +20,10 @@ import type {
   ProcessDwnRequest } from '@enbox/agent';
 
 import type { DwnSubscriptionMessage } from '@enbox/dwn-clients';
-import type { RecordDataAccess } from './record-types.js';
+import type { RecordDataAccess, StoredRecordData } from './record-types.js';
 
 import { AgentPermissionsApi, DwnInterface, getRecordAuthor } from '@enbox/agent';
+import { Message, Records } from '@enbox/dwn-sdk-js';
 
 import { dataToBlob } from './utils.js';
 import { LiveQuery } from './live-query.js';
@@ -263,6 +264,14 @@ export type RecordsSubscribeResponse = DwnResponseStatus & {
 export type MessagesSubscribeRequest = Omit<DwnMessageParams[DwnInterface.MessagesSubscribe], 'signer'> & {
   /** Optional DID specifying the remote target DWN tenant to subscribe from. */
   from?: string;
+
+  /**
+   * Hydrates each `RecordsWrite` event as a {@link MessageChange.record}.
+   * Inline bytes are reused directly; larger payloads are read lazily when
+   * `record.data` is consumed using the same `Messages.Read` authorization
+   * that opened the feed.
+   */
+  includeRecords?: boolean;
 };
 
 /** Encapsulates the response from a DWN MessagesSubscribeRequest. */
@@ -465,6 +474,118 @@ export class DwnApi {
       ...(request.granteeDid === undefined ? {} : { granteeDid: request.granteeDid }),
       ...(messageParams?.delegatedGrant === undefined ? {} : { delegatedGrant: messageParams.delegatedGrant }),
     };
+  }
+
+  /**
+   * Creates a repeatable source for the exact stored bytes carried by a
+   * MessagesSubscribe event. Large payloads are reopened by message CID using
+   * the feed's Messages.Read authorization, not by record ID via RecordsRead.
+   */
+  private createMessagesEventStoredData(params: {
+    encodedData?: string;
+    message: DwnMessage[DwnInterface.RecordsWrite];
+    messageCid?: string;
+    remote: boolean;
+    subscriptionRequest: ProcessDwnRequest<DwnInterface.MessagesSubscribe>;
+  }): StoredRecordData {
+    if (params.encodedData !== undefined) {
+      return params.encodedData;
+    }
+
+    const eventMessage = structuredClone(params.message);
+    const permissionGrantIds = [...(params.subscriptionRequest.messageParams?.permissionGrantIds ?? [])];
+    return {
+      dataCid : params.message.descriptor.dataCid,
+      open    : async (): Promise<ReadableStream<Uint8Array>> => this.readMessagesEventStoredData({
+        author     : params.subscriptionRequest.author,
+        dataCid    : params.message.descriptor.dataCid,
+        eventMessage,
+        granteeDid : params.subscriptionRequest.granteeDid,
+        messageCid : params.messageCid,
+        permissionGrantIds,
+        recordId   : params.message.recordId,
+        remote     : params.remote,
+        target     : params.subscriptionRequest.target,
+      }),
+    };
+  }
+
+  /** Reads and verifies one non-inline MessagesSubscribe record payload. */
+  private async readMessagesEventStoredData(params: {
+    author: string;
+    dataCid: string;
+    eventMessage: DwnMessage[DwnInterface.RecordsWrite];
+    granteeDid?: string;
+    messageCid?: string;
+    permissionGrantIds: string[];
+    recordId: string;
+    remote: boolean;
+    target: string;
+  }): Promise<ReadableStream<Uint8Array>> {
+    const eventMessageCid = await Message.getCid(params.eventMessage);
+    if (params.messageCid !== undefined && params.messageCid !== eventMessageCid) {
+      throw new Error(
+        `DwnApi: MessagesSubscribe event CID '${params.messageCid}' does not match its message CID '${eventMessageCid}'.`
+      );
+    }
+
+    const readRequest: ProcessDwnRequest<DwnInterface.MessagesRead> = {
+      author        : params.author,
+      messageParams : {
+        messageCid: eventMessageCid,
+        ...(params.permissionGrantIds.length === 0 ? {} : { permissionGrantIds: params.permissionGrantIds }),
+      },
+      messageType : DwnInterface.MessagesRead,
+      target      : params.target,
+      ...(params.granteeDid === undefined ? {} : { granteeDid: params.granteeDid }),
+    };
+    const { reply } = params.remote ?
+      await this.agent.sendDwnRequest(readRequest) :
+      await this.agent.processDwnRequest(readRequest);
+
+    const { entry, status } = reply;
+    if (status.code !== 200 || entry === undefined) {
+      throw new Error(`DwnApi: Unable to read message data: ${status.code}: ${status.detail}`);
+    }
+    if (entry.messageCid !== eventMessageCid || await Message.getCid(entry.message) !== eventMessageCid) {
+      throw new Error(`DwnApi: MessagesRead returned a different message for CID '${eventMessageCid}'.`);
+    }
+    if (!Records.isRecordsWrite(entry.message) || entry.message.recordId !== params.recordId) {
+      throw new Error(`DwnApi: MessagesRead returned a different record for '${params.recordId}'.`);
+    }
+    if (entry.message.descriptor.dataCid !== params.dataCid) {
+      throw new Error(
+        `DwnApi: MessagesRead returned data CID '${entry.message.descriptor.dataCid}' ` +
+        `for source CID '${params.dataCid}'.`
+      );
+    }
+    if (entry.data === undefined) {
+      throw new Error(`DwnApi: MessagesRead returned no stored data for record '${params.recordId}'.`);
+    }
+
+    return entry.data;
+  }
+
+  /** Builds the same version-pinned Record shape for every subscription surface. */
+  private buildEventRecord(params: {
+    dataAccess: RecordDataAccess;
+    initialWrite?: DwnMessage[DwnInterface.RecordsWrite];
+    message: DwnMessage[DwnInterface.RecordsWrite];
+    protocolRole?: string;
+    remoteOrigin?: string;
+    storedData?: StoredRecordData;
+  }): Record {
+    return new Record(this.agent, {
+      ...params.message,
+      author       : getRecordAuthor(params.message),
+      connectedDid : this.connectedDid,
+      dataAccess   : params.dataAccess,
+      delegateDid  : this.delegateDid,
+      initialWrite : params.initialWrite,
+      protocolRole : params.protocolRole,
+      remoteOrigin : params.remoteOrigin,
+      storedData   : params.storedData,
+    }, this.permissionsApi);
   }
 
   /**
@@ -773,9 +894,13 @@ export class DwnApi {
        * Delegated access resolves a `Messages.Read` grant when the filters
        * name exactly one protocol; multi-protocol delegated subscriptions
        * should pass explicit `permissionGrantIds`.
+       *
+       * Set `includeRecords` to hydrate RecordsWrite events as version-pinned
+       * {@link Record} objects. Small payloads reuse the event's inline bytes;
+       * larger payloads reopen through MessagesRead under the same feed grant.
        */
       subscribe: async (request: MessagesSubscribeRequest = {}): Promise<MessagesSubscribeResponse> => {
-        const { from, ...messageParams } = request;
+        const { from, includeRecords = false, ...messageParams } = request;
 
         // Constructed BEFORE the request is dispatched: a local cursor
         // catch-up (and its EOSE) replays synchronously inside the subscribe
@@ -814,9 +939,28 @@ export class DwnApi {
           }
 
           const { message } = msg.event;
+          let record: Record | undefined;
+          if (includeRecords && Records.isRecordsWrite(message)) {
+            const remote = from !== undefined;
+            record = this.buildEventRecord({
+              dataAccess   : DwnApi.getRecordDataAccess(agentRequest, remote),
+              initialWrite : msg.event.initialWrite,
+              message,
+              remoteOrigin : from,
+              storedData   : this.createMessagesEventStoredData({
+                encodedData         : msg.encodedData,
+                message,
+                messageCid          : msg.messageCid,
+                remote,
+                subscriptionRequest : agentRequest,
+              }),
+            });
+          }
+
           liveQuery.handleEvent({
             message,
             descriptor : describeMessage(message),
+            ...(record === undefined ? {} : { record }),
             messageCid : msg.messageCid,
             cursor     : msg.cursor,
           });
@@ -1205,17 +1349,14 @@ export class DwnApi {
           }
 
           const { message, initialWrite } = msg.event;
-          const record = new Record(this.agent, {
-            ...message as DwnMessage[DwnInterface.RecordsWrite],
-            author       : getRecordAuthor(message as DwnMessage[DwnInterface.RecordsWrite]),
-            connectedDid : this.connectedDid,
+          const record = this.buildEventRecord({
             dataAccess   : DwnApi.getRecordDataAccess(agentRequest, from !== undefined),
-            remoteOrigin,
-            initialWrite : initialWrite,
+            initialWrite : initialWrite as DwnMessage[DwnInterface.RecordsWrite] | undefined,
+            message      : message as DwnMessage[DwnInterface.RecordsWrite],
             protocolRole,
-            delegateDid  : this.delegateDid,
+            remoteOrigin,
             storedData   : msg.encodedData,
-          }, this.permissionsApi);
+          });
 
           liveQuery?.handleEvent(record);
         };
