@@ -1,5 +1,92 @@
 # @enbox/agent
 
+## 0.8.30
+
+### Patch Changes
+
+- [#1372](https://github.com/enboxorg/enbox/pull/1372) [`257fa11`](https://github.com/enboxorg/enbox/commit/257fa11e014b59a758e93dcdeb8dec9b6deb989b) Thanks [@poindex-bot](https://github.com/poindex-bot)! - fix: live pull serves inline record data from the subscription event instead of re-fetching it
+
+- [#1373](https://github.com/enboxorg/enbox/pull/1373) [`da812fc`](https://github.com/enboxorg/enbox/commit/da812fcfd501f4135682683f2960793c0ad37d26) Thanks [@poindex-bot](https://github.com/poindex-bot)! - refactor: the sync engine is live-only — poll mode removed. startSync starts live sync; `interval` now sets the periodic settle-check cadence. Userland polling remains trivial via the public one-shot sync(): setInterval(() => { agent.sync.sync().catch(console.error); }, ms).
+
+- [#1371](https://github.com/enboxorg/enbox/pull/1371) [`83020bd`](https://github.com/enboxorg/enbox/commit/83020bdcf86e4db86f00f877c88427fc7e36f7bc) Thanks [@poindex-bot](https://github.com/poindex-bot)! - refactor: greenfield cleanup of the sync engine — remove backwards-compatibility shims, dead status/config surface, and duplicated helpers; no behavior changes on reachable paths. `startSync` now requires an explicit `mode`, the write-only `receivedToken` checkpoint field is gone, and a checkpoint update can no longer recreate a deleted replication-link record.
+
+- [#1367](https://github.com/enboxorg/enbox/pull/1367) [`8b9ab70`](https://github.com/enboxorg/enbox/commit/8b9ab7017d5ac9d37920249c54d75264cad1fe99) Thanks [@poindex-bot](https://github.com/poindex-bot)! - refactor(agent): serialize the live-push regime through a per-link mailbox
+
+  `SyncLinkController` gains a mailbox — a FIFO `enqueue` serializing link-scoped work for the controller's lifetime, refusing work after deactivation while letting in-flight operations finish, with rejections surfaced to callers without poisoning the queue. The push regime's read-decide-write bodies (flush and requeue) run through it, so at most one push flush is in flight per link _by construction_: the push-specific `flushing` flag is deleted, `takeBatch` is controller-addressed, and a reconcile requeue serializes behind an in-flight transport batch instead of interleaving with it — removing a source of duplicate re-push work. Local subscription events still append synchronously (ingestion never blocks behind a network push); the start-flush decision reads the generalized `mailboxIdle` signal. First mailbox migration of the Phase-3 per-link-actor series; repair/reconcile and live-pull ordinals follow.
+
+- [#1374](https://github.com/enboxorg/enbox/pull/1374) [`3804b5d`](https://github.com/enboxorg/enbox/commit/3804b5dc1ddb94cd7beaff7045345efd474f6965) Thanks [@poindex-bot](https://github.com/poindex-bot)! - refactor: sync engine readability and vocabulary. Corrected stale and inverted comments, removed dead bookkeeping, split the 244-line engine constructor into named factories, and unified the subsystem vocabulary to one name per concept and one meaning per word (glossary in `docs/architecture/sync-vocabulary.md`).
+
+  BREAKING: the `SyncEngine` dead-letter read API is renamed to match the `DeadLetterEntry` type it returns and the vocabulary the store and every collaborator already used — `getFailedMessages` → `getDeadLetters`, `clearFailedMessage` → `clearDeadLetter`, `clearAllFailedMessages` → `clearAllDeadLetters`.
+
+  Fixed: a paused replication link reported `converged: true` from a reconcile cycle that compared nothing, so post-repair verification could emit `reconcile:completed` for a link it never checked. The reconcile result now carries `paused` and leaves `converged` absent when nothing was verified.
+
+- [#1370](https://github.com/enboxorg/enbox/pull/1370) [`b334497`](https://github.com/enboxorg/enbox/commit/b33449751d36dd5c3bfddce7d208c75a9418bf50) Thanks [@poindex-bot](https://github.com/poindex-bot)! - fix: one generation owns a link's pull deliveries and subscription pair
+
+  Live pull keeps its concurrent delivery model (handlers fire without
+  awaiting; an ordinal tracker advances the checkpoint over the
+  contiguously committed prefix), and a single per-link generation now
+  fences everything transient around it. Pausing, repairing, or resetting
+  a link bumps the generation synchronously, before any await, and:
+
+  - deliveries carry a generation ticket, so one still admitting across a
+    repair cannot collide with a reissued ordinal and mark durable
+    progress over a message that never applied;
+  - out-of-scope events acknowledge through the ordinal tracker instead
+    of directly persisting their cursor, so they cannot skip past an
+    earlier covered delivery still admitting;
+  - one generation is captured for the whole subscription pair: both
+    opener halves validate it after every await and attach through a
+    generation-fenced install, a pause landing between the halves stops
+    the attempt before the local half opens, a pause or repair landing
+    while an open is in flight closes the returned subscription instead
+    of installing a permanently fenced slot, a stale ProgressGap or
+    rejection is that attempt's teardown rather than a fresh failure,
+    completing initialization cannot mark a paused link live, and a link
+    paused or taken over for repair while opening stays in its identity's
+    keep-set instead of being failed and pruned;
+  - cleanup is attempt-owned: a superseded opener no longer closes the
+    replacement generation's subscription pair;
+  - callbacks and processing rejections from a superseded subscription —
+    remote pull and local push alike — are discarded silently instead of
+    writing checkpoints, enqueueing redundant pushes, spamming error
+    reports, or re-triggering repair on a healthy link.
+
+- [#1369](https://github.com/enboxorg/enbox/pull/1369) [`08c6912`](https://github.com/enboxorg/enbox/commit/08c69121ecdfcfe2adc7758e7242d28b894caa95) Thanks [@poindex-bot](https://github.com/poindex-bot)! - refactor: serialize link repair and reconciliation through the per-link mailbox
+
+  Repair and durable-reconciliation passes now run on the same per-link
+  mailbox that serializes live-push flushes, with three ownership rules
+  replacing the old scattered in-flight bookkeeping:
+
+  - Shared lanes with trailing turns: concurrent repair or reconcile
+    requests coalesce onto one execution, and a request arriving while a
+    pass is already executing (a fresh gap with a newer resume token, a
+    signal postdating the pass's remote snapshot) runs exactly one
+    trailing pass — enqueued as a new mailbox turn behind already-queued
+    work, never inline. A superseded repair pass does not complete, clear
+    progress, or mark the link live over the newer request, and a
+    requested trailing pass subsumes the failed pass's retry timer. The
+    `repairInFlight`/`reconcileInFlight` handles are gone.
+  - Transitions publish atomically: a repair transition writes its resume
+    token, run request, generation fence, and in-memory status in one
+    synchronous block before any await, so a pass consuming the request —
+    trailing turn or fresh supervision — always observes the complete
+    transition, and a superseded pass's failure hands off quietly to the
+    trailing repair instead of reporting, arming retries, or burning the
+    attempt budget into a pause.
+  - Pause is a cancellation fence: pausing stays prompt and mailbox-free
+    (it is the fail-safe for revoked authorization), and every repair
+    checkpoint, completion step, and late failure handler observes the
+    paused status and abandons the link instead of reviving it, reporting
+    spurious errors, or rearming timers.
+  - Push batches die with their runtime: an in-flight push result or
+    rejection that lands after a pause or runtime replacement is dropped
+    instead of folding transitions, requeueing entries, or recreating the
+    runtime the transition just cleared.
+
+  Local event ingestion stays synchronous, and events observed while a
+  repair or reconcile occupies the mailbox queue a flush behind it rather
+  than stalling until the next event arrives.
+
 ## 0.8.29
 
 ### Patch Changes
