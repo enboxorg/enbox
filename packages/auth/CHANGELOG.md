@@ -1,5 +1,14 @@
 # @enbox/auth
 
+## 0.6.76
+
+### Patch Changes
+
+- [#1373](https://github.com/enboxorg/enbox/pull/1373) [`da812fc`](https://github.com/enboxorg/enbox/commit/da812fcfd501f4135682683f2960793c0ad37d26) Thanks [@poindex-bot](https://github.com/poindex-bot)! - refactor: the sync engine is live-only — poll mode removed. startSync starts live sync; `interval` now sets the periodic settle-check cadence. Userland polling remains trivial via the public one-shot sync(): setInterval(() => { agent.sync.sync().catch(console.error); }, ms).
+
+- Updated dependencies [[`257fa11`](https://github.com/enboxorg/enbox/commit/257fa11e014b59a758e93dcdeb8dec9b6deb989b), [`da812fc`](https://github.com/enboxorg/enbox/commit/da812fcfd501f4135682683f2960793c0ad37d26), [`83020bd`](https://github.com/enboxorg/enbox/commit/83020bdcf86e4db86f00f877c88427fc7e36f7bc), [`8b9ab70`](https://github.com/enboxorg/enbox/commit/8b9ab7017d5ac9d37920249c54d75264cad1fe99), [`3804b5d`](https://github.com/enboxorg/enbox/commit/3804b5dc1ddb94cd7beaff7045345efd474f6965), [`b334497`](https://github.com/enboxorg/enbox/commit/b33449751d36dd5c3bfddce7d208c75a9418bf50), [`08c6912`](https://github.com/enboxorg/enbox/commit/08c69121ecdfcfe2adc7758e7242d28b894caa95)]:
+  - @enbox/agent@0.8.30
+
 ## 0.6.75
 
 ### Patch Changes
