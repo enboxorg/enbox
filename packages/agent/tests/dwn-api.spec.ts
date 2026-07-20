@@ -9,6 +9,7 @@ import {
   DwnErrorCode,
   DwnInterfaceName,
   DwnMethodName,
+  Encoder,
   ENCRYPTION_CONTROL_DELIVERY_PATH,
   KeyDerivationScheme,
   Message,
@@ -55,6 +56,34 @@ async function installFreeForAll(
   if (reply.status.code !== 202) {
     throw new Error(`Failed to install free-for-all protocol: ${reply.status.code} ${reply.status.detail}`);
   }
+}
+
+/** Opens application-readable bytes from one raw stored RecordsWrite payload. */
+async function decryptStoredData(
+  dwn: AgentDwnApi,
+  author: string,
+  target: string,
+  recordsWrite: RecordsWriteMessage,
+  dataStream: ReadableStream<Uint8Array>,
+): Promise<Uint8Array> {
+  const decrypted = await dwn.decryptRecordData({ author, dataStream, recordsWrite, target });
+  return DataStream.toBytes(decrypted);
+}
+
+/** Opens application-readable bytes from a query entry's raw inline payload. */
+async function decryptInlineData(
+  dwn: AgentDwnApi,
+  author: string,
+  target: string,
+  entry: RecordsWriteMessage & { encodedData: string },
+): Promise<Uint8Array> {
+  return decryptStoredData(
+    dwn,
+    author,
+    target,
+    entry,
+    DataStream.fromBytes(Encoder.base64UrlToBytes(entry.encodedData)),
+  );
 }
 
 describe('AgentDwnApi', () => {
@@ -2891,7 +2920,7 @@ describe('Encryption Callback Factories', () => {
       const plaintextString = 'This is my secret note';
       const dataBytes = Convert.string(plaintextString).toUint8Array();
 
-      const { message: writeMessage, reply: { status: writeStatus } } = await testHarness.agent.dwn.processRequest({
+      const { data: storedData, message: writeMessage, reply: { status: writeStatus } } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
@@ -2906,6 +2935,7 @@ describe('Encryption Callback Factories', () => {
       });
 
       expect(writeStatus.code).toBe(202);
+      expect(storedData).toBeDefined();
 
       // Verify the message has encryption metadata
       const recordsWriteMessage = writeMessage as RecordsWriteMessage;
@@ -2927,11 +2957,12 @@ describe('Encryption Callback Factories', () => {
 
       expect(readReply.status.code).toBe(200);
       const rawDataBytes = await DataStream.toBytes(readReply.entry!.data!);
+      expect(rawDataBytes).toEqual(new Uint8Array(await storedData!.arrayBuffer()));
       // Raw data should NOT be the original plaintext (it's encrypted)
       expect(Convert.uint8Array(rawDataBytes).toString()).not.toBe(plaintextString);
     });
 
-    it('should auto-decrypt data on RecordsRead', async () => {
+    it('should keep RecordsRead data raw and decrypt it only through explicit data access', async () => {
       // Configure and write encrypted record
       await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
@@ -2962,7 +2993,7 @@ describe('Encryption Callback Factories', () => {
 
       const recordsWriteMessage = writeMessage as RecordsWriteMessage;
 
-      // Read with encryption: true should auto-decrypt
+      // Low-level reads always expose the bytes stored by the DWN.
       const { reply: readReply } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
@@ -2970,15 +3001,23 @@ describe('Encryption Callback Factories', () => {
         messageParams : {
           filter: { recordId: recordsWriteMessage.recordId }
         },
-        encryption: true
       });
 
       expect(readReply.status.code).toBe(200);
-      const decryptedBytes = await DataStream.toBytes(readReply.entry!.data!);
+      const rawBytes = await DataStream.toBytes(readReply.entry!.data!);
+      expect(Convert.uint8Array(rawBytes).toString()).not.toBe(plaintextString);
+
+      const decryptedStream = await testHarness.agent.dwn.decryptRecordData({
+        author       : alice.did.uri,
+        dataStream   : DataStream.fromBytes(rawBytes),
+        recordsWrite : readReply.entry!.recordsWrite,
+        target       : alice.did.uri,
+      });
+      const decryptedBytes = await DataStream.toBytes(decryptedStream);
       expect(Convert.uint8Array(decryptedBytes).toString()).toBe(plaintextString);
     });
 
-    it('should auto-decrypt encodedData on RecordsQuery', async () => {
+    it('should keep RecordsQuery inline data raw until a record accessor decrypts it', async () => {
       // Configure and write a small encrypted record (will be inline as encodedData)
       await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
@@ -3007,7 +3046,7 @@ describe('Encryption Callback Factories', () => {
         encryption : true
       });
 
-      // Query with encryption: true should auto-decrypt encodedData
+      // Query replies stay raw so one undecryptable record cannot fail the whole query.
       const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
@@ -3018,19 +3057,25 @@ describe('Encryption Callback Factories', () => {
             protocolPath : 'note',
           }
         },
-        encryption: true
       });
 
       expect(queryReply.status.code).toBe(200);
       expect(queryReply.entries).toHaveLength(1);
 
       const entry = queryReply.entries![0];
-      // The encodedData should be decrypted plaintext (base64url encoded)
-      if (entry.encodedData) {
-        const { Encoder } = await import('@enbox/dwn-sdk-js');
-        const decodedBytes = Encoder.base64UrlToBytes(entry.encodedData);
-        expect(Convert.uint8Array(decodedBytes).toString()).toBe(plaintextString);
-      }
+      expect(entry.encodedData).toBeDefined();
+      const { Encoder } = await import('@enbox/dwn-sdk-js');
+      const rawBytes = Encoder.base64UrlToBytes(entry.encodedData!);
+      expect(Convert.uint8Array(rawBytes).toString()).not.toBe(plaintextString);
+
+      const decryptedStream = await testHarness.agent.dwn.decryptRecordData({
+        author       : alice.did.uri,
+        dataStream   : DataStream.fromBytes(rawBytes),
+        recordsWrite : entry as RecordsWriteMessage,
+        target       : alice.did.uri,
+      });
+      const decryptedBytes = await DataStream.toBytes(decryptedStream);
+      expect(Convert.uint8Array(decryptedBytes).toString()).toBe(plaintextString);
     });
 
     it('should throw if protocol is not installed when encrypting', async () => {
@@ -3126,7 +3171,7 @@ describe('Encryption Callback Factories', () => {
       // Verify encryption metadata present
       expect(recordsWriteMessage).toHaveProperty('encryption');
 
-      // Read with decryption
+      // Read raw stored bytes, then open the application view explicitly.
       const { reply: readReply } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
@@ -3134,11 +3179,16 @@ describe('Encryption Callback Factories', () => {
         messageParams : {
           filter: { recordId: recordsWriteMessage.recordId }
         },
-        encryption: true
       });
 
       expect(readReply.status.code).toBe(200);
-      const decryptedBytes = await DataStream.toBytes(readReply.entry!.data!);
+      const decryptedBytes = await decryptStoredData(
+        testHarness.agent.dwn,
+        alice.did.uri,
+        alice.did.uri,
+        readReply.entry!.recordsWrite,
+        readReply.entry!.data!,
+      );
       expect(Convert.uint8Array(decryptedBytes).toString()).toBe(plaintextString);
     });
 
@@ -3267,7 +3317,7 @@ describe('Encryption Callback Factories', () => {
 
       const recordsWriteMessage = writeMessage as RecordsWriteMessage;
 
-      // 3. Read with auto-decrypt
+      // 3. Read raw bytes and open the application view.
       const { reply: readReply } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
@@ -3275,14 +3325,19 @@ describe('Encryption Callback Factories', () => {
         messageParams : {
           filter: { recordId: recordsWriteMessage.recordId }
         },
-        encryption: true
       });
 
       expect(readReply.status.code).toBe(200);
-      const readDecryptedBytes = await DataStream.toBytes(readReply.entry!.data!);
+      const readDecryptedBytes = await decryptStoredData(
+        testHarness.agent.dwn,
+        alice.did.uri,
+        alice.did.uri,
+        readReply.entry!.recordsWrite,
+        readReply.entry!.data!,
+      );
       expect(Convert.uint8Array(readDecryptedBytes).toString()).toBe(plaintextString);
 
-      // 4. Query with auto-decrypt
+      // 4. Query returns raw inline bytes; the application view decrypts them.
       const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
@@ -3293,18 +3348,19 @@ describe('Encryption Callback Factories', () => {
             protocolPath : 'note',
           }
         },
-        encryption: true
       });
 
       expect(queryReply.status.code).toBe(200);
       expect(queryReply.entries).toHaveLength(1);
 
-      const entry = queryReply.entries![0];
-      if (entry.encodedData) {
-        const { Encoder } = await import('@enbox/dwn-sdk-js');
-        const queryDecryptedBytes = Encoder.base64UrlToBytes(entry.encodedData);
-        expect(Convert.uint8Array(queryDecryptedBytes).toString()).toBe(plaintextString);
-      }
+      const entry = queryReply.entries![0] as RecordsWriteMessage & { encodedData: string };
+      const queryDecryptedBytes = await decryptInlineData(
+        testHarness.agent.dwn,
+        alice.did.uri,
+        alice.did.uri,
+        entry,
+      );
+      expect(Convert.uint8Array(queryDecryptedBytes).toString()).toBe(plaintextString);
     });
 
     it('should auto-encrypt record updates with fresh DEK', async () => {
@@ -3372,7 +3428,7 @@ describe('Encryption Callback Factories', () => {
       expect(updateWriteMessage.encryption!.initializationVector)
         .not.toBe(initialEncryption!.initializationVector);
 
-      // Read back with decryption — should get the UPDATED plaintext
+      // Read back raw, then decrypt the current version.
       const { reply: readReply } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
@@ -3380,11 +3436,16 @@ describe('Encryption Callback Factories', () => {
         messageParams : {
           filter: { recordId: recordsWriteMessage.recordId }
         },
-        encryption: true
       });
 
       expect(readReply.status.code).toBe(200);
-      const decryptedBytes = await DataStream.toBytes(readReply.entry!.data!);
+      const decryptedBytes = await decryptStoredData(
+        testHarness.agent.dwn,
+        alice.did.uri,
+        alice.did.uri,
+        readReply.entry!.recordsWrite,
+        readReply.entry!.data!,
+      );
       expect(Convert.uint8Array(decryptedBytes).toString()).toBe(updatedPlaintext);
     });
 
@@ -3481,7 +3542,7 @@ describe('Encryption Callback Factories', () => {
       expect(updatedEncryption).toBeDefined();
       expect(updatedEncryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
 
-      // Read back with decryption
+      // Read raw bytes, then decrypt the updated version.
       const { reply: readReply } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
@@ -3489,11 +3550,16 @@ describe('Encryption Callback Factories', () => {
         messageParams : {
           filter: { recordId: chatRecordId }
         },
-        encryption: true
       });
 
       expect(readReply.status.code).toBe(200);
-      const decryptedBytes = await DataStream.toBytes(readReply.entry!.data!);
+      const decryptedBytes = await decryptStoredData(
+        testHarness.agent.dwn,
+        alice.did.uri,
+        alice.did.uri,
+        readReply.entry!.recordsWrite,
+        readReply.entry!.data!,
+      );
       expect(Convert.uint8Array(decryptedBytes).toString()).toBe(updatedChat);
     });
   });
@@ -3672,7 +3738,7 @@ describe('Encryption Callback Factories', () => {
       expect(recordsWriteMessage.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
     });
 
-    it('owner should decrypt root record via RecordsRead', async () => {
+    it('owner should decrypt raw root record data through the application boundary', async () => {
       // Configure protocol
       await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
@@ -3704,7 +3770,8 @@ describe('Encryption Callback Factories', () => {
 
       const recordsWriteMessage = writeMessage as RecordsWriteMessage;
 
-      // Read with auto-decrypt through the owner's protocol-path key.
+      // The low-level read stays raw; the application boundary uses the
+      // owner's protocol-path key.
       const { reply: readReply } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
@@ -3712,11 +3779,16 @@ describe('Encryption Callback Factories', () => {
         messageParams : {
           filter: { recordId: recordsWriteMessage.recordId }
         },
-        encryption: true
       });
 
       expect(readReply.status.code).toBe(200);
-      const decryptedBytes = await DataStream.toBytes(readReply.entry!.data!);
+      const decryptedBytes = await decryptStoredData(
+        testHarness.agent.dwn,
+        alice.did.uri,
+        alice.did.uri,
+        readReply.entry!.recordsWrite,
+        readReply.entry!.data!,
+      );
       expect(Convert.uint8Array(decryptedBytes).toString()).toBe(plaintextString);
     });
 
@@ -3770,7 +3842,7 @@ describe('Encryption Callback Factories', () => {
 
       const chatRecordId = (chatMessage as RecordsWriteMessage).recordId;
 
-      // 3. Read root record — should decrypt
+      // 3. Read and decrypt the root record.
       const { reply: threadReadReply } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
@@ -3778,14 +3850,19 @@ describe('Encryption Callback Factories', () => {
         messageParams : {
           filter: { recordId: threadRecordId }
         },
-        encryption: true
       });
 
       expect(threadReadReply.status.code).toBe(200);
-      const threadDecrypted = await DataStream.toBytes(threadReadReply.entry!.data!);
+      const threadDecrypted = await decryptStoredData(
+        testHarness.agent.dwn,
+        alice.did.uri,
+        alice.did.uri,
+        threadReadReply.entry!.recordsWrite,
+        threadReadReply.entry!.data!,
+      );
       expect(Convert.uint8Array(threadDecrypted).toString()).toBe(threadPlaintext);
 
-      // 4. Read child record — should decrypt
+      // 4. Read and decrypt the child record.
       const { reply: chatReadReply } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
@@ -3793,14 +3870,19 @@ describe('Encryption Callback Factories', () => {
         messageParams : {
           filter: { recordId: chatRecordId }
         },
-        encryption: true
       });
 
       expect(chatReadReply.status.code).toBe(200);
-      const chatDecrypted = await DataStream.toBytes(chatReadReply.entry!.data!);
+      const chatDecrypted = await decryptStoredData(
+        testHarness.agent.dwn,
+        alice.did.uri,
+        alice.did.uri,
+        chatReadReply.entry!.recordsWrite,
+        chatReadReply.entry!.data!,
+      );
       expect(Convert.uint8Array(chatDecrypted).toString()).toBe(chatPlaintext);
 
-      // 5. Query child records — should auto-decrypt encodedData
+      // 5. Query child records and decrypt the raw inline data explicitly.
       const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
@@ -3812,18 +3894,19 @@ describe('Encryption Callback Factories', () => {
             contextId    : threadContextId,
           }
         },
-        encryption: true
       });
 
       expect(queryReply.status.code).toBe(200);
       expect(queryReply.entries).toHaveLength(1);
 
-      const entry = queryReply.entries![0];
-      if (entry.encodedData) {
-        const { Encoder } = await import('@enbox/dwn-sdk-js');
-        const decodedBytes = Encoder.base64UrlToBytes(entry.encodedData);
-        expect(Convert.uint8Array(decodedBytes).toString()).toBe(chatPlaintext);
-      }
+      const entry = queryReply.entries![0] as RecordsWriteMessage & { encodedData: string };
+      const decodedBytes = await decryptInlineData(
+        testHarness.agent.dwn,
+        alice.did.uri,
+        alice.did.uri,
+        entry,
+      );
+      expect(Convert.uint8Array(decodedBytes).toString()).toBe(chatPlaintext);
     });
 
     it('raw read without encryption flag should return encrypted data', async () => {
@@ -3857,7 +3940,7 @@ describe('Encryption Callback Factories', () => {
 
       const recordsWriteMessage = writeMessage as RecordsWriteMessage;
 
-      // Read WITHOUT encryption flag — should get raw encrypted data
+      // Low-level reads always return raw encrypted data.
       const { reply: readReply } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
@@ -3983,18 +4066,17 @@ describe('Role record write behavior', () => {
           contextId    : threadContextId,
         }
       },
-      encryption: true,
     });
 
     expect(queryReply.entries).toHaveLength(1);
-    // With auto-decrypt, encodedData should contain the original user data
-    const entry = queryReply.entries![0];
-    if (entry.encodedData) {
-      const { Encoder } = await import('@enbox/dwn-sdk-js');
-      const decodedBytes = Encoder.base64UrlToBytes(entry.encodedData);
-      const decodedString = new TextDecoder().decode(decodedBytes);
-      expect(decodedString).toBe(participantData);
-    }
+    const entry = queryReply.entries![0] as RecordsWriteMessage & { encodedData: string };
+    const decodedBytes = await decryptInlineData(
+      testHarness.agent.dwn,
+      alice.did.uri,
+      alice.did.uri,
+      entry,
+    );
+    expect(new TextDecoder().decode(decodedBytes)).toBe(participantData);
   }, 10000);
 
   it('records a best-effort skip (no throw) when no key is supplied and the recipient key cannot be resolved', async () => {
@@ -4530,7 +4612,7 @@ describe('Owner encrypted read behavior', () => {
     },
   };
 
-  it('owner should auto-decrypt multi-party records via protocol-path keys', async () => {
+  it('owner should decrypt raw multi-party data via protocol-path keys', async () => {
     // Configure protocol
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -4574,7 +4656,7 @@ describe('Owner encrypted read behavior', () => {
       encryption : true,
     });
 
-    // Read back with auto-decryption through the owner's protocol-path key.
+    // Query raw inline data and decrypt it through the owner's protocol-path key.
     const { reply: readReply } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
@@ -4586,7 +4668,6 @@ describe('Owner encrypted read behavior', () => {
           contextId    : threadContextId,
         }
       },
-      encryption: true,
     });
 
     expect(readReply.entries).toHaveLength(1);
@@ -4594,12 +4675,13 @@ describe('Owner encrypted read behavior', () => {
     expect(entry.encryption).toBeDefined();
     expect(entry.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
 
-    // Verify auto-decryption produced the original plaintext
-    if (entry.encodedData) {
-      const { Encoder } = await import('@enbox/dwn-sdk-js');
-      const decoded = new TextDecoder().decode(Encoder.base64UrlToBytes(entry.encodedData));
-      expect(decoded).toBe(chatText);
-    }
+    const decoded = await decryptInlineData(
+      testHarness.agent.dwn,
+      alice.did.uri,
+      alice.did.uri,
+      entry as RecordsWriteMessage & { encodedData: string },
+    );
+    expect(new TextDecoder().decode(decoded)).toBe(chatText);
   }, 10000);
 
 });
@@ -4714,7 +4796,7 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     expect(keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
   }, 15000);
 
-  it('Alice should decrypt cross-DWN root record via ProtocolPath', async () => {
+  it('Alice should decrypt raw cross-DWN root data via ProtocolPath', async () => {
     // Configure protocol for Alice with encryption
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -4743,19 +4825,24 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
 
     const recordId = (threadMessage as RecordsWriteMessage).recordId;
 
-    // Alice reads with auto-decryption
+    // Alice reads raw stored bytes.
     const { reply: readReply } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsRead,
       messageParams : { filter: { recordId } },
-      encryption    : true,
     });
 
     const readResult = readReply as any;
     expect(readResult.entry.data).toBeDefined();
 
-    const decryptedBytes = await DataStream.toBytes(readResult.entry.data);
+    const decryptedBytes = await decryptStoredData(
+      testHarness.agent.dwn,
+      alice.did.uri,
+      alice.did.uri,
+      readResult.entry.recordsWrite,
+      readResult.entry.data,
+    );
     const decryptedText = new TextDecoder().decode(decryptedBytes);
     expect(decryptedText).toBe(threadText);
   }, 15000);

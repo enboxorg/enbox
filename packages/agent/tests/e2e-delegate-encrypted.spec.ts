@@ -126,6 +126,24 @@ async function copyRecordToHarness(
   expect(applyReply.status.code).toBe(202);
 }
 
+/** Decrypts one raw RecordsRead entry through the application data boundary. */
+async function readApplicationText(
+  harness: PlatformAgentTestHarness,
+  author: string,
+  target: string,
+  entry: { data: ReadableStream<Uint8Array>; recordsWrite: RecordsWriteMessage },
+  granteeDid?: string,
+): Promise<string> {
+  const decrypted = await harness.agent.dwn.decryptRecordData({
+    author,
+    dataStream   : entry.data,
+    granteeDid,
+    recordsWrite : entry.recordsWrite,
+    target,
+  });
+  return new TextDecoder().decode(await DataStream.toBytes(decrypted));
+}
+
 async function installProtocol(
   harness: PlatformAgentTestHarness,
   tenantDid: string,
@@ -328,12 +346,17 @@ describe('e2e: delegate + encrypted protocol', () => {
         filter            : { recordId: (noteWrite as RecordsWriteMessage).recordId },
         permissionGrantId : grantId,
       },
-      encryption : true,
-      granteeDid : delegateDid,
+      granteeDid: delegateDid,
     });
 
     expect(reply.status.code).toBe(200);
-    expect(new TextDecoder().decode(await DataStream.toBytes(reply.entry!.data!))).toBe(noteData);
+    expect(await readApplicationText(
+      delegateHarness,
+      delegateDid,
+      walletIdentity.did.uri,
+      reply.entry!,
+      delegateDid,
+    )).toBe(noteData);
 
     const revocation = await walletHarness.agent.permissions.createRevocation({
       author : walletIdentity.did.uri,
@@ -418,12 +441,17 @@ describe('e2e: delegate + encrypted protocol', () => {
         filter            : { recordId: (noteWrite as RecordsWriteMessage).recordId },
         permissionGrantId : grantId,
       },
-      encryption : true,
-      granteeDid : delegateDid,
+      granteeDid: delegateDid,
     });
 
     expect(reply.status.code).toBe(200);
-    expect(new TextDecoder().decode(await DataStream.toBytes(reply.entry!.data!))).toBe(noteData);
+    expect(await readApplicationText(
+      delegateHarness,
+      delegateDid,
+      walletIdentity.did.uri,
+      reply.entry!,
+      delegateDid,
+    )).toBe(noteData);
   });
 
   it('should hydrate protocolPath-scoped durable grantKeys without owner KMS fallback', async () => {
@@ -466,12 +494,17 @@ describe('e2e: delegate + encrypted protocol', () => {
         filter            : { recordId: (noteWrite as RecordsWriteMessage).recordId },
         permissionGrantId : grantId,
       },
-      encryption : true,
-      granteeDid : delegateDid,
+      granteeDid: delegateDid,
     });
 
     expect(reply.status.code).toBe(200);
-    expect(new TextDecoder().decode(await DataStream.toBytes(reply.entry!.data!))).toBe(noteData);
+    expect(await readApplicationText(
+      delegateHarness,
+      delegateDid,
+      walletIdentity.did.uri,
+      reply.entry!,
+      delegateDid,
+    )).toBe(noteData);
   });
 
   it('should install, write, and read encrypted records as owner', async () => {
@@ -498,11 +531,15 @@ describe('e2e: delegate + encrypted protocol', () => {
       target        : walletIdentity.did.uri,
       messageType   : DwnInterface.RecordsRead,
       messageParams : { filter: { protocol: encryptedNoteProtocol.protocol } },
-      encryption    : true,
     });
 
     expect(readReply.status.code).toBe(200);
-    expect(new TextDecoder().decode(await DataStream.toBytes(readReply.entry!.data!))).toBe(noteData);
+    expect(await readApplicationText(
+      walletHarness,
+      walletIdentity.did.uri,
+      walletIdentity.did.uri,
+      readReply.entry!,
+    )).toBe(noteData);
     expect((await queryRawEntry(walletHarness, walletIdentity.did.uri, encryptedNoteProtocol.protocol))?.encryption).toBeDefined();
   });
 

@@ -9,7 +9,7 @@
 
 import type { AudienceDecryptFailureCause } from '../src/dwn-encryption.js';
 import type { BearerIdentity } from '../src/bearer-identity.js';
-import type { ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { DataEncodedRecordsWriteMessage, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 import { X25519 } from '@enbox/crypto';
@@ -117,13 +117,30 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
     return message as RecordsWriteMessage;
   }
 
-  async function readNoteAs(recipientDid: string, recordId: string): Promise<unknown> {
-    return testHarness.agent.dwn.processRequest({
+  async function readNoteAs(recipientDid: string, recordId: string, options?: {
+    delegatedGrant?: DataEncodedRecordsWriteMessage;
+    granteeDid?: string;
+    harness?: PlatformAgentTestHarness;
+  }): Promise<ReadableStream<Uint8Array>> {
+    const harness = options?.harness ?? testHarness;
+    const { reply } = await harness.agent.dwn.processRequest({
       author        : recipientDid,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsRead,
-      messageParams : { filter: { recordId } },
-      encryption    : true,
+      messageParams : {
+        filter: { recordId },
+        ...(options?.delegatedGrant === undefined ? {} : { delegatedGrant: options.delegatedGrant }),
+      },
+      ...(options?.granteeDid === undefined ? {} : { granteeDid: options.granteeDid }),
+    });
+    expect(reply.status.code).toBe(200);
+    return harness.agent.dwn.decryptRecordData({
+      author         : recipientDid,
+      dataStream     : reply.entry!.data!,
+      delegatedGrant : options?.delegatedGrant,
+      granteeDid     : options?.granteeDid,
+      recordsWrite   : reply.entry!.recordsWrite,
+      target         : alice.did.uri,
     });
   }
 
@@ -379,16 +396,9 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
     });
 
     const decryptError = await expectAudienceDecryptError(
-      testHarness.agent.dwn.processRequest({
-        author        : bob.did.uri,
-        granteeDid    : delegate.did.uri,
-        target        : alice.did.uri,
-        messageType   : DwnInterface.RecordsRead,
-        messageParams : {
-          delegatedGrant : sessionReadGrant.message,
-          filter         : { recordId: noteWrite.recordId },
-        },
-        encryption: true,
+      readNoteAs(bob.did.uri, noteWrite.recordId, {
+        delegatedGrant : sessionReadGrant.message,
+        granteeDid     : delegate.did.uri,
       }),
       'unknown',
     );
@@ -431,16 +441,9 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
     });
 
     const decryptError = await expectAudienceDecryptError(
-      testHarness.agent.dwn.processRequest({
-        author        : bob.did.uri,
-        granteeDid    : delegate.did.uri,
-        target        : alice.did.uri,
-        messageType   : DwnInterface.RecordsRead,
-        messageParams : {
-          delegatedGrant : contextScopedGrant.message,
-          filter         : { recordId: noteWrite.recordId },
-        },
-        encryption: true,
+      readNoteAs(bob.did.uri, noteWrite.recordId, {
+        delegatedGrant : contextScopedGrant.message,
+        granteeDid     : delegate.did.uri,
       }),
       'unknown',
     );
@@ -620,13 +623,7 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
       const sendStub = sinon.stub(recipientHarness.agent, 'sendDwnRequest')
         .rejects(new Error('remote transport down in test'));
       const decryptError = await expectAudienceDecryptError(
-        recipientHarness.agent.dwn.processRequest({
-          author        : bob.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.RecordsRead,
-          messageParams : { filter: { recordId: noteWrite.recordId } },
-          encryption    : true,
-        }),
+        readNoteAs(bob.did.uri, noteWrite.recordId, { harness: recipientHarness }),
         'remote-unverifiable',
       );
       expect(decryptError.detail).toContain('$encryption/delivery');

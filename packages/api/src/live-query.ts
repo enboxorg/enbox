@@ -1,3 +1,4 @@
+import type { RecordDataAccess } from './record-types.js';
 import type { DwnMessageSubscription, EnboxAgent, PermissionsApi } from '@enbox/agent';
 import type { PaginationCursor, ProgressToken, RecordsQueryReplyEntry } from '@enbox/dwn-sdk-js';
 
@@ -67,6 +68,9 @@ export type LiveQueryOptions = {
 
   /** Optional remote DWN origin if subscribing to a remote DWN. */
   remoteOrigin?: string;
+
+  /** Authorization and routing context used to obtain the snapshot and live data. */
+  dataAccess: RecordDataAccess;
 
   /** The permissions API instance for constructing Record objects. */
   permissionsApi?: PermissionsApi;
@@ -188,6 +192,7 @@ export class LiveQuery extends EventTarget {
       agent,
       connectedDid,
       cursor,
+      dataAccess,
       delegateDid,
       protocolRole,
       remoteOrigin,
@@ -200,14 +205,19 @@ export class LiveQuery extends EventTarget {
     this.cursor = cursor;
 
     // Build Record objects from the initial snapshot entries (same logic as records.query()).
-    this.records = initialEntries.map((entry) => new Record(agent, {
-      author: getRecordAuthor(entry),
-      connectedDid,
-      remoteOrigin,
-      delegateDid,
-      protocolRole,
-      ...entry,
-    }, permissionsApi));
+    this.records = initialEntries.map((entry) => {
+      const { encodedData, ...recordsWrite } = entry;
+      return new Record(agent, {
+        author     : getRecordAuthor(entry),
+        connectedDid,
+        dataAccess,
+        remoteOrigin,
+        delegateDid,
+        protocolRole,
+        storedData : encodedData,
+        ...recordsWrite,
+      }, permissionsApi);
+    });
 
     // Seed the known-records map with recordId -> messageTimestamp for dedup.
     this._knownRecords = new Map();

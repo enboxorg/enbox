@@ -37,8 +37,13 @@ function createLiveQuery(options?: {
   subscription?: DwnMessageSubscription;
 }): LiveQuery {
   return new LiveQuery({
-    agent          : {} as EnboxAgent,
-    connectedDid   : 'did:test:alice',
+    agent        : {} as EnboxAgent,
+    connectedDid : 'did:test:alice',
+    dataAccess   : {
+      author : 'did:test:alice',
+      remote : false,
+      target : 'did:test:alice',
+    },
     initialEntries : options?.initialEntries ?? [],
     subscription   : options?.subscription ?? createMockSubscription() as unknown as DwnMessageSubscription,
   });

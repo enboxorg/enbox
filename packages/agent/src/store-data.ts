@@ -308,29 +308,28 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
       // Otherwise, continue to read from the store.
     }
 
-    // Read the record from the store. If encryption is active for this tenant,
-    // the agent's auto-decryption pipeline handles key unwrapping and AES decryption.
-    //
-    // When the protocol definition declares `encryptionRequired: true`, always
-    // request decryption — even if `initialize()` has not been called for this
-    // tenant yet. This covers delegate sessions where key records arrive via
-    // replicated sync rather than `set()`, leaving the per-tenant
-    // `_tenantEncryptionActive` cache cold after an agent restart.
-    const encryptionActive = this.encryptionRequired || this.isEncryptionActive(tenantDid);
+    // Low-level DWN reads always return stored bytes. The RecordsWrite envelope
+    // determines whether the application view decrypts them.
     const { reply: readReply } = await agent.dwn.processRequest({
       author        : tenantDid,
       target        : tenantDid,
       messageType   : DwnInterface.RecordsRead,
       messageParams : { filter: { recordId } },
-      ...(encryptionActive ? { encryption: true } : {}),
     });
 
-    if (!readReply.entry?.data) {
+    if (!readReply.entry?.data || !readReply.entry.recordsWrite) {
       throw new Error(`${this.name}: Failed to read data from DWN for: ${recordId}`);
     }
 
+    const applicationData = await agent.dwn.decryptRecordData({
+      author       : tenantDid,
+      dataStream   : readReply.entry.data,
+      recordsWrite : readReply.entry.recordsWrite,
+      target       : tenantDid,
+    });
+
     // If the record was found, convert back to store object format.
-    const storeObject = await Stream.consumeToJson<TStoreObject>({ readableStream: readReply.entry.data });
+    const storeObject = await Stream.consumeToJson<TStoreObject>({ readableStream: applicationData });
 
     // If caching is enabled, add the store object to the cache.
     if (useCache) {

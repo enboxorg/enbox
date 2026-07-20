@@ -53,6 +53,7 @@ import type { AudienceDecryptionKeyEntry, AudienceKeyPayload, DelegateDecryption
 import type {
   AudienceKeyDeliveryOutcome,
   AudienceKeyDeliveryStatus,
+  DecryptRecordDataParams,
   DwnMessage,
   DwnMessageInstance,
   DwnMessageParams,
@@ -90,14 +91,13 @@ import {
   buildEncryptionInput as buildEncryptionInputFn,
   createAudienceDeliveryRecord as createAudienceDeliveryRecordFn,
   createAudienceRecord as createAudienceRecordFn,
+  decryptRecordData as decryptRecordDataFn,
   encryptAndComputeCid as encryptAndComputeCidFn,
   generateAudienceKey as generateAudienceKeyFn,
   getAudienceDecryptionKeyCacheKey,
   getEncryptionKeyDeriver as getEncryptionKeyDeriverFn,
   hasAudienceSealCoverage as hasAudienceSealCoverageFn,
   ivLength as ivLengthFn,
-  maybeDecryptReply as maybeDecryptReplyFn,
-  maybeWrapSubscriptionHandlerForDecryption as maybeWrapSubscriptionHandlerForDecryptionFn,
   queryAudienceDeliveryMessagesDetailed as queryAudienceDeliveryMessagesDetailedFn,
   queryAudienceDeliveryMessages as queryAudienceDeliveryMessagesFn,
   resolveAudienceDecryptionKey as resolveAudienceDecryptionKeyFn,
@@ -640,12 +640,10 @@ export class AgentDwnApi {
 
     // Constructs a DWN message. and if there is a data payload, prepares the data as a
     // Web ReadableStream.
-    const { message, dataStream } =
+    const { message, dataStream, data } =
       await this.constructDwnMessage({ request });
 
-    // Extracts the optional subscription handler from the request to pass into `processMessage`,
-    // wrapped for event-payload auto-decryption when the request enables encryption.
-    const subscriptionHandler = this.maybeWrapSubscriptionHandler(request);
+    const subscriptionHandler = request.subscriptionHandler;
 
     // Conditionally processes the message with the DWN instance:
     // - If `store` is not explicitly set to false, it sends the message to the DWN node for
@@ -675,16 +673,28 @@ export class AgentDwnApi {
 
     const audienceKeyDelivery = await this.provisionAudienceKeyDeliveryForReply(request, message, reply);
 
-    await this.maybeDecryptReply(request, reply);
-
     // Returns an object containing the reply from processing the message, the original message,
     // and the content identifier (CID) of the message.
     return {
       reply,
       message,
       messageCid: await Message.getCid(message),
+      ...(data ? { data } : {}),
       ...(audienceKeyDelivery ? { audienceKeyDelivery } : {}),
     };
+  }
+
+  /**
+   * Returns application-readable bytes for raw stored record data. The
+   * RecordsWrite encryption envelope determines whether decryption is needed.
+   */
+  public async decryptRecordData(params: DecryptRecordDataParams): Promise<ReadableStream<Uint8Array>> {
+    return decryptRecordDataFn({
+      ...params,
+      agent                      : this.agent,
+      delegateDecryptionKeyCache : this._delegateDecryptionKeyCache,
+      audienceDecryptionKeyCache : this._audienceDecryptionKeyCache,
+    });
   }
 
   /**
@@ -929,6 +939,7 @@ export class AgentDwnApi {
     let messageCid: string | undefined;
     let message: DwnMessage[T];
     let data: DwnRpcData | undefined;
+    let responseData: Blob | undefined;
     let subscriptionHandler: MessageHandler[T] | undefined;
 
     // If `messageCid` is given, retrieve message and data, if any.
@@ -941,10 +952,9 @@ export class AgentDwnApi {
       messageCid = request.messageCid;
 
     } else {
-      // Otherwise, construct a new message. The subscription handler is wrapped
-      // for event-payload auto-decryption when the request enables encryption.
-      ({ message, dataStream: data } = await this.constructDwnMessage({ request }));
-      subscriptionHandler = this.maybeWrapSubscriptionHandler(request);
+      // Otherwise, construct a new message.
+      ({ message, dataStream: data, data: responseData } = await this.constructDwnMessage({ request }));
+      subscriptionHandler = request.subscriptionHandler;
     }
 
     // Build a resubscribe factory for subscribe requests. This closure
@@ -973,15 +983,12 @@ export class AgentDwnApi {
       resubscribeFactory,
     });
 
-    // Auto-decrypt reply data if encryption is enabled (Component 7)
-    await this.maybeDecryptReply(request, reply);
-
     // If the message CID was not given in the `request`, compute it.
     messageCid ??= await Message.getCid(message);
 
     // Returns an object containing the reply from processing the message, the original message,
     // and the content identifier (CID) of the message.
-    return { reply, message, messageCid };
+    return { reply, message, messageCid, ...(responseData ? { data: responseData } : {}) };
   }
 
   /**
@@ -1758,6 +1765,7 @@ export class AgentDwnApi {
 
     const rawMessage = request.rawMessage;
     let readableStream: ReadableStream<Uint8Array> | undefined;
+    let data: Blob | undefined;
     // if the request is a RecordsWrite message, we need to handle the data stream and update the messageParams accordingly
     if (isDwnRequest(request, DwnInterface.RecordsWrite)) {
       const messageParams = request.messageParams;
@@ -1769,6 +1777,7 @@ export class AgentDwnApi {
         if (dataStream instanceof Blob) {
           forCid = dataStream.stream() as ReadableStream<Uint8Array>;
           readableStream = dataStream.stream() as ReadableStream<Uint8Array>;
+          data = dataStream;
 
         } else if (dataStream instanceof ReadableStream) {
           const [ cidCopy, processCopy ] = dataStream.tee();
@@ -1996,6 +2005,7 @@ export class AgentDwnApi {
         messageParams.dataSize = dataSize;
         delete messageParams.data;
         readableStream = DataStream.fromBytes(encryptedBytes);
+        data = new Blob([encryptedBytes as BlobPart]);
         request.dataStream = undefined;
         messageParams.encryptionInput = encryptionInput;
       }
@@ -2049,6 +2059,7 @@ export class AgentDwnApi {
     return {
       message    : dwnMessage.message as DwnMessage[T],
       dataStream : readableStream,
+      data,
     };
   }
 
@@ -2240,37 +2251,6 @@ export class AgentDwnApi {
     return fetchRemoteProtocolDefinitionFn(
       targetDid, protocolUri, this.getDwnEndpointUrlsForTarget.bind(this),
       this.sendDwnRpcRequest.bind(this), this._protocolDefinitionCache,
-    );
-  }
-
-  /**
-   * Post-processes a DWN reply, auto-decrypting data if encryption is enabled.
-   * Delegates to the standalone function in `dwn-encryption.ts`.
-   */
-  private async maybeDecryptReply<T extends DwnInterface>(
-    request: ProcessDwnRequest<T> | SendDwnRequest<T>,
-    reply: DwnMessageReply[T],
-  ): Promise<void> {
-    return maybeDecryptReplyFn(
-      request, reply, this.agent,
-      this._delegateDecryptionKeyCache,
-      this._audienceDecryptionKeyCache,
-    );
-  }
-
-  /**
-   * Returns the request's subscription handler, wrapped so event-inline record
-   * payloads are auto-decrypted before delivery when the request is a
-   * `RecordsSubscribe` with `encryption` enabled.
-   * Delegates to the standalone function in `dwn-encryption.ts`.
-   */
-  private maybeWrapSubscriptionHandler<T extends DwnInterface>(
-    request: ProcessDwnRequest<T>,
-  ): MessageHandler[T] | undefined {
-    return maybeWrapSubscriptionHandlerForDecryptionFn(
-      request, this.agent,
-      this._delegateDecryptionKeyCache,
-      this._audienceDecryptionKeyCache,
     );
   }
 

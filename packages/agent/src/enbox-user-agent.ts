@@ -5,8 +5,8 @@ import type { EnboxRpc } from '@enbox/dwn-clients';
 import type { LocalDwnStrategy } from './local-dwn.js';
 import type { SecretStore } from './secret-store.js';
 import type { SyncEngine } from './types/sync.js';
+import type { DecryptRecordDataParams, DwnInterface, DwnResponse, ProcessDwnRequest, SendDwnRequest } from './types/dwn.js';
 import type { DidInterface, DidRequest, DidResponse } from './did-api.js';
-import type { DwnInterface, DwnResponse, ProcessDwnRequest, SendDwnRequest } from './types/dwn.js';
 import type { ProcessVcRequest, SendVcRequest, VcResponse } from './types/vc.js';
 
 import { AgentCryptoApi } from './crypto-api.js';
@@ -265,6 +265,10 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
     recoveryPhrase = await this.vault.initialize({ password, recoveryPhrase, dwnEndpoints });
 
     return recoveryPhrase;
+  }
+
+  public async decryptRecordData(params: DecryptRecordDataParams): Promise<ReadableStream<Uint8Array>> {
+    return this.dwn.decryptRecordData(params);
   }
 
   async processDidRequest<T extends DidInterface>(

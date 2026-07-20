@@ -10,7 +10,7 @@ import type { IdentityVault } from './identity-vault.js';
 import type { SecretStore } from '../secret-store.js';
 import type { SyncEngine } from './sync.js';
 import type { AgentDidApi, DidInterface, DidRequest, DidResponse } from '../did-api.js';
-import type { DwnInterface, DwnResponse, ProcessDwnRequest, SendDwnRequest } from './dwn.js';
+import type { DecryptRecordDataParams, DwnInterface, DwnResponse, ProcessDwnRequest, SendDwnRequest } from './dwn.js';
 import type { ProcessVcRequest, SendVcRequest, VcResponse } from './vc.js';
 
 
@@ -69,6 +69,13 @@ export interface EnboxAgent {
    * The Decentralized Identifier (DID) of this Enbox Agent.
    */
   agentDid: BearerDid;
+
+  /**
+   * Returns an application-readable stream for raw stored record bytes.
+   * Encrypted records are decrypted from their message envelope; plaintext
+   * records pass through unchanged.
+   */
+  decryptRecordData(params: DecryptRecordDataParams): Promise<ReadableStream<Uint8Array>>;
 
   /**
    * Processes a DID request, handling it internally within the agent and returning a DID response,

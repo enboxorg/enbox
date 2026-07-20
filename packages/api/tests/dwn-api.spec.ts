@@ -2678,16 +2678,13 @@ describe('DwnApi', () => {
           return spy.getCalls().filter((call) => call.args[0].messageType === DwnInterface.RecordsRead).length;
         }
 
-        it('should deliver plaintext snapshot and event records without a read round-trip when enabled', async () => {
+        it('should lazily decrypt inline snapshot and event data without a read round-trip', async () => {
           const protocol = await installEncryptedProtocol();
 
           // write an encrypted record BEFORE subscribing — lands in the snapshot
           await writeEncryptedNote(protocol, 'snapshot secret');
 
-          const { status, liveQuery: live } = await dwnAlice.records.subscribe({
-            filter     : { protocol },
-            encryption : true,
-          });
+          const { status, liveQuery: live } = await dwnAlice.records.subscribe({ filter: { protocol } });
           expect(status.code).toBe(200);
           expect(live).toBeDefined();
           expect(live!.records).toHaveLength(1);
@@ -2705,7 +2702,7 @@ describe('DwnApi', () => {
           // Spy AFTER delivery so only the data accesses below are observed.
           const processDwnRequestSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
 
-          // Both records serve plaintext from the inline (pre-decrypted) payload.
+          // Both records decrypt their inline stored ciphertext on access.
           expect(await live!.records[0].data.text()).toBe('snapshot secret');
           expect(await created[0].data.text()).toBe('live secret');
 
@@ -2715,44 +2712,33 @@ describe('DwnApi', () => {
           await live!.close();
         });
 
-        it('should preserve the lazy re-read behavior when encryption is not requested', async () => {
+        it('should return every query result when one record cannot be decrypted', async () => {
           const protocol = await installEncryptedProtocol();
-
-          // snapshot record: inline data remains ciphertext when the flag is off
-          await writeEncryptedNote(protocol, 'snapshot secret');
-
-          const { liveQuery: live } = await dwnAlice.records.subscribe({
-            filter: { protocol },
-          });
-          expect(live).toBeDefined();
-          expect(live!.records).toHaveLength(1);
-          expect(await live!.records[0].data.text()).not.toBe('snapshot secret');
-
-          const created: Record[] = [];
-          live!.on('create', (record) => { created.push(record); });
-
-          await writeEncryptedNote(protocol, 'live secret');
-
-          await Poller.pollUntilSuccessOrTimeout(async () => {
-            expect(created).toHaveLength(1);
+          const unreadable = await writeEncryptedNote(protocol, 'unreadable secret');
+          const readable = await writeEncryptedNote(protocol, 'readable secret');
+          const decryptRecordData = testHarness.agent.decryptRecordData.bind(testHarness.agent);
+          const decryptStub = sinon.stub(testHarness.agent, 'decryptRecordData').callsFake(async (params): Promise<ReadableStream<Uint8Array>> => {
+            if (params.recordsWrite.recordId === unreadable.id) {
+              throw new Error('test-induced decryption failure');
+            }
+            return decryptRecordData(params);
           });
 
-          // Event records carry no inline data; access re-reads from the DWN
-          // (decrypting, since the record carries an encryption envelope).
-          const processDwnRequestSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
-          expect(await created[0].data.text()).toBe('live secret');
-          expect(countRecordsReads(processDwnRequestSpy)).toBeGreaterThanOrEqual(1);
+          const { status, records } = await dwnAlice.records.query({ filter: { protocol } });
+          expect(status.code).toBe(200);
+          expect(records).toHaveLength(2);
+          expect(decryptStub.called).toBe(false);
 
-          await live!.close();
+          const readableResult = records.find((record) => record.id === readable.id)!;
+          const unreadableResult = records.find((record) => record.id === unreadable.id)!;
+          expect(await readableResult.data.text()).toBe('readable secret');
+          await expect(unreadableResult.data.text()).rejects.toThrow('test-induced decryption failure');
         });
 
         it('should decrypt large (non-inlined) record events through the lazy read', async () => {
           const protocol = await installEncryptedProtocol();
 
-          const { liveQuery: live } = await dwnAlice.records.subscribe({
-            filter     : { protocol },
-            encryption : true,
-          });
+          const { liveQuery: live } = await dwnAlice.records.subscribe({ filter: { protocol } });
           expect(live).toBeDefined();
 
           const created: Record[] = [];
@@ -2777,10 +2763,7 @@ describe('DwnApi', () => {
         it('should keep the subscription alive and reject data access for events that fail to decrypt', async () => {
           const protocol = await installEncryptedProtocol();
 
-          const { liveQuery: live } = await dwnAlice.records.subscribe({
-            filter     : { protocol },
-            encryption : true,
-          });
+          const { liveQuery: live } = await dwnAlice.records.subscribe({ filter: { protocol } });
           expect(live).toBeDefined();
 
           const created: Record[] = [];
@@ -2796,8 +2779,8 @@ describe('DwnApi', () => {
             expect(created).toHaveLength(1);
           });
 
-          // The event was delivered (ciphertext withheld); data access falls back
-          // to the lazy decrypting read, which rejects with the decryption error.
+          // Event delivery is independent of decryption. The error surfaces only
+          // when the application consumes this record's data.
           expect(created[0].id).toBe(failedWrite.id);
           await expect(created[0].data.text()).rejects.toThrow('Failed to decrypt record');
 

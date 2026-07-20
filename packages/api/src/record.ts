@@ -19,10 +19,13 @@ import type {
 } from '@enbox/agent';
 
 import type {
+  RecordDataAccess,
   RecordDeleteParams,
   RecordModel,
   RecordOptions,
   RecordUpdateParams,
+  StoredRecordData,
+  StoredRecordDataSource,
 } from './record-types.js';
 
 import {
@@ -40,15 +43,25 @@ import type { RecordData } from './record-data.js';
 import { createRecordData } from './record-data.js';
 import { dataToBlob, SendCache } from './utils.js';
 
-// Re-export types for backward compatibility — consumers that import from
-// `./record.js` will continue to resolve every type without changes.
+type StoredRecordDataReadParams = {
+  agent: EnboxAgent;
+  dataAccess: RecordDataAccess;
+  dataCid: string;
+  protocolRole?: string;
+  recordId: string;
+};
+
+// Re-export the Record types from the class's primary module.
 export type {
   ImmutableRecordProperties,
   OptionalRecordProperties,
   RecordDeleteParams,
+  RecordDataAccess,
   RecordModel,
   RecordOptions,
   RecordUpdateParams,
+  StoredRecordData,
+  StoredRecordDataSource,
 } from './record-types.js';
 
 export type { RecordData } from './record-data.js';
@@ -110,16 +123,15 @@ export class Record implements RecordModel {
   private readonly _delegateDid?: string;
   /** cache for fetching a permission {@link PermissionGrant}, keyed by a specific MessageType and protocol */
   private readonly _permissionsApi: PermissionsApi;
-  /** Encoded data of the record, if available. */
-  private _encodedData?: Blob;
-  /** Stream of the record's data (Web ReadableStream for cross-platform compatibility). */
-  private _readableStream?: ReadableStream;
+  /** Version-pinned access to the raw bytes stored for the current RecordsWrite. */
+  private _storedData?: StoredRecordDataSource;
+  /** Authorization and routing context used to open and decrypt the stored bytes. */
+  private _dataAccess: RecordDataAccess;
   /**
    * The origin DID if the record was fetched from — or updated on — a remote DWN.
    *
-   * Mutable for exactly one reason: a cross-tenant `update({ from })` re-homes the record's
-   * authoritative copy on the target tenant, so the in-place-mutated original must re-target
-   * its subsequent lazy data reads there. Never exposed through a setter.
+   * Kept in step with `_dataAccess` when an update changes the authoritative tenant. The
+   * access context, rather than this provenance field, drives lazy reads.
    */
   private _remoteOrigin?: string;
 
@@ -300,11 +312,9 @@ export class Record implements RecordModel {
     this._delegateDid = options.delegateDid;
     this._permissionsApi = permissionsApi ?? new AgentPermissionsApi({ agent });
 
-    // If the record was queried or read from a remote DWN, the `remoteOrigin` DID will be
-    // defined. This value is used to send subsequent read requests to the same remote DWN in the
-    // event the record's data payload was too large to be returned in query results. or must be
-    // read again (e.g., if the data stream is consumed).
+    // Retain remote provenance separately from the exact access context that drives backing reads.
     this._remoteOrigin = options.remoteOrigin;
+    this._dataAccess = options.dataAccess;
 
     // RecordsWriteMessage properties.
     this._attestation = options.attestation;
@@ -316,20 +326,8 @@ export class Record implements RecordModel {
     this._recordId = this.isRecordsDeleteDescriptor(options.descriptor) ? options.descriptor.recordId : options.recordId;
     this._protocolRole = options.protocolRole;
 
-    if (options.encodedData) {
-      // If `encodedData` is set, then it is expected that:
-      // type is Blob if the Record object was instantiated by dwn.records.create()/write().
-      // type is Base64 URL encoded string if the Record object was instantiated by dwn.records.query().
-      // If it is a string, we need to Base64 URL decode to bytes and instantiate a Blob.
-      this._encodedData = (typeof options.encodedData === 'string') ?
-        new Blob([Convert.base64Url(options.encodedData).toUint8Array() as BlobPart], { type: this.dataFormat }) :
-        options.encodedData;
-    }
-
-    if (options.data) {
-      // If the record was created from a RecordsRead reply then it will have a `data` property.
-      // The DWN SDK now returns Web ReadableStream natively.
-      this._readableStream = options.data;
+    if (!this.deleted) {
+      this._storedData = this.createStoredDataSource(options.storedData);
     }
   }
 
@@ -342,35 +340,17 @@ export class Record implements RecordModel {
    * @beta
    */
   get data(): RecordData {
-    return createRecordData(async (): Promise<ReadableStream> => {
+    return createRecordData(async (): Promise<ReadableStream<Uint8Array>> => {
       if (this.deleted) {
         throw new Error('Cannot access data of a deleted record.');
       }
 
-      if (this._encodedData) {
-        /** If `encodedData` is set, it indicates that the Record was instantiated by
-         * `dwn.records.create()`/`dwn.records.write()` or the record's data payload was small
-         * enough to be returned in `dwn.records.query()` results. In either case, the data is
-         * already available in-memory and can be returned as a Web `ReadableStream`. */
-        return Stream.fromBlob(this._encodedData);
-
-      } else if (this._readableStream) {
-        /** If a data stream is available, return it and clear the reference so subsequent
-         * calls will re-fetch. Unlike Node Readable streams, a consumed Web ReadableStream
-         * still appears "readable" (unlocked), so we cannot rely on `isReadable()` to
-         * detect exhaustion. Clearing the reference ensures the next call re-fetches. */
-        const currentStream = this._readableStream;
-        this._readableStream = undefined;
-        return currentStream;
-
-      } else {
-        /** The data stream has been consumed or was never set. Re-fetch from either: */
-        return this._remoteOrigin ?
-          // A. ...a remote DWN if the record was originally queried from a remote DWN.
-          await this.readRecordData({ target: this._remoteOrigin, isRemote: true }) :
-          // B. ...a local DWN if the record was originally queried from the local DWN.
-          await this.readRecordData({ target: this._connectedDid, isRemote: false });
-      }
+      const dataStream = await this.openStoredData();
+      return this._agent.decryptRecordData({
+        ...this._dataAccess,
+        dataStream,
+        recordsWrite: this.rawMessage as DwnMessage[DwnInterface.RecordsWrite],
+      });
     }, this.dataFormat);
   }
 
@@ -453,7 +433,7 @@ export class Record implements RecordModel {
         messageType : DwnInterface.RecordsWrite,
         author      : this._connectedDid,
         target      : target,
-        dataStream  : this._encodedData ?? await this.data.stream(),
+        dataStream  : await this.openStoredData(),
         rawMessage  : { ...this.rawMessage }
       };
     }
@@ -555,6 +535,10 @@ export class Record implements RecordModel {
       throw new Error('Record: Cannot revive a deleted record.');
     }
 
+    if (data === undefined && encryption !== undefined && encryption !== (this._encryption !== undefined)) {
+      throw new Error('Record: Changing a record\'s encryption mode requires replacement data.');
+    }
+
     // Auto-detect encryption: if the record was originally encrypted and the
     // caller didn't explicitly set `encryption`, default to re-encrypting.
     const shouldEncrypt = encryption ?? (this._encryption !== undefined);
@@ -625,7 +609,7 @@ export class Record implements RecordModel {
       await this._agent.sendDwnRequest(requestOptions) :
       await this._agent.processDwnRequest(requestOptions);
 
-    const { message: responseMessage, reply: { status }, audienceKeyDelivery } = agentResponse;
+    const { message: responseMessage, reply: { status }, audienceKeyDelivery, data: responseData } = agentResponse;
 
     if (!(200 <= status.code && status.code <= 299)) {
       // Return a shallow copy of this record on failure — no state change.
@@ -644,16 +628,24 @@ export class Record implements RecordModel {
     // whoever signed this update, which may differ from the previous author.
     const msg = responseMessage as DwnMessage[DwnInterface.RecordsWrite];
     const updatedAuthor = getRecordAuthor(msg) ?? this._author;
-    const updatedRemoteOrigin = from ?? this._remoteOrigin;
+    const updatedRemoteOrigin = isRemote ? from : undefined;
+    const dataAccess = Record.getDataAccess(requestOptions, isRemote);
+    // A stored metadata-only update should re-open the accepted state from its
+    // new target. A non-stored update has no target copy to reopen, so retain
+    // the existing exact-CID source until the constructed message is sent.
+    const storedData = responseData ?? (
+      !store && this._storedData?.dataCid === msg.descriptor.dataCid ? this._storedData : undefined
+    );
 
     const updatedRecord = new Record(this._agent, {
       author       : updatedAuthor,
       connectedDid : this._connectedDid,
       delegateDid  : this._delegateDid,
+      dataAccess,
       remoteOrigin : updatedRemoteOrigin,
       protocolRole : protocolRole ?? this._protocolRole,
       initialWrite,
-      encodedData  : data === undefined ? this._encodedData : dataBlob,
+      storedData,
       ...msg,
     }, this._permissionsApi);
 
@@ -674,8 +666,8 @@ export class Record implements RecordModel {
     this._protocolRole = protocolRole ?? this._protocolRole;
     this._author = updatedAuthor;
     this._remoteOrigin = updatedRemoteOrigin;
-    this._encodedData = data === undefined ? this._encodedData : dataBlob;
-    this._readableStream = undefined; // Invalidate any consumed stream.
+    this._dataAccess = dataAccess;
+    this._storedData = this.createStoredDataSource(storedData);
     this._rawMessageDirty = true; // Force rawMessage cache rebuild.
 
     return { status, record: updatedRecord, ...(audienceKeyDelivery ? { audienceKeyDelivery } : {}) };
@@ -824,6 +816,7 @@ export class Record implements RecordModel {
       author       : getRecordAuthor(message),
       connectedDid : this._connectedDid,
       delegateDid  : this._delegateDid,
+      dataAccess   : this._dataAccess,
       remoteOrigin : this._remoteOrigin,
       protocolRole : deleteParams?.protocolRole ?? this._protocolRole,
       initialWrite,
@@ -836,8 +829,7 @@ export class Record implements RecordModel {
     this._descriptor = deleteMsg.descriptor;
     this._authorization = deleteMsg.authorization;
     this._protocolRole = deleteParams?.protocolRole ?? this._protocolRole;
-    this._encodedData = undefined;
-    this._readableStream = undefined;
+    this._storedData = undefined;
     this._rawMessageDirty = true;
 
     return { status, record: deletedRecord };
@@ -908,7 +900,7 @@ export class Record implements RecordModel {
         rawMessage  : this.rawMessage,
         author      : this._connectedDid,
         target      : this._connectedDid,
-        dataStream  : this._encodedData ?? await this.data.stream(),
+        dataStream  : await this.openStoredData(),
         signAsOwner : signAsOwnerValue,
         signAsOwnerDelegate,
         store,
@@ -933,63 +925,141 @@ export class Record implements RecordModel {
     return { status };
   }
 
-  /**
-   * Fetches the record's data from the specified DWN.
-   *
-   * This private method is called when the record data is not available in-memory
-   * and needs to be fetched from either a local or a remote DWN.
-   * It makes a read request to the specified DWN and processes the response to provide
-   * a Web `ReadableStream` of the record's data.
-   *
-   * @param params - Parameters for fetching the record's data.
-   * @param params.target - The DID of the DWN to fetch the data from.
-   * @param params.isRemote - Indicates whether the target DWN is a remote node.
-   * @returns A Promise that resolves to a Web `ReadableStream` of the record's data.
-   * @throws If there is an error while fetching or processing the data from the DWN.
-   *
-   * @beta
-   */
-  private async readRecordData({ target, isRemote }: { target: string, isRemote: boolean }): Promise<ReadableStream> {
-    const readRequest: ProcessDwnRequest<DwnInterface.RecordsRead> = {
-      author        : this._connectedDid,
-      messageParams : { filter: { recordId: this.id }, protocolRole: this._protocolRole },
-      messageType   : DwnInterface.RecordsRead,
-      target,
-      // If the record is encrypted, enable auto-decryption so re-fetched
-      // data is returned as plaintext rather than ciphertext.
-      ...(this._encryption ? { encryption: true } : {}),
-    };
-
-    if (this._delegateDid) {
-      // When reading the data as a delegate, if we don't find a grant we will attempt to read it with the delegate DID as the author.
-      // This allows users to read publicly available data without needing explicit grants.
-      //
-      // NOTE: For anonymous/public record data access, callers can use `ReadOnlyRecord` via `Enbox.anonymous()`.
-      // See: https://github.com/enboxorg/enbox/issues/898
-      try {
-        await this.applyDelegateGrant(readRequest);
-      } catch {
-        // If there is an error fetching the grant, we will attempt to read the data as the delegate.
-        readRequest.author = this._delegateDid;
-      }
+  /** Creates a version-pinned source for raw bytes supplied inline or fetched lazily. */
+  private createStoredDataSource(storedData?: StoredRecordData): StoredRecordDataSource {
+    const dataCid = this.dataCid;
+    if (dataCid === undefined) {
+      throw new Error('Record: Cannot create a stored data source without a data CID.');
     }
 
-    const agentResponsePromise = isRemote ?
-      this._agent.sendDwnRequest(readRequest) :
-      this._agent.processDwnRequest(readRequest);
+    if (storedData !== undefined && Record.isStoredDataSource(storedData)) {
+      if (storedData.dataCid !== dataCid) {
+        throw new Error(
+          `Record: Stored data source CID '${storedData.dataCid}' does not match record data CID '${dataCid}'.`
+        );
+      }
+      return storedData;
+    }
+
+    const dataBlob = typeof storedData === 'string'
+      ? new Blob([Convert.base64Url(storedData).toUint8Array() as BlobPart])
+      : storedData instanceof Blob ? storedData : undefined;
+    let dataStream = storedData instanceof ReadableStream ? storedData : undefined;
+    const readParams: StoredRecordDataReadParams = {
+      agent        : this._agent,
+      dataAccess   : { ...this._dataAccess },
+      dataCid,
+      protocolRole : this._protocolRole,
+      recordId     : this.id,
+    };
+
+    return {
+      dataCid,
+      open: async (): Promise<ReadableStream<Uint8Array>> => {
+        if (dataBlob !== undefined) {
+          return Stream.fromBlob(dataBlob) as ReadableStream<Uint8Array>;
+        }
+        if (dataStream !== undefined) {
+          const stream = dataStream;
+          dataStream = undefined;
+          return stream;
+        }
+        return Record.readStoredRecordData(readParams);
+      },
+    };
+  }
+
+  /** Opens raw bytes only when their source is pinned to the current RecordsWrite data CID. */
+  private async openStoredData(): Promise<ReadableStream<Uint8Array>> {
+    const expectedDataCid = this.dataCid;
+    if (expectedDataCid === undefined || this._storedData === undefined) {
+      throw new Error('Record: Stored data is unavailable for this record state.');
+    }
+    if (this._storedData.dataCid !== expectedDataCid) {
+      throw new Error(
+        `Record: Stored data source CID '${this._storedData.dataCid}' does not match ` +
+        `current record data CID '${expectedDataCid}'.`
+      );
+    }
+
+    return this._storedData.open();
+  }
+
+  /** Reads raw stored bytes and rejects a response for any other data version. */
+  private static async readStoredRecordData({
+    agent,
+    dataAccess,
+    dataCid,
+    protocolRole,
+    recordId,
+  }: StoredRecordDataReadParams): Promise<ReadableStream<Uint8Array>> {
+    const { author, delegatedGrant, granteeDid, remote, target } = dataAccess;
+    const readRequest: ProcessDwnRequest<DwnInterface.RecordsRead> = {
+      author,
+      messageParams: {
+        filter: { recordId },
+        protocolRole,
+        ...(delegatedGrant === undefined ? {} : { delegatedGrant }),
+      },
+      messageType: DwnInterface.RecordsRead,
+      target,
+      ...(granteeDid === undefined ? {} : { granteeDid }),
+    };
+
+    const agentResponsePromise = remote ?
+      agent.sendDwnRequest(readRequest) :
+      agent.processDwnRequest(readRequest);
 
     try {
       const { reply: { status, entry } } = await agentResponsePromise;
       if (status.code !== 200) {
         throw new Error(`${status.code}: ${status.detail}`);
       }
+      if (entry?.recordsWrite === undefined || entry.data === undefined) {
+        throw new Error('the DWN returned no stored record data');
+      }
+      if (entry.recordsWrite.recordId !== recordId) {
+        throw new Error(
+          `the DWN returned record '${entry.recordsWrite.recordId}' while reading '${recordId}'`
+        );
+      }
+      if (entry.recordsWrite.descriptor.dataCid !== dataCid) {
+        throw new Error(
+          `the DWN returned data CID '${entry.recordsWrite.descriptor.dataCid}' ` +
+          `for source CID '${dataCid}'`
+        );
+      }
 
-      // DWN SDK now returns Web ReadableStream natively.
       return entry.data;
 
     } catch (error) {
-      throw new Error(`Error encountered while attempting to read data: ${error.message}`);
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`Record: Unable to read stored data: ${detail}`);
     }
+  }
+
+  /** Captures the exact authorization and routing context used for a successful request. */
+  private static getDataAccess<T extends DwnInterface>(
+    request: ProcessDwnRequest<T>,
+    remote: boolean,
+  ): RecordDataAccess {
+    const messageParams = request.messageParams as { delegatedGrant?: RecordDataAccess['delegatedGrant'] } | undefined;
+    return {
+      author : request.author,
+      remote,
+      target : request.target,
+      ...(request.granteeDid === undefined ? {} : { granteeDid: request.granteeDid }),
+      ...(messageParams?.delegatedGrant === undefined ? {} : { delegatedGrant: messageParams.delegatedGrant }),
+    };
+  }
+
+  private static isStoredDataSource(storedData: StoredRecordData): storedData is StoredRecordDataSource {
+    return typeof storedData === 'object'
+      && storedData !== null
+      && 'dataCid' in storedData
+      && typeof storedData.dataCid === 'string'
+      && 'open' in storedData
+      && typeof storedData.open === 'function';
   }
 
   /**
