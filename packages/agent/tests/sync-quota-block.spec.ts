@@ -241,7 +241,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     await seedQuotaBlock({ authorizationEpoch: 'old-epoch', cid: 'old-cid', nextProbeAt });
     await seedQuotaBlock({ authorizationEpoch: 'new-epoch', cid: 'new-cid', nextProbeAt });
     const internal = syncEngine as unknown as {
-      pruneQuotaBlocksForCurrentTargets(targets: unknown[], expectedGeneration: number): Promise<void>;
+      pruneQuotaBlocksForCurrentTargets(targets: unknown[], expectedTopologyGeneration: number): Promise<void>;
     };
 
     await internal.pruneQuotaBlocksForCurrentTargets([{

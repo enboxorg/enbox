@@ -311,7 +311,7 @@ export class SyncLinkRecoveryCoordinator {
     if (this.repairSuperseded(controller, runtimeScope)) {
       return;
     }
-    controller.resetPullRuntime();
+    controller.resetPullGeneration();
 
     try {
       const target = SyncLinkRecoveryCoordinator.targetFromController(controller);

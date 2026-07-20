@@ -73,7 +73,7 @@ describe('SyncLinkController', () => {
     controller.startPullDelivery(token(1));
     controller.startPullDelivery(token(2));
 
-    controller.resetPullRuntime();
+    controller.resetPullGeneration();
     const next = controller.startPullDelivery(token(3));
 
     expect(next.ordinal).toBe(0);
@@ -87,7 +87,7 @@ describe('SyncLinkController', () => {
     const controller = new SyncLinkController('link-key', link);
     const stale = controller.startPullDelivery(token(9));
 
-    controller.resetPullRuntime();
+    controller.resetPullGeneration();
     const fresh = controller.startPullDelivery(token(2));
 
     // The stale ticket's ordinal collides with the fresh delivery's ordinal

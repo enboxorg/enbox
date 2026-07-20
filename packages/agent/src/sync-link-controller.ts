@@ -38,13 +38,19 @@ type InFlightPullCommit = {
 };
 
 /**
- * One in-flight pull delivery's ordering claim. The epoch pins the claim to
- * the pull generation that issued it: clearing or resetting the pull runtime
- * starts a new generation, and commits carrying a superseded ticket are
- * ignored instead of colliding with a fresh delivery's ordinal.
+ * One in-flight pull delivery's ordering claim, pinned to the pull
+ * generation that issued it. `startNewPullGeneration` and
+ * `resetPullGeneration` each begin a new generation, after which commits
+ * carrying a superseded ticket are ignored instead of colliding with a
+ * fresh delivery's ordinal.
+ *
+ * "Generation" means this monotonic in-memory counter and nothing else. The
+ * two durable, string-valued epochs — `authorizationEpoch` on a replication
+ * link, and `ProgressToken.epoch` on a remote stream — are separate concepts
+ * that deliberately keep the word "epoch".
  */
 export type SyncPullDeliveryTicket = {
-  epoch: number;
+  generation: number;
   ordinal: number;
 };
 
@@ -76,7 +82,7 @@ export class SyncLinkController {
   private _nextPullCommitOrdinal = 0;
   private _nextPullDeliveryOrdinal = 0;
   private readonly _pullInflight: Map<number, InFlightPullCommit> = new Map();
-  private _pullEpoch = 0;
+  private _pullGeneration = 0;
   private _pushRuntime?: SyncPushRuntimeState;
   private _reconcileTimer?: ReturnType<typeof setTimeout>;
   private _reconcileTimerDueAt?: number;
@@ -200,13 +206,13 @@ export class SyncLinkController {
   }
 
   /** The current pull generation; superseded delivery tickets are ignored. */
-  public get pullEpoch(): number {
-    return this._pullEpoch;
+  public get pullGeneration(): number {
+    return this._pullGeneration;
   }
 
   /** Whether this controller is still active and owns the given pull generation. */
-  public isPullEpochCurrent(epoch: number): boolean {
-    return this._active && this._pullEpoch === epoch;
+  public isPullGenerationCurrent(generation: number): boolean {
+    return this._active && this._pullGeneration === generation;
   }
 
   /** Number of pull deliveries still waiting to become contiguously committed. */
@@ -250,7 +256,7 @@ export class SyncLinkController {
   public startPullDelivery(token: ProgressToken): SyncPullDeliveryTicket {
     const ordinal = this._nextPullDeliveryOrdinal++;
     this._pullInflight.set(ordinal, { token, committed: false });
-    return { epoch: this._pullEpoch, ordinal };
+    return { generation: this._pullGeneration, ordinal };
   }
 
   /**
@@ -261,7 +267,7 @@ export class SyncLinkController {
    * delivery, and its token predates the re-established pull boundary.
    */
   public commitPullDelivery(ticket: SyncPullDeliveryTicket): number {
-    if (ticket.epoch !== this._pullEpoch) {
+    if (ticket.generation !== this._pullGeneration) {
       return 0;
     }
 
@@ -302,14 +308,14 @@ export class SyncLinkController {
    * repair transition synchronously, before any await.
    */
   public startNewPullGeneration(): void {
-    this._pullEpoch++;
+    this._pullGeneration++;
     this._pullInflight.clear();
     this._nextPullCommitOrdinal = this._nextPullDeliveryOrdinal;
   }
 
   /** Reset pull delivery ordering when a repair establishes a fresh boundary. */
-  public resetPullRuntime(): void {
-    this._pullEpoch++;
+  public resetPullGeneration(): void {
+    this._pullGeneration++;
     this._pullInflight.clear();
     this._nextPullCommitOrdinal = 0;
     this._nextPullDeliveryOrdinal = 0;
@@ -377,11 +383,11 @@ export class SyncLinkController {
    * permanently fenced: every callback discarded as stale while the slot
    * blocks the replacement.
    */
-  public setLiveSubscription(subscription: SyncLinkSubscription, expectedPullEpoch?: number): boolean {
+  public setLiveSubscription(subscription: SyncLinkSubscription, expectedPullGeneration?: number): boolean {
     if (!this._active || this._liveSubscription !== undefined) {
       return false;
     }
-    if (expectedPullEpoch !== undefined && expectedPullEpoch !== this._pullEpoch) {
+    if (expectedPullGeneration !== undefined && expectedPullGeneration !== this._pullGeneration) {
       return false;
     }
     this._liveSubscription = subscription;
@@ -393,11 +399,11 @@ export class SyncLinkController {
    * active — and, when the caller pins the pull generation it opened the
    * subscription for, only while that generation is still current.
    */
-  public setLocalSubscription(subscription: SyncLinkSubscription, expectedPullEpoch?: number): boolean {
+  public setLocalSubscription(subscription: SyncLinkSubscription, expectedPullGeneration?: number): boolean {
     if (!this._active || this._localSubscription !== undefined) {
       return false;
     }
-    if (expectedPullEpoch !== undefined && expectedPullEpoch !== this._pullEpoch) {
+    if (expectedPullGeneration !== undefined && expectedPullGeneration !== this._pullGeneration) {
       return false;
     }
     this._localSubscription = subscription;
@@ -522,7 +528,7 @@ export class SyncLinkController {
     this.clearPushRuntime();
     this.cancelRepairRetry();
     this.cancelReconcileTimer();
-    this.resetPullRuntime();
+    this.resetPullGeneration();
     this._mailboxShared.clear();
     this._sharedRunRequests.clear();
     this._repairAttempts = 0;
