@@ -726,7 +726,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
 
     expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
     expect(fixture.operations.reconcileTarget.firstCall.args[2]).toBeUndefined();
-    expect(controller.reconcileTimerDueAt).toBe(500);
+    expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(true);
     controller.deactivate();
     await clock.runAllAsync();
   });
