@@ -31,7 +31,7 @@ describe('RPC Clients', () => {
         result: { reply: { status: { code: 200, detail: 'OK' }, entries: [] } },
       });
       poolOf().set(socketKey, {
-        socket        : { isConnected: true, isFresh: (): boolean => true, request, send: sinon.stub() },
+        socket        : { isConnected: true, request, send: sinon.stub() },
         subscriptions : new Map(),
         url           : `${socketKey}/`,
       });
@@ -96,7 +96,7 @@ describe('RPC Clients', () => {
       const { client: httpStub, sent } = recordingHttpClient();
       const rpcClient = new EnboxRpcClient([httpStub]);
       poolOf().set(socketKey, {
-        socket        : { isConnected: false, isFresh: (): boolean => false, request: sinon.stub() },
+        socket        : { isConnected: false, request: sinon.stub() },
         subscriptions : new Map(),
         url           : `${socketKey}/`,
       });
@@ -107,26 +107,6 @@ describe('RPC Clients', () => {
         message   : queryMessage() as never,
       });
 
-      expect(sent).toHaveLength(1);
-    });
-
-    it('keeps an ordinary HTTP request on HTTP when the pooled socket is stale', async () => {
-      const { client: httpStub, sent } = recordingHttpClient();
-      const rpcClient = new EnboxRpcClient([httpStub]);
-      const request = sinon.stub();
-      poolOf().set(socketKey, {
-        socket        : { isConnected: true, isFresh: (): boolean => false, request, send: sinon.stub() },
-        subscriptions : new Map(),
-        url           : `${socketKey}/`,
-      });
-
-      await rpcClient.sendDwnRequest({
-        dwnUrl    : httpEndpoint,
-        targetDid : 'did:example:alice',
-        message   : queryMessage() as never,
-      });
-
-      expect(request.called).toBe(false);
       expect(sent).toHaveLength(1);
     });
 
@@ -193,7 +173,7 @@ describe('RPC Clients', () => {
         close: async (): Promise<void> => {},
       });
       poolOf().set(socketKey, {
-        socket        : { isConnected: true, isFresh: (): boolean => true, subscribe, send: sinon.stub() },
+        socket        : { isConnected: true, subscribe, send: sinon.stub() },
         subscriptions : new Map(),
         url           : `${socketKey}/`,
       });

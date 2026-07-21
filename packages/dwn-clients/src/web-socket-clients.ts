@@ -348,8 +348,8 @@ export class WebSocketDwnRpcClient implements DwnRpc {
         })
         .catch((error: unknown) => {
           // Establishment failure means nothing was ever transmitted on this
-          // socket — surface the typed never-sent rejection (with redacted
-          // detail) so the socket-preferred router can fall back to HTTP.
+          // socket. Surface that fact as a typed rejection (with redacted
+          // detail) without silently changing the caller's transport.
           throw new SocketUnavailableError(`Error connecting to ${displayUrl.toString()}: ${redactConnectionError(error, url, displayUrl)}`);
         })
         .finally(() => {
