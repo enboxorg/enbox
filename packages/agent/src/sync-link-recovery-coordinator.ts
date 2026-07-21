@@ -158,7 +158,7 @@ export class SyncLinkRecoveryCoordinator {
     runtime.cancelTimer(SyncLinkRecoveryCoordinator.repairRetryTimerKey(controller.linkKey));
   }
 
-  /** Schedule a failed repair using the bounded per-link backoff ladder. */
+  /** Schedule a failed or superseded repair using the bounded per-link backoff ladder. */
   private scheduleRepairRetry(controller: SyncLinkController): void {
     const { link } = controller;
     const runtime = this._operations.getRuntime();
@@ -338,8 +338,13 @@ export class SyncLinkRecoveryCoordinator {
     } catch (error: unknown) {
       await this.handleRepairFailure(controller, runtime, attempts, error);
     } finally {
-      if (controller.executor.hasPending('repair')) {
+      // A newer recovery signal supersedes this attempt, but it must not make
+      // the executor spin close/reconcile/reopen without a delay while a
+      // transport is flapping. Retain the signal through the runtime-owned
+      // retry timer and leave genuine failures as the attempt-budget owner.
+      if (controller.executor.consumePending('repair')) {
         controller.retireRepairAttempt(attempts);
+        this.scheduleRepairRetry(controller);
       }
     }
   }
@@ -441,9 +446,9 @@ export class SyncLinkRecoveryCoordinator {
   ): Promise<void> {
     // A repair failing after it was superseded — an external pause tearing
     // down its I/O, or a newer repair request taking ownership — is a quiet
-    // handoff: no report, no repair:failed, no rethrow into the retry
-    // ladder, so the trailing turn (if any) runs immediately with the
-    // newest transition state instead of inheriting this pass's failure.
+    // handoff: no report and no repair:failed. The retained signal follows
+    // the supersession backoff without inheriting this pass's failure or
+    // consuming its attempt budget.
     if (this.isRepairSuperseded(controller, runtime)) {
       return;
     }
