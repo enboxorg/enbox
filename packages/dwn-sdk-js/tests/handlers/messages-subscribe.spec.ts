@@ -277,6 +277,64 @@ export function testMessagesSubscribeHandler(): void {
           await reply.subscription!.close();
         });
 
+        it.skipIf(!supportsReplicationFeed)('should omit the fingerprint for filter sets naming a core protocol directly', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+
+          // Core protocols contribute no tagged domains for themselves, so a
+          // fingerprint over this set would have known-incomplete coverage —
+          // it fails closed instead.
+          const messagesSubscribe = await MessagesSubscribe.create({
+            signer  : Jws.createSigner(alice),
+            filters : [{ protocol: PermissionsProtocol.uri }],
+          });
+          const reply = await dwn.processMessage(alice.did, messagesSubscribe.message, { subscriptionHandler: (_) => {} });
+          expect(reply.status.code).toBe(200);
+          expect(reply.fingerprint).toBeUndefined();
+          expect(reply.head!.position).toBe('0');
+
+          await reply.subscription!.close();
+        });
+
+        it.skipIf(!supportsReplicationFeed)('should return the live subscription without snapshot fields when the snapshot fails', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          // `fingerprint` is snapshot-only (`logBounds` also serves the
+          // subscribe path itself), so it is the clean injection point.
+          const snapshotFailure = sinon.stub(messageStore as unknown as { fingerprint: () => Promise<never> }, 'fingerprint')
+            .rejects(new Error('injected snapshot failure'));
+
+          // Snapshot enrichment is best-effort: a failure must not fail the
+          // reply, which would orphan the just-installed listener (close
+          // handles register only from successful replies).
+          let delivered = 0;
+          const messagesSubscribe = await MessagesSubscribe.create({ signer: Jws.createSigner(alice) });
+          const reply = await dwn.processMessage(alice.did, messagesSubscribe.message, {
+            subscriptionHandler: (_) => { delivered += 1; },
+          });
+          snapshotFailure.restore();
+          expect(reply.status.code).toBe(200);
+          expect(reply.subscription).toBeDefined();
+          expect(reply.fingerprint).toBeUndefined();
+          expect(reply.head).toBeUndefined();
+
+          // The subscription is genuinely live — an event flows through it.
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          const record = await TestDataGenerator.generateRecordsWrite({ author: alice });
+          const writeReply = await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream });
+          expect(writeReply.status.code).toBe(202);
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(delivered).toBeGreaterThan(0);
+          });
+
+          // And its close handle works — no orphaned listener remains.
+          const deliveredAtClose = delivered;
+          await reply.subscription!.close();
+          const second = await TestDataGenerator.generateRecordsWrite({ author: alice });
+          const secondReply = await dwn.processMessage(alice.did, second.message, { dataStream: second.dataStream });
+          expect(secondReply.status.code).toBe(202);
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          expect(delivered).toBe(deliveredAtClose);
+        });
+
         it.skipIf(!supportsReplicationFeed)('should omit the fingerprint but keep the head for filters outside fingerprint domains', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
 

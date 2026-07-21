@@ -84,7 +84,14 @@ export class MessagesSubscribeHandler implements MethodHandler {
         status: { code: 200, detail: 'OK' },
         subscription,
       };
-      await MessagesSubscribeHandler.attachFeedSnapshot(reply, tenant, filters, this.deps);
+      try {
+        await MessagesSubscribeHandler.attachFeedSnapshot(reply, tenant, filters, this.deps);
+      } catch {
+        // Best-effort enrichment: the subscription is live and correct
+        // without the snapshot — consumers feature-detect the fields. A
+        // failure reply here would orphan the just-installed listener, since
+        // close handles are registered only from successful replies.
+      }
 
       return reply;
     } catch (error) {
@@ -123,12 +130,20 @@ export class MessagesSubscribeHandler implements MethodHandler {
       return;
     }
 
+    // Build the complete snapshot before attaching anything: a partial
+    // snapshot (a head without its fingerprint) would read to consumers as
+    // a fingerprint-less server rather than as a failed capture.
     const bounds = await feedReader.logBounds(tenant);
-    reply.head = bounds?.latest ?? await MessagesSubscribeHandler.buildAnchorToken(tenant, feedReader);
+    const head = bounds?.latest ?? await MessagesSubscribeHandler.buildAnchorToken(tenant, feedReader);
 
     const fingerprintScopes = Messages.computeFingerprintScopes(filters);
-    if (fingerprintScopes !== undefined) {
-      reply.fingerprint = await feedReader.fingerprint(tenant, fingerprintScopes);
+    const fingerprint = fingerprintScopes === undefined
+      ? undefined
+      : await feedReader.fingerprint(tenant, fingerprintScopes);
+
+    reply.head = head;
+    if (fingerprint !== undefined) {
+      reply.fingerprint = fingerprint;
     }
   }
 

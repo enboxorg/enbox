@@ -117,7 +117,8 @@ export class Replication {
     );
   }
 
-  private static isCoreProtocolUri(protocolUri: string): boolean {
+  /** Whether a protocol URI is one of the core protocols (permissions, encryption). */
+  public static isCoreProtocolUri(protocolUri: string): boolean {
     return protocolUri === PermissionsProtocol.uri || protocolUri === EncryptionProtocol.uri;
   }
 

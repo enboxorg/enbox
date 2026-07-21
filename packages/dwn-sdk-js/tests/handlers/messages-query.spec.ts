@@ -199,17 +199,17 @@ export function testMessagesQueryHandler(): void {
         Replication.encryptionDomain(protocol),
       ]));
 
+      // Filter sets naming a core protocol directly fail closed: the core
+      // protocols contribute no tagged domains for themselves, so a
+      // fingerprint over such a set would not span everything these filters
+      // enumerate — no fingerprint beats one with known-incomplete coverage.
       const protocolAndPermissionsQuery = await TestDataGenerator.generateMessagesQuery({
         author  : alice,
         filters : [{ protocol }, { protocol: PermissionsProtocol.uri }],
       });
       const protocolAndPermissionsReply = await dwn.processMessage(alice.did, protocolAndPermissionsQuery.message);
       expect(protocolAndPermissionsReply.status.code).toBe(200);
-      expect(protocolAndPermissionsReply.fingerprint).toBe(await feedReader.fingerprint(alice.did, [
-        Replication.protocolDomain(protocol),
-        Replication.protocolDomain(PermissionsProtocol.uri),
-        Replication.encryptionDomain(protocol),
-      ]));
+      expect(protocolAndPermissionsReply.fingerprint).toBeUndefined();
 
       const protocolAndEncryptionQuery = await TestDataGenerator.generateMessagesQuery({
         author  : alice,
@@ -217,11 +217,7 @@ export function testMessagesQueryHandler(): void {
       });
       const protocolAndEncryptionReply = await dwn.processMessage(alice.did, protocolAndEncryptionQuery.message);
       expect(protocolAndEncryptionReply.status.code).toBe(200);
-      expect(protocolAndEncryptionReply.fingerprint).toBe(await feedReader.fingerprint(alice.did, [
-        Replication.protocolDomain(protocol),
-        Replication.permissionDomain(protocol),
-        Replication.protocolDomain(EncryptionProtocol.uri),
-      ]));
+      expect(protocolAndEncryptionReply.fingerprint).toBeUndefined();
 
       const allProtocolScopesQuery = await TestDataGenerator.generateMessagesQuery({
         author  : alice,
@@ -229,11 +225,7 @@ export function testMessagesQueryHandler(): void {
       });
       const allProtocolScopesReply = await dwn.processMessage(alice.did, allProtocolScopesQuery.message);
       expect(allProtocolScopesReply.status.code).toBe(200);
-      expect(allProtocolScopesReply.fingerprint).toBe(await feedReader.fingerprint(alice.did, [
-        Replication.protocolDomain(protocol),
-        Replication.protocolDomain(PermissionsProtocol.uri),
-        Replication.protocolDomain(EncryptionProtocol.uri),
-      ]));
+      expect(allProtocolScopesReply.fingerprint).toBeUndefined();
 
       const nonCanonicalQuery = await TestDataGenerator.generateMessagesQuery({
         author  : alice,

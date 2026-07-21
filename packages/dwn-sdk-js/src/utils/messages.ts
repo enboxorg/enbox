@@ -145,6 +145,17 @@ export class Messages {
       protocols.add(filter.protocol);
     }
 
+    // Fail closed for filter sets naming a core protocol directly: the core
+    // protocols contribute no tagged domains for themselves, so the domain
+    // set would not span everything such filters enumerate — two feeds could
+    // fingerprint identically while differing in enumerable messages. No
+    // fingerprint beats one whose coverage is known-incomplete.
+    for (const protocol of protocols) {
+      if (Replication.isCoreProtocolUri(protocol)) {
+        return undefined;
+      }
+    }
+
     const scopes: string[] = [];
     for (const protocol of protocols) {
       scopes.push(
