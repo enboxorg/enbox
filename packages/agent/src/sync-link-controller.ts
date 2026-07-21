@@ -32,10 +32,7 @@ export class SyncLinkController {
   private _pullSnapshot?: SyncFeedSnapshot;
   private _replicationGeneration = 0;
   private _pushSnapshot?: SyncFeedSnapshot;
-  private _reconcileTimer?: ReturnType<typeof setTimeout>;
-  private _reconcileTimerDueAt?: number;
   private _repairAttempts = 0;
-  private _repairRetryTimer?: ReturnType<typeof setTimeout>;
 
   public constructor(
     public readonly linkKey: string,
@@ -77,20 +74,8 @@ export class SyncLinkController {
     return this._active && this._replicationGeneration === replicationGeneration;
   }
 
-  public get reconcileTimer(): ReturnType<typeof setTimeout> | undefined {
-    return this._reconcileTimer;
-  }
-
-  public get reconcileTimerDueAt(): number | undefined {
-    return this._reconcileTimerDueAt;
-  }
-
   public get repairAttempts(): number {
     return this._repairAttempts;
-  }
-
-  public get repairRetryTimer(): ReturnType<typeof setTimeout> | undefined {
-    return this._repairRetryTimer;
   }
 
   public get hasLiveSubscription(): boolean {
@@ -206,56 +191,8 @@ export class SyncLinkController {
     }
   }
 
-  public clearRepairProgress(): void {
+  public clearRepairAttempts(): void {
     this._repairAttempts = 0;
-    this.cancelRepairRetryTimer();
-  }
-
-  public setRepairRetryTimer(timer: ReturnType<typeof setTimeout>): void {
-    this.cancelRepairRetryTimer();
-    this._repairRetryTimer = timer;
-  }
-
-  /** Consume the current repair timer without disturbing a newer replacement. */
-  public consumeRepairRetryTimer(timer: ReturnType<typeof setTimeout>): boolean {
-    if (this._repairRetryTimer !== timer) {
-      return false;
-    }
-
-    this._repairRetryTimer = undefined;
-    return true;
-  }
-
-  public cancelRepairRetryTimer(): void {
-    if (this._repairRetryTimer !== undefined) {
-      clearTimeout(this._repairRetryTimer);
-      this._repairRetryTimer = undefined;
-    }
-  }
-
-  public setReconcileTimer(timer: ReturnType<typeof setTimeout>, dueAt: number): void {
-    this.cancelReconcileTimer();
-    this._reconcileTimer = timer;
-    this._reconcileTimerDueAt = dueAt;
-  }
-
-  /** Consume the current reconcile timer without disturbing a newer replacement. */
-  public consumeReconcileTimer(timer: ReturnType<typeof setTimeout>): boolean {
-    if (this._reconcileTimer !== timer) {
-      return false;
-    }
-
-    this._reconcileTimer = undefined;
-    this._reconcileTimerDueAt = undefined;
-    return true;
-  }
-
-  public cancelReconcileTimer(): void {
-    if (this._reconcileTimer !== undefined) {
-      clearTimeout(this._reconcileTimer);
-      this._reconcileTimer = undefined;
-      this._reconcileTimerDueAt = undefined;
-    }
   }
 
   private static cloneFeedSnapshot(snapshot: SyncFeedSnapshot | undefined): SyncFeedSnapshot | undefined {
@@ -280,8 +217,6 @@ export class SyncLinkController {
     }
 
     this._active = false;
-    this.cancelRepairRetryTimer();
-    this.cancelReconcileTimer();
     this._replicationGeneration++;
     this._pullSnapshot = undefined;
     this._pushSnapshot = undefined;

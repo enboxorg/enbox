@@ -2,7 +2,6 @@ import type { SyncFeedConvergenceLinkContext } from './sync-feed-convergence-man
 import type { SyncIdentityTaskRunner } from './sync-lifecycle-coordinator.js';
 import type { SyncLinkController } from './sync-link-controller.js';
 import type { SyncLinkWorkKind } from './sync-link-executor.js';
-import type { SyncRuntimeHandle } from './sync-runtime.js';
 import type { SyncTarget } from './sync-target-resolver.js';
 import type {
   PushFailure,
@@ -14,6 +13,7 @@ import type {
   SyncDurableFeedReconcileOptions,
   SyncDurableFeedReconcileResult,
 } from './sync-durable-feed-reconciler.js';
+import type { SyncRuntime, SyncRuntimeHandle } from './sync-runtime.js';
 
 import { syncEventScope as eventScope } from './types/sync.js';
 import { syncTargetFromLink } from './sync-target-resolver.js';
@@ -26,7 +26,7 @@ export interface SyncLinkRecoveryCoordinatorOperations {
   clearConvergence(linkKey: string): void;
   emitEvent(event: SyncEvent): void;
   getController(linkKey: string): SyncLinkController | undefined;
-  getRuntime(): SyncRuntimeHandle;
+  getRuntime(): SyncRuntime;
   handleDivergence(
     target: SyncTarget,
     result: SyncDurableFeedReconcileResult,
@@ -57,6 +57,8 @@ const POST_REPAIR_RECONCILE_DELAY_MS = 500;
 const DEFAULT_RECONCILE_DELAY_MS = 1500;
 const RECONCILE_RETRY_DELAY_MS = 5000;
 const DEFAULT_REPAIR_BACKOFF_MS = [1000, 3000, 10_000] as const;
+const RECONCILE_TIMER_PREFIX = 'syncReconcile:';
+const REPAIR_RETRY_TIMER_PREFIX = 'syncRepairRetry:';
 
 /**
  * Coordinates per-link repair and durable reconciliation without depending on
@@ -133,6 +135,7 @@ export class SyncLinkRecoveryCoordinator {
       // the replication-generation-fenced attach — attaching after the bump is
       // impossible, and anything attached before it is closed below.
       controller.resetReplicationGeneration();
+      this.cancelScheduledWork(controller);
     }
 
     await this.setOfflineStatus(link, 'paused');
@@ -141,14 +144,22 @@ export class SyncLinkRecoveryCoordinator {
     }
 
     await controller.closeSubscriptions();
-    controller.cancelReconcileTimer();
-    controller.clearRepairProgress();
+    controller.clearRepairAttempts();
+  }
+
+  /** Cancel every runtime-owned timer for one exact link lifetime. */
+  public cancelScheduledWork(controller: SyncLinkController): void {
+    const runtime = this._operations.getRuntime();
+    runtime.cancelTimer(SyncLinkRecoveryCoordinator.reconcileTimerKey(controller.linkKey));
+    runtime.cancelTimer(SyncLinkRecoveryCoordinator.repairRetryTimerKey(controller.linkKey));
   }
 
   /** Schedule a failed repair using the bounded per-link backoff ladder. */
   private scheduleRepairRetry(controller: SyncLinkController): void {
     const { link } = controller;
-    if (!controller.isActive || link.status !== 'repairing' || controller.repairRetryTimer !== undefined) {
+    const runtime = this._operations.getRuntime();
+    const timerKey = SyncLinkRecoveryCoordinator.repairRetryTimerKey(controller.linkKey);
+    if (!controller.isActive || link.status !== 'repairing' || runtime.hasTimer(timerKey)) {
       return;
     }
 
@@ -156,18 +167,14 @@ export class SyncLinkRecoveryCoordinator {
     const delayMs = this._repairBackoffMs[
       Math.min(attempts - 1, this._repairBackoffMs.length - 1)
     ] ?? 0;
-    const runtime = this._operations.getRuntime();
-    const timer = setTimeout((): void => {
-      if (!controller.consumeRepairRetryTimer(timer)) {
-        return;
-      }
+    const runIdentityTask = this._operations.captureIdentityTaskRunner(link.tenantDid);
+    runtime.armTimeout(timerKey, (): void => {
       if (this.isStale(controller, runtime) || link.status !== 'repairing') {
         return;
       }
       controller.executor.request('repair');
-      this.superviseExecutor(controller);
+      void runIdentityTask(() => this.runExecutor(controller));
     }, delayMs);
-    controller.setRepairRetryTimer(timer);
   }
 
   /** Coalesce local feed signals into ordered durable push passes. */
@@ -225,23 +232,16 @@ export class SyncLinkRecoveryCoordinator {
   /** Schedule the earliest requested reconciliation for an exact link lifetime. */
   public scheduleReconcile(controller: SyncLinkController, delayMs = this._reconcileDelayMs): boolean {
     const normalizedDelay = Math.max(0, delayMs);
-    const dueAt = Date.now() + normalizedDelay;
-    if (!this.replaceLaterReconcileTimer(controller, dueAt)) {
-      return false;
-    }
-
     const runtime = this._operations.getRuntime();
     const runIdentityTask = this._operations.captureIdentityTaskRunner(controller.link.tenantDid);
-    const timer = setTimeout((): void => {
-      if (!controller.consumeReconcileTimer(timer) || this.isStale(controller, runtime)) {
+    const timerKey = SyncLinkRecoveryCoordinator.reconcileTimerKey(controller.linkKey);
+    return runtime.armTimeoutIfEarlier(timerKey, (): void => {
+      if (this.isStale(controller, runtime)) {
         return;
       }
-      void runIdentityTask(async (): Promise<void> => {
-        await this.reconcile(controller);
-      });
+      controller.executor.request('reconcile');
+      void runIdentityTask(() => this.runExecutor(controller));
     }, normalizedDelay);
-    controller.setReconcileTimer(timer, dueAt);
-    return true;
   }
 
   /** Coalesce a durable reconciliation request into the link executor. */
@@ -395,7 +395,10 @@ export class SyncLinkRecoveryCoordinator {
       return;
     }
 
-    controller.clearRepairProgress();
+    controller.clearRepairAttempts();
+    this._operations.getRuntime().cancelTimer(
+      SyncLinkRecoveryCoordinator.repairRetryTimerKey(controller.linkKey),
+    );
     controller.markReplicationReady();
 
     if (pushFailures.length > 0 && !this.isRepairSuperseded(controller, runtime)) {
@@ -490,6 +493,10 @@ export class SyncLinkRecoveryCoordinator {
     const shouldContinue = (): boolean =>
       !this.isStale(controller, runtime) && link.status === 'live';
     const target = syncTargetFromLink(link);
+    // This pass owns every reconcile deadline armed before it starts. Cancel
+    // that stale retry now; a fresh deadline armed while the pass is in
+    // flight remains distinguishable and survives the result.
+    runtime.cancelTimer(SyncLinkRecoveryCoordinator.reconcileTimerKey(controller.linkKey));
     try {
       const outcome = await this._operations.reconcileTarget(
         controller,
@@ -648,18 +655,6 @@ export class SyncLinkRecoveryCoordinator {
     }
   }
 
-  private replaceLaterReconcileTimer(controller: SyncLinkController, dueAt: number): boolean {
-    if (controller.reconcileTimer === undefined) {
-      return true;
-    }
-    if (controller.reconcileTimerDueAt !== undefined && controller.reconcileTimerDueAt <= dueAt) {
-      return false;
-    }
-    controller.cancelReconcileTimer();
-    return true;
-  }
-
-
   private isStale(controller: SyncLinkController, runtime: SyncRuntimeHandle): boolean {
     return runtime.disposed || !controller.isActive;
   }
@@ -692,5 +687,13 @@ export class SyncLinkRecoveryCoordinator {
       ...syncTargetFromLink(controller.link),
       linkKey: controller.linkKey,
     };
+  }
+
+  private static reconcileTimerKey(linkKey: string): string {
+    return `${RECONCILE_TIMER_PREFIX}${linkKey}`;
+  }
+
+  private static repairRetryTimerKey(linkKey: string): string {
+    return `${REPAIR_RETRY_TIMER_PREFIX}${linkKey}`;
   }
 }

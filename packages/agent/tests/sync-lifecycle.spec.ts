@@ -275,10 +275,12 @@ describe('SyncEngineLevel lifecycle', () => {
     };
 
     const controller = engine['activateLink'](linkKey, link as never);
+    controller.markReplicationReady();
     const recoveryCoordinator = engine['_linkRecoveryCoordinator'];
-    sinon.stub(recoveryCoordinator, 'reconcile').callsFake(async (): Promise<void> => {
+    sinon.stub(engine['_durableFeedReconciler'], 'reconcile').callsFake(async (): Promise<{ converged: true }> => {
       reconcileStarted.resolve();
       await releaseReconcile.promise;
+      return { converged: true };
     });
 
     const scheduled = recoveryCoordinator.scheduleReconcile(controller, 0);
@@ -601,10 +603,12 @@ describe('SyncEngineLevel lifecycle', () => {
     await engine.registerIdentity({ did, options: { protocols: 'all' } });
     engine['_runtime'] = new SyncRuntime(true);
     const controller = engine['activateLink'](linkKey, link as never);
+    controller.markReplicationReady();
     const recoveryCoordinator = engine['_linkRecoveryCoordinator'];
-    sinon.stub(recoveryCoordinator, 'reconcile').callsFake(async (): Promise<void> => {
+    sinon.stub(engine['_durableFeedReconciler'], 'reconcile').callsFake(async (): Promise<{ converged: true }> => {
       reconcileStarted.resolve();
       await releaseReconcile.promise;
+      return { converged: true };
     });
     const clearQuotaBlocks = sinon.stub(engine as never, 'clearQuotaBlocksForTenant').resolves();
     const addIdentity = sinon.stub(engine as never, 'addIdentityToLiveSync').resolves(new Set());
@@ -735,8 +739,8 @@ describe('SyncEngineLevel lifecycle', () => {
     const engine = new SyncEngineLevel({ db });
     engine['_runtime'] = new SyncRuntime(true);
     const { controller, target } = activateAdministrativeLink(engine, 'did:example:settle-repairing', 'repairing');
-    const repairRetryTimer = setTimeout((): void => {}, 60_000);
-    controller.setRepairRetryTimer(repairRetryTimer);
+    const repairRetryTimerKey = `syncRepairRetry:${controller.linkKey}`;
+    engine['_runtime'].armTimeout(repairRetryTimerKey, () => {}, 60_000);
 
     sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
     sinon.stub(engine as any, 'getOrCreateReplicationLink').resolves(controller.link);
@@ -758,7 +762,7 @@ describe('SyncEngineLevel lifecycle', () => {
 
       expect(verifyConvergence.notCalled).toBe(true);
       expect(reconcile.notCalled).toBe(true);
-      expect(controller.repairRetryTimer).toBe(repairRetryTimer);
+      expect(engine['_runtime'].hasTimer(repairRetryTimerKey)).toBe(true);
 
       // The settle pass released the engine-wide lock, and the link executor
       // can still run the pending repair retry.
@@ -772,6 +776,7 @@ describe('SyncEngineLevel lifecycle', () => {
       await controller.executor.drain(repairTurn);
       expect(repairTurn.calledOnceWithExactly('repair')).toBe(true);
     } finally {
+      engine['_runtime'].dispose();
       await controller.dispose();
     }
   });

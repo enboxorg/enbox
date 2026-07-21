@@ -22,6 +22,7 @@ type RecoveryOperationStubs = {
 type RecoveryFixture = {
   controllers: Map<string, SyncLinkController>;
   coordinator: SyncLinkRecoveryCoordinator;
+  getRuntime(): SyncRuntime;
   /** Simulate a runtime transition by replacing the current runtime. */
   replaceRuntime(): void;
   operations: RecoveryOperationStubs;
@@ -31,6 +32,8 @@ type RecoveryFixture = {
 const DID = 'did:example:alice';
 const REMOTE = 'https://dwn.example';
 const LINK_KEY = `${DID}^${REMOTE}^projection^owner-epoch`;
+const RECONCILE_TIMER_KEY = `syncReconcile:${LINK_KEY}`;
+const REPAIR_RETRY_TIMER_KEY = `syncRepairRetry:${LINK_KEY}`;
 
 function link(status: ReplicationLinkState['status'] = 'live'): ReplicationLinkState {
   return {
@@ -77,7 +80,8 @@ function createFixture(options: {
   return {
     controllers,
     coordinator,
-    replaceRuntime: (): void => {
+    getRuntime     : (): SyncRuntime => runtime,
+    replaceRuntime : (): void => {
       runtime.dispose();
       runtime = new SyncRuntime();
     },
@@ -199,8 +203,8 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const push = sinon.stub().resolves();
     const pendingPull = controller.executor.enqueue(pull);
     const pendingPush = controller.executor.enqueue(push);
-    controller.setRepairRetryTimer(setTimeout(() => undefined, 1000));
-    controller.setReconcileTimer(setTimeout(() => undefined, 1000), 1000);
+    fixture.getRuntime().armTimeout(REPAIR_RETRY_TIMER_KEY, () => undefined, 1000);
+    fixture.getRuntime().armTimeout(RECONCILE_TIMER_KEY, () => undefined, 1000);
 
     await fixture.coordinator.transitionToPaused(LINK_KEY, state);
     await fixture.coordinator.transitionToPaused(LINK_KEY, state);
@@ -212,8 +216,8 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(await pendingPush).toBeUndefined();
     expect(pull.notCalled).toBe(true);
     expect(push.notCalled).toBe(true);
-    expect(controller.repairRetryTimer).toBeUndefined();
-    expect(controller.reconcileTimer).toBeUndefined();
+    expect(fixture.getRuntime().hasTimer(REPAIR_RETRY_TIMER_KEY)).toBe(false);
+    expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(false);
     expect(fixture.operations.setStatus.calledOnce).toBe(true);
     await clock.runAllAsync();
   });
@@ -250,7 +254,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(controller.isReplicationReady).toBe(true);
     expect(controller.executor.hasWork('repair')).toBe(false);
     expect(controller.repairAttempts).toBe(0);
-    expect(controller.reconcileTimerDueAt).toBe(500);
+    expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(true);
     expect(fixture.operations.emitEvent.calledWithMatch({ type: 'repair:completed' })).toBe(true);
     expect(fixture.operations.emitEvent.calledWithMatch({
       type   : 'reconcile:needed',
@@ -402,23 +406,23 @@ describe('SyncLinkRecoveryCoordinator', () => {
 
     await runRepair(fixture, controller);
     expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
-    expect(controller.repairRetryTimer).toBeDefined();
+    expect(fixture.getRuntime().hasTimer(REPAIR_RETRY_TIMER_KEY)).toBe(true);
     fixture.replaceRuntime();
     await clock.tickAsync(1000);
     expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
     expect(controller.executor.hasPending('repair')).toBe(false);
-    expect(controller.repairRetryTimer).toBeUndefined();
+    expect(fixture.getRuntime().hasTimer(REPAIR_RETRY_TIMER_KEY)).toBe(false);
 
     const currentFixture = createFixture({ repairBackoffMs: [1000] });
     const currentController = activate(currentFixture, link('repairing'));
     currentFixture.operations.reconcileTarget.onFirstCall().rejects(new Error('offline'));
     currentFixture.operations.reconcileTarget.onSecondCall().resolves({ converged: true });
     await runRepair(currentFixture, currentController);
-    expect(currentController.repairRetryTimer).toBeDefined();
+    expect(currentFixture.getRuntime().hasTimer(REPAIR_RETRY_TIMER_KEY)).toBe(true);
     await clock.tickAsync(1000);
     await waitForLastTask(currentFixture.taskRunner);
     expect(currentFixture.operations.reconcileTarget.callCount).toBe(2);
-    expect(currentController.repairRetryTimer).toBeUndefined();
+    expect(currentFixture.getRuntime().hasTimer(REPAIR_RETRY_TIMER_KEY)).toBe(false);
     expect(currentController.link.status).toBe('live');
     currentController.deactivate();
     controller.deactivate();
@@ -429,25 +433,38 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const clock = sinon.useFakeTimers();
     const fixture = createFixture();
     const controller = activate(fixture);
-    const reconcile = sinon.stub(fixture.coordinator, 'reconcile').resolves();
 
     expect(fixture.coordinator.scheduleReconcile(controller, 1000)).toBe(true);
     expect(fixture.operations.captureIdentityTaskRunner.calledOnceWithExactly(DID)).toBe(true);
     fixture.operations.captureIdentityTaskRunner.resetHistory();
     expect(fixture.coordinator.scheduleReconcile(controller, 2000)).toBe(false);
     expect(fixture.coordinator.scheduleReconcile(controller, 500)).toBe(true);
-    expect(controller.reconcileTimerDueAt).toBe(500);
+    expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(true);
     await clock.tickAsync(500);
     await waitForLastTask(fixture.taskRunner);
-    expect(fixture.operations.captureIdentityTaskRunner.calledOnceWithExactly(DID)).toBe(true);
-    expect(reconcile.calledOnceWithExactly(controller)).toBe(true);
-    expect(controller.reconcileTimer).toBeUndefined();
+    expect(fixture.taskRunner.calledOnce).toBe(true);
+    expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
+    expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(false);
 
     fixture.coordinator.scheduleReconcile(controller, 100);
     fixture.replaceRuntime();
     await clock.tickAsync(100);
-    expect(reconcile.calledOnce).toBe(true);
-    expect(controller.reconcileTimer).toBeUndefined();
+    expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
+    expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(false);
+  });
+
+  it('turns a reconcile timer firing into a supervised executor mark before any I/O', async () => {
+    const clock = sinon.useFakeTimers();
+    const fixture = createFixture();
+    const controller = activate(fixture);
+    fixture.taskRunner.callsFake(async (): Promise<void> => {});
+
+    fixture.coordinator.scheduleReconcile(controller, 10);
+    await clock.tickAsync(10);
+
+    expect(controller.executor.hasPending('reconcile')).toBe(true);
+    expect(fixture.taskRunner.calledOnce).toBe(true);
+    expect(fixture.operations.reconcileTarget.notCalled).toBe(true);
   });
 
   it('routes convergence, divergence, and retryable push work independently', async () => {
@@ -479,7 +496,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const failure = { cid: 'push-cid', detail: 'retry' };
     fixture.operations.reconcileTarget.onThirdCall().resolves({ pushFailures: [failure] });
     await fixture.coordinator.reconcile(controller);
-    expect(controller.reconcileTimerDueAt).toBe(5000);
+    expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(true);
     expect(fixture.operations.emitEvent.calledWithMatch({
       type   : 'reconcile:needed',
       reason : 'push-retryable',
@@ -526,7 +543,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
 
     expect(fixture.operations.reportError.calledOnce).toBe(true);
     expect(fixture.operations.reportError.firstCall.calledWithMatch('Durable pull pass failed')).toBe(true);
-    expect(controller.reconcileTimerDueAt).toBe(5000);
+    expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(true);
     expect(fixture.operations.emitEvent.calledWithMatch({
       type   : 'reconcile:needed',
       reason : 'pull-retryable',
@@ -545,7 +562,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await fixture.coordinator.pull(controller);
 
     expect(fixture.operations.reportError.notCalled).toBe(true);
-    expect(controller.reconcileTimer).toBeUndefined();
+    expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(false);
     expect(fixture.operations.emitEvent.calledWithMatch({ reason: 'pull-retryable' })).toBe(false);
   });
 
@@ -604,7 +621,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await fixture.coordinator.push(controller);
 
     expect(state.push.contiguousAppliedToken).toEqual(checkpoint);
-    expect(controller.reconcileTimerDueAt).toBe(5000);
+    expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(true);
     expect(fixture.operations.emitEvent.calledWithMatch({
       type   : 'reconcile:needed',
       reason : 'push-retryable',
@@ -623,12 +640,12 @@ describe('SyncLinkRecoveryCoordinator', () => {
 
     await fixture.coordinator.reconcile(controller);
     expect(fixture.operations.reportError.calledOnce).toBe(true);
-    expect(controller.reconcileTimerDueAt).toBe(5000);
-    controller.cancelReconcileTimer();
+    expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(true);
+    fixture.getRuntime().cancelTimer(RECONCILE_TIMER_KEY);
 
     const started = deferred<void>();
     const release = deferred<void>();
-    fixture.operations.reconcileTarget.callsFake(async () => {
+    fixture.operations.reconcileTarget.callsFake(async (): Promise<{ converged: true }> => {
       started.resolve();
       await release.promise;
       throw new Error('late failure');
@@ -640,7 +657,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await reconciling;
 
     expect(fixture.operations.reportError.calledOnce).toBe(true);
-    expect(controller.reconcileTimer).toBeUndefined();
+    expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(false);
     await clock.runAllAsync();
   });
 
@@ -744,7 +761,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(state.status).toBe('paused');
     expect(state.connectivity).toBe('offline');
     expect(fixture.operations.emitEvent.calledWithMatch({ type: 'repair:completed' })).toBe(false);
-    expect(controller.reconcileTimer).toBeUndefined();
+    expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(false);
   });
 
   it('stays quiet when reconciliation rejects after an external pause', async () => {
@@ -766,7 +783,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await reconciling;
 
     expect(fixture.operations.reportError.notCalled).toBe(true);
-    expect(controller.reconcileTimer).toBeUndefined();
+    expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(false);
   });
 
   it('stays quiet when repair rejects after an external pause', async () => {
@@ -789,7 +806,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
 
     expect(fixture.operations.reportError.notCalled).toBe(true);
     expect(fixture.operations.emitEvent.calledWithMatch({ type: 'repair:failed' })).toBe(false);
-    expect(controller.repairRetryTimer).toBeUndefined();
+    expect(fixture.getRuntime().hasTimer(REPAIR_RETRY_TIMER_KEY)).toBe(false);
     expect(state.status).toBe('paused');
   });
 
@@ -897,7 +914,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
       .filter((event) => event.type === 'repair:started')
       .map((event) => event.attempt);
     expect(startedAttempts).toEqual([1, 1]);
-    expect(controller.repairRetryTimer).toBeUndefined();
+    expect(fixture.getRuntime().hasTimer(REPAIR_RETRY_TIMER_KEY)).toBe(false);
     expect(state.status).toBe('paused');
     controller.deactivate();
   });
@@ -954,7 +971,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await firstTask;
 
     expect(state.status).toBe('repairing');
-    expect(controller.repairRetryTimer).toBeDefined();
+    expect(fixture.getRuntime().hasTimer(REPAIR_RETRY_TIMER_KEY)).toBe(true);
     expect(fixture.operations.emitEvent.calledWithMatch({ type: 'repair:completed' })).toBe(false);
     expect(fixture.operations.emitEvent.calledWithMatch({ from: 'repairing', to: 'live' })).toBe(false);
     controller.deactivate();
@@ -985,7 +1002,43 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await clock.tickAsync(5000);
     await clock.runAllAsync();
     expect(fixture.operations.reconcileTarget.callCount).toBe(2);
-    expect(controller.reconcileTimer).toBeUndefined();
+    expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(false);
+  });
+
+  it('cancels an armed reconcile retry after a successful full pass', async () => {
+    const clock = sinon.useFakeTimers();
+    const fixture = createFixture();
+    const controller = activate(fixture);
+
+    fixture.coordinator.scheduleReconcile(controller, 5000);
+    await fixture.coordinator.reconcile(controller);
+
+    expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(false);
+    await clock.tickAsync(5000);
+    expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
+  });
+
+  it('retains a reconcile deadline armed after the active pass starts', async () => {
+    const clock = sinon.useFakeTimers();
+    const fixture = createFixture();
+    const controller = activate(fixture);
+    const passStarted = deferred<void>();
+    const releasePass = deferred<void>();
+    fixture.operations.reconcileTarget.callsFake(async (): Promise<{ converged: true }> => {
+      passStarted.resolve();
+      await releasePass.promise;
+      return { converged: true };
+    });
+
+    const reconciling = fixture.coordinator.reconcile(controller);
+    await passStarted.promise;
+    fixture.coordinator.scheduleReconcile(controller, 5000);
+    releasePass.resolve();
+    await reconciling;
+
+    expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(true);
+    controller.deactivate();
+    await clock.runAllAsync();
   });
 
   it('runs one trailing reconciliation pass for signals arriving after the snapshot', async () => {
