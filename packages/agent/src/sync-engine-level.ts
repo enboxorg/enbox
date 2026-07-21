@@ -1414,45 +1414,80 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       controller = this.activateLink(linkKey, link);
-      if (link.status === 'paused') {
-        if (!controller.isActive) {
-          return { status: LinkInitializationStatus.Failed };
-        }
-        return this.createActiveLinkInitializationResult(link);
-      }
-
-      const openReplicationGeneration = controller.replicationGeneration;
-      const subscriptionResult = await this.openLinkSubscriptions({ ...target, linkKey }, controller, openReplicationGeneration);
-      if (subscriptionResult === LinkSubscriptionOpenResult.Inactive || !controller.isActive) {
-        // A pause or repair takeover superseded the opening attempt. The
-        // durable link now belongs to that transition: reporting Failed
-        // here would drop it from the identity's keep-set and let the
-        // superseded-link prune delete a fail-safe pause's record.
-        if (controller.isActive && (controller.link.status === 'paused' || controller.link.status === 'repairing')) {
-          return this.createActiveLinkInitializationResult(link);
-        }
-        return { status: LinkInitializationStatus.Failed };
-      }
-      if (subscriptionResult === LinkSubscriptionOpenResult.ReadyForLive) {
-        const baseline = await this.establishLinkBaseline(target, controller, openReplicationGeneration);
-        if (baseline?.admittedCids !== undefined && baseline.admittedCids.length > 0) {
-          this.emitReconcileApplied(target, baseline.admittedCids);
-        }
-        if ((baseline?.pushFailures?.length ?? 0) > 0) {
-          controller.requestPass('push');
-        }
-        await this.markLinkLive(target, controller, openReplicationGeneration);
-        if (!controller.isActive) {
-          return { status: LinkInitializationStatus.Failed };
-        }
-      }
-      return this.createActiveLinkInitializationResult(link);
+      return this.initializeActivatedLinkTarget(target, linkKey, link, controller);
     } catch (error: any) {
       if (runtimeScope.disposed) {
         return { status: LinkInitializationStatus.Failed };
       }
       return this.handleInitializeLinkTargetError(target, link, controller, error);
     }
+  }
+
+  /** Open subscriptions and establish the replay baseline for one newly activated link. */
+  private async initializeActivatedLinkTarget(
+    target: SyncTarget,
+    linkKey: string,
+    link: ReplicationLinkState,
+    controller: SyncLinkController,
+  ): Promise<LinkInitializationResult> {
+    if (link.status === 'paused') {
+      return this.activeLinkInitializationResultIfOwned(controller, link);
+    }
+
+    const openReplicationGeneration = controller.replicationGeneration;
+    const subscriptionResult = await this.openLinkSubscriptions(
+      { ...target, linkKey },
+      controller,
+      openReplicationGeneration,
+    );
+    if (subscriptionResult === LinkSubscriptionOpenResult.Inactive || !controller.isActive) {
+      return this.interruptedLinkInitializationResult(controller, link);
+    }
+    if (subscriptionResult === LinkSubscriptionOpenResult.ReadyForLive) {
+      return this.establishActivatedLinkBaseline(target, link, controller, openReplicationGeneration);
+    }
+    return this.activeLinkInitializationResultIfOwned(controller, link);
+  }
+
+  /** Preserve a pause or repair that took ownership while subscriptions were opening. */
+  private interruptedLinkInitializationResult(
+    controller: SyncLinkController,
+    link: ReplicationLinkState,
+  ): LinkInitializationResult {
+    // Reporting Failed for an owned transition would drop the link from the
+    // identity's keep-set and let pruning delete a fail-safe pause's record.
+    const status = controller.link.status;
+    if (controller.isActive && (status === 'paused' || status === 'repairing')) {
+      return this.createActiveLinkInitializationResult(link);
+    }
+    return { status: LinkInitializationStatus.Failed };
+  }
+
+  /** Establish the initial baseline, surface its effects, and release replay. */
+  private async establishActivatedLinkBaseline(
+    target: SyncTarget,
+    link: ReplicationLinkState,
+    controller: SyncLinkController,
+    openReplicationGeneration: number,
+  ): Promise<LinkInitializationResult> {
+    const baseline = await this.establishLinkBaseline(target, controller, openReplicationGeneration);
+    if (baseline?.admittedCids !== undefined && baseline.admittedCids.length > 0) {
+      this.emitReconcileApplied(target, baseline.admittedCids);
+    }
+    if ((baseline?.pushFailures?.length ?? 0) > 0) {
+      controller.requestPass('push');
+    }
+    await this.markLinkLive(target, controller, openReplicationGeneration);
+    return this.activeLinkInitializationResultIfOwned(controller, link);
+  }
+
+  private activeLinkInitializationResultIfOwned(
+    controller: SyncLinkController,
+    link: ReplicationLinkState,
+  ): LinkInitializationResult {
+    return controller.isActive
+      ? this.createActiveLinkInitializationResult(link)
+      : { status: LinkInitializationStatus.Failed };
   }
 
   private async getOrCreateReplicationLink(target: SyncTarget): Promise<ReplicationLinkState> {

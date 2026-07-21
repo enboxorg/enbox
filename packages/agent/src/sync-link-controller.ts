@@ -16,7 +16,7 @@ export type SyncFeedSnapshot = {
 type SyncDirectionOperation = {
   operation: () => Promise<unknown>;
   reject: (reason: unknown) => void;
-  resolve: (value: unknown | undefined) => void;
+  resolve: (value: unknown) => void;
 };
 
 type SyncDirectionQueue = {
