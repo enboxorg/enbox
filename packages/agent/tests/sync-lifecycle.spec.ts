@@ -1052,8 +1052,8 @@ describe('SyncEngineLevel lifecycle', () => {
 
   it('should retry DID-resolution failures while the runtime is unchanged', async () => {
     const engine = new SyncEngineLevel({ db });
-    const originalBackoff = SyncEngineLevel['DID_RESOLUTION_RETRY_BACKOFF_MS'];
-    (SyncEngineLevel as unknown as { DID_RESOLUTION_RETRY_BACKOFF_MS: number[] }).DID_RESOLUTION_RETRY_BACKOFF_MS = [1, 1];
+    const originalBackoff = SyncEngineLevel['TRANSIENT_INIT_RETRY_BACKOFF_MS'];
+    (SyncEngineLevel as unknown as { TRANSIENT_INIT_RETRY_BACKOFF_MS: number[] }).TRANSIENT_INIT_RETRY_BACKOFF_MS = [1, 1];
     try {
       const initializeLinkTarget = sinon.stub(engine as never, 'initializeLinkTarget')
         .rejects(new Error('remote DWN rejected request: GetPublicKeyNotFound'));
@@ -1065,14 +1065,14 @@ describe('SyncEngineLevel lifecycle', () => {
       expect(result).toEqual({ status: 'failed' });
       expect(initializeLinkTarget.callCount).toBe(3);
     } finally {
-      (SyncEngineLevel as unknown as { DID_RESOLUTION_RETRY_BACKOFF_MS: number[] }).DID_RESOLUTION_RETRY_BACKOFF_MS = originalBackoff;
+      (SyncEngineLevel as unknown as { TRANSIENT_INIT_RETRY_BACKOFF_MS: number[] }).TRANSIENT_INIT_RETRY_BACKOFF_MS = originalBackoff;
     }
   });
 
   it('should stop DID-resolution init retries after a runtime transition', async () => {
     const engine = new SyncEngineLevel({ db });
-    const originalBackoff = SyncEngineLevel['DID_RESOLUTION_RETRY_BACKOFF_MS'];
-    (SyncEngineLevel as unknown as { DID_RESOLUTION_RETRY_BACKOFF_MS: number[] }).DID_RESOLUTION_RETRY_BACKOFF_MS = [1, 1];
+    const originalBackoff = SyncEngineLevel['TRANSIENT_INIT_RETRY_BACKOFF_MS'];
+    (SyncEngineLevel as unknown as { TRANSIENT_INIT_RETRY_BACKOFF_MS: number[] }).TRANSIENT_INIT_RETRY_BACKOFF_MS = [1, 1];
     try {
       const initializeLinkTarget = sinon.stub(engine as never, 'initializeLinkTarget')
         .callsFake(async (): Promise<never> => {
@@ -1088,7 +1088,7 @@ describe('SyncEngineLevel lifecycle', () => {
       expect(result).toEqual({ status: 'failed' });
       expect(initializeLinkTarget.callCount).toBe(1);
     } finally {
-      (SyncEngineLevel as unknown as { DID_RESOLUTION_RETRY_BACKOFF_MS: number[] }).DID_RESOLUTION_RETRY_BACKOFF_MS = originalBackoff;
+      (SyncEngineLevel as unknown as { TRANSIENT_INIT_RETRY_BACKOFF_MS: number[] }).TRANSIENT_INIT_RETRY_BACKOFF_MS = originalBackoff;
     }
   });
 });
