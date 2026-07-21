@@ -888,7 +888,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     controller.deactivate();
   });
 
-  it('runs exactly two passes when a transition lands mid-repair, even while its status write is pending', async () => {
+  it('delays a superseding repair even while its status write is pending', async () => {
     const clock = sinon.useFakeTimers();
     const fixture = createFixture();
     const state = link('repairing');
@@ -918,6 +918,12 @@ describe('SyncLinkRecoveryCoordinator', () => {
     releaseReconcile.resolve();
     await repairing;
 
+    expect(fixture.operations.reconcileTarget.callCount).toBe(1);
+    expect(fixture.getRuntime().hasTimer(REPAIR_RETRY_TIMER_KEY)).toBe(true);
+    await clock.tickAsync(999);
+    expect(fixture.operations.reconcileTarget.callCount).toBe(1);
+    await clock.tickAsync(1);
+    await waitForLastTask(fixture.taskRunner);
     expect(fixture.operations.reconcileTarget.callCount).toBe(2);
     // Once the transition's persistence resolves, its supervision finds the
     // request already served — no third repair pass (the later scheduled
@@ -933,7 +939,8 @@ describe('SyncLinkRecoveryCoordinator', () => {
   });
 
   it('hands a superseded pass failure to the trailing repair without burning the attempt budget', async () => {
-    const fixture = createFixture({ maxRepairAttempts: 1 });
+    const clock = sinon.useFakeTimers();
+    const fixture = createFixture({ maxRepairAttempts: 1, repairBackoffMs: [1000] });
     const state = link('repairing');
     const controller = activate(fixture, state);
     const reconcileStarted = deferred<void>();
@@ -952,8 +959,11 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await Promise.all([repairing, transitioning]);
 
     // The stale failure is a quiet handoff. The trailing repair is the first
-    // counted attempt, so its genuine failure reports attempt 1 and applies
-    // the configured one-attempt limit.
+    // counted attempt after the supersession backoff, so its genuine failure
+    // reports attempt 1 and applies the configured one-attempt limit.
+    expect(fixture.operations.reconcileTarget.callCount).toBe(1);
+    await clock.tickAsync(1000);
+    await waitForLastTask(fixture.taskRunner);
     expect(fixture.operations.reconcileTarget.callCount).toBe(2);
     expect(fixture.operations.reportError.calledOnce).toBe(true);
     expect(fixture.operations.emitEvent.calledWithMatch({ type: 'repair:failed', attempt: 1 })).toBe(true);
@@ -965,6 +975,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(fixture.getRuntime().hasTimer(REPAIR_RETRY_TIMER_KEY)).toBe(false);
     expect(state.status).toBe('paused');
     controller.deactivate();
+    await clock.runAllAsync();
   });
 
   it('runs one trailing repair when a transition lands mid-repair', async () => {
@@ -988,8 +999,57 @@ describe('SyncLinkRecoveryCoordinator', () => {
     releasePull.resolve();
     await repairing;
 
+    expect(fixture.operations.reconcileTarget.callCount).toBe(1);
+    await clock.tickAsync(999);
+    expect(fixture.operations.reconcileTarget.callCount).toBe(1);
+    await clock.tickAsync(1);
+    await waitForLastTask(fixture.taskRunner);
     expect(fixture.operations.reconcileTarget.callCount).toBe(2);
     expect(state.status).toBe('live');
+    controller.deactivate();
+    await clock.runAllAsync();
+  });
+
+  it('bounds sustained repair supersession without consuming the failure-attempt budget', async () => {
+    const clock = sinon.useFakeTimers();
+    const fixture = createFixture({ repairBackoffMs: [1000] });
+    const state = link('repairing');
+    const controller = activate(fixture, state);
+    let passStarted = deferred<void>();
+    let releasePass = deferred<void>();
+    fixture.operations.reconcileTarget.callsFake(async () => {
+      passStarted.resolve();
+      await releasePass.promise;
+      return { converged: true };
+    });
+
+    const repairing = runRepair(fixture, controller);
+    await passStarted.promise;
+
+    for (let supersession = 0; supersession < 3; supersession++) {
+      await fixture.coordinator.transitionToRepairing(controller);
+      releasePass.resolve();
+      await waitForLastTask(fixture.taskRunner);
+
+      const completedPasses = supersession + 1;
+      expect(fixture.operations.reconcileTarget.callCount).toBe(completedPasses);
+      expect(controller.repairAttempts).toBe(0);
+      expect(fixture.getRuntime().hasTimer(REPAIR_RETRY_TIMER_KEY)).toBe(true);
+      await clock.tickAsync(999);
+      expect(fixture.operations.reconcileTarget.callCount).toBe(completedPasses);
+
+      passStarted = deferred<void>();
+      releasePass = deferred<void>();
+      await clock.tickAsync(1);
+      await passStarted.promise;
+    }
+
+    releasePass.resolve();
+    await waitForLastTask(fixture.taskRunner);
+    await repairing;
+    expect(fixture.operations.reconcileTarget.callCount).toBe(4);
+    expect(state.status).toBe('live');
+    expect(controller.repairAttempts).toBe(0);
     controller.deactivate();
     await clock.runAllAsync();
   });
