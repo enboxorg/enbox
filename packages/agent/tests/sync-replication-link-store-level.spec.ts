@@ -84,8 +84,8 @@ describe('SyncReplicationLinkStoreLevel', () => {
       scope          : { kind: 'full' },
       ...ownerAuthorization,
     });
-    pullLink.pull = { contiguousAppliedToken: token(10) };
-    pushLink.push = { contiguousAppliedToken: token(20) };
+    pullLink.pull.contiguousAppliedToken = token(10);
+    pushLink.push.contiguousAppliedToken = token(20);
 
     await Promise.all([
       store.persistCheckpoint(pullLink, 'pull'),
@@ -111,7 +111,7 @@ describe('SyncReplicationLinkStoreLevel', () => {
       ...ownerAuthorization,
     });
     statusLink.connectivity = 'offline';
-    checkpointLink.push = { contiguousAppliedToken: token(30) };
+    checkpointLink.push.contiguousAppliedToken = token(30);
 
     await Promise.all([
       store.setStatus(statusLink, 'repairing'),
@@ -124,11 +124,11 @@ describe('SyncReplicationLinkStoreLevel', () => {
     expect(persisted.push).toEqual(checkpointLink.push);
   });
 
-  it('should serialize same-link read-merge-write operations', async () => {
+  it('should serialize same-link read-merge-write operations across store instances', async () => {
     const pullLink = makeLink();
     const pushLink = makeLink();
-    pullLink.pull = { contiguousAppliedToken: token(1) };
-    pushLink.push = { contiguousAppliedToken: token(2) };
+    pullLink.pull.contiguousAppliedToken = token(1);
+    pushLink.push.contiguousAppliedToken = token(2);
     let storedValue = JSON.stringify(makeLink());
     let putCallCount = 0;
     const firstPutStarted = createDeferred();
@@ -147,11 +147,12 @@ describe('SyncReplicationLinkStoreLevel', () => {
     const fakeDb = {
       sublevel: (): typeof links => links,
     } as unknown as AbstractLevel<string | Buffer | Uint8Array>;
-    const serializedStore = new SyncReplicationLinkStoreLevel(fakeDb);
+    const firstStore = new SyncReplicationLinkStoreLevel(fakeDb, 'shared-store');
+    const secondStore = new SyncReplicationLinkStoreLevel(fakeDb, 'shared-store');
 
-    const pullPersistence = serializedStore.persistCheckpoint(pullLink, 'pull');
+    const pullPersistence = firstStore.persistCheckpoint(pullLink, 'pull');
     await firstPutStarted.promise;
-    const pushPersistence = serializedStore.persistCheckpoint(pushLink, 'push');
+    const pushPersistence = secondStore.persistCheckpoint(pushLink, 'push');
     await Promise.resolve();
 
     expect(putCallCount).toBe(1);
@@ -167,8 +168,8 @@ describe('SyncReplicationLinkStoreLevel', () => {
   it('should allow different-link mutations to proceed independently', async () => {
     const firstLink = makeLink();
     const secondLink = { ...makeLink(), remoteEndpoint: 'https://other-dwn.example.com' };
-    firstLink.pull = { contiguousAppliedToken: token(1) };
-    secondLink.push = { contiguousAppliedToken: token(2) };
+    firstLink.pull.contiguousAppliedToken = token(1);
+    secondLink.push.contiguousAppliedToken = token(2);
     const firstKey = `${firstLink.tenantDid}^${firstLink.remoteEndpoint}^${firstLink.projectionId}^${firstLink.authorizationEpoch}`;
     const secondKey = `${secondLink.tenantDid}^${secondLink.remoteEndpoint}^${secondLink.projectionId}^${secondLink.authorizationEpoch}`;
     const storedValues = new Map<string, string>([
@@ -237,10 +238,10 @@ describe('SyncReplicationLinkStoreLevel', () => {
     } as unknown as AbstractLevel<string | Buffer | Uint8Array>;
     const recoveringStore = new SyncReplicationLinkStoreLevel(fakeDb);
 
-    link.pull = { contiguousAppliedToken: token(1) };
+    link.pull.contiguousAppliedToken = token(1);
     await expect(recoveringStore.persistCheckpoint(link, 'pull')).rejects.toBe(expectedError);
 
-    link.push = { contiguousAppliedToken: token(2) };
+    link.push.contiguousAppliedToken = token(2);
     await recoveringStore.persistCheckpoint(link, 'push');
 
     const persisted = JSON.parse(storedValue) as ReplicationLinkState;
@@ -257,7 +258,7 @@ describe('SyncReplicationLinkStoreLevel', () => {
     });
     await store.deleteLink(link.tenantDid, link.remoteEndpoint, link.projectionId, link.authorizationEpoch);
 
-    link.pull = { contiguousAppliedToken: token(1) };
+    link.pull.contiguousAppliedToken = token(1);
     await store.persistCheckpoint(link, 'pull');
     await store.setStatus(link, 'live');
 
@@ -274,7 +275,7 @@ describe('SyncReplicationLinkStoreLevel', () => {
       scope          : { kind: 'full' },
       ...ownerAuthorization,
     });
-    deleteFirstLink.pull = { contiguousAppliedToken: token(1) };
+    deleteFirstLink.pull.contiguousAppliedToken = token(1);
 
     const deletion = store.deleteLink(
       deleteFirstLink.tenantDid,
@@ -295,7 +296,7 @@ describe('SyncReplicationLinkStoreLevel', () => {
       scope          : { kind: 'full' },
       ...ownerAuthorization,
     });
-    updateFirstLink.pull = { contiguousAppliedToken: token(2) };
+    updateFirstLink.pull.contiguousAppliedToken = token(2);
 
     const leadingPersist = store.persistCheckpoint(updateFirstLink, 'pull');
     const overlappingDeletion = store.deleteLink(
@@ -316,8 +317,8 @@ describe('SyncReplicationLinkStoreLevel', () => {
       scope          : { kind: 'full' },
       ...ownerAuthorization,
     });
-    link.pull = { contiguousAppliedToken: token(10) };
-    link.push = { contiguousAppliedToken: token(20) };
+    link.pull.contiguousAppliedToken = token(10);
+    link.push.contiguousAppliedToken = token(20);
     await store.persistCheckpoint(link, 'pull');
     await store.persistCheckpoint(link, 'push');
 
@@ -341,8 +342,8 @@ describe('SyncReplicationLinkStoreLevel', () => {
       scope          : { kind: 'full' },
       ...ownerAuthorization,
     });
-    link.pull = { contiguousAppliedToken: token(10) };
-    link.push = { contiguousAppliedToken: token(20) };
+    link.pull.contiguousAppliedToken = token(10);
+    link.push.contiguousAppliedToken = token(20);
     await store.persistCheckpoint(link, 'pull');
     await store.persistCheckpoint(link, 'push');
 
@@ -378,8 +379,8 @@ describe('SyncReplicationLinkStoreLevel', () => {
         scope          : { kind: 'full' },
         ...ownerAuthorization,
       });
-      link.pull = { contiguousAppliedToken: token(40) };
-      link.push = { contiguousAppliedToken: token(50) };
+      link.pull.contiguousAppliedToken = token(40);
+      link.push.contiguousAppliedToken = token(50);
       link.connectivity = 'online';
       await firstStore.persistCheckpoint(link, 'pull');
       await firstStore.persistCheckpoint(link, 'push');
@@ -464,12 +465,12 @@ describe('SyncReplicationLinkStoreLevel', () => {
     });
 
     // The reconciler's freshly loaded instance advances the pull checkpoint...
-    freshLink.pull = { contiguousAppliedToken: token(50) };
+    freshLink.pull.contiguousAppliedToken = token(50);
     await store.persistCheckpoint(freshLink, 'pull');
 
     // ...then a live handler persists the same direction from the stale
     // controller instance that never saw that advance.
-    staleLink.pull = { contiguousAppliedToken: token(10) };
+    staleLink.pull.contiguousAppliedToken = token(10);
     await store.persistCheckpoint(staleLink, 'pull');
 
     const [persisted] = await store.getAllLinks();
@@ -489,7 +490,7 @@ describe('SyncReplicationLinkStoreLevel', () => {
       scope          : { kind: 'full' },
       ...ownerAuthorization,
     });
-    freshLink.pull = { contiguousAppliedToken: token(50) };
+    freshLink.pull.contiguousAppliedToken = token(50);
     await store.persistCheckpoint(freshLink, 'pull');
 
     await store.persistCheckpoint(staleLink, 'pull');
@@ -505,12 +506,12 @@ describe('SyncReplicationLinkStoreLevel', () => {
       scope          : { kind: 'full' },
       ...ownerAuthorization,
     });
-    link.pull = { contiguousAppliedToken: token(50, 'one') };
+    link.pull.contiguousAppliedToken = token(50, 'one');
     await store.persistCheckpoint(link, 'pull');
 
     // A stream/epoch change is a deliberate feed reset: a lower position in
     // the new domain must replace the old domain's checkpoint entirely.
-    link.pull = { contiguousAppliedToken: token(3, 'two') };
+    link.pull.contiguousAppliedToken = token(3, 'two');
     await store.persistCheckpoint(link, 'pull');
 
     const [persisted] = await store.getAllLinks();
@@ -530,7 +531,7 @@ describe('SyncReplicationLinkStoreLevel', () => {
       scope          : { kind: 'full' },
       ...ownerAuthorization,
     });
-    freshLink.pull = { contiguousAppliedToken: token(50) };
+    freshLink.pull.contiguousAppliedToken = token(50);
     await store.persistCheckpoint(freshLink, 'pull');
 
     await store.resetCheckpoint(staleLink, 'pull');

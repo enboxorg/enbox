@@ -38,6 +38,7 @@ export interface SyncLinkRecoveryCoordinatorOperations {
   openPullSubscription(target: SyncLinkRecoveryTarget, controller: SyncLinkController): Promise<boolean>;
   openPushSubscription(target: SyncLinkRecoveryTarget, controller: SyncLinkController): Promise<boolean>;
   reconcileTarget(
+    controller: SyncLinkController,
     target: SyncTarget,
     options?: SyncDurableFeedReconcileOptions,
     shouldContinue?: () => boolean,
@@ -337,6 +338,7 @@ export class SyncLinkRecoveryCoordinator {
     try {
       const target = SyncLinkRecoveryCoordinator.targetFromController(controller);
       const outcome = await this._operations.reconcileTarget(
+        controller,
         target,
         undefined,
         () => !this.isRepairSuperseded(controller, runtimeScope),
@@ -536,6 +538,7 @@ export class SyncLinkRecoveryCoordinator {
     const target = syncTargetFromLink(link);
     try {
       const outcome = await this._operations.reconcileTarget(
+        controller,
         target,
         { verifyConvergence: true },
         shouldContinue,

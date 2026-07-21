@@ -2,15 +2,18 @@
 "@enbox/agent": patch
 ---
 
-feat: gate the connectivity-driven convergence check on stream health
+refactor: make browser wake recovery transport-owned
 
-A wake signal (browser online, tab visible) no longer runs a full verified
-`sync()` across every tenant and remote. The convergence check now consults
-each replication link's stream health: a link that is live and online with
-both subscription halves attached and no repair or reconciliation pending is
-provably current — live deliveries commit durable cursors contiguously and a
-gap surfaces as repair — so it needs nothing. Stale links get a targeted
-reconcile on their own per-link mailbox lane, and only a topology the live
-runtime is not fully operating (a target with no active controller) falls
-back to the full verified sync. On a healthy wallet a tab focus now costs
-zero HTTP RPCs; periodic full verification remains the settle check's job.
+Browser online and visibility signals now stay in the WebSocket transport,
+which probes connection health, reconnects, and resumes subscriptions from
+their durable cursors. The agent no longer maintains a second wake debounce
+and recovery state machine or starts data-plane reconciliation from those
+signals. If WebSocket subscriptions cannot operate while HTTP still can, or a
+target does not yet have an active link, recovery falls back to the periodic
+settle check (the configured sync interval, `5m` by default).
+
+Link connectivity now means transport-observed connectivity rather than the
+browser's network hint. While an active page is offline, the default heartbeat
+detects the lost socket within one 30-second interval plus its 10-second pong
+deadline; a foreground/online wake instead runs the transport's 5-second
+on-demand health probe immediately.

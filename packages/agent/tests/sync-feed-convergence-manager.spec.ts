@@ -263,21 +263,22 @@ describe('SyncFeedConvergenceManager', () => {
     expect(operations.transitionToPaused.calledOnceWithExactly(context.linkKey, context.link)).toBe(true);
   });
 
-  it('copies durable checkpoints into a replacement active link before resetting or pausing it', async () => {
+  it('resets the active link without replacing its controller-owned checkpoint objects', async () => {
     const syncTarget = target();
-    const ledgerLink = linkFor(syncTarget);
     const activeLink = linkFor(syncTarget);
-    ledgerLink.pull = { contiguousAppliedToken: { epoch: 'epoch', position: '1', streamId: 'pull' } };
-    ledgerLink.push = { contiguousAppliedToken: { epoch: 'epoch', position: '2', streamId: 'push' } };
-    const context = contextFor(syncTarget, ledgerLink);
-    const { manager, operations } = createFixture({ activeLink, ledgerLink, syncTarget });
+    activeLink.pull.contiguousAppliedToken = { epoch: 'epoch', position: '1', streamId: 'pull' };
+    activeLink.push.contiguousAppliedToken = { epoch: 'epoch', position: '2', streamId: 'push' };
+    const pullCheckpoint = activeLink.pull;
+    const pushCheckpoint = activeLink.push;
+    const context = contextFor(syncTarget, activeLink);
+    const { manager, operations } = createFixture({ activeLink, ledgerLink: activeLink, syncTarget });
 
     await manager.handleVerifiedDivergence(syncTarget, divergence(), context);
     await manager.handleVerifiedDivergence(syncTarget, divergence(), context);
     await manager.handleVerifiedDivergence(syncTarget, divergence(), context);
 
-    expect(activeLink.pull).toBe(ledgerLink.pull);
-    expect(activeLink.push).toBe(ledgerLink.push);
+    expect(activeLink.pull).toBe(pullCheckpoint);
+    expect(activeLink.push).toBe(pushCheckpoint);
     expect(operations.resetCheckpoints.calledTwice).toBe(true);
     expect(operations.resetCheckpoints.alwaysCalledWithExactly(activeLink)).toBe(true);
     expect(operations.scheduleLinkReconcileByKey.calledTwice).toBe(true);

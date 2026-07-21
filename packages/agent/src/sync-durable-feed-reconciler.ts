@@ -1,6 +1,5 @@
 import type { MessagesQueryReply, MessagesQueryReplyEntry, ProgressToken } from '@enbox/dwn-sdk-js';
 
-import type { SyncReplicationLinkStore } from './sync-replication-link-store.js';
 import type { SyncTarget } from './sync-target-resolver.js';
 import type { PushFailure, ReplicationLinkState, SyncDirection } from './types/sync.js';
 
@@ -80,10 +79,6 @@ export interface SyncDurableFeedReconcilerOperations {
 
   clearResolvedQuotaOmissions(target: SyncTarget): Promise<void>;
 
-  getReplicationLinkStore(): SyncReplicationLinkStore;
-
-  getOrCreateLink(target: SyncTarget): Promise<ReplicationLinkState>;
-
   getQuotaBlockCids(target: SyncTarget): Promise<string[]>;
 
   /**
@@ -92,7 +87,7 @@ export interface SyncDurableFeedReconcilerOperations {
    * the same write), the direction checkpoint is persisted once, and its
    * advance is emitted.
    */
-  commitCheckpoint(link: ReplicationLinkState, direction: SyncDirection, target: SyncTarget): Promise<void>;
+  commitCheckpoint(link: ReplicationLinkState, direction: SyncDirection): Promise<void>;
 
   onReconcileApplied(target: SyncTarget, messageCids: string[]): void;
 
@@ -110,6 +105,8 @@ export interface SyncDurableFeedReconcilerOperations {
   ): Promise<SyncDurableFeedPagePushResult>;
 
   queryFeed(query: SyncDurableFeedQuery): Promise<MessagesQueryReply>;
+
+  resetCheckpoint(link: ReplicationLinkState, direction: SyncDirection): Promise<void>;
 }
 
 type FeedCursorAdvanceResult =
@@ -146,6 +143,7 @@ export class SyncDurableFeedReconciler {
    */
   public async reconcile(
     target: SyncTarget,
+    link: ReplicationLinkState,
     options?: SyncDurableFeedReconcileOptions,
     shouldContinue?: () => boolean,
   ): Promise<SyncDurableFeedReconcileResult> {
@@ -157,7 +155,7 @@ export class SyncDurableFeedReconciler {
       if (SyncDurableFeedReconciler.shouldAbort(shouldContinue)) {
         return { ...SyncDurableFeedReconciler.initialResult(options), aborted: true };
       }
-      return this.reconcileTarget(target, options, shouldContinue);
+      return this.reconcileTarget(target, link, options, shouldContinue);
     });
     const settled = run.then((): void => {}, (): void => {});
     this._runs.set(linkKey, settled);
@@ -174,6 +172,7 @@ export class SyncDurableFeedReconciler {
   /** Pull every missing remote feed entry and persist contiguous progress. */
   public async pull(
     target: SyncTarget,
+    link: ReplicationLinkState,
     options?: SyncDurableFeedReconcileOptions,
     shouldContinue?: () => boolean,
   ): Promise<SyncDurableFeedReconcileResult> {
@@ -181,13 +180,13 @@ export class SyncDurableFeedReconciler {
       return {};
     }
 
-    const link = await this._operations.getOrCreateLink(target);
     return this.pullRemotePages(target, link, shouldContinue);
   }
 
   /** Push every missing local feed entry and persist contiguous progress. */
   public async push(
     target: SyncTarget,
+    link: ReplicationLinkState,
     options?: SyncDurableFeedReconcileOptions,
     shouldContinue?: () => boolean,
   ): Promise<SyncDurableFeedReconcileResult> {
@@ -199,7 +198,6 @@ export class SyncDurableFeedReconciler {
     const forceProbeCids = forceQuotaProbe
       ? new Set(await this._operations.getQuotaBlockCids(target))
       : undefined;
-    const link = await this._operations.getOrCreateLink(target);
     const result = await this.pushLocalPages(target, link, shouldContinue, forceQuotaProbe);
 
     // Checkpoint progress intentionally advances past quota-blocked roots. Run
@@ -261,10 +259,10 @@ export class SyncDurableFeedReconciler {
 
   private async reconcileTarget(
     target: SyncTarget,
+    link: ReplicationLinkState,
     options?: SyncDurableFeedReconcileOptions,
     shouldContinue?: () => boolean,
   ): Promise<SyncDurableFeedReconcileResult> {
-    const link = await this._operations.getOrCreateLink(target);
     if (link.status === 'paused') {
       // Parked: nothing is reconciled and no fingerprints are compared, so
       // convergence is UNKNOWN — report it as such rather than inheriting
@@ -276,7 +274,7 @@ export class SyncDurableFeedReconciler {
 
     const result = SyncDurableFeedReconciler.initialResult(options);
 
-    const pullResult = await this.pull(target, options, shouldContinue);
+    const pullResult = await this.pull(target, link, options, shouldContinue);
     SyncDurableFeedReconciler.mergeResult(result, pullResult, options);
     if (SyncDurableFeedReconciler.shouldStop(result, pullResult)) {
       return result;
@@ -285,7 +283,7 @@ export class SyncDurableFeedReconciler {
       return { ...result, aborted: true };
     }
 
-    const pushResult = await this.push(target, options, shouldContinue);
+    const pushResult = await this.push(target, link, options, shouldContinue);
     SyncDurableFeedReconciler.mergeResult(result, pushResult, options);
     if (SyncDurableFeedReconciler.shouldStop(result, pushResult)) {
       return result;
@@ -655,7 +653,7 @@ export class SyncDurableFeedReconciler {
       direction,
     );
     SyncCheckpoint.commitContiguousToken(checkpoint, reply.cursor);
-    await this._operations.commitCheckpoint(link, direction, target);
+    await this._operations.commitCheckpoint(link, direction);
 
     return drained ? { drained: true } : { cursor: reply.cursor, drained: false };
   }
@@ -674,7 +672,7 @@ export class SyncDurableFeedReconciler {
       return false;
     }
 
-    await this._operations.getReplicationLinkStore().resetCheckpoint(link, direction);
+    await this._operations.resetCheckpoint(link, direction);
     return true;
   }
 

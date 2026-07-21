@@ -2,7 +2,6 @@ import type { SinonStub } from 'sinon';
 
 import type { MessagesQueryReply, MessagesQueryReplyEntry, ProgressToken } from '@enbox/dwn-sdk-js';
 
-import type { SyncReplicationLinkStore } from '../src/sync-replication-link-store.js';
 import type { SyncTarget } from '../src/sync-target-resolver.js';
 import type { ReplicationLinkState, SyncDirection } from '../src/types/sync.js';
 
@@ -90,18 +89,6 @@ function createReconciler(syncTarget = target()): ReconcilerFixture {
   ): Promise<void> => {
     SyncCheckpoint.reset(storedLink[direction], baseline);
   });
-  const linkStore = {
-    clear             : sinon.stub().resolves(),
-    deleteLink        : sinon.stub().resolves(),
-    getAllLinks       : sinon.stub().resolves([]),
-    getLinksForTenant : sinon.stub().resolves([]),
-    getOrCreateLink   : sinon.stub().resolves(link),
-    persistCheckpoint,
-    resetCheckpoint,
-    resetCheckpoints  : sinon.stub().resolves(),
-    setStatus         : sinon.stub().resolves(),
-  } satisfies SyncReplicationLinkStore;
-
   const queryFeed = sinon.stub().callsFake(async ({ source }: SyncDurableFeedQuery): Promise<MessagesQueryReply> =>
     reply({ fingerprint: `${source}-fingerprint` })
   );
@@ -109,14 +96,13 @@ function createReconciler(syncTarget = target()): ReconcilerFixture {
     admitRemotePage                 : sinon.stub().resolves({ kind: 'processed', admittedCids: [], hasActionableDiffs: false }),
     bootstrapRemotePermissionGrants : sinon.stub().resolves({ kind: 'processed', failures: [], hasActionableDiffs: false, quotaBlocked: false }),
     clearResolvedQuotaOmissions     : sinon.stub().resolves(),
-    getReplicationLinkStore         : sinon.stub().returns(linkStore),
-    getOrCreateLink                 : sinon.stub().resolves(link),
     getQuotaBlockCids               : sinon.stub().resolves([]),
     commitCheckpoint                : sinon.stub().resolves(),
     onReconcileApplied              : sinon.stub(),
     probeQuotaBlocks                : sinon.stub().resolves(),
     pushLocalPage                   : sinon.stub().resolves({ kind: 'processed', hasActionableDiffs: false }),
     queryFeed,
+    resetCheckpoint,
   } satisfies SyncDurableFeedReconcilerOperations;
 
   return {
@@ -132,6 +118,10 @@ function createReconciler(syncTarget = target()): ReconcilerFixture {
 describe('SyncDurableFeedReconciler', () => {
   it('should serialize the same link while allowing a different link to reconcile', async () => {
     const { reconciler } = createReconciler();
+    const targetA = target('https://a.example');
+    const targetB = target('https://b.example', 'projection-b');
+    const linkA = linkFor(targetA);
+    const linkB = linkFor(targetB);
     const releases: Array<() => void> = [];
     const activeByRemote = new Map<string, number>();
     const maxActiveByRemote = new Map<string, number>();
@@ -169,10 +159,10 @@ describe('SyncDurableFeedReconciler', () => {
     });
     sinon.stub(reconciler, 'push').resolves({});
 
-    const firstA = reconciler.reconcile(target('https://a.example'));
+    const firstA = reconciler.reconcile(targetA, linkA);
     await firstAEntered;
-    const secondA = reconciler.reconcile(target('https://a.example'));
-    const firstB = reconciler.reconcile(target('https://b.example', 'projection-b'));
+    const secondA = reconciler.reconcile(targetA, linkA);
+    const firstB = reconciler.reconcile(targetB, linkB);
 
     try {
       await firstBEntered;
@@ -197,14 +187,14 @@ describe('SyncDurableFeedReconciler', () => {
   });
 
   it('should recover the per-link queue after a failed predecessor', async () => {
-    const { reconciler } = createReconciler();
+    const { link, reconciler } = createReconciler();
     const pull = sinon.stub(reconciler, 'pull');
     pull.onFirstCall().rejects(new Error('first run failed'));
     pull.onSecondCall().resolves({ admittedCids: ['recovered'] });
     sinon.stub(reconciler, 'push').resolves({});
 
-    const failed = reconciler.reconcile(target());
-    const recovered = reconciler.reconcile(target());
+    const failed = reconciler.reconcile(target(), link);
+    const recovered = reconciler.reconcile(target(), link);
 
     await expect(failed).rejects.toThrow('first run failed');
     expect(await recovered).toMatchObject({ admittedCids: ['recovered'] });
@@ -212,13 +202,13 @@ describe('SyncDurableFeedReconciler', () => {
   });
 
   it('should order pull, push, and verification while merging their outcomes', async () => {
-    const { reconciler } = createReconciler();
+    const { link, reconciler } = createReconciler();
     const calls: string[] = [];
-    sinon.stub(reconciler, 'pull').callsFake(async () => {
+    const pull = sinon.stub(reconciler, 'pull').callsFake(async () => {
       calls.push('pull');
       return { admittedCids: ['remote-cid'], hasActionableDiffs: true, remoteFingerprint: 'before' };
     });
-    sinon.stub(reconciler, 'push').callsFake(async () => {
+    const push = sinon.stub(reconciler, 'push').callsFake(async () => {
       calls.push('push');
       return { hasActionableDiffs: true, localFingerprint: 'before', pushFailures: [] };
     });
@@ -227,9 +217,11 @@ describe('SyncDurableFeedReconciler', () => {
       return { converged: true, localFingerprint: 'after', remoteFingerprint: 'after', pushFailures: [] };
     });
 
-    const result = await reconciler.reconcile(target(), { verifyConvergence: true });
+    const result = await reconciler.reconcile(target(), link, { verifyConvergence: true });
 
     expect(calls).toEqual(['pull', 'push', 'verify']);
+    expect(pull.firstCall.args[1]).toBe(link);
+    expect(push.firstCall.args[1]).toBe(link);
     expect(result).toMatchObject({
       admittedCids       : ['remote-cid'],
       converged          : true,
@@ -247,7 +239,7 @@ describe('SyncDurableFeedReconciler', () => {
     const push = sinon.stub(reconciler, 'push').resolves({});
     const verify = sinon.stub(reconciler, 'verifyConvergence').resolves({});
 
-    const result = await reconciler.reconcile(target(), { verifyConvergence: true });
+    const result = await reconciler.reconcile(target(), link, { verifyConvergence: true });
 
     // Nothing ran, so nothing was compared. Convergence must be ABSENT —
     // reporting `converged: true` here would let a post-repair verification
@@ -260,7 +252,7 @@ describe('SyncDurableFeedReconciler', () => {
   });
 
   it('should abort between phases without starting push or verification', async () => {
-    const { reconciler } = createReconciler();
+    const { link, reconciler } = createReconciler();
     let active = true;
     sinon.stub(reconciler, 'pull').callsFake(async () => {
       active = false;
@@ -269,7 +261,7 @@ describe('SyncDurableFeedReconciler', () => {
     const push = sinon.stub(reconciler, 'push').resolves({});
     const verify = sinon.stub(reconciler, 'verifyConvergence').resolves({ converged: true });
 
-    const result = await reconciler.reconcile(target(), { verifyConvergence: true }, () => active);
+    const result = await reconciler.reconcile(target(), link, { verifyConvergence: true }, () => active);
 
     expect(result).toMatchObject({ aborted: true, admittedCids: ['applied'], converged: true });
     expect(push.called).toBe(false);
@@ -296,7 +288,7 @@ describe('SyncDurableFeedReconciler', () => {
       hasActionableDiffs : entries.length > 0,
     }));
 
-    const result = await fixture.reconciler.pull(target());
+    const result = await fixture.reconciler.pull(target(), fixture.link);
 
     expect(result).toEqual({
       admittedCids       : ['remote-2', 'remote-3'],
@@ -313,7 +305,7 @@ describe('SyncDurableFeedReconciler', () => {
     fixture.link.pull.contiguousAppliedToken = token(1);
     fixture.queryFeed.resolves(reply({ cursor: token(1), drained: false }));
 
-    await expect(fixture.reconciler.pull(target())).rejects.toThrow(
+    await expect(fixture.reconciler.pull(target(), fixture.link)).rejects.toThrow(
       'SyncDurableFeedReconciler: pull MessagesQuery cursor did not advance',
     );
     expect(fixture.operations.commitCheckpoint.called).toBe(false);
@@ -334,7 +326,7 @@ describe('SyncDurableFeedReconciler', () => {
       messageCid         : 'deferred',
     });
 
-    await expect(fixture.reconciler.pull(target())).rejects.toThrow(
+    await expect(fixture.reconciler.pull(target(), fixture.link)).rejects.toThrow(
       'SyncDurableFeedReconciler: pull deferred for deferred: dependency missing',
     );
     expect(fixture.operations.onReconcileApplied.calledOnceWith(target(), ['applied'])).toBe(true);
@@ -356,7 +348,7 @@ describe('SyncDurableFeedReconciler', () => {
     }));
     fixture.operations.pushLocalPage.resolves({ kind: 'processed', hasActionableDiffs: true });
 
-    const result = await fixture.reconciler.push(target());
+    const result = await fixture.reconciler.push(target(), fixture.link);
 
     expect(fixture.resetCheckpoint.calledOnceWith(fixture.link, 'push')).toBe(true);
     expect(fixture.operations.pushLocalPage.calledOnce).toBe(true);
@@ -412,7 +404,7 @@ describe('SyncDurableFeedReconciler', () => {
         return reply({ cursor: token(1), fingerprint: 'A' });
       });
 
-      const result = await fixture.reconciler.reconcile(target(), { verifyConvergence: true });
+      const result = await fixture.reconciler.reconcile(target(), fixture.link, { verifyConvergence: true });
 
       expect(probeCalls(fixture)).toHaveLength(2);
       expect(result).toMatchObject({
@@ -435,7 +427,7 @@ describe('SyncDurableFeedReconciler', () => {
         return reply({ cursor: token(1), fingerprint: 'A' });
       });
 
-      const result = await fixture.reconciler.reconcile(target(), { verifyConvergence: true });
+      const result = await fixture.reconciler.reconcile(target(), fixture.link, { verifyConvergence: true });
 
       expect(probeCalls(fixture)).toHaveLength(2);
       expect(result).toMatchObject({
@@ -466,7 +458,7 @@ describe('SyncDurableFeedReconciler', () => {
       // applied — the remote feed changed despite the quiet aggregate result.
       fixture.operations.pushLocalPage.resolves({ kind: 'processed', hasActionableDiffs: false });
 
-      const result = await fixture.reconciler.reconcile(target(), { verifyConvergence: true });
+      const result = await fixture.reconciler.reconcile(target(), fixture.link, { verifyConvergence: true });
 
       expect(probeCalls(fixture, 'remote')).toHaveLength(1);
       // The verdict reflects the post-push remote state, not the pull-time
