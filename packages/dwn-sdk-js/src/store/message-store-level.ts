@@ -157,7 +157,6 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
   private readonly wakePublisher?: WakePublisher;
   private partitionsPromise?: Promise<StorePartitions>;
   private epochPromise?: Promise<string>;
-  private readonly writeLockLocation: string;
 
   /**
    * @param {MessageStoreLevelConfig} config
@@ -176,7 +175,6 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     };
 
     this.wakePublisher = this.config.wakePublisher;
-    this.writeLockLocation = this.config.location!;
   }
 
   async open(): Promise<void> {
@@ -869,7 +867,7 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
    * a later batch could land first).
    */
   private async withTenantWriteLock<T>(tenant: string, task: () => Promise<T>): Promise<T> {
-    const lockName = `enbox:dwn-message-store:${JSON.stringify([this.writeLockLocation, tenant])}`;
+    const lockName = `enbox:dwn-message-store:${JSON.stringify([this.config.location!, tenant])}`;
     return runWithCrossContextLock(lockName, task);
   }
 
