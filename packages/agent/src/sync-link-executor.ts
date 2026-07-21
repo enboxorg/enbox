@@ -182,40 +182,57 @@ export class SyncLinkExecutor {
       if (entry === undefined) {
         break;
       }
-
-      if (entry.type === 'mark') {
-        this._activeWorkKind = entry.kind;
-        try {
-          await handler(entry.kind);
-        } catch (reason: unknown) {
-          // Surface the first handler failure after every entry already
-          // queued behind it has had a chance to settle. A rejected mark must
-          // never poison the executor or strand caller-specific promises.
-          workFailure ??= { reason };
-        } finally {
-          this._activeWorkKind = undefined;
-        }
-        continue;
-      }
-
-      try {
-        const result = await entry.operation();
-        if (this.isReady) {
-          entry.resolve(result);
-        } else {
-          entry.resolve(undefined);
-        }
-      } catch (error: unknown) {
-        if (this.isReady) {
-          entry.reject(error);
-        } else {
-          entry.resolve(undefined);
-        }
-      }
+      const entryFailure = await this.executeEntry(entry, handler);
+      workFailure ??= entryFailure;
     }
 
     if (workFailure !== undefined) {
       throw workFailure.reason;
+    }
+  }
+
+  private async executeEntry(
+    entry: SyncLinkExecutorEntry,
+    handler: SyncLinkWorkHandler,
+  ): Promise<SyncLinkWorkFailure | undefined> {
+    if (entry.type === 'mark') {
+      return this.executeMark(entry, handler);
+    }
+
+    await this.executeCall(entry);
+  }
+
+  private async executeMark(
+    mark: SyncLinkWorkMark,
+    handler: SyncLinkWorkHandler,
+  ): Promise<SyncLinkWorkFailure | undefined> {
+    this._activeWorkKind = mark.kind;
+    try {
+      await handler(mark.kind);
+    } catch (reason: unknown) {
+      // Surface the first handler failure after every entry already queued
+      // behind it has had a chance to settle. A rejected mark must never
+      // poison the executor or strand caller-specific promises.
+      return { reason };
+    } finally {
+      this._activeWorkKind = undefined;
+    }
+  }
+
+  private async executeCall(entry: SyncLinkCall): Promise<void> {
+    try {
+      const result = await entry.operation();
+      if (this.isReady) {
+        entry.resolve(result);
+      } else {
+        entry.resolve(undefined);
+      }
+    } catch (error: unknown) {
+      if (this.isReady) {
+        entry.reject(error);
+      } else {
+        entry.resolve(undefined);
+      }
     }
   }
 

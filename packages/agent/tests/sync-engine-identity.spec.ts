@@ -712,6 +712,39 @@ describe('SyncEngineLevel — identity management', () => {
       expect(hotRemoveStub.called).toBe(false);
     });
 
+    it('should cancel same-key link scheduling before hot-replacing a controller', () => {
+      const engine = new SyncEngineLevel({ db });
+      engine['_runtime'] = new SyncRuntime(true);
+      const linkKey = 'did:example:replacement^https://dwn.example.com^scope1';
+      const reconcileTimerKey = `syncReconcile:${linkKey}`;
+      const repairRetryTimerKey = `syncRepairRetry:${linkKey}`;
+      const original = activateTestLink(engine, linkKey, 'did:example:replacement');
+      const runtime = engine['_runtime'];
+
+      runtime.armTimeout(reconcileTimerKey, () => {}, 60_000);
+      runtime.armTimeout(repairRetryTimerKey, () => {}, 60_000);
+
+      const replacement = activateTestLink(engine, linkKey, 'did:example:replacement');
+
+      expect(original.isActive).toBe(false);
+      expect(replacement.isActive).toBe(true);
+      expect(runtime.hasTimer(reconcileTimerKey)).toBe(false);
+      expect(runtime.hasTimer(repairRetryTimerKey)).toBe(false);
+
+      const recoveryCoordinator = engine['_linkRecoveryCoordinator'];
+      expect(recoveryCoordinator.scheduleReconcile(replacement, 60_000)).toBe(true);
+      expect(runtime.hasTimer(reconcileTimerKey)).toBe(true);
+      runtime.cancelTimer(reconcileTimerKey);
+
+      replacement.link.status = 'repairing';
+      replacement.incrementRepairAttempts();
+      recoveryCoordinator['scheduleRepairRetry'](replacement);
+      expect(runtime.hasTimer(repairRetryTimerKey)).toBe(true);
+
+      replacement.deactivate();
+      runtime.dispose();
+    });
+
     it('should still throw when unregistering a non-registered identity during live sync', async () => {
       const engine = new SyncEngineLevel({ db });
       (engine as any)._runtime = new SyncRuntime(true);
@@ -925,34 +958,35 @@ describe('SyncEngineLevel — identity management', () => {
 
     it('removeIdentityFromLiveSync should clear repair attempts and retry timers for the target DID', async () => {
       const engine = new SyncEngineLevel({ db });
-      const aliceRetryTimer = setTimeout(() => {}, 60_000);
-      const bobRetryTimer = setTimeout(() => {}, 60_000);
+      engine['_runtime'] = new SyncRuntime(true);
       const aliceController = activateTestLink(engine, 'did:example:alice^https://dwn.example.com^scope1', 'did:example:alice');
       const bobController = activateTestLink(engine, 'did:example:bob^https://dwn.example.com^scope1', 'did:example:bob');
       aliceController.incrementRepairAttempts();
       aliceController.incrementRepairAttempts();
       bobController.incrementRepairAttempts();
-      aliceController.setRepairRetryTimer(aliceRetryTimer);
-      bobController.setRepairRetryTimer(bobRetryTimer);
+      const aliceTimerKey = `syncRepairRetry:${aliceController.linkKey}`;
+      const bobTimerKey = `syncRepairRetry:${bobController.linkKey}`;
+      engine['_runtime'].armTimeout(aliceTimerKey, () => {}, 60_000);
+      engine['_runtime'].armTimeout(bobTimerKey, () => {}, 60_000);
 
       await (engine as any).removeIdentityFromLiveSync('did:example:alice');
 
       expect(aliceController.isActive).toBe(false);
       expect(bobController.repairAttempts).toBe(1);
-      expect(aliceController.repairRetryTimer).toBeUndefined();
-      expect(bobController.repairRetryTimer).toBeDefined();
-
-      clearTimeout(bobRetryTimer);
+      expect(engine['_runtime'].hasTimer(aliceTimerKey)).toBe(false);
+      expect(engine['_runtime'].hasTimer(bobTimerKey)).toBe(true);
+      engine['_runtime'].dispose();
     });
 
     it('removeIdentityFromLiveSync should clear reconcile timers and in-flight ops for the target DID', async () => {
       const engine = new SyncEngineLevel({ db });
-      const aliceReconcileTimer = setTimeout(() => {}, 60_000);
-      const bobReconcileTimer = setTimeout(() => {}, 60_000);
+      engine['_runtime'] = new SyncRuntime(true);
       const aliceController = activateTestLink(engine, 'did:example:alice^https://dwn.example.com^scope1', 'did:example:alice');
       const bobController = activateTestLink(engine, 'did:example:bob^https://dwn.example.com^scope1', 'did:example:bob');
-      aliceController.setReconcileTimer(aliceReconcileTimer, Date.now() + 60_000);
-      bobController.setReconcileTimer(bobReconcileTimer, Date.now() + 60_000);
+      const aliceTimerKey = `syncReconcile:${aliceController.linkKey}`;
+      const bobTimerKey = `syncReconcile:${bobController.linkKey}`;
+      engine['_runtime'].armTimeout(aliceTimerKey, () => {}, 60_000);
+      engine['_runtime'].armTimeout(bobTimerKey, () => {}, 60_000);
       let releaseBlocker!: () => void;
       let blockerStarted!: () => void;
       const blockerStartedGate = new Promise<void>((resolve) => { blockerStarted = resolve; });
@@ -972,12 +1006,11 @@ describe('SyncEngineLevel — identity management', () => {
       releaseBlocker();
       await Promise.all([blocker, queuedReconcile, draining]);
 
-      expect(aliceController.reconcileTimer).toBeUndefined();
+      expect(engine['_runtime'].hasTimer(aliceTimerKey)).toBe(false);
       expect(queuedReconcileRan).toBe(false);
-      expect(bobController.reconcileTimer).toBeDefined();
+      expect(engine['_runtime'].hasTimer(bobTimerKey)).toBe(true);
       expect((engine as any)._linkControllers.has(aliceController.linkKey)).toBe(false);
-
-      clearTimeout(bobReconcileTimer);
+      engine['_runtime'].dispose();
     });
 
     it('removeIdentityFromLiveSync should be a safe no-op for a DID with no subscriptions or state', async () => {

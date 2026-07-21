@@ -1,5 +1,6 @@
 /** One armed native timer and the token proving it still owns its key. */
 type ArmedTimer = {
+  dueAt?: number;
   kind: 'interval' | 'timeout';
   handle: ReturnType<typeof setInterval> | ReturnType<typeof setTimeout>;
   token: symbol;
@@ -87,18 +88,34 @@ export class SyncRuntime implements SyncRuntimeHandle {
     if (this._disposed) {
       return;
     }
-    this.cancelTimer(key);
-    const token = Symbol(key);
-    const handle = setTimeout((): void => {
-      // Same ownership re-check as intervals: a firing queued before a
-      // replacement or disposal must not start the callback.
-      if (this._disposed || this._timers.get(key)?.token !== token) {
-        return;
-      }
-      this._timers.delete(key);
-      callback();
-    }, delayMs);
-    this._timers.set(key, { kind: 'timeout', handle, token });
+
+    this.armTimeoutAt(key, callback, Date.now() + Math.max(0, delayMs));
+  }
+
+  /**
+   * Arm a one-shot timer unless the same key is already due no later. This is
+   * the runtime-owned earliest-wins policy used by coalesced link work.
+   *
+   * @returns Whether this request armed or replaced the timer.
+   */
+  public armTimeoutIfEarlier(key: string, callback: () => void, delayMs: number): boolean {
+    if (this._disposed) {
+      return false;
+    }
+
+    const dueAt = Date.now() + Math.max(0, delayMs);
+    const existing = this._timers.get(key);
+    if (existing?.kind === 'timeout' && existing.dueAt !== undefined && existing.dueAt <= dueAt) {
+      return false;
+    }
+
+    this.armTimeoutAt(key, callback, dueAt);
+    return true;
+  }
+
+  /** Whether one exact timer key is currently armed. */
+  public hasTimer(key: string): boolean {
+    return this._timers.has(key);
   }
 
   /** Whether any armed timer's key satisfies the predicate. */
@@ -136,6 +153,21 @@ export class SyncRuntime implements SyncRuntimeHandle {
       SyncRuntime.clearNativeTimer(armed);
     }
     this._timers.clear();
+  }
+
+  private armTimeoutAt(key: string, callback: () => void, dueAt: number): void {
+    this.cancelTimer(key);
+    const token = Symbol(key);
+    const handle = setTimeout((): void => {
+      // Same ownership re-check as intervals: a firing queued before a
+      // replacement or disposal must not start the callback.
+      if (this._disposed || this._timers.get(key)?.token !== token) {
+        return;
+      }
+      this._timers.delete(key);
+      callback();
+    }, Math.max(0, dueAt - Date.now()));
+    this._timers.set(key, { dueAt, kind: 'timeout', handle, token });
   }
 
   private static clearNativeTimer(armed: ArmedTimer): void {

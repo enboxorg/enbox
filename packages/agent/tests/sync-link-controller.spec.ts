@@ -8,8 +8,6 @@ import type { ReplicationLinkState } from '../src/types/sync.js';
 
 import { SyncLinkController } from '../src/sync-link-controller.js';
 
-type SyncLinkTimer = Parameters<SyncLinkController['setRepairRetryTimer']>[0];
-
 function createLink(): ReplicationLinkState {
   return {
     authorization      : { kind: 'owner' },
@@ -107,51 +105,17 @@ describe('SyncLinkController', () => {
     expect(closeOwned.calledOnce).toBe(true);
   });
 
-  it('should consume only the currently owned repair and reconcile timers', () => {
+  it('should invalidate execution and clear repair attempts on deactivation', () => {
     const controller = new SyncLinkController('link-key', createLink());
-    const firstRepair = setTimeout(() => {}, 60_000);
-    const currentRepair = setTimeout(() => {}, 60_000);
-    const firstReconcile = setTimeout(() => {}, 60_000);
-    const currentReconcile = setTimeout(() => {}, 60_000);
-
-    controller.setRepairRetryTimer(firstRepair);
-    controller.setRepairRetryTimer(currentRepair);
-    controller.setReconcileTimer(firstReconcile, 1);
-    controller.setReconcileTimer(currentReconcile, 2);
-
-    expect(controller.consumeRepairRetryTimer(firstRepair)).toBe(false);
-    expect(controller.repairRetryTimer).toBe(currentRepair);
-    expect(controller.consumeReconcileTimer(firstReconcile)).toBe(false);
-    expect(controller.reconcileTimer).toBe(currentReconcile);
-
-    expect(controller.consumeRepairRetryTimer(currentRepair)).toBe(true);
-    expect(controller.consumeReconcileTimer(currentReconcile)).toBe(true);
-    expect(controller.repairRetryTimer).toBeUndefined();
-    expect(controller.reconcileTimer).toBeUndefined();
-
-    clearTimeout(currentRepair);
-    clearTimeout(currentReconcile);
-  });
-
-  it('should invalidate execution and cancel every queued timer on deactivation', async () => {
-    const clock = sinon.useFakeTimers();
-    const controller = new SyncLinkController('link-key', createLink());
-    const fired = sinon.stub();
-    const repairTimer = setTimeout(fired, 10) as unknown as SyncLinkTimer;
-    const reconcileTimer = setTimeout(fired, 10) as unknown as SyncLinkTimer;
-    controller.setRepairRetryTimer(repairTimer);
-    controller.setReconcileTimer(reconcileTimer, Date.now() + 10);
     controller.incrementRepairAttempts();
     controller.markReplicationReady();
+    controller.executor.request('pull');
 
     controller.deactivate();
-    await clock.tickAsync(10);
 
     expect(controller.isActive).toBe(false);
     expect(controller.isReplicationReady).toBe(false);
-    expect(controller.repairRetryTimer).toBeUndefined();
-    expect(controller.reconcileTimer).toBeUndefined();
     expect(controller.repairAttempts).toBe(0);
-    expect(fired.called).toBe(false);
+    expect(controller.executor.hasPendingWork).toBe(false);
   });
 });
