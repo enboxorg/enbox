@@ -128,7 +128,7 @@ describe('SyncEngineLevel lifecycle', () => {
     expect(db.status).toBe('open');
   });
 
-  it('should keep storage open while teardown races a mid-feed push', async () => {
+  it('should keep storage open while stop races a mid-feed push', async () => {
     const engine = new SyncEngineLevel({ db });
     const pushStarted = createDeferred();
     const releasePush = createDeferred();
@@ -140,7 +140,7 @@ describe('SyncEngineLevel lifecycle', () => {
       projectionId       : '',
       scope              : { kind: 'full' as const },
     };
-    const link = await engine['ledger'].getOrCreateLink({
+    const link = await engine['replicationLinkStore'].getOrCreateLink({
       tenantDid          : target.did,
       remoteEndpoint     : target.dwnUrl,
       scope              : target.scope,
@@ -148,7 +148,7 @@ describe('SyncEngineLevel lifecycle', () => {
       authorizationEpoch : target.authorizationEpoch,
     });
     target.projectionId = link.projectionId;
-    await engine['ledger'].setStatus(link, 'live');
+    await engine['replicationLinkStore'].setStatus(link, 'live');
     engine['activateLink']('active-link', link);
 
     const internal = engine as unknown as {
@@ -231,10 +231,10 @@ describe('SyncEngineLevel lifecycle', () => {
     };
 
     const controller = engine['activateLink'](linkKey, link as never);
-    sinon.stub(engine['ledger'], 'setStatus').callsFake(async (): Promise<void> => {
+    sinon.stub(engine['replicationLinkStore'], 'setStatus').callsFake(async (): Promise<void> => {
       link.status = 'repairing';
     });
-    sinon.stub(engine['_linkRecoveryCoordinator'] as any, 'runPendingRepairs').callsFake(async (): Promise<void> => {
+    sinon.stub(engine['_linkRecoveryCoordinator'] as any, 'runRequestedRepairPasses').callsFake(async (): Promise<void> => {
       repairStarted.resolve();
       await releaseRepair.promise;
     });
@@ -485,10 +485,10 @@ describe('SyncEngineLevel lifecycle', () => {
     await engine.registerIdentity({ did, options: { protocols: 'all' } });
     engine['_runtime'] = new SyncRuntime(true);
     engine['activateLink'](linkKey, link as never);
-    sinon.stub(engine['ledger'], 'setStatus').callsFake(async (): Promise<void> => {
+    sinon.stub(engine['replicationLinkStore'], 'setStatus').callsFake(async (): Promise<void> => {
       link.status = 'repairing';
     });
-    sinon.stub(engine['_linkRecoveryCoordinator'] as any, 'runPendingRepairs').callsFake(async (): Promise<void> => {
+    sinon.stub(engine['_linkRecoveryCoordinator'] as any, 'runRequestedRepairPasses').callsFake(async (): Promise<void> => {
       repairStarted.resolve();
       await releaseRepair.promise;
     });
@@ -543,10 +543,10 @@ describe('SyncEngineLevel lifecycle', () => {
 
     engine['activateLink'](aliceLinkKey, aliceLink as never);
     engine['activateLink'](bobLinkKey, bobLink as never);
-    sinon.stub(engine['ledger'], 'setStatus').callsFake(async (): Promise<void> => {
+    sinon.stub(engine['replicationLinkStore'], 'setStatus').callsFake(async (): Promise<void> => {
       bobLink.status = 'repairing';
     });
-    sinon.stub(engine['_linkRecoveryCoordinator'] as any, 'runPendingRepairs').callsFake(async (): Promise<void> => {
+    sinon.stub(engine['_linkRecoveryCoordinator'] as any, 'runRequestedRepairPasses').callsFake(async (): Promise<void> => {
       repairStarted.resolve();
       await releaseRepair.promise;
     });
@@ -1004,7 +1004,7 @@ describe('SyncEngineLevel lifecycle', () => {
     await registeredIdentities.put('did:example:alice', JSON.stringify({ protocols: 'all' }));
     const getSyncTargets = sinon.stub(engine as never, 'getSyncTargets').resolves([]);
 
-    // Stop the engine: the current scope is disposed but stays installed.
+    // Stop the engine: the current runtime is disposed but stays installed.
     await engine.stopSync();
     const stoppedRuntime = engine['_runtime'];
     expect(stoppedRuntime.disposed).toBe(true);
@@ -1017,14 +1017,14 @@ describe('SyncEngineLevel lifecycle', () => {
     expect(stoppedFence()).toBe(true);
 
     // Hold the exclusive lock (as a stopped-state retry would) and queue a
-    // sync(): its own fence is captured under the already-disposed scope.
+    // sync(): its own fence is captured under the already-disposed runtime.
     expect(engine['_lifecycle'].tryAcquireSync()).toBe(true);
     const syncPromise = engine.sync();
     syncPromise.catch((): void => {});
 
     // A second transition from the stopped state must still be observable:
     // disposal alone cannot flip an already-disposed flag, so the transition
-    // installs a NEW disposed scope object.
+    // installs a NEW disposed runtime object.
     const stopPromise = engine.stopSync();
     engine['_lifecycle'].releaseSync();
     await stopPromise;
@@ -1039,7 +1039,7 @@ describe('SyncEngineLevel lifecycle', () => {
     expect(getSyncTargets.called).toBe(false);
   });
 
-  it('should retry DID-resolution failures while the runtime generation is unchanged', async () => {
+  it('should retry DID-resolution failures while the runtime is unchanged', async () => {
     const engine = new SyncEngineLevel({ db });
     const originalBackoff = SyncEngineLevel['DID_RESOLUTION_RETRY_BACKOFF_MS'];
     (SyncEngineLevel as unknown as { DID_RESOLUTION_RETRY_BACKOFF_MS: number[] }).DID_RESOLUTION_RETRY_BACKOFF_MS = [1, 1];

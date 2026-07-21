@@ -22,10 +22,12 @@ export class SubscriptionHandlerTerminalError extends Error {
 }
 
 /**
- * Rejection meaning the WebSocket transport could not take a request at all —
- * the socket was not connected, or a connection could not be established. The
- * request was never transmitted, so a caller may safely retry it according to
- * its own policy. The RPC client does not automatically change transports.
+ * Typed rejection from an explicit WebSocket request that could not be
+ * transmitted because the socket was unavailable or connection establishment
+ * failed. A caller may safely retry according to its own policy.
+ *
+ * This is a delivery-certainty boundary only. It does not request HTTP
+ * fallback, and the RPC client never changes transports automatically.
  */
 export class SocketUnavailableError extends Error {
   constructor(message: string) {

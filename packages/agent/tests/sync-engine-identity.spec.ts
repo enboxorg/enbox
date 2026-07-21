@@ -380,14 +380,14 @@ describe('SyncEngineLevel — identity management', () => {
       const engine = new SyncEngineLevel({ db });
       const internal = engine as any;
       const initialResolver = internal.targetResolver;
-      const initialTopologyGeneration = internal._targetPlanner.generation;
+      const initialTopologyGeneration = internal._targetPlanner.topologyGeneration;
       const mockAgent = { agentDid: 'did:example:agent' } as any;
 
       engine.agent = mockAgent;
 
       expect(engine.agent).toBe(mockAgent);
       expect(internal.targetResolver).not.toBe(initialResolver);
-      expect(internal._targetPlanner.generation).toBe(initialTopologyGeneration + 1);
+      expect(internal._targetPlanner.topologyGeneration).toBe(initialTopologyGeneration + 1);
     });
   });
 
@@ -676,7 +676,7 @@ describe('SyncEngineLevel — identity management', () => {
       await settlePass;
       await updatePromise;
 
-      // The update's teardown-and-rebuild ran after the pass: only the new
+      // The update's stop-and-rebuild ran after the pass: only the new
       // scope's link remains.
       const controllerKeys = [...(engine as any)._linkControllers.keys()];
       expect(controllerKeys).toHaveLength(1);
@@ -1050,7 +1050,7 @@ describe('SyncEngineLevel — identity management', () => {
       };
       (engine as any)._agent = mockAgent;
 
-      const ledgerStub = sinon.stub().callsFake(async (params: any) => ({
+      const getOrCreateLinkStub = sinon.stub().callsFake(async (params: any) => ({
         tenantDid          : 'did:example:proto',
         remoteEndpoint     : 'https://dwn.example.com',
         projectionId       : 'projection-1',
@@ -1062,8 +1062,8 @@ describe('SyncEngineLevel — identity management', () => {
         push               : {},
         connectivity       : 'unknown',
       }));
-      sinon.stub(engine as any, 'ledger').get(() => ({
-        getOrCreateLink : ledgerStub,
+      sinon.stub(engine as any, 'replicationLinkStore').get(() => ({
+        getOrCreateLink : getOrCreateLinkStub,
         setStatus       : sinon.stub().resolves(),
       }));
       sinon.stub(engine as any, 'openLivePullSubscription').resolves(true);
@@ -1074,12 +1074,12 @@ describe('SyncEngineLevel — identity management', () => {
         protocols: ['https://proto1.example', 'https://proto2.example'],
       });
 
-      expect(ledgerStub.calledOnce).toBe(true);
-      expect(ledgerStub.firstCall.args[0].scope).toEqual({
+      expect(getOrCreateLinkStub.calledOnce).toBe(true);
+      expect(getOrCreateLinkStub.firstCall.args[0].scope).toEqual({
         kind      : 'protocolSet',
         protocols : ['https://proto1.example', 'https://proto2.example'],
       });
-      expect(ledgerStub.firstCall.args[0].authorization).toEqual({ kind: 'owner' });
+      expect(getOrCreateLinkStub.firstCall.args[0].authorization).toEqual({ kind: 'owner' });
     });
 
     it('addIdentityToLiveSync should create a full-tenant link when protocols is all', async () => {
@@ -1089,7 +1089,7 @@ describe('SyncEngineLevel — identity management', () => {
       };
       (engine as any)._agent = mockAgent;
 
-      const ledgerStub = sinon.stub().callsFake(async (params: any) => ({
+      const getOrCreateLinkStub = sinon.stub().callsFake(async (params: any) => ({
         tenantDid          : 'did:example:full',
         remoteEndpoint     : 'https://dwn.example.com',
         projectionId       : 'projection-full',
@@ -1101,8 +1101,8 @@ describe('SyncEngineLevel — identity management', () => {
         push               : {},
         connectivity       : 'unknown',
       }));
-      sinon.stub(engine as any, 'ledger').get(() => ({
-        getOrCreateLink : ledgerStub,
+      sinon.stub(engine as any, 'replicationLinkStore').get(() => ({
+        getOrCreateLink : getOrCreateLinkStub,
         setStatus       : sinon.stub().resolves(),
       }));
       sinon.stub(engine as any, 'openLivePullSubscription').resolves(true);
@@ -1111,8 +1111,8 @@ describe('SyncEngineLevel — identity management', () => {
 
       await (engine as any).addIdentityToLiveSync('did:example:full', { protocols: 'all' });
 
-      expect(ledgerStub.calledOnce).toBe(true);
-      expect(ledgerStub.firstCall.args[0].scope).toEqual({ kind: 'full' });
+      expect(getOrCreateLinkStub.calledOnce).toBe(true);
+      expect(getOrCreateLinkStub.firstCall.args[0].scope).toEqual({ kind: 'full' });
     });
 
     it('addIdentityToLiveSync should close pull subscription if push subscription fails', async () => {
@@ -1122,7 +1122,7 @@ describe('SyncEngineLevel — identity management', () => {
       };
       (engine as any)._agent = mockAgent;
 
-      sinon.stub(engine as any, 'ledger').get(() => ({
+      sinon.stub(engine as any, 'replicationLinkStore').get(() => ({
         getOrCreateLink: sinon.stub().callsFake(async (params: any) => ({
           tenantDid          : 'did:example:pushfail',
           remoteEndpoint     : 'https://dwn.example.com',
@@ -1160,7 +1160,7 @@ describe('SyncEngineLevel — identity management', () => {
       };
       (engine as any)._agent = mockAgent;
 
-      sinon.stub(engine as any, 'ledger').get(() => ({
+      sinon.stub(engine as any, 'replicationLinkStore').get(() => ({
         getOrCreateLink: sinon.stub().callsFake(async (params: any) => ({
           tenantDid          : 'did:example:ratelimited',
           remoteEndpoint     : 'https://dwn.example.com',
@@ -1202,7 +1202,7 @@ describe('SyncEngineLevel — identity management', () => {
       };
       (engine as any)._agent = mockAgent;
 
-      sinon.stub(engine as any, 'ledger').get(() => ({
+      sinon.stub(engine as any, 'replicationLinkStore').get(() => ({
         getOrCreateLink: sinon.stub().callsFake(async (params: any) => ({
           tenantDid          : 'did:example:ratelimited-recover',
           remoteEndpoint     : 'https://dwn.example.com',
@@ -1415,7 +1415,7 @@ describe('SyncEngineLevel — identity management', () => {
   // removeIdentityFromLiveSync clears in-flight repair state
   // ---------------------------------------------------------------------------
 
-  describe('removeIdentityFromLiveSync — in-flight repair cleanup', () => {
+  describe('removeIdentityFromLiveSync — in-flight repair disposal', () => {
     it('should discard the target DID controller with its in-flight repair', async () => {
       const engine = new SyncEngineLevel({ db });
       const aliceKey = 'did:example:alice^https://dwn.example.com^scope1';

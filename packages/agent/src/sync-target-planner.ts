@@ -17,8 +17,8 @@ export type SyncTargetPlannerParams = {
 };
 
 export type SyncTargetPlanningOptions = {
-  /** Run engine-owned cleanup before a complete target snapshot is cached. */
-  beforeCache?: (targets: SyncTarget[], generation: number) => Promise<void>;
+  /** Run engine-owned pruning before a complete target snapshot is cached. */
+  beforeCache?: (targets: SyncTarget[], topologyGeneration: number) => Promise<void>;
 };
 
 type SyncTargetCache = {
@@ -35,7 +35,7 @@ type RegisteredIdentityTargets = {
  * Plans and caches canonical sync targets for every registered identity.
  *
  * Persistence and target resolution are supplied through backend-neutral
- * contracts. Engine-specific lifecycle and cleanup policy remains outside.
+ * contracts. Engine-specific lifecycle and pruning policy remains outside.
  */
 export class SyncTargetPlanner {
   private static readonly DEFAULT_CACHE_TTL_MS = 30_000;
@@ -46,7 +46,7 @@ export class SyncTargetPlanner {
   private readonly _identityStore: SyncIdentityStore;
   private _lastResolutionComplete = false;
   private readonly _now: () => number;
-  private _generation = 0;
+  private _topologyGeneration = 0;
   private readonly _warn: (message: string, error: unknown) => void;
 
   constructor({
@@ -64,8 +64,8 @@ export class SyncTargetPlanner {
   }
 
   /** Monotonic topology version used to reject work planned before invalidation. */
-  public get generation(): number {
-    return this._generation;
+  public get topologyGeneration(): number {
+    return this._topologyGeneration;
   }
 
   /** Whether the latest uncached resolution covered every registration. */
@@ -77,7 +77,7 @@ export class SyncTargetPlanner {
   public invalidate(): void {
     this._cache = undefined;
     this._lastResolutionComplete = false;
-    this._generation++;
+    this._topologyGeneration++;
   }
 
   /** Resolve every registered identity into canonical sync targets. */
@@ -87,7 +87,7 @@ export class SyncTargetPlanner {
       return this._cache.targets;
     }
 
-    const generationAtStart = this._generation;
+    const topologyGenerationAtStart = this._topologyGeneration;
     const targets: SyncTarget[] = [];
     let hasRegisteredIdentities = false;
     let anyTargetUnavailable = false;
@@ -109,7 +109,7 @@ export class SyncTargetPlanner {
     await this.cacheCompleteTargets({
       anyTargetUnavailable,
       beforeCache,
-      generationAtStart,
+      topologyGenerationAtStart,
       hasRegisteredIdentities,
       targets,
     });
@@ -138,25 +138,25 @@ export class SyncTargetPlanner {
   private async cacheCompleteTargets({
     anyTargetUnavailable,
     beforeCache,
-    generationAtStart,
+    topologyGenerationAtStart,
     hasRegisteredIdentities,
     targets,
   }: {
     anyTargetUnavailable: boolean;
     beforeCache: SyncTargetPlanningOptions['beforeCache'];
-    generationAtStart: number;
+    topologyGenerationAtStart: number;
     hasRegisteredIdentities: boolean;
     targets: SyncTarget[];
   }): Promise<void> {
-    const generationIsCurrent = this._generation === generationAtStart;
-    this._lastResolutionComplete = !anyTargetUnavailable && generationIsCurrent;
+    const topologyGenerationIsCurrent = this._topologyGeneration === topologyGenerationAtStart;
+    this._lastResolutionComplete = !anyTargetUnavailable && topologyGenerationIsCurrent;
     const isComplete = hasRegisteredIdentities && this._lastResolutionComplete;
     if (targets.length === 0 || !isComplete) {
       return;
     }
 
-    await beforeCache?.(targets, generationAtStart);
-    if (this._generation === generationAtStart) {
+    await beforeCache?.(targets, topologyGenerationAtStart);
+    if (this._topologyGeneration === topologyGenerationAtStart) {
       this._cache = { targets, timestamp: this._now() };
     } else {
       this._lastResolutionComplete = false;

@@ -22,18 +22,18 @@ type SyncDirectionOperation = {
 type SyncDirectionQueue = {
   active?: Promise<void>;
   draining: boolean;
-  generation: number;
   invalidated: boolean;
   operations: SyncDirectionOperation[];
   pendingCount: number;
   readiness: Promise<void>;
+  replicationGeneration: number;
 };
 
 type SyncReplicationReadiness = {
-  generation: number;
   isReady: boolean;
   promise: Promise<void>;
   release: () => void;
+  replicationGeneration: number;
 };
 
 /**
@@ -91,29 +91,29 @@ export class SyncLinkController {
     return this._active;
   }
 
-  /** Whether the current generation has established its durable replay baselines. */
+  /** Whether the current replication generation established its durable replay baselines. */
   public get isReplicationReady(): boolean {
     return this._active &&
-      this._replicationReadiness.generation === this._replicationGeneration &&
+      this._replicationReadiness.replicationGeneration === this._replicationGeneration &&
       this._replicationReadiness.isReady;
   }
 
-  /** Snapshot captured with the current generation's remote pull subscription. */
+  /** Snapshot captured with the current replication generation's remote pull subscription. */
   public get pullSnapshot(): SyncFeedSnapshot | undefined {
     return this._pullSnapshot;
   }
 
-  /** Snapshot captured with the current generation's local push subscription. */
+  /** Snapshot captured with the current replication generation's local push subscription. */
   public get pushSnapshot(): SyncFeedSnapshot | undefined {
     return this._pushSnapshot;
   }
 
   /**
    * Enqueue replication work in one direction's FIFO. Pull and push drain
-   * independently, while both wait for the current generation's durable
-   * replay baselines before starting. Work invalidated by a generation reset
-   * or deactivation resolves `undefined`; a current operation's rejection is
-   * surfaced without poisoning the queue.
+   * independently, while both wait for the current replication generation's
+   * durable replay baselines before starting. Work invalidated by a replication
+   * generation reset or deactivation resolves `undefined`; a current operation's
+   * rejection is surfaced without poisoning the queue.
    */
   public enqueueDirection<T>(
     direction: SyncDirection,
@@ -136,12 +136,12 @@ export class SyncLinkController {
     return result;
   }
 
-  /** Number of running, queued, or readiness-blocked operations in the current generation. */
+  /** Number of running, queued, or readiness-blocked operations in the current replication generation. */
   public getPendingDirectionCount(direction: SyncDirection): number {
     return this._directionQueues[direction].pendingCount;
   }
 
-  /** Wait for operations invalidated by a generation reset to finish unwinding. */
+  /** Wait for operations invalidated by a replication-generation reset to finish unwinding. */
   public waitForSupersededDirectionWork(): Promise<void> {
     return this._supersededDirectionWork;
   }
@@ -149,7 +149,11 @@ export class SyncLinkController {
   /** Release both directional queues after their durable replay baselines are established. */
   public markReplicationReady(): void {
     const readiness = this._replicationReadiness;
-    if (!this._active || readiness.generation !== this._replicationGeneration || readiness.isReady) {
+    if (
+      !this._active ||
+      readiness.replicationGeneration !== this._replicationGeneration ||
+      readiness.isReady
+    ) {
       return;
     }
 
@@ -262,14 +266,14 @@ export class SyncLinkController {
     }
   }
 
-  /** The current subscription-pair generation. */
+  /** The current subscription-pair replication generation. */
   public get replicationGeneration(): number {
     return this._replicationGeneration;
   }
 
   /** Whether this controller is still active and owns the given replication generation. */
-  public isReplicationGenerationCurrent(generation: number): boolean {
-    return this._active && this._replicationGeneration === generation;
+  public isReplicationGenerationCurrent(replicationGeneration: number): boolean {
+    return this._active && this._replicationGeneration === replicationGeneration;
   }
 
   public get reconcileTimer(): ReturnType<typeof setTimeout> | undefined {
@@ -309,8 +313,8 @@ export class SyncLinkController {
   /**
    * Attach a remote pull subscription only while this link lifetime is
    * active — and, when the caller pins the replication generation it opened the
-   * subscription for, only while that generation is still current. A
-   * subscription opened across a generation reset would be installed
+   * subscription for, only while that replication generation is still current. A
+   * subscription opened across a replication-generation reset would be installed
    * permanently fenced: every callback discarded as stale while the slot
    * blocks the replacement.
    */
@@ -333,7 +337,7 @@ export class SyncLinkController {
   /**
    * Attach a local push subscription only while this link lifetime is
    * active — and, when the caller pins the replication generation it opened the
-   * subscription for, only while that generation is still current.
+   * subscription for, only while that replication generation is still current.
    */
   public setLocalSubscription(
     subscription: SyncLinkSubscription,
@@ -351,7 +355,7 @@ export class SyncLinkController {
     return true;
   }
 
-  /** Close and forget the remote pull subscription, ignoring teardown errors. */
+  /** Close and forget the remote pull subscription, ignoring close errors. */
   public async closeLiveSubscription(): Promise<void> {
     const subscription = this._liveSubscription;
     this._liveSubscription = undefined;
@@ -363,11 +367,11 @@ export class SyncLinkController {
     try {
       await subscription.close();
     } catch {
-      // Best-effort cleanup.
+      // Best-effort close.
     }
   }
 
-  /** Close and forget the local push subscription, ignoring teardown errors. */
+  /** Close and forget the local push subscription, ignoring close errors. */
   public async closeLocalSubscription(): Promise<void> {
     const subscription = this._localSubscription;
     this._localSubscription = undefined;
@@ -379,7 +383,7 @@ export class SyncLinkController {
     try {
       await subscription.close();
     } catch {
-      // Best-effort cleanup.
+      // Best-effort close.
     }
   }
 
@@ -472,20 +476,20 @@ export class SyncLinkController {
     readiness: SyncReplicationReadiness,
   ): Record<SyncDirection, SyncDirectionQueue> {
     const createQueue = (): SyncDirectionQueue => ({
-      draining     : false,
-      generation   : readiness.generation,
-      invalidated  : false,
-      operations   : [],
-      pendingCount : 0,
-      readiness    : readiness.promise,
+      draining              : false,
+      invalidated           : false,
+      operations            : [],
+      pendingCount          : 0,
+      readiness             : readiness.promise,
+      replicationGeneration : readiness.replicationGeneration,
     });
     return { pull: createQueue(), push: createQueue() };
   }
 
-  private static createReplicationReadiness(generation: number): SyncReplicationReadiness {
+  private static createReplicationReadiness(replicationGeneration: number): SyncReplicationReadiness {
     let release!: () => void;
     const promise = new Promise<void>((resolve) => { release = resolve; });
-    return { generation, isReady: false, promise, release };
+    return { isReady: false, promise, release, replicationGeneration };
   }
 
   private async drainDirectionQueue(direction: SyncDirection, queue: SyncDirectionQueue): Promise<void> {
@@ -536,7 +540,7 @@ export class SyncLinkController {
   private isDirectionQueueCurrent(direction: SyncDirection, queue: SyncDirectionQueue): boolean {
     return this._active &&
       !queue.invalidated &&
-      queue.generation === this._replicationGeneration &&
+      queue.replicationGeneration === this._replicationGeneration &&
       this._directionQueues[direction] === queue;
   }
 

@@ -50,11 +50,11 @@ describe('SyncEngineLevel — durable push replay seam', () => {
       scope              : { kind: 'full' as const },
       tenantDid          : DID,
     };
-    const link = await (engine as any).ledger.getOrCreateLink(identity);
+    const link = await (engine as any).replicationLinkStore.getOrCreateLink(identity);
     const durableCursor = token(1);
     link.push.contiguousAppliedToken = durableCursor;
-    await (engine as any).ledger.persistCheckpoint(link, 'push');
-    await (engine as any).ledger.setStatus(link, 'live');
+    await (engine as any).replicationLinkStore.persistCheckpoint(link, 'push');
+    await (engine as any).replicationLinkStore.setStatus(link, 'live');
 
     const linkKey = buildLinkKey(DID, REMOTE, link.projectionId, link.authorizationEpoch);
     const controller = (engine as any).activateLink(linkKey, link);
@@ -95,7 +95,7 @@ describe('SyncEngineLevel — durable push replay seam', () => {
     expect(replayQueries.map(({ cursor }) => cursor)).toEqual([durableCursor]);
     expect(pushLocalPage.firstCall.args[1]).toEqual([{ messageCid: 'cid-2' }]);
     expect(controller.link.push.contiguousAppliedToken).toEqual(durableCursor);
-    const persistedAfterFailure = await (engine as any).ledger.getOrCreateLink(identity);
+    const persistedAfterFailure = await (engine as any).replicationLinkStore.getOrCreateLink(identity);
     expect(persistedAfterFailure.push.contiguousAppliedToken).toEqual(durableCursor);
 
     // A later wake replays the same owed page. Only the successful page may
@@ -105,7 +105,7 @@ describe('SyncEngineLevel — durable push replay seam', () => {
     expect(replayQueries.map(({ cursor }) => cursor)).toEqual([durableCursor, durableCursor]);
     expect(pushLocalPage.secondCall.args[1]).toEqual([{ messageCid: 'cid-2' }]);
     expect(controller.link.push.contiguousAppliedToken).toEqual(token(2));
-    const persistedAfterSuccess = await (engine as any).ledger.getOrCreateLink(identity);
+    const persistedAfterSuccess = await (engine as any).replicationLinkStore.getOrCreateLink(identity);
     expect(persistedAfterSuccess.push.contiguousAppliedToken).toEqual(token(2));
 
     await controller.dispose();

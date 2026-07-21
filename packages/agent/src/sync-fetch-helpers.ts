@@ -5,7 +5,7 @@ import type { DependencyRef, GenericMessage, ProtocolsConfigureMessage } from '@
 import { DwnInterfaceName, DwnMethodName, Message } from '@enbox/dwn-sdk-js';
 
 /**
- * Helpers shared by the push (`sync-messages.ts`) and pull (`sync-admit-closure.ts`)
+ * Helpers used by the push (`sync-messages.ts`) and pull (`sync-admit-closure.ts`)
  * dependency-closure fetch paths. These were previously duplicated verbatim in both
  * modules; keep them here so the two paths cannot drift.
  */

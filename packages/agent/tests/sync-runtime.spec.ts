@@ -79,14 +79,14 @@ describe('SyncRuntime', () => {
     expect(ticks).toBe(0);
   });
 
-  it('should carry its liveness for the generation and lose it on disposal', () => {
+  it('should carry its liveness for the runtime and lose it on disposal', () => {
     const idle = new SyncRuntime();
     expect(idle.live).toBe(false);
 
     const runtime = new SyncRuntime(true);
     expect(runtime.live).toBe(true);
 
-    // Liveness is a property of the generation: a disposed scope is never
+    // Liveness is a property of the runtime: a disposed runtime is never
     // live, exactly as the engine between runtimes is not.
     runtime.dispose();
     expect(runtime.live).toBe(false);

@@ -1,7 +1,8 @@
 # Sync engine vocabulary
 
-The sync subsystem (`packages/agent/src/sync-*.ts`) spans ~14k lines across 45
-files, and several of its core concepts had accumulated multiple names while
+The sync subsystem (`packages/agent/src/sync-*.ts` plus
+`packages/agent/src/types/sync.ts`) spans more than 13k lines across more than
+40 source files. Several core concepts had accumulated multiple names while
 several words had accumulated multiple meanings. This file is the canonical
 list: **one name per concept, one meaning per word.**
 
@@ -17,16 +18,28 @@ the code, not an entry missing from this table.
 | Reconciling one target's durable feeds | **`reconcileTarget`** | `syncTargetWithDurableFeeds` |
 | Runtime identifier of a replication link | **`linkKey`** — `buildLinkKey`, `LINK_KEY_SEPARATOR` | `buildLinkId`, `LINK_ID_SEPARATOR` |
 | Endpoint-independent link identity | **`durableLinkIdentityKey`** | — |
-| Durable replication-link store | **`replicationLinkStore`** | `getLinkStore`, "ledger" (nickname only) |
+| Durable replication-link store | **`replicationLinkStore`** | `getLinkStore`, `ledger` |
 | Authoritative in-engine owner of one active link object, both subscriptions, directional replay ordering, startup readiness, repair, and reconciliation | **replication session** — currently `SyncLinkController` | independent live and reconciler link copies |
 | Per-link subscription and replay fence — ONE generation for the subscription pair and both directional queues | **`replicationGeneration`** / `expectedReplicationGeneration` | `pullGeneration`, `pullEpoch`, `openGeneration`, `expectedGeneration`, `subscriptionPullEpoch` |
 | Target-plan version | **`topologyGeneration`** / `expectedTopologyGeneration` | bare `generation`, `expectedGeneration` |
+| Deterministic identity of one tenant-and-scope projection, independent of endpoint and authorization | **`projectionId`** — `computeProjectionId` | endpoint identity, authorization identity |
 | Ordered callback work after subscription establishment | **direction replay queue** — `enqueueDirection`, one independent FIFO each for `pull` and `push` | `DeliveryLedger`, `SyncDeliveryTag`, `track*Delivery` / `ack*Delivery`, `pushQueue`, `SyncPushQueue*` |
-| Shared startup boundary for the two direction queues | **replication readiness barrier** — `isReplicationReady`, `markReplicationReady` | allowing subscription callbacks to race baseline establishment |
+| Single startup boundary for the two direction queues | **replication readiness barrier** — `isReplicationReady`, `markReplicationReady` | allowing subscription callbacks to race baseline establishment |
 | A local subscription event that says the durable local feed may have advanced; bursts request one trailing pass, and the pass always resumes from `link.push.contiguousAppliedToken` | **durable push wake** — `requestPass('push')`, `SyncLinkRecoveryCoordinator.push` | per-event push job, delivery acknowledgement, or checkpoint evidence |
-| Folding a push result into quota state | **`applyPushResult`** | `transitionPushResult` |
+| Durable resume point for one direction of one replication link | **direction checkpoint** — `DirectionCheckpoint.contiguousAppliedToken` | delivery acknowledgement, arbitrary subscription cursor |
+| Namespace in which progress-token positions can be compared | **token domain** — exact `(streamId, epoch)` pair | stream alone, epoch alone, or a globally ordered position |
+| Folding a push result into quota state | **push result outcome** — `applyPushResult`, `SyncQuotaPushResultOutcome` | `transitionPushResult`, push transition |
+| Temporarily unadmittable remote root that must hold the pull page | **deferred pull** — `SyncDeferredPullState`, `SyncDeferredPullStore` | dead letter, retryable push failure |
+| Endpoint-local, bounded hint that prevents immediate transfer echoes | **echo suppression** — `SyncEchoSuppressor` | checkpoint evidence, durable acknowledgement |
+| Active durable record of a remote quota rejection | **quota block** — `SyncQuotaBlockState` without `supersededAt` | dead letter, generic retryable failure |
+| Direct retry of a due quota block, independent of feed progress | **quota probe** — `probeBlocksForTarget`, `probeBlock` | settle check, repair pass |
+| Historical quota row retained only to explain an intentional feed omission | **resolved quota omission** — `SyncQuotaBlockState.supersededAt` | active quota block |
+| Verified comparison of complete local and remote feed inventories | **feed convergence** — `SyncFeedConvergenceManager` | ordinary reconciliation pass, transport health |
+| Ordering and supervision of start/stop, exclusive work, and background tasks | **lifecycle coordination** — `SyncLifecycleCoordinator`, `SyncTaskGroup` | timer ownership, which belongs to `SyncRuntime` |
+| Public engine observability notification | **sync event** — `SyncEvent`, `SyncEngine.on(listener)` | DWN subscription `MessageEvent`, transport lifecycle message |
+| Dependency-aware topological ordering of messages before DWN processing | **admission order** — `orderMessagesForAdmission` | feed order, direction replay order |
 | Permanently-failed message record | **dead letter** — `DeadLetterEntry`, `getDeadLetters`, `clearDeadLetter`, `clearAllDeadLetters`, `recordDeadLetter`, `hasDeadLetter` | `getFailedMessages`, `clearFailedMessage`, `clearAllFailedMessages`, `hasAdmissionDeadLetter` |
-| Clearing one exact `(tenant, cid, remote)` dead letter | **`clearDeadLetterForTenant`** | the quota ops key `clearFailedMessage`, which shared a name with the across-tenants public method |
+| Clearing one exact `(tenant, cid, remote)` dead letter | **`clearDeadLetterForTenant`** | the quota ops key `clearFailedMessage`, which reused the across-tenants public method's name |
 | A cycle that did not run because the link is parked | **`paused`** on the reconcile result | reporting `converged: true` for a link nothing compared |
 
 ## One meaning per word
@@ -35,11 +48,11 @@ the code, not an entry missing from this table.
 |---|---|---|
 | **epoch** | A durable, string-valued generation: `authorizationEpoch` on a link, `ProgressToken.epoch` on a remote stream | The in-memory replication counter — that is a *generation* |
 | **generation** | An in-memory monotonic counter. Always qualified: *replication* generation, *topology* generation | The `SyncRuntime` lifetime — that is a *runtime* |
-| **runtime** | The `SyncRuntime` timer-ownership scope for one start/stop cycle | Direction replay state (*queue*), live-sync mode (*live sync*), or loose ephemeral state |
-| **drain** | Consuming ordered queued/data work: `drainDirectionQueue`, `drainTo`, `SyncDrainCoordinator` | Pumping a request set (`runRequestedPasses`), committing a durable checkpoint, or running repair passes (`runPendingRepairs`) |
+| **runtime** | The `SyncRuntime` timer owner for one start/stop cycle | Direction replay state (*queue*), live-sync mode (*live sync*), or loose ephemeral state |
+| **drain** | Consuming ordered queued/data work: `drainDirectionQueue`, `drainTo`, `SyncDrainCoordinator` | Pumping a request set (`runRequestedPasses`), committing a durable checkpoint, or running repair passes (`runRequestedRepairPasses`) |
 | **admission** | Replicated-message admission into the local DWN: `admitClosure`, `admitRemoteFeedPage`, `MAX_ADMISSION_PASSES` | Background-task admission — that is *intake* (`pauseTaskIntake`) |
 | **closure** | One root message plus the transitive dependency set required to make it applicable | Scope closure — always spelled out as *scope closure* |
-| **scope** | A `SyncScope` (a protocol set) | The runtime timer scope, or the lock namespace (`_lockNamespace`) |
+| **scope** | Always qualified data selection: *sync scope* (`SyncScope`) or emitted *event scope* (`SyncEventScope`) | The runtime or lock namespace (`_lockNamespace`) |
 | **shared** | One execution coalesced across many callers (`enqueueShared`) | A pending-pass mark — that is `requestPass` / `isPassRequested` |
 
 ## Verb conventions
@@ -78,8 +91,33 @@ One verb per kind of ending, because these had four overlapping spellings:
 | `prune` | A supersession sweep | `pruneStaleLinkBlocks` |
 | `retire` | An attempt abandoned mid-flight | `retireFailedLinkAttempt` |
 
-`teardown*` and `cleanup*` are retired — they were synonyms of `stop` and
-`retire` respectively.
+`teardown*` and `cleanup*` identifiers are retired — they were synonyms of
+`stop` and `retire` respectively.
+
+## Subsystem boundaries
+
+These mechanisms deliberately solve different failure modes. Combining them
+would make one signal stand in for proof it does not carry.
+
+| Subsystem | Owns | Does not own |
+|---|---|---|
+| Quota | Durable per-link blocks, backoff, direct probes, and resolved-omission evidence | General push retry, dead letters, or feed checkpoints |
+| Deferred pulls | Temporary pull-admission state; a root holds the page until it succeeds, disappears, or ages into a dead letter | Push failures or permanent admission rejection |
+| Echo suppression | Short-lived `(tenant, CID, endpoint)` transfer hints | Durable progress; a cache hit never advances a checkpoint by itself |
+| Feed convergence | Verified inventory/fingerprint mismatch policy after reconciliation | Socket health or routine feed transfer |
+| Lifecycle coordination | Transition serialization, exclusive sync ownership, task intake, and waiting for supervised work | Timers and liveness, which belong to the current runtime |
+| Sync events | Metrics/UI-facing observations emitted by the engine | Transport subscription delivery or replication control flow |
+| Admission ordering | Dependency order within a closure before DWN admission | Order of feed delivery or direction replay |
+
+## Checkpoint and token-domain rules
+
+- Compare token positions only when both `streamId` and `epoch` match. A token
+  from another domain is neither newer nor older.
+- Advance a direction checkpoint only after ordered direction replay or a
+  durable-feed page has settled. A subscription notification alone is not
+  checkpoint evidence.
+- Reset or re-establish the baseline when the token domain changes. Never carry
+  a position across domains.
 
 ## Design rule: verify at the point of use
 
@@ -102,8 +140,7 @@ Names left knowingly unconverged, because the fix costs more than the confusion:
 
 - **`SyncTarget.did` / `.dwnUrl`** are the same values as
   `ReplicationLinkState.tenantDid` / `.remoteEndpoint`, and `syncTargetFromLink`
-  is purely that mapping. Converging them means per-site judgment across ~500
-  occurrences — `did` and `dwnUrl` are also fields on push-request types —
-  including ~149 untyped test literals the compiler cannot
-  check, and 33 `as any` stubs where a wrong rename fails silently rather than
-  loudly. Documented on the type instead.
+  is purely that mapping. Converging them requires per-site judgment because
+  `did` and `dwnUrl` are also fields on push-request types, while many test
+  literals and dynamic stubs cannot be checked by the compiler. Documented on
+  the type instead.

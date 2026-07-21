@@ -118,7 +118,7 @@ describe('Agent remote mode integration', () => {
     expect(await readLocalRecordText(testHarness.agent, alice.did.uri, remoteWrite.recordId)).toBe('remote pull body');
     expect(await readLocalRecordText(testHarness.agent, bob.did.uri, bobRemoteWrite.recordId)).toBeUndefined();
 
-    const links = await syncEngine.ledger.getLinksForTenant(alice.did.uri);
+    const links = await syncEngine.replicationLinkStore.getLinksForTenant(alice.did.uri);
     const link = links.find((candidate: any): boolean => candidate.remoteEndpoint === remoteServer.httpUrl);
 
     expect(link).toBeDefined();
@@ -163,7 +163,7 @@ describe('Agent remote mode integration', () => {
     expect(await readRecordTextFromServer(testHarness.agent, remoteServer.httpUrl, alice.did, localWrite.recordId)).toBe('drained local body');
     expect(await readLocalRecordText(testHarness.agent, alice.did.uri, remoteWrite.recordId)).toBe('drained remote body');
 
-    const links = await syncEngine.ledger.getLinksForTenant(alice.did.uri);
+    const links = await syncEngine.replicationLinkStore.getLinksForTenant(alice.did.uri);
     const link = links.find((candidate: any): boolean => candidate.remoteEndpoint === remoteServer.httpUrl);
 
     expect(link).toBeDefined();
@@ -239,7 +239,7 @@ describe('Agent remote mode integration', () => {
     });
     await testHarness.agent.sync.startSync({ interval: '30s' });
 
-    const beforeLinks = await syncEngine.ledger.getLinksForTenant(alice.did.uri);
+    const beforeLinks = await syncEngine.replicationLinkStore.getLinksForTenant(alice.did.uri);
     const before = beforeLinks.find((candidate: any): boolean => candidate.remoteEndpoint === remoteServer.httpUrl);
     expect(before).toBeDefined();
     const beforePullPosition = BigInt(before.pull.contiguousAppliedToken?.position ?? '-1');
@@ -258,7 +258,7 @@ describe('Agent remote mode integration', () => {
       await readRecordTextFromServer(testHarness.agent, remoteServer.httpUrl, alice.did, localWrite.recordId) === 'concurrent local body'
     );
     await waitFor(async () => {
-      const links = await syncEngine.ledger.getLinksForTenant(alice.did.uri);
+      const links = await syncEngine.replicationLinkStore.getLinksForTenant(alice.did.uri);
       const link = links.find((candidate: any): boolean => candidate.remoteEndpoint === remoteServer.httpUrl);
       return link !== undefined &&
         BigInt(link.pull.contiguousAppliedToken?.position ?? '-1') > beforePullPosition &&

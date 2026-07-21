@@ -54,7 +54,7 @@ function createEngineFixture(db: Level<string, string>): EngineFixture {
     return { status: { code: 200 }, subscription: { close: sinon.stub().resolves() } };
   });
   (engine as any)._agent = { dwn: { processRequest }, rpc: { sendDwnRequest } };
-  const persistCheckpoint = sinon.stub((engine as any).ledger, 'persistCheckpoint').resolves();
+  const persistCheckpoint = sinon.stub((engine as any).replicationLinkStore, 'persistCheckpoint').resolves();
   const repairing = sinon.stub((engine as any)._linkRecoveryCoordinator, 'transitionToRepairing').resolves();
   const target = {
     authorization      : { kind: 'owner' as const },
@@ -72,7 +72,7 @@ function openSubscription(fixture: EngineFixture): Promise<boolean> {
   return (fixture.engine as any).openLivePullSubscription(fixture.target, fixture.controller);
 }
 
-describe('SyncEngineLevel — live-replication generation fencing', () => {
+describe('SyncEngineLevel — replication generation fencing', () => {
   let db: Level<string, string>;
 
   beforeAll(() => {
@@ -133,7 +133,7 @@ describe('SyncEngineLevel — live-replication generation fencing', () => {
     const opening = openSubscription(fixture);
     await requestStarted.promise;
     // A repair or pause resets the replication generation while the subscribe RPC is
-    // pending: the eventual subscription belongs to a superseded generation
+    // pending: the eventual subscription belongs to a superseded replication generation
     // and must be closed, not installed as a permanently fenced slot that
     // blocks the replacement.
     fixture.controller.resetReplicationGeneration();
@@ -206,7 +206,7 @@ describe('SyncEngineLevel — live-replication generation fencing', () => {
     controller.link.status = 'initializing';
     const livePersistenceStarted = deferred();
     const releaseLivePersistence = deferred();
-    sinon.stub((engine as any).ledger, 'setStatus').callsFake(async (link: any, status: string): Promise<void> => {
+    sinon.stub((engine as any).replicationLinkStore, 'setStatus').callsFake(async (link: any, status: string): Promise<void> => {
       link.status = status;
       if (status === 'live') {
         livePersistenceStarted.resolve();
@@ -231,7 +231,7 @@ describe('SyncEngineLevel — live-replication generation fencing', () => {
     expect(await queuedReplay).toBeUndefined();
   });
 
-  it('should swallow a superseded attempt failure but propagate a current-generation failure', async () => {
+  it('should swallow a superseded attempt failure but propagate a current-replication-generation failure', async () => {
     const fixture = createEngineFixture(db);
     const requestStarted = deferred();
     const releaseRequest = deferred();
@@ -245,11 +245,11 @@ describe('SyncEngineLevel — live-replication generation fencing', () => {
     await requestStarted.promise;
     fixture.controller.resetReplicationGeneration();
     releaseRequest.resolve();
-    // The superseded attempt's rejection is its own teardown, not this
+    // The superseded attempt's rejection retires that attempt; it is not this
     // link's failure.
     expect(await opening).toBe(false);
 
-    // The same failure in the current generation still surfaces.
+    // The same failure in the current replication generation still surfaces.
     fixture.sendDwnRequest.rejects(new Error('transport failed'));
     await expect(openSubscription(fixture)).rejects.toThrow('transport failed');
 
@@ -261,7 +261,7 @@ describe('SyncEngineLevel — live-replication generation fencing', () => {
     const { controller, engine } = fixture;
     const replacementClose = sinon.stub().resolves();
     sinon.stub(engine as any, 'openLivePullSubscription').callsFake(async (): Promise<boolean> => {
-      // A repair supersedes the attempt and its replacement generation
+      // A repair supersedes the attempt and its replacement replication generation
       // attaches a fresh pair before the old attempt resumes.
       controller.resetReplicationGeneration();
       controller.setLiveSubscription({ close: replacementClose });
@@ -286,7 +286,7 @@ describe('SyncEngineLevel — live-replication generation fencing', () => {
     const openReplicationGeneration = controller.replicationGeneration;
     sinon.stub(engine as any, 'openLivePullSubscription').callsFake(async (): Promise<boolean> => {
       // A terminal callback queued at attachment pauses the link before the
-      // caller resumes — the pause bumps the generation and tears down.
+      // caller resumes — the pause bumps the replication generation and closes the pair.
       await (engine as any)._linkRecoveryCoordinator.transitionToPaused(LINK_KEY, controller.link);
       return true;
     });
@@ -302,7 +302,7 @@ describe('SyncEngineLevel — live-replication generation fencing', () => {
     await controller.dispose();
   });
 
-  it('should fence local subscription callbacks issued before a generation reset', async () => {
+  it('should fence local subscription callbacks issued before a replication-generation reset', async () => {
     const fixture = createEngineFixture(db);
     const { controller, engine } = fixture;
     const push = sinon.stub((engine as any)._linkRecoveryCoordinator, 'push').resolves();
@@ -314,7 +314,7 @@ describe('SyncEngineLevel — live-replication generation fencing', () => {
     });
 
     expect(await (engine as any).openLocalPushSubscription(fixture.target, controller)).toBe(true);
-    // A repair resets the generation and reopens the local subscription.
+    // A repair resets the replication generation and reopens the local subscription.
     controller.resetReplicationGeneration();
     await controller.closeLocalSubscription();
     expect(await (engine as any).openLocalPushSubscription(fixture.target, controller)).toBe(true);
@@ -325,14 +325,14 @@ describe('SyncEngineLevel — live-replication generation fencing', () => {
     await localHandlers[1](message);
 
     // The superseded callback cannot wake durable replay. The replacement
-    // generation contributes one coalesced push request.
+    // replication generation contributes one coalesced push request.
     expect(push.calledOnceWithExactly(controller)).toBe(true);
     expect(controller.isPassRequested('push')).toBe(true);
 
     await controller.dispose();
   });
 
-  it('should refuse a local install that resolves while pause teardown awaits a subscription close', async () => {
+  it('should refuse a local install that resolves while pause awaits a subscription close', async () => {
     const fixture = createEngineFixture(db);
     const { controller, engine } = fixture;
     controller.link.status = 'initializing';
@@ -352,8 +352,8 @@ describe('SyncEngineLevel — live-replication generation fencing', () => {
     const pausing = (engine as any)._linkRecoveryCoordinator.transitionToPaused(LINK_KEY, controller.link);
     // The pause is blocked awaiting the pull subscription's close when the
     // pending local subscribe resolves: the attach must be refused by the
-    // pause's already-published generation, not slip into the slot the
-    // teardown has already inspected.
+    // pause's already-published replication generation, not slip into the slot
+    // the close operation has already inspected.
     releaseSubscribe.resolve();
     expect(await opening).toBe(false);
     expect(localClose.calledOnce).toBe(true);
@@ -399,7 +399,7 @@ describe('SyncEngineLevel — live-replication generation fencing', () => {
     await controller.dispose();
   });
 
-  it('should discard a stale ProgressGap reply instead of repairing the superseded generation', async () => {
+  it('should discard a stale ProgressGap reply instead of repairing the superseded replication generation', async () => {
     const fixture = createEngineFixture(db);
     const requestStarted = deferred();
     const releaseRequest = deferred();
@@ -415,9 +415,9 @@ describe('SyncEngineLevel — live-replication generation fencing', () => {
     fixture.controller.resetReplicationGeneration();
     releaseRequest.resolve();
 
-    // The 410 belongs to the superseded generation's cursor: resolving false
+    // The 410 belongs to the superseded replication generation's cursor: resolving false
     // (instead of throwing the ProgressGap) keeps callers from starting
-    // another repair for a generation that no longer exists.
+    // another repair for a replication generation that no longer exists.
     expect(await opening).toBe(false);
     expect(fixture.repairing.notCalled).toBe(true);
 
@@ -478,7 +478,7 @@ describe('SyncEngineLevel — transport lifecycle connectivity', () => {
     expect(controller.link.connectivity).toBe('online');
 
     // A late disconnect from the superseded subscription must not mark the
-    // replacement generation offline.
+    // replacement replication generation offline.
     await staleHandler({ type: 'disconnected' });
     expect(controller.link.connectivity).toBe('online');
 

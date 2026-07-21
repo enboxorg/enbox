@@ -96,7 +96,7 @@ describe('SyncEngineLevel sync() coalescing', () => {
     expect(run.notCalled).toBe(true);
 
     // stopSync/clear/close funnel through this transition: it bumps the
-    // engine generation and drops the queued join point. The joiner must
+    // engine runtime and drops the queued join point. The joiner must
     // reject — a resolved sync() always means a covering run completed.
     (engine as any).prepareForSyncRuntimeTransition();
     lifecycle.releaseSync();

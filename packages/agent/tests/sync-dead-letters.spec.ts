@@ -82,7 +82,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
     ]);
   });
 
-  it('should suppress only the expected database-close race during internal cleanup', async () => {
+  it('should suppress only the expected database-close race during internal deletion', async () => {
     const del = sinon.stub();
     const internal = new SyncEngineLevel({
       db: {
@@ -378,17 +378,19 @@ describe('SyncEngineLevel dead letter tracking', () => {
   it('should keep the registration intact when durable-link pruning fails, then succeed on retry', async () => {
     const tenantDid = 'did:example:alice';
     await registerTenant(tenantDid);
-    const ledger = (syncEngine as unknown as { ledger: SyncReplicationLinkStore }).ledger;
-    const link = await ledger.getOrCreateLink({
+    const replicationLinkStore = (
+      syncEngine as unknown as { replicationLinkStore: SyncReplicationLinkStore }
+    ).replicationLinkStore;
+    const link = await replicationLinkStore.getOrCreateLink({
       tenantDid,
       remoteEndpoint     : 'https://dwn.example',
       scope              : { kind: 'full' },
       authorization      : { kind: 'owner' },
       authorizationEpoch : 'owner',
     });
-    await ledger.setStatus(link, 'paused');
+    await replicationLinkStore.setStatus(link, 'paused');
 
-    const deleteLink = sinon.stub(ledger, 'deleteLink').rejects(new Error('link delete failed'));
+    const deleteLink = sinon.stub(replicationLinkStore, 'deleteLink').rejects(new Error('link delete failed'));
 
     await expect(syncEngine.unregisterIdentity(tenantDid)).rejects.toThrow('link delete failed');
     // Durable-link pruning precedes the identity-marker commit point: a
@@ -401,10 +403,10 @@ describe('SyncEngineLevel dead letter tracking', () => {
     await syncEngine.unregisterIdentity(tenantDid);
 
     expect(await syncEngine.getIdentityOptions(tenantDid)).toBeUndefined();
-    expect(await ledger.getAllLinks()).toEqual([]);
+    expect(await replicationLinkStore.getAllLinks()).toEqual([]);
   });
 
-  it('should keep the registration intact when unregister cleanup fails, then succeed on retry', async () => {
+  it('should keep the registration intact when unregister deletion fails, then succeed on retry', async () => {
     const tenantDid = 'did:example:alice';
     const remoteEndpoint = 'https://dwn.example';
     const store = deferredPullStoreOf(syncEngine);

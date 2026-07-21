@@ -16,12 +16,12 @@ const KEY_SEP = '^';
 /** Level-backed persistence for durable replication links. */
 export class SyncReplicationLinkStoreLevel implements SyncReplicationLinkStore {
   private readonly _links: AbstractLevel<LevelKey, string, string>;
-  private readonly _lockScope: string;
+  private readonly _lockNamespace: string;
   private readonly _pendingLinkOperations = new Map<string, Promise<void>>();
 
-  constructor(db: AbstractLevel<LevelKey>, lockScope = 'default') {
+  constructor(db: AbstractLevel<LevelKey>, lockNamespace = 'default') {
     this._links = db.sublevel('replicationLinks');
-    this._lockScope = lockScope;
+    this._lockNamespace = lockNamespace;
   }
 
   public async clear(): Promise<void> {
@@ -240,7 +240,7 @@ export class SyncReplicationLinkStoreLevel implements SyncReplicationLinkStore {
       this._pendingLinkOperations,
       key,
       (): Promise<T> => runWithCrossContextLock(
-        `enbox:sync-link:${this._lockScope}:${key}`,
+        `enbox:sync-link:${this._lockNamespace}:${key}`,
         operation,
       ),
     );

@@ -233,9 +233,9 @@ export class JsonRpcSocket {
   /**
    * Sends a JSON-RPC request through the socket and waits for a single response.
    *
-   * Rejects immediately when the socket is not connected: a request sent into
-   * a closed or reconnecting transport can never receive its response, so
-   * waiting out the response timeout only delays the inevitable failure.
+   * Rejects with {@link SocketUnavailableError} when the socket is not
+   * connected. The typed pre-transmission boundary lets an explicit WebSocket
+   * caller retry without implying any transport fallback policy.
    */
   public async request(request: JsonRpcRequest): Promise<JsonRpcResponse> {
     if (!this._isConnected) {

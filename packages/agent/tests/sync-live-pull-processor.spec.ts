@@ -64,14 +64,14 @@ function contextFor(
 ): SyncLivePullContext {
   const linkKey = `${DID}^${REMOTE}^projection^owner-epoch`;
   const controller = new SyncLinkController(linkKey, state);
-  const generation = controller.replicationGeneration;
+  const replicationGeneration = controller.replicationGeneration;
   controller.markReplicationReady();
   return {
     controller,
     did        : DID,
     dwnUrl     : REMOTE,
     eventScope : {},
-    isStale    : isStale ?? ((): boolean => !controller.isReplicationGenerationCurrent(generation)),
+    isStale    : isStale ?? ((): boolean => !controller.isReplicationGenerationCurrent(replicationGeneration)),
     link       : state,
     linkKey,
   };
@@ -501,10 +501,10 @@ describe('SyncLivePullProcessor', () => {
     let stale = false;
     const context = contextFor(state, () => stale);
     admit.callsFake(async () => {
-      // The teardown that made the delivery stale is also what kills its
+      // The disposal that made the delivery stale is also what stops its
       // in-flight admission I/O.
       stale = true;
-      throw new Error('socket closed by teardown');
+      throw new Error('socket closed during disposal');
     });
 
     await processor.handleEvent(context, event(token('1')));
@@ -513,7 +513,7 @@ describe('SyncLivePullProcessor', () => {
     expect(operations.transitionToRepairing.notCalled).toBe(true);
   });
 
-  it('drops queued work and prevents a running delivery from committing after a generation reset', async () => {
+  it('drops queued work and prevents a running delivery from committing after a replication generation reset', async () => {
     const staleStarted = deferred<void>();
     const releaseStale = deferred<void>();
     const { admit, operations, processor } = createFixture();
@@ -575,7 +575,7 @@ describe('SyncLivePullProcessor', () => {
     expect(state.pull.contiguousAppliedToken).toBeUndefined();
   });
 
-  it('repairs immediately and drops the queued generation when the pull queue overflows', async () => {
+  it('repairs immediately and drops the queued replication generation when the pull queue overflows', async () => {
     const firstStarted = deferred<void>();
     const releaseFirst = deferred<void>();
     const { admit, operations, processor } = createFixture(1);

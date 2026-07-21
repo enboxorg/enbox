@@ -240,7 +240,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
       authorization      : { kind: 'owner' },
       authorizationEpoch : 'new-epoch',
       projectionId,
-    }], (syncEngine as any)._targetPlanner.generation);
+    }], (syncEngine as any)._targetPlanner.topologyGeneration);
 
     const [status] = await syncEngine.getRemoteSyncStatus(TENANT);
     expect(status.quotaBlockedMessageCount).toBe(1);
@@ -441,7 +441,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
   it('aborts an exact-target retry when registration topology changes in flight', async () => {
     const internal = syncEngine as any;
     const transitionFence = internal.captureTransitionFence() as () => boolean;
-    const topologyGeneration = internal._targetPlanner.generation as number;
+    const topologyGeneration = internal._targetPlanner.topologyGeneration as number;
     sinon.stub(internal, 'getQuotaBlocksForTarget').callsFake(async () => {
       internal._targetPlanner.invalidate();
       return [{
@@ -480,7 +480,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
       projectionId,
     };
 
-    // Active runtime: the fence holds until a transition disposes the scope.
+    // Active runtime: the fence holds until a transition disposes the runtime.
     await internal.probeQuotaBlocksForTarget(probeTarget);
     expect(fences[0]()).toBe(true);
     internal.prepareForSyncRuntimeTransition();
@@ -694,7 +694,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
       projectionId,
     };
 
-    const transition = await internal.applyPushResult(target, {
+    const outcome = await internal.applyPushResult(target, {
       succeeded    : ['cid-1'],
       acknowledged : [{ cid: 'cid-1', resolution: 'applied' }],
       failed       : [{
@@ -706,7 +706,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
       }],
     });
 
-    expect(transition.quotaBlocked).toBe(false);
+    expect(outcome.quotaBlocked).toBe(false);
     expect(await (syncEngine as any)._quotaManager.getBlocksForTarget(target)).toHaveLength(0);
     expect(await db.sublevel('quotaBlocks').values().all()).toHaveLength(0);
   });
@@ -814,7 +814,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     };
 
     const before = Date.now();
-    const transition = await internal.applyPushResult(target, {
+    const outcome = await internal.applyPushResult(target, {
       acknowledged : [],
       succeeded    : [],
       failed       : [{
@@ -827,7 +827,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     });
     unsubscribe();
 
-    expect(transition.quotaBlocked).toBe(true);
+    expect(outcome.quotaBlocked).toBe(true);
     const blocked = events.filter(
       (event): event is Extract<SyncEvent, { type: 'push:quota-blocked' }> => event.type === 'push:quota-blocked',
     );
@@ -840,11 +840,11 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
       detail         : 'tenant over storage quota',
     });
     // The first block schedules the soonest (30s) re-probe, and the event
-    // carries the same durable nextProbeAt the transition reports to the caller.
+    // carries the same durable nextProbeAt the outcome reports to the caller.
     const probeDelay = Date.parse(blocked[0].nextProbeAt) - before;
     expect(probeDelay).toBeGreaterThanOrEqual(30_000);
     expect(probeDelay).toBeLessThan(60_000);
-    expect(transition.nextQuotaProbeAt).toBe(blocked[0].nextProbeAt);
+    expect(outcome.nextQuotaProbeAt).toBe(blocked[0].nextProbeAt);
   });
 
   it('extends the re-probe backoff along the 30s/1m/5m/15m/30m ladder and clamps at 30m', async () => {

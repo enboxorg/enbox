@@ -51,7 +51,7 @@ describe('SyncLinkController', () => {
   });
 
   describe('direction queues', () => {
-    it('should hold admitted work behind the generation readiness barrier', async () => {
+    it('should hold admitted work behind the replication readiness barrier', async () => {
       const controller = new SyncLinkController('link-key', createLink());
       let ran = false;
 
@@ -121,7 +121,7 @@ describe('SyncLinkController', () => {
       await pull;
     });
 
-    it('should synchronously fence queued work and replace readiness on generation reset', async () => {
+    it('should synchronously fence queued work and replace readiness on replication generation reset', async () => {
       const controller = new SyncLinkController('link-key', createLink());
       const initialGeneration = controller.replicationGeneration;
       let staleRan = false;
@@ -225,20 +225,20 @@ describe('SyncLinkController', () => {
     expect(controller.pushSnapshot).toBeUndefined();
   });
 
-  it('should capture generation-pinned feed snapshots and clear them on reset', async () => {
+  it('should capture replication-generation-pinned feed snapshots and clear them on reset', async () => {
     const controller = new SyncLinkController('link-key', createLink());
-    const generation = controller.replicationGeneration;
+    const replicationGeneration = controller.replicationGeneration;
     const pullHead = token(3);
     const pushHead = token(4);
 
     expect(controller.setLiveSubscription(
       { close: async (): Promise<void> => {} },
-      generation,
+      replicationGeneration,
       { fingerprint: 'pull-fingerprint', head: pullHead },
     )).toBe(true);
     expect(controller.setLocalSubscription(
       { close: async (): Promise<void> => {} },
-      generation,
+      replicationGeneration,
       { fingerprint: 'push-fingerprint', head: pushHead },
     )).toBe(true);
 
@@ -255,7 +255,7 @@ describe('SyncLinkController', () => {
     await controller.closeSubscriptions();
     expect(controller.setLiveSubscription(
       { close: async (): Promise<void> => {} },
-      generation,
+      replicationGeneration,
       { head: token(5) },
     )).toBe(false);
   });

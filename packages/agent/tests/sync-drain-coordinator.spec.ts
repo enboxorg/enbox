@@ -20,7 +20,7 @@ type DrainFixtureOptions = {
 };
 
 type DrainFixtureState = {
-  generation: number;
+  topologyGeneration: number;
 };
 
 type DrainFixtureOperations = {
@@ -86,7 +86,7 @@ function createFixture({
     remoteFingerprint : 'stable-fingerprint',
   },
 }: DrainFixtureOptions = {}): DrainFixture {
-  const state: DrainFixtureState = { generation: 1 };
+  const state: DrainFixtureState = { topologyGeneration: 1 };
   const entries = sinon.stub().callsFake((): AsyncIterable<SyncIdentityStoreEntry> => ({
     async *[Symbol.asyncIterator](): AsyncIterator<SyncIdentityStoreEntry> {
       yield* storedEntries;
@@ -106,7 +106,7 @@ function createFixture({
     clearFeedConvergenceFailure  : sinon.stub().resolves(),
     getLink                      : sinon.stub().resolves(link),
     getQuotaBlockCount           : sinon.stub().resolves(0),
-    getTopologyGeneration        : sinon.stub().callsFake((): number => state.generation),
+    getTopologyGeneration        : sinon.stub().callsFake((): number => state.topologyGeneration),
     handleVerifiedFeedDivergence : sinon.stub().resolves(false),
     onReconcileApplied           : sinon.stub(),
     prepareLiveTarget            : sinon.stub().resolves(),
@@ -148,7 +148,7 @@ describe('SyncDrainCoordinator', () => {
   it('captures topology only after endpoint registration completes', async () => {
     const { coordinator, operations, state } = createFixture();
     operations.registerEndpoint.callsFake(async (): Promise<void> => {
-      state.generation++;
+      state.topologyGeneration++;
     });
 
     const result = await coordinator.drain('https://dwn.example');
@@ -347,7 +347,7 @@ describe('SyncDrainCoordinator', () => {
       shouldContinue,
     ): Promise<SyncDurableFeedReconcileResult> => {
       expect(shouldContinue()).toBe(true);
-      state.generation++;
+      state.topologyGeneration++;
       expect(shouldContinue()).toBe(false);
       return {
         converged         : true,
@@ -456,7 +456,7 @@ describe('SyncDrainCoordinator', () => {
     const entries = [validEntry('did:example:alice'), validEntry('did:example:bob')];
     const { coordinator, operations, state } = createFixture({ entries });
     operations.prepareLiveTarget.callsFake(async (): Promise<void> => {
-      state.generation++;
+      state.topologyGeneration++;
     });
 
     const result = await coordinator.drain('https://dwn.example');

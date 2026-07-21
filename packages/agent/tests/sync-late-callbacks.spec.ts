@@ -114,7 +114,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     sinon.stub(engine, 'sync').resolves();
     sinon.stub(engine as never, 'getSyncTargets').resolves([target]);
     Object.assign(engine, {
-      _ledger: {
+      _replicationLinkStore: {
         getOrCreateLink    : sinon.stub().resolves(link),
         persistCheckpoint  : persistCheckpointStub,
         persistCheckpoints : sinon.stub().resolves(),
@@ -155,7 +155,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
       await releaseHandler.promise;
     });
     Object.assign(engine, {
-      _ledger: {
+      _replicationLinkStore: {
         getOrCreateLink    : sinon.stub().resolves(link),
         persistCheckpoint  : sinon.stub().resolves(),
         persistCheckpoints : sinon.stub().resolves(),
@@ -209,7 +209,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
       },
     ));
     Object.assign(engine, {
-      _ledger: {
+      _replicationLinkStore: {
         getOrCreateLink    : sinon.stub().resolves(link),
         persistCheckpoint  : sinon.stub().resolves(),
         persistCheckpoints : sinon.stub().resolves(),
@@ -389,7 +389,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     const persistenceStarted = createDeferred();
     const releasePersistence = createDeferred();
     Object.assign(engine, {
-      _ledger: {
+      _replicationLinkStore: {
         persistCheckpoint: sinon.stub().callsFake(async (): Promise<void> => {
           persistenceStarted.resolve();
           await releasePersistence.promise;

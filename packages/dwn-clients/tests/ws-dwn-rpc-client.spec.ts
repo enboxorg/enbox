@@ -123,8 +123,8 @@ describe('WebSocketDwnRpcClient', () => {
       });
 
       // Nothing listens on this port: establishment fails before any request
-      // is transmitted, so the typed never-sent rejection must survive the
-      // connection-error redaction for the router's HTTP fallback to fire.
+      // is transmitted. The typed rejection preserves that retry-safe boundary
+      // while the connection detail remains redacted.
       const rejection = await client.sendDwnRequest({
         dwnUrl    : 'ws://127.0.0.1:59987',
         targetDid : alice.did,

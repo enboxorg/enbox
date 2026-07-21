@@ -62,7 +62,7 @@ export function syncTargetFromLink(link: ReplicationLinkState): SyncTarget {
   };
 }
 
-/** Scope and authorization details shared by every endpoint for an identity. */
+/** Scope and authorization details common to every endpoint for an identity. */
 export type SyncTargetResolution = Pick<
   SyncTarget,
   'authorization' | 'authorizationEpoch' | 'delegateDid' | 'permissionGrantIds' | 'scope'
