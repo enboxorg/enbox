@@ -1545,7 +1545,7 @@ export class SyncEngineLevel implements SyncEngine {
    * Establish the durable checkpoint pair before subscription wakes may run.
    * Equal snapshots prove that neither feed owes historical transfer;
    * otherwise one direct reconciliation establishes both baselines. Events
-   * after either snapshot leave a pending pass for the readiness release.
+   * after either snapshot leave a work mark for executor eligibility.
    */
   private async establishLinkBaseline(
     target: SyncTarget,
@@ -2260,7 +2260,7 @@ export class SyncEngineLevel implements SyncEngine {
     return true;
   }
 
-  /** Coalesce one local feed event into the session's durable push lane. */
+  /** Coalesce one local feed event into the session's durable push work. */
   private async handleLocalPushMessage(
     controller: SyncLinkController,
     isStale: () => boolean,

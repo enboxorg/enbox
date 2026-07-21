@@ -24,11 +24,12 @@ the code, not an entry missing from this table.
 | Target-plan version | **`topologyGeneration`** / `expectedTopologyGeneration` | bare `generation`, `expectedGeneration` |
 | Deterministic identity of one tenant-and-scope projection, independent of endpoint and authorization | **`projectionId`** — `computeProjectionId` | endpoint identity, authorization identity |
 | Sole serializer for work owned by one active replication session | **link executor** — `SyncLinkExecutor` | link mailbox, direction reconciliation queue, `enqueueDirection`, `enqueueShared` |
-| Coalesced notice that one durable wake pass is owed | **work mark** — `SyncLinkExecutor.request`, `hasPending` | queued call, event cursor, `requestPass`, `_requestedPasses` |
-| Whether ordinary executor work may run for the current replication generation; wakes are retained while ineligible and calls fail fast | **executor eligibility** — `isReady`, `markReady`, surfaced as `isReplicationReady` / `markReplicationReady` | readiness promise, replication readiness barrier, parked administrative call |
+| Coalesced notice that one durable wake pass is owed | **work mark** — `SyncLinkExecutor.request`, `hasPending` | event cursor, `requestPass`, `_requestedPasses` |
+| Distinct caller-specific operation serialized by the active replication session | **executor call** — `SyncLinkExecutor.enqueue`, `SyncLinkRecoveryCoordinator.execute` | work mark, shared operation |
+| Whether ordinary executor work may run for the current replication generation; wakes are retained while ineligible and calls fail fast | **executor eligibility** — `isReady`, `markReady`, `SyncLinkRecoveryCoordinator.resume`, surfaced as `isReplicationReady` / `markReplicationReady` | readiness promise, replication readiness barrier, parked administrative call |
 | Cursorless remote subscription whose events request durable pull passes | **live pull subscription** — `openLivePullSubscription`, `LivePullWakeContext` | live-pull admission pipeline, `SyncLivePullProcessor` |
-| A remote subscription event that says the durable remote feed may have advanced; bursts request one trailing pass, and the pass always resumes from `link.pull.contiguousAppliedToken` | **durable pull wake** — `executor.request('pull')`, `SyncLinkRecoveryCoordinator.pull` | per-event admission, delivery acknowledgement, event-cursor checkpoint, or EOSE checkpoint |
-| A local subscription event that says the durable local feed may have advanced; bursts request one trailing pass, and the pass always resumes from `link.push.contiguousAppliedToken` | **durable push wake** — `executor.request('push')`, `SyncLinkRecoveryCoordinator.push` | per-event push job, delivery acknowledgement, or checkpoint evidence |
+| A remote subscription event that says the durable remote feed may have advanced; bursts request one trailing pass, and the pass always resumes from `link.pull.contiguousAppliedToken` | **durable pull wake** — `executor.request('pull')` followed by `SyncLinkRecoveryCoordinator.resume` when eligible | per-event admission, delivery acknowledgement, event-cursor checkpoint, or EOSE checkpoint |
+| A local subscription event that says the durable local feed may have advanced; bursts request one trailing pass, and the pass always resumes from `link.push.contiguousAppliedToken` | **durable push wake** — `executor.request('push')` followed by `SyncLinkRecoveryCoordinator.resume` when eligible | per-event push job, delivery acknowledgement, or checkpoint evidence |
 | Durable resume point for one direction of one replication link | **direction checkpoint** — `DirectionCheckpoint.contiguousAppliedToken` | delivery acknowledgement, arbitrary subscription cursor |
 | Namespace in which progress-token positions can be compared | **token domain** — exact `(streamId, epoch)` pair | stream alone, epoch alone, or a globally ordered position |
 | Folding a push result into quota state | **push result outcome** — `applyPushResult`, `SyncQuotaPushResultOutcome` | `transitionPushResult`, push transition |
@@ -57,7 +58,7 @@ the code, not an entry missing from this table.
 | **admission** | Replicated-message admission into the local DWN: `admitClosure`, `admitRemoteFeedPage`, `MAX_ADMISSION_PASSES` | Background-task admission — that is *intake* (`pauseTaskIntake`) |
 | **closure** | One root message plus the transitive dependency set required to make it applicable | Scope closure — always spelled out as *scope closure* |
 | **scope** | Always qualified data selection: *sync scope* (`SyncScope`) or emitted *event scope* (`SyncEventScope`) | The runtime or lock namespace (`_lockNamespace`) |
-| **shared** | One execution and result joined by several callers, such as the queued `sync()` follow-up | A work mark or distinct caller-specific executor call |
+| **shared** | One execution and result joined by several callers, such as the queued `sync()` follow-up in `joinPendingSyncRun` | A work mark or distinct caller-specific executor call |
 
 ## Verb conventions
 

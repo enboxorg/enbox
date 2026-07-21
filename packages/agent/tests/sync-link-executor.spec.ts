@@ -81,6 +81,20 @@ describe('SyncLinkExecutor', () => {
     expect(runs).toEqual(['pull', 'push', 'pull']);
   });
 
+  it('should consume only the pending mark already represented by equivalent active work', async () => {
+    const executor = new SyncLinkExecutor();
+    const runs: SyncLinkWorkKind[] = [];
+    executor.markReady();
+    executor.request('pull');
+    executor.request('push');
+
+    expect(executor.consumePending('pull')).toBe(true);
+    expect(executor.consumePending('pull')).toBe(false);
+    await executor.drain(async (kind): Promise<void> => { runs.push(kind); });
+
+    expect(runs).toEqual(['push']);
+  });
+
   it('should prioritize repair while retaining ordinary work for the replacement baseline', async () => {
     const executor = new SyncLinkExecutor();
     const runs: SyncLinkWorkKind[] = [];
@@ -154,6 +168,27 @@ describe('SyncLinkExecutor', () => {
     expect(await rejection).toEqual(new Error('call failed'));
     expect(await resolved).toBe('later-result');
     expect(laterCallRan).toBe(true);
+  });
+
+  it('should surface a handler rejection after settling work already queued behind it', async () => {
+    const executor = new SyncLinkExecutor();
+    const runs: SyncLinkWorkKind[] = [];
+    executor.markReady();
+    executor.request('pull');
+    const call = executor.enqueue(async (): Promise<string> => 'call-result');
+    executor.request('push');
+
+    const draining = executor.drain(async (kind): Promise<void> => {
+      runs.push(kind);
+      if (kind === 'pull') {
+        throw new Error('pull failed');
+      }
+    });
+    const rejection = draining.catch((error: unknown): unknown => error);
+
+    expect(await call).toBe('call-result');
+    expect(await rejection).toEqual(new Error('pull failed'));
+    expect(runs).toEqual(['pull', 'push']);
   });
 
   it('should fail calls fast while unready instead of parking them', async () => {

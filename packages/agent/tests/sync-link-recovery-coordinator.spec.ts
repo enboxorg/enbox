@@ -105,6 +105,16 @@ async function runRepair(fixture: RecoveryFixture, controller: SyncLinkControlle
   await waitForLastTask(fixture.taskRunner);
 }
 
+/** Exercise a durable wake through the production mark-and-resume path. */
+function runWake(
+  fixture: RecoveryFixture,
+  controller: SyncLinkController,
+  kind: 'pull' | 'push',
+): Promise<void> {
+  controller.executor.request(kind);
+  return fixture.coordinator.resume(controller);
+}
+
 describe('SyncLinkRecoveryCoordinator', () => {
   afterEach(() => {
     sinon.restore();
@@ -276,8 +286,16 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await runRepair(fixture, controller);
 
     const completionEvents = fixture.operations.emitEvent.getCalls()
-      .map((call) => call.args[0] as Record<string, unknown>);
+      .map((call) => call.args[0] as Record<string, unknown>)
+      .filter((event) => ['repair:completed', 'link:connectivity-change', 'link:status-change']
+        .includes(event.type as string));
     expect(completionEvents.some((event) => event.type === 'repair:completed')).toBe(true);
+    expect(completionEvents.some((event) =>
+      event.type === 'link:connectivity-change' && event.from === 'offline' && event.to === 'online',
+    )).toBe(true);
+    expect(completionEvents.some((event) =>
+      event.type === 'link:status-change' && event.from === 'repairing' && event.to === 'live',
+    )).toBe(true);
 
     for (const event of completionEvents) {
       // The event scope is the link's protocol scope — never the runtime
@@ -501,10 +519,10 @@ describe('SyncLinkRecoveryCoordinator', () => {
     });
     fixture.operations.reconcileTarget.resolves({});
 
-    const first = fixture.coordinator.pull(controller);
+    const first = runWake(fixture, controller, 'pull');
     await passStarted.promise;
-    const second = fixture.coordinator.pull(controller);
-    const third = fixture.coordinator.pull(controller);
+    const second = runWake(fixture, controller, 'pull');
+    const third = runWake(fixture, controller, 'pull');
     releasePass.resolve();
     await Promise.all([first, second, third]);
 
@@ -522,7 +540,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const controller = activate(fixture);
     fixture.operations.reconcileTarget.rejects(new Error('remote query failed'));
 
-    await fixture.coordinator.pull(controller);
+    await runWake(fixture, controller, 'pull');
 
     expect(fixture.operations.reportError.calledOnce).toBe(true);
     expect(fixture.operations.reportError.firstCall.calledWithMatch('Durable pull pass failed')).toBe(true);
@@ -542,7 +560,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
       deferredPull: { messageCid: 'deferred-cid', detail: 'dependency unavailable' },
     });
 
-    await fixture.coordinator.pull(controller);
+    await runWake(fixture, controller, 'pull');
 
     expect(fixture.operations.reportError.notCalled).toBe(true);
     expect(controller.reconcileTimer).toBeUndefined();
@@ -575,10 +593,10 @@ describe('SyncLinkRecoveryCoordinator', () => {
     });
     fixture.operations.reconcileTarget.resolves({});
 
-    const first = fixture.coordinator.push(controller);
+    const first = runWake(fixture, controller, 'push');
     await passStarted.promise;
-    const second = fixture.coordinator.push(controller);
-    const third = fixture.coordinator.push(controller);
+    const second = runWake(fixture, controller, 'push');
+    const third = runWake(fixture, controller, 'push');
     releasePass.resolve();
     await Promise.all([first, second, third]);
 
@@ -601,7 +619,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
       pushFailures: [{ cid: 'push-cid', detail: 'remote unavailable' }],
     });
 
-    await fixture.coordinator.push(controller);
+    await runWake(fixture, controller, 'push');
 
     expect(state.push.contiguousAppliedToken).toEqual(checkpoint);
     expect(controller.reconcileTimerDueAt).toBe(5000);
@@ -656,7 +674,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     });
     fixture.operations.reconcileTarget.onSecondCall().resolves({ converged: true });
 
-    const push = fixture.coordinator.push(controller);
+    const push = runWake(fixture, controller, 'push');
     await pushStarted.promise;
     const repairing = runRepair(fixture, controller);
     await Promise.resolve();
@@ -672,7 +690,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     controller.deactivate();
   });
 
-  it('runs repair before a retained reconciliation request', async () => {
+  it('subsumes a reconciliation mark pending before the repair durable pass', async () => {
     const clock = sinon.useFakeTimers();
     const fixture = createFixture();
     const controller = activate(fixture);
@@ -689,9 +707,9 @@ describe('SyncLinkRecoveryCoordinator', () => {
     releaseGate.resolve();
     await Promise.all([gate, reconciling, repairing]);
 
-    expect(fixture.operations.reconcileTarget.callCount).toBe(2);
+    expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
     expect(fixture.operations.reconcileTarget.firstCall.args[2]).toBeUndefined();
-    expect(fixture.operations.reconcileTarget.secondCall.args[2]).toEqual({ verifyConvergence: true });
+    expect(controller.reconcileTimerDueAt).toBe(500);
     controller.deactivate();
     await clock.runAllAsync();
   });
