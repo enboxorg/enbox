@@ -1,5 +1,21 @@
 # @enbox/dwn-clients
 
+## 0.4.23
+
+### Patch Changes
+
+- [#1387](https://github.com/enboxorg/enbox/pull/1387) [`4062e4a`](https://github.com/enboxorg/enbox/commit/4062e4ab7e588c11a7f2fcfe302ac5cf048e4624) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: keep ordinary DWN requests on their endpoint's native transport
+
+  `EnboxRpcClient.sendDwnRequest` routes HTTP(S) requests over HTTP(S), where
+  the server advertises complete `dwn.processMessage` behavior. Subscriptions
+  continue to map HTTP(S) endpoints to the pooled WebSocket transport, and an
+  explicit `ws:`/`wss:` endpoint continues to use that transport directly.
+  This removes a second routing policy based on transient socket health and
+  keeps request transport selection deterministic.
+
+- Updated dependencies [[`7a437b2`](https://github.com/enboxorg/enbox/commit/7a437b2bed8cdb88b30eec86fb6420801845a352)]:
+  - @enbox/dwn-sdk-js@0.4.16
+
 ## 0.4.22
 
 ### Patch Changes
