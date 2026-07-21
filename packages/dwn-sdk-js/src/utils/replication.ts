@@ -1,5 +1,6 @@
 import type { GenericMessage } from '../types/message-types.js';
 import type { KeyValues } from '../types/query-types.js';
+import type { ReplicationFeedReader } from '../types/subscriptions.js';
 
 import { EncryptionProtocol } from '../protocols/encryption.js';
 import { PermissionsProtocol } from '../protocols/permissions.js';
@@ -42,6 +43,22 @@ export class Replication {
       domains.push(Replication.encryptionDomain(protocolUri));
     }
     return domains;
+  }
+
+  /**
+   * Narrows a message store to its replication feed surface when it implements
+   * one. Returns `undefined` for stores without replication feed support.
+   */
+  public static asFeedReader(candidate: unknown): ReplicationFeedReader | undefined {
+    const partial = candidate as Partial<ReplicationFeedReader>;
+    if (
+      typeof partial.logRead === 'function' &&
+      typeof partial.logBounds === 'function' &&
+      typeof partial.fingerprint === 'function' &&
+      typeof partial.epoch === 'function'
+    ) {
+      return partial as ReplicationFeedReader;
+    }
   }
 
   public static async deriveStreamId(tenant: string): Promise<string> {

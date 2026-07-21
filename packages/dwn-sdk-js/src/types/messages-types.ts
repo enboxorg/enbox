@@ -87,6 +87,20 @@ export type MessagesSubscribeMessage = {
 
 export type MessagesSubscribeReply = GenericMessageReply & {
   subscription?: MessageSubscription;
+  /**
+   * Feed fingerprint over the subscription's filter scopes, observed after the
+   * subscription became active. Present only when the filters map onto
+   * fingerprint domains and the message store exposes the replication feed.
+   */
+  fingerprint?: string;
+  /**
+   * High-water progress token of the tenant's replication log, observed after
+   * the subscription became active — the position-zero anchor when the log is
+   * empty. NOT a delivery cursor: adopting it as a checkpoint is sound only
+   * after verifying `fingerprint` against the local feed, since resuming from
+   * it skips every earlier log position.
+   */
+  head?: ProgressToken;
   /** Present when status.code is 410 — structured gap metadata. */
   error?: { code: 'ProgressGap' } & ProgressGapInfo;
 };

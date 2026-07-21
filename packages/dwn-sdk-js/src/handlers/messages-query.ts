@@ -1,4 +1,4 @@
-import type { EventLogEntry, ProgressGapInfo, ReplicationFeedReader } from '../types/subscriptions.js';
+import type { EventLogEntry, ProgressGapInfo } from '../types/subscriptions.js';
 import type { Filter, KeyValues } from '../types/query-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { MessagesFilter, MessagesQueryMessage, MessagesQueryReply, MessagesQueryReplyEntry } from '../types/messages-types.js';
@@ -31,7 +31,7 @@ export class MessagesQueryHandler implements MethodHandler {
       return messageReplyFromError(e, 401);
     }
 
-    const replicationFeedReader = MessagesQueryHandler.asReplicationFeedReader(this.deps.messageStore);
+    const replicationFeedReader = Replication.asFeedReader(this.deps.messageStore);
     if (replicationFeedReader === undefined) {
       return {
         status: {
@@ -56,7 +56,7 @@ export class MessagesQueryHandler implements MethodHandler {
         drained : result.drained,
       };
 
-      const fingerprintScopes = MessagesQueryHandler.computeFingerprintScopes(message.descriptor.filters);
+      const fingerprintScopes = Messages.computeFingerprintScopes(message.descriptor.filters);
       if (fingerprintScopes !== undefined) {
         reply.fingerprint = await replicationFeedReader.fingerprint(tenant, fingerprintScopes);
       }
@@ -85,18 +85,6 @@ export class MessagesQueryHandler implements MethodHandler {
       validationStateReader : this.deps.validationStateReader,
       failureCode           : DwnErrorCode.MessagesQueryAuthorizationFailed,
     });
-  }
-
-  private static asReplicationFeedReader(candidate: unknown): ReplicationFeedReader | undefined {
-    const partial = candidate as Partial<ReplicationFeedReader>;
-    if (
-      typeof partial.logRead === 'function' &&
-      typeof partial.logBounds === 'function' &&
-      typeof partial.fingerprint === 'function' &&
-      typeof partial.epoch === 'function'
-    ) {
-      return partial as ReplicationFeedReader;
-    }
   }
 
   private static convertFilters(filters: MessagesFilter[], deps: HandlerDependencies): Filter[] | undefined {
@@ -153,32 +141,6 @@ export class MessagesQueryHandler implements MethodHandler {
 
   private static isLatestBaseState(indexes: KeyValues): boolean {
     return indexes.isLatestBaseState === true || indexes.isLatestBaseState === 'true';
-  }
-
-  private static computeFingerprintScopes(filters: MessagesFilter[]): string[] | undefined {
-    if (filters.length === 0) {
-      return [Replication.globalDomain];
-    }
-
-    const protocols = new Set<string>();
-    for (const filter of filters) {
-      const keys = Object.keys(filter);
-      if (keys.length !== 1 || typeof filter.protocol !== 'string') {
-        return undefined;
-      }
-
-      protocols.add(filter.protocol);
-    }
-
-    const scopes: string[] = [];
-    for (const protocol of protocols) {
-      scopes.push(
-        Replication.protocolDomain(protocol),
-        ...Replication.taggedCoreProtocolDomains(protocol, protocols),
-      );
-    }
-
-    return scopes;
   }
 
   private static getProgressGapInfo(error: DwnError): ProgressGapInfo | undefined {

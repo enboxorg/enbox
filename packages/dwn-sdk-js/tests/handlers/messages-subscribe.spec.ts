@@ -22,7 +22,7 @@ import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
-import { DataStream, DwnInterfaceName, DwnMethodName, PermissionGrant, PermissionsProtocol, Time } from '../../src/index.js';
+import { DataStream, DwnInterfaceName, DwnMethodName, PermissionGrant, PermissionsProtocol, Replication, Time } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
 import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
@@ -196,6 +196,101 @@ export function testMessagesSubscribeHandler(): void {
         const subscriptionReply = await dwn.processMessage(alice.did, messagesSubscribe.message);
         expect(subscriptionReply.status.code).toBe(401);
         expect(subscriptionReply.subscription).toBeUndefined();
+      });
+
+      describe('feed snapshot on subscribe reply', () => {
+        // Registration-time probe of the injected message store, mirroring the
+        // equivalent probe in messages-query.spec.ts: feed-dependent tests
+        // register as skipped when the store under test does not implement
+        // the replication feed reader interface.
+        const supportsReplicationFeed = Replication.asFeedReader(TestStores.get().messageStore) !== undefined;
+
+        it.skipIf(!supportsReplicationFeed)('should attach the position-zero anchor head and empty fingerprint for an empty feed', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+
+          const messagesSubscribe = await MessagesSubscribe.create({ signer: Jws.createSigner(alice) });
+          const reply = await dwn.processMessage(alice.did, messagesSubscribe.message, { subscriptionHandler: (_) => {} });
+          expect(reply.status.code).toBe(200);
+          expect(reply.head!.position).toBe('0');
+          expect(reply.head!.messageCid).toBeUndefined();
+          expect(reply.fingerprint).toBe('0'.repeat(64));
+
+          // The anchor matches what a MessagesQuery of the same empty feed returns.
+          const { message: queryMessage } = await TestDataGenerator.generateMessagesQuery({ author: alice });
+          const queryReply = await dwn.processMessage(alice.did, queryMessage);
+          expect(queryReply.status.code).toBe(200);
+          expect(queryReply.cursor).toEqual(reply.head);
+          expect(queryReply.fingerprint).toBe(reply.fingerprint!);
+
+          await reply.subscription!.close();
+        });
+
+        it.skipIf(!supportsReplicationFeed)('should attach a head and fingerprint consistent with a drained MessagesQuery', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+          for (let i = 0; i < 3; i++) {
+            const record = await TestDataGenerator.generateRecordsWrite({ author: alice });
+            const writeReply = await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream });
+            expect(writeReply.status.code).toBe(202);
+          }
+
+          const { message: queryMessage } = await TestDataGenerator.generateMessagesQuery({ author: alice, cidsOnly: true });
+          const queryReply = await dwn.processMessage(alice.did, queryMessage);
+          expect(queryReply.status.code).toBe(200);
+          expect(queryReply.drained).toBe(true);
+
+          const messagesSubscribe = await MessagesSubscribe.create({ signer: Jws.createSigner(alice) });
+          const reply = await dwn.processMessage(alice.did, messagesSubscribe.message, { subscriptionHandler: (_) => {} });
+          expect(reply.status.code).toBe(200);
+          expect(reply.head).toEqual(queryReply.cursor!);
+          expect(reply.fingerprint).toBe(queryReply.fingerprint!);
+
+          await reply.subscription!.close();
+        });
+
+        it.skipIf(!supportsReplicationFeed)('should attach the protocol-scope fingerprint for protocol-only filters', async () => {
+          const feedReader = Replication.asFeedReader(messageStore)!;
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+          const record = await TestDataGenerator.generateRecordsWrite({ author: alice });
+          const writeReply = await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream });
+          expect(writeReply.status.code).toBe(202);
+          const protocol = record.message.descriptor.protocol!;
+
+          const messagesSubscribe = await MessagesSubscribe.create({
+            signer  : Jws.createSigner(alice),
+            filters : [{ protocol }],
+          });
+          const reply = await dwn.processMessage(alice.did, messagesSubscribe.message, { subscriptionHandler: (_) => {} });
+          expect(reply.status.code).toBe(200);
+          expect(reply.fingerprint).toBe(await feedReader.fingerprint(alice.did, [
+            Replication.protocolDomain(protocol),
+            Replication.permissionDomain(protocol),
+            Replication.encryptionDomain(protocol),
+          ]));
+
+          const bounds = await feedReader.logBounds(alice.did);
+          expect(reply.head).toEqual(bounds!.latest);
+
+          await reply.subscription!.close();
+        });
+
+        it.skipIf(!supportsReplicationFeed)('should omit the fingerprint but keep the head for filters outside fingerprint domains', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+
+          const messagesSubscribe = await MessagesSubscribe.create({
+            signer  : Jws.createSigner(alice),
+            filters : [{ interface: DwnInterfaceName.Records, method: DwnMethodName.Write }],
+          });
+          const reply = await dwn.processMessage(alice.did, messagesSubscribe.message, { subscriptionHandler: (_) => {} });
+          expect(reply.status.code).toBe(200);
+          expect(reply.fingerprint).toBeUndefined();
+          expect(reply.head!.position).toBe('0');
+
+          await reply.subscription!.close();
+        });
       });
 
       describe('cursor-based subscriptions', () => {

@@ -130,6 +130,31 @@ function runReplicationLogTests(dialect: Dialect): void {
       expect(drained).toBe(true);
     });
 
+    it('should return the position-zero anchor cursor for an empty log and resume from it', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+
+      const empty = await messageStore.logRead(alice.did);
+      expect(empty.events).toEqual([]);
+      expect(empty.drained).toBe(true);
+      expect(empty.cursor!.position).toBe('0');
+      expect(empty.cursor!.messageCid).toBeUndefined();
+
+      // A cursor-bearing read of a still-empty log echoes the input anchor.
+      const echoed = await messageStore.logRead(alice.did, { cursor: empty.cursor });
+      expect(echoed.events).toEqual([]);
+      expect(echoed.cursor).toEqual(empty.cursor);
+      expect(echoed.drained).toBe(true);
+
+      // A later write is fully visible when resuming from the anchor.
+      const { message, messageCid, indexes } = await generateStoredMessage();
+      await messageStore.put(alice.did, message, indexes);
+      const resumed = await messageStore.logRead(alice.did, { cursor: empty.cursor });
+      expect(resumed.events.map((entry) => entry.messageCid)).toEqual([messageCid]);
+      expect(resumed.cursor!.streamId).toBe(empty.cursor!.streamId);
+      expect(resumed.cursor!.epoch).toBe(empty.cursor!.epoch);
+      expect(resumed.drained).toBe(true);
+    });
+
     it('should assign gap-free monotonic positions for concurrent puts', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const writes = await Promise.all(

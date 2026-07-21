@@ -731,8 +731,10 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     const startPosition = cursor === undefined ? 0n : BigInt(cursor.position);
 
     if (head === 0n) {
-      // Nothing to scan — caught up at the input position.
-      return { events: [], cursor, drained: true };
+      // Nothing to scan — caught up at the input position. A caller without a
+      // cursor still gets the position-zero anchor so an empty log yields a
+      // checkpointable token instead of forcing a rescan on every pass.
+      return { events: [], cursor: cursor ?? await this.buildToken(tenant, 0n), drained: true };
     }
 
     const maxResults = limit ?? Number.MAX_SAFE_INTEGER;
