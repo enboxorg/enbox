@@ -309,7 +309,6 @@ describe('SyncLinkController', () => {
     controller.setRepairRetryTimer(repairTimer);
     controller.setReconcileTimer(reconcileTimer, Date.now() + 10);
     controller.incrementRepairAttempts();
-    controller.setRepairResumeToken(token(1));
 
     controller.deactivate();
     await clock.tickAsync(10);
@@ -318,7 +317,6 @@ describe('SyncLinkController', () => {
     expect(controller.repairRetryTimer).toBeUndefined();
     expect(controller.reconcileTimer).toBeUndefined();
     expect(controller.repairAttempts).toBe(0);
-    expect(controller.repairResumeToken).toBeUndefined();
     expect(fired.called).toBe(false);
   });
 });

@@ -98,7 +98,6 @@ function createReconciler(syncTarget = target()): ReconcilerFixture {
     clearResolvedQuotaOmissions     : sinon.stub().resolves(),
     getQuotaBlockCids               : sinon.stub().resolves([]),
     commitCheckpoint                : sinon.stub().resolves(),
-    onReconcileApplied              : sinon.stub(),
     probeQuotaBlocks                : sinon.stub().resolves(),
     pushLocalPage                   : sinon.stub().resolves({ kind: 'processed', hasActionableDiffs: false }),
     queryFeed,
@@ -329,7 +328,6 @@ describe('SyncDurableFeedReconciler', () => {
     await expect(fixture.reconciler.pull(target(), fixture.link)).rejects.toThrow(
       'SyncDurableFeedReconciler: pull deferred for deferred: dependency missing',
     );
-    expect(fixture.operations.onReconcileApplied.calledOnceWith(target(), ['applied'])).toBe(true);
     expect(fixture.persistCheckpoint.called).toBe(false);
   });
 

@@ -126,18 +126,23 @@ describe('SyncEngineLevel late subscription callbacks', () => {
 
     const handler = getRemoteHandler();
     expect(handler).toBeDefined();
+    const [controller] = engine['_linkControllers'].values();
+    expect(controller).toBeDefined();
+    if (controller === undefined) {
+      throw new Error('expected an active replication session');
+    }
+    const requestPass = sinon.spy(controller, 'requestPass');
 
-    const savesBeforeStop = persistCheckpointStub.callCount;
     await engine.stopSync();
 
     expect(engine['_linkControllers'].size).toBe(0);
 
     await handler!({
-      type   : 'eose',
-      cursor : { streamId: 's1', epoch: 'e1', position: '1', messageCid: 'cid-1' },
+      type  : 'event',
+      event : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
     });
 
-    expect(persistCheckpointStub.callCount).toBe(savesBeforeStop);
+    expect(requestPass.notCalled).toBe(true);
     expect(engine.connectivityState).not.toBe('online');
   });
 
@@ -170,8 +175,8 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     const handler = getRemoteHandler();
     expect(handler).toBeDefined();
     const handlerPromise = handler!({
-      type   : 'eose',
-      cursor : { streamId: 's1', epoch: 'e1', position: '1', messageCid: 'cid-1' },
+      type  : 'event',
+      event : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
     });
     await handlerStarted.promise;
 
@@ -381,46 +386,4 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     }
   });
 
-  it('should not mark a link online when its lifetime ends during checkpoint persistence', async () => {
-    const engine = new SyncEngineLevel({ db });
-    const linkKey = 'did:example:alice^https://dwn.example.com^projection-1^authorization-1';
-    const link = makeLink();
-    const controller = engine['activateLink'](linkKey, link as never);
-    const persistenceStarted = createDeferred();
-    const releasePersistence = createDeferred();
-    Object.assign(engine, {
-      _replicationLinkStore: {
-        persistCheckpoint: sinon.stub().callsFake(async (): Promise<void> => {
-          persistenceStarted.resolve();
-          await releasePersistence.promise;
-        }),
-      },
-    });
-
-    const handling = (engine as unknown as {
-      _livePullProcessor: {
-        handleEose(
-          context: Record<string, unknown>,
-          message: { type: 'eose'; cursor: { epoch: string; position: string; streamId: string } },
-        ): Promise<void>;
-      };
-    })._livePullProcessor.handleEose({
-      controller,
-      did        : link.tenantDid,
-      dwnUrl     : link.remoteEndpoint,
-      eventScope : {},
-      isStale    : (): boolean => !controller.isActive,
-      link,
-      linkKey,
-    }, {
-      type   : 'eose',
-      cursor : { epoch: 'epoch', position: '1', streamId: 'stream' },
-    });
-    await persistenceStarted.promise;
-    controller.deactivate();
-    releasePersistence.resolve();
-    await handling;
-
-    expect(link.connectivity).toBe('unknown');
-  });
 });

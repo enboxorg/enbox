@@ -86,8 +86,6 @@ export interface SyncDurableFeedReconcilerOperations {
    */
   commitCheckpoint(link: ReplicationLinkState, direction: SyncDirection): Promise<void>;
 
-  onReconcileApplied(target: SyncTarget, messageCids: string[]): void;
-
   probeQuotaBlocks(
     target: SyncTarget,
     force: boolean,
@@ -611,9 +609,6 @@ export class SyncDurableFeedReconciler {
     }
 
     if (pageResult.kind === 'deferred') {
-      if (admittedCids.length > 0) {
-        this._operations.onReconcileApplied(target, admittedCids);
-      }
       throw new Error(
         `SyncDurableFeedReconciler: pull deferred for ${pageResult.messageCid}: ${pageResult.detail ?? 'dependency unavailable'}`,
       );

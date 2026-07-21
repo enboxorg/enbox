@@ -22,8 +22,9 @@ type EngineFixture = {
   controller: SyncLinkController;
   engine: SyncEngineLevel;
   handlers: Array<(message: unknown) => Promise<void>>;
-  persistCheckpoint: SinonStub;
   processRequest: SinonStub;
+  pull: SinonStub;
+  push: SinonStub;
   repairing: SinonStub;
   sendDwnRequest: SinonStub;
   target: Record<string, unknown>;
@@ -54,7 +55,8 @@ function createEngineFixture(db: Level<string, string>): EngineFixture {
     return { status: { code: 200 }, subscription: { close: sinon.stub().resolves() } };
   });
   (engine as any)._agent = { dwn: { processRequest }, rpc: { sendDwnRequest } };
-  const persistCheckpoint = sinon.stub((engine as any).replicationLinkStore, 'persistCheckpoint').resolves();
+  const pull = sinon.stub((engine as any)._linkRecoveryCoordinator, 'pull').resolves();
+  const push = sinon.stub((engine as any)._linkRecoveryCoordinator, 'push').resolves();
   const repairing = sinon.stub((engine as any)._linkRecoveryCoordinator, 'transitionToRepairing').resolves();
   const target = {
     authorization      : { kind: 'owner' as const },
@@ -65,7 +67,7 @@ function createEngineFixture(db: Level<string, string>): EngineFixture {
     projectionId       : 'projection-id',
     scope              : { kind: 'full' as const },
   };
-  return { controller, engine, handlers, persistCheckpoint, processRequest, repairing, sendDwnRequest, target };
+  return { controller, engine, handlers, processRequest, pull, push, repairing, sendDwnRequest, target };
 }
 
 function openSubscription(fixture: EngineFixture): Promise<boolean> {
@@ -95,25 +97,21 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     expect(await openSubscription(fixture)).toBe(true);
     const staleHandler = fixture.handlers[0];
 
-    // A repair resets the replication generation, re-establishes the boundary on a new
-    // stream domain, and reopens the subscription.
+    // A repair resets the replication generation and reopens the subscription.
     controller.resetReplicationGeneration();
-    controller.link.pull.contiguousAppliedToken = tokenIn('stream-2', 'epoch-2', '1');
     await controller.closeLiveSubscription();
     expect(await openSubscription(fixture)).toBe(true);
     controller.markReplicationReady();
     const freshHandler = fixture.handlers[1];
 
-    // An EOSE from the superseded subscription carries a cursor from the old
-    // stream domain: it must be discarded, not treated as a domain mismatch
-    // that sends the freshly repaired link straight back into repair.
-    await staleHandler({ type: 'eose', cursor: tokenIn('stream-1', 'epoch-1', '9') });
+    await staleHandler({ type: 'event' });
     expect(fixture.repairing.notCalled).toBe(true);
-    expect(fixture.persistCheckpoint.notCalled).toBe(true);
+    expect(fixture.pull.notCalled).toBe(true);
 
     // The replacement subscription's callbacks flow normally.
-    await freshHandler({ type: 'eose', cursor: tokenIn('stream-2', 'epoch-2', '2') });
-    expect(fixture.persistCheckpoint.calledOnce).toBe(true);
+    await freshHandler({ type: 'event' });
+    expect(fixture.pull.calledOnceWithExactly(controller)).toBe(true);
+    expect(controller.link.pull.contiguousAppliedToken).toBeUndefined();
 
     await controller.dispose();
   });
@@ -142,28 +140,6 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     expect(await opening).toBe(false);
     expect(close.calledOnce).toBe(true);
     expect(fixture.controller.hasLiveSubscription).toBe(false);
-
-    await fixture.controller.dispose();
-  });
-
-  it('should abandon an open whose replication generation resets during cursor resolution', async () => {
-    const fixture = createEngineFixture(db);
-    const cursorStarted = deferred();
-    const releaseCursor = deferred();
-    sinon.stub(fixture.engine as any, 'resolveInitialPullCursor').callsFake(async () => {
-      cursorStarted.resolve();
-      await releaseCursor.promise;
-      return undefined;
-    });
-
-    const opening = openSubscription(fixture);
-    await cursorStarted.promise;
-    fixture.controller.resetReplicationGeneration();
-    releaseCursor.resolve();
-
-    expect(await opening).toBe(false);
-    expect(fixture.processRequest.notCalled).toBe(true);
-    expect(fixture.sendDwnRequest.notCalled).toBe(true);
 
     await fixture.controller.dispose();
   });
@@ -200,7 +176,7 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     await controller.dispose();
   });
 
-  it('should not release replacement replay when a pause lands during live-status persistence', async () => {
+  it('should not release replacement reconciliation when a pause lands during live-status persistence', async () => {
     const fixture = createEngineFixture(db);
     const { controller, engine } = fixture;
     controller.link.status = 'initializing';
@@ -305,7 +281,6 @@ describe('SyncEngineLevel — replication generation fencing', () => {
   it('should fence local subscription callbacks issued before a replication-generation reset', async () => {
     const fixture = createEngineFixture(db);
     const { controller, engine } = fixture;
-    const push = sinon.stub((engine as any)._linkRecoveryCoordinator, 'push').resolves();
     const localHandlers: Array<(message: unknown) => Promise<void>> = [];
     const close = sinon.stub().resolves();
     fixture.processRequest.callsFake(async (request: any) => {
@@ -324,9 +299,9 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     await localHandlers[0](message);
     await localHandlers[1](message);
 
-    // The superseded callback cannot wake durable replay. The replacement
+    // The superseded callback cannot wake durable reconciliation. The replacement
     // replication generation contributes one coalesced push request.
-    expect(push.calledOnceWithExactly(controller)).toBe(true);
+    expect(fixture.push.calledOnceWithExactly(controller)).toBe(true);
     expect(controller.isPassRequested('push')).toBe(true);
 
     await controller.dispose();
@@ -399,27 +374,19 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     await controller.dispose();
   });
 
-  it('should discard a stale ProgressGap reply instead of repairing the superseded replication generation', async () => {
+  it('should establish and re-establish the wake subscription without a replay cursor', async () => {
     const fixture = createEngineFixture(db);
-    const requestStarted = deferred();
-    const releaseRequest = deferred();
-    fixture.sendDwnRequest.callsFake(async (request: any) => {
-      fixture.handlers.push(request.subscription.handler);
-      requestStarted.resolve();
-      await releaseRequest.promise;
-      return { error: { latestAvailable: tokenIn('stream-1', 'epoch-1', '9') }, status: { code: 410, detail: 'gap' } };
-    });
+    fixture.controller.link.pull.contiguousAppliedToken = tokenIn('durable-stream', 'durable-epoch', '9');
 
-    const opening = openSubscription(fixture);
-    await requestStarted.promise;
-    fixture.controller.resetReplicationGeneration();
-    releaseRequest.resolve();
+    expect(await openSubscription(fixture)).toBe(true);
 
-    // The 410 belongs to the superseded replication generation's cursor: resolving false
-    // (instead of throwing the ProgressGap) keeps callers from starting
-    // another repair for a replication generation that no longer exists.
-    expect(await opening).toBe(false);
-    expect(fixture.repairing.notCalled).toBe(true);
+    expect(fixture.processRequest.firstCall.args[0].messageParams.cursor).toBeUndefined();
+    const factory = fixture.sendDwnRequest.firstCall.args[0].subscription.resubscribeFactory;
+    await factory(tokenIn('transport-stream', 'transport-epoch', '99'));
+    expect(fixture.processRequest.secondCall.args[0].messageParams.cursor).toBeUndefined();
+    expect(fixture.controller.link.pull.contiguousAppliedToken).toEqual(
+      tokenIn('durable-stream', 'durable-epoch', '9'),
+    );
 
     await fixture.controller.dispose();
   });
@@ -447,6 +414,7 @@ describe('SyncEngineLevel — transport lifecycle connectivity', () => {
     controller.setLocalSubscription({ close: async (): Promise<void> => {} });
 
     expect(await openSubscription(fixture)).toBe(true);
+    controller.markReplicationReady();
     const handler = fixture.handlers[0];
 
     // The transport lost its socket: report this exact link offline even
@@ -460,6 +428,8 @@ describe('SyncEngineLevel — transport lifecycle connectivity', () => {
     // The transport reports reconnected only after verified resubscription.
     await handler({ type: 'reconnected' });
     expect(controller.link.connectivity).toBe('online');
+    expect(fixture.pull.calledOnceWithExactly(controller)).toBe(true);
+    expect(fixture.push.calledOnceWithExactly(controller)).toBe(true);
 
     await controller.dispose();
   });
@@ -483,6 +453,47 @@ describe('SyncEngineLevel — transport lifecycle connectivity', () => {
     expect(controller.link.connectivity).toBe('online');
 
     await controller.dispose();
+  });
+
+  it('should ignore EOSE cursors because durable queries own pull progress', async () => {
+    const fixture = createEngineFixture(db);
+    fixture.controller.link.pull.contiguousAppliedToken = tokenIn('durable-stream', 'durable-epoch', '4');
+
+    expect(await openSubscription(fixture)).toBe(true);
+    fixture.controller.markReplicationReady();
+    await fixture.handlers[0]({ type: 'eose', cursor: tokenIn('event-stream', 'event-epoch', '20') });
+
+    expect(fixture.pull.notCalled).toBe(true);
+    expect(fixture.controller.link.pull.contiguousAppliedToken).toEqual(
+      tokenIn('durable-stream', 'durable-epoch', '4'),
+    );
+    await fixture.controller.dispose();
+  });
+
+  it('should pause terminal subscription authorization failures', async () => {
+    const fixture = createEngineFixture(db);
+    expect(await openSubscription(fixture)).toBe(true);
+
+    await fixture.handlers[0]({
+      type  : 'error',
+      error : { code: 'GrantAuthorizationGrantRevoked' },
+    });
+
+    expect(fixture.controller.link.status).toBe('paused');
+    expect(fixture.repairing.notCalled).toBe(true);
+    await fixture.controller.dispose();
+  });
+
+  it('should repair retryable subscription failures', async () => {
+    const fixture = createEngineFixture(db);
+    expect(await openSubscription(fixture)).toBe(true);
+    await fixture.handlers[0]({
+      type  : 'error',
+      error : { code: 'SubscriptionRecoveryFailed' },
+    });
+
+    expect(fixture.repairing.calledOnceWithExactly(fixture.controller)).toBe(true);
+    await fixture.controller.dispose();
   });
 
 });

@@ -42,7 +42,7 @@ export class SyncEchoSuppressor {
     return this.hasUnexpiredEntry(this._pulledEntries, tenantDid, messageCid, remoteEndpoint);
   }
 
-  /** Return whether this link recently pushed the CID and may commit its pull echo directly. */
+  /** Return whether this link recently pushed the CID and should verify a possible pull echo locally. */
   public hasRecentlyPushed(tenantDid: string, messageCid: string, remoteEndpoint: string): boolean {
     return this.hasUnexpiredEntry(this._pushedEntries, tenantDid, messageCid, remoteEndpoint);
   }
@@ -52,7 +52,7 @@ export class SyncEchoSuppressor {
     this.track(this._pulledEntries, tenantDid, messageCid, remoteEndpoint);
   }
 
-  /** Record a message about to be pushed so its subscription echo can be committed directly. */
+  /** Record a message about to be pushed so its possible pull echo can be verified locally. */
   public trackPushed(tenantDid: string, messageCid: string, remoteEndpoint: string): void {
     this.track(this._pushedEntries, tenantDid, messageCid, remoteEndpoint);
   }

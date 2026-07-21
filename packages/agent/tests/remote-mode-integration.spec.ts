@@ -195,7 +195,7 @@ describe('Agent remote mode integration', () => {
     expect(targets.some((target: any): boolean => target.dwnUrl === remoteServer.httpUrl)).toBe(true);
   });
 
-  it('receives live WebSocket pull events through a real remote-mode local node', async () => {
+  it('reconciles a WebSocket pull wake through a real remote-mode local node', async () => {
     context = await setupRemoteModeContext('live');
     const { alice, remoteServer, testHarness } = context;
     const syncEngine = testHarness.agent.sync as any;
@@ -209,10 +209,10 @@ describe('Agent remote mode integration', () => {
     expect(testHarness.agent.sync.hasActiveSubscriptions).toBe(true);
 
     await configureProtocolOnServer(testHarness.agent, remoteServer.httpUrl, alice.did, notesProtocol);
-    const remoteWrite = await writeRecordToServer(testHarness.agent, remoteServer.httpUrl, alice.did, 'live pull body');
+    const remoteWrite = await writeRecordToServer(testHarness.agent, remoteServer.httpUrl, alice.did, 'durable pull body');
 
     await waitFor(async () =>
-      await readLocalRecordText(testHarness.agent, alice.did.uri, remoteWrite.recordId) === 'live pull body'
+      await readLocalRecordText(testHarness.agent, alice.did.uri, remoteWrite.recordId) === 'durable pull body'
     );
 
     const controllers = [...syncEngine._linkControllers.values()];
@@ -227,7 +227,7 @@ describe('Agent remote mode integration', () => {
     expect(link.pull.contiguousAppliedToken.messageCid).toBeDefined();
   });
 
-  it('persists both checkpoints across live pull and durable push activity', async () => {
+  it('persists both checkpoints across durable pull and push activity', async () => {
     context = await setupRemoteModeContext('concurrent-checkpoints');
     const { alice, remoteServer, testHarness } = context;
     const syncEngine = testHarness.agent.sync as any;

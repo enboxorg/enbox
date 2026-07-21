@@ -39,25 +39,6 @@ export class SyncCheckpoint {
     checkpoint.contiguousAppliedToken = token;
   }
 
-  /**
-   * Whether `token` is the immediate successor of the checkpoint: the very
-   * next position in the same stream domain, or a stream's first position
-   * onto an empty checkpoint. Verified at the point of use — a live
-   * observation carries no proof about the span below it, so only the
-   * gap-free next position may advance a checkpoint that replay does not
-   * anchor.
-   */
-  public static isImmediateSuccessor(checkpoint: DirectionCheckpoint, token: ProgressToken): boolean {
-    const current = checkpoint.contiguousAppliedToken;
-    if (current === undefined) {
-      return BigInt(token.position) === BigInt(1);
-    }
-
-    return token.streamId === current.streamId &&
-      token.epoch === current.epoch &&
-      BigInt(token.position) === BigInt(current.position) + BigInt(1);
-  }
-
   /** Check whether a token matches a checkpoint's established stream and epoch. */
   public static validateTokenDomain(checkpoint: DirectionCheckpoint, token: ProgressToken): boolean {
     if (checkpoint.contiguousAppliedToken === undefined) { return true; }

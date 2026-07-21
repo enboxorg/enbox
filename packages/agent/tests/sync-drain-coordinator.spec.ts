@@ -108,7 +108,6 @@ function createFixture({
     getQuotaBlockCount           : sinon.stub().resolves(0),
     getTopologyGeneration        : sinon.stub().callsFake((): number => state.topologyGeneration),
     handleVerifiedFeedDivergence : sinon.stub().resolves(false),
-    onReconcileApplied           : sinon.stub(),
     prepareLiveTarget            : sinon.stub().resolves(),
     reconcileTarget              : sinon.stub().resolves(reconcileResult),
     recordConnectivityFailure    : sinon.stub(),
@@ -253,10 +252,6 @@ describe('SyncDrainCoordinator', () => {
       forceQuotaProbe   : true,
       verifyConvergence : true,
     });
-    expect(operations.onReconcileApplied.calledOnceWithExactly(
-      sinon.match.object,
-      ['cid-1', 'cid-2'],
-    )).toBe(true);
     expect(operations.verifyConvergence.calledOnce).toBe(true);
     expect(operations.clearFeedConvergenceFailure.calledOnce).toBe(true);
     expect(operations.recordConnectivitySuccess.calledOnce).toBe(true);

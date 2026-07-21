@@ -48,7 +48,6 @@ function createFixture(targets: SyncTarget[] = [
     clearFeedConvergenceFailure  : sinon.stub().resolves(),
     getTargets                   : sinon.stub().resolves(targets),
     handleVerifiedFeedDivergence : sinon.stub().resolves(),
-    onReconcileApplied           : sinon.stub(),
     probeFeedConvergence         : sinon.stub().resolves(reconciled()),
     reconcileTarget              : sinon.stub().resolves(reconciled()),
     recordConnectivityFailure    : sinon.stub(),
@@ -203,7 +202,7 @@ describe('SyncRunCoordinator', () => {
     expect(operations.recordConnectivityFailure.calledOnce).toBe(true);
   });
 
-  it('emits admitted CIDs and records terminal push failures without requiring verification', async () => {
+  it('records terminal push failures without requiring verification', async () => {
     const pushFailures = [{ cid: 'terminal-cid', terminal: true }];
     const { coordinator, operations } = createFixture();
     operations.reconcileTarget.resolves({
@@ -214,10 +213,6 @@ describe('SyncRunCoordinator', () => {
 
     await coordinator.run('pull');
 
-    expect(operations.onReconcileApplied.calledOnceWithExactly(
-      sinon.match.object,
-      ['admitted-cid'],
-    )).toBe(true);
     expect(operations.recordPushFailures.calledOnceWithExactly(
       sinon.match.object,
       pushFailures,

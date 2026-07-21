@@ -13,7 +13,6 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 import type { ReplicationLinkState } from '../src/types/sync.js';
 
 import { deferred as createDeferred } from './utils/deferred.js';
-import { SyncCheckpoint } from '../src/sync-checkpoint.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 
 const DID = 'did:example:alice';
@@ -100,7 +99,7 @@ function establishBaseline(
   );
 }
 
-describe('SyncEngineLevel — dual-subscription replay baseline', () => {
+describe('SyncEngineLevel — dual-subscription wake baseline', () => {
   let db: Level<string, string>;
 
   beforeAll(() => {
@@ -214,10 +213,12 @@ describe('SyncEngineLevel — dual-subscription replay baseline', () => {
     });
   }
 
-  it('should reuse an existing cursor pair for both subscriptions and skip baseline reconciliation', async () => {
+  it('should open wake subscriptions at the live head and advance an existing checkpoint pair from matching snapshots', async () => {
     const fixture = createBaselineFixture(db);
     const pullCursor = tokenIn('remote-stream', 'remote-epoch', '17');
     const pushCursor = tokenIn('local-stream', 'local-epoch', '23');
+    const pullHead = tokenIn('remote-stream', 'remote-epoch', '31');
+    const pushHead = tokenIn('local-stream', 'local-epoch', '37');
     fixture.controller.link.pull.contiguousAppliedToken = pullCursor;
     fixture.controller.link.push.contiguousAppliedToken = pushCursor;
     const requests: CapturedSubscribeRequest[] = [];
@@ -226,8 +227,8 @@ describe('SyncEngineLevel — dual-subscription replay baseline', () => {
       if (request.subscriptionHandler !== undefined) {
         return {
           reply: {
-            fingerprint  : 'local-feed',
-            head         : pushCursor,
+            fingerprint  : 'same-feed',
+            head         : pushHead,
             status       : { code: 200, detail: 'OK' },
             subscription : { close: sinon.stub().resolves() },
           },
@@ -236,8 +237,8 @@ describe('SyncEngineLevel — dual-subscription replay baseline', () => {
       return { message: {} };
     });
     const sendDwnRequest = sinon.stub().resolves({
-      fingerprint  : 'remote-feed',
-      head         : pullCursor,
+      fingerprint  : 'same-feed',
+      head         : pullHead,
       status       : { code: 200, detail: 'OK' },
       subscription : { close: sinon.stub().resolves() },
     });
@@ -255,16 +256,18 @@ describe('SyncEngineLevel — dual-subscription replay baseline', () => {
     )).toBe(true);
 
     expect(requests).toHaveLength(2);
-    expect(requests[0].messageParams.cursor).toEqual(pullCursor);
-    expect(requests[1].messageParams.cursor).toEqual(pushCursor);
-    expect(await establishBaseline(fixture)).toBeUndefined();
+    expect(requests[0].messageParams.cursor).toBeUndefined();
+    expect(requests[1].messageParams.cursor).toBeUndefined();
+    expect(await establishBaseline(fixture)).toEqual({ converged: true });
     expect(fixture.reconcile.notCalled).toBe(true);
-    expect(fixture.persistCheckpoints.notCalled).toBe(true);
+    expect(fixture.persistCheckpoints.calledOnceWithExactly(fixture.controller.link)).toBe(true);
+    expect(fixture.controller.link.pull.contiguousAppliedToken).toEqual(pullHead);
+    expect(fixture.controller.link.push.contiguousAppliedToken).toEqual(pushHead);
 
     await fixture.controller.dispose();
   });
 
-  it('should reconcile before replay when only one durable cursor exists', async () => {
+  it('should reconcile before releasing wakes when only one durable cursor exists', async () => {
     const fixture = createBaselineFixture(db);
     fixture.controller.link.pull.contiguousAppliedToken = tokenIn('remote-stream', 'remote-epoch', '17');
     attachSubscriptionSnapshots(
@@ -276,89 +279,6 @@ describe('SyncEngineLevel — dual-subscription replay baseline', () => {
     expect(await establishBaseline(fixture)).toEqual({ converged: true });
     expect(fixture.reconcile.calledOnce).toBe(true);
     expect(fixture.persistCheckpoints.notCalled).toBe(true);
-
-    await fixture.controller.dispose();
-  });
-
-  it('should reset an expired local push cursor once and require baseline recovery', async () => {
-    const fixture = createBaselineFixture(db);
-    const pushCursor = tokenIn('local-stream', 'local-epoch', '23');
-    fixture.controller.link.push.contiguousAppliedToken = pushCursor;
-    const requestedCursors: Array<ProgressToken | undefined> = [];
-    const processRequest = sinon.stub().callsFake(async (request: CapturedSubscribeRequest) => {
-      requestedCursors.push(request.messageParams.cursor);
-      if (requestedCursors.length === 1) {
-        return { reply: { status: { code: 410, detail: 'ProgressGap' } } };
-      }
-      return {
-        reply: {
-          fingerprint  : 'local-feed',
-          head         : tokenIn('local-stream', 'local-epoch', '31'),
-          status       : { code: 200, detail: 'OK' },
-          subscription : { close: sinon.stub().resolves() },
-        },
-      };
-    });
-    (fixture.engine as any)._agent = { dwn: { processRequest }, rpc: {} };
-    const resetCheckpoint = sinon.stub((fixture.engine as any).replicationLinkStore, 'resetCheckpoint').callsFake(async (
-      link: ReplicationLinkState,
-      direction: 'pull' | 'push',
-    ): Promise<void> => {
-      SyncCheckpoint.reset(link[direction]);
-    });
-
-    expect(await (fixture.engine as any).openLocalPushSubscription(
-      fixture.target,
-      fixture.controller,
-      fixture.controller.replicationGeneration,
-    )).toBe(true);
-
-    expect(requestedCursors).toEqual([pushCursor, undefined]);
-    expect(resetCheckpoint.calledOnceWithExactly(fixture.controller.link, 'push')).toBe(true);
-    expect(fixture.controller.hasLocalSubscription).toBe(true);
-
-    expect(fixture.controller.setLiveSubscription(
-      { close: async (): Promise<void> => {} },
-      fixture.controller.replicationGeneration,
-      { fingerprint: 'remote-feed', head: tokenIn('remote-stream', 'remote-epoch', '29') },
-    )).toBe(true);
-    expect(await establishBaseline(fixture)).toEqual({ converged: true });
-    expect(fixture.reconcile.calledOnce).toBe(true);
-
-    await fixture.controller.dispose();
-  });
-
-  it('should discard an invalid local cursor before constructing the subscription', async () => {
-    const fixture = createBaselineFixture(db);
-    fixture.controller.link.push.contiguousAppliedToken = tokenIn('', '', '');
-    const requestedCursors: Array<ProgressToken | undefined> = [];
-    const processRequest = sinon.stub().callsFake(async (request: CapturedSubscribeRequest) => {
-      requestedCursors.push(request.messageParams.cursor);
-      return {
-        reply: {
-          fingerprint  : 'local-feed',
-          head         : tokenIn('local-stream', 'local-epoch', '31'),
-          status       : { code: 200, detail: 'OK' },
-          subscription : { close: sinon.stub().resolves() },
-        },
-      };
-    });
-    (fixture.engine as any)._agent = { dwn: { processRequest }, rpc: {} };
-    const resetCheckpoint = sinon.stub((fixture.engine as any).replicationLinkStore, 'resetCheckpoint').callsFake(async (
-      link: ReplicationLinkState,
-      direction: 'pull' | 'push',
-    ): Promise<void> => {
-      SyncCheckpoint.reset(link[direction]);
-    });
-
-    expect(await (fixture.engine as any).openLocalPushSubscription(
-      fixture.target,
-      fixture.controller,
-      fixture.controller.replicationGeneration,
-    )).toBe(true);
-
-    expect(requestedCursors).toEqual([undefined]);
-    expect(resetCheckpoint.calledOnceWithExactly(fixture.controller.link, 'push')).toBe(true);
 
     await fixture.controller.dispose();
   });

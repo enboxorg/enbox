@@ -37,7 +37,6 @@ export interface SyncDrainCoordinatorOperations {
     target: SyncTarget,
     result: SyncDurableFeedReconcileResult,
   ): Promise<boolean>;
-  onReconcileApplied(target: SyncTarget, messageCids: string[]): void;
   prepareLiveTarget(target: SyncTarget): Promise<void>;
   reconcileTarget(
     target: SyncTarget,
@@ -197,10 +196,6 @@ export class SyncDrainCoordinator {
       { forceQuotaProbe: true, verifyConvergence: true },
       shouldContinue,
     );
-    if (result.admittedCids !== undefined && result.admittedCids.length > 0) {
-      this._operations.onReconcileApplied(target, result.admittedCids);
-    }
-
     const pushFailures = result.pushFailures ?? [];
     if (pushFailures.length > 0) {
       await this._operations.recordPushFailures(target, pushFailures);

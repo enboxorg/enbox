@@ -11,7 +11,6 @@ export interface SyncRunCoordinatorOperations {
     target: SyncTarget,
     result: SyncDurableFeedReconcileResult,
   ): Promise<void>;
-  onReconcileApplied(target: SyncTarget, messageCids: string[]): void;
   probeFeedConvergence(target: SyncTarget): Promise<SyncDurableFeedReconcileResult>;
   reconcileTarget(
     target: SyncTarget,
@@ -142,10 +141,6 @@ export class SyncRunCoordinator {
       direction,
       options?.verifyConvergence,
     );
-
-    if (result.admittedCids !== undefined && result.admittedCids.length > 0) {
-      this._operations.onReconcileApplied(target, result.admittedCids);
-    }
 
     if (result.pushFailures !== undefined && result.pushFailures.length > 0) {
       const retryableFailures = await this._operations.recordPushFailures(target, result.pushFailures);
