@@ -588,4 +588,51 @@ describe('SyncLivePushCoordinator', () => {
     expect(controller.pushQueue?.timer).toBeDefined();
     controller.deactivate();
   });
+
+  describe('flushPendingPushBatch', () => {
+    it('consumes a stranded timer batch, delivers it, and clears the queue', async () => {
+      const fixture = createFixture();
+      const controller = activate(fixture);
+      const runtime = controller.getOrCreatePushQueue({ did: DID, dwnUrl: REMOTE });
+      runtime.entries.push({ cid: 'stranded-cid' });
+      // The debounce timer was armed before a suspension and may never fire.
+      controller.setPushTimer(runtime, setTimeout((): void => {}, 600_000));
+
+      await fixture.coordinator.flushPendingPushBatch(controller);
+
+      expect(fixture.operations.pushMessages.calledOnce).toBe(true);
+      expect(fixture.operations.pushMessages.firstCall.args[0].messageCids).toEqual(['stranded-cid']);
+      // The delivered batch's queue is gone — the currency gate unblocks.
+      expect(controller.pushQueue).toBeUndefined();
+    });
+
+    it('preserves entries arriving while the flush is in flight', async () => {
+      const fixture = createFixture();
+      const controller = activate(fixture);
+      const runtime = controller.getOrCreatePushQueue({ did: DID, dwnUrl: REMOTE });
+      runtime.entries.push({ cid: 'stranded-cid' });
+      controller.setPushTimer(runtime, setTimeout((): void => {}, 600_000));
+      fixture.operations.pushMessages.callsFake(async ({ messageCids }: { messageCids: string[] }) => {
+        runtime.entries.push({ cid: 'late-cid' });
+        return { failed: [], succeeded: messageCids };
+      });
+
+      await fixture.coordinator.flushPendingPushBatch(controller);
+
+      // The late entry re-queued and re-armed through the normal path.
+      expect(controller.pushQueue).toBe(runtime);
+      expect(runtime.entries.map((entry) => entry.cid)).toEqual(['late-cid']);
+      expect(runtime.timer).toBeDefined();
+      controller.clearPushQueue();
+    });
+
+    it('is a no-op for a link without a pending queue', async () => {
+      const fixture = createFixture();
+      const controller = activate(fixture);
+
+      await fixture.coordinator.flushPendingPushBatch(controller);
+
+      expect(fixture.operations.pushMessages.called).toBe(false);
+    });
+  });
 });

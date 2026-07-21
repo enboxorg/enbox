@@ -104,18 +104,19 @@ function createFixture(maxInFlightDeliveries?: number): PullFixture {
   const agent = {} as EnboxPlatformAgent;
   const permissionsApi = {} as PermissionsApi;
   const operations: PullOperationStubs = {
-    emitCheckpointAdvance : sinon.stub(),
-    emitEvent             : sinon.stub(),
-    getAgent              : sinon.stub().returns(agent),
-    getPermissionsApi     : sinon.stub().returns(permissionsApi),
-    persistCheckpoint     : sinon.stub().resolves(),
-    recordDeadLetter      : sinon.stub().resolves(),
-    reportError           : sinon.stub(),
-    scheduleReconcile     : sinon.stub(),
-    trackAppliedCids      : sinon.stub().resolves(),
-    transitionToPaused    : sinon.stub().resolves(),
-    transitionToRepairing : sinon.stub().resolves(),
-    warn                  : sinon.stub(),
+    emitCheckpointAdvance   : sinon.stub(),
+    emitEvent               : sinon.stub(),
+    getAgent                : sinon.stub().returns(agent),
+    getPermissionsApi       : sinon.stub().returns(permissionsApi),
+    persistCheckpoint       : sinon.stub().resolves(),
+    recordDeadLetter        : sinon.stub().resolves(),
+    reportError             : sinon.stub(),
+    requestConvergenceCheck : sinon.stub(),
+    scheduleReconcile       : sinon.stub(),
+    trackAppliedCids        : sinon.stub().resolves(),
+    transitionToPaused      : sinon.stub().resolves(),
+    transitionToRepairing   : sinon.stub().resolves(),
+    warn                    : sinon.stub(),
   };
   const admit = sinon.stub().resolves({ kind: 'admitted', appliedCids: ['root-cid'], freshEntries: [] });
   const fetchMessages = sinon.stub().resolves([]);

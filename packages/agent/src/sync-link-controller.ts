@@ -82,6 +82,7 @@ export class SyncLinkController {
   private readonly _mailboxShared: Map<SyncLinkMailboxKind, Promise<unknown>> = new Map();
   private readonly _requestedPasses: Set<SyncLinkMailboxKind> = new Set();
   private _mailboxTail: Promise<void> = Promise.resolve();
+  private _liveStreamAttached = false;
   private _liveSubscription?: SyncLinkSubscription;
   private _localSubscription?: SyncLinkSubscription;
   private _nextPullCommitOrdinal = 0;
@@ -257,6 +258,63 @@ export class SyncLinkController {
     return this._localSubscription !== undefined;
   }
 
+  /**
+   * Whether this link's replication stream provably covers everything a
+   * connectivity-driven convergence check would otherwise fetch or send: the
+   * link is live and online, both subscription halves are attached with the
+   * transport confirming the remote stream, no push batch is queued or
+   * flushing, and no repair or reconciliation work is pending, scheduled, or
+   * in flight. Live deliveries commit durable cursors contiguously and a gap
+   * surfaces as repair, so a current stream owes no pull gap — deliveries
+   * may still be mid-admission, which is progress, not staleness.
+   *
+   * `connectivity` here is a cached value that can predate a long
+   * suspension. Trusting it is safe because the transport probes socket
+   * liveness on the same wake signals: a dead socket emits `disconnected`
+   * (detaching the stream here), then either resubscribes from the durable
+   * checkpoint or surfaces a terminal error that drives repair. The gate's
+   * correctness rests on that recovery chain, not on its own ordering.
+   */
+  public get isStreamCurrent(): boolean {
+    return this._active
+      && this.link.status === 'live'
+      && this.link.connectivity === 'online'
+      && this._liveSubscription !== undefined
+      && this._liveStreamAttached
+      && this._localSubscription !== undefined
+      && this._pushQueue === undefined
+      && !this.isMailboxBusy('flush')
+      && this._repairResumeToken === undefined
+      && this._repairRetryTimer === undefined
+      && this._reconcileTimer === undefined
+      && !this.isMailboxBusy('repair')
+      && !this.isPassRequested('repair')
+      && !this.isMailboxBusy('reconcile')
+      && !this.isPassRequested('reconcile');
+  }
+
+  /** Whether the transport currently confirms the live stream's socket attachment. */
+  public get isLiveStreamAttached(): boolean {
+    return this._liveStreamAttached;
+  }
+
+  /** Mark the live stream detached while the transport's socket reconnects. */
+  public markLiveStreamDetached(): void {
+    this._liveStreamAttached = false;
+  }
+
+  /**
+   * Restore stream attachment after the transport verifies a resubscription.
+   * Meaningful only while a live subscription handle is installed — the
+   * transport keeps the logical subscription identity across reconnects, so
+   * the handle survives the detached window.
+   */
+  public markLiveStreamAttached(): void {
+    if (this._active && this._liveSubscription !== undefined) {
+      this._liveStreamAttached = true;
+    }
+  }
+
   /** Claim an ordinal in the current pull generation before admission begins. */
   public startPullDelivery(token: ProgressToken): SyncPullDeliveryTicket {
     const ordinal = this._nextPullDeliveryOrdinal++;
@@ -396,6 +454,7 @@ export class SyncLinkController {
       return false;
     }
     this._liveSubscription = subscription;
+    this._liveStreamAttached = true;
     return true;
   }
 
@@ -419,6 +478,7 @@ export class SyncLinkController {
   public async closeLiveSubscription(): Promise<void> {
     const subscription = this._liveSubscription;
     this._liveSubscription = undefined;
+    this._liveStreamAttached = false;
     if (subscription === undefined) {
       return;
     }

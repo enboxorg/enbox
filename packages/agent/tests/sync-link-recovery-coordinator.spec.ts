@@ -63,6 +63,7 @@ function createFixture(options: {
     captureIdentityTaskRunner : sinon.stub().returns(taskRunner),
     clearConvergence          : sinon.stub(),
     emitEvent                 : sinon.stub(),
+    flushPendingPushBatch     : sinon.stub().resolves(),
     getController             : sinon.stub().callsFake((linkKey: string) => controllers.get(linkKey)),
     getRuntimeScope           : sinon.stub().callsFake(() => scope),
     handleDivergence          : sinon.stub().resolves(false),
@@ -429,6 +430,34 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await fixture.coordinator.reconcile(controller);
     expect(fixture.operations.handlePushFailures.calledOnceWithExactly(controller, [failure])).toBe(true);
     expect(fixture.operations.handleDivergence.calledOnce).toBe(true);
+  });
+
+  it('drains the pending push batch through the flush lane before the reconcile pass', async () => {
+    const fixture = createFixture();
+    const controller = activate(fixture);
+    const order: string[] = [];
+    fixture.operations.flushPendingPushBatch.callsFake(async (): Promise<void> => { order.push('flush'); });
+    fixture.operations.reconcileTarget.callsFake(async (): Promise<Record<string, unknown>> => {
+      order.push('reconcile');
+      return { converged: true };
+    });
+
+    await fixture.coordinator.reconcile(controller);
+
+    expect(fixture.operations.flushPendingPushBatch.calledOnceWithExactly(controller)).toBe(true);
+    expect(order).toEqual(['flush', 'reconcile']);
+  });
+
+  it('runs the reconcile pass even when the pre-flush fails', async () => {
+    const fixture = createFixture();
+    const controller = activate(fixture);
+    fixture.operations.flushPendingPushBatch.rejects(new Error('flush failed'));
+
+    await fixture.coordinator.reconcile(controller);
+
+    expect(fixture.operations.reportError.calledOnce).toBe(true);
+    expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
+    expect(fixture.operations.emitEvent.calledWithMatch({ type: 'reconcile:completed' })).toBe(true);
   });
 
   it('reports reconciliation failures, schedules retry, and suppresses both after staleness', async () => {

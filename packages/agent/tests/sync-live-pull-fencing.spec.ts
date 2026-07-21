@@ -393,3 +393,94 @@ describe('SyncEngineLevel — live-pull generation fencing', () => {
     await fixture.controller.dispose();
   });
 });
+
+describe('SyncEngineLevel — transport lifecycle stream attachment', () => {
+  let db: Level<string, string>;
+
+  beforeAll(() => {
+    db = new Level<string, string>('__TESTDATA__/sync-transport-attachment-spec');
+  });
+
+  afterEach(async () => {
+    await db.clear();
+    sinon.restore();
+  });
+
+  afterAll(async () => {
+    await db.close();
+  });
+
+  it('should detach the stream while the socket is down and restore it on verified resubscription', async () => {
+    const fixture = createEngineFixture(db);
+    const { controller } = fixture;
+    controller.setLocalSubscription({ close: async (): Promise<void> => {} });
+
+    expect(await openSubscription(fixture)).toBe(true);
+    const handler = fixture.handlers[0];
+    expect(controller.isLiveStreamAttached).toBe(true);
+    expect(controller.isStreamCurrent).toBe(true);
+
+    // The transport lost its socket: the stream detaches and the link stops
+    // reading as current even though both subscription handles remain.
+    await handler({ type: 'disconnected' });
+    expect(controller.isLiveStreamAttached).toBe(false);
+    expect(controller.hasLiveSubscription).toBe(true);
+    expect(controller.isStreamCurrent).toBe(false);
+
+    await handler({ type: 'reconnecting', attempt: 1 });
+    expect(controller.isLiveStreamAttached).toBe(false);
+
+    // A browser offline event marked the link offline during the outage. The
+    // transport's verified resubscription restores attachment and
+    // connectivity together.
+    controller.link.connectivity = 'offline';
+    await handler({ type: 'reconnected' });
+    expect(controller.isLiveStreamAttached).toBe(true);
+    expect(controller.link.connectivity).toBe('online');
+    expect(controller.isStreamCurrent).toBe(true);
+
+    await controller.dispose();
+  });
+
+  it('should ignore transport lifecycle events from a superseded subscription', async () => {
+    const fixture = createEngineFixture(db);
+    const { controller } = fixture;
+
+    expect(await openSubscription(fixture)).toBe(true);
+    const staleHandler = fixture.handlers[0];
+
+    // A repair resets the pull runtime and reopens the subscription.
+    controller.resetPullGeneration();
+    await controller.closeLiveSubscription();
+    expect(await openSubscription(fixture)).toBe(true);
+    expect(controller.isLiveStreamAttached).toBe(true);
+
+    // A late disconnect from the superseded subscription must not detach
+    // the replacement generation's stream.
+    await staleHandler({ type: 'disconnected' });
+    expect(controller.isLiveStreamAttached).toBe(true);
+
+    await controller.dispose();
+  });
+
+  it('should request a coalesced convergence check when the stream detaches', async () => {
+    const fixture = createEngineFixture(db);
+    const { controller, engine } = fixture;
+    const request = sinon.stub((engine as any)._connectivityManager, 'requestConvergenceCheck');
+
+    expect(await openSubscription(fixture)).toBe(true);
+    const handler = fixture.handlers[0];
+
+    // The transport's health verdict can land AFTER a wake-driven check
+    // already ran — detachment re-requests evaluation instead of leaving
+    // the link to wait for the next wake or settle pass.
+    await handler({ type: 'disconnected' });
+    expect(request.calledOnce).toBe(true);
+    await handler({ type: 'reconnecting', attempt: 1 });
+    expect(request.calledTwice).toBe(true);
+    await handler({ type: 'reconnected' });
+    expect(request.calledTwice).toBe(true);
+
+    await controller.dispose();
+  });
+});
