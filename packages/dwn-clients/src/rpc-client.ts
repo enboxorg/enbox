@@ -9,7 +9,7 @@ import { HttpDwnRpcClient } from './http-dwn-rpc-client.js';
 import { normalizeDwnRpcAuthEndpoint } from './rpc-auth.js';
 import { SocketUnavailableError } from './dwn-rpc-error.js';
 import { WebSocketDwnRpcClient } from './web-socket-clients.js';
-import { DEFAULT_MAX_WS_RAW_RECORD_DATA_BYTES, maxWsJsonRpcPayloadBytes, utf8ByteLength } from './ws-payload-size.js';
+import { utf8ByteLength, WS_JSON_RPC_ENVELOPE_BYTES } from './ws-payload-size.js';
 
 /**
  * Interface that can be implemented to communicate with {@link EnboxAgent | Enbox Agent}
@@ -65,12 +65,16 @@ export type EnboxRpcClientOptions = {
 };
 
 /**
- * The client-side estimate of the server's WebSocket frame cap (the server
- * derives its `maxPayloadLength` from the same formula over its configured
- * record-data cap). Complete frames are measured against it so an at-cap
- * request falls back to HTTP instead of being dropped by the socket server.
+ * Conservative control-frame budget: the floor of every possible server
+ * WebSocket cap. The server derives its `maxPayloadLength` as
+ * `encoded(configured record-data cap) + WS_JSON_RPC_ENVELOPE_BYTES`, and the
+ * client cannot observe the configured cap — assuming the default would let a
+ * frame the server rejects close the pooled socket and disrupt its
+ * subscriptions. A frame within the envelope allowance alone fits EVERY
+ * configuration; control-plane messages are kilobytes, and anything larger
+ * rides HTTP.
  */
-const SOCKET_FRAME_BUDGET_BYTES = maxWsJsonRpcPayloadBytes(DEFAULT_MAX_WS_RAW_RECORD_DATA_BYTES);
+const CONTROL_FRAME_BUDGET_BYTES = WS_JSON_RPC_ENVELOPE_BYTES;
 
 /** Fixed-length stand-in for the UUID request id when measuring a frame. */
 const FRAME_MEASUREMENT_ID = '00000000-0000-0000-0000-000000000000';
@@ -250,7 +254,7 @@ export class EnboxRpcClient implements EnboxRpc {
       target  : request.targetDid,
       message : wireMessage,
     });
-    if (utf8ByteLength(JSON.stringify(frame)) > SOCKET_FRAME_BUDGET_BYTES) {
+    if (utf8ByteLength(JSON.stringify(frame)) > CONTROL_FRAME_BUDGET_BYTES) {
       return undefined;
     }
 

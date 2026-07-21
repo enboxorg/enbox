@@ -18,6 +18,36 @@ async function sleepWhileWaitingForEvents(override?: number):Promise<void> {
 }
 
 describe('JsonRpcSocket', () => {
+  it('reports fresh only while inbound traffic is inside the heartbeat window', async () => {
+    const client = await JsonRpcSocket.connect(socketDwnUrl, { heartbeatInterval: 1_000, heartbeatTimeout: 500 });
+    try {
+      // Freshly connected: the connect handshake stamps inbound liveness.
+      expect(client.isFresh()).toBe(true);
+
+      // A suspension leaves isConnected stale-true while no inbound frame
+      // arrived within the window — freshness must fail at point of use.
+      (client as unknown as { _lastInboundAt: number })._lastInboundAt = Date.now() - 60_000;
+      expect(client.isConnected).toBe(true);
+      expect(client.isFresh()).toBe(false);
+    } finally {
+      client.close();
+    }
+  });
+
+  it('reports a heartbeat-disabled connected socket as fresh', async () => {
+    const client = await JsonRpcSocket.connect(socketDwnUrl, { heartbeatInterval: 0 });
+    try {
+      // No heartbeat means no inbound signal to demand; connectedness is the
+      // only claim a heartbeat-less socket can make.
+      (client as unknown as { _lastInboundAt: number })._lastInboundAt = Date.now() - 60_000;
+      expect(client.isFresh()).toBe(true);
+      client.close();
+      expect(client.isFresh()).toBe(false);
+    } finally {
+      client.close();
+    }
+  });
+
   let alice: Persona;
   // we set the client to a websocket url
   const dwnUrl = new URL(testDwnUrl);

@@ -35,6 +35,8 @@ const DEFAULT_MAX_RECONNECT_ATTEMPTS = Infinity;
 /** Default heartbeat settings. */
 const DEFAULT_HEARTBEAT_INTERVAL = 30_000;
 const DEFAULT_HEARTBEAT_TIMEOUT = 10_000;
+/** Grace added to one heartbeat round-trip when judging inbound freshness. */
+const HEARTBEAT_FRESHNESS_SLACK = 5_000;
 
 /** Default deadline for an on-demand health probe pong. */
 const DEFAULT_HEALTH_PROBE_TIMEOUT = 5_000;
@@ -141,6 +143,16 @@ export class JsonRpcSocket {
   /** In-flight on-demand health probe, deduplicating concurrent checks. */
   private _healthProbe: Promise<boolean> | undefined;
 
+  /** Timestamp of the most recent inbound frame — pongs included. */
+  private _lastInboundAt = Date.now();
+
+  /**
+   * The window within which inbound traffic proves liveness: one heartbeat
+   * round-trip plus slack. `undefined` when heartbeats are disabled — an
+   * idle socket then produces no inbound signal to demand.
+   */
+  private readonly _freshnessWindowMs: number | undefined;
+
   /** Resolver that fast-forwards the pending reconnect backoff wait. */
   private _backoffWake: (() => void) | undefined;
 
@@ -153,6 +165,10 @@ export class JsonRpcSocket {
     this.url = url;
     this.options = options;
     this._isConnected = true;
+    const heartbeatInterval = options.heartbeatInterval ?? DEFAULT_HEARTBEAT_INTERVAL;
+    this._freshnessWindowMs = heartbeatInterval > 0
+      ? heartbeatInterval + (options.heartbeatTimeout ?? DEFAULT_HEARTBEAT_TIMEOUT) + HEARTBEAT_FRESHNESS_SLACK
+      : undefined;
   }
 
   /** Whether the socket is currently connected. */
@@ -163,6 +179,24 @@ export class JsonRpcSocket {
   /** Whether {@link close} was called — a user-closed socket never reconnects. */
   public get isClosedByUser(): boolean {
     return this.closedByUser;
+  }
+
+  /**
+   * Whether the connection is connected AND has produced inbound traffic
+   * within one heartbeat round-trip. `isConnected` is a cached flag that a
+   * suspension leaves stale-true; the heartbeat guarantees a live socket
+   * receives at least one pong per interval, so recent inbound is proof of
+   * liveness verified at the point of use — not provenance. Always true for
+   * a connected socket whose heartbeats are disabled (no signal to demand).
+   */
+  public isFresh(): boolean {
+    if (!this._isConnected) {
+      return false;
+    }
+    if (this._freshnessWindowMs === undefined) {
+      return true;
+    }
+    return Date.now() - this._lastInboundAt <= this._freshnessWindowMs;
   }
 
   public static async connect(url: string, options: JsonRpcSocketOptions = {}): Promise<JsonRpcSocket> {
@@ -387,7 +421,10 @@ export class JsonRpcSocket {
    * WebSocket instance. Called both on initial connect and on reconnect.
    */
   private wireSocket(ws: WebSocket): void {
+    this._lastInboundAt = Date.now();
     ws.addEventListener('message', (event: { data: any }) => {
+      // Any inbound frame is transport-level proof of life.
+      this._lastInboundAt = Date.now();
       const jsonRpcResponse = parseJson(toText(event.data)) as JsonRpcResponse;
       if (jsonRpcResponse === null) {
         return;

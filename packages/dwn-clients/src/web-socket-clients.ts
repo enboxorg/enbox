@@ -321,15 +321,19 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   }
 
   /**
-   * Whether the pool already holds a connected socket for `dwnUrl` under
-   * this client's transport authentication. Routing layers use this to
-   * prefer the socket only when it costs nothing to establish — a missing
-   * or reconnecting socket falls back to HTTP rather than waiting.
+   * Whether the pool already holds a connected AND fresh socket for `dwnUrl`
+   * under this client's transport authentication. Routing layers use this to
+   * prefer the socket only when it costs nothing to establish — a missing or
+   * reconnecting socket falls back to HTTP rather than waiting. Freshness is
+   * verified at the point of use ({@link JsonRpcSocket.isFresh}): after a
+   * suspension the cached connected flag is stale-true, and preferring that
+   * socket would stall the request for the full response timeout in exactly
+   * the wake scenario routing exists to optimize.
    */
   public hasHealthyConnection(dwnUrl: string): boolean {
     const url = withLocalNodeTokenQuery(dwnUrl, this.authOptions);
     const connection = WebSocketDwnRpcClient.connections.get(connectionCacheKey(url));
-    return connection !== undefined && connection.socket.isConnected;
+    return connection !== undefined && connection.socket.isFresh();
   }
 
   private async maxPayloadBytesForReplicatedApply(request: DwnReplicationApplyRequest): Promise<number> {
@@ -387,7 +391,10 @@ export class WebSocketDwnRpcClient implements DwnRpc {
           return connection;
         })
         .catch((error: unknown) => {
-          throw new Error(`Error connecting to ${displayUrl.toString()}: ${redactConnectionError(error, url, displayUrl)}`);
+          // Establishment failure means nothing was ever transmitted on this
+          // socket — surface the typed never-sent rejection (with redacted
+          // detail) so the socket-preferred router can fall back to HTTP.
+          throw new SocketUnavailableError(`Error connecting to ${displayUrl.toString()}: ${redactConnectionError(error, url, displayUrl)}`);
         })
         .finally(() => {
           WebSocketDwnRpcClient.pendingConnections.delete(key);
@@ -465,13 +472,6 @@ export class WebSocketDwnRpcClient implements DwnRpc {
         // Resubscribe all tracked subscriptions with their last known cursor.
         WebSocketDwnRpcClient.resubscribeAll(conn);
       },
-    }).catch((error: unknown) => {
-      // Establishment failure means no request was ever transmitted on this
-      // socket — surface the typed never-sent rejection so routing layers
-      // may safely retry over another transport.
-      throw new SocketUnavailableError(
-        `WebSocket connection to ${url} could not be established: ${error instanceof Error ? error.message : String(error)}`,
-      );
     });
 
     return { socket, subscriptions, url: url.toString() };
