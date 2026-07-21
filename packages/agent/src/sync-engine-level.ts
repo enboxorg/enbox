@@ -3089,7 +3089,10 @@ export class SyncEngineLevel implements SyncEngine {
       permissionGrantIds : target.permissionGrantIds,
       scope              : target.scope,
       agent              : this.agent,
-      permissionsApi     : this._permissionsApi,
+      onBeforeApply      : (messageCid): void => {
+        this._echoSuppressor.trackPulled(target.did, messageCid, target.dwnUrl);
+      },
+      permissionsApi: this._permissionsApi,
       prefetched,
       shouldContinue,
     });

@@ -350,9 +350,12 @@ export class SyncLivePullProcessor {
       permissionGrantIds : context.permissionGrantIds,
       scope              : context.link.scope,
       agent              : this._operations.getAgent(),
-      permissionsApi     : this._operations.getPermissionsApi(),
+      onBeforeApply      : (messageCid): void => {
+        this._echoSuppressor.trackPulled(context.did, messageCid, context.dwnUrl);
+      },
+      permissionsApi : this._operations.getPermissionsApi(),
       prefetched,
-      shouldContinue     : () => !context.isStale(),
+      shouldContinue : () => !context.isStale(),
     });
     if (context.isStale()) { return undefined; }
 

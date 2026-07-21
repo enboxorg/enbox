@@ -138,6 +138,22 @@ function createFixture(maxInFlightDeliveries?: number): PullFixture {
 }
 
 describe('SyncLivePullProcessor', () => {
+  it('marks closure entries as pulled before local application can emit a push wake', async () => {
+    const { admit, echoSuppressor, processor } = createFixture();
+    const message = protocolMessage('https://protocol.example/inbox');
+    const rootCid = await Message.getCid(message);
+    admit.callsFake(async (_rootCid, deps): Promise<Record<string, unknown>> => {
+      expect(echoSuppressor.hasRecentlyPulled(DID, rootCid, REMOTE)).toBe(false);
+      deps.onBeforeApply?.(rootCid);
+      expect(echoSuppressor.hasRecentlyPulled(DID, rootCid, REMOTE)).toBe(true);
+      return { kind: 'admitted', appliedCids: [rootCid], freshEntries: [] };
+    });
+
+    await processor.handleEvent(contextFor(), event(token('1'), message));
+
+    expect(admit.calledOnce).toBe(true);
+  });
+
   it('emits delivery:applied with a descriptor only for freshly admitted deliveries', async () => {
     const { admit, operations, processor } = createFixture();
     const message = protocolMessage('https://protocol.example/inbox');
