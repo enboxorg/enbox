@@ -2133,24 +2133,25 @@ describe('SyncEngineLevel', () => {
           options : { protocols: 'all' },
         });
 
-        const syncSpy = sinon.stub(SyncEngineLevel.prototype as any, 'sync');
-        syncSpy.resolves();
-
         // Live link initialization is not under test — resolve no targets.
         const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
         getSyncTargetsStub.resolves([]);
+        const settleStub = sinon.stub((testHarness.agent.sync as any)._runCoordinator, 'settle').resolves();
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
         await testHarness.agent.sync.startSync({ interval: '1s' });
 
         await clock.tickAsync(2_800); // just under 3 intervals
-        syncSpy.restore();
+        const settleCalls = settleStub.callCount;
+        await testHarness.agent.sync.stopSync();
+        settleStub.restore();
         getSyncTargetsStub.restore();
         clock.restore();
 
-        // one initial catch-up when starting, and one settle check per interval
-        expect(syncSpy.callCount).toBe(3);
+        // Startup establishes its baseline through link initialization; the
+        // periodic coordinator runs once at each elapsed interval.
+        expect(settleCalls).toBe(2);
       });
 
       it('arms the settle check and resolves startSync when startup target discovery fails', async () => {
@@ -2159,10 +2160,9 @@ describe('SyncEngineLevel', () => {
           options : { protocols: 'all' },
         });
 
-        const syncSpy = sinon.stub(SyncEngineLevel.prototype as any, 'sync');
-        syncSpy.resolves();
         const initStub = sinon.stub(SyncEngineLevel.prototype as any, 'initializeLinkTarget');
         initStub.resolves({ status: 'active', durableLinkIdentityKey: 'key' });
+        const settleStub = sinon.stub((testHarness.agent.sync as any)._runCoordinator, 'settle').resolves();
 
         // DID endpoint discovery is transiently unavailable at startup: the
         // settle timer is still armed (in the finally after planning fails)
@@ -2177,19 +2177,20 @@ describe('SyncEngineLevel', () => {
 
         await testHarness.agent.sync.startSync({ interval: '1s' });
 
-        const callsAfterStart = syncSpy.callCount;
+        const settleCallsAfterStart = settleStub.callCount;
         const initCallsAfterStart = initStub.callCount;
         await clock.tickAsync(1_000);
-        syncSpy.restore();
+        const settleCallsAfterInterval = settleStub.callCount;
+        await testHarness.agent.sync.stopSync();
+        settleStub.restore();
         initStub.restore();
         getSyncTargetsStub.restore();
         clock.restore();
 
-        // The initial catch-up ran, and the settle check still fired after
-        // the discovery failure.
-        expect(callsAfterStart).toBe(1);
-        expect(syncSpy.callCount).toBe(2);
-        expect(syncSpy.lastCall.args[1]).toEqual({ verifyConvergence: true });
+        // Startup planning failed before a baseline could run, and the
+        // periodic settle coordinator still fired afterwards.
+        expect(settleCallsAfterStart).toBe(0);
+        expect(settleCallsAfterInterval).toBe(1);
 
         // Startup planning failed before reaching link initialization; the
         // settle pass re-initialized the orphaned target.
@@ -2204,8 +2205,7 @@ describe('SyncEngineLevel', () => {
           options : { protocols: 'all' },
         });
 
-        const syncSpy = sinon.stub(SyncEngineLevel.prototype as any, 'sync');
-        syncSpy.resolves();
+        const settleStub = sinon.stub((testHarness.agent.sync as any)._runCoordinator, 'settle').resolves();
         let releaseInit!: () => void;
         const initGate = new Promise<void>((resolve) => { releaseInit = resolve; });
         const initStub = sinon.stub(SyncEngineLevel.prototype as any, 'initializeLinkTarget');
@@ -2223,19 +2223,21 @@ describe('SyncEngineLevel', () => {
         // start a second reconciliation wave while startup is in flight.
         const starting = testHarness.agent.sync.startSync({ interval: '1s' });
         await clock.tickAsync(2_400);
-        expect(syncSpy.callCount).toBe(1);
+        const settleCallsDuringInitialization = settleStub.callCount;
 
         releaseInit();
         await starting;
         await clock.tickAsync(1_000);
-        syncSpy.restore();
+        const settleCallsAfterInitialization = settleStub.callCount;
+        await testHarness.agent.sync.stopSync();
+        settleStub.restore();
         initStub.restore();
         getSyncTargetsStub.restore();
         clock.restore();
 
         // The settle check begins only after initialization finished.
-        expect(syncSpy.callCount).toBe(2);
-        expect(syncSpy.lastCall.args[1]).toEqual({ verifyConvergence: true });
+        expect(settleCallsDuringInitialization).toBe(0);
+        expect(settleCallsAfterInitialization).toBe(1);
       });
 
       it('skips settle checks while sync work is already in progress', async () => {
@@ -2246,70 +2248,38 @@ describe('SyncEngineLevel', () => {
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
-        let resolveSettlePull!: (result: object) => void;
-        const settlePull = new Promise<object>((resolve) => {
-          resolveSettlePull = resolve;
+        let resolveSettle!: () => void;
+        const settle = new Promise<void>((resolve) => {
+          resolveSettle = resolve;
         });
 
-        // Stub a feed phase so the real sync() manages the exclusive sync
-        // lock, while the first settle check's pull remains pending until the
-        // test explicitly releases it.
-        const durableFeedReconciler = (testHarness.agent.sync as any)._durableFeedReconciler;
-        const pullRemoteFeedStub = sinon.stub(durableFeedReconciler, 'pull');
-        pullRemoteFeedStub.resolves({});
-        pullRemoteFeedStub.onSecondCall().returns(settlePull);
-
         const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
-        getSyncTargetsStub.resolves([{
-          did                : alice.did.uri,
-          dwnUrl             : 'http://localhost:3000',
-          scope              : { kind: 'full' },
-          authorization      : { kind: 'owner' },
-          authorizationEpoch : 'test-owner-epoch',
-        }]);
-
-        // Live subscription opening is not under test — skip its I/O.
-        const initializeLinkTargetStub = sinon.stub(testHarness.agent.sync as any, 'initializeLinkTarget');
-        initializeLinkTargetStub.resolves({ status: 'failed' });
-
-        const pushLocalFeedStub = sinon.stub(durableFeedReconciler, 'push');
-        pushLocalFeedStub.resolves({});
-
-        const verifyFeedConvergenceStub = sinon.stub(durableFeedReconciler, 'verifyConvergence');
-        verifyFeedConvergenceStub.resolves({ converged: true });
-
-        const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
+        getSyncTargetsStub.resolves([]);
+        const settleStub = sinon.stub((testHarness.agent.sync as any)._runCoordinator, 'settle').returns(settle);
 
         const startPromise = testHarness.agent.sync.startSync({ interval: '1s' });
 
         await clock.tickAsync(0);
         await startPromise;
 
-        // only the initial live catch-up so far
-        expect(syncSpy.callCount).toBe(1);
-
         await clock.tickAsync(1_000); // the first settle check starts and stays pending
-
-        expect(syncSpy.callCount).toBe(2);
+        const callsAfterFirstInterval = settleStub.callCount;
 
         await clock.tickAsync(2_000); // further intervals fire while it holds the lock
+        const callsWhileBusy = settleStub.callCount;
 
-        // those ticks are skipped because sync work is already in progress
-        expect(syncSpy.callCount).toBe(2);
-
-        resolveSettlePull({});
+        resolveSettle();
         await clock.tickAsync(0);
-
-        // completing the settle check does not retroactively run skipped intervals
-        expect(syncSpy.callCount).toBe(2);
-
-        syncSpy.restore();
-        verifyFeedConvergenceStub.restore();
-        initializeLinkTargetStub.restore();
+        const callsAfterCompletion = settleStub.callCount;
+        await testHarness.agent.sync.stopSync();
+        settleStub.restore();
         getSyncTargetsStub.restore();
-        pullRemoteFeedStub.restore();
-        pushLocalFeedStub.restore();
         clock.restore();
+
+        expect(callsAfterFirstInterval).toBe(1);
+        expect(callsWhileBusy).toBe(1);
+        // Completing the settle check does not retroactively run skipped intervals.
+        expect(callsAfterCompletion).toBe(1);
       });
 
       it('should replace the settle-check interval when startSync is called again', async () => {
@@ -2318,39 +2288,39 @@ describe('SyncEngineLevel', () => {
           options : { protocols: 'all' },
         });
 
-        const syncSpy = sinon.stub(SyncEngineLevel.prototype as any, 'sync');
-        syncSpy.resolves();
-
         const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
         getSyncTargetsStub.resolves([]);
+        const settleStub = sinon.stub((testHarness.agent.sync as any)._runCoordinator, 'settle').resolves();
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
         await testHarness.agent.sync.startSync({ interval: '2s' });
 
-        // one initial catch-up when starting
-        expect(syncSpy.callCount).toBe(1);
+        const callsAfterFirstStart = settleStub.callCount;
 
         await clock.tickAsync(4_001); // two settle intervals
-
-        expect(syncSpy.callCount).toBe(3);
+        const callsAtFirstCadence = settleStub.callCount;
 
         await testHarness.agent.sync.startSync({ interval: '1s' });
-
-        // the restart runs its own initial catch-up
-        expect(syncSpy.callCount).toBe(4);
+        const callsAfterRestart = settleStub.callCount;
 
         await clock.tickAsync(2_001); // two intervals at the new cadence
-
-        expect(syncSpy.callCount).toBe(6);
+        const callsAtReplacementCadence = settleStub.callCount;
 
         // only the 1s timer remains: one more tick, not a stale 2s one
         await clock.tickAsync(1_000);
-        expect(syncSpy.callCount).toBe(7);
+        const callsAfterFinalInterval = settleStub.callCount;
 
-        syncSpy.restore();
+        await testHarness.agent.sync.stopSync();
+        settleStub.restore();
         getSyncTargetsStub.restore();
         clock.restore();
+
+        expect(callsAfterFirstStart).toBe(0);
+        expect(callsAtFirstCadence).toBe(2);
+        expect(callsAfterRestart).toBe(2);
+        expect(callsAtReplacementCadence).toBe(4);
+        expect(callsAfterFinalInterval).toBe(5);
       });
 
       it('should log settle check errors, but continue at the next interval', async () => {
@@ -2360,13 +2330,9 @@ describe('SyncEngineLevel', () => {
         });
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
-        const syncSpy = sinon.stub(SyncEngineLevel.prototype as any, 'sync');
-        syncSpy.resolves();
-
-        // first call is the initial catch-up, 2nd and onward are settle
-        // checks; the 2nd settle check (3rd call) rejects, a 4th call should
-        // still be made
-        syncSpy.onThirdCall().rejects(new Error('Sync error'));
+        const settleStub = sinon.stub((testHarness.agent.sync as any)._runCoordinator, 'settle');
+        settleStub.resolves();
+        settleStub.onSecondCall().rejects(new Error('Sync error'));
 
         const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
         getSyncTargetsStub.resolves([]);
@@ -2378,18 +2344,19 @@ describe('SyncEngineLevel', () => {
 
         // three intervals
         await clock.tickAsync(3_201);
+        const settleCalls = settleStub.callCount;
+        const errorCalls = consoleErrorSpy.callCount;
+        const errorMessage = consoleErrorSpy.args[0]?.[0];
 
-        // this should equal 4, once for the initial call and once for each interval call
-        expect(syncSpy.callCount).toBe(4);
-
-        // check if the error message is logged
-        expect(consoleErrorSpy.callCount).toBe(1);
-        expect(consoleErrorSpy.args[0][0]).toContain('SyncEngineLevel: Error during durable feed settle check');
-
-        syncSpy.restore();
+        await testHarness.agent.sync.stopSync();
+        settleStub.restore();
         getSyncTargetsStub.restore();
         consoleErrorSpy.restore();
         clock.restore();
+
+        expect(settleCalls).toBe(3);
+        expect(errorCalls).toBe(1);
+        expect(errorMessage).toContain('SyncEngineLevel: Error during durable feed settle check');
       });
 
       it('returns the owned link from re-initialization without reopening subscriptions', async () => {
@@ -2435,10 +2402,9 @@ describe('SyncEngineLevel', () => {
           options : { protocols: 'all' },
         });
 
-        const syncSpy = sinon.stub(SyncEngineLevel.prototype as any, 'sync');
-        syncSpy.resolves();
         const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
         getSyncTargetsStub.resolves([]);
+        const settleStub = sinon.stub((testHarness.agent.sync as any)._runCoordinator, 'settle').resolves();
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
@@ -2447,15 +2413,17 @@ describe('SyncEngineLevel', () => {
         await testHarness.agent.sync.startSync({ interval: '0s' });
 
         await clock.tickAsync(999);
-        expect(syncSpy.callCount).toBe(1); // the initial catch-up only — no tight loop
+        const callsBeforeFloor = settleStub.callCount;
 
         await clock.tickAsync(1);
-        syncSpy.restore();
+        const callsAtFloor = settleStub.callCount;
+        await testHarness.agent.sync.stopSync();
+        settleStub.restore();
         getSyncTargetsStub.restore();
         clock.restore();
 
-        // the first settle check fires at the clamped floor
-        expect(syncSpy.callCount).toBe(2);
+        expect(callsBeforeFloor).toBe(0);
+        expect(callsAtFloor).toBe(1);
       });
     });
 
@@ -2468,40 +2436,26 @@ describe('SyncEngineLevel', () => {
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
-        // stub getSyncTargets to return empty array so sync() completes quickly
-        // but still sets/releases the _syncLock
         const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
-        getSyncTargetsStub.returns(new Promise<any[]>((resolve) => {
-          clock.setTimeout(() => {
-            resolve([]);
-          }, 3);
-        }));
+        getSyncTargetsStub.resolves([]);
+        const settleStub = sinon.stub((testHarness.agent.sync as any)._runCoordinator, 'settle').resolves();
 
-        const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
+        await testHarness.agent.sync.startSync({ interval: '1s' });
 
-        const startPromise = testHarness.agent.sync.startSync({ interval: '1s' });
-
-        // expect the immediate sync call
-        expect(syncSpy.callCount).toBe(1);
-
-        await clock.tickAsync(10);
-        await startPromise;
-
-        await clock.tickAsync(2_100); // two interval rounds after the immediate sync
-
-        // expect 2 sync interval calls + initial sync
-        expect(syncSpy.callCount).toBe(3);
+        await clock.tickAsync(2_100); // two settle intervals
+        const callsBeforeStop = settleStub.callCount;
 
         await testHarness.agent.sync.stopSync();
 
         await clock.tickAsync(2_000); // 2 intervals
+        const callsAfterStop = settleStub.callCount;
 
-        // sync calls remain unchanged
-        expect(syncSpy.callCount).toBe(3);
-
-        syncSpy.restore();
+        settleStub.restore();
         getSyncTargetsStub.restore();
         clock.restore();
+
+        expect(callsBeforeStop).toBe(2);
+        expect(callsAfterStop).toBe(2);
       });
 
       it('waits for the current sync to complete before stopping', async () => {
@@ -2512,58 +2466,36 @@ describe('SyncEngineLevel', () => {
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
-        // stub getSyncTargets to take a controlled amount of time
         const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
-        getSyncTargetsStub.returns(new Promise<any[]>((resolve) => {
-          clock.setTimeout(() => {
-            resolve([]);
-          }, 3);
-        }));
+        getSyncTargetsStub.resolves([]);
+        let releaseSettle!: () => void;
+        const settle = new Promise<void>((resolve) => { releaseSettle = resolve; });
+        const settleStub = sinon.stub((testHarness.agent.sync as any)._runCoordinator, 'settle').returns(settle);
 
-        const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
+        await testHarness.agent.sync.startSync({ interval: '1s' });
+        await clock.tickAsync(1_000);
 
-        const startPromise = testHarness.agent.sync.startSync({ interval: '1s' });
+        let stopped = false;
+        const stopPromise = testHarness.agent.sync.stopSync().then((): void => { stopped = true; });
+        await clock.tickAsync(1);
+        const stoppedWhileSettlePending = stopped;
 
-        // expect the immediate sync call
-        expect(syncSpy.callCount).toBe(1);
-
-        await clock.tickAsync(10);
-        await startPromise;
-
-        // cause getSyncTargets to take longer (the timer starts now, so the
-        // delay must outlive the settle tick that starts one interval later)
-        getSyncTargetsStub.returns(new Promise<any[]>((resolve) => {
-          clock.setTimeout(() => {
-            resolve([]);
-          }, 2_000);
-        }));
-
-        await clock.tickAsync(1_001); // Enough time for the next interval to start
-
-        // next interval was called
-        expect(syncSpy.callCount).toBe(2);
-
-        // stop the sync
-        await new Promise<void>((resolve) => {
-          const stopPromise = testHarness.agent.sync.stopSync();
-          clock.tickAsync(1_000).then(async () => {
-            await stopPromise;
-            resolve();
-          });
-        });
-
-        // sync calls remain unchanged
-        expect(syncSpy.callCount).toBe(2);
+        releaseSettle();
+        await clock.tickAsync(0);
+        await stopPromise;
+        const callsAtStop = settleStub.callCount;
 
         // wait for future intervals
         await clock.tickAsync(2_000);
+        const callsAfterStop = settleStub.callCount;
 
-        // sync calls remain unchanged
-        expect(syncSpy.callCount).toBe(2);
-
-        syncSpy.restore();
+        settleStub.restore();
         getSyncTargetsStub.restore();
         clock.restore();
+
+        expect(stoppedWhileSettlePending).toBe(false);
+        expect(callsAtStop).toBe(1);
+        expect(callsAfterStop).toBe(1);
       });
 
       it('throws if ongoing sync does not complete within 2 seconds', async () => {
@@ -2574,61 +2506,31 @@ describe('SyncEngineLevel', () => {
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
-        // stub getSyncTargets to take a controlled amount of time
         const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
-        getSyncTargetsStub.returns(new Promise<any[]>((resolve) => {
-          clock.setTimeout(() => {
-            resolve([]);
-          }, 3);
-        }));
+        getSyncTargetsStub.resolves([]);
+        let releaseSettle!: () => void;
+        const settle = new Promise<void>((resolve) => { releaseSettle = resolve; });
+        const settleStub = sinon.stub((testHarness.agent.sync as any)._runCoordinator, 'settle').returns(settle);
 
-        const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
-
-        const startPromise = testHarness.agent.sync.startSync({ interval: '1s' });
-
-        // expect the immediate sync call
-        expect(syncSpy.callCount).toBe(1);
-
-        await clock.tickAsync(10);
-        await startPromise;
-
-        // cause getSyncTargets to take longer than the 2 second timeout
-        // (measured from stopSync, which starts one settle interval later)
-        getSyncTargetsStub.returns(new Promise<any[]>((resolve) => {
-          clock.setTimeout(() => {
-            resolve([]);
-          }, 3_700); // longer than the 2 seconds
-        }));
-
-        await clock.tickAsync(1_001); // Enough time for the next interval to start
-
-        // next interval was called
-        expect(syncSpy.callCount).toBe(2);
-
+        await testHarness.agent.sync.startSync({ interval: '1s' });
+        await clock.tickAsync(1_000);
         const stopPromise = testHarness.agent.sync.stopSync();
+        let stopError: unknown;
+        const observedStop = stopPromise.catch((error: unknown): void => { stopError = error; });
+        await clock.tickAsync(2_000);
+        await observedStop;
 
-        try {
-          await new Promise<void>((resolve, reject) => {
-            stopPromise.catch((error) => reject(error));
+        releaseSettle();
+        await clock.tickAsync(0);
+        await testHarness.agent.sync.stopSync(3_000);
 
-            clock.runToLastAsync().then(async () => {
-              try {
-                await stopPromise;
-                resolve();
-              } catch (error) {
-                reject(error);
-              }
-            });
-
-          });
-          throw new Error('Expected an error to be thrown');
-        } catch (error:any) {
-          expect(error.message).toBe('SyncEngineLevel: Existing sync operation did not complete within 2000 milliseconds.');
-        }
-
-        syncSpy.restore();
+        settleStub.restore();
         getSyncTargetsStub.restore();
         clock.restore();
+
+        expect((stopError as Error).message).toBe(
+          'SyncEngineLevel: Existing sync operation did not complete within 2000 milliseconds.'
+        );
       });
 
       it('only waits for the ongoing sync for the given timeout before failing', async () => {
@@ -2639,68 +2541,31 @@ describe('SyncEngineLevel', () => {
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
-        // stub getSyncTargets to take a controlled amount of time
         const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
-        getSyncTargetsStub.returns(new Promise<any[]>((resolve) => {
-          clock.setTimeout(() => {
-            resolve([]);
-          }, 3);
-        }));
+        getSyncTargetsStub.resolves([]);
+        let releaseSettle!: () => void;
+        const settle = new Promise<void>((resolve) => { releaseSettle = resolve; });
+        const settleStub = sinon.stub((testHarness.agent.sync as any)._runCoordinator, 'settle').returns(settle);
 
-        const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
-
-        testHarness.agent.sync.startSync({ interval: '1s' });
-
-        // expect the immediate sync call
-        expect(syncSpy.callCount).toBe(1);
-
-        await clock.tickAsync(10); // enough time for the sync round trip to complete
-
-        // cause getSyncTargets to take longer than the 2 second timeout
-        getSyncTargetsStub.returns(new Promise<any[]>((resolve) => {
-          clock.setTimeout(() => {
-            resolve([]);
-          }, 2_700); // longer than the 2 seconds
-        }));
-
-        await clock.tickAsync(1_001); // Enough time for the next interval to start
-
-        // next interval was called
-        expect(syncSpy.callCount).toBe(2);
-
+        await testHarness.agent.sync.startSync({ interval: '1s' });
+        await clock.tickAsync(1_000);
         const stopPromise = testHarness.agent.sync.stopSync(10);
-        try {
-          await new Promise<void>((resolve, reject) => {
-            stopPromise.catch((error) => reject(error));
+        let stopError: unknown;
+        const observedStop = stopPromise.catch((error: unknown): void => { stopError = error; });
+        await clock.tickAsync(10);
+        await observedStop;
 
-            clock.tickAsync(10).then(async () => {
-              try {
-                await stopPromise;
-                resolve();
-              } catch (error) {
-                reject(error);
-              }
-            });
+        releaseSettle();
+        await clock.tickAsync(0);
+        await testHarness.agent.sync.stopSync(3_000);
 
-          });
-          throw new Error('Expected an error to be thrown');
-        } catch (error:any) {
-          expect(error.message).toBe('SyncEngineLevel: Existing sync operation did not complete within 10 milliseconds.');
-        }
-
-        // call again with a longer timeout
-        await new Promise<void>((resolve) => {
-          const stopPromise2 = testHarness.agent.sync.stopSync(3_000);
-          // enough time for the ongoing sync to complete + 100ms as the check interval
-          clock.tickAsync(2800).then(async () => {
-            stopPromise2.then(() => resolve());
-          });
-        });
-
-        await clock.runToLastAsync();
-        syncSpy.restore();
+        settleStub.restore();
         getSyncTargetsStub.restore();
         clock.restore();
+
+        expect((stopError as Error).message).toBe(
+          'SyncEngineLevel: Existing sync operation did not complete within 10 milliseconds.'
+        );
       });
 
     });
@@ -3819,29 +3684,34 @@ describe('SyncEngineLevel', () => {
 
     it('should leave a running runtime untouched when a reconfiguration passes an invalid interval', async () => {
       const syncEngine = new SyncEngineLevel({ db: testHarness.syncStore, agent: testHarness.agent });
-      const syncStub = sinon.stub(SyncEngineLevel.prototype as any, 'sync');
-      syncStub.resolves();
       const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
       getSyncTargetsStub.resolves([]);
+      const settleStub = sinon.stub((syncEngine as any)._runCoordinator, 'settle').resolves();
       const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
       await syncEngine.startSync({ interval: '1s' });
 
-      // one sync for the initial startSync catch-up
-      expect(syncStub.callCount).toBe(1);
+      const callsAfterStart = settleStub.callCount;
 
-      await expect(syncEngine.startSync({ interval: 'not-a-duration' })).rejects.toThrow(
-        `Invalid duration: 'not-a-duration'`
-      );
+      let startError: unknown;
+      try {
+        await syncEngine.startSync({ interval: 'not-a-duration' });
+      } catch (error: unknown) {
+        startError = error;
+      }
 
       // the running runtime's settle-check timer persists and keeps firing
       await clock.tickAsync(2_800); // just under 3 intervals
-      expect(syncStub.callCount).toBe(3);
+      const callsAfterIntervals = settleStub.callCount;
 
-      clock.restore();
       await syncEngine.stopSync(5000);
-      syncStub.restore();
+      clock.restore();
+      settleStub.restore();
       getSyncTargetsStub.restore();
+
+      expect((startError as Error).message).toBe(`Invalid duration: 'not-a-duration'`);
+      expect(callsAfterStart).toBe(0);
+      expect(callsAfterIntervals).toBe(2);
     });
   });
 
