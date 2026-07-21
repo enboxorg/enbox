@@ -335,6 +335,31 @@ describe('SyncDurableFeedReconciler', () => {
     expect(fixture.operations.commitCheckpoint.called).toBe(false);
   });
 
+  it('should reset invalid persisted checkpoints before either direction sends a query', async () => {
+    for (const direction of ['pull', 'push'] as const) {
+      const fixture = createReconciler();
+      fixture.link[direction].contiguousAppliedToken = { ...token(1), streamId: '' };
+
+      await fixture.reconciler[direction](target(), fixture.link);
+
+      expect(fixture.resetCheckpoint.calledOnceWithExactly(fixture.link, direction)).toBe(true);
+      expect(fixture.resetCheckpoint.calledBefore(fixture.queryFeed.firstCall)).toBe(true);
+      expect(fixture.link[direction].contiguousAppliedToken).toBeUndefined();
+      expect(fixture.queryFeed.getCalls().every(({ args }) => args[0].cursor === undefined)).toBe(true);
+    }
+  });
+
+  it('should not reset an invalid checkpoint after its replication generation is cancelled', async () => {
+    const fixture = createReconciler();
+    fixture.link.pull.contiguousAppliedToken = { ...token(1), streamId: '' };
+
+    expect(await fixture.reconciler.pull(target(), fixture.link, undefined, (): boolean => false)).toEqual({
+      aborted: true,
+    });
+    expect(fixture.resetCheckpoint.notCalled).toBe(true);
+    expect(fixture.queryFeed.notCalled).toBe(true);
+  });
+
   it('should report a deferred pull without advancing the page checkpoint', async () => {
     const fixture = createReconciler();
     fixture.link.pull.contiguousAppliedToken = token(1);

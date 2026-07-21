@@ -201,7 +201,11 @@ export class SyncDurableFeedReconciler {
     if (options?.direction === 'push') {
       return {};
     }
+    if (SyncDurableFeedReconciler.shouldAbort(shouldContinue)) {
+      return { aborted: true };
+    }
 
+    await this.resetInvalidCheckpoint(link, 'pull');
     return this.pullRemotePages(target, link, shouldContinue);
   }
 
@@ -215,7 +219,11 @@ export class SyncDurableFeedReconciler {
     if (options?.direction === 'pull') {
       return {};
     }
+    if (SyncDurableFeedReconciler.shouldAbort(shouldContinue)) {
+      return { aborted: true };
+    }
 
+    await this.resetInvalidCheckpoint(link, 'push');
     const forceQuotaProbe = options?.forceQuotaProbe === true;
     const forceProbeCids = forceQuotaProbe
       ? new Set((await this._quotaManager.getActiveBlocksForTarget(target)).map(({ messageCid }) => messageCid))
@@ -598,6 +606,14 @@ export class SyncDurableFeedReconciler {
         return cids;
       }
       cursor = advance.cursor;
+    }
+  }
+
+  /** Reset corrupt durable progress before it can enter a DWN query. */
+  private async resetInvalidCheckpoint(link: ReplicationLinkState, direction: SyncDirection): Promise<void> {
+    const token = link[direction].contiguousAppliedToken;
+    if (token !== undefined && !isValidProgressToken(token)) {
+      await this._operations.resetCheckpoint(link, direction);
     }
   }
 
