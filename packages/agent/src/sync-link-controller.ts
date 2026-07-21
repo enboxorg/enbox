@@ -1,6 +1,6 @@
 import type { ProgressToken } from '@enbox/dwn-sdk-js';
 
-import type { NonEmptyStringArray, PushFailure, ReplicationLinkState, SyncScope } from './types/sync.js';
+import type { DirectionCheckpoint, NonEmptyStringArray, PushFailure, ReplicationLinkState, SyncScope } from './types/sync.js';
 
 import { SyncCheckpoint } from './sync-checkpoint.js';
 
@@ -13,6 +13,8 @@ export type SyncLinkSubscription = {
 export type SyncPushQueueEntry = {
   cid: string;
   lastFailure?: PushFailure;
+  /** Delivery tag for the local feed position this entry came from. */
+  tag?: SyncDeliveryTag;
 };
 
 /** Configuration captured when a live-push queue is first created. */
@@ -32,27 +34,152 @@ export type SyncPushQueueState = SyncPushQueueParams & {
   timer?: ReturnType<typeof setTimeout>;
 };
 
-type InFlightPullCommit = {
-  committed: boolean;
+type InFlightDelivery = {
+  acked: boolean;
   token: ProgressToken;
 };
 
 /**
- * One in-flight pull delivery's ordering claim, pinned to the pull
- * generation that issued it. `startNewPullGeneration` and
- * `resetPullGeneration` each begin a new generation, after which commits
- * carrying a superseded ticket are ignored instead of colliding with a
- * fresh delivery's ordinal.
+ * The delivery tag for one in-flight delivery in either direction —
+ * AMQP-style cumulative acknowledgement: `track*Delivery` issues the tag in
+ * delivery order, `ack*Delivery` resolves it, and the direction's checkpoint
+ * advances only through the contiguous acked prefix. Tags are pinned to the
+ * pull generation that issued them — one fence for both directions, because
+ * the local and remote subscription halves open and reset as one
+ * generational pair — and an ack carrying a superseded tag is ignored
+ * instead of colliding with a fresh delivery's ordinal.
  *
  * "Generation" means this monotonic in-memory counter and nothing else. The
  * two durable, string-valued epochs — `authorizationEpoch` on a replication
  * link, and `ProgressToken.epoch` on a remote stream — are separate concepts
  * that deliberately keep the word "epoch".
  */
-export type SyncPullDeliveryTicket = {
+export type SyncDeliveryTag = {
   generation: number;
   ordinal: number;
 };
+
+/**
+ * How a ledger earns the right to commit an acked delivery into the
+ * checkpoint:
+ *
+ * - `stream-anchored` — deliveries arrive on a replay stream opened FROM the
+ *   checkpoint, so every delivered token is contiguous by construction and
+ *   commits as soon as its prefix is acked (the pull side).
+ * - `successor-only` — deliveries are live observations with no proof about
+ *   the span below them, so only the checkpoint's immediate successor (or a
+ *   stream's first position onto an empty checkpoint) may commit; anything
+ *   else holds until a reconciler pass covers the gap (the push side, whose
+ *   local subscription opens from "now").
+ */
+type DeliveryCommitPolicy = 'stream-anchored' | 'successor-only';
+
+/**
+ * One direction's cumulative-acknowledgement ledger: in-flight deliveries
+ * keyed by delivery-order ordinal, with the direction's durable checkpoint
+ * advancing only through the contiguous acked prefix its commit policy can
+ * prove gap-free. The generation fence lives in the controller, shared by
+ * both directions.
+ */
+class DeliveryLedger {
+  private readonly _inflight: Map<number, InFlightDelivery> = new Map();
+  private _nextCommitOrdinal = 0;
+  private _nextDeliveryOrdinal = 0;
+
+  public constructor(
+    private readonly _checkpoint: DirectionCheckpoint,
+    private readonly _commitPolicy: DeliveryCommitPolicy,
+  ) {}
+
+  public get inflightCount(): number {
+    return this._inflight.size;
+  }
+
+  /** Register a delivery in feed order and return its ordinal. */
+  public track(token: ProgressToken): number {
+    const ordinal = this._nextDeliveryOrdinal++;
+    this._inflight.set(ordinal, { token, acked: false });
+    return ordinal;
+  }
+
+  /** Mark one delivery acked and advance through the contiguous acked prefix. */
+  public ack(ordinal: number): number {
+    const entry = this._inflight.get(ordinal);
+    if (entry !== undefined) {
+      entry.acked = true;
+    }
+
+    return this.commitAcked();
+  }
+
+  /** Advance the checkpoint through the contiguous acked prefix the policy proves. */
+  public commitAcked(): number {
+    let drained = 0;
+    while (true) {
+      const entry = this._inflight.get(this._nextCommitOrdinal);
+      if (entry?.acked !== true) {
+        break;
+      }
+      if (
+        this._commitPolicy === 'successor-only' &&
+        !SyncCheckpoint.isImmediateSuccessor(this._checkpoint, entry.token)
+      ) {
+        break;
+      }
+
+      SyncCheckpoint.commitContiguousToken(this._checkpoint, entry.token);
+      this._inflight.delete(this._nextCommitOrdinal);
+      this._nextCommitOrdinal++;
+      drained++;
+    }
+
+    return drained;
+  }
+
+  /**
+   * Fold an externally advanced checkpoint into this ledger's (a reconciler
+   * pass advanced its own link copy — the fold is monotonic), drop the
+   * in-flight prefix it covers, then advance through acked deliveries the
+   * fold unlocked or the sweep released. Returns only the newly advanced
+   * count — folding and pruning alone move nothing new.
+   */
+  public pruneCovered(coveringToken: ProgressToken): number {
+    SyncCheckpoint.commitContiguousToken(this._checkpoint, coveringToken);
+    const checkpoint = this._checkpoint.contiguousAppliedToken;
+    if (checkpoint === undefined) {
+      return 0;
+    }
+
+    while (true) {
+      const entry = this._inflight.get(this._nextCommitOrdinal);
+      if (
+        entry === undefined ||
+        !SyncCheckpoint.validateTokenDomain(this._checkpoint, entry.token) ||
+        SyncCheckpoint.comparePosition(entry.token, checkpoint) > 0
+      ) {
+        break;
+      }
+
+      this._inflight.delete(this._nextCommitOrdinal);
+      this._nextCommitOrdinal++;
+    }
+
+    return this.commitAcked();
+  }
+
+  /** Discard in-flight deliveries; rebase the commit cursor onto the next unissued ordinal. */
+  public rebase(): void {
+    this._inflight.clear();
+    this._nextCommitOrdinal = this._nextDeliveryOrdinal;
+  }
+
+  /** Discard in-flight deliveries and restart ordinals from zero. */
+  public reset(): void {
+    this._inflight.clear();
+    this._nextCommitOrdinal = 0;
+    this._nextDeliveryOrdinal = 0;
+  }
+}
 
 /**
  * Serialization lanes multiplexed onto one link mailbox. Every enqueued
@@ -85,9 +212,8 @@ export class SyncLinkController {
   private _liveStreamAttached = false;
   private _liveSubscription?: SyncLinkSubscription;
   private _localSubscription?: SyncLinkSubscription;
-  private _nextPullCommitOrdinal = 0;
-  private _nextPullDeliveryOrdinal = 0;
-  private readonly _pullInflight: Map<number, InFlightPullCommit> = new Map();
+  private readonly _pullLedger: DeliveryLedger;
+  private readonly _pushLedger: DeliveryLedger;
   private _pullGeneration = 0;
   private _pushQueue?: SyncPushQueueState;
   private _reconcileTimer?: ReturnType<typeof setTimeout>;
@@ -99,7 +225,10 @@ export class SyncLinkController {
   public constructor(
     public readonly linkKey: string,
     public readonly link: ReplicationLinkState,
-  ) {}
+  ) {
+    this._pullLedger = new DeliveryLedger(link.pull, 'stream-anchored');
+    this._pushLedger = new DeliveryLedger(link.push, 'successor-only');
+  }
 
   /** Whether this controller still owns callbacks for its active-link lifetime. */
   public get isActive(): boolean {
@@ -211,7 +340,7 @@ export class SyncLinkController {
     }
   }
 
-  /** The current pull generation; superseded delivery tickets are ignored. */
+  /** The current pull generation; superseded delivery tags are ignored. */
   public get pullGeneration(): number {
     return this._pullGeneration;
   }
@@ -223,7 +352,12 @@ export class SyncLinkController {
 
   /** Number of pull deliveries still waiting to become contiguously committed. */
   public get pullInflightCount(): number {
-    return this._pullInflight.size;
+    return this._pullLedger.inflightCount;
+  }
+
+  /** Number of local feed deliveries still waiting to settle in the push ledger. */
+  public get pushInflightCount(): number {
+    return this._pushLedger.inflightCount;
   }
 
   public get pushQueue(): SyncPushQueueState | undefined {
@@ -315,73 +449,93 @@ export class SyncLinkController {
     }
   }
 
-  /** Claim an ordinal in the current pull generation before admission begins. */
-  public startPullDelivery(token: ProgressToken): SyncPullDeliveryTicket {
-    const ordinal = this._nextPullDeliveryOrdinal++;
-    this._pullInflight.set(ordinal, { token, committed: false });
-    return { generation: this._pullGeneration, ordinal };
+  /** Issue the delivery tag for a pull delivery before admission begins. */
+  public trackPullDelivery(token: ProgressToken): SyncDeliveryTag {
+    return { generation: this._pullGeneration, ordinal: this._pullLedger.track(token) };
   }
 
   /**
-   * Mark a pull delivery committed and advance only the contiguous prefix.
-   * Returns the number of newly drained deliveries. A ticket issued before
-   * the pull runtime was cleared or reset belongs to a superseded generation
-   * and commits nothing — its ordinal may have been reissued to a fresh
-   * delivery, and its token predates the re-established pull boundary.
+   * Acknowledge a pull delivery as durably applied and advance the pull
+   * checkpoint through the contiguous acked prefix. Returns the number of
+   * newly committed deliveries. An ack carrying a superseded generation's
+   * tag is ignored — its ordinal may have been reissued to a fresh delivery,
+   * and its token predates the re-established pull boundary.
    */
-  public commitPullDelivery(ticket: SyncPullDeliveryTicket): number {
-    if (ticket.generation !== this._pullGeneration) {
+  public ackPullDelivery(tag: SyncDeliveryTag): number {
+    if (tag.generation !== this._pullGeneration) {
       return 0;
     }
 
-    const entry = this._pullInflight.get(ticket.ordinal);
-    if (entry !== undefined) {
-      entry.committed = true;
-    }
-
-    return this.advanceContiguousPullCommits();
+    return this._pullLedger.ack(tag.ordinal);
   }
 
-  /** Advance the link checkpoint through every contiguously committed delivery. */
-  public advanceContiguousPullCommits(): number {
-    let drained = 0;
-    while (true) {
-      const entry = this._pullInflight.get(this._nextPullCommitOrdinal);
-      if (entry?.committed !== true) {
-        break;
-      }
-
-      SyncCheckpoint.commitContiguousToken(this.link.pull, entry.token);
-      this._pullInflight.delete(this._nextPullCommitOrdinal);
-      this._nextPullCommitOrdinal++;
-      drained++;
-    }
-
-    return drained;
+  /** Advance the pull checkpoint through the contiguous acked prefix. */
+  public commitAckedPullDeliveries(): number {
+    return this._pullLedger.commitAcked();
   }
 
-  /** Discard incomplete pull deliveries while preserving future ordinal order. */
+  /**
+   * Issue the delivery tag for a local feed delivery before its push outcome
+   * is known. Tags are issued in delivery order — callers tag before their
+   * first await so the ledger mirrors local feed order.
+   */
+  public trackPushDelivery(token: ProgressToken): SyncDeliveryTag {
+    return { generation: this._pullGeneration, ordinal: this._pushLedger.track(token) };
+  }
+
+  /**
+   * Acknowledge a local delivery as owing this link nothing — pushed
+   * successfully, echo-suppressed, out of scope, or dead-lettered — and
+   * advance the durable push checkpoint through the contiguous acked
+   * prefix. An ack carrying a superseded generation's tag is ignored.
+   */
+  public ackPushDelivery(tag: SyncDeliveryTag): number {
+    if (tag.generation !== this._pullGeneration) {
+      return 0;
+    }
+
+    return this._pushLedger.ack(tag.ordinal);
+  }
+
+  /** Advance the push checkpoint through the contiguous acked prefix. */
+  public commitAckedPushDeliveries(): number {
+    return this._pushLedger.commitAcked();
+  }
+
+  /**
+   * Drop in-flight push deliveries the durable checkpoint already covers. A
+   * reconciler push pass advances the checkpoint independently of the live
+   * ledger, and positions at or below it owe nothing — without this sweep, a
+   * delivery the live path could not settle (an unclassifiable event, an
+   * exhausted retry) stalls the ledger prefix for the rest of the
+   * generation even after the reconciler has covered it. Returns only the
+   * count of acked deliveries the sweep released into the checkpoint.
+   */
+  public pruneCoveredPushDeliveries(coveringToken: ProgressToken): number {
+    return this._pushLedger.pruneCovered(coveringToken);
+  }
+
   /**
    * Begin a new pull generation: bump the counter so outstanding delivery
-   * tickets and in-flight subscription attaches are fenced off, discard
-   * incomplete deliveries, and rebase the commit cursor onto the next
-   * unissued ordinal.
+   * tags and in-flight subscription attaches are fenced off, discard
+   * in-flight deliveries in BOTH directions (the subscription pair resets
+   * as one unit), and rebase the commit cursors onto the next unissued
+   * ordinals.
    *
    * The bump is the point — both callers rely on it to publish a pause or
    * repair transition synchronously, before any await.
    */
   public startNewPullGeneration(): void {
     this._pullGeneration++;
-    this._pullInflight.clear();
-    this._nextPullCommitOrdinal = this._nextPullDeliveryOrdinal;
+    this._pullLedger.rebase();
+    this._pushLedger.rebase();
   }
 
-  /** Reset pull delivery ordering when a repair establishes a fresh boundary. */
+  /** Reset delivery ordering in both directions when a repair establishes a fresh boundary. */
   public resetPullGeneration(): void {
     this._pullGeneration++;
-    this._pullInflight.clear();
-    this._nextPullCommitOrdinal = 0;
-    this._nextPullDeliveryOrdinal = 0;
+    this._pullLedger.reset();
+    this._pushLedger.reset();
   }
 
   /** Return the existing push queue or initialize it for this link lifetime. */

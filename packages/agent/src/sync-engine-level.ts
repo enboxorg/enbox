@@ -437,9 +437,10 @@ export class SyncEngineLevel implements SyncEngine {
         this.getOrCreateReplicationLink(target),
       getQuotaBlockCids: async (target): Promise<string[]> =>
         (await this.getQuotaBlocksForTarget(target)).map(({ messageCid }) => messageCid),
-      onCheckpointAdvanced : (link, direction): void => { this.emitCheckpointAdvance(link, direction); },
-      onReconcileApplied   : (target, messageCids): void => { this.emitReconcileApplied(target, messageCids); },
-      probeQuotaBlocks     : (target, force, forceProbeCids, shouldContinue): Promise<void> =>
+      commitCheckpoint: (link, direction, target): Promise<void> =>
+        this.commitReconciledCheckpoint(link, direction, target),
+      onReconcileApplied : (target, messageCids): void => { this.emitReconcileApplied(target, messageCids); },
+      probeQuotaBlocks   : (target, force, forceProbeCids, shouldContinue): Promise<void> =>
         this.probeQuotaBlocksForTarget(target, force, forceProbeCids, shouldContinue),
       pushLocalPage: (target, entries, shouldContinue): Promise<FeedPagePushResult> =>
         this.pushLocalFeedPage(target, entries, shouldContinue),
@@ -505,11 +506,13 @@ export class SyncEngineLevel implements SyncEngine {
           this._lifecycle.captureIdentityTaskRunner(tenantDid),
         clearQuotaBlock: (tenantDid, linkKey, messageCid): Promise<boolean> =>
           this.clearQuotaBlockByLinkKey(tenantDid, linkKey, messageCid),
-        getController     : (linkKey): SyncLinkController | undefined => this.getLinkController(linkKey),
-        pushMessages      : (request): Promise<PushResult> => this.pushMessages(request),
-        recordDeadLetter  : (entry): Promise<void> => this.recordDeadLetter(entry),
-        reportError       : (message, error): void => { console.error(message, error); },
-        scheduleReconcile : (linkKey, link, reason, delayMs): void => {
+        emitCheckpointAdvance : (link): void => { this.emitCheckpointAdvance(link, 'push'); },
+        getController         : (linkKey): SyncLinkController | undefined => this.getLinkController(linkKey),
+        persistCheckpoint     : (link): Promise<void> => this.ledger.persistCheckpoint(link, 'push'),
+        pushMessages          : (request): Promise<PushResult> => this.pushMessages(request),
+        recordDeadLetter      : (entry): Promise<void> => this.recordDeadLetter(entry),
+        reportError           : (message, error): void => { console.error(message, error); },
+        scheduleReconcile     : (linkKey, link, reason, delayMs): void => {
           this.scheduleLinkReconcileByKey(linkKey, link, reason, delayMs);
         },
         applyPushResult: (target, result, options): Promise<SyncQuotaPushResultOutcome> =>
@@ -2213,6 +2216,41 @@ export class SyncEngineLevel implements SyncEngine {
         ? { type: 'checkpoint:pull-advance', ...base }
         : { type: 'checkpoint:push-advance', ...base },
     );
+  }
+
+  /**
+   * The single seam a reconciler page-commit flows through: covered live
+   * push-ledger deliveries are pruned first — acked positions they release
+   * fold into the same write — then the direction checkpoint is persisted
+   * once and its advance emitted. One awaited persist per advance; no
+   * fire-and-forget checkpoint writes.
+   */
+  private async commitReconciledCheckpoint(
+    link: ReplicationLinkState,
+    direction: SyncDirection,
+    target: SyncTarget,
+  ): Promise<void> {
+    if (direction === 'push') {
+      // The reconciler advanced ITS OWN link copy (getOrCreateLink returns
+      // independent objects); the controller's ledger is the authoritative
+      // live state. Fold the reconciler's advance into the controller —
+      // releasing covered deliveries and any acks they unblocked — then fold
+      // the controller's final checkpoint, possibly further advanced, back
+      // into the object being persisted. One authoritative checkpoint, one
+      // awaited write.
+      const controller = this.getLinkController(this.getReplicationLinkKey(target, link));
+      const advanced = link.push.contiguousAppliedToken;
+      if (controller?.isActive === true && advanced !== undefined) {
+        controller.pruneCoveredPushDeliveries(advanced);
+        const authoritative = controller.link.push.contiguousAppliedToken;
+        if (authoritative !== undefined) {
+          SyncCheckpoint.commitContiguousToken(link.push, authoritative);
+        }
+      }
+    }
+
+    await this.ledger.persistCheckpoint(link, direction);
+    this.emitCheckpointAdvance(link, direction);
   }
 
   // ---------------------------------------------------------------------------

@@ -108,7 +108,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const fixture = createFixture();
     const state = link();
     const controller = activate(fixture, state);
-    controller.startPullDelivery(token());
+    controller.trackPullDelivery(token());
     const resumeToken = token('10');
     const drain = sinon.stub(fixture.coordinator as any, 'runPendingRepairs').resolves();
 
@@ -159,7 +159,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const closePush = sinon.stub().resolves();
     controller.setLiveSubscription({ close: closePull });
     controller.setLocalSubscription({ close: closePush });
-    controller.startPullDelivery(token());
+    controller.trackPullDelivery(token());
     const runtime = controller.getOrCreatePushQueue({ did: DID, dwnUrl: REMOTE });
     runtime.entries.push({ cid: 'push-cid' });
     controller.setPushTimer(runtime, setTimeout(() => undefined, 1000));

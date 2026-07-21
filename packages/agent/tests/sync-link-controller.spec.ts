@@ -42,14 +42,14 @@ describe('SyncLinkController', () => {
   it('should commit concurrently delivered pull events only in delivery order', () => {
     const link = createLink();
     const controller = new SyncLinkController('link-key', link);
-    const first = controller.startPullDelivery(token(1));
-    const second = controller.startPullDelivery(token(2));
+    const first = controller.trackPullDelivery(token(1));
+    const second = controller.trackPullDelivery(token(2));
 
-    expect(controller.commitPullDelivery(second)).toBe(0);
+    expect(controller.ackPullDelivery(second)).toBe(0);
     expect(link.pull.contiguousAppliedToken).toBeUndefined();
     expect(controller.pullInflightCount).toBe(2);
 
-    expect(controller.commitPullDelivery(first)).toBe(2);
+    expect(controller.ackPullDelivery(first)).toBe(2);
     expect(link.pull.contiguousAppliedToken).toEqual(token(2));
     expect(controller.pullInflightCount).toBe(0);
   });
@@ -57,57 +57,57 @@ describe('SyncLinkController', () => {
   it('should discard interrupted pull deliveries without blocking later work', () => {
     const link = createLink();
     const controller = new SyncLinkController('link-key', link);
-    controller.startPullDelivery(token(1));
+    controller.trackPullDelivery(token(1));
 
     controller.startNewPullGeneration();
-    const next = controller.startPullDelivery(token(2));
+    const next = controller.trackPullDelivery(token(2));
 
     expect(next.ordinal).toBe(1);
-    expect(controller.commitPullDelivery(next)).toBe(1);
+    expect(controller.ackPullDelivery(next)).toBe(1);
     expect(link.pull.contiguousAppliedToken).toEqual(token(2));
   });
 
   it('should restart pull delivery ordering when the runtime is reset', () => {
     const link = createLink();
     const controller = new SyncLinkController('link-key', link);
-    controller.startPullDelivery(token(1));
-    controller.startPullDelivery(token(2));
+    controller.trackPullDelivery(token(1));
+    controller.trackPullDelivery(token(2));
 
     controller.resetPullGeneration();
-    const next = controller.startPullDelivery(token(3));
+    const next = controller.trackPullDelivery(token(3));
 
     expect(next.ordinal).toBe(0);
     expect(controller.pullInflightCount).toBe(1);
-    expect(controller.commitPullDelivery(next)).toBe(1);
+    expect(controller.ackPullDelivery(next)).toBe(1);
     expect(link.pull.contiguousAppliedToken).toEqual(token(3));
   });
 
-  it('should ignore commits carrying a superseded pull-generation ticket', () => {
+  it('should ignore commits carrying a superseded pull-generation tag', () => {
     const link = createLink();
     const controller = new SyncLinkController('link-key', link);
-    const stale = controller.startPullDelivery(token(9));
+    const stale = controller.trackPullDelivery(token(9));
 
     controller.resetPullGeneration();
-    const fresh = controller.startPullDelivery(token(2));
+    const fresh = controller.trackPullDelivery(token(2));
 
-    // The stale ticket's ordinal collides with the fresh delivery's ordinal
+    // The stale tag's ordinal collides with the fresh delivery's ordinal
     // in the new generation; its commit must not mark the fresh delivery
     // committed or move either checkpoint token.
-    expect(controller.commitPullDelivery(stale)).toBe(0);
+    expect(controller.ackPullDelivery(stale)).toBe(0);
     expect(link.pull.contiguousAppliedToken).toBeUndefined();
 
-    expect(controller.commitPullDelivery(fresh)).toBe(1);
+    expect(controller.ackPullDelivery(fresh)).toBe(1);
     expect(link.pull.contiguousAppliedToken).toEqual(token(2));
   });
 
   it('should ignore commits abandoned by startNewPullGeneration', () => {
     const link = createLink();
     const controller = new SyncLinkController('link-key', link);
-    const abandoned = controller.startPullDelivery(token(1));
+    const abandoned = controller.trackPullDelivery(token(1));
 
     controller.startNewPullGeneration();
 
-    expect(controller.commitPullDelivery(abandoned)).toBe(0);
+    expect(controller.ackPullDelivery(abandoned)).toBe(0);
     expect(link.pull.contiguousAppliedToken).toBeUndefined();
   });
 
@@ -515,6 +515,89 @@ describe('SyncLinkController mailbox', () => {
       const controller = currentController();
       controller.dispose();
       expect(controller.isStreamCurrent).toBe(false);
+    });
+  });
+
+  describe('push ledger', () => {
+    it('should advance the push checkpoint through the contiguous settled prefix', () => {
+      const controller = new SyncLinkController('push-ledger-link-key', createLink());
+      const first = controller.trackPushDelivery(token(1));
+      const second = controller.trackPushDelivery(token(2));
+      const third = controller.trackPushDelivery(token(3));
+
+      // Out of order: held until the prefix settles.
+      expect(controller.ackPushDelivery(second)).toBe(0);
+      expect(controller.link.push.contiguousAppliedToken).toBeUndefined();
+
+      expect(controller.ackPushDelivery(first)).toBe(2);
+      expect(controller.link.push.contiguousAppliedToken?.position).toBe('2');
+
+      expect(controller.ackPushDelivery(third)).toBe(1);
+      expect(controller.link.push.contiguousAppliedToken?.position).toBe('3');
+      expect(controller.pushInflightCount).toBe(0);
+    });
+
+    it('should fence tags from a superseded generation', () => {
+      const controller = new SyncLinkController('push-ledger-link-key', createLink());
+      const stale = controller.trackPushDelivery(token(1));
+      controller.resetPullGeneration();
+
+      expect(controller.ackPushDelivery(stale)).toBe(0);
+      expect(controller.link.push.contiguousAppliedToken).toBeUndefined();
+      expect(controller.pushInflightCount).toBe(0);
+
+      const fresh = controller.trackPushDelivery(token(1));
+      expect(controller.ackPushDelivery(fresh)).toBe(1);
+      expect(controller.link.push.contiguousAppliedToken?.position).toBe('1');
+    });
+
+    it('should clear push ordering alongside pull ordering on a new generation', () => {
+      const controller = new SyncLinkController('push-ledger-link-key', createLink());
+      controller.trackPushDelivery(token(1));
+      controller.startNewPullGeneration();
+
+      expect(controller.pushInflightCount).toBe(0);
+      const next = controller.trackPushDelivery(token(1));
+      expect(controller.ackPushDelivery(next)).toBe(1);
+      expect(controller.link.push.contiguousAppliedToken?.position).toBe('1');
+    });
+
+    it('should hold a live ack that is not the checkpoint successor until a reconciler covers the gap', () => {
+      const controller = new SyncLinkController('push-ledger-link-key', createLink());
+
+      // The local subscription opened from "now": a live delivery at
+      // position 5 proves nothing about positions 1-4, so its ack must not
+      // establish the checkpoint.
+      const above = controller.trackPushDelivery(token(5));
+      expect(controller.ackPushDelivery(above)).toBe(0);
+      expect(controller.link.push.contiguousAppliedToken).toBeUndefined();
+
+      // A reconciler pass covered through 4 — the held ack is now the
+      // immediate successor and commits.
+      expect(controller.pruneCoveredPushDeliveries(token(4))).toBe(1);
+      expect(controller.link.push.contiguousAppliedToken?.position).toBe('5');
+      expect(controller.pushInflightCount).toBe(0);
+    });
+
+    it('should prune deliveries a reconciler checkpoint covers and release acked ones above', () => {
+      const controller = new SyncLinkController('push-ledger-link-key', createLink());
+      controller.trackPushDelivery(token(1));
+      const acked = controller.trackPushDelivery(token(2));
+      expect(controller.ackPushDelivery(acked)).toBe(0);
+
+      // Only the released acked delivery counts — folding and pruning alone
+      // move nothing new.
+      expect(controller.pruneCoveredPushDeliveries(token(1))).toBe(1);
+      expect(controller.link.push.contiguousAppliedToken?.position).toBe('2');
+      expect(controller.pushInflightCount).toBe(0);
+    });
+
+    it('should stop pruning at a foreign token domain', () => {
+      const controller = new SyncLinkController('push-ledger-link-key', createLink());
+      controller.trackPushDelivery({ epoch: 'other-epoch', position: '9', streamId: 'other-stream' });
+
+      expect(controller.pruneCoveredPushDeliveries(token(5))).toBe(0);
+      expect(controller.pushInflightCount).toBe(1);
     });
   });
 });

@@ -86,7 +86,13 @@ export interface SyncDurableFeedReconcilerOperations {
 
   getQuotaBlockCids(target: SyncTarget): Promise<string[]>;
 
-  onCheckpointAdvanced(link: ReplicationLinkState, direction: SyncDirection): void;
+  /**
+   * Commit one page's checkpoint advance through the engine's single seam:
+   * covered live push-ledger deliveries are pruned (their release folds into
+   * the same write), the direction checkpoint is persisted once, and its
+   * advance is emitted.
+   */
+  commitCheckpoint(link: ReplicationLinkState, direction: SyncDirection, target: SyncTarget): Promise<void>;
 
   onReconcileApplied(target: SyncTarget, messageCids: string[]): void;
 
@@ -649,8 +655,7 @@ export class SyncDurableFeedReconciler {
       direction,
     );
     SyncCheckpoint.commitContiguousToken(checkpoint, reply.cursor);
-    await this._operations.getReplicationLinkStore().persistCheckpoint(link, direction);
-    this._operations.onCheckpointAdvanced(link, direction);
+    await this._operations.commitCheckpoint(link, direction, target);
 
     return drained ? { drained: true } : { cursor: reply.cursor, drained: false };
   }

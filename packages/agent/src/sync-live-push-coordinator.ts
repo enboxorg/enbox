@@ -11,7 +11,7 @@ import type {
   ReplicationLinkState,
   SyncScope,
 } from './types/sync.js';
-import type { SyncLinkController, SyncPushQueueEntry, SyncPushQueueState } from './sync-link-controller.js';
+import type { SyncDeliveryTag, SyncLinkController, SyncPushQueueEntry, SyncPushQueueState } from './sync-link-controller.js';
 import type { SyncQuotaPushResultOutcome, SyncQuotaPushTransitionOptions } from './sync-quota-manager.js';
 
 import { Message } from '@enbox/dwn-sdk-js';
@@ -37,6 +37,10 @@ export interface SyncLivePushCoordinatorOperations {
   pushMessages(request: SyncLivePushBatchRequest): Promise<PushResult>;
   recordDeadLetter(entry: Omit<DeadLetterEntry, 'failedAt'>): Promise<void>;
   reportError(message: string, error: unknown): void;
+  /** Emit the push checkpoint-advance event after a durable save. */
+  emitCheckpointAdvance(link: ReplicationLinkState): void;
+  /** Persist the link's durable push checkpoint after the ledger advanced it. */
+  persistCheckpoint(link: ReplicationLinkState): Promise<void>;
   scheduleReconcile(linkKey: string, link: ReplicationLinkState, reason: string, delayMs?: number): void;
   applyPushResult(
     target: SyncTarget,
@@ -110,17 +114,31 @@ export class SyncLivePushCoordinator {
       return;
     }
 
+    // Claim the delivery's push-ledger ordinal before the first await so
+    // tag order mirrors local feed order. Every settled outcome —
+    // pushed, suppressed, out of scope, dead-lettered — commits the tag
+    // and advances the durable push checkpoint, so the reconciler's push
+    // pass stops re-reading feed spans live push already covered.
+    const tag = controller.trackPushDelivery(message.cursor);
+
     const classification = classifySyncEventScope(message.event, controller.link.scope);
     if (classification === 'out-of-scope') {
+      await this.ackPushDeliveries(controller, [tag]);
       return;
     }
     if (classification === 'unknown') {
+      // Unsettled on purpose: the scheduled reconcile owns this position,
+      // and its checkpoint advancement prunes the stalled ledger prefix.
       this._operations.scheduleReconcile(target.linkKey, controller.link, 'push-scope-unclassified');
       return;
     }
 
     const cid = await Message.getCid(message.event.message as GenericMessage);
-    if (isStale() || this._echoSuppressor.hasRecentlyPulled(target.did, cid, target.dwnUrl)) {
+    if (isStale()) {
+      return;
+    }
+    if (this._echoSuppressor.hasRecentlyPulled(target.did, cid, target.dwnUrl)) {
+      await this.ackPushDeliveries(controller, [tag]);
       return;
     }
 
@@ -132,7 +150,7 @@ export class SyncLivePushCoordinator {
       scope              : target.scope,
       permissionGrantIds : target.permissionGrantIds,
     });
-    runtime.entries.push({ cid });
+    runtime.entries.push({ cid, tag });
 
     // A busy flush lane means a flush or requeue is queued or in flight:
     // entries appended now ride with it, or with the debounce timer it arms
@@ -249,10 +267,14 @@ export class SyncLivePushCoordinator {
 
     const { link, linkKey } = controller;
     const runtime = controller.getOrCreatePushQueue(pending);
-    const entries = await this.removeTerminalFailures(linkKey, pending);
+    const { deadLettered, retryable: entries } = await this.removeTerminalFailures(linkKey, pending);
     if (!controller.isActive) {
       return;
     }
+    // Dead-lettered entries are deliberately skipped deliveries — they ack
+    // their ledger tags exactly as the reconciler's checkpoint deliberately
+    // advances past quota-blocked roots.
+    await this.ackPushDeliveries(controller, SyncLivePushCoordinator.tagsOf(deadLettered));
     if (entries.length === 0) {
       this.stopRuntime(controller, runtime);
       this._operations.scheduleReconcile(linkKey, link, 'push-terminal');
@@ -344,21 +366,68 @@ export class SyncLivePushCoordinator {
       this.scheduleQuotaProbe(linkKey, controller.link, transition.nextQuotaProbeAt);
     }
     if (transition.retryableFailures.length > 0) {
+      // Delivered entries ack their ledger tags; retryable ones keep
+      // theirs, holding the checkpoint below the positions still owed.
+      const failuresByCid = new Map(transition.retryableFailures.map((failure) => [failure.cid, failure]));
+      await this.ackPushDeliveries(
+        controller,
+        SyncLivePushCoordinator.tagsOf(batch.entries, (entry) => !failuresByCid.has(entry.cid)),
+      );
       await this.requeueExclusive(controller, {
         ...SyncLivePushCoordinator.pendingFromRuntime(runtime),
-        entries: transition.retryableFailures.map((failure) => ({
-          cid         : failure.cid,
-          lastFailure : failure,
-        })),
+        entries: batch.entries.flatMap((entry) => {
+          const failure = failuresByCid.get(entry.cid);
+          return failure === undefined ? [] : [{ ...entry, lastFailure: failure }];
+        }),
         retryCount: runtime.retryCount + 1,
       });
       return;
     }
 
+    await this.ackPushDeliveries(controller, SyncLivePushCoordinator.tagsOf(batch.entries));
     runtime.retryCount = 0;
     if (runtime.timer === undefined && runtime.entries.length === 0) {
       controller.clearPushQueue(runtime);
     }
+  }
+
+  /** Commit settled push-ledger tags and persist the checkpoint when it advanced. */
+  private async ackPushDeliveries(
+    controller: SyncLinkController,
+    tags: readonly SyncDeliveryTag[],
+  ): Promise<void> {
+    let advanced = 0;
+    for (const tag of tags) {
+      advanced += controller.ackPushDelivery(tag);
+    }
+    if (advanced === 0) {
+      return;
+    }
+
+    try {
+      await this._operations.persistCheckpoint(controller.link);
+      this._operations.emitCheckpointAdvance(controller.link);
+    } catch (error: unknown) {
+      // Best-effort: an unpersisted checkpoint costs one redundant
+      // reconciler span, never correctness.
+      this._operations.reportError(
+        `SyncLivePushCoordinator: Failed to persist push checkpoint for ${controller.link.tenantDid} -> ${controller.link.remoteEndpoint}`,
+        error,
+      );
+    }
+  }
+
+  private static tagsOf(
+    entries: readonly SyncPushQueueEntry[],
+    include: (entry: SyncPushQueueEntry) => boolean = (): boolean => true,
+  ): SyncDeliveryTag[] {
+    const tags: SyncDeliveryTag[] = [];
+    for (const entry of entries) {
+      if (entry.tag !== undefined && include(entry)) {
+        tags.push(entry.tag);
+      }
+    }
+    return tags;
   }
 
   private finishFlush(controller: SyncLinkController, runtime: SyncPushQueueState): void {
@@ -380,7 +449,8 @@ export class SyncLivePushCoordinator {
   private async removeTerminalFailures(
     linkKey: string,
     pending: SyncLivePushPendingBatch,
-  ): Promise<SyncPushQueueEntry[]> {
+  ): Promise<{ deadLettered: SyncPushQueueEntry[]; retryable: SyncPushQueueEntry[] }> {
+    const deadLettered: SyncPushQueueEntry[] = [];
     const retryable: SyncPushQueueEntry[] = [];
     for (const entry of pending.entries) {
       const failure = entry.lastFailure;
@@ -389,6 +459,7 @@ export class SyncLivePushCoordinator {
         continue;
       }
 
+      deadLettered.push(entry);
       await this._operations.clearQuotaBlock(pending.did, linkKey, entry.cid);
       await this._operations.recordDeadLetter({
         messageCid     : entry.cid,
@@ -399,7 +470,7 @@ export class SyncLivePushCoordinator {
         errorDetail    : failure.detail ?? 'terminal push failure',
       });
     }
-    return retryable;
+    return { deadLettered, retryable };
   }
 
   private scheduleRetry(
