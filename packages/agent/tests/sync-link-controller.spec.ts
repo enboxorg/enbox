@@ -569,7 +569,8 @@ describe('SyncLinkController mailbox', () => {
       expect(controller.ackPushDelivery(settled)).toBe(0);
 
       controller.link.push.contiguousAppliedToken = token(1);
-      expect(controller.pruneCoveredPushDeliveries()).toBe(2);
+      // Only the released acked delivery counts — pruning alone moves nothing.
+      expect(controller.pruneCoveredPushDeliveries()).toBe(1);
       expect(controller.link.push.contiguousAppliedToken?.position).toBe('2');
       expect(controller.pushInflightCount).toBe(0);
     });

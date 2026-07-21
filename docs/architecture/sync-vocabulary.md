@@ -18,10 +18,10 @@ the code, not an entry missing from this table.
 | Runtime identifier of a replication link | **`linkKey`** — `buildLinkKey`, `LINK_KEY_SEPARATOR` | `buildLinkId`, `LINK_ID_SEPARATOR` |
 | Endpoint-independent link identity | **`durableLinkIdentityKey`** | — |
 | Durable replication-link store | **`replicationLinkStore`** — `getReplicationLinkStore` | `getLinkStore`, "ledger" (nickname only) |
-| Per-link pull ordering fence | **`pullGeneration`** / `expectedPullGeneration` | `pullEpoch`, `openGeneration`, `expectedGeneration`, `subscriptionPullEpoch` |
+| Per-link delivery ordering fence — ONE generation for the subscription pair, fencing delivery tags in both directions | **`pullGeneration`** / `expectedPullGeneration` | `pullEpoch`, `openGeneration`, `expectedGeneration`, `subscriptionPullEpoch` |
 | Target-plan version | **`topologyGeneration`** / `expectedTopologyGeneration` | bare `generation`, `expectedGeneration` |
 | Per-link push batching state | **`pushQueue`** — `SyncPushQueueState/Params/Entry` | `pushRuntime`, `SyncPushRuntime*` |
-| In-flight delivery acknowledgement, both directions: `track*Delivery` issues a delivery tag in feed order, `ack*Delivery` resolves it, and `commitAcked*Deliveries` advances the durable checkpoint through the contiguous acked prefix (cumulative ack); `pruneCoveredPushDeliveries` sweeps ledger positions a reconciler checkpoint covers | **delivery tag** — `SyncPullDeliveryTag`, `SyncPushDeliveryTag` | `SyncPullDeliveryTicket`, `startPullDelivery`, `commitPullDelivery`, `advanceContiguousPullCommits` |
+| In-flight delivery acknowledgement, both directions: `track*Delivery` issues a delivery tag in feed order, `ack*Delivery` resolves it, and `commitAcked*Deliveries` advances the durable checkpoint through the contiguous acked prefix (cumulative ack); `pruneCoveredPushDeliveries` sweeps ledger positions a reconciler checkpoint covers | **delivery tag** — `SyncDeliveryTag`, one type for both directions | `SyncPullDeliveryTicket`, `SyncPullDeliveryTag`/`SyncPushDeliveryTag` (twin types), `startPullDelivery`, `commitPullDelivery`, `advanceContiguousPullCommits` |
 | Folding a push result into quota state | **`applyPushResult`** | `transitionPushResult` |
 | Permanently-failed message record | **dead letter** — `DeadLetterEntry`, `getDeadLetters`, `clearDeadLetter`, `clearAllDeadLetters`, `recordDeadLetter`, `hasDeadLetter` | `getFailedMessages`, `clearFailedMessage`, `clearAllFailedMessages`, `hasAdmissionDeadLetter` |
 | Clearing one exact `(tenant, cid, remote)` dead letter | **`clearDeadLetterForTenant`** | the quota ops key `clearFailedMessage`, which shared a name with the across-tenants public method |
@@ -79,9 +79,17 @@ One verb per kind of ending, because these had four overlapping spellings:
 `teardown*` and `cleanup*` are retired — they were synonyms of `stop` and
 `retire` respectively.
 
-## Known remaining split
+## Known remaining splits
 
-One knowingly-unconverged name, because the fix costs more than the confusion:
+Names left knowingly unconverged, because the fix costs more than the confusion:
+
+- **`pullGeneration`** now fences delivery tags in BOTH directions (the
+  subscription pair opens and resets as one unit), but keeps its pull-flavored
+  name: renaming it (and `expectedPullGeneration`, `isPullGenerationCurrent`,
+  `startNewPullGeneration`, `resetPullGeneration`) to a direction-neutral form
+  touches a hundred-plus call sites across in-flight branches. The table row
+  above documents the broadened meaning; the name converges when the churn is
+  cheap.
 
 - **`SyncTarget.did` / `.dwnUrl`** are the same values as
   `ReplicationLinkState.tenantDid` / `.remoteEndpoint`, and `syncTargetFromLink`

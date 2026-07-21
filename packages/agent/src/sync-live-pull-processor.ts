@@ -14,7 +14,7 @@ import type {
   SyncEvent,
   SyncEventScope,
 } from './types/sync.js';
-import type { SyncLinkController, SyncPullDeliveryTag } from './sync-link-controller.js';
+import type { SyncDeliveryTag, SyncLinkController } from './sync-link-controller.js';
 
 import { Encoder, Message } from '@enbox/dwn-sdk-js';
 
@@ -68,7 +68,7 @@ export type SyncLivePullFetchMessages = typeof fetchRemoteMessages;
 
 type PullDelivery = {
   controller?: SyncLinkController;
-  tag?: SyncPullDeliveryTag;
+  tag?: SyncDeliveryTag;
 };
 
 type LivePullProcessResult =

@@ -73,9 +73,9 @@ function protocolMessage(protocol = 'https://protocol.example/covered'): Generic
   } as GenericMessage;
 }
 
-function event(message: GenericMessage = protocolMessage()): Extract<SubscriptionMessage, { type: 'event' }> {
+function event(message: GenericMessage = protocolMessage(), position = '1'): Extract<SubscriptionMessage, { type: 'event' }> {
   return {
-    cursor : { epoch: 'epoch', position: '1', streamId: 'stream' },
+    cursor : { epoch: 'epoch', position, streamId: 'stream' },
     event  : { message },
     type   : 'event',
   } as Extract<SubscriptionMessage, { type: 'event' }>;
@@ -90,6 +90,7 @@ function createFixture(options: {
   const operations: PushOperationStubs = {
     captureIdentityTaskRunner : sinon.stub().returns(taskRunner),
     clearQuotaBlock           : sinon.stub().resolves(false),
+    emitCheckpointAdvance     : sinon.stub(),
     getController             : sinon.stub().callsFake((linkKey: string) => controllers.get(linkKey)),
     persistCheckpoint         : sinon.stub().resolves(),
     pushMessages              : sinon.stub().callsFake(async ({ messageCids }) => ({ failed: [], succeeded: messageCids })),
@@ -638,14 +639,6 @@ describe('SyncLivePushCoordinator', () => {
   });
 
   describe('push ledger checkpointing', () => {
-    function eventAt(position: string, message: GenericMessage = protocolMessage()): Extract<SubscriptionMessage, { type: 'event' }> {
-      return {
-        cursor : { epoch: 'local-epoch', position, streamId: 'local-stream' },
-        event  : { message },
-        type   : 'event',
-      } as Extract<SubscriptionMessage, { type: 'event' }>;
-    }
-
     it('settles suppressed and out-of-scope deliveries and persists the checkpoint', async () => {
       const fixture = createFixture();
       const scope = { kind: 'protocolSet' as const, protocols: ['https://protocol.example/covered'] as [string] };
@@ -656,14 +649,14 @@ describe('SyncLivePushCoordinator', () => {
         controller,
         () => false,
         fixture.taskRunner,
-        eventAt('1', protocolMessage('https://protocol.example/outside')),
+        event(protocolMessage('https://protocol.example/outside'), '1'),
       );
       expect(controller.link.push.contiguousAppliedToken?.position).toBe('1');
 
       const echoed = protocolMessage();
       const echoedCid = await Message.getCid(echoed);
       fixture.echoSuppressor.trackPulled(DID, echoedCid, REMOTE);
-      await fixture.coordinator.handleEvent(target(scope), controller, () => false, fixture.taskRunner, eventAt('2', echoed));
+      await fixture.coordinator.handleEvent(target(scope), controller, () => false, fixture.taskRunner, event(echoed, '2'));
 
       expect(controller.link.push.contiguousAppliedToken?.position).toBe('2');
       expect(controller.pushInflightCount).toBe(0);
@@ -677,7 +670,7 @@ describe('SyncLivePushCoordinator', () => {
       const fixture = createFixture();
       const controller = activate(fixture);
 
-      await fixture.coordinator.handleEvent(target(), controller, () => false, fixture.taskRunner, eventAt('1'));
+      await fixture.coordinator.handleEvent(target(), controller, () => false, fixture.taskRunner, event(protocolMessage(), '1'));
       await waitForLastTask(fixture.taskRunner);
 
       expect(fixture.operations.pushMessages.calledOnce).toBe(true);
@@ -687,8 +680,9 @@ describe('SyncLivePushCoordinator', () => {
       controller.deactivate();
     });
 
-    it('holds the checkpoint below a retryable failure and settles after the retry delivers', async () => {
-      const fixture = createFixture({ retryBackoffMs: [0, 0] });
+    it('holds the checkpoint below a retryable failure and acks after the retry delivers', async () => {
+      const clock = sinon.useFakeTimers();
+      const fixture = createFixture({ retryBackoffMs: [0, 250] });
       const controller = activate(fixture);
       const message = protocolMessage();
       const cid = await Message.getCid(message);
@@ -698,22 +692,22 @@ describe('SyncLivePushCoordinator', () => {
         terminalFailures  : [],
       });
 
-      await fixture.coordinator.handleEvent(target(), controller, () => false, fixture.taskRunner, eventAt('1', message));
+      await fixture.coordinator.handleEvent(target(), controller, () => false, fixture.taskRunner, event(message, '1'));
       await waitForLastTask(fixture.taskRunner);
       // First flush failed retryably — the position is still owed.
       expect(controller.link.push.contiguousAppliedToken).toBeUndefined();
 
-      const deadline = Date.now() + 2_000;
-      while (controller.link.push.contiguousAppliedToken === undefined && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
+      // The retry timer delivers on the second attempt.
+      await clock.tickAsync(250);
+      await waitForLastTask(fixture.taskRunner);
       expect(controller.link.push.contiguousAppliedToken?.position).toBe('1');
       expect(controller.pushInflightCount).toBe(0);
       controller.deactivate();
     });
 
-    it('settles a dead-lettered delivery as deliberately skipped', async () => {
-      const fixture = createFixture({ retryBackoffMs: [0, 0] });
+    it('acks a dead-lettered delivery as deliberately skipped', async () => {
+      const clock = sinon.useFakeTimers();
+      const fixture = createFixture({ retryBackoffMs: [0, 250] });
       const controller = activate(fixture);
       const message = protocolMessage();
       const cid = await Message.getCid(message);
@@ -723,13 +717,10 @@ describe('SyncLivePushCoordinator', () => {
         terminalFailures  : [],
       });
 
-      await fixture.coordinator.handleEvent(target(), controller, () => false, fixture.taskRunner, eventAt('1', message));
+      await fixture.coordinator.handleEvent(target(), controller, () => false, fixture.taskRunner, event(message, '1'));
       await waitForLastTask(fixture.taskRunner);
+      await clock.tickAsync(0);
 
-      const deadline = Date.now() + 2_000;
-      while (controller.link.push.contiguousAppliedToken === undefined && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
       expect(fixture.operations.recordDeadLetter.calledOnce).toBe(true);
       expect(controller.link.push.contiguousAppliedToken?.position).toBe('1');
       expect(controller.pushInflightCount).toBe(0);
@@ -749,13 +740,13 @@ describe('SyncLivePushCoordinator', () => {
         },
       } as GenericMessage;
 
-      await fixture.coordinator.handleEvent(target(scope), controller, () => false, fixture.taskRunner, eventAt('1', unknown));
+      await fixture.coordinator.handleEvent(target(scope), controller, () => false, fixture.taskRunner, event(unknown, '1'));
       await fixture.coordinator.handleEvent(
         target(scope),
         controller,
         () => false,
         fixture.taskRunner,
-        eventAt('2', protocolMessage('https://protocol.example/outside')),
+        event(protocolMessage('https://protocol.example/outside'), '2'),
       );
 
       // The settled position 2 is held behind the unclassifiable position 1,
@@ -765,8 +756,8 @@ describe('SyncLivePushCoordinator', () => {
 
       // The reconciler's push pass advanced the durable checkpoint past the
       // stall — the sweep drops the covered position and releases the rest.
-      controller.link.push.contiguousAppliedToken = { epoch: 'local-epoch', position: '1', streamId: 'local-stream' };
-      expect(controller.pruneCoveredPushDeliveries()).toBe(2);
+      controller.link.push.contiguousAppliedToken = { epoch: 'epoch', position: '1', streamId: 'stream' };
+      expect(controller.pruneCoveredPushDeliveries()).toBe(1);
       expect(controller.link.push.contiguousAppliedToken?.position).toBe('2');
       expect(controller.pushInflightCount).toBe(0);
     });

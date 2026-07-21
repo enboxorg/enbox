@@ -112,7 +112,7 @@ function createReconciler(syncTarget = target()): ReconcilerFixture {
     getReplicationLinkStore         : sinon.stub().returns(linkStore),
     getOrCreateLink                 : sinon.stub().resolves(link),
     getQuotaBlockCids               : sinon.stub().resolves([]),
-    onCheckpointAdvanced            : sinon.stub(),
+    commitCheckpoint                : sinon.stub().resolves(),
     onReconcileApplied              : sinon.stub(),
     probeQuotaBlocks                : sinon.stub().resolves(),
     pushLocalPage                   : sinon.stub().resolves({ kind: 'processed', hasActionableDiffs: false }),
@@ -303,10 +303,9 @@ describe('SyncDurableFeedReconciler', () => {
       hasActionableDiffs : true,
       remoteFingerprint  : 'page-2',
     });
-    expect(fixture.persistCheckpoint.callCount).toBe(2);
     expect(fixture.link.pull.contiguousAppliedToken).toEqual(token(3));
-    expect(fixture.operations.onCheckpointAdvanced.callCount).toBe(2);
-    expect(fixture.persistCheckpoint.calledBefore(fixture.operations.onCheckpointAdvanced)).toBe(true);
+    expect(fixture.operations.commitCheckpoint.callCount).toBe(2);
+    expect(fixture.operations.commitCheckpoint.alwaysCalledWith(fixture.link, 'pull')).toBe(true);
   });
 
   it('should reject a non-advancing cursor before persisting or emitting progress', async () => {
@@ -317,8 +316,7 @@ describe('SyncDurableFeedReconciler', () => {
     await expect(fixture.reconciler.pull(target())).rejects.toThrow(
       'SyncDurableFeedReconciler: pull MessagesQuery cursor did not advance',
     );
-    expect(fixture.persistCheckpoint.called).toBe(false);
-    expect(fixture.operations.onCheckpointAdvanced.called).toBe(false);
+    expect(fixture.operations.commitCheckpoint.called).toBe(false);
   });
 
   it('should report partial pull admission before surfacing a deferred dependency', async () => {

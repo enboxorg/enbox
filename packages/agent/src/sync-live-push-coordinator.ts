@@ -11,7 +11,7 @@ import type {
   ReplicationLinkState,
   SyncScope,
 } from './types/sync.js';
-import type { SyncLinkController, SyncPushDeliveryTag, SyncPushQueueEntry, SyncPushQueueState } from './sync-link-controller.js';
+import type { SyncDeliveryTag, SyncLinkController, SyncPushQueueEntry, SyncPushQueueState } from './sync-link-controller.js';
 import type { SyncQuotaPushResultOutcome, SyncQuotaPushTransitionOptions } from './sync-quota-manager.js';
 
 import { Message } from '@enbox/dwn-sdk-js';
@@ -37,6 +37,8 @@ export interface SyncLivePushCoordinatorOperations {
   pushMessages(request: SyncLivePushBatchRequest): Promise<PushResult>;
   recordDeadLetter(entry: Omit<DeadLetterEntry, 'failedAt'>): Promise<void>;
   reportError(message: string, error: unknown): void;
+  /** Emit the push checkpoint-advance event after a durable save. */
+  emitCheckpointAdvance(link: ReplicationLinkState): void;
   /** Persist the link's durable push checkpoint after the ledger advanced it. */
   persistCheckpoint(link: ReplicationLinkState): Promise<void>;
   scheduleReconcile(linkKey: string, link: ReplicationLinkState, reason: string, delayMs?: number): void;
@@ -265,18 +267,14 @@ export class SyncLivePushCoordinator {
 
     const { link, linkKey } = controller;
     const runtime = controller.getOrCreatePushQueue(pending);
-    const entries = await this.removeTerminalFailures(linkKey, pending);
+    const { deadLettered, retryable: entries } = await this.removeTerminalFailures(linkKey, pending);
     if (!controller.isActive) {
       return;
     }
-    // Dead-lettered entries are deliberately skipped deliveries — they
-    // settle their ledger tags exactly as the reconciler's checkpoint
-    // deliberately advances past quota-blocked roots.
-    const retryableEntries = new Set(entries);
-    await this.ackPushDeliveries(
-      controller,
-      SyncLivePushCoordinator.tagsOf(pending.entries, (entry) => !retryableEntries.has(entry)),
-    );
+    // Dead-lettered entries are deliberately skipped deliveries — they ack
+    // their ledger tags exactly as the reconciler's checkpoint deliberately
+    // advances past quota-blocked roots.
+    await this.ackPushDeliveries(controller, SyncLivePushCoordinator.tagsOf(deadLettered));
     if (entries.length === 0) {
       this.stopRuntime(controller, runtime);
       this._operations.scheduleReconcile(linkKey, link, 'push-terminal');
@@ -368,23 +366,19 @@ export class SyncLivePushCoordinator {
       this.scheduleQuotaProbe(linkKey, controller.link, transition.nextQuotaProbeAt);
     }
     if (transition.retryableFailures.length > 0) {
-      // Delivered entries settle their ledger tags; retryable ones keep
+      // Delivered entries ack their ledger tags; retryable ones keep
       // theirs, holding the checkpoint below the positions still owed.
-      const retryableCids = new Set(transition.retryableFailures.map((failure) => failure.cid));
+      const failuresByCid = new Map(transition.retryableFailures.map((failure) => [failure.cid, failure]));
       await this.ackPushDeliveries(
         controller,
-        SyncLivePushCoordinator.tagsOf(batch.entries, (entry) => !retryableCids.has(entry.cid)),
-      );
-      const tagsByCid = new Map(
-        batch.entries.filter((entry) => entry.tag !== undefined).map((entry) => [entry.cid, entry.tag!]),
+        SyncLivePushCoordinator.tagsOf(batch.entries, (entry) => !failuresByCid.has(entry.cid)),
       );
       await this.requeueExclusive(controller, {
         ...SyncLivePushCoordinator.pendingFromRuntime(runtime),
-        entries: transition.retryableFailures.map((failure) => ({
-          cid         : failure.cid,
-          lastFailure : failure,
-          tag         : tagsByCid.get(failure.cid),
-        })),
+        entries: batch.entries.flatMap((entry) => {
+          const failure = failuresByCid.get(entry.cid);
+          return failure === undefined ? [] : [{ ...entry, lastFailure: failure }];
+        }),
         retryCount: runtime.retryCount + 1,
       });
       return;
@@ -400,7 +394,7 @@ export class SyncLivePushCoordinator {
   /** Commit settled push-ledger tags and persist the checkpoint when it advanced. */
   private async ackPushDeliveries(
     controller: SyncLinkController,
-    tags: readonly SyncPushDeliveryTag[],
+    tags: readonly SyncDeliveryTag[],
   ): Promise<void> {
     let advanced = 0;
     for (const tag of tags) {
@@ -412,6 +406,7 @@ export class SyncLivePushCoordinator {
 
     try {
       await this._operations.persistCheckpoint(controller.link);
+      this._operations.emitCheckpointAdvance(controller.link);
     } catch (error: unknown) {
       // Best-effort: an unpersisted checkpoint costs one redundant
       // reconciler span, never correctness.
@@ -425,8 +420,8 @@ export class SyncLivePushCoordinator {
   private static tagsOf(
     entries: readonly SyncPushQueueEntry[],
     include: (entry: SyncPushQueueEntry) => boolean = (): boolean => true,
-  ): SyncPushDeliveryTag[] {
-    const tags: SyncPushDeliveryTag[] = [];
+  ): SyncDeliveryTag[] {
+    const tags: SyncDeliveryTag[] = [];
     for (const entry of entries) {
       if (entry.tag !== undefined && include(entry)) {
         tags.push(entry.tag);
@@ -454,7 +449,8 @@ export class SyncLivePushCoordinator {
   private async removeTerminalFailures(
     linkKey: string,
     pending: SyncLivePushPendingBatch,
-  ): Promise<SyncPushQueueEntry[]> {
+  ): Promise<{ deadLettered: SyncPushQueueEntry[]; retryable: SyncPushQueueEntry[] }> {
+    const deadLettered: SyncPushQueueEntry[] = [];
     const retryable: SyncPushQueueEntry[] = [];
     for (const entry of pending.entries) {
       const failure = entry.lastFailure;
@@ -463,6 +459,7 @@ export class SyncLivePushCoordinator {
         continue;
       }
 
+      deadLettered.push(entry);
       await this._operations.clearQuotaBlock(pending.did, linkKey, entry.cid);
       await this._operations.recordDeadLetter({
         messageCid     : entry.cid,
@@ -473,7 +470,7 @@ export class SyncLivePushCoordinator {
         errorDetail    : failure.detail ?? 'terminal push failure',
       });
     }
-    return retryable;
+    return { deadLettered, retryable };
   }
 
   private scheduleRetry(
