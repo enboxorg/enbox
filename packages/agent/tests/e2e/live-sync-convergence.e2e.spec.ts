@@ -3,10 +3,10 @@
  *
  * Creates an agent, writes a record locally, and verifies it appears on
  * the remote DWN via live sync push. Then writes directly to the remote
- * and verifies the live pull subscription applies the record locally.
+ * and verifies the remote subscription wakes durable pull reconciliation.
  * Proves the full pipeline:
  *   local write -> EventLog -> durable push wake -> durable feed pass -> remote DWN
- *   remote DWN -> live pull subscription -> local DWN
+ *   remote write -> subscription wake -> durable feed pass -> local DWN
  *
  * Requires: DWN server running on localhost:3000 (or TEST_DWN_URL),
  *           Pkarr relay on localhost:7527 (or DID_DHT_GATEWAY_URI).

@@ -1,4 +1,4 @@
-import type { GenericMessage, MessageEvent, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { DwnInterfaceName, DwnMethodName, EncryptionProtocol, PermissionsProtocol } from '@enbox/dwn-sdk-js';
 
@@ -14,23 +14,6 @@ type SyncMessageScopeClassificationParams = {
 };
 
 type ProtocolSetSyncScope = Extract<SyncScope, { kind: 'protocolSet' }>;
-
-/**
- * Classifies whether a live event belongs to the link's current sync scope.
- *
- * Full links accept every message. Protocol-set links accept records for a
- * covered protocol, ProtocolsConfigure messages that install a covered
- * protocol, and permission records tagged for a covered protocol. RecordsDelete
- * messages carry no protocol in their descriptor, so they must be classified
- * from the event's initial write metadata.
- */
-export function classifySyncEventScope(event: MessageEvent, scope: SyncScope): SyncScopeClassification {
-  return classifySyncMessageScope({
-    message      : event.message,
-    initialWrite : event.initialWrite,
-    scope,
-  });
-}
 
 /**
  * Classifies whether a DWN message belongs to a sync scope before local apply.

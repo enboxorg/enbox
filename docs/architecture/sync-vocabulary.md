@@ -14,17 +14,19 @@ the code, not an entry missing from this table.
 | Concept | Canonical name | Retired aliases |
 |---|---|---|
 | The periodic pass that reconciles durable feeds *and* re-initializes orphaned links | **settle check** — `runSettleCheck`, `SETTLE_CHECK_TIMER` | `runLiveIntegrityCheck`, `SYNC_INTERVAL_TIMER` |
-| Browser online and visibility recovery, which probes the transport and lets durable-cursor resubscription recover the stream without starting data-plane reconciliation | **wake health check** — `checkHealth`, `checkAllConnections` | agent-level convergence or integrity check |
+| Browser online and visibility recovery, which probes the transport; verified reconnection reopens cursorless wake subscriptions and requests durable passes from persisted checkpoints | **wake health check** — `checkHealth`, `checkAllConnections` | agent-level convergence or integrity check |
 | Reconciling one target's durable feeds | **`reconcileTarget`** | `syncTargetWithDurableFeeds` |
 | Runtime identifier of a replication link | **`linkKey`** — `buildLinkKey`, `LINK_KEY_SEPARATOR` | `buildLinkId`, `LINK_ID_SEPARATOR` |
 | Endpoint-independent link identity | **`durableLinkIdentityKey`** | — |
 | Durable replication-link store | **`replicationLinkStore`** | `getLinkStore`, `ledger` |
-| Authoritative in-engine owner of one active link object, both subscriptions, directional replay ordering, startup readiness, repair, and reconciliation | **replication session** — currently `SyncLinkController` | independent live and reconciler link copies |
-| Per-link subscription and replay fence — ONE generation for the subscription pair and both directional queues | **`replicationGeneration`** / `expectedReplicationGeneration` | `pullGeneration`, `pullEpoch`, `openGeneration`, `expectedGeneration`, `subscriptionPullEpoch` |
+| Authoritative in-engine owner of one active link object, both wake subscriptions, directional reconciliation ordering, startup readiness, repair, and reconciliation | **replication session** — currently `SyncLinkController` | independent live and reconciler link copies |
+| Per-link subscription and reconciliation fence — ONE generation for the subscription pair and both directional queues | **`replicationGeneration`** / `expectedReplicationGeneration` | `pullGeneration`, `pullEpoch`, `openGeneration`, `expectedGeneration`, `subscriptionPullEpoch` |
 | Target-plan version | **`topologyGeneration`** / `expectedTopologyGeneration` | bare `generation`, `expectedGeneration` |
 | Deterministic identity of one tenant-and-scope projection, independent of endpoint and authorization | **`projectionId`** — `computeProjectionId` | endpoint identity, authorization identity |
-| Ordered callback work after subscription establishment | **direction replay queue** — `enqueueDirection`, one independent FIFO each for `pull` and `push` | `DeliveryLedger`, `SyncDeliveryTag`, `track*Delivery` / `ack*Delivery`, `pushQueue`, `SyncPushQueue*` |
-| Single startup boundary for the two direction queues | **replication readiness barrier** — `isReplicationReady`, `markReplicationReady` | allowing subscription callbacks to race baseline establishment |
+| Ordered durable-feed work for one replication direction | **direction reconciliation queue** — `enqueueDirection`, one independent FIFO each for `pull` and `push` | subscription callback queue, `DeliveryLedger`, `SyncDeliveryTag`, `track*Delivery` / `ack*Delivery`, `pushQueue`, `SyncPushQueue*` |
+| Single startup boundary for the two direction queues | **replication readiness barrier** — `isReplicationReady`, `markReplicationReady` | allowing wake-requested passes to race baseline establishment |
+| Cursorless remote subscription whose events request durable pull passes | **live pull subscription** — `openLivePullSubscription`, `LivePullWakeContext` | live-pull admission pipeline, `SyncLivePullProcessor` |
+| A remote subscription event that says the durable remote feed may have advanced; bursts request one trailing pass, and the pass always resumes from `link.pull.contiguousAppliedToken` | **durable pull wake** — `requestPass('pull')`, `SyncLinkRecoveryCoordinator.pull` | per-event admission, delivery acknowledgement, event-cursor checkpoint, or EOSE checkpoint |
 | A local subscription event that says the durable local feed may have advanced; bursts request one trailing pass, and the pass always resumes from `link.push.contiguousAppliedToken` | **durable push wake** — `requestPass('push')`, `SyncLinkRecoveryCoordinator.push` | per-event push job, delivery acknowledgement, or checkpoint evidence |
 | Durable resume point for one direction of one replication link | **direction checkpoint** — `DirectionCheckpoint.contiguousAppliedToken` | delivery acknowledgement, arbitrary subscription cursor |
 | Namespace in which progress-token positions can be compared | **token domain** — exact `(streamId, epoch)` pair | stream alone, epoch alone, or a globally ordered position |
@@ -37,7 +39,7 @@ the code, not an entry missing from this table.
 | Verified comparison of complete local and remote feed inventories | **feed convergence** — `SyncFeedConvergenceManager` | ordinary reconciliation pass, transport health |
 | Ordering and supervision of start/stop, exclusive work, and background tasks | **lifecycle coordination** — `SyncLifecycleCoordinator`, `SyncTaskGroup` | timer ownership, which belongs to `SyncRuntime` |
 | Public engine observability notification | **sync event** — `SyncEvent`, `SyncEngine.on(listener)` | DWN subscription `MessageEvent`, transport lifecycle message |
-| Dependency-aware topological ordering of messages before DWN processing | **admission order** — `orderMessagesForAdmission` | feed order, direction replay order |
+| Dependency-aware topological ordering of messages before DWN processing | **admission order** — `orderMessagesForAdmission` | feed order, direction reconciliation order |
 | Permanently-failed message record | **dead letter** — `DeadLetterEntry`, `getDeadLetters`, `clearDeadLetter`, `clearAllDeadLetters`, `recordDeadLetter`, `hasDeadLetter` | `getFailedMessages`, `clearFailedMessage`, `clearAllFailedMessages`, `hasAdmissionDeadLetter` |
 | Clearing one exact `(tenant, cid, remote)` dead letter | **`clearDeadLetterForTenant`** | the quota ops key `clearFailedMessage`, which reused the across-tenants public method's name |
 | A cycle that did not run because the link is parked | **`paused`** on the reconcile result | reporting `converged: true` for a link nothing compared |
@@ -48,7 +50,7 @@ the code, not an entry missing from this table.
 |---|---|---|
 | **epoch** | A durable, string-valued generation: `authorizationEpoch` on a link, `ProgressToken.epoch` on a remote stream | The in-memory replication counter — that is a *generation* |
 | **generation** | An in-memory monotonic counter. Always qualified: *replication* generation, *topology* generation | The `SyncRuntime` lifetime — that is a *runtime* |
-| **runtime** | The `SyncRuntime` timer owner for one start/stop cycle | Direction replay state (*queue*), live-sync mode (*live sync*), or loose ephemeral state |
+| **runtime** | The `SyncRuntime` timer owner for one start/stop cycle | Direction reconciliation state (*queue*), live-sync mode (*live sync*), or loose ephemeral state |
 | **settle** | Reach a quiescent boundary: a **settle check** reconciles durable feeds, while `SyncTaskGroup.settle` and `SyncRunCoordinator.settle` wait for owned work to finish | A quota probe or transport health check |
 | **drain** | Consuming ordered queued/data work: `drainDirectionQueue`, `drainTo`, `SyncDrainCoordinator` | Pumping a request set (`runRequestedPasses`), committing a durable checkpoint, or running repair passes (`runRequestedRepairPasses`) |
 | **admission** | Replicated-message admission into the local DWN: `admitClosure`, `admitRemoteFeedPage`, `MAX_ADMISSION_PASSES` | Background-task admission — that is *intake* (`pauseTaskIntake`) |
@@ -108,15 +110,15 @@ would make one signal stand in for proof it does not carry.
 | Feed convergence | Verified inventory/fingerprint mismatch policy after reconciliation | Socket health or routine feed transfer |
 | Lifecycle coordination | Transition serialization, exclusive sync ownership, task intake, and waiting for supervised work | Timers and liveness, which belong to the current runtime |
 | Sync events | Metrics/UI-facing observations emitted by the engine | Transport subscription delivery or replication control flow |
-| Admission ordering | Dependency order within a closure before DWN admission | Order of feed delivery or direction replay |
+| Admission ordering | Dependency order within a closure before DWN admission | Order of feed delivery or direction reconciliation |
 
 ## Checkpoint and token-domain rules
 
 - Compare token positions only when both `streamId` and `epoch` match. A token
   from another domain is neither newer nor older.
-- Advance a direction checkpoint only after ordered direction replay or a
-  durable-feed page has settled. A subscription notification alone is not
-  checkpoint evidence.
+- Advance a direction checkpoint only after a durable-feed page has settled,
+  or establish its initial baseline from equal paired-subscription snapshots.
+  A subscription event cursor or EOSE cursor is never checkpoint evidence.
 - Reset or re-establish the baseline when the token domain changes. Never carry
   a position across domains.
 
@@ -125,7 +127,7 @@ would make one signal stand in for proof it does not carry.
 Trusting a cached or claimed state instead of verifying the property where it
 is used is this subsystem's recurring bug shape — a stale `isConnected`
 preferred over proving liveness, a subscription event cursor treated as
-durable push progress, a fingerprint match treated as feed identity beyond
+durable progress, a fingerprint match treated as feed identity beyond
 its domain coverage. The check is almost always cheap and local: an on-demand
 transport health probe, replay from the persisted direction checkpoint, or a
 fail-closed decision when a domain set is known-incomplete. When a property

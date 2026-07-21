@@ -1,5 +1,3 @@
-import type { ProgressToken } from '@enbox/dwn-sdk-js';
-
 import type { SyncFeedConvergenceLinkContext } from './sync-feed-convergence-manager.js';
 import type { SyncIdentityTaskRunner } from './sync-lifecycle-coordinator.js';
 import type { SyncLinkController } from './sync-link-controller.js';
@@ -8,6 +6,7 @@ import type { SyncTarget } from './sync-target-resolver.js';
 import type {
   PushFailure,
   ReplicationLinkState,
+  SyncDirection,
   SyncEvent,
 } from './types/sync.js';
 import type {
@@ -17,7 +16,7 @@ import type {
 
 import { syncEventScope as eventScope } from './types/sync.js';
 import { syncTargetFromLink } from './sync-target-resolver.js';
-import { isSyncProgressGapError, isTerminalSyncAuthorizationFailure, syncErrorMessage } from './sync-runtime-errors.js';
+import { isTerminalSyncAuthorizationFailure, syncErrorMessage } from './sync-runtime-errors.js';
 
 export type SyncLinkRecoveryTarget = SyncTarget & { linkKey: string };
 
@@ -42,7 +41,6 @@ export interface SyncLinkRecoveryCoordinatorOperations {
     bypassDirectionQueues?: boolean,
   ): Promise<SyncDurableFeedReconcileResult>;
   reportError(message: string, error: unknown): void;
-  resetPullCheckpoint(link: ReplicationLinkState, resumeToken?: ProgressToken): Promise<void>;
   setStatus(link: ReplicationLinkState, status: ReplicationLinkState['status']): Promise<void>;
   warn(message: string): void;
 }
@@ -52,10 +50,6 @@ export type SyncLinkRecoveryCoordinatorParams = {
   operations: SyncLinkRecoveryCoordinatorOperations;
   reconcileDelayMs?: number;
   repairBackoffMs?: readonly number[];
-};
-
-export type SyncRepairTransitionOptions = {
-  resumeToken?: ProgressToken;
 };
 
 const DEFAULT_MAX_REPAIR_ATTEMPTS = 3;
@@ -90,7 +84,6 @@ export class SyncLinkRecoveryCoordinator {
   /** Move an active link offline and supervise its first repair attempt. */
   public async transitionToRepairing(
     controller: SyncLinkController,
-    options?: SyncRepairTransitionOptions,
   ): Promise<void> {
     const { link } = controller;
     if (link.status === 'paused' || !controller.isActive) {
@@ -98,15 +91,12 @@ export class SyncLinkRecoveryCoordinator {
     }
 
     // Publish the entire transition in one synchronous block — abandoned
-    // pull deliveries, the resume token, the run request, and the in-memory
+    // pull deliveries, the run request, and the in-memory
     // repairing status (setOfflineStatus writes it before its first await).
     // Whoever consumes the request afterwards, whether an already-executing
     // pass's trailing turn or the supervision below, observes the complete
     // transition; only durability and supervision trail the block.
     controller.resetReplicationGeneration();
-    if (options?.resumeToken !== undefined) {
-      controller.setRepairResumeToken(options.resumeToken);
-    }
     controller.requestPass('repair');
     await this.setOfflineStatus(link, 'repairing');
     if (!controller.isActive) {
@@ -186,7 +176,7 @@ export class SyncLinkRecoveryCoordinator {
    * Coalesce repair callers onto one queued-or-running mailbox repair.
    * The mailbox serializes the repair behind any in-flight push or
    * reconciliation pass for the same link, so repair never tears down
-   * subscriptions or direction replay queues underneath another link operation.
+   * subscriptions or direction reconciliation queues underneath another link operation.
    */
   public repair(controller: SyncLinkController): Promise<void> {
     controller.requestPass('repair');
@@ -224,7 +214,19 @@ export class SyncLinkRecoveryCoordinator {
   /** Coalesce local feed signals into ordered durable push passes. */
   public push(controller: SyncLinkController): Promise<void> {
     controller.requestPass('push');
-    return controller.runRequestedPasses('push', (): Promise<void> => this.pushExclusive(controller));
+    return controller.runRequestedPasses(
+      'push',
+      (): Promise<void> => this.reconcileDirectionExclusive(controller, 'push'),
+    );
+  }
+
+  /** Coalesce remote feed signals into ordered durable pull passes. */
+  public pull(controller: SyncLinkController): Promise<void> {
+    controller.requestPass('pull');
+    return controller.runRequestedPasses(
+      'pull',
+      (): Promise<void> => this.reconcileDirectionExclusive(controller, 'pull'),
+    );
   }
 
   /** Emit and coalesce a named durable-reconciliation request for a live link. */
@@ -335,13 +337,6 @@ export class SyncLinkRecoveryCoordinator {
       if (outcome.aborted || this.isRepairSuperseded(controller, runtime)) {
         return;
       }
-      this.emitApplied(link, outcome.admittedCids);
-
-      const resumeToken = controller.repairResumeToken ?? link.pull.contiguousAppliedToken;
-      await this._operations.resetPullCheckpoint(link, resumeToken);
-      if (this.isRepairSuperseded(controller, runtime)) {
-        return;
-      }
       if (!await this.reopenSubscriptions(target, controller, runtime)) {
         return;
       }
@@ -356,7 +351,7 @@ export class SyncLinkRecoveryCoordinator {
     controller: SyncLinkController,
     runtime: SyncRuntimeHandle,
   ): Promise<boolean> {
-    const pullOpened = await this.openRepairPullSubscription(target, controller, runtime);
+    const pullOpened = await this._operations.openPullSubscription(target, controller);
     if (!pullOpened) {
       return false;
     }
@@ -382,29 +377,6 @@ export class SyncLinkRecoveryCoordinator {
     return false;
   }
 
-  private async openRepairPullSubscription(
-    target: SyncLinkRecoveryTarget,
-    controller: SyncLinkController,
-    runtime: SyncRuntimeHandle,
-  ): Promise<boolean> {
-    try {
-      return await this._operations.openPullSubscription(target, controller);
-    } catch (error: unknown) {
-      if (!isSyncProgressGapError(error)) {
-        throw error;
-      }
-
-      this._operations.warn(
-        `SyncLinkRecoveryCoordinator: Stale pull resume token for ${target.did} -> ${target.dwnUrl}, resetting to start fresh`,
-      );
-      await this._operations.resetPullCheckpoint(controller.link);
-      if (this.isRepairSuperseded(controller, runtime)) {
-        return false;
-      }
-      return this._operations.openPullSubscription(target, controller);
-    }
-  }
-
   private async completeRepair(
     controller: SyncLinkController,
     runtime: SyncRuntimeHandle,
@@ -428,6 +400,10 @@ export class SyncLinkRecoveryCoordinator {
 
     controller.clearRepairProgress();
     controller.markReplicationReady();
+    if (controller.isPassRequested('pull')) {
+      const runIdentityTask = this._operations.captureIdentityTaskRunner(link.tenantDid);
+      void runIdentityTask(() => this.pull(controller));
+    }
     if (controller.isPassRequested('push')) {
       const runIdentityTask = this._operations.captureIdentityTaskRunner(link.tenantDid);
       void runIdentityTask(() => this.push(controller));
@@ -538,8 +514,6 @@ export class SyncLinkRecoveryCoordinator {
       if (outcome.aborted || !shouldContinue()) {
         return;
       }
-      this.emitApplied(link, outcome.admittedCids);
-
       const pushFailures = outcome.pushFailures ?? [];
       if (pushFailures.length > 0) {
         this.schedulePushRetry(controller);
@@ -550,6 +524,12 @@ export class SyncLinkRecoveryCoordinator {
       // claim a verification that never happened, and handling divergence
       // would fight the pause. The pause owns the link now.
       if (outcome.paused === true) {
+        return;
+      }
+      // A deferred remote root holds its durable page until a later wake or
+      // settle pass. It is neither divergence nor a transport failure, so it
+      // must not enter the fixed-delay verified-reconcile retry loop.
+      if (outcome.deferredPull !== undefined) {
         return;
       }
       if (outcome.converged) {
@@ -583,21 +563,11 @@ export class SyncLinkRecoveryCoordinator {
     }
   }
 
-  private emitApplied(link: ReplicationLinkState, messageCids: string[] | undefined): void {
-    if (messageCids === undefined || messageCids.length === 0) {
-      return;
-    }
-    this._operations.emitEvent({
-      type           : 'reconcile:applied',
-      tenantDid      : link.tenantDid,
-      remoteEndpoint : link.remoteEndpoint,
-      ...eventScope(link.scope),
-      messageCids,
-    });
-  }
-
-  /** Push the local durable feed from its checkpoint inside the link mailbox. */
-  private async pushExclusive(controller: SyncLinkController): Promise<void> {
+  /** Reconcile one durable direction from its checkpoint inside the link mailbox. */
+  private async reconcileDirectionExclusive(
+    controller: SyncLinkController,
+    direction: SyncDirection,
+  ): Promise<void> {
     const { link } = controller;
     if (!controller.isActive || link.status !== 'live' || controller.isMailboxBusy('repair')) {
       return;
@@ -610,13 +580,13 @@ export class SyncLinkRecoveryCoordinator {
       const outcome = await this._operations.reconcileTarget(
         controller,
         syncTargetFromLink(link),
-        { direction: 'push' },
+        { direction },
         shouldContinue,
       );
       if (outcome.aborted || !shouldContinue()) {
         return;
       }
-      if ((outcome.pushFailures?.length ?? 0) > 0) {
+      if (direction === 'push' && (outcome.pushFailures?.length ?? 0) > 0) {
         this.schedulePushRetry(controller);
       }
     } catch (error: unknown) {
@@ -624,10 +594,14 @@ export class SyncLinkRecoveryCoordinator {
         return;
       }
       this._operations.reportError(
-        `SyncLinkRecoveryCoordinator: Durable push pass failed for ${link.tenantDid} -> ${link.remoteEndpoint}`,
+        `SyncLinkRecoveryCoordinator: Durable ${direction} pass failed for ${link.tenantDid} -> ${link.remoteEndpoint}`,
         error,
       );
-      this.schedulePushRetry(controller);
+      if (direction === 'push') {
+        this.schedulePushRetry(controller);
+      } else {
+        this.scheduleLinkReconcileByKey(controller, 'pull-retryable', RECONCILE_RETRY_DELAY_MS);
+      }
     }
   }
 

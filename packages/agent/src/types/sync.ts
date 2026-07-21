@@ -207,22 +207,23 @@ export async function computeAuthorizationEpoch(input:
 // ---------------------------------------------------------------------------
 
 /**
- * Tracks directional (pull or push) replay progression for a single
+ * Tracks directional (pull or push) reconciliation progress for a single
  * replication link. All tokens belong to the same `(streamId, epoch)`.
  *
  * This is the **durable** replication checkpoint persisted to the
- * `replicationLinkStore`. Live subscription callbacks enter the direction
- * replay queue in arrival order, while durable reconciliation settles each
- * page before committing its cursor. After a crash, replay resumes from
- * `contiguousAppliedToken`; idempotent DWN admission makes redelivery safe.
+ * `replicationLinkStore`. Subscription callbacks only announce that a feed
+ * may have advanced. Durable reconciliation resumes from
+ * `contiguousAppliedToken`, settles each page, and then commits its cursor.
+ * Idempotent DWN admission makes reconciliation after a crash safe.
  */
 export type DirectionCheckpoint = {
   /**
    * The highest feed token through which all earlier work for this link has
    * been durably settled. This is the resume point after crash or reconnect.
    *
-   * Only ordered direction replay or a completed durable-feed page advances
-   * it; a subscription notification alone is not checkpoint evidence.
+   * A completed durable-feed page advances it during reconciliation; an
+   * equal paired-subscription snapshot may establish the initial baseline.
+   * A subscription notification alone is never checkpoint evidence.
    * Positions may be sparse for filtered feeds.
    */
   contiguousAppliedToken?: ProgressToken;
@@ -254,7 +255,7 @@ export type SyncRunOptions = {
  *
  * - `initializing` — link created, no subscriptions open yet.
  * - `live` — actively receiving events via subscription.
- * - `repairing` — gap detected or pending overflow; running durable feed repair.
+ * - `repairing` — recovering from a retryable subscription failure or verified feed divergence.
  * - `paused` — link retries are stopped until the app updates registration or recreates the link.
  */
 export type LinkStatus = 'initializing' | 'live' | 'repairing' | 'paused';
@@ -512,27 +513,17 @@ export type SyncEvent =
   | SyncEventBase & { type: 'checkpoint:pull-advance'; position: string; messageCid?: string }
   | SyncEventBase & { type: 'checkpoint:push-advance'; position: string; messageCid?: string }
   /**
-   * Emitted once per FRESHLY applied message a live pull delivery admits —
-   * the delivered root and any fetched dependency (parent, role record,
-   * initial write) admitted alongside it — with each message described so
-   * consumers can react to the specific change (protocol path, record,
-   * author) without querying. `Duplicate`/`Superseded` applies (echoes of
-   * messages this store already held) are silent. Live-path only: messages
-   * admitted by durable-feed reconciliation are reported through
-   * `reconcile:applied` (cids-only) instead — that split is the origin
-   * signal (`delivery:applied` = pushed to us in real time;
-   * `reconcile:applied` = found by a reconciliation pass, including one-shot
-   * `sync()` runs this agent initiated itself).
+   * Emitted once per FRESHLY applied remote message — the feed root and any
+   * fetched dependency (parent, role record, initial write) admitted alongside
+   * it — with each message described so consumers can react to the specific
+   * change without querying. `Duplicate`/`Superseded` applies are silent.
    */
   | SyncEventBase & { type: 'delivery:applied'; messageCid: string; descriptor: SyncMessageDescriptor }
-  /** Emitted when set reconciliation admits remote messages outside the live pull checkpoint stream. */
-  | SyncEventBase & { type: 'reconcile:applied'; messageCids: string[] }
   | SyncEventBase & { type: 'reconcile:needed'; reason: string }
   | SyncEventBase & { type: 'reconcile:completed' }
   | SyncEventBase & { type: 'repair:started'; attempt: number }
   | SyncEventBase & { type: 'repair:completed' }
   | SyncEventBase & { type: 'repair:failed'; attempt: number; error: string }
-  | SyncEventBase & { type: 'gap:detected'; reason: string }
   /** A push was rejected because the remote is out of storage/message quota for this tenant. Re-probing is deferred until `nextProbeAt`. */
   | SyncEventBase & { type: 'push:quota-blocked'; messageCid: string; detail?: string; nextProbeAt: string }
   /** A previously quota-blocked push was acknowledged or retired because it no longer exists locally. */
@@ -625,9 +616,10 @@ export type RemoteSyncStatus = {
  * `(tenantDid, remoteEndpoint, scope)`. Where {@link RemoteSyncStatus} rolls
  * links up per remote for a status badge, this exposes the per-link detail an
  * app needs to reason about replication progress — most notably `status`:
- * a link whose status has reached `live` has finished replaying its remote
- * backlog (the subscription's end-of-stored-events marker), so "every link
- * for this identity is `live`" is the per-identity caught-up signal.
+ * a link whose status has reached `live` has established the paired
+ * subscription-snapshot baseline and completed any reconciliation that
+ * baseline required, so "every link for this identity is `live`" is the
+ * per-identity caught-up signal.
  */
 export type ReplicationLinkSnapshot = {
   /** The tenant DID this link syncs for. */
@@ -730,7 +722,7 @@ export interface SyncEngine {
    *
    * This is a one-shot eject primitive: it creates or resumes durable
    * replication links for `endpoint`, persists it as a supplemental target
-   * for later live sync, replays local and remote feeds, and requires two
+   * for later live sync, reconciles local and remote feeds, and requires two
    * stable cids-only convergence snapshots before marking a target complete.
    * Empty plans, paused links, cancellation, or registration changes produce
    * an incomplete result that callers may safely retry.

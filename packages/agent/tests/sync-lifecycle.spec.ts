@@ -728,7 +728,7 @@ describe('SyncEngineLevel lifecycle', () => {
     expect(sync.called).toBe(false);
   });
 
-  it('should skip a repairing link without parking the settle pass behind replay readiness', async () => {
+  it('should skip a repairing link without parking the settle pass behind reconciliation readiness', async () => {
     const engine = new SyncEngineLevel({ db });
     engine['_runtime'] = new SyncRuntime(true);
     const { controller, target } = activateAdministrativeLink(engine, 'did:example:settle-repairing', 'repairing');

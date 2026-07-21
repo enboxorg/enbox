@@ -1,9 +1,9 @@
 import type { BearerIdentity } from '../src/bearer-identity.js';
+import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type { ReplicationLinkState } from '../src/types/sync.js';
 import type { SyncDurableFeedReconcileResult } from '../src/sync-durable-feed-reconciler.js';
 import type { SyncIdentityOptions } from '../src/index.js';
 import type { SyncTarget } from '../src/sync-target-resolver.js';
-import type { GenericMessage, ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
@@ -59,21 +59,12 @@ describe('SyncEngineLevel', () => {
     });
   });
 
-  describe('durable push echo suppression', () => {
-    it('queues a pushed echo until the replication baseline is ready, then commits it durably', async () => {
+  describe('durable subscription wakes', () => {
+    it('holds a pull wake until the paired replication baseline is ready', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
       const internal = syncEngine as any;
       const dwnUrl = 'https://dwn.example';
       const linkKey = 'link-key';
-      const message = {
-        descriptor: {
-          interface        : DwnInterfaceName.Protocols,
-          method           : DwnMethodName.Configure,
-          messageTimestamp : '2026-07-16T00:00:00.000000Z',
-        },
-      } as GenericMessage;
-      const messageCid = await Message.getCid(message);
-      const cursor = { epoch: 'epoch', messageCid, position: '1', streamId: 'stream' };
       const link = {
         authorization      : { kind: 'owner' },
         authorizationEpoch : 'owner-epoch',
@@ -95,40 +86,30 @@ describe('SyncEngineLevel', () => {
         link,
         linkKey,
       };
-      const persistCheckpoint = sinon.stub().resolves();
-      const events: unknown[] = [];
-      const unsubscribe = syncEngine.on((event) => events.push(event));
-
       const controller = internal.activateLink(linkKey, link);
       context.controller = controller;
-      internal._replicationLinkStore = { persistCheckpoint };
-      internal._echoSuppressor.trackPushed(context.did, messageCid, dwnUrl);
+      internal._replicationLinkStore = {
+        setStatus: sinon.stub().callsFake(async (state: ReplicationLinkState, status: string): Promise<void> => {
+          state.status = status as ReplicationLinkState['status'];
+        }),
+      };
+      sinon.stub(internal, 'getNextQuotaProbeAtForTarget').resolves(undefined);
+      const pull = sinon.stub(internal._linkRecoveryCoordinator, 'pull').resolves();
 
-      const handling = internal._livePullProcessor.handleMessage(context, {
-        cursor,
-        event : { message },
-        type  : 'event',
+      await internal.handleLivePullMessage(context, {
+        cursor : { epoch: 'event-epoch', position: '99', streamId: 'event-stream' },
+        event  : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
+        type   : 'event',
       });
 
-      try {
-        expect(controller.getPendingDirectionCount('pull')).toBe(1);
-        expect(persistCheckpoint.notCalled).toBe(true);
+      expect(controller.isPassRequested('pull')).toBe(true);
+      expect(pull.notCalled).toBe(true);
+      expect(link.pull.contiguousAppliedToken).toBeUndefined();
 
-        controller.markReplicationReady();
-        await handling;
-      } finally {
-        unsubscribe();
-      }
+      await internal.markLinkLive({ did: link.tenantDid, dwnUrl, scope: link.scope }, controller, controller.replicationGeneration);
+      await Promise.resolve();
 
-      expect(persistCheckpoint.calledOnceWithExactly(link, 'pull')).toBe(true);
-      expect(link.pull.contiguousAppliedToken).toEqual(cursor);
-      expect(controller.getPendingDirectionCount('pull')).toBe(0);
-      expect(events).toContainEqual(expect.objectContaining({
-        type           : 'checkpoint:pull-advance',
-        messageCid,
-        position       : cursor.position,
-        remoteEndpoint : dwnUrl,
-      }));
+      expect(pull.calledOnceWithExactly(controller)).toBe(true);
     });
 
     it('clears pulled and pushed echo state when live sync stops', async () => {

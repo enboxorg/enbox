@@ -1625,8 +1625,8 @@ describe('E2E Multi-Agent Sync', () => {
       await primaryHarness.agent.sync.startSync({ interval: '60s' });
       await new Promise(r => setTimeout(r, 500));
 
-      // Capture the engine's per-delivery events: a freshly admitted live
-      // delivery must announce itself with a routing descriptor.
+      // Capture the engine's per-delivery events: a freshly admitted durable
+      // pull entry must announce itself with a routing descriptor.
       const deliveries: Extract<SyncEvent, { type: 'delivery:applied' }>[] = [];
       const offSyncEvents = primaryHarness.agent.sync.on((event) => {
         if (event.type === 'delivery:applied' && event.descriptor.protocol === protocolInbox.protocol) {

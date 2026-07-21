@@ -899,7 +899,7 @@ describe('SyncEngineLevel — identity management', () => {
       expect((engine as any)._linkControllers.has(bobKey)).toBe(true);
     });
 
-    it('removeIdentityFromLiveSync should invalidate only the target DID directional replay', async () => {
+    it('removeIdentityFromLiveSync should invalidate only the target DID directional reconciliation', async () => {
       const engine = new SyncEngineLevel({ db });
       const aliceController = activateTestLink(engine, 'did:example:alice^https://dwn.example.com', 'did:example:alice');
       const bobController = activateTestLink(engine, 'did:example:bob^https://dwn.example.com', 'did:example:bob');
@@ -1451,20 +1451,5 @@ describe('SyncEngineLevel — identity management', () => {
       expect(joinedRan).toBe(false);
     });
 
-    it('should discard the target DID controller with its repair context', async () => {
-      const engine = new SyncEngineLevel({ db });
-      const aliceKey = 'did:example:alice^https://dwn.example.com^scope1';
-      const bobKey = 'did:example:bob^https://dwn.example.com^scope1';
-      const aliceController = activateTestLink(engine, aliceKey, 'did:example:alice');
-      const bobController = activateTestLink(engine, bobKey, 'did:example:bob');
-      aliceController.setRepairResumeToken({ epoch: 'epoch', position: '1', streamId: 'stream' });
-      const bobToken = { epoch: 'epoch', position: '2', streamId: 'stream' };
-      bobController.setRepairResumeToken(bobToken);
-
-      await (engine as any).removeIdentityFromLiveSync('did:example:alice');
-
-      expect((engine as any)._linkControllers.has(aliceKey)).toBe(false);
-      expect((engine as any)._linkControllers.get(bobKey)?.repairResumeToken).toEqual(bobToken);
-    });
   });
 });

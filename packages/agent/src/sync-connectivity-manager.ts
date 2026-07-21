@@ -4,9 +4,10 @@ import type { SyncConnectivityState } from './types/sync.js';
  * Folds transport-reported per-link connectivity with one-shot sync outcomes.
  *
  * Browser wake recovery belongs to the WebSocket transport, which owns socket
- * health checks, reconnect backoff, and durable-cursor resubscription. Keeping
- * this class state-only prevents a wake signal from independently launching a
- * second data-plane reconciliation wave.
+ * health checks, reconnect backoff, and cursorless wake-subscription recovery.
+ * A verified reconnect requests durable passes from persisted checkpoints.
+ * Keeping this class state-only prevents the browser signal from launching a
+ * second, independent data-plane reconciliation wave.
  */
 export class SyncConnectivityManager {
   private _state: SyncConnectivityState = 'unknown';

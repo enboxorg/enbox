@@ -5,9 +5,9 @@
  *   1. Agent has a live pull subscription via WebSocket
  *   2. WebSocket is force-closed (simulating network interruption)
  *   3. A record is written directly to the REMOTE DWN (bypassing this agent)
- *   4. JsonRpcSocket auto-reconnect fires, pull subscription re-establishes
- *   5. The remote-only record appears in the local DWN via the recovered
- *      pull subscription (or the durable feed settle check that follows)
+ *   4. JsonRpcSocket auto-reconnect re-establishes the cursorless wake stream
+ *   5. The reconnect requests a pull pass from the durable checkpoint and the
+ *      remote-only record appears in the local DWN
  *
  * This isolates the pull reconnection path — the push path uses HTTP and
  * is unaffected by WebSocket drops.
@@ -179,10 +179,9 @@ describe('E2E: pull subscription recovery after WebSocket drop', () => {
       await new Promise(r => setTimeout(r, 100));
     }
 
-    // Phase 3: Wait for auto-reconnect to re-establish the pull
-    // subscription and deliver the post-drop record locally.
-    // JsonRpcSocket reconnect fires after ~500-1000ms (backoff + jitter),
-    // then re-subscription replays from the cursor and delivers the record.
+    // Phase 3: Wait for auto-reconnect to re-establish the pull wake stream.
+    // JsonRpcSocket reconnect fires after ~500-1000ms (backoff + jitter), then
+    // the lifecycle signal starts a durable pull pass from the checkpoint.
     deadline = Date.now() + 20_000;
     found = false;
     while (Date.now() < deadline) {

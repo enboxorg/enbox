@@ -47,7 +47,7 @@ type SyncReplicationReadiness = {
  *    lives OUTSIDE the queue — a mark is not queued work, it is a note that
  *    one more pass is owed once the current one finishes.
  */
-export type SyncLinkMailboxKind = 'push' | 'repair' | 'reconcile';
+export type SyncLinkMailboxKind = 'pull' | 'push' | 'repair' | 'reconcile';
 
 /**
  * Owns all ephemeral state associated with one active replication link.
@@ -74,7 +74,6 @@ export class SyncLinkController {
   private _reconcileTimerDueAt?: number;
   private _replicationReadiness: SyncReplicationReadiness;
   private _repairAttempts = 0;
-  private _repairResumeToken?: ProgressToken;
   private _repairRetryTimer?: ReturnType<typeof setTimeout>;
   private _supersededDirectionWork: Promise<void> = Promise.resolve();
 
@@ -91,7 +90,7 @@ export class SyncLinkController {
     return this._active;
   }
 
-  /** Whether the current replication generation established its durable replay baselines. */
+  /** Whether the current replication generation established its durable reconciliation baselines. */
   public get isReplicationReady(): boolean {
     return this._active &&
       this._replicationReadiness.replicationGeneration === this._replicationGeneration &&
@@ -111,7 +110,7 @@ export class SyncLinkController {
   /**
    * Enqueue replication work in one direction's FIFO. Pull and push drain
    * independently, while both wait for the current replication generation's
-   * durable replay baselines before starting. Work invalidated by a replication
+   * durable reconciliation baselines before starting. Work invalidated by a replication
    * generation reset or deactivation resolves `undefined`; a current operation's
    * rejection is surfaced without poisoning the queue.
    */
@@ -146,7 +145,7 @@ export class SyncLinkController {
     return this._supersededDirectionWork;
   }
 
-  /** Release both directional queues after their durable replay baselines are established. */
+  /** Release both directional queues after their durable reconciliation baselines are established. */
   public markReplicationReady(): void {
     const readiness = this._replicationReadiness;
     if (
@@ -288,10 +287,6 @@ export class SyncLinkController {
     return this._repairAttempts;
   }
 
-  public get repairResumeToken(): ProgressToken | undefined {
-    return this._repairResumeToken;
-  }
-
   public get repairRetryTimer(): ReturnType<typeof setTimeout> | undefined {
     return this._repairRetryTimer;
   }
@@ -400,17 +395,8 @@ export class SyncLinkController {
     return this._repairAttempts;
   }
 
-  public setRepairResumeToken(token: ProgressToken): void {
-    this._repairResumeToken = token;
-  }
-
   public clearRepairProgress(): void {
     this._repairAttempts = 0;
-    // A pending repair request owns the freshest resume token — completing
-    // the pass it supersedes must not discard it.
-    if (!this._requestedPasses.has('repair')) {
-      this._repairResumeToken = undefined;
-    }
     this.cancelRepairRetryTimer();
   }
 
@@ -591,7 +577,6 @@ export class SyncLinkController {
     this._mailboxShared.clear();
     this._requestedPasses.clear();
     this._repairAttempts = 0;
-    this._repairResumeToken = undefined;
   }
 
   /** Deactivate the link and close its transport subscriptions. */

@@ -3,11 +3,9 @@
  * Uses LocalDwnRpcShim to route pull subscription requests to an in-process DWN,
  * exercising the real subscription handler code path with real EventLog events.
  *
- * These tests assert actual behavioral outcomes (checkpoint advancement and
- * echo suppression), not just "link is live."
+ * These tests assert actual durable-feed behavior, not just "link is live."
  */
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { SyncEchoSuppressor } from '../src/sync-echo-suppressor.js';
 import type { SyncEngineLevel } from '../src/sync-engine-level.js';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -123,15 +121,15 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
     expect(reply.fingerprint).toBeDefined();
   });
 
-  it('should advance pull checkpoint after processing a live event through the real handler', async () => {
+  it('should advance the durable pull checkpoint after a live event wakes reconciliation', async () => {
     const syncEngine = testHarness.agent.sync as SyncEngineLevel;
     await syncEngine.registerIdentity({
       did     : tenant,
       options : { protocols: 'all' },
     });
 
-    // Start live sync FIRST — this opens real subscriptions via the shim.
-    // Without a prior cursor, the subscription is live-only (no catch-up).
+    // Start live sync FIRST — this opens real cursorless wake subscriptions
+    // via the shim. Durable queries, not subscription replay, own catch-up.
     await syncEngine.startSync({ interval: '30s' });
 
     const { reply: protoReply } = await testHarness.agent.dwn.processRequest({
@@ -143,7 +141,7 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
     expect(protoReply.status.code).toBe(202);
 
     // Write a record AFTER sync starts — this triggers a live event
-    // through the EventLog subscription, delivered to the pull handler.
+    // through the EventLog subscription and wakes a durable pull pass.
     const { reply: writeReply } = await testHarness.agent.dwn.processRequest({
       author        : tenant,
       target        : tenant,
@@ -158,8 +156,8 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
     });
     expect(writeReply.status.code).toBe(202);
 
-    // Poll until the pull checkpoint has advanced — proves the handler
-    // actually processed the live event via processRawMessage.
+    // Poll until the durable pull query advances its checkpoint. The
+    // subscription event itself carries no progress authority.
     const links = (): any[] => [...(syncEngine as any)._linkControllers.values()]
       .map((controller: any): any => controller.link);
     const getLink = (): any => links().find((link: any) =>
@@ -175,8 +173,8 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
     const activeLink = getLink();
     expect(activeLink).toBeDefined();
     expect(activeLink.status).toBe('live');
-    // The pull checkpoint MUST have advanced — this proves processRawMessage ran
-    // and the FIFO direction replay committed the token.
+    // The checkpoint came from MessagesQuery after durable admission, not from
+    // the subscription event cursor.
     expect(activeLink.pull.contiguousAppliedToken).toBeDefined();
     expect(activeLink.pull.contiguousAppliedToken.position).toBeDefined();
     expect(activeLink.pull.contiguousAppliedToken.messageCid).toBeDefined();
@@ -184,44 +182,4 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
     await syncEngine.stopSync();
   });
 
-  it('should track pull echo suppression after the real handler processes an event', async () => {
-    const syncEngine = testHarness.agent.sync as SyncEngineLevel;
-    await syncEngine.registerIdentity({
-      did     : tenant,
-      options : { protocols: 'all' },
-    });
-
-    // Start sync first, then write — so the event fires as a live event.
-    await syncEngine.startSync({ interval: '30s' });
-
-    await testHarness.agent.dwn.processRequest({
-      author        : tenant,
-      target        : tenant,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: testProtocol },
-    });
-
-    const { messageCid: writeMessageCid } = await testHarness.agent.dwn.processRequest({
-      author        : tenant,
-      target        : tenant,
-      messageType   : DwnInterface.RecordsWrite,
-      messageParams : {
-        protocol     : testProtocol.protocol,
-        protocolPath : 'note',
-        dataFormat   : 'text/plain',
-        schema       : 'https://schemas.example.com/note',
-      },
-      dataStream: new Blob([new TextEncoder().encode('Echo test')]),
-    });
-
-    if (writeMessageCid === undefined) {
-      throw new Error('Expected the local RecordsWrite to produce a message CID.');
-    }
-    const echoSuppressor = (syncEngine as unknown as { _echoSuppressor: SyncEchoSuppressor })._echoSuppressor;
-    await waitFor(() => echoSuppressor.hasRecentlyPulled(tenant, writeMessageCid, 'http://localhost:9999'));
-
-    expect(echoSuppressor.hasRecentlyPulled(tenant, writeMessageCid, 'http://localhost:9999')).toBe(true);
-
-    await syncEngine.stopSync();
-  });
 });

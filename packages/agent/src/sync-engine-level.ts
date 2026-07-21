@@ -1,7 +1,7 @@
 import type { AbstractLevel } from 'abstract-level';
 
 import type { DwnSubscriptionHandler, DwnSubscriptionMessage, ResubscribeFactory } from '@enbox/dwn-clients';
-import type { GenericMessage, MessagesFilter, MessagesQueryReply, MessagesQueryReplyEntry, MessagesSubscribeReply, ProgressToken, RecordsQueryReply, SubscriptionMessage } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessagesFilter, MessagesQueryReply, MessagesQueryReplyEntry, MessagesSubscribeReply, RecordsQueryReply, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
 import { Level } from 'level';
 import { RateLimitError } from '@enbox/dwn-clients';
@@ -12,9 +12,9 @@ import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
 import type { SyncDeadLetterStore } from './sync-dead-letter-store.js';
 import type { SyncEndpointStore } from './sync-endpoint-store.js';
+import type { SyncFreshEntry } from './sync-admit-closure.js';
 import type { SyncIdentityStore } from './sync-identity-store.js';
 import type { SyncIdentityTaskRunner } from './sync-lifecycle-coordinator.js';
-import type { SyncLivePullContext } from './sync-live-pull-processor.js';
 import type { SyncMessageEntry } from './sync-messages.js';
 import type { SyncReplicationLinkStore } from './sync-replication-link-store.js';
 import type { SyncRuntimeHandle } from './sync-runtime.js';
@@ -33,6 +33,7 @@ import type {
   SyncEngine,
   SyncEvent,
   SyncEventListener,
+  SyncEventScope,
   SyncHealthSummary,
   SyncIdentityOptions,
   SyncRunOptions,
@@ -74,11 +75,9 @@ import { SyncIdentityStoreLevel } from './sync-identity-store-level.js';
 import { SyncLifecycleCoordinator } from './sync-lifecycle-coordinator.js';
 import { SyncLinkController } from './sync-link-controller.js';
 import { SyncLinkRecoveryCoordinator } from './sync-link-recovery-coordinator.js';
-import { SyncLivePullProcessor } from './sync-live-pull-processor.js';
 import { SyncQuotaManager } from './sync-quota-manager.js';
 import { SyncQuotaStoreLevel } from './sync-quota-store-level.js';
 import { SyncReplicationLinkStoreLevel } from './sync-replication-link-store-level.js';
-import { SyncRunCancelledError } from './sync-runtime-errors.js';
 import { SyncRunCoordinator } from './sync-run-coordinator.js';
 import { SyncRuntime } from './sync-runtime.js';
 import { SyncScopeClosureValidator } from './sync-scope-closure-validator.js';
@@ -86,8 +85,9 @@ import { SyncStatusReporter } from './sync-status-reporter.js';
 import { SyncTargetPlanner } from './sync-target-planner.js';
 import { buildDurableLinkIdentityKey, buildLinkKey, LINK_KEY_SEPARATOR } from './sync-link-key.js';
 import { computeProjectionId, isTerminalPushFailure, lexicographicalCompare, singleProtocolForSyncScope, syncEventScope, syncScopeFromProtocols } from './types/sync.js';
-import { fetchRemoteMessages, getLocalMessage, isInitialWriteForRecord, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, recordIdForRecordsMessage } from './sync-messages.js';
+import { fetchRemoteMessages, getLocalMessage, isInitialWriteForRecord, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, recordIdForRecordsMessage, syncMessageDescriptor } from './sync-messages.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
+import { isTerminalSyncAuthorizationFailure, SyncRunCancelledError } from './sync-runtime-errors.js';
 import { isValidProgressToken, SyncCheckpoint } from './sync-checkpoint.js';
 import { normalizeDwnEndpoint, SyncTargetResolver } from './sync-target-resolver.js';
 
@@ -98,6 +98,16 @@ export type SyncEngineLevelParams = {
 };
 
 type LinkSyncTarget = SyncTarget & { linkKey: string };
+
+type LivePullWakeContext = {
+  controller: SyncLinkController;
+  did: string;
+  dwnUrl: string;
+  eventScope: SyncEventScope;
+  isStale: () => boolean;
+  link: ReplicationLinkState;
+  linkKey: string;
+};
 
 enum LinkSubscriptionOpenResult {
   Inactive = 'inactive',
@@ -165,7 +175,6 @@ export class SyncEngineLevel implements SyncEngine {
   private readonly _identityStore: SyncIdentityStore;
   private readonly _lifecycle = new SyncLifecycleCoordinator();
   private readonly _linkRecoveryCoordinator: SyncLinkRecoveryCoordinator;
-  private readonly _livePullProcessor: SyncLivePullProcessor;
   private readonly _quotaManager: SyncQuotaManager;
   private readonly _runCoordinator: SyncRunCoordinator;
 
@@ -240,8 +249,8 @@ export class SyncEngineLevel implements SyncEngine {
     // Collaborators. Each is handed an `operations` adapter of arrow
     // functions that resolve `this.…` at CALL time, not here — which is why
     // this list does not have to be in dependency order. The drain
-    // coordinator names the feed-convergence manager, and the live pull
-    // processor names the link-recovery coordinator, all of which are
+    // coordinator names the feed-convergence manager, and the link-recovery
+    // coordinator names engine-owned subscription operations, all of which are
     // constructed further down. Keep the adapters lazy and that stays true.
     this._connectivityManager = new SyncConnectivityManager();
     this._drainCoordinator = this.createDrainCoordinator();
@@ -252,7 +261,6 @@ export class SyncEngineLevel implements SyncEngine {
     this._durableFeedReconciler = this.createDurableFeedReconciler();
     this._targetPlanner = this.createTargetPlanner();
     this._statusReporter = this.createStatusReporter();
-    this._livePullProcessor = this.createLivePullProcessor();
     this._linkRecoveryCoordinator = this.createLinkRecoveryCoordinator();
   }
 
@@ -270,9 +278,8 @@ export class SyncEngineLevel implements SyncEngine {
         getTopologyGeneration        : (): number => this._targetPlanner.topologyGeneration,
         handleVerifiedFeedDivergence : (target, result): Promise<boolean> =>
           this._feedConvergenceManager.handleVerifiedDivergence(target, result),
-        onReconcileApplied : (target, messageCids): void => { this.emitReconcileApplied(target, messageCids); },
-        prepareLiveTarget  : (target): Promise<void> => this.prepareDrainLiveTarget(target),
-        reconcileTarget    : (target, options, shouldContinue): Promise<SyncReconcileResult> =>
+        prepareLiveTarget : (target): Promise<void> => this.prepareDrainLiveTarget(target),
+        reconcileTarget   : (target, options, shouldContinue): Promise<SyncReconcileResult> =>
           this.reconcileTarget(target, options, shouldContinue),
         recordConnectivityFailure : (): void => { this._connectivityManager.recordFailure(); },
         recordConnectivitySuccess : (): void => { this._connectivityManager.recordSuccess(); },
@@ -297,8 +304,7 @@ export class SyncEngineLevel implements SyncEngine {
         handleVerifiedFeedDivergence : async (target, result): Promise<void> => {
           await this._feedConvergenceManager.handleVerifiedDivergence(target, result);
         },
-        onReconcileApplied   : (target, messageCids): void => { this.emitReconcileApplied(target, messageCids); },
-        probeFeedConvergence : (target): Promise<SyncReconcileResult> =>
+        probeFeedConvergence: (target): Promise<SyncReconcileResult> =>
           this.probeFeedConvergence(target),
         reconcileTarget: (target, direction, verifyConvergence): Promise<SyncReconcileResult> =>
           this.reconcileTarget(target, { direction, verifyConvergence }),
@@ -418,8 +424,7 @@ export class SyncEngineLevel implements SyncEngine {
         (await this.getQuotaBlocksForTarget(target)).map(({ messageCid }) => messageCid),
       commitCheckpoint: (link, direction): Promise<void> =>
         this.commitReconciledCheckpoint(link, direction),
-      onReconcileApplied : (target, messageCids): void => { this.emitReconcileApplied(target, messageCids); },
-      probeQuotaBlocks   : (target, force, forceProbeCids, shouldContinue): Promise<void> =>
+      probeQuotaBlocks: (target, force, forceProbeCids, shouldContinue): Promise<void> =>
         this.probeQuotaBlocksForTarget(target, force, forceProbeCids, shouldContinue),
       pushLocalPage: (target, entries, shouldContinue): Promise<FeedPagePushResult> =>
         this.pushLocalFeedPage(target, entries, shouldContinue),
@@ -451,28 +456,6 @@ export class SyncEngineLevel implements SyncEngine {
     });
   }
 
-  /** Wire SyncLivePullProcessor to this engine. */
-  private createLivePullProcessor(): SyncLivePullProcessor {
-    return new SyncLivePullProcessor({
-      echoSuppressor : this._echoSuppressor,
-      operations     : {
-        emitCheckpointAdvance : (link): void => { this.emitCheckpointAdvance(link, 'pull'); },
-        emitEvent             : (event): void => { this.emitEvent(event); },
-        getAgent              : (): EnboxPlatformAgent => this.agent,
-        getPermissionsApi     : (): PermissionsApi => this._permissionsApi,
-        persistCheckpoint     : (link): Promise<void> => this.replicationLinkStore.persistCheckpoint(link, 'pull'),
-        recordDeadLetter      : (entry): Promise<void> => this.recordDeadLetter(entry),
-        reportError           : (message, error): void => { console.error(message, error); },
-        trackAppliedCids      : (messageCids, target): Promise<void> =>
-          this.trackRemoteFeedAppliedCids(messageCids, target),
-        transitionToPaused    : (linkKey, link): Promise<void> => this.transitionToPaused(linkKey, link),
-        transitionToRepairing : (controller): Promise<void> =>
-          this._linkRecoveryCoordinator.transitionToRepairing(controller),
-        warn: (message): void => { console.warn(message); },
-      },
-    });
-  }
-
   /** Wire SyncLinkRecoveryCoordinator to this engine. */
   private createLinkRecoveryCoordinator(): SyncLinkRecoveryCoordinator {
     return new SyncLinkRecoveryCoordinator({
@@ -497,11 +480,9 @@ export class SyncEngineLevel implements SyncEngine {
             shouldContinue,
             bypassDirectionQueues !== true,
           ),
-        reportError         : (message, error): void => { console.error(message, error); },
-        resetPullCheckpoint : (link, resumeToken): Promise<void> =>
-          this.replicationLinkStore.resetCheckpoint(link, 'pull', resumeToken),
-        setStatus : (link, status): Promise<void> => this.replicationLinkStore.setStatus(link, status),
-        warn      : (message): void => { console.warn(message); },
+        reportError : (message, error): void => { console.error(message, error); },
+        setStatus   : (link, status): Promise<void> => this.replicationLinkStore.setStatus(link, status),
+        warn        : (message): void => { console.warn(message); },
       },
     });
   }
@@ -693,13 +674,18 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  private emitReconcileApplied(target: Pick<SyncTarget, 'did' | 'dwnUrl' | 'scope'>, messageCids: string[]): void {
+  private emitDeliveryApplied(
+    target: Pick<SyncTarget, 'did' | 'dwnUrl' | 'scope'>,
+    messageCid: string,
+    message: GenericMessage,
+  ): void {
     this.emitEvent({
-      type           : 'reconcile:applied',
+      type           : 'delivery:applied',
       tenantDid      : target.did,
       remoteEndpoint : target.dwnUrl,
       ...syncEventScope(target.scope),
-      messageCids,
+      messageCid,
+      descriptor     : syncMessageDescriptor(message),
     });
   }
 
@@ -1206,8 +1192,9 @@ export class SyncEngineLevel implements SyncEngine {
   /**
    * Starts live sync:
    * 1. Opens the remote and local durable subscriptions for each link.
-   * 2. Establishes a checkpoint baseline only for fresh links.
-   * 3. Releases ordered replay from both durable cursors.
+   * 2. Establishes a paired checkpoint baseline from subscription snapshots
+   *    or durable reconciliation.
+   * 3. Releases ordered reconciliation from both durable checkpoints.
    * 4. Schedules an infrequent probe-first settle check at `interval`.
    */
   private async startLiveSync(intervalMilliseconds: number): Promise<void> {
@@ -1222,9 +1209,10 @@ export class SyncEngineLevel implements SyncEngine {
     // subscriptions are still opening. (armInterval no-ops on a disposed
     // runtime, covering stopSync racing startup.)
     try {
-      // Initialize replication links and open live subscriptions. A fresh
-      // link compares the two subscription snapshots and reconciles only on
-      // mismatch; a resumed link replays directly from its durable cursors.
+      // Initialize replication links and open live subscriptions. Every link
+      // compares the two subscription snapshots: equal inventories establish
+      // both heads atomically, while a mismatch reconciles from the durable
+      // checkpoints.
       // Each target's link initialization is independent — process
       // concurrently; a transient discovery failure must not reject
       // startSync or strand the runtime.
@@ -1422,7 +1410,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  /** Open subscriptions and establish the replay baseline for one newly activated link. */
+  /** Open subscriptions and establish the reconciliation baseline for one newly activated link. */
   private async initializeActivatedLinkTarget(
     target: SyncTarget,
     linkKey: string,
@@ -1462,7 +1450,7 @@ export class SyncEngineLevel implements SyncEngine {
     return { status: LinkInitializationStatus.Failed };
   }
 
-  /** Establish the initial baseline, surface its effects, and release replay. */
+  /** Establish the initial baseline, surface its effects, and release reconciliation. */
   private async establishActivatedLinkBaseline(
     target: SyncTarget,
     link: ReplicationLinkState,
@@ -1470,9 +1458,6 @@ export class SyncEngineLevel implements SyncEngine {
     openReplicationGeneration: number,
   ): Promise<LinkInitializationResult> {
     const baseline = await this.establishLinkBaseline(target, controller, openReplicationGeneration);
-    if (baseline?.admittedCids !== undefined && baseline.admittedCids.length > 0) {
-      this.emitReconcileApplied(target, baseline.admittedCids);
-    }
     if ((baseline?.pushFailures?.length ?? 0) > 0) {
       controller.requestPass('push');
     }
@@ -1563,11 +1548,10 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /**
-   * Establish the durable cursor pair before queued subscription callbacks
-   * are released. Equal subscription snapshots prove that a fresh link owes
-   * no historical transfer; otherwise one direct reconciliation establishes
-   * both baselines while post-snapshot events remain queued behind the
-   * controller's readiness barrier.
+   * Establish the durable checkpoint pair before subscription wakes may run.
+   * Equal snapshots prove that neither feed owes historical transfer;
+   * otherwise one direct reconciliation establishes both baselines. Events
+   * after either snapshot leave a pending pass for the readiness release.
    */
   private async establishLinkBaseline(
     target: SyncTarget,
@@ -1575,10 +1559,6 @@ export class SyncEngineLevel implements SyncEngine {
     expectedReplicationGeneration: number,
   ): Promise<SyncReconcileResult | undefined> {
     const { link } = controller;
-    if (link.pull.contiguousAppliedToken !== undefined && link.push.contiguousAppliedToken !== undefined) {
-      return undefined;
-    }
-
     const isCurrent = (): boolean =>
       !this._runtime.disposed && controller.isReplicationGenerationCurrent(expectedReplicationGeneration);
     const pullSnapshot = controller.pullSnapshot;
@@ -1635,6 +1615,10 @@ export class SyncEngineLevel implements SyncEngine {
       to             : 'live'
     });
     controller.markReplicationReady();
+    if (controller.isPassRequested('pull')) {
+      const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(link.tenantDid);
+      void runIdentityTask(() => this._linkRecoveryCoordinator.pull(controller));
+    }
     if (controller.isPassRequested('push')) {
       const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(link.tenantDid);
       void runIdentityTask(() => this._linkRecoveryCoordinator.push(controller));
@@ -1653,23 +1637,6 @@ export class SyncEngineLevel implements SyncEngine {
   ): Promise<LinkInitializationResult> {
     if (controller !== undefined && !controller.isActive) {
       return { status: LinkInitializationStatus.Failed };
-    }
-
-    if (error.isProgressGap && link) {
-      console.warn(`SyncEngineLevel: ProgressGap detected for ${target.did} -> ${target.dwnUrl}, initiating repair`);
-      this.emitEvent({
-        type           : 'gap:detected',
-        tenantDid      : target.did,
-        remoteEndpoint : target.dwnUrl,
-        ...syncEventScope(target.scope),
-        reason         : 'ProgressGap'
-      });
-      if (controller !== undefined) {
-        await this._linkRecoveryCoordinator.transitionToRepairing(controller, {
-          resumeToken: error.gapInfo?.latestAvailable,
-        });
-      }
-      return this.createActiveLinkInitializationResult(link);
     }
 
     if (this.isRateLimitError(error) && link) {
@@ -1964,7 +1931,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   /**
    * Opens a MessagesSubscribe WebSocket subscription to a remote DWN.
-   * Incoming events are processed locally as they arrive.
+   * Incoming events only wake durable pull reconciliation.
    */
   private async openLivePullSubscription(
     target: LinkSyncTarget,
@@ -2011,10 +1978,8 @@ export class SyncEngineLevel implements SyncEngine {
     const { did, delegateDid, dwnUrl } = target;
     const eventScope = syncEventScope(target.scope);
 
-    const cursorKey = target.linkKey;
+    const linkKey = target.linkKey;
     const { link } = controller;
-    const cursor = await this.resolveInitialPullCursor({ did, dwnUrl, link });
-    if (!controller.isReplicationGenerationCurrent(subscriptionReplicationGeneration) || controller.linkKey !== cursorKey) { return false; }
 
     const filters = target.scope.kind === 'protocolSet'
       ? target.scope.protocols.map(protocol => ({ protocol }))
@@ -2022,24 +1987,18 @@ export class SyncEngineLevel implements SyncEngine {
 
     const runtime = this._runtime;
 
-    // The WebSocket transport invokes handlers as events arrive and awaits
-    // their results through its acknowledgement chain. Claiming a pull-queue
-    // turn synchronously inside the handler preserves that arrival order even
-    // while several handler promises are in flight.
     // Capture the controller lifetime so remove+re-add invalidates callbacks
     // even when the replacement uses the same durable link key, and the pull
     // replication generation so callbacks from a subscription superseded by a
-    // repair reset cannot touch checkpoints or trigger repairs after recovery.
+    // repair reset cannot request durable work after recovery.
     const isStale = (): boolean => runtime.disposed || !controller.isReplicationGenerationCurrent(subscriptionReplicationGeneration);
-    const pullContext: SyncLivePullContext = {
+    const pullContext: LivePullWakeContext = {
       did,
       dwnUrl,
-      delegateDid,
       eventScope,
       controller,
-      linkKey            : cursorKey,
+      linkKey,
       link,
-      permissionGrantIds : target.permissionGrantIds,
       isStale,
     };
     const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(did);
@@ -2057,7 +2016,7 @@ export class SyncEngineLevel implements SyncEngine {
       target        : did,
       messageType   : DwnInterface.MessagesSubscribe as const,
       granteeDid    : delegateDid,
-      messageParams : { filters, cursor, permissionGrantIds: toMessagesPermissionGrantIds(target.permissionGrantIds) },
+      messageParams : { filters, permissionGrantIds: toMessagesPermissionGrantIds(target.permissionGrantIds) },
     };
 
     const { message } = await this.agent.dwn.processRequest(subscribeRequest);
@@ -2066,21 +2025,11 @@ export class SyncEngineLevel implements SyncEngine {
       throw new Error(`SyncEngineLevel: Failed to construct MessagesSubscribe for ${dwnUrl}`);
     }
 
-    // Build a resubscribe factory so the WebSocket client can resume with
-    // a fresh cursor-stamped message after reconnection.
+    // Re-establish at the live head instead of replaying subscription events.
+    // The `reconnected` lifecycle signal requests durable pull and push passes,
+    // which recover the disconnected interval from persisted checkpoints.
     const resubscribeFactory: ResubscribeFactory = async () => {
-      // On reconnect, resume from the latest durable applied checkpoint, not
-      // the transport's last-delivered cursor. The transport may have delivered
-      // an event that has not been locally applied yet.
-      let effectiveCursor = link?.pull.contiguousAppliedToken ?? cursor;
-      if (effectiveCursor && !isValidProgressToken(effectiveCursor)) {
-        effectiveCursor = undefined;
-      }
-      const resumeRequest = {
-        ...subscribeRequest,
-        messageParams: { ...subscribeRequest.messageParams, cursor: effectiveCursor },
-      };
-      const { message: resumeMsg } = await this.agent.dwn.processRequest(resumeRequest);
+      const { message: resumeMsg } = await this.agent.dwn.processRequest(subscribeRequest);
       if (!resumeMsg) {
         throw new Error(`SyncEngineLevel: Failed to construct resume MessagesSubscribe for ${dwnUrl}`);
       }
@@ -2098,17 +2047,6 @@ export class SyncEngineLevel implements SyncEngine {
         resubscribeFactory,
       },
     }) as MessagesSubscribeReply;
-    // No stale-reply handling here: a superseded 200 is refused by the
-    // replication-generation-fenced attach below (and closed by its refusal path), and
-    // a superseded 410 or error throw is converted to `false` by the
-    // replication-generation-fenced wrapper.
-    if (reply.status.code === 410) {
-      // ProgressGap — the cursor is no longer replayable. The link needs repair.
-      const gapError = new Error(`SyncEngineLevel: ProgressGap for ${did} -> ${dwnUrl}: ${reply.status.detail}`);
-      (gapError as any).isProgressGap = true;
-      (gapError as any).gapInfo = reply.error;
-      throw gapError;
-    }
     if (reply.status.code !== 200 || !reply.subscription) {
       throw new Error(`SyncEngineLevel: MessagesSubscribe failed for ${did} -> ${dwnUrl}: ${reply.status.code} ${reply.status.detail}`);
     }
@@ -2127,48 +2065,103 @@ export class SyncEngineLevel implements SyncEngine {
       return false;
     }
 
-    // Set per-link connectivity to online after successful subscription setup.
-    const pullLink = controller.isActive ? controller.link : undefined;
-    if (pullLink) {
-      const prevPullConnectivity = pullLink.connectivity;
-      pullLink.connectivity = 'online';
-      if (prevPullConnectivity !== 'online') {
-        this.emitEvent({ type: 'link:connectivity-change', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope, from: prevPullConnectivity, to: 'online' });
-      }
-    }
+    this.setLivePullConnectivity(pullContext, 'online');
 
     return true;
   }
 
-  private async resolveInitialPullCursor({ did, dwnUrl, link }: {
-    did: string;
-    dwnUrl: string;
-    link?: ReplicationLinkState;
-  }): Promise<ProgressToken | undefined> {
-    // Resolve the cursor from the link's durable pull checkpoint.
-    if (!link) {
-      return undefined;
+  /** Treat remote subscription messages as lifecycle signals or durable-feed wakes. */
+  private async handleLivePullMessage(
+    context: LivePullWakeContext,
+    message: DwnSubscriptionMessage,
+  ): Promise<void> {
+    if (context.isStale()) {
+      return;
     }
 
-    const cursor = link.pull.contiguousAppliedToken;
-    if (!cursor || isValidProgressToken(cursor)) {
-      return cursor;
+    if (message.type === 'disconnected' || message.type === 'reconnecting') {
+      this.setLivePullConnectivity(context, 'offline');
+      return;
+    }
+    if (message.type === 'reconnected') {
+      this.setLivePullConnectivity(context, 'online');
+      await this.requestDurableReconnectPasses(context);
+      return;
+    }
+    if (message.type === 'error') {
+      await this.handleLivePullError(context, message.error.code);
+      return;
+    }
+    if (message.type !== 'event') {
+      return;
     }
 
-    // Guard against corrupted tokens with empty fields — these would fail
-    // MessagesSubscribe JSON schema validation (minLength: 1). Discard and
-    // start from the beginning rather than crash the subscription.
-    console.warn(`SyncEngineLevel: Discarding stored cursor with empty field(s) for ${did} -> ${dwnUrl}`);
-    await this.replicationLinkStore.resetCheckpoint(link, 'pull');
-    return undefined;
+    context.controller.requestPass('pull');
+    if (!context.controller.isReplicationReady || context.isStale()) {
+      return;
+    }
+
+    // A subscription event is only a wake hint. Hand the durable pass to
+    // lifecycle supervision and return so transport acknowledgement is not
+    // coupled to a potentially multi-page catch-up. stopSync() still waits
+    // for the supervised pass before closing storage.
+    const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(context.did);
+    void runIdentityTask(() => this._linkRecoveryCoordinator.pull(context.controller));
   }
 
-  /** Thin transport boundary retained for lifecycle task tracking and tests. */
-  private handleLivePullMessage(
-    context: SyncLivePullContext,
-    subMessage: DwnSubscriptionMessage,
-  ): Promise<void> {
-    return this._livePullProcessor.handleMessage(context, subMessage);
+  /** A reconnect closes both disconnected-interval gaps without a full convergence probe. */
+  private async requestDurableReconnectPasses(context: LivePullWakeContext): Promise<void> {
+    const { controller } = context;
+    controller.requestPass('pull');
+    controller.requestPass('push');
+    if (!controller.isReplicationReady || context.isStale()) {
+      return;
+    }
+
+    await Promise.all([
+      this._linkRecoveryCoordinator.pull(controller),
+      this._linkRecoveryCoordinator.push(controller),
+    ]);
+  }
+
+  private async handleLivePullError(context: LivePullWakeContext, errorCode: string): Promise<void> {
+    if (isTerminalSyncAuthorizationFailure(errorCode)) {
+      console.warn(
+        `SyncEngineLevel: sync authorization for ${context.did} -> ${context.dwnUrl} was revoked or expired — ` +
+        'pausing link (reconnect to resume).',
+      );
+      if (!context.isStale()) {
+        await this.transitionToPaused(context.linkKey, context.link);
+      }
+      return;
+    }
+
+    console.warn(`SyncEngineLevel: subscription error for ${context.did} -> ${context.dwnUrl}: ${errorCode}`);
+    if (!context.isStale()) {
+      await this._linkRecoveryCoordinator.transitionToRepairing(context.controller);
+    }
+  }
+
+  private setLivePullConnectivity(
+    context: LivePullWakeContext,
+    connectivity: SyncConnectivityState,
+  ): void {
+    if (context.isStale()) {
+      return;
+    }
+
+    const previous = context.link.connectivity;
+    context.link.connectivity = connectivity;
+    if (previous !== connectivity) {
+      this.emitEvent({
+        type           : 'link:connectivity-change',
+        tenantDid      : context.did,
+        remoteEndpoint : context.dwnUrl,
+        ...context.eventScope,
+        from           : previous,
+        to             : connectivity,
+      });
+    }
   }
 
   private emitCheckpointAdvance(link: ReplicationLinkState, direction: SyncDirection): void {
@@ -2241,22 +2234,12 @@ export class SyncEngineLevel implements SyncEngine {
       runtime.disposed || !controller.isReplicationGenerationCurrent(subscriptionReplicationGeneration);
     const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(did);
 
-    const storedCursor = controller.link.push.contiguousAppliedToken;
-    if (storedCursor !== undefined && !isValidProgressToken(storedCursor)) {
-      console.warn(`SyncEngineLevel: Discarding stored local cursor with empty field(s) for ${did}`);
-      await this.replicationLinkStore.resetCheckpoint(controller.link, 'push');
-      if (!controller.isReplicationGenerationCurrent(subscriptionReplicationGeneration)) {
-        return false;
-      }
-    }
-
     // Subscribe to the local DWN's EventLog.
     const subscriptionHandler = (subMessage: SubscriptionMessage): Promise<void> =>
       runIdentityTask(() => this.handleLocalPushMessage(controller, isPushStale, subMessage));
 
-    // Resume the local feed from the durable PUSH checkpoint. The callback is
-    // only a wake signal: one coalesced durable push pass reads every owed
-    // entry from this cursor, so replay ordering lives in the durable feed.
+    // Subscribe at the live head. Paired snapshots establish startup progress;
+    // later callbacks only request coalesced durable push passes.
     const response = await this.agent.dwn.processRequest({
       author        : did,
       target        : did,
@@ -2264,20 +2247,12 @@ export class SyncEngineLevel implements SyncEngine {
       granteeDid    : delegateDid,
       messageParams : {
         filters,
-        cursor             : controller.link.push.contiguousAppliedToken,
-        permissionGrantIds : toMessagesPermissionGrantIds(target.permissionGrantIds),
+        permissionGrantIds: toMessagesPermissionGrantIds(target.permissionGrantIds),
       },
       subscriptionHandler: subscriptionHandler as any,
     });
 
     const reply = response.reply as MessagesSubscribeReply;
-    if (reply.status.code === 410 && controller.link.push.contiguousAppliedToken !== undefined) {
-      await this.replicationLinkStore.resetCheckpoint(controller.link, 'push');
-      if (!controller.isReplicationGenerationCurrent(subscriptionReplicationGeneration)) {
-        return false;
-      }
-      return this.openLocalPushSubscriptionAttempt(target, controller, subscriptionReplicationGeneration);
-    }
     if (reply.status.code !== 200 || !reply.subscription) {
       throw new Error(`SyncEngineLevel: Local MessagesSubscribe failed for ${did}: ${reply.status.code} ${reply.status.detail}`);
     }
@@ -2421,7 +2396,7 @@ export class SyncEngineLevel implements SyncEngine {
     if (useDirectionQueues &&
         (controller.link.status !== 'live' || !controller.isReplicationReady)) {
       // Initialization and repair already own the authoritative reconciliation
-      // that establishes this replication generation's replay boundary.
+      // that establishes this replication generation's reconciliation boundary.
       // Administrative sync work must not wait on it while holding the controller
       // mailbox, because the owning repair may be queued behind this turn.
       return { aborted: true };
@@ -2453,7 +2428,7 @@ export class SyncEngineLevel implements SyncEngine {
     return this._durableFeedReconciler.verifyConvergence(target, shouldContinue);
   }
 
-  /** Probe one active session without racing either directional replay queue. */
+  /** Probe one active session without racing either direction reconciliation queue. */
   private async probeFeedConvergence(target: SyncTarget): Promise<SyncReconcileResult> {
     await this.getOrCreateReplicationLink(target);
     const linkKey = buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
@@ -2909,11 +2884,17 @@ export class SyncEngineLevel implements SyncEngine {
         hasActionableDiffs = true;
         continue;
       }
+      if (outcome.kind === 'echo') {
+        continue;
+      }
 
       hasActionableDiffs = true;
       if (outcome.kind === 'admitted') {
         admittedCids.push(...outcome.appliedCids);
         await this.trackRemoteFeedAppliedCids(outcome.appliedCids, target);
+        for (const freshEntry of outcome.freshEntries) {
+          this.emitDeliveryApplied(target, freshEntry.messageCid, freshEntry.message);
+        }
       }
     }
 
@@ -3127,12 +3108,17 @@ export class SyncEngineLevel implements SyncEngine {
     shouldContinue?: () => boolean,
   ): Promise<
     | { kind: 'aborted' }
-    | { kind: 'admitted'; appliedCids: string[] }
+    | { kind: 'admitted'; appliedCids: string[]; freshEntries: SyncFreshEntry[] }
     | { kind: 'dead-lettered' }
     | { kind: 'deferred'; detail?: string }
+    | { kind: 'echo' }
   > {
     if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
       return { kind: 'aborted' };
+    }
+
+    if (await this.hasDurableLocalPullEcho(target, entry)) {
+      return { kind: 'echo' };
     }
 
     const prefetched = await this.syncEntriesFromFeedEntry(target, entry);
@@ -3152,7 +3138,7 @@ export class SyncEngineLevel implements SyncEngine {
     });
 
     if (outcome.kind === 'admitted') {
-      return { kind: 'admitted', appliedCids: outcome.appliedCids };
+      return { kind: 'admitted', appliedCids: outcome.appliedCids, freshEntries: outcome.freshEntries };
     }
 
     if (outcome.kind === 'deferred') {
@@ -3168,6 +3154,32 @@ export class SyncEngineLevel implements SyncEngine {
       errorDetail    : outcome.detail ?? 'replicated message admission failed',
     });
     return { kind: 'dead-lettered' };
+  }
+
+  /**
+   * Verify a recent-push hint against durable local state before skipping its
+   * remote echo. The in-memory hint narrows the check but is never checkpoint
+   * evidence by itself. A latest RecordsWrite also needs its local stored data;
+   * retaining only a dataless message is not equivalent to the remote record.
+   */
+  private async hasDurableLocalPullEcho(
+    target: SyncTarget,
+    entry: MessagesQueryReplyEntry,
+  ): Promise<boolean> {
+    if (!this._echoSuppressor.hasRecentlyPushed(target.did, entry.messageCid, target.dwnUrl)) {
+      return false;
+    }
+
+    const local = await this.getLocalMessageForTarget(target, entry.messageCid);
+    if (local === undefined) {
+      return false;
+    }
+
+    const hasStoredData = local.dataStream !== undefined;
+    await local.dataStream?.cancel();
+    return entry.isLatestBaseState !== true ||
+      !SyncEngineLevel.recordsWriteRequiresRemoteData(local.message) ||
+      hasStoredData;
   }
 
   private async syncEntriesFromFeedEntry(
