@@ -310,7 +310,7 @@ describe('SyncDurableFeedReconciler', () => {
     expect(fixture.operations.commitCheckpoint.called).toBe(false);
   });
 
-  it('should report partial pull admission before surfacing a deferred dependency', async () => {
+  it('should report a deferred pull without advancing the page checkpoint', async () => {
     const fixture = createReconciler();
     fixture.link.pull.contiguousAppliedToken = token(1);
     fixture.queryFeed.resolves(reply({
@@ -325,9 +325,13 @@ describe('SyncDurableFeedReconciler', () => {
       messageCid         : 'deferred',
     });
 
-    await expect(fixture.reconciler.pull(target(), fixture.link)).rejects.toThrow(
-      'SyncDurableFeedReconciler: pull deferred for deferred: dependency missing',
-    );
+    const result = await fixture.reconciler.pull(target(), fixture.link);
+
+    expect(result).toEqual({
+      admittedCids       : ['applied'],
+      hasActionableDiffs : true,
+      deferredPull       : { messageCid: 'deferred', detail: 'dependency missing' },
+    });
     expect(fixture.persistCheckpoint.called).toBe(false);
   });
 

@@ -221,9 +221,10 @@ export type DirectionCheckpoint = {
    * The highest feed token through which all earlier work for this link has
    * been durably settled. This is the resume point after crash or reconnect.
    *
-   * Only a completed durable-feed page advances it; a subscription
-   * notification alone is not checkpoint evidence. Positions may be sparse
-   * for filtered feeds.
+   * A completed durable-feed page advances it during reconciliation; an
+   * equal paired-subscription snapshot may establish the initial baseline.
+   * A subscription notification alone is never checkpoint evidence.
+   * Positions may be sparse for filtered feeds.
    */
   contiguousAppliedToken?: ProgressToken;
 };
@@ -254,7 +255,7 @@ export type SyncRunOptions = {
  *
  * - `initializing` — link created, no subscriptions open yet.
  * - `live` — actively receiving events via subscription.
- * - `repairing` — gap detected or pending overflow; running durable feed repair.
+ * - `repairing` — recovering from a retryable subscription failure or verified feed divergence.
  * - `paused` — link retries are stopped until the app updates registration or recreates the link.
  */
 export type LinkStatus = 'initializing' | 'live' | 'repairing' | 'paused';

@@ -25,6 +25,7 @@ the code, not an entry missing from this table.
 | Deterministic identity of one tenant-and-scope projection, independent of endpoint and authorization | **`projectionId`** — `computeProjectionId` | endpoint identity, authorization identity |
 | Ordered durable-feed work for one replication direction | **direction reconciliation queue** — `enqueueDirection`, one independent FIFO each for `pull` and `push` | subscription callback queue, `DeliveryLedger`, `SyncDeliveryTag`, `track*Delivery` / `ack*Delivery`, `pushQueue`, `SyncPushQueue*` |
 | Single startup boundary for the two direction queues | **replication readiness barrier** — `isReplicationReady`, `markReplicationReady` | allowing wake-requested passes to race baseline establishment |
+| Cursorless remote subscription whose events request durable pull passes | **live pull subscription** — `openLivePullSubscription`, `LivePullWakeContext` | live-pull admission pipeline, `SyncLivePullProcessor` |
 | A remote subscription event that says the durable remote feed may have advanced; bursts request one trailing pass, and the pass always resumes from `link.pull.contiguousAppliedToken` | **durable pull wake** — `requestPass('pull')`, `SyncLinkRecoveryCoordinator.pull` | per-event admission, delivery acknowledgement, event-cursor checkpoint, or EOSE checkpoint |
 | A local subscription event that says the durable local feed may have advanced; bursts request one trailing pass, and the pass always resumes from `link.push.contiguousAppliedToken` | **durable push wake** — `requestPass('push')`, `SyncLinkRecoveryCoordinator.push` | per-event push job, delivery acknowledgement, or checkpoint evidence |
 | Durable resume point for one direction of one replication link | **direction checkpoint** — `DirectionCheckpoint.contiguousAppliedToken` | delivery acknowledgement, arbitrary subscription cursor |
@@ -115,7 +116,8 @@ would make one signal stand in for proof it does not carry.
 
 - Compare token positions only when both `streamId` and `epoch` match. A token
   from another domain is neither newer nor older.
-- Advance a direction checkpoint only after a durable-feed page has settled.
+- Advance a direction checkpoint only after a durable-feed page has settled,
+  or establish its initial baseline from equal paired-subscription snapshots.
   A subscription event cursor or EOSE cursor is never checkpoint evidence.
 - Reset or re-establish the baseline when the token domain changes. Never carry
   a position across domains.

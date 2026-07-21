@@ -2100,7 +2100,13 @@ export class SyncEngineLevel implements SyncEngine {
     if (!context.controller.isReplicationReady || context.isStale()) {
       return;
     }
-    await this._linkRecoveryCoordinator.pull(context.controller);
+
+    // A subscription event is only a wake hint. Hand the durable pass to
+    // lifecycle supervision and return so transport acknowledgement is not
+    // coupled to a potentially multi-page catch-up. stopSync() still waits
+    // for the supervised pass before closing storage.
+    const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(context.did);
+    void runIdentityTask(() => this._linkRecoveryCoordinator.pull(context.controller));
   }
 
   /** A reconnect closes both disconnected-interval gaps without a full convergence probe. */

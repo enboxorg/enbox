@@ -146,19 +146,13 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     expect(engine.connectivityState).not.toBe('online');
   });
 
-  it('should wait for an in-flight pull callback before stopSync() completes', async () => {
+  it('should release a pull wake handler before its supervised pass settles and wait on stopSync()', async () => {
     const { agent, getRemoteHandler } = createLiveMockAgent();
     const engine = new SyncEngineLevel({ db, agent });
     const link = makeLink();
-    const handlerStarted = createDeferred();
-    const releaseHandler = createDeferred();
 
     sinon.stub(engine, 'sync').resolves();
     sinon.stub(engine as never, 'getSyncTargets').resolves([target]);
-    sinon.stub(engine as never, 'handleLivePullMessage').callsFake(async (): Promise<void> => {
-      handlerStarted.resolve();
-      await releaseHandler.promise;
-    });
     Object.assign(engine, {
       _replicationLinkStore: {
         getOrCreateLink    : sinon.stub().resolves(link),
@@ -172,13 +166,24 @@ describe('SyncEngineLevel late subscription callbacks', () => {
 
     await engine.startSync({ interval: '30s' });
 
+    const passStarted = createDeferred();
+    const releasePass = createDeferred();
+    sinon.stub(engine['_linkRecoveryCoordinator'], 'pull').callsFake(async (): Promise<void> => {
+      passStarted.resolve();
+      await releasePass.promise;
+    });
+
     const handler = getRemoteHandler();
     expect(handler).toBeDefined();
     const handlerPromise = handler!({
       type  : 'event',
       event : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
     });
-    await handlerStarted.promise;
+    await passStarted.promise;
+
+    // Transport acknowledgement is chained to the handler promise, so the
+    // handler must settle without joining the potentially multi-page pass.
+    await handlerPromise;
 
     let stopCompleted = false;
     const stopPromise = engine.stopSync().then((): void => { stopCompleted = true; });
@@ -187,8 +192,8 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     expect(stopCompleted).toBe(false);
     expect(db.status).toBe('open');
 
-    releaseHandler.resolve();
-    await Promise.all([handlerPromise, stopPromise]);
+    releasePass.resolve();
+    await stopPromise;
 
     expect(stopCompleted).toBe(true);
   });

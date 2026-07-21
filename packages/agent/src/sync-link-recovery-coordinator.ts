@@ -519,6 +519,12 @@ export class SyncLinkRecoveryCoordinator {
       if (outcome.paused === true) {
         return;
       }
+      // A deferred remote root holds its durable page until a later wake or
+      // settle pass. It is neither divergence nor a transport failure, so it
+      // must not enter the fixed-delay verified-reconcile retry loop.
+      if (outcome.deferredPull !== undefined) {
+        return;
+      }
       if (outcome.converged) {
         this._operations.clearConvergence(linkKey);
         this.restoreLinkConnectivity(link);

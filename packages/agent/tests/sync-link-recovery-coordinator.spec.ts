@@ -324,6 +324,39 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await clock.runAllAsync();
   });
 
+  it('runs a pull pass requested while repair owns the link after repair completes', async () => {
+    const clock = sinon.useFakeTimers();
+    const fixture = createFixture();
+    const state = link('repairing');
+    const controller = activate(fixture, state);
+    const repairStarted = deferred<void>();
+    const releaseRepair = deferred<void>();
+    fixture.operations.reconcileTarget.onFirstCall().callsFake(async () => {
+      repairStarted.resolve();
+      await releaseRepair.promise;
+      return { converged: true };
+    });
+    fixture.operations.reconcileTarget.onSecondCall().resolves({});
+
+    const repairing = fixture.coordinator.repair(controller);
+    await repairStarted.promise;
+
+    // A wake during repair can only leave its durable pass mark: readiness is
+    // fenced until both subscriptions reopen.
+    controller.requestPass('pull');
+    releaseRepair.resolve();
+    await repairing;
+    await waitForLastTask(fixture.taskRunner);
+
+    expect(fixture.operations.reconcileTarget.callCount).toBe(2);
+    expect(fixture.operations.reconcileTarget.secondCall.args[0]).toBe(controller);
+    expect(fixture.operations.reconcileTarget.secondCall.args[2]).toEqual({ direction: 'pull' });
+    expect(controller.isPassRequested('pull')).toBe(false);
+
+    controller.deactivate();
+    await clock.runAllAsync();
+  });
+
   it('abandons a repair whose runtime is disposed during durable reconciliation', async () => {
     const fixture = createFixture();
     const state = link('repairing');
@@ -527,6 +560,34 @@ describe('SyncLinkRecoveryCoordinator', () => {
     })).toBe(true);
     controller.deactivate();
     await clock.runAllAsync();
+  });
+
+  it('leaves a deferred pull for the next wake or settle pass without arming a retry loop', async () => {
+    const fixture = createFixture();
+    const controller = activate(fixture);
+    fixture.operations.reconcileTarget.resolves({
+      deferredPull: { messageCid: 'deferred-cid', detail: 'dependency unavailable' },
+    });
+
+    await fixture.coordinator.pull(controller);
+
+    expect(fixture.operations.reportError.notCalled).toBe(true);
+    expect(controller.reconcileTimer).toBeUndefined();
+    expect(fixture.operations.emitEvent.calledWithMatch({ reason: 'pull-retryable' })).toBe(false);
+  });
+
+  it('does not classify a deferred pull as verified feed divergence', async () => {
+    const fixture = createFixture();
+    const controller = activate(fixture);
+    fixture.operations.reconcileTarget.resolves({
+      deferredPull: { messageCid: 'deferred-cid', detail: 'dependency unavailable' },
+    });
+
+    await fixture.coordinator.reconcile(controller);
+
+    expect(fixture.operations.handleDivergence.notCalled).toBe(true);
+    expect(fixture.operations.clearConvergence.notCalled).toBe(true);
+    expect(fixture.operations.emitEvent.calledWithMatch({ type: 'reconcile:completed' })).toBe(false);
   });
 
   it('coalesces push wake signals into one trailing durable-feed pass', async () => {

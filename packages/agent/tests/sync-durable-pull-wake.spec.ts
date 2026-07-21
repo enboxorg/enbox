@@ -5,7 +5,7 @@ import type { SyncTarget } from '../src/sync-target-resolver.js';
 import sinon from 'sinon';
 
 import { afterEach, describe, expect, it } from 'bun:test';
-import { DwnInterfaceName, DwnMethodName, Encoder } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, Encoder, Message } from '@enbox/dwn-sdk-js';
 
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 
@@ -96,9 +96,48 @@ describe('SyncEngineLevel durable pull admission', () => {
     })).rejects.toThrow('continued to durable admission');
   });
 
+  it('skips a latest RecordsWrite echo only when its local stored data is durable', async () => {
+    const engine = new SyncEngineLevel({ agent: {} as never, db: {} as never });
+    const internal = engine as any;
+    const messageCid = 'cid-local-data';
+    internal._echoSuppressor.trackPushed(DID, messageCid, REMOTE);
+    const dataStream = new Blob(['stored data']).stream();
+    sinon.stub(internal, 'getLocalMessageForTarget').resolves({
+      dataStream,
+      message: recordsWriteMessage(),
+    });
+    const hydrate = sinon.stub(internal, 'syncEntriesFromFeedEntry').rejects(new Error('must not hydrate'));
+
+    const result = await internal.admitRemoteFeedEntry(target(), {
+      isLatestBaseState: true,
+      messageCid,
+    });
+
+    expect(result).toEqual({ kind: 'echo' });
+    expect(hydrate.notCalled).toBe(true);
+  });
+
+  it('skips a non-latest RecordsWrite echo without requiring retained record data', async () => {
+    const engine = new SyncEngineLevel({ agent: {} as never, db: {} as never });
+    const internal = engine as any;
+    const messageCid = 'cid-non-latest';
+    internal._echoSuppressor.trackPushed(DID, messageCid, REMOTE);
+    sinon.stub(internal, 'getLocalMessageForTarget').resolves({ message: recordsWriteMessage() });
+    const hydrate = sinon.stub(internal, 'syncEntriesFromFeedEntry').rejects(new Error('must not hydrate'));
+
+    const result = await internal.admitRemoteFeedEntry(target(), {
+      isLatestBaseState: false,
+      messageCid,
+    });
+
+    expect(result).toEqual({ kind: 'echo' });
+    expect(hydrate.notCalled).toBe(true);
+  });
+
   it('emits one described delivery for every freshly applied root or dependency', async () => {
     const engine = new SyncEngineLevel({ agent: {} as never, db: {} as never });
     const internal = engine as any;
+    const syncTarget = target();
     const root = protocolMessage('2026-07-21T00:00:00.000000Z');
     const dependency = protocolMessage('2026-07-20T00:00:00.000000Z');
     sinon.stub(internal, 'admitRemoteFeedEntry').resolves({
@@ -110,11 +149,11 @@ describe('SyncEngineLevel durable pull admission', () => {
       ],
     });
     sinon.stub(internal, 'hasDeadLetter').resolves(false);
-    sinon.stub(internal, 'trackRemoteFeedAppliedCids').resolves();
+    const trackApplied = sinon.stub(internal, 'trackRemoteFeedAppliedCids').resolves();
     const events: unknown[] = [];
     engine.on((event): void => { events.push(event); });
 
-    const result = await internal.admitRemoteFeedPage(target(), [{ messageCid: 'cid-root' }]);
+    const result = await internal.admitRemoteFeedPage(syncTarget, [{ messageCid: 'cid-root' }]);
 
     expect(result).toEqual({
       kind               : 'processed',
@@ -135,6 +174,61 @@ describe('SyncEngineLevel durable pull admission', () => {
         messageCid : 'cid-dependency',
       }),
     ]);
+    expect(trackApplied.calledOnceWithExactly(['cid-root', 'cid-dependency'], syncTarget)).toBe(true);
+  });
+
+  it('does not emit delivery events for duplicate or superseded admissions', async () => {
+    const engine = new SyncEngineLevel({ agent: {} as never, db: {} as never });
+    const internal = engine as any;
+    const syncTarget = target();
+    sinon.stub(internal, 'admitRemoteFeedEntry').resolves({
+      kind         : 'admitted',
+      appliedCids  : ['cid-existing'],
+      freshEntries : [],
+    });
+    sinon.stub(internal, 'hasDeadLetter').resolves(false);
+    const trackApplied = sinon.stub(internal, 'trackRemoteFeedAppliedCids').resolves();
+    const events: unknown[] = [];
+    engine.on((event): void => { events.push(event); });
+
+    const result = await internal.admitRemoteFeedPage(syncTarget, [{ messageCid: 'cid-existing' }]);
+
+    expect(result).toEqual({
+      kind               : 'processed',
+      admittedCids       : ['cid-existing'],
+      hasActionableDiffs : true,
+    });
+    expect(trackApplied.calledOnceWithExactly(['cid-existing'], syncTarget)).toBe(true);
+    expect(events.filter((event: any) => event.type === 'delivery:applied')).toEqual([]);
+  });
+
+  it('records a terminal admission failure as a dead letter at the engine seam', async () => {
+    const message = protocolMessage('2026-07-21T00:00:00.000000Z');
+    const messageCid = await Message.getCid(message);
+    const applyReplicatedMessage = sinon.stub().resolves({ kind: 'Invalid', reason: 'bad signature' });
+    const engine = new SyncEngineLevel({
+      agent: {
+        dwn: { applyReplicatedMessage, isRemoteMode: false },
+      } as never,
+      db: {} as never,
+    });
+    const internal = engine as any;
+    const recordDeadLetter = sinon.stub(internal, 'recordDeadLetter').resolves();
+
+    const result = await internal.admitRemoteFeedEntry(target(), {
+      isLatestBaseState: true,
+      message,
+      messageCid,
+    });
+
+    expect(result).toEqual({ kind: 'dead-lettered' });
+    expect(recordDeadLetter.calledOnceWithMatch({
+      errorCode      : 'invalid',
+      errorDetail    : 'bad signature',
+      messageCid,
+      remoteEndpoint : REMOTE,
+      tenantDid      : DID,
+    })).toBe(true);
   });
 
   it('hydrates inline durable-query data without a second remote read or a hint cache', async () => {
@@ -154,5 +248,69 @@ describe('SyncEngineLevel durable pull admission', () => {
     expect(hydrated.message).toEqual(entry.message);
     expect(hydrated.bufferedData).toEqual(bytes);
     expect(hydrated.isLatestBaseState).toBe(true);
+  });
+
+  it('fetches a durable-query entry by CID when the query omits its message', async () => {
+    const fetchedMessage = protocolMessage('2026-07-21T00:00:00.000000Z');
+    const processDwnRequest = sinon.stub().resolves({ message: { descriptor: {} } });
+    const sendDwnRequest = sinon.stub().resolves({
+      status : { code: 200, detail: 'OK' },
+      entry  : { message: fetchedMessage },
+    });
+    const engine = new SyncEngineLevel({
+      agent: {
+        processDwnRequest,
+        rpc: { sendDwnRequest },
+      } as never,
+      db: {} as never,
+    });
+    const internal = engine as any;
+
+    const [hydrated] = await internal.syncEntriesFromFeedEntry(target(), {
+      isLatestBaseState : true,
+      messageCid        : 'cid-without-message',
+    });
+
+    expect(hydrated).toEqual({
+      isLatestBaseState : true,
+      message           : fetchedMessage,
+    });
+    expect(processDwnRequest.calledOnce).toBe(true);
+    expect(sendDwnRequest.calledOnce).toBe(true);
+  });
+
+  it('refetches detached RecordsWrite data for every data-stream attempt', async () => {
+    const message = recordsWriteMessage();
+    const firstStream = new Blob(['first']).stream();
+    const secondStream = new Blob(['second']).stream();
+    const processDwnRequest = sinon.stub().resolves({ message: { descriptor: {} } });
+    const sendDwnRequest = sinon.stub();
+    sendDwnRequest.onFirstCall().resolves({
+      status : { code: 200, detail: 'OK' },
+      entry  : { data: firstStream, message },
+    });
+    sendDwnRequest.onSecondCall().resolves({
+      status : { code: 200, detail: 'OK' },
+      entry  : { data: secondStream, message },
+    });
+    const engine = new SyncEngineLevel({
+      agent: {
+        processDwnRequest,
+        rpc: { sendDwnRequest },
+      } as never,
+      db: {} as never,
+    });
+    const internal = engine as any;
+
+    const [hydrated] = await internal.syncEntriesFromFeedEntry(target(), {
+      isLatestBaseState : true,
+      message,
+      messageCid        : 'cid-detached-data',
+    });
+
+    expect(await hydrated.dataStreamFactory()).toBe(firstStream);
+    expect(await hydrated.dataStreamFactory()).toBe(secondStream);
+    expect(processDwnRequest.calledTwice).toBe(true);
+    expect(sendDwnRequest.calledTwice).toBe(true);
   });
 });

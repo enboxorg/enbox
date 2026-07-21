@@ -28,6 +28,12 @@ export type SyncDurableFeedReconcileResult = {
   hasActionableDiffs?: boolean;
   localFingerprint?: string;
   /**
+   * The first remote root whose dependencies are not yet available. Its page
+   * and checkpoint remain unsettled; a later wake or settle pass retries from
+   * the same durable checkpoint.
+   */
+  deferredPull?: { messageCid: string; detail?: string };
+  /**
    * The link was parked, so the cycle returned without reconciling anything.
    * Distinct from converged and from divergent: nothing was compared.
    */
@@ -110,6 +116,7 @@ type FeedCursorAdvanceResult =
 
 type TrackedFeedPageAdmissionResult =
   | { kind: 'aborted' }
+  | { kind: 'deferred'; detail?: string; hasActionableDiffs: boolean; messageCid: string }
   | { kind: 'processed'; hasActionableDiffs: boolean };
 
 /**
@@ -287,6 +294,15 @@ export class SyncDurableFeedReconciler {
       return { ...result, aborted: true };
     }
 
+    // A deferred pull is durable blocked work, not feed divergence. Keep the
+    // checkpoint below it and let the next wake or settle pass retry. The push
+    // direction above remains independent, but convergence cannot be claimed
+    // until the blocked pull page settles.
+    if (result.deferredPull !== undefined) {
+      delete result.converged;
+      return result;
+    }
+
     if (options?.verifyConvergence === true) {
       const convergence = await this.verifyConvergence(target, shouldContinue);
       SyncDurableFeedReconciler.mergeResult(result, convergence, options);
@@ -345,6 +361,16 @@ export class SyncDurableFeedReconciler {
       }
 
       hasActionableDiffs ||= pageResult.hasActionableDiffs;
+      if (pageResult.kind === 'deferred') {
+        return {
+          admittedCids,
+          hasActionableDiffs,
+          deferredPull: {
+            detail     : pageResult.detail,
+            messageCid : pageResult.messageCid,
+          },
+        };
+      }
       const cursorAdvance = await this.commitPageProgress(link, 'pull', cursor, reply, target);
       if (cursorAdvance.drained) {
         return { admittedCids, hasActionableDiffs, remoteFingerprint: reply.fingerprint };
@@ -406,6 +432,16 @@ export class SyncDurableFeedReconciler {
       }
 
       hasActionableDiffs ||= pageResult.hasActionableDiffs;
+      if (pageResult.kind === 'deferred') {
+        return {
+          admittedCids,
+          hasActionableDiffs,
+          deferredPull: {
+            detail     : pageResult.detail,
+            messageCid : pageResult.messageCid,
+          },
+        };
+      }
       const cursorAdvance = await this.commitPageProgress(link, 'pull', cursor, reply, target);
       if (cursorAdvance.drained) {
         return { admittedCids, hasActionableDiffs, remoteFingerprint: reply.fingerprint };
@@ -609,9 +645,12 @@ export class SyncDurableFeedReconciler {
     }
 
     if (pageResult.kind === 'deferred') {
-      throw new Error(
-        `SyncDurableFeedReconciler: pull deferred for ${pageResult.messageCid}: ${pageResult.detail ?? 'dependency unavailable'}`,
-      );
+      return {
+        kind               : 'deferred',
+        detail             : pageResult.detail,
+        hasActionableDiffs : pageResult.hasActionableDiffs,
+        messageCid         : pageResult.messageCid,
+      };
     }
 
     return { kind: 'processed', hasActionableDiffs: pageResult.hasActionableDiffs };
@@ -720,8 +759,8 @@ export class SyncDurableFeedReconciler {
    * `converged` starts OPTIMISTIC when convergence verification is
    * requested: only `mergeResult` ever drives it to `false`. A path that
    * returns this untouched therefore reports convergence without having
-   * compared fingerprints — which is what a paused link does deliberately,
-   * since it has nothing to reconcile.
+   * compared fingerprints. Callers that stop before verification must remove
+   * or avoid that optimistic seed, as the paused and deferred-pull paths do.
    */
   private static initialResult(options?: SyncDurableFeedReconcileOptions): SyncDurableFeedReconcileResult {
     return {
@@ -758,6 +797,9 @@ export class SyncDurableFeedReconciler {
     target.admittedCids?.push(...(source.admittedCids ?? []));
     target.pushFailures?.push(...(source.pushFailures ?? []));
     target.hasActionableDiffs ||= source.hasActionableDiffs === true;
+    if (source.deferredPull !== undefined) {
+      target.deferredPull = source.deferredPull;
+    }
     target.quotaBlocked ||= source.quotaBlocked === true;
     target.localFingerprint = source.localFingerprint ?? target.localFingerprint;
     target.remoteFingerprint = source.remoteFingerprint ?? target.remoteFingerprint;
