@@ -25,6 +25,8 @@ export interface SyncLinkRecoveryCoordinatorOperations {
   captureIdentityTaskRunner(tenantDid: string): SyncIdentityTaskRunner;
   clearConvergence(linkKey: string): void;
   emitEvent(event: SyncEvent): void;
+  /** Consume a stranded push timer and flush the pending batch through the flush lane. */
+  flushPendingPushBatch(controller: SyncLinkController): Promise<void>;
   getController(linkKey: string): SyncLinkController | undefined;
   getRuntimeScope(): SyncRuntimeHandle;
   handleDivergence(
@@ -275,10 +277,29 @@ export class SyncLinkRecoveryCoordinator {
    * arriving before the pass takes its remote snapshot join it; a signal
    * arriving after the snapshot is news that pass cannot have seen, so it
    * runs as one trailing pass instead of being silently absorbed.
+   *
+   * A pending push batch is drained through the flush lane FIRST — recovery
+   * must consume the state the currency gate rejects on, or a batch whose
+   * debounce timer was lost across a suspension keeps the link non-current
+   * after every successful reconciliation. Both dispatches below are
+   * synchronous: the flush turn enters the mailbox ahead of the reconcile
+   * turn, and no await sits between the pass request and its enqueue — the
+   * mailbox ordering that callers queueing around this call rely on is
+   * unchanged (a link with no pending batch enqueues nothing extra). A
+   * flush failure never blocks the pass: the reconciliation pushes the
+   * same messages from the durable feed.
    */
-  public reconcile(controller: SyncLinkController): Promise<void> {
+  public async reconcile(controller: SyncLinkController): Promise<void> {
     controller.requestPass('reconcile');
-    return controller.runRequestedPasses('reconcile', (): Promise<void> => this.reconcileExclusive(controller));
+    const flush = this._operations.flushPendingPushBatch(controller).catch((error: unknown) => {
+      this._operations.reportError(
+        `SyncLinkRecoveryCoordinator: pre-reconcile push flush failed for ${controller.link.tenantDid} -> ${controller.link.remoteEndpoint}`,
+        error,
+      );
+    });
+    const pass = controller.runRequestedPasses('reconcile', (): Promise<void> => this.reconcileExclusive(controller));
+    await flush;
+    await pass;
   }
 
   private superviseRepairPasses(

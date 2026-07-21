@@ -127,6 +127,33 @@ describe('SyncConnectivityManager', () => {
     manager.stop();
   });
 
+  it('schedules a stream-detachment request through the same coalescing machinery', async () => {
+    const clock = sinon.useFakeTimers();
+    const environment = new TestConnectivityEnvironment();
+    environment.visibilityState = 'visible';
+    const { manager, state } = setupManager({ environment });
+
+    // Before start() there is no runtime scope — the request is a no-op.
+    manager.requestConvergenceCheck();
+    await clock.tickAsync(0);
+    expect(state.integrityChecks).toBe(0);
+
+    manager.start();
+    manager.requestConvergenceCheck();
+    await clock.tickAsync(0);
+    expect(state.integrityChecks).toBe(1);
+
+    // Detachments inside the cooldown coalesce into one trailing check — a
+    // quick resubscription simply makes that deferred check a no-op.
+    manager.requestConvergenceCheck();
+    manager.requestConvergenceCheck();
+    await clock.tickAsync(9_999);
+    expect(state.integrityChecks).toBe(1);
+    await clock.tickAsync(1);
+    expect(state.integrityChecks).toBe(2);
+    manager.stop();
+  });
+
   it('defers a recovery signal that follows a completed check inside the cooldown', async () => {
     const clock = sinon.useFakeTimers();
     const environment = new TestConnectivityEnvironment();

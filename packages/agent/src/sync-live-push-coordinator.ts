@@ -145,6 +145,27 @@ export class SyncLivePushCoordinator {
     }
   }
 
+  /**
+   * Consume a stranded debounce/retry timer and flush the pending batch now.
+   * Wake-driven recovery runs this before reconciling: a timer lost across a
+   * browser suspension otherwise strands its queued entries — the link reads
+   * permanently non-current while the entries wait for a timer that may
+   * never fire. The armed timer is cancelled so `takeBatch` can consume its
+   * entries; anything arriving during the flush queues and re-arms through
+   * the normal path.
+   */
+  public async flushPendingPushBatch(controller: SyncLinkController): Promise<void> {
+    const runtime = controller.pushQueue;
+    if (runtime === undefined) {
+      return;
+    }
+
+    if (runtime.timer !== undefined) {
+      controller.cancelPushTimer(runtime);
+    }
+    await this.flushLink(controller.linkKey, controller);
+  }
+
   /** Flush the current queue for one exact active link lifetime. */
   public async flushLink(linkKey: string, expectedController?: SyncLinkController): Promise<void> {
     const controller = this._operations.getController(linkKey);

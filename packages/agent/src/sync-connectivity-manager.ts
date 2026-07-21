@@ -20,7 +20,7 @@ export interface SyncConnectivityManagerOperations {
   getRuntimeScope(): SyncConnectivityRuntimeScope;
   markActiveLinksOffline(): void;
   runBackgroundTask(operation: () => Promise<void>): Promise<void>;
-  /** Run or queue one full integrity check, coalescing with exclusive sync work. */
+  /** Run one convergence check under the engine's exclusive sync admission. */
   runConvergenceCheck(): Promise<void>;
 }
 
@@ -29,7 +29,7 @@ export type SyncConnectivityManagerParams = {
   operations: SyncConnectivityManagerOperations;
 };
 
-type SyncConvergenceTrigger = 'online' | 'visibility';
+type SyncConvergenceTrigger = 'online' | 'visibility' | 'stream';
 type ActiveConvergenceCheck = { scope: SyncConnectivityRuntimeScope };
 
 /**
@@ -153,6 +153,23 @@ export class SyncConnectivityManager {
     this.scheduleConvergenceCheck('online');
   }
 
+  /**
+   * Request a coalesced convergence check for a non-browser recovery signal
+   * — e.g. a replication stream detaching after its socket's health probe
+   * settles. A wake-driven check can complete BEFORE the transport's
+   * asynchronous verdict lands; the invalidating signal re-requests
+   * evaluation here, riding the same single-flight, cooldown, and trailing
+   * machinery as browser events. A quick resubscription makes the deferred
+   * check a no-op.
+   */
+  public requestConvergenceCheck(): void {
+    if (!this.isCurrentScope()) {
+      return;
+    }
+
+    this.scheduleConvergenceCheck('stream');
+  }
+
   private handleOffline(): void {
     if (!this.isCurrentScope()) {
       return;
@@ -222,7 +239,9 @@ export class SyncConnectivityManager {
     scope.cancelTimer(SyncConnectivityManager.RECOVERY_TIMER);
     this._activeConvergenceCheck = check;
     this._lastConvergenceCheckStartedAt = Date.now();
-    const reason = trigger === 'online' ? 'browser online' : 'page visible';
+    const reason = trigger === 'online'
+      ? 'browser online'
+      : trigger === 'visibility' ? 'page visible' : 'replication stream detached';
     console.info(`SyncConnectivityManager: ${reason} — checking replication streams`);
     const task = this._operations.runBackgroundTask(async (): Promise<void> => {
       if (scope.disposed) {

@@ -475,14 +475,15 @@ export class SyncEngineLevel implements SyncEngine {
     return new SyncLivePullProcessor({
       echoSuppressor : this._echoSuppressor,
       operations     : {
-        emitCheckpointAdvance : (link): void => { this.emitCheckpointAdvance(link, 'pull'); },
-        emitEvent             : (event): void => { this.emitEvent(event); },
-        getAgent              : (): EnboxPlatformAgent => this.agent,
-        getPermissionsApi     : (): PermissionsApi => this._permissionsApi,
-        persistCheckpoint     : (link): Promise<void> => this.ledger.persistCheckpoint(link, 'pull'),
-        recordDeadLetter      : (entry): Promise<void> => this.recordDeadLetter(entry),
-        reportError           : (message, error): void => { console.error(message, error); },
-        scheduleReconcile     : (controller, reason): void => {
+        emitCheckpointAdvance   : (link): void => { this.emitCheckpointAdvance(link, 'pull'); },
+        emitEvent               : (event): void => { this.emitEvent(event); },
+        getAgent                : (): EnboxPlatformAgent => this.agent,
+        getPermissionsApi       : (): PermissionsApi => this._permissionsApi,
+        persistCheckpoint       : (link): Promise<void> => this.ledger.persistCheckpoint(link, 'pull'),
+        recordDeadLetter        : (entry): Promise<void> => this.recordDeadLetter(entry),
+        reportError             : (message, error): void => { console.error(message, error); },
+        requestConvergenceCheck : (): void => { this._connectivityManager.requestConvergenceCheck(); },
+        scheduleReconcile       : (controller, reason): void => {
           this._linkRecoveryCoordinator.scheduleLinkReconcileByKey(controller, reason);
         },
         trackAppliedCids: (messageCids, target): Promise<void> =>
@@ -523,8 +524,10 @@ export class SyncEngineLevel implements SyncEngine {
       operations: {
         captureIdentityTaskRunner: (tenantDid): SyncIdentityTaskRunner =>
           this._lifecycle.captureIdentityTaskRunner(tenantDid),
-        clearConvergence : (linkKey): void => { this._feedConvergenceManager.clearLink(linkKey); },
-        emitEvent        : (event): void => { this.emitEvent(event); },
+        clearConvergence      : (linkKey): void => { this._feedConvergenceManager.clearLink(linkKey); },
+        emitEvent             : (event): void => { this.emitEvent(event); },
+        flushPendingPushBatch : (controller): Promise<void> =>
+          this._livePushCoordinator.flushPendingPushBatch(controller),
         getController    : (linkKey): SyncLinkController | undefined => this.getLinkController(linkKey),
         getRuntimeScope  : (): SyncRuntimeHandle => this._runtime,
         handleDivergence : (target, result, context): Promise<boolean> =>
@@ -3345,20 +3348,41 @@ export class SyncEngineLevel implements SyncEngine {
    * promise get work, as a targeted reconcile on their own mailbox lane,
    * supervised by the identity task group and endpoint-grouped like a full
    * run. A topology the live runtime is not fully operating (a target with
-   * no active controller) cannot be gated and falls back to the full
-   * verified `sync()`. Periodic full verification remains the settle
-   * check's job.
+   * no active controller) cannot be gated and falls back to a full
+   * verified run. Periodic full verification remains the settle check's
+   * job.
+   *
+   * The check runs under the exclusive sync admission — the same lock that
+   * covers full syncs, scoped syncs, drains, retries, and identity
+   * mutations. A held lock DEFERS the check behind its owner instead of
+   * dropping the wake (`acquireSync` queues), target planning happens
+   * inside the admission rather than against a pre-acquisition snapshot,
+   * and the targeted lanes can never overlap a concurrent full run. Wakes
+   * arriving while a check waits here coalesce in the connectivity
+   * manager's single-flight machinery.
    */
   private async runConvergenceCheck(): Promise<void> {
-    // An in-flight sync() is already reconciling every target under the
-    // exclusive sync queue; targeted lanes beside it would duplicate that
-    // same work. Skipping IS the coalescing — the settle check skips
-    // identically, and the connectivity manager's trailing flush re-runs
-    // a check that arrives while one is active.
-    if (this._runtime.disposed || this._lifecycle.isSyncInProgress) {
+    if (this._runtime.disposed) {
       return;
     }
 
+    const fence = this.captureTransitionFence();
+    await this._lifecycle.acquireSync();
+    try {
+      // A runtime transition while waiting for the lock invalidated this
+      // generation's check; the next runtime's own connectivity manager
+      // owns recovery from here.
+      if (!fence() || this._runtime.disposed) {
+        return;
+      }
+      await this.runConvergenceCheckExclusive();
+    } finally {
+      this._lifecycle.releaseSync();
+    }
+  }
+
+  /** The convergence-check body. Runs only under the exclusive sync admission. */
+  private async runConvergenceCheckExclusive(): Promise<void> {
     const targets = await this.getSyncTargets();
     if (targets.length === 0) {
       return;
@@ -3380,7 +3404,9 @@ export class SyncEngineLevel implements SyncEngine {
       console.info(
         `SyncEngineLevel: convergence check — ${uncontrolledTargets} target(s) without an active link; running full verified sync`,
       );
-      await this.sync(undefined, { verifyConvergence: true });
+      // Already inside the admission `sync()` would acquire — run the full
+      // verified cycle directly under it.
+      await this._runCoordinator.run(undefined, { verifyConvergence: true });
       return;
     }
 
@@ -3409,6 +3435,12 @@ export class SyncEngineLevel implements SyncEngine {
     }
     await Promise.allSettled([...staleByEndpoint.values()].map(async (group): Promise<void> => {
       for (const controller of group) {
+        // A link queued behind another on its endpoint may have recovered
+        // (reconnected, or finished flushing) while it waited — re-check
+        // at its turn instead of reconciling on the stale verdict.
+        if (controller.isStreamCurrent) {
+          continue;
+        }
         const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(controller.link.tenantDid);
         await runIdentityTask(async (): Promise<void> => {
           try {

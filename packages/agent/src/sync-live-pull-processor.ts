@@ -46,6 +46,8 @@ export interface SyncLivePullProcessorOperations {
   persistCheckpoint(link: ReplicationLinkState): Promise<void>;
   recordDeadLetter(entry: Omit<DeadLetterEntry, 'failedAt'>): Promise<void>;
   reportError(message: string, error: unknown): void;
+  /** Request a coalesced convergence check after a state-invalidating transport signal. */
+  requestConvergenceCheck(): void;
   scheduleReconcile(controller: SyncLinkController, reason: string): void;
   trackAppliedCids(messageCids: string[], target: SyncTarget): Promise<void>;
   transitionToPaused(linkKey: string, link: ReplicationLinkState): Promise<void>;
@@ -124,6 +126,11 @@ export class SyncLivePullProcessor {
     // failures arrive separately as `error` messages and drive repair.
     if (message.type === 'disconnected' || message.type === 'reconnecting') {
       context.controller.markLiveStreamDetached();
+      // A wake-driven check may have consumed its wake before this verdict
+      // landed and skipped the link as current. The invalidating signal
+      // re-requests a coalesced check, so an unavailable socket still gets
+      // prompt HTTP recovery; a quick resubscription makes it a no-op.
+      this._operations.requestConvergenceCheck();
       return;
     }
     if (message.type === 'reconnected') {

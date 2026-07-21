@@ -462,4 +462,25 @@ describe('SyncEngineLevel — transport lifecycle stream attachment', () => {
 
     await controller.dispose();
   });
+
+  it('should request a coalesced convergence check when the stream detaches', async () => {
+    const fixture = createEngineFixture(db);
+    const { controller, engine } = fixture;
+    const request = sinon.stub((engine as any)._connectivityManager, 'requestConvergenceCheck');
+
+    expect(await openSubscription(fixture)).toBe(true);
+    const handler = fixture.handlers[0];
+
+    // The transport's health verdict can land AFTER a wake-driven check
+    // already ran — detachment re-requests evaluation instead of leaving
+    // the link to wait for the next wake or settle pass.
+    await handler({ type: 'disconnected' });
+    expect(request.calledOnce).toBe(true);
+    await handler({ type: 'reconnecting', attempt: 1 });
+    expect(request.calledTwice).toBe(true);
+    await handler({ type: 'reconnected' });
+    expect(request.calledTwice).toBe(true);
+
+    await controller.dispose();
+  });
 });
