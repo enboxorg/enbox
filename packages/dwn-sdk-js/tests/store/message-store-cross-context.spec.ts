@@ -16,7 +16,6 @@ describe('MessageStoreLevel cross-context writes', () => {
 
     await Promise.all(stores.map((store) => store.open()));
     try {
-      await firstStore.clear();
       const writes = await Promise.all(Array.from({ length: 24 }, async () => {
         const generated = await TestDataGenerator.generateRecordsWrite();
         return {

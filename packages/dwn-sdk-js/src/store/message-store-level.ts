@@ -723,7 +723,7 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     const partitions = await this.partitions();
     const { cursor, limit, filters } = options;
 
-    // Head-captured-first: the per-tenant write mutex serializes commits in position order, so an
+    // Head-captured-first: the per-tenant write lock serializes commits in position order, so an
     // observed head H is a visibility barrier — every position <= H is already committed when the
     // range scans below run, and anything committed afterward has a position > H and waits for
     // the next page.
