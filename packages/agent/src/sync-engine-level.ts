@@ -61,7 +61,6 @@ import { AgentPermissionsApi } from './permissions-api.js';
 
 import { admitClosure } from './sync-admit-closure.js';
 import { DwnInterface } from './types/dwn.js';
-import { isValidProgressToken } from './sync-checkpoint.js';
 import { runWithCrossContextLock } from './sync-cross-context-lock.js';
 import { SyncConnectivityManager } from './sync-connectivity-manager.js';
 import { SyncDeadLetterStoreLevel } from './sync-dead-letter-store-level.js';
@@ -90,6 +89,7 @@ import { buildDurableLinkIdentityKey, buildLinkKey, LINK_KEY_SEPARATOR } from '.
 import { computeProjectionId, isTerminalPushFailure, lexicographicalCompare, singleProtocolForSyncScope, syncEventScope, syncScopeFromProtocols } from './types/sync.js';
 import { fetchRemoteMessages, getLocalMessage, isInitialWriteForRecord, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, recordIdForRecordsMessage } from './sync-messages.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
+import { isValidProgressToken, SyncCheckpoint } from './sync-checkpoint.js';
 import { normalizeDwnEndpoint, SyncTargetResolver } from './sync-target-resolver.js';
 
 export type SyncEngineLevelParams = {
@@ -2103,7 +2103,63 @@ export class SyncEngineLevel implements SyncEngine {
         this.emitEvent({ type: 'link:connectivity-change', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope, from: prevPullConnectivity, to: 'online' });
       }
     }
+
+    // A cursor-less open has no replay to catch up through — when the reply
+    // proves the feeds already match, adopt the remote head as the pull
+    // checkpoint so the link's first reconcile is an incremental no-op
+    // instead of a full feed enumeration.
+    if (cursor === undefined) {
+      await this.bootstrapPullCheckpoint(target, controller, reply, subscriptionPullGeneration);
+    }
     return true;
+  }
+
+  /**
+   * Adopts a subscribe reply's `head` token as the link's pull checkpoint when
+   * the reply's feed `fingerprint` matches the local feed — the two feeds hold
+   * the same message set, so every log position at or before `head` is already
+   * accounted for locally and replay from `head` loses nothing. Feature-
+   * detected: servers that do not attach the snapshot leave the checkpoint
+   * untouched. Best-effort: a probe failure never fails the subscription open.
+   */
+  private async bootstrapPullCheckpoint(
+    target: LinkSyncTarget,
+    controller: SyncLinkController,
+    reply: MessagesSubscribeReply,
+    subscriptionPullGeneration: number,
+  ): Promise<void> {
+    if (reply.fingerprint === undefined || reply.head === undefined || !isValidProgressToken(reply.head)) {
+      return;
+    }
+    if (!controller.isActive || controller.link.pull.contiguousAppliedToken !== undefined) {
+      return;
+    }
+
+    try {
+      const localReply = await this.queryDurableFeed({ cidsOnly: true, limit: 1, source: 'local', target });
+      if (localReply.status.code !== 200 || localReply.fingerprint !== reply.fingerprint) {
+        return;
+      }
+
+      // Re-check ownership and vacancy after the probe: a repair reset, a
+      // pause takeover, or a live delivery that committed a token while the
+      // local query ran owns the checkpoint now.
+      if (this._runtime.disposed || !controller.isPullGenerationCurrent(subscriptionPullGeneration)) {
+        return;
+      }
+      if (!controller.isActive || controller.linkKey !== target.linkKey) {
+        return;
+      }
+      const { link } = controller;
+      if (link.pull.contiguousAppliedToken !== undefined) {
+        return;
+      }
+
+      SyncCheckpoint.commitContiguousToken(link.pull, reply.head);
+      await this.ledger.persistCheckpoint(link, 'pull');
+    } catch (error) {
+      console.warn(`SyncEngineLevel: Pull checkpoint bootstrap skipped for ${target.did} -> ${target.dwnUrl}`, error);
+    }
   }
 
   private async resolveInitialPullCursor({ did, dwnUrl, link }: {

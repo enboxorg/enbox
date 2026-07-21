@@ -1,7 +1,7 @@
 import type { PermissionGrant } from '../protocols/permission-grant.js';
-import type { EventSubscription, ProgressGapInfo, SubscriptionEvent, SubscriptionListener, SubscriptionMessage } from '../types/subscriptions.js';
+import type { EventSubscription, ProgressGapInfo, ProgressToken, ReplicationFeedReader, SubscriptionEvent, SubscriptionListener, SubscriptionMessage } from '../types/subscriptions.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
-import type { MessagesSubscribeMessage, MessagesSubscribeReply } from '../types/messages-types.js';
+import type { MessagesFilter, MessagesSubscribeMessage, MessagesSubscribeReply } from '../types/messages-types.js';
 
 import { authenticate } from '../core/auth.js';
 import { Message } from '../core/message.js';
@@ -9,6 +9,7 @@ import { messageReplyFromError } from '../core/message-reply.js';
 import { Messages } from '../utils/messages.js';
 import { MessagesGrantAuthorization } from '../core/messages-grant-authorization.js';
 import { MessagesSubscribe } from '../interfaces/messages-subscribe.js';
+import { Replication } from '../utils/replication.js';
 import { Time } from '../utils/time.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
@@ -79,10 +80,20 @@ export class MessagesSubscribeHandler implements MethodHandler {
       });
       await guardedHandler.setSubscription(subscription);
 
-      return {
+      const reply: MessagesSubscribeReply = {
         status: { code: 200, detail: 'OK' },
         subscription,
       };
+      try {
+        await MessagesSubscribeHandler.attachFeedSnapshot(reply, tenant, filters, this.deps);
+      } catch {
+        // Best-effort enrichment: the subscription is live and correct
+        // without the snapshot — consumers feature-detect the fields. A
+        // failure reply here would orphan the just-installed listener, since
+        // close handles are registered only from successful replies.
+      }
+
+      return reply;
     } catch (error) {
       if (error instanceof DwnError && error.code === DwnErrorCode.EventLogProgressGap) {
         const gapInfo = (error as any).gapInfo as ProgressGapInfo | undefined;
@@ -93,6 +104,59 @@ export class MessagesSubscribeHandler implements MethodHandler {
       }
       return messageReplyFromError(error, 500);
     }
+  }
+
+  /**
+   * Attaches the replication feed's `head` token and scope `fingerprint` to a
+   * successful subscribe reply, when the message store exposes the feed.
+   *
+   * Ordering is load-bearing: both values are observed AFTER the subscription
+   * became active, so every event past `head` is either replayable from it or
+   * already flowing on the live stream — a caller that verifies `fingerprint`
+   * against its local feed may adopt `head` as a checkpoint without a delivery
+   * gap. The head is captured before the fingerprint, mirroring MessagesQuery's
+   * cursor-then-fingerprint order: an event landing between the two captures
+   * makes the fingerprint read ahead of the head, which a consumer observes as
+   * a mismatch (one redundant reconcile), never as a silently skipped event.
+   */
+  private static async attachFeedSnapshot(
+    reply: MessagesSubscribeReply,
+    tenant: string,
+    filters: MessagesFilter[],
+    deps: HandlerDependencies,
+  ): Promise<void> {
+    const feedReader = Replication.asFeedReader(deps.messageStore);
+    if (feedReader === undefined) {
+      return;
+    }
+
+    // Build the complete snapshot before attaching anything: a partial
+    // snapshot (a head without its fingerprint) would read to consumers as
+    // a fingerprint-less server rather than as a failed capture.
+    const bounds = await feedReader.logBounds(tenant);
+    const head = bounds?.latest ?? await MessagesSubscribeHandler.buildAnchorToken(tenant, feedReader);
+
+    const fingerprintScopes = Messages.computeFingerprintScopes(filters);
+    const fingerprint = fingerprintScopes === undefined
+      ? undefined
+      : await feedReader.fingerprint(tenant, fingerprintScopes);
+
+    reply.head = head;
+    if (fingerprint !== undefined) {
+      reply.fingerprint = fingerprint;
+    }
+  }
+
+  /** Builds the position-zero anchor token for a tenant log with no events. */
+  private static async buildAnchorToken(
+    tenant: string,
+    feedReader: ReplicationFeedReader,
+  ): Promise<ProgressToken> {
+    return {
+      streamId : await Replication.deriveStreamId(tenant),
+      epoch    : await feedReader.epoch(),
+      position : '0',
+    };
   }
 
   private static async authorizeMessagesSubscribe(

@@ -6,6 +6,7 @@ import type { MessagesFilter } from '../types/messages-types.js';
 import { FilterUtility } from './filter.js';
 import { normalizeProtocolUrl } from './url.js';
 import { Records } from './records.js';
+import { Replication } from './replication.js';
 import { isEmptyObject, removeUndefinedProperties } from '@enbox/common';
 
 type StoredMessageWithEncodedData = GenericMessage & { encodedData?: string };
@@ -120,6 +121,50 @@ export class Messages {
     }
 
     return metadataFilter;
+  }
+
+  /**
+   * Maps a filter set onto the replication fingerprint domains it covers, or
+   * `undefined` when the filters do not correspond to fingerprint domains.
+   * An empty filter set covers the global domain; a set of protocol-only
+   * filters covers each protocol's domain plus its tagged core-protocol
+   * domains. Any other filter shape has no domain mapping.
+   */
+  public static computeFingerprintScopes(filters: MessagesFilter[]): string[] | undefined {
+    if (filters.length === 0) {
+      return [Replication.globalDomain];
+    }
+
+    const protocols = new Set<string>();
+    for (const filter of filters) {
+      const keys = Object.keys(filter);
+      if (keys.length !== 1 || typeof filter.protocol !== 'string') {
+        return undefined;
+      }
+
+      protocols.add(filter.protocol);
+    }
+
+    // Fail closed for filter sets naming a core protocol directly: the core
+    // protocols contribute no tagged domains for themselves, so the domain
+    // set would not span everything such filters enumerate — two feeds could
+    // fingerprint identically while differing in enumerable messages. No
+    // fingerprint beats one whose coverage is known-incomplete.
+    for (const protocol of protocols) {
+      if (Replication.isCoreProtocolUri(protocol)) {
+        return undefined;
+      }
+    }
+
+    const scopes: string[] = [];
+    for (const protocol of protocols) {
+      scopes.push(
+        Replication.protocolDomain(protocol),
+        ...Replication.taggedCoreProtocolDomains(protocol, protocols),
+      );
+    }
+
+    return scopes;
   }
 
   /**
