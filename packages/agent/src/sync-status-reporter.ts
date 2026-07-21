@@ -1,4 +1,5 @@
 import type { SyncQuotaBlockState } from './sync-quota-store.js';
+import type { SyncQuotaManager } from './sync-quota-manager.js';
 import type {
   DeadLetterEntry,
   RemoteSyncState,
@@ -26,12 +27,11 @@ export interface SyncStatusReporterOperations {
   getDeadLetters(): Promise<DeadLetterEntry[]>;
 
   getLinks(): Promise<ReplicationLinkState[]>;
-
-  getQuotaBlocks(): Promise<SyncQuotaBlockState[]>;
 }
 
 export type SyncStatusReporterParams = {
   operations: SyncStatusReporterOperations;
+  quotaManager: SyncQuotaManager;
 };
 
 /** Per-(tenant, remote) state folded from links, quota blocks, and dead letters. */
@@ -51,14 +51,16 @@ type RemoteStatusAccumulator = {
 /**
  * Aggregates sync health and per-remote status independently of a persistence backend.
  *
- * Storage reads and current-topology resolution are injected so a Level-, SQLite-,
- * or other engine can share the same filtering and status precedence policy.
+ * Engine state reads and current-topology resolution are injected. Durable
+ * quota state comes from `SyncQuotaManager`, independent of its store backend.
  */
 export class SyncStatusReporter {
   private readonly _operations: SyncStatusReporterOperations;
+  private readonly _quotaManager: SyncQuotaManager;
 
-  constructor({ operations }: SyncStatusReporterParams) {
+  constructor({ operations, quotaManager }: SyncStatusReporterParams) {
     this._operations = operations;
+    this._quotaManager = quotaManager;
   }
 
   /** Summarize current terminal failures, quota blocks, and degraded links. */
@@ -67,7 +69,7 @@ export class SyncStatusReporter {
 
     const currentQuotaLinkKeys = await this._operations.getCurrentQuotaLinkKeys();
     let quotaBlockedMessageCount = 0;
-    for (const state of await this._operations.getQuotaBlocks()) {
+    for (const state of await this._quotaManager.getAllBlockStates()) {
       if (SyncStatusReporter.isCurrentQuotaBlock(state, currentQuotaLinkKeys)) {
         quotaBlockedMessageCount++;
       }
@@ -171,7 +173,7 @@ export class SyncStatusReporter {
     tenantDid: string | undefined,
   ): Promise<void> {
     const currentQuotaLinkKeys = await this._operations.getCurrentQuotaLinkKeys();
-    for (const state of await this._operations.getQuotaBlocks()) {
+    for (const state of await this._quotaManager.getAllBlockStates()) {
       if (!SyncStatusReporter.matchesTenant(state.tenantDid, tenantDid)) { continue; }
       if (!SyncStatusReporter.isCurrentQuotaBlock(state, currentQuotaLinkKeys)) { continue; }
 

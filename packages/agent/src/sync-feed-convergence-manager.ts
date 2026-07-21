@@ -1,4 +1,5 @@
 import type { SyncDurableFeedReconcileResult } from './sync-durable-feed-reconciler.js';
+import type { SyncQuotaManager } from './sync-quota-manager.js';
 import type { SyncTarget } from './sync-target-resolver.js';
 import type { DeadLetterEntry, ReplicationLinkState, SyncScope } from './types/sync.js';
 
@@ -12,11 +13,6 @@ export interface SyncFeedConvergenceManagerOperations {
   getDeadLettersForTenant(tenantDid: string): Promise<DeadLetterEntry[]>;
   getLink(target: SyncTarget): Promise<ReplicationLinkState>;
   getLinkKey(target: SyncTarget, link: ReplicationLinkState): string;
-  getNextQuotaProbeAt(target: SyncTarget): Promise<string | undefined>;
-  isDivergenceExplained(
-    target: SyncTarget,
-    result: SyncDurableFeedReconcileResult,
-  ): Promise<boolean>;
   isLinkKeyForTenant(linkKey: string, tenantDid: string): boolean;
   resetCheckpoints(link: ReplicationLinkState): Promise<void>;
   scheduleLinkReconcileByKey(
@@ -32,6 +28,7 @@ export interface SyncFeedConvergenceManagerOperations {
 export type SyncFeedConvergenceManagerParams = {
   maxAttempts?: number;
   operations: SyncFeedConvergenceManagerOperations;
+  quotaManager: SyncQuotaManager;
 };
 
 type SyncFeedConvergenceFailureState = {
@@ -51,13 +48,16 @@ export class SyncFeedConvergenceManager {
   private readonly _failures = new Map<string, SyncFeedConvergenceFailureState>();
   private readonly _maxAttempts: number;
   private readonly _operations: SyncFeedConvergenceManagerOperations;
+  private readonly _quotaManager: SyncQuotaManager;
 
   public constructor({
     maxAttempts = DEFAULT_MAX_ATTEMPTS,
     operations,
+    quotaManager,
   }: SyncFeedConvergenceManagerParams) {
     this._maxAttempts = maxAttempts;
     this._operations = operations;
+    this._quotaManager = quotaManager;
   }
 
   /** Resolve quota-explained divergence or record an unexplained mismatch. */
@@ -66,7 +66,7 @@ export class SyncFeedConvergenceManager {
     result: SyncDurableFeedReconcileResult,
     context?: SyncFeedConvergenceLinkContext,
   ): Promise<boolean> {
-    if (await this._operations.isDivergenceExplained(target, result)) {
+    if (await this._quotaManager.reconcileAndExplainFeedDivergence(target, result)) {
       await this.clear(target, context);
       await this.scheduleNextQuotaProbe(target, context);
       return true;
@@ -109,7 +109,7 @@ export class SyncFeedConvergenceManager {
     target: SyncTarget,
     context: SyncFeedConvergenceLinkContext | undefined,
   ): Promise<void> {
-    const nextProbeAt = await this._operations.getNextQuotaProbeAt(target);
+    const nextProbeAt = await this._quotaManager.getNextProbeAtForTarget(target);
     if (nextProbeAt === undefined) {
       return;
     }

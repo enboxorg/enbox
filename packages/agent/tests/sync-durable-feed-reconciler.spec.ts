@@ -1,7 +1,8 @@
-import type { SinonStub } from 'sinon';
+import type { SinonStub, SinonStubbedInstance } from 'sinon';
 
 import type { MessagesQueryReply, MessagesQueryReplyEntry, ProgressToken } from '@enbox/dwn-sdk-js';
 
+import type { SyncQuotaBlockEntry } from '../src/sync-quota-manager.js';
 import type { SyncTarget } from '../src/sync-target-resolver.js';
 import type { ReplicationLinkState, SyncDirection } from '../src/types/sync.js';
 
@@ -13,6 +14,7 @@ import type { SyncDurableFeedQuery, SyncDurableFeedReconcilerOperations } from '
 
 import { SyncCheckpoint } from '../src/sync-checkpoint.js';
 import { SyncDurableFeedReconciler } from '../src/sync-durable-feed-reconciler.js';
+import { SyncQuotaManager } from '../src/sync-quota-manager.js';
 
 type StubbedReconcilerOperations = {
   [Method in keyof SyncDurableFeedReconcilerOperations]: SinonStub;
@@ -23,6 +25,7 @@ type ReconcilerFixture = {
   operations: StubbedReconcilerOperations;
   persistCheckpoint: SinonStub;
   queryFeed: SinonStub;
+  quotaManager: SinonStubbedInstance<SyncQuotaManager>;
   reconciler: SyncDurableFeedReconciler;
   resetCheckpoint: SinonStub;
 };
@@ -54,6 +57,26 @@ function linkFor(syncTarget: SyncTarget): ReplicationLinkState {
     scope              : syncTarget.scope,
     status             : 'live',
     tenantDid          : syncTarget.did,
+  };
+}
+
+function quotaBlockEntry(messageCid: string, syncTarget = target()): SyncQuotaBlockEntry {
+  return {
+    messageCid,
+    state: {
+      attempts           : 1,
+      authorizationEpoch : syncTarget.authorizationEpoch,
+      blockedCid         : messageCid,
+      firstBlockedAt     : '2026-01-01T00:00:00.000Z',
+      lastBlockedAt      : '2026-01-01T00:00:00.000Z',
+      linkKey            : `${syncTarget.did}^${syncTarget.dwnUrl}^${syncTarget.projectionId}^${syncTarget.authorizationEpoch}`,
+      messageCid,
+      nextProbeAt        : '2026-01-01T00:01:00.000Z',
+      projectionId       : syncTarget.projectionId,
+      remoteEndpoint     : syncTarget.dwnUrl,
+      source             : 'feed',
+      tenantDid          : syncTarget.did,
+    },
   };
 }
 
@@ -92,11 +115,12 @@ function createReconciler(syncTarget = target()): ReconcilerFixture {
   const queryFeed = sinon.stub().callsFake(async ({ source }: SyncDurableFeedQuery): Promise<MessagesQueryReply> =>
     reply({ fingerprint: `${source}-fingerprint` })
   );
+  const quotaManager = sinon.createStubInstance(SyncQuotaManager);
+  quotaManager.clearResolvedOmissionsForTarget.resolves();
+  quotaManager.getActiveBlocksForTarget.resolves([]);
   const operations: StubbedReconcilerOperations = {
     admitRemotePage                 : sinon.stub().resolves({ kind: 'processed', admittedCids: [], hasActionableDiffs: false }),
     bootstrapRemotePermissionGrants : sinon.stub().resolves({ kind: 'processed', failures: [], hasActionableDiffs: false, quotaBlocked: false }),
-    clearResolvedQuotaOmissions     : sinon.stub().resolves(),
-    getQuotaBlockCids               : sinon.stub().resolves([]),
     commitCheckpoint                : sinon.stub().resolves(),
     probeQuotaBlocks                : sinon.stub().resolves(),
     pushLocalPage                   : sinon.stub().resolves({ kind: 'processed', hasActionableDiffs: false }),
@@ -109,7 +133,8 @@ function createReconciler(syncTarget = target()): ReconcilerFixture {
     operations,
     persistCheckpoint,
     queryFeed,
-    reconciler: new SyncDurableFeedReconciler(operations),
+    quotaManager,
+    reconciler: new SyncDurableFeedReconciler({ operations, quotaManager }),
     resetCheckpoint,
   };
 }
@@ -364,21 +389,41 @@ describe('SyncDurableFeedReconciler', () => {
     });
   });
 
+  it('should source an exact force-probe CID snapshot from the quota manager', async () => {
+    const fixture = createReconciler();
+    const syncTarget = target();
+    fixture.quotaManager.getActiveBlocksForTarget.resolves([
+      quotaBlockEntry('blocked-a', syncTarget),
+      quotaBlockEntry('blocked-b', syncTarget),
+    ]);
+
+    await fixture.reconciler.push(syncTarget, fixture.link, { forceQuotaProbe: true });
+
+    expect(fixture.quotaManager.getActiveBlocksForTarget.calledOnceWithExactly(syncTarget)).toBe(true);
+    expect(fixture.operations.probeQuotaBlocks.calledOnce).toBe(true);
+    expect(fixture.operations.probeQuotaBlocks.firstCall.args).toEqual([
+      syncTarget,
+      true,
+      new Set(['blocked-a', 'blocked-b']),
+      undefined,
+    ]);
+  });
+
   it('should clear resolved quota omissions only after exact fingerprint equality', async () => {
     const fixture = createReconciler();
     fixture.queryFeed.onFirstCall().resolves(reply({ fingerprint: 'same' }));
     fixture.queryFeed.onSecondCall().resolves(reply({ fingerprint: 'same' }));
 
     expect(await fixture.reconciler.verifyConvergence(target())).toMatchObject({ converged: true });
-    expect(fixture.operations.clearResolvedQuotaOmissions.calledOnce).toBe(true);
+    expect(fixture.quotaManager.clearResolvedOmissionsForTarget.calledOnce).toBe(true);
 
-    fixture.operations.clearResolvedQuotaOmissions.resetHistory();
+    fixture.quotaManager.clearResolvedOmissionsForTarget.resetHistory();
     fixture.queryFeed.reset();
     fixture.queryFeed.onFirstCall().resolves(reply({ fingerprint: 'local' }));
     fixture.queryFeed.onSecondCall().resolves(reply({ fingerprint: 'remote' }));
 
     expect(await fixture.reconciler.verifyConvergence(target())).toMatchObject({ converged: false });
-    expect(fixture.operations.clearResolvedQuotaOmissions.called).toBe(false);
+    expect(fixture.quotaManager.clearResolvedOmissionsForTarget.called).toBe(false);
   });
 
   // Convergence verification is a LATER observation than the pull and push
@@ -414,7 +459,7 @@ describe('SyncDurableFeedReconciler', () => {
         localFingerprint  : 'A',
         remoteFingerprint : 'B',
       });
-      expect(fixture.operations.clearResolvedQuotaOmissions.called).toBe(false);
+      expect(fixture.quotaManager.clearResolvedOmissionsForTarget.called).toBe(false);
     });
 
     it('should observe a local write that lands after the push-phase local sample', async () => {
@@ -437,7 +482,7 @@ describe('SyncDurableFeedReconciler', () => {
         localFingerprint  : 'B',
         remoteFingerprint : 'A',
       });
-      expect(fixture.operations.clearResolvedQuotaOmissions.called).toBe(false);
+      expect(fixture.quotaManager.clearResolvedOmissionsForTarget.called).toBe(false);
     });
 
     it('should observe remote movement from a mixed push that reports no actionable diffs', async () => {

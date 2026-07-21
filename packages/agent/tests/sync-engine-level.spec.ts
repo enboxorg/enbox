@@ -93,7 +93,7 @@ describe('SyncEngineLevel', () => {
           state.status = status as ReplicationLinkState['status'];
         }),
       };
-      sinon.stub(internal, 'getNextQuotaProbeAtForTarget').resolves(undefined);
+      sinon.stub(internal._quotaManager, 'getNextProbeAtForTarget').resolves(undefined);
       const resume = sinon.stub(internal._linkRecoveryCoordinator, 'resume').resolves();
 
       await internal.handleLivePullMessage(context, {
@@ -226,7 +226,7 @@ describe('SyncEngineLevel', () => {
       const pushStarted = new Promise<void>((resolve) => { resolvePushStarted = resolve; });
 
       sinon.stub(internal, 'hasDeadLetter').resolves(false);
-      sinon.stub(internal, 'getQuotaBlockState').resolves(undefined);
+      sinon.stub(internal._quotaManager, 'getState').resolves(undefined);
       sinon.stub(internal, 'getQuotaBlockedInitialCidsForFeedEntry').resolves([]);
       sinon.stub(internal, 'pushMessages').callsFake(async () => {
         resolvePushStarted();
@@ -236,7 +236,7 @@ describe('SyncEngineLevel', () => {
           failed    : [{ cid: 'cid-1', kind: 'Deferred', quotaBlocked: true, reason: 'storage' }],
         };
       });
-      const transition = sinon.stub(internal, 'applyPushResult');
+      const transition = sinon.stub(internal._quotaManager, 'applyPushResult');
 
       const result = internal.pushLocalFeedPage(target, [{ messageCid: 'cid-1' }], (): boolean => current);
       await pushStarted;
@@ -261,7 +261,7 @@ describe('SyncEngineLevel', () => {
         entries  : [{ message: {}, messageCid: 'grant-cid' }],
         failures : [],
       });
-      sinon.stub(internal, 'getQuotaBlockState').resolves(undefined);
+      sinon.stub(internal._quotaManager, 'getState').resolves(undefined);
       sinon.stub(internal, 'pushMessageEntries').callsFake(async () => {
         resolvePushStarted();
         await pushGate;
@@ -270,7 +270,7 @@ describe('SyncEngineLevel', () => {
           failed    : [{ cid: 'grant-cid', kind: 'Deferred', quotaBlocked: true, reason: 'messages' }],
         };
       });
-      const transition = sinon.stub(internal, 'applyPushResult');
+      const transition = sinon.stub(internal._quotaManager, 'applyPushResult');
 
       const result = internal.bootstrapRemotePermissionGrants(grantTarget, (): boolean => current, true);
       await pushStarted;
@@ -318,8 +318,8 @@ describe('SyncEngineLevel', () => {
         agent : { dwn: { processRequest } } as any,
         db    : {} as any,
       });
-      sinon.stub(syncEngine as any, 'getQuotaBlockState').resolves(undefined);
-      const transition = sinon.stub(syncEngine as any, 'applyPushResult').resolves({
+      sinon.stub(syncEngine['_quotaManager'], 'getState').resolves(undefined);
+      const transition = sinon.stub(syncEngine['_quotaManager'], 'applyPushResult').resolves({
         quotaBlocked      : false,
         retryableFailures : [],
         terminalFailures  : [],
@@ -3421,8 +3421,8 @@ describe('SyncEngineLevel', () => {
         link.status = 'live';
         syncEngine['activateLink'](linkKey, link);
 
-        sinon.stub(syncEngine as any, 'isFeedDivergenceExplainedByQuotaBlocks').resolves(true);
-        sinon.stub(syncEngine as any, 'getNextQuotaProbeAtForTarget').resolves('2026-01-01T00:01:00.000Z');
+        sinon.stub(syncEngine['_quotaManager'], 'reconcileAndExplainFeedDivergence').resolves(true);
+        sinon.stub(syncEngine['_quotaManager'], 'getNextProbeAtForTarget').resolves('2026-01-01T00:01:00.000Z');
         const probeStub = sinon.stub(syncEngine as any, 'scheduleQuotaProbeForActiveLink');
 
         const explained = await syncEngine['_feedConvergenceManager'].handleVerifiedDivergence(target, feedDivergence());
@@ -3438,7 +3438,7 @@ describe('SyncEngineLevel', () => {
         await syncEngine['replicationLinkStore'].persistCheckpoint(link, 'pull');
         syncEngine['activateLink'](linkKey, link);
 
-        sinon.stub(syncEngine as any, 'isFeedDivergenceExplainedByQuotaBlocks').resolves(false);
+        sinon.stub(syncEngine['_quotaManager'], 'reconcileAndExplainFeedDivergence').resolves(false);
         const reconcileStub = sinon.stub(syncEngine as any, 'scheduleLinkReconcileByKey');
         const pauseStub = sinon.stub(syncEngine as any, 'transitionToPaused').resolves();
         await syncEngine['_deadLetterStore'].put({
@@ -3482,7 +3482,7 @@ describe('SyncEngineLevel', () => {
         const bobContext = await createConvergenceTarget('did:example:bob');
         const manager = syncEngine['_feedConvergenceManager'];
 
-        sinon.stub(syncEngine as any, 'isFeedDivergenceExplainedByQuotaBlocks').resolves(false);
+        sinon.stub(syncEngine['_quotaManager'], 'reconcileAndExplainFeedDivergence').resolves(false);
         const pauseStub = sinon.stub(syncEngine as any, 'transitionToPaused').resolves();
 
         await manager.handleVerifiedDivergence(aliceContext.target, feedDivergence());

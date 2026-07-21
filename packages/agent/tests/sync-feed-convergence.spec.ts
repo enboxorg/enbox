@@ -563,7 +563,6 @@ describe('SyncEngineLevel durable feed convergence', () => {
     const internal = syncEngine as unknown as {
       getSyncTargets(): Promise<any[]>;
       getOrCreateReplicationLink(target: any): Promise<any>;
-      getQuotaBlocksForTarget(target: any): Promise<Array<{ messageCid: string }>>;
       replicationLinkStore: { persistCheckpoint(link: any, direction: 'push'): Promise<void> };
     };
     const [target] = await internal.getSyncTargets();
@@ -626,7 +625,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
       remoteEndpoint : remoteEndpoint,
       resolution     : 'superseded',
     }));
-    expect(await internal.getQuotaBlocksForTarget(target)).toHaveLength(0);
+    expect(await (syncEngine as any)._quotaManager.getActiveBlocksForTarget(target)).toHaveLength(0);
     expect(await (syncEngine as any)._quotaManager.getBlocksForTarget(target)).toEqual([
       expect.objectContaining({
         messageCid : updateCid,

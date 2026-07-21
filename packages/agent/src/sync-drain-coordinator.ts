@@ -1,4 +1,5 @@
 import type { SyncIdentityStore } from './sync-identity-store.js';
+import type { SyncQuotaManager } from './sync-quota-manager.js';
 import type { SyncTarget } from './sync-target-resolver.js';
 import type {
   PushFailure,
@@ -31,7 +32,6 @@ export interface SyncDrainCoordinatorOperations {
   ): Promise<SyncTarget[]>;
   clearFeedConvergenceFailure(target: SyncTarget): Promise<void>;
   getLink(target: SyncTarget): Promise<ReplicationLinkState>;
-  getQuotaBlockCount(target: SyncTarget): Promise<number>;
   getTopologyGeneration(): number;
   handleVerifiedFeedDivergence(
     target: SyncTarget,
@@ -56,6 +56,7 @@ export interface SyncDrainCoordinatorOperations {
 export type SyncDrainCoordinatorParams = {
   identityStore: SyncIdentityStore;
   operations: SyncDrainCoordinatorOperations;
+  quotaManager: SyncQuotaManager;
 };
 
 /**
@@ -66,10 +67,12 @@ export type SyncDrainCoordinatorParams = {
 export class SyncDrainCoordinator {
   private readonly _identityStore: SyncIdentityStore;
   private readonly _operations: SyncDrainCoordinatorOperations;
+  private readonly _quotaManager: SyncQuotaManager;
 
-  public constructor({ identityStore, operations }: SyncDrainCoordinatorParams) {
+  public constructor({ identityStore, operations, quotaManager }: SyncDrainCoordinatorParams) {
     this._identityStore = identityStore;
     this._operations = operations;
+    this._quotaManager = quotaManager;
   }
 
   /** Drain every registered sync target to one normalized remote endpoint. */
@@ -205,7 +208,7 @@ export class SyncDrainCoordinator {
     const feedHeadChanged = await this.verifyStability(target, result, link, pushFailures, getStopReason);
     const divergenceExplained = await this.resolveDivergence(target, result, feedHeadChanged, getStopReason);
     const stopReason = getStopReason();
-    const quotaBlocked = await this._operations.getQuotaBlockCount(target) > 0;
+    const quotaBlocked = (await this._quotaManager.getActiveBlocksForTarget(target)).length > 0;
     if (divergenceExplained && !quotaBlocked) {
       // A resolved omission is logical convergence: intentionally absent
       // history will not be probed again even though raw fingerprints differ.

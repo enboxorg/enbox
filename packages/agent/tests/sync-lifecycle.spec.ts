@@ -167,7 +167,7 @@ describe('SyncEngineLevel lifecycle', () => {
     sinon.stub(engine as never, 'getSyncTargets').resolves([target]);
     sinon.stub(durableFeedReconciler, 'pull').resolves({});
     sinon.stub(engine as never, 'hasDeadLetter').resolves(false);
-    sinon.stub(engine as never, 'getQuotaBlockState').resolves(undefined);
+    sinon.stub(engine['_quotaManager'], 'getState').resolves(undefined);
     sinon.stub(engine as never, 'getQuotaBlockedInitialCidsForFeedEntry').resolves([]);
     sinon.stub(engine as never, 'pushMessages').callsFake(async (): Promise<{ acknowledged: never[]; failed: never[]; succeeded: string[] }> => {
       pushStarted.resolve();
@@ -189,7 +189,7 @@ describe('SyncEngineLevel lifecycle', () => {
       }
       return { hasActionableDiffs: result.kind === 'pushed', pushFailures: [] };
     });
-    const applyPushResult = sinon.spy(engine as never, 'applyPushResult');
+    const applyPushResult = sinon.spy(engine['_quotaManager'], 'applyPushResult');
 
     const syncPromise = engine.sync();
     await pushStarted.promise;
@@ -611,7 +611,7 @@ describe('SyncEngineLevel lifecycle', () => {
       await releaseReconcile.promise;
       return { converged: true };
     });
-    const clearQuotaBlocks = sinon.stub(engine as never, 'clearQuotaBlocksForTenant').resolves();
+    const clearQuotaBlocks = sinon.stub(engine['_quotaManager'], 'clearTenant').resolves();
     const addIdentity = sinon.stub(engine as never, 'addIdentityToLiveSync').resolves(new Set());
     const removeIdentity = engine['removeIdentityFromLiveSync'].bind(engine);
     sinon.stub(engine as never, 'removeIdentityFromLiveSync').callsFake(async (identityDid: string): Promise<void> => {

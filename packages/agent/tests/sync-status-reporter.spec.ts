@@ -9,9 +9,12 @@ import type {
   SyncStatusReporterOperations,
 } from '../src/sync-status-reporter.js';
 
+import sinon from 'sinon';
+
 import { describe, expect, it } from 'bun:test';
 
 import { buildDurableLinkIdentityKey } from '../src/sync-link-key.js';
+import { SyncQuotaManager } from '../src/sync-quota-manager.js';
 import { SyncStatusReporter } from '../src/sync-status-reporter.js';
 
 const ALICE = 'did:example:alice';
@@ -220,9 +223,10 @@ function createReporter(overrides: Partial<SyncStatusReporterState> = {}): SyncS
     getCurrentQuotaLinkKeys    : async (): Promise<SyncStatusCurrentKeySet> => state.currentQuotaLinkKeys,
     getDeadLetters             : async (): Promise<DeadLetterEntry[]> => state.deadLetters,
     getLinks                   : async (): Promise<ReplicationLinkState[]> => state.links,
-    getQuotaBlocks             : async (): Promise<SyncQuotaBlockState[]> => state.quotaBlocks,
   } satisfies SyncStatusReporterOperations;
-  return new SyncStatusReporter({ operations });
+  const quotaManager = sinon.createStubInstance(SyncQuotaManager);
+  quotaManager.getAllBlockStates.callsFake(async (): Promise<SyncQuotaBlockState[]> => state.quotaBlocks);
+  return new SyncStatusReporter({ operations, quotaManager });
 }
 
 function identityKey(state: ReplicationLinkState): string {
