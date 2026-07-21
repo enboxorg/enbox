@@ -21,7 +21,7 @@ the code, not an entry missing from this table.
 | Per-link delivery ordering fence — ONE generation for the subscription pair, fencing delivery tags in both directions | **`pullGeneration`** / `expectedPullGeneration` | `pullEpoch`, `openGeneration`, `expectedGeneration`, `subscriptionPullEpoch` |
 | Target-plan version | **`topologyGeneration`** / `expectedTopologyGeneration` | bare `generation`, `expectedGeneration` |
 | Per-link push batching state | **`pushQueue`** — `SyncPushQueueState/Params/Entry` | `pushRuntime`, `SyncPushRuntime*` |
-| In-flight delivery acknowledgement, both directions: `track*Delivery` issues a delivery tag in feed order, `ack*Delivery` resolves it, and `commitAcked*Deliveries` advances the durable checkpoint through the contiguous acked prefix (cumulative ack); `pruneCoveredPushDeliveries` sweeps ledger positions a reconciler checkpoint covers | **delivery tag** — `SyncDeliveryTag`, one type for both directions | `SyncPullDeliveryTicket`, `SyncPullDeliveryTag`/`SyncPushDeliveryTag` (twin types), `startPullDelivery`, `commitPullDelivery`, `advanceContiguousPullCommits` |
+| In-flight delivery acknowledgement, both directions: `track*Delivery` issues a delivery tag in feed order, `ack*Delivery` resolves it, and `commitAcked*Deliveries` advances the durable checkpoint through the contiguous acked prefix its commit policy proves gap-free (cumulative ack — pull is stream-anchored by checkpoint replay; push commits successor-only, because a live observation proves nothing about the span below it); `pruneCoveredPushDeliveries` folds a reconciler-advanced checkpoint in and sweeps the ledger positions it covers | **delivery tag** — `SyncDeliveryTag`, one type for both directions | `SyncPullDeliveryTicket`, `SyncPullDeliveryTag`/`SyncPushDeliveryTag` (twin types), `startPullDelivery`, `commitPullDelivery`, `advanceContiguousPullCommits` |
 | Folding a push result into quota state | **`applyPushResult`** | `transitionPushResult` |
 | Permanently-failed message record | **dead letter** — `DeadLetterEntry`, `getDeadLetters`, `clearDeadLetter`, `clearAllDeadLetters`, `recordDeadLetter`, `hasDeadLetter` | `getFailedMessages`, `clearFailedMessage`, `clearAllFailedMessages`, `hasAdmissionDeadLetter` |
 | Clearing one exact `(tenant, cid, remote)` dead letter | **`clearDeadLetterForTenant`** | the quota ops key `clearFailedMessage`, which shared a name with the across-tenants public method |
@@ -78,6 +78,17 @@ One verb per kind of ending, because these had four overlapping spellings:
 
 `teardown*` and `cleanup*` are retired — they were synonyms of `stop` and
 `retire` respectively.
+
+## Design rule: verify at the point of use
+
+Trusting a cached or claimed state instead of verifying the property where it
+is used is this subsystem's recurring bug shape — a stale `isConnected`
+preferred over proving liveness, an ack treated as proof of a contiguous
+prefix, a fingerprint match treated as feed identity beyond its domain
+coverage. The check is almost always cheap and local: last inbound within the
+heartbeat window, token is the checkpoint's immediate successor, fail closed
+when a domain set is known-incomplete. When a property matters, verify it
+where it is consumed; never assume it from provenance.
 
 ## Known remaining splits
 

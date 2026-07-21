@@ -756,8 +756,7 @@ describe('SyncLivePushCoordinator', () => {
 
       // The reconciler's push pass advanced the durable checkpoint past the
       // stall — the sweep drops the covered position and releases the rest.
-      controller.link.push.contiguousAppliedToken = { epoch: 'epoch', position: '1', streamId: 'stream' };
-      expect(controller.pruneCoveredPushDeliveries()).toBe(1);
+      expect(controller.pruneCoveredPushDeliveries({ epoch: 'epoch', position: '1', streamId: 'stream' })).toBe(1);
       expect(controller.link.push.contiguousAppliedToken?.position).toBe('2');
       expect(controller.pushInflightCount).toBe(0);
     });

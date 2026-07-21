@@ -546,9 +546,9 @@ describe('SyncLinkController mailbox', () => {
       expect(controller.link.push.contiguousAppliedToken).toBeUndefined();
       expect(controller.pushInflightCount).toBe(0);
 
-      const fresh = controller.trackPushDelivery(token(2));
+      const fresh = controller.trackPushDelivery(token(1));
       expect(controller.ackPushDelivery(fresh)).toBe(1);
-      expect(controller.link.push.contiguousAppliedToken?.position).toBe('2');
+      expect(controller.link.push.contiguousAppliedToken?.position).toBe('1');
     });
 
     it('should clear push ordering alongside pull ordering on a new generation', () => {
@@ -557,20 +557,37 @@ describe('SyncLinkController mailbox', () => {
       controller.startNewPullGeneration();
 
       expect(controller.pushInflightCount).toBe(0);
-      const next = controller.trackPushDelivery(token(2));
+      const next = controller.trackPushDelivery(token(1));
       expect(controller.ackPushDelivery(next)).toBe(1);
-      expect(controller.link.push.contiguousAppliedToken?.position).toBe('2');
+      expect(controller.link.push.contiguousAppliedToken?.position).toBe('1');
     });
 
-    it('should prune deliveries a reconciler checkpoint covers and release settled ones above', () => {
+    it('should hold a live ack that is not the checkpoint successor until a reconciler covers the gap', () => {
+      const controller = new SyncLinkController('push-ledger-link-key', createLink());
+
+      // The local subscription opened from "now": a live delivery at
+      // position 5 proves nothing about positions 1-4, so its ack must not
+      // establish the checkpoint.
+      const above = controller.trackPushDelivery(token(5));
+      expect(controller.ackPushDelivery(above)).toBe(0);
+      expect(controller.link.push.contiguousAppliedToken).toBeUndefined();
+
+      // A reconciler pass covered through 4 — the held ack is now the
+      // immediate successor and commits.
+      expect(controller.pruneCoveredPushDeliveries(token(4))).toBe(1);
+      expect(controller.link.push.contiguousAppliedToken?.position).toBe('5');
+      expect(controller.pushInflightCount).toBe(0);
+    });
+
+    it('should prune deliveries a reconciler checkpoint covers and release acked ones above', () => {
       const controller = new SyncLinkController('push-ledger-link-key', createLink());
       controller.trackPushDelivery(token(1));
-      const settled = controller.trackPushDelivery(token(2));
-      expect(controller.ackPushDelivery(settled)).toBe(0);
+      const acked = controller.trackPushDelivery(token(2));
+      expect(controller.ackPushDelivery(acked)).toBe(0);
 
-      controller.link.push.contiguousAppliedToken = token(1);
-      // Only the released acked delivery counts — pruning alone moves nothing.
-      expect(controller.pruneCoveredPushDeliveries()).toBe(1);
+      // Only the released acked delivery counts — folding and pruning alone
+      // move nothing new.
+      expect(controller.pruneCoveredPushDeliveries(token(1))).toBe(1);
       expect(controller.link.push.contiguousAppliedToken?.position).toBe('2');
       expect(controller.pushInflightCount).toBe(0);
     });
@@ -578,9 +595,8 @@ describe('SyncLinkController mailbox', () => {
     it('should stop pruning at a foreign token domain', () => {
       const controller = new SyncLinkController('push-ledger-link-key', createLink());
       controller.trackPushDelivery({ epoch: 'other-epoch', position: '9', streamId: 'other-stream' });
-      controller.link.push.contiguousAppliedToken = token(5);
 
-      expect(controller.pruneCoveredPushDeliveries()).toBe(0);
+      expect(controller.pruneCoveredPushDeliveries(token(5))).toBe(0);
       expect(controller.pushInflightCount).toBe(1);
     });
   });

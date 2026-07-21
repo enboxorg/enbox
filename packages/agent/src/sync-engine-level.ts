@@ -61,7 +61,6 @@ import { AgentPermissionsApi } from './permissions-api.js';
 
 import { admitClosure } from './sync-admit-closure.js';
 import { DwnInterface } from './types/dwn.js';
-import { isValidProgressToken } from './sync-checkpoint.js';
 import { runWithCrossContextLock } from './sync-cross-context-lock.js';
 import { SyncConnectivityManager } from './sync-connectivity-manager.js';
 import { SyncDeadLetterStoreLevel } from './sync-dead-letter-store-level.js';
@@ -90,6 +89,7 @@ import { buildDurableLinkIdentityKey, buildLinkKey, LINK_KEY_SEPARATOR } from '.
 import { computeProjectionId, isTerminalPushFailure, lexicographicalCompare, singleProtocolForSyncScope, syncEventScope, syncScopeFromProtocols } from './types/sync.js';
 import { fetchRemoteMessages, getLocalMessage, isInitialWriteForRecord, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, recordIdForRecordsMessage } from './sync-messages.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
+import { isValidProgressToken, SyncCheckpoint } from './sync-checkpoint.js';
 import { normalizeDwnEndpoint, SyncTargetResolver } from './sync-target-resolver.js';
 
 export type SyncEngineLevelParams = {
@@ -2178,9 +2178,21 @@ export class SyncEngineLevel implements SyncEngine {
     target: SyncTarget,
   ): Promise<void> {
     if (direction === 'push') {
+      // The reconciler advanced ITS OWN link copy (getOrCreateLink returns
+      // independent objects); the controller's ledger is the authoritative
+      // live state. Fold the reconciler's advance into the controller —
+      // releasing covered deliveries and any acks they unblocked — then fold
+      // the controller's final checkpoint, possibly further advanced, back
+      // into the object being persisted. One authoritative checkpoint, one
+      // awaited write.
       const controller = this.getLinkController(this.getReplicationLinkKey(target, link));
-      if (controller?.isActive === true) {
-        controller.pruneCoveredPushDeliveries();
+      const advanced = link.push.contiguousAppliedToken;
+      if (controller?.isActive === true && advanced !== undefined) {
+        controller.pruneCoveredPushDeliveries(advanced);
+        const authoritative = controller.link.push.contiguousAppliedToken;
+        if (authoritative !== undefined) {
+          SyncCheckpoint.commitContiguousToken(link.push, authoritative);
+        }
       }
     }
 

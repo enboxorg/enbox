@@ -60,17 +60,36 @@ export type SyncDeliveryTag = {
 };
 
 /**
+ * How a ledger earns the right to commit an acked delivery into the
+ * checkpoint:
+ *
+ * - `stream-anchored` — deliveries arrive on a replay stream opened FROM the
+ *   checkpoint, so every delivered token is contiguous by construction and
+ *   commits as soon as its prefix is acked (the pull side).
+ * - `successor-only` — deliveries are live observations with no proof about
+ *   the span below them, so only the checkpoint's immediate successor (or a
+ *   stream's first position onto an empty checkpoint) may commit; anything
+ *   else holds until a reconciler pass covers the gap (the push side, whose
+ *   local subscription opens from "now").
+ */
+type DeliveryCommitPolicy = 'stream-anchored' | 'successor-only';
+
+/**
  * One direction's cumulative-acknowledgement ledger: in-flight deliveries
  * keyed by delivery-order ordinal, with the direction's durable checkpoint
- * advancing only through the contiguous acked prefix. The generation fence
- * lives in the controller, shared by both directions.
+ * advancing only through the contiguous acked prefix its commit policy can
+ * prove gap-free. The generation fence lives in the controller, shared by
+ * both directions.
  */
 class DeliveryLedger {
   private readonly _inflight: Map<number, InFlightDelivery> = new Map();
   private _nextCommitOrdinal = 0;
   private _nextDeliveryOrdinal = 0;
 
-  public constructor(private readonly _checkpoint: DirectionCheckpoint) {}
+  public constructor(
+    private readonly _checkpoint: DirectionCheckpoint,
+    private readonly _commitPolicy: DeliveryCommitPolicy,
+  ) {}
 
   public get inflightCount(): number {
     return this._inflight.size;
@@ -93,12 +112,18 @@ class DeliveryLedger {
     return this.commitAcked();
   }
 
-  /** Advance the checkpoint through the contiguous acked prefix. */
+  /** Advance the checkpoint through the contiguous acked prefix the policy proves. */
   public commitAcked(): number {
     let drained = 0;
     while (true) {
       const entry = this._inflight.get(this._nextCommitOrdinal);
       if (entry?.acked !== true) {
+        break;
+      }
+      if (
+        this._commitPolicy === 'successor-only' &&
+        !SyncCheckpoint.isImmediateSuccessor(this._checkpoint, entry.token)
+      ) {
         break;
       }
 
@@ -112,17 +137,19 @@ class DeliveryLedger {
   }
 
   /**
-   * Drop the in-flight prefix the durable checkpoint already covers, then
-   * advance through acked deliveries the sweep released. Returns only the
-   * newly advanced count — pruning alone never moves the checkpoint.
+   * Fold an externally advanced checkpoint into this ledger's (a reconciler
+   * pass advanced its own link copy — the fold is monotonic), drop the
+   * in-flight prefix it covers, then advance through acked deliveries the
+   * fold unlocked or the sweep released. Returns only the newly advanced
+   * count — folding and pruning alone move nothing new.
    */
-  public pruneCovered(): number {
+  public pruneCovered(coveringToken: ProgressToken): number {
+    SyncCheckpoint.commitContiguousToken(this._checkpoint, coveringToken);
     const checkpoint = this._checkpoint.contiguousAppliedToken;
     if (checkpoint === undefined) {
       return 0;
     }
 
-    let pruned = 0;
     while (true) {
       const entry = this._inflight.get(this._nextCommitOrdinal);
       if (
@@ -135,10 +162,9 @@ class DeliveryLedger {
 
       this._inflight.delete(this._nextCommitOrdinal);
       this._nextCommitOrdinal++;
-      pruned++;
     }
 
-    return pruned > 0 ? this.commitAcked() : 0;
+    return this.commitAcked();
   }
 
   /** Discard in-flight deliveries; rebase the commit cursor onto the next unissued ordinal. */
@@ -200,8 +226,8 @@ export class SyncLinkController {
     public readonly linkKey: string,
     public readonly link: ReplicationLinkState,
   ) {
-    this._pullLedger = new DeliveryLedger(link.pull);
-    this._pushLedger = new DeliveryLedger(link.push);
+    this._pullLedger = new DeliveryLedger(link.pull, 'stream-anchored');
+    this._pushLedger = new DeliveryLedger(link.push, 'successor-only');
   }
 
   /** Whether this controller still owns callbacks for its active-link lifetime. */
@@ -485,8 +511,8 @@ export class SyncLinkController {
    * generation even after the reconciler has covered it. Returns only the
    * count of acked deliveries the sweep released into the checkpoint.
    */
-  public pruneCoveredPushDeliveries(): number {
-    return this._pushLedger.pruneCovered();
+  public pruneCoveredPushDeliveries(coveringToken: ProgressToken): number {
+    return this._pushLedger.pruneCovered(coveringToken);
   }
 
   /**
