@@ -1,5 +1,13 @@
 # @enbox/local-node
 
+## 0.0.18
+
+### Patch Changes
+
+- Updated dependencies [[`4043f46`](https://github.com/enboxorg/enbox/commit/4043f46136cf23f08eb092976f1cb12cbb600ca7), [`bd3ea12`](https://github.com/enboxorg/enbox/commit/bd3ea128fdad3c28e2291028b054640ecfc159e2), [`61ceb57`](https://github.com/enboxorg/enbox/commit/61ceb575144c0eea39cee6938ce2f2c474c8b6f2), [`64115f8`](https://github.com/enboxorg/enbox/commit/64115f8d9fbfb37bf16cb04603556a0873de6b53), [`4426e72`](https://github.com/enboxorg/enbox/commit/4426e72a213fffbf420ce776fb2adb31c9c4f9b3), [`82e2f62`](https://github.com/enboxorg/enbox/commit/82e2f628fd6441eb4ca81be0b13952d11fbe6cba), [`a0aa94e`](https://github.com/enboxorg/enbox/commit/a0aa94e727320063dbb806aab57979abbbfb82b1), [`c603c33`](https://github.com/enboxorg/enbox/commit/c603c333387644b2d250cc4e778be1ebb14581ff), [`bd3ea12`](https://github.com/enboxorg/enbox/commit/bd3ea128fdad3c28e2291028b054640ecfc159e2), [`87afa05`](https://github.com/enboxorg/enbox/commit/87afa055a2aa23e7981f83dbff1ff2add138ea94), [`4062e4a`](https://github.com/enboxorg/enbox/commit/4062e4ab7e588c11a7f2fcfe302ac5cf048e4624), [`686c918`](https://github.com/enboxorg/enbox/commit/686c918e33d11af23314a2be421d3b66028020a1), [`7a437b2`](https://github.com/enboxorg/enbox/commit/7a437b2bed8cdb88b30eec86fb6420801845a352), [`06793a4`](https://github.com/enboxorg/enbox/commit/06793a4ddb8577b6f73c59db001e89fa2499f18c)]:
+  - @enbox/agent@0.8.32
+  - @enbox/dwn-server@0.1.31
+
 ## 0.0.17
 
 ### Patch Changes

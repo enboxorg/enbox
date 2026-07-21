@@ -1,5 +1,82 @@
 # @enbox/agent
 
+## 0.8.32
+
+### Patch Changes
+
+- [#1392](https://github.com/enboxorg/enbox/pull/1392) [`4043f46`](https://github.com/enboxorg/enbox/commit/4043f46136cf23f08eb092976f1cb12cbb600ca7) Thanks [@LiranCohen](https://github.com/LiranCohen)! - refactor: make each active link controller the authoritative replication session
+
+  Active reconciliation, subscriptions, recovery, and checkpoint commits now
+  share one controller-owned link object and mailbox. Replication-link storage
+  serializes read/merge/write mutations across browser contexts so stale link
+  copies cannot overwrite newer durable state.
+
+- [#1401](https://github.com/enboxorg/enbox/pull/1401) [`bd3ea12`](https://github.com/enboxorg/enbox/commit/bd3ea128fdad3c28e2291028b054640ecfc159e2) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Bound repair churn during repeated subscription flapping by deferring superseding repair signals through the per-link retry backoff without consuming the failure-attempt budget.
+
+- [#1394](https://github.com/enboxorg/enbox/pull/1394) [`61ceb57`](https://github.com/enboxorg/enbox/commit/61ceb575144c0eea39cee6938ce2f2c474c8b6f2) Thanks [@LiranCohen](https://github.com/LiranCohen)! - refactor: align sync implementation, tests, and architecture documentation on canonical replication terminology
+
+- [#1399](https://github.com/enboxorg/enbox/pull/1399) [`64115f8`](https://github.com/enboxorg/enbox/commit/64115f8d9fbfb37bf16cb04603556a0873de6b53) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Simplify sync quota plumbing by injecting `SyncQuotaManager` directly into durable-feed policy consumers while retaining engine-owned lifecycle fencing for probes.
+
+- [#1395](https://github.com/enboxorg/enbox/pull/1395) [`4426e72`](https://github.com/enboxorg/enbox/commit/4426e72a213fffbf420ce776fb2adb31c9c4f9b3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - refactor: treat remote subscription events as cursorless durable pull wakes
+
+  Pull and push subscriptions now have the same progress model: their events only coalesce work, while `MessagesQuery` resumes from the persisted direction checkpoint and advances it after a settled page. Matching subscription snapshots establish a paired startup baseline; reconnect wakes both durable directions to cover the disconnected interval. Pull admission reuses message and inline-data bytes returned by the durable query, verifies immediate push echoes against local stored state before avoiding remote hydration, and emits one described `delivery:applied` event for each fresh root or dependency. Event cursors, EOSE commits, subscription-gap repair state, and the separate live-pull admission pipeline are removed.
+
+  Dependency-blocked pull pages retain their checkpoint and retry on the next subscription wake or periodic settle pass instead of entering a fixed-delay verified-reconciliation loop.
+
+  The public `SyncEvent` members `reconcile:applied` and `gap:detected` are removed; consumers should observe `delivery:applied` as the single notification for each freshly admitted remote message.
+
+- [#1389](https://github.com/enboxorg/enbox/pull/1389) [`82e2f62`](https://github.com/enboxorg/enbox/commit/82e2f628fd6441eb4ca81be0b13952d11fbe6cba) Thanks [@LiranCohen](https://github.com/LiranCohen)! - refactor: make live push a coalesced durable-feed wake
+
+  Local subscription events now wake one coalesced durable push pass instead of creating in-memory batches or delivery acknowledgements. Every pass resumes from the persisted push checkpoint, and advances it only after a complete feed page is pushed successfully. Retryable failures leave the cursor unchanged so startup, reconnect, or a later wake deterministically replays the owed page. Retryable live-push failures now enter verified reconciliation after five seconds instead of using the removed in-memory 0/250ms/1s/2s retry ladder. Remotely sourced CIDs are marked before local application emits its wake, preventing an immediate echo to the same DWN.
+
+- [#1396](https://github.com/enboxorg/enbox/pull/1396) [`a0aa94e`](https://github.com/enboxorg/enbox/commit/a0aa94e727320063dbb806aab57979abbbfb82b1) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Replace the sync link mailbox, directional queues, and readiness promise with one ordered executor. Wake signals remain coalesced and durable-checkpoint-driven, repair keeps priority without discarding ordinary work, and administrative sync calls abort promptly while a link baseline is unavailable.
+
+  Repair attempts superseded by a newer repair signal are retired from the bounded failure count, so later genuine failures retain the complete retry ladder and their reported attempt number may restart after supersession.
+
+- [#1393](https://github.com/enboxorg/enbox/pull/1393) [`c603c33`](https://github.com/enboxorg/enbox/commit/c603c333387644b2d250cc4e778be1ebb14581ff) Thanks [@LiranCohen](https://github.com/LiranCohen)! - refactor: order replication startup and settle work per link
+
+  Pull and push callbacks now enter independent FIFO replay queues behind one generation-owned readiness barrier. Subscription snapshots or an initial durable reconciliation establish both baselines before callbacks run; resets fence queued work and stale completions. Recovery and settle passes coordinate through the same authoritative replication session while allowing the two replay directions to make progress independently. Administrative sync and settle work skip initializing or repairing links instead of waiting behind their readiness barriers; the in-flight baseline or repair already owns reconciliation for those links.
+
+- [#1401](https://github.com/enboxorg/enbox/pull/1401) [`bd3ea12`](https://github.com/enboxorg/enbox/commit/bd3ea128fdad3c28e2291028b054640ecfc159e2) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Re-sign remote-mode local DWN subscriptions at their reconnect cursor, replay durable push progress after reconnection, and repair subscriptions whose transport recovery fails.
+
+- [#1398](https://github.com/enboxorg/enbox/pull/1398) [`87afa05`](https://github.com/enboxorg/enbox/commit/87afa055a2aa23e7981f83dbff1ff2add138ea94) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Move sync repair and reconciliation into runtime-owned link scheduling. Per-link retries now share keyed stale-callback fencing, earliest-wins reconciliation timing, and automatic cancellation on runtime disposal or link removal.
+
+- [#1387](https://github.com/enboxorg/enbox/pull/1387) [`4062e4a`](https://github.com/enboxorg/enbox/commit/4062e4ab7e588c11a7f2fcfe302ac5cf048e4624) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: keep ordinary DWN requests on their endpoint's native transport
+
+  `EnboxRpcClient.sendDwnRequest` routes HTTP(S) requests over HTTP(S), where
+  the server advertises complete `dwn.processMessage` behavior. Subscriptions
+  continue to map HTTP(S) endpoints to the pooled WebSocket transport, and an
+  explicit `ws:`/`wss:` endpoint continues to use that transport directly.
+  This removes a second routing policy based on transient socket health and
+  keeps request transport selection deterministic.
+
+- [#1386](https://github.com/enboxorg/enbox/pull/1386) [`686c918`](https://github.com/enboxorg/enbox/commit/686c918e33d11af23314a2be421d3b66028020a1) Thanks [@LiranCohen](https://github.com/LiranCohen)! - refactor: make browser wake recovery transport-owned
+
+  Browser online and visibility signals now stay in the WebSocket transport,
+  which probes connection health, reconnects, and resumes subscriptions from
+  their durable cursors. The agent no longer maintains a second wake debounce
+  and recovery state machine or starts data-plane reconciliation from those
+  signals. If WebSocket subscriptions cannot operate while HTTP still can, or a
+  target does not yet have an active link, recovery falls back to the periodic
+  settle check (the configured sync interval, `5m` by default).
+
+  Link connectivity now means transport-observed connectivity rather than the
+  browser's network hint. While an active page is offline, the default heartbeat
+  detects the lost socket within one 30-second interval plus its 10-second pong
+  deadline; a foreground/online wake instead runs the transport's 5-second
+  on-demand health probe immediately.
+
+- [#1388](https://github.com/enboxorg/enbox/pull/1388) [`7a437b2`](https://github.com/enboxorg/enbox/commit/7a437b2bed8cdb88b30eec86fb6420801845a352) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: subscribe-reply feed snapshot and empty-log anchor cursor
+
+  MessagesSubscribe replies now carry the tenant feed's `head` progress token and scope `fingerprint`, observed after the subscription is active. Empty replication logs return a position-zero anchor cursor from `logRead` in both stores, so empty-feed drains checkpoint instead of re-enumerating every pass. The agent captures both subscription snapshots: matching fingerprints atomically establish the pull and push baselines from their respective heads, while missing or mismatched snapshots run one durable reconciliation before queued callbacks are released.
+
+- [#1400](https://github.com/enboxorg/enbox/pull/1400) [`06793a4`](https://github.com/enboxorg/enbox/commit/06793a4ddb8577b6f73c59db001e89fa2499f18c) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Recover sync directions with corrupt persisted checkpoints by resetting invalid progress tokens before querying durable feeds.
+
+- Updated dependencies [[`4062e4a`](https://github.com/enboxorg/enbox/commit/4062e4ab7e588c11a7f2fcfe302ac5cf048e4624), [`7a437b2`](https://github.com/enboxorg/enbox/commit/7a437b2bed8cdb88b30eec86fb6420801845a352)]:
+  - @enbox/dwn-clients@0.4.23
+  - @enbox/dwn-sdk-js@0.4.16
+  - @enbox/connect@0.1.12
+
 ## 0.8.31
 
 ### Patch Changes

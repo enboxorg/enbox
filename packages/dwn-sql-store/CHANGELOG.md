@@ -1,5 +1,16 @@
 # @enbox/dwn-sql-store
 
+## 0.0.41
+
+### Patch Changes
+
+- [#1388](https://github.com/enboxorg/enbox/pull/1388) [`7a437b2`](https://github.com/enboxorg/enbox/commit/7a437b2bed8cdb88b30eec86fb6420801845a352) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: subscribe-reply feed snapshot and empty-log anchor cursor
+
+  MessagesSubscribe replies now carry the tenant feed's `head` progress token and scope `fingerprint`, observed after the subscription is active. Empty replication logs return a position-zero anchor cursor from `logRead` in both stores, so empty-feed drains checkpoint instead of re-enumerating every pass. The agent captures both subscription snapshots: matching fingerprints atomically establish the pull and push baselines from their respective heads, while missing or mismatched snapshots run one durable reconciliation before queued callbacks are released.
+
+- Updated dependencies [[`7a437b2`](https://github.com/enboxorg/enbox/commit/7a437b2bed8cdb88b30eec86fb6420801845a352)]:
+  - @enbox/dwn-sdk-js@0.4.16
+
 ## 0.0.40
 
 ### Patch Changes
