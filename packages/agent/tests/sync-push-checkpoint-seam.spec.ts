@@ -2,6 +2,7 @@ import type { ProgressToken, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
 import type { SyncDurableFeedQuery } from '../src/sync-durable-feed-reconciler.js';
 
+import { DwnErrorCode } from '@enbox/dwn-sdk-js';
 import { Level } from 'level';
 import sinon from 'sinon';
 
@@ -98,15 +99,56 @@ describe('SyncEngineLevel — durable push replay seam', () => {
     const persistedAfterFailure = await (engine as any).replicationLinkStore.getOrCreateLink(identity);
     expect(persistedAfterFailure.push.contiguousAppliedToken).toEqual(durableCursor);
 
-    // A later wake replays the same owed page. Only the successful page may
-    // advance the in-memory and durable checkpoints.
-    await (engine as any).handleLocalPushMessage(controller, (): boolean => false, event(100));
+    // A remote-mode local DWN reconnect may have skipped writes while its
+    // socket was down. The reconnect notification is also only a wake: it
+    // replays from durable progress rather than trusting transport state.
+    await (engine as any).handleLocalPushMessage(
+      controller,
+      (): boolean => false,
+      { type: 'reconnected' },
+    );
 
     expect(replayQueries.map(({ cursor }) => cursor)).toEqual([durableCursor, durableCursor]);
     expect(pushLocalPage.secondCall.args[1]).toEqual([{ messageCid: 'cid-2' }]);
     expect(controller.link.push.contiguousAppliedToken).toEqual(token(2));
     const persistedAfterSuccess = await (engine as any).replicationLinkStore.getOrCreateLink(identity);
     expect(persistedAfterSuccess.push.contiguousAppliedToken).toEqual(token(2));
+
+    await controller.dispose();
+  });
+
+  it('repairs a failed local subscription recovery and pauses terminal authorization failures', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const link = await (engine as any).replicationLinkStore.getOrCreateLink({
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'owner-epoch',
+      remoteEndpoint     : REMOTE,
+      scope              : { kind: 'full' },
+      tenantDid          : DID,
+    });
+    await (engine as any).replicationLinkStore.setStatus(link, 'live');
+    const linkKey = buildLinkKey(DID, REMOTE, link.projectionId, link.authorizationEpoch);
+    const controller = (engine as any).activateLink(linkKey, link);
+    controller.markReplicationReady();
+    const repair = sinon.stub(engine['_linkRecoveryCoordinator'], 'transitionToRepairing').resolves();
+    const pause = sinon.stub(engine as any, 'transitionToPaused').resolves();
+    sinon.stub(console, 'warn');
+
+    await (engine as any).handleLocalPushMessage(controller, (): boolean => false, {
+      cursor : token(2),
+      error  : { code: 'SubscriptionRecoveryFailed', detail: 'socket recovery failed' },
+      type   : 'error',
+    });
+    expect(repair.calledOnceWithExactly(controller)).toBe(true);
+    expect(pause.notCalled).toBe(true);
+
+    await (engine as any).handleLocalPushMessage(controller, (): boolean => false, {
+      cursor : token(2),
+      error  : { code: DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed, detail: 'grant revoked' },
+      type   : 'error',
+    });
+    expect(pause.calledOnceWithExactly(linkKey, link)).toBe(true);
+    expect(repair.calledOnce).toBe(true);
 
     await controller.dispose();
   });

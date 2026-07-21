@@ -233,6 +233,46 @@ describe('AgentDwnApi', () => {
       expect(rpcSendStub.firstCall.args[0].dwnUrl).toBe('http://127.0.0.1:55557');
     });
 
+    it('re-signs remote-mode local subscriptions at their reconnect cursor', async () => {
+      const rpcSendStub = sinon.stub().resolves({
+        status       : { code: 200, detail: 'OK' },
+        subscription : { close: async (): Promise<void> => {} },
+      });
+      const mockAgent: any = {
+        agentDid: {
+          uri       : 'did:dht:testagent',
+          getSigner : sinon.stub().resolves({
+            algorithm : 'EdDSA',
+            keyId     : 'did:dht:testagent#0',
+            sign      : sinon.stub().resolves(new Uint8Array(64)),
+          }),
+        },
+        rpc: {
+          getServerInfo  : sinon.stub().resolves({ server: '@enbox/dwn-server', webSocketSupport: true }),
+          sendDwnRequest : rpcSendStub,
+        },
+      };
+      const dwnApi = new AgentDwnApi({
+        agent            : mockAgent,
+        localDwnEndpoint : 'http://127.0.0.1:55557',
+      });
+
+      await dwnApi.processRequest({
+        author              : 'did:dht:testagent',
+        target              : 'did:dht:testagent',
+        messageType         : DwnInterface.MessagesSubscribe,
+        messageParams       : { filters: [] },
+        subscriptionHandler : (): void => {},
+      });
+
+      const factory = rpcSendStub.firstCall.args[0].subscription.resubscribeFactory;
+      expect(factory).toBeDefined();
+      const reconnectCursor = { streamId: 'stream', epoch: 'epoch', position: '42', messageCid: 'cid-42' };
+      const resumeMessage = await factory(reconnectCursor);
+
+      expect(resumeMessage.descriptor.cursor).toEqual(reconnectCursor);
+    });
+
     it('routes processRawMessage through RPC in remote mode', async () => {
       const rpcSendStub = sinon.stub().resolves({
         status: { code: 202, detail: 'Accepted' },
