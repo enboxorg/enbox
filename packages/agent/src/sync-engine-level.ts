@@ -6,7 +6,7 @@ import type { GenericMessage, MessagesFilter, MessagesQueryReply, MessagesQueryR
 import { Level } from 'level';
 import { RateLimitError } from '@enbox/dwn-clients';
 import { DwnInterfaceName, DwnMethodName, Encoder, Message } from '@enbox/dwn-sdk-js';
-import { parseDurationInMilliseconds, sleep } from '@enbox/common';
+import { parseDurationInMilliseconds, runWithCrossContextLock, sleep } from '@enbox/common';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
@@ -59,7 +59,6 @@ import { AgentPermissionsApi } from './permissions-api.js';
 
 import { admitClosure } from './sync-admit-closure.js';
 import { DwnInterface } from './types/dwn.js';
-import { runWithCrossContextLock } from './sync-cross-context-lock.js';
 import { SyncConnectivityManager } from './sync-connectivity-manager.js';
 import { SyncDeadLetterStoreLevel } from './sync-dead-letter-store-level.js';
 import { SyncDeferredPullStoreLevel } from './sync-deferred-pull-store-level.js';

@@ -18,6 +18,8 @@ import type { MessageStore, MessageStoreLatestStateTransition, MessageStoreOptio
 import * as block from 'multiformats/block';
 import * as cbor from '@ipld/dag-cbor';
 
+import { runWithCrossContextLock } from '@enbox/common';
+
 import { Cid } from '../utils/cid.js';
 import { CID } from 'multiformats/cid';
 import { executeUnlessAborted } from '../utils/abort.js';
@@ -143,8 +145,9 @@ type StorePartitions = {
  * the store epoch are all sublevels of one Level instance, so every mutation commits as one fully
  * atomic batch.
  *
- * A per-tenant async write mutex spans seq assignment through batch write, so commit order equals
- * seq order by construction. Seq assignment is gap-free (a failed batch never persists the head),
+ * A per-tenant cross-context write lock spans seq assignment through batch write, so commit order
+ * equals seq order by construction even when browser tabs, workers, or service workers share the
+ * same IndexedDB database. Seq assignment is gap-free (a failed batch never persists the head),
  * while the readable log stays sparse after compaction and under filters — readers never assume
  * contiguity.
  */
@@ -154,7 +157,6 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
   private readonly wakePublisher?: WakePublisher;
   private partitionsPromise?: Promise<StorePartitions>;
   private epochPromise?: Promise<string>;
-  private readonly writeLocks: Map<string, Promise<void>> = new Map();
 
   /**
    * @param {MessageStoreLevelConfig} config
@@ -719,7 +721,7 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     const partitions = await this.partitions();
     const { cursor, limit, filters } = options;
 
-    // Head-captured-first: the per-tenant write mutex serializes commits in position order, so an
+    // Head-captured-first: the per-tenant write lock serializes commits in position order, so an
     // observed head H is a visibility barrier — every position <= H is already committed when the
     // range scans below run, and anything committed afterward has a position > H and waits for
     // the next page.
@@ -865,20 +867,8 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
    * a later batch could land first).
    */
   private async withTenantWriteLock<T>(tenant: string, task: () => Promise<T>): Promise<T> {
-    const previous = this.writeLocks.get(tenant) ?? Promise.resolve();
-    let release!: () => void;
-    const current = new Promise<void>((resolve) => { release = resolve; });
-    this.writeLocks.set(tenant, current);
-
-    await previous;
-    try {
-      return await task();
-    } finally {
-      release();
-      if (this.writeLocks.get(tenant) === current) {
-        this.writeLocks.delete(tenant);
-      }
-    }
+    const lockName = `enbox:dwn-message-store:${JSON.stringify([this.config.location!, tenant])}`;
+    return runWithCrossContextLock(lockName, task);
   }
 
   /**
