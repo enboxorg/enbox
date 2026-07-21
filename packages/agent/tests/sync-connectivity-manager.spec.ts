@@ -144,6 +144,9 @@ describe('SyncConnectivityManager', () => {
     // inside this window recovers with no check at all.
     await clock.tickAsync(2_999);
     expect(state.integrityChecks).toBe(0);
+    // A flapping socket re-requesting inside the window must not push the
+    // deadline out: the original 3s deadline still fires.
+    manager.requestConvergenceCheck();
     await clock.tickAsync(1);
     expect(state.integrityChecks).toBe(1);
 

@@ -180,7 +180,15 @@ export class SyncConnectivityManager {
       return;
     }
 
-    this._pendingConvergenceTrigger ??= 'stream';
+    // Arm-once: a pending trigger already owns a deadline — its debounce or
+    // trailing timer, or the completion of the active check. Re-arming here
+    // would let a socket flapping faster than the window push the deadline
+    // out forever, starving the recovery the re-request exists to provide.
+    if (this._pendingConvergenceTrigger !== undefined) {
+      return;
+    }
+
+    this._pendingConvergenceTrigger = 'stream';
     scope.armTimeout(
       SyncConnectivityManager.RECOVERY_TIMER,
       (): void => { this.flushTrailingConvergenceCheck(scope); },
