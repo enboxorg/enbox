@@ -17,7 +17,6 @@ import type { SyncIdentityStore } from './sync-identity-store.js';
 import type { SyncIdentityTaskRunner } from './sync-lifecycle-coordinator.js';
 import type { SyncMessageEntry } from './sync-messages.js';
 import type { SyncReplicationLinkStore } from './sync-replication-link-store.js';
-import type { SyncRuntimeHandle } from './sync-runtime.js';
 import type {
   DeadLetterEntry,
   PushFailure,
@@ -465,7 +464,7 @@ export class SyncEngineLevel implements SyncEngine {
         clearConvergence : (linkKey): void => { this._feedConvergenceManager.clearLink(linkKey); },
         emitEvent        : (event): void => { this.emitEvent(event); },
         getController    : (linkKey): SyncLinkController | undefined => this.getLinkController(linkKey),
-        getRuntime       : (): SyncRuntimeHandle => this._runtime,
+        getRuntime       : (): SyncRuntime => this._runtime,
         handleDivergence : (target, result, context): Promise<boolean> =>
           this._feedConvergenceManager.handleVerifiedDivergence(target, result, context),
         openPullSubscription: (target, controller): Promise<boolean> =>
@@ -617,6 +616,7 @@ export class SyncEngineLevel implements SyncEngine {
     if (existing !== undefined) {
       // Closing starts synchronously; the controller absorbs transport close
       // errors while the replacement lifetime is installed.
+      this._linkRecoveryCoordinator.cancelScheduledWork(existing);
       void existing.dispose();
     }
     const controller = new SyncLinkController(linkKey, link);
@@ -648,6 +648,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     // Removal is synchronous for callback invalidation; subscription closure
     // is best effort and cannot reject from the controller.
+    this._linkRecoveryCoordinator.cancelScheduledWork(controller);
     void controller.dispose();
     this._linkControllers.delete(linkKey);
   }
@@ -1341,8 +1342,8 @@ export class SyncEngineLevel implements SyncEngine {
   // ---------------------------------------------------------------------------
 
   private async stopLiveSync(): Promise<void> {
-    // Invalidate callbacks, cancel timers, and close subscriptions through the
-    // same lifetime owner used by normal hot-remove and repair paths.
+    // The runtime transition already cancelled scheduled work. Invalidate
+    // callbacks and close subscriptions through the active link owner.
     const controllers = [...this._linkControllers.values()];
     for (const controller of controllers) {
       controller.deactivate();
@@ -1861,8 +1862,7 @@ export class SyncEngineLevel implements SyncEngine {
   private cancelIdentityTimers(did: string): void {
     for (const controller of this._linkControllers.values()) {
       if (controller.link.tenantDid === did) {
-        controller.cancelRepairRetryTimer();
-        controller.cancelReconcileTimer();
+        this._linkRecoveryCoordinator.cancelScheduledWork(controller);
       }
     }
     this.cancelLinkInitRetriesForDid(did);

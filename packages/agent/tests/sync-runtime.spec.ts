@@ -181,6 +181,22 @@ describe('SyncRuntime', () => {
     expect(second).toBe(1);
   });
 
+  it('should keep the earliest timeout requested for one key', async () => {
+    const clock = sinon.useFakeTimers();
+    const runtime = new SyncRuntime();
+    const runs: string[] = [];
+
+    expect(runtime.armTimeoutIfEarlier('link-work', () => { runs.push('first'); }, 1000)).toBe(true);
+    expect(runtime.armTimeoutIfEarlier('link-work', () => { runs.push('later'); }, 2000)).toBe(false);
+    expect(runtime.armTimeoutIfEarlier('link-work', () => { runs.push('earlier'); }, 500)).toBe(true);
+
+    await clock.tickAsync(499);
+    expect(runs).toEqual([]);
+    await clock.tickAsync(1);
+    expect(runs).toEqual(['earlier']);
+    expect(runtime.hasTimer('link-work')).toBe(false);
+  });
+
   it('should neutralize a timeout firing queued before dispose or replacement', () => {
     const scheduled = captureScheduledCallbacks();
     const runtime = new SyncRuntime();
