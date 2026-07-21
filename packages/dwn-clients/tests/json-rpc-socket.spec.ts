@@ -18,6 +18,22 @@ async function sleepWhileWaitingForEvents(override?: number):Promise<void> {
 }
 
 describe('JsonRpcSocket', () => {
+  let alice: Persona;
+  // we set the client to a websocket url
+  const dwnUrl = new URL(testDwnUrl);
+  dwnUrl.protocol = dwnUrl.protocol === 'http:' ? 'ws:' : 'wss:';
+  const socketDwnUrl = dwnUrl.toString();
+
+  afterAll(() => {
+    mock.restore();
+  });
+
+  beforeEach(async () => {
+    mock.restore();
+
+    alice = await TestDataGenerator.generateDidKeyPersona();
+  });
+
   it('reports fresh only while inbound traffic is inside the heartbeat window', async () => {
     const client = await JsonRpcSocket.connect(socketDwnUrl, { heartbeatInterval: 1_000, heartbeatTimeout: 500 });
     try {
@@ -46,22 +62,6 @@ describe('JsonRpcSocket', () => {
     } finally {
       client.close();
     }
-  });
-
-  let alice: Persona;
-  // we set the client to a websocket url
-  const dwnUrl = new URL(testDwnUrl);
-  dwnUrl.protocol = dwnUrl.protocol === 'http:' ? 'ws:' : 'wss:';
-  const socketDwnUrl = dwnUrl.toString();
-
-  afterAll(() => {
-    mock.restore();
-  });
-
-  beforeEach(async () => {
-    mock.restore();
-
-    alice = await TestDataGenerator.generateDidKeyPersona();
   });
 
   it('connects to a url', async () => {
