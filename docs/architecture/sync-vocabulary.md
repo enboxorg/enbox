@@ -21,6 +21,7 @@ the code, not an entry missing from this table.
 | Per-link pull ordering fence | **`pullGeneration`** / `expectedPullGeneration` | `pullEpoch`, `openGeneration`, `expectedGeneration`, `subscriptionPullEpoch` |
 | Target-plan version | **`topologyGeneration`** / `expectedTopologyGeneration` | bare `generation`, `expectedGeneration` |
 | Per-link push batching state | **`pushQueue`** — `SyncPushQueueState/Params/Entry` | `pushRuntime`, `SyncPushRuntime*` |
+| In-flight delivery acknowledgement, both directions: `track*Delivery` issues a delivery tag in feed order, `ack*Delivery` resolves it, and `commitAcked*Deliveries` advances the durable checkpoint through the contiguous acked prefix (cumulative ack); `pruneCoveredPushDeliveries` sweeps ledger positions a reconciler checkpoint covers | **delivery tag** — `SyncPullDeliveryTag`, `SyncPushDeliveryTag` | `SyncPullDeliveryTicket`, `startPullDelivery`, `commitPullDelivery`, `advanceContiguousPullCommits` |
 | Folding a push result into quota state | **`applyPushResult`** | `transitionPushResult` |
 | Permanently-failed message record | **dead letter** — `DeadLetterEntry`, `getDeadLetters`, `clearDeadLetter`, `clearAllDeadLetters`, `recordDeadLetter`, `hasDeadLetter` | `getFailedMessages`, `clearFailedMessage`, `clearAllFailedMessages`, `hasAdmissionDeadLetter` |
 | Clearing one exact `(tenant, cid, remote)` dead letter | **`clearDeadLetterForTenant`** | the quota ops key `clearFailedMessage`, which shared a name with the across-tenants public method |
@@ -33,7 +34,7 @@ the code, not an entry missing from this table.
 | **epoch** | A durable, string-valued generation: `authorizationEpoch` on a link, `ProgressToken.epoch` on a remote stream | The in-memory pull counter — that is a *generation* |
 | **generation** | An in-memory monotonic counter. Always qualified: *pull* generation, *topology* generation | The `SyncRuntime` lifetime — that is a *runtime* |
 | **runtime** | The `SyncRuntime` timer-ownership scope for one start/stop cycle | Push batching state (*queue*), live-sync mode (*live sync*), or loose ephemeral state |
-| **drain** | The engine's data handoff to an endpoint: `drainTo`, `SyncDrainCoordinator` | Pumping a request set (`runRequestedPasses`), advancing a commit prefix (`advanceContiguousPullCommits`), running repair passes (`runPendingRepairs`) |
+| **drain** | The engine's data handoff to an endpoint: `drainTo`, `SyncDrainCoordinator` | Pumping a request set (`runRequestedPasses`), advancing a commit prefix (`commitAckedPullDeliveries`), running repair passes (`runPendingRepairs`) |
 | **admission** | Replicated-message admission into the local DWN: `admitClosure`, `admitRemoteFeedPage`, `MAX_ADMISSION_PASSES` | Background-task admission — that is *intake* (`pauseTaskIntake`) |
 | **closure** | One root message plus the transitive dependency set required to make it applicable | Scope closure — always spelled out as *scope closure* |
 | **scope** | A `SyncScope` (a protocol set) | The runtime timer scope, or the lock namespace (`_lockNamespace`) |

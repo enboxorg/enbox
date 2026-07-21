@@ -437,9 +437,14 @@ export class SyncEngineLevel implements SyncEngine {
         this.getOrCreateReplicationLink(target),
       getQuotaBlockCids: async (target): Promise<string[]> =>
         (await this.getQuotaBlocksForTarget(target)).map(({ messageCid }) => messageCid),
-      onCheckpointAdvanced : (link, direction): void => { this.emitCheckpointAdvance(link, direction); },
-      onReconcileApplied   : (target, messageCids): void => { this.emitReconcileApplied(target, messageCids); },
-      probeQuotaBlocks     : (target, force, forceProbeCids, shouldContinue): Promise<void> =>
+      onCheckpointAdvanced: (link, direction): void => {
+        this.emitCheckpointAdvance(link, direction);
+        if (direction === 'push') {
+          this.pruneCoveredPushLedger(link);
+        }
+      },
+      onReconcileApplied : (target, messageCids): void => { this.emitReconcileApplied(target, messageCids); },
+      probeQuotaBlocks   : (target, force, forceProbeCids, shouldContinue): Promise<void> =>
         this.probeQuotaBlocksForTarget(target, force, forceProbeCids, shouldContinue),
       pushLocalPage: (target, entries, shouldContinue): Promise<FeedPagePushResult> =>
         this.pushLocalFeedPage(target, entries, shouldContinue),
@@ -506,6 +511,7 @@ export class SyncEngineLevel implements SyncEngine {
         clearQuotaBlock: (tenantDid, linkKey, messageCid): Promise<boolean> =>
           this.clearQuotaBlockByLinkKey(tenantDid, linkKey, messageCid),
         getController     : (linkKey): SyncLinkController | undefined => this.getLinkController(linkKey),
+        persistCheckpoint : (link): Promise<void> => this.ledger.persistCheckpoint(link, 'push'),
         pushMessages      : (request): Promise<PushResult> => this.pushMessages(request),
         recordDeadLetter  : (entry): Promise<void> => this.recordDeadLetter(entry),
         reportError       : (message, error): void => { console.error(message, error); },
@@ -2160,6 +2166,31 @@ export class SyncEngineLevel implements SyncEngine {
         ? { type: 'checkpoint:pull-advance', ...base }
         : { type: 'checkpoint:push-advance', ...base },
     );
+  }
+
+  /**
+   * Sweep the live push ledger after a reconciler pass advanced the durable
+   * push checkpoint: in-flight deliveries the checkpoint now covers are
+   * dropped so an unsettled position (an unclassifiable event, an exhausted
+   * retry) cannot stall the ledger prefix the reconciler already owns. Any
+   * settled deliveries unblocked above the covered span advance the
+   * checkpoint further; persisting that advance is best-effort.
+   */
+  private pruneCoveredPushLedger(link: ReplicationLinkState): void {
+    const linkKey = buildLinkKey(link.tenantDid, link.remoteEndpoint, link.projectionId, link.authorizationEpoch);
+    const controller = this.getLinkController(linkKey);
+    if (controller === undefined || !controller.isActive) {
+      return;
+    }
+
+    if (controller.pruneCoveredPushDeliveries() > 0) {
+      void this.ledger.persistCheckpoint(link, 'push').catch((error: unknown) => {
+        console.error(
+          `SyncEngineLevel: Failed to persist push checkpoint after ledger prune for ${link.tenantDid} -> ${link.remoteEndpoint}`,
+          error,
+        );
+      });
+    }
   }
 
   // ---------------------------------------------------------------------------

@@ -91,6 +91,7 @@ function createFixture(options: {
     captureIdentityTaskRunner : sinon.stub().returns(taskRunner),
     clearQuotaBlock           : sinon.stub().resolves(false),
     getController             : sinon.stub().callsFake((linkKey: string) => controllers.get(linkKey)),
+    persistCheckpoint         : sinon.stub().resolves(),
     pushMessages              : sinon.stub().callsFake(async ({ messageCids }) => ({ failed: [], succeeded: messageCids })),
     recordDeadLetter          : sinon.stub().resolves(),
     reportError               : sinon.stub(),
@@ -633,6 +634,141 @@ describe('SyncLivePushCoordinator', () => {
       await fixture.coordinator.flushPendingPushBatch(controller);
 
       expect(fixture.operations.pushMessages.called).toBe(false);
+    });
+  });
+
+  describe('push ledger checkpointing', () => {
+    function eventAt(position: string, message: GenericMessage = protocolMessage()): Extract<SubscriptionMessage, { type: 'event' }> {
+      return {
+        cursor : { epoch: 'local-epoch', position, streamId: 'local-stream' },
+        event  : { message },
+        type   : 'event',
+      } as Extract<SubscriptionMessage, { type: 'event' }>;
+    }
+
+    it('settles suppressed and out-of-scope deliveries and persists the checkpoint', async () => {
+      const fixture = createFixture();
+      const scope = { kind: 'protocolSet' as const, protocols: ['https://protocol.example/covered'] as [string] };
+      const controller = activate(fixture, link(scope));
+
+      await fixture.coordinator.handleEvent(
+        target(scope),
+        controller,
+        () => false,
+        fixture.taskRunner,
+        eventAt('1', protocolMessage('https://protocol.example/outside')),
+      );
+      expect(controller.link.push.contiguousAppliedToken?.position).toBe('1');
+
+      const echoed = protocolMessage();
+      const echoedCid = await Message.getCid(echoed);
+      fixture.echoSuppressor.trackPulled(DID, echoedCid, REMOTE);
+      await fixture.coordinator.handleEvent(target(scope), controller, () => false, fixture.taskRunner, eventAt('2', echoed));
+
+      expect(controller.link.push.contiguousAppliedToken?.position).toBe('2');
+      expect(controller.pushInflightCount).toBe(0);
+      expect(fixture.operations.persistCheckpoint.callCount).toBe(2);
+      // Nothing queued and nothing flushed — the checkpoint advanced anyway.
+      expect(controller.pushQueue).toBeUndefined();
+      expect(fixture.operations.pushMessages.called).toBe(false);
+    });
+
+    it('settles a queued delivery only once its flush delivers it', async () => {
+      const fixture = createFixture();
+      const controller = activate(fixture);
+
+      await fixture.coordinator.handleEvent(target(), controller, () => false, fixture.taskRunner, eventAt('1'));
+      await waitForLastTask(fixture.taskRunner);
+
+      expect(fixture.operations.pushMessages.calledOnce).toBe(true);
+      expect(controller.link.push.contiguousAppliedToken?.position).toBe('1');
+      expect(controller.pushInflightCount).toBe(0);
+      expect(fixture.operations.persistCheckpoint.calledOnce).toBe(true);
+      controller.deactivate();
+    });
+
+    it('holds the checkpoint below a retryable failure and settles after the retry delivers', async () => {
+      const fixture = createFixture({ retryBackoffMs: [0, 0] });
+      const controller = activate(fixture);
+      const message = protocolMessage();
+      const cid = await Message.getCid(message);
+      fixture.operations.applyPushResult.onFirstCall().resolves({
+        quotaBlocked      : false,
+        retryableFailures : [{ cid, detail: 'transient' }],
+        terminalFailures  : [],
+      });
+
+      await fixture.coordinator.handleEvent(target(), controller, () => false, fixture.taskRunner, eventAt('1', message));
+      await waitForLastTask(fixture.taskRunner);
+      // First flush failed retryably — the position is still owed.
+      expect(controller.link.push.contiguousAppliedToken).toBeUndefined();
+
+      const deadline = Date.now() + 2_000;
+      while (controller.link.push.contiguousAppliedToken === undefined && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(controller.link.push.contiguousAppliedToken?.position).toBe('1');
+      expect(controller.pushInflightCount).toBe(0);
+      controller.deactivate();
+    });
+
+    it('settles a dead-lettered delivery as deliberately skipped', async () => {
+      const fixture = createFixture({ retryBackoffMs: [0, 0] });
+      const controller = activate(fixture);
+      const message = protocolMessage();
+      const cid = await Message.getCid(message);
+      fixture.operations.applyPushResult.onFirstCall().resolves({
+        quotaBlocked      : false,
+        retryableFailures : [{ cid, detail: 'rejected', terminal: true }],
+        terminalFailures  : [],
+      });
+
+      await fixture.coordinator.handleEvent(target(), controller, () => false, fixture.taskRunner, eventAt('1', message));
+      await waitForLastTask(fixture.taskRunner);
+
+      const deadline = Date.now() + 2_000;
+      while (controller.link.push.contiguousAppliedToken === undefined && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(fixture.operations.recordDeadLetter.calledOnce).toBe(true);
+      expect(controller.link.push.contiguousAppliedToken?.position).toBe('1');
+      expect(controller.pushInflightCount).toBe(0);
+      controller.deactivate();
+    });
+
+    it('leaves an unclassifiable position stalled until a reconciler checkpoint covers it', async () => {
+      const fixture = createFixture();
+      const scope = { kind: 'protocolSet' as const, protocols: ['https://protocol.example/covered'] as [string] };
+      const controller = activate(fixture, link(scope));
+      const unknown = {
+        descriptor: {
+          interface        : DwnInterfaceName.Records,
+          messageTimestamp : '2026-07-17T00:00:00.000000Z',
+          method           : DwnMethodName.Delete,
+          recordId         : 'record-id',
+        },
+      } as GenericMessage;
+
+      await fixture.coordinator.handleEvent(target(scope), controller, () => false, fixture.taskRunner, eventAt('1', unknown));
+      await fixture.coordinator.handleEvent(
+        target(scope),
+        controller,
+        () => false,
+        fixture.taskRunner,
+        eventAt('2', protocolMessage('https://protocol.example/outside')),
+      );
+
+      // The settled position 2 is held behind the unclassifiable position 1,
+      // which the scheduled reconcile owns.
+      expect(controller.link.push.contiguousAppliedToken).toBeUndefined();
+      expect(fixture.operations.scheduleReconcile.calledOnce).toBe(true);
+
+      // The reconciler's push pass advanced the durable checkpoint past the
+      // stall — the sweep drops the covered position and releases the rest.
+      controller.link.push.contiguousAppliedToken = { epoch: 'local-epoch', position: '1', streamId: 'local-stream' };
+      expect(controller.pruneCoveredPushDeliveries()).toBe(2);
+      expect(controller.link.push.contiguousAppliedToken?.position).toBe('2');
+      expect(controller.pushInflightCount).toBe(0);
     });
   });
 });

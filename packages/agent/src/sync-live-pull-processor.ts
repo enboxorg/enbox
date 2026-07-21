@@ -14,7 +14,7 @@ import type {
   SyncEvent,
   SyncEventScope,
 } from './types/sync.js';
-import type { SyncLinkController, SyncPullDeliveryTicket } from './sync-link-controller.js';
+import type { SyncLinkController, SyncPullDeliveryTag } from './sync-link-controller.js';
 
 import { Encoder, Message } from '@enbox/dwn-sdk-js';
 
@@ -68,7 +68,7 @@ export type SyncLivePullFetchMessages = typeof fetchRemoteMessages;
 
 type PullDelivery = {
   controller?: SyncLinkController;
-  ticket?: SyncPullDeliveryTicket;
+  tag?: SyncPullDeliveryTag;
 };
 
 type LivePullProcessResult =
@@ -182,7 +182,7 @@ export class SyncLivePullProcessor {
       return;
     }
 
-    controller.advanceContiguousPullCommits();
+    controller.commitAckedPullDeliveries();
     if (isStale()) { return; }
     await this._operations.persistCheckpoint(link);
     if (isStale()) { return; }
@@ -248,7 +248,7 @@ export class SyncLivePullProcessor {
       return;
     }
 
-    // Every guard above is synchronous, so the ordering ticket is claimed in
+    // Every guard above is synchronous, so the ordering tag is claimed in
     // arrival order before any asynchronous work. An out-of-scope event is
     // acknowledged through the ordinal tracker like any other delivery — a
     // direct checkpoint advance would persist its cursor as contiguous while
@@ -326,8 +326,8 @@ export class SyncLivePullProcessor {
     const deliveryController = context.controller.isActive && context.link === context.controller.link
       ? context.controller
       : undefined;
-    const ticket = deliveryController?.startPullDelivery(cursor);
-    return { controller: deliveryController, ticket };
+    const tag = deliveryController?.trackPullDelivery(cursor);
+    return { controller: deliveryController, tag };
   }
 
   private async processEvent(
@@ -434,14 +434,14 @@ export class SyncLivePullProcessor {
     const { did, dwnUrl, link, isStale } = context;
     if (
       delivery.controller === undefined ||
-      delivery.ticket === undefined ||
+      delivery.tag === undefined ||
       (link.status !== 'live' && link.status !== 'initializing') ||
       isStale()
     ) {
       return;
     }
 
-    const drained = delivery.controller.commitPullDelivery(delivery.ticket);
+    const drained = delivery.controller.ackPullDelivery(delivery.tag);
     if (drained > 0) {
       await this._operations.persistCheckpoint(link);
       if (isStale()) { return; }
