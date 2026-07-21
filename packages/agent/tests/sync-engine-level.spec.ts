@@ -59,7 +59,7 @@ describe('SyncEngineLevel', () => {
     });
   });
 
-  describe('live push echo suppression', () => {
+  describe('durable push echo suppression', () => {
     it('queues a pushed echo until the replication baseline is ready, then commits it durably', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
       const internal = syncEngine as any;
@@ -101,7 +101,7 @@ describe('SyncEngineLevel', () => {
 
       const controller = internal.activateLink(linkKey, link);
       context.controller = controller;
-      internal._ledger = { persistCheckpoint };
+      internal._replicationLinkStore = { persistCheckpoint };
       internal._echoSuppressor.trackPushed(context.did, messageCid, dwnUrl);
 
       const handling = internal._livePullProcessor.handleMessage(context, {
@@ -131,7 +131,7 @@ describe('SyncEngineLevel', () => {
       }));
     });
 
-    it('clears pulled and pushed echo state during live teardown', async () => {
+    it('clears pulled and pushed echo state when live sync stops', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
       const internal = syncEngine as any;
       const tenantDid = 'did:example:alice';
@@ -3389,7 +3389,7 @@ describe('SyncEngineLevel', () => {
         const [target] = await syncEngine['getSyncTargets']();
         expect(target).toBeDefined();
         const link = await syncEngine['getOrCreateReplicationLink'](target!);
-        await syncEngine['ledger'].setStatus(link, 'paused');
+        await syncEngine['replicationLinkStore'].setStatus(link, 'paused');
 
         const health = await syncEngine.getSyncHealth();
 
@@ -3416,7 +3416,7 @@ describe('SyncEngineLevel', () => {
         target: SyncTarget;
       }> => {
         const dwnUrl = testDwnUrls[0];
-        const link = await syncEngine['ledger'].getOrCreateLink({
+        const link = await syncEngine['replicationLinkStore'].getOrCreateLink({
           tenantDid          : did,
           remoteEndpoint     : dwnUrl,
           scope              : { kind: 'full' },
@@ -3454,7 +3454,7 @@ describe('SyncEngineLevel', () => {
         const { link, linkKey, target } = await createConvergenceTarget(alice.did.uri);
         link.status = 'live';
         link.pull.contiguousAppliedToken = { epoch: 'epoch-1', messageCid: 'bafy-checkpoint', position: '5', streamId: 'pull-stream' };
-        await syncEngine['ledger'].persistCheckpoint(link, 'pull');
+        await syncEngine['replicationLinkStore'].persistCheckpoint(link, 'pull');
         syncEngine['activateLink'](linkKey, link);
 
         sinon.stub(syncEngine as any, 'isFeedDivergenceExplainedByQuotaBlocks').resolves(false);
@@ -3511,7 +3511,7 @@ describe('SyncEngineLevel', () => {
 
         syncEngine['discardIdentityLinkState'](alice.did.uri);
 
-        // Alice's attempt count restarted after identity cleanup; Bob's did not.
+        // Alice's attempt count restarted after identity removal; Bob's did not.
         await manager.handleVerifiedDivergence(aliceContext.target, feedDivergence());
         expect(pauseStub.notCalled).toBe(true);
 
@@ -3554,8 +3554,8 @@ describe('SyncEngineLevel', () => {
 
           syncEngine['_runtime'] = new SyncRuntime(true);
 
-          const ledger = syncEngine['ledger'];
-          const link = await ledger.getOrCreateLink({
+          const replicationLinkStore = syncEngine['replicationLinkStore'];
+          const link = await replicationLinkStore.getOrCreateLink({
             tenantDid          : did,
             remoteEndpoint     : testDwnUrls[0],
             scope              : { kind: 'full' },
@@ -3579,7 +3579,7 @@ describe('SyncEngineLevel', () => {
             options: { protocols: 'all', delegateDid: 'did:example:new-delegate' },
           });
 
-          const reloadedLinks = await ledger.getLinksForTenant(did);
+          const reloadedLinks = await replicationLinkStore.getLinksForTenant(did);
           expect(reloadedLinks[0].delegateDid).toBe('did:example:old-delegate');
           expect(reloadedLinks[0].authorizationEpoch).toBe('old-delegate-epoch');
 
@@ -3600,8 +3600,8 @@ describe('SyncEngineLevel', () => {
           await syncEngine.registerIdentity({ did, options: { protocols: 'all' } });
           syncEngine['_runtime'] = new SyncRuntime(true);
 
-          const ledger = syncEngine['ledger'];
-          const originalLink = await ledger.getOrCreateLink({
+          const replicationLinkStore = syncEngine['replicationLinkStore'];
+          const originalLink = await replicationLinkStore.getOrCreateLink({
             tenantDid      : did,
             remoteEndpoint : testDwnUrls[0],
             scope          : { kind: 'full' },
@@ -3611,8 +3611,8 @@ describe('SyncEngineLevel', () => {
           originalLink.status = 'repairing';
           const originalController = syncEngine['activateLink'](linkKey, originalLink);
 
-          // Reload from ledger — same data, different object identity.
-          const replacementLink = await ledger.getOrCreateLink({
+          // Reload from the replication-link store — same data, different object identity.
+          const replacementLink = await replicationLinkStore.getOrCreateLink({
             tenantDid      : did,
             remoteEndpoint : testDwnUrls[0],
             scope          : { kind: 'full' },

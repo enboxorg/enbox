@@ -57,7 +57,7 @@ function createLink(): ReplicationLinkState {
 function createBaselineFixture(db: Level<string, string>): BaselineFixture {
   const engine = new SyncEngineLevel({ db });
   const controller: SyncLinkController = (engine as any).activateLink(LINK_KEY, createLink());
-  const persistCheckpoints = sinon.stub((engine as any).ledger, 'persistCheckpoints').resolves();
+  const persistCheckpoints = sinon.stub((engine as any).replicationLinkStore, 'persistCheckpoints').resolves();
   const reconcile = sinon.stub((engine as any)._durableFeedReconciler, 'reconcile').resolves({ converged: true });
   const target = {
     authorization      : { kind: 'owner' as const },
@@ -76,21 +76,28 @@ function attachSubscriptionSnapshots(
   pullSnapshot?: SyncFeedSnapshot,
   pushSnapshot?: SyncFeedSnapshot,
 ): void {
-  const generation = controller.replicationGeneration;
+  const replicationGeneration = controller.replicationGeneration;
   expect(controller.setLiveSubscription(
     { close: async (): Promise<void> => {} },
-    generation,
+    replicationGeneration,
     pullSnapshot,
   )).toBe(true);
   expect(controller.setLocalSubscription(
     { close: async (): Promise<void> => {} },
-    generation,
+    replicationGeneration,
     pushSnapshot,
   )).toBe(true);
 }
 
-function establishBaseline(fixture: BaselineFixture, generation = fixture.controller.replicationGeneration): Promise<unknown> {
-  return (fixture.engine as any).establishLinkBaseline(fixture.target, fixture.controller, generation);
+function establishBaseline(
+  fixture: BaselineFixture,
+  replicationGeneration = fixture.controller.replicationGeneration,
+): Promise<unknown> {
+  return (fixture.engine as any).establishLinkBaseline(
+    fixture.target,
+    fixture.controller,
+    replicationGeneration,
+  );
 }
 
 describe('SyncEngineLevel — dual-subscription replay baseline', () => {
@@ -293,7 +300,7 @@ describe('SyncEngineLevel — dual-subscription replay baseline', () => {
       };
     });
     (fixture.engine as any)._agent = { dwn: { processRequest }, rpc: {} };
-    const resetCheckpoint = sinon.stub((fixture.engine as any).ledger, 'resetCheckpoint').callsFake(async (
+    const resetCheckpoint = sinon.stub((fixture.engine as any).replicationLinkStore, 'resetCheckpoint').callsFake(async (
       link: ReplicationLinkState,
       direction: 'pull' | 'push',
     ): Promise<void> => {
@@ -337,7 +344,7 @@ describe('SyncEngineLevel — dual-subscription replay baseline', () => {
       };
     });
     (fixture.engine as any)._agent = { dwn: { processRequest }, rpc: {} };
-    const resetCheckpoint = sinon.stub((fixture.engine as any).ledger, 'resetCheckpoint').callsFake(async (
+    const resetCheckpoint = sinon.stub((fixture.engine as any).replicationLinkStore, 'resetCheckpoint').callsFake(async (
       link: ReplicationLinkState,
       direction: 'pull' | 'push',
     ): Promise<void> => {
@@ -356,9 +363,9 @@ describe('SyncEngineLevel — dual-subscription replay baseline', () => {
     await fixture.controller.dispose();
   });
 
-  it('should abort a superseded baseline generation without committing checkpoints', async () => {
+  it('should abort a superseded baseline replication generation without committing checkpoints', async () => {
     const fixture = createBaselineFixture(db);
-    const generation = fixture.controller.replicationGeneration;
+    const replicationGeneration = fixture.controller.replicationGeneration;
     attachSubscriptionSnapshots(
       fixture.controller,
       { fingerprint: 'same-feed', head: tokenIn('remote-stream', 'remote-epoch', '7') },
@@ -367,7 +374,7 @@ describe('SyncEngineLevel — dual-subscription replay baseline', () => {
     fixture.reconcile.resolves({ aborted: true });
 
     fixture.controller.resetReplicationGeneration();
-    const result = await establishBaseline(fixture, generation);
+    const result = await establishBaseline(fixture, replicationGeneration);
 
     expect(result).toEqual({ aborted: true });
     expect(fixture.controller.link.pull.contiguousAppliedToken).toBeUndefined();

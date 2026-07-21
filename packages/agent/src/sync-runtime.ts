@@ -6,38 +6,37 @@ type ArmedTimer = {
 };
 
 /**
- * Read-only staleness view of a runtime scope.
+ * Read-only staleness view of a runtime.
  *
- * Collaborators capture the handle when they start work under a runtime
- * generation and re-check `disposed` after awaits: once the scope is
- * disposed, every continuation belonging to that generation is stale.
+ * Collaborators capture the handle when they start work under a runtime and
+ * re-check `disposed` after awaits: once the runtime is disposed, every
+ * continuation belonging to that runtime is stale.
  */
 export interface SyncRuntimeHandle {
   readonly disposed: boolean;
 }
 
 /**
- * Ownership scope for one sync runtime generation.
+ * Timer owner for one sync runtime.
  *
- * Every timer a runtime generation schedules is armed through this scope
- * under a stable key, and `dispose()` cancels them all and refuses further
- * arming.
+ * Every timer is armed through this runtime under a stable key, and `dispose()`
+ * cancels them all and refuses further arming.
  *
  * Guarantee: a timer callback never STARTS once its key has been replaced or
- * the scope disposed. Cancelling the native timer alone cannot ensure this —
+ * the runtime disposed. Cancelling the native timer alone cannot ensure this —
  * `clearInterval`/`clearTimeout` do not retract a firing the event loop has
  * already queued — so every callback is wrapped in an ownership re-check
  * that turns such stale firings into no-ops.
  *
  * Boundary: work that has already started — in particular an async callback
- * body suspended at an `await` — is beyond any timer scope's reach. Such
+ * body suspended at an `await` — is beyond any timer owner's reach. Such
  * work must run under lifecycle supervision (task groups) and re-check
- * `disposed` after resuming; the scope only guarantees that no NEW callback
+ * `disposed` after resuming; the runtime only guarantees that no NEW callback
  * bodies begin.
  *
- * Only generation-scoped mechanisms belong here. State that outlives any
- * single start/stop cycle — the exclusive sync lock, durable stores, the
- * target planner and its topology generation — stays with its owner.
+ * Only runtime-owned mechanisms belong here. State that outlives any single
+ * start/stop cycle — the exclusive sync lock, durable stores, the target
+ * planner and its topology generation — stays with its owner.
  */
 export class SyncRuntime implements SyncRuntimeHandle {
   private _disposed = false;
@@ -48,21 +47,20 @@ export class SyncRuntime implements SyncRuntimeHandle {
     this._live = live;
   }
 
-  /** Whether this runtime generation has been torn down. */
+  /** Whether this runtime has been disposed. */
   public get disposed(): boolean {
     return this._disposed;
   }
 
   /**
-   * Whether this generation is a started live-sync runtime. Liveness is a
-   * property of the generation: a disposed scope is never live, exactly as
-   * the engine between runtimes is not.
+   * Whether this is a started live-sync runtime. A disposed runtime is never
+   * live, exactly as the engine between runtimes is not.
    */
   public get live(): boolean {
     return !this._disposed && this._live;
   }
 
-  /** Arm (or replace) a repeating timer owned by this scope. No-op once disposed. */
+  /** Arm (or replace) a repeating timer owned by this runtime. No-op once disposed. */
   public armInterval(key: string, callback: () => void, delayMs: number): void {
     if (this._disposed) {
       return;
@@ -81,7 +79,7 @@ export class SyncRuntime implements SyncRuntimeHandle {
   }
 
   /**
-   * Arm (or replace) a one-shot timer owned by this scope. No-op once
+   * Arm (or replace) a one-shot timer owned by this runtime. No-op once
    * disposed. The key unarms itself immediately before the callback runs, so
    * the callback may re-arm the same key.
    */
@@ -122,7 +120,7 @@ export class SyncRuntime implements SyncRuntimeHandle {
     }
   }
 
-  /** Cancel one owned timer. Safe for unarmed keys and disposed scopes. */
+  /** Cancel one owned timer. Safe for unarmed keys and disposed runtimes. */
   public cancelTimer(key: string): void {
     const armed = this._timers.get(key);
     if (armed !== undefined) {

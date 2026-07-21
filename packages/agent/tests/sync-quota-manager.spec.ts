@@ -28,7 +28,7 @@ describe('SyncQuotaManager', () => {
     sinon.restore();
   });
 
-  it('persists quota failures, advances backoff, and emits the folded transition', async () => {
+  it('persists quota failures, advances backoff, and returns the folded outcome', async () => {
     const clock = sinon.useFakeTimers({ now: Date.parse('2026-01-01T00:00:00.000Z') });
     const { manager, operations } = createHarness();
 
@@ -75,7 +75,7 @@ describe('SyncQuotaManager', () => {
     const { manager, operations } = createHarness();
     await manager.recordBlock(target(), 'blocked-cid', undefined, 'over quota');
 
-    const transition = await manager.applyPushResult(target(), {
+    const outcome = await manager.applyPushResult(target(), {
       acknowledged : [{ cid: 'blocked-cid', resolution: 'superseded' }],
       failed       : [
         { cid: 'blocked-cid', quotaBlocked: true },
@@ -85,7 +85,7 @@ describe('SyncQuotaManager', () => {
       succeeded: [],
     });
 
-    expect(transition).toEqual({
+    expect(outcome).toEqual({
       quotaBlocked      : false,
       retryableFailures : [{ cid: 'retry-cid', kind: 'Deferred' }],
       terminalFailures  : [{ cid: 'terminal-cid', kind: 'Invalid', terminal: true }],

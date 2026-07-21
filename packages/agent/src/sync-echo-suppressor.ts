@@ -31,7 +31,7 @@ export class SyncEchoSuppressor {
     this._ttlMs = ttlMs;
   }
 
-  /** Clear both transfer directions during sync-runtime teardown. */
+  /** Clear both transfer directions during sync-runtime disposal. */
   public clear(): void {
     this._pulledEntries.clear();
     this._pushedEntries.clear();

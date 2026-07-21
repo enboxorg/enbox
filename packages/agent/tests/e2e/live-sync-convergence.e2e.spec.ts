@@ -5,7 +5,7 @@
  * the remote DWN via live sync push. Then writes directly to the remote
  * and verifies the live pull subscription applies the record locally.
  * Proves the full pipeline:
- *   local write -> EventLog -> live push subscription -> remote DWN
+ *   local write -> EventLog -> durable push wake -> durable feed pass -> remote DWN
  *   remote DWN -> live pull subscription -> local DWN
  *
  * Requires: DWN server running on localhost:3000 (or TEST_DWN_URL),

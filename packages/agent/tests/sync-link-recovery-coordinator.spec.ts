@@ -22,8 +22,8 @@ type RecoveryOperationStubs = {
 type RecoveryFixture = {
   controllers: Map<string, SyncLinkController>;
   coordinator: SyncLinkRecoveryCoordinator;
-  /** Simulate a runtime transition: dispose the current scope, install a fresh one. */
-  disposeScope(): void;
+  /** Simulate a runtime transition by replacing the current runtime. */
+  replaceRuntime(): void;
   operations: RecoveryOperationStubs;
   taskRunner: SinonStub;
 };
@@ -56,7 +56,7 @@ function createFixture(options: {
   reconcileDelayMs?: number;
   repairBackoffMs?: readonly number[];
 } = {}): RecoveryFixture {
-  let scope = new SyncRuntime();
+  let runtime = new SyncRuntime();
   const controllers = new Map<string, SyncLinkController>();
   const taskRunner = sinon.stub().callsFake(async (operation: () => Promise<void>) => operation());
   const operations: RecoveryOperationStubs = {
@@ -64,7 +64,7 @@ function createFixture(options: {
     clearConvergence          : sinon.stub(),
     emitEvent                 : sinon.stub(),
     getController             : sinon.stub().callsFake((linkKey: string) => controllers.get(linkKey)),
-    getRuntimeScope           : sinon.stub().callsFake(() => scope),
+    getRuntime                : sinon.stub().callsFake(() => runtime),
     handleDivergence          : sinon.stub().resolves(false),
     openPullSubscription      : sinon.stub().resolves(true),
     openPushSubscription      : sinon.stub().resolves(true),
@@ -78,9 +78,9 @@ function createFixture(options: {
   return {
     controllers,
     coordinator,
-    disposeScope: (): void => {
-      scope.dispose();
-      scope = new SyncRuntime();
+    replaceRuntime: (): void => {
+      runtime.dispose();
+      runtime = new SyncRuntime();
     },
     operations,
     taskRunner,
@@ -111,7 +111,10 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const queuedPull = controller.enqueueDirection('pull', stalePull);
     const queuedPush = controller.enqueueDirection('push', stalePush);
     const resumeToken = token('10');
-    const drain = sinon.stub(fixture.coordinator as any, 'runPendingRepairs').resolves();
+    const runRequestedRepairPasses = sinon.stub(
+      fixture.coordinator as any,
+      'runRequestedRepairPasses',
+    ).resolves();
 
     await fixture.coordinator.transitionToRepairing(controller, { resumeToken });
     await waitForLastTask(fixture.taskRunner);
@@ -126,10 +129,10 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(controller.getPendingDirectionCount('push')).toBe(0);
     expect(controller.isReplicationReady).toBe(false);
     // The transition publishes the runnable request and its token together;
-    // the supervised drain runs it without re-marking.
+    // the supervised pass runner runs it without re-marking.
     expect(controller.repairResumeToken).toEqual(resumeToken);
     expect(controller.isPassRequested('repair')).toBe(true);
-    expect(drain.calledOnceWithExactly(controller)).toBe(true);
+    expect(runRequestedRepairPasses.calledOnceWithExactly(controller)).toBe(true);
     expect(fixture.operations.emitEvent.calledWithMatch({
       type : 'link:status-change',
       from : 'live',
@@ -141,7 +144,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     controller.deactivate();
     fixture.controllers.set(LINK_KEY, new SyncLinkController(LINK_KEY, link()));
     await fixture.coordinator.transitionToRepairing(controller);
-    expect(drain.calledOnce).toBe(true);
+    expect(runRequestedRepairPasses.calledOnce).toBe(true);
   });
 
   it('waits for invalidated directional work to unwind before repair reconciliation starts', async () => {
@@ -262,7 +265,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await clock.runAllAsync();
   });
 
-  it('emits protocol-scoped repair-completion events without leaking runtime-scope internals', async () => {
+  it('emits protocol-scoped repair-completion events without leaking runtime internals', async () => {
     const clock = sinon.useFakeTimers();
     const fixture = createFixture();
     const protocol = 'https://proto.example/chat';
@@ -283,8 +286,8 @@ describe('SyncLinkRecoveryCoordinator', () => {
     ]);
 
     for (const event of completionEvents) {
-      // The event scope is the LINK's protocol scope — never the runtime
-      // scope handle, whose enumerable internals must not reach subscribers.
+      // The event scope is the link's protocol scope — never the runtime
+      // handle, whose enumerable internals must not reach subscribers.
       expect(event.protocol).toBe(protocol);
       expect(event.protocols).toEqual([protocol]);
       expect('_disposed' in event).toBe(false);
@@ -349,7 +352,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await clock.runAllAsync();
   });
 
-  it('abandons a repair whose runtime scope is disposed during durable reconciliation', async () => {
+  it('abandons a repair whose runtime is disposed during durable reconciliation', async () => {
     const fixture = createFixture();
     const state = link('repairing');
     const controller = activate(fixture, state);
@@ -365,7 +368,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
 
     const repairing = fixture.coordinator.repair(controller);
     await reconcileStarted.promise;
-    fixture.disposeScope();
+    fixture.replaceRuntime();
     expect(shouldContinue()).toBe(false);
     releaseReconcile.resolve();
     await repairing;
@@ -383,7 +386,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const closePull = sinon.stub().resolves();
     controller.setLiveSubscription({ close: closePull });
     fixture.operations.openPullSubscription.callsFake(async () => {
-      fixture.disposeScope();
+      fixture.replaceRuntime();
       return true;
     });
 
@@ -418,18 +421,21 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(fixture.operations.warn.calledWithMatch('Max repair attempts reached')).toBe(true);
   });
 
-  it('guards the production repair-retry timer by scope disposal and consumes it before starting work', async () => {
+  it('guards the production repair-retry timer by runtime disposal and consumes it before starting work', async () => {
     const clock = sinon.useFakeTimers();
     const fixture = createFixture({ repairBackoffMs: [1000] });
     const controller = activate(fixture, link('repairing'));
-    const drain = sinon.stub(fixture.coordinator as any, 'runPendingRepairs').resolves();
+    const runRequestedRepairPasses = sinon.stub(
+      fixture.coordinator as any,
+      'runRequestedRepairPasses',
+    ).resolves();
 
     fixture.coordinator.scheduleRepairRetry(controller);
     expect(fixture.operations.captureIdentityTaskRunner.calledOnceWithExactly(DID)).toBe(true);
     fixture.operations.captureIdentityTaskRunner.resetHistory();
-    fixture.disposeScope();
+    fixture.replaceRuntime();
     await clock.tickAsync(1000);
-    expect(drain.called).toBe(false);
+    expect(runRequestedRepairPasses.called).toBe(false);
     expect(controller.isPassRequested('repair')).toBe(false);
     expect(fixture.operations.captureIdentityTaskRunner.notCalled).toBe(true);
     expect(controller.repairRetryTimer).toBeUndefined();
@@ -438,11 +444,11 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await clock.tickAsync(1000);
     await waitForLastTask(fixture.taskRunner);
     expect(controller.isPassRequested('repair')).toBe(true);
-    expect(drain.calledOnceWithExactly(controller)).toBe(true);
+    expect(runRequestedRepairPasses.calledOnceWithExactly(controller)).toBe(true);
     expect(controller.repairRetryTimer).toBeUndefined();
   });
 
-  it('keeps the earliest reconcile timer and drives the production callback only for its captured scope', async () => {
+  it('keeps the earliest reconcile timer and drives the production callback only for its captured runtime', async () => {
     const clock = sinon.useFakeTimers();
     const fixture = createFixture();
     const controller = activate(fixture);
@@ -461,7 +467,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(controller.reconcileTimer).toBeUndefined();
 
     fixture.coordinator.scheduleReconcile(controller, 100);
-    fixture.disposeScope();
+    fixture.replaceRuntime();
     await clock.tickAsync(100);
     expect(reconcile.calledOnce).toBe(true);
     expect(controller.reconcileTimer).toBeUndefined();
@@ -691,7 +697,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     fixture.operations.reconcileTarget.callsFake(async () => {
       started.resolve();
       await release.promise;
-      throw new Error('socket closed by pause teardown');
+      throw new Error('socket closed by pause');
     });
 
     const reconciling = fixture.coordinator.reconcile(controller);
@@ -713,7 +719,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     fixture.operations.reconcileTarget.callsFake(async () => {
       started.resolve();
       await release.promise;
-      throw new Error('socket closed by pause teardown');
+      throw new Error('socket closed by pause');
     });
 
     const repairing = fixture.coordinator.repair(controller);
@@ -817,7 +823,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     fixture.operations.reconcileTarget.onFirstCall().callsFake(async () => {
       reconcileStarted.resolve();
       await releaseReconcile.promise;
-      throw new Error('socket closed by supersession teardown');
+      throw new Error('socket closed by supersession');
     });
     fixture.operations.reconcileTarget.resolves({ converged: true });
 
@@ -953,7 +959,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
 
     // Each trailing pass is its own mailbox turn, so the queued push runs
     // right after the pass that was executing when it was queued — the
-    // stream cannot hold the mailbox and starve live push.
+    // stream cannot hold the mailbox and starve a durable push pass.
     expect(order).toEqual(['pass-1', 'push', 'pass-2', 'pass-3', 'pass-4']);
   });
 

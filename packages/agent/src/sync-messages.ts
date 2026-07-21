@@ -130,7 +130,7 @@ type PushRootOutcome =
   | { kind: 'failed'; failure: PushFailure };
 
 /**
- * Shared push/pull admission budget. Replication apply reports the full set of
+ * Common push/pull admission budget. Replication apply reports the full set of
  * missing ancestors in a single bounded, structured result, so a well-formed
  * closure converges in a handful of passes; this cap prevents remote cycles
  * and malformed or adversarial remotes from turning into unbounded local

@@ -30,7 +30,7 @@ export type SyncQuotaPushResultOutcome = {
 };
 
 /** Optional attribution applied while folding a push result. */
-export type SyncQuotaPushTransitionOptions = {
+export type SyncQuotaPushResultOptions = {
   protocol?: string;
   source?: SyncQuotaBlockSource;
 };
@@ -152,13 +152,13 @@ export class SyncQuotaManager {
     return this._store.delete(tenantDid, linkKey, messageCid);
   }
 
-  /** Apply push outcomes consistently for feed, live, bootstrap, and direct probes. */
+  /** Apply push outcomes consistently for feed, bootstrap, and direct probes. */
   public async applyPushResult(
     target: SyncTarget,
     result: PushResult,
-    options?: SyncQuotaPushTransitionOptions,
+    options?: SyncQuotaPushResultOptions,
   ): Promise<SyncQuotaPushResultOutcome> {
-    const transition: SyncQuotaPushResultOutcome = {
+    const outcome: SyncQuotaPushResultOutcome = {
       quotaBlocked      : false,
       retryableFailures : [],
       terminalFailures  : [],
@@ -182,10 +182,10 @@ export class SyncQuotaManager {
         ...originalFailure,
         protocol: originalFailure.protocol ?? options?.protocol,
       };
-      await this.applyPushFailureOutcome(target, failure, options?.source, transition);
+      await this.applyPushFailureOutcome(target, failure, options?.source, outcome);
     }
 
-    return transition;
+    return outcome;
   }
 
   /** Re-probe due feed roots independently of the feed checkpoint that advanced past them. */
@@ -422,7 +422,7 @@ export class SyncQuotaManager {
     target: SyncTarget,
     failure: PushFailure,
     source: SyncQuotaBlockSource | undefined,
-    transition: SyncQuotaPushResultOutcome,
+    outcome: SyncQuotaPushResultOutcome,
   ): Promise<void> {
     if (isQuotaBlockedPushFailure(failure)) {
       const state = await this.recordBlock(
@@ -434,7 +434,7 @@ export class SyncQuotaManager {
         failure.dependencyCid,
       );
       if (state.supersededAt !== undefined) { return; }
-      SyncQuotaManager.markTransitionQuotaBlocked(transition, state);
+      SyncQuotaManager.markOutcomeQuotaBlocked(outcome, state);
       this._operations.onQuotaBlocked(target, failure.cid, failure.detail, state.nextProbeAt);
       return;
     }
@@ -451,7 +451,7 @@ export class SyncQuotaManager {
     if (isTerminalPushFailure(failure)) {
       await this.clearBlock(target, failure.cid);
       await this._operations.recordTerminalFailure(target, failure);
-      transition.terminalFailures.push(failure);
+      outcome.terminalFailures.push(failure);
       return;
     }
 
@@ -465,20 +465,20 @@ export class SyncQuotaManager {
         previousBlock.blockedCid,
       );
       if (state.supersededAt !== undefined) { return; }
-      SyncQuotaManager.markTransitionQuotaBlocked(transition, state);
+      SyncQuotaManager.markOutcomeQuotaBlocked(outcome, state);
       return;
     }
 
-    transition.retryableFailures.push(failure);
+    outcome.retryableFailures.push(failure);
   }
 
-  private static markTransitionQuotaBlocked(
-    transition: SyncQuotaPushResultOutcome,
+  private static markOutcomeQuotaBlocked(
+    outcome: SyncQuotaPushResultOutcome,
     state: SyncQuotaBlockState,
   ): void {
-    transition.quotaBlocked = true;
-    transition.nextQuotaProbeAt = SyncQuotaManager.earliestTimestamp(
-      transition.nextQuotaProbeAt,
+    outcome.quotaBlocked = true;
+    outcome.nextQuotaProbeAt = SyncQuotaManager.earliestTimestamp(
+      outcome.nextQuotaProbeAt,
       state.nextProbeAt,
     );
   }

@@ -1321,7 +1321,7 @@ describe('E2E Multi-Agent Sync', () => {
       const recordId = writeResult.message!.recordId;
 
       // Wait for the record to appear on the device agent's local DWN.
-      // Path: local write → push subscription → debounce → HTTP push to remote
+      // Path: local write → durable push wake → coalesced feed pass → HTTP push to remote
       // → remote EventLog emits → WebSocket delivers to device → processRawMessage.
       const received = await waitForRecord(deviceHarness.agent, {
         did            : alice.did.uri,
@@ -1406,7 +1406,7 @@ describe('E2E Multi-Agent Sync', () => {
       await deviceHarness.agent.sync.stopSync();
     });
 
-    it('should drain an in-flight live push before unregistering its identity', async () => {
+    it('should drain an in-flight durable push pass before unregistering its identity', async () => {
       await primaryHarness.agent.sync.registerIdentity({ did: alice.did.uri, options: { protocols: 'all' } });
       await primaryHarness.agent.sync.startSync({ interval: '60s' });
       await new Promise<void>((resolve) => { setTimeout(resolve, 500); });

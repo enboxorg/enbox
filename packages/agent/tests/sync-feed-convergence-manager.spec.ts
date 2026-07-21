@@ -100,16 +100,16 @@ function deadLetter(
 
 function createFixture({
   activeLink,
-  ledgerLink,
+  storedLink,
   maxAttempts,
   syncTarget = target(),
 }: {
   activeLink?: ReplicationLinkState;
-  ledgerLink?: ReplicationLinkState;
+  storedLink?: ReplicationLinkState;
   maxAttempts?: number;
   syncTarget?: SyncTarget;
 } = {}): FeedConvergenceFixture {
-  const storedLink = ledgerLink ?? linkFor(syncTarget);
+  storedLink ??= linkFor(syncTarget);
   const operations: FeedConvergenceOperationStubs = {
     getActiveLink           : sinon.stub().returns(activeLink ?? storedLink),
     getDeadLettersForTenant : sinon.stub().resolves([]),
@@ -271,7 +271,7 @@ describe('SyncFeedConvergenceManager', () => {
     const pullCheckpoint = activeLink.pull;
     const pushCheckpoint = activeLink.push;
     const context = contextFor(syncTarget, activeLink);
-    const { manager, operations } = createFixture({ activeLink, ledgerLink: activeLink, syncTarget });
+    const { manager, operations } = createFixture({ activeLink, storedLink: activeLink, syncTarget });
 
     await manager.handleVerifiedDivergence(syncTarget, divergence(), context);
     await manager.handleVerifiedDivergence(syncTarget, divergence(), context);
@@ -293,21 +293,21 @@ describe('SyncFeedConvergenceManager', () => {
 
   it('resets a controller-less durable link without scheduling live reconciliation', async () => {
     const syncTarget = target();
-    const ledgerLink = linkFor(syncTarget, 'initializing');
-    const context = contextFor(syncTarget, ledgerLink);
-    const { manager, operations } = createFixture({ ledgerLink, syncTarget });
+    const storedLink = linkFor(syncTarget, 'initializing');
+    const context = contextFor(syncTarget, storedLink);
+    const { manager, operations } = createFixture({ storedLink, syncTarget });
     operations.getActiveLink.returns(undefined);
 
     await manager.handleVerifiedDivergence(syncTarget, divergence(), context);
 
-    expect(operations.resetCheckpoints.calledOnceWithExactly(ledgerLink)).toBe(true);
+    expect(operations.resetCheckpoints.calledOnceWithExactly(storedLink)).toBe(true);
     expect(operations.scheduleLinkReconcileByKey.notCalled).toBe(true);
   });
 
   it('resolves a link only when clear is called without an existing context', async () => {
     const syncTarget = target();
     const context = contextFor(syncTarget);
-    const { manager, operations } = createFixture({ ledgerLink: context.link, syncTarget });
+    const { manager, operations } = createFixture({ storedLink: context.link, syncTarget });
 
     await manager.clear(syncTarget, context);
     expect(operations.getLink.notCalled).toBe(true);

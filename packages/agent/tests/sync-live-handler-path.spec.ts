@@ -176,7 +176,7 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
     expect(activeLink).toBeDefined();
     expect(activeLink.status).toBe('live');
     // The pull checkpoint MUST have advanced — this proves processRawMessage ran
-    // and the ordinal drain committed the token.
+    // and the FIFO direction replay committed the token.
     expect(activeLink.pull.contiguousAppliedToken).toBeDefined();
     expect(activeLink.pull.contiguousAppliedToken.position).toBeDefined();
     expect(activeLink.pull.contiguousAppliedToken.messageCid).toBeDefined();

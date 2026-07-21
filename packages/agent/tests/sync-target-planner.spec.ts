@@ -122,7 +122,7 @@ describe('SyncTargetPlanner', () => {
     await planner.getTargets();
     planner.invalidate();
 
-    expect(planner.generation).toBe(1);
+    expect(planner.topologyGeneration).toBe(1);
     expect(planner.lastResolutionComplete).toBe(false);
     await planner.getTargets();
     expect(entries.callCount).toBe(2);

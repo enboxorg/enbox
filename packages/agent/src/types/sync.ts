@@ -210,19 +210,20 @@ export async function computeAuthorizationEpoch(input:
  * Tracks directional (pull or push) replay progression for a single
  * replication link. All tokens belong to the same `(streamId, epoch)`.
  *
- * This is the **durable** replication checkpoint persisted to the ledger.
- * In-memory delivery-order tracking (ordinals, in-flight commits) is owned
- * by the sync engine and is not persisted — on crash recovery, replay
- * restarts from `contiguousAppliedToken` and idempotent apply handles
- * any re-delivered events.
+ * This is the **durable** replication checkpoint persisted to the
+ * `replicationLinkStore`. Live subscription callbacks enter the direction
+ * replay queue in arrival order, while durable reconciliation settles each
+ * page before committing its cursor. After a crash, replay resumes from
+ * `contiguousAppliedToken`; idempotent DWN admission makes redelivery safe.
  */
 export type DirectionCheckpoint = {
   /**
-   * The highest token such that all earlier delivered tokens for this link
-   * have been durably applied. This is the resume point after crash/reconnect.
+   * The highest feed token through which all earlier work for this link has
+   * been durably settled. This is the resume point after crash or reconnect.
    *
-   * Advancement is controlled by the engine's delivery-order tracking,
-   * not by position arithmetic. Positions may be sparse (filtered streams).
+   * Only ordered direction replay or a completed durable-feed page advances
+   * it; a subscription notification alone is not checkpoint evidence.
+   * Positions may be sparse for filtered feeds.
    */
   contiguousAppliedToken?: ProgressToken;
 };
@@ -500,9 +501,10 @@ export type SyncMessageDescriptor = {
 };
 
 /**
- * Events emitted by the sync engine at key state transitions.
- * Consumers subscribe via `SyncEngine.on('event', handler)` and can
- * hook these into metrics, logging, or UI state.
+ * Observability events emitted by the sync engine at key state transitions.
+ * Consumers subscribe via `SyncEngine.on(listener)` and can hook these into
+ * metrics, logging, or UI state. These are distinct from transport-level DWN
+ * subscription messages.
  */
 export type SyncEvent =
   | SyncEventBase & { type: 'link:status-change'; from: LinkStatus; to: LinkStatus }
@@ -742,7 +744,7 @@ export interface SyncEngine {
    * immediate push, and runs a periodic durable feed settle check at
    * `interval` to repair anything the subscriptions missed.
    *
-   * Subsequent calls update the interval, tearing down the previous
+   * Subsequent calls update the interval, disposing of the previous
    * runtime's resources before starting the new one.
    *
    * The returned promise resolves after the initial durable-feed catch-up

@@ -9,9 +9,9 @@ export type SyncIdentityTaskRunner = (operation: () => Promise<void>) => Promise
  * Coordinates sync lifecycle transitions, exclusive sync operations, and
  * supervised background work without depending on a persistence backend.
  *
- * Runtime-specific teardown remains the responsibility of the owning sync
- * engine. This coordinator only provides the ordering and task-admission
- * primitives needed to perform that teardown safely.
+ * Runtime disposal remains the responsibility of the owning sync
+ * engine. This coordinator only provides the ordering and task-intake
+ * primitives needed to dispose it safely.
  */
 export class SyncLifecycleCoordinator {
   private readonly _backgroundTasks = new SyncTaskGroup();
@@ -111,12 +111,12 @@ export class SyncLifecycleCoordinator {
     return true;
   }
 
-  /** Starts globally supervised background work while task admission is open. */
+  /** Starts globally supervised background work while task intake is open. */
   public runBackgroundTask(operation: () => Promise<void>): Promise<void> {
     return this._backgroundTasks.run(operation);
   }
 
-  /** Returns the stable task group for an identity in the current runtime generation. */
+  /** Returns the stable task group for an identity in the current runtime. */
   public getIdentityTaskGroup(did: string): SyncTaskGroup {
     let taskGroup = this._identityTaskGroups.get(did);
     if (taskGroup === undefined) {
@@ -145,7 +145,7 @@ export class SyncLifecycleCoordinator {
     }
   }
 
-  /** Reopens global background-task admission for a new runtime generation. */
+  /** Reopens global background-task intake for a new runtime. */
   public resumeTaskIntake(): void {
     this._backgroundTasks.resume();
   }
