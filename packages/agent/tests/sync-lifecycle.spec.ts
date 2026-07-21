@@ -1,4 +1,7 @@
+import type { ReplicationLinkState } from '../src/types/sync.js';
+import type { SyncLinkController } from '../src/sync-link-controller.js';
 import type { SyncScopeClosureValidator } from '../src/sync-scope-closure-validator.js';
+import type { SyncTarget } from '../src/sync-target-resolver.js';
 
 import sinon from 'sinon';
 
@@ -13,6 +16,38 @@ import { deferred as createDeferred } from './utils/deferred.js';
 
 function getScopeClosureValidator(engine: SyncEngineLevel): SyncScopeClosureValidator {
   return (engine as unknown as { _scopeClosureValidator: SyncScopeClosureValidator })._scopeClosureValidator;
+}
+
+function activateAdministrativeLink(
+  engine: SyncEngineLevel,
+  did: string,
+  status: 'initializing' | 'repairing',
+): { controller: SyncLinkController; target: SyncTarget } {
+  const target: SyncTarget = {
+    did,
+    dwnUrl             : 'https://dwn.example.com',
+    scope              : { kind: 'full' },
+    authorization      : { kind: 'owner' },
+    authorizationEpoch : 'owner-epoch',
+    projectionId       : 'projection-id',
+  };
+  const link: ReplicationLinkState = {
+    authorization      : target.authorization,
+    authorizationEpoch : target.authorizationEpoch,
+    connectivity       : status === 'repairing' ? 'offline' : 'unknown',
+    projectionId       : target.projectionId,
+    pull               : {},
+    push               : {},
+    remoteEndpoint     : target.dwnUrl,
+    scope              : target.scope,
+    status,
+    tenantDid          : target.did,
+  };
+  const linkKey = `${target.did}^${target.dwnUrl}^${target.projectionId}^${target.authorizationEpoch}`;
+  const controller = (engine as unknown as {
+    activateLink(key: string, state: ReplicationLinkState): SyncLinkController;
+  }).activateLink(linkKey, link);
+  return { controller, target };
 }
 
 describe('SyncEngineLevel lifecycle', () => {
@@ -691,6 +726,81 @@ describe('SyncEngineLevel lifecycle', () => {
     }).runSettleCheck(staleRuntime);
 
     expect(sync.called).toBe(false);
+  });
+
+  it('should skip a repairing link without parking the settle pass behind replay readiness', async () => {
+    const engine = new SyncEngineLevel({ db });
+    engine['_runtime'] = new SyncRuntime(true);
+    const { controller, target } = activateAdministrativeLink(engine, 'did:example:settle-repairing', 'repairing');
+    const repairRetryTimer = setTimeout((): void => {}, 60_000);
+    controller.setRepairRetryTimer(repairRetryTimer);
+
+    sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
+    sinon.stub(engine as any, 'getOrCreateReplicationLink').resolves(controller.link);
+    sinon.stub(engine as any, 'reinitializeOrphanedLinkTargets').resolves();
+    const verifyConvergence = sinon.stub(engine['_durableFeedReconciler'], 'verifyConvergence').resolves({
+      converged          : true,
+      hasActionableDiffs : false,
+      pushFailures       : [],
+    });
+    const reconcile = sinon.stub(engine['_durableFeedReconciler'], 'reconcile').resolves({
+      hasActionableDiffs : false,
+      pushFailures       : [],
+    });
+
+    try {
+      await (engine as unknown as {
+        runSettleCheck(runtime: SyncRuntime): Promise<void>;
+      }).runSettleCheck(engine['_runtime']);
+
+      expect(verifyConvergence.notCalled).toBe(true);
+      expect(reconcile.notCalled).toBe(true);
+      expect(controller.repairRetryTimer).toBe(repairRetryTimer);
+
+      // The settle pass released the engine-wide lock, and its controller
+      // mailbox is still available for the pending repair retry.
+      const acquiredSync = engine['_lifecycle'].tryAcquireSync();
+      if (acquiredSync) {
+        engine['_lifecycle'].releaseSync();
+      }
+      expect(acquiredSync).toBe(true);
+      const repairTurn = sinon.stub().resolves();
+      await controller.enqueue(repairTurn, 'repair');
+      expect(repairTurn.calledOnce).toBe(true);
+    } finally {
+      await controller.dispose();
+    }
+  });
+
+  it('should let one-shot sync skip an initializing link while its baseline owns reconciliation', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const { controller, target } = activateAdministrativeLink(engine, 'did:example:sync-initializing', 'initializing');
+
+    sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
+    sinon.stub(engine as any, 'getOrCreateReplicationLink').resolves(controller.link);
+    const reconcile = sinon.stub(engine['_durableFeedReconciler'], 'reconcile').resolves({
+      hasActionableDiffs : false,
+      pushFailures       : [],
+    });
+
+    try {
+      await engine.sync();
+
+      expect(reconcile.notCalled).toBe(true);
+      const acquiredSync = engine['_lifecycle'].tryAcquireSync();
+      if (acquiredSync) {
+        engine['_lifecycle'].releaseSync();
+      }
+      expect(acquiredSync).toBe(true);
+
+      // Initialization remains the sole owner of the baseline, while the
+      // administrative sync leaves the controller mailbox unoccupied.
+      const initializationTurn = sinon.stub().resolves();
+      await controller.enqueue(initializationTurn);
+      expect(initializationTurn.calledOnce).toBe(true);
+    } finally {
+      await controller.dispose();
+    }
   });
 
   it('should skip a settle tick entirely while the pass, including its re-initialization, is in flight', async () => {

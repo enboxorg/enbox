@@ -2385,6 +2385,14 @@ export class SyncEngineLevel implements SyncEngine {
     if (controller.link.status === 'paused') {
       return { paused: true };
     }
+    if (useDirectionQueues &&
+        (controller.link.status !== 'live' || !controller.isReplicationReady)) {
+      // Initialization and repair already own the authoritative reconciliation
+      // that establishes this generation's replay boundary. Administrative
+      // sync work must not wait on that boundary while holding the controller
+      // mailbox, because the owning repair may be queued behind this turn.
+      return { aborted: true };
+    }
 
     const generation = controller.replicationGeneration;
     const isCurrent = (): boolean =>
@@ -2425,6 +2433,19 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     const result = await controller.enqueue(async (): Promise<SyncReconcileResult> => {
+      // Re-check after this mailbox turn starts. A pre-mailbox status claim can
+      // become stale while earlier work runs, and administrative probes must
+      // never park on readiness while holding the mailbox needed by repair.
+      if (!controller.isActive) {
+        return { aborted: true };
+      }
+      if (controller.link.status === 'paused') {
+        return { paused: true };
+      }
+      if (controller.link.status !== 'live' || !controller.isReplicationReady) {
+        return { aborted: true };
+      }
+
       const generation = controller.replicationGeneration;
       const isCurrent = (): boolean => controller.isReplicationGenerationCurrent(generation);
       const probe = (): Promise<SyncReconcileResult> => this.verifyFeedConvergence(target, isCurrent);
