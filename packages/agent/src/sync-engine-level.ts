@@ -1,7 +1,7 @@
 import type { AbstractLevel } from 'abstract-level';
 
 import type { DwnSubscriptionHandler, DwnSubscriptionMessage, ResubscribeFactory } from '@enbox/dwn-clients';
-import type { GenericMessage, MessagesFilter, MessagesQueryReply, MessagesQueryReplyEntry, MessagesSubscribeReply, RecordsQueryReply, SubscriptionMessage } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessagesFilter, MessagesQueryReply, MessagesQueryReplyEntry, MessagesSubscribeReply, RecordsQueryReply } from '@enbox/dwn-sdk-js';
 
 import { Level } from 'level';
 import { RateLimitError } from '@enbox/dwn-clients';
@@ -2216,7 +2216,7 @@ export class SyncEngineLevel implements SyncEngine {
     const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(did);
 
     // Subscribe to the local DWN's EventLog.
-    const subscriptionHandler = (subMessage: SubscriptionMessage): Promise<void> =>
+    const subscriptionHandler = (subMessage: DwnSubscriptionMessage): Promise<void> =>
       runIdentityTask(() => this.handleLocalPushMessage(controller, isPushStale, subMessage));
 
     // Subscribe at the live head. Paired snapshots establish startup progress;
@@ -2258,9 +2258,28 @@ export class SyncEngineLevel implements SyncEngine {
   private async handleLocalPushMessage(
     controller: SyncLinkController,
     isStale: () => boolean,
-    message: SubscriptionMessage,
+    message: DwnSubscriptionMessage,
   ): Promise<void> {
-    if (isStale() || message.type !== 'event') {
+    if (isStale()) {
+      return;
+    }
+    if (message.type === 'error') {
+      const { code } = message.error;
+      if (isTerminalSyncAuthorizationFailure(code)) {
+        console.warn(
+          `SyncEngineLevel: local sync authorization for ${controller.link.tenantDid} was revoked or expired — ` +
+          'pausing link (reconnect to resume).',
+        );
+        await this.transitionToPaused(controller.linkKey, controller.link);
+      } else {
+        console.warn(
+          `SyncEngineLevel: local push subscription error for ${controller.link.tenantDid}: ${code}`,
+        );
+        await this._linkRecoveryCoordinator.transitionToRepairing(controller);
+      }
+      return;
+    }
+    if (message.type !== 'event' && message.type !== 'reconnected') {
       return;
     }
 

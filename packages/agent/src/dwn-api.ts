@@ -684,11 +684,14 @@ export class AgentDwnApi {
     } else {
       // Remote mode: route through RPC to the local DWN server.
       reply = await this.sendDwnRpcRequest({
-        targetDid       : request.target,
-        dwnEndpointUrls : [this._localDwnEndpoint!],
+        targetDid          : request.target,
+        dwnEndpointUrls    : [this._localDwnEndpoint!],
         message,
-        data            : dataStream,
+        data               : dataStream,
         subscriptionHandler,
+        resubscribeFactory : subscriptionHandler === undefined
+          ? undefined
+          : this.createResubscribeFactory(request, 'local'),
       });
     }
 
@@ -998,18 +1001,7 @@ export class AgentDwnApi {
     // subscribe message with a cursor on reconnection.
     let resubscribeFactory: ResubscribeFactory | undefined;
     if (subscriptionHandler !== undefined && !('messageCid' in request)) {
-      resubscribeFactory = async (cursor?: ProgressToken): Promise<GenericMessage> => {
-        const resumeParams = cursor === undefined
-          ? request.messageParams
-          : { ...request.messageParams, cursor } as DwnMessageParams[T];
-
-        const resumeRequest: ProcessDwnRequest<T> = { ...request, messageParams: resumeParams };
-        const { message: resumeMessage } = await this.constructDwnMessage({
-          request                  : resumeRequest,
-          protocolDefinitionSource : 'remote',
-        });
-        return resumeMessage;
-      };
+      resubscribeFactory = this.createResubscribeFactory(request, 'remote');
     }
 
     // Send the RPC request to the target DID's DWN service endpoint using the Agent's RPC client.
@@ -1029,6 +1021,21 @@ export class AgentDwnApi {
     // Returns an object containing the reply from processing the message, the original message,
     // and the content identifier (CID) of the message.
     return { reply, message, messageCid, ...(responseData ? { data: responseData } : {}) };
+  }
+
+  /** Reconstruct and re-sign a subscription at its last transport cursor. */
+  private createResubscribeFactory<T extends DwnInterface>(
+    request: ProcessDwnRequest<T>,
+    protocolDefinitionSource: ProtocolDefinitionSource,
+  ): ResubscribeFactory {
+    return async (cursor?: ProgressToken): Promise<GenericMessage> => {
+      const resumeParams = cursor === undefined
+        ? request.messageParams
+        : { ...request.messageParams, cursor } as DwnMessageParams[T];
+      const resumeRequest: ProcessDwnRequest<T> = { ...request, messageParams: resumeParams };
+      const { message } = await this.constructDwnMessage({ request: resumeRequest, protocolDefinitionSource });
+      return message;
+    };
   }
 
   /**
