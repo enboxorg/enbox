@@ -899,26 +899,28 @@ describe('SyncEngineLevel — identity management', () => {
       expect((engine as any)._linkControllers.has(bobKey)).toBe(true);
     });
 
-    it('removeIdentityFromLiveSync should invalidate only the target DID directional reconciliation', async () => {
+    it('removeIdentityFromLiveSync should discard only the target DID executor work', async () => {
       const engine = new SyncEngineLevel({ db });
       const aliceController = activateTestLink(engine, 'did:example:alice^https://dwn.example.com', 'did:example:alice');
       const bobController = activateTestLink(engine, 'did:example:bob^https://dwn.example.com', 'did:example:bob');
-      const aliceReplay = aliceController.enqueueDirection('push', async (): Promise<string> => 'alice');
-      const bobReplay = bobController.enqueueDirection('push', async (): Promise<string> => 'bob');
+      aliceController.executor.request('push');
+      bobController.executor.request('push');
 
-      expect(aliceController.getPendingDirectionCount('push')).toBe(1);
-      expect(bobController.getPendingDirectionCount('push')).toBe(1);
+      expect(aliceController.executor.hasPending('push')).toBe(true);
+      expect(bobController.executor.hasPending('push')).toBe(true);
 
       await (engine as any).removeIdentityFromLiveSync('did:example:alice');
 
-      expect(await aliceReplay).toBeUndefined();
       expect(aliceController.isActive).toBe(false);
+      expect(aliceController.executor.hasPending('push')).toBe(false);
       expect(bobController.isActive).toBe(true);
-      expect(bobController.getPendingDirectionCount('push')).toBe(1);
+      expect(bobController.executor.hasPending('push')).toBe(true);
 
       bobController.markReplicationReady();
-      expect(await bobReplay).toBe('bob');
-      expect(bobController.getPendingDirectionCount('push')).toBe(0);
+      const work: string[] = [];
+      await bobController.executor.drain(async (kind): Promise<void> => { work.push(kind); });
+      expect(work).toEqual(['push']);
+      expect(bobController.executor.hasPending('push')).toBe(false);
     });
 
     it('removeIdentityFromLiveSync should clear repair attempts and retry timers for the target DID', async () => {
@@ -954,23 +956,24 @@ describe('SyncEngineLevel — identity management', () => {
       let releaseBlocker!: () => void;
       let blockerStarted!: () => void;
       const blockerStartedGate = new Promise<void>((resolve) => { blockerStarted = resolve; });
-      const blocker = aliceController.enqueue(async (): Promise<void> => {
+      aliceController.markReplicationReady();
+      const blocker = aliceController.executor.enqueue(async (): Promise<void> => {
         blockerStarted();
         await new Promise<void>((resolve) => { releaseBlocker = resolve; });
       });
+      const draining = aliceController.executor.drain(async (): Promise<void> => {});
       let queuedReconcileRan = false;
-      const queuedReconcile = aliceController.enqueueShared('reconcile', async (): Promise<void> => {
+      const queuedReconcile = aliceController.executor.enqueue(async (): Promise<void> => {
         queuedReconcileRan = true;
       });
 
       await blockerStartedGate;
       await (engine as any).removeIdentityFromLiveSync('did:example:alice');
       releaseBlocker();
-      await Promise.all([blocker, queuedReconcile]);
+      await Promise.all([blocker, queuedReconcile, draining]);
 
       expect(aliceController.reconcileTimer).toBeUndefined();
       expect(queuedReconcileRan).toBe(false);
-      expect(aliceController.isMailboxBusy('reconcile')).toBe(false);
       expect(bobController.reconcileTimer).toBeDefined();
       expect((engine as any)._linkControllers.has(aliceController.linkKey)).toBe(false);
 
@@ -1416,7 +1419,7 @@ describe('SyncEngineLevel — identity management', () => {
   // ---------------------------------------------------------------------------
 
   describe('removeIdentityFromLiveSync — in-flight repair disposal', () => {
-    it('should discard the target DID controller with its in-flight repair', async () => {
+    it('should discard the target DID controller without disturbing another link executor', async () => {
       const engine = new SyncEngineLevel({ db });
       const aliceKey = 'did:example:alice^https://dwn.example.com^scope1';
       const bobKey = 'did:example:bob^https://dwn.example.com^scope1';
@@ -1425,17 +1428,21 @@ describe('SyncEngineLevel — identity management', () => {
       let releaseAlice!: () => void;
       let aliceStarted!: () => void;
       const aliceStartedGate = new Promise<void>((resolve) => { aliceStarted = resolve; });
-      const aliceRepair = aliceController.enqueueShared('repair', async (): Promise<void> => {
+      aliceController.markReplicationReady();
+      bobController.markReplicationReady();
+      const aliceRepair = aliceController.executor.enqueue(async (): Promise<void> => {
         aliceStarted();
         await new Promise<void>((resolve) => { releaseAlice = resolve; });
       });
       let releaseBob!: () => void;
       let bobStarted!: () => void;
       const bobStartedGate = new Promise<void>((resolve) => { bobStarted = resolve; });
-      const bobRepair = bobController.enqueueShared('repair', async (): Promise<void> => {
+      const bobRepair = bobController.executor.enqueue(async (): Promise<void> => {
         bobStarted();
         await new Promise<void>((resolve) => { releaseBob = resolve; });
       });
+      const aliceDrain = aliceController.executor.drain(async (): Promise<void> => {});
+      const bobDrain = bobController.executor.drain(async (): Promise<void> => {});
 
       await Promise.all([aliceStartedGate, bobStartedGate]);
       await (engine as any).removeIdentityFromLiveSync('did:example:alice');
@@ -1443,12 +1450,12 @@ describe('SyncEngineLevel — identity management', () => {
       expect((engine as any)._linkControllers.has(aliceKey)).toBe(false);
       const survivingBob = (engine as any)._linkControllers.get(bobKey);
       let joinedRan = false;
-      expect(survivingBob.enqueueShared('repair', async (): Promise<void> => { joinedRan = true; })).toBe(bobRepair);
+      const bobFollowUp = survivingBob.executor.enqueue(async (): Promise<void> => { joinedRan = true; });
 
       releaseAlice();
       releaseBob();
-      await Promise.all([aliceRepair, bobRepair]);
-      expect(joinedRan).toBe(false);
+      await Promise.all([aliceRepair, bobRepair, aliceDrain, bobDrain, bobFollowUp]);
+      expect(joinedRan).toBe(true);
     });
 
   });

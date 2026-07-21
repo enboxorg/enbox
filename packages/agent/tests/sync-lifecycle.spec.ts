@@ -234,9 +234,10 @@ describe('SyncEngineLevel lifecycle', () => {
     sinon.stub(engine['replicationLinkStore'], 'setStatus').callsFake(async (): Promise<void> => {
       link.status = 'repairing';
     });
-    sinon.stub(engine['_linkRecoveryCoordinator'] as any, 'runRequestedRepairPasses').callsFake(async (): Promise<void> => {
+    sinon.stub(engine['_durableFeedReconciler'], 'reconcile').callsFake(async (): Promise<{ aborted: true }> => {
       repairStarted.resolve();
       await releaseRepair.promise;
+      return { aborted: true };
     });
 
     await engine['_linkRecoveryCoordinator'].transitionToRepairing(controller);
@@ -323,7 +324,8 @@ describe('SyncEngineLevel lifecycle', () => {
     });
 
     const runIdentityTask = (engine as any)._lifecycle.captureIdentityTaskRunner(did);
-    const push = runIdentityTask(() => engine['_linkRecoveryCoordinator'].push(controller));
+    controller.executor.request('push');
+    const push = runIdentityTask(() => engine['_linkRecoveryCoordinator'].resume(controller));
     await pushStarted.promise;
 
     let closeCompleted = false;
@@ -488,9 +490,10 @@ describe('SyncEngineLevel lifecycle', () => {
     sinon.stub(engine['replicationLinkStore'], 'setStatus').callsFake(async (): Promise<void> => {
       link.status = 'repairing';
     });
-    sinon.stub(engine['_linkRecoveryCoordinator'] as any, 'runRequestedRepairPasses').callsFake(async (): Promise<void> => {
+    sinon.stub(engine['_durableFeedReconciler'], 'reconcile').callsFake(async (): Promise<{ aborted: true }> => {
       repairStarted.resolve();
       await releaseRepair.promise;
+      return { aborted: true };
     });
     const removeIdentity = engine['removeIdentityFromLiveSync'].bind(engine);
     sinon.stub(engine as never, 'removeIdentityFromLiveSync').callsFake(async (identityDid: string): Promise<void> => {
@@ -546,9 +549,10 @@ describe('SyncEngineLevel lifecycle', () => {
     sinon.stub(engine['replicationLinkStore'], 'setStatus').callsFake(async (): Promise<void> => {
       bobLink.status = 'repairing';
     });
-    sinon.stub(engine['_linkRecoveryCoordinator'] as any, 'runRequestedRepairPasses').callsFake(async (): Promise<void> => {
+    sinon.stub(engine['_durableFeedReconciler'], 'reconcile').callsFake(async (): Promise<{ aborted: true }> => {
       repairStarted.resolve();
       await releaseRepair.promise;
+      return { aborted: true };
     });
 
     await engine['_linkRecoveryCoordinator'].transitionToRepairing(
@@ -671,7 +675,8 @@ describe('SyncEngineLevel lifecycle', () => {
     });
 
     const runIdentityTask = (engine as any)._lifecycle.captureIdentityTaskRunner(did);
-    const push = runIdentityTask(() => engine['_linkRecoveryCoordinator'].push(controller));
+    controller.executor.request('push');
+    const push = runIdentityTask(() => engine['_linkRecoveryCoordinator'].resume(controller));
     await pushStarted.promise;
 
     const unregisterPromise = engine.unregisterIdentity(did);
@@ -757,16 +762,17 @@ describe('SyncEngineLevel lifecycle', () => {
       expect(reconcile.notCalled).toBe(true);
       expect(controller.repairRetryTimer).toBe(repairRetryTimer);
 
-      // The settle pass released the engine-wide lock, and its controller
-      // mailbox is still available for the pending repair retry.
+      // The settle pass released the engine-wide lock, and the link executor
+      // can still run the pending repair retry.
       const acquiredSync = engine['_lifecycle'].tryAcquireSync();
       if (acquiredSync) {
         engine['_lifecycle'].releaseSync();
       }
       expect(acquiredSync).toBe(true);
       const repairTurn = sinon.stub().resolves();
-      await controller.enqueue(repairTurn, 'repair');
-      expect(repairTurn.calledOnce).toBe(true);
+      controller.executor.request('repair');
+      await controller.executor.drain(repairTurn);
+      expect(repairTurn.calledOnceWithExactly('repair')).toBe(true);
     } finally {
       await controller.dispose();
     }
@@ -793,11 +799,11 @@ describe('SyncEngineLevel lifecycle', () => {
       }
       expect(acquiredSync).toBe(true);
 
-      // Initialization remains the sole owner of the baseline, while the
-      // administrative sync leaves the controller mailbox unoccupied.
+      // Initialization remains the sole owner of the baseline. An
+      // administrative executor call must fail fast instead of parking.
       const initializationTurn = sinon.stub().resolves();
-      await controller.enqueue(initializationTurn);
-      expect(initializationTurn.calledOnce).toBe(true);
+      expect(await controller.executor.enqueue(initializationTurn)).toBeUndefined();
+      expect(initializationTurn.notCalled).toBe(true);
     } finally {
       await controller.dispose();
     }
