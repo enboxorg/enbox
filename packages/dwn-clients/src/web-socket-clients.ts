@@ -24,7 +24,7 @@ import { parseReplicationApplyResult } from './replication-apply-result.js';
 import { RateLimitError } from './rate-limit-error.js';
 import { withLocalNodeTokenQuery } from './rpc-auth.js';
 import { createJsonRpcAck, createJsonRpcRequest, createJsonRpcSubscriptionRequest, JsonRpcErrorCodes } from './json-rpc.js';
-import { DataStream, DwnInterfaceName, DwnMethodName, Encoder } from '@enbox/dwn-sdk-js';
+import { DataStream, Encoder } from '@enbox/dwn-sdk-js';
 import { DEFAULT_MAX_WS_RAW_RECORD_DATA_BYTES, maxWsJsonRpcPayloadBytes, utf8ByteLength } from './ws-payload-size.js';
 import { DwnRpcError, SocketUnavailableError, SubscriptionHandlerTerminalError } from './dwn-rpc-error.js';
 
@@ -290,50 +290,6 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
   async getServerInfo(dwnUrl: string): Promise<ServerInfo> {
     return this.serverInfoRpc.getServerInfo(httpUrlForWsDwnUrl(dwnUrl));
-  }
-
-  /**
-   * Whether the socket's `dwn.processMessage` framing can serve a message
-   * with full reply parity. This is the single client-side definition of the
-   * socket capability boundary — the server enforces the same rule in its
-   * inbound transport gate — so routing layers consult it instead of
-   * re-deriving a proxy that can drift:
-   *
-   * - `Records/Write` stays on HTTP, including data-less and zero-length
-   *   writes. Its data stream lives in the HTTP request body, and the server
-   *   accepts it over non-HTTP transports only for replicated apply behind a
-   *   server-side flag this client cannot observe — assume the strict answer.
-   * - `Read` methods stay on HTTP. Their replies may stream record data,
-   *   which only the HTTP framing surfaces as a stream — a socket reply
-   *   would silently drop it.
-   * - A message without a readable descriptor cannot be classified and is
-   *   refused.
-   */
-  public static canSendDwnMessage(message: Partial<GenericMessage>): boolean {
-    const descriptor = message.descriptor;
-    if (descriptor === undefined) {
-      return false;
-    }
-    if (descriptor.interface === DwnInterfaceName.Records && descriptor.method === DwnMethodName.Write) {
-      return false;
-    }
-    return descriptor.method !== DwnMethodName.Read;
-  }
-
-  /**
-   * Whether the pool already holds a connected AND fresh socket for `dwnUrl`
-   * under this client's transport authentication. Routing layers use this to
-   * prefer the socket only when it costs nothing to establish — a missing or
-   * reconnecting socket falls back to HTTP rather than waiting. Freshness is
-   * verified at the point of use ({@link JsonRpcSocket.isFresh}): after a
-   * suspension the cached connected flag is stale-true, and preferring that
-   * socket would stall the request for the full response timeout in exactly
-   * the wake scenario routing exists to optimize.
-   */
-  public hasHealthyConnection(dwnUrl: string): boolean {
-    const url = withLocalNodeTokenQuery(dwnUrl, this.authOptions);
-    const connection = WebSocketDwnRpcClient.connections.get(connectionCacheKey(url));
-    return connection !== undefined && connection.socket.isFresh();
   }
 
   private async maxPayloadBytesForReplicatedApply(request: DwnReplicationApplyRequest): Promise<number> {

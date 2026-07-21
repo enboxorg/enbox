@@ -13,11 +13,12 @@ the code, not an entry missing from this table.
 | Concept | Canonical name | Retired aliases |
 |---|---|---|
 | The periodic pass that reconciles durable feeds *and* re-initializes orphaned links | **settle check** — `runSettleCheck`, `SETTLE_CHECK_TIMER` | `runLiveIntegrityCheck`, `SYNC_INTERVAL_TIMER` |
-| The connectivity-driven recovery check: skips links whose replication stream is current (`isStreamCurrent`, both directions), reconciles stale links on their mailbox lanes under identity task supervision — endpoint-grouped like a full run — and falls back to a full verifying `sync()` only when a target has no active controller. Runs under the exclusive sync admission: deferred behind a lock owner, never dropped. No orphan re-init. | **convergence check** — `runConvergenceCheck`, `scheduleConvergenceCheck` | `runIntegrityCheck`, `scheduleIntegrityCheck` |
+| Browser online and visibility recovery, which probes the transport and lets durable-cursor resubscription recover the stream without starting data-plane reconciliation | **wake health check** — `checkHealth`, `checkAllConnections` | agent-level convergence or integrity check |
 | Reconciling one target's durable feeds | **`reconcileTarget`** | `syncTargetWithDurableFeeds` |
 | Runtime identifier of a replication link | **`linkKey`** — `buildLinkKey`, `LINK_KEY_SEPARATOR` | `buildLinkId`, `LINK_ID_SEPARATOR` |
 | Endpoint-independent link identity | **`durableLinkIdentityKey`** | — |
-| Durable replication-link store | **`replicationLinkStore`** — `getReplicationLinkStore` | `getLinkStore`, "ledger" (nickname only) |
+| Durable replication-link store | **`replicationLinkStore`** | `getLinkStore`, "ledger" (nickname only) |
+| Authoritative in-engine owner of one active link object, both subscriptions, delivery ordering, batching, repair, and reconciliation | **replication session** — currently `SyncLinkController` | independent live and reconciler link copies |
 | Per-link delivery ordering fence — ONE generation for the subscription pair, fencing delivery tags in both directions | **`pullGeneration`** / `expectedPullGeneration` | `pullEpoch`, `openGeneration`, `expectedGeneration`, `subscriptionPullEpoch` |
 | Target-plan version | **`topologyGeneration`** / `expectedTopologyGeneration` | bare `generation`, `expectedGeneration` |
 | Per-link push batching state | **`pushQueue`** — `SyncPushQueueState/Params/Entry` | `pushRuntime`, `SyncPushRuntime*` |
@@ -93,6 +94,10 @@ where it is consumed; never assume it from provenance.
 ## Known remaining splits
 
 Names left knowingly unconverged, because the fix costs more than the confusion:
+
+- **`SyncLinkController`** is the replication session. The existing name stays
+  because renaming it adds broad churn without changing or clarifying its
+  ownership boundary.
 
 - **`pullGeneration`** now fences delivery tags in BOTH directions (the
   subscription pair opens and resets as one unit), but keeps its pull-flavored

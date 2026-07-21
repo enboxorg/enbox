@@ -286,10 +286,10 @@ export type ReplicationLinkState = {
   status: LinkStatus;
 
   /** Pull-direction replication checkpoint (remote → local). */
-  pull: DirectionCheckpoint;
+  readonly pull: DirectionCheckpoint;
 
   /** Push-direction replication checkpoint (local → remote). */
-  push: DirectionCheckpoint;
+  readonly push: DirectionCheckpoint;
 
   /** Per-link connectivity state. Used to compute the aggregate engine-level state. */
   connectivity: SyncConnectivityState;

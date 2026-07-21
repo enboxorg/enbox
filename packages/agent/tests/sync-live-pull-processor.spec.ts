@@ -104,19 +104,18 @@ function createFixture(maxInFlightDeliveries?: number): PullFixture {
   const agent = {} as EnboxPlatformAgent;
   const permissionsApi = {} as PermissionsApi;
   const operations: PullOperationStubs = {
-    emitCheckpointAdvance   : sinon.stub(),
-    emitEvent               : sinon.stub(),
-    getAgent                : sinon.stub().returns(agent),
-    getPermissionsApi       : sinon.stub().returns(permissionsApi),
-    persistCheckpoint       : sinon.stub().resolves(),
-    recordDeadLetter        : sinon.stub().resolves(),
-    reportError             : sinon.stub(),
-    requestConvergenceCheck : sinon.stub(),
-    scheduleReconcile       : sinon.stub(),
-    trackAppliedCids        : sinon.stub().resolves(),
-    transitionToPaused      : sinon.stub().resolves(),
-    transitionToRepairing   : sinon.stub().resolves(),
-    warn                    : sinon.stub(),
+    emitCheckpointAdvance : sinon.stub(),
+    emitEvent             : sinon.stub(),
+    getAgent              : sinon.stub().returns(agent),
+    getPermissionsApi     : sinon.stub().returns(permissionsApi),
+    persistCheckpoint     : sinon.stub().resolves(),
+    recordDeadLetter      : sinon.stub().resolves(),
+    reportError           : sinon.stub(),
+    scheduleReconcile     : sinon.stub(),
+    trackAppliedCids      : sinon.stub().resolves(),
+    transitionToPaused    : sinon.stub().resolves(),
+    transitionToRepairing : sinon.stub().resolves(),
+    warn                  : sinon.stub(),
   };
   const admit = sinon.stub().resolves({ kind: 'admitted', appliedCids: ['root-cid'], freshEntries: [] });
   const fetchMessages = sinon.stub().resolves([]);
@@ -241,6 +240,30 @@ describe('SyncLivePullProcessor', () => {
     operations.persistCheckpoint.callsFake(async () => { stale = true; });
     await processor.handleEose(contextFor(staleState, () => stale), { type: 'eose', cursor: token('2') });
     expect(staleState.connectivity).toBe('unknown');
+  });
+
+  it('folds socket lifecycle messages into link connectivity without starting data-plane recovery', async () => {
+    const { operations, processor } = createFixture();
+    const state = link();
+    const context = contextFor(state);
+    context.controller.setLiveSubscription({ close: async (): Promise<void> => {} });
+
+    await processor.handleMessage(context, { type: 'disconnected' });
+    await processor.handleMessage(context, { type: 'reconnecting', attempt: 1 });
+
+    expect(context.controller.isLiveStreamAttached).toBe(false);
+    expect(state.connectivity).toBe('offline');
+    expect(operations.emitEvent.calledOnceWithMatch({
+      type : 'link:connectivity-change',
+      from : 'unknown',
+      to   : 'offline',
+    })).toBe(true);
+
+    await processor.handleMessage(context, { type: 'reconnected' });
+
+    expect(context.controller.isLiveStreamAttached).toBe(true);
+    expect(state.connectivity).toBe('online');
+    expect(operations.emitEvent.calledTwice).toBe(true);
   });
 
   it('repairs a token-domain mismatch without mutating or persisting the checkpoint', async () => {

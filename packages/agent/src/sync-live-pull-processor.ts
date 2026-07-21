@@ -46,8 +46,6 @@ export interface SyncLivePullProcessorOperations {
   persistCheckpoint(link: ReplicationLinkState): Promise<void>;
   recordDeadLetter(entry: Omit<DeadLetterEntry, 'failedAt'>): Promise<void>;
   reportError(message: string, error: unknown): void;
-  /** Request a coalesced convergence check after a state-invalidating transport signal. */
-  requestConvergenceCheck(): void;
   scheduleReconcile(controller: SyncLinkController, reason: string): void;
   trackAppliedCids(messageCids: string[], target: SyncTarget): Promise<void>;
   transitionToPaused(linkKey: string, link: ReplicationLinkState): Promise<void>;
@@ -120,17 +118,13 @@ export class SyncLivePullProcessor {
       return;
     }
 
-    // Transport lifecycle: a lost socket detaches the stream so the
-    // connectivity-driven convergence check stops treating the link as
-    // current; a verified resubscription restores it. Terminal recovery
-    // failures arrive separately as `error` messages and drive repair.
+    // Transport lifecycle belongs to the socket: a lost connection detaches
+    // the stream and marks this link offline; a verified resubscription
+    // restores it. Terminal recovery failures arrive separately as `error`
+    // messages and drive repair for this link only.
     if (message.type === 'disconnected' || message.type === 'reconnecting') {
       context.controller.markLiveStreamDetached();
-      // A wake-driven check may have consumed its wake before this verdict
-      // landed and skipped the link as current. The invalidating signal
-      // re-requests a coalesced check, so an unavailable socket still gets
-      // prompt HTTP recovery; a quick resubscription makes it a no-op.
-      this._operations.requestConvergenceCheck();
+      this.markLinkOffline(context);
       return;
     }
     if (message.type === 'reconnected') {
@@ -318,6 +312,21 @@ export class SyncLivePullProcessor {
         ...eventScope,
         from           : previous,
         to             : 'online',
+      });
+    }
+  }
+
+  private markLinkOffline({ did, dwnUrl, eventScope, link }: SyncLivePullContext): void {
+    const previous = link.connectivity;
+    link.connectivity = 'offline';
+    if (previous !== 'offline') {
+      this._operations.emitEvent({
+        type           : 'link:connectivity-change',
+        tenantDid      : did,
+        remoteEndpoint : dwnUrl,
+        ...eventScope,
+        from           : previous,
+        to             : 'offline',
       });
     }
   }

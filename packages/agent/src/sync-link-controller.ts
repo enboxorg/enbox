@@ -392,41 +392,6 @@ export class SyncLinkController {
     return this._localSubscription !== undefined;
   }
 
-  /**
-   * Whether this link's replication stream provably covers everything a
-   * connectivity-driven convergence check would otherwise fetch or send: the
-   * link is live and online, both subscription halves are attached with the
-   * transport confirming the remote stream, no push batch is queued or
-   * flushing, and no repair or reconciliation work is pending, scheduled, or
-   * in flight. Live deliveries commit durable cursors contiguously and a gap
-   * surfaces as repair, so a current stream owes no pull gap — deliveries
-   * may still be mid-admission, which is progress, not staleness.
-   *
-   * `connectivity` here is a cached value that can predate a long
-   * suspension. Trusting it is safe because the transport probes socket
-   * liveness on the same wake signals: a dead socket emits `disconnected`
-   * (detaching the stream here), then either resubscribes from the durable
-   * checkpoint or surfaces a terminal error that drives repair. The gate's
-   * correctness rests on that recovery chain, not on its own ordering.
-   */
-  public get isStreamCurrent(): boolean {
-    return this._active
-      && this.link.status === 'live'
-      && this.link.connectivity === 'online'
-      && this._liveSubscription !== undefined
-      && this._liveStreamAttached
-      && this._localSubscription !== undefined
-      && this._pushQueue === undefined
-      && !this.isMailboxBusy('flush')
-      && this._repairResumeToken === undefined
-      && this._repairRetryTimer === undefined
-      && this._reconcileTimer === undefined
-      && !this.isMailboxBusy('repair')
-      && !this.isPassRequested('repair')
-      && !this.isMailboxBusy('reconcile')
-      && !this.isPassRequested('reconcile');
-  }
-
   /** Whether the transport currently confirms the live stream's socket attachment. */
   public get isLiveStreamAttached(): boolean {
     return this._liveStreamAttached;

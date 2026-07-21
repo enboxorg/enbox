@@ -196,7 +196,8 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await fixture.coordinator.repair(controller);
 
     expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
-    const [repairTarget, options, shouldContinue] = fixture.operations.reconcileTarget.firstCall.args;
+    const [ownedController, repairTarget, options, shouldContinue] = fixture.operations.reconcileTarget.firstCall.args;
+    expect(ownedController).toBe(controller);
     expect(repairTarget).toEqual(expect.objectContaining({
       did     : DID,
       dwnUrl  : REMOTE,
@@ -286,7 +287,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const reconcileStarted = deferred<void>();
     const releaseReconcile = deferred<void>();
     let shouldContinue!: () => boolean;
-    fixture.operations.reconcileTarget.callsFake(async (_target, _options, predicate) => {
+    fixture.operations.reconcileTarget.callsFake(async (_controller, _target, _options, predicate) => {
       shouldContinue = predicate;
       reconcileStarted.resolve();
       await releaseReconcile.promise;
@@ -413,8 +414,9 @@ describe('SyncLinkRecoveryCoordinator', () => {
       messageCids : ['applied-cid'],
     })).toBe(true);
     expect(fixture.operations.emitEvent.calledWithMatch({ type: 'reconcile:completed' })).toBe(true);
-    expect(fixture.operations.reconcileTarget.firstCall.args[1]).toEqual({ verifyConvergence: true });
-    expect(fixture.operations.reconcileTarget.firstCall.args[2]()).toBe(true);
+    expect(fixture.operations.reconcileTarget.firstCall.args[0]).toBe(controller);
+    expect(fixture.operations.reconcileTarget.firstCall.args[2]).toEqual({ verifyConvergence: true });
+    expect(fixture.operations.reconcileTarget.firstCall.args[3]()).toBe(true);
 
     fixture.operations.reconcileTarget.onSecondCall().resolves({ converged: false });
     await fixture.coordinator.reconcile(controller);
@@ -524,7 +526,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await Promise.all([gate, reconciling, repairing]);
 
     expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
-    expect(fixture.operations.reconcileTarget.firstCall.args[1]).toBeUndefined();
+    expect(fixture.operations.reconcileTarget.firstCall.args[2]).toBeUndefined();
     controller.deactivate();
     await clock.runAllAsync();
   });
@@ -651,7 +653,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await clock.runAllAsync();
 
     const verificationPasses = fixture.operations.reconcileTarget.getCalls()
-      .filter((call) => (call.args[1] as { verifyConvergence?: boolean } | undefined)?.verifyConvergence === true);
+      .filter((call) => (call.args[2] as { verifyConvergence?: boolean } | undefined)?.verifyConvergence === true);
     expect(verificationPasses.length).toBe(1);
     controller.deactivate();
   });
@@ -702,7 +704,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     controller.deactivate();
     await clock.runAllAsync();
     const repairPasses = fixture.operations.reconcileTarget.getCalls()
-      .filter((call) => call.args[1] === undefined);
+      .filter((call) => call.args[2] === undefined);
     expect(repairPasses.length).toBe(2);
   });
 

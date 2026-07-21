@@ -141,6 +141,7 @@ describe('SyncEngineLevel lifecycle', () => {
     });
     sinon.stub(durableFeedReconciler, 'push').callsFake(async (
       runTarget: typeof target,
+      _link: typeof link,
       _options: unknown,
       shouldContinue?: () => boolean,
     ): Promise<Record<string, unknown>> => {
@@ -689,7 +690,7 @@ describe('SyncEngineLevel lifecycle', () => {
     expect(engine['_runtime'].live).toBe(false);
   });
 
-  it('should ignore a stale live integrity callback after stop', async () => {
+  it('should ignore a stale settle-check callback after stop', async () => {
     const engine = new SyncEngineLevel({ db });
     const sync = sinon.stub(engine, 'sync').resolves();
     const staleRuntime = engine['_runtime'];

@@ -129,10 +129,6 @@ export class SyncFeedConvergenceManager {
   ): Promise<void> {
     const resolved = await this.resolveLinkContext(target, context);
     const activeLink = this._operations.getActiveLink(resolved.linkKey);
-    if (activeLink !== undefined && activeLink !== resolved.link) {
-      activeLink.pull = resolved.link.pull;
-      activeLink.push = resolved.link.push;
-    }
     const link = activeLink ?? resolved.link;
     const signature = SyncFeedConvergenceManager.failureSignature(result, deadLetterCids);
     const previous = this._failures.get(resolved.linkKey);

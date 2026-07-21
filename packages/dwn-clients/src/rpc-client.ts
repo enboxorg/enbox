@@ -1,15 +1,13 @@
 import type { JsonRpcResponse } from './json-rpc.js';
+import type { ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 import type { DwnReplicationApplyRequest, DwnRpc, DwnRpcAuthOptions, DwnRpcRequest, DwnRpcResponse } from './dwn-rpc-types.js';
 import type { DwnServerInfoRpc, ServerInfo } from './server-info-types.js';
-import type { GenericMessage, ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 
 import { createJsonRpcRequest } from './json-rpc.js';
 import { CryptoUtils } from '@enbox/crypto';
 import { HttpDwnRpcClient } from './http-dwn-rpc-client.js';
 import { normalizeDwnRpcAuthEndpoint } from './rpc-auth.js';
-import { SocketUnavailableError } from './dwn-rpc-error.js';
 import { WebSocketDwnRpcClient } from './web-socket-clients.js';
-import { utf8ByteLength, WS_JSON_RPC_ENVELOPE_BYTES } from './ws-payload-size.js';
 
 /**
  * Interface that can be implemented to communicate with {@link EnboxAgent | Enbox Agent}
@@ -63,21 +61,6 @@ export interface EnboxRpc extends DwnRpc, DidRpc, DwnServerInfoRpc {
 export type EnboxRpcClientOptions = {
   auth?: DwnRpcAuthOptions;
 };
-
-/**
- * Conservative control-frame budget: the floor of every possible server
- * WebSocket cap. The server derives its `maxPayloadLength` as
- * `encoded(configured record-data cap) + WS_JSON_RPC_ENVELOPE_BYTES`, and the
- * client cannot observe the configured cap — assuming the default would let a
- * frame the server rejects close the pooled socket and disrupt its
- * subscriptions. A frame within the envelope allowance alone fits EVERY
- * configuration; control-plane messages are kilobytes, and anything larger
- * rides HTTP.
- */
-const CONTROL_FRAME_BUDGET_BYTES = WS_JSON_RPC_ENVELOPE_BYTES;
-
-/** Fixed-length stand-in for the UUID request id when measuring a frame. */
-const FRAME_MEASUREMENT_ID = '00000000-0000-0000-0000-000000000000';
 
 /**
  * Client used to communicate with Dwn Servers
@@ -177,9 +160,9 @@ export class EnboxRpcClient implements EnboxRpc {
     // will throw if url is invalid
     const url = new URL(request.dwnUrl);
 
-    const socketRoute = this.resolveSocketRoute(request, url);
-    if (socketRoute !== undefined) {
-      return socketRoute;
+    const subscriptionRoute = this.resolveSubscriptionRoute(request, url);
+    if (subscriptionRoute !== undefined) {
+      return subscriptionRoute;
     }
 
     return this.sendDwnRequestOverScheme(request, url);
@@ -199,25 +182,13 @@ export class EnboxRpcClient implements EnboxRpc {
   }
 
   /**
-   * Prefer the WebSocket transport for an `http(s)` endpoint when it can
-   * serve the request with full reply parity:
-   *
-   * - a subscription requires the socket transport, so it always routes to
-   *   whichever client owns the converted `ws(s)` scheme — including a
-   *   caller-supplied transport override;
-   * - ordinary-request preference engages only for the built-in transport:
-   *   the request must carry no raw data payload and no HTTP-only caller
-   *   semantics (`signal`, `timeoutMs`), its wire message must pass the
-   *   transport's capability boundary ({@link WebSocketDwnRpcClient.canSendDwnMessage}),
-   *   an ALREADY-HEALTHY pooled socket must exist, and the complete frame
-   *   must fit the socket budget — anything else falls through to ordinary
-   *   scheme routing;
-   * - a socket rejection that provably never transmitted the request
-   *   ({@link SocketUnavailableError}) retries once over HTTP, preserving
-   *   the pre-routing failure profile; every other rejection propagates.
+   * Routes subscriptions declared against an `http(s)` DWN endpoint through
+   * the corresponding `ws(s)` transport. Ordinary requests remain on the
+   * transport selected by their URL scheme: server info advertises WebSocket
+   * subscription support, not parity for every `dwn.processMessage` shape.
    */
-  private resolveSocketRoute(request: DwnRpcRequest, url: URL): Promise<DwnRpcResponse> | undefined {
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+  private resolveSubscriptionRoute(request: DwnRpcRequest, url: URL): Promise<DwnRpcResponse> | undefined {
+    if (request.subscription === undefined || (url.protocol !== 'http:' && url.protocol !== 'https:')) {
       return undefined;
     }
 
@@ -228,59 +199,7 @@ export class EnboxRpcClient implements EnboxRpc {
       return undefined;
     }
 
-    if (request.subscription !== undefined) {
-      return socketClient.sendDwnRequest({ ...request, dwnUrl: socketUrl.toString() });
-    }
-
-    if (!(socketClient instanceof WebSocketEnboxRpcClient)) {
-      return undefined;
-    }
-    if (request.data !== undefined || request.signal !== undefined || request.timeoutMs !== undefined) {
-      return undefined;
-    }
-
-    // Classify, measure, and transmit ONE wire representation — a
-    // serializable message instance is normalized before its descriptor is
-    // consulted, so instance shapes cannot bypass the capability boundary.
-    const wireMessage = EnboxRpcClient.toWireDwnMessage(request.message);
-    if (!WebSocketDwnRpcClient.canSendDwnMessage(wireMessage)) {
-      return undefined;
-    }
-    if (!socketClient.hasHealthyConnection(socketUrl.toString())) {
-      return undefined;
-    }
-
-    const frame = createJsonRpcRequest(FRAME_MEASUREMENT_ID, 'dwn.processMessage', {
-      target  : request.targetDid,
-      message : wireMessage,
-    });
-    if (utf8ByteLength(JSON.stringify(frame)) > CONTROL_FRAME_BUDGET_BYTES) {
-      return undefined;
-    }
-
-    const socketRequest: DwnRpcRequest = { ...request, dwnUrl: socketUrl.toString(), message: wireMessage };
-    return socketClient.sendDwnRequest(socketRequest).catch((error: unknown) => {
-      // The health check is a snapshot: a socket dying between the check and
-      // the send surfaces as SocketUnavailableError, which guarantees the
-      // request never left — retrying it over HTTP is safe.
-      if (error instanceof SocketUnavailableError) {
-        return this.sendDwnRequestOverScheme(request, url);
-      }
-      throw error;
-    });
-  }
-
-  /**
-   * Normalizes a possibly-serializable DWN message instance (an SDK message
-   * object exposing `toJSON()`) into the wire representation used for
-   * classification, frame measurement, and transmission.
-   */
-  private static toWireDwnMessage(message: DwnRpcRequest['message']): Partial<GenericMessage> {
-    const candidate = message as { toJSON?: () => unknown };
-    if (typeof candidate.toJSON === 'function') {
-      return candidate.toJSON() as Partial<GenericMessage>;
-    }
-    return message as Partial<GenericMessage>;
+    return socketClient.sendDwnRequest({ ...request, dwnUrl: socketUrl.toString() });
   }
 
   applyReplicatedMessage(request: DwnReplicationApplyRequest): Promise<ReplicationApplyResult> {

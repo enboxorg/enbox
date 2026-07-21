@@ -4,9 +4,9 @@ import type { ProgressToken } from '@enbox/dwn-sdk-js';
 import type { DirectionCheckpoint, LinkStatus, ReplicationLinkState, SyncDirection } from './types/sync.js';
 import type { SyncReplicationLinkCreateParams, SyncReplicationLinkStore } from './sync-replication-link-store.js';
 
-import { runSerializedByKey } from './sync-cross-context-lock.js';
 import { SyncCheckpoint } from './sync-checkpoint.js';
 import { canonicalizeSyncScope, computeProjectionId } from './types/sync.js';
+import { runSerializedByKey, runWithCrossContextLock } from './sync-cross-context-lock.js';
 
 type LevelKey = string | Buffer | Uint8Array;
 
@@ -16,10 +16,12 @@ const KEY_SEP = '^';
 /** Level-backed persistence for durable replication links. */
 export class SyncReplicationLinkStoreLevel implements SyncReplicationLinkStore {
   private readonly _links: AbstractLevel<LevelKey, string, string>;
+  private readonly _lockScope: string;
   private readonly _pendingLinkOperations = new Map<string, Promise<void>>();
 
-  constructor(db: AbstractLevel<LevelKey>) {
+  constructor(db: AbstractLevel<LevelKey>, lockScope = 'default') {
     this._links = db.sublevel('replicationLinks');
+    this._lockScope = lockScope;
   }
 
   public async clear(): Promise<void> {
@@ -106,8 +108,8 @@ export class SyncReplicationLinkStoreLevel implements SyncReplicationLinkStore {
     const pull = SyncReplicationLinkStoreLevel.cloneCheckpoint(link.pull);
     const push = SyncReplicationLinkStoreLevel.cloneCheckpoint(link.push);
     await this.updateLink(link, (persistedLink): void => {
-      persistedLink.pull = pull;
-      persistedLink.push = push;
+      SyncCheckpoint.reset(persistedLink.pull, pull.contiguousAppliedToken);
+      SyncCheckpoint.reset(persistedLink.push, push.contiguousAppliedToken);
     });
   }
 
@@ -115,7 +117,7 @@ export class SyncReplicationLinkStoreLevel implements SyncReplicationLinkStore {
     SyncCheckpoint.reset(link[direction], token);
     const checkpoint = SyncReplicationLinkStoreLevel.cloneCheckpoint(link[direction]);
     await this.updateLink(link, (persistedLink): void => {
-      persistedLink[direction] = checkpoint;
+      SyncCheckpoint.reset(persistedLink[direction], checkpoint.contiguousAppliedToken);
     });
   }
 
@@ -171,13 +173,12 @@ export class SyncReplicationLinkStoreLevel implements SyncReplicationLinkStore {
 
   /**
    * Merge an in-memory checkpoint into the persisted one without regressing
-   * within a token domain. Concurrent writers hold independent in-memory
-   * copies of one durable link (the live controller's instance and the feed
-   * reconciler's freshly loaded instance), so a routine persist from a stale
-   * copy must never move `contiguousAppliedToken` backwards. A token from a
-   * different stream or epoch replaces the checkpoint wholesale — that domain
-   * change is a deliberate feed reset. Clearing a checkpoint goes through
-   * {@link resetCheckpoint}, which overwrites explicitly.
+   * within a token domain. One-shot work and another browser context can still
+   * hold independent in-memory copies of one durable link, so a routine persist
+   * from a stale copy must never move `contiguousAppliedToken` backwards. A
+   * token from a different stream or epoch replaces the checkpoint wholesale —
+   * that domain change is a deliberate feed reset. Clearing a checkpoint goes
+   * through {@link resetCheckpoint}, which overwrites explicitly.
    */
   private static mergeCheckpoint(persisted: DirectionCheckpoint, incoming: DirectionCheckpoint): void {
     if (incoming.contiguousAppliedToken === undefined) {
@@ -226,7 +227,14 @@ export class SyncReplicationLinkStoreLevel implements SyncReplicationLinkStore {
 
   /** Serialize read/merge/write operations for one complete link identity. */
   private async runForLink<T>(key: string, operation: () => Promise<T>): Promise<T> {
-    return runSerializedByKey(this._pendingLinkOperations, key, operation);
+    return runSerializedByKey(
+      this._pendingLinkOperations,
+      key,
+      (): Promise<T> => runWithCrossContextLock(
+        `enbox:sync-link:${this._lockScope}:${key}`,
+        operation,
+      ),
+    );
   }
 
   private async waitForPendingLinkOperations(): Promise<void> {

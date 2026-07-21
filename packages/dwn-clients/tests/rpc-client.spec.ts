@@ -6,10 +6,9 @@ import sinon from 'sinon';
 import { CryptoUtils } from '@enbox/crypto';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
-  createJsonRpcErrorResponse, createJsonRpcRequest, createJsonRpcSuccessResponse,
-  DwnRpcError, DwnServerInfoCacheMemory, HttpDwnRpcClient,
-  JsonRpcErrorCodes, normalizeDwnRpcAuthEndpoint, RateLimitError,
-  SocketUnavailableError, utf8ByteLength, WS_JSON_RPC_ENVELOPE_BYTES,
+  createJsonRpcErrorResponse, createJsonRpcSuccessResponse,
+  DwnServerInfoCacheMemory, HttpDwnRpcClient,
+  JsonRpcErrorCodes, normalizeDwnRpcAuthEndpoint,
 } from '../src/index.js';
 import { DidRpcMethod, EnboxRpcClient, HttpEnboxRpcClient, WebSocketEnboxRpcClient } from '../src/rpc-client.js';
 import { Jws, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
@@ -17,7 +16,7 @@ import { Jws, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
 const testDwnUrl = process.env.TEST_DWN_URL || 'http://localhost:3000';
 
 describe('RPC Clients', () => {
-  describe('EnboxRpcClient socket-preferred routing', () => {
+  describe('EnboxRpcClient transport routing', () => {
     const httpEndpoint = 'http://socket-route.example:3000/';
     const socketKey = 'ws://socket-route.example:3000';
 
@@ -64,7 +63,7 @@ describe('RPC Clients', () => {
       sinon.restore();
     });
 
-    it('routes a control-plane message over an already-healthy pooled socket', async () => {
+    it('keeps an ordinary HTTP request on HTTP when a healthy pooled socket exists', async () => {
       const { client: httpStub, sent } = recordingHttpClient();
       const rpcClient = new EnboxRpcClient([httpStub]);
       const socketRequest = seedHealthySocket();
@@ -75,13 +74,12 @@ describe('RPC Clients', () => {
         message   : queryMessage() as never,
       });
 
-      expect(socketRequest.calledOnce).toBe(true);
-      expect(socketRequest.firstCall.args[0].method).toBe('dwn.processMessage');
-      expect(sent).toHaveLength(0);
+      expect(socketRequest.called).toBe(false);
+      expect(sent).toHaveLength(1);
       expect((reply as { status: { code: number } }).status.code).toBe(200);
     });
 
-    it('falls back to HTTP when no pooled socket exists', async () => {
+    it('routes an ordinary HTTP request by its URL scheme when no socket exists', async () => {
       const { client: httpStub, sent } = recordingHttpClient();
       const rpcClient = new EnboxRpcClient([httpStub]);
 
@@ -94,7 +92,7 @@ describe('RPC Clients', () => {
       expect(sent).toHaveLength(1);
     });
 
-    it('falls back to HTTP when the pooled socket is not connected', async () => {
+    it('keeps an ordinary HTTP request on HTTP when the pooled socket is not connected', async () => {
       const { client: httpStub, sent } = recordingHttpClient();
       const rpcClient = new EnboxRpcClient([httpStub]);
       poolOf().set(socketKey, {
@@ -112,12 +110,9 @@ describe('RPC Clients', () => {
       expect(sent).toHaveLength(1);
     });
 
-    it('falls back to HTTP when the pooled socket is connected but stale', async () => {
+    it('keeps an ordinary HTTP request on HTTP when the pooled socket is stale', async () => {
       const { client: httpStub, sent } = recordingHttpClient();
       const rpcClient = new EnboxRpcClient([httpStub]);
-      // A suspension leaves isConnected stale-true; no inbound traffic has
-      // arrived within the heartbeat window, so freshness fails and the
-      // request must not stall on a dead socket.
       const request = sinon.stub();
       poolOf().set(socketKey, {
         socket        : { isConnected: true, isFresh: (): boolean => false, request, send: sinon.stub() },
@@ -215,7 +210,7 @@ describe('RPC Clients', () => {
       expect((reply as { status: { code: number } }).status.code).toBe(200);
     });
 
-    it('does not engage socket preference for a caller-supplied ws override', async () => {
+    it('keeps an ordinary HTTP request on HTTP when a caller supplies a ws override', async () => {
       const { client: httpStub, sent } = recordingHttpClient();
       const wsOverrideSent: unknown[] = [];
       const wsOverride = {
@@ -238,8 +233,6 @@ describe('RPC Clients', () => {
         message   : queryMessage() as never,
       });
 
-      // The override owns the ws scheme, so preference is disabled and the
-      // request follows plain scheme routing to HTTP.
       expect(socketRequest.called).toBe(false);
       expect(wsOverrideSent).toHaveLength(0);
       expect(sent).toHaveLength(1);
@@ -323,12 +316,11 @@ describe('RPC Clients', () => {
       expect(sent).toHaveLength(2);
     });
 
-    it('classifies serializable message instances by their wire representation', async () => {
+    it('keeps serializable message instances on their declared HTTP transport', async () => {
       const { client: httpStub, sent } = recordingHttpClient();
       const rpcClient = new EnboxRpcClient([httpStub]);
       const socketRequest = seedHealthySocket();
 
-      // An SDK-style message instance: the wire message lives behind toJSON().
       const readInstance = {
         toJSON: (): Record<string, unknown> => ({ descriptor: { interface: 'Records', method: 'Read' } }),
       };
@@ -349,109 +341,84 @@ describe('RPC Clients', () => {
         message   : queryInstance as never,
       });
 
-      // The eligible instance rides the socket, transmitted in wire form.
-      expect(socketRequest.calledOnce).toBe(true);
-      const transmitted = socketRequest.firstCall.args[0].params.message;
-      expect(transmitted.descriptor.method).toBe('Query');
-      expect(typeof transmitted.toJSON).toBe('undefined');
-      expect(sent).toHaveLength(1);
+      expect(socketRequest.called).toBe(false);
+      expect(sent).toHaveLength(2);
     });
 
-    it('measures the complete frame against the socket budget', async () => {
+    it('does not reroute ordinary HTTP requests based on their frame size', async () => {
       const { client: httpStub, sent } = recordingHttpClient();
       const rpcClient = new EnboxRpcClient([httpStub]);
       const socketRequest = seedHealthySocket();
-      const budget = WS_JSON_RPC_ENVELOPE_BYTES;
       const targetDid = 'did:example:alice';
 
-      // Mirror the router's measurement to construct an exactly-at-budget frame.
-      const frameSize = (padding: string): number => utf8ByteLength(JSON.stringify(createJsonRpcRequest(
-        '00000000-0000-0000-0000-000000000000',
-        'dwn.processMessage',
-        { target: targetDid, message: { descriptor: { interface: 'Messages', method: 'Query', padding } } },
-      )));
-      const exactPadding = 'x'.repeat(budget - frameSize(''));
-      expect(frameSize(exactPadding)).toBe(budget);
+      await rpcClient.sendDwnRequest({
+        dwnUrl  : httpEndpoint,
+        targetDid,
+        message : queryMessage() as never,
+      });
 
       await rpcClient.sendDwnRequest({
         dwnUrl  : httpEndpoint,
         targetDid,
-        message : { descriptor: { interface: 'Messages', method: 'Query', padding: exactPadding } } as never,
+        message : {
+          descriptor: { interface: 'Messages', method: 'Query', padding: 'x'.repeat(128 * 1024) },
+        } as never,
       });
-      expect(socketRequest.calledOnce).toBe(true);
-
-      await rpcClient.sendDwnRequest({
-        dwnUrl  : httpEndpoint,
-        targetDid,
-        message : { descriptor: { interface: 'Messages', method: 'Query', padding: `${exactPadding}x` } } as never,
-      });
-      expect(socketRequest.calledOnce).toBe(true);
-      expect(sent).toHaveLength(1);
+      expect(socketRequest.called).toBe(false);
+      expect(sent).toHaveLength(2);
     });
 
-    it('preserves rate-limit and structured error semantics over the socket', async () => {
+    it('routes a request with an explicit ws URL to the socket transport', async () => {
       const { client: httpStub, sent } = recordingHttpClient();
-      const rpcClient = new EnboxRpcClient([httpStub]);
-      const request = sinon.stub();
-      request.onFirstCall().resolves({
-        error: { code: JsonRpcErrorCodes.TooManyRequests, message: 'slow down', data: { retryAfterSec: 7 } },
-      });
-      request.onSecondCall().resolves({
-        error: { code: JsonRpcErrorCodes.BadRequest, message: 'rejected', data: { code: 'SomeTypedFailure' } },
-      });
-      poolOf().set(socketKey, {
-        socket        : { isConnected: true, isFresh: (): boolean => true, request, send: sinon.stub() },
-        subscriptions : new Map(),
-        url           : `${socketKey}/`,
-      });
+      const wsSent: unknown[] = [];
+      const wsOverride = {
+        get transportProtocols(): string[] { return ['ws:', 'wss:']; },
+        close          : async (): Promise<void> => {},
+        sendDidRequest : async (): Promise<never> => { throw new Error('unused'); },
+        sendDwnRequest : async (request: unknown): Promise<unknown> => {
+          wsSent.push(request);
+          return { status: { code: 200, detail: 'OK' } };
+        },
+        applyReplicatedMessage : async (): Promise<never> => { throw new Error('unused'); },
+        getServerInfo          : async (): Promise<never> => { throw new Error('unused'); },
+      } as unknown as EnboxRpc;
+      const rpcClient = new EnboxRpcClient([httpStub, wsOverride]);
 
-      const rateLimited = await rpcClient.sendDwnRequest({
-        dwnUrl    : httpEndpoint,
+      const reply = await rpcClient.sendDwnRequest({
+        dwnUrl    : 'ws://socket-route.example:3000/',
         targetDid : 'did:example:alice',
         message   : queryMessage() as never,
-      }).catch((error: unknown) => error);
-      expect(rateLimited).toBeInstanceOf(RateLimitError);
-      expect((rateLimited as RateLimitError).retryAfterSec).toBe(7);
+      });
 
-      const structured = await rpcClient.sendDwnRequest({
-        dwnUrl    : httpEndpoint,
+      expect(wsSent).toHaveLength(1);
+      expect(sent).toHaveLength(0);
+      expect(reply.status.code).toBe(200);
+    });
+
+    it('does not fall back to HTTP when an explicit ws request fails', async () => {
+      const { client: httpStub, sent } = recordingHttpClient();
+      const expectedError = new Error('socket failed');
+      const wsOverride = {
+        get transportProtocols(): string[] { return ['ws:', 'wss:']; },
+        close                  : async (): Promise<void> => {},
+        sendDidRequest         : async (): Promise<never> => { throw new Error('unused'); },
+        sendDwnRequest         : async (): Promise<never> => { throw expectedError; },
+        applyReplicatedMessage : async (): Promise<never> => { throw new Error('unused'); },
+        getServerInfo          : async (): Promise<never> => { throw new Error('unused'); },
+      } as unknown as EnboxRpc;
+      const rpcClient = new EnboxRpcClient([httpStub, wsOverride]);
+
+      const error = await rpcClient.sendDwnRequest({
+        dwnUrl    : 'ws://socket-route.example:3000/',
         targetDid : 'did:example:alice',
         message   : queryMessage() as never,
-      }).catch((error: unknown) => error);
-      expect(structured).toBeInstanceOf(DwnRpcError);
-      expect((structured as DwnRpcError).code).toBe(JsonRpcErrorCodes.BadRequest);
-      expect((structured as DwnRpcError).data).toEqual({ code: 'SomeTypedFailure' });
-      expect((structured as DwnRpcError).terminal).toBe(true);
+      }).catch((caught: unknown) => caught);
 
-      // Server-side rejections are real outcomes: nothing fell back to HTTP.
+      expect(error).toBe(expectedError);
       expect(sent).toHaveLength(0);
     });
 
-    it('retries over HTTP when the socket provably never transmitted the request', async () => {
-      const { client: httpStub, sent } = recordingHttpClient();
-      const rpcClient = new EnboxRpcClient([httpStub]);
-      poolOf().set(socketKey, {
-        socket: {
-          isConnected : true,
-          isFresh     : (): boolean => true,
-          request     : sinon.stub().rejects(new SocketUnavailableError('socket died between check and send')),
-          send        : sinon.stub(),
-        },
-        subscriptions : new Map(),
-        url           : `${socketKey}/`,
-      });
-
-      const reply = await rpcClient.sendDwnRequest({
-        dwnUrl    : httpEndpoint,
-        targetDid : 'did:example:alice',
-        message   : queryMessage() as never,
-      });
-
-      expect(sent).toHaveLength(1);
-      expect((reply as { status: { code: number } }).status.code).toBe(200);
-    });
-
-    it('serves a live sequence: subscribe over the socket, control traffic rides it, a write stays on HTTP', async () => {
+    it('serves a live sequence with subscriptions on the socket and ordinary traffic on HTTP', async () => {
       const rpcClient = new EnboxRpcClient();
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const socketSend = sinon.spy(WebSocketEnboxRpcClient.prototype, 'sendDwnRequest');
@@ -468,8 +435,8 @@ describe('RPC Clients', () => {
         expect(subscribeReply.status.code).toBe(200);
         expect(socketSend.callCount).toBe(1);
 
-        // 2. Control-plane traffic rides the now-healthy pooled socket: a
-        // ProtocolsConfigure and a MessagesQuery are both socket-eligible.
+        // 2. Ordinary traffic remains on HTTP after the subscription has
+        // established a healthy pooled socket.
         const protocolDefinition = {
           protocol  : 'http://socket-routing-test.example/protocol',
           published : true,
@@ -486,7 +453,7 @@ describe('RPC Clients', () => {
           message   : configureMessage,
         });
         expect(configureReply.status.code).toBe(202);
-        expect(socketSend.callCount).toBe(2);
+        expect(socketSend.callCount).toBe(1);
 
         const { message: queryMsg } = await TestDataGenerator.generateMessagesQuery({ author: alice });
         const queryReply = await rpcClient.sendDwnRequest({
@@ -495,11 +462,9 @@ describe('RPC Clients', () => {
           message   : queryMsg,
         });
         expect(queryReply.status.code).toBe(200);
-        expect(socketSend.callCount).toBe(3);
+        expect(socketSend.callCount).toBe(1);
 
-        // 3. A RecordsWrite is socket-ineligible and succeeds over HTTP —
-        // passed as a message INSTANCE, so classification goes through the
-        // wire representation on a live request too.
+        // 3. A RecordsWrite also succeeds over HTTP.
         const dataBytes = new TextEncoder().encode('socket routing integration');
         const recordsWrite = await RecordsWrite.create({
           signer       : Jws.createSigner(alice),
@@ -515,7 +480,7 @@ describe('RPC Clients', () => {
           data      : new Blob([dataBytes]) as never,
         });
         expect(writeReply.status.code).toBe(202);
-        expect(socketSend.callCount).toBe(3);
+        expect(socketSend.callCount).toBe(1);
 
         await subscribeReply.subscription?.close();
       } finally {
