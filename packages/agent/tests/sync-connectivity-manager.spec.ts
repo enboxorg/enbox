@@ -127,7 +127,7 @@ describe('SyncConnectivityManager', () => {
     manager.stop();
   });
 
-  it('schedules a stream-detachment request through the same coalescing machinery', async () => {
+  it('debounces a stream-detachment request so the transport reconnect gets first crack', async () => {
     const clock = sinon.useFakeTimers();
     const environment = new TestConnectivityEnvironment();
     environment.visibilityState = 'visible';
@@ -135,21 +135,24 @@ describe('SyncConnectivityManager', () => {
 
     // Before start() there is no runtime scope — the request is a no-op.
     manager.requestConvergenceCheck();
-    await clock.tickAsync(0);
+    await clock.tickAsync(5_000);
     expect(state.integrityChecks).toBe(0);
 
     manager.start();
     manager.requestConvergenceCheck();
-    await clock.tickAsync(0);
+    // Debounced: no immediate check — a quick reconnect-and-resubscribe
+    // inside this window recovers with no check at all.
+    await clock.tickAsync(2_999);
+    expect(state.integrityChecks).toBe(0);
+    await clock.tickAsync(1);
     expect(state.integrityChecks).toBe(1);
 
-    // Detachments inside the cooldown coalesce into one trailing check — a
-    // quick resubscription simply makes that deferred check a no-op.
+    // Detachments inside the cooldown coalesce into one trailing check.
     manager.requestConvergenceCheck();
     manager.requestConvergenceCheck();
-    await clock.tickAsync(9_999);
+    await clock.tickAsync(3_000);
     expect(state.integrityChecks).toBe(1);
-    await clock.tickAsync(1);
+    await clock.tickAsync(7_000);
     expect(state.integrityChecks).toBe(2);
     manager.stop();
   });

@@ -40,6 +40,12 @@ export class SyncConnectivityManager {
   private static readonly RECOVERY_TIMER = 'connectivity-recovery';
   private static readonly MINIMUM_HIDDEN_DURATION_MILLISECONDS = 5_000;
   private static readonly RECOVERY_COOLDOWN_MILLISECONDS = 10_000;
+  /**
+   * How long a detached stream waits before a recovery check. Must exceed
+   * the socket's first reconnect backoff (~500-1000ms with jitter) plus
+   * resubscription, so a healthy reconnect wins the race and no check runs.
+   */
+  private static readonly STREAM_DETACH_DEBOUNCE_MILLISECONDS = 3_000;
   private readonly _configuredEnvironment: SyncConnectivityEnvironment | undefined;
   private readonly _operations: SyncConnectivityManagerOperations;
   private _activeEnvironment?: SyncConnectivityEnvironment;
@@ -158,16 +164,28 @@ export class SyncConnectivityManager {
    * — e.g. a replication stream detaching after its socket's health probe
    * settles. A wake-driven check can complete BEFORE the transport's
    * asynchronous verdict lands; the invalidating signal re-requests
-   * evaluation here, riding the same single-flight, cooldown, and trailing
-   * machinery as browser events. A quick resubscription makes the deferred
-   * check a no-op.
+   * evaluation here.
+   *
+   * Debounced rather than immediate: the transport's own reconnect gets
+   * first crack. A socket that reconnects and verifies its resubscription
+   * inside the window re-attaches with no check at all — cursor replay,
+   * not a reconcile, delivers whatever the outage missed — and only a
+   * stream still detached when the timer fires pays a recovery pass. The
+   * shared timer and pending-trigger slot integrate with the browser-signal
+   * coalescing: whichever deadline fires first flushes one pending check.
    */
   public requestConvergenceCheck(): void {
-    if (!this.isCurrentScope()) {
+    const scope = this._scope;
+    if (scope === undefined || scope.disposed) {
       return;
     }
 
-    this.scheduleConvergenceCheck('stream');
+    this._pendingConvergenceTrigger ??= 'stream';
+    scope.armTimeout(
+      SyncConnectivityManager.RECOVERY_TIMER,
+      (): void => { this.flushTrailingConvergenceCheck(scope); },
+      SyncConnectivityManager.STREAM_DETACH_DEBOUNCE_MILLISECONDS,
+    );
   }
 
   private handleOffline(): void {
@@ -212,6 +230,13 @@ export class SyncConnectivityManager {
     return this._scope !== undefined && !this._scope.disposed;
   }
 
+  private static convergenceCheckReason(trigger: SyncConvergenceTrigger): string {
+    if (trigger === 'online') {
+      return 'browser online';
+    }
+    return trigger === 'visibility' ? 'page visible' : 'replication stream detached';
+  }
+
   private scheduleConvergenceCheck(trigger: SyncConvergenceTrigger): void {
     const scope = this._scope;
     if (scope === undefined || scope.disposed) {
@@ -239,9 +264,7 @@ export class SyncConnectivityManager {
     scope.cancelTimer(SyncConnectivityManager.RECOVERY_TIMER);
     this._activeConvergenceCheck = check;
     this._lastConvergenceCheckStartedAt = Date.now();
-    const reason = trigger === 'online'
-      ? 'browser online'
-      : trigger === 'visibility' ? 'page visible' : 'replication stream detached';
+    const reason = SyncConnectivityManager.convergenceCheckReason(trigger);
     console.info(`SyncConnectivityManager: ${reason} — checking replication streams`);
     const task = this._operations.runBackgroundTask(async (): Promise<void> => {
       if (scope.disposed) {
