@@ -6,6 +6,7 @@ import type { SyncTarget } from './sync-target-resolver.js';
 import type {
   PushFailure,
   ReplicationLinkState,
+  SyncDirection,
   SyncEvent,
 } from './types/sync.js';
 import type {
@@ -213,13 +214,19 @@ export class SyncLinkRecoveryCoordinator {
   /** Coalesce local feed signals into ordered durable push passes. */
   public push(controller: SyncLinkController): Promise<void> {
     controller.requestPass('push');
-    return controller.runRequestedPasses('push', (): Promise<void> => this.pushExclusive(controller));
+    return controller.runRequestedPasses(
+      'push',
+      (): Promise<void> => this.reconcileDirectionExclusive(controller, 'push'),
+    );
   }
 
   /** Coalesce remote feed signals into ordered durable pull passes. */
   public pull(controller: SyncLinkController): Promise<void> {
     controller.requestPass('pull');
-    return controller.runRequestedPasses('pull', (): Promise<void> => this.pullExclusive(controller));
+    return controller.runRequestedPasses(
+      'pull',
+      (): Promise<void> => this.reconcileDirectionExclusive(controller, 'pull'),
+    );
   }
 
   /** Emit and coalesce a named durable-reconciliation request for a live link. */
@@ -556,8 +563,11 @@ export class SyncLinkRecoveryCoordinator {
     }
   }
 
-  /** Pull the remote durable feed from its checkpoint inside the link mailbox. */
-  private async pullExclusive(controller: SyncLinkController): Promise<void> {
+  /** Reconcile one durable direction from its checkpoint inside the link mailbox. */
+  private async reconcileDirectionExclusive(
+    controller: SyncLinkController,
+    direction: SyncDirection,
+  ): Promise<void> {
     const { link } = controller;
     if (!controller.isActive || link.status !== 'live' || controller.isMailboxBusy('repair')) {
       return;
@@ -570,45 +580,13 @@ export class SyncLinkRecoveryCoordinator {
       const outcome = await this._operations.reconcileTarget(
         controller,
         syncTargetFromLink(link),
-        { direction: 'pull' },
+        { direction },
         shouldContinue,
       );
       if (outcome.aborted || !shouldContinue()) {
         return;
       }
-    } catch (error: unknown) {
-      if (!shouldContinue()) {
-        return;
-      }
-      this._operations.reportError(
-        `SyncLinkRecoveryCoordinator: Durable pull pass failed for ${link.tenantDid} -> ${link.remoteEndpoint}`,
-        error,
-      );
-      this.scheduleLinkReconcileByKey(controller, 'pull-retryable', RECONCILE_RETRY_DELAY_MS);
-    }
-  }
-
-  /** Push the local durable feed from its checkpoint inside the link mailbox. */
-  private async pushExclusive(controller: SyncLinkController): Promise<void> {
-    const { link } = controller;
-    if (!controller.isActive || link.status !== 'live' || controller.isMailboxBusy('repair')) {
-      return;
-    }
-
-    const runtime = this._operations.getRuntime();
-    const shouldContinue = (): boolean =>
-      !this.isStale(controller, runtime) && link.status === 'live';
-    try {
-      const outcome = await this._operations.reconcileTarget(
-        controller,
-        syncTargetFromLink(link),
-        { direction: 'push' },
-        shouldContinue,
-      );
-      if (outcome.aborted || !shouldContinue()) {
-        return;
-      }
-      if ((outcome.pushFailures?.length ?? 0) > 0) {
+      if (direction === 'push' && (outcome.pushFailures?.length ?? 0) > 0) {
         this.schedulePushRetry(controller);
       }
     } catch (error: unknown) {
@@ -616,10 +594,14 @@ export class SyncLinkRecoveryCoordinator {
         return;
       }
       this._operations.reportError(
-        `SyncLinkRecoveryCoordinator: Durable push pass failed for ${link.tenantDid} -> ${link.remoteEndpoint}`,
+        `SyncLinkRecoveryCoordinator: Durable ${direction} pass failed for ${link.tenantDid} -> ${link.remoteEndpoint}`,
         error,
       );
-      this.schedulePushRetry(controller);
+      if (direction === 'push') {
+        this.schedulePushRetry(controller);
+      } else {
+        this.scheduleLinkReconcileByKey(controller, 'pull-retryable', RECONCILE_RETRY_DELAY_MS);
+      }
     }
   }
 
