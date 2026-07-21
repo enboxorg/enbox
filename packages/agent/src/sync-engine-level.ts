@@ -2058,13 +2058,10 @@ export class SyncEngineLevel implements SyncEngine {
       return resumeMsg;
     };
 
-    // Convert http(s) URL to ws(s) for WebSocket transport.
-    const parsedUrl = new URL(dwnUrl);
-    parsedUrl.protocol = parsedUrl.protocol === 'http:' ? 'ws:' : 'wss:';
-    const wsUrl = parsedUrl.toString();
-
+    // The RPC client routes subscription requests to the WebSocket transport
+    // itself — the endpoint URL is passed as configured.
     const reply = await this.agent.rpc.sendDwnRequest({
-      dwnUrl       : wsUrl,
+      dwnUrl,
       targetDid    : did,
       message,
       subscription : {

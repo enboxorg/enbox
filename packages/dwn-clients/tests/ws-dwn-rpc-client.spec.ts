@@ -4,7 +4,6 @@ import type { GenericMessage, Persona, ProgressToken, ProtocolDefinition, Record
 
 import sinon from 'sinon';
 
-import { DwnRpcError } from '../src/dwn-rpc-error.js';
 import { HttpDwnRpcClient } from '../src/http-dwn-rpc-client.js';
 import { JsonRpcSocket } from '../src/json-rpc-socket.js';
 import { RateLimitError } from '../src/rate-limit-error.js';
@@ -12,6 +11,7 @@ import { WebSocketDwnRpcClient } from '../src/web-socket-clients.js';
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { createJsonRpcErrorResponse, createJsonRpcRequest, JsonRpcErrorCodes } from '../src/json-rpc.js';
 import { DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Jws, Message, MessagesRead, ProtocolsConfigure, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { DwnRpcError, SocketUnavailableError } from '../src/dwn-rpc-error.js';
 
 /**
  * Matches the defaults used by `TestDataGenerator.generateRecordsWrite()`.
@@ -116,6 +116,24 @@ describe('WebSocketDwnRpcClient', () => {
   });
 
   describe('sendDwnRequest', () => {
+    it('rejects with SocketUnavailableError when the connection cannot be established', async () => {
+      const { message } = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : { schema: 'foo/bar' },
+      });
+
+      // Nothing listens on this port: establishment fails before any request
+      // is transmitted, so the typed never-sent rejection must survive the
+      // connection-error redaction for the router's HTTP fallback to fire.
+      const rejection = await client.sendDwnRequest({
+        dwnUrl    : 'ws://127.0.0.1:59987',
+        targetDid : alice.did,
+        message,
+      }).catch((error: unknown) => error);
+
+      expect(rejection).toBeInstanceOf(SocketUnavailableError);
+    });
+
     it('sends request', async () => {
       // create a generic records query
       const { message } = await TestDataGenerator.generateRecordsQuery({
@@ -386,7 +404,7 @@ describe('WebSocketDwnRpcClient', () => {
     });
 
     describe('processMessage', () => {
-      it('throws when json rpc response errors are returned', async () => {
+      it('preserves typed JSON-RPC errors exactly as the HTTP path does', async () => {
         const { message } = await TestDataGenerator.generateRecordsQuery({
           author : alice,
           filter : {
@@ -400,17 +418,34 @@ describe('WebSocketDwnRpcClient', () => {
           socket,
         };
 
-        spyOn(socket, 'request').mockResolvedValue({
+        const requestSpy = spyOn(socket, 'request').mockResolvedValue({
           jsonrpc : '2.0',
           id      : 'id',
-          error   : { message: 'some error',code: JsonRpcErrorCodes.BadRequest }
+          error   : { message: 'some error', code: JsonRpcErrorCodes.BadRequest, data: { code: 'SomeTypedFailure' } }
         });
 
         try {
           await WebSocketDwnRpcClient['processMessage'](connection, alice.did, message);
           throw new Error('Expected an error to be thrown');
         } catch (error: any) {
-          expect(error.message).toBe('error sending DWN request: some error');
+          expect(error).toBeInstanceOf(DwnRpcError);
+          expect(error.code).toBe(JsonRpcErrorCodes.BadRequest);
+          expect(error.data).toEqual({ code: 'SomeTypedFailure' });
+          expect(error.terminal).toBe(true);
+        }
+
+        requestSpy.mockResolvedValue({
+          jsonrpc : '2.0',
+          id      : 'id',
+          error   : { message: 'slow down', code: JsonRpcErrorCodes.TooManyRequests, data: { retryAfterSec: 9 } }
+        });
+
+        try {
+          await WebSocketDwnRpcClient['processMessage'](connection, alice.did, message);
+          throw new Error('Expected an error to be thrown');
+        } catch (error: any) {
+          expect(error).toBeInstanceOf(RateLimitError);
+          expect(error.retryAfterSec).toBe(9);
         }
       });
     });

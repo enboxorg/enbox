@@ -22,6 +22,20 @@ export class SubscriptionHandlerTerminalError extends Error {
 }
 
 /**
+ * Rejection meaning the WebSocket transport could not take a request at all —
+ * the socket was not connected, or a connection could not be established. The
+ * request was NEVER transmitted, so retrying it on another transport is safe:
+ * the socket-preferred router falls back to HTTP on exactly this error and no
+ * other.
+ */
+export class SocketUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SocketUnavailableError';
+  }
+}
+
+/**
  * Error surfaced by DWN JSON-RPC transports when the server returns a typed
  * JSON-RPC error envelope.
  */
