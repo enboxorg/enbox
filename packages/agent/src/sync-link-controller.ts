@@ -16,11 +16,13 @@ export type SyncFeedSnapshot = {
 };
 
 /**
- * Owns all ephemeral state associated with one active replication link.
+ * Owns the controller-local ephemeral state for one active replication link.
  *
  * The controller is persistence- and transport-backend neutral. The enclosing
  * sync engine performs I/O while the controller provides one stable lifetime
  * boundary for subscriptions, link execution, repair, and reconciliation.
+ * Runtime-owned link scheduling is held separately by `SyncRuntime` under the
+ * controller's `linkKey`.
  * Captured callbacks use `isActive` to reject work belonging to a replaced or
  * removed link without consulting backend-specific state.
  */

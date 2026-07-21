@@ -74,6 +74,7 @@ describe('SyncRuntime', () => {
     expect(runtime.disposed).toBe(true);
 
     runtime.armInterval('c', () => { ticks++; }, 5);
+    expect(runtime.armTimeoutIfEarlier('d', () => { ticks++; }, 5)).toBe(false);
 
     await sleep(25);
     expect(ticks).toBe(0);
@@ -187,6 +188,7 @@ describe('SyncRuntime', () => {
     const runs: string[] = [];
 
     expect(runtime.armTimeoutIfEarlier('link-work', () => { runs.push('first'); }, 1000)).toBe(true);
+    expect(runtime.armTimeoutIfEarlier('link-work', () => { runs.push('equal'); }, 1000)).toBe(false);
     expect(runtime.armTimeoutIfEarlier('link-work', () => { runs.push('later'); }, 2000)).toBe(false);
     expect(runtime.armTimeoutIfEarlier('link-work', () => { runs.push('earlier'); }, 500)).toBe(true);
 

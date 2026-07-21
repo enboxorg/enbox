@@ -196,7 +196,7 @@ export class SyncEngineLevel implements SyncEngine {
    */
   private _replicationLinkStore?: SyncReplicationLinkStore;
 
-  /** Active link lifetimes and their backend-neutral ephemeral state. */
+  /** Active replication-session controllers; their keyed scheduling lives in `_runtime`. */
   private readonly _linkControllers: Map<string, SyncLinkController> = new Map();
 
   // ---------------------------------------------------------------------------
@@ -1087,7 +1087,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /**
-   * stopSync invalidates scheduled work and closes live subscriptions, then
+   * stopSync cancels runtime-owned scheduling and closes live subscriptions, then
    * waits for current lock-owning and background sync operations to finish.
    *
    * @param timeout - Maximum milliseconds to wait for in-progress sync work
@@ -1342,7 +1342,7 @@ export class SyncEngineLevel implements SyncEngine {
   // ---------------------------------------------------------------------------
 
   private async stopLiveSync(): Promise<void> {
-    // The runtime transition already cancelled scheduled work. Invalidate
+    // The runtime transition already cancelled runtime-owned scheduling. Invalidate
     // callbacks and close subscriptions through the active link owner.
     const controllers = [...this._linkControllers.values()];
     for (const controller of controllers) {
@@ -1859,6 +1859,7 @@ export class SyncEngineLevel implements SyncEngine {
     this._lifecycle.deleteIdentityTaskGroup(did, taskGroup);
   }
 
+  /** Cancel active-session scheduling and pre-session initialization retries for one identity. */
   private cancelIdentityTimers(did: string): void {
     for (const controller of this._linkControllers.values()) {
       if (controller.link.tenantDid === did) {

@@ -555,7 +555,8 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const clock = sinon.useFakeTimers();
     const fixture = createFixture();
     const controller = activate(fixture);
-    fixture.operations.reconcileTarget.rejects(new Error('remote query failed'));
+    fixture.operations.reconcileTarget.onFirstCall().rejects(new Error('remote query failed'));
+    fixture.operations.reconcileTarget.onSecondCall().resolves({ converged: true });
 
     await runWake(fixture, controller, 'pull');
 
@@ -566,6 +567,13 @@ describe('SyncLinkRecoveryCoordinator', () => {
       type   : 'reconcile:needed',
       reason : 'pull-retryable',
     })).toBe(true);
+    await clock.tickAsync(4999);
+    expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
+    await clock.tickAsync(1);
+    await waitForLastTask(fixture.taskRunner);
+    expect(fixture.operations.reconcileTarget.callCount).toBe(2);
+    expect(fixture.operations.reconcileTarget.secondCall.args[2]).toEqual({ verifyConvergence: true });
+    expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(false);
     controller.deactivate();
     await clock.runAllAsync();
   });
@@ -632,9 +640,10 @@ describe('SyncLinkRecoveryCoordinator', () => {
     state.push.contiguousAppliedToken = token('7');
     const checkpoint = { ...state.push.contiguousAppliedToken };
     const controller = activate(fixture, state);
-    fixture.operations.reconcileTarget.resolves({
+    fixture.operations.reconcileTarget.onFirstCall().resolves({
       pushFailures: [{ cid: 'push-cid', detail: 'remote unavailable' }],
     });
+    fixture.operations.reconcileTarget.onSecondCall().resolves({ converged: true });
 
     await runWake(fixture, controller, 'push');
 
@@ -646,6 +655,13 @@ describe('SyncLinkRecoveryCoordinator', () => {
     })).toBe(true);
     expect(fixture.operations.clearConvergence.notCalled).toBe(true);
     expect(fixture.operations.emitEvent.calledWithMatch({ type: 'reconcile:completed' })).toBe(false);
+    await clock.tickAsync(4999);
+    expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
+    await clock.tickAsync(1);
+    await waitForLastTask(fixture.taskRunner);
+    expect(fixture.operations.reconcileTarget.callCount).toBe(2);
+    expect(fixture.operations.reconcileTarget.secondCall.args[2]).toEqual({ verifyConvergence: true });
+    expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(false);
     controller.deactivate();
     await clock.runAllAsync();
   });
@@ -654,16 +670,23 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const clock = sinon.useFakeTimers();
     const fixture = createFixture();
     const controller = activate(fixture);
-    fixture.operations.reconcileTarget.rejects(new Error('offline'));
+    fixture.operations.reconcileTarget.onFirstCall().rejects(new Error('offline'));
+    fixture.operations.reconcileTarget.onSecondCall().resolves({ converged: true });
 
     await fixture.coordinator.reconcile(controller);
     expect(fixture.operations.reportError.calledOnce).toBe(true);
     expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(true);
-    fixture.getRuntime().cancelTimer(RECONCILE_TIMER_KEY);
+    await clock.tickAsync(4999);
+    expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
+    await clock.tickAsync(1);
+    await waitForLastTask(fixture.taskRunner);
+    expect(fixture.operations.reconcileTarget.callCount).toBe(2);
+    expect(fixture.operations.reconcileTarget.secondCall.args[2]).toEqual({ verifyConvergence: true });
+    expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(false);
 
     const started = deferred<void>();
     const release = deferred<void>();
-    fixture.operations.reconcileTarget.callsFake(async (): Promise<{ converged: true }> => {
+    fixture.operations.reconcileTarget.onThirdCall().callsFake(async (): Promise<{ converged: true }> => {
       started.resolve();
       await release.promise;
       throw new Error('late failure');
@@ -727,6 +750,13 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
     expect(fixture.operations.reconcileTarget.firstCall.args[2]).toBeUndefined();
     expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(true);
+    await clock.tickAsync(499);
+    expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
+    await clock.tickAsync(1);
+    await waitForLastTask(fixture.taskRunner);
+    expect(fixture.operations.reconcileTarget.callCount).toBe(2);
+    expect(fixture.operations.reconcileTarget.secondCall.args[2]).toEqual({ verifyConvergence: true });
+    expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(false);
     controller.deactivate();
     await clock.runAllAsync();
   });

@@ -147,7 +147,11 @@ export class SyncLinkRecoveryCoordinator {
     controller.clearRepairAttempts();
   }
 
-  /** Cancel every runtime-owned timer for one exact link lifetime. */
+  /**
+   * Cancel reconciliation and repair scheduling for the controller's link key.
+   * Same-key replacement controllers share these keys, so predecessor
+   * scheduling must be cancelled before installing the successor.
+   */
   public cancelScheduledWork(controller: SyncLinkController): void {
     const runtime = this._operations.getRuntime();
     runtime.cancelTimer(SyncLinkRecoveryCoordinator.reconcileTimerKey(controller.linkKey));
@@ -222,7 +226,7 @@ export class SyncLinkRecoveryCoordinator {
     });
   }
 
-  /** Schedule the earliest requested reconciliation for an exact link lifetime. */
+  /** Schedule the earliest reconciliation fenced by the captured controller lifetime. */
   public scheduleReconcile(controller: SyncLinkController, delayMs = this._reconcileDelayMs): boolean {
     const normalizedDelay = Math.max(0, delayMs);
     const runtime = this._operations.getRuntime();

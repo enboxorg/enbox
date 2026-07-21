@@ -24,7 +24,8 @@ the code, not an entry missing from this table.
 | Target-plan version | **`topologyGeneration`** / `expectedTopologyGeneration` | bare `generation`, `expectedGeneration` |
 | Deterministic identity of one tenant-and-scope projection, independent of endpoint and authorization | **`projectionId`** — `computeProjectionId` | endpoint identity, authorization identity |
 | Sole serializer for work owned by one active replication session | **link executor** — `SyncLinkExecutor` | link mailbox, direction reconciliation queue, `enqueueDirection`, `enqueueShared` |
-| Runtime-owned scheduling of delayed work for one active replication session | **link scheduler** — `SyncRuntime.armTimeout` / `armTimeoutIfEarlier`, keyed by `syncRepairRetry:<linkKey>` or `syncReconcile:<linkKey>` | controller timer handles, due-time fields, `set*Timer` / `consume*Timer` pairs |
+| Runtime-owned scheduling for one active replication session | **link scheduler** — `SyncRuntime.armTimeout` / `armTimeoutIfEarlier`, keyed by `syncRepairRetry:<linkKey>` or `syncReconcile:<linkKey>` | controller timer handles, due-time fields, `set*Timer` / `consume*Timer` pairs |
+| Runtime-owned Retry-After scheduling before a replication session exists | **link initialization retry** — `scheduleLinkInitRetry`, keyed by `linkInitRetry:<linkKey>` | link scheduler, which requires an active replication session |
 | Coalesced notice that one durable wake pass is owed | **work mark** — `SyncLinkExecutor.request`, `hasPending` | event cursor, `requestPass`, `_requestedPasses` |
 | Distinct caller-specific operation serialized by the active replication session | **executor call** — `SyncLinkExecutor.enqueue`, `SyncLinkRecoveryCoordinator.execute` | work mark, shared operation |
 | Whether ordinary executor work may run for the current replication generation; wakes are retained while ineligible and calls fail fast | **executor eligibility** — `isReady`, `markReady`, `SyncLinkRecoveryCoordinator.resume`, surfaced as `isReplicationReady` / `markReplicationReady` | readiness promise, replication readiness barrier, parked administrative call |
@@ -72,7 +73,7 @@ the code, not an entry missing from this table.
 | `collect*` | Full enumeration into a set |
 | `query*` / `fetch*` | A DWN round-trip |
 | `apply*` | Fold an outcome into state |
-| `cancel*` | Retract a scheduled timer (suffix `Timer`) |
+| `cancel*` | Retract runtime-owned scheduling without ending its owner; name the cancellation scope |
 | `clear*` | Wipe durable storage |
 | `dispose*` | Irreversibly end an owned lifetime (`SyncRuntime`, `SyncLinkController`) |
 | `stop*` | Halt a restartable activity |
@@ -81,6 +82,16 @@ the code, not an entry missing from this table.
 
 Booleans are `is*` / `has*`; `should*` is reserved for policy predicates passed
 downward (`shouldContinue` — `true` means *proceed*).
+
+### Scheduling cancellation scopes
+
+| Scope | Entry point |
+|---|---|
+| One exact runtime key | `SyncRuntime.cancelTimer` |
+| A runtime key family selected by predicate | `SyncRuntime.cancelTimers` |
+| Reconciliation and repair scheduling for one `linkKey` | `SyncLinkRecoveryCoordinator.cancelScheduledWork` |
+| Active-session scheduling plus pre-session initialization retries for one identity | `SyncEngineLevel.cancelIdentityTimers` |
+| Every timer owned by one runtime | `SyncRuntime.dispose` |
 
 ## Teardown verbs
 
@@ -91,7 +102,7 @@ One verb per kind of ending, because these had four overlapping spellings:
 | `dispose` | An owned lifetime, irreversibly | `SyncRuntime.dispose`, `SyncLinkController.dispose` |
 | `close` | One external resource | `closeLiveSubscription`, `SyncEngineLevel.close` |
 | `stop` | A restartable activity | `stopSync`, `stopLiveSync` |
-| `cancel*Timer` | A scheduled timer | `cancelTimer`, `cancelRepairRetryTimer` |
+| `cancel*` | Runtime-owned scheduling at a named scope | `cancelTimer`, `cancelScheduledWork`, `cancelIdentityTimers` |
 | `clear` | Durable storage, wiped | `clear()`, `clearSyncDb` |
 | `remove` / `delete` | One entry in a registry or store | `removeLinkController` |
 | `prune` | A supersession sweep | `pruneStaleLinkBlocks` |

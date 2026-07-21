@@ -712,6 +712,39 @@ describe('SyncEngineLevel — identity management', () => {
       expect(hotRemoveStub.called).toBe(false);
     });
 
+    it('should cancel same-key link scheduling before hot-replacing a controller', () => {
+      const engine = new SyncEngineLevel({ db });
+      engine['_runtime'] = new SyncRuntime(true);
+      const linkKey = 'did:example:replacement^https://dwn.example.com^scope1';
+      const reconcileTimerKey = `syncReconcile:${linkKey}`;
+      const repairRetryTimerKey = `syncRepairRetry:${linkKey}`;
+      const original = activateTestLink(engine, linkKey, 'did:example:replacement');
+      const runtime = engine['_runtime'];
+
+      runtime.armTimeout(reconcileTimerKey, () => {}, 60_000);
+      runtime.armTimeout(repairRetryTimerKey, () => {}, 60_000);
+
+      const replacement = activateTestLink(engine, linkKey, 'did:example:replacement');
+
+      expect(original.isActive).toBe(false);
+      expect(replacement.isActive).toBe(true);
+      expect(runtime.hasTimer(reconcileTimerKey)).toBe(false);
+      expect(runtime.hasTimer(repairRetryTimerKey)).toBe(false);
+
+      const recoveryCoordinator = engine['_linkRecoveryCoordinator'];
+      expect(recoveryCoordinator.scheduleReconcile(replacement, 60_000)).toBe(true);
+      expect(runtime.hasTimer(reconcileTimerKey)).toBe(true);
+      runtime.cancelTimer(reconcileTimerKey);
+
+      replacement.link.status = 'repairing';
+      replacement.incrementRepairAttempts();
+      recoveryCoordinator['scheduleRepairRetry'](replacement);
+      expect(runtime.hasTimer(repairRetryTimerKey)).toBe(true);
+
+      replacement.deactivate();
+      runtime.dispose();
+    });
+
     it('should still throw when unregistering a non-registered identity during live sync', async () => {
       const engine = new SyncEngineLevel({ db });
       (engine as any)._runtime = new SyncRuntime(true);
