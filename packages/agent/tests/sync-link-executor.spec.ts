@@ -81,6 +81,52 @@ describe('SyncLinkExecutor', () => {
     expect(runs).toEqual(['pull', 'push', 'pull']);
   });
 
+  it('should coalesce repeated reconnect waves without losing either durable direction', async () => {
+    const executor = new SyncLinkExecutor();
+    const firstPullStarted = deferred<void>();
+    const firstPushStarted = deferred<void>();
+    const releaseFirstPull = deferred<void>();
+    const releaseFirstPush = deferred<void>();
+    const runs: SyncLinkWorkKind[] = [];
+    let pullRuns = 0;
+    let pushRuns = 0;
+    executor.markReady();
+    executor.request('pull');
+    executor.request('push');
+
+    const draining = executor.drain(async (kind): Promise<void> => {
+      runs.push(kind);
+      if (kind === 'pull' && ++pullRuns === 1) {
+        firstPullStarted.resolve();
+        await releaseFirstPull.promise;
+      }
+      if (kind === 'push' && ++pushRuns === 1) {
+        firstPushStarted.resolve();
+        await releaseFirstPush.promise;
+      }
+    });
+    await firstPullStarted.promise;
+
+    for (let wave = 0; wave < 64; wave++) {
+      executor.request('pull');
+      executor.request('push');
+    }
+
+    releaseFirstPull.resolve();
+    await firstPushStarted.promise;
+
+    for (let wave = 0; wave < 64; wave++) {
+      executor.request('pull');
+      executor.request('push');
+    }
+
+    releaseFirstPush.resolve();
+    await draining;
+
+    expect(runs).toEqual(['pull', 'push', 'pull', 'push']);
+    expect(executor.hasPendingWork).toBe(false);
+  });
+
   it('should consume only the pending mark already represented by equivalent active work', async () => {
     const executor = new SyncLinkExecutor();
     const runs: SyncLinkWorkKind[] = [];

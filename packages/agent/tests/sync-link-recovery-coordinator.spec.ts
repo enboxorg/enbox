@@ -524,7 +524,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await clock.runAllAsync();
   });
 
-  it('coalesces pull wake signals into one trailing durable-feed pass', async () => {
+  it('coalesces a pull wake burst into one trailing durable-feed pass', async () => {
     const fixture = createFixture();
     const controller = activate(fixture);
     const passStarted = deferred<void>();
@@ -538,10 +538,12 @@ describe('SyncLinkRecoveryCoordinator', () => {
 
     const first = runWake(fixture, controller, 'pull');
     await passStarted.promise;
-    const second = runWake(fixture, controller, 'pull');
-    const third = runWake(fixture, controller, 'pull');
+    const trailingWakes = Array.from(
+      { length: 64 },
+      (): Promise<void> => runWake(fixture, controller, 'pull'),
+    );
     releasePass.resolve();
-    await Promise.all([first, second, third]);
+    await Promise.all([first, ...trailingWakes]);
 
     expect(fixture.operations.reconcileTarget.callCount).toBe(2);
     for (const call of fixture.operations.reconcileTarget.getCalls()) {
