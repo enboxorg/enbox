@@ -26,8 +26,8 @@ describe('SyncEngineLevel quota routing', () => {
     sinon.stub(internal, 'clearDeadLetterForTenant').resolves();
     sinon.stub(internal, 'clearDeferredPull').resolves();
     const resolveSuperseded = sinon.stub(
-      internal,
-      'resolveQuotaBlocksSupersededByAcknowledgement',
+      internal._quotaManager,
+      'resolveBlocksSupersededByAcknowledgement',
     ).resolves();
     const clearBlock = sinon.spy(internal._quotaManager, 'clearBlock');
 

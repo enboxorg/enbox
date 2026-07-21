@@ -1,4 +1,4 @@
-import type { SinonStub } from 'sinon';
+import type { SinonStub, SinonStubbedInstance } from 'sinon';
 
 import type { SyncDurableFeedReconcileResult } from '../src/sync-durable-feed-reconciler.js';
 import type { SyncTarget } from '../src/sync-target-resolver.js';
@@ -13,6 +13,7 @@ import sinon from 'sinon';
 import { describe, expect, it } from 'bun:test';
 
 import { SyncFeedConvergenceManager } from '../src/sync-feed-convergence-manager.js';
+import { SyncQuotaManager } from '../src/sync-quota-manager.js';
 
 type FeedConvergenceOperationStubs = {
   [Operation in keyof SyncFeedConvergenceManagerOperations]: SinonStub;
@@ -21,6 +22,7 @@ type FeedConvergenceOperationStubs = {
 type FeedConvergenceFixture = {
   manager: SyncFeedConvergenceManager;
   operations: FeedConvergenceOperationStubs;
+  quotaManager: SinonStubbedInstance<SyncQuotaManager>;
 };
 
 const ALICE = 'did:example:alice';
@@ -110,13 +112,14 @@ function createFixture({
   syncTarget?: SyncTarget;
 } = {}): FeedConvergenceFixture {
   storedLink ??= linkFor(syncTarget);
+  const quotaManager = sinon.createStubInstance(SyncQuotaManager);
+  quotaManager.getNextProbeAtForTarget.resolves(undefined);
+  quotaManager.reconcileAndExplainFeedDivergence.resolves(false);
   const operations: FeedConvergenceOperationStubs = {
     getActiveLink           : sinon.stub().returns(activeLink ?? storedLink),
     getDeadLettersForTenant : sinon.stub().resolves([]),
     getLink                 : sinon.stub().resolves(storedLink),
     getLinkKey              : sinon.stub().callsFake((value: SyncTarget) => linkKey(value)),
-    getNextQuotaProbeAt     : sinon.stub().resolves(undefined),
-    isDivergenceExplained   : sinon.stub().resolves(false),
     isLinkKeyForTenant      : sinon.stub().callsFake(
       (value: string, tenantDid: string) => value.startsWith(`${tenantDid}^`),
     ),
@@ -127,8 +130,9 @@ function createFixture({
   };
 
   return {
-    manager: new SyncFeedConvergenceManager({ maxAttempts, operations }),
+    manager: new SyncFeedConvergenceManager({ maxAttempts, operations, quotaManager }),
     operations,
+    quotaManager,
   };
 }
 
@@ -136,12 +140,12 @@ describe('SyncFeedConvergenceManager', () => {
   it('accepts quota-explained divergence, clears its failure history, and schedules the next live probe', async () => {
     const syncTarget = target();
     const context = contextFor(syncTarget);
-    const { manager, operations } = createFixture({ activeLink: context.link, syncTarget });
-    operations.isDivergenceExplained.onCall(0).resolves(false);
-    operations.isDivergenceExplained.onCall(1).resolves(false);
-    operations.isDivergenceExplained.onCall(2).resolves(true);
-    operations.isDivergenceExplained.onCall(3).resolves(false);
-    operations.getNextQuotaProbeAt.resolves('2026-01-01T00:01:00.000Z');
+    const { manager, operations, quotaManager } = createFixture({ activeLink: context.link, syncTarget });
+    quotaManager.reconcileAndExplainFeedDivergence.onCall(0).resolves(false);
+    quotaManager.reconcileAndExplainFeedDivergence.onCall(1).resolves(false);
+    quotaManager.reconcileAndExplainFeedDivergence.onCall(2).resolves(true);
+    quotaManager.reconcileAndExplainFeedDivergence.onCall(3).resolves(false);
+    quotaManager.getNextProbeAtForTarget.resolves('2026-01-01T00:01:00.000Z');
 
     expect(await manager.handleVerifiedDivergence(syncTarget, divergence(), context)).toBe(false);
     expect(await manager.handleVerifiedDivergence(syncTarget, divergence(), context)).toBe(false);
@@ -155,6 +159,8 @@ describe('SyncFeedConvergenceManager', () => {
       context.link,
       '2026-01-01T00:01:00.000Z',
     )).toBe(true);
+    expect(quotaManager.reconcileAndExplainFeedDivergence.alwaysCalledWithExactly(syncTarget, divergence())).toBe(true);
+    expect(quotaManager.getNextProbeAtForTarget.calledOnceWithExactly(syncTarget)).toBe(true);
     expect(operations.getLink.notCalled).toBe(true);
   });
 
@@ -162,11 +168,11 @@ describe('SyncFeedConvergenceManager', () => {
     const syncTarget = target();
     const initializingLink = linkFor(syncTarget, 'initializing');
     const context = contextFor(syncTarget, initializingLink);
-    const { manager, operations } = createFixture({ activeLink: initializingLink, syncTarget });
-    operations.isDivergenceExplained.resolves(true);
+    const { manager, operations, quotaManager } = createFixture({ activeLink: initializingLink, syncTarget });
+    quotaManager.reconcileAndExplainFeedDivergence.resolves(true);
 
     await manager.handleVerifiedDivergence(syncTarget, divergence(), context);
-    operations.getNextQuotaProbeAt.resolves('2026-01-01T00:01:00.000Z');
+    quotaManager.getNextProbeAtForTarget.resolves('2026-01-01T00:01:00.000Z');
     await manager.handleVerifiedDivergence(syncTarget, divergence(), context);
 
     expect(operations.getActiveLink.calledOnceWithExactly(context.linkKey)).toBe(true);

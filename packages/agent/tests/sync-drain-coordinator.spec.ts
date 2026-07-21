@@ -1,8 +1,9 @@
-import type { SinonStub } from 'sinon';
+import type { SinonStub, SinonStubbedInstance } from 'sinon';
 
 import type { ReplicationLinkState } from '../src/types/sync.js';
 import type { SyncDrainCoordinatorOperations } from '../src/sync-drain-coordinator.js';
 import type { SyncDurableFeedReconcileResult } from '../src/sync-durable-feed-reconciler.js';
+import type { SyncQuotaBlockEntry } from '../src/sync-quota-manager.js';
 import type { SyncTarget } from '../src/sync-target-resolver.js';
 import type { SyncIdentityStore, SyncIdentityStoreEntry } from '../src/sync-identity-store.js';
 
@@ -11,6 +12,7 @@ import sinon from 'sinon';
 import { describe, expect, it } from 'bun:test';
 
 import { SyncDrainCoordinator } from '../src/sync-drain-coordinator.js';
+import { SyncQuotaManager } from '../src/sync-quota-manager.js';
 
 type DrainFixtureOptions = {
   entries?: SyncIdentityStoreEntry[];
@@ -31,6 +33,7 @@ type DrainFixture = {
   coordinator: SyncDrainCoordinator;
   entries: SinonStub;
   operations: DrainFixtureOperations;
+  quotaManager: SinonStubbedInstance<SyncQuotaManager>;
   state: DrainFixtureState;
 };
 
@@ -70,6 +73,27 @@ function validEntry(did = 'did:example:alice'): SyncIdentityStoreEntry {
   return { status: 'valid', did, options: { protocols: 'all' } };
 }
 
+function quotaBlockEntry(syncTarget = ownerTarget()): SyncQuotaBlockEntry {
+  const messageCid = 'blocked-cid';
+  return {
+    messageCid,
+    state: {
+      attempts           : 1,
+      authorizationEpoch : syncTarget.authorizationEpoch,
+      blockedCid         : messageCid,
+      firstBlockedAt     : '2026-01-01T00:00:00.000Z',
+      lastBlockedAt      : '2026-01-01T00:00:00.000Z',
+      linkKey            : `${syncTarget.did}^${syncTarget.dwnUrl}^${syncTarget.projectionId}^${syncTarget.authorizationEpoch}`,
+      messageCid,
+      nextProbeAt        : '2026-01-01T00:01:00.000Z',
+      projectionId       : syncTarget.projectionId,
+      remoteEndpoint     : syncTarget.dwnUrl,
+      source             : 'feed',
+      tenantDid          : syncTarget.did,
+    },
+  };
+}
+
 function createFixture({
   entries: storedEntries = [validEntry()],
   link = replicationLink(),
@@ -99,13 +123,14 @@ function createFixture({
     get    : sinon.stub().resolves(undefined),
     set    : sinon.stub().resolves(),
   } satisfies SyncIdentityStore;
+  const quotaManager = sinon.createStubInstance(SyncQuotaManager);
+  quotaManager.getActiveBlocksForTarget.resolves([]);
   const operations = {
     buildTargetsForEndpoint: sinon.stub().callsFake(
       async (did: string, remoteEndpoint: string): Promise<SyncTarget[]> => [ownerTarget(did, remoteEndpoint)],
     ),
     clearFeedConvergenceFailure  : sinon.stub().resolves(),
     getLink                      : sinon.stub().resolves(link),
-    getQuotaBlockCount           : sinon.stub().resolves(0),
     getTopologyGeneration        : sinon.stub().callsFake((): number => state.topologyGeneration),
     handleVerifiedFeedDivergence : sinon.stub().resolves(false),
     prepareLiveTarget            : sinon.stub().resolves(),
@@ -118,9 +143,10 @@ function createFixture({
   } satisfies SyncDrainCoordinatorOperations;
 
   return {
-    coordinator: new SyncDrainCoordinator({ identityStore, operations }),
+    coordinator: new SyncDrainCoordinator({ identityStore, operations, quotaManager }),
     entries,
     operations,
+    quotaManager,
     state,
   };
 }
@@ -423,7 +449,7 @@ describe('SyncDrainCoordinator', () => {
   });
 
   it('keeps explained divergence incomplete while quota blocks remain but records connectivity success', async () => {
-    const { coordinator, operations } = createFixture({
+    const { coordinator, operations, quotaManager } = createFixture({
       reconcileResult: {
         converged         : false,
         localFingerprint  : 'local-fingerprint',
@@ -432,7 +458,7 @@ describe('SyncDrainCoordinator', () => {
       },
     });
     operations.handleVerifiedFeedDivergence.resolves(true);
-    operations.getQuotaBlockCount.resolves(1);
+    quotaManager.getActiveBlocksForTarget.resolves([quotaBlockEntry()]);
 
     const result = await coordinator.drain('https://dwn.example');
 
@@ -445,6 +471,7 @@ describe('SyncDrainCoordinator', () => {
     });
     expect(operations.recordConnectivitySuccess.calledOnce).toBe(true);
     expect(operations.recordConnectivityFailure.notCalled).toBe(true);
+    expect(quotaManager.getActiveBlocksForTarget.calledOnceWithExactly(ownerTarget())).toBe(true);
   });
 
   it('stops preparing and draining targets after the topology changes', async () => {

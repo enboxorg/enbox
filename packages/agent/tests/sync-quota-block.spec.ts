@@ -31,6 +31,10 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
   let projectionId: string;
   let syncEngine: SyncEngineLevel;
 
+  function quotaManager(): SyncQuotaManager {
+    return (syncEngine as any)._quotaManager;
+  }
+
   async function seedQuotaBlock({
     authorizationEpoch = 'owner',
     blockedCid,
@@ -229,18 +233,15 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     const nextProbeAt = new Date(Date.now() + 60_000).toISOString();
     await seedQuotaBlock({ authorizationEpoch: 'old-epoch', cid: 'old-cid', nextProbeAt });
     await seedQuotaBlock({ authorizationEpoch: 'new-epoch', cid: 'new-cid', nextProbeAt });
-    const internal = syncEngine as unknown as {
-      pruneQuotaBlocksForCurrentTargets(targets: unknown[], expectedTopologyGeneration: number): Promise<void>;
-    };
-
-    await internal.pruneQuotaBlocksForCurrentTargets([{
+    const topologyGeneration = (syncEngine as any)._targetPlanner.topologyGeneration as number;
+    await quotaManager().pruneStaleLinkBlocks([{
       did                : TENANT,
       dwnUrl             : REMOTE,
       scope              : { kind: 'full' },
       authorization      : { kind: 'owner' },
       authorizationEpoch : 'new-epoch',
       projectionId,
-    }], (syncEngine as any)._targetPlanner.topologyGeneration);
+    }], (): boolean => (syncEngine as any)._targetPlanner.topologyGeneration === topologyGeneration);
 
     const [status] = await syncEngine.getRemoteSyncStatus(TENANT);
     expect(status.quotaBlockedMessageCount).toBe(1);
@@ -291,11 +292,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     const late = new Date(Date.now() + 300_000).toISOString();
     await seedQuotaBlock({ cid: 'grant-a', nextProbeAt: early, source: 'permission-grant' });
     await seedQuotaBlock({ cid: 'grant-b', nextProbeAt: late, source: 'permission-grant' });
-    const internal = syncEngine as unknown as {
-      getNextQuotaProbeAtForTarget(target: unknown): Promise<string | undefined>;
-    };
-
-    const nextProbeAt = await internal.getNextQuotaProbeAtForTarget({
+    const nextProbeAt = await quotaManager().getNextProbeAtForTarget({
       did                : TENANT,
       dwnUrl             : REMOTE,
       scope              : { kind: 'full' },
@@ -442,7 +439,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     const internal = syncEngine as any;
     const transitionFence = internal.captureTransitionFence() as () => boolean;
     const topologyGeneration = internal._targetPlanner.topologyGeneration as number;
-    sinon.stub(internal, 'getQuotaBlocksForTarget').callsFake(async () => {
+    sinon.stub(internal._quotaManager, 'getActiveBlocksForTarget').callsFake(async () => {
       internal._targetPlanner.invalidate();
       return [{
         messageCid : 'blocked-cid',
@@ -507,12 +504,11 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     const internal = syncEngine as unknown as {
       collectLocalFeedCids(target: unknown): Promise<Set<string> | undefined>;
       collectRemoteFeedCids(target: unknown): Promise<Set<string> | undefined>;
-      isFeedDivergenceExplainedByQuotaBlocks(target: unknown, result: unknown): Promise<boolean>;
     };
     sinon.stub(internal, 'collectLocalFeedCids').resolves(new Set(['blocked-cid', 'unrelated-cid']));
     sinon.stub(internal, 'collectRemoteFeedCids').resolves(new Set());
 
-    const explained = await internal.isFeedDivergenceExplainedByQuotaBlocks({
+    const explained = await quotaManager().reconcileAndExplainFeedDivergence({
       did                : TENANT,
       dwnUrl             : REMOTE,
       scope              : { kind: 'full' },
@@ -535,12 +531,11 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     const internal = syncEngine as unknown as {
       collectLocalFeedCids(target: unknown): Promise<Set<string> | undefined>;
       collectRemoteFeedCids(target: unknown): Promise<Set<string> | undefined>;
-      isFeedDivergenceExplainedByQuotaBlocks(target: unknown, result: unknown): Promise<boolean>;
     };
     sinon.stub(internal, 'collectLocalFeedCids').resolves(new Set(['blocked-cid']));
     sinon.stub(internal, 'collectRemoteFeedCids').resolves(new Set(['remote-only-cid']));
 
-    const explained = await internal.isFeedDivergenceExplainedByQuotaBlocks({
+    const explained = await quotaManager().reconcileAndExplainFeedDivergence({
       did                : TENANT,
       dwnUrl             : REMOTE,
       scope              : { kind: 'full' },
@@ -568,7 +563,6 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     const internal = syncEngine as unknown as {
       collectLocalFeedCids(target: unknown): Promise<Set<string> | undefined>;
       collectRemoteFeedCids(target: unknown): Promise<Set<string> | undefined>;
-      isFeedDivergenceExplainedByQuotaBlocks(target: unknown, result: unknown): Promise<boolean>;
     };
     sinon.stub(internal, 'collectLocalFeedCids').callsFake(async () => localCids);
     sinon.stub(internal, 'collectRemoteFeedCids').callsFake(async () => remoteCids);
@@ -581,7 +575,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
       projectionId,
     };
 
-    expect(await internal.isFeedDivergenceExplainedByQuotaBlocks(target, {})).toBe(true);
+    expect(await quotaManager().reconcileAndExplainFeedDivergence(target, {})).toBe(true);
     expect(await (syncEngine as any)._quotaManager.getBlocksForTarget(target)).toEqual([
       expect.objectContaining({
         messageCid : 'update-cid',
@@ -594,14 +588,14 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     // solely because its key CID left the local feed.
     localCids = new Set(['initial-cid']);
     remoteCids = new Set();
-    expect(await internal.isFeedDivergenceExplainedByQuotaBlocks(target, {})).toBe(true);
+    expect(await quotaManager().reconcileAndExplainFeedDivergence(target, {})).toBe(true);
     expect(await (syncEngine as any)._quotaManager.getBlocksForTarget(target)).toHaveLength(1);
 
     // Once the remote accounts for both the root and its attributed dependency,
     // the explanatory row is no longer needed.
     localCids = new Set(['initial-cid', 'update-cid']);
     remoteCids = new Set(['initial-cid', 'update-cid']);
-    await internal.isFeedDivergenceExplainedByQuotaBlocks(target, {});
+    await quotaManager().reconcileAndExplainFeedDivergence(target, {});
     expect(await (syncEngine as any)._quotaManager.getBlocksForTarget(target)).toHaveLength(0);
   });
 
@@ -657,11 +651,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     await seedQuotaBlock({ cid: 'cid-1', nextProbeAt: new Date(0).toISOString() });
     const events: SyncEvent[] = [];
     const unsubscribe = syncEngine.on((event) => events.push(event));
-    const internal = syncEngine as unknown as {
-      applyPushResult(target: unknown, result: PushResult): Promise<unknown>;
-    };
-
-    await internal.applyPushResult({
+    await quotaManager().applyPushResult({
       did                : TENANT,
       dwnUrl             : REMOTE,
       scope              : { kind: 'full' },
@@ -682,9 +672,6 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
 
   it('does not recreate quota state when the same result also acknowledges the CID', async () => {
     await seedQuotaBlock({ cid: 'cid-1', nextProbeAt: new Date(0).toISOString() });
-    const internal = syncEngine as unknown as {
-      applyPushResult(target: unknown, result: PushResult): Promise<{ quotaBlocked: boolean }>;
-    };
     const target = {
       did                : TENANT,
       dwnUrl             : REMOTE,
@@ -694,7 +681,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
       projectionId,
     };
 
-    const outcome = await internal.applyPushResult(target, {
+    const outcome = await quotaManager().applyPushResult(target, {
       succeeded    : ['cid-1'],
       acknowledged : [{ cid: 'cid-1', resolution: 'applied' }],
       failed       : [{
@@ -715,10 +702,6 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     await seedQuotaBlock({ cid: 'cid-1', nextProbeAt: new Date(0).toISOString() });
     const events: SyncEvent[] = [];
     const unsubscribe = syncEngine.on((event) => events.push(event));
-    const internal = syncEngine as unknown as {
-      applyPushResult(target: unknown, result: PushResult): Promise<unknown>;
-      getQuotaBlocksForTarget(target: unknown): Promise<unknown[]>;
-    };
     const target = {
       did                : TENANT,
       dwnUrl             : REMOTE,
@@ -728,7 +711,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
       projectionId,
     };
 
-    await internal.applyPushResult(target, {
+    await quotaManager().applyPushResult(target, {
       succeeded    : ['cid-1'],
       acknowledged : [{ cid: 'cid-1', resolution: 'superseded' }],
       failed       : [],
@@ -736,9 +719,9 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
 
     const [resolved] = await (syncEngine as any)._quotaManager.getBlocksForTarget(target);
     expect(resolved.state).toMatchObject({ attempts: 1, supersededAt: expect.any(String) });
-    expect(await internal.getQuotaBlocksForTarget(target)).toHaveLength(0);
+    expect(await quotaManager().getActiveBlocksForTarget(target)).toHaveLength(0);
 
-    await internal.applyPushResult(target, {
+    await quotaManager().applyPushResult(target, {
       acknowledged : [],
       succeeded    : [],
       failed       : [{
@@ -749,7 +732,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
         reason       : 'storage',
       }],
     });
-    await internal.applyPushResult(target, {
+    await quotaManager().applyPushResult(target, {
       acknowledged : [],
       succeeded    : [],
       failed       : [{ cid: 'cid-1', kind: 'Invalid', terminal: true, detail: 'stale terminal result' }],
@@ -776,9 +759,6 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
 
   it('deletes an exact quota row after an Applied acknowledgement', async () => {
     await seedQuotaBlock({ cid: 'cid-1', nextProbeAt: new Date(0).toISOString() });
-    const internal = syncEngine as unknown as {
-      applyPushResult(target: unknown, result: PushResult): Promise<unknown>;
-    };
     const target = {
       did                : TENANT,
       dwnUrl             : REMOTE,
@@ -788,7 +768,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
       projectionId,
     };
 
-    await internal.applyPushResult(target, {
+    await quotaManager().applyPushResult(target, {
       succeeded    : ['cid-1'],
       acknowledged : [{ cid: 'cid-1', resolution: 'applied' }],
       failed       : [],
@@ -801,9 +781,6 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
   it('emits push:quota-blocked with the CID, detail, and next probe time on a fresh block', async () => {
     const events: SyncEvent[] = [];
     const unsubscribe = syncEngine.on((event) => events.push(event));
-    const internal = syncEngine as unknown as {
-      applyPushResult(target: unknown, result: PushResult): Promise<{ quotaBlocked: boolean; nextQuotaProbeAt?: string }>;
-    };
     const target = {
       did                : TENANT,
       dwnUrl             : REMOTE,
@@ -814,7 +791,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     };
 
     const before = Date.now();
-    const outcome = await internal.applyPushResult(target, {
+    const outcome = await quotaManager().applyPushResult(target, {
       acknowledged : [],
       succeeded    : [],
       failed       : [{
@@ -848,9 +825,6 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
   });
 
   it('extends the re-probe backoff along the 30s/1m/5m/15m/30m ladder and clamps at 30m', async () => {
-    const internal = syncEngine as unknown as {
-      applyPushResult(target: unknown, result: PushResult): Promise<unknown>;
-    };
     const target = {
       did                : TENANT,
       dwnUrl             : REMOTE,
@@ -864,7 +838,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     const observed: number[] = [];
     // One extra block past the ladder must clamp at the final 30m rung.
     for (let attempt = 0; attempt < ladder.length + 1; attempt++) {
-      await internal.applyPushResult(target, {
+      await quotaManager().applyPushResult(target, {
         acknowledged : [],
         succeeded    : [],
         failed       : [{

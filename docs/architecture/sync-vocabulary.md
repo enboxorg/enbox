@@ -40,6 +40,7 @@ the code, not an entry missing from this table.
 | Active durable record of a remote quota rejection | **quota block** — `SyncQuotaBlockState` without `supersededAt` | dead letter, generic retryable failure |
 | Direct retry of a due quota block, independent of feed progress | **quota probe** — `probeQuotaBlocksForTarget`, `probeBlocksForTarget`, `probeBlock` | repair pass |
 | Historical quota row retained only to explain an intentional feed omission | **resolved quota omission** — `SyncQuotaBlockState.supersededAt` | active quota block |
+| Backend-neutral owner of quota policy and durable quota state | **quota manager** — `SyncQuotaManager`, injected directly into its policy consumers | engine quota delegation wrappers |
 | Verified comparison of complete local and remote feed inventories | **feed convergence** — `SyncFeedConvergenceManager` | ordinary reconciliation pass, transport health |
 | Ordering and supervision of start/stop, exclusive work, and background tasks | **lifecycle coordination** — `SyncLifecycleCoordinator`, `SyncTaskGroup` | timer ownership, which belongs to `SyncRuntime` |
 | Public engine observability notification | **sync event** — `SyncEvent`, `SyncEngine.on(listener)` | DWN subscription `MessageEvent`, transport lifecycle message |
@@ -118,7 +119,7 @@ would make one signal stand in for proof it does not carry.
 
 | Subsystem | Owns | Does not own |
 |---|---|---|
-| Quota | Durable per-link blocks, backoff, direct probes, and resolved-omission evidence | General push retry, dead letters, or feed checkpoints |
+| Quota | `SyncQuotaManager` owns durable per-link blocks, backoff, direct probes, and resolved-omission evidence; the engine owns lifecycle fencing and effects | General push retry, dead letters, or feed checkpoints |
 | Deferred pulls | Temporary pull-admission state; a root holds the page until it succeeds, disappears, or ages into a dead letter | Push failures or permanent admission rejection |
 | Echo suppression | Short-lived `(tenant, CID, endpoint)` transfer hints | Durable progress; a cache hit never advances a checkpoint by itself |
 | Feed convergence | Verified inventory/fingerprint mismatch policy after reconciliation | Socket health or routine feed transfer |

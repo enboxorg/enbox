@@ -1,5 +1,6 @@
 import type { MessagesQueryReply, MessagesQueryReplyEntry, ProgressToken } from '@enbox/dwn-sdk-js';
 
+import type { SyncQuotaManager } from './sync-quota-manager.js';
 import type { SyncTarget } from './sync-target-resolver.js';
 import type { PushFailure, ReplicationLinkState, SyncDirection } from './types/sync.js';
 
@@ -83,10 +84,6 @@ export interface SyncDurableFeedReconcilerOperations {
     forceQuotaProbe?: boolean,
   ): Promise<SyncDurableFeedPermissionGrantBootstrapResult>;
 
-  clearResolvedQuotaOmissions(target: SyncTarget): Promise<void>;
-
-  getQuotaBlockCids(target: SyncTarget): Promise<string[]>;
-
   /**
    * Persist one page's ordered checkpoint advance and emit it once durable.
    */
@@ -109,6 +106,11 @@ export interface SyncDurableFeedReconcilerOperations {
 
   resetCheckpoint(link: ReplicationLinkState, direction: SyncDirection): Promise<void>;
 }
+
+export type SyncDurableFeedReconcilerParams = {
+  operations: SyncDurableFeedReconcilerOperations;
+  quotaManager: SyncQuotaManager;
+};
 
 type FeedCursorAdvanceResult =
   | { drained: true }
@@ -139,18 +141,20 @@ type ProcessPullPageParams = {
  * Reconciles one durable local/remote message feed pair.
  *
  * The algorithm owns ordering, pagination, progress-gap recovery, checkpoint
- * progression, and convergence verification. Storage, transport, admission,
- * and quota policy are supplied through domain operations so the same
- * reconciler can be used by Level- or SQLite-backed sync engines.
+ * progression, and convergence verification. Storage, transport, and
+ * admission are supplied through domain operations. Durable quota policy
+ * is supplied by `SyncQuotaManager`, independent of the sync-engine backend.
  */
 export class SyncDurableFeedReconciler {
   private static readonly PAGE_LIMIT = 100;
 
   private readonly _operations: SyncDurableFeedReconcilerOperations;
+  private readonly _quotaManager: SyncQuotaManager;
   private readonly _runs: Map<string, Promise<void>> = new Map();
 
-  constructor(operations: SyncDurableFeedReconcilerOperations) {
+  constructor({ operations, quotaManager }: SyncDurableFeedReconcilerParams) {
     this._operations = operations;
+    this._quotaManager = quotaManager;
   }
 
   /**
@@ -214,7 +218,7 @@ export class SyncDurableFeedReconciler {
 
     const forceQuotaProbe = options?.forceQuotaProbe === true;
     const forceProbeCids = forceQuotaProbe
-      ? new Set(await this._operations.getQuotaBlockCids(target))
+      ? new Set((await this._quotaManager.getActiveBlocksForTarget(target)).map(({ messageCid }) => messageCid))
       : undefined;
     const result = await this.pushLocalPages(target, link, shouldContinue, forceQuotaProbe);
 
@@ -260,7 +264,7 @@ export class SyncDurableFeedReconciler {
     };
     const converged = SyncDurableFeedReconciler.fingerprintsConverged(result);
     if (converged) {
-      await this._operations.clearResolvedQuotaOmissions(target);
+      await this._quotaManager.clearResolvedOmissionsForTarget(target);
     }
     return { ...result, converged };
   }
