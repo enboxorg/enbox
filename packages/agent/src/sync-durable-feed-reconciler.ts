@@ -141,8 +141,8 @@ type ProcessPullPageParams = {
  * Reconciles one durable local/remote message feed pair.
  *
  * The algorithm owns ordering, pagination, progress-gap recovery, checkpoint
- * progression, and convergence verification. Storage, transport, admission,
- * and transport are supplied through domain operations. Durable quota policy
+ * progression, and convergence verification. Storage, transport, and
+ * admission are supplied through domain operations. Durable quota policy
  * is supplied by `SyncQuotaManager`, independent of the sync-engine backend.
  */
 export class SyncDurableFeedReconciler {
