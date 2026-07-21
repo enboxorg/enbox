@@ -744,7 +744,7 @@ export interface SyncEngine {
    * immediate push, and runs a periodic durable feed settle check at
    * `interval` to repair anything the subscriptions missed.
    *
-   * Subsequent calls update the interval, tearing down the previous
+   * Subsequent calls update the interval, disposing of the previous
    * runtime's resources before starting the new one.
    *
    * The returned promise resolves after the initial durable-feed catch-up

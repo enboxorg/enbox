@@ -10,7 +10,7 @@ export type SyncIdentityTaskRunner = (operation: () => Promise<void>) => Promise
  * supervised background work without depending on a persistence backend.
  *
  * Runtime disposal remains the responsibility of the owning sync
- * engine. This coordinator only provides the ordering and task-admission
+ * engine. This coordinator only provides the ordering and task-intake
  * primitives needed to dispose it safely.
  */
 export class SyncLifecycleCoordinator {
@@ -111,7 +111,7 @@ export class SyncLifecycleCoordinator {
     return true;
   }
 
-  /** Starts globally supervised background work while task admission is open. */
+  /** Starts globally supervised background work while task intake is open. */
   public runBackgroundTask(operation: () => Promise<void>): Promise<void> {
     return this._backgroundTasks.run(operation);
   }

@@ -1292,7 +1292,7 @@ export class SyncEngineLevel implements SyncEngine {
    * so nothing in the awaited graph below may take it. That holds
    * structurally today: `SyncLifecycleCoordinator` is engine-private, and
    * the only lifecycle surface link initialization reaches is background
-   * task admission. Keep it that way; an awaited `acquireSync` under this
+   * task intake. Keep it that way; an awaited `acquireSync` under this
    * hold would self-deadlock rather than merely queue.
    */
   private async reinitializeOrphanedLinkTargets(runtime: SyncRuntime): Promise<void> {
@@ -1792,7 +1792,7 @@ export class SyncEngineLevel implements SyncEngine {
       if (!this.isDidResolutionFailure(error)) { throw error; }
 
       for (const delay of SyncEngineLevel.DID_RESOLUTION_RETRY_BACKOFF_MS) {
-        // A runtime transition during an attempt or the backoff tore down
+        // A runtime transition during an attempt or the backoff disposed of
         // whatever this initialization would have joined; a retry now would
         // re-activate a link controller and reopen subscriptions behind the
         // disposed runtime. Checked on both sides of the sleep so a transition during

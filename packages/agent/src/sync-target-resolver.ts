@@ -28,7 +28,7 @@ export interface SyncEndpointDiscovery {
  * different field names — `did` here is `tenantDid` there, and `dwnUrl`
  * here is `remoteEndpoint` there. {@link syncTargetFromLink} is that
  * mapping and nothing more. The names are NOT converged because `did` and
- * `dwnUrl` are also the field names on the push-request and push-queue
+ * `dwnUrl` are also the field names on the push-request
  * types, so renaming only this type's fields would need per-site judgment
  * across ~500 occurrences, many of them in untyped test literals the
  * compiler cannot check.

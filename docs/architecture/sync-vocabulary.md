@@ -32,7 +32,7 @@ the code, not an entry missing from this table.
 | Temporarily unadmittable remote root that must hold the pull page | **deferred pull** — `SyncDeferredPullState`, `SyncDeferredPullStore` | dead letter, retryable push failure |
 | Endpoint-local, bounded hint that prevents immediate transfer echoes | **echo suppression** — `SyncEchoSuppressor` | checkpoint evidence, durable acknowledgement |
 | Active durable record of a remote quota rejection | **quota block** — `SyncQuotaBlockState` without `supersededAt` | dead letter, generic retryable failure |
-| Direct retry of a due quota block, independent of feed progress | **quota probe** — `probeBlocksForTarget`, `probeBlock` | settle check, repair pass |
+| Direct retry of a due quota block, independent of feed progress | **quota probe** — `probeQuotaBlocksForTarget`, `probeBlocksForTarget`, `probeBlock` | repair pass |
 | Historical quota row retained only to explain an intentional feed omission | **resolved quota omission** — `SyncQuotaBlockState.supersededAt` | active quota block |
 | Verified comparison of complete local and remote feed inventories | **feed convergence** — `SyncFeedConvergenceManager` | ordinary reconciliation pass, transport health |
 | Ordering and supervision of start/stop, exclusive work, and background tasks | **lifecycle coordination** — `SyncLifecycleCoordinator`, `SyncTaskGroup` | timer ownership, which belongs to `SyncRuntime` |
@@ -49,6 +49,7 @@ the code, not an entry missing from this table.
 | **epoch** | A durable, string-valued generation: `authorizationEpoch` on a link, `ProgressToken.epoch` on a remote stream | The in-memory replication counter — that is a *generation* |
 | **generation** | An in-memory monotonic counter. Always qualified: *replication* generation, *topology* generation | The `SyncRuntime` lifetime — that is a *runtime* |
 | **runtime** | The `SyncRuntime` timer owner for one start/stop cycle | Direction replay state (*queue*), live-sync mode (*live sync*), or loose ephemeral state |
+| **settle** | Reach a quiescent boundary: a **settle check** reconciles durable feeds, while `SyncTaskGroup.settle` and `SyncRunCoordinator.settle` wait for owned work to finish | A quota probe or transport health check |
 | **drain** | Consuming ordered queued/data work: `drainDirectionQueue`, `drainTo`, `SyncDrainCoordinator` | Pumping a request set (`runRequestedPasses`), committing a durable checkpoint, or running repair passes (`runRequestedRepairPasses`) |
 | **admission** | Replicated-message admission into the local DWN: `admitClosure`, `admitRemoteFeedPage`, `MAX_ADMISSION_PASSES` | Background-task admission — that is *intake* (`pauseTaskIntake`) |
 | **closure** | One root message plus the transitive dependency set required to make it applicable | Scope closure — always spelled out as *scope closure* |
@@ -140,7 +141,8 @@ Names left knowingly unconverged, because the fix costs more than the confusion:
 
 - **`SyncTarget.did` / `.dwnUrl`** are the same values as
   `ReplicationLinkState.tenantDid` / `.remoteEndpoint`, and `syncTargetFromLink`
-  is purely that mapping. Converging them requires per-site judgment because
-  `did` and `dwnUrl` are also fields on push-request types, while many test
-  literals and dynamic stubs cannot be checked by the compiler. Documented on
-  the type instead.
+  is purely that mapping. Converging them requires per-site judgment across
+  roughly 500 occurrences — `did` and `dwnUrl` are also fields on push-request
+  types — including roughly 149 untyped test literals the compiler cannot
+  check and 33 dynamic `as any` stubs where a wrong rename fails silently.
+  Measured July 2026; documented on the type instead.

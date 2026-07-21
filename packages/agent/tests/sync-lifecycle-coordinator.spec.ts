@@ -132,7 +132,7 @@ describe('SyncLifecycleCoordinator', () => {
     expect(coordinator.getIdentityTaskGroup(did)).not.toBe(originalGroup);
   });
 
-  it('should pause all task admission and resume only the new global runtime', async () => {
+  it('should pause all task intake and resume only the new global runtime', async () => {
     const coordinator = new SyncLifecycleCoordinator();
     const oldIdentityGroup = coordinator.getIdentityTaskGroup('did:example:alice');
     let backgroundCalls = 0;
