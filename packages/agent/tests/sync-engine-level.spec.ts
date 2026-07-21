@@ -94,7 +94,7 @@ describe('SyncEngineLevel', () => {
         }),
       };
       sinon.stub(internal, 'getNextQuotaProbeAtForTarget').resolves(undefined);
-      const pull = sinon.stub(internal._linkRecoveryCoordinator, 'pull').resolves();
+      const resume = sinon.stub(internal._linkRecoveryCoordinator, 'resume').resolves();
 
       await internal.handleLivePullMessage(context, {
         cursor : { epoch: 'event-epoch', position: '99', streamId: 'event-stream' },
@@ -102,14 +102,14 @@ describe('SyncEngineLevel', () => {
         type   : 'event',
       });
 
-      expect(controller.isPassRequested('pull')).toBe(true);
-      expect(pull.notCalled).toBe(true);
+      expect(controller.executor.hasPending('pull')).toBe(true);
+      expect(resume.notCalled).toBe(true);
       expect(link.pull.contiguousAppliedToken).toBeUndefined();
 
       await internal.markLinkLive({ did: link.tenantDid, dwnUrl, scope: link.scope }, controller, controller.replicationGeneration);
       await Promise.resolve();
 
-      expect(pull.calledOnceWithExactly(controller)).toBe(true);
+      expect(resume.calledOnceWithExactly(controller)).toBe(true);
     });
 
     it('clears pulled and pushed echo state when live sync stops', async () => {

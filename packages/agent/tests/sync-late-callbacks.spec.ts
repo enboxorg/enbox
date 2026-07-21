@@ -131,7 +131,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     if (controller === undefined) {
       throw new Error('expected an active replication session');
     }
-    const requestPass = sinon.spy(controller, 'requestPass');
+    const request = sinon.spy(controller.executor, 'request');
 
     await engine.stopSync();
 
@@ -142,7 +142,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
       event : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
     });
 
-    expect(requestPass.notCalled).toBe(true);
+    expect(request.notCalled).toBe(true);
     expect(engine.connectivityState).not.toBe('online');
   });
 
@@ -168,7 +168,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
 
     const passStarted = createDeferred();
     const releasePass = createDeferred();
-    sinon.stub(engine['_linkRecoveryCoordinator'], 'pull').callsFake(async (): Promise<void> => {
+    sinon.stub(engine['_linkRecoveryCoordinator'], 'resume').callsFake(async (): Promise<void> => {
       passStarted.resolve();
       await releasePass.promise;
     });
@@ -239,7 +239,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
       throw new Error('Expected live sync to activate a link controller');
     }
 
-    const requestPass = sinon.spy(controller, 'requestPass');
+    const request = sinon.spy(controller.executor, 'request');
 
     await engine.stopSync();
 
@@ -249,8 +249,8 @@ describe('SyncEngineLevel late subscription callbacks', () => {
       event  : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
     });
 
-    expect(requestPass.called).toBe(false);
-    expect(controller.isPassRequested('push')).toBe(false);
+    expect(request.called).toBe(false);
+    expect(controller.executor.hasPending('push')).toBe(false);
   });
 
   it('should close a remote subscription that resolves after its link lifetime ends', async () => {

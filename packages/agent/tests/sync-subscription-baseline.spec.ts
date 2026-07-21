@@ -124,10 +124,9 @@ describe('SyncEngineLevel — dual-subscription wake baseline', () => {
       { fingerprint: 'same-feed', head: pullHead },
       { fingerprint: 'same-feed', head: pushHead },
     );
-    const pullCallback = sinon.stub().resolves();
-    const pushCallback = sinon.stub().resolves();
-    const pullDelivery = fixture.controller.enqueueDirection('pull', (): Promise<void> => pullCallback());
-    const pushDelivery = fixture.controller.enqueueDirection('push', (): Promise<void> => pushCallback());
+    const work: string[] = [];
+    fixture.controller.executor.request('pull');
+    fixture.controller.executor.request('push');
 
     const result = await establishBaseline(fixture);
 
@@ -136,13 +135,12 @@ describe('SyncEngineLevel — dual-subscription wake baseline', () => {
     expect(fixture.controller.link.push.contiguousAppliedToken).toEqual(pushHead);
     expect(fixture.persistCheckpoints.calledOnceWithExactly(fixture.controller.link)).toBe(true);
     expect(fixture.reconcile.notCalled).toBe(true);
-    expect(pullCallback.notCalled).toBe(true);
-    expect(pushCallback.notCalled).toBe(true);
+    expect(fixture.controller.executor.hasPending('pull')).toBe(true);
+    expect(fixture.controller.executor.hasPending('push')).toBe(true);
 
     fixture.controller.markReplicationReady();
-    await Promise.all([pullDelivery, pushDelivery]);
-    expect(pullCallback.calledOnce).toBe(true);
-    expect(pushCallback.calledOnce).toBe(true);
+    await fixture.controller.executor.drain(async (kind): Promise<void> => { work.push(kind); });
+    expect(work).toEqual(['pull', 'push']);
 
     await fixture.controller.dispose();
   });
@@ -184,16 +182,15 @@ describe('SyncEngineLevel — dual-subscription wake baseline', () => {
         await releaseReconcile.promise;
         return { converged: true };
       });
-      const pullCallback = sinon.stub().resolves();
-      const pushCallback = sinon.stub().resolves();
-      const pullDelivery = fixture.controller.enqueueDirection('pull', (): Promise<void> => pullCallback());
-      const pushDelivery = fixture.controller.enqueueDirection('push', (): Promise<void> => pushCallback());
+      const work: string[] = [];
+      fixture.controller.executor.request('pull');
+      fixture.controller.executor.request('push');
 
       const baseline = establishBaseline(fixture);
       await reconcileStarted.promise;
 
-      expect(pullCallback.notCalled).toBe(true);
-      expect(pushCallback.notCalled).toBe(true);
+      expect(fixture.controller.executor.hasPending('pull')).toBe(true);
+      expect(fixture.controller.executor.hasPending('push')).toBe(true);
       expect(fixture.persistCheckpoints.notCalled).toBe(true);
 
       releaseReconcile.resolve();
@@ -201,13 +198,12 @@ describe('SyncEngineLevel — dual-subscription wake baseline', () => {
       expect(fixture.reconcile.calledOnce).toBe(true);
       expect(fixture.reconcile.firstCall.args[0]).toBe(fixture.target);
       expect(fixture.reconcile.firstCall.args[1]).toBe(fixture.controller.link);
-      expect(pullCallback.notCalled).toBe(true);
-      expect(pushCallback.notCalled).toBe(true);
+      expect(fixture.controller.executor.hasPending('pull')).toBe(true);
+      expect(fixture.controller.executor.hasPending('push')).toBe(true);
 
       fixture.controller.markReplicationReady();
-      await Promise.all([pullDelivery, pushDelivery]);
-      expect(pullCallback.calledOnce).toBe(true);
-      expect(pushCallback.calledOnce).toBe(true);
+      await fixture.controller.executor.drain(async (kind): Promise<void> => { work.push(kind); });
+      expect(work).toEqual(['pull', 'push']);
 
       await fixture.controller.dispose();
     });

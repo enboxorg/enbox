@@ -1,6 +1,8 @@
 import type { ProgressToken } from '@enbox/dwn-sdk-js';
 
-import type { ReplicationLinkState, SyncDirection } from './types/sync.js';
+import type { ReplicationLinkState } from './types/sync.js';
+
+import { SyncLinkExecutor } from './sync-link-executor.js';
 
 /** A closable transport subscription owned by one replication link. */
 export type SyncLinkSubscription = {
@@ -13,58 +15,18 @@ export type SyncFeedSnapshot = {
   head?: ProgressToken;
 };
 
-type SyncDirectionOperation = {
-  operation: () => Promise<unknown>;
-  reject: (reason: unknown) => void;
-  resolve: (value: unknown) => void;
-};
-
-type SyncDirectionQueue = {
-  active?: Promise<void>;
-  draining: boolean;
-  invalidated: boolean;
-  operations: SyncDirectionOperation[];
-  pendingCount: number;
-  readiness: Promise<void>;
-  replicationGeneration: number;
-};
-
-type SyncReplicationReadiness = {
-  isReady: boolean;
-  promise: Promise<void>;
-  release: () => void;
-  replicationGeneration: number;
-};
-
-/**
- * Serialization lanes multiplexed onto one link mailbox. Every enqueued
- * operation runs FIFO regardless of lane. A lane does three things:
- *
- * 1. lets callers observe pending work of one kind (`isMailboxBusy`);
- * 2. coalesces shared operations (`enqueueShared`) without extra in-flight
- *    bookkeeping;
- * 3. carries a pending-pass mark (`requestPass` / `isPassRequested`) that
- *    lives OUTSIDE the queue — a mark is not queued work, it is a note that
- *    one more pass is owed once the current one finishes.
- */
-export type SyncLinkMailboxKind = 'pull' | 'push' | 'repair' | 'reconcile';
-
 /**
  * Owns all ephemeral state associated with one active replication link.
  *
  * The controller is persistence- and transport-backend neutral. The enclosing
  * sync engine performs I/O while the controller provides one stable lifetime
- * boundary for subscriptions, directional replication queues, repair, and
- * reconciliation. Captured callbacks use `isActive` to reject work belonging
- * to a replaced or removed link without consulting backend-specific state.
+ * boundary for subscriptions, link execution, repair, and reconciliation.
+ * Captured callbacks use `isActive` to reject work belonging to a replaced or
+ * removed link without consulting backend-specific state.
  */
 export class SyncLinkController {
   private _active = true;
-  private _directionQueues: Record<SyncDirection, SyncDirectionQueue>;
-  private readonly _mailboxKindDepths: Map<SyncLinkMailboxKind, number> = new Map();
-  private readonly _mailboxShared: Map<SyncLinkMailboxKind, Promise<unknown>> = new Map();
-  private readonly _requestedPasses: Set<SyncLinkMailboxKind> = new Set();
-  private _mailboxTail: Promise<void> = Promise.resolve();
+  public readonly executor = new SyncLinkExecutor();
   private _liveSubscription?: SyncLinkSubscription;
   private _localSubscription?: SyncLinkSubscription;
   private _pullSnapshot?: SyncFeedSnapshot;
@@ -72,18 +34,13 @@ export class SyncLinkController {
   private _pushSnapshot?: SyncFeedSnapshot;
   private _reconcileTimer?: ReturnType<typeof setTimeout>;
   private _reconcileTimerDueAt?: number;
-  private _replicationReadiness: SyncReplicationReadiness;
   private _repairAttempts = 0;
   private _repairRetryTimer?: ReturnType<typeof setTimeout>;
-  private _supersededDirectionWork: Promise<void> = Promise.resolve();
 
   public constructor(
     public readonly linkKey: string,
     public readonly link: ReplicationLinkState,
-  ) {
-    this._replicationReadiness = SyncLinkController.createReplicationReadiness(this._replicationGeneration);
-    this._directionQueues = SyncLinkController.createDirectionQueues(this._replicationReadiness);
-  }
+  ) {}
 
   /** Whether this controller still owns callbacks for its active-link lifetime. */
   public get isActive(): boolean {
@@ -92,9 +49,7 @@ export class SyncLinkController {
 
   /** Whether the current replication generation established its durable reconciliation baselines. */
   public get isReplicationReady(): boolean {
-    return this._active &&
-      this._replicationReadiness.replicationGeneration === this._replicationGeneration &&
-      this._replicationReadiness.isReady;
+    return this._active && this.executor.isReady;
   }
 
   /** Snapshot captured with the current replication generation's remote pull subscription. */
@@ -107,162 +62,9 @@ export class SyncLinkController {
     return this._pushSnapshot;
   }
 
-  /**
-   * Enqueue replication work in one direction's FIFO. Pull and push drain
-   * independently, while both wait for the current replication generation's
-   * durable reconciliation baselines before starting. Work invalidated by a replication
-   * generation reset or deactivation resolves `undefined`; a current operation's
-   * rejection is surfaced without poisoning the queue.
-   */
-  public enqueueDirection<T>(
-    direction: SyncDirection,
-    operation: () => Promise<T>,
-  ): Promise<T | undefined> {
-    if (!this._active) {
-      return Promise.resolve(undefined);
-    }
-
-    const queue = this._directionQueues[direction];
-    queue.pendingCount++;
-    const result = new Promise<T | undefined>((resolve, reject) => {
-      queue.operations.push({
-        operation,
-        reject,
-        resolve: (value): void => { resolve(value as T | undefined); },
-      });
-    });
-    this.startDirectionDrain(direction, queue);
-    return result;
-  }
-
-  /** Number of running, queued, or readiness-blocked operations in the current replication generation. */
-  public getPendingDirectionCount(direction: SyncDirection): number {
-    return this._directionQueues[direction].pendingCount;
-  }
-
-  /** Wait for operations invalidated by a replication-generation reset to finish unwinding. */
-  public waitForSupersededDirectionWork(): Promise<void> {
-    return this._supersededDirectionWork;
-  }
-
-  /** Release both directional queues after their durable reconciliation baselines are established. */
+  /** Release retained ordinary work after its durable reconciliation baselines are established. */
   public markReplicationReady(): void {
-    const readiness = this._replicationReadiness;
-    if (
-      !this._active ||
-      readiness.replicationGeneration !== this._replicationGeneration ||
-      readiness.isReady
-    ) {
-      return;
-    }
-
-    readiness.isReady = true;
-    readiness.release();
-  }
-
-  /**
-   * Run link-scoped work serialized behind every previously enqueued
-   * operation for this controller lifetime — the link's mailbox. Work
-   * enqueued after deactivation resolves `undefined` without running (the
-   * convention paused task groups use), while an operation already running
-   * continues to completion. A rejected operation surfaces to its caller
-   * without poisoning the queue.
-   *
-   * Do not await a nested `enqueue` from inside an enqueued operation — the
-   * inner operation is ordered after the outer one and the await would
-   * deadlock. Internal helpers that already run inside the mailbox must call
-   * their exclusive bodies directly.
-   */
-  public enqueue<T>(operation: () => Promise<T>, kind?: SyncLinkMailboxKind): Promise<T | undefined> {
-    if (!this._active) {
-      return Promise.resolve(undefined);
-    }
-    if (kind !== undefined) {
-      this._mailboxKindDepths.set(kind, (this._mailboxKindDepths.get(kind) ?? 0) + 1);
-    }
-    const run = this._mailboxTail.then(async (): Promise<T | undefined> => {
-      if (!this._active) {
-        return undefined;
-      }
-      return operation();
-    });
-    const settle = (): void => {
-      if (kind === undefined) {
-        return;
-      }
-      const depth = (this._mailboxKindDepths.get(kind) ?? 1) - 1;
-      if (depth <= 0) {
-        this._mailboxKindDepths.delete(kind);
-      } else {
-        this._mailboxKindDepths.set(kind, depth);
-      }
-    };
-    this._mailboxTail = run.then(settle, settle);
-    return run;
-  }
-
-  /**
-   * Join the queued-or-running shared operation of `kind`, or enqueue
-   * `operation` as the new one. Callers coalesce onto a single execution
-   * per kind at a time — the mailbox form of an in-flight dedup handle —
-   * and the handle releases itself when that execution settles.
-   */
-  public enqueueShared<T>(kind: SyncLinkMailboxKind, operation: () => Promise<T>): Promise<T | undefined> {
-    const existing = this._mailboxShared.get(kind);
-    if (existing !== undefined) {
-      return existing as Promise<T | undefined>;
-    }
-
-    const run = this.enqueue(operation, kind);
-    this._mailboxShared.set(kind, run);
-    const release = (): void => {
-      if (this._mailboxShared.get(kind) === run) {
-        this._mailboxShared.delete(kind);
-      }
-    };
-    run.then(release, release);
-    return run;
-  }
-
-  /** Whether an operation of `kind` is queued or in flight in the mailbox. */
-  public isMailboxBusy(kind: SyncLinkMailboxKind): boolean {
-    return (this._mailboxKindDepths.get(kind) ?? 0) > 0;
-  }
-
-  /**
-   * Record that a fresh run of the shared `kind` lane is wanted. A request
-   * that arrives while a run is already executing is not a duplicate caller
-   * — it postdates that run's snapshot of the world — so the lane's loop
-   * consumes one mark per pass and runs exactly one trailing pass for a
-   * burst of requests.
-   */
-  public requestPass(kind: SyncLinkMailboxKind): void {
-    if (this._active) {
-      this._requestedPasses.add(kind);
-    }
-  }
-
-  /** Whether a run request for `kind` is pending. */
-  public isPassRequested(kind: SyncLinkMailboxKind): boolean {
-    return this._requestedPasses.has(kind);
-  }
-
-  /**
-   * Run shared `kind` turns until no run request is pending. Each turn is
-   * one mailbox operation that consumes one request mark, so a request
-   * arriving while a turn executes yields exactly one trailing turn at the
-   * mailbox tail — behind any work already queued — and a burst of further
-   * requests coalesces into it.
-   */
-  public async runRequestedPasses(kind: SyncLinkMailboxKind, run: () => Promise<void>): Promise<void> {
-    while (this._requestedPasses.has(kind)) {
-      await this.enqueueShared(kind, async (): Promise<void> => {
-        if (!this._requestedPasses.delete(kind)) {
-          return;
-        }
-        await run();
-      });
-    }
+    this.executor.markReady();
   }
 
   /** The current subscription-pair replication generation. */
@@ -299,10 +101,12 @@ export class SyncLinkController {
     return this._localSubscription !== undefined;
   }
 
-  /** Begin a fresh replication generation and fence both directional queues. */
+  /** Begin a fresh replication generation and fence caller-specific executor work. */
   public resetReplicationGeneration(): void {
     this._replicationGeneration++;
-    this.replaceDirectionQueues();
+    this._pullSnapshot = undefined;
+    this._pushSnapshot = undefined;
+    this.executor.reset();
   }
 
   /**
@@ -395,6 +199,13 @@ export class SyncLinkController {
     return this._repairAttempts;
   }
 
+  /** Discard an attempt superseded before the next executor repair starts. */
+  public discardRepairAttempt(attempt: number): void {
+    if (this._repairAttempts === attempt) {
+      this._repairAttempts = Math.max(0, attempt - 1);
+    }
+  }
+
   public clearRepairProgress(): void {
     this._repairAttempts = 0;
     this.cancelRepairRetryTimer();
@@ -458,108 +269,6 @@ export class SyncLinkController {
     };
   }
 
-  private static createDirectionQueues(
-    readiness: SyncReplicationReadiness,
-  ): Record<SyncDirection, SyncDirectionQueue> {
-    const createQueue = (): SyncDirectionQueue => ({
-      draining              : false,
-      invalidated           : false,
-      operations            : [],
-      pendingCount          : 0,
-      readiness             : readiness.promise,
-      replicationGeneration : readiness.replicationGeneration,
-    });
-    return { pull: createQueue(), push: createQueue() };
-  }
-
-  private static createReplicationReadiness(replicationGeneration: number): SyncReplicationReadiness {
-    let release!: () => void;
-    const promise = new Promise<void>((resolve) => { release = resolve; });
-    return { isReady: false, promise, release, replicationGeneration };
-  }
-
-  private async drainDirectionQueue(direction: SyncDirection, queue: SyncDirectionQueue): Promise<void> {
-    await queue.readiness;
-
-    while (!queue.invalidated && this._directionQueues[direction] === queue) {
-      const queued = queue.operations.shift();
-      if (queued === undefined) {
-        break;
-      }
-
-      let releaseActive!: () => void;
-      const active = new Promise<void>((resolve) => { releaseActive = resolve; });
-      queue.active = active;
-      try {
-        const result = await queued.operation();
-        if (this.isDirectionQueueCurrent(direction, queue)) {
-          queued.resolve(result);
-        } else {
-          queued.resolve(undefined);
-        }
-      } catch (error: unknown) {
-        if (this.isDirectionQueueCurrent(direction, queue)) {
-          queued.reject(error);
-        } else {
-          queued.resolve(undefined);
-        }
-      } finally {
-        if (queue.active === active) {
-          queue.active = undefined;
-        }
-        releaseActive();
-        queue.pendingCount--;
-      }
-    }
-
-    queue.draining = false;
-  }
-
-  private invalidateDirectionQueue(queue: SyncDirectionQueue): void {
-    queue.invalidated = true;
-    for (const queued of queue.operations.splice(0)) {
-      queue.pendingCount--;
-      queued.resolve(undefined);
-    }
-  }
-
-  private isDirectionQueueCurrent(direction: SyncDirection, queue: SyncDirectionQueue): boolean {
-    return this._active &&
-      !queue.invalidated &&
-      queue.replicationGeneration === this._replicationGeneration &&
-      this._directionQueues[direction] === queue;
-  }
-
-  private replaceDirectionQueues(): void {
-    const previousReadiness = this._replicationReadiness;
-    const previousPull = this._directionQueues.pull;
-    const previousPush = this._directionQueues.push;
-    this.invalidateDirectionQueue(previousPull);
-    this.invalidateDirectionQueue(previousPush);
-    previousReadiness.release();
-
-    const previousSupersededWork = this._supersededDirectionWork;
-    this._supersededDirectionWork = Promise.all([
-      previousSupersededWork,
-      previousPull.active ?? Promise.resolve(),
-      previousPush.active ?? Promise.resolve(),
-    ]).then((): void => {});
-
-    this._pullSnapshot = undefined;
-    this._pushSnapshot = undefined;
-    this._replicationReadiness = SyncLinkController.createReplicationReadiness(this._replicationGeneration);
-    this._directionQueues = SyncLinkController.createDirectionQueues(this._replicationReadiness);
-  }
-
-  private startDirectionDrain(direction: SyncDirection, queue: SyncDirectionQueue): void {
-    if (queue.draining) {
-      return;
-    }
-
-    queue.draining = true;
-    void this.drainDirectionQueue(direction, queue);
-  }
-
   /**
    * Invalidate captured callbacks and cancel work that has not started yet.
    * In-flight operations remain supervised by the lifecycle coordinator while
@@ -573,9 +282,10 @@ export class SyncLinkController {
     this._active = false;
     this.cancelRepairRetryTimer();
     this.cancelReconcileTimer();
-    this.resetReplicationGeneration();
-    this._mailboxShared.clear();
-    this._requestedPasses.clear();
+    this._replicationGeneration++;
+    this._pullSnapshot = undefined;
+    this._pushSnapshot = undefined;
+    this.executor.dispose();
     this._repairAttempts = 0;
   }
 

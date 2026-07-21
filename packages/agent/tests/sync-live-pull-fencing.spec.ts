@@ -23,8 +23,7 @@ type EngineFixture = {
   engine: SyncEngineLevel;
   handlers: Array<(message: unknown) => Promise<void>>;
   processRequest: SinonStub;
-  pull: SinonStub;
-  push: SinonStub;
+  resume: SinonStub;
   repairing: SinonStub;
   sendDwnRequest: SinonStub;
   target: Record<string, unknown>;
@@ -55,8 +54,7 @@ function createEngineFixture(db: Level<string, string>): EngineFixture {
     return { status: { code: 200 }, subscription: { close: sinon.stub().resolves() } };
   });
   (engine as any)._agent = { dwn: { processRequest }, rpc: { sendDwnRequest } };
-  const pull = sinon.stub((engine as any)._linkRecoveryCoordinator, 'pull').resolves();
-  const push = sinon.stub((engine as any)._linkRecoveryCoordinator, 'push').resolves();
+  const resume = sinon.stub((engine as any)._linkRecoveryCoordinator, 'resume').resolves();
   const repairing = sinon.stub((engine as any)._linkRecoveryCoordinator, 'transitionToRepairing').resolves();
   const target = {
     authorization      : { kind: 'owner' as const },
@@ -67,7 +65,7 @@ function createEngineFixture(db: Level<string, string>): EngineFixture {
     projectionId       : 'projection-id',
     scope              : { kind: 'full' as const },
   };
-  return { controller, engine, handlers, processRequest, pull, push, repairing, sendDwnRequest, target };
+  return { controller, engine, handlers, processRequest, repairing, resume, sendDwnRequest, target };
 }
 
 function openSubscription(fixture: EngineFixture): Promise<boolean> {
@@ -106,11 +104,11 @@ describe('SyncEngineLevel — replication generation fencing', () => {
 
     await staleHandler({ type: 'event' });
     expect(fixture.repairing.notCalled).toBe(true);
-    expect(fixture.pull.notCalled).toBe(true);
+    expect(fixture.resume.notCalled).toBe(true);
 
     // The replacement subscription's callbacks flow normally.
     await freshHandler({ type: 'event' });
-    expect(fixture.pull.calledOnceWithExactly(controller)).toBe(true);
+    expect(fixture.resume.calledOnceWithExactly(controller)).toBe(true);
     expect(controller.link.pull.contiguousAppliedToken).toBeUndefined();
 
     await controller.dispose();
@@ -195,16 +193,15 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     await livePersistenceStarted.promise;
 
     await (engine as any)._linkRecoveryCoordinator.transitionToPaused(LINK_KEY, controller.link);
-    const replacementReplay = sinon.stub().resolves();
-    const queuedReplay = controller.enqueueDirection('pull', replacementReplay);
+    controller.executor.request('pull');
     releaseLivePersistence.resolve();
     await markingLive;
 
     expect(controller.link.status).toBe('paused');
-    expect(replacementReplay.notCalled).toBe(true);
+    expect(controller.executor.hasPending('pull')).toBe(true);
 
     await controller.dispose();
-    expect(await queuedReplay).toBeUndefined();
+    expect(controller.executor.hasPending('pull')).toBe(false);
   });
 
   it('should swallow a superseded attempt failure but propagate a current-replication-generation failure', async () => {
@@ -301,8 +298,8 @@ describe('SyncEngineLevel — replication generation fencing', () => {
 
     // The superseded callback cannot wake durable reconciliation. The replacement
     // replication generation contributes one coalesced push request.
-    expect(fixture.push.calledOnceWithExactly(controller)).toBe(true);
-    expect(controller.isPassRequested('push')).toBe(true);
+    expect(fixture.resume.calledOnceWithExactly(controller)).toBe(true);
+    expect(controller.executor.hasPending('push')).toBe(true);
 
     await controller.dispose();
   });
@@ -428,8 +425,7 @@ describe('SyncEngineLevel — transport lifecycle connectivity', () => {
     // The transport reports reconnected only after verified resubscription.
     await handler({ type: 'reconnected' });
     expect(controller.link.connectivity).toBe('online');
-    expect(fixture.pull.calledOnceWithExactly(controller)).toBe(true);
-    expect(fixture.push.calledOnceWithExactly(controller)).toBe(true);
+    expect(fixture.resume.calledOnceWithExactly(controller)).toBe(true);
 
     await controller.dispose();
   });
@@ -463,7 +459,7 @@ describe('SyncEngineLevel — transport lifecycle connectivity', () => {
     fixture.controller.markReplicationReady();
     await fixture.handlers[0]({ type: 'eose', cursor: tokenIn('event-stream', 'event-epoch', '20') });
 
-    expect(fixture.pull.notCalled).toBe(true);
+    expect(fixture.resume.notCalled).toBe(true);
     expect(fixture.controller.link.pull.contiguousAppliedToken).toEqual(
       tokenIn('durable-stream', 'durable-epoch', '4'),
     );
