@@ -25,8 +25,6 @@ export interface SyncLinkRecoveryCoordinatorOperations {
   captureIdentityTaskRunner(tenantDid: string): SyncIdentityTaskRunner;
   clearConvergence(linkKey: string): void;
   emitEvent(event: SyncEvent): void;
-  /** Consume a stranded push timer and flush the pending batch through the flush lane. */
-  flushPendingPushBatch(controller: SyncLinkController): Promise<void>;
   getController(linkKey: string): SyncLinkController | undefined;
   getRuntimeScope(): SyncRuntimeHandle;
   handleDivergence(
@@ -34,7 +32,6 @@ export interface SyncLinkRecoveryCoordinatorOperations {
     result: SyncDurableFeedReconcileResult,
     context: SyncFeedConvergenceLinkContext,
   ): Promise<unknown>;
-  handlePushFailures(controller: SyncLinkController, failures: PushFailure[]): Promise<void>;
   openPullSubscription(target: SyncLinkRecoveryTarget, controller: SyncLinkController): Promise<boolean>;
   openPushSubscription(target: SyncLinkRecoveryTarget, controller: SyncLinkController): Promise<boolean>;
   reconcileTarget(
@@ -42,6 +39,7 @@ export interface SyncLinkRecoveryCoordinatorOperations {
     target: SyncTarget,
     options?: SyncDurableFeedReconcileOptions,
     shouldContinue?: () => boolean,
+    bypassDirectionQueues?: boolean,
   ): Promise<SyncDurableFeedReconcileResult>;
   reportError(message: string, error: unknown): void;
   resetPullCheckpoint(link: ReplicationLinkState, resumeToken?: ProgressToken): Promise<void>;
@@ -105,7 +103,7 @@ export class SyncLinkRecoveryCoordinator {
     // Whoever consumes the request afterwards, whether an already-executing
     // pass's trailing turn or the supervision below, observes the complete
     // transition; only durability and supervision trail the block.
-    controller.startNewPullGeneration();
+    controller.resetReplicationGeneration();
     if (options?.resumeToken !== undefined) {
       controller.setRepairResumeToken(options.resumeToken);
     }
@@ -145,7 +143,7 @@ export class SyncLinkRecoveryCoordinator {
       // the teardown below awaits an in-flight close must be refused by
       // the generation-fenced attach — attaching after the bump is
       // impossible, and anything attached before it is closed below.
-      controller.startNewPullGeneration();
+      controller.resetReplicationGeneration();
     }
 
     await this.setOfflineStatus(link, 'paused');
@@ -155,7 +153,6 @@ export class SyncLinkRecoveryCoordinator {
 
     await controller.closeSubscriptions();
     controller.cancelReconcileTimer();
-    controller.clearPushQueue();
     controller.clearRepairProgress();
   }
 
@@ -187,9 +184,9 @@ export class SyncLinkRecoveryCoordinator {
 
   /**
    * Coalesce repair callers onto one queued-or-running mailbox repair.
-   * The mailbox serializes the repair behind any in-flight push flush or
-   * reconciliation for the same link, so repair never tears down
-   * subscriptions or pull ordering underneath another link operation.
+   * The mailbox serializes the repair behind any in-flight push or
+   * reconciliation pass for the same link, so repair never tears down
+   * subscriptions or delivery ordering underneath another link operation.
    */
   public repair(controller: SyncLinkController): Promise<void> {
     controller.requestPass('repair');
@@ -222,6 +219,12 @@ export class SyncLinkRecoveryCoordinator {
         );
       }
     });
+  }
+
+  /** Coalesce local feed signals into ordered durable push passes. */
+  public push(controller: SyncLinkController): Promise<void> {
+    controller.requestPass('push');
+    return controller.runRequestedPasses('push', (): Promise<void> => this.pushExclusive(controller));
   }
 
   /** Emit and coalesce a named durable-reconciliation request for a live link. */
@@ -278,29 +281,10 @@ export class SyncLinkRecoveryCoordinator {
    * arriving before the pass takes its remote snapshot join it; a signal
    * arriving after the snapshot is news that pass cannot have seen, so it
    * runs as one trailing pass instead of being silently absorbed.
-   *
-   * A pending push batch is drained through the flush lane FIRST — recovery
-   * must consume the state the currency gate rejects on, or a batch whose
-   * debounce timer was lost across a suspension keeps the link non-current
-   * after every successful reconciliation. Both dispatches below are
-   * synchronous: the flush turn enters the mailbox ahead of the reconcile
-   * turn, and no await sits between the pass request and its enqueue — the
-   * mailbox ordering that callers queueing around this call rely on is
-   * unchanged (a link with no pending batch enqueues nothing extra). A
-   * flush failure never blocks the pass: the reconciliation pushes the
-   * same messages from the durable feed.
    */
   public async reconcile(controller: SyncLinkController): Promise<void> {
     controller.requestPass('reconcile');
-    const flush = this._operations.flushPendingPushBatch(controller).catch((error: unknown) => {
-      this._operations.reportError(
-        `SyncLinkRecoveryCoordinator: pre-reconcile push flush failed for ${controller.link.tenantDid} -> ${controller.link.remoteEndpoint}`,
-        error,
-      );
-    });
-    const pass = controller.runRequestedPasses('reconcile', (): Promise<void> => this.reconcileExclusive(controller));
-    await flush;
-    await pass;
+    await controller.runRequestedPasses('reconcile', (): Promise<void> => this.reconcileExclusive(controller));
   }
 
   private superviseRepairPasses(
@@ -333,7 +317,11 @@ export class SyncLinkRecoveryCoordinator {
     if (this.isRepairSuperseded(controller, runtimeScope)) {
       return;
     }
-    controller.resetPullGeneration();
+    controller.resetReplicationGeneration();
+    await controller.waitForSupersededDirectionWork();
+    if (this.isRepairSuperseded(controller, runtimeScope)) {
+      return;
+    }
 
     try {
       const target = SyncLinkRecoveryCoordinator.targetFromController(controller);
@@ -342,6 +330,7 @@ export class SyncLinkRecoveryCoordinator {
         target,
         undefined,
         () => !this.isRepairSuperseded(controller, runtimeScope),
+        true,
       );
       if (outcome.aborted || this.isRepairSuperseded(controller, runtimeScope)) {
         return;
@@ -430,7 +419,6 @@ export class SyncLinkRecoveryCoordinator {
     }
 
     const { link } = controller;
-    controller.clearRepairProgress();
     const previousConnectivity = link.connectivity;
     link.connectivity = 'online';
     await this._operations.setStatus(link, 'live');
@@ -438,11 +426,15 @@ export class SyncLinkRecoveryCoordinator {
       return;
     }
 
-    if (pushFailures.length > 0) {
-      await this._operations.handlePushFailures(controller, pushFailures);
-      if (this.isRepairSuperseded(controller, runtimeScope)) {
-        return;
-      }
+    controller.clearRepairProgress();
+    controller.markReplicationReady();
+    if (controller.isPassRequested('push')) {
+      const runIdentityTask = this._operations.captureIdentityTaskRunner(link.tenantDid);
+      void runIdentityTask(() => this.push(controller));
+    }
+
+    if (pushFailures.length > 0 && !this.isRepairSuperseded(controller, runtimeScope)) {
+      this.schedulePushRetry(controller);
     }
 
     const linkEventScope = eventScope(link.scope);
@@ -550,7 +542,7 @@ export class SyncLinkRecoveryCoordinator {
 
       const pushFailures = outcome.pushFailures ?? [];
       if (pushFailures.length > 0) {
-        await this._operations.handlePushFailures(controller, pushFailures);
+        this.schedulePushRetry(controller);
         return;
       }
       // A pause took the link before the cycle ran, so nothing was compared.
@@ -604,13 +596,50 @@ export class SyncLinkRecoveryCoordinator {
     });
   }
 
+  /** Push the local durable feed from its checkpoint inside the link mailbox. */
+  private async pushExclusive(controller: SyncLinkController): Promise<void> {
+    const { link } = controller;
+    if (!controller.isActive || link.status !== 'live' || controller.isMailboxBusy('repair')) {
+      return;
+    }
+
+    const runtimeScope = this._operations.getRuntimeScope();
+    const shouldContinue = (): boolean =>
+      !this.isStale(controller, runtimeScope) && link.status === 'live';
+    try {
+      const outcome = await this._operations.reconcileTarget(
+        controller,
+        syncTargetFromLink(link),
+        { direction: 'push' },
+        shouldContinue,
+      );
+      if (outcome.aborted || !shouldContinue()) {
+        return;
+      }
+      if ((outcome.pushFailures?.length ?? 0) > 0) {
+        this.schedulePushRetry(controller);
+      }
+    } catch (error: unknown) {
+      if (!shouldContinue()) {
+        return;
+      }
+      this._operations.reportError(
+        `SyncLinkRecoveryCoordinator: Live push failed for ${link.tenantDid} -> ${link.remoteEndpoint}`,
+        error,
+      );
+      this.schedulePushRetry(controller);
+    }
+  }
+
+  /** A retryable push failure falls back to the verified reconciliation path. */
+  private schedulePushRetry(controller: SyncLinkController): void {
+    this.scheduleLinkReconcileByKey(controller, 'push-retryable', RECONCILE_RETRY_DELAY_MS);
+  }
+
   /**
    * A verified convergence just round-tripped the endpoint, so reachability
-   * is proven — restore link connectivity for the stream-health gate. This
-   * deliberately restores only connectivity: stream ATTACHMENT is tracked
-   * separately from the transport lifecycle, so a link whose socket is
-   * still down stays non-current (and keeps receiving targeted wake
-   * recovery) even while the endpoint is reachable over HTTP.
+   * is proven. Stream attachment remains transport-owned and is reported by
+   * its lifecycle events.
    */
   private restoreLinkConnectivity(link: ReplicationLinkState): void {
     const previous = link.connectivity;

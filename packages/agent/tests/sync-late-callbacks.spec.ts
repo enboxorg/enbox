@@ -1,3 +1,5 @@
+import type { SyncLinkController } from '../src/sync-link-controller.js';
+
 import sinon from 'sinon';
 
 import { Level } from 'level';
@@ -18,13 +20,19 @@ type LiveMockAgent = {
 function createLiveMockAgent(): LiveMockAgent {
   let localHandler: CapturedSubscriptionHandler;
   let remoteHandler: CapturedSubscriptionHandler;
+  const head = { streamId: 's1', epoch: 'e1', position: '0', messageCid: 'cid-0' };
 
   const processRequestStub = sinon.stub().callsFake(async (request: { subscriptionHandler?: CapturedSubscriptionHandler }) => {
     if (request.subscriptionHandler !== undefined) {
       localHandler = request.subscriptionHandler;
       return {
-        reply   : { status: { code: 200, detail: 'OK' }, subscription: { close: sinon.stub().resolves() } },
-        message : { descriptor: {} },
+        reply: {
+          status       : { code: 200, detail: 'OK' },
+          subscription : { close: sinon.stub().resolves() },
+          fingerprint  : 'feed-fingerprint',
+          head,
+        },
+        message: { descriptor: {} },
       };
     }
 
@@ -35,6 +43,8 @@ function createLiveMockAgent(): LiveMockAgent {
     return {
       status       : { code: 200, detail: 'OK' },
       subscription : { close: sinon.stub().resolves() },
+      fingerprint  : 'feed-fingerprint',
+      head,
     };
   });
 
@@ -103,12 +113,12 @@ describe('SyncEngineLevel late subscription callbacks', () => {
 
     sinon.stub(engine, 'sync').resolves();
     sinon.stub(engine as never, 'getSyncTargets').resolves([target]);
-    sinon.stub(engine as never, 'openLocalPushSubscription').resolves();
     Object.assign(engine, {
       _ledger: {
-        getOrCreateLink   : sinon.stub().resolves(link),
-        persistCheckpoint : persistCheckpointStub,
-        setStatus         : setStatusStub,
+        getOrCreateLink    : sinon.stub().resolves(link),
+        persistCheckpoint  : persistCheckpointStub,
+        persistCheckpoints : sinon.stub().resolves(),
+        setStatus          : setStatusStub,
       },
     });
 
@@ -140,16 +150,16 @@ describe('SyncEngineLevel late subscription callbacks', () => {
 
     sinon.stub(engine, 'sync').resolves();
     sinon.stub(engine as never, 'getSyncTargets').resolves([target]);
-    sinon.stub(engine as never, 'openLocalPushSubscription').resolves();
     sinon.stub(engine as never, 'handleLivePullMessage').callsFake(async (): Promise<void> => {
       handlerStarted.resolve();
       await releaseHandler.promise;
     });
     Object.assign(engine, {
       _ledger: {
-        getOrCreateLink   : sinon.stub().resolves(link),
-        persistCheckpoint : sinon.stub().resolves(),
-        setStatus         : sinon.stub().callsFake(async (linkState: Record<string, unknown>, status: string): Promise<void> => {
+        getOrCreateLink    : sinon.stub().resolves(link),
+        persistCheckpoint  : sinon.stub().resolves(),
+        persistCheckpoints : sinon.stub().resolves(),
+        setStatus          : sinon.stub().callsFake(async (linkState: Record<string, unknown>, status: string): Promise<void> => {
           linkState.status = status;
         }),
       },
@@ -186,12 +196,24 @@ describe('SyncEngineLevel late subscription callbacks', () => {
 
     sinon.stub(engine, 'sync').resolves();
     sinon.stub(engine as never, 'getSyncTargets').resolves([target]);
-    sinon.stub(engine as never, 'openLivePullSubscription').resolves();
+    sinon.stub(engine as never, 'openLivePullSubscription').callsFake(async (
+      _target: unknown,
+      controller: SyncLinkController,
+      expectedReplicationGeneration: number,
+    ): Promise<boolean> => controller.setLiveSubscription(
+      { close: sinon.stub().resolves() },
+      expectedReplicationGeneration,
+      {
+        fingerprint : 'feed-fingerprint',
+        head        : { streamId: 's1', epoch: 'e1', position: '0', messageCid: 'cid-0' },
+      },
+    ));
     Object.assign(engine, {
       _ledger: {
-        getOrCreateLink   : sinon.stub().resolves(link),
-        persistCheckpoint : sinon.stub().resolves(),
-        setStatus         : sinon.stub().callsFake(async (linkState: Record<string, unknown>, status: string): Promise<void> => {
+        getOrCreateLink    : sinon.stub().resolves(link),
+        persistCheckpoint  : sinon.stub().resolves(),
+        persistCheckpoints : sinon.stub().resolves(),
+        setStatus          : sinon.stub().callsFake(async (linkState: Record<string, unknown>, status: string): Promise<void> => {
           linkState.status = status;
         }),
       },
@@ -207,7 +229,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
       throw new Error('Expected live sync to activate a link controller');
     }
 
-    const enqueueSpy = sinon.spy(controller, 'getOrCreatePushQueue');
+    const requestPass = sinon.spy(controller, 'requestPass');
 
     await engine.stopSync();
 
@@ -217,8 +239,8 @@ describe('SyncEngineLevel late subscription callbacks', () => {
       event  : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
     });
 
-    expect(enqueueSpy.called).toBe(false);
-    expect(controller.pushQueue).toBeUndefined();
+    expect(requestPass.called).toBe(false);
+    expect(controller.isPassRequested('push')).toBe(false);
   });
 
   it('should close a remote subscription that resolves after its link lifetime ends', async () => {
@@ -357,40 +379,6 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     } finally {
       clock.restore();
     }
-  });
-
-  it('should not requeue an old push result onto a replacement controller', async () => {
-    const engine = new SyncEngineLevel({ db });
-    const linkKey = 'did:example:alice^https://dwn.example.com^projection-1^authorization-1';
-    const original = engine['activateLink'](linkKey, makeLink({ status: 'live' }) as never);
-    const pushQueue = original.getOrCreatePushQueue({
-      did    : target.did,
-      dwnUrl : target.dwnUrl,
-    });
-    pushQueue.entries.push({ cid: 'cid-1' });
-    const transitionStarted = createDeferred();
-    const releaseTransition = createDeferred();
-    sinon.stub(engine as never, 'pushMessages').resolves({
-      failed    : [{ cid: 'cid-1', kind: 'Deferred' }],
-      succeeded : [],
-    });
-    sinon.stub(engine as never, 'applyPushResult').callsFake(async () => {
-      transitionStarted.resolve();
-      await releaseTransition.promise;
-      return {
-        retryableFailures: [{ cid: 'cid-1', kind: 'Deferred' }],
-      };
-    });
-    const requeueSpy = sinon.spy(engine['_livePushCoordinator'], 'requeue');
-
-    const flushing = engine['_livePushCoordinator'].flushLink(linkKey);
-    await transitionStarted.promise;
-    const replacement = engine['activateLink'](linkKey, makeLink({ status: 'live' }) as never);
-    releaseTransition.resolve();
-    await flushing;
-
-    expect(requeueSpy.called).toBe(false);
-    expect(replacement.pushQueue).toBeUndefined();
   });
 
   it('should not mark a link online when its lifetime ends during checkpoint persistence', async () => {

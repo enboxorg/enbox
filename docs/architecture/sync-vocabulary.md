@@ -18,11 +18,12 @@ the code, not an entry missing from this table.
 | Runtime identifier of a replication link | **`linkKey`** — `buildLinkKey`, `LINK_KEY_SEPARATOR` | `buildLinkId`, `LINK_ID_SEPARATOR` |
 | Endpoint-independent link identity | **`durableLinkIdentityKey`** | — |
 | Durable replication-link store | **`replicationLinkStore`** | `getLinkStore`, "ledger" (nickname only) |
-| Authoritative in-engine owner of one active link object, both subscriptions, delivery ordering, batching, repair, and reconciliation | **replication session** — currently `SyncLinkController` | independent live and reconciler link copies |
-| Per-link delivery ordering fence — ONE generation for the subscription pair, fencing delivery tags in both directions | **`pullGeneration`** / `expectedPullGeneration` | `pullEpoch`, `openGeneration`, `expectedGeneration`, `subscriptionPullEpoch` |
+| Authoritative in-engine owner of one active link object, both subscriptions, directional replay ordering, startup readiness, repair, and reconciliation | **replication session** — currently `SyncLinkController` | independent live and reconciler link copies |
+| Per-link subscription and replay fence — ONE generation for the subscription pair and both directional queues | **`replicationGeneration`** / `expectedReplicationGeneration` | `pullGeneration`, `pullEpoch`, `openGeneration`, `expectedGeneration`, `subscriptionPullEpoch` |
 | Target-plan version | **`topologyGeneration`** / `expectedTopologyGeneration` | bare `generation`, `expectedGeneration` |
-| Per-link push batching state | **`pushQueue`** — `SyncPushQueueState/Params/Entry` | `pushRuntime`, `SyncPushRuntime*` |
-| In-flight delivery acknowledgement, both directions: `track*Delivery` issues a delivery tag in feed order, `ack*Delivery` resolves it, and `commitAcked*Deliveries` advances the durable checkpoint through the contiguous acked prefix its commit policy proves gap-free (cumulative ack — pull is stream-anchored by checkpoint replay; push commits successor-only, because a live observation proves nothing about the span below it); `pruneCoveredPushDeliveries` folds a reconciler-advanced checkpoint in and sweeps the ledger positions it covers | **delivery tag** — `SyncDeliveryTag`, one type for both directions | `SyncPullDeliveryTicket`, `SyncPullDeliveryTag`/`SyncPushDeliveryTag` (twin types), `startPullDelivery`, `commitPullDelivery`, `advanceContiguousPullCommits` |
+| Ordered callback work after subscription establishment | **direction replay queue** — `enqueueDirection`, one independent FIFO each for `pull` and `push` | `DeliveryLedger`, `SyncDeliveryTag`, `track*Delivery` / `ack*Delivery`, `pushQueue`, `SyncPushQueue*` |
+| Shared startup boundary for the two direction queues | **replication readiness barrier** — `isReplicationReady`, `markReplicationReady` | allowing subscription callbacks to race baseline establishment |
+| A local subscription event that says the durable local feed may have advanced; bursts request one trailing pass, and the pass always resumes from `link.push.contiguousAppliedToken` | **durable push wake** — `requestPass('push')`, `SyncLinkRecoveryCoordinator.push` | per-event push job, delivery acknowledgement, or checkpoint evidence |
 | Folding a push result into quota state | **`applyPushResult`** | `transitionPushResult` |
 | Permanently-failed message record | **dead letter** — `DeadLetterEntry`, `getDeadLetters`, `clearDeadLetter`, `clearAllDeadLetters`, `recordDeadLetter`, `hasDeadLetter` | `getFailedMessages`, `clearFailedMessage`, `clearAllFailedMessages`, `hasAdmissionDeadLetter` |
 | Clearing one exact `(tenant, cid, remote)` dead letter | **`clearDeadLetterForTenant`** | the quota ops key `clearFailedMessage`, which shared a name with the across-tenants public method |
@@ -32,10 +33,10 @@ the code, not an entry missing from this table.
 
 | Word | Means, and only this | Not this |
 |---|---|---|
-| **epoch** | A durable, string-valued generation: `authorizationEpoch` on a link, `ProgressToken.epoch` on a remote stream | The in-memory pull counter — that is a *generation* |
-| **generation** | An in-memory monotonic counter. Always qualified: *pull* generation, *topology* generation | The `SyncRuntime` lifetime — that is a *runtime* |
-| **runtime** | The `SyncRuntime` timer-ownership scope for one start/stop cycle | Push batching state (*queue*), live-sync mode (*live sync*), or loose ephemeral state |
-| **drain** | The engine's data handoff to an endpoint: `drainTo`, `SyncDrainCoordinator` | Pumping a request set (`runRequestedPasses`), advancing a commit prefix (`commitAckedPullDeliveries`), running repair passes (`runPendingRepairs`) |
+| **epoch** | A durable, string-valued generation: `authorizationEpoch` on a link, `ProgressToken.epoch` on a remote stream | The in-memory replication counter — that is a *generation* |
+| **generation** | An in-memory monotonic counter. Always qualified: *replication* generation, *topology* generation | The `SyncRuntime` lifetime — that is a *runtime* |
+| **runtime** | The `SyncRuntime` timer-ownership scope for one start/stop cycle | Direction replay state (*queue*), live-sync mode (*live sync*), or loose ephemeral state |
+| **drain** | Consuming ordered queued/data work: `drainDirectionQueue`, `drainTo`, `SyncDrainCoordinator` | Pumping a request set (`runRequestedPasses`), committing a durable checkpoint, or running repair passes (`runPendingRepairs`) |
 | **admission** | Replicated-message admission into the local DWN: `admitClosure`, `admitRemoteFeedPage`, `MAX_ADMISSION_PASSES` | Background-task admission — that is *intake* (`pauseTaskIntake`) |
 | **closure** | One root message plus the transitive dependency set required to make it applicable | Scope closure — always spelled out as *scope closure* |
 | **scope** | A `SyncScope` (a protocol set) | The runtime timer scope, or the lock namespace (`_lockNamespace`) |
@@ -84,12 +85,12 @@ One verb per kind of ending, because these had four overlapping spellings:
 
 Trusting a cached or claimed state instead of verifying the property where it
 is used is this subsystem's recurring bug shape — a stale `isConnected`
-preferred over proving liveness, an ack treated as proof of a contiguous
-prefix, a fingerprint match treated as feed identity beyond its domain
-coverage. The check is almost always cheap and local: last inbound within the
-heartbeat window, token is the checkpoint's immediate successor, fail closed
-when a domain set is known-incomplete. When a property matters, verify it
-where it is consumed; never assume it from provenance.
+preferred over proving liveness, a subscription event cursor treated as
+durable push progress, a fingerprint match treated as feed identity beyond
+its domain coverage. The check is almost always cheap and local: an on-demand
+transport health probe, replay from the persisted direction checkpoint, or a
+fail-closed decision when a domain set is known-incomplete. When a property
+matters, verify it where it is consumed; never assume it from provenance.
 
 ## Known remaining splits
 
@@ -99,18 +100,10 @@ Names left knowingly unconverged, because the fix costs more than the confusion:
   because renaming it adds broad churn without changing or clarifying its
   ownership boundary.
 
-- **`pullGeneration`** now fences delivery tags in BOTH directions (the
-  subscription pair opens and resets as one unit), but keeps its pull-flavored
-  name: renaming it (and `expectedPullGeneration`, `isPullGenerationCurrent`,
-  `startNewPullGeneration`, `resetPullGeneration`) to a direction-neutral form
-  touches a hundred-plus call sites across in-flight branches. The table row
-  above documents the broadened meaning; the name converges when the churn is
-  cheap.
-
 - **`SyncTarget.did` / `.dwnUrl`** are the same values as
   `ReplicationLinkState.tenantDid` / `.remoteEndpoint`, and `syncTargetFromLink`
   is purely that mapping. Converging them means per-site judgment across ~500
-  occurrences — `did` and `dwnUrl` are also fields on the push-request and
-  push-queue types — including ~149 untyped test literals the compiler cannot
+  occurrences — `did` and `dwnUrl` are also fields on push-request types —
+  including ~149 untyped test literals the compiler cannot
   check, and 33 `as any` stubs where a wrong rename fails silently rather than
   loudly. Documented on the type instead.

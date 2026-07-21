@@ -6,4 +6,4 @@
 
 feat: subscribe-reply feed snapshot and empty-log anchor cursor
 
-MessagesSubscribe replies now carry the tenant feed's `head` progress token and scope `fingerprint`, observed after the subscription is active. Empty replication logs return a position-zero anchor cursor from `logRead` (both stores), so empty-feed drains checkpoint instead of re-enumerating every pass. The agent adopts the reply head as its pull checkpoint on cursor-less subscription opens when the reply fingerprint matches the local feed — a fresh or reset link against an already-identical remote converges with zero feed enumeration.
+MessagesSubscribe replies now carry the tenant feed's `head` progress token and scope `fingerprint`, observed after the subscription is active. Empty replication logs return a position-zero anchor cursor from `logRead` in both stores, so empty-feed drains checkpoint instead of re-enumerating every pass. The agent captures both subscription snapshots: matching fingerprints atomically establish the pull and push baselines from their respective heads, while missing or mismatched snapshots run one durable reconciliation before queued callbacks are released.

@@ -82,10 +82,7 @@ export interface SyncDurableFeedReconcilerOperations {
   getQuotaBlockCids(target: SyncTarget): Promise<string[]>;
 
   /**
-   * Commit one page's checkpoint advance through the engine's single seam:
-   * covered live push-ledger deliveries are pruned (their release folds into
-   * the same write), the direction checkpoint is persisted once, and its
-   * advance is emitted.
+   * Persist one page's ordered checkpoint advance and emit it once durable.
    */
   commitCheckpoint(link: ReplicationLinkState, direction: SyncDirection): Promise<void>;
 

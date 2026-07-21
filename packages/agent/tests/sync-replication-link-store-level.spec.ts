@@ -97,6 +97,23 @@ describe('SyncReplicationLinkStoreLevel', () => {
     expect(persisted.push).toEqual(pushLink.push);
   });
 
+  it('should persist both directional checkpoints in one store update', async () => {
+    const link = await store.getOrCreateLink({
+      tenantDid      : 'did:example:alice',
+      remoteEndpoint : 'https://dwn.example.com',
+      scope          : { kind: 'full' },
+      ...ownerAuthorization,
+    });
+    link.pull.contiguousAppliedToken = token(11);
+    link.push.contiguousAppliedToken = token(12);
+
+    await store.persistCheckpoints(link);
+
+    const [persisted] = await store.getAllLinks();
+    expect(persisted.pull).toEqual(link.pull);
+    expect(persisted.push).toEqual(link.push);
+  });
+
   it('should preserve a concurrent status transition and checkpoint update', async () => {
     const statusLink = await store.getOrCreateLink({
       tenantDid      : 'did:example:alice',

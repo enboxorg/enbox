@@ -12,6 +12,7 @@ export interface SyncRunCoordinatorOperations {
     result: SyncDurableFeedReconcileResult,
   ): Promise<void>;
   onReconcileApplied(target: SyncTarget, messageCids: string[]): void;
+  probeFeedConvergence(target: SyncTarget): Promise<SyncDurableFeedReconcileResult>;
   reconcileTarget(
     target: SyncTarget,
     direction: SyncDirection | undefined,
@@ -28,6 +29,7 @@ export type SyncRunCoordinatorParams = {
 };
 
 type SyncTargetGroupRunResult = {
+  attempted: boolean;
   dwnUrl: string;
   succeeded: boolean;
 };
@@ -37,6 +39,8 @@ type SyncTargetGroupSummary = {
   groupsFailed: number;
   groupsSucceeded: number;
 };
+
+type SyncTargetRunner = (target: SyncTarget) => Promise<boolean>;
 
 /**
  * Coordinates an ordinary one-shot sync cycle without depending on a storage
@@ -59,19 +63,32 @@ export class SyncRunCoordinator {
       // here means the identity has no resolvable endpoints — a no-op run.
       targets = targets.filter(target => target.did === options.did);
     }
-    const summary = await this.runTargetGroups(targets, direction, options);
+    const summary = await this.runTargetGroups(
+      targets,
+      (target): Promise<boolean> => this.runTarget(target, direction, options),
+    );
+    this.updateConnectivity(summary);
+    SyncRunCoordinator.assertTargetGroupsSucceeded(summary);
+  }
+
+  /** Probe all current targets and reconcile only feeds whose exact fingerprints differ. */
+  public async settle(): Promise<void> {
+    const targets = await this._operations.getTargets();
+    const summary = await this.runTargetGroups(
+      targets,
+      (target): Promise<boolean> => this.settleTarget(target),
+    );
     this.updateConnectivity(summary);
     SyncRunCoordinator.assertTargetGroupsSucceeded(summary);
   }
 
   private async runTargetGroups(
     targets: SyncTarget[],
-    direction: SyncDirection | undefined,
-    options: SyncRunOptions | undefined,
+    runTarget: SyncTargetRunner,
   ): Promise<SyncTargetGroupSummary> {
     const byUrl = SyncRunCoordinator.groupTargetsByDwnUrl(targets);
     const results = await Promise.allSettled([...byUrl.entries()].map(([dwnUrl, groupTargets]) =>
-      this.runTargetGroupWithUrl(dwnUrl, groupTargets, direction, options)
+      this.runTargetGroupWithUrl(dwnUrl, groupTargets, runTarget)
     ));
 
     return SyncRunCoordinator.summarizeTargetGroupResults(results);
@@ -90,40 +107,36 @@ export class SyncRunCoordinator {
   private async runTargetGroupWithUrl(
     dwnUrl: string,
     targets: SyncTarget[],
-    direction: SyncDirection | undefined,
-    options: SyncRunOptions | undefined,
+    runTarget: SyncTargetRunner,
   ): Promise<SyncTargetGroupRunResult> {
-    return {
-      dwnUrl,
-      succeeded: await this.runTargetGroup(dwnUrl, targets, direction, options),
-    };
+    return { dwnUrl, ...await this.runTargetGroup(dwnUrl, targets, runTarget) };
   }
 
   private async runTargetGroup(
     dwnUrl: string,
     targets: SyncTarget[],
-    direction: SyncDirection | undefined,
-    options: SyncRunOptions | undefined,
-  ): Promise<boolean> {
+    runTarget: SyncTargetRunner,
+  ): Promise<{ attempted: boolean; succeeded: boolean }> {
+    let attempted = false;
     for (const target of targets) {
       try {
-        await this.runTarget(target, direction, options);
+        attempted = await runTarget(target) || attempted;
       } catch (error: unknown) {
         this._operations.reportError(
           `SyncRunCoordinator: Error syncing ${target.did} with ${dwnUrl}`,
           error,
         );
-        return false;
+        return { attempted: true, succeeded: false };
       }
     }
-    return true;
+    return { attempted, succeeded: true };
   }
 
   private async runTarget(
     target: SyncTarget,
     direction: SyncDirection | undefined,
     options: SyncRunOptions | undefined,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const result = await this._operations.reconcileTarget(
       target,
       direction,
@@ -144,13 +157,27 @@ export class SyncRunCoordinator {
     }
 
     if (options?.verifyConvergence !== true) {
-      return;
+      return result.aborted !== true && result.paused !== true;
     }
     if (result.converged === false) {
       await this._operations.handleVerifiedFeedDivergence(target, result);
     } else if (result.converged === true) {
       await this._operations.clearFeedConvergenceFailure(target);
     }
+    return result.aborted !== true && result.paused !== true;
+  }
+
+  private async settleTarget(target: SyncTarget): Promise<boolean> {
+    const probe = await this._operations.probeFeedConvergence(target);
+    if (probe.aborted === true || probe.paused === true) {
+      return false;
+    }
+    if (probe.converged === true) {
+      await this._operations.clearFeedConvergenceFailure(target);
+      return true;
+    }
+
+    return this.runTarget(target, undefined, { verifyConvergence: true });
   }
 
   private static summarizeTargetGroupResults(
@@ -173,6 +200,9 @@ export class SyncRunCoordinator {
   ): void {
     if (result.status === 'rejected') {
       summary.groupsFailed++;
+      return;
+    }
+    if (!result.value.attempted) {
       return;
     }
     if (result.value.succeeded) {

@@ -262,11 +262,12 @@ describe('SyncEngineLevel lifecycle', () => {
     expect(db.status).toBe('closed');
   });
 
-  it('should wait for a scheduled push flush before closing storage', async () => {
+  it('should wait for an in-flight durable push pass before closing storage', async () => {
     const engine = new SyncEngineLevel({ db });
     const pushStarted = createDeferred();
     const releasePush = createDeferred();
     const linkKey = 'did:example:alice^https://dwn.example.com^projection-1^authorization-1';
+    const did = 'did:example:alice';
     const controller = engine['activateLink'](linkKey, {
       authorization      : { kind: 'owner' },
       authorizationEpoch : 'authorization-1',
@@ -277,25 +278,17 @@ describe('SyncEngineLevel lifecycle', () => {
       remoteEndpoint     : 'https://dwn.example.com',
       scope              : { kind: 'full' },
       status             : 'live',
-      tenantDid          : 'did:example:alice',
+      tenantDid          : did,
     });
-    const pushQueue = controller.getOrCreatePushQueue({
-      did    : 'did:example:alice',
-      dwnUrl : 'https://dwn.example.com',
-    });
-
-    const livePushCoordinator = engine['_livePushCoordinator'];
-    sinon.stub(livePushCoordinator, 'flushLink').callsFake(async (): Promise<void> => {
+    controller.markReplicationReady();
+    sinon.stub(engine as never, 'reconcileOwnedTarget').callsFake(async (): Promise<Record<string, unknown>> => {
       pushStarted.resolve();
       await releasePush.promise;
+      return { pushFailures: [] };
     });
 
-    await livePushCoordinator.requeue(controller, {
-      did        : pushQueue.did,
-      dwnUrl     : pushQueue.dwnUrl,
-      entries    : [{ cid: 'cid-1' }],
-      retryCount : 0,
-    });
+    const runIdentityTask = (engine as any)._lifecycle.captureIdentityTaskRunner(did);
+    const push = runIdentityTask(() => engine['_linkRecoveryCoordinator'].push(controller));
     await pushStarted.promise;
 
     let closeCompleted = false;
@@ -306,7 +299,7 @@ describe('SyncEngineLevel lifecycle', () => {
     expect(db.status).toBe('open');
 
     releasePush.resolve();
-    await closePromise;
+    await Promise.all([push, closePromise]);
 
     expect(db.status).toBe('closed');
   });
@@ -447,6 +440,7 @@ describe('SyncEngineLevel lifecycle', () => {
       connectivity       : 'unknown',
       projectionId       : 'projection-1',
       pull               : {},
+      push               : {},
       remoteEndpoint     : 'https://dwn.example.com',
       scope              : { kind: 'full' },
       status             : 'initializing',
@@ -504,6 +498,7 @@ describe('SyncEngineLevel lifecycle', () => {
       connectivity       : 'online',
       projectionId       : 'projection-1',
       pull               : {},
+      push               : {},
       remoteEndpoint     : 'https://dwn.example.com',
       scope              : { kind: 'full' },
       status             : 'live',
@@ -558,6 +553,7 @@ describe('SyncEngineLevel lifecycle', () => {
       connectivity       : 'online',
       projectionId       : 'projection-1',
       pull               : {},
+      push               : {},
       remoteEndpoint     : 'https://dwn.example.com',
       scope              : { kind: 'full' },
       status             : 'live',
@@ -604,7 +600,7 @@ describe('SyncEngineLevel lifecycle', () => {
     expect(await engine.getIdentityOptions(did)).toEqual(updatedOptions);
   });
 
-  it('should keep push runtime state until an in-flight flush drains during unregister', async () => {
+  it('should keep the replication link active until an in-flight durable push drains during unregister', async () => {
     const engine = new SyncEngineLevel({ db });
     const pushStarted = createDeferred();
     const releasePush = createDeferred();
@@ -623,17 +619,14 @@ describe('SyncEngineLevel lifecycle', () => {
       status             : 'live',
       tenantDid          : did,
     });
-    const pushQueue = controller.getOrCreatePushQueue({
-      did,
-      dwnUrl: 'https://dwn.example.com',
-    });
+    controller.markReplicationReady();
 
     await engine.registerIdentity({ did, options: { protocols: 'all' } });
     engine['_runtime'] = new SyncRuntime(true);
-    const livePushCoordinator = engine['_livePushCoordinator'];
-    sinon.stub(livePushCoordinator, 'flushLink').callsFake(async (): Promise<void> => {
+    sinon.stub(engine as never, 'reconcileOwnedTarget').callsFake(async (): Promise<Record<string, unknown>> => {
       pushStarted.resolve();
       await releasePush.promise;
+      return { pushFailures: [] };
     });
     const removeIdentity = engine['removeIdentityFromLiveSync'].bind(engine);
     sinon.stub(engine as never, 'removeIdentityFromLiveSync').callsFake(async (identityDid: string): Promise<void> => {
@@ -642,23 +635,20 @@ describe('SyncEngineLevel lifecycle', () => {
       await removal;
     });
 
-    await livePushCoordinator.requeue(controller, {
-      did        : pushQueue.did,
-      dwnUrl     : pushQueue.dwnUrl,
-      entries    : [{ cid: 'cid-1' }],
-      retryCount : 0,
-    });
+    const runIdentityTask = (engine as any)._lifecycle.captureIdentityTaskRunner(did);
+    const push = runIdentityTask(() => engine['_linkRecoveryCoordinator'].push(controller));
     await pushStarted.promise;
 
     const unregisterPromise = engine.unregisterIdentity(did);
     await removeStarted.promise;
 
     try {
-      expect(engine['_linkControllers'].get(linkKey)?.pushQueue).toBe(pushQueue);
+      expect(engine['_linkControllers'].get(linkKey)).toBe(controller);
+      expect(controller.isActive).toBe(true);
       expect(await engine.getIdentityOptions(did)).toBeDefined();
     } finally {
       releasePush.resolve();
-      await unregisterPromise;
+      await Promise.all([push, unregisterPromise]);
     }
 
     expect(engine['_linkControllers'].has(linkKey)).toBe(false);
@@ -707,7 +697,7 @@ describe('SyncEngineLevel lifecycle', () => {
     const engine = new SyncEngineLevel({ db });
     engine['_runtime'] = new SyncRuntime(true);
 
-    const runStub = sinon.stub((engine as any)._runCoordinator, 'run').resolves();
+    const settleStub = sinon.stub((engine as any)._runCoordinator, 'settle').resolves();
     sinon.stub(engine as any, 'getSyncTargets').resolves([{
       did                : 'did:example:settle-skip',
       dwnUrl             : 'https://dwn.example.com',
@@ -717,6 +707,7 @@ describe('SyncEngineLevel lifecycle', () => {
       projectionId       : 'projection-id',
     }]);
     sinon.stub(engine as any, 'openLinkSubscriptions').resolves('readyForLive');
+    sinon.stub(engine as any, 'establishLinkBaseline').resolves();
     sinon.stub(engine as any, 'markLinkLive').resolves();
 
     const reachedLinkStorage = createDeferred();
@@ -749,11 +740,11 @@ describe('SyncEngineLevel lifecycle', () => {
     await (engine as unknown as {
       runSettleCheck(runtime: unknown): Promise<void>;
     }).runSettleCheck(engine['_runtime']);
-    expect(runStub.callCount).toBe(1);
+    expect(settleStub.callCount).toBe(1);
 
     releaseLinkStorage.resolve();
     await firstPass;
-    expect(runStub.callCount).toBe(1);
+    expect(settleStub.callCount).toBe(1);
 
     await engine.stopSync();
   });
@@ -772,7 +763,7 @@ describe('SyncEngineLevel lifecycle', () => {
     };
     const linkKey = `${did}^https://dwn.example.com^projection-id^owner-epoch`;
 
-    sinon.stub((engine as any)._runCoordinator, 'run').resolves();
+    sinon.stub((engine as any)._runCoordinator, 'settle').resolves();
     sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
     const initStub = sinon.stub(engine as any, 'initializeLinkTarget');
     initStub.resolves({ status: 'active', durableLinkIdentityKey: 'key' });

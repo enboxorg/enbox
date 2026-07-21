@@ -63,11 +63,9 @@ function createFixture(options: {
     captureIdentityTaskRunner : sinon.stub().returns(taskRunner),
     clearConvergence          : sinon.stub(),
     emitEvent                 : sinon.stub(),
-    flushPendingPushBatch     : sinon.stub().resolves(),
     getController             : sinon.stub().callsFake((linkKey: string) => controllers.get(linkKey)),
     getRuntimeScope           : sinon.stub().callsFake(() => scope),
     handleDivergence          : sinon.stub().resolves(false),
-    handlePushFailures        : sinon.stub().resolves(),
     openPullSubscription      : sinon.stub().resolves(true),
     openPushSubscription      : sinon.stub().resolves(true),
     reconcileTarget           : sinon.stub().resolves({ converged: true }),
@@ -108,7 +106,10 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const fixture = createFixture();
     const state = link();
     const controller = activate(fixture, state);
-    controller.trackPullDelivery(token());
+    const stalePull = sinon.stub().resolves();
+    const stalePush = sinon.stub().resolves();
+    const queuedPull = controller.enqueueDirection('pull', stalePull);
+    const queuedPush = controller.enqueueDirection('push', stalePush);
     const resumeToken = token('10');
     const drain = sinon.stub(fixture.coordinator as any, 'runPendingRepairs').resolves();
 
@@ -117,7 +118,13 @@ describe('SyncLinkRecoveryCoordinator', () => {
 
     expect(state.status).toBe('repairing');
     expect(state.connectivity).toBe('offline');
-    expect(controller.pullInflightCount).toBe(0);
+    expect(await queuedPull).toBeUndefined();
+    expect(await queuedPush).toBeUndefined();
+    expect(stalePull.notCalled).toBe(true);
+    expect(stalePush.notCalled).toBe(true);
+    expect(controller.getPendingDirectionCount('pull')).toBe(0);
+    expect(controller.getPendingDirectionCount('push')).toBe(0);
+    expect(controller.isReplicationReady).toBe(false);
     // The transition publishes the runnable request and its token together;
     // the supervised drain runs it without re-marking.
     expect(controller.repairResumeToken).toEqual(resumeToken);
@@ -137,6 +144,30 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(drain.calledOnce).toBe(true);
   });
 
+  it('waits for invalidated directional work to unwind before repair reconciliation starts', async () => {
+    const fixture = createFixture();
+    const controller = activate(fixture);
+    const operationStarted = deferred<void>();
+    const releaseOperation = deferred<void>();
+    controller.markReplicationReady();
+    const staleOperation = controller.enqueueDirection('pull', async (): Promise<void> => {
+      operationStarted.resolve();
+      await releaseOperation.promise;
+    });
+    await operationStarted.promise;
+
+    await fixture.coordinator.transitionToRepairing(controller);
+    expect(fixture.operations.reconcileTarget.notCalled).toBe(true);
+
+    releaseOperation.resolve();
+    await staleOperation;
+    await waitForLastTask(fixture.taskRunner);
+
+    expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
+    expect(controller.isReplicationReady).toBe(true);
+    controller.deactivate();
+  });
+
   it('does not publish any repair state for a paused link', async () => {
     const fixture = createFixture();
     const state = link('paused');
@@ -150,7 +181,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(state.status).toBe('paused');
   });
 
-  it('pauses a link once and clears subscriptions, timers, pull ordering, repair state, and push state', async () => {
+  it('pauses a link once and clears subscriptions, timers, directional work, and repair state', async () => {
     const clock = sinon.useFakeTimers();
     const fixture = createFixture();
     const state = link('repairing');
@@ -159,10 +190,8 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const closePush = sinon.stub().resolves();
     controller.setLiveSubscription({ close: closePull });
     controller.setLocalSubscription({ close: closePush });
-    controller.trackPullDelivery(token());
-    const runtime = controller.getOrCreatePushQueue({ did: DID, dwnUrl: REMOTE });
-    runtime.entries.push({ cid: 'push-cid' });
-    controller.setPushTimer(runtime, setTimeout(() => undefined, 1000));
+    const pendingPull = controller.enqueueDirection('pull', sinon.stub().resolves());
+    const pendingPush = controller.enqueueDirection('push', sinon.stub().resolves());
     controller.setRepairRetryTimer(setTimeout(() => undefined, 1000));
     controller.setReconcileTimer(setTimeout(() => undefined, 1000), 1000);
 
@@ -172,15 +201,17 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(state.status).toBe('paused');
     expect(closePull.calledOnce).toBe(true);
     expect(closePush.calledOnce).toBe(true);
-    expect(controller.pullInflightCount).toBe(0);
-    expect(controller.pushQueue).toBeUndefined();
+    expect(await pendingPull).toBeUndefined();
+    expect(await pendingPush).toBeUndefined();
+    expect(controller.getPendingDirectionCount('pull')).toBe(0);
+    expect(controller.getPendingDirectionCount('push')).toBe(0);
     expect(controller.repairRetryTimer).toBeUndefined();
     expect(controller.reconcileTimer).toBeUndefined();
     expect(fixture.operations.setStatus.calledOnce).toBe(true);
     await clock.runAllAsync();
   });
 
-  it('repairs through durable feeds, restores subscriptions, folds push failures, and schedules the repair-window gap', async () => {
+  it('repairs through durable feeds, restores subscriptions, and schedules retryable push work', async () => {
     const clock = sinon.useFakeTimers();
     const fixture = createFixture();
     const state = link('repairing');
@@ -208,9 +239,9 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(fixture.operations.resetPullCheckpoint.calledOnceWithExactly(state, token('4'))).toBe(true);
     expect(fixture.operations.openPullSubscription.calledOnceWithExactly(repairTarget, controller)).toBe(true);
     expect(fixture.operations.openPushSubscription.calledOnceWithExactly(repairTarget, controller)).toBe(true);
-    expect(fixture.operations.handlePushFailures.calledOnceWithExactly(controller, [failure])).toBe(true);
     expect(state.status).toBe('live');
     expect(state.connectivity).toBe('online');
+    expect(controller.isReplicationReady).toBe(true);
     expect(controller.isMailboxBusy('repair')).toBe(false);
     expect(controller.repairAttempts).toBe(0);
     expect(controller.reconcileTimerDueAt).toBe(500);
@@ -219,6 +250,10 @@ describe('SyncLinkRecoveryCoordinator', () => {
       messageCids : ['admitted-cid'],
     })).toBe(true);
     expect(fixture.operations.emitEvent.calledWithMatch({ type: 'repair:completed' })).toBe(true);
+    expect(fixture.operations.emitEvent.calledWithMatch({
+      type   : 'reconcile:needed',
+      reason : 'push-retryable',
+    })).toBe(true);
     expect(fixture.operations.emitEvent.calledWithMatch({
       type   : 'reconcile:needed',
       reason : 'post-repair-gap',
@@ -256,6 +291,40 @@ describe('SyncLinkRecoveryCoordinator', () => {
       expect('_timers' in event).toBe(false);
       expect('disposed' in event).toBe(false);
     }
+
+    controller.deactivate();
+    await clock.runAllAsync();
+  });
+
+  it('releases directional replay only after both repaired subscriptions reopen', async () => {
+    const clock = sinon.useFakeTimers();
+    const fixture = createFixture();
+    const state = link('repairing');
+    const controller = activate(fixture, state);
+    const pushOpening = deferred<void>();
+    const releasePush = deferred<void>();
+    fixture.operations.openPushSubscription.callsFake(async (): Promise<boolean> => {
+      pushOpening.resolve();
+      await releasePush.promise;
+      return true;
+    });
+
+    const repairing = fixture.coordinator.repair(controller);
+    await pushOpening.promise;
+
+    const replay = sinon.stub().resolves('replayed');
+    const queuedReplay = controller.enqueueDirection('pull', replay);
+    await Promise.resolve();
+    expect(fixture.operations.openPullSubscription.calledOnce).toBe(true);
+    expect(fixture.operations.openPushSubscription.calledOnce).toBe(true);
+    expect(controller.isReplicationReady).toBe(false);
+    expect(replay.notCalled).toBe(true);
+
+    releasePush.resolve();
+    await repairing;
+    expect(controller.isReplicationReady).toBe(true);
+    expect(await queuedReplay).toBe('replayed');
+    expect(replay.calledOnce).toBe(true);
 
     controller.deactivate();
     await clock.runAllAsync();
@@ -398,7 +467,8 @@ describe('SyncLinkRecoveryCoordinator', () => {
     expect(controller.reconcileTimer).toBeUndefined();
   });
 
-  it('reconciles applied CIDs and convergence, then routes divergence and push failures independently', async () => {
+  it('reconciles applied CIDs and convergence, then routes divergence and retryable push work independently', async () => {
+    const clock = sinon.useFakeTimers();
     const fixture = createFixture();
     const state = link();
     const controller = activate(fixture, state);
@@ -430,36 +500,66 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const failure = { cid: 'push-cid', detail: 'retry' };
     fixture.operations.reconcileTarget.onThirdCall().resolves({ pushFailures: [failure] });
     await fixture.coordinator.reconcile(controller);
-    expect(fixture.operations.handlePushFailures.calledOnceWithExactly(controller, [failure])).toBe(true);
+    expect(controller.reconcileTimerDueAt).toBe(5000);
+    expect(fixture.operations.emitEvent.calledWithMatch({
+      type   : 'reconcile:needed',
+      reason : 'push-retryable',
+    })).toBe(true);
     expect(fixture.operations.handleDivergence.calledOnce).toBe(true);
+    controller.deactivate();
+    await clock.runAllAsync();
   });
 
-  it('drains the pending push batch through the flush lane before the reconcile pass', async () => {
+  it('coalesces push wake signals into one trailing durable-feed pass', async () => {
     const fixture = createFixture();
     const controller = activate(fixture);
-    const order: string[] = [];
-    fixture.operations.flushPendingPushBatch.callsFake(async (): Promise<void> => { order.push('flush'); });
-    fixture.operations.reconcileTarget.callsFake(async (): Promise<Record<string, unknown>> => {
-      order.push('reconcile');
-      return { converged: true };
+    const passStarted = deferred<void>();
+    const releasePass = deferred<void>();
+    fixture.operations.reconcileTarget.onFirstCall().callsFake(async () => {
+      passStarted.resolve();
+      await releasePass.promise;
+      return {};
+    });
+    fixture.operations.reconcileTarget.resolves({});
+
+    const first = fixture.coordinator.push(controller);
+    await passStarted.promise;
+    const second = fixture.coordinator.push(controller);
+    const third = fixture.coordinator.push(controller);
+    releasePass.resolve();
+    await Promise.all([first, second, third]);
+
+    expect(fixture.operations.reconcileTarget.callCount).toBe(2);
+    for (const call of fixture.operations.reconcileTarget.getCalls()) {
+      expect(call.args[0]).toBe(controller);
+      expect(call.args[2]).toEqual({ direction: 'push' });
+      expect(call.args[3]()).toBe(true);
+    }
+  });
+
+  it('keeps the durable push checkpoint unchanged and schedules verified retry after a push failure', async () => {
+    const clock = sinon.useFakeTimers();
+    const fixture = createFixture();
+    const state = link();
+    state.push.contiguousAppliedToken = token('7');
+    const checkpoint = { ...state.push.contiguousAppliedToken };
+    const controller = activate(fixture, state);
+    fixture.operations.reconcileTarget.resolves({
+      pushFailures: [{ cid: 'push-cid', detail: 'remote unavailable' }],
     });
 
-    await fixture.coordinator.reconcile(controller);
+    await fixture.coordinator.push(controller);
 
-    expect(fixture.operations.flushPendingPushBatch.calledOnceWithExactly(controller)).toBe(true);
-    expect(order).toEqual(['flush', 'reconcile']);
-  });
-
-  it('runs the reconcile pass even when the pre-flush fails', async () => {
-    const fixture = createFixture();
-    const controller = activate(fixture);
-    fixture.operations.flushPendingPushBatch.rejects(new Error('flush failed'));
-
-    await fixture.coordinator.reconcile(controller);
-
-    expect(fixture.operations.reportError.calledOnce).toBe(true);
-    expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
-    expect(fixture.operations.emitEvent.calledWithMatch({ type: 'reconcile:completed' })).toBe(true);
+    expect(state.push.contiguousAppliedToken).toEqual(checkpoint);
+    expect(controller.reconcileTimerDueAt).toBe(5000);
+    expect(fixture.operations.emitEvent.calledWithMatch({
+      type   : 'reconcile:needed',
+      reason : 'push-retryable',
+    })).toBe(true);
+    expect(fixture.operations.clearConvergence.notCalled).toBe(true);
+    expect(fixture.operations.emitEvent.calledWithMatch({ type: 'reconcile:completed' })).toBe(false);
+    controller.deactivate();
+    await clock.runAllAsync();
   });
 
   it('reports reconciliation failures, schedules retry, and suppresses both after staleness', async () => {
@@ -491,21 +591,21 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await clock.runAllAsync();
   });
 
-  it('serializes a repair behind an in-flight mailbox flush instead of tearing it down mid-push', async () => {
+  it('serializes a repair behind an in-flight push pass instead of tearing it down', async () => {
     const fixture = createFixture();
     const controller = activate(fixture, link('repairing'));
-    const releaseFlush = deferred<void>();
-    const flush = controller.enqueue(async (): Promise<void> => {
-      await releaseFlush.promise;
-    }, 'flush');
+    const releasePush = deferred<void>();
+    const push = controller.enqueue(async (): Promise<void> => {
+      await releasePush.promise;
+    }, 'push');
 
     const repairing = fixture.coordinator.repair(controller);
     await Promise.resolve();
     expect(controller.isMailboxBusy('repair')).toBe(true);
     expect(fixture.operations.reconcileTarget.called).toBe(false);
 
-    releaseFlush.resolve();
-    await Promise.all([flush, repairing]);
+    releasePush.resolve();
+    await Promise.all([push, repairing]);
     expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
 
     controller.deactivate();
@@ -804,7 +904,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await clock.runAllAsync();
   });
 
-  it('runs a trailing reconciliation as a new mailbox turn behind an already-queued flush', async () => {
+  it('runs a trailing reconciliation as a new mailbox turn behind an already-queued push', async () => {
     const fixture = createFixture();
     const controller = activate(fixture);
     const order: string[] = [];
@@ -819,17 +919,17 @@ describe('SyncLinkRecoveryCoordinator', () => {
 
     const first = fixture.coordinator.reconcile(controller);
     await Promise.resolve();
-    const flush = controller.enqueue(async (): Promise<void> => { order.push('flush'); }, 'flush');
-    // The signal lands after the flush was queued: its trailing pass must
+    const push = controller.enqueue(async (): Promise<void> => { order.push('push'); }, 'push');
+    // The signal lands after the push was queued: its trailing pass must
     // not jump the mailbox queue.
     const second = fixture.coordinator.reconcile(controller);
     releasePass.resolve();
-    await Promise.all([first, flush, second]);
+    await Promise.all([first, push, second]);
 
-    expect(order).toEqual(['pass-1', 'flush', 'pass-2']);
+    expect(order).toEqual(['pass-1', 'push', 'pass-2']);
   });
 
-  it('lets an already-queued flush run between the turns of a sustained signal stream', async () => {
+  it('lets an already-queued push run between the turns of a sustained signal stream', async () => {
     const fixture = createFixture();
     const controller = activate(fixture);
     const order: string[] = [];
@@ -848,13 +948,13 @@ describe('SyncLinkRecoveryCoordinator', () => {
 
     const first = fixture.coordinator.reconcile(controller);
     await passStarted.promise;
-    const flush = controller.enqueue(async (): Promise<void> => { order.push('flush'); }, 'flush');
-    await Promise.all([first, flush]);
+    const push = controller.enqueue(async (): Promise<void> => { order.push('push'); }, 'push');
+    await Promise.all([first, push]);
 
-    // Each trailing pass is its own mailbox turn, so the queued flush runs
+    // Each trailing pass is its own mailbox turn, so the queued push runs
     // right after the pass that was executing when it was queued — the
     // stream cannot hold the mailbox and starve live push.
-    expect(order).toEqual(['pass-1', 'flush', 'pass-2', 'pass-3', 'pass-4']);
+    expect(order).toEqual(['pass-1', 'push', 'pass-2', 'pass-3', 'pass-4']);
   });
 
   it('lets a successful trailing pass subsume the failed pass retry timer', async () => {

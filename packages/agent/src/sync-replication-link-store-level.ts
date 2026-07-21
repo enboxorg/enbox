@@ -102,6 +102,15 @@ export class SyncReplicationLinkStoreLevel implements SyncReplicationLinkStore {
     });
   }
 
+  public async persistCheckpoints(link: ReplicationLinkState): Promise<void> {
+    const pull = SyncReplicationLinkStoreLevel.cloneCheckpoint(link.pull);
+    const push = SyncReplicationLinkStoreLevel.cloneCheckpoint(link.push);
+    await this.updateLink(link, (persistedLink): void => {
+      SyncReplicationLinkStoreLevel.mergeCheckpoint(persistedLink.pull, pull);
+      SyncReplicationLinkStoreLevel.mergeCheckpoint(persistedLink.push, push);
+    });
+  }
+
   public async resetCheckpoints(link: ReplicationLinkState): Promise<void> {
     SyncCheckpoint.reset(link.pull);
     SyncCheckpoint.reset(link.push);

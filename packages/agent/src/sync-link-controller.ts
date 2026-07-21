@@ -1,185 +1,40 @@
 import type { ProgressToken } from '@enbox/dwn-sdk-js';
 
-import type { DirectionCheckpoint, NonEmptyStringArray, PushFailure, ReplicationLinkState, SyncScope } from './types/sync.js';
-
-import { SyncCheckpoint } from './sync-checkpoint.js';
+import type { ReplicationLinkState, SyncDirection } from './types/sync.js';
 
 /** A closable transport subscription owned by one replication link. */
 export type SyncLinkSubscription = {
   close: () => Promise<void>;
 };
 
-/** One queued live-push entry and its most recent failure, if any. */
-export type SyncPushQueueEntry = {
-  cid: string;
-  lastFailure?: PushFailure;
-  /** Delivery tag for the local feed position this entry came from. */
-  tag?: SyncDeliveryTag;
+/** Feed state captured atomically with one subscription establishment. */
+export type SyncFeedSnapshot = {
+  fingerprint?: string;
+  head?: ProgressToken;
 };
 
-/** Configuration captured when a live-push queue is first created. */
-export type SyncPushQueueParams = {
-  did: string;
-  dwnUrl: string;
-  delegateDid?: string;
-  protocol?: string;
-  scope?: SyncScope;
-  permissionGrantIds?: NonEmptyStringArray;
+type SyncDirectionOperation = {
+  operation: () => Promise<unknown>;
+  reject: (reason: unknown) => void;
+  resolve: (value: unknown | undefined) => void;
 };
 
-/** Mutable batching and retry state for a link's opportunistic push path. */
-export type SyncPushQueueState = SyncPushQueueParams & {
-  entries: SyncPushQueueEntry[];
-  retryCount: number;
-  timer?: ReturnType<typeof setTimeout>;
-};
-
-type InFlightDelivery = {
-  acked: boolean;
-  token: ProgressToken;
-};
-
-/**
- * The delivery tag for one in-flight delivery in either direction —
- * AMQP-style cumulative acknowledgement: `track*Delivery` issues the tag in
- * delivery order, `ack*Delivery` resolves it, and the direction's checkpoint
- * advances only through the contiguous acked prefix. Tags are pinned to the
- * pull generation that issued them — one fence for both directions, because
- * the local and remote subscription halves open and reset as one
- * generational pair — and an ack carrying a superseded tag is ignored
- * instead of colliding with a fresh delivery's ordinal.
- *
- * "Generation" means this monotonic in-memory counter and nothing else. The
- * two durable, string-valued epochs — `authorizationEpoch` on a replication
- * link, and `ProgressToken.epoch` on a remote stream — are separate concepts
- * that deliberately keep the word "epoch".
- */
-export type SyncDeliveryTag = {
+type SyncDirectionQueue = {
+  active?: Promise<void>;
+  draining: boolean;
   generation: number;
-  ordinal: number;
+  invalidated: boolean;
+  operations: SyncDirectionOperation[];
+  pendingCount: number;
+  readiness: Promise<void>;
 };
 
-/**
- * How a ledger earns the right to commit an acked delivery into the
- * checkpoint:
- *
- * - `stream-anchored` — deliveries arrive on a replay stream opened FROM the
- *   checkpoint, so every delivered token is contiguous by construction and
- *   commits as soon as its prefix is acked (the pull side).
- * - `successor-only` — deliveries are live observations with no proof about
- *   the span below them, so only the checkpoint's immediate successor (or a
- *   stream's first position onto an empty checkpoint) may commit; anything
- *   else holds until a reconciler pass covers the gap (the push side, whose
- *   local subscription opens from "now").
- */
-type DeliveryCommitPolicy = 'stream-anchored' | 'successor-only';
-
-/**
- * One direction's cumulative-acknowledgement ledger: in-flight deliveries
- * keyed by delivery-order ordinal, with the direction's durable checkpoint
- * advancing only through the contiguous acked prefix its commit policy can
- * prove gap-free. The generation fence lives in the controller, shared by
- * both directions.
- */
-class DeliveryLedger {
-  private readonly _inflight: Map<number, InFlightDelivery> = new Map();
-  private _nextCommitOrdinal = 0;
-  private _nextDeliveryOrdinal = 0;
-
-  public constructor(
-    private readonly _checkpoint: DirectionCheckpoint,
-    private readonly _commitPolicy: DeliveryCommitPolicy,
-  ) {}
-
-  public get inflightCount(): number {
-    return this._inflight.size;
-  }
-
-  /** Register a delivery in feed order and return its ordinal. */
-  public track(token: ProgressToken): number {
-    const ordinal = this._nextDeliveryOrdinal++;
-    this._inflight.set(ordinal, { token, acked: false });
-    return ordinal;
-  }
-
-  /** Mark one delivery acked and advance through the contiguous acked prefix. */
-  public ack(ordinal: number): number {
-    const entry = this._inflight.get(ordinal);
-    if (entry !== undefined) {
-      entry.acked = true;
-    }
-
-    return this.commitAcked();
-  }
-
-  /** Advance the checkpoint through the contiguous acked prefix the policy proves. */
-  public commitAcked(): number {
-    let drained = 0;
-    while (true) {
-      const entry = this._inflight.get(this._nextCommitOrdinal);
-      if (entry?.acked !== true) {
-        break;
-      }
-      if (
-        this._commitPolicy === 'successor-only' &&
-        !SyncCheckpoint.isImmediateSuccessor(this._checkpoint, entry.token)
-      ) {
-        break;
-      }
-
-      SyncCheckpoint.commitContiguousToken(this._checkpoint, entry.token);
-      this._inflight.delete(this._nextCommitOrdinal);
-      this._nextCommitOrdinal++;
-      drained++;
-    }
-
-    return drained;
-  }
-
-  /**
-   * Fold an externally advanced checkpoint into this ledger's (a reconciler
-   * pass advanced its own link copy — the fold is monotonic), drop the
-   * in-flight prefix it covers, then advance through acked deliveries the
-   * fold unlocked or the sweep released. Returns only the newly advanced
-   * count — folding and pruning alone move nothing new.
-   */
-  public pruneCovered(coveringToken: ProgressToken): number {
-    SyncCheckpoint.commitContiguousToken(this._checkpoint, coveringToken);
-    const checkpoint = this._checkpoint.contiguousAppliedToken;
-    if (checkpoint === undefined) {
-      return 0;
-    }
-
-    while (true) {
-      const entry = this._inflight.get(this._nextCommitOrdinal);
-      if (
-        entry === undefined ||
-        !SyncCheckpoint.validateTokenDomain(this._checkpoint, entry.token) ||
-        SyncCheckpoint.comparePosition(entry.token, checkpoint) > 0
-      ) {
-        break;
-      }
-
-      this._inflight.delete(this._nextCommitOrdinal);
-      this._nextCommitOrdinal++;
-    }
-
-    return this.commitAcked();
-  }
-
-  /** Discard in-flight deliveries; rebase the commit cursor onto the next unissued ordinal. */
-  public rebase(): void {
-    this._inflight.clear();
-    this._nextCommitOrdinal = this._nextDeliveryOrdinal;
-  }
-
-  /** Discard in-flight deliveries and restart ordinals from zero. */
-  public reset(): void {
-    this._inflight.clear();
-    this._nextCommitOrdinal = 0;
-    this._nextDeliveryOrdinal = 0;
-  }
-}
+type SyncReplicationReadiness = {
+  generation: number;
+  isReady: boolean;
+  promise: Promise<void>;
+  release: () => void;
+};
 
 /**
  * Serialization lanes multiplexed onto one link mailbox. Every enqueued
@@ -192,47 +47,114 @@ class DeliveryLedger {
  *    lives OUTSIDE the queue — a mark is not queued work, it is a note that
  *    one more pass is owed once the current one finishes.
  */
-export type SyncLinkMailboxKind = 'flush' | 'repair' | 'reconcile';
+export type SyncLinkMailboxKind = 'push' | 'repair' | 'reconcile';
 
 /**
  * Owns all ephemeral state associated with one active replication link.
  *
  * The controller is persistence- and transport-backend neutral. The enclosing
  * sync engine performs I/O while the controller provides one stable lifetime
- * boundary for subscriptions, pull ordering, push batching, repair, and
+ * boundary for subscriptions, directional replication queues, repair, and
  * reconciliation. Captured callbacks use `isActive` to reject work belonging
  * to a replaced or removed link without consulting backend-specific state.
  */
 export class SyncLinkController {
   private _active = true;
+  private _directionQueues: Record<SyncDirection, SyncDirectionQueue>;
   private readonly _mailboxKindDepths: Map<SyncLinkMailboxKind, number> = new Map();
   private readonly _mailboxShared: Map<SyncLinkMailboxKind, Promise<unknown>> = new Map();
   private readonly _requestedPasses: Set<SyncLinkMailboxKind> = new Set();
   private _mailboxTail: Promise<void> = Promise.resolve();
-  private _liveStreamAttached = false;
   private _liveSubscription?: SyncLinkSubscription;
   private _localSubscription?: SyncLinkSubscription;
-  private readonly _pullLedger: DeliveryLedger;
-  private readonly _pushLedger: DeliveryLedger;
-  private _pullGeneration = 0;
-  private _pushQueue?: SyncPushQueueState;
+  private _pullSnapshot?: SyncFeedSnapshot;
+  private _replicationGeneration = 0;
+  private _pushSnapshot?: SyncFeedSnapshot;
   private _reconcileTimer?: ReturnType<typeof setTimeout>;
   private _reconcileTimerDueAt?: number;
+  private _replicationReadiness: SyncReplicationReadiness;
   private _repairAttempts = 0;
   private _repairResumeToken?: ProgressToken;
   private _repairRetryTimer?: ReturnType<typeof setTimeout>;
+  private _supersededDirectionWork: Promise<void> = Promise.resolve();
 
   public constructor(
     public readonly linkKey: string,
     public readonly link: ReplicationLinkState,
   ) {
-    this._pullLedger = new DeliveryLedger(link.pull, 'stream-anchored');
-    this._pushLedger = new DeliveryLedger(link.push, 'successor-only');
+    this._replicationReadiness = SyncLinkController.createReplicationReadiness(this._replicationGeneration);
+    this._directionQueues = SyncLinkController.createDirectionQueues(this._replicationReadiness);
   }
 
   /** Whether this controller still owns callbacks for its active-link lifetime. */
   public get isActive(): boolean {
     return this._active;
+  }
+
+  /** Whether the current generation has established its durable replay baselines. */
+  public get isReplicationReady(): boolean {
+    return this._active &&
+      this._replicationReadiness.generation === this._replicationGeneration &&
+      this._replicationReadiness.isReady;
+  }
+
+  /** Snapshot captured with the current generation's remote pull subscription. */
+  public get pullSnapshot(): SyncFeedSnapshot | undefined {
+    return this._pullSnapshot;
+  }
+
+  /** Snapshot captured with the current generation's local push subscription. */
+  public get pushSnapshot(): SyncFeedSnapshot | undefined {
+    return this._pushSnapshot;
+  }
+
+  /**
+   * Enqueue replication work in one direction's FIFO. Pull and push drain
+   * independently, while both wait for the current generation's durable
+   * replay baselines before starting. Work invalidated by a generation reset
+   * or deactivation resolves `undefined`; a current operation's rejection is
+   * surfaced without poisoning the queue.
+   */
+  public enqueueDirection<T>(
+    direction: SyncDirection,
+    operation: () => Promise<T>,
+  ): Promise<T | undefined> {
+    if (!this._active) {
+      return Promise.resolve(undefined);
+    }
+
+    const queue = this._directionQueues[direction];
+    queue.pendingCount++;
+    const result = new Promise<T | undefined>((resolve, reject) => {
+      queue.operations.push({
+        operation,
+        reject,
+        resolve: (value): void => { resolve(value as T | undefined); },
+      });
+    });
+    this.startDirectionDrain(direction, queue);
+    return result;
+  }
+
+  /** Number of running, queued, or readiness-blocked operations in the current generation. */
+  public getPendingDirectionCount(direction: SyncDirection): number {
+    return this._directionQueues[direction].pendingCount;
+  }
+
+  /** Wait for operations invalidated by a generation reset to finish unwinding. */
+  public waitForSupersededDirectionWork(): Promise<void> {
+    return this._supersededDirectionWork;
+  }
+
+  /** Release both directional queues after their durable replay baselines are established. */
+  public markReplicationReady(): void {
+    const readiness = this._replicationReadiness;
+    if (!this._active || readiness.generation !== this._replicationGeneration || readiness.isReady) {
+      return;
+    }
+
+    readiness.isReady = true;
+    readiness.release();
   }
 
   /**
@@ -340,28 +262,14 @@ export class SyncLinkController {
     }
   }
 
-  /** The current pull generation; superseded delivery tags are ignored. */
-  public get pullGeneration(): number {
-    return this._pullGeneration;
+  /** The current subscription-pair generation. */
+  public get replicationGeneration(): number {
+    return this._replicationGeneration;
   }
 
-  /** Whether this controller is still active and owns the given pull generation. */
-  public isPullGenerationCurrent(generation: number): boolean {
-    return this._active && this._pullGeneration === generation;
-  }
-
-  /** Number of pull deliveries still waiting to become contiguously committed. */
-  public get pullInflightCount(): number {
-    return this._pullLedger.inflightCount;
-  }
-
-  /** Number of local feed deliveries still waiting to settle in the push ledger. */
-  public get pushInflightCount(): number {
-    return this._pushLedger.inflightCount;
-  }
-
-  public get pushQueue(): SyncPushQueueState | undefined {
-    return this._pushQueue;
+  /** Whether this controller is still active and owns the given replication generation. */
+  public isReplicationGenerationCurrent(generation: number): boolean {
+    return this._active && this._replicationGeneration === generation;
   }
 
   public get reconcileTimer(): ReturnType<typeof setTimeout> | undefined {
@@ -392,204 +300,54 @@ export class SyncLinkController {
     return this._localSubscription !== undefined;
   }
 
-  /** Whether the transport currently confirms the live stream's socket attachment. */
-  public get isLiveStreamAttached(): boolean {
-    return this._liveStreamAttached;
-  }
-
-  /** Mark the live stream detached while the transport's socket reconnects. */
-  public markLiveStreamDetached(): void {
-    this._liveStreamAttached = false;
-  }
-
-  /**
-   * Restore stream attachment after the transport verifies a resubscription.
-   * Meaningful only while a live subscription handle is installed — the
-   * transport keeps the logical subscription identity across reconnects, so
-   * the handle survives the detached window.
-   */
-  public markLiveStreamAttached(): void {
-    if (this._active && this._liveSubscription !== undefined) {
-      this._liveStreamAttached = true;
-    }
-  }
-
-  /** Issue the delivery tag for a pull delivery before admission begins. */
-  public trackPullDelivery(token: ProgressToken): SyncDeliveryTag {
-    return { generation: this._pullGeneration, ordinal: this._pullLedger.track(token) };
-  }
-
-  /**
-   * Acknowledge a pull delivery as durably applied and advance the pull
-   * checkpoint through the contiguous acked prefix. Returns the number of
-   * newly committed deliveries. An ack carrying a superseded generation's
-   * tag is ignored — its ordinal may have been reissued to a fresh delivery,
-   * and its token predates the re-established pull boundary.
-   */
-  public ackPullDelivery(tag: SyncDeliveryTag): number {
-    if (tag.generation !== this._pullGeneration) {
-      return 0;
-    }
-
-    return this._pullLedger.ack(tag.ordinal);
-  }
-
-  /** Advance the pull checkpoint through the contiguous acked prefix. */
-  public commitAckedPullDeliveries(): number {
-    return this._pullLedger.commitAcked();
-  }
-
-  /**
-   * Issue the delivery tag for a local feed delivery before its push outcome
-   * is known. Tags are issued in delivery order — callers tag before their
-   * first await so the ledger mirrors local feed order.
-   */
-  public trackPushDelivery(token: ProgressToken): SyncDeliveryTag {
-    return { generation: this._pullGeneration, ordinal: this._pushLedger.track(token) };
-  }
-
-  /**
-   * Acknowledge a local delivery as owing this link nothing — pushed
-   * successfully, echo-suppressed, out of scope, or dead-lettered — and
-   * advance the durable push checkpoint through the contiguous acked
-   * prefix. An ack carrying a superseded generation's tag is ignored.
-   */
-  public ackPushDelivery(tag: SyncDeliveryTag): number {
-    if (tag.generation !== this._pullGeneration) {
-      return 0;
-    }
-
-    return this._pushLedger.ack(tag.ordinal);
-  }
-
-  /** Advance the push checkpoint through the contiguous acked prefix. */
-  public commitAckedPushDeliveries(): number {
-    return this._pushLedger.commitAcked();
-  }
-
-  /**
-   * Drop in-flight push deliveries the durable checkpoint already covers. A
-   * reconciler push pass advances the checkpoint independently of the live
-   * ledger, and positions at or below it owe nothing — without this sweep, a
-   * delivery the live path could not settle (an unclassifiable event, an
-   * exhausted retry) stalls the ledger prefix for the rest of the
-   * generation even after the reconciler has covered it. Returns only the
-   * count of acked deliveries the sweep released into the checkpoint.
-   */
-  public pruneCoveredPushDeliveries(coveringToken: ProgressToken): number {
-    return this._pushLedger.pruneCovered(coveringToken);
-  }
-
-  /**
-   * Begin a new pull generation: bump the counter so outstanding delivery
-   * tags and in-flight subscription attaches are fenced off, discard
-   * in-flight deliveries in BOTH directions (the subscription pair resets
-   * as one unit), and rebase the commit cursors onto the next unissued
-   * ordinals.
-   *
-   * The bump is the point — both callers rely on it to publish a pause or
-   * repair transition synchronously, before any await.
-   */
-  public startNewPullGeneration(): void {
-    this._pullGeneration++;
-    this._pullLedger.rebase();
-    this._pushLedger.rebase();
-  }
-
-  /** Reset delivery ordering in both directions when a repair establishes a fresh boundary. */
-  public resetPullGeneration(): void {
-    this._pullGeneration++;
-    this._pullLedger.reset();
-    this._pushLedger.reset();
-  }
-
-  /** Return the existing push queue or initialize it for this link lifetime. */
-  public getOrCreatePushQueue(params: SyncPushQueueParams): SyncPushQueueState {
-    this._pushQueue ??= {
-      ...params,
-      entries    : [],
-      retryCount : 0,
-    };
-    return this._pushQueue;
-  }
-
-  /** Cancel and discard the current push queue when it is still the expected queue. */
-  public clearPushQueue(expected?: SyncPushQueueState): void {
-    if (expected !== undefined && this._pushQueue !== expected) {
-      return;
-    }
-
-    if (this._pushQueue !== undefined) {
-      this.cancelPushTimer(this._pushQueue);
-    }
-    this._pushQueue = undefined;
-  }
-
-  /** Attach a timer only while its push queue is current and active. */
-  public setPushTimer(pushQueue: SyncPushQueueState, timer: ReturnType<typeof setTimeout>): boolean {
-    if (!this._active || this._pushQueue !== pushQueue) {
-      clearTimeout(timer);
-      return false;
-    }
-
-    this.cancelPushTimer(pushQueue);
-    pushQueue.timer = timer;
-    return true;
-  }
-
-  /** Consume the current push timer without disturbing a newer replacement. */
-  public consumePushTimer(pushQueue: SyncPushQueueState, timer: ReturnType<typeof setTimeout>): boolean {
-    if (this._pushQueue !== pushQueue || pushQueue.timer !== timer) {
-      return false;
-    }
-
-    pushQueue.timer = undefined;
-    return true;
-  }
-
-  /** Cancel a timer only while its push queue is current. */
-  public cancelPushTimer(pushQueue: SyncPushQueueState): void {
-    if (this._pushQueue !== pushQueue || pushQueue.timer === undefined) {
-      return;
-    }
-
-    clearTimeout(pushQueue.timer);
-    pushQueue.timer = undefined;
+  /** Begin a fresh replication generation and fence both directional queues. */
+  public resetReplicationGeneration(): void {
+    this._replicationGeneration++;
+    this.replaceDirectionQueues();
   }
 
   /**
    * Attach a remote pull subscription only while this link lifetime is
-   * active — and, when the caller pins the pull generation it opened the
+   * active — and, when the caller pins the replication generation it opened the
    * subscription for, only while that generation is still current. A
    * subscription opened across a generation reset would be installed
    * permanently fenced: every callback discarded as stale while the slot
    * blocks the replacement.
    */
-  public setLiveSubscription(subscription: SyncLinkSubscription, expectedPullGeneration?: number): boolean {
+  public setLiveSubscription(
+    subscription: SyncLinkSubscription,
+    expectedReplicationGeneration?: number,
+    snapshot?: SyncFeedSnapshot,
+  ): boolean {
     if (!this._active || this._liveSubscription !== undefined) {
       return false;
     }
-    if (expectedPullGeneration !== undefined && expectedPullGeneration !== this._pullGeneration) {
+    if (expectedReplicationGeneration !== undefined && expectedReplicationGeneration !== this._replicationGeneration) {
       return false;
     }
     this._liveSubscription = subscription;
-    this._liveStreamAttached = true;
+    this._pullSnapshot = SyncLinkController.cloneFeedSnapshot(snapshot);
     return true;
   }
 
   /**
    * Attach a local push subscription only while this link lifetime is
-   * active — and, when the caller pins the pull generation it opened the
+   * active — and, when the caller pins the replication generation it opened the
    * subscription for, only while that generation is still current.
    */
-  public setLocalSubscription(subscription: SyncLinkSubscription, expectedPullGeneration?: number): boolean {
+  public setLocalSubscription(
+    subscription: SyncLinkSubscription,
+    expectedReplicationGeneration?: number,
+    snapshot?: SyncFeedSnapshot,
+  ): boolean {
     if (!this._active || this._localSubscription !== undefined) {
       return false;
     }
-    if (expectedPullGeneration !== undefined && expectedPullGeneration !== this._pullGeneration) {
+    if (expectedReplicationGeneration !== undefined && expectedReplicationGeneration !== this._replicationGeneration) {
       return false;
     }
     this._localSubscription = subscription;
+    this._pushSnapshot = SyncLinkController.cloneFeedSnapshot(snapshot);
     return true;
   }
 
@@ -597,7 +355,7 @@ export class SyncLinkController {
   public async closeLiveSubscription(): Promise<void> {
     const subscription = this._liveSubscription;
     this._liveSubscription = undefined;
-    this._liveStreamAttached = false;
+    this._pullSnapshot = undefined;
     if (subscription === undefined) {
       return;
     }
@@ -613,6 +371,7 @@ export class SyncLinkController {
   public async closeLocalSubscription(): Promise<void> {
     const subscription = this._localSubscription;
     this._localSubscription = undefined;
+    this._pushSnapshot = undefined;
     if (subscription === undefined) {
       return;
     }
@@ -698,6 +457,119 @@ export class SyncLinkController {
     }
   }
 
+  private static cloneFeedSnapshot(snapshot: SyncFeedSnapshot | undefined): SyncFeedSnapshot | undefined {
+    if (snapshot === undefined) {
+      return undefined;
+    }
+
+    return {
+      ...(snapshot.fingerprint === undefined ? {} : { fingerprint: snapshot.fingerprint }),
+      ...(snapshot.head === undefined ? {} : { head: { ...snapshot.head } }),
+    };
+  }
+
+  private static createDirectionQueues(
+    readiness: SyncReplicationReadiness,
+  ): Record<SyncDirection, SyncDirectionQueue> {
+    const createQueue = (): SyncDirectionQueue => ({
+      draining     : false,
+      generation   : readiness.generation,
+      invalidated  : false,
+      operations   : [],
+      pendingCount : 0,
+      readiness    : readiness.promise,
+    });
+    return { pull: createQueue(), push: createQueue() };
+  }
+
+  private static createReplicationReadiness(generation: number): SyncReplicationReadiness {
+    let release!: () => void;
+    const promise = new Promise<void>((resolve) => { release = resolve; });
+    return { generation, isReady: false, promise, release };
+  }
+
+  private async drainDirectionQueue(direction: SyncDirection, queue: SyncDirectionQueue): Promise<void> {
+    await queue.readiness;
+
+    while (!queue.invalidated && this._directionQueues[direction] === queue) {
+      const queued = queue.operations.shift();
+      if (queued === undefined) {
+        break;
+      }
+
+      let releaseActive!: () => void;
+      const active = new Promise<void>((resolve) => { releaseActive = resolve; });
+      queue.active = active;
+      try {
+        const result = await queued.operation();
+        if (this.isDirectionQueueCurrent(direction, queue)) {
+          queued.resolve(result);
+        } else {
+          queued.resolve(undefined);
+        }
+      } catch (error: unknown) {
+        if (this.isDirectionQueueCurrent(direction, queue)) {
+          queued.reject(error);
+        } else {
+          queued.resolve(undefined);
+        }
+      } finally {
+        if (queue.active === active) {
+          queue.active = undefined;
+        }
+        releaseActive();
+        queue.pendingCount--;
+      }
+    }
+
+    queue.draining = false;
+  }
+
+  private invalidateDirectionQueue(queue: SyncDirectionQueue): void {
+    queue.invalidated = true;
+    for (const queued of queue.operations.splice(0)) {
+      queue.pendingCount--;
+      queued.resolve(undefined);
+    }
+  }
+
+  private isDirectionQueueCurrent(direction: SyncDirection, queue: SyncDirectionQueue): boolean {
+    return this._active &&
+      !queue.invalidated &&
+      queue.generation === this._replicationGeneration &&
+      this._directionQueues[direction] === queue;
+  }
+
+  private replaceDirectionQueues(): void {
+    const previousReadiness = this._replicationReadiness;
+    const previousPull = this._directionQueues.pull;
+    const previousPush = this._directionQueues.push;
+    this.invalidateDirectionQueue(previousPull);
+    this.invalidateDirectionQueue(previousPush);
+    previousReadiness.release();
+
+    const previousSupersededWork = this._supersededDirectionWork;
+    this._supersededDirectionWork = Promise.all([
+      previousSupersededWork,
+      previousPull.active ?? Promise.resolve(),
+      previousPush.active ?? Promise.resolve(),
+    ]).then((): void => {});
+
+    this._pullSnapshot = undefined;
+    this._pushSnapshot = undefined;
+    this._replicationReadiness = SyncLinkController.createReplicationReadiness(this._replicationGeneration);
+    this._directionQueues = SyncLinkController.createDirectionQueues(this._replicationReadiness);
+  }
+
+  private startDirectionDrain(direction: SyncDirection, queue: SyncDirectionQueue): void {
+    if (queue.draining) {
+      return;
+    }
+
+    queue.draining = true;
+    void this.drainDirectionQueue(direction, queue);
+  }
+
   /**
    * Invalidate captured callbacks and cancel work that has not started yet.
    * In-flight operations remain supervised by the lifecycle coordinator while
@@ -709,10 +581,9 @@ export class SyncLinkController {
     }
 
     this._active = false;
-    this.clearPushQueue();
     this.cancelRepairRetryTimer();
     this.cancelReconcileTimer();
-    this.resetPullGeneration();
+    this.resetReplicationGeneration();
     this._mailboxShared.clear();
     this._requestedPasses.clear();
     this._repairAttempts = 0;

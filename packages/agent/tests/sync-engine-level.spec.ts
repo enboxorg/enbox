@@ -60,7 +60,7 @@ describe('SyncEngineLevel', () => {
   });
 
   describe('live push echo suppression', () => {
-    it('durably commits a pushed echo delivered while the link is initializing', async () => {
+    it('queues a pushed echo until the replication baseline is ready, then commits it durably', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
       const internal = syncEngine as any;
       const dwnUrl = 'https://dwn.example';
@@ -104,19 +104,25 @@ describe('SyncEngineLevel', () => {
       internal._ledger = { persistCheckpoint };
       internal._echoSuppressor.trackPushed(context.did, messageCid, dwnUrl);
 
+      const handling = internal._livePullProcessor.handleMessage(context, {
+        cursor,
+        event : { message },
+        type  : 'event',
+      });
+
       try {
-        await internal._livePullProcessor.handleEvent(context, {
-          cursor,
-          event : { message },
-          type  : 'event',
-        });
+        expect(controller.getPendingDirectionCount('pull')).toBe(1);
+        expect(persistCheckpoint.notCalled).toBe(true);
+
+        controller.markReplicationReady();
+        await handling;
       } finally {
         unsubscribe();
       }
 
       expect(persistCheckpoint.calledOnceWithExactly(link, 'pull')).toBe(true);
       expect(link.pull.contiguousAppliedToken).toEqual(cursor);
-      expect(controller.pullInflightCount).toBe(0);
+      expect(controller.getPendingDirectionCount('pull')).toBe(0);
       expect(events).toContainEqual(expect.objectContaining({
         type           : 'checkpoint:pull-advance',
         messageCid,
@@ -3718,103 +3724,7 @@ describe('SyncEngineLevel', () => {
       });
 
       // -----------------------------------------------------------------------
-      // Item 2: Late subscription callbacks bail after hot-remove
-      // -----------------------------------------------------------------------
-
-      describe('late callback invalidation after hot-remove', () => {
-
-        it('should not flush pushes when flushPendingPushesForLink fires after hot-remove', async () => {
-          const did = alice.did.uri;
-
-          await syncEngine.registerIdentity({ did, options: { protocols: 'all' } });
-          syncEngine['_runtime'] = new SyncRuntime(true);
-
-          const ledger = syncEngine['ledger'];
-          const link = await ledger.getOrCreateLink({
-            tenantDid      : did,
-            remoteEndpoint : testDwnUrls[0],
-            scope          : { kind: 'full' },
-            ...ownerAuthorization,
-          });
-          const linkKey = linkKeyFor(did, testDwnUrls[0], link);
-          link.status = 'live';
-          const controller = syncEngine['activateLink'](linkKey, link);
-
-          // Manually inject a push runtime to simulate pending pushes.
-          const pushQueue = controller.getOrCreatePushQueue({
-            did,
-            dwnUrl: testDwnUrls[0],
-          });
-          pushQueue.entries.push({ cid: 'cid-1' });
-
-          // Hot-remove.
-          await syncEngine['removeIdentityFromLiveSync'](did);
-
-          // Try to flush — the guard in the coordinator's flushLink should bail.
-          const pushStub = sinon.stub(syncEngine as any, 'pushMessages');
-          pushStub.resolves({ acknowledged: [], succeeded: [], failed: [] });
-
-          await syncEngine['_livePushCoordinator'].flushLink(linkKey);
-
-          expect(pushStub.called).toBe(false);
-        });
-
-        it('should abort in-flight flush when link is replaced during pushMessages', async () => {
-          const did = alice.did.uri;
-
-          await syncEngine.registerIdentity({ did, options: { protocols: 'all' } });
-          syncEngine['_runtime'] = new SyncRuntime(true);
-
-          const ledger = syncEngine['ledger'];
-          const link = await ledger.getOrCreateLink({
-            tenantDid      : did,
-            remoteEndpoint : testDwnUrls[0],
-            scope          : { kind: 'full' },
-            ...ownerAuthorization,
-          });
-          const linkKey = linkKeyFor(did, testDwnUrls[0], link);
-          link.status = 'live';
-          const controller = syncEngine['activateLink'](linkKey, link);
-
-          const pushQueue = controller.getOrCreatePushQueue({
-            did,
-            dwnUrl: testDwnUrls[0],
-          });
-          pushQueue.entries.push({ cid: 'cid-1' });
-          pushQueue.retryCount = 1;
-
-          // The live-push coordinator ultimately calls the imported pushMessages
-          // helper. Stub its underlying agent request and replace the link mid-flight.
-          const requeueSpy = sinon.spy(syncEngine['_livePushCoordinator'], 'requeue');
-          const processStub = sinon.stub(testHarness.agent.dwn, 'processRequest').callsFake(async () => {
-            // Mid-flight: replace the link with a new object.
-            const replacementLink = { ...link };
-            syncEngine['activateLink'](linkKey, replacementLink);
-            return {
-              reply: {
-                status : { code: 200 },
-                entry  : { message: { descriptor: { interface: 'Records', method: 'Write' } } },
-              },
-            } as any;
-          });
-
-          // Stub rpc to return a failure so the code path reaches requeue.
-          // (if it weren't for the stale check).
-          const rpcStub = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').resolves({ status: { code: 500 } } as any);
-
-          await syncEngine['_livePushCoordinator'].flushLink(linkKey);
-
-          // Requeue should NOT have been called — the stale-result
-          // check after pushMessages detected the replacement and bailed.
-          expect(requeueSpy.called).toBe(false);
-
-          processStub.restore();
-          rpcStub.restore();
-        });
-
-      });
-
-      // Item 3: Same link key stale repair/reconcile isolation
+      // Item 2: Same link key stale repair/reconcile isolation
       // -----------------------------------------------------------------------
 
       describe('same link key — stale repair and reconcile isolation', () => {

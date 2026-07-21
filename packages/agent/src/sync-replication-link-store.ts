@@ -43,6 +43,9 @@ export interface SyncReplicationLinkStore {
   /** Persist the engine-computed checkpoint for one direction. */
   persistCheckpoint(link: ReplicationLinkState, direction: SyncDirection): Promise<void>;
 
+  /** Persist both engine-computed checkpoints in one read/merge/write. */
+  persistCheckpoints(link: ReplicationLinkState): Promise<void>;
+
   /** Reset both directional checkpoints and persist the reset atomically. */
   resetCheckpoints(link: ReplicationLinkState): Promise<void>;
 

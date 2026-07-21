@@ -380,30 +380,6 @@ export function isQuotaBlockedPushFailure(failure: PushFailure): boolean {
 }
 
 /**
- * Returns the reconcile reason for a push batch that cannot converge under the hot
- * retry ladder, or `undefined` when the batch is worth retrying immediately.
- *
- * `Incomplete` outranks tenant-inactive: a remote that still reports already
- * acknowledged dependencies as missing will not converge however often the same
- * closure is replayed, and retrying an inactive tenant hot-loops. Both defer to
- * delayed reconciliation rather than the immediate retry ladder.
- */
-export function pushBatchReconcileReason(entries: Array<{ lastFailure?: PushFailure }>): string | undefined {
-  const failures = entries.flatMap(entry => entry.lastFailure ?? []);
-
-  if (failures.some(failure => failure.kind === 'Incomplete')) {
-    return 'push-incomplete';
-  }
-  if (failures.some(failure => failure.quotaBlocked === true)) {
-    return 'push-quota-blocked';
-  }
-  if (failures.some(failure => failure.tenantInactive === true)) {
-    return 'push-tenant-inactive';
-  }
-  return undefined;
-}
-
-/**
  * Parameters for {@link SyncEngine.startSync}.
  */
 export type StartSyncParams = {

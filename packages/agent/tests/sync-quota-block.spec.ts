@@ -13,7 +13,6 @@ import {
   computeAuthorizationEpoch,
   computeProjectionId,
   isQuotaBlockedPushFailure,
-  pushBatchReconcileReason,
 } from '../src/types/sync.js';
 
 describe('quota-block push-failure classification', () => {
@@ -21,16 +20,6 @@ describe('quota-block push-failure classification', () => {
     expect(isQuotaBlockedPushFailure({ cid: 'c', quotaBlocked: true })).toBe(true);
     expect(isQuotaBlockedPushFailure({ cid: 'c' })).toBe(false);
     expect(isQuotaBlockedPushFailure({ cid: 'c', tenantInactive: true })).toBe(false);
-  });
-
-  it('pushBatchReconcileReason surfaces push-quota-blocked, but Incomplete still outranks it', () => {
-    expect(pushBatchReconcileReason([{ lastFailure: { cid: 'c', quotaBlocked: true } }]))
-      .toBe('push-quota-blocked');
-    expect(pushBatchReconcileReason([
-      { lastFailure: { cid: 'c', quotaBlocked: true } },
-      { lastFailure: { cid: 'd', kind: 'Incomplete' } },
-    ])).toBe('push-incomplete');
-    expect(pushBatchReconcileReason([{ lastFailure: { cid: 'c' } }])).toBeUndefined();
   });
 });
 

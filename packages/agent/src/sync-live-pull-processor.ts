@@ -4,6 +4,7 @@ import type { GenericMessage, MessageEvent, ProgressToken, SubscriptionMessage }
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
 import type { SyncEchoSuppressor } from './sync-echo-suppressor.js';
+import type { SyncLinkController } from './sync-link-controller.js';
 import type { SyncMessageEntry } from './sync-messages.js';
 import type { SyncTarget } from './sync-target-resolver.js';
 import type { AdmitClosureDeps, AdmitOutcome, SyncFreshEntry } from './sync-admit-closure.js';
@@ -14,7 +15,6 @@ import type {
   SyncEvent,
   SyncEventScope,
 } from './types/sync.js';
-import type { SyncDeliveryTag, SyncLinkController } from './sync-link-controller.js';
 
 import { Encoder, Message } from '@enbox/dwn-sdk-js';
 
@@ -24,7 +24,7 @@ import { isRecordsWrite } from './utils.js';
 import { isTerminalSyncAuthorizationFailure } from './sync-runtime-errors.js';
 import { SyncCheckpoint } from './sync-checkpoint.js';
 import { syncTargetFromLink } from './sync-target-resolver.js';
-import { dataStreamFromBytes, fetchRemoteMessages, syncMessageDescriptor, SyncPullAbortedError } from './sync-messages.js';
+import { dataStreamFromBytes, fetchRemoteMessages, syncMessageDescriptor } from './sync-messages.js';
 
 export type SyncLivePullContext = {
   controller: SyncLinkController;
@@ -46,7 +46,6 @@ export interface SyncLivePullProcessorOperations {
   persistCheckpoint(link: ReplicationLinkState): Promise<void>;
   recordDeadLetter(entry: Omit<DeadLetterEntry, 'failedAt'>): Promise<void>;
   reportError(message: string, error: unknown): void;
-  scheduleReconcile(controller: SyncLinkController, reason: string): void;
   trackAppliedCids(messageCids: string[], target: SyncTarget): Promise<void>;
   transitionToPaused(linkKey: string, link: ReplicationLinkState): Promise<void>;
   transitionToRepairing(controller: SyncLinkController): Promise<void>;
@@ -63,11 +62,6 @@ export type SyncLivePullProcessorParams = {
 
 export type SyncLivePullAdmit = (rootCid: string, deps: AdmitClosureDeps) => Promise<AdmitOutcome>;
 export type SyncLivePullFetchMessages = typeof fetchRemoteMessages;
-
-type PullDelivery = {
-  controller?: SyncLinkController;
-  tag?: SyncDeliveryTag;
-};
 
 type LivePullProcessResult =
   | { admitted: false; messageCid: string }
@@ -123,37 +117,45 @@ export class SyncLivePullProcessor {
     // restores it. Terminal recovery failures arrive separately as `error`
     // messages and drive repair for this link only.
     if (message.type === 'disconnected' || message.type === 'reconnecting') {
-      context.controller.markLiveStreamDetached();
       this.markLinkOffline(context);
       return;
     }
     if (message.type === 'reconnected') {
-      this.markStreamReattached(context);
-      return;
-    }
-
-    if (message.type === 'eose') {
-      await this.handleEose(context, message);
+      this.markLinkOnline(context);
       return;
     }
     if (message.type === 'error') {
       await this.handleSubscriptionError(context, message);
       return;
     }
-    if (message.type === 'event') {
-      await this.handleEvent(context, message);
-    }
-  }
 
-  /**
-   * Restore stream attachment and link connectivity after the transport
-   * verified a resubscription: `reconnected` is emitted per subscription
-   * only once its resume request returned a live subscription, so the
-   * stream is provably attached and the endpoint provably reachable.
-   */
-  private markStreamReattached(context: SyncLivePullContext): void {
-    context.controller.markLiveStreamAttached();
-    this.markLinkOnline(context);
+    // The transport invokes subscription handlers without awaiting them.
+    // Claim a place in the controller's pull queue before doing any async
+    // work so event and EOSE processing exactly follows feed arrival order.
+    const queued = context.controller.enqueueDirection('pull', async (): Promise<void> => {
+      if (context.isStale()) {
+        return;
+      }
+      try {
+        if (message.type === 'eose') {
+          await this.handleEose(context, message);
+        } else if (message.type === 'event') {
+          await this.handleEvent(context, message);
+        }
+      } catch (error: unknown) {
+        await this.handleProcessingError(context, error);
+      }
+    });
+
+    if (context.controller.getPendingDirectionCount('pull') > this._maxInFlightDeliveries) {
+      this._operations.warn(
+        `SyncLivePullProcessor: Pull queue overflow for ${context.did} -> ${context.dwnUrl}, transitioning to repairing`,
+      );
+      await this._operations.transitionToRepairing(context.controller);
+      return;
+    }
+
+    await queued;
   }
 
   /** Persist a validated catch-up boundary and mark the pull path online. */
@@ -176,11 +178,11 @@ export class SyncLivePullProcessor {
       return;
     }
 
-    controller.commitAckedPullDeliveries();
-    if (isStale()) { return; }
+    SyncCheckpoint.commitContiguousToken(link.pull, message.cursor);
     await this._operations.persistCheckpoint(link);
     if (isStale()) { return; }
 
+    this._operations.emitCheckpointAdvance(link);
     this.markLinkOnline(context);
   }
 
@@ -208,7 +210,7 @@ export class SyncLivePullProcessor {
     }
   }
 
-  /** Apply, acknowledge, or defer one live remote event in delivery order. */
+  /** Apply or otherwise settle one live remote event inside its ordered pull turn. */
   public async handleEvent(
     context: SyncLivePullContext,
     message: Extract<SubscriptionMessage, { type: 'event' }>,
@@ -242,22 +244,15 @@ export class SyncLivePullProcessor {
       return;
     }
 
-    // Every guard above is synchronous, so the ordering tag is claimed in
-    // arrival order before any asynchronous work. An out-of-scope event is
-    // acknowledged through the ordinal tracker like any other delivery — a
-    // direct checkpoint advance would persist its cursor as contiguous while
-    // an earlier covered delivery is still admitting, and a crash in that
-    // window would resume past the never-applied earlier event.
-    const delivery = this.startDelivery(context, message.cursor);
     if (classification === 'out-of-scope') {
-      await this.commitDelivery(context, delivery);
+      await this.commitEventCursor(context, message.cursor);
       return;
     }
 
     try {
       const messageCid = await Message.getCid(message.event.message);
       if (this._echoSuppressor.hasRecentlyPushed(context.did, messageCid, context.dwnUrl)) {
-        await this.commitDelivery(context, delivery);
+        await this.commitEventCursor(context, message.cursor);
         return;
       }
 
@@ -269,6 +264,7 @@ export class SyncLivePullProcessor {
           result.appliedCids,
           syncTargetFromLink(context.link),
         );
+        if (isStale()) { return; }
         // Fresh only: a Duplicate/Superseded apply (an echo of a message this
         // store already held, e.g. our own push looping back via another
         // endpoint) is not a remote change and must not signal consumers.
@@ -279,7 +275,7 @@ export class SyncLivePullProcessor {
           this.emitDeliveryApplied(context, freshEntry.message, freshEntry.messageCid);
         }
       }
-      await this.commitDelivery(context, delivery);
+      await this.commitEventCursor(context, message.cursor);
     } catch (error: unknown) {
       await this.handleProcessingError(context, error);
     }
@@ -331,14 +327,6 @@ export class SyncLivePullProcessor {
     }
   }
 
-  private startDelivery(context: SyncLivePullContext, cursor: ProgressToken): PullDelivery {
-    const deliveryController = context.controller.isActive && context.link === context.controller.link
-      ? context.controller
-      : undefined;
-    const tag = deliveryController?.trackPullDelivery(cursor);
-    return { controller: deliveryController, tag };
-  }
-
   private async processEvent(
     context: SyncLivePullContext,
     message: Extract<SubscriptionMessage, { type: 'event' }>,
@@ -380,8 +368,8 @@ export class SyncLivePullProcessor {
       await this.recordAdmissionFailure(context, rootCid, event, outcome);
       return { admitted: false, messageCid: rootCid };
     }
-    this._operations.scheduleReconcile(context.controller, `pull-${outcome.kind}`);
-    return { admitted: false, messageCid: rootCid };
+    await this._operations.transitionToRepairing(context.controller);
+    return undefined;
   }
 
   private async recordAdmissionFailure(
@@ -436,37 +424,21 @@ export class SyncLivePullProcessor {
     };
   }
 
-  private async commitDelivery(
-    context: SyncLivePullContext,
-    delivery: PullDelivery,
-  ): Promise<void> {
-    const { did, dwnUrl, link, isStale } = context;
-    if (
-      delivery.controller === undefined ||
-      delivery.tag === undefined ||
-      (link.status !== 'live' && link.status !== 'initializing') ||
-      isStale()
-    ) {
+  /** Commit one settled event's exact cursor after its ordered queue turn. */
+  private async commitEventCursor(context: SyncLivePullContext, cursor: ProgressToken): Promise<void> {
+    const { link, isStale } = context;
+    if ((link.status !== 'live' && link.status !== 'initializing') || isStale()) {
       return;
     }
 
-    const drained = delivery.controller.ackPullDelivery(delivery.tag);
-    if (drained > 0) {
-      await this._operations.persistCheckpoint(link);
-      if (isStale()) { return; }
-      this._operations.emitCheckpointAdvance(link);
-    }
-
-    if (delivery.controller.pullInflightCount > this._maxInFlightDeliveries) {
-      this._operations.warn(
-        `SyncLivePullProcessor: Pull in-flight overflow for ${did} -> ${dwnUrl}, transitioning to repairing`,
-      );
-      await this._operations.transitionToRepairing(delivery.controller);
-    }
+    SyncCheckpoint.commitContiguousToken(link.pull, cursor);
+    await this._operations.persistCheckpoint(link);
+    if (isStale()) { return; }
+    this._operations.emitCheckpointAdvance(link);
   }
 
   private async handleProcessingError(context: SyncLivePullContext, error: unknown): Promise<void> {
-    if (error instanceof SyncPullAbortedError || context.isStale()) {
+    if (context.isStale()) {
       return;
     }
 
