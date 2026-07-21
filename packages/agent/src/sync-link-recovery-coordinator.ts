@@ -177,24 +177,17 @@ export class SyncLinkRecoveryCoordinator {
     }, delayMs);
   }
 
-  /** Coalesce local feed signals into ordered durable push passes. */
-  public push(controller: SyncLinkController): Promise<void> {
-    controller.executor.request('push');
-    return this.runExecutor(controller);
-  }
-
-  /** Coalesce remote feed signals into ordered durable pull passes. */
-  public pull(controller: SyncLinkController): Promise<void> {
-    controller.executor.request('pull');
-    return this.runExecutor(controller);
-  }
-
   /** Drain work retained while the current replication generation was not ready. */
   public resume(controller: SyncLinkController): Promise<void> {
     return this.runExecutor(controller);
   }
 
-  /** Serialize one caller-specific reconciliation operation through the link executor. */
+  /**
+   * Serialize one caller-specific reconciliation operation through the link
+   * executor. The operation must not await another call to `execute()` for
+   * the same controller: that nested operation is ordered after its caller
+   * and cannot start until the caller settles.
+   */
   public execute<T>(controller: SyncLinkController, operation: () => Promise<T>): Promise<T | undefined> {
     const result = controller.executor.enqueue(operation);
     if (controller.executor.isReady) {
@@ -321,6 +314,10 @@ export class SyncLinkRecoveryCoordinator {
       }
 
       const target = SyncLinkRecoveryCoordinator.targetFromController(controller);
+      // The repair's full durable pass subsumes a reconcile wake already
+      // pending at this boundary. A mark arriving during the pass remains
+      // pending and runs afterward.
+      controller.executor.consumePending('reconcile');
       const outcome = await this._operations.reconcileTarget(
         controller,
         target,
@@ -338,7 +335,7 @@ export class SyncLinkRecoveryCoordinator {
       await this.handleRepairFailure(controller, runtime, attempts, error);
     } finally {
       if (controller.executor.hasPending('repair')) {
-        controller.discardRepairAttempt(attempts);
+        controller.retireRepairAttempt(attempts);
       }
     }
   }

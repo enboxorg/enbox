@@ -18,6 +18,10 @@ type SyncLinkWorkMark = {
 
 type SyncLinkExecutorEntry = SyncLinkCall | SyncLinkWorkMark;
 
+type SyncLinkWorkFailure = {
+  reason: unknown;
+};
+
 /**
  * Serializes every operation for one active replication link.
  *
@@ -58,6 +62,24 @@ export class SyncLinkExecutor {
     return this._pendingMarks.has(kind);
   }
 
+  /**
+   * Consume a pending mark when the active operation is about to perform the
+   * same work. A mark requested after this boundary remains pending.
+   */
+  public consumePending(kind: SyncLinkWorkKind): boolean {
+    const mark = this._pendingMarks.get(kind);
+    if (mark === undefined) {
+      return false;
+    }
+
+    const index = this._entries.indexOf(mark);
+    if (index >= 0) {
+      this._entries.splice(index, 1);
+    }
+    this._pendingMarks.delete(kind);
+    return true;
+  }
+
   /** Whether work of `kind` is pending or currently executing. */
   public hasWork(kind: SyncLinkWorkKind): boolean {
     return this._activeWorkKind === kind || this.hasPending(kind);
@@ -71,6 +93,10 @@ export class SyncLinkExecutor {
   /**
    * Enqueue one caller-specific operation. Calls fail fast while the current
    * replication generation is not ready; they never park behind readiness.
+   *
+   * An enqueued operation must not await another operation enqueued on this
+   * same executor. The nested operation is ordered after its caller and
+   * cannot start until that caller settles.
    */
   public enqueue<T>(operation: () => Promise<T>): Promise<T | undefined> {
     if (!this.isReady) {
@@ -150,16 +176,22 @@ export class SyncLinkExecutor {
   }
 
   private async drainOwned(handler: SyncLinkWorkHandler): Promise<void> {
+    let workFailure: SyncLinkWorkFailure | undefined;
     while (this._active) {
       const entry = this.takeNextEligibleEntry();
       if (entry === undefined) {
-        return;
+        break;
       }
 
       if (entry.type === 'mark') {
         this._activeWorkKind = entry.kind;
         try {
           await handler(entry.kind);
+        } catch (reason: unknown) {
+          // Surface the first handler failure after every entry already
+          // queued behind it has had a chance to settle. A rejected mark must
+          // never poison the executor or strand caller-specific promises.
+          workFailure ??= { reason };
         } finally {
           this._activeWorkKind = undefined;
         }
@@ -181,13 +213,22 @@ export class SyncLinkExecutor {
         }
       }
     }
+
+    if (workFailure !== undefined) {
+      throw workFailure.reason;
+    }
   }
 
   private takeNextEligibleEntry(): SyncLinkExecutorEntry | undefined {
     const repairIndex = this._entries.findIndex(
       (entry): boolean => entry.type === 'mark' && entry.kind === 'repair',
     );
-    const index = repairIndex >= 0 ? repairIndex : this._ready ? 0 : -1;
+    let index = -1;
+    if (repairIndex >= 0) {
+      index = repairIndex;
+    } else if (this._ready) {
+      index = 0;
+    }
     if (index < 0) {
       return;
     }

@@ -184,8 +184,8 @@ export class SyncLinkController {
     return this._repairAttempts;
   }
 
-  /** Discard an attempt superseded before the next executor repair starts. */
-  public discardRepairAttempt(attempt: number): void {
+  /** Retire an attempt superseded before the next executor repair starts. */
+  public retireRepairAttempt(attempt: number): void {
     if (this._repairAttempts === attempt) {
       this._repairAttempts = Math.max(0, attempt - 1);
     }

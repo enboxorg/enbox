@@ -426,6 +426,8 @@ describe('SyncEngineLevel — transport lifecycle connectivity', () => {
     await handler({ type: 'reconnected' });
     expect(controller.link.connectivity).toBe('online');
     expect(fixture.resume.calledOnceWithExactly(controller)).toBe(true);
+    expect(controller.executor.hasPending('pull')).toBe(true);
+    expect(controller.executor.hasPending('push')).toBe(true);
 
     await controller.dispose();
   });

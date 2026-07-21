@@ -326,7 +326,8 @@ describe('SyncEngineLevel lifecycle', () => {
     });
 
     const runIdentityTask = (engine as any)._lifecycle.captureIdentityTaskRunner(did);
-    const push = runIdentityTask(() => engine['_linkRecoveryCoordinator'].push(controller));
+    controller.executor.request('push');
+    const push = runIdentityTask(() => engine['_linkRecoveryCoordinator'].resume(controller));
     await pushStarted.promise;
 
     let closeCompleted = false;
@@ -678,7 +679,8 @@ describe('SyncEngineLevel lifecycle', () => {
     });
 
     const runIdentityTask = (engine as any)._lifecycle.captureIdentityTaskRunner(did);
-    const push = runIdentityTask(() => engine['_linkRecoveryCoordinator'].push(controller));
+    controller.executor.request('push');
+    const push = runIdentityTask(() => engine['_linkRecoveryCoordinator'].resume(controller));
     await pushStarted.promise;
 
     const unregisterPromise = engine.unregisterIdentity(did);
