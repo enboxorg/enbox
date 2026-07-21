@@ -1,6 +1,7 @@
 import type { JsonRpcId, JsonRpcRequest, JsonRpcResponse } from './json-rpc.js';
 
 import { CryptoUtils } from '@enbox/crypto';
+import { SocketUnavailableError } from './dwn-rpc-error.js';
 import { createJsonRpcSubscriptionRequest, JsonRpcErrorCodes, parseJson } from './json-rpc.js';
 
 /**
@@ -238,7 +239,7 @@ export class JsonRpcSocket {
    */
   public async request(request: JsonRpcRequest): Promise<JsonRpcResponse> {
     if (!this._isConnected) {
-      throw new Error('JsonRpcSocket: request refused — socket is not connected');
+      throw new SocketUnavailableError('JsonRpcSocket: request refused — socket is not connected');
     }
 
     return new Promise((resolve, reject) => {

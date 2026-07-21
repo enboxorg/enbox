@@ -24,9 +24,9 @@ import { parseReplicationApplyResult } from './replication-apply-result.js';
 import { RateLimitError } from './rate-limit-error.js';
 import { withLocalNodeTokenQuery } from './rpc-auth.js';
 import { createJsonRpcAck, createJsonRpcRequest, createJsonRpcSubscriptionRequest, JsonRpcErrorCodes } from './json-rpc.js';
-import { DataStream, Encoder } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnInterfaceName, DwnMethodName, Encoder } from '@enbox/dwn-sdk-js';
 import { DEFAULT_MAX_WS_RAW_RECORD_DATA_BYTES, maxWsJsonRpcPayloadBytes, utf8ByteLength } from './ws-payload-size.js';
-import { DwnRpcError, SubscriptionHandlerTerminalError } from './dwn-rpc-error.js';
+import { DwnRpcError, SocketUnavailableError, SubscriptionHandlerTerminalError } from './dwn-rpc-error.js';
 
 const DEFAULT_MAX_WS_JSON_RPC_PAYLOAD_BYTES = maxWsJsonRpcPayloadBytes(DEFAULT_MAX_WS_RAW_RECORD_DATA_BYTES);
 
@@ -293,6 +293,34 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   }
 
   /**
+   * Whether the socket's `dwn.processMessage` framing can serve a message
+   * with full reply parity. This is the single client-side definition of the
+   * socket capability boundary — the server enforces the same rule in its
+   * inbound transport gate — so routing layers consult it instead of
+   * re-deriving a proxy that can drift:
+   *
+   * - `Records/Write` stays on HTTP, including data-less and zero-length
+   *   writes. Its data stream lives in the HTTP request body, and the server
+   *   accepts it over non-HTTP transports only for replicated apply behind a
+   *   server-side flag this client cannot observe — assume the strict answer.
+   * - `Read` methods stay on HTTP. Their replies may stream record data,
+   *   which only the HTTP framing surfaces as a stream — a socket reply
+   *   would silently drop it.
+   * - A message without a readable descriptor cannot be classified and is
+   *   refused.
+   */
+  public static canSendDwnMessage(message: Partial<GenericMessage>): boolean {
+    const descriptor = message.descriptor;
+    if (descriptor === undefined) {
+      return false;
+    }
+    if (descriptor.interface === DwnInterfaceName.Records && descriptor.method === DwnMethodName.Write) {
+      return false;
+    }
+    return descriptor.method !== DwnMethodName.Read;
+  }
+
+  /**
    * Whether the pool already holds a connected socket for `dwnUrl` under
    * this client's transport authentication. Routing layers use this to
    * prefer the socket only when it costs nothing to establish — a missing
@@ -437,6 +465,13 @@ export class WebSocketDwnRpcClient implements DwnRpc {
         // Resubscribe all tracked subscriptions with their last known cursor.
         WebSocketDwnRpcClient.resubscribeAll(conn);
       },
+    }).catch((error: unknown) => {
+      // Establishment failure means no request was ever transmitted on this
+      // socket — surface the typed never-sent rejection so routing layers
+      // may safely retry over another transport.
+      throw new SocketUnavailableError(
+        `WebSocket connection to ${url} could not be established: ${error instanceof Error ? error.message : String(error)}`,
+      );
     });
 
     return { socket, subscriptions, url: url.toString() };
@@ -451,9 +486,14 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     const { socket } = connection;
     const response = await socket.request(request);
 
+    // Classify JSON-RPC errors exactly as the HTTP and subscription paths
+    // do, so socket-routed requests keep rate-limit and terminal semantics.
     const { error, result } = response;
     if (error !== undefined) {
-      throw new Error(`error sending DWN request: ${error.message}`);
+      if (error.code === JsonRpcErrorCodes.TooManyRequests) {
+        throw new RateLimitError(error.data?.retryAfterSec ?? 1);
+      }
+      throw new DwnRpcError(error.code, error.message, error.data);
     }
 
     return result.reply as DwnRpcResponse;

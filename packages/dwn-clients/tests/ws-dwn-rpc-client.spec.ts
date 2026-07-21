@@ -386,7 +386,7 @@ describe('WebSocketDwnRpcClient', () => {
     });
 
     describe('processMessage', () => {
-      it('throws when json rpc response errors are returned', async () => {
+      it('preserves typed JSON-RPC errors exactly as the HTTP path does', async () => {
         const { message } = await TestDataGenerator.generateRecordsQuery({
           author : alice,
           filter : {
@@ -400,17 +400,34 @@ describe('WebSocketDwnRpcClient', () => {
           socket,
         };
 
-        spyOn(socket, 'request').mockResolvedValue({
+        const requestSpy = spyOn(socket, 'request').mockResolvedValue({
           jsonrpc : '2.0',
           id      : 'id',
-          error   : { message: 'some error',code: JsonRpcErrorCodes.BadRequest }
+          error   : { message: 'some error', code: JsonRpcErrorCodes.BadRequest, data: { code: 'SomeTypedFailure' } }
         });
 
         try {
           await WebSocketDwnRpcClient['processMessage'](connection, alice.did, message);
           throw new Error('Expected an error to be thrown');
         } catch (error: any) {
-          expect(error.message).toBe('error sending DWN request: some error');
+          expect(error).toBeInstanceOf(DwnRpcError);
+          expect(error.code).toBe(JsonRpcErrorCodes.BadRequest);
+          expect(error.data).toEqual({ code: 'SomeTypedFailure' });
+          expect(error.terminal).toBe(true);
+        }
+
+        requestSpy.mockResolvedValue({
+          jsonrpc : '2.0',
+          id      : 'id',
+          error   : { message: 'slow down', code: JsonRpcErrorCodes.TooManyRequests, data: { retryAfterSec: 9 } }
+        });
+
+        try {
+          await WebSocketDwnRpcClient['processMessage'](connection, alice.did, message);
+          throw new Error('Expected an error to be thrown');
+        } catch (error: any) {
+          expect(error).toBeInstanceOf(RateLimitError);
+          expect(error.retryAfterSec).toBe(9);
         }
       });
     });
