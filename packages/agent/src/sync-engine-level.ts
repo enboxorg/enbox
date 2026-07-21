@@ -1541,7 +1541,7 @@ export class SyncEngineLevel implements SyncEngine {
     expectedReplicationGeneration: number,
   ): Promise<SyncReconcileResult | undefined> {
     const { link } = controller;
-    if (link.pull.contiguousAppliedToken !== undefined || link.push.contiguousAppliedToken !== undefined) {
+    if (link.pull.contiguousAppliedToken !== undefined && link.push.contiguousAppliedToken !== undefined) {
       return undefined;
     }
 
@@ -2206,6 +2206,15 @@ export class SyncEngineLevel implements SyncEngine {
     const isPushStale = (): boolean =>
       runtimeScope.disposed || !controller.isReplicationGenerationCurrent(subscriptionReplicationGeneration);
     const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(did);
+
+    const storedCursor = controller.link.push.contiguousAppliedToken;
+    if (storedCursor !== undefined && !isValidProgressToken(storedCursor)) {
+      console.warn(`SyncEngineLevel: Discarding stored local cursor with empty field(s) for ${did}`);
+      await this.ledger.resetCheckpoint(controller.link, 'push');
+      if (!controller.isReplicationGenerationCurrent(subscriptionReplicationGeneration)) {
+        return false;
+      }
+    }
 
     // Subscribe to the local DWN's EventLog.
     const subscriptionHandler = (subMessage: SubscriptionMessage): Promise<void> =>

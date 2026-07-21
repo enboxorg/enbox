@@ -257,7 +257,23 @@ describe('SyncEngineLevel — dual-subscription replay baseline', () => {
     await fixture.controller.dispose();
   });
 
-  it('should reset an expired local push cursor once and reopen from the beginning', async () => {
+  it('should reconcile before replay when only one durable cursor exists', async () => {
+    const fixture = createBaselineFixture(db);
+    fixture.controller.link.pull.contiguousAppliedToken = tokenIn('remote-stream', 'remote-epoch', '17');
+    attachSubscriptionSnapshots(
+      fixture.controller,
+      { fingerprint: 'remote-feed', head: tokenIn('remote-stream', 'remote-epoch', '19') },
+      { fingerprint: 'local-feed', head: tokenIn('local-stream', 'local-epoch', '23') },
+    );
+
+    expect(await establishBaseline(fixture)).toEqual({ converged: true });
+    expect(fixture.reconcile.calledOnce).toBe(true);
+    expect(fixture.persistCheckpoints.notCalled).toBe(true);
+
+    await fixture.controller.dispose();
+  });
+
+  it('should reset an expired local push cursor once and require baseline recovery', async () => {
     const fixture = createBaselineFixture(db);
     const pushCursor = tokenIn('local-stream', 'local-epoch', '23');
     fixture.controller.link.push.contiguousAppliedToken = pushCursor;
@@ -293,6 +309,49 @@ describe('SyncEngineLevel — dual-subscription replay baseline', () => {
     expect(requestedCursors).toEqual([pushCursor, undefined]);
     expect(resetCheckpoint.calledOnceWithExactly(fixture.controller.link, 'push')).toBe(true);
     expect(fixture.controller.hasLocalSubscription).toBe(true);
+
+    expect(fixture.controller.setLiveSubscription(
+      { close: async (): Promise<void> => {} },
+      fixture.controller.replicationGeneration,
+      { fingerprint: 'remote-feed', head: tokenIn('remote-stream', 'remote-epoch', '29') },
+    )).toBe(true);
+    expect(await establishBaseline(fixture)).toEqual({ converged: true });
+    expect(fixture.reconcile.calledOnce).toBe(true);
+
+    await fixture.controller.dispose();
+  });
+
+  it('should discard an invalid local cursor before constructing the subscription', async () => {
+    const fixture = createBaselineFixture(db);
+    fixture.controller.link.push.contiguousAppliedToken = tokenIn('', '', '');
+    const requestedCursors: Array<ProgressToken | undefined> = [];
+    const processRequest = sinon.stub().callsFake(async (request: CapturedSubscribeRequest) => {
+      requestedCursors.push(request.messageParams.cursor);
+      return {
+        reply: {
+          fingerprint  : 'local-feed',
+          head         : tokenIn('local-stream', 'local-epoch', '31'),
+          status       : { code: 200, detail: 'OK' },
+          subscription : { close: sinon.stub().resolves() },
+        },
+      };
+    });
+    (fixture.engine as any)._agent = { dwn: { processRequest }, rpc: {} };
+    const resetCheckpoint = sinon.stub((fixture.engine as any).ledger, 'resetCheckpoint').callsFake(async (
+      link: ReplicationLinkState,
+      direction: 'pull' | 'push',
+    ): Promise<void> => {
+      SyncCheckpoint.reset(link[direction]);
+    });
+
+    expect(await (fixture.engine as any).openLocalPushSubscription(
+      fixture.target,
+      fixture.controller,
+      fixture.controller.replicationGeneration,
+    )).toBe(true);
+
+    expect(requestedCursors).toEqual([undefined]);
+    expect(resetCheckpoint.calledOnceWithExactly(fixture.controller.link, 'push')).toBe(true);
 
     await fixture.controller.dispose();
   });
