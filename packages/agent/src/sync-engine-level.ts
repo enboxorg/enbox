@@ -1414,7 +1414,7 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       controller = this.activateLink(linkKey, link);
-      return this.initializeActivatedLinkTarget(target, linkKey, link, controller);
+      return await this.initializeActivatedLinkTarget(target, linkKey, link, controller);
     } catch (error: any) {
       if (runtimeScope.disposed) {
         return { status: LinkInitializationStatus.Failed };
