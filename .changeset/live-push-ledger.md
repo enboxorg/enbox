@@ -2,6 +2,6 @@
 "@enbox/agent": patch
 ---
 
-feat: cumulative delivery acknowledgement advances the durable push checkpoint
+refactor: make live push a coalesced durable-feed wake
 
-Local feed deliveries are tagged in feed order and acknowledged as they settle — pushed, echo-suppressed, out of scope, or dead-lettered — and the durable push checkpoint advances through the contiguous acked prefix (AMQP-style cumulative ack). The reconciler's push pass stops re-reading and re-sending feed spans live push already covered. Positions the live path cannot settle hold the checkpoint deliberately until a reconciler pass covers them, after which the covered ledger span is pruned and acked positions above it advance. The pull side's delivery tracking adopts the same track/ack/commit naming.
+Local subscription events now wake one coalesced durable push pass instead of creating in-memory batches or delivery acknowledgements. Every pass resumes from the persisted push checkpoint, and advances it only after a complete feed page is pushed successfully. Retryable failures leave the cursor unchanged so startup, reconnect, or a later wake deterministically replays the owed page. Retryable live-push failures now enter verified reconciliation after five seconds instead of using the removed in-memory 0/250ms/1s/2s retry ladder. Remotely sourced CIDs are marked before local application emits its wake, preventing an immediate echo to the same DWN.

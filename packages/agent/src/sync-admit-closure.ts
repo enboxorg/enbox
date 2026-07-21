@@ -69,6 +69,7 @@ export type AdmitClosureDeps = {
   permissionGrantIds?: string[];
   scope?: SyncScope;
   agent: EnboxPlatformAgent;
+  onBeforeApply?: (messageCid: string) => void;
   permissionsApi?: PermissionsApi;
   prefetched?: SyncMessageEntry[];
   shouldContinue?: () => boolean;
@@ -197,6 +198,7 @@ class AdmitClosureContext {
     }
 
     try {
+      this.deps.onBeforeApply?.(cid);
       return this.admissionResultFromApply(rootCid, entry, cid, await this.applyEntry(entry, dataStream));
     } catch (error: any) {
       if (error instanceof SyncDataSizeLimitExceededError) {

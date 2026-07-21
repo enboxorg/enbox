@@ -60,15 +60,18 @@ function link(scope: SyncScope = { kind: 'full' }): ReplicationLinkState {
 
 function contextFor(
   state = link(),
-  isStale: () => boolean = () => false,
+  isStale?: () => boolean,
 ): SyncLivePullContext {
   const linkKey = `${DID}^${REMOTE}^projection^owner-epoch`;
+  const controller = new SyncLinkController(linkKey, state);
+  const generation = controller.replicationGeneration;
+  controller.markReplicationReady();
   return {
-    controller : new SyncLinkController(linkKey, state),
+    controller,
     did        : DID,
     dwnUrl     : REMOTE,
     eventScope : {},
-    isStale,
+    isStale    : isStale ?? ((): boolean => !controller.isReplicationGenerationCurrent(generation)),
     link       : state,
     linkKey,
   };
@@ -111,7 +114,6 @@ function createFixture(maxInFlightDeliveries?: number): PullFixture {
     persistCheckpoint     : sinon.stub().resolves(),
     recordDeadLetter      : sinon.stub().resolves(),
     reportError           : sinon.stub(),
-    scheduleReconcile     : sinon.stub(),
     trackAppliedCids      : sinon.stub().resolves(),
     transitionToPaused    : sinon.stub().resolves(),
     transitionToRepairing : sinon.stub().resolves(),
@@ -136,6 +138,22 @@ function createFixture(maxInFlightDeliveries?: number): PullFixture {
 }
 
 describe('SyncLivePullProcessor', () => {
+  it('marks closure entries as pulled before local application can emit a push wake', async () => {
+    const { admit, echoSuppressor, processor } = createFixture();
+    const message = protocolMessage('https://protocol.example/inbox');
+    const rootCid = await Message.getCid(message);
+    admit.callsFake(async (_rootCid, deps): Promise<Record<string, unknown>> => {
+      expect(echoSuppressor.hasRecentlyPulled(DID, rootCid, REMOTE)).toBe(false);
+      deps.onBeforeApply?.(rootCid);
+      expect(echoSuppressor.hasRecentlyPulled(DID, rootCid, REMOTE)).toBe(true);
+      return { kind: 'admitted', appliedCids: [rootCid], freshEntries: [] };
+    });
+
+    await processor.handleEvent(contextFor(), event(token('1'), message));
+
+    expect(admit.calledOnce).toBe(true);
+  });
+
   it('emits delivery:applied with a descriptor only for freshly admitted deliveries', async () => {
     const { admit, operations, processor } = createFixture();
     const message = protocolMessage('https://protocol.example/inbox');
@@ -251,7 +269,6 @@ describe('SyncLivePullProcessor', () => {
     await processor.handleMessage(context, { type: 'disconnected' });
     await processor.handleMessage(context, { type: 'reconnecting', attempt: 1 });
 
-    expect(context.controller.isLiveStreamAttached).toBe(false);
     expect(state.connectivity).toBe('offline');
     expect(operations.emitEvent.calledOnceWithMatch({
       type : 'link:connectivity-change',
@@ -261,7 +278,6 @@ describe('SyncLivePullProcessor', () => {
 
     await processor.handleMessage(context, { type: 'reconnected' });
 
-    expect(context.controller.isLiveStreamAttached).toBe(true);
     expect(state.connectivity).toBe('online');
     expect(operations.emitEvent.calledTwice).toBe(true);
   });
@@ -324,7 +340,7 @@ describe('SyncLivePullProcessor', () => {
     const context = contextFor(state);
     admit.resolves({ kind: 'admitted', appliedCids: ['dependency-cid', 'root-cid'], freshEntries: [] });
 
-    await processor.handleEvent(context, event());
+    await processor.handleMessage(context, event());
 
     expect(operations.trackAppliedCids.calledOnceWith(
       ['dependency-cid', 'root-cid'],
@@ -333,19 +349,25 @@ describe('SyncLivePullProcessor', () => {
     expect(operations.persistCheckpoint.calledOnceWithExactly(state)).toBe(true);
   });
 
-  it('defers reconciliation for durable omissions while still committing the delivery ticket', async () => {
+  it('repairs a deferred admission without advancing past the unsettled event', async () => {
     const { admit, operations, processor } = createFixture();
     const message = protocolMessage();
     const messageCid = await Message.getCid(message);
 
     const durableContext = contextFor();
-    admit.resolves({ kind: 'deferred', rootCid: messageCid, detail: 'missing dependency' });
-    await processor.handleEvent(durableContext, event(token('1'), message));
+    operations.transitionToRepairing.callsFake(async (controller: SyncLinkController): Promise<void> => {
+      controller.resetReplicationGeneration();
+    });
+    admit.onFirstCall().resolves({ kind: 'deferred', rootCid: messageCid, detail: 'missing dependency' });
+    admit.onSecondCall().resolves({ kind: 'admitted', appliedCids: ['later'], freshEntries: [] });
 
-    expect(operations.scheduleReconcile.calledOnceWithExactly(
-      durableContext.controller,
-      'pull-deferred',
-    )).toBe(true);
+    const deferredEvent = processor.handleMessage(durableContext, event(token('1'), message));
+    const laterEvent = processor.handleMessage(durableContext, event(token('2'), protocolMessage('https://protocol.example/later')));
+    await Promise.all([deferredEvent, laterEvent]);
+
+    expect(operations.transitionToRepairing.calledOnceWithExactly(durableContext.controller)).toBe(true);
+    expect(admit.calledOnce).toBe(true);
+    expect(operations.persistCheckpoint.notCalled).toBe(true);
     expect(operations.trackAppliedCids.notCalled).toBe(true);
   });
 
@@ -354,7 +376,7 @@ describe('SyncLivePullProcessor', () => {
     const context = contextFor();
     admit.resolves({ kind: 'failed', rootCid: 'root-cid', reason: 'invalid', detail: 'bad signature' });
 
-    await processor.handleEvent(context, event());
+    await processor.handleMessage(context, event());
 
     expect(operations.recordDeadLetter.calledOnceWithMatch({
       tenantDid      : DID,
@@ -362,21 +384,27 @@ describe('SyncLivePullProcessor', () => {
       errorCode      : 'invalid',
       errorDetail    : 'bad signature',
     })).toBe(true);
+    expect(context.link.pull.contiguousAppliedToken).toEqual(token('1'));
+    expect(operations.persistCheckpoint.calledOnceWithExactly(context.link)).toBe(true);
 
     admit.rejects(new Error('transport failed'));
-    await processor.handleEvent(context, event(token('2')));
+    await processor.handleMessage(context, event(token('2')));
     expect(operations.reportError.calledOnceWithMatch(
       'SyncLivePullProcessor: Error processing live-pull event',
     )).toBe(true);
     expect(operations.transitionToRepairing.calledOnceWithExactly(context.controller)).toBe(true);
   });
 
-  it('preserves delivery order when later admission completes first', async () => {
+  it('starts the second delivery only after the first delivery settles and persists each exact cursor', async () => {
     const firstStarted = deferred<void>();
     const releaseFirst = deferred<void>();
     const { admit, operations, processor } = createFixture();
     const state = link();
     const context = contextFor(state);
+    const persistedPositions: string[] = [];
+    operations.persistCheckpoint.callsFake(async (persisted: ReplicationLinkState): Promise<void> => {
+      persistedPositions.push(persisted.pull.contiguousAppliedToken!.position);
+    });
     admit.onFirstCall().callsFake(async () => {
       firstStarted.resolve();
       await releaseFirst.promise;
@@ -384,22 +412,56 @@ describe('SyncLivePullProcessor', () => {
     });
     admit.onSecondCall().resolves({ kind: 'admitted', appliedCids: ['second'], freshEntries: [] });
 
-    const first = processor.handleEvent(context, event(token('1'), protocolMessage('https://protocol.example/first')));
+    const first = processor.handleMessage(context, event(token('1'), protocolMessage('https://protocol.example/first')));
     await firstStarted.promise;
-    await processor.handleEvent(context, event(token('2'), protocolMessage('https://protocol.example/second')));
+    const second = processor.handleMessage(context, event(token('2'), protocolMessage('https://protocol.example/second')));
 
+    expect(admit.calledOnce).toBe(true);
     expect(operations.persistCheckpoint.notCalled).toBe(true);
-    expect(context.controller?.pullInflightCount).toBe(2);
+    expect(context.controller.getPendingDirectionCount('pull')).toBe(2);
 
     releaseFirst.resolve();
-    await first;
+    await Promise.all([first, second]);
 
-    expect(operations.persistCheckpoint.calledOnceWithExactly(state)).toBe(true);
+    expect(admit.calledTwice).toBe(true);
+    expect(persistedPositions).toEqual(['1', '2']);
     expect(state.pull.contiguousAppliedToken).toEqual(token('2'));
-    expect(context.controller?.pullInflightCount).toBe(0);
+    expect(context.controller.getPendingDirectionCount('pull')).toBe(0);
   });
 
-  it('orders an out-of-scope acknowledgement behind an earlier in-flight covered delivery', async () => {
+  it('orders EOSE behind earlier events before persisting its cursor and marking the link online', async () => {
+    const eventStarted = deferred<void>();
+    const releaseEvent = deferred<void>();
+    const { admit, operations, processor } = createFixture();
+    const state = link();
+    const context = contextFor(state);
+    const persistedPositions: string[] = [];
+    operations.persistCheckpoint.callsFake(async (persisted: ReplicationLinkState): Promise<void> => {
+      persistedPositions.push(persisted.pull.contiguousAppliedToken!.position);
+    });
+    admit.callsFake(async () => {
+      eventStarted.resolve();
+      await releaseEvent.promise;
+      return { kind: 'admitted', appliedCids: ['event'], freshEntries: [] };
+    });
+
+    const eventResult = processor.handleMessage(context, event(token('1')));
+    await eventStarted.promise;
+    const eoseResult = processor.handleMessage(context, { type: 'eose', cursor: token('2') });
+
+    expect(state.connectivity).toBe('unknown');
+    expect(operations.persistCheckpoint.notCalled).toBe(true);
+
+    releaseEvent.resolve();
+    await Promise.all([eventResult, eoseResult]);
+
+    expect(persistedPositions).toEqual(['1', '2']);
+    expect(state.pull.contiguousAppliedToken).toEqual(token('2'));
+    expect(state.connectivity).toBe('online');
+    expect(operations.emitCheckpointAdvance.calledTwice).toBe(true);
+  });
+
+  it('orders an out-of-scope cursor behind an earlier covered delivery', async () => {
     const coveredStarted = deferred<void>();
     const releaseCovered = deferred<void>();
     const { admit, operations, processor } = createFixture();
@@ -412,22 +474,25 @@ describe('SyncLivePullProcessor', () => {
       return { kind: 'admitted', appliedCids: ['covered'], freshEntries: [] };
     });
 
-    const covered = processor.handleEvent(context, event(token('1'), protocolMessage('https://protocol.example/covered')));
-    await coveredStarted.promise;
-    await processor.handleEvent(context, event(token('2'), protocolMessage('https://protocol.example/outside')));
+    const persistedPositions: string[] = [];
+    operations.persistCheckpoint.callsFake(async (persisted: ReplicationLinkState): Promise<void> => {
+      persistedPositions.push(persisted.pull.contiguousAppliedToken!.position);
+    });
 
-    // The out-of-scope acknowledgement must wait in the ordinal queue: a
-    // direct advance would persist position 2 as contiguous while the
-    // position-1 delivery is still admitting, and a crash in that window
-    // would resume past the never-applied earlier event.
+    const covered = processor.handleMessage(context, event(token('1'), protocolMessage('https://protocol.example/covered')));
+    await coveredStarted.promise;
+    const outside = processor.handleMessage(context, event(token('2'), protocolMessage('https://protocol.example/outside')));
+
+    expect(admit.calledOnce).toBe(true);
     expect(operations.persistCheckpoint.notCalled).toBe(true);
     expect(state.pull.contiguousAppliedToken).toBeUndefined();
 
     releaseCovered.resolve();
-    await covered;
+    await Promise.all([covered, outside]);
 
+    expect(admit.calledOnce).toBe(true);
+    expect(persistedPositions).toEqual(['1', '2']);
     expect(state.pull.contiguousAppliedToken).toEqual(token('2'));
-    expect(operations.persistCheckpoint.calledOnceWithExactly(state)).toBe(true);
   });
 
   it('does not report or repair when event processing rejects after the delivery went stale', async () => {
@@ -448,11 +513,9 @@ describe('SyncLivePullProcessor', () => {
     expect(operations.transitionToRepairing.notCalled).toBe(true);
   });
 
-  it('ignores a delivery that commits across a pull-runtime reset', async () => {
+  it('drops queued work and prevents a running delivery from committing after a generation reset', async () => {
     const staleStarted = deferred<void>();
     const releaseStale = deferred<void>();
-    const freshStarted = deferred<void>();
-    const releaseFresh = deferred<void>();
     const { admit, operations, processor } = createFixture();
     const state = link();
     const context = contextFor(state);
@@ -461,40 +524,65 @@ describe('SyncLivePullProcessor', () => {
       await releaseStale.promise;
       return { kind: 'admitted', appliedCids: ['stale'], freshEntries: [] };
     });
-    admit.onSecondCall().callsFake(async () => {
-      freshStarted.resolve();
-      await releaseFresh.promise;
-      return { kind: 'admitted', appliedCids: ['fresh'], freshEntries: [] };
-    });
 
-    const stale = processor.handleEvent(context, event(token('5'), protocolMessage('https://protocol.example/stale')));
+    const running = processor.handleMessage(context, event(token('1'), protocolMessage('https://protocol.example/running')));
     await staleStarted.promise;
+    const queued = processor.handleMessage(context, event(token('2'), protocolMessage('https://protocol.example/queued')));
 
-    // A repair re-establishes the pull boundary while the delivery admits.
-    context.controller?.resetPullGeneration();
-    const fresh = processor.handleEvent(context, event(token('6'), protocolMessage('https://protocol.example/fresh')));
-    await freshStarted.promise;
+    expect(context.controller.getPendingDirectionCount('pull')).toBe(2);
+    context.controller.resetReplicationGeneration();
+    expect(context.controller.getPendingDirectionCount('pull')).toBe(0);
 
     releaseStale.resolve();
-    await stale;
+    await Promise.all([running, queued]);
 
-    // The superseded delivery reuses ordinal 0 of the new generation; its
-    // commit must not mark the still-admitting fresh delivery as applied.
+    expect(admit.calledOnce).toBe(true);
     expect(operations.persistCheckpoint.notCalled).toBe(true);
     expect(state.pull.contiguousAppliedToken).toBeUndefined();
-
-    releaseFresh.resolve();
-    await fresh;
-
-    expect(state.pull.contiguousAppliedToken).toEqual(token('6'));
-    expect(operations.persistCheckpoint.calledOnceWithExactly(state)).toBe(true);
   });
 
-  it('repairs a link when concurrent deliveries exceed the bounded backlog', async () => {
+  it('handles lifecycle and error messages immediately while an event is blocked', async () => {
+    const eventStarted = deferred<void>();
+    const releaseEvent = deferred<void>();
+    const { admit, operations, processor } = createFixture();
+    const state = link();
+    const context = contextFor(state);
+    admit.callsFake(async () => {
+      eventStarted.resolve();
+      await releaseEvent.promise;
+      return { kind: 'admitted', appliedCids: ['event'], freshEntries: [] };
+    });
+    operations.transitionToRepairing.callsFake(async (controller: SyncLinkController): Promise<void> => {
+      controller.resetReplicationGeneration();
+    });
+
+    const running = processor.handleMessage(context, event(token('1')));
+    await eventStarted.promise;
+
+    await processor.handleMessage(context, { type: 'disconnected' });
+    expect(state.connectivity).toBe('offline');
+
+    await processor.handleMessage(context, {
+      type  : 'error',
+      error : { code: 'SomeTransientCode', message: 'offline' },
+    });
+    expect(operations.transitionToRepairing.calledOnceWithExactly(context.controller)).toBe(true);
+
+    releaseEvent.resolve();
+    await running;
+
+    expect(operations.persistCheckpoint.notCalled).toBe(true);
+    expect(state.pull.contiguousAppliedToken).toBeUndefined();
+  });
+
+  it('repairs immediately and drops the queued generation when the pull queue overflows', async () => {
     const firstStarted = deferred<void>();
     const releaseFirst = deferred<void>();
     const { admit, operations, processor } = createFixture(1);
     const context = contextFor();
+    operations.transitionToRepairing.callsFake(async (controller: SyncLinkController): Promise<void> => {
+      controller.resetReplicationGeneration();
+    });
     admit.onFirstCall().callsFake(async () => {
       firstStarted.resolve();
       await releaseFirst.promise;
@@ -502,15 +590,20 @@ describe('SyncLivePullProcessor', () => {
     });
     admit.onSecondCall().resolves({ kind: 'admitted', appliedCids: ['second'], freshEntries: [] });
 
-    const first = processor.handleEvent(context, event(token('1'), protocolMessage('https://protocol.example/first')));
+    const first = processor.handleMessage(context, event(token('1'), protocolMessage('https://protocol.example/first')));
     await firstStarted.promise;
-    await processor.handleEvent(context, event(token('2'), protocolMessage('https://protocol.example/second')));
+    const overflow = processor.handleMessage(context, event(token('2'), protocolMessage('https://protocol.example/second')));
+    await overflow;
 
-    expect(context.controller?.pullInflightCount).toBe(2);
     expect(operations.transitionToRepairing.calledOnceWithExactly(context.controller)).toBe(true);
+    expect(context.controller.getPendingDirectionCount('pull')).toBe(0);
 
     releaseFirst.resolve();
     await first;
+
+    expect(admit.calledOnce).toBe(true);
+    expect(operations.persistCheckpoint.notCalled).toBe(true);
+    expect(context.link.pull.contiguousAppliedToken).toBeUndefined();
   });
 
   it('serves inline record data from the subscription event without re-fetching it', async () => {

@@ -10,6 +10,17 @@ import { SyncLinkController } from '../src/sync-link-controller.js';
 
 type SyncLinkTimer = Parameters<SyncLinkController['setRepairRetryTimer']>[0];
 
+type Deferred<T> = {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+};
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((res) => { resolve = res; });
+  return { promise, resolve };
+}
+
 function createLink(): ReplicationLinkState {
   return {
     authorization      : { kind: 'owner' },
@@ -39,135 +50,170 @@ describe('SyncLinkController', () => {
     sinon.restore();
   });
 
-  it('should commit concurrently delivered pull events only in delivery order', () => {
-    const link = createLink();
-    const controller = new SyncLinkController('link-key', link);
-    const first = controller.trackPullDelivery(token(1));
-    const second = controller.trackPullDelivery(token(2));
+  describe('direction queues', () => {
+    it('should hold admitted work behind the generation readiness barrier', async () => {
+      const controller = new SyncLinkController('link-key', createLink());
+      let ran = false;
 
-    expect(controller.ackPullDelivery(second)).toBe(0);
-    expect(link.pull.contiguousAppliedToken).toBeUndefined();
-    expect(controller.pullInflightCount).toBe(2);
+      const result = controller.enqueueDirection('pull', async (): Promise<string> => {
+        ran = true;
+        return 'ready';
+      });
+      await Promise.resolve();
 
-    expect(controller.ackPullDelivery(first)).toBe(2);
-    expect(link.pull.contiguousAppliedToken).toEqual(token(2));
-    expect(controller.pullInflightCount).toBe(0);
-  });
+      expect(controller.isReplicationReady).toBe(false);
+      expect(controller.getPendingDirectionCount('pull')).toBe(1);
+      expect(ran).toBe(false);
 
-  it('should discard interrupted pull deliveries without blocking later work', () => {
-    const link = createLink();
-    const controller = new SyncLinkController('link-key', link);
-    controller.trackPullDelivery(token(1));
+      controller.markReplicationReady();
 
-    controller.startNewPullGeneration();
-    const next = controller.trackPullDelivery(token(2));
-
-    expect(next.ordinal).toBe(1);
-    expect(controller.ackPullDelivery(next)).toBe(1);
-    expect(link.pull.contiguousAppliedToken).toEqual(token(2));
-  });
-
-  it('should restart pull delivery ordering when the runtime is reset', () => {
-    const link = createLink();
-    const controller = new SyncLinkController('link-key', link);
-    controller.trackPullDelivery(token(1));
-    controller.trackPullDelivery(token(2));
-
-    controller.resetPullGeneration();
-    const next = controller.trackPullDelivery(token(3));
-
-    expect(next.ordinal).toBe(0);
-    expect(controller.pullInflightCount).toBe(1);
-    expect(controller.ackPullDelivery(next)).toBe(1);
-    expect(link.pull.contiguousAppliedToken).toEqual(token(3));
-  });
-
-  it('should ignore commits carrying a superseded pull-generation tag', () => {
-    const link = createLink();
-    const controller = new SyncLinkController('link-key', link);
-    const stale = controller.trackPullDelivery(token(9));
-
-    controller.resetPullGeneration();
-    const fresh = controller.trackPullDelivery(token(2));
-
-    // The stale tag's ordinal collides with the fresh delivery's ordinal
-    // in the new generation; its commit must not mark the fresh delivery
-    // committed or move either checkpoint token.
-    expect(controller.ackPullDelivery(stale)).toBe(0);
-    expect(link.pull.contiguousAppliedToken).toBeUndefined();
-
-    expect(controller.ackPullDelivery(fresh)).toBe(1);
-    expect(link.pull.contiguousAppliedToken).toEqual(token(2));
-  });
-
-  it('should ignore commits abandoned by startNewPullGeneration', () => {
-    const link = createLink();
-    const controller = new SyncLinkController('link-key', link);
-    const abandoned = controller.trackPullDelivery(token(1));
-
-    controller.startNewPullGeneration();
-
-    expect(controller.ackPullDelivery(abandoned)).toBe(0);
-    expect(link.pull.contiguousAppliedToken).toBeUndefined();
-  });
-
-  it('should not let an old push batch clear or consume a replacement queue', () => {
-    const controller = new SyncLinkController('link-key', createLink());
-    const first = controller.getOrCreatePushQueue({
-      did    : 'did:example:alice',
-      dwnUrl : 'https://dwn.example.com',
-    });
-    const firstTimer = setTimeout(() => {}, 60_000);
-    controller.setPushTimer(first, firstTimer);
-    controller.clearPushQueue(first);
-    const replacement = controller.getOrCreatePushQueue({
-      did    : 'did:example:alice',
-      dwnUrl : 'https://dwn.example.com',
-    });
-    const replacementTimer = setTimeout(() => {}, 60_000);
-    controller.setPushTimer(replacement, replacementTimer);
-
-    controller.clearPushQueue(first);
-
-    expect(controller.pushQueue).toBe(replacement);
-    expect(controller.consumePushTimer(first, firstTimer)).toBe(false);
-    expect(controller.pushQueue?.timer).toBe(replacementTimer);
-
-    controller.clearPushQueue(replacement);
-  });
-
-  it('should reject and cancel push timers for stale or inactive runtimes', async () => {
-    const clock = sinon.useFakeTimers();
-    const controller = new SyncLinkController('link-key', createLink());
-    const fired = sinon.stub();
-    const stale = controller.getOrCreatePushQueue({
-      did    : 'did:example:alice',
-      dwnUrl : 'https://dwn.example.com',
-    });
-    controller.clearPushQueue(stale);
-    const current = controller.getOrCreatePushQueue({
-      did    : 'did:example:alice',
-      dwnUrl : 'https://dwn.example.com',
+      expect(await result).toBe('ready');
+      expect(controller.isReplicationReady).toBe(true);
+      expect(controller.getPendingDirectionCount('pull')).toBe(0);
     });
 
-    const staleTimer = setTimeout(fired, 10) as unknown as SyncLinkTimer;
-    expect(controller.setPushTimer(stale, staleTimer)).toBe(false);
+    it('should run each direction FIFO and count running plus queued work', async () => {
+      const controller = new SyncLinkController('link-key', createLink());
+      const firstGate = deferred<void>();
+      const firstStarted = deferred<void>();
+      const order: string[] = [];
+      controller.markReplicationReady();
 
-    controller.deactivate();
-    const inactiveTimer = setTimeout(fired, 10) as unknown as SyncLinkTimer;
-    expect(controller.setPushTimer(current, inactiveTimer)).toBe(false);
+      const first = controller.enqueueDirection('pull', async (): Promise<string> => {
+        firstStarted.resolve();
+        await firstGate.promise;
+        order.push('first');
+        return 'first-result';
+      });
+      const second = controller.enqueueDirection('pull', async (): Promise<string> => {
+        order.push('second');
+        return 'second-result';
+      });
+      await firstStarted.promise;
 
-    await clock.tickAsync(10);
+      expect(controller.getPendingDirectionCount('pull')).toBe(2);
+      expect(order).toEqual([]);
 
-    expect(fired.called).toBe(false);
+      firstGate.resolve();
+      expect(await Promise.all([first, second])).toEqual(['first-result', 'second-result']);
+      expect(order).toEqual(['first', 'second']);
+      expect(controller.getPendingDirectionCount('pull')).toBe(0);
+    });
+
+    it('should drain pull and push independently', async () => {
+      const controller = new SyncLinkController('link-key', createLink());
+      const pullGate = deferred<void>();
+      const pullStarted = deferred<void>();
+      controller.markReplicationReady();
+
+      const pull = controller.enqueueDirection('pull', async (): Promise<void> => {
+        pullStarted.resolve();
+        await pullGate.promise;
+      });
+      await pullStarted.promise;
+
+      const push = controller.enqueueDirection('push', async (): Promise<string> => 'pushed');
+      expect(await push).toBe('pushed');
+      expect(controller.getPendingDirectionCount('pull')).toBe(1);
+      expect(controller.getPendingDirectionCount('push')).toBe(0);
+
+      pullGate.resolve();
+      await pull;
+    });
+
+    it('should synchronously fence queued work and replace readiness on generation reset', async () => {
+      const controller = new SyncLinkController('link-key', createLink());
+      const initialGeneration = controller.replicationGeneration;
+      let staleRan = false;
+      let freshRan = false;
+      const stale = controller.enqueueDirection('push', async (): Promise<void> => { staleRan = true; });
+
+      controller.resetReplicationGeneration();
+
+      expect(controller.replicationGeneration).toBe(initialGeneration + 1);
+      expect(await stale).toBeUndefined();
+      expect(staleRan).toBe(false);
+      expect(controller.isReplicationReady).toBe(false);
+      expect(controller.getPendingDirectionCount('push')).toBe(0);
+
+      const fresh = controller.enqueueDirection('push', async (): Promise<void> => { freshRan = true; });
+      await Promise.resolve();
+      expect(freshRan).toBe(false);
+
+      controller.markReplicationReady();
+      await fresh;
+      expect(freshRan).toBe(true);
+    });
+
+    it('should fence a stale running completion without blocking the replacement queue', async () => {
+      const controller = new SyncLinkController('link-key', createLink());
+      const oldGate = deferred<void>();
+      const oldStarted = deferred<void>();
+      let queuedRan = false;
+      controller.markReplicationReady();
+
+      const running = controller.enqueueDirection('pull', async (): Promise<string> => {
+        oldStarted.resolve();
+        await oldGate.promise;
+        return 'stale-result';
+      });
+      const queued = controller.enqueueDirection('pull', async (): Promise<void> => { queuedRan = true; });
+      await oldStarted.promise;
+
+      controller.resetReplicationGeneration();
+      let supersededSettled = false;
+      const superseded = controller.waitForSupersededDirectionWork().then((): void => {
+        supersededSettled = true;
+      });
+
+      expect(await queued).toBeUndefined();
+      expect(queuedRan).toBe(false);
+      expect(controller.getPendingDirectionCount('pull')).toBe(0);
+      expect(supersededSettled).toBe(false);
+
+      controller.markReplicationReady();
+      expect(await controller.enqueueDirection('pull', async (): Promise<string> => 'fresh-result')).toBe('fresh-result');
+
+      oldGate.resolve();
+      expect(await running).toBeUndefined();
+      await superseded;
+      expect(supersededSettled).toBe(true);
+      expect(controller.getPendingDirectionCount('pull')).toBe(0);
+    });
+
+    it('should release readiness waiters without running them on deactivation', async () => {
+      const controller = new SyncLinkController('link-key', createLink());
+      let ran = false;
+      const pending = controller.enqueueDirection('pull', async (): Promise<void> => { ran = true; });
+
+      controller.deactivate();
+
+      expect(await pending).toBeUndefined();
+      expect(ran).toBe(false);
+      expect(controller.isReplicationReady).toBe(false);
+      expect(await controller.enqueueDirection('pull', async (): Promise<void> => { ran = true; })).toBeUndefined();
+    });
+
+    it('should surface a current rejection without poisoning its direction queue', async () => {
+      const controller = new SyncLinkController('link-key', createLink());
+      controller.markReplicationReady();
+
+      const failed = controller.enqueueDirection('push', async (): Promise<never> => {
+        throw new Error('push failed');
+      });
+      const continued = controller.enqueueDirection('push', async (): Promise<string> => 'continued');
+
+      await expect(failed).rejects.toThrow('push failed');
+      expect(await continued).toBe('continued');
+    });
   });
 
   it('should own and close both link subscriptions even when one close fails', async () => {
     const controller = new SyncLinkController('link-key', createLink());
     const closeLive = sinon.stub().rejects(new Error('already closed'));
     const closeLocal = sinon.stub().resolves();
-    controller.setLiveSubscription({ close: closeLive });
-    controller.setLocalSubscription({ close: closeLocal });
+    controller.setLiveSubscription({ close: closeLive }, controller.replicationGeneration, { head: token(1) });
+    controller.setLocalSubscription({ close: closeLocal }, controller.replicationGeneration, { head: token(2) });
 
     await controller.closeSubscriptions();
 
@@ -175,6 +221,43 @@ describe('SyncLinkController', () => {
     expect(closeLocal.calledOnce).toBe(true);
     expect(controller.hasLiveSubscription).toBe(false);
     expect(controller.hasLocalSubscription).toBe(false);
+    expect(controller.pullSnapshot).toBeUndefined();
+    expect(controller.pushSnapshot).toBeUndefined();
+  });
+
+  it('should capture generation-pinned feed snapshots and clear them on reset', async () => {
+    const controller = new SyncLinkController('link-key', createLink());
+    const generation = controller.replicationGeneration;
+    const pullHead = token(3);
+    const pushHead = token(4);
+
+    expect(controller.setLiveSubscription(
+      { close: async (): Promise<void> => {} },
+      generation,
+      { fingerprint: 'pull-fingerprint', head: pullHead },
+    )).toBe(true);
+    expect(controller.setLocalSubscription(
+      { close: async (): Promise<void> => {} },
+      generation,
+      { fingerprint: 'push-fingerprint', head: pushHead },
+    )).toBe(true);
+
+    // Captured state is insulated from a caller mutating its reply object.
+    pullHead.position = '99';
+    pushHead.position = '99';
+    expect(controller.pullSnapshot).toEqual({ fingerprint: 'pull-fingerprint', head: token(3) });
+    expect(controller.pushSnapshot).toEqual({ fingerprint: 'push-fingerprint', head: token(4) });
+
+    controller.resetReplicationGeneration();
+
+    expect(controller.pullSnapshot).toBeUndefined();
+    expect(controller.pushSnapshot).toBeUndefined();
+    await controller.closeSubscriptions();
+    expect(controller.setLiveSubscription(
+      { close: async (): Promise<void> => {} },
+      generation,
+      { head: token(5) },
+    )).toBe(false);
   });
 
   it('should reject duplicate or post-deactivation subscription ownership', async () => {
@@ -221,14 +304,8 @@ describe('SyncLinkController', () => {
     const clock = sinon.useFakeTimers();
     const controller = new SyncLinkController('link-key', createLink());
     const fired = sinon.stub();
-    const pushQueue = controller.getOrCreatePushQueue({
-      did    : 'did:example:alice',
-      dwnUrl : 'https://dwn.example.com',
-    });
-    const pushTimer = setTimeout(fired, 10) as unknown as SyncLinkTimer;
     const repairTimer = setTimeout(fired, 10) as unknown as SyncLinkTimer;
     const reconcileTimer = setTimeout(fired, 10) as unknown as SyncLinkTimer;
-    controller.setPushTimer(pushQueue, pushTimer);
     controller.setRepairRetryTimer(repairTimer);
     controller.setReconcileTimer(reconcileTimer, Date.now() + 10);
     controller.incrementRepairAttempts();
@@ -238,7 +315,6 @@ describe('SyncLinkController', () => {
     await clock.tickAsync(10);
 
     expect(controller.isActive).toBe(false);
-    expect(controller.pushQueue).toBeUndefined();
     expect(controller.repairRetryTimer).toBeUndefined();
     expect(controller.reconcileTimer).toBeUndefined();
     expect(controller.repairAttempts).toBe(0);
@@ -315,20 +391,20 @@ describe('SyncLinkController mailbox', () => {
 
   it('should track lane business for queued and running operations independently', async () => {
     const controller = new SyncLinkController(LINK_KEY, createLink());
-    let releaseFlush!: () => void;
-    const flushGate = new Promise<void>((resolve) => { releaseFlush = resolve; });
+    let releasePush!: () => void;
+    const pushGate = new Promise<void>((resolve) => { releasePush = resolve; });
 
-    const flush = controller.enqueue(async (): Promise<void> => { await flushGate; }, 'flush');
+    const push = controller.enqueue(async (): Promise<void> => { await pushGate; }, 'push');
     const repair = controller.enqueue(async (): Promise<void> => {}, 'repair');
 
-    expect(controller.isMailboxBusy('flush')).toBe(true);
+    expect(controller.isMailboxBusy('push')).toBe(true);
     expect(controller.isMailboxBusy('repair')).toBe(true);
     expect(controller.isMailboxBusy('reconcile')).toBe(false);
 
-    releaseFlush();
-    await Promise.all([flush, repair]);
+    releasePush();
+    await Promise.all([push, repair]);
 
-    expect(controller.isMailboxBusy('flush')).toBe(false);
+    expect(controller.isMailboxBusy('push')).toBe(false);
     expect(controller.isMailboxBusy('repair')).toBe(false);
   });
 
@@ -388,112 +464,4 @@ describe('SyncLinkController mailbox', () => {
     expect(secondRan).toBe(true);
   });
 
-  describe('live stream attachment', () => {
-    it('should track transport detachment and verified reattachment', () => {
-      const controller = new SyncLinkController('stream-link-key', createLink());
-      controller.setLiveSubscription({ close: async (): Promise<void> => {} });
-
-      expect(controller.isLiveStreamAttached).toBe(true);
-      controller.markLiveStreamDetached();
-      expect(controller.isLiveStreamAttached).toBe(false);
-      controller.markLiveStreamAttached();
-      expect(controller.isLiveStreamAttached).toBe(true);
-    });
-
-    it('should not report attachment without a live subscription handle', async () => {
-      const controller = new SyncLinkController('stream-link-key', createLink());
-
-      controller.markLiveStreamAttached();
-      expect(controller.isLiveStreamAttached).toBe(false);
-
-      controller.setLiveSubscription({ close: async (): Promise<void> => {} });
-      expect(controller.isLiveStreamAttached).toBe(true);
-
-      await controller.closeLiveSubscription();
-      expect(controller.isLiveStreamAttached).toBe(false);
-    });
-  });
-
-  describe('push ledger', () => {
-    it('should advance the push checkpoint through the contiguous settled prefix', () => {
-      const controller = new SyncLinkController('push-ledger-link-key', createLink());
-      const first = controller.trackPushDelivery(token(1));
-      const second = controller.trackPushDelivery(token(2));
-      const third = controller.trackPushDelivery(token(3));
-
-      // Out of order: held until the prefix settles.
-      expect(controller.ackPushDelivery(second)).toBe(0);
-      expect(controller.link.push.contiguousAppliedToken).toBeUndefined();
-
-      expect(controller.ackPushDelivery(first)).toBe(2);
-      expect(controller.link.push.contiguousAppliedToken?.position).toBe('2');
-
-      expect(controller.ackPushDelivery(third)).toBe(1);
-      expect(controller.link.push.contiguousAppliedToken?.position).toBe('3');
-      expect(controller.pushInflightCount).toBe(0);
-    });
-
-    it('should fence tags from a superseded generation', () => {
-      const controller = new SyncLinkController('push-ledger-link-key', createLink());
-      const stale = controller.trackPushDelivery(token(1));
-      controller.resetPullGeneration();
-
-      expect(controller.ackPushDelivery(stale)).toBe(0);
-      expect(controller.link.push.contiguousAppliedToken).toBeUndefined();
-      expect(controller.pushInflightCount).toBe(0);
-
-      const fresh = controller.trackPushDelivery(token(1));
-      expect(controller.ackPushDelivery(fresh)).toBe(1);
-      expect(controller.link.push.contiguousAppliedToken?.position).toBe('1');
-    });
-
-    it('should clear push ordering alongside pull ordering on a new generation', () => {
-      const controller = new SyncLinkController('push-ledger-link-key', createLink());
-      controller.trackPushDelivery(token(1));
-      controller.startNewPullGeneration();
-
-      expect(controller.pushInflightCount).toBe(0);
-      const next = controller.trackPushDelivery(token(1));
-      expect(controller.ackPushDelivery(next)).toBe(1);
-      expect(controller.link.push.contiguousAppliedToken?.position).toBe('1');
-    });
-
-    it('should hold a live ack that is not the checkpoint successor until a reconciler covers the gap', () => {
-      const controller = new SyncLinkController('push-ledger-link-key', createLink());
-
-      // The local subscription opened from "now": a live delivery at
-      // position 5 proves nothing about positions 1-4, so its ack must not
-      // establish the checkpoint.
-      const above = controller.trackPushDelivery(token(5));
-      expect(controller.ackPushDelivery(above)).toBe(0);
-      expect(controller.link.push.contiguousAppliedToken).toBeUndefined();
-
-      // A reconciler pass covered through 4 — the held ack is now the
-      // immediate successor and commits.
-      expect(controller.pruneCoveredPushDeliveries(token(4))).toBe(1);
-      expect(controller.link.push.contiguousAppliedToken?.position).toBe('5');
-      expect(controller.pushInflightCount).toBe(0);
-    });
-
-    it('should prune deliveries a reconciler checkpoint covers and release acked ones above', () => {
-      const controller = new SyncLinkController('push-ledger-link-key', createLink());
-      controller.trackPushDelivery(token(1));
-      const acked = controller.trackPushDelivery(token(2));
-      expect(controller.ackPushDelivery(acked)).toBe(0);
-
-      // Only the released acked delivery counts — folding and pruning alone
-      // move nothing new.
-      expect(controller.pruneCoveredPushDeliveries(token(1))).toBe(1);
-      expect(controller.link.push.contiguousAppliedToken?.position).toBe('2');
-      expect(controller.pushInflightCount).toBe(0);
-    });
-
-    it('should stop pruning at a foreign token domain', () => {
-      const controller = new SyncLinkController('push-ledger-link-key', createLink());
-      controller.trackPushDelivery({ epoch: 'other-epoch', position: '9', streamId: 'other-stream' });
-
-      expect(controller.pruneCoveredPushDeliveries(token(5))).toBe(0);
-      expect(controller.pushInflightCount).toBe(1);
-    });
-  });
 });

@@ -556,9 +556,10 @@ describe('SyncEngineLevel — identity management', () => {
         authorizationEpoch : 'owner-epoch',
         projectionId       : 'projection-id',
       };
-      sinon.stub((engine as any)._runCoordinator, 'run').resolves();
+      sinon.stub((engine as any)._runCoordinator, 'settle').resolves();
       sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
       sinon.stub(engine as any, 'openLinkSubscriptions').resolves('readyForLive');
+      sinon.stub(engine as any, 'establishLinkBaseline').resolves();
       sinon.stub(engine as any, 'markLinkLive').resolves();
 
       // Park the settle re-initialization inside link storage.
@@ -626,9 +627,10 @@ describe('SyncEngineLevel — identity management', () => {
         authorizationEpoch : 'owner-epoch',
         projectionId       : 'projection-new',
       };
-      sinon.stub((engine as any)._runCoordinator, 'run').resolves();
+      sinon.stub((engine as any)._runCoordinator, 'settle').resolves();
       sinon.stub(engine as any, 'getSyncTargets').resolves([oldTarget]);
       sinon.stub(engine as any, 'openLinkSubscriptions').resolves('readyForLive');
+      sinon.stub(engine as any, 'establishLinkBaseline').resolves();
       sinon.stub(engine as any, 'markLinkLive').resolves();
       sinon.stub((engine as any).targetResolver, 'getEndpointUrls').resolves(['https://dwn.example.com']);
       sinon.stub((engine as any).targetResolver, 'buildTargetsForEndpoint').resolves([newTarget]);
@@ -897,21 +899,26 @@ describe('SyncEngineLevel — identity management', () => {
       expect((engine as any)._linkControllers.has(bobKey)).toBe(true);
     });
 
-    it('removeIdentityFromLiveSync should cancel push timers for the target DID only', async () => {
+    it('removeIdentityFromLiveSync should invalidate only the target DID directional replay', async () => {
       const engine = new SyncEngineLevel({ db });
-      const aliceTimer = setTimeout(() => {}, 60_000);
-      const bobTimer = setTimeout(() => {}, 60_000);
       const aliceController = activateTestLink(engine, 'did:example:alice^https://dwn.example.com', 'did:example:alice');
       const bobController = activateTestLink(engine, 'did:example:bob^https://dwn.example.com', 'did:example:bob');
-      aliceController.getOrCreatePushQueue({ did: 'did:example:alice', dwnUrl: 'https://dwn.example.com' }).timer = aliceTimer;
-      bobController.getOrCreatePushQueue({ did: 'did:example:bob', dwnUrl: 'https://dwn.example.com' }).timer = bobTimer;
+      const aliceReplay = aliceController.enqueueDirection('push', async (): Promise<string> => 'alice');
+      const bobReplay = bobController.enqueueDirection('push', async (): Promise<string> => 'bob');
+
+      expect(aliceController.getPendingDirectionCount('push')).toBe(1);
+      expect(bobController.getPendingDirectionCount('push')).toBe(1);
 
       await (engine as any).removeIdentityFromLiveSync('did:example:alice');
 
-      expect(aliceController.pushQueue).toBeUndefined();
-      expect(bobController.pushQueue).toBeDefined();
+      expect(await aliceReplay).toBeUndefined();
+      expect(aliceController.isActive).toBe(false);
+      expect(bobController.isActive).toBe(true);
+      expect(bobController.getPendingDirectionCount('push')).toBe(1);
 
-      clearTimeout(bobTimer);
+      bobController.markReplicationReady();
+      expect(await bobReplay).toBe('bob');
+      expect(bobController.getPendingDirectionCount('push')).toBe(0);
     });
 
     it('removeIdentityFromLiveSync should clear repair attempts and retry timers for the target DID', async () => {
@@ -1052,14 +1059,16 @@ describe('SyncEngineLevel — identity management', () => {
         scope              : params.scope,
         status             : 'initializing',
         pull               : {},
+        push               : {},
         connectivity       : 'unknown',
       }));
       sinon.stub(engine as any, 'ledger').get(() => ({
         getOrCreateLink : ledgerStub,
         setStatus       : sinon.stub().resolves(),
       }));
-      sinon.stub(engine as any, 'openLivePullSubscription').resolves();
-      sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
+      sinon.stub(engine as any, 'openLivePullSubscription').resolves(true);
+      sinon.stub(engine as any, 'openLocalPushSubscription').resolves(true);
+      sinon.stub(engine as any, 'establishLinkBaseline').resolves();
 
       await (engine as any).addIdentityToLiveSync('did:example:proto', {
         protocols: ['https://proto1.example', 'https://proto2.example'],
@@ -1089,14 +1098,16 @@ describe('SyncEngineLevel — identity management', () => {
         scope              : params.scope,
         status             : 'initializing',
         pull               : {},
+        push               : {},
         connectivity       : 'unknown',
       }));
       sinon.stub(engine as any, 'ledger').get(() => ({
         getOrCreateLink : ledgerStub,
         setStatus       : sinon.stub().resolves(),
       }));
-      sinon.stub(engine as any, 'openLivePullSubscription').resolves();
-      sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
+      sinon.stub(engine as any, 'openLivePullSubscription').resolves(true);
+      sinon.stub(engine as any, 'openLocalPushSubscription').resolves(true);
+      sinon.stub(engine as any, 'establishLinkBaseline').resolves();
 
       await (engine as any).addIdentityToLiveSync('did:example:full', { protocols: 'all' });
 
@@ -1121,6 +1132,7 @@ describe('SyncEngineLevel — identity management', () => {
           scope              : { kind: 'full' },
           status             : 'initializing',
           pull               : {},
+          push               : {},
           connectivity       : 'unknown',
         })),
         setStatus: sinon.stub().resolves(),
@@ -1129,6 +1141,7 @@ describe('SyncEngineLevel — identity management', () => {
       const pullCloseSpy = sinon.stub().resolves();
       sinon.stub(engine as any, 'openLivePullSubscription').callsFake(async (target: any) => {
         (engine as any).getLinkController(target.linkKey).setLiveSubscription({ close: pullCloseSpy });
+        return true;
       });
       sinon.stub(engine as any, 'openLocalPushSubscription').rejects(new Error('push subscription boom'));
 
@@ -1157,6 +1170,7 @@ describe('SyncEngineLevel — identity management', () => {
           scope              : { kind: 'full' },
           status             : 'initializing',
           pull               : {},
+          push               : {},
           connectivity       : 'unknown',
         })),
         setStatus: sinon.stub().resolves(),
@@ -1198,6 +1212,7 @@ describe('SyncEngineLevel — identity management', () => {
           scope              : { kind: 'full' },
           status             : 'initializing',
           pull               : {},
+          push               : {},
           connectivity       : 'unknown',
         })),
         setStatus: sinon.stub().resolves(),
@@ -1206,8 +1221,9 @@ describe('SyncEngineLevel — identity management', () => {
       // Rate-limited on the first attempt, succeeds on the scheduled reattempt.
       const openPullStub = sinon.stub(engine as any, 'openLivePullSubscription');
       openPullStub.onFirstCall().rejects(new RateLimitError(1));
-      openPullStub.onSecondCall().resolves();
-      sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
+      openPullStub.onSecondCall().resolves(true);
+      sinon.stub(engine as any, 'openLocalPushSubscription').resolves(true);
+      sinon.stub(engine as any, 'establishLinkBaseline').resolves();
 
       await (engine as any).addIdentityToLiveSync('did:example:ratelimited-recover', { protocols: 'all' });
       expect((engine as any)._linkControllers.size).toBe(0);

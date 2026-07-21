@@ -115,6 +115,28 @@ describe('admitClosure', () => {
     expect(freshCidsOf(outcome)).toEqual([]);
   });
 
+  it('marks a remotely sourced CID before applying it to the local DWN', async () => {
+    const write = await TestDataGenerator.generateRecordsWrite({ protocol: 'https://example.com/protocol' });
+    const rootCid = await Message.getCid(write.message);
+    const agent = createMockAgent();
+    const order: string[] = [];
+    agent.dwn.applyReplicatedMessage.callsFake(async (): Promise<{ kind: 'Applied' }> => {
+      order.push('apply');
+      return { kind: 'Applied' };
+    });
+
+    const outcome = await admitClosure(rootCid, {
+      did           : 'did:example:alice',
+      dwnUrl        : 'https://dwn.example.com',
+      agent,
+      onBeforeApply : (messageCid): void => { order.push(`mark:${messageCid}`); },
+      prefetched    : [{ message: write.message }],
+    });
+
+    expect(outcome.kind).toBe('admitted');
+    expect(order).toEqual([`mark:${rootCid}`, 'apply']);
+  });
+
   it('splits RecordsQuery initialWrite hints into separately admissible entries', async () => {
     const protocol = 'https://example.com/protocol';
     const parent = await TestDataGenerator.generateRecordsWrite({ protocol });
