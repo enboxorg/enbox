@@ -136,6 +136,8 @@ would make one signal stand in for proof it does not carry.
   A subscription event cursor or EOSE cursor is never checkpoint evidence.
 - Reset or re-establish the baseline when the token domain changes. Never carry
   a position across domains.
+- Validate a persisted direction checkpoint before its first query. Reset an
+  invalid token and rebuild the baseline from durable feed inventory.
 
 ## Design rule: verify at the point of use
 
