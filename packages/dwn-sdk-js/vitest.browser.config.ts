@@ -119,6 +119,7 @@ export default defineConfig({
       'tests/core/protocol-authorization.spec.ts',
       'tests/jose/jws/general.spec.ts',
       'tests/store/blockstore-mock.spec.ts',
+      'tests/store/message-store-cross-context.spec.ts',
       'tests/interfaces/messages-get.spec.ts',
       'tests/interfaces/messages-subscribe.spec.ts',
       'tests/interfaces/protocols-configure.spec.ts',

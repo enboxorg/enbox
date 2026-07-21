@@ -4,9 +4,10 @@ import type { ProgressToken } from '@enbox/dwn-sdk-js';
 import type { DirectionCheckpoint, LinkStatus, ReplicationLinkState, SyncDirection } from './types/sync.js';
 import type { SyncReplicationLinkCreateParams, SyncReplicationLinkStore } from './sync-replication-link-store.js';
 
+import { runSerializedByKey, runWithCrossContextLock } from '@enbox/common';
+
 import { SyncCheckpoint } from './sync-checkpoint.js';
 import { canonicalizeSyncScope, computeProjectionId } from './types/sync.js';
-import { runSerializedByKey, runWithCrossContextLock } from './sync-cross-context-lock.js';
 
 type LevelKey = string | Buffer | Uint8Array;
 

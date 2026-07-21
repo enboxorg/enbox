@@ -3,7 +3,7 @@ const pendingFallbackOperations = new Map<string, Promise<void>>();
 /**
  * Run one operation exclusively across every browser context on the origin.
  * Non-browser runtimes use a module-wide queue, which coordinates every
- * engine instance in the process.
+ * caller in the process.
  */
 export async function runWithCrossContextLock<T>(name: string, operation: () => Promise<T>): Promise<T> {
   const lockManager = globalThis.navigator?.locks;
@@ -13,9 +13,9 @@ export async function runWithCrossContextLock<T>(name: string, operation: () => 
 
   // `isSecureContext` exists on browser Window and Worker globals. Never
   // degrade to a realm-local queue there: doing so would reintroduce races
-  // between tabs, workers, and service workers on the same IndexedDB store.
+  // between tabs, workers, and service workers that share persistent state.
   if (globalThis.isSecureContext !== undefined) {
-    throw new Error('Cross-context sync locking requires the Web Locks API.');
+    throw new Error('Cross-context locking requires the Web Locks API.');
   }
 
   return runSerializedByKey(pendingFallbackOperations, name, operation);
