@@ -244,9 +244,10 @@ export class SyncEngineLevel implements SyncEngine {
     this._identityStore = new SyncIdentityStoreLevel(this._db);
 
     // Collaborators. The quota manager is constructed first because it is a
-    // direct policy dependency of drain, convergence, and durable-feed
-    // reconciliation. Remaining cross-collaborator operations resolve
-    // `this.…` at CALL time, so their construction order stays independent.
+    // direct policy dependency of drain, convergence, durable-feed
+    // reconciliation, and status reporting. Remaining cross-collaborator
+    // operations resolve `this.…` at CALL time, so their construction order
+    // stays independent.
     this._connectivityManager = new SyncConnectivityManager();
     this._quotaManager = this.createQuotaManager();
     this._drainCoordinator = this.createDrainCoordinator();
