@@ -75,8 +75,8 @@ import type {
   SendDwnRequest,
 } from './types/dwn.js';
 
-import { AgentPermissionsApi } from './permissions-api.js';
 import { DwnDiscoveryFile } from './dwn-discovery-file.js';
+import { PermissionGrantNotFoundError } from './permissions-api.js';
 import { DEFAULT_LOCAL_DWN_STRATEGY, LocalDwnDiscovery } from './local-dwn.js';
 import { DwnInterface, dwnMessageConstructors } from './types/dwn.js';
 import { getDwnServiceEndpointUrls, isRecordsWrite } from './utils.js';
@@ -2502,16 +2502,17 @@ export class AgentDwnApi {
     let permissionGrantId: string | undefined;
     if (granteeDid) {
       try {
-        const permissionsApi = new AgentPermissionsApi({ agent: this.agent });
-        const { grant } = await permissionsApi.getPermissionForRequest({
+        const { grant } = await this.agent.permissions.getPermissionForRequest({
           connectedDid : tenantDid,
           delegateDid  : granteeDid,
           protocol     : protocolUri,
-          cached       : true,
           messageType  : DwnInterface.ProtocolsQuery,
         });
         permissionGrantId = grant.id;
-      } catch {
+      } catch (error: unknown) {
+        if (!(error instanceof PermissionGrantNotFoundError)) {
+          throw error;
+        }
         // No grant found — try without (works for published protocols).
       }
     }

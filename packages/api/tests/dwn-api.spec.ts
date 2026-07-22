@@ -1,9 +1,6 @@
 import type { DwnSubscriptionMessage } from '@enbox/dwn-clients';
-import type { MessageChange } from '../src/messages-live-query.js';
-import type { Record } from '../src/record.js';
 import type { BearerDid, PortableDid } from '@enbox/dids';
-import type { DwnProtocolDefinition, EnboxAgent, ProcessDwnRequest } from '@enbox/agent';
-import type { LiveQueryError, RecordChange } from '../src/live-query.js';
+import type { DwnProtocolDefinition, ProcessDwnRequest } from '@enbox/agent';
 
 import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -12,7 +9,7 @@ import { PlatformAgentTestHarness } from '@enbox/agent/test';
 
 import {
   AgentPermissionsApi, createPermissionGrants, DwnDateSort, DwnInterface,
-  EnboxUserAgent, getRecordAuthor,
+  EnboxUserAgent, getRecordAuthor, PermissionGrantNotFoundError,
 } from '@enbox/agent';
 import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, PermissionsProtocol, Poller, Time } from '@enbox/dwn-sdk-js';
 import { processConnectedGrants, WalletConnect } from '@enbox/auth';
@@ -28,6 +25,14 @@ import { TestDataGenerator } from './utils/test-data-generator.js';
 import { testDwnUrl } from './utils/test-config.js';
 
 const testDwnUrls: string[] = [testDwnUrl];
+
+function getSubscriptionRecordId(message: DwnSubscriptionMessage): string | undefined {
+  if (message.type !== 'event') {
+    return undefined;
+  }
+  const recordMessage = message.event.message as { recordId?: string; descriptor?: { recordId?: string } };
+  return recordMessage.recordId ?? recordMessage.descriptor?.recordId;
+}
 
 describe('DwnApi', () => {
   let aliceDid: BearerDid;
@@ -97,17 +102,14 @@ describe('DwnApi', () => {
       const { status: protocolSendStatus } = await protocol!.send(aliceDid.uri);
       expect(protocolSendStatus.code).toBe(202);
 
-      const { status, liveQuery } = await dwnAlice.messages.subscribe({
-        from           : aliceDid.uri,
-        filters        : [{ protocol: protocolDefinition.protocol }],
-        includeRecords : true,
+      const events: DwnSubscriptionMessage[] = [];
+      const { status, subscription } = await dwnAlice.messages.subscribe({
+        from                : aliceDid.uri,
+        filters             : [{ protocol: protocolDefinition.protocol }],
+        subscriptionHandler : (message): void => { events.push(message); },
       });
       expect(status.code).toBe(200);
-      expect(liveQuery).toBeDefined();
-      expect(liveQuery!.isConnected).toBe(true);
-
-      const events: MessageChange[] = [];
-      liveQuery!.on('event', (change): void => { events.push(change); });
+      expect(subscription).toBeDefined();
 
       const remoteData = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000);
       const { status: writeStatus, record } = await dwnAlice.records.write({
@@ -122,16 +124,16 @@ describe('DwnApi', () => {
       expect(recordSendStatus.code).toBe(202);
 
       await Poller.pollUntilSuccessOrTimeout(async () => {
-        expect(events.some(event => event.descriptor.recordId === record.id)).toBe(true);
+        expect(events.some(event => getSubscriptionRecordId(event) === record.id)).toBe(true);
       });
 
-      const change = events.find(event => event.descriptor.recordId === record.id)!;
-      expect(change.descriptor.protocol).toBe(protocolDefinition.protocol);
-      expect(change.descriptor.author).toBe(aliceDid.uri);
-      expect(change.record).toBeDefined();
-      expect(await change.record!.data.text()).toBe(remoteData);
+      const change = events.find(event => getSubscriptionRecordId(event) === record.id)!;
+      expect(change.type).toBe('event');
+      if (change.type === 'event') {
+        expect(change.event.message.descriptor.protocol).toBe(protocolDefinition.protocol);
+      }
 
-      await liveQuery!.close();
+      await subscription!.close();
     });
   });
 
@@ -240,24 +242,46 @@ describe('DwnApi', () => {
       delegateDwn = (enbox as any)._dwn;
     });
 
+    it('propagates operational permission-resolution failures', async () => {
+      const failure = new Error('grant store unavailable');
+      const permissionsApi = (delegateDwn as any).permissionsApi as AgentPermissionsApi;
+      const resolveGrant = sinon.stub(permissionsApi, 'getPermissionForRequest').rejects(failure);
+
+      await expect(delegateDwn.records.count({
+        filter: { protocol: notesProtocol.protocol },
+      })).rejects.toBe(failure);
+      await expect(delegateDwn.protocols.query({
+        filter: { protocol: notesProtocol.protocol },
+      })).rejects.toBe(failure);
+      await expect(delegateDwn.messages.subscribe({
+        filters             : [{ protocol: notesProtocol.protocol }],
+        subscriptionHandler : (): void => {},
+      })).rejects.toBe(failure);
+
+      expect(resolveGrant.callCount).toBe(3);
+    });
+
     describe('messages', () => {
       it('should subscribe with an auto-resolved Messages.Read grant and receive delegated writes', async () => {
         const { grant: messagesReadGrant } = await (delegateDwn as any).permissionsApi.getPermissionForRequest({
           connectedDid : aliceDid.uri,
           delegateDid  : delegateDid.uri,
           protocol     : notesProtocol.protocol,
-          cached       : true,
           messageType  : DwnInterface.MessagesSubscribe,
         });
-        const { status, liveQuery } = await delegateDwn.messages.subscribe({
-          filters        : [{ protocol: notesProtocol.protocol }],
-          includeRecords : true,
+        const processSpy = sinon.spy(delegateHarness.agent, 'processDwnRequest');
+        const events: DwnSubscriptionMessage[] = [];
+        const { status, subscription } = await delegateDwn.messages.subscribe({
+          filters             : [{ protocol: notesProtocol.protocol }],
+          subscriptionHandler : (message): void => { events.push(message); },
         });
         expect(status.code).toBe(200);
-        expect(liveQuery).toBeDefined();
+        expect(subscription).toBeDefined();
 
-        const events: MessageChange[] = [];
-        liveQuery!.on('event', (change): void => { events.push(change); });
+        const subscribeRequest = processSpy.getCalls().find(
+          call => call.args[0].messageType === DwnInterface.MessagesSubscribe
+        )!.args[0];
+        expect(subscribeRequest.messageParams.permissionGrantIds).toEqual([messagesReadGrant.id]);
 
         const data = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000);
         const { status: writeStatus, record } = await delegateDwn.records.write({
@@ -270,25 +294,10 @@ describe('DwnApi', () => {
         expect(writeStatus.code).toBe(202);
 
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(events.some(event => event.descriptor.recordId === record.id)).toBe(true);
+          expect(events.some(event => getSubscriptionRecordId(event) === record.id)).toBe(true);
         });
 
-        const change = events.find(event => event.descriptor.recordId === record.id)!;
-        expect(change.descriptor.protocol).toBe(notesProtocol.protocol);
-        // Alice is the author; the delegate only signed on her behalf.
-        expect(change.descriptor.author).toBe(aliceDid.uri);
-        expect(change.record).toBeDefined();
-
-        const processSpy = sinon.spy(delegateHarness.agent, 'processDwnRequest');
-        expect(await change.record!.data.text()).toBe(data);
-        const messagesReadCalls = processSpy.getCalls().filter(
-          call => call.args[0].messageType === DwnInterface.MessagesRead
-        );
-        expect(messagesReadCalls).toHaveLength(1);
-        expect(messagesReadCalls[0].args[0].messageParams.permissionGrantIds).toEqual([messagesReadGrant.id]);
-        expect(processSpy.getCalls().some(call => call.args[0].messageType === DwnInterface.RecordsRead)).toBe(false);
-
-        await liveQuery!.close();
+        await subscription!.close();
       });
 
       it('should honour caller-supplied permissionGrantIds without re-resolution', async () => {
@@ -297,22 +306,20 @@ describe('DwnApi', () => {
           connectedDid : aliceDid.uri,
           delegateDid  : delegateDid.uri,
           protocol     : notesProtocol.protocol,
-          cached       : true,
           messageType  : DwnInterface.MessagesSubscribe,
         });
 
         // Explicit ids must win: no further grant resolution happens.
         const resolveSpy = sinon.spy((delegateDwn as any).permissionsApi, 'getPermissionForRequest');
-        const { status, liveQuery } = await delegateDwn.messages.subscribe({
-          filters            : [{ protocol: notesProtocol.protocol }],
-          permissionGrantIds : [grant.id],
+        const events: DwnSubscriptionMessage[] = [];
+        const { status, subscription } = await delegateDwn.messages.subscribe({
+          filters             : [{ protocol: notesProtocol.protocol }],
+          permissionGrantIds  : [grant.id],
+          subscriptionHandler : (message): void => { events.push(message); },
         });
         expect(status.code).toBe(200);
         expect(resolveSpy.notCalled).toBe(true);
         resolveSpy.restore();
-
-        const events: MessageChange[] = [];
-        liveQuery!.on('event', (change): void => { events.push(change); });
 
         const { status: writeStatus, record } = await delegateDwn.records.write({
           data         : 'explicit grant note',
@@ -324,10 +331,10 @@ describe('DwnApi', () => {
         expect(writeStatus.code).toBe(202);
 
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(events.some(event => event.descriptor.recordId === record.id)).toBe(true);
+          expect(events.some(event => getSubscriptionRecordId(event) === record.id)).toBe(true);
         });
 
-        await liveQuery!.close();
+        await subscription!.close();
       });
     });
 
@@ -366,10 +373,10 @@ describe('DwnApi', () => {
         expect(sendStatus.code).toBe(202);
 
         const { status: readStatus, record: readRecord } = await delegateDwn.records.read({
-          from     : aliceDid.uri,
-          protocol : notesProtocol.protocol,
-          filter   : {
-            recordId: record.id
+          from   : aliceDid.uri,
+          filter : {
+            protocol : notesProtocol.protocol,
+            recordId : record.id
           }
         });
 
@@ -409,71 +416,6 @@ describe('DwnApi', () => {
 
         // the record should be the same
         expect(records[0].id).toBe(record.id);
-      });
-
-      it('should subscribe to records with a delegated grant', async () => {
-        // subscribe to all messages from the protocol
-        const subscribeResult = await delegateDwn.records.subscribe({
-          filter: {
-            protocol: notesProtocol.protocol
-          }
-        });
-        expect(subscribeResult.status.code).toBe(200);
-        expect(subscribeResult.liveQuery).toBeDefined();
-        const live = subscribeResult.liveQuery!;
-
-        const changes: RecordChange[] = [];
-        live.on('change', (change) => { changes.push(change); });
-
-        // write a record
-        const writeResult = await delegateDwn.records.write({
-          data         : 'Hello, world!',
-          recipient    : bobDid.uri,
-          protocol     : notesProtocol.protocol,
-          protocolPath : 'note',
-          schema       : notesProtocol.types.note.schema,
-          dataFormat   : 'text/plain',
-        });
-        expect(writeResult.status.code).toBe(202);
-
-        // wait for the create event
-        await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(changes).toHaveLength(1);
-          expect(changes[0].type).toBe('create');
-          expect(changes[0].record.id).toBe(writeResult.record.id);
-          expect(changes[0].record.deleted).toBe(false);
-        });
-
-        // delete the record using the original writeResult instance of it
-        const deleteResult = await writeResult.record.delete();
-        expect(deleteResult.status.code).toBe(202);
-
-        // wait for the delete event
-        await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(changes).toHaveLength(2);
-          expect(changes[1].type).toBe('delete');
-          expect(changes[1].record.id).toBe(writeResult.record.id);
-        });
-
-        // write another record
-        const writeResult2 = await delegateDwn.records.write({
-          data         : 'Hello, world!',
-          recipient    : bobDid.uri,
-          protocol     : notesProtocol.protocol,
-          protocolPath : 'note',
-          schema       : notesProtocol.types.note.schema,
-          dataFormat   : 'text/plain',
-        });
-        expect(writeResult2.status.code).toBe(202);
-
-        // wait for the create event
-        await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(changes).toHaveLength(3);
-          expect(changes[2].type).toBe('create');
-          expect(changes[2].record.id).toBe(writeResult2.record.id);
-        });
-
-        await live.close();
       });
 
       it('should read records as the delegate DID if no grant is found', async () => {
@@ -528,10 +470,10 @@ describe('DwnApi', () => {
 
         // sanity: delegateDwn reads from the allowed record from alice's DWN
         const { status: readStatus1, record: allowedRecordReturned } = await delegateDwn.records.read({
-          from     : aliceDid.uri,
-          protocol : notesProtocol.protocol,
-          filter   : {
-            recordId: allowedRecord.id
+          from   : aliceDid.uri,
+          filter : {
+            protocol : notesProtocol.protocol,
+            recordId : allowedRecord.id
           }
         });
         expect(readStatus1.code).toBe(200);
@@ -659,111 +601,6 @@ describe('DwnApi', () => {
         expect(allRecords.map(r => r.id)).toEqual(expect.arrayContaining([publicRecord.id, privateRecord.id]));
       });
 
-      it('should subscribe to records as the delegate DID if no grant is found', async () => {
-        // alice installs some other protocol
-        const { status: aliceConfigStatus, protocol: aliceOtherProtocol } = await dwnAlice.protocols.configure({ definition: {
-          ...notesProtocol,
-          protocol: `http://other-protocol.xyz/protocol/${TestDataGenerator.randomString(15)}`
-        } });
-        expect(aliceConfigStatus.code).toBe(202);
-        const { status: aliceOtherProtocolSend } = await aliceOtherProtocol.send(aliceDid.uri);
-        expect(aliceOtherProtocolSend.code).toBe(202);
-
-        // delegatedDwn subscribes to both protocols
-        const permissionedNotesChanges: RecordChange[] = [];
-        const { liveQuery: permissionedLive } = await delegateDwn.records.subscribe({
-          from   : aliceDid.uri,
-          filter : {
-            protocol: notesProtocol.protocol
-          }
-        });
-        expect(permissionedLive).toBeDefined();
-        permissionedLive!.on('change', (change) => { permissionedNotesChanges.push(change); });
-
-        const otherProtocolChanges: RecordChange[] = [];
-        const { liveQuery: otherLive } = await delegateDwn.records.subscribe({
-          from   : aliceDid.uri,
-          filter : {
-            protocol: aliceOtherProtocol.definition.protocol
-          }
-        });
-        expect(otherLive).toBeDefined();
-        otherLive!.on('change', (change) => { otherProtocolChanges.push(change); });
-
-        // alice subscribes to the other protocol as a sanity
-        const aliceOtherProtocolChanges: RecordChange[] = [];
-        const { liveQuery: aliceOtherLive } = await dwnAlice.records.subscribe({
-          from   : aliceDid.uri,
-          filter : {
-            protocol: aliceOtherProtocol.definition.protocol
-          }
-        });
-        expect(aliceOtherLive).toBeDefined();
-        aliceOtherLive!.on('change', (change) => { aliceOtherProtocolChanges.push(change); });
-
-        // NOTE: write the private record before the public so that it should be received first
-        // alice writes a public and private note to the other protocol
-        const { status: writeStatus2, record: publicRecord } = await dwnAlice.records.write({
-          data         : 'Hello, world!',
-          published    : true,
-          protocol     : aliceOtherProtocol.definition.protocol,
-          protocolPath : 'note',
-          schema       : aliceOtherProtocol.definition.types.note.schema,
-          dataFormat   : 'text/plain',
-        });
-        expect(writeStatus2.code).toBe(202);
-        expect(publicRecord).toBeDefined();
-        const { status: publicRecordSendStatus } = await publicRecord.send();
-        expect(publicRecordSendStatus.code).toBe(202);
-
-        // alice writes a note record to the permissioned protocol
-        const { status: writeStatus1, record: allowedRecord } = await dwnAlice.records.write({
-          data         : 'Hello, world!',
-          protocol     : notesProtocol.protocol,
-          protocolPath : 'note',
-          schema       : notesProtocol.types.note.schema,
-          dataFormat   : 'text/plain',
-        });
-        expect(writeStatus1.code).toBe(202);
-        expect(allowedRecord).toBeDefined();
-        const { status: allowedRecordSendStatus } = await allowedRecord.send();
-        expect(allowedRecordSendStatus.code).toBe(202);
-
-        const { status: writeStatus3, record: privateRecord } = await dwnAlice.records.write({
-          data         : 'Hello, world!',
-          protocol     : aliceOtherProtocol.definition.protocol,
-          protocolPath : 'note',
-          schema       : aliceOtherProtocol.definition.types.note.schema,
-          dataFormat   : 'text/plain',
-        });
-        expect(writeStatus3.code).toBe(202);
-        expect(privateRecord).toBeDefined();
-        const { status: privateRecordSendStatus } = await privateRecord.send();
-        expect(privateRecordSendStatus.code).toBe(202);
-
-        // wait for the records to be received
-        // alice receives both the public and private records on her subscription
-        await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(aliceOtherProtocolChanges).toHaveLength(2);
-          expect(aliceOtherProtocolChanges.some(c => c.record.id === publicRecord.id)).toBe(true);
-          expect(aliceOtherProtocolChanges.some(c => c.record.id === privateRecord.id)).toBe(true);
-        });
-
-        // delegated agent only receives the public record from the other protocol
-        await Poller.pollUntilSuccessOrTimeout(async () => {
-          // permissionedNotesChanges should have the allowedRecord
-          expect(permissionedNotesChanges).toHaveLength(1);
-          expect(permissionedNotesChanges[0].record.id).toBe(allowedRecord.id);
-
-          // otherProtocolChanges should have only the publicRecord
-          expect(otherProtocolChanges).toHaveLength(1);
-          expect(otherProtocolChanges[0].record.id).toBe(publicRecord.id);
-        });
-
-        await permissionedLive!.close();
-        await otherLive!.close();
-        await aliceOtherLive!.close();
-      });
     });
 
     describe('protocols', () => {
@@ -779,8 +616,11 @@ describe('DwnApi', () => {
             }
           });
           throw new Error('Expected an error to be thrown.');
-        } catch (error: any) {
-          expect(error.message).toBe(`CachedPermissions: No permissions found for ProtocolsConfigure: ${protocolUri}`);
+        } catch (error: unknown) {
+          expect(error).toBeInstanceOf(PermissionGrantNotFoundError);
+          expect((error as Error).message).toBe(
+            `AgentPermissionsApi: No matching permission grant found for ProtocolsConfigure: ${protocolUri}`
+          );
         }
 
         // Create an explicit lower-level grant for this test. Connect must
@@ -2302,707 +2142,6 @@ describe('DwnApi', () => {
         // The record's author should be Alice's DID since Alice was the signer.
         const recordOnBobsDwn = bobQueryResult.record;
         expect(recordOnBobsDwn.author).toBe(aliceDid.uri);
-      });
-    });
-  });
-
-  describe('records.subscribe()', () => {
-    describe('agent', () => {
-      it('should return a LiveQuery with initial records and respond to live events', async () => {
-        // configure a protocol
-        const protocolConfigure = await dwnAlice.protocols.configure({
-          definition: { ...emailProtocolDefinition, published: true }
-        });
-        expect(protocolConfigure.status.code).toBe(202);
-
-        // write a record BEFORE subscribing
-        const write1 = await dwnAlice.records.write({
-          data         : 'Message 1',
-          recipient    : bobDid.uri,
-          protocol     : emailProtocolDefinition.protocol,
-          protocolPath : 'thread',
-          schema       : emailProtocolDefinition.types.thread.schema,
-          dataFormat   : 'text/plain'
-        });
-        expect(write1.status.code).toBe(202);
-
-        // subscribe — returns a LiveQuery with the initial snapshot
-        const subscribeResult = await dwnAlice.records.subscribe({
-          filter: {
-            protocol: emailProtocolDefinition.protocol
-          }
-        });
-        expect(subscribeResult.status.code).toBe(200);
-        expect(subscribeResult.liveQuery).toBeDefined();
-        const live = subscribeResult.liveQuery!;
-
-        // initial records should contain write1
-        expect(live.records).toHaveLength(1);
-        expect(live.records[0].id).toBe(write1.record.id);
-
-        // track change events
-        const changes: RecordChange[] = [];
-        live.on('change', (change) => { changes.push(change); });
-
-        // write a new record AFTER subscribing — should emit 'create'
-        const write2 = await dwnAlice.records.write({
-          data         : 'Message 2',
-          recipient    : bobDid.uri,
-          protocol     : emailProtocolDefinition.protocol,
-          protocolPath : 'thread',
-          schema       : emailProtocolDefinition.types.thread.schema,
-          dataFormat   : 'text/plain'
-        });
-        expect(write2.status.code).toBe(202);
-
-        await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(changes).toHaveLength(1);
-          expect(changes[0].type).toBe('create');
-          expect(changes[0].record.id).toBe(write2.record.id);
-        });
-
-        // delete the record using the original writeResult instance of it
-        const deleteResult = await write1.record.delete();
-        expect(deleteResult.status.code).toBe(202);
-
-        // wait for the delete event
-        await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(changes).toHaveLength(2);
-          expect(changes[1].type).toBe('delete');
-          expect(changes[1].record.id).toBe(write1.record.id);
-        });
-
-        // clean up
-        await live.close();
-      });
-
-      it('should surface terminal subscription errors before closing the live query', async () => {
-        let subscriptionHandler: ((msg: DwnSubscriptionMessage) => void) | undefined;
-        const subscription = { close: sinon.stub().resolves() };
-        const agent = {
-          processDwnRequest: sinon.stub().callsFake(async (request: ProcessDwnRequest<DwnInterface.RecordsSubscribe>) => {
-            subscriptionHandler = request.subscriptionHandler;
-            return {
-              reply: {
-                status  : { code: 200, detail: 'OK' },
-                entries : [],
-                subscription,
-              }
-            };
-          })
-        };
-        const dwn = new DwnApi({ agent: agent as unknown as EnboxAgent, connectedDid: aliceDid.uri });
-        const { liveQuery } = await dwn.records.subscribe({
-          filter: { protocol: protocolUri }
-        });
-        const cursor = {
-          streamId   : 'events',
-          epoch      : '1',
-          position   : '10',
-          messageCid : 'bafyreihash',
-        };
-        const errors: LiveQueryError[] = [];
-
-        expect(liveQuery).toBeDefined();
-        liveQuery!.on('error', (error) => { errors.push(error); });
-
-        subscriptionHandler!({
-          type  : 'error',
-          cursor,
-          error : {
-            code   : 'MessagesSubscribeDeliveryAuthorizationFailed',
-            detail : 'subscription grant is no longer valid',
-          },
-        });
-
-        await new Promise((resolve) => setTimeout(resolve, 0));
-
-        expect(errors).toEqual([{
-          code   : 'MessagesSubscribeDeliveryAuthorizationFailed',
-          detail : 'subscription grant is no longer valid',
-          cursor,
-        }]);
-        expect(liveQuery!.isConnected).toBe(false);
-        expect(subscription.close.calledOnce).toBe(true);
-      });
-
-      it('should emit update events for updated records', async () => {
-        const protocolConfigure = await dwnAlice.protocols.configure({
-          definition: { ...emailProtocolDefinition, published: true }
-        });
-        expect(protocolConfigure.status.code).toBe(202);
-
-        // write a record
-        const write1 = await dwnAlice.records.write({
-          data         : 'Original',
-          recipient    : bobDid.uri,
-          protocol     : emailProtocolDefinition.protocol,
-          protocolPath : 'thread',
-          schema       : emailProtocolDefinition.types.thread.schema,
-          dataFormat   : 'text/plain'
-        });
-        expect(write1.status.code).toBe(202);
-
-        // subscribe
-        const { liveQuery: live } = await dwnAlice.records.subscribe({
-          filter: { protocol: emailProtocolDefinition.protocol }
-        });
-        expect(live).toBeDefined();
-        expect(live!.records).toHaveLength(1);
-
-        const changes: RecordChange[] = [];
-        live!.on('change', (change) => { changes.push(change); });
-
-        // update the record
-        const updateResult = await write1.record.update({ data: 'Updated' });
-        expect(updateResult.status.code).toBe(202);
-
-        await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(changes).toHaveLength(1);
-          expect(changes[0].type).toBe('update');
-          expect(changes[0].record.id).toBe(write1.record.id);
-        });
-
-        await live!.close();
-      });
-
-      it('should emit delete events for deleted records', async () => {
-        const protocolConfigure = await dwnAlice.protocols.configure({
-          definition: { ...emailProtocolDefinition, published: true }
-        });
-        expect(protocolConfigure.status.code).toBe(202);
-
-        // write a record
-        const write1 = await dwnAlice.records.write({
-          data         : 'To be deleted',
-          recipient    : bobDid.uri,
-          protocol     : emailProtocolDefinition.protocol,
-          protocolPath : 'thread',
-          schema       : emailProtocolDefinition.types.thread.schema,
-          dataFormat   : 'text/plain'
-        });
-        expect(write1.status.code).toBe(202);
-
-        // subscribe
-        const { liveQuery: live } = await dwnAlice.records.subscribe({
-          filter: { protocol: emailProtocolDefinition.protocol }
-        });
-        expect(live).toBeDefined();
-
-        const changes: RecordChange[] = [];
-        live!.on('change', (change) => { changes.push(change); });
-
-        // delete the record
-        const deleteResult = await write1.record.delete();
-        expect(deleteResult.status.code).toBe(202);
-
-        await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(changes).toHaveLength(1);
-          expect(changes[0].type).toBe('delete');
-          expect(changes[0].record.id).toBe(write1.record.id);
-        });
-
-        await live!.close();
-      });
-
-      it('should support typed convenience events (create/update/delete)', async () => {
-        const protocolConfigure = await dwnAlice.protocols.configure({
-          definition: { ...emailProtocolDefinition, published: true }
-        });
-        expect(protocolConfigure.status.code).toBe(202);
-
-        const { liveQuery: live } = await dwnAlice.records.subscribe({
-          filter: { protocol: emailProtocolDefinition.protocol }
-        });
-        expect(live).toBeDefined();
-
-        const created: Record[] = [];
-        const updated: Record[] = [];
-        const deleted: Record[] = [];
-        live!.on('create', (record) => { created.push(record); });
-        live!.on('update', (record) => { updated.push(record); });
-        live!.on('delete', (record) => { deleted.push(record); });
-
-        // write a record
-        const writeResult = await dwnAlice.records.write({
-          data         : 'Hello',
-          recipient    : bobDid.uri,
-          protocol     : emailProtocolDefinition.protocol,
-          protocolPath : 'thread',
-          schema       : emailProtocolDefinition.types.thread.schema,
-          dataFormat   : 'text/plain'
-        });
-        expect(writeResult.status.code).toBe(202);
-
-        await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(created).toHaveLength(1);
-          expect(created[0].id).toBe(writeResult.record.id);
-        });
-
-        // update it
-        const updateResult = await writeResult.record.update({ data: 'Updated' });
-        expect(updateResult.status.code).toBe(202);
-
-        await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(updated).toHaveLength(1);
-          expect(updated[0].id).toBe(writeResult.record.id);
-        });
-
-        // delete it
-        const deleteResult = await writeResult.record.delete();
-        expect(deleteResult.status.code).toBe(202);
-
-        await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(deleted).toHaveLength(1);
-          expect(deleted[0].id).toBe(writeResult.record.id);
-        });
-
-        await live!.close();
-      });
-
-      it('should return an unsubscribe function from on()', async () => {
-        const protocolConfigure = await dwnAlice.protocols.configure({
-          definition: { ...emailProtocolDefinition, published: true }
-        });
-        expect(protocolConfigure.status.code).toBe(202);
-
-        const { liveQuery: live } = await dwnAlice.records.subscribe({
-          filter: { protocol: emailProtocolDefinition.protocol }
-        });
-        expect(live).toBeDefined();
-
-        const changes: RecordChange[] = [];
-        const off = live!.on('change', (change) => { changes.push(change); });
-
-        // write a record — should be received
-        const write1 = await dwnAlice.records.write({
-          data         : 'First',
-          recipient    : bobDid.uri,
-          protocol     : emailProtocolDefinition.protocol,
-          protocolPath : 'thread',
-          schema       : emailProtocolDefinition.types.thread.schema,
-          dataFormat   : 'text/plain'
-        });
-        expect(write1.status.code).toBe(202);
-
-        await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(changes).toHaveLength(1);
-        });
-
-        // unsubscribe
-        off();
-
-        // write another record — should NOT be received
-        const write2 = await dwnAlice.records.write({
-          data         : 'Second',
-          recipient    : bobDid.uri,
-          protocol     : emailProtocolDefinition.protocol,
-          protocolPath : 'thread',
-          schema       : emailProtocolDefinition.types.thread.schema,
-          dataFormat   : 'text/plain'
-        });
-        expect(write2.status.code).toBe(202);
-
-        // give it time to potentially arrive (it shouldn't)
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        expect(changes).toHaveLength(1); // still only 1
-
-        await live!.close();
-      });
-
-      it('should return a pagination cursor when the initial snapshot is limited', async () => {
-        const protocolConfigure = await dwnAlice.protocols.configure({
-          definition: { ...emailProtocolDefinition, published: true }
-        });
-        expect(protocolConfigure.status.code).toBe(202);
-
-        // write 3 records
-        for (let i = 0; i < 3; i++) {
-          const writeResult = await dwnAlice.records.write({
-            data         : `Message ${i}`,
-            recipient    : bobDid.uri,
-            protocol     : emailProtocolDefinition.protocol,
-            protocolPath : 'thread',
-            schema       : emailProtocolDefinition.types.thread.schema,
-            dataFormat   : 'text/plain'
-          });
-          expect(writeResult.status.code).toBe(202);
-        }
-
-        // subscribe with a limit of 2
-        const { liveQuery: live } = await dwnAlice.records.subscribe({
-          filter     : { protocol: emailProtocolDefinition.protocol },
-          pagination : { limit: 2 }
-        });
-        expect(live).toBeDefined();
-
-        // should have 2 initial records and a cursor for the next page
-        expect(live!.records).toHaveLength(2);
-        expect(live!.cursor).toBeDefined();
-        expect(live!.cursor!.messageCid).toBeDefined();
-        expect(live!.cursor!.value).toBeDefined();
-
-        await live!.close();
-
-        // subscribe again using the cursor to get the remaining records
-        const { liveQuery: live2 } = await dwnAlice.records.subscribe({
-          filter     : { protocol: emailProtocolDefinition.protocol },
-          pagination : { limit: 2, cursor: live!.cursor }
-        });
-        expect(live2).toBeDefined();
-
-        // should have 1 remaining record and no cursor (end of results)
-        expect(live2!.records).toHaveLength(1);
-        expect(live2!.cursor).toBeUndefined();
-
-        await live2!.close();
-      });
-
-      describe('encryption', () => {
-        /** Installs a fresh encrypted-notes protocol under a random URI and returns the protocol URI. */
-        async function installEncryptedProtocol(): Promise<string> {
-          const encProtocol: DwnProtocolDefinition = {
-            published : true,
-            protocol  : `http://encrypted-notes.xyz/${TestDataGenerator.randomString(15)}`,
-            types     : {
-              note: {
-                schema             : 'https://schemas.xyz/note',
-                dataFormats        : ['text/plain'],
-                encryptionRequired : true,
-              },
-            },
-            structure: { note: {} },
-          };
-
-          const { status } = await dwnAlice.protocols.configure({
-            definition: encProtocol,
-          });
-          expect(status.code).toBe(202);
-
-          return encProtocol.protocol;
-        }
-
-        /** Writes an encrypted note and returns the created record. */
-        async function writeEncryptedNote(protocol: string, plaintext: string): Promise<Record> {
-          const { status, record } = await dwnAlice.records.write({
-            data         : plaintext,
-            protocol,
-            protocolPath : 'note',
-            schema       : 'https://schemas.xyz/note',
-            dataFormat   : 'text/plain',
-          });
-          expect(status.code).toBe(202);
-          return record!;
-        }
-
-        /** Counts the RecordsRead requests issued through the given processDwnRequest spy. */
-        function countRecordsReads(spy: sinon.SinonSpy): number {
-          return spy.getCalls().filter((call) => call.args[0].messageType === DwnInterface.RecordsRead).length;
-        }
-
-        it('should lazily decrypt inline snapshot and event data without a read round-trip', async () => {
-          const protocol = await installEncryptedProtocol();
-
-          // write an encrypted record BEFORE subscribing — lands in the snapshot
-          await writeEncryptedNote(protocol, 'snapshot secret');
-
-          const { status, liveQuery: live } = await dwnAlice.records.subscribe({ filter: { protocol } });
-          expect(status.code).toBe(200);
-          expect(live).toBeDefined();
-          expect(live!.records).toHaveLength(1);
-
-          const created: Record[] = [];
-          live!.on('create', (record) => { created.push(record); });
-
-          // write an encrypted record AFTER subscribing — arrives as a create event
-          await writeEncryptedNote(protocol, 'live secret');
-
-          await Poller.pollUntilSuccessOrTimeout(async () => {
-            expect(created).toHaveLength(1);
-          });
-
-          // Spy AFTER delivery so only the data accesses below are observed.
-          const processDwnRequestSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
-
-          // Both records decrypt their inline stored ciphertext on access.
-          expect(await live!.records[0].data.text()).toBe('snapshot secret');
-          expect(await created[0].data.text()).toBe('live secret');
-
-          // No RecordsRead round-trip was needed for either access.
-          expect(countRecordsReads(processDwnRequestSpy)).toBe(0);
-
-          await live!.close();
-        });
-
-        it('should return every query result when one record cannot be decrypted', async () => {
-          const protocol = await installEncryptedProtocol();
-          const unreadable = await writeEncryptedNote(protocol, 'unreadable secret');
-          const readable = await writeEncryptedNote(protocol, 'readable secret');
-          const decryptRecordData = testHarness.agent.decryptRecordData.bind(testHarness.agent);
-          const decryptStub = sinon.stub(testHarness.agent, 'decryptRecordData').callsFake(async (params): Promise<ReadableStream<Uint8Array>> => {
-            if (params.recordsWrite.recordId === unreadable.id) {
-              throw new Error('test-induced decryption failure');
-            }
-            return decryptRecordData(params);
-          });
-
-          const { status, records } = await dwnAlice.records.query({ filter: { protocol } });
-          expect(status.code).toBe(200);
-          expect(records).toHaveLength(2);
-          expect(decryptStub.called).toBe(false);
-
-          const readableResult = records.find((record) => record.id === readable.id)!;
-          const unreadableResult = records.find((record) => record.id === unreadable.id)!;
-          expect(await readableResult.data.text()).toBe('readable secret');
-          await expect(unreadableResult.data.text()).rejects.toThrow('test-induced decryption failure');
-        });
-
-        it('should decrypt large (non-inlined) record events through the lazy read', async () => {
-          const protocol = await installEncryptedProtocol();
-
-          const { liveQuery: live } = await dwnAlice.records.subscribe({ filter: { protocol } });
-          expect(live).toBeDefined();
-
-          const created: Record[] = [];
-          live!.on('create', (record) => { created.push(record); });
-
-          // Too large to be inlined with the event — nothing to decrypt inline.
-          const largePlaintext = 'A'.repeat(DwnConstant.maxDataSizeAllowedToBeEncoded + 1_000);
-          await writeEncryptedNote(protocol, largePlaintext);
-
-          await Poller.pollUntilSuccessOrTimeout(async () => {
-            expect(created).toHaveLength(1);
-          });
-
-          // The lazy read path still decrypts on access.
-          const processDwnRequestSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
-          expect(await created[0].data.text()).toBe(largePlaintext);
-          expect(countRecordsReads(processDwnRequestSpy)).toBeGreaterThanOrEqual(1);
-
-          await live!.close();
-        });
-
-        it('should keep the subscription alive and reject data access for events that fail to decrypt', async () => {
-          const protocol = await installEncryptedProtocol();
-
-          const { liveQuery: live } = await dwnAlice.records.subscribe({ filter: { protocol } });
-          expect(live).toBeDefined();
-
-          const created: Record[] = [];
-          live!.on('create', (record) => { created.push(record); });
-
-          // Make key unwrapping fail so the event's payload cannot be decrypted.
-          const unwrapStub = sinon.stub(testHarness.agent.keyManager, 'unwrapContentKey')
-            .rejects(new Error('test-induced key unwrap failure'));
-
-          const failedWrite = await writeEncryptedNote(protocol, 'cannot read me');
-
-          await Poller.pollUntilSuccessOrTimeout(async () => {
-            expect(created).toHaveLength(1);
-          });
-
-          // Event delivery is independent of decryption. The error surfaces only
-          // when the application consumes this record's data.
-          expect(created[0].id).toBe(failedWrite.id);
-          await expect(created[0].data.text()).rejects.toThrow('Failed to decrypt record');
-
-          // The subscription survives: after keys work again, subsequent events
-          // are delivered decrypted.
-          unwrapStub.restore();
-          await writeEncryptedNote(protocol, 'readable note');
-
-          await Poller.pollUntilSuccessOrTimeout(async () => {
-            expect(created).toHaveLength(2);
-          });
-          expect(await created[1].data.text()).toBe('readable note');
-
-          // Self-healing: the previously failed record's data now lazily reads
-          // (and decrypts) successfully.
-          expect(await created[0].data.text()).toBe('cannot read me');
-
-          await live!.close();
-        });
-      });
-    });
-
-    describe('from: did', () => {
-      it('subscribes to records from remote', async () => {
-        // configure a protocol
-        const protocolConfigure = await dwnAlice.protocols.configure({
-          definition: { ...protocolDefinition, published: true }
-        });
-        expect(protocolConfigure.status.code).toBe(202);
-        const protocolSend = await protocolConfigure.protocol.send(aliceDid.uri);
-        expect(protocolSend.status.code).toBe(202);
-
-        //configure the protocol on bob's DWN
-        const protocolConfigureBob = await dwnBob.protocols.configure({
-          definition: { ...protocolDefinition, published: true }
-        });
-        expect(protocolConfigureBob.status.code).toBe(202);
-        const protocolSendBob = await protocolConfigureBob.protocol.send(bobDid.uri);
-        expect(protocolSendBob.status.code).toBe(202);
-
-        // subscribe to all messages from the protocol
-        const { liveQuery: live } = await dwnAlice.records.subscribe({
-          from   : aliceDid.uri,
-          filter : {
-            protocol: protocolUri,
-          }
-        });
-        expect(live).toBeDefined();
-
-        const changes: RecordChange[] = [];
-        live!.on('change', (change) => { changes.push(change); });
-
-        // write a record
-        const writeResult = await dwnAlice.records.write({
-          data         : 'Hello, world!',
-          recipient    : bobDid.uri,
-          protocol     : protocolUri,
-          protocolPath : 'thread',
-          schema       : protocolDefinition.types.thread.schema,
-          dataFormat   : 'text/plain'
-        });
-        expect(writeResult.status.code).toBe(202);
-        const writeResultSend = await writeResult.record.send();
-        expect(writeResultSend.status.code).toBe(202);
-
-        // wait for the create event
-        await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(changes).toHaveLength(1);
-          expect(changes[0].type).toBe('create');
-          expect(changes[0].record.id).toBe(writeResult.record.id);
-        });
-
-        // delete the record using the original writeResult instance of it
-        const { status: deleteStatus, record: deletedRecord } = await writeResult.record.delete();
-        expect(deleteStatus.code).toBe(202);
-        const deleteResultSend = await deletedRecord.send();
-        expect(deleteResultSend.status.code).toBe(202);
-
-        // wait for the delete event
-        await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(changes).toHaveLength(2);
-          expect(changes[1].type).toBe('delete');
-          expect(changes[1].record.id).toBe(writeResult.record.id);
-        });
-
-        // write another record
-        const writeResult2 = await dwnAlice.records.write({
-          data         : 'Hello, world!',
-          recipient    : bobDid.uri,
-          protocol     : protocolUri,
-          protocolPath : 'thread',
-          schema       : protocolDefinition.types.thread.schema,
-          dataFormat   : 'text/plain'
-        });
-        const writeResult2Send = await writeResult2.record.send();
-        expect(writeResult2Send.status.code).toBe(202);
-
-        // wait for the create event
-        await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(changes).toHaveLength(3);
-          expect(changes[2].type).toBe('create');
-          expect(changes[2].record.id).toBe(writeResult2.record.id);
-        });
-
-        await live!.close();
-      });
-
-      it('ensures that a protocolRole used to subscribe is also used to read the data of the resulted records', async () => {
-        // scenario: Bob has a protocol where he can write notes and add friends who can subscribe and read these notes
-        // When Alice subscribes to the notes protocol using the role, the role should also be used to read the data of the notes
-
-        const protocol = {
-          ...notesProtocolDefinition,
-          protocol: 'http://example.com/notes' + TestDataGenerator.randomString(15)
-        };
-
-        // Bob configures the notes protocol for himself
-        const { status: bobProtocolStatus, protocol: bobProtocol } = await dwnBob.protocols.configure({
-          definition: protocol
-        });
-        expect(bobProtocolStatus.code).toBe(202);
-        const { status: bobRemoteProtocolStatus } = await bobProtocol.send(bobDid.uri);
-        expect(bobRemoteProtocolStatus.code).toBe(202);
-
-
-        // Bob makes Alice a `friend` to allow her to read and comment on his notes
-        const { status: friendCreateStatus, record: friendRecord } = await dwnBob.records.write({
-          data         : 'friend!',
-          recipient    : aliceDid.uri,
-          protocol     : protocol.protocol,
-          protocolPath : 'friend',
-          schema       : protocol.types.friend.schema,
-          dataFormat   : 'text/plain'
-        });
-        expect(friendCreateStatus.code).toBe(202);
-        const { status: bobFriendSendStatus } = await friendRecord.send(bobDid.uri);
-        expect(bobFriendSendStatus.code).toBe(202);
-
-        // Alice subscribes to the notes protocol using the role
-        const notes: Record[] = [];
-        const { status: notesSubscribeStatus, liveQuery: live } = await dwnAlice.records.subscribe({
-          from         : bobDid.uri,
-          protocolRole : 'friend',
-          filter       : {
-            protocol     : protocol.protocol,
-            protocolPath : 'note'
-          }
-        });
-        expect(notesSubscribeStatus.code).toBe(200);
-        expect(live).toBeDefined();
-
-        live!.on('create', (record) => {
-          notes.push(record);
-        });
-
-        // Bob creates a few notes ensuring that the data is larger than the max encoded size
-        // that way the data will be requested with a separate `read` request
-        const recordData: Map<string, string> = new Map();
-        for (let i = 0; i < 3; i++) {
-          const data = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
-          const { status: noteCreateStatus, record: noteRecord } = await dwnBob.records.write({
-            data,
-            protocol     : protocol.protocol,
-            protocolPath : 'note',
-            schema       : protocol.types.note.schema,
-            dataFormat   : 'text/plain',
-          });
-          expect(noteCreateStatus.code).toBe(202);
-          const { status: noteSendStatus } = await noteRecord.send();
-          expect(noteSendStatus.code).toBe(202);
-          recordData.set(noteRecord.id, data);
-        }
-
-        // poll for the note records to be received
-        await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(notes).toHaveLength(3);
-        });
-
-        // spy on sendDwnRequest to ensure that the protocolRole is used to read the data of the notes
-        const sendDwnRequestSpy = sinon.spy(testHarness.agent, 'sendDwnRequest');
-
-        // confirm that it starts with 0 calls
-        expect(sendDwnRequestSpy.callCount).toBe(0);
-        // Alice attempts to read the data of the notes, which should succeed
-        for (const record of notes) {
-          const readResult = await record.data.text();
-          const expectedData = recordData.get(record.id);
-          expect(readResult).toBe(expectedData);
-        }
-
-        // confirm that it was called 3 times
-        expect(sendDwnRequestSpy.callCount).toBe(3);
-
-        // confirm that the protocolRole was used to read the data of the notes
-        expect(sendDwnRequestSpy.getCalls().every(call =>
-          call.args[0].messageType === DwnInterface.RecordsRead &&
-          (call.args[0] as ProcessDwnRequest<DwnInterface.RecordsRead>).messageParams.protocolRole === 'friend'
-        )).toBe(true);
-
-        await live!.close();
       });
     });
   });

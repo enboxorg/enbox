@@ -88,24 +88,6 @@ for (const r of records) {
 await record.delete();
 ```
 
-### 4. Real-time subscriptions
-
-```ts
-const { liveQuery } = await tasks.records.subscribe('task');
-
-liveQuery.on('create', (record) => {
-  console.log('New task:', record.id);
-});
-
-liveQuery.on('update', (record) => {
-  console.log('Task updated:', record.id);
-});
-
-liveQuery.on('delete', (record) => {
-  console.log('Task deleted:', record.id);
-});
-```
-
 ## Packages
 
 | Package | Description |

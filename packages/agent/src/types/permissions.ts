@@ -78,13 +78,16 @@ export type GetPermissionParams = {
   protocol?: string;
   protocolPath?: string;
   contextId?: string;
-  cached?: boolean;
+  /** Whether to bypass cached grant catalogs and force a fresh grant lookup. */
+  forceRefresh?: boolean;
   delegate?: boolean;
 };
 
 export interface PermissionsApi {
   /**
    * Get the permission grant for a given author, target, and protocol. To be used when authoring delegated requests.
+   *
+   * @throws PermissionGrantNotFoundError if no active grant matches the requested permission scope.
    */
   getPermissionForRequest: (params: GetPermissionParams) => Promise<PermissionGrantEntry>;
 
@@ -119,7 +122,7 @@ export interface PermissionsApi {
   createRevocation(params: CreateRevocationParams): Promise<PermissionRevocationEntry>;
 
   /**
-   * Clears the cache of matched permissions.
+   * Clears cached grant catalogs and known revocations.
    */
   clear: () => Promise<void>;
 }

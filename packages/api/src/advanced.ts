@@ -13,12 +13,15 @@ export { DwnApi } from './dwn-api.js';
 export type {
   FetchGrantsRequest,
   FetchRequestsRequest,
+  MessagesSubscribeRequest,
+  MessagesSubscribeResponse,
   ProtocolsConfigureRequest,
   ProtocolsConfigureResponse,
   ProtocolsQueryRequest,
   ProtocolsQueryResponse,
+  RecordsCountRequest,
+  RecordsCountResponse,
   RecordsDeleteRequest,
-  RecordsQueryAllRequest,
   RecordsQueryRequest,
   RecordsQueryResponse,
   RecordsReadRequest,
@@ -28,3 +31,5 @@ export type {
   RecordsWriteRequest,
   RecordsWriteResponse,
 } from './dwn-api.js';
+
+export type { DwnSubscriptionHandler, DwnSubscriptionMessage } from '@enbox/dwn-clients';

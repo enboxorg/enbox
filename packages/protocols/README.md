@@ -20,36 +20,33 @@ bun add @enbox/protocols
 ## Quick Start
 
 ```ts
-import { repository, Enbox } from '@enbox/api';
+import { Enbox } from '@enbox/api';
 import { ProfileProtocol, SocialGraphProtocol } from '@enbox/protocols';
 
 const { enbox } = await Enbox.connect({ password: 'secret' });
 
-// Use the repository pattern for ergonomic CRUD
-const social = repository(enbox.using(SocialGraphProtocol));
+const social = enbox.using(SocialGraphProtocol);
 await social.configure();
 
-// Collections: create, query, get, delete, subscribe
-const { record } = await social.friend.create({
+const { record } = await social.records.create('friend', {
   data: { did: 'did:dht:alice...', alias: 'Alice' },
 });
 
-const { records: friends } = await social.friend.query();
+const { records: friends } = await social.records.query('friend');
 for (const f of friends) {
   const data = await f.data.json(); // FriendData -- typed
   console.log(data.alias);
 }
 
-// Singletons: set, get, delete
-const profile = repository(enbox.using(ProfileProtocol));
+const profile = enbox.using(ProfileProtocol);
 await profile.configure();
 
-await profile.profile.set({
+await profile.records.create('profile', {
   data: { displayName: 'Bob', bio: 'Building the decentralized web' },
 });
 
-const { record: p } = await profile.profile.get();
-console.log(await p.data.json()); // ProfileData
+const { records: profiles } = await profile.records.query('profile');
+console.log(await profiles[0].data.json()); // ProfileData
 ```
 
 ## Protocol Catalog
@@ -214,12 +211,13 @@ schemas/
 
 Binary-only types (`avatar`, `hero`) do not have JSON Schemas since they store raw image data.
 
-## Singleton Detection
+## Singleton Records
 
-Types annotated with `$recordLimit: { max: 1, strategy: 'reject' }` in the protocol structure are treated as singletons by the `repository()` factory. This means:
+Types annotated with `$recordLimit: { max: 1, strategy: 'reject' }` in the protocol structure are enforced as singletons by the DWN:
 
-- **Singletons** get `set()` (upsert) and `get()` instead of `create()` and `query()`
-- The DWN engine enforces the limit -- a second `create` for a singleton is rejected
+- Create the record with `records.create()` and load it with `records.query()`.
+- Update the returned `TypedRecord` explicitly with `record.update()`.
+- The DWN rejects a second record at the singleton path; the SDK does not hide this rule behind a client-side read-then-write upsert.
 - Currently annotated singletons: `profile`, `avatar`, `hero`, `theme`, `locale`, `privacy`, `wallet`
 
 ## Exports

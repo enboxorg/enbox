@@ -1,7 +1,6 @@
 /**
  * A type-safe wrapper around {@link Record} that carries the data type `T`
- * through its entire lifecycle — from write to read, query, update, and
- * subscribe.
+ * through its entire lifecycle — from write to read, query, and update.
  *
  * `TypedRecord<T>` uses composition (not inheritance) to wrap the underlying
  * untyped `Record` class. All read-only getters and lifecycle methods are
@@ -14,7 +13,7 @@
  *
  * You never construct `TypedRecord` directly — instances are returned by
  * {@link TypedEnbox} methods such as `records.create()`, `records.query()`,
- * `records.read()`, and `records.subscribe()`.
+ * and `records.read()`.
  *
  * @typeParam T - The TypeScript type of the record's data payload, resolved
  *   from the protocol's schema map at the given protocol path.
@@ -191,8 +190,7 @@ export type TypedRecordDeleteResult<T> = DwnResponseStatus & {
  * A type-safe wrapper around {@link Record} that preserves the data type `T`.
  *
  * Obtain instances through {@link TypedEnbox} methods — `records.create()`,
- * `records.query()`, `records.read()`, or `records.subscribe()` — never
- * construct directly.
+ * `records.query()`, or `records.read()` — never construct directly.
  *
  * @typeParam T - The TypeScript type of the record's data payload. This type
  *   is inferred automatically from the protocol's schema map and the protocol
@@ -535,7 +533,7 @@ export class TypedRecord<T> {
    * When a record is created as a child (using `parentContextId`), the DWN
    * assigns a `contextId` that links all records in the same hierarchy.
    * Use this value as the `parentContextId` when creating child records,
-   * or as a `parentId` filter when querying for children.
+   * or as the `contextId` filter when querying for children.
    *
    * @returns The context ID string, or `undefined` if the record is not
    *   part of a hierarchical context.

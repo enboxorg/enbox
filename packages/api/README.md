@@ -94,11 +94,13 @@ const { record } = await notes.records.create('note', {
   data: { title: 'Launch', body: 'Ship it' },
 });
 
+const selection = { pagination: { limit: 20 } };
+
 // Query
-const { records, cursor } = await notes.records.query('note', {
-  dateSort   : 'createdDescending',
-  pagination : { limit: 20 },
-});
+const { records, cursor } = await notes.records.query('note', selection);
+
+// Count the same selection before pagination
+const { count } = await notes.records.count('note', selection);
 
 // Read
 const { record: found } = await notes.records.read('note', {
@@ -117,45 +119,6 @@ await found.delete();
 Returned records are `TypedRecord<T>` instances. They expose typed
 `data.json()` plus `data.text()`, `data.bytes()`, `data.blob()`, and
 `data.stream()`.
-
-## Live Queries
-
-```ts
-const { liveQuery } = await notes.records.subscribe('note');
-
-liveQuery.on('create', async (created) => {
-  console.log(await created.data.json());
-});
-
-liveQuery.on('delete', (deleted) => {
-  console.log(deleted.id);
-});
-
-await liveQuery.close();
-```
-
-The initial snapshot is available at `liveQuery.records`. Change events are
-deduplicated against that snapshot.
-
-## Repository Helper
-
-Use `repository()` when you want a structure-aware object instead of passing
-protocol paths to every call.
-
-```ts
-import { repository } from '@enbox/api';
-
-const repo = repository(enbox.using(NotesProtocol));
-
-await repo.note.create({
-  data: { title: 'Hello', body: 'World' },
-});
-
-const { records } = await repo.note.query();
-```
-
-Types annotated with `$recordLimit: { max: 1 }` become singletons with
-`set()`, `get()`, and `delete()` instead of collection-style CRUD.
 
 ## Anonymous Reads
 
@@ -215,10 +178,9 @@ coordinates writes across browser contexts.
 |---|---|
 | `Enbox` | Main app API: `connect()`, `fromSession()`, `anonymous()`, `using()`. |
 | `defineProtocol()` | Creates typed protocol definitions. |
-| `repository()` | Creates structure-aware CRUD repositories. |
+| `RecordQuery` | Protocol-derived filter, date ordering, and pagination shared by query and count. |
 | `TypedEnbox` | Protocol-scoped record API returned by `enbox.using()`. |
 | `TypedRecord<T>` | Type-safe record wrapper. |
-| `TypedLiveQuery<T>` | Typed subscription snapshot and change events. |
 | `Record` / `ReadOnlyRecord` | Mutable and anonymous-read record wrappers. |
 | `DidApi` | DID resolution helpers. |
 | `DwnReaderApi` | Anonymous read-only DWN API. |

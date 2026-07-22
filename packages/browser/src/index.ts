@@ -9,7 +9,7 @@
  * ```ts
  * import {
  *   Enbox, BrowserConnectHandler,
- *   defineProtocol, repository,
+ *   defineProtocol,
  * } from '@enbox/browser';
  *
  * const { enbox, session } = await Enbox.connect({
@@ -26,14 +26,13 @@
 
 // ─── Re-exports from @enbox/api ─────────────────────────────────
 //
-// The high-level Enbox API: DWN records, protocols, repositories.
+// The high-level Enbox API: DWN records and protocols.
 
 export {
   AudienceDecryptError,
   createConnectionStore,
   Enbox,
   defineProtocol,
-  repository,
 } from '@enbox/api';
 
 export type {
@@ -49,6 +48,9 @@ export type {
   EnboxConnectResult,
   EnboxParams,
   EnboxSessionParams,
+  RecordFilter,
+  RecordQuery,
+  RecordsCountResponse,
 } from '@enbox/api';
 
 // ─── Re-exports from @enbox/auth ────────────────────────────────

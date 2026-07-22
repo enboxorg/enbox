@@ -3,10 +3,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, mock, spyOn } fr
 
 import type { DwnPermissionScope, EnboxPlatformAgent } from '../src/index.js';
 
-import { AgentPermissionsApi } from '../src/permissions-api.js';
 import { Convert } from '@enbox/common';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
+import { AgentPermissionsApi, PermissionGrantNotFoundError } from '../src/permissions-api.js';
 import { DwnInterface, DwnPermissionGrant, type PermissionGrantEntry } from '../src/index.js';
 import { DwnInterfaceName, DwnMethodName, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
 
@@ -94,7 +94,8 @@ describe('AgentPermissionsApi', () => {
         });
         throw new Error('Expected an error to be thrown');
       } catch (error: any) {
-        expect(error.message).toBe('CachedPermissions: No permissions found for MessagesQuery: undefined');
+        expect(error).toBeInstanceOf(PermissionGrantNotFoundError);
+        expect(error.message).toBe('AgentPermissionsApi: No matching permission grant found for MessagesQuery: undefined');
       }
 
       // create a permission grant to fetch
@@ -128,6 +129,28 @@ describe('AgentPermissionsApi', () => {
         messageType  : DwnInterface.MessagesQuery,
       });
       expect(fetchedMessagesQueryGrant.message.recordId).toBe(messagesQueryGrant.message.recordId);
+    });
+
+    it('invalidates a cached catalog when a grant is stored locally', async () => {
+      const protocol = 'http://example.com/permission-cache-invalidation';
+      const request = {
+        connectedDid : aliceDid.uri,
+        delegateDid  : bobDid.uri,
+        messageType  : DwnInterface.RecordsWrite,
+        protocol,
+      } as const;
+
+      await expect(testHarness.agent.permissions.getPermissionForRequest(request))
+        .rejects.toBeInstanceOf(PermissionGrantNotFoundError);
+
+      const storedGrant = await storeGrantAsBob({
+        interface : DwnInterfaceName.Records,
+        method    : DwnMethodName.Write,
+        protocol,
+      });
+      const fetchedGrant = await testHarness.agent.permissions.getPermissionForRequest(request);
+
+      expect(fetchedGrant.message.recordId).toBe(storedGrant.message.recordId);
     });
 
     it('uses Records.Read grants for read-like record requests', async () => {
@@ -201,7 +224,6 @@ describe('AgentPermissionsApi', () => {
         delegateDid  : bobDid.uri,
         messageType  : DwnInterface.RecordsWrite,
         protocol     : protocolUri,
-        cached       : true
       });
       expect(fetchedGrant.message.recordId).toBe(recordsWriteGrant.message.recordId);
 
@@ -213,7 +235,6 @@ describe('AgentPermissionsApi', () => {
         delegateDid  : bobDid.uri,
         messageType  : DwnInterface.RecordsWrite,
         protocol     : protocolUri,
-        cached       : true
       });
       expect(fetchedGrant2.message.recordId).toBe(recordsWriteGrant.message.recordId);
 
@@ -221,7 +242,7 @@ describe('AgentPermissionsApi', () => {
       expect(fetchGrantSpy.mock.calls).toHaveLength(1);
     });
 
-    it('should cache the results of a fetch even if cache is set to false', async () => {
+    it('should cache the results of an explicit fresh fetch', async () => {
       // create a RecordsWrite grant from alice to bob
       const protocolUri = 'http://example.com/protocol';
       const recordsWriteGrant = await testHarness.agent.permissions.createGrant({
@@ -252,47 +273,44 @@ describe('AgentPermissionsApi', () => {
       // spy on fetchGrant to ensure it's only called once
       const fetchGrantSpy = spyOn(testHarness.agent.permissions, 'fetchGrants');
 
-      // get the grant with cache set to false (default)
-      // this will refresh the cache with the result anyway, but will always call fetchGrant when set to false
+      // Explicitly refresh the grant catalog. The fresh result still populates the cache.
       const fetchedGrant = await testHarness.agent.permissions.getPermissionForRequest({
         connectedDid : aliceDid.uri,
         delegateDid  : bobDid.uri,
         messageType  : DwnInterface.RecordsWrite,
         protocol     : protocolUri,
-        cached       : false
+        forceRefresh : true
       });
       expect(fetchedGrant.message.recordId).toBe(recordsWriteGrant.message.recordId);
 
       expect(fetchGrantSpy.mock.calls).toHaveLength(1);
 
-      // get the grant again (with cache set to true)
+      // The default lookup reuses the refreshed catalog.
       const fetchedGrant2 = await testHarness.agent.permissions.getPermissionForRequest({
         connectedDid : aliceDid.uri,
         delegateDid  : bobDid.uri,
         messageType  : DwnInterface.RecordsWrite,
         protocol     : protocolUri,
-        cached       : true
       });
       expect(fetchedGrant2.message.recordId).toBe(recordsWriteGrant.message.recordId);
 
       // expect the fetchGrant method to not have been called again
       expect(fetchGrantSpy.mock.calls).toHaveLength(1);
 
-      // call again with cache set to false
+      // A second explicit refresh performs another store read.
       const fetchedGrant3 = await testHarness.agent.permissions.getPermissionForRequest({
         connectedDid : aliceDid.uri,
         delegateDid  : bobDid.uri,
         messageType  : DwnInterface.RecordsWrite,
         protocol     : protocolUri,
-        cached       : false
+        forceRefresh : true
       });
       expect(fetchedGrant3.message.recordId).toBe(recordsWriteGrant.message.recordId);
 
-      // now cache was not set to true, so expect the fetchGrant method to have been called again
       expect(fetchGrantSpy.mock.calls).toHaveLength(2);
     });
 
-    it('uses unambiguous cache keys for protocolPath-scoped grants', async () => {
+    it('matches distinct protocolPath scopes from one cached grant catalog', async () => {
       const storeGrantForDelegate = async (scope: DwnPermissionScope): Promise<PermissionGrantEntry> => {
         const grant = await testHarness.agent.permissions.createGrant({
           store       : true,
@@ -337,7 +355,7 @@ describe('AgentPermissionsApi', () => {
         messageType  : DwnInterface.MessagesRead,
         protocol     : 'http://example.com/a',
         protocolPath : 'b~c',
-        cached       : false
+        forceRefresh : true
       });
       expect(firstFetched.message.recordId).toBe(firstGrant.message.recordId);
       expect(fetchGrantSpy.mock.calls).toHaveLength(1);
@@ -348,10 +366,9 @@ describe('AgentPermissionsApi', () => {
         messageType  : DwnInterface.MessagesRead,
         protocol     : 'http://example.com/a~b',
         protocolPath : 'c',
-        cached       : true
       });
       expect(secondFetched.message.recordId).toBe(secondGrant.message.recordId);
-      expect(fetchGrantSpy.mock.calls).toHaveLength(2);
+      expect(fetchGrantSpy.mock.calls).toHaveLength(1);
     });
   });
 

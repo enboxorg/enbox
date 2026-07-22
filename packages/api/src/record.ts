@@ -1081,8 +1081,9 @@ export class Record implements RecordModel {
       connectedDid : this._connectedDid,
       delegateDid  : this._delegateDid,
       protocol     : this.protocol,
+      protocolPath : this.protocolPath,
+      contextId    : this.contextId,
       delegate     : true,
-      cached       : true,
       messageType  : requestOptions.messageType
     });
 

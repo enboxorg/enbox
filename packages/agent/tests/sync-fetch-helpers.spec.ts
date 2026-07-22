@@ -4,6 +4,7 @@ import { TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { describe, expect, it } from 'bun:test';
 
 import { DwnInterface } from '../src/types/dwn.js';
+import { PermissionGrantNotFoundError } from '../src/permissions-api.js';
 import {
   dependencyKey,
   hasTerminalDependency,
@@ -42,7 +43,6 @@ describe('sync-fetch-helpers', () => {
       );
       expect(result).toBe('grant-123');
       expect(permissionsApi.getPermissionForRequest.firstCall.args[0]).toEqual({
-        cached       : true,
         connectedDid : 'did:example:alice',
         delegateDid  : 'did:example:delegate',
         messageType  : DwnInterface.RecordsQuery,
@@ -53,7 +53,10 @@ describe('sync-fetch-helpers', () => {
     it('returns undefined when no matching grant exists (expected not-found)', async () => {
       const permissionsApi = {
         getPermissionForRequest: sinon.stub().rejects(
-          new Error('CachedPermissions: No permissions found for RecordsQuery: https://example.com/protocol')
+          new PermissionGrantNotFoundError({
+            messageType : DwnInterface.RecordsQuery,
+            protocol    : 'https://example.com/protocol',
+          })
         ),
       };
       const result = await resolveDelegatePermissionGrantId(

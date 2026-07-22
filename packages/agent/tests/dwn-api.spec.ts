@@ -30,6 +30,7 @@ import { DEFAULT_LOCAL_DWN_STRATEGY } from '../src/local-dwn.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' with { type: 'json' };
 import freeForAllProtocolDefinition from './fixtures/protocol-definitions/free-for-all.json' with { type: 'json' };
+import { PermissionGrantNotFoundError } from '../src/permissions-api.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
@@ -2913,6 +2914,8 @@ describe('Encryption Callback Factories', () => {
   });
 
   describe('getProtocolDefinition()', () => {
+    afterEach(() => { sinon.restore(); });
+
     it('should return cached protocol definition', async () => {
       // Install a protocol
       const { reply: { status: configureStatus } } = await testHarness.agent.dwn.processRequest({
@@ -2951,6 +2954,45 @@ describe('Encryption Callback Factories', () => {
       );
 
       expect(def).toBeUndefined();
+    });
+
+    it('should query a published protocol without a delegated grant', async () => {
+      const { reply: { status } } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: emailProtocolDefinition }
+      });
+      expect(status.code).toBe(202);
+
+      const permissionLookup = sinon.stub(testHarness.agent.permissions, 'getPermissionForRequest').rejects(
+        new PermissionGrantNotFoundError({
+          messageType : DwnInterface.ProtocolsQuery,
+          protocol    : emailProtocolDefinition.protocol,
+        })
+      );
+
+      const definition = await testHarness.agent.dwn['getProtocolDefinition'](
+        alice.did.uri,
+        emailProtocolDefinition.protocol,
+        alice.did.uri,
+      );
+
+      expect(definition).toEqual(emailProtocolDefinition);
+      expect(permissionLookup.calledOnce).toBe(true);
+    });
+
+    it('should propagate delegated protocol grant lookup failures', async () => {
+      const failure = new Error('grant store unavailable');
+      const permissionLookup = sinon.stub(testHarness.agent.permissions, 'getPermissionForRequest').rejects(failure);
+
+      await expect(testHarness.agent.dwn['getProtocolDefinition'](
+        alice.did.uri,
+        emailProtocolDefinition.protocol,
+        alice.did.uri,
+      )).rejects.toBe(failure);
+
+      expect(permissionLookup.calledOnce).toBe(true);
     });
   });
 

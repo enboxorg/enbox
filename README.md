@@ -32,7 +32,7 @@ Enbox is a Bun/TypeScript monorepo for building apps on
 [Decentralized Web Nodes](https://identity.foundation/decentralized-web-node/spec/)
 (DWNs). It includes:
 
-- A high-level app SDK with typed protocols, record CRUD, subscriptions, and DID helpers.
+- A high-level app SDK with typed protocols, record operations, and DID helpers.
 - A headless auth layer for local vaults, wallet connect, session restore, and sync startup.
 - An agent runtime with encrypted identity/key stores and live/durable DWN sync.
 - A self-hostable DWN server with HTTP/WebSocket APIs and SQL-backed persistence.
@@ -87,11 +87,6 @@ const { records } = await bookmarks.records.query('bookmark', {
   filter: { tags: { category: 'reading' } },
 });
 
-const { liveQuery } = await bookmarks.records.subscribe('bookmark');
-liveQuery.on('create', async (created) => {
-  console.log(await created.data.json());
-});
-
 console.log(session.did, record.id, records.length);
 ```
 
@@ -144,7 +139,7 @@ configuration, storage backends, and registration options.
 
 | Package | Role |
 |---|---|
-| [`@enbox/api`](./packages/api) | High-level SDK: `Enbox.connect()`, typed protocols, records, subscriptions |
+| [`@enbox/api`](./packages/api) | High-level SDK: `Enbox.connect()`, typed protocols, and records |
 | [`@enbox/auth`](./packages/auth) | Headless auth, local vault connect, wallet connect, session restore |
 | [`@enbox/browser`](./packages/browser) | Browser helpers and polyfills |
 | [`@enbox/cli`](./packages/cli) | CLI helpers and relay/PIN wallet connect handler |

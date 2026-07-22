@@ -25,24 +25,21 @@
 export * from './connection-store.js';
 export * from './define-protocol.js';
 export * from './did-api.js';
+export type { RecordsCountResponse } from './dwn-api.js';
 export * from './dwn-reader-api.js';
 export * from './enbox.js';
 export type * from './enbox-types.js';
 export * from './grant-revocation.js';
-export * from './live-query.js';
-export * from './messages-live-query.js';
 export * from './permission-grant.js';
 export * from './permission-request.js';
 export * from './protocol.js';
 export * from './protocol-types.js';
 export * from './read-only-record.js';
+export type { RecordFilter, RecordQuery } from './record-query.js';
 export * from './record.js';
 export * from './record-data.js';
 export * from './record-types.js';
-export * from './repository.js';
-export * from './repository-types.js';
 export * from './typed-enbox.js';
-export * from './typed-live-query.js';
 export * from './typed-record.js';
 export * from './vc-api.js';
 

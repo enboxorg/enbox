@@ -84,6 +84,20 @@ export type DataFormatsForType<D extends ProtocolDefinition, TypeName extends st
       : undefined
     : undefined;
 
+/**
+ * Resolves the `dataFormat` string literal union for a protocol path.
+ * Protocol types without a declared `dataFormats` list retain the raw
+ * string escape hatch.
+ */
+export type DataFormatAtPath<
+  D extends ProtocolDefinition,
+  Path extends string,
+> = DataFormatsForType<D, TypeNameAtPath<Path>> extends infer Formats
+  ? Formats extends readonly string[]
+    ? Formats[number]
+    : string
+  : string;
+
 // ---------------------------------------------------------------------------
 // Tag extraction helpers
 // ---------------------------------------------------------------------------

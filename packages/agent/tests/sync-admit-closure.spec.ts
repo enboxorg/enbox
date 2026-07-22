@@ -369,7 +369,6 @@ describe('admitClosure', () => {
     expect(outcome).toMatchObject({ kind: 'admitted', appliedCids: [roleCid, rootCid] });
     expect(freshCidsOf(outcome)).toEqual([roleCid, rootCid]);
     expect(permissionsApi.getPermissionForRequest.firstCall.args[0]).toEqual({
-      cached       : true,
       connectedDid : 'did:example:alice',
       delegateDid  : 'did:example:delegate',
       messageType  : DwnInterface.RecordsQuery,

@@ -1,12 +1,11 @@
 import type { DidResolutionLike } from './utils/identity-helpers.js';
 import type { ProfileSchemaMap } from '@enbox/protocols';
-import type { Repository } from '@enbox/api';
 import type { AuthState, IdentityInfo, PortableIdentity } from '@enbox/auth';
 
 import { AuthManager } from '@enbox/auth';
 import { DwnApi } from '@enbox/api/advanced';
+import { TypedEnbox } from '@enbox/api';
 import { ProfileDefinition, ProfileProtocol, SocialGraphDefinition } from '@enbox/protocols';
-import { repository, TypedEnbox } from '@enbox/api';
 
 import { getAppStore } from './state/app-store.js';
 import { createResolutionErrorResult, errorMessage, normalizeEndpointList, normalizeOptionalString } from './utils/identity-helpers.js';
@@ -602,8 +601,9 @@ class IdentityRuntimeController implements IdentityRuntime {
       };
     }
 
-    const profileRepo = this._createProfileRepository(dwn);
-    const profileRecord = await profileRepo.profile.get();
+    const typed = new TypedEnbox(dwn, ProfileProtocol);
+    const { records: profileRecords } = await typed.records.query('profile');
+    const profileRecord = profileRecords[0];
     if (!profileRecord) {
       return {
         did     : normalizedDidUri,
@@ -612,20 +612,23 @@ class IdentityRuntimeController implements IdentityRuntime {
       };
     }
 
-    const profileData = await profileRecord.data.json<EditableDidProfileSnapshot['profile']>();
+    const profileData = await profileRecord.data.json();
     const profileContextId = profileRecord.contextId;
-    const avatarRecord = profileContextId ? await profileRepo.profile.avatar.get(profileContextId) : undefined;
-    const heroRecord = profileContextId ? await profileRepo.profile.hero.get(profileContextId) : undefined;
-    const linkResult = profileContextId ? await profileRepo.profile.link.query(profileContextId) : { records: [] };
+    const avatarResult = profileContextId
+      ? await typed.records.query('profile/avatar', { filter: { contextId: profileContextId } })
+      : { records: [] };
+    const heroResult = profileContextId
+      ? await typed.records.query('profile/hero', { filter: { contextId: profileContextId } })
+      : { records: [] };
+    const linkResult = profileContextId
+      ? await typed.records.query('profile/link', { filter: { contextId: profileContextId } })
+      : { records: [] };
+    const avatarRecord = avatarResult.records[0];
+    const heroRecord = heroResult.records[0];
 
     const links = await Promise.all(
       linkResult.records.map(async (record) => {
-        const data = await record.data.json<{
-          url: string;
-          title: string;
-          icon?: string;
-          sortOrder?: number;
-        }>();
+        const data = await record.data.json();
 
         return {
           id        : record.id,
@@ -701,9 +704,10 @@ class IdentityRuntimeController implements IdentityRuntime {
 
     const { dwn } = await this._createDwnApiForDid(normalizedDidUri);
     const typed = new TypedEnbox(dwn, ProfileProtocol);
-    const profileRepo = repository(typed);
-
-    const profileResult = await profileRepo.profile.set({ data: profileData });
+    const { records: profileRecords } = await typed.records.query('profile');
+    const profileResult = profileRecords[0]
+      ? await profileRecords[0].update({ data: profileData })
+      : await typed.records.create('profile', { data: profileData });
     if (profileResult.status.code >= 300 || !profileResult.record?.contextId) {
       throw new Error(profileResult.status.detail || `Failed to save profile (${profileResult.status.code}).`);
     }
@@ -775,8 +779,9 @@ class IdentityRuntimeController implements IdentityRuntime {
         continue;
       }
 
-      const createResult = await profileRepo.profile.link.create(profileContextId, {
-        data: linkData,
+      const createResult = await typed.records.create('profile/link', {
+        data            : linkData,
+        parentContextId : profileContextId,
       });
       if (createResult.status.code >= 300 || !createResult.record) {
         throw new Error(createResult.status.detail || `Failed to create link (${createResult.status.code}).`);
@@ -1059,10 +1064,6 @@ class IdentityRuntimeController implements IdentityRuntime {
     }
   }
 
-  private _createProfileRepository(dwn: DwnApi): Repository<typeof ProfileDefinition, ProfileSchemaMap> {
-    return repository(new TypedEnbox(dwn, ProfileProtocol));
-  }
-
   private async _saveProfileImageRecord({
     action,
     file,
@@ -1080,7 +1081,7 @@ class IdentityRuntimeController implements IdentityRuntime {
       delete: () => Promise<{ status: { code: number; detail: string } }>;
     };
     parentContextId: string;
-    typed: TypedEnbox<typeof ProfileDefinition, Record<string, unknown>>;
+    typed: TypedEnbox<typeof ProfileDefinition, ProfileSchemaMap>;
     path: 'profile/avatar' | 'profile/hero';
   }): Promise<void> {
     if (action === 'keep') {

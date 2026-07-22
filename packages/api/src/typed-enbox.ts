@@ -8,7 +8,7 @@
  *
  * All record-returning methods wrap the underlying `Record` instances in
  * {@link TypedRecord} so that type information flows through reads, queries,
- * updates, and subscriptions without manual casts.
+ * and updates without manual casts.
  *
  * @example
  * ```ts
@@ -28,26 +28,20 @@
  * // Query — protocol and protocolPath are auto-injected
  * const { records } = await social.records.query('thread');
  * // records is TypedRecord<ThreadData>[]
- *
- * // Subscribe — real-time changes via TypedLiveQuery
- * const { liveQuery } = await social.records.subscribe('thread/reply');
- * liveQuery.on('create', (record) => {
- *   // record is TypedRecord<ReplyData>
- * });
  * ```
  */
 
-import type { LiveQuery } from './live-query.js';
 import type { Protocol } from './protocol.js';
 
 import type { AudienceKeyDeliveryOutcome, DwnPaginationCursor, DwnPublicKeyJwk, DwnResponseStatus } from '@enbox/agent';
-import type { DateSort, ProtocolDefinition, ProtocolType, RecordsFilter } from '@enbox/dwn-sdk-js';
-import type { DwnApi, ProtocolsConfigureResponse } from './dwn-api.js';
-import type { ProtocolPaths, SchemaMap, TypedProtocol, TypeNameAtPath } from './protocol-types.js';
+import type { DataFormatAtPath, ProtocolPaths, SchemaMap, TypedProtocol, TypeNameAtPath } from './protocol-types.js';
+import type { DwnApi, ProtocolsConfigureResponse, RecordsCountResponse } from './dwn-api.js';
+import type { ProtocolDefinition, ProtocolType } from '@enbox/dwn-sdk-js';
+import type { RecordFilter, RecordQuery } from './record-query.js';
 
-import { assertValidQueryAllOptions } from './dwn-api.js';
-import { TypedLiveQuery } from './typed-live-query.js';
+import { getTypeName } from '@enbox/dwn-sdk-js';
 import { TypedRecord } from './typed-record.js';
+import { compileRecordFilter, compileRecordQuery } from './record-query.js';
 
 // ---------------------------------------------------------------------------
 // Helper types
@@ -64,30 +58,6 @@ export type DataForPath<
   M extends SchemaMap,
   Path extends string,
 > = TypeNameAtPath<Path> extends keyof M ? M[TypeNameAtPath<Path>] : unknown;
-
-/**
- * Resolves the `ProtocolType` entry for a given protocol path.
- */
-type ProtocolTypeForPath<
-  D extends ProtocolDefinition,
-  Path extends string,
-> = TypeNameAtPath<Path> extends keyof D['types']
-  ? D['types'][TypeNameAtPath<Path>] extends ProtocolType
-    ? D['types'][TypeNameAtPath<Path>]
-    : undefined
-  : undefined;
-
-/**
- * Resolves a `dataFormat` string literal union for a path, or `string` if none.
- */
-type DataFormatForPath<
-  D extends ProtocolDefinition,
-  Path extends string,
-> = ProtocolTypeForPath<D, Path> extends { dataFormats: infer F }
-  ? F extends readonly string[]
-    ? F[number]
-    : string
-  : string;
 
 // ---------------------------------------------------------------------------
 // Request / response types
@@ -263,7 +233,7 @@ export type TypedCreateRequest<
    * If omitted, defaults to the first entry in the protocol type's
    * `dataFormats` array (typically `'application/json'`).
    */
-  dataFormat?: DataFormatForPath<D, Path>;
+  dataFormat?: DataFormatAtPath<D, Path>;
 
   /**
    * Key-value metadata tags to attach to the record.
@@ -310,140 +280,6 @@ export type TypedCreateResponse<T = unknown> =
   | (DwnResponseStatus & { record: undefined; audienceKeyDelivery?: AudienceKeyDeliveryOutcome });
 
 /**
- * Filter options for {@link TypedEnbox} `records.query()` and `records.subscribe()`.
- *
- * The `protocol`, `protocolPath`, and `schema` fields are automatically
- * injected by {@link TypedEnbox} — you only need to supply additional
- * filter criteria.
- *
- * Common filter fields inherited from `RecordsFilter`:
- *
- * - **`parentId`** — Filter by the parent record's **bare record id** (the
- *   value stored in the message descriptor). Prefer `parentContextId` for
- *   child-scoped queries — see below.
- * - **`recordId`** — Match a specific record by its unique ID.
- * - **`recipient`** — Filter by recipient DID.
- * - **`dataFormat`** — Filter by MIME type.
- * - **`dateCreated`** — Range filter on creation date.
- * - **`contextId`** — Filter by context ID directly (prefix match).
- *
- * ### Child-scoped queries on nested paths
- *
- * The DWN engine REJECTS a Query/Subscribe on a nested protocol path (any
- * path containing `/`) unless the filter carries the DIRECT parent's
- * compound `contextId` (e.g. `'rootId/parentId'` for a depth-3 path) — and
- * the engine's `parentId` filter matches the parent's BARE record id, not
- * its compound context id. Every app used to rediscover this via production
- * 400s.
- *
- * The typed surface derives both automatically: pass the parent record's
- * {@link TypedRecord.contextId | contextId} as **`parentContextId`** and the
- * required bare `parentId` **and** compound `contextId` filters are injected
- * for you. (A compound value passed via `parentId` is normalized the same
- * way; explicitly-set `contextId`/`parentId` values are never overwritten.)
- * For depth ≥ 3 paths a bare `parentId` alone cannot be completed — pass
- * `parentContextId` (or `contextId`) instead.
- *
- * @example
- * ```ts
- * // Find pages under a specific notebook — parentId + contextId derived
- * const { records } = await proto.records.query('notebook/page', {
- *   filter: {
- *     parentContextId: notebook.contextId,
- *     tags: { status: 'published' },
- *   },
- * });
- * ```
- */
-export type TypedQueryFilter = Omit<RecordsFilter, 'protocol' | 'protocolPath' | 'schema'> & {
-  /**
-   * Filter records by tag values.
-   *
-   * Only records whose tags match **all** specified key-value pairs are
-   * returned. Array values match if the record's tag contains any of the
-   * specified values.
-   */
-  tags?: globalThis.Record<string, string | number | boolean | (string | number)[]>;
-  /**
-   * Scope the results to children of the parent record with this
-   * (compound) context ID — pass the parent record's
-   * {@link TypedRecord.contextId | contextId}.
-   *
-   * The typed surface derives the engine-level filters from it: the bare
-   * `parentId` (last context segment) and the compound `contextId` the
-   * engine requires for nested-path queries/subscriptions.
-   */
-  parentContextId?: string;
-};
-
-/**
- * Options for {@link TypedEnbox} `records.query()`.
- *
- * All fields are optional — calling `query(path)` with no request object
- * returns all records at that path.
- *
- * @example
- * ```ts
- * const { records, cursor } = await proto.records.query('notebook', {
- *   filter: { tags: { archived: false } },
- *   dateSort: DateSort.CreatedDescending,
- *   pagination: { limit: 25 },
- * });
- *
- * // Paginate for more
- * if (cursor) {
- *   const { records: next } = await proto.records.query('notebook', {
- *     pagination: { limit: 25, cursor },
- *   });
- * }
- * ```
- */
-export type TypedQueryRequest = {
-  /**
-   * A remote DWN DID to query from.
-   *
-   * When set, the query is sent to the specified DID's remote DWN instead
-   * of the local DWN.
-   */
-  from?: string;
-
-  /**
-   * Filter criteria for the query.
-   *
-   * The `protocol`, `protocolPath`, and `schema` fields are auto-injected.
-   * See {@link TypedQueryFilter} for available filter fields.
-   */
-  filter?: TypedQueryFilter;
-
-  /**
-   * Sort order for the returned records.
-   *
-   * Use `DateSort.CreatedAscending`, `DateSort.CreatedDescending`,
-   * `DateSort.PublishedAscending`, `DateSort.PublishedDescending`,
-   * `DateSort.UpdatedAscending`, or `DateSort.UpdatedDescending`.
-   */
-  dateSort?: DateSort;
-
-  /**
-   * Pagination options.
-   *
-   * - `limit` — Maximum number of records to return.
-   * - `cursor` — A pagination cursor from a previous query response to
-   *   resume from where the last page left off.
-   */
-  pagination?: { limit?: number; cursor?: DwnPaginationCursor };
-
-  /**
-   * The protocol role under which to execute the query.
-   *
-   * Required when the protocol's `$actions` rules restrict read access
-   * to specific roles.
-   */
-  protocolRole?: string;
-
-};
-
-/**
  * Response from {@link TypedEnbox} `records.query()`.
  *
  * @typeParam T - The data type of the queried records.
@@ -467,50 +303,6 @@ export type TypedQueryResponse<T = unknown> = DwnResponseStatus & {
 };
 
 /**
- * Options for {@link TypedEnbox} `records.queryAll()` — the cursor-free
- * drain of every record matching a query.
- *
- * Identical to {@link TypedQueryRequest} except pagination is managed
- * internally: results are fetched in `pageSize`-sized pages until the
- * cursor is exhausted (or the optional `maxRecords` safety cap is hit),
- * so callers never hand-write cursor loops.
- *
- * @example
- * ```ts
- * for await (const note of proto.records.queryAll('note')) {
- *   console.log(await note.data.json());
- * }
- * ```
- */
-export type TypedQueryAllRequest = Omit<TypedQueryRequest, 'pagination'> & {
-  /**
-   * The number of records fetched per underlying query page. Defaults
-   * to 100.
-   */
-  pageSize?: number;
-
-  /**
-   * Optional safety cap on the total number of records yielded. When set,
-   * iteration stops after this many records even if more pages remain —
-   * guarding accidental unbounded drains. When omitted, the drain runs to
-   * cursor exhaustion.
-   */
-  maxRecords?: number;
-
-  /**
-   * Overall page-request budget for the drain, independent of `maxRecords`
-   * (which counts yielded records and so cannot bound empty pages).
-   * Defaults to 1000 pages; exceeding it THROWS — it is a runaway-remote
-   * guard, not a truncation knob. Must be a positive integer.
-   *
-   * Built-in liveness guards apply regardless: a repeated pagination
-   * cursor or a run of consecutive empty cursor-bearing pages terminates
-   * the drain with a thrown error.
-   */
-  maxPages?: number;
-};
-
-/**
  * Options for {@link TypedEnbox} `records.read()`.
  *
  * A `filter` is required to identify which record to read. The most common
@@ -530,28 +322,19 @@ export type TypedQueryAllRequest = Omit<TypedQueryRequest, 'pagination'> & {
  * });
  * ```
  */
-export type TypedReadRequest = {
-  /**
-   * A remote DWN DID to read from.
-   *
-   * When set, the read is performed against the specified DID's remote
-   * DWN instead of the local DWN.
-   */
-  from?: string;
-
+export type TypedReadRequest<
+  D extends ProtocolDefinition,
+  Path extends ProtocolPaths<D> & string,
+> = Pick<RecordQuery<D, Path>, 'from'> & {
   /**
    * Filter to identify the record to read.
    *
    * The `protocol`, `protocolPath`, and `schema` fields are auto-injected.
    * Typically you filter by `recordId` to read a specific record. Other
-   * fields from `RecordsFilter` (like `contextId`, `parentId`, `recipient`)
-   * are also available.
+   * fields from `RecordsFilter` (like `contextId` and `recipient`) are also
+   * available.
    */
-  filter: Omit<RecordsFilter, 'protocol' | 'protocolPath' | 'schema'> & {
-    /** Alias for `parentId` — filters records by parent context ID. */
-    parentContextId?: string;
-  };
-
+  filter: RecordFilter<D, Path>;
 };
 
 /**
@@ -585,6 +368,12 @@ export type TypedReadResponse<T = unknown> =
  */
 export type TypedDeleteRequest = {
   /**
+   * Full context ID of the target record, used only to resolve a context-scoped
+   * delegated delete grant. It is not included in the RecordsDelete message.
+   */
+  contextId?: string;
+
+  /**
    * A remote DWN DID to delete from.
    *
    * When set, the delete is performed on the specified DID's remote DWN.
@@ -606,62 +395,6 @@ export type TypedDeleteRequest = {
    * delete is a plain tombstone that leaves children in place.
    */
   prune?: boolean;
-};
-
-/**
- * Options for {@link TypedEnbox} `records.subscribe()`.
- *
- * @example
- * ```ts
- * const { liveQuery } = await proto.records.subscribe('notebook/page', {
- *   filter: { parentId: notebook.contextId },
- * });
- *
- * liveQuery.on('create', (record) => {
- *   console.log('New page:', await record.data.json());
- * });
- * ```
- */
-export type TypedSubscribeRequest = {
-  /**
-   * A remote DWN DID to subscribe to.
-   *
-   * When set, the subscription listens to the specified DID's remote DWN.
-   */
-  from?: string;
-
-  /**
-   * Filter criteria for the subscription.
-   *
-   * The `protocol`, `protocolPath`, and `schema` fields are auto-injected.
-   * See {@link TypedQueryFilter} for available filter fields.
-   */
-  filter?: TypedQueryFilter;
-
-  /**
-   * The protocol role under which to subscribe.
-   *
-   * Required when the protocol's `$actions` rules restrict read access
-   * to specific roles.
-   */
-  protocolRole?: string;
-
-};
-
-/**
- * Response from {@link TypedEnbox} `records.subscribe()`.
- *
- * @typeParam T - The data type of records in the subscription.
- */
-export type TypedSubscribeResponse<T = unknown> = DwnResponseStatus & {
-  /**
-   * The typed live query instance for receiving real-time record changes.
-   *
-   * `undefined` if the subscription request failed (check `status.code`).
-   * When defined, use `liveQuery.on('create' | 'update' | 'delete', callback)`
-   * to react to changes. Call `liveQuery.close()` to stop the subscription.
-   */
-  liveQuery?: TypedLiveQuery<T>;
 };
 
 /**
@@ -761,7 +494,7 @@ export type VerifyInstalledResult = {
  *
  * All record-returning methods wrap results in {@link TypedRecord} so that
  * the data type `T` (resolved from the schema map) flows end-to-end — from
- * write through read, query, update, and subscribe — without manual casts.
+ * write through read, query, and update — without manual casts.
  *
  * Obtain an instance via `enbox.using(typedProtocol)`.
  *
@@ -1064,40 +797,6 @@ export class TypedEnbox<
   }
 
   /**
-   * Subscribe to **all** record changes across the entire protocol,
-   * regardless of protocolPath.
-   *
-   * Unlike `records.subscribe(path)` which scopes to a single path
-   * (e.g. `'notebook'`), this method catches creates, updates, and
-   * deletes at every level of the protocol hierarchy — ideal for a
-   * "refresh everything" strategy when any record changes.
-   *
-   * Returns a {@link LiveQuery} (untyped, since events span multiple
-   * paths/types) or `undefined` if the subscription could not be created.
-   * Call `liveQuery.close()` to stop listening.
-   *
-   * @example
-   * ```ts
-   * const typed = enbox.using(NotebookProtocol);
-   * const liveQuery = await typed.subscribe();
-   *
-   * liveQuery?.on('change', () => {
-   *   // A record somewhere in the protocol changed — re-query as needed.
-   * });
-   * ```
-   */
-  public async subscribe(request?: { from?: string }): Promise<LiveQuery | undefined> {
-    await this._autoConfigureOnce();
-
-    const { liveQuery } = await this._dwn.records.subscribe({
-      from   : request?.from,
-      filter : { protocol: this._definition.protocol },
-    });
-
-    return liveQuery;
-  }
-
-  /**
    * Validates that the path is recognized.
    * Throws a descriptive error if the path is not a valid protocol path.
    */
@@ -1236,42 +935,6 @@ export class TypedEnbox<
   }
 
   /**
-   * Backs `records.queryAll()`: ensures the protocol is ready, injects the
-   * protocol-scoped filter (with child-scope derivation), and delegates the
-   * cursor loop to the raw {@link DwnApi} drain, wrapping each yielded
-   * record in a {@link TypedRecord}.
-   */
-  private async * queryAllTypedRecords<Path extends ProtocolPaths<D> & string>(
-    path: Path,
-    request?: TypedQueryAllRequest,
-  ): AsyncGenerator<TypedRecord<DataForPath<D, M, Path>>, void, undefined> {
-    const normalizedPath = normalizePath(path);
-    await this._ensureReady(normalizedPath);
-    const typeName = lastSegment(normalizedPath);
-    const drainFilter = deriveChildScopeFilter(request?.filter, normalizedPath);
-    const typeEntry = this._definition.types[typeName];
-
-    const drain = this._dwn.records.queryAll({
-      from   : request?.from,
-      filter : {
-        ...drainFilter,
-        protocol     : this._definition.protocol,
-        protocolPath : normalizedPath,
-        ...(typeEntry?.schema === undefined ? {} : { schema: typeEntry.schema }),
-      },
-      dateSort     : request?.dateSort,
-      protocolRole : request?.protocolRole,
-      pageSize     : request?.pageSize,
-      maxRecords   : request?.maxRecords,
-      maxPages     : request?.maxPages,
-    });
-
-    for await (const record of drain) {
-      yield new TypedRecord<DataForPath<D, M, Path>>(record);
-    }
-  }
-
-  /**
    * Protocol-scoped record operations.
    *
    * Every method auto-injects the `protocol`, `protocolPath`, and `schema`
@@ -1279,17 +942,15 @@ export class TypedEnbox<
    * Path parameters provide **compile-time autocompletion** via
    * `ProtocolPaths<D>`, and data types are resolved from the schema map.
    *
-   * All methods return {@link TypedRecord} or {@link TypedLiveQuery} instances
-   * that carry the resolved data type from the schema map, providing
-   * end-to-end type safety.
+   * Record-returning methods use {@link TypedRecord} instances that carry the
+   * resolved data type from the schema map, providing end-to-end type safety.
    *
    * Available methods:
    * - {@link TypedEnbox.records.create | create(path, request)} — Create a new record
    * - {@link TypedEnbox.records.query | query(path, request?)} — Query records with filters
-   * - {@link TypedEnbox.records.queryAll | queryAll(path, request?)} — Drain all matching records (auto-pagination)
+   * - {@link TypedEnbox.records.count | count(path, request?)} — Count the same matching population
    * - {@link TypedEnbox.records.read | read(path, request)} — Read a single record
    * - {@link TypedEnbox.records.delete | delete(path, request)} — Delete a record by ID
-   * - {@link TypedEnbox.records.subscribe | subscribe(path, request?)} — Real-time subscription
    */
   public get records(): {
     create: <Path extends ProtocolPaths<D> & string>(
@@ -1299,28 +960,23 @@ export class TypedEnbox<
 
     query: <Path extends ProtocolPaths<D> & string>(
       path: Path,
-      request?: TypedQueryRequest,
+      request?: RecordQuery<D, Path>,
     ) => Promise<TypedQueryResponse<DataForPath<D, M, Path>>>;
 
-    queryAll: <Path extends ProtocolPaths<D> & string>(
+    count: <Path extends ProtocolPaths<D> & string>(
       path: Path,
-      request?: TypedQueryAllRequest,
-    ) => AsyncGenerator<TypedRecord<DataForPath<D, M, Path>>, void, undefined>;
+      request?: RecordQuery<D, Path>,
+    ) => Promise<RecordsCountResponse>;
 
     read: <Path extends ProtocolPaths<D> & string>(
       path: Path,
-      request: TypedReadRequest,
+      request: TypedReadRequest<D, Path>,
     ) => Promise<TypedReadResponse<DataForPath<D, M, Path>>>;
 
     delete: <Path extends ProtocolPaths<D> & string>(
       path: Path,
       request: TypedDeleteRequest,
     ) => Promise<DwnResponseStatus>;
-
-    subscribe: <Path extends ProtocolPaths<D> & string>(
-      path: Path,
-      request?: TypedSubscribeRequest,
-    ) => Promise<TypedSubscribeResponse<DataForPath<D, M, Path>>>;
     } {
     if (this._records !== undefined) {
       return this._records;
@@ -1360,7 +1016,7 @@ export class TypedEnbox<
       ): Promise<TypedCreateResponse<DataForPath<D, M, Path>>> => {
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
-        const typeName = lastSegment(normalizedPath);
+        const typeName = getTypeName(normalizedPath);
         const typeEntry = this._definition.types[typeName];
 
         const { status, record, audienceKeyDelivery } = await this._dwn.records.write({
@@ -1411,7 +1067,7 @@ export class TypedEnbox<
        *
        * // Query pages under a specific notebook
        * const { records: pages } = await proto.records.query('notebook/page', {
-       *   filter: { parentId: notebook.contextId },
+       *   filter: { contextId: notebook.contextId },
        * });
        *
        * for (const page of pages) {
@@ -1427,26 +1083,12 @@ export class TypedEnbox<
        */
       query: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
-        request?: TypedQueryRequest,
+        request?: RecordQuery<D, Path>,
       ): Promise<TypedQueryResponse<DataForPath<D, M, Path>>> => {
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
-        const typeName = lastSegment(normalizedPath);
-        const typeEntry = this._definition.types[typeName];
-
-        const queryFilter = deriveChildScopeFilter(request?.filter, normalizedPath);
-        const { status, records, cursor } = await this._dwn.records.query({
-          from   : request?.from,
-          filter : {
-            ...queryFilter,
-            protocol     : this._definition.protocol,
-            protocolPath : normalizedPath,
-            ...(typeEntry?.schema === undefined ? {} : { schema: typeEntry.schema }),
-          },
-          dateSort     : request?.dateSort,
-          pagination   : request?.pagination,
-          protocolRole : request?.protocolRole,
-        });
+        const compiled = compileRecordQuery(this._definition, normalizedPath, request);
+        const { status, records, cursor } = await this._dwn.records.query(compiled);
 
         return {
           status,
@@ -1456,42 +1098,23 @@ export class TypedEnbox<
       },
 
       /**
-       * Drain every record at the given protocol path, paging through
-       * query results internally — no hand-written cursor loops.
-       *
-       * Returns an async generator of typed records; iterate it with
-       * `for await...of`. Pages are fetched lazily as iteration advances
-       * (`pageSize` records per underlying query, 100 by default), and the
-       * optional `maxRecords` safety cap bounds the total yield. A page
-       * that fails with a non-2xx status aborts iteration with a thrown
-       * Error, as do the liveness guards: a repeated pagination cursor, a
-       * run of consecutive empty cursor-bearing pages, or an exceeded
-       * `maxPages` budget.
-       *
-       * @param path - The protocol path to drain (e.g. `'notebook'`).
-       * @param request - Optional filter/sort options plus `pageSize`,
-       *   `maxRecords`, and `maxPages`. See {@link TypedQueryAllRequest}.
-       * @returns An `AsyncGenerator` yielding every matching
-       *   {@link TypedRecord} in sort order.
-       *
-       * @example
-       * ```ts
-       * const titles: string[] = [];
-       * for await (const page of proto.records.queryAll('notebook/page', {
-       *   filter: { parentContextId: notebook.contextId },
-       * })) {
-       *   titles.push((await page.data.json()).title);
-       * }
-       * ```
+       * Count the complete population selected by the same specification as
+       * `query()`. Pagination and ordering do not change the count; a
+       * published-date sort still selects published records only.
        */
-      queryAll: <Path extends ProtocolPaths<D> & string>(
+      count: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
-        request?: TypedQueryAllRequest,
-      ): AsyncGenerator<TypedRecord<DataForPath<D, M, Path>>, void, undefined> => {
-        // Validated at CALL time (the generator body — including its inner
-        // raw queryAll call — only runs on first iteration).
-        assertValidQueryAllOptions(request ?? {});
-        return this.queryAllTypedRecords(path, request);
+        request?: RecordQuery<D, Path>,
+      ): Promise<RecordsCountResponse> => {
+        const normalizedPath = normalizePath(path);
+        await this._ensureReady(normalizedPath);
+        const compiled = compileRecordQuery(this._definition, normalizedPath, request);
+
+        return this._dwn.records.count({
+          from         : compiled.from,
+          filter       : compiled.filter,
+          protocolRole : compiled.protocolRole,
+        });
       },
 
       /**
@@ -1518,23 +1141,14 @@ export class TypedEnbox<
        */
       read: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
-        request: TypedReadRequest,
+        request: TypedReadRequest<D, Path>,
       ): Promise<TypedReadResponse<DataForPath<D, M, Path>>> => {
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
-        const typeName = lastSegment(normalizedPath);
-        const typeEntry = this._definition.types[typeName];
-
-        const readFilter = deriveChildScopeFilter(request.filter, normalizedPath);
+        const readFilter = compileRecordFilter(this._definition, normalizedPath, request.filter);
         const { status, record } = await this._dwn.records.read({
-          from     : request.from,
-          protocol : this._definition.protocol,
-          filter   : {
-            ...readFilter,
-            protocol     : this._definition.protocol,
-            protocolPath : normalizedPath,
-            ...(typeEntry?.schema === undefined ? {} : { schema: typeEntry.schema }),
-          },
+          from   : request.from,
+          filter : readFilter,
         });
 
         return {
@@ -1551,8 +1165,8 @@ export class TypedEnbox<
        *
        * @param path - The protocol path (used for permission scoping and
        *   path validation).
-       * @param request - Delete options. `recordId` is required; `from` is
-       *   optional for remote deletes.
+       * @param request - Delete options. `recordId` is required; `contextId`
+       *   scopes delegated grant resolution and `from` selects a remote DWN.
        * @returns The DWN response status.
        *
        * @example
@@ -1567,80 +1181,21 @@ export class TypedEnbox<
        * ```
        */
       delete: async <Path extends ProtocolPaths<D> & string>(
-        _path: Path,
+        path: Path,
         request: TypedDeleteRequest,
       ): Promise<DwnResponseStatus> => {
-        await this._ensureReady(normalizePath(_path));
-        return this._dwn.records.delete({
-          from     : request.from,
-          protocol : this._definition.protocol,
-          recordId : request.recordId,
-          prune    : request.prune,
-        });
-      },
-
-      /**
-       * Subscribe to real-time changes at the given protocol path.
-       *
-       * Returns a {@link TypedLiveQuery} that atomically provides an initial
-       * snapshot and a real-time stream of deduplicated change events, with
-       * all records typed as `TypedRecord<T>`.
-       *
-       * @param path - The protocol path to subscribe to.
-       * @param request - Optional filter and role. Use `filter.parentId`
-       *   to scope the subscription to children of a specific parent.
-       * @returns A {@link TypedSubscribeResponse} containing `status` and
-       *   a {@link TypedLiveQuery} for receiving events.
-       *
-       * @example
-       * ```ts
-       * const { liveQuery } = await proto.records.subscribe('notebook/page', {
-       *   filter: { parentId: notebook.contextId },
-       * });
-       *
-       * liveQuery.on('create', (record) => {
-       *   // record is TypedRecord<PageData>
-       *   console.log('New page created');
-       * });
-       *
-       * liveQuery.on('update', (record) => {
-       *   const data = await record.data.json(); // PageData
-       * });
-       *
-       * liveQuery.on('delete', (record) => {
-       *   console.log('Page deleted:', record.id);
-       * });
-       *
-       * // Stop listening
-       * liveQuery.close();
-       * ```
-       */
-      subscribe: async <Path extends ProtocolPaths<D> & string>(
-        path: Path,
-        request?: TypedSubscribeRequest,
-      ): Promise<TypedSubscribeResponse<DataForPath<D, M, Path>>> => {
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
-        const typeName = lastSegment(normalizedPath);
-        const typeEntry = this._definition.types[typeName];
-
-        const subFilter = deriveChildScopeFilter(request?.filter, normalizedPath);
-        const { status, liveQuery } = await this._dwn.records.subscribe({
-          from   : request?.from,
-          filter : {
-            ...subFilter,
-            protocol     : this._definition.protocol,
-            protocolPath : normalizedPath,
-            ...(typeEntry?.schema === undefined ? {} : { schema: typeEntry.schema }),
-          },
-          protocolRole: request?.protocolRole,
+        return this._dwn.records.delete({
+          contextId    : request.contextId,
+          from         : request.from,
+          protocol     : this._definition.protocol,
+          protocolPath : normalizedPath,
+          recordId     : request.recordId,
+          prune        : request.prune,
         });
-
-        return {
-          status,
-          liveQuery: liveQuery ? new TypedLiveQuery<DataForPath<D, M, Path>>(liveQuery) : undefined,
-        };
       },
+
     };
 
     this._records = cached;
@@ -1651,67 +1206,6 @@ export class TypedEnbox<
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Derives the engine-level child-scope filters from the `parentContextId`
- * alias for the given (normalized) protocol path.
- *
- * The DWN engine has two coupled rules every app used to rediscover via
- * production 400s:
- *
- * 1. `filter.parentId` matches the parent's BARE record id (the descriptor
- *    stores only the last context segment), while record creation takes the
- *    compound `parentContextId` — so the natural "pass `parent.contextId`
- *    everywhere" symmetry silently matches nothing on nested parents.
- * 2. Query/Count/Subscribe on a nested protocol path are REJECTED
- *    (`...NestedProtocolPathContextIdInvalid`) unless the filter carries the
- *    DIRECT parent's compound `contextId` (exactly `depth - 1` segments).
- *
- * Given a compound parent context id (via `parentContextId`, or a `parentId`
- * value containing `/` — record ids never contain slashes), this injects
- * BOTH: the bare `parentId` (last segment) and the compound `contextId`.
- * For depth-2 paths the parent is a root record whose contextId IS its
- * record id, so a bare `parentId` alone is also completed with the required
- * `contextId`. Explicitly-set `contextId`/`parentId` values are never
- * overwritten. Returns a new object (or `undefined` if the input was
- * `undefined`).
- */
-function deriveChildScopeFilter<T extends Record<string, unknown>>(
-  filter: T | undefined,
-  protocolPath: string,
-): Omit<T, 'parentContextId'> | undefined {
-  if (!filter) { return undefined; }
-  const { parentContextId, ...rest } = filter as Record<string, unknown>;
-  const pathDepth = protocolPath.split('/').length;
-
-  // Resolve the compound parent contextId source: the explicit alias wins;
-  // a `parentId` carrying a compound value (record ids never contain '/')
-  // is treated as one for backward-friendliness with the old alias docs.
-  let compoundParentContextId: string | undefined;
-  if (typeof parentContextId === 'string') {
-    compoundParentContextId = parentContextId;
-  } else if (typeof rest.parentId === 'string' && rest.parentId.includes('/')) {
-    compoundParentContextId = rest.parentId;
-  }
-
-  if (compoundParentContextId !== undefined) {
-    // The engine's `parentId` filter matches the parent's bare record id.
-    if (rest.parentId === undefined || rest.parentId === compoundParentContextId) {
-      rest.parentId = lastSegment(compoundParentContextId);
-    }
-    // Nested-path Query/Subscribe require the direct parent's compound
-    // contextId; inject it when the caller didn't set one explicitly.
-    if (pathDepth >= 2 && rest.contextId === undefined) {
-      rest.contextId = compoundParentContextId;
-    }
-  } else if (pathDepth === 2 && typeof rest.parentId === 'string' && rest.contextId === undefined) {
-    // Depth-2 paths have a ROOT parent, whose contextId IS its record id —
-    // derive the required contextId filter from the bare parentId.
-    rest.contextId = rest.parentId;
-  }
-
-  return rest as Omit<T, 'parentContextId'>;
-}
 
 /**
  * Compares two protocol definitions for **logical** equality using
@@ -1816,14 +1310,6 @@ function normalizePath(path: string): string {
   let end = path.length;
   while (end > start && path.codePointAt(end - 1) === 47) { end--; }
   return path.slice(start, end);
-}
-
-/**
- * Returns the last segment of a slash-delimited path.
- */
-function lastSegment(path: string): string {
-  const parts = path.split('/');
-  return parts.at(-1)!;
 }
 
 /**
