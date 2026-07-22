@@ -1,6 +1,7 @@
 import type { PermissionScope, RecordsPermissionScope } from '../types/permission-types.js';
 import type { ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
 
+import { FilterUtility } from './filter.js';
 import { KeyDerivationScheme } from './hd-key.js';
 import { ProtocolAction } from '../types/protocols-types.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
@@ -171,7 +172,7 @@ function readGrantKeyScopeCoversDeliveredScope(input: {
     return false;
   }
 
-  if (isBoundaryAwareSubtree(grantProtocolPath, deliveredProtocolPath)) {
+  if (FilterUtility.matchesSubtree(grantProtocolPath, deliveredProtocolPath)) {
     return true;
   }
 
@@ -206,7 +207,7 @@ function writeGrantKeyScopeCoversDeliveredScope(input: {
     return true;
   }
 
-  return isBoundaryAwareSubtree(grantProtocolPath, deliveredProtocolPath);
+  return FilterUtility.matchesSubtree(grantProtocolPath, deliveredProtocolPath);
 }
 
 function getGrantKeyReadRolePathsForScope(protocolDefinition: ProtocolDefinition, scopeProtocolPath: string): string[] {
@@ -257,7 +258,7 @@ function collectReadRolePaths(protocolDefinition: ProtocolDefinition, ruleSet: P
 
 function getGrantKeyRolePathsCoveredByScope(protocolDefinition: ProtocolDefinition, scopeProtocolPath?: string): string[] {
   return collectRolePaths(protocolDefinition, protocolDefinition.structure as ProtocolRuleSet)
-    .filter((rolePath) => scopeProtocolPath === undefined || isBoundaryAwareSubtree(scopeProtocolPath, rolePath));
+    .filter((rolePath) => scopeProtocolPath === undefined || FilterUtility.matchesSubtree(scopeProtocolPath, rolePath));
 }
 
 function collectRolePaths(protocolDefinition: ProtocolDefinition, ruleSet: ProtocolRuleSet, parentPath: string[] = []): string[] {
@@ -283,10 +284,6 @@ function collectRolePaths(protocolDefinition: ProtocolDefinition, ruleSet: Proto
 function isGrantKeyLocalRolePath(protocolDefinition: ProtocolDefinition, protocolPath: string): boolean {
   const ruleSet = getRuleSetAtPath(protocolPath, protocolDefinition.structure);
   return ruleSet?.$role === true && ruleSet.$keyAgreement !== undefined;
-}
-
-function isBoundaryAwareSubtree(scopePath: string, candidatePath: string): boolean {
-  return `${candidatePath}/`.startsWith(`${scopePath}/`);
 }
 
 function getGrantKeyScopeCacheKey(scope: GrantKeyProtocolPathScope): string {

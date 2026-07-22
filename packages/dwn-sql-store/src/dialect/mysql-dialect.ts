@@ -10,6 +10,7 @@ import type {
   RawBuilder,
   SelectExpression,
   Selection,
+  SqlBool,
   Transaction } from 'kysely';
 
 import {
@@ -112,5 +113,13 @@ export class MysqlDialect extends KyselyMysqlDialect implements Dialect {
 
   bigIntColumnAsText(columnReference: string): RawBuilder<string | null> {
     return sql<string | null>`CAST(${sql.ref(columnReference)} AS CHAR)`;
+  }
+
+  subtreePredicate(columnReference: string, subtree: string): RawBuilder<SqlBool> {
+    const descendantPrefix = `${subtree}/`;
+    return sql<SqlBool>`(
+      CAST(${sql.ref(columnReference)} AS BINARY) = CAST(${subtree} AS BINARY)
+      OR LOCATE(CAST(${descendantPrefix} AS BINARY), CAST(${sql.ref(columnReference)} AS BINARY)) = 1
+    )`;
   }
 }

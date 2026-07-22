@@ -11,6 +11,7 @@ import { Records } from '../utils/records.js';
 import { RecordsCount } from '../interfaces/records-count.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { countRecordsWithRecordLimitOccupancy, queryRecordsWithRecordLimitOccupancy } from '../utils/record-limit-occupancy.js';
+import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
 export class RecordsCountHandler implements MethodHandler {
@@ -31,26 +32,33 @@ export class RecordsCountHandler implements MethodHandler {
     let count: number;
     const requester = Message.getRequester(recordsCount.message);
 
-    // if this is an anonymous count and the filter supports published records, count only published records
-    if (Records.filterIncludesPublishedRecords(recordsCount.message.descriptor.filter) && recordsCount.author === undefined) {
-      count = await this.countPublishedRecords(tenant, recordsCount, requester);
-    } else {
-      // authentication and authorization
-      try {
-        await authenticate(message.authorization!, this.deps.didResolver);
-
-        await RecordsCountHandler.authorizeRecordsCount(tenant, recordsCount, this.deps);
-      } catch (e) {
-        return messageReplyFromError(e, 401);
-      }
-
-      if (recordsCount.author === tenant && requester === tenant) {
-        count = await this.countRecordsAsOwner(tenant, recordsCount);
-      } else if (recordsCount.author === tenant) {
-        count = await this.countRecordsAsOwnerDelegate(tenant, recordsCount, requester);
+    try {
+      // if this is an anonymous count and the filter supports published records, count only published records
+      if (Records.filterIncludesPublishedRecords(recordsCount.message.descriptor.filter) && recordsCount.author === undefined) {
+        count = await this.countPublishedRecords(tenant, recordsCount, requester);
       } else {
-        count = await this.countRecordsAsNonOwner(tenant, recordsCount, requester);
+        // authentication and authorization
+        try {
+          await authenticate(message.authorization!, this.deps.didResolver);
+
+          await RecordsCountHandler.authorizeRecordsCount(tenant, recordsCount, this.deps);
+        } catch (e) {
+          return messageReplyFromError(e, 401);
+        }
+
+        if (recordsCount.author === tenant && requester === tenant) {
+          count = await this.countRecordsAsOwner(tenant, recordsCount);
+        } else if (recordsCount.author === tenant) {
+          count = await this.countRecordsAsOwnerDelegate(tenant, recordsCount, requester);
+        } else {
+          count = await this.countRecordsAsNonOwner(tenant, recordsCount, requester);
+        }
       }
+    } catch (error) {
+      if (error instanceof DwnError && error.code === DwnErrorCode.RecordsRecordLimitAncestorScopeUnsupported) {
+        return messageReplyFromError(error, 400);
+      }
+      throw error;
     }
 
     return {

@@ -1,3 +1,5 @@
+import { FilterUtility } from './filter.js';
+
 /**
  * Minimal protocol-bound scope shape used by permission grant authorization.
  *
@@ -38,22 +40,13 @@ export class PermissionScopeMatcher {
     }
 
     if (scope.protocolPath !== undefined) {
-      return PermissionScopeMatcher.matchesSubtree(scope.protocolPath, target.protocolPath);
+      return FilterUtility.matchesSubtree(scope.protocolPath, target.protocolPath);
     }
 
     if (scope.contextId !== undefined) {
-      return PermissionScopeMatcher.matchesContextId(scope.contextId, target.contextId);
+      return FilterUtility.matchesSubtree(scope.contextId, target.contextId);
     }
 
     return true;
-  }
-
-  private static matchesContextId(scopeContextId: string, candidateContextId: unknown): boolean {
-    return PermissionScopeMatcher.matchesSubtree(scopeContextId, candidateContextId);
-  }
-
-  private static matchesSubtree(scopeValue: string, candidateValue: unknown): boolean {
-    return typeof candidateValue === 'string' &&
-      (candidateValue === scopeValue || candidateValue.startsWith(scopeValue + '/'));
   }
 }

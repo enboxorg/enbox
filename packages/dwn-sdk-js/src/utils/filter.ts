@@ -1,4 +1,4 @@
-import type { EqualFilter, Filter, FilterValue, KeyValues, OneOfFilter, RangeCriterion, RangeFilter, RangeValue } from '../types/query-types.js';
+import type { EqualFilter, Filter, FilterValue, KeyValues, OneOfFilter, RangeCriterion, RangeFilter, RangeValue, SubtreeFilter } from '../types/query-types.js';
 
 /**
  * A Utility class to help match indexes against filters.
@@ -84,7 +84,9 @@ export class FilterUtility {
         if (this.matchOneOf(filterValue, indexValue)) {
           return true;
         }
-      } else if (this.matchRange(filterValue, indexValue as RangeValue)) {
+      } else if (this.isSubtreeFilter(filterValue) && this.matchesSubtree(filterValue.subtree, indexValue)) {
+        return true;
+      } else if (this.isRangeFilter(filterValue) && this.matchRange(filterValue, indexValue as RangeValue)) {
         // `filterValue` is a `RangeFilter`
         // range filters cannot range over booleans
         return true;
@@ -148,6 +150,14 @@ export class FilterUtility {
     return false;
   }
 
+  static isSubtreeFilter(filter: FilterValue): filter is SubtreeFilter {
+    return typeof filter === 'object' &&
+      filter !== null &&
+      !Array.isArray(filter) &&
+      Object.keys(filter).length === 1 &&
+      typeof (filter as Partial<SubtreeFilter>).subtree === 'string';
+  }
+
   static isOneOfFilter(filter: FilterValue): filter is OneOfFilter {
     if (typeof filter === 'object' && Array.isArray(filter)) {
       return true;
@@ -179,6 +189,15 @@ export class FilterUtility {
       gte : prefix,
       lt  : prefix + '\uffff',
     };
+  }
+
+  /**
+   * Returns whether a candidate is the selected hierarchical path or one of
+   * its proper `/`-delimited descendants.
+   */
+  static matchesSubtree(subtree: string, candidate: unknown): candidate is string {
+    return typeof candidate === 'string' &&
+      (candidate === subtree || candidate.startsWith(`${subtree}/`));
   }
 
 }

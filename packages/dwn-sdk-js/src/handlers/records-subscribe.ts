@@ -17,7 +17,7 @@ import { RecordsSubscribe } from '../interfaces/records-subscribe.js';
 import { SortDirection } from '../types/query-types.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
-import { isRecordLimitOccupant, queryRecordsWithRecordLimitOccupancy } from '../utils/record-limit-occupancy.js';
+import { isRecordLimitOccupant, queryRecordsWithRecordLimitOccupancy, validateRecordLimitContextScope } from '../utils/record-limit-occupancy.js';
 
 type ProjectedRecordsSubscriptionHandler = {
   listener: SubscriptionListener;
@@ -57,6 +57,23 @@ export class RecordsSubscribeHandler implements MethodHandler {
       return filterResolution.errorReply;
     }
     const { eventFilters, queryFilters } = filterResolution;
+
+    try {
+      // Validate before registering either subscription mode. A rejected
+      // snapshot must never expose a live callback before its query fails.
+      await validateRecordLimitContextScope({
+        messageStore          : this.deps.messageStore,
+        validationStateReader : this.deps.validationStateReader,
+        tenant,
+        filter                : recordsSubscribe.message.descriptor.filter,
+        messageTimestamp      : recordsSubscribe.message.descriptor.messageTimestamp,
+      });
+    } catch (error) {
+      const statusCode = error instanceof DwnError && error.code === DwnErrorCode.RecordsRecordLimitAncestorScopeUnsupported
+        ? 400
+        : 500;
+      return messageReplyFromError(error, statusCode);
+    }
 
     const messageCid = await Message.getCid(message);
     const { cursor: eventLogCursor } = recordsSubscribe.message.descriptor;
@@ -204,7 +221,10 @@ export class RecordsSubscribeHandler implements MethodHandler {
     } catch (error) {
       // if the query fails, close the subscription and return the error
       await subscription.close();
-      return messageReplyFromError(error, 500);
+      const statusCode = error instanceof DwnError && error.code === DwnErrorCode.RecordsRecordLimitAncestorScopeUnsupported
+        ? 400
+        : 500;
+      return messageReplyFromError(error, statusCode);
     }
 
     // Step 3: Return subscription + initial entries + cursor

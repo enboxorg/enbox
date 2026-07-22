@@ -6,7 +6,6 @@ import type { MessageStore, MessageStorePutResult } from '../types/message-store
 import type { RecordsDeleteMessage, RecordsWriteMessage } from '../types/records-types.js';
 
 import { DwnConstant } from '../core/dwn-constant.js';
-import { FilterUtility } from '../utils/filter.js';
 import { Message } from '../core/message.js';
 import { Records } from '../utils/records.js';
 import { RecordsDelete } from '../interfaces/records-delete.js';
@@ -123,8 +122,7 @@ export class StorageController {
     // Scope by parent context for nested records
     const parentContextId = Records.getParentContextFromOfContextId(message.contextId);
     if (parentContextId !== undefined && parentContextId !== '') {
-      const prefixFilter = FilterUtility.constructPrefixFilterAsRangeFilter(parentContextId);
-      filter.contextId = prefixFilter;
+      filter.contextId = { subtree: parentContextId };
     }
 
     // Query for all records at this path and context

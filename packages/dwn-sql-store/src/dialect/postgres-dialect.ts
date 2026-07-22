@@ -9,6 +9,7 @@ import type {
   RawBuilder,
   SelectExpression,
   Selection,
+  SqlBool,
   Transaction } from 'kysely';
 
 import {
@@ -91,6 +92,14 @@ export class PostgresDialect extends KyselyPostgresDialect implements Dialect {
 
   bigIntColumnAsText(columnReference: string): RawBuilder<string | null> {
     return sql<string | null>`CAST(${sql.ref(columnReference)} AS TEXT)`;
+  }
+
+  subtreePredicate(columnReference: string, subtree: string): RawBuilder<SqlBool> {
+    const descendantPrefix = `${subtree}/`;
+    return sql<SqlBool>`(
+      convert_to(${sql.ref(columnReference)}, 'UTF8') = convert_to(${subtree}, 'UTF8')
+      OR position(convert_to(${descendantPrefix}, 'UTF8') in convert_to(${sql.ref(columnReference)}, 'UTF8')) = 1
+    )`;
   }
 
 }

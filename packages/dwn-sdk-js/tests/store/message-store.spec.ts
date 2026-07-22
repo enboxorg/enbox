@@ -468,6 +468,42 @@ export function testMessageStore(): void {
       });
 
       describe('pagination', () => {
+        it('should query and count byte-stable slash-delimited subtrees across pages', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const subtree = 'Root1';
+          const contexts = [
+            subtree,
+            `${subtree}/Child1`,
+            `${subtree}/Child1/Grandchild`,
+            `${subtree}/Child2`,
+            `${subtree}Sibling/Child`,
+            `root1/CaseVariant`,
+          ];
+          const expectedCids: string[] = [];
+
+          for (const [index, contextId] of contexts.entries()) {
+            const messageTimestamp = `2026-07-22T00:00:0${index}.000000Z`;
+            const { message } = await TestDataGenerator.generateRecordsWrite({ messageTimestamp });
+            await messageStore.put(alice.did, message, { contextId, messageTimestamp });
+            if (index < 4) {
+              expectedCids.push(await Message.getCid(message));
+            }
+          }
+
+          const filter = [{ contextId: { subtree } }];
+          const unpaged = await messageStore.query(alice.did, filter);
+          expect(await Promise.all(unpaged.messages.map(message => Message.getCid(message)))).toEqual(expectedCids);
+          expect(await messageStore.count(alice.did, filter)).toBe(expectedCids.length);
+
+          const firstPage = await messageStore.query(alice.did, filter, {}, { limit: 2 });
+          expect(await Promise.all(firstPage.messages.map(message => Message.getCid(message)))).toEqual(expectedCids.slice(0, 2));
+          expect(firstPage.cursor).toBeDefined();
+
+          const secondPage = await messageStore.query(alice.did, filter, {}, { cursor: firstPage.cursor, limit: 2 });
+          expect(await Promise.all(secondPage.messages.map(message => Message.getCid(message)))).toEqual(expectedCids.slice(2));
+          expect(secondPage.cursor).toBeUndefined();
+        });
+
         it('should return all records if no limit is specified', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const messages = await Promise.all(Array(10).fill({}).map((_) => TestDataGenerator.generateRecordsWrite({

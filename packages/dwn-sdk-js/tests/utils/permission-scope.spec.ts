@@ -52,6 +52,10 @@ describe('PermissionScopeMatcher', () => {
       protocol  : 'https://example.com/protocol',
       contextId : 'root/child',
     })).toBe(true);
+    expect(PermissionScopeMatcher.matches({ ...scope, contextId: 'root/child' }, {
+      protocol  : 'https://example.com/protocol',
+      contextId : 'root',
+    })).toBe(false);
     expect(PermissionScopeMatcher.matches(scope, {
       protocol  : 'https://example.com/protocol',
       contextId : 'rootEVIL',

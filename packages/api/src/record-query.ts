@@ -49,6 +49,7 @@ const dateSortValues = new Set<unknown>([
   DateSort.UpdatedAscending,
   DateSort.UpdatedDescending,
 ]);
+const contextIdPattern = /^[a-zA-Z0-9]+(?:\/[a-zA-Z0-9]+)*$/;
 
 /**
  * Type-safe scalar tag filters explicitly declared by the protocol at one
@@ -142,6 +143,7 @@ export function compileRecordQuery(
   } = {},
 ): CompiledRecordQuery {
   assertValidQueryControls(query.dateSort, query.pagination);
+  assertValidQueryContextScope(protocolPath, query.filter?.contextId);
 
   return {
     from         : query.from,
@@ -171,11 +173,6 @@ export function compileRecordFilter(
     compiledFilter.published = true;
   }
 
-  const directParentId = getDirectParentId(filter?.contextId, protocolPath);
-  if (directParentId !== undefined) {
-    compiledFilter.parentId = directParentId;
-  }
-
   const typeName = getTypeName(protocolPath);
   const schema = definition.types[typeName]?.schema;
   return {
@@ -196,11 +193,25 @@ function assertValidFilter(filter: RecordFilterInput | undefined, dateSort: Date
   if (filter?.tags !== undefined && Object.keys(filter.tags).length === 0) {
     throw new TypeError('RecordFilter: tags must contain at least one tag filter.');
   }
-  if (filter?.contextId === '') {
-    throw new TypeError('RecordFilter: contextId must not be empty.');
+  if (filter?.contextId !== undefined && (filter.contextId.length > 600 || !contextIdPattern.test(filter.contextId))) {
+    throw new TypeError('RecordFilter: contextId must be at most 600 characters of alphanumeric path segments.');
   }
   if (filter?.published === false && selectsPublishedRecords(filter, dateSort)) {
     throw new TypeError('RecordFilter: published-date filters and sorting cannot be combined with published: false.');
+  }
+}
+
+function assertValidQueryContextScope(protocolPath: string, contextId: string | undefined): void {
+  if (!protocolPath.includes('/')) {
+    return;
+  }
+
+  if (contextId === undefined) {
+    throw new TypeError(`RecordQuery: nested protocol path '${protocolPath}' requires a contextId scope.`);
+  }
+
+  if (contextId.split('/').length > protocolPath.split('/').length) {
+    throw new TypeError(`RecordQuery: contextId cannot be deeper than protocol path '${protocolPath}'.`);
   }
 }
 
@@ -241,25 +252,6 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function normalizeStringSelection(selection: StringSelection): string | string[] {
   return typeof selection === 'string' ? selection : [...selection];
-}
-
-/**
- * Add an exact parent-ID fence when `contextId` names the direct parent of
- * the selected path. This preserves exact child selection independently of
- * the DWN context index's prefix representation. Shallower context scopes
- * are left unfenced so the DWN layer can give them segment-safe descendant
- * semantics in the follow-up implementation.
- */
-function getDirectParentId(contextId: string | undefined, protocolPath: string): string | undefined {
-  if (contextId === undefined) {
-    return undefined;
-  }
-
-  const pathDepth = protocolPath.split('/').length;
-  const contextSegments = contextId.split('/');
-  return pathDepth > 1 && contextSegments.length === pathDepth - 1
-    ? contextSegments.at(-1)
-    : undefined;
 }
 
 function selectsPublishedRecords(filter: RecordFilterInput | undefined, dateSort: DateSort | undefined): boolean {

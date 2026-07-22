@@ -95,4 +95,18 @@ describe('Records', () => {
       expect(result).toEqual({ messageTimestamp: SortDirection.Descending });
     });
   });
+
+  describe('convertFilter()', () => {
+    it('should lower contextId to a segment-aware subtree filter', () => {
+      const result = Records.convertFilter({
+        contextId    : 'root/branch',
+        protocolPath : 'root/branch/leaf',
+      });
+
+      expect(result).toEqual({
+        contextId    : { subtree: 'root/branch' },
+        protocolPath : 'root/branch/leaf',
+      });
+    });
+  });
 });

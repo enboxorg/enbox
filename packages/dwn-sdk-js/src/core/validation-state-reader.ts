@@ -8,7 +8,6 @@ import type { DataEncodedRecordsWriteMessage, RecordsWriteMessage } from '../typ
 import type { ProtocolDefinition, ProtocolsConfigureMessage } from '../types/protocols-types.js';
 
 import { ENCRYPTION_CONTROL_AUDIENCE_PATH } from './constants.js';
-import { FilterUtility } from '../utils/filter.js';
 import { PermissionGrant } from '../protocols/permission-grant.js';
 import { PermissionsProtocol } from '../protocols/permissions.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
@@ -313,7 +312,7 @@ export class StoreValidationStateReader implements ValidationStateReader {
     };
 
     if (input.contextIdPrefix !== undefined) {
-      filter.contextId = FilterUtility.constructPrefixFilterAsRangeFilter(input.contextIdPrefix);
+      filter.contextId = { subtree: input.contextIdPrefix };
     }
 
     const { messages } = await this.messageStore.query(
@@ -370,7 +369,7 @@ export class StoreValidationStateReader implements ValidationStateReader {
     }
 
     if (input.contextIdPrefix !== undefined) {
-      filter.contextId = FilterUtility.constructPrefixFilterAsRangeFilter(input.contextIdPrefix);
+      filter.contextId = { subtree: input.contextIdPrefix };
     }
 
     return filter;

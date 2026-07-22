@@ -589,6 +589,17 @@ export class IndexLevel {
           const exactMatches = await this.filterExactMatches(tenant, propertyName, propertyValue, levelOptions);
           processResults(exactMatches);
         }
+      } else if (FilterUtility.isSubtreeFilter(propertyFilter)) {
+        const exactMatches = await this.filterExactMatches(tenant, propertyName, propertyFilter.subtree, levelOptions);
+        processResults(exactMatches);
+
+        const descendantMatches = await this.filterRangeMatches(
+          tenant,
+          propertyName,
+          FilterUtility.constructPrefixFilterAsRangeFilter(`${propertyFilter.subtree}/`),
+          levelOptions,
+        );
+        processResults(descendantMatches);
       } else if (FilterUtility.isRangeFilter(propertyFilter)) {
         // `propertyFilter` is a `RangeFilter`
         const rangeMatches = await this.filterRangeMatches(tenant, propertyName, propertyFilter, levelOptions);

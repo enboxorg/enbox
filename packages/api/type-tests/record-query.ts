@@ -131,7 +131,7 @@ void typed.records.query('attachment', { filter: { dataFormat: 'image/jpeg' } })
 // @ts-expect-error query scope uses the DWN contextId field directly.
 void typed.records.query('note/comment', { filter: { parentContextId: 'root/note' } });
 
-// @ts-expect-error parentId is an internal direct-parent fence on the typed surface.
+// @ts-expect-error parentId is a raw structural edge, not a typed context selector.
 void typed.records.query('note/comment', { filter: { parentId: 'note' } });
 
 const InlineProtocol = defineProtocol({

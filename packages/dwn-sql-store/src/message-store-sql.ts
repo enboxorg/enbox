@@ -385,7 +385,7 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
       ])
       .where('tenant', '=', tenant);
 
-    query = filterSelectQuery(filters, query);
+    query = filterSelectQuery(filters, query, this.#dialect);
 
     if (pagination?.cursor !== undefined) {
       const cursorValue = pagination.cursor.value as string;
@@ -428,7 +428,7 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
       .select(sql<number>`count(distinct ${sql.ref('messageStoreMessages.messageCid')})`.as('count'))
       .where('tenant', '=', tenant);
 
-    query = filterSelectQuery(filters, query);
+    query = filterSelectQuery(filters, query, this.#dialect);
 
     const result = await executeUnlessAborted(query.executeTakeFirstOrThrow(), options?.signal);
 
@@ -745,7 +745,7 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
       .orderBy('seq', 'asc');
 
     if (filters !== undefined && filters.length > 0) {
-      query = filterSelectQuery(filters, query);
+      query = filterSelectQuery(filters, query, this.#dialect);
     }
 
     if (maxResults < Number.MAX_SAFE_INTEGER) {

@@ -196,26 +196,16 @@ export class Messages {
       delete filterCopy.dateUpdated;
     }
 
-    // Convert protocolPathPrefix into a protocolPath range filter.
-    // The range gte: prefix, lt: prefix + '/\uffff' matches:
-    //   - exact: 'post' (prefix itself)
-    //   - children: 'post/attachment', 'post/comment', etc.
-    //   - NOT siblings: 'poster', 'postfix' (excluded because '/' < any alphanumeric)
+    // Convert protocolPathPrefix into a segment-aware protocolPath subtree filter.
     if (protocolPathPrefix !== undefined) {
       delete (filterCopy as any).protocolPathPrefix;
-      filterCopy.protocolPath = {
-        gte : protocolPathPrefix,
-        lt  : protocolPathPrefix + '/\uffff',
-      };
+      filterCopy.protocolPath = { subtree: protocolPathPrefix };
     }
 
-    // Convert contextIdPrefix into a contextId range filter (same pattern).
+    // Convert contextIdPrefix into the same segment-aware subtree filter.
     if (contextIdPrefix !== undefined) {
       delete (filterCopy as any).contextIdPrefix;
-      filterCopy.contextId = {
-        gte : contextIdPrefix,
-        lt  : contextIdPrefix + '/\uffff',
-      };
+      filterCopy.contextId = { subtree: contextIdPrefix };
     }
 
     return filterCopy;

@@ -9,6 +9,7 @@ import type {
   RawBuilder,
   SelectExpression,
   Selection,
+  SqlBool,
   Transaction } from 'kysely';
 
 import {
@@ -98,5 +99,13 @@ export class SqliteDialect extends KyselySqliteDialect implements Dialect {
 
   bigIntColumnAsText(columnReference: string): RawBuilder<string | null> {
     return sql<string | null>`CAST(${sql.ref(columnReference)} AS TEXT)`;
+  }
+
+  subtreePredicate(columnReference: string, subtree: string): RawBuilder<SqlBool> {
+    const descendantPrefix = `${subtree}/`;
+    return sql<SqlBool>`(
+      CAST(${sql.ref(columnReference)} AS BLOB) = CAST(${subtree} AS BLOB)
+      OR instr(CAST(${sql.ref(columnReference)} AS BLOB), CAST(${descendantPrefix} AS BLOB)) = 1
+    )`;
   }
 }

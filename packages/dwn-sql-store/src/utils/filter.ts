@@ -1,6 +1,7 @@
+import type { Dialect } from '../dialect/dialect.js';
 import type { DwnDatabaseType } from '../types.js';
 import type { DynamicReferenceBuilder, ExpressionBuilder, OperandExpression, RawBuilder, SelectQueryBuilder, SqlBool } from 'kysely';
-import type { EqualFilter, Filter, RangeFilter } from '@enbox/dwn-sdk-js';
+import type { EqualFilter, Filter, RangeFilter, SubtreeFilter } from '@enbox/dwn-sdk-js';
 
 import { DynamicModule, sql } from 'kysely';
 import { sanitizedValue, sanitizeFiltersAndSeparateTags } from './sanitize.js';
@@ -17,7 +18,8 @@ const SQL_LIKE_ESCAPE = String.fromCodePoint(92);
  */
 export function filterSelectQuery<DB = DwnDatabaseType, TB extends keyof DB = keyof DB, O = unknown>(
   filters: Filter[],
-  query: SelectQueryBuilder<DB, TB, O>
+  query: SelectQueryBuilder<DB, TB, O>,
+  dialect: Dialect,
 ): SelectQueryBuilder<DB, TB, O> {
   const sanitizedFilters = sanitizeFiltersAndSeparateTags(filters);
 
@@ -27,8 +29,8 @@ export function filterSelectQuery<DB = DwnDatabaseType, TB extends keyof DB = ke
       // evaluate each filter + tags tuple as an AND expression.
       const andOperands: OperandExpression<SqlBool>[] = [];
 
-      processFilter(eb, andOperands, filter);
-      processTags(andOperands, tags);
+      processFilter(eb, andOperands, filter, dialect);
+      processTags(andOperands, tags, dialect);
 
       return eb.and(andOperands);
     }))
@@ -46,19 +48,34 @@ export function filterSelectQuery<DB = DwnDatabaseType, TB extends keyof DB = ke
 function processFilter<DB = DwnDatabaseType, TB extends keyof DB = keyof DB>(
   eb: ExpressionBuilder<DB, TB>,
   andOperands: OperandExpression<SqlBool>[],
-  filter: Filter
+  filter: Filter,
+  dialect: Dialect,
 ): void {
   for (const property in filter) {
     const value = filter[property];
     const column = new DynamicModule().ref(property);
     if (Array.isArray(value)) { // OneOfFilter
       andOperands.push(eb(column, 'in', value));
+    } else if (isSubtreeFilter(value)) {
+      processSubtreeFilterProperty(andOperands, property, value, dialect);
     } else if (typeof value === 'object') { // RangeFilter
       processRangeFilterProperty(eb, andOperands, property, column, value);
     } else { // EqualFilter
       andOperands.push(eb(column, '=', sanitizedValue(value)));
     }
   }
+}
+
+/**
+ * Adds a segment-aware subtree predicate for one indexed string property.
+ */
+function processSubtreeFilterProperty(
+  andOperands: OperandExpression<SqlBool>[],
+  property: string,
+  value: SubtreeFilter,
+  dialect: Dialect,
+): void {
+  andOperands.push(dialect.subtreePredicate(property, value.subtree));
 }
 
 /**
@@ -121,6 +138,13 @@ function getPrefixRangeFilterPrefix(value: object): string | undefined {
   return range.lt === range.gte + '\uffff' ? range.gte : undefined;
 }
 
+function isSubtreeFilter(value: unknown): value is SubtreeFilter {
+  return typeof value === 'object' &&
+    value !== null &&
+    Object.keys(value).length === 1 &&
+    typeof (value as Partial<SubtreeFilter>).subtree === 'string';
+}
+
 /**
  * Escapes SQL LIKE meta-characters (`%`, `_`) in the given string so that
  * they are matched literally.
@@ -141,7 +165,8 @@ function escapeLikePattern(input: string): string {
  */
 function processTags(
   andOperands: OperandExpression<SqlBool>[],
-  tags: Filter
+  tags: Filter,
+  dialect: Dialect,
 ): void {
 
   for (const property in tags) {
@@ -150,18 +175,18 @@ function processTags(
       from ${sql.table('messageStoreRecordsTags')}
       where ${sql.ref('messageStoreRecordsTags.messageInsertId')} = ${sql.ref('messageStoreMessages.id')}
         and ${sql.ref('messageStoreRecordsTags.tag')} = ${property}
-        and ${tagValuePredicate(tags[property])}
+        and ${tagValuePredicate(tags[property], dialect)}
     )`);
   }
 }
 
-function tagValuePredicate(value: Filter[string]): RawBuilder<SqlBool> {
+function tagValuePredicate(value: Filter[string], dialect: Dialect): RawBuilder<SqlBool> {
   if (Array.isArray(value)) {
     return tagOneOfPredicate(value);
   }
 
   if (typeof value === 'object') {
-    return tagObjectPredicate(value);
+    return tagObjectPredicate(value, dialect);
   }
 
   return tagEqualPredicate(value);
@@ -183,7 +208,11 @@ function tagOneOfPredicate(values: EqualFilter[]): RawBuilder<SqlBool> {
   return joinTagPredicates(operands, 'or', false);
 }
 
-function tagObjectPredicate(value: RangeFilter): RawBuilder<SqlBool> {
+function tagObjectPredicate(value: RangeFilter | SubtreeFilter, dialect: Dialect): RawBuilder<SqlBool> {
+  if (isSubtreeFilter(value)) {
+    return dialect.subtreePredicate('messageStoreRecordsTags.valueString', value.subtree);
+  }
+
   const prefixRangeFilterPrefix = getPrefixRangeFilterPrefix(value);
   if (prefixRangeFilterPrefix !== undefined) {
     const prefix = escapeLikePattern(prefixRangeFilterPrefix);
