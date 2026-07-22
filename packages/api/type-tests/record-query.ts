@@ -1,7 +1,7 @@
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { RecordQuery, TypedEnbox } from '../src/index.js';
+import type { RecordQuery, RecordsCountResponse, TypedEnbox } from '@enbox/api';
 
-import { defineProtocol } from '../src/index.js';
+import { defineProtocol } from '@enbox/api';
 
 const QueryDefinition = {
   protocol  : 'https://example.com/protocols/query-types',
@@ -63,6 +63,9 @@ type QuerySchemaMap = {
 
 declare const typed: TypedEnbox<typeof QueryDefinition, QuerySchemaMap>;
 declare const authors: string[];
+
+const countResponse: Promise<RecordsCountResponse> = typed.records.count('note');
+void countResponse;
 
 const reusableQuery = {
   filter: {

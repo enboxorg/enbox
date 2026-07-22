@@ -844,14 +844,14 @@ describe('TypedProtocol API', () => {
 
       });
 
-      describe('lastSegment()', () => {
+      describe('protocol-path type resolution', () => {
         it('should resolve schema from the last segment of a nested path', async () => {
           // Create a parent list first.
           const { record: listRecord } = await typed.records.create('list', {
             data: { name: 'LastSegment Test' },
           });
 
-          // Create a task — lastSegment('list/task') = 'task' → resolves to task schema.
+          // The final `task` path segment resolves to the task schema.
           const { status, record } = await typed.records.create('list/task', {
             data            : { title: 'Deep task', completed: false },
             parentContextId : listRecord.contextId,
@@ -870,7 +870,7 @@ describe('TypedProtocol API', () => {
             parentContextId : listRecord.contextId,
           });
 
-          // lastSegment('list/task/attachment') = 'attachment' → no schema (schema-less type).
+          // The final `attachment` path segment resolves to the schema-less attachment type.
           const blob = new Blob(['content'], { type: 'application/octet-stream' });
           const { status, record } = await typed.records.create('list/task/attachment', {
             data            : blob,

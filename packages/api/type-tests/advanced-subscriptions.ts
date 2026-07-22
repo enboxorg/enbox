@@ -5,7 +5,7 @@ import type {
   MessagesSubscribeResponse,
   RecordsSubscribeRequest,
   RecordsSubscribeResponse,
-} from '../src/advanced.js';
+} from '@enbox/api/advanced';
 
 declare const handler: DwnSubscriptionHandler;
 declare const message: DwnSubscriptionMessage;

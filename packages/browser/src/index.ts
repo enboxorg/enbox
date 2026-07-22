@@ -50,6 +50,7 @@ export type {
   EnboxSessionParams,
   RecordFilter,
   RecordQuery,
+  RecordsCountResponse,
 } from '@enbox/api';
 
 // ─── Re-exports from @enbox/auth ────────────────────────────────

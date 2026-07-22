@@ -3,7 +3,7 @@ import type { AgentPermissionsApi, DwnDataEncodedRecordsWriteMessage, DwnRespons
 import sinon from 'sinon';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
-import { DwnInterface } from '@enbox/agent';
+import { DwnInterface, PermissionGrantNotFoundError } from '@enbox/agent';
 
 import { DwnApi } from '../src/dwn-api.js';
 
@@ -180,7 +180,6 @@ describe('DwnApi records.count()', () => {
     const dwn = createDwnApi(agent, permissions, { delegateDid });
 
     const response = await dwn.records.read({
-      protocol,
       filter: { protocol, protocolPath: 'note', contextId: 'root/note' },
     });
 
@@ -195,6 +194,12 @@ describe('DwnApi records.count()', () => {
       cached       : true,
       messageType  : DwnInterface.RecordsRead,
     })).toBe(true);
+
+    const request = agent.processDwnRequest.firstCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsRead>;
+    expect(request.messageParams).toEqual({
+      filter: { protocol, protocolPath: 'note', contextId: 'root/note' },
+      delegatedGrant,
+    });
   });
 
   it('should resolve path- and context-scoped grants for subscriptions', async () => {
@@ -223,7 +228,10 @@ describe('DwnApi records.count()', () => {
   });
 
   it('should author as the delegate when no delegated grant is available', async () => {
-    permissions.getPermissionForRequest.rejects(new Error('no matching grant'));
+    permissions.getPermissionForRequest.rejects(new PermissionGrantNotFoundError({
+      messageType: DwnInterface.RecordsCount,
+      protocol,
+    }));
     agent.processDwnRequest.resolves(createCountResponse({ code: 200, detail: 'OK' }, 1));
     const dwn = createDwnApi(agent, permissions, { delegateDid });
 

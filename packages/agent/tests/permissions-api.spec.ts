@@ -3,10 +3,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, mock, spyOn } fr
 
 import type { DwnPermissionScope, EnboxPlatformAgent } from '../src/index.js';
 
-import { AgentPermissionsApi } from '../src/permissions-api.js';
 import { Convert } from '@enbox/common';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
+import { AgentPermissionsApi, PermissionGrantNotFoundError } from '../src/permissions-api.js';
 import { DwnInterface, DwnPermissionGrant, type PermissionGrantEntry } from '../src/index.js';
 import { DwnInterfaceName, DwnMethodName, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
 
@@ -94,7 +94,8 @@ describe('AgentPermissionsApi', () => {
         });
         throw new Error('Expected an error to be thrown');
       } catch (error: any) {
-        expect(error.message).toBe('CachedPermissions: No permissions found for MessagesQuery: undefined');
+        expect(error).toBeInstanceOf(PermissionGrantNotFoundError);
+        expect(error.message).toBe('AgentPermissionsApi: No matching permission grant found for MessagesQuery: undefined');
       }
 
       // create a permission grant to fetch
@@ -292,7 +293,7 @@ describe('AgentPermissionsApi', () => {
       expect(fetchGrantSpy.mock.calls).toHaveLength(2);
     });
 
-    it('uses unambiguous cache keys for protocolPath-scoped grants', async () => {
+    it('matches distinct protocolPath scopes from one cached grant catalog', async () => {
       const storeGrantForDelegate = async (scope: DwnPermissionScope): Promise<PermissionGrantEntry> => {
         const grant = await testHarness.agent.permissions.createGrant({
           store       : true,
@@ -351,7 +352,7 @@ describe('AgentPermissionsApi', () => {
         cached       : true
       });
       expect(secondFetched.message.recordId).toBe(secondGrant.message.recordId);
-      expect(fetchGrantSpy.mock.calls).toHaveLength(2);
+      expect(fetchGrantSpy.mock.calls).toHaveLength(1);
     });
   });
 

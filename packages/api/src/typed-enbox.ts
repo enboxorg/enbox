@@ -39,6 +39,7 @@ import type { DwnApi, ProtocolsConfigureResponse, RecordsCountResponse } from '.
 import type { ProtocolDefinition, ProtocolType } from '@enbox/dwn-sdk-js';
 import type { RecordFilter, RecordQuery } from './record-query.js';
 
+import { getTypeName } from '@enbox/dwn-sdk-js';
 import { TypedRecord } from './typed-record.js';
 import { compileRecordFilter, compileRecordQuery } from './record-query.js';
 
@@ -1010,7 +1011,7 @@ export class TypedEnbox<
       ): Promise<TypedCreateResponse<DataForPath<D, M, Path>>> => {
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
-        const typeName = lastSegment(normalizedPath);
+        const typeName = getTypeName(normalizedPath);
         const typeEntry = this._definition.types[typeName];
 
         const { status, record, audienceKeyDelivery } = await this._dwn.records.write({
@@ -1141,9 +1142,8 @@ export class TypedEnbox<
         await this._ensureReady(normalizedPath);
         const readFilter = compileRecordFilter(this._definition, normalizedPath, request.filter);
         const { status, record } = await this._dwn.records.read({
-          from     : request.from,
-          protocol : this._definition.protocol,
-          filter   : readFilter,
+          from   : request.from,
+          filter : readFilter,
         });
 
         return {
@@ -1302,14 +1302,6 @@ function normalizePath(path: string): string {
   let end = path.length;
   while (end > start && path.codePointAt(end - 1) === 47) { end--; }
   return path.slice(start, end);
-}
-
-/**
- * Returns the last segment of a slash-delimited path.
- */
-function lastSegment(path: string): string {
-  const parts = path.split('/');
-  return parts.at(-1)!;
 }
 
 /**

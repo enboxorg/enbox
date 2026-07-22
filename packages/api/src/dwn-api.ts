@@ -29,7 +29,7 @@ import { PermissionGrant } from './permission-grant.js';
 import { PermissionRequest } from './permission-request.js';
 import { Protocol } from './protocol.js';
 import { Record } from './record.js';
-import { AgentPermissionsApi, DwnInterface, getRecordAuthor } from '@enbox/agent';
+import { AgentPermissionsApi, DwnInterface, getRecordAuthor, PermissionGrantNotFoundError } from '@enbox/agent';
 
 type ReadLikeRecordsInterface =
   | DwnInterface.RecordsCount
@@ -177,9 +177,6 @@ export type RecordsQueryResponse = DwnResponseStatus & {
 export type RecordsReadRequest = Omit<DwnMessageParams[DwnInterface.RecordsRead], 'signer'> & {
   /** Optional DID specifying the remote target DWN tenant the record will be read from. */
   from?: string;
-
-  /** Protocol URI for permission grant resolution. */
-  protocol?: string;
 };
 
 /**
@@ -383,7 +380,10 @@ export class DwnApi {
         },
         granteeDid: this.delegateDid,
       };
-    } catch {
+    } catch (error: unknown) {
+      if (!(error instanceof PermissionGrantNotFoundError)) {
+        throw error;
+      }
       // A delegate without a matching owner grant can still request records
       // visible to the delegate itself, including public records.
       return { ...request, author: this.delegateDid };
@@ -658,7 +658,10 @@ export class DwnApi {
               permissionGrantId
             };
             agentRequest.granteeDid = this.delegateDid;
-          } catch {
+          } catch (error: unknown) {
+            if (!(error instanceof PermissionGrantNotFoundError)) {
+              throw error;
+            }
             // if a grant is not found, we should author the request as the delegated DID to get public protocols
             agentRequest.author = this.delegateDid;
           }
@@ -744,7 +747,10 @@ export class DwnApi {
                 permissionGrantIds: [grant.id],
               };
               agentRequest.granteeDid = this.delegateDid;
-            } catch {
+            } catch (error: unknown) {
+              if (!(error instanceof PermissionGrantNotFoundError)) {
+                throw error;
+              }
               // Without a usable grant, author as the delegate so only
               // public or otherwise delegate-visible messages are delivered.
               agentRequest.author = this.delegateDid;
@@ -914,7 +920,7 @@ export class DwnApi {
        * Read a single record based on the given filter
        */
       read: async (request: RecordsReadRequest): Promise<RecordsReadResponse> => {
-        const { from, protocol, ...messageParams } = request;
+        const { from, ...messageParams } = request;
 
         const agentRequest = await this.prepareRecordsReadRequest({
           /**
@@ -931,7 +937,7 @@ export class DwnApi {
           */
           target      : from || this.connectedDid,
         }, {
-          protocol,
+          protocol     : messageParams.filter?.protocol,
           protocolPath : messageParams.filter?.protocolPath,
           contextId    : messageParams.filter?.contextId,
         });

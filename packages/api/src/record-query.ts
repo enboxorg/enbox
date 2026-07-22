@@ -2,7 +2,7 @@ import type { DwnPaginationCursor } from '@enbox/agent';
 import type { DataFormatAtPath, ProtocolPaths, TagKeys, TagsAtPath } from './protocol-types.js';
 import type { Pagination, ProtocolDefinition, RecordsFilter } from '@enbox/dwn-sdk-js';
 
-import { DateSort } from '@enbox/dwn-sdk-js';
+import { DateSort, getTypeName } from '@enbox/dwn-sdk-js';
 
 type LowerBound<T extends string | number> =
   | { gt: T; gte?: never }
@@ -176,7 +176,7 @@ export function compileRecordFilter(
     compiledFilter.parentId = directParentId;
   }
 
-  const typeName = protocolPath.split('/').at(-1)!;
+  const typeName = getTypeName(protocolPath);
   const schema = definition.types[typeName]?.schema;
   return {
     ...compiledFilter,
@@ -195,6 +195,9 @@ function assertValidFilter(filter: RecordFilterInput | undefined, dateSort: Date
   }
   if (filter?.tags !== undefined && Object.keys(filter.tags).length === 0) {
     throw new TypeError('RecordFilter: tags must contain at least one tag filter.');
+  }
+  if (filter?.contextId === '') {
+    throw new TypeError('RecordFilter: contextId must not be empty.');
   }
   if (filter?.published === false && selectsPublishedRecords(filter, dateSort)) {
     throw new TypeError('RecordFilter: published-date filters and sorting cannot be combined with published: false.');

@@ -153,6 +153,8 @@ describe('RecordQuery', () => {
       .toThrow('RecordFilter: recipient must not be an empty array');
     expect(() => compileRecordFilter(QueryDefinition, 'note', { tags: {} }))
       .toThrow('RecordFilter: tags must contain at least one tag filter');
+    expect(() => compileRecordFilter(QueryDefinition, 'note', { contextId: '' }))
+      .toThrow('RecordFilter: contextId must not be empty');
     expect(() => compileRecordQuery(QueryDefinition, 'note', {
       filter   : { published: false },
       dateSort : DateSort.PublishedAscending,

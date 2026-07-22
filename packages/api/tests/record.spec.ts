@@ -253,9 +253,9 @@ describe('Record', () => {
 
       // attempt to read the record with the delegated grant
       const readResult = await delegateDwn.records.read({
-        protocol : notesProtocol.protocol,
-        filter   : {
-          recordId: record!.id
+        filter: {
+          protocol : notesProtocol.protocol,
+          recordId : record!.id
         }
       });
 
@@ -319,9 +319,9 @@ describe('Record', () => {
 
       // attempt to read the record with the delegated grant
       const readResult = await delegateDwn.records.read({
-        protocol : notesProtocol.protocol,
-        filter   : {
-          recordId: record!.id
+        filter: {
+          protocol : notesProtocol.protocol,
+          recordId : record!.id
         }
       });
 

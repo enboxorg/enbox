@@ -10,6 +10,8 @@ import { DwnInterface, DwnPermissionGrant, DwnPermissionRequest } from './types/
 import { DwnInterfaceName, DwnMethodName, PermissionScopeMatcher, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
 
 const REVOCATION_CHECK_CONCURRENCY = 8;
+const PERMISSION_CATALOG_CACHE_MAX = 100;
+const PERMISSION_CATALOG_CACHE_TTL = 60 * 1000;
 
 type GrantMatchRank = {
   exactMessageType: boolean;
@@ -18,11 +20,28 @@ type GrantMatchRank = {
   dateGranted: string;
 };
 
+/** Indicates that no active permission grant matches a delegated request. */
+export class PermissionGrantNotFoundError extends Error {
+  public constructor({ messageType, protocol, protocolPath, contextId }: Pick<
+    GetPermissionParams,
+    'messageType' | 'protocol' | 'protocolPath' | 'contextId'
+  >) {
+    const scope = [protocol, protocolPath, contextId].filter(Boolean).join('/') || undefined;
+    super(`AgentPermissionsApi: No matching permission grant found for ${messageType}: ${scope}`);
+    this.name = 'PermissionGrantNotFoundError';
+  }
+}
+
 export class AgentPermissionsApi implements PermissionsApi {
 
-  /** cache for fetching a permission {@link PermissionGrant}, keyed by a specific MessageType and protocol */
-  private readonly _cachedPermissions: TtlCache<string, PermissionGrantEntry> = new TtlCache({ ttl: 60 * 1000 });
+  /** Active grant catalogs keyed by grantor and grantee, with scope matching performed per request. */
+  private readonly _permissionCatalogCache = new TtlCache<string, PermissionGrantEntry[]>({
+    max : PERMISSION_CATALOG_CACHE_MAX,
+    ttl : PERMISSION_CATALOG_CACHE_TTL,
+  });
+  private readonly _permissionCatalogFetches = new Map<string, Promise<PermissionGrantEntry[]>>();
   private readonly _revokedGrantIds = new Set<string>();
+  private _permissionCacheGeneration = 0;
 
   private _agent?: EnboxAgent;
 
@@ -51,39 +70,108 @@ export class AgentPermissionsApi implements PermissionsApi {
     contextId,
     cached = false
   }: GetPermissionParams): Promise<PermissionGrantEntry> {
-    const cacheKey = JSON.stringify([ connectedDid, delegateDid, delegate, messageType, protocol, protocolPath, contextId ]);
-    const cachedGrant = cached ? this._cachedPermissions.get(cacheKey) : undefined;
-    const now = Time.getCurrentTimestamp();
-    if (cachedGrant && AgentPermissionsApi.isGrantActive(cachedGrant.grant, now)) {
-      return cachedGrant;
-    }
-    if (cachedGrant) {
-      this._cachedPermissions.delete(cacheKey);
+    const catalogKey = JSON.stringify([connectedDid, delegateDid]);
+    const cachedCatalog = cached ? this._permissionCatalogCache.get(catalogKey) : undefined;
+    if (cachedCatalog !== undefined) {
+      const cachedGrant = await this.matchGrantForRequest({
+        connectedDid,
+        delegateDid,
+        delegate,
+        messageType,
+        protocol,
+        protocolPath,
+        contextId,
+      }, cachedCatalog);
+      if (cachedGrant !== undefined) {
+        return cachedGrant;
+      }
     }
 
-    const permissionGrants = await this.fetchGrants({
+    // A catalog miss is refreshed even when a cached catalog exists so newly
+    // stored or newly delegated grants are discoverable before its TTL expires.
+    const permissionGrants = await this.fetchPermissionCatalog({
+      catalogKey,
+      connectedDid,
+      delegateDid,
+      forceRefresh: !cached,
+    });
+
+    const grant = await this.matchGrantForRequest({
+      connectedDid,
+      delegateDid,
+      delegate,
+      messageType,
+      protocol,
+      protocolPath,
+      contextId,
+    }, permissionGrants);
+
+    if (grant === undefined) {
+      throw new PermissionGrantNotFoundError({ messageType, protocol, protocolPath, contextId });
+    }
+
+    return grant;
+  }
+
+  /** Fetches and caches one grant catalog while coalescing concurrent refreshes for the same DID pair. */
+  private async fetchPermissionCatalog({ catalogKey, connectedDid, delegateDid, forceRefresh }: {
+    catalogKey: string;
+    connectedDid: string;
+    delegateDid: string;
+    forceRefresh: boolean;
+  }): Promise<PermissionGrantEntry[]> {
+    let activeFetch = this._permissionCatalogFetches.get(catalogKey);
+    if (!forceRefresh && activeFetch !== undefined) {
+      return activeFetch;
+    }
+
+    // An explicit uncached lookup retains its historical force-refresh
+    // contract. Let an older local-store read settle, then issue a new one;
+    // otherwise the forced lookup could join a stale pre-mutation snapshot.
+    while (forceRefresh && activeFetch !== undefined) {
+      try {
+        await activeFetch;
+      } catch {
+        // The forced lookup below owns its own result and failure.
+      }
+      activeFetch = this._permissionCatalogFetches.get(catalogKey);
+    }
+
+    const generation = this._permissionCacheGeneration;
+    const fetch = this.fetchGrants({
       author       : delegateDid,
       target       : delegateDid,
       grantor      : connectedDid,
       grantee      : delegateDid,
       checkRevoked : true,
+    }).then((grants): PermissionGrantEntry[] => {
+      if (this._permissionCacheGeneration === generation) {
+        this._permissionCatalogCache.set(catalogKey, grants);
+      }
+      return grants;
+    }).finally((): void => {
+      if (this._permissionCatalogFetches.get(catalogKey) === fetch) {
+        this._permissionCatalogFetches.delete(catalogKey);
+      }
     });
 
-    // get the delegate grants that match the messageParams and are associated with the connectedDid as the grantor
-    const grant = await AgentPermissionsApi.matchGrantFromArray(
+    this._permissionCatalogFetches.set(catalogKey, fetch);
+    return fetch;
+  }
+
+  /** Selects one active, non-revoked grant from a pair-level catalog. */
+  private async matchGrantForRequest(
+    { connectedDid, delegateDid, delegate, messageType, protocol, protocolPath, contextId }: Omit<GetPermissionParams, 'cached'>,
+    permissionGrants: PermissionGrantEntry[],
+  ): Promise<PermissionGrantEntry | undefined> {
+    const activeGrants = permissionGrants.filter(({ grant }): boolean => !this._revokedGrantIds.has(grant.id));
+    return AgentPermissionsApi.matchGrantFromArray(
       connectedDid,
       delegateDid,
       { messageType, protocol, protocolPath, contextId },
-      permissionGrants,
-      delegate
+      activeGrants,
+      delegate,
     );
-
-    if (!grant) {
-      throw new Error(`CachedPermissions: No permissions found for ${messageType}: ${[protocol, protocolPath, contextId].filter(Boolean).join('/') || undefined}`);
-    }
-
-    this._cachedPermissions.set(cacheKey, grant);
-    return grant;
   }
 
   async fetchGrants({
@@ -95,6 +183,7 @@ export class AgentPermissionsApi implements PermissionsApi {
     remote = false,
     checkRevoked = false,
   }: FetchPermissionsParams): Promise<PermissionGrantEntry[]> {
+    const cacheGeneration = this._permissionCacheGeneration;
 
     // filter by a protocol using tags if provided
     const tags = protocol ? { protocol } : undefined;
@@ -125,7 +214,7 @@ export class AgentPermissionsApi implements PermissionsApi {
     // time. If this becomes hot, add a dedicated revocation-read path instead
     // of broad nested queries or parentId set filters.
     const revokedGrantIds = checkRevoked
-      ? await this.fetchRevokedGrantIds({ author, target, grantMessages, remote })
+      ? await this.fetchRevokedGrantIds({ author, target, grantMessages, remote, cacheGeneration })
       : new Set<string>();
 
     const grants:PermissionGrantEntry[] = [];
@@ -143,11 +232,12 @@ export class AgentPermissionsApi implements PermissionsApi {
   /**
    * Fetches the grant record IDs that have a stored revocation.
    */
-  private async fetchRevokedGrantIds({ author, target, grantMessages, remote }: {
+  private async fetchRevokedGrantIds({ author, target, grantMessages, remote, cacheGeneration }: {
     author: string;
     target: string;
     grantMessages: DwnDataEncodedRecordsWriteMessage[];
     remote: boolean;
+    cacheGeneration: number;
   }): Promise<Set<string>> {
     if (grantMessages.length === 0) {
       return new Set<string>();
@@ -160,12 +250,12 @@ export class AgentPermissionsApi implements PermissionsApi {
         return;
       }
 
-      const revoked = await this.isGrantRevoked({
+      const revoked = await this.readGrantRevocation({
         author,
         target,
         grantRecordId: grantMessage.recordId,
         remote,
-      });
+      }, cacheGeneration);
       if (revoked) {
         revokedGrantIds.add(grantMessage.recordId);
       }
@@ -216,6 +306,16 @@ export class AgentPermissionsApi implements PermissionsApi {
     grantRecordId,
     remote = false
   }: IsGrantRevokedParams): Promise<boolean> {
+    return this.readGrantRevocation({ author, target, grantRecordId, remote }, this._permissionCacheGeneration);
+  }
+
+  /** Reads one revocation while keeping cache writes owned by the initiating cache generation. */
+  private async readGrantRevocation({
+    author,
+    target,
+    grantRecordId,
+    remote,
+  }: Required<IsGrantRevokedParams>, cacheGeneration: number): Promise<boolean> {
     if (this._revokedGrantIds.has(grantRecordId)) {
       return true;
     }
@@ -239,7 +339,9 @@ export class AgentPermissionsApi implements PermissionsApi {
       return false;
     } else if (revocationReply.status.code === 200) {
       // a revocation was found, the grant is revoked
-      this._revokedGrantIds.add(grantRecordId);
+      if (this._permissionCacheGeneration === cacheGeneration) {
+        this._revokedGrantIds.add(grantRecordId);
+      }
       return true;
     }
 
@@ -395,7 +497,9 @@ export class AgentPermissionsApi implements PermissionsApi {
   }
 
   async clear():Promise<void> {
-    this._cachedPermissions.clear();
+    this._permissionCacheGeneration++;
+    this._permissionCatalogCache.clear();
+    this._permissionCatalogFetches.clear();
     this._revokedGrantIds.clear();
   }
 

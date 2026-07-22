@@ -2,6 +2,7 @@ import type { DwnInterface } from './types/dwn.js';
 import type { PermissionsApi } from './types/permissions.js';
 import type { DependencyRef, GenericMessage, ProtocolsConfigureMessage } from '@enbox/dwn-sdk-js';
 
+import { PermissionGrantNotFoundError } from './permissions-api.js';
 import { DwnInterfaceName, DwnMethodName, Message } from '@enbox/dwn-sdk-js';
 
 /**
@@ -35,8 +36,8 @@ export async function resolveDelegatePermissionGrantId(
       messageType,
     });
     return grant.id;
-  } catch (error: any) {
-    if (error instanceof Error && error.message.includes('No permissions found')) {
+  } catch (error: unknown) {
+    if (error instanceof PermissionGrantNotFoundError) {
       return undefined;
     }
     throw error;

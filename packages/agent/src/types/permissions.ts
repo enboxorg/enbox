@@ -78,6 +78,7 @@ export type GetPermissionParams = {
   protocol?: string;
   protocolPath?: string;
   contextId?: string;
+  /** Whether an active grant catalog may satisfy this lookup without refreshing it first. */
   cached?: boolean;
   delegate?: boolean;
 };
@@ -119,7 +120,7 @@ export interface PermissionsApi {
   createRevocation(params: CreateRevocationParams): Promise<PermissionRevocationEntry>;
 
   /**
-   * Clears the cache of matched permissions.
+   * Clears cached grant catalogs and known revocations.
    */
   clear: () => Promise<void>;
 }

@@ -9,7 +9,7 @@ import { PlatformAgentTestHarness } from '@enbox/agent/test';
 
 import {
   AgentPermissionsApi, createPermissionGrants, DwnDateSort, DwnInterface,
-  EnboxUserAgent, getRecordAuthor,
+  EnboxUserAgent, getRecordAuthor, PermissionGrantNotFoundError,
 } from '@enbox/agent';
 import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, PermissionsProtocol, Poller, Time } from '@enbox/dwn-sdk-js';
 import { processConnectedGrants, WalletConnect } from '@enbox/auth';
@@ -242,6 +242,25 @@ describe('DwnApi', () => {
       delegateDwn = (enbox as any)._dwn;
     });
 
+    it('propagates operational permission-resolution failures', async () => {
+      const failure = new Error('grant store unavailable');
+      const permissionsApi = (delegateDwn as any).permissionsApi as AgentPermissionsApi;
+      const resolveGrant = sinon.stub(permissionsApi, 'getPermissionForRequest').rejects(failure);
+
+      await expect(delegateDwn.records.count({
+        filter: { protocol: notesProtocol.protocol },
+      })).rejects.toBe(failure);
+      await expect(delegateDwn.protocols.query({
+        filter: { protocol: notesProtocol.protocol },
+      })).rejects.toBe(failure);
+      await expect(delegateDwn.messages.subscribe({
+        filters             : [{ protocol: notesProtocol.protocol }],
+        subscriptionHandler : (): void => {},
+      })).rejects.toBe(failure);
+
+      expect(resolveGrant.callCount).toBe(3);
+    });
+
     describe('messages', () => {
       it('should subscribe with an auto-resolved Messages.Read grant and receive delegated writes', async () => {
         const { grant: messagesReadGrant } = await (delegateDwn as any).permissionsApi.getPermissionForRequest({
@@ -356,10 +375,10 @@ describe('DwnApi', () => {
         expect(sendStatus.code).toBe(202);
 
         const { status: readStatus, record: readRecord } = await delegateDwn.records.read({
-          from     : aliceDid.uri,
-          protocol : notesProtocol.protocol,
-          filter   : {
-            recordId: record.id
+          from   : aliceDid.uri,
+          filter : {
+            protocol : notesProtocol.protocol,
+            recordId : record.id
           }
         });
 
@@ -453,10 +472,10 @@ describe('DwnApi', () => {
 
         // sanity: delegateDwn reads from the allowed record from alice's DWN
         const { status: readStatus1, record: allowedRecordReturned } = await delegateDwn.records.read({
-          from     : aliceDid.uri,
-          protocol : notesProtocol.protocol,
-          filter   : {
-            recordId: allowedRecord.id
+          from   : aliceDid.uri,
+          filter : {
+            protocol : notesProtocol.protocol,
+            recordId : allowedRecord.id
           }
         });
         expect(readStatus1.code).toBe(200);
@@ -599,8 +618,11 @@ describe('DwnApi', () => {
             }
           });
           throw new Error('Expected an error to be thrown.');
-        } catch (error: any) {
-          expect(error.message).toBe(`CachedPermissions: No permissions found for ProtocolsConfigure: ${protocolUri}`);
+        } catch (error: unknown) {
+          expect(error).toBeInstanceOf(PermissionGrantNotFoundError);
+          expect((error as Error).message).toBe(
+            `AgentPermissionsApi: No matching permission grant found for ProtocolsConfigure: ${protocolUri}`
+          );
         }
 
         // Create an explicit lower-level grant for this test. Connect must

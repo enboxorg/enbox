@@ -25,6 +25,7 @@
 export * from './connection-store.js';
 export * from './define-protocol.js';
 export * from './did-api.js';
+export type { RecordsCountResponse } from './dwn-api.js';
 export * from './dwn-reader-api.js';
 export * from './enbox.js';
 export type * from './enbox-types.js';
@@ -33,8 +34,8 @@ export * from './permission-grant.js';
 export * from './permission-request.js';
 export * from './protocol.js';
 export * from './protocol-types.js';
-export type { RecordFilter, RecordQuery } from './record-query.js';
 export * from './read-only-record.js';
+export type { RecordFilter, RecordQuery } from './record-query.js';
 export * from './record.js';
 export * from './record-data.js';
 export * from './record-types.js';
