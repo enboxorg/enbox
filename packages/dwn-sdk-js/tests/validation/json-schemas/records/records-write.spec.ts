@@ -229,7 +229,9 @@ describe('RecordsWrite schema definition', () => {
       authorization: TestDataGenerator.generateAuthorization()
     };
 
-    const expectedErrorMessage = 'contextId: must match pattern "^[a-zA-Z0-9]+(/[a-zA-Z0-9]+)*$';
+    // Ajv's runtime and precompiled validators serialize the escaped `/`
+    // differently. Pin the validation keyword rather than its formatter.
+    const expectedErrorMessage = 'contextId: must match pattern';
 
     const invalidMessage1 = { ...validMessage };
     invalidMessage1.contextId = 'invalid:path', // `:` is not a valid char in `contextId`
