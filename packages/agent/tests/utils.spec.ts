@@ -25,7 +25,10 @@ describe('Utils', () => {
     it('should return a PaginationCursor object', async () => {
       // create a RecordWriteMessage object which is published
       const { message } = await TestDataGenerator.generateRecordsWrite({
-        published: true,
+        dateCreated      : '2025-01-01T00:00:00.000000Z',
+        datePublished    : '2025-01-02T00:00:00.000000Z',
+        messageTimestamp : '2025-01-03T00:00:00.000000Z',
+        published        : true,
       });
 
       const messageCid = await Message.getCid(message);
@@ -57,19 +60,49 @@ describe('Utils', () => {
         value: message.descriptor.dateCreated,
         messageCid,
       });
+
+      // Updated Ascending DateSort will get the messageTimestamp as the cursor value
+      const dateUpdatedAscendingCursor = await getPaginationCursor(message, DateSort.UpdatedAscending);
+      expect(dateUpdatedAscendingCursor).toEqual({
+        value: message.descriptor.messageTimestamp,
+        messageCid,
+      });
+
+      // Updated Descending DateSort will get the messageTimestamp as the cursor value
+      const dateUpdatedDescendingCursor = await getPaginationCursor(message, DateSort.UpdatedDescending);
+      expect(dateUpdatedDescendingCursor).toEqual({
+        value: message.descriptor.messageTimestamp,
+        messageCid,
+      });
     });
 
     it('should fail for DateSort with PublishedAscending or PublishedDescending if the record is not published', async () => {
       // create a RecordWriteMessage object which is not published
+      const { message } = await TestDataGenerator.generateRecordsWrite({
+        messageTimestamp: '2025-01-03T00:00:00.000000Z'
+      });
+
+      const messageCid = await Message.getCid(message);
+      await expect(getPaginationCursor(message, DateSort.UpdatedAscending)).resolves.toEqual({
+        value: message.descriptor.messageTimestamp,
+        messageCid,
+      });
+      await expect(getPaginationCursor(message, DateSort.UpdatedDescending)).resolves.toEqual({
+        value: message.descriptor.messageTimestamp,
+        messageCid,
+      });
+
+      await expect(getPaginationCursor(message, DateSort.PublishedAscending))
+        .rejects.toThrow('getPaginationCursor: datePublished is missing from the record descriptor.');
+      await expect(getPaginationCursor(message, DateSort.PublishedDescending))
+        .rejects.toThrow('getPaginationCursor: datePublished is missing from the record descriptor.');
+    });
+
+    it('should fail explicitly for an unsupported DateSort', async () => {
       const { message } = await TestDataGenerator.generateRecordsWrite();
 
-      // Published Ascending DateSort will get the datePublished as the cursor value
-      try {
-        await getPaginationCursor(message, DateSort.PublishedAscending);
-        throw new Error('Expected getPaginationCursor to throw an error');
-      } catch (error: any) {
-        expect(error.message).toContain('The dateCreated or datePublished property is missing from the record descriptor.');
-      }
+      await expect(getPaginationCursor(message, 'futureSort' as DateSort))
+        .rejects.toThrow('getPaginationCursor: unsupported date sort \'futureSort\'.');
     });
   });
 

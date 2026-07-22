@@ -499,9 +499,12 @@ export class Record implements RecordModel {
 
   /**
    * Returns a pagination cursor for the current record given a sort order.
+   * Created sorts use {@link Record.dateCreated}, published sorts use
+   * {@link Record.datePublished}, and updated sorts use {@link Record.timestamp}.
    *
    * @param sort the sort order to use for the pagination cursor.
    * @returns A promise that resolves to a pagination cursor for the current record.
+   * @throws If a published-date sort is requested for an unpublished record.
    */
   async paginationCursor(sort: DwnDateSort): Promise<DwnPaginationCursor | undefined> {
     return isDwnMessage(DwnInterface.RecordsWrite, this.rawMessage) ? getPaginationCursor(this.rawMessage, sort) : undefined;
