@@ -2377,6 +2377,52 @@ describe('SyncEngineLevel', () => {
         (syncEngine as any).removeLinkController('owned-link-key', controller);
       });
 
+      it('retries link initialization when the remote tenant is not registered yet, then succeeds', async () => {
+        syncEngine['_runtime'] = new SyncRuntime(true);
+        const target = {
+          did    : alice.did.uri,
+          dwnUrl : 'https://dwn.example.com',
+          scope  : { kind: 'full' },
+        } as any;
+
+        // A newly created identity's remote DWN 401s MessagesSubscribe with
+        // 'Not a registered tenant' until tenant registration lands. The first
+        // attempt fails with that transient error; the backoff ladder
+        // re-attempts and the second attempt succeeds.
+        const initStub = sinon.stub(syncEngine as any, 'initializeLinkTarget');
+        initStub.onFirstCall().rejects(
+          new Error(`SyncEngineLevel: MessagesSubscribe failed for ${alice.did.uri} -> https://dwn.example.com: 401 Not a registered tenant.`),
+        );
+        initStub.onSecondCall().resolves({ status: 'active', durableLinkIdentityKey: 'key' });
+
+        const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
+        const pending = (syncEngine as any).initializeLinkTargetWithRetry(target);
+        await clock.tickAsync(2_000); // advance the first backoff step
+        const result = await pending;
+        clock.restore();
+
+        expect(initStub.callCount).toBe(2);
+        expect(result.status).toBe('active');
+      });
+
+      it('does not retry link initialization on a non-transient failure', async () => {
+        syncEngine['_runtime'] = new SyncRuntime(true);
+        const target = {
+          did    : alice.did.uri,
+          dwnUrl : 'https://dwn.example.com',
+          scope  : { kind: 'full' },
+        } as any;
+
+        // Only the transient 401s (DID propagation / tenant registration) are
+        // retried; every other failure rejects immediately for the caller to
+        // absorb, so the ladder is not broadened into a blanket retry.
+        const initStub = sinon.stub(syncEngine as any, 'initializeLinkTarget');
+        initStub.rejects(new Error('SyncEngineLevel: MessagesSubscribe failed for x -> y: 500 boom'));
+
+        await expect((syncEngine as any).initializeLinkTargetWithRetry(target)).rejects.toThrow('500 boom');
+        expect(initStub.callCount).toBe(1);
+      });
+
       it('clamps a sub-second settle-check interval to the one-second floor', async () => {
         await testHarness.agent.sync.registerIdentity({
           did     : alice.did.uri,

@@ -226,8 +226,12 @@ export class SyncEngineLevel implements SyncEngine {
   /** Serializes public Retry-now operations with each other before they acquire the sync lock. */
   private _retryRemoteQueue: Promise<void> = Promise.resolve();
 
-  /** Backoff schedule for recently published did:dht records. */
-  private static readonly DID_RESOLUTION_RETRY_BACKOFF_MS = [2000, 4000, 8000];
+  /**
+   * Backoff schedule for transient link-init 401s that clear on their own: a
+   * recently published did:dht record still propagating, or a newly created
+   * identity the remote DWN has not finished registering as a tenant.
+   */
+  private static readonly TRANSIENT_INIT_RETRY_BACKOFF_MS = [2000, 4000, 8000];
 
   constructor({ agent, dataPath, db }: SyncEngineLevelParams) {
     this._agent = agent;
@@ -1638,15 +1642,33 @@ export class SyncEngineLevel implements SyncEngine {
       return { status: LinkInitializationStatus.Failed };
     }
 
+    if (this.isTenantNotRegisteredError(error)) {
+      // Transient during identity creation: the remote DWN has not finished
+      // registering the newly created tenant, so MessagesSubscribe 401s with
+      // 'Not a registered tenant'. It clears within seconds, so log at warn
+      // and rethrow to initializeLinkTargetWithRetry's backoff ladder instead
+      // of an alarming error and a wait for the periodic settle check. Durable
+      // reconciliation still runs via the settle check, so no data is lost
+      // while the live subscription is deferred.
+      console.warn(
+        `SyncEngineLevel: Deferring live subscription for ${target.did} -> ${target.dwnUrl}; ` +
+        `remote tenant not registered yet, retrying`,
+      );
+      if (link) {
+        this.retireFailedLinkAttempt(this.getReplicationLinkKey(target, link), controller);
+      }
+      throw error;
+    }
+
     console.error(`SyncEngineLevel: Failed to open live subscription for ${target.did} -> ${target.dwnUrl}`, error);
     if (link) {
       this.retireFailedLinkAttempt(this.getReplicationLinkKey(target, link), controller);
     }
-    // The ONLY error class that escapes this method: rethrow so
-    // initializeLinkTargetWithRetry can run the DHT-propagation backoff
-    // ladder. Callers without that wrapper absorb it via Promise.allSettled.
-    // Everything else is already reported and reduced to Failed — remove
-    // this rethrow and the retry ladder silently stops working.
+    // Rethrow so initializeLinkTargetWithRetry can run the transient-401 backoff
+    // ladder (the tenant-not-registered case rethrows above). Callers without
+    // that wrapper absorb it via Promise.allSettled. Everything else is already
+    // reported and reduced to Failed — remove this rethrow and the retry ladder
+    // silently stops working for DID propagation.
     if (this.isDidResolutionFailure(error)) {
       throw error;
     }
@@ -1727,21 +1749,23 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /**
-   * Wrapper around {@link initializeLinkTarget} that retries on DID
-   * resolution failures. Newly published `did:dht` DIDs take a few
-   * seconds to propagate through the DHT network. During this window,
-   * the remote DWN can't resolve the DID to verify request signatures,
-   * causing a 401. Retrying with exponential backoff lets the
-   * propagation settle before giving up.
+   * Wrapper around {@link initializeLinkTarget} that retries on transient
+   * link-init failures — see {@link isTransientInitFailure}. A newly published
+   * `did:dht` DID takes a few seconds to propagate through the DHT (during which
+   * the remote DWN can't resolve it to verify request signatures, causing a
+   * 401), and a newly created identity's remote tenant registration lands a beat
+   * after the subscription is first attempted (a `401 Not a registered tenant`).
+   * Retrying with exponential backoff lets both settle before giving up; the
+   * periodic settle check remains the longer-horizon backstop.
    */
   private async initializeLinkTargetWithRetry(target: SyncTarget): Promise<LinkInitializationResult> {
     const runtime = this._runtime;
     try {
       return await this.initializeLinkTarget(target);
     } catch (error: any) {
-      if (!this.isDidResolutionFailure(error)) { throw error; }
+      if (!this.isTransientInitFailure(error)) { throw error; }
 
-      for (const delay of SyncEngineLevel.DID_RESOLUTION_RETRY_BACKOFF_MS) {
+      for (const delay of SyncEngineLevel.TRANSIENT_INIT_RETRY_BACKOFF_MS) {
         // A runtime transition during an attempt or the backoff disposed of
         // whatever this initialization would have joined; a retry now would
         // re-activate a link controller and reopen subscriptions behind the
@@ -1769,6 +1793,25 @@ export class SyncEngineLevel implements SyncEngine {
   private isDidResolutionFailure(error: any): boolean {
     const message = error.message ?? '';
     return message.includes('GetPublicKeyNotFound');
+  }
+
+  /**
+   * A newly created identity's remote DWN briefly rejects MessagesSubscribe with
+   * `401 Not a registered tenant` until tenant registration lands. Like DID
+   * propagation, it clears within seconds.
+   */
+  private isTenantNotRegisteredError(error: any): boolean {
+    const message = error.message ?? '';
+    return message.includes('Not a registered tenant');
+  }
+
+  /**
+   * Transient link-init failures a freshly created identity clears on its own
+   * within seconds — the {@link TRANSIENT_INIT_RETRY_BACKOFF_MS} ladder
+   * re-attempts rather than waiting for the periodic settle check.
+   */
+  private isTransientInitFailure(error: any): boolean {
+    return this.isDidResolutionFailure(error) || this.isTenantNotRegisteredError(error);
   }
 
   // ---------------------------------------------------------------------------
