@@ -1044,6 +1044,9 @@ export class DwnApi {
 
         // if impersonation is enabled, fetch the delegated grant to use with the write operation
         if (this.delegateDid) {
+          // Mirror RecordsWrite.create(): root context IDs equal recordId;
+          // nested context IDs append recordId to parentContextId. Before an
+          // ID is generated, parentContextId is the narrowest available scope.
           let permissionContextId = messageParams.parentContextId;
           if (messageParams.recordId !== undefined) {
             permissionContextId = messageParams.parentContextId === undefined

@@ -368,6 +368,12 @@ export type TypedReadResponse<T = unknown> =
  */
 export type TypedDeleteRequest = {
   /**
+   * Full context ID of the target record, used only to resolve a context-scoped
+   * delegated delete grant. It is not included in the RecordsDelete message.
+   */
+  contextId?: string;
+
+  /**
    * A remote DWN DID to delete from.
    *
    * When set, the delete is performed on the specified DID's remote DWN.
@@ -1159,8 +1165,8 @@ export class TypedEnbox<
        *
        * @param path - The protocol path (used for permission scoping and
        *   path validation).
-       * @param request - Delete options. `recordId` is required; `from` is
-       *   optional for remote deletes.
+       * @param request - Delete options. `recordId` is required; `contextId`
+       *   scopes delegated grant resolution and `from` selects a remote DWN.
        * @returns The DWN response status.
        *
        * @example
@@ -1181,6 +1187,7 @@ export class TypedEnbox<
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
         return this._dwn.records.delete({
+          contextId    : request.contextId,
           from         : request.from,
           protocol     : this._definition.protocol,
           protocolPath : normalizedPath,

@@ -856,9 +856,13 @@ describe('TypedProtocol API', () => {
           } as unknown as DwnApi;
           const scopedTyped = new TypedEnbox(dwn, TodoProtocol);
 
-          await scopedTyped.records.delete('/list/' as any, { recordId: 'record-id' });
+          await scopedTyped.records.delete('/list/' as any, {
+            contextId : 'list-context',
+            recordId  : 'record-id',
+          });
 
           expect(deleteRecord.calledOnceWithExactly({
+            contextId    : 'list-context',
             from         : undefined,
             protocol     : TodoProtocolDefinition.protocol,
             protocolPath : 'list',
