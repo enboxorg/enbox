@@ -36,7 +36,7 @@ type ScalarTagKeys<D extends ProtocolDefinition, Path extends string> = {
 
 type StringSelection = string | string[] | readonly string[];
 
-type QueryFilterInput = Omit<RecordsFilter, 'author' | 'recipient' | 'parentId'> & {
+type RecordFilterInput = Omit<RecordsFilter, 'author' | 'recipient' | 'parentId'> & {
   author?: StringSelection;
   recipient?: StringSelection;
 };
@@ -56,7 +56,7 @@ const dateSortValues = new Set<unknown>([
  * and tag policy inherited through `$ref` remain available through the raw
  * DWN API instead of widening this surface.
  */
-export type QueryTagFilters<
+type RecordTagFilters<
   D extends ProtocolDefinition,
   Path extends ProtocolPaths<D> & string,
 > = [TagsAtPath<D, Path>] extends [never]
@@ -72,7 +72,7 @@ export type QueryTagFilters<
  * Protocol identity fields are injected from the typed protocol and cannot
  * be overridden by a caller.
  */
-export type QueryFilter<
+export type RecordFilter<
   D extends ProtocolDefinition,
   Path extends ProtocolPaths<D> & string,
 > = Omit<RecordsFilter, 'author' | 'recipient' | 'parentId' | 'protocol' | 'protocolPath' | 'schema' | 'tags' | 'dataFormat'> & {
@@ -86,7 +86,7 @@ export type QueryFilter<
   dataFormat?: DataFormatAtPath<D, Path>;
 
   /** Protocol-declared scalar tag filters for this exact path. */
-  tags?: QueryTagFilters<D, Path>;
+  tags?: RecordTagFilters<D, Path>;
 };
 
 /**
@@ -97,7 +97,7 @@ export type QueryFilter<
  * order is immaterial to a count, except that published-date sorting selects
  * published records only, exactly as it does for a query.
  */
-export type QuerySpec<
+export type RecordQuery<
   D extends ProtocolDefinition,
   Path extends ProtocolPaths<D> & string,
 > = {
@@ -105,7 +105,7 @@ export type QuerySpec<
   from?: string;
 
   /** Additional filters; protocol, path, and schema are injected automatically. */
-  filter?: QueryFilter<D, Path>;
+  filter?: RecordFilter<D, Path>;
 
   /** Existing DWN created, published, or updated date ordering. */
   dateSort?: DateSort;
@@ -117,18 +117,18 @@ export type QuerySpec<
   protocolRole?: string;
 };
 
-/** Options for draining a {@link QuerySpec} to cursor exhaustion. */
-export type QueryAllSpec<
+/** Options for draining a {@link RecordQuery} to cursor exhaustion. */
+export type RecordQueryAllOptions<
   D extends ProtocolDefinition,
   Path extends ProtocolPaths<D> & string,
-> = Omit<QuerySpec<D, Path>, 'pagination'> & {
+> = Omit<RecordQuery<D, Path>, 'pagination'> & {
   pageSize?: number;
   maxRecords?: number;
   maxPages?: number;
 };
 
-/** @internal Canonical low-level selection produced from a typed query spec. */
-type CompiledQuerySpec = {
+/** @internal Canonical low-level request produced from a typed record query. */
+type CompiledRecordQuery = {
   from?: string;
   filter: RecordsFilter;
   dateSort?: DateSort;
@@ -137,36 +137,36 @@ type CompiledQuerySpec = {
 };
 
 /**
- * @internal Compile one typed query specification into the low-level request
+ * @internal Compile one typed record query into the low-level request
  * shape shared by query, queryAll, count, and subscription consumers.
  */
-export function compileQuerySpec(
+export function compileRecordQuery(
   definition: ProtocolDefinition,
   protocolPath: string,
-  spec: {
+  query: {
     from?: string;
-    filter?: QueryFilterInput;
+    filter?: RecordFilterInput;
     dateSort?: DateSort;
     pagination?: Pagination;
     protocolRole?: string;
   } = {},
-): CompiledQuerySpec {
-  assertValidQueryControls(spec.dateSort, spec.pagination);
+): CompiledRecordQuery {
+  assertValidQueryControls(query.dateSort, query.pagination);
 
   return {
-    from         : spec.from,
-    filter       : compileQueryFilter(definition, protocolPath, spec.filter, spec.dateSort),
-    dateSort     : spec.dateSort,
-    pagination   : spec.pagination,
-    protocolRole : spec.protocolRole,
+    from         : query.from,
+    filter       : compileRecordFilter(definition, protocolPath, query.filter, query.dateSort),
+    dateSort     : query.dateSort,
+    pagination   : query.pagination,
+    protocolRole : query.protocolRole,
   };
 }
 
 /** @internal Compile and validate the shared selection filter. */
-export function compileQueryFilter(
+export function compileRecordFilter(
   definition: ProtocolDefinition,
   protocolPath: string,
-  filter: QueryFilterInput | undefined,
+  filter: RecordFilterInput | undefined,
   dateSort?: DateSort,
 ): RecordsFilter {
   assertValidFilter(filter, dateSort);
@@ -196,34 +196,34 @@ export function compileQueryFilter(
   };
 }
 
-function assertValidFilter(filter: QueryFilterInput | undefined, dateSort: DateSort | undefined): void {
+function assertValidFilter(filter: RecordFilterInput | undefined, dateSort: DateSort | undefined): void {
   if (Array.isArray(filter?.author) && filter.author.length === 0) {
-    throw new TypeError('QuerySpec: filter.author must not be an empty array.');
+    throw new TypeError('RecordQuery: filter.author must not be an empty array.');
   }
   if (Array.isArray(filter?.recipient) && filter.recipient.length === 0) {
-    throw new TypeError('QuerySpec: filter.recipient must not be an empty array.');
+    throw new TypeError('RecordQuery: filter.recipient must not be an empty array.');
   }
   if (filter?.tags !== undefined && Object.keys(filter.tags).length === 0) {
-    throw new TypeError('QuerySpec: filter.tags must contain at least one tag filter.');
+    throw new TypeError('RecordQuery: filter.tags must contain at least one tag filter.');
   }
   if (filter?.published === false && selectsPublishedRecords(filter, dateSort)) {
-    throw new TypeError('QuerySpec: published-date filters and sorting cannot be combined with published: false.');
+    throw new TypeError('RecordQuery: published-date filters and sorting cannot be combined with published: false.');
   }
 }
 
 function assertValidQueryControls(dateSort: DateSort | undefined, pagination: Pagination | undefined): void {
   if (dateSort !== undefined && !dateSortValues.has(dateSort)) {
-    throw new TypeError(`QuerySpec: unsupported dateSort '${dateSort}'.`);
+    throw new TypeError(`RecordQuery: unsupported dateSort '${dateSort}'.`);
   }
   if (pagination === undefined) {
     return;
   }
   if (!isPlainObject(pagination) || hasUnexpectedKeys(pagination, ['limit', 'cursor'])) {
-    throw new TypeError('QuerySpec: pagination must contain only limit and cursor.');
+    throw new TypeError('RecordQuery: pagination must contain only limit and cursor.');
   }
   if (pagination.limit !== undefined
     && (typeof pagination.limit !== 'number' || !Number.isFinite(pagination.limit) || pagination.limit < 1)) {
-    throw new TypeError('QuerySpec: pagination.limit must be a finite number greater than or equal to 1.');
+    throw new TypeError('RecordQuery: pagination.limit must be a finite number greater than or equal to 1.');
   }
   if (pagination.cursor === undefined) {
     return;
@@ -234,7 +234,7 @@ function assertValidQueryControls(dateSort: DateSort | undefined, pagination: Pa
     || hasUnexpectedKeys(cursor, ['messageCid', 'value'])
     || typeof cursor.messageCid !== 'string'
     || (typeof cursor.value !== 'string' && (typeof cursor.value !== 'number' || !Number.isFinite(cursor.value)))) {
-    throw new TypeError('QuerySpec: pagination.cursor must contain a string messageCid and a string or finite number value.');
+    throw new TypeError('RecordQuery: pagination.cursor must contain a string messageCid and a string or finite number value.');
   }
 }
 
@@ -269,7 +269,7 @@ function getDirectParentId(contextId: string | undefined, protocolPath: string):
     : undefined;
 }
 
-function selectsPublishedRecords(filter: QueryFilterInput | undefined, dateSort: DateSort | undefined): boolean {
+function selectsPublishedRecords(filter: RecordFilterInput | undefined, dateSort: DateSort | undefined): boolean {
   return filter?.datePublished !== undefined
     || dateSort === DateSort.PublishedAscending
     || dateSort === DateSort.PublishedDescending;

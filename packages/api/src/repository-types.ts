@@ -10,7 +10,7 @@
  * @module
  */
 
-import type { QuerySpec } from './query-spec.js';
+import type { RecordQuery } from './record-query.js';
 import type { TypedLiveQuery } from './typed-live-query.js';
 import type { TypedRecord } from './typed-record.js';
 import type { AudienceKeyDeliveryOutcome, DwnPaginationCursor, DwnResponseStatus } from '@enbox/agent';
@@ -126,7 +126,7 @@ export type CollectionCRUD<
     | (DwnResponseStatus & RepositoryWriteOutcome & { record: TypedRecord<DataAt<D, M, Path>> })
     | (DwnResponseStatus & RepositoryWriteOutcome & { record: undefined })
   >;
-  query(options?: QuerySpec<D, Path & ProtocolPaths<D>>): Promise<
+  query(options?: RecordQuery<D, Path & ProtocolPaths<D>>): Promise<
     DwnResponseStatus & { records: TypedRecord<DataAt<D, M, Path>>[]; cursor?: DwnPaginationCursor }
   >;
   get(recordId: string): Promise<TypedRecord<DataAt<D, M, Path>> | undefined>;
@@ -163,7 +163,7 @@ export type NestedCollectionCRUD<
   >;
   query(
     parentContextId: string,
-    options?: QuerySpec<D, Path & ProtocolPaths<D>>,
+    options?: RecordQuery<D, Path & ProtocolPaths<D>>,
   ): Promise<DwnResponseStatus & { records: TypedRecord<DataAt<D, M, Path>>[]; cursor?: DwnPaginationCursor }>;
   get(recordId: string): Promise<TypedRecord<DataAt<D, M, Path>> | undefined>;
   delete(recordId: string): Promise<DwnResponseStatus>;

@@ -217,7 +217,7 @@ coordinates writes across browser contexts.
 |---|---|
 | `Enbox` | Main app API: `connect()`, `fromSession()`, `anonymous()`, `using()`. |
 | `defineProtocol()` | Creates typed protocol definitions. |
-| `QuerySpec` | Protocol-derived filter, date ordering, and pagination shared by query and count. |
+| `RecordQuery` | Protocol-derived filter, date ordering, and pagination shared by query and count. |
 | `repository()` | Creates structure-aware CRUD repositories. |
 | `TypedEnbox` | Protocol-scoped record API returned by `enbox.using()`. |
 | `TypedRecord<T>` | Type-safe record wrapper. |

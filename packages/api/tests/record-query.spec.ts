@@ -1,5 +1,5 @@
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { QuerySpec } from '../src/query-spec.js';
+import type { RecordQuery } from '../src/record-query.js';
 import type { DwnApi, RecordsCountRequest, RecordsQueryRequest } from '../src/dwn-api.js';
 
 import { DateSort } from '@enbox/dwn-sdk-js';
@@ -7,10 +7,10 @@ import { describe, expect, it } from 'bun:test';
 
 import { defineProtocol } from '../src/define-protocol.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
-import { compileQueryFilter, compileQuerySpec } from '../src/query-spec.js';
+import { compileRecordFilter, compileRecordQuery } from '../src/record-query.js';
 
 const QueryDefinition = {
-  protocol  : 'https://example.com/protocols/query-spec',
+  protocol  : 'https://example.com/protocols/record-query',
   published : true,
   types     : {
     note: {
@@ -73,7 +73,7 @@ function createTypedEnbox(dwn: DwnApi): TypedEnbox<typeof QueryDefinition, Query
   return typed;
 }
 
-describe('QuerySpec', () => {
+describe('RecordQuery', () => {
   it('should compile one immutable selection for query and count', async () => {
     const { dwn, countRequests, queryRequests } = createCapturingDwn();
     const typed = createTypedEnbox(dwn);
@@ -81,7 +81,7 @@ describe('QuerySpec', () => {
       contextId : 'root/parent',
       tags      : { status: 'published' as const, priority: { gte: 2 } },
     };
-    const spec: QuerySpec<typeof QueryDefinition, 'note'> = {
+    const query: RecordQuery<typeof QueryDefinition, 'note'> = {
       from         : 'did:example:remote',
       filter,
       dateSort     : DateSort.PublishedDescending,
@@ -89,8 +89,8 @@ describe('QuerySpec', () => {
       protocolRole : 'editor',
     };
 
-    await typed.records.query('note', spec);
-    const countResponse = await typed.records.count('note', spec);
+    await typed.records.query('note', query);
+    const countResponse = await typed.records.count('note', query);
 
     const expectedFilter = {
       ...filter,
@@ -100,16 +100,16 @@ describe('QuerySpec', () => {
       schema       : QueryDefinition.types.note.schema,
     };
     expect(queryRequests).toEqual([{
-      from         : spec.from,
+      from         : query.from,
       filter       : expectedFilter,
-      dateSort     : spec.dateSort,
-      pagination   : spec.pagination,
-      protocolRole : spec.protocolRole,
+      dateSort     : query.dateSort,
+      pagination   : query.pagination,
+      protocolRole : query.protocolRole,
     }]);
     expect(countRequests).toEqual([{
-      from         : spec.from,
+      from         : query.from,
       filter       : expectedFilter,
-      protocolRole : spec.protocolRole,
+      protocolRole : query.protocolRole,
     }]);
     expect(countResponse.count).toBe(7);
     expect(filter).toEqual({
@@ -119,7 +119,7 @@ describe('QuerySpec', () => {
   });
 
   it('should omit schema for a schema-less protocol type', () => {
-    const filter = compileQueryFilter(QueryDefinition, 'attachment', { dataFormat: 'image/png' });
+    const filter = compileRecordFilter(QueryDefinition, 'attachment', { dataFormat: 'image/png' });
 
     expect(filter).toEqual({
       dataFormat   : 'image/png',
@@ -129,8 +129,8 @@ describe('QuerySpec', () => {
   });
 
   it('should fence prefix-sharing direct-parent contexts by exact record ID', () => {
-    const prefixParent = compileQueryFilter(QueryDefinition, 'root/note/attachment', { contextId: 'root/abc' });
-    const prefixSharingSibling = compileQueryFilter(QueryDefinition, 'root/note/attachment', { contextId: 'root/abcd' });
+    const prefixParent = compileRecordFilter(QueryDefinition, 'root/note/attachment', { contextId: 'root/abc' });
+    const prefixSharingSibling = compileRecordFilter(QueryDefinition, 'root/note/attachment', { contextId: 'root/abcd' });
 
     expect(prefixParent.contextId).toBe('root/abc');
     expect(prefixParent.parentId).toBe('abc');
@@ -139,7 +139,7 @@ describe('QuerySpec', () => {
   });
 
   it('should make datePublished filters select published records for count parity', () => {
-    const compiled = compileQuerySpec(QueryDefinition, 'note', {
+    const compiled = compileRecordQuery(QueryDefinition, 'note', {
       filter: { datePublished: { from: '2026-01-01T00:00:00Z' } },
     });
 
@@ -147,23 +147,23 @@ describe('QuerySpec', () => {
   });
 
   it('should reject filters that would broaden or contradict the selection', () => {
-    expect(() => compileQueryFilter(QueryDefinition, 'note', { author: [] }))
+    expect(() => compileRecordFilter(QueryDefinition, 'note', { author: [] }))
       .toThrow('filter.author must not be an empty array');
-    expect(() => compileQueryFilter(QueryDefinition, 'note', { recipient: [] }))
+    expect(() => compileRecordFilter(QueryDefinition, 'note', { recipient: [] }))
       .toThrow('filter.recipient must not be an empty array');
-    expect(() => compileQueryFilter(QueryDefinition, 'note', { tags: {} }))
+    expect(() => compileRecordFilter(QueryDefinition, 'note', { tags: {} }))
       .toThrow('filter.tags must contain at least one tag filter');
-    expect(() => compileQuerySpec(QueryDefinition, 'note', {
+    expect(() => compileRecordQuery(QueryDefinition, 'note', {
       filter   : { published: false },
       dateSort : DateSort.PublishedAscending,
     })).toThrow('cannot be combined with published: false');
-    expect(() => compileQueryFilter(QueryDefinition, 'note', {
+    expect(() => compileRecordFilter(QueryDefinition, 'note', {
       published     : false,
       datePublished : { to: '2026-01-01T00:00:00Z' },
     })).toThrow('cannot be combined with published: false');
   });
 
-  it('should reject invalid shared specifications through both public operations', async () => {
+  it('should reject invalid record queries through both public operations', async () => {
     const { dwn, countRequests, queryRequests } = createCapturingDwn();
     const typed = createTypedEnbox(dwn);
 
@@ -172,11 +172,11 @@ describe('QuerySpec', () => {
     await expect(typed.records.count('note', { filter: { author: [] } }))
       .rejects.toThrow('filter.author must not be an empty array');
 
-    const invalidSort = { dateSort: 'unsupported' } as unknown as QuerySpec<typeof QueryDefinition, 'note'>;
+    const invalidSort = { dateSort: 'unsupported' } as unknown as RecordQuery<typeof QueryDefinition, 'note'>;
     await expect(typed.records.query('note', invalidSort)).rejects.toThrow('unsupported dateSort');
     await expect(typed.records.count('note', invalidSort)).rejects.toThrow('unsupported dateSort');
 
-    const invalidPagination = { pagination: { limit: 0 } } as QuerySpec<typeof QueryDefinition, 'note'>;
+    const invalidPagination = { pagination: { limit: 0 } } as RecordQuery<typeof QueryDefinition, 'note'>;
     await expect(typed.records.query('note', invalidPagination)).rejects.toThrow('pagination.limit');
     await expect(typed.records.count('note', invalidPagination)).rejects.toThrow('pagination.limit');
 
@@ -196,9 +196,9 @@ describe('QuerySpec', () => {
     ];
 
     for (const pagination of invalidPaginationValues) {
-      expect(() => compileQuerySpec(QueryDefinition, 'note', {
+      expect(() => compileRecordQuery(QueryDefinition, 'note', {
         pagination: pagination as never,
-      })).toThrow('QuerySpec: pagination');
+      })).toThrow('RecordQuery: pagination');
     }
   });
 });

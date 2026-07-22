@@ -44,12 +44,12 @@ import type { AudienceKeyDeliveryOutcome, DwnPaginationCursor, DwnPublicKeyJwk, 
 import type { DataFormatAtPath, ProtocolPaths, SchemaMap, TypedProtocol, TypeNameAtPath } from './protocol-types.js';
 import type { DwnApi, ProtocolsConfigureResponse, RecordsCountResponse } from './dwn-api.js';
 import type { ProtocolDefinition, ProtocolType } from '@enbox/dwn-sdk-js';
-import type { QueryAllSpec, QueryFilter, QuerySpec } from './query-spec.js';
+import type { RecordFilter, RecordQuery, RecordQueryAllOptions } from './record-query.js';
 
 import { assertValidQueryAllOptions } from './dwn-api.js';
 import { TypedLiveQuery } from './typed-live-query.js';
 import { TypedRecord } from './typed-record.js';
-import { compileQueryFilter, compileQuerySpec } from './query-spec.js';
+import { compileRecordFilter, compileRecordQuery } from './record-query.js';
 
 // ---------------------------------------------------------------------------
 // Helper types
@@ -333,15 +333,7 @@ export type TypedQueryResponse<T = unknown> = DwnResponseStatus & {
 export type TypedReadRequest<
   D extends ProtocolDefinition,
   Path extends ProtocolPaths<D> & string,
-> = {
-  /**
-   * A remote DWN DID to read from.
-   *
-   * When set, the read is performed against the specified DID's remote
-   * DWN instead of the local DWN.
-   */
-  from?: string;
-
+> = Pick<RecordQuery<D, Path>, 'from'> & {
   /**
    * Filter to identify the record to read.
    *
@@ -350,8 +342,7 @@ export type TypedReadRequest<
    * fields from `RecordsFilter` (like `contextId` and `recipient`) are also
    * available.
    */
-  filter: QueryFilter<D, Path>;
-
+  filter: RecordFilter<D, Path>;
 };
 
 /**
@@ -425,31 +416,7 @@ export type TypedDeleteRequest = {
 export type TypedSubscribeRequest<
   D extends ProtocolDefinition,
   Path extends ProtocolPaths<D> & string,
-> = {
-  /**
-   * A remote DWN DID to subscribe to.
-   *
-   * When set, the subscription listens to the specified DID's remote DWN.
-   */
-  from?: string;
-
-  /**
-   * Filter criteria for the subscription.
-   *
-   * The `protocol`, `protocolPath`, and `schema` fields are auto-injected.
-   * See {@link QueryFilter} for available filter fields.
-   */
-  filter?: QueryFilter<D, Path>;
-
-  /**
-   * The protocol role under which to subscribe.
-   *
-   * Required when the protocol's `$actions` rules restrict read access
-   * to specific roles.
-   */
-  protocolRole?: string;
-
-};
+> = Pick<RecordQuery<D, Path>, 'from' | 'filter' | 'protocolRole'>;
 
 /**
  * Response from {@link TypedEnbox} `records.subscribe()`.
@@ -1046,11 +1013,11 @@ export class TypedEnbox<
    */
   private async * queryAllTypedRecords<Path extends ProtocolPaths<D> & string>(
     path: Path,
-    request?: QueryAllSpec<D, Path>,
+    request?: RecordQueryAllOptions<D, Path>,
   ): AsyncGenerator<TypedRecord<DataForPath<D, M, Path>>, void, undefined> {
     const normalizedPath = normalizePath(path);
     await this._ensureReady(normalizedPath);
-    const compiled = compileQuerySpec(this._definition, normalizedPath, request);
+    const compiled = compileRecordQuery(this._definition, normalizedPath, request);
 
     const drain = this._dwn.records.queryAll({
       from         : compiled.from,
@@ -1096,17 +1063,17 @@ export class TypedEnbox<
 
     query: <Path extends ProtocolPaths<D> & string>(
       path: Path,
-      request?: QuerySpec<D, Path>,
+      request?: RecordQuery<D, Path>,
     ) => Promise<TypedQueryResponse<DataForPath<D, M, Path>>>;
 
     count: <Path extends ProtocolPaths<D> & string>(
       path: Path,
-      request?: QuerySpec<D, Path>,
+      request?: RecordQuery<D, Path>,
     ) => Promise<RecordsCountResponse>;
 
     queryAll: <Path extends ProtocolPaths<D> & string>(
       path: Path,
-      request?: QueryAllSpec<D, Path>,
+      request?: RecordQueryAllOptions<D, Path>,
     ) => AsyncGenerator<TypedRecord<DataForPath<D, M, Path>>, void, undefined>;
 
     read: <Path extends ProtocolPaths<D> & string>(
@@ -1229,11 +1196,11 @@ export class TypedEnbox<
        */
       query: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
-        request?: QuerySpec<D, Path>,
+        request?: RecordQuery<D, Path>,
       ): Promise<TypedQueryResponse<DataForPath<D, M, Path>>> => {
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
-        const compiled = compileQuerySpec(this._definition, normalizedPath, request);
+        const compiled = compileRecordQuery(this._definition, normalizedPath, request);
         const { status, records, cursor } = await this._dwn.records.query(compiled);
 
         return {
@@ -1250,11 +1217,11 @@ export class TypedEnbox<
        */
       count: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
-        request?: QuerySpec<D, Path>,
+        request?: RecordQuery<D, Path>,
       ): Promise<RecordsCountResponse> => {
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
-        const compiled = compileQuerySpec(this._definition, normalizedPath, request);
+        const compiled = compileRecordQuery(this._definition, normalizedPath, request);
 
         return this._dwn.records.count({
           from         : compiled.from,
@@ -1278,7 +1245,7 @@ export class TypedEnbox<
        *
        * @param path - The protocol path to drain (e.g. `'notebook'`).
        * @param request - Optional filter/sort options plus `pageSize`,
-       *   `maxRecords`, and `maxPages`. See {@link QueryAllSpec}.
+       *   `maxRecords`, and `maxPages`. See {@link RecordQueryAllOptions}.
        * @returns An `AsyncGenerator` yielding every matching
        *   {@link TypedRecord} in sort order.
        *
@@ -1294,7 +1261,7 @@ export class TypedEnbox<
        */
       queryAll: <Path extends ProtocolPaths<D> & string>(
         path: Path,
-        request?: QueryAllSpec<D, Path>,
+        request?: RecordQueryAllOptions<D, Path>,
       ): AsyncGenerator<TypedRecord<DataForPath<D, M, Path>>, void, undefined> => {
         // Validated at CALL time (the generator body — including its inner
         // raw queryAll call — only runs on first iteration).
@@ -1330,7 +1297,7 @@ export class TypedEnbox<
       ): Promise<TypedReadResponse<DataForPath<D, M, Path>>> => {
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
-        const readFilter = compileQueryFilter(this._definition, normalizedPath, request.filter);
+        const readFilter = compileRecordFilter(this._definition, normalizedPath, request.filter);
         const { status, record } = await this._dwn.records.read({
           from     : request.from,
           protocol : this._definition.protocol,
@@ -1421,7 +1388,7 @@ export class TypedEnbox<
       ): Promise<TypedSubscribeResponse<DataForPath<D, M, Path>>> => {
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
-        const subFilter = compileQueryFilter(this._definition, normalizedPath, request?.filter);
+        const subFilter = compileRecordFilter(this._definition, normalizedPath, request?.filter);
         const { status, liveQuery } = await this._dwn.records.subscribe({
           from         : request?.from,
           filter       : subFilter,

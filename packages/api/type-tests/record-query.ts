@@ -1,5 +1,5 @@
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { QuerySpec, TypedEnbox } from '../src/index.js';
+import type { RecordQuery, TypedEnbox } from '../src/index.js';
 
 import { defineProtocol } from '../src/index.js';
 
@@ -64,7 +64,7 @@ type QuerySchemaMap = {
 declare const typed: TypedEnbox<typeof QueryDefinition, QuerySchemaMap>;
 declare const authors: string[];
 
-const reusableSpec = {
+const reusableQuery = {
   filter: {
     author     : ['did:example:alice'] as const,
     dataFormat : 'application/json',
@@ -75,10 +75,10 @@ const reusableSpec = {
       pinned   : true,
     },
   },
-} satisfies QuerySpec<typeof QueryDefinition, 'note'>;
+} satisfies RecordQuery<typeof QueryDefinition, 'note'>;
 
-void typed.records.query('note', reusableSpec);
-void typed.records.count('note', reusableSpec);
+void typed.records.query('note', reusableQuery);
+void typed.records.count('note', reusableQuery);
 void typed.records.query('note/comment', { filter: { tags: { kind: { startsWith: 'reply-' } } } });
 void typed.records.query('flexible', { filter: { tags: { known: 'value' } } });
 void typed.records.query('note', { filter: { author: authors } });

@@ -33,6 +33,18 @@ import { Protocol } from './protocol.js';
 import { Record } from './record.js';
 import { describeMessage, MessagesLiveQuery } from './messages-live-query.js';
 
+type ReadLikeRecordsInterface =
+  | DwnInterface.RecordsCount
+  | DwnInterface.RecordsQuery
+  | DwnInterface.RecordsRead
+  | DwnInterface.RecordsSubscribe;
+
+type RecordsReadScope = {
+  protocol?: string;
+  protocolPath?: string;
+  contextId?: string;
+};
+
 /**
  * Represents the request payload for fetching permission requests from a Decentralized Web Node (DWN).
  *
@@ -496,6 +508,55 @@ export class DwnApi {
       ...(request.granteeDid === undefined ? {} : { granteeDid: request.granteeDid }),
       ...(messageParams?.delegatedGrant === undefined ? {} : { delegatedGrant: messageParams.delegatedGrant }),
     };
+  }
+
+  /**
+   * Applies the delegate authorization policy shared by authenticated
+   * record count, query, read, and subscription requests.
+   */
+  private async prepareRecordsReadRequest<T extends ReadLikeRecordsInterface>(
+    request: ProcessDwnRequest<T>,
+    scope: RecordsReadScope,
+  ): Promise<ProcessDwnRequest<T>> {
+    if (this.delegateDid === undefined) {
+      return request;
+    }
+
+    try {
+      const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
+        connectedDid : this.connectedDid,
+        delegateDid  : this.delegateDid,
+        protocol     : scope.protocol,
+        protocolPath : scope.protocolPath,
+        contextId    : scope.contextId,
+        delegate     : true,
+        cached       : true,
+        messageType  : request.messageType,
+      });
+
+      return {
+        ...request,
+        messageParams: {
+          ...request.messageParams,
+          delegatedGrant,
+        },
+        granteeDid: this.delegateDid,
+      };
+    } catch {
+      // A delegate without a matching owner grant can still request records
+      // visible to the delegate itself, including public records.
+      return { ...request, author: this.delegateDid };
+    }
+  }
+
+  /** Dispatches one prepared request through the local or remote agent path. */
+  private dispatchDwnRequest<T extends DwnInterface>(
+    request: ProcessDwnRequest<T>,
+    remote: boolean,
+  ): Promise<DwnResponse<T>> {
+    return remote
+      ? this.agent.sendDwnRequest(request)
+      : this.agent.processDwnRequest(request);
   }
 
   /**
@@ -1074,45 +1135,18 @@ export class DwnApi {
       count: async (request: RecordsCountRequest): Promise<RecordsCountResponse> => {
         const { from, ...messageParams } = request;
 
-        const agentRequest: ProcessDwnRequest<DwnInterface.RecordsCount> = {
+        const agentRequest = await this.prepareRecordsReadRequest({
           author      : this.connectedDid,
           messageParams,
           messageType : DwnInterface.RecordsCount,
           target      : from || this.connectedDid,
-        };
+        }, {
+          protocol     : messageParams.filter?.protocol,
+          protocolPath : messageParams.filter?.protocolPath,
+          contextId    : messageParams.filter?.contextId,
+        });
 
-        if (this.delegateDid) {
-          // Mirror records.query(): use the owner's delegated read grant when available, otherwise
-          // author as the delegate so public records can still be counted.
-          try {
-            const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
-              connectedDid : this.connectedDid,
-              delegateDid  : this.delegateDid,
-              protocol     : messageParams.filter?.protocol,
-              protocolPath : messageParams.filter?.protocolPath,
-              contextId    : messageParams.filter?.contextId,
-              delegate     : true,
-              cached       : true,
-              messageType  : agentRequest.messageType
-            });
-
-            agentRequest.messageParams = {
-              ...agentRequest.messageParams,
-              delegatedGrant
-            };
-            agentRequest.granteeDid = this.delegateDid;
-          } catch {
-            agentRequest.author = this.delegateDid;
-          }
-        }
-
-        let agentResponse: DwnResponse<DwnInterface.RecordsCount>;
-
-        if (from) {
-          agentResponse = await this.agent.sendDwnRequest(agentRequest);
-        } else {
-          agentResponse = await this.agent.processDwnRequest(agentRequest);
-        }
+        const agentResponse = await this.dispatchDwnRequest(agentRequest, Boolean(from));
 
         const { count, status } = agentResponse.reply;
         return { count, status };
@@ -1176,7 +1210,7 @@ export class DwnApi {
       query: async (request: RecordsQueryRequest): Promise<RecordsQueryResponse> => {
         const { from, ...messageParams } = request;
 
-        const agentRequest: ProcessDwnRequest<DwnInterface.RecordsQuery> = {
+        const agentRequest = await this.prepareRecordsReadRequest({
           /**
            * The `author` is the DID that will sign the message and must be the DID the Enbox app is
            * connected with and is authorized to access the signing private key of.
@@ -1190,44 +1224,13 @@ export class DwnApi {
            * Otherwise, the local DWN will be queried.
           */
           target      : from || this.connectedDid,
-        };
+        }, {
+          protocol     : messageParams.filter?.protocol,
+          protocolPath : messageParams.filter?.protocolPath,
+          contextId    : messageParams.filter?.contextId,
+        });
 
-        if (this.delegateDid) {
-          // if we don't find a delegated grant, we will attempt to query signing as the delegated DID
-          // This is to allow the API caller to query public records without needing to impersonate the delegate.
-          //
-          // NOTE: For anonymous/public queries without explicit permissions, callers can use `DwnReaderApi` via `Enbox.anonymous()`.
-          // See: https://github.com/enboxorg/enbox/issues/898
-          try {
-            const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
-              connectedDid : this.connectedDid,
-              delegateDid  : this.delegateDid,
-              protocol     : messageParams.filter?.protocol,
-              protocolPath : messageParams.filter?.protocolPath,
-              contextId    : messageParams.filter?.contextId,
-              delegate     : true,
-              cached       : true,
-              messageType  : agentRequest.messageType
-            });
-
-            agentRequest.messageParams = {
-              ...agentRequest.messageParams,
-              delegatedGrant
-            };
-            agentRequest.granteeDid = this.delegateDid;
-          } catch {
-            // if a grant is not found, we should author the request as the delegated DID to get public records
-            agentRequest.author = this.delegateDid;
-          }
-        }
-
-        let agentResponse: DwnResponse<DwnInterface.RecordsQuery>;
-
-        if (from) {
-          agentResponse = await this.agent.sendDwnRequest(agentRequest);
-        } else {
-          agentResponse = await this.agent.processDwnRequest(agentRequest);
-        }
+        const agentResponse = await this.dispatchDwnRequest(agentRequest, Boolean(from));
 
         const reply = agentResponse.reply;
         const { entries = [], status, cursor } = reply;
@@ -1288,7 +1291,7 @@ export class DwnApi {
       read: async (request: RecordsReadRequest): Promise<RecordsReadResponse> => {
         const { from, protocol, ...messageParams } = request;
 
-        const agentRequest: ProcessDwnRequest<DwnInterface.RecordsRead> = {
+        const agentRequest = await this.prepareRecordsReadRequest({
           /**
            * The `author` is the DID that will sign the message and must be the DID the Enbox app is
            * connected with and is authorized to access the signing private key of.
@@ -1302,45 +1305,13 @@ export class DwnApi {
            * Otherwise, the read will occur on the local DWN.
           */
           target      : from || this.connectedDid,
-        };
+        }, {
+          protocol,
+          protocolPath : messageParams.filter?.protocolPath,
+          contextId    : messageParams.filter?.contextId,
+        });
 
-        if (this.delegateDid) {
-          // if we don't find a delegated grant, we will attempt to read signing as the delegated DID
-          // This is to allow the API caller to read public records without needing to impersonate the delegate.
-          //
-          // NOTE: For anonymous/public reads without explicit permissions, callers can use `DwnReaderApi` via `Enbox.anonymous()`.
-          // See: https://github.com/enboxorg/enbox/issues/898
-
-          try {
-            const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
-              connectedDid : this.connectedDid,
-              delegateDid  : this.delegateDid,
-              protocol,
-              protocolPath : messageParams.filter?.protocolPath,
-              contextId    : messageParams.filter?.contextId,
-              delegate     : true,
-              cached       : true,
-              messageType  : agentRequest.messageType
-            });
-
-            agentRequest.messageParams = {
-              ...agentRequest.messageParams,
-              delegatedGrant
-            };
-            agentRequest.granteeDid = this.delegateDid;
-          } catch {
-            // if a grant is not found, we should author the request as the delegated DID to get public records
-            agentRequest.author = this.delegateDid;
-          }
-        }
-
-        let agentResponse: DwnResponse<DwnInterface.RecordsRead>;
-
-        if (from) {
-          agentResponse = await this.agent.sendDwnRequest(agentRequest);
-        } else {
-          agentResponse = await this.agent.processDwnRequest(agentRequest);
-        }
+        const agentResponse = await this.dispatchDwnRequest(agentRequest, Boolean(from));
 
         const { reply: { entry, status } } = agentResponse;
 
@@ -1438,50 +1409,19 @@ export class DwnApi {
           liveQuery?.handleEvent(record);
         };
 
-        const agentRequest: ProcessDwnRequest<DwnInterface.RecordsSubscribe> = {
+        const agentRequest = await this.prepareRecordsReadRequest({
           author      : this.connectedDid,
           messageParams,
           messageType : DwnInterface.RecordsSubscribe,
           target      : from || this.connectedDid,
           subscriptionHandler,
-        };
+        }, {
+          protocol     : messageParams.filter?.protocol,
+          protocolPath : messageParams.filter?.protocolPath,
+          contextId    : messageParams.filter?.contextId,
+        });
 
-        if (this.delegateDid) {
-          // if we don't find a delegated grant, we will attempt to subscribe signing as the delegated DID
-          // This is to allow the API caller to subscribe to public records without needing to impersonate the delegate.
-          //
-          // NOTE: For anonymous/public subscriptions without explicit permissions, callers can use `DwnReaderApi` via `Enbox.anonymous()`.
-          // See: https://github.com/enboxorg/enbox/issues/898
-          try {
-            const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
-              connectedDid : this.connectedDid,
-              delegateDid  : this.delegateDid,
-              protocol     : messageParams.filter?.protocol,
-              protocolPath : messageParams.filter?.protocolPath,
-              contextId    : messageParams.filter?.contextId,
-              delegate     : true,
-              cached       : true,
-              messageType  : agentRequest.messageType
-            });
-
-            agentRequest.messageParams = {
-              ...agentRequest.messageParams,
-              delegatedGrant
-            };
-            agentRequest.granteeDid = this.delegateDid;
-          } catch {
-            // if a grant is not found, we should author the request as the delegated DID to get public records
-            agentRequest.author = this.delegateDid;
-          }
-        }
-
-        let agentResponse: DwnResponse<DwnInterface.RecordsSubscribe>;
-
-        if (from) {
-          agentResponse = await this.agent.sendDwnRequest(agentRequest);
-        } else {
-          agentResponse = await this.agent.processDwnRequest(agentRequest);
-        }
+        const agentResponse = await this.dispatchDwnRequest(agentRequest, Boolean(from));
 
         const reply = agentResponse.reply;
         const { status, subscription, entries = [], cursor } = reply;
