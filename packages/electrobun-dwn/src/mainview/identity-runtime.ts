@@ -1,4 +1,5 @@
 import type { DidResolutionLike } from './utils/identity-helpers.js';
+import type { ProfileSchemaMap } from '@enbox/protocols';
 import type { AuthState, IdentityInfo, PortableIdentity } from '@enbox/auth';
 
 import { AuthManager } from '@enbox/auth';
@@ -611,7 +612,7 @@ class IdentityRuntimeController implements IdentityRuntime {
       };
     }
 
-    const profileData = await profileRecord.data.json<EditableDidProfileSnapshot['profile']>();
+    const profileData = await profileRecord.data.json();
     const profileContextId = profileRecord.contextId;
     const avatarResult = profileContextId
       ? await typed.records.query('profile/avatar', { filter: { contextId: profileContextId } })
@@ -627,12 +628,7 @@ class IdentityRuntimeController implements IdentityRuntime {
 
     const links = await Promise.all(
       linkResult.records.map(async (record) => {
-        const data = await record.data.json<{
-          url: string;
-          title: string;
-          icon?: string;
-          sortOrder?: number;
-        }>();
+        const data = await record.data.json();
 
         return {
           id        : record.id,
@@ -1085,7 +1081,7 @@ class IdentityRuntimeController implements IdentityRuntime {
       delete: () => Promise<{ status: { code: number; detail: string } }>;
     };
     parentContextId: string;
-    typed: TypedEnbox<typeof ProfileDefinition, Record<string, unknown>>;
+    typed: TypedEnbox<typeof ProfileDefinition, ProfileSchemaMap>;
     path: 'profile/avatar' | 'profile/hero';
   }): Promise<void> {
     if (action === 'keep') {

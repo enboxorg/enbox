@@ -127,7 +127,6 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
       protocol     : 'https://example.com/notes',
-      cached       : true,
     });
     await clock.tickAsync(2000);
     const second = await permissions.getPermissionForRequest({
@@ -135,7 +134,6 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
       protocol     : 'https://example.com/notes',
-      cached       : true,
     });
 
     expect(first.grant.id).toBe('expiring');
@@ -165,7 +163,6 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
       protocol     : 'https://example.com/notes',
-      cached       : true,
     });
     const delegatedMatch = await permissions.getPermissionForRequest({
       connectedDid : OWNER_DID,
@@ -173,7 +170,6 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       delegate     : true,
       messageType  : DwnInterface.RecordsWrite,
       protocol     : 'https://example.com/notes',
-      cached       : true,
     });
 
     expect(permissiveMatch.grant.id).toBe('direct');
@@ -205,7 +201,6 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       messageType  : DwnInterface.RecordsWrite,
       protocol     : 'https://example.com/notes',
       contextId    : 'conversation-a',
-      cached       : true,
     });
     const second = await permissions.getPermissionForRequest({
       connectedDid : OWNER_DID,
@@ -213,7 +208,6 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       messageType  : DwnInterface.RecordsWrite,
       protocol     : 'https://example.com/notes',
       contextId    : 'conversation-b',
-      cached       : true,
     });
 
     expect(first.grant.id).toBe('first-context');
@@ -247,7 +241,6 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       messageType  : DwnInterface.RecordsWrite,
       protocol     : 'https://example.com/notes',
       contextId    : 'conversation-a',
-      cached       : true,
     });
     const added = await permissions.getPermissionForRequest({
       connectedDid : OWNER_DID,
@@ -255,7 +248,6 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       messageType  : DwnInterface.RecordsWrite,
       protocol     : 'https://example.com/notes',
       contextId    : 'conversation-b',
-      cached       : true,
     });
 
     expect(added.grant.id).toBe('added-context');
@@ -282,14 +274,12 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
       protocol     : 'https://example.com/notes',
-      cached       : true,
     });
     const second = permissions.getPermissionForRequest({
       connectedDid : OWNER_DID,
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
       protocol     : 'https://example.com/notes',
-      cached       : true,
     });
     resolveFetch([grant]);
 
@@ -326,14 +316,13 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
       protocol     : 'https://example.com/notes',
-      cached       : true,
     });
     const freshLookup = permissions.getPermissionForRequest({
       connectedDid : OWNER_DID,
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
       protocol     : 'https://example.com/notes',
-      cached       : false,
+      forceRefresh : true,
     });
     resolveCachedFetch([stale]);
 
@@ -344,7 +333,6 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
       protocol     : 'https://example.com/notes',
-      cached       : true,
     })).grant.id).toBe('fresh');
     expect(fetchGrants.callCount).toBe(2);
     clock.restore();
@@ -371,7 +359,6 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
       protocol     : 'https://example.com/notes',
-      cached       : true,
     });
     await permissions.clear();
     resolveFetch([grant]);
@@ -382,7 +369,6 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
       protocol     : 'https://example.com/notes',
-      cached       : true,
     });
 
     expect(lookupAfterClear.grant.id).toBe('grant-after-clear');
@@ -411,7 +397,6 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
       protocol     : 'https://example.com/notes',
-      cached       : true,
     })).grant.id).toBe('revoked-grant');
 
     await permissions.createRevocation({ author: OWNER_DID, grant: grant.grant, store: true });
@@ -421,7 +406,6 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
       protocol     : 'https://example.com/notes',
-      cached       : true,
     })).rejects.toBeInstanceOf(PermissionGrantNotFoundError);
     expect(fetchGrants.callCount).toBe(2);
     clock.restore();
@@ -468,6 +452,81 @@ describe('AgentPermissionsApi refresh grant selection', () => {
     expect(processDwnRequest.callCount).toBe(3);
   });
 
+  test('briefly caches a missing request scope without suppressing other scopes', async () => {
+    const permissions = new AgentPermissionsApi();
+    const fetchGrants = sinon.stub(permissions, 'fetchGrants').resolves([]);
+    const missingScope = {
+      connectedDid : OWNER_DID,
+      delegateDid  : DELEGATE_DID,
+      messageType  : DwnInterface.RecordsWrite,
+      protocol     : 'https://example.com/notes',
+      contextId    : 'conversation-a',
+    } as const;
+
+    await expect(permissions.getPermissionForRequest(missingScope)).rejects.toBeInstanceOf(PermissionGrantNotFoundError);
+    await expect(permissions.getPermissionForRequest(missingScope)).rejects.toBeInstanceOf(PermissionGrantNotFoundError);
+    expect(fetchGrants.callCount).toBe(1);
+
+    await expect(permissions.getPermissionForRequest({
+      ...missingScope,
+      contextId: 'conversation-b',
+    })).rejects.toBeInstanceOf(PermissionGrantNotFoundError);
+    expect(fetchGrants.callCount).toBe(2);
+  });
+
+  test('lets an explicit fresh lookup bypass a cached miss', async () => {
+    const clock = sinon.useFakeTimers({ now: new Date('2026-07-13T12:00:00.000Z') });
+    const permissions = new AgentPermissionsApi();
+    const addedGrant = createGrantEntry({
+      id          : 'new-grant',
+      dateGranted : '2026-07-13T11:00:00.000000Z',
+      dateExpires : '2026-07-14T12:00:00.000000Z',
+    });
+    const fetchGrants = sinon.stub(permissions, 'fetchGrants');
+    fetchGrants.onFirstCall().resolves([]);
+    fetchGrants.onSecondCall().resolves([addedGrant]);
+    const request = {
+      connectedDid : OWNER_DID,
+      delegateDid  : DELEGATE_DID,
+      messageType  : DwnInterface.RecordsWrite,
+      protocol     : 'https://example.com/notes',
+    } as const;
+
+    await expect(permissions.getPermissionForRequest(request)).rejects.toBeInstanceOf(PermissionGrantNotFoundError);
+    const refreshed = await permissions.getPermissionForRequest({ ...request, forceRefresh: true });
+
+    expect(refreshed.grant.id).toBe('new-grant');
+    expect(fetchGrants.callCount).toBe(2);
+    clock.restore();
+  });
+
+  test('expires cached misses so externally stored grants are discovered', async () => {
+    const clock = sinon.useFakeTimers({ now: new Date('2026-07-13T12:00:00.000Z') });
+    const permissions = new AgentPermissionsApi();
+    const addedGrant = createGrantEntry({
+      id          : 'external-grant',
+      dateGranted : '2026-07-13T11:00:00.000000Z',
+      dateExpires : '2026-07-14T12:00:00.000000Z',
+    });
+    const fetchGrants = sinon.stub(permissions, 'fetchGrants');
+    fetchGrants.onFirstCall().resolves([]);
+    fetchGrants.onSecondCall().resolves([addedGrant]);
+    const request = {
+      connectedDid : OWNER_DID,
+      delegateDid  : DELEGATE_DID,
+      messageType  : DwnInterface.RecordsWrite,
+      protocol     : 'https://example.com/notes',
+    } as const;
+
+    await expect(permissions.getPermissionForRequest(request)).rejects.toBeInstanceOf(PermissionGrantNotFoundError);
+    await clock.tickAsync(5001);
+    const discovered = await permissions.getPermissionForRequest(request);
+
+    expect(discovered.grant.id).toBe('external-grant');
+    expect(fetchGrants.callCount).toBe(2);
+    clock.restore();
+  });
+
   test('throws a typed not-found error without masking catalog fetch failures', async () => {
     const permissions = new AgentPermissionsApi();
     const fetchGrants = sinon.stub(permissions, 'fetchGrants');
@@ -486,6 +545,7 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
       protocol     : 'https://example.com/notes',
+      forceRefresh : true,
     })).rejects.toThrow('grant store unavailable');
   });
 });

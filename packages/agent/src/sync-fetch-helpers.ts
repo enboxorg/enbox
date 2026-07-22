@@ -32,7 +32,6 @@ export async function resolveDelegatePermissionGrantId(
       connectedDid : deps.did,
       delegateDid  : deps.delegateDid,
       protocol,
-      cached       : true,
       messageType,
     });
     return grant.id;

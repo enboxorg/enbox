@@ -971,7 +971,6 @@ export class TypedEnbox<
       path: Path,
       request: TypedDeleteRequest,
     ) => Promise<DwnResponseStatus>;
-
     } {
     if (this._records !== undefined) {
       return this._records;
@@ -1176,15 +1175,17 @@ export class TypedEnbox<
        * ```
        */
       delete: async <Path extends ProtocolPaths<D> & string>(
-        _path: Path,
+        path: Path,
         request: TypedDeleteRequest,
       ): Promise<DwnResponseStatus> => {
-        await this._ensureReady(normalizePath(_path));
+        const normalizedPath = normalizePath(path);
+        await this._ensureReady(normalizedPath);
         return this._dwn.records.delete({
-          from     : request.from,
-          protocol : this._definition.protocol,
-          recordId : request.recordId,
-          prune    : request.prune,
+          from         : request.from,
+          protocol     : this._definition.protocol,
+          protocolPath : normalizedPath,
+          recordId     : request.recordId,
+          prune        : request.prune,
         });
       },
 

@@ -267,7 +267,6 @@ describe('DwnApi', () => {
           connectedDid : aliceDid.uri,
           delegateDid  : delegateDid.uri,
           protocol     : notesProtocol.protocol,
-          cached       : true,
           messageType  : DwnInterface.MessagesSubscribe,
         });
         const processSpy = sinon.spy(delegateHarness.agent, 'processDwnRequest');
@@ -307,7 +306,6 @@ describe('DwnApi', () => {
           connectedDid : aliceDid.uri,
           delegateDid  : delegateDid.uri,
           protocol     : notesProtocol.protocol,
-          cached       : true,
           messageType  : DwnInterface.MessagesSubscribe,
         });
 

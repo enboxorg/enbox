@@ -141,6 +141,12 @@ export type RecordsDeleteRequest = Omit<DwnMessageParams[DwnInterface.RecordsDel
 
   /** Protocol URI for permission grant resolution. */
   protocol?: string;
+
+  /** Protocol path for permission grant resolution. This field is not sent in the delete message. */
+  protocolPath?: string;
+
+  /** Context ID for permission grant resolution. This field is not sent in the delete message. */
+  contextId?: string;
 };
 
 /**
@@ -368,7 +374,6 @@ export class DwnApi {
         protocolPath : scope.protocolPath,
         contextId    : scope.contextId,
         delegate     : true,
-        cached       : true,
         messageType  : request.messageType,
       });
 
@@ -393,9 +398,9 @@ export class DwnApi {
   /** Dispatches one prepared request through the local or remote agent path. */
   private dispatchDwnRequest<T extends DwnInterface>(
     request: ProcessDwnRequest<T>,
-    remote: boolean,
+    remoteTarget?: string,
   ): Promise<DwnResponse<T>> {
-    return remote
+    return remoteTarget
       ? this.agent.sendDwnRequest(request)
       : this.agent.processDwnRequest(request);
   }
@@ -603,7 +608,6 @@ export class DwnApi {
             delegateDid  : this.delegateDid,
             protocol     : request.definition.protocol,
             delegate     : true,
-            cached       : true,
             messageType  : agentRequest.messageType
           });
 
@@ -649,7 +653,6 @@ export class DwnApi {
               connectedDid : this.connectedDid,
               delegateDid  : this.delegateDid,
               protocol     : messageParams.filter.protocol,
-              cached       : true,
               messageType  : agentRequest.messageType
             });
 
@@ -738,7 +741,6 @@ export class DwnApi {
                 connectedDid : this.connectedDid,
                 delegateDid  : this.delegateDid,
                 protocol     : protocols[0],
-                cached       : true,
                 messageType  : agentRequest.messageType,
               });
 
@@ -758,7 +760,7 @@ export class DwnApi {
           }
         }
 
-        const agentResponse = await this.dispatchDwnRequest(agentRequest, Boolean(from));
+        const agentResponse = await this.dispatchDwnRequest(agentRequest, from);
         return agentResponse.reply;
       },
     };
@@ -794,7 +796,7 @@ export class DwnApi {
           contextId    : messageParams.filter?.contextId,
         });
 
-        const agentResponse = await this.dispatchDwnRequest(agentRequest, Boolean(from));
+        const agentResponse = await this.dispatchDwnRequest(agentRequest, from);
 
         const { count, status } = agentResponse.reply;
         return { count, status };
@@ -804,7 +806,7 @@ export class DwnApi {
        * Delete a record
        */
       delete: async (request: RecordsDeleteRequest): Promise<DwnResponseStatus> => {
-        const { from, protocol, ...messageParams } = request;
+        const { from, protocol, protocolPath, contextId, ...messageParams } = request;
 
         const agentRequest: ProcessDwnRequest<DwnInterface.RecordsDelete> = {
           /**
@@ -827,8 +829,9 @@ export class DwnApi {
             connectedDid : this.connectedDid,
             delegateDid  : this.delegateDid,
             protocol,
+            protocolPath,
+            contextId,
             delegate     : true,
-            cached       : true,
             messageType  : agentRequest.messageType
           });
 
@@ -878,7 +881,7 @@ export class DwnApi {
           contextId    : messageParams.filter?.contextId,
         });
 
-        const agentResponse = await this.dispatchDwnRequest(agentRequest, Boolean(from));
+        const agentResponse = await this.dispatchDwnRequest(agentRequest, from);
 
         const reply = agentResponse.reply;
         const { entries = [], status, cursor } = reply;
@@ -942,7 +945,7 @@ export class DwnApi {
           contextId    : messageParams.filter?.contextId,
         });
 
-        const agentResponse = await this.dispatchDwnRequest(agentRequest, Boolean(from));
+        const agentResponse = await this.dispatchDwnRequest(agentRequest, from);
 
         const { reply: { entry, status } } = agentResponse;
 
@@ -995,7 +998,7 @@ export class DwnApi {
           contextId    : messageParams.filter?.contextId,
         });
 
-        const agentResponse = await this.dispatchDwnRequest(agentRequest, Boolean(from));
+        const agentResponse = await this.dispatchDwnRequest(agentRequest, from);
         return agentResponse.reply;
       },
 
@@ -1041,12 +1044,19 @@ export class DwnApi {
 
         // if impersonation is enabled, fetch the delegated grant to use with the write operation
         if (this.delegateDid) {
+          let permissionContextId = messageParams.parentContextId;
+          if (messageParams.recordId !== undefined) {
+            permissionContextId = messageParams.parentContextId === undefined
+              ? messageParams.recordId
+              : `${messageParams.parentContextId}/${messageParams.recordId}`;
+          }
           const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
             connectedDid : this.connectedDid,
             delegateDid  : this.delegateDid,
             protocol     : messageParams.protocol,
+            protocolPath : messageParams.protocolPath,
+            contextId    : permissionContextId,
             delegate     : true,
-            cached       : true,
             messageType  : dwnRequestParams.messageType
           });
 

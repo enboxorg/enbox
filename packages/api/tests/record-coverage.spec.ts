@@ -409,6 +409,33 @@ describe('Record — coverage gaps (stubbed)', () => {
     });
   });
 
+  describe('delegated mutation grant scope', () => {
+    it('should resolve a grant with the record protocol path and context', async () => {
+      const delegatedGrant = { recordId: 'delegated-write-grant' };
+      const permissionsApi = {
+        getPermissionForRequest: sinon.stub().resolves({ message: delegatedGrant }),
+      };
+      const options = createRecordOptions({ delegateDid: 'did:example:delegate' });
+      const record = new Record(agentStub as unknown as EnboxAgent, options, permissionsApi as any);
+      agentStub.processDwnRequest.resolves({
+        reply: { status: { code: 400, detail: 'Bad Request' } },
+      } as any);
+
+      const result = await record.update({ data: 'updated' });
+
+      expect(result.status.code).toBe(400);
+      expect(permissionsApi.getPermissionForRequest.calledOnceWithExactly({
+        connectedDid : 'did:example:alice',
+        delegateDid  : 'did:example:delegate',
+        protocol     : 'https://example.com/protocol',
+        protocolPath : 'post',
+        contextId    : 'ctx-001',
+        delegate     : true,
+        messageType  : DwnInterface.RecordsWrite,
+      })).toBe(true);
+    });
+  });
+
   describe('readRecordData() — envelope-driven decryption', () => {
     it('should keep the low-level read raw and decrypt only when data is consumed', async () => {
       const options = createRecordOptions({

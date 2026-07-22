@@ -2506,7 +2506,6 @@ export class AgentDwnApi {
           connectedDid : tenantDid,
           delegateDid  : granteeDid,
           protocol     : protocolUri,
-          cached       : true,
           messageType  : DwnInterface.ProtocolsQuery,
         });
         permissionGrantId = grant.id;

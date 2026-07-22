@@ -43,7 +43,6 @@ describe('sync-fetch-helpers', () => {
       );
       expect(result).toBe('grant-123');
       expect(permissionsApi.getPermissionForRequest.firstCall.args[0]).toEqual({
-        cached       : true,
         connectedDid : 'did:example:alice',
         delegateDid  : 'did:example:delegate',
         messageType  : DwnInterface.RecordsQuery,

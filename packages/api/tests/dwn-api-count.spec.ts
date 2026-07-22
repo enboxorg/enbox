@@ -67,7 +67,7 @@ function createDwnApi(agent: AgentStub, permissions: PermissionsStub, options?: 
   });
 }
 
-describe('DwnApi records.count()', () => {
+describe('DwnApi record requests', () => {
   let agent: AgentStub;
   let permissions: PermissionsStub;
 
@@ -137,7 +137,6 @@ describe('DwnApi records.count()', () => {
       protocolPath : 'note',
       contextId    : 'root/note',
       delegate     : true,
-      cached       : true,
       messageType  : DwnInterface.RecordsCount,
     })).toBe(true);
 
@@ -168,7 +167,6 @@ describe('DwnApi records.count()', () => {
       protocolPath : 'note',
       contextId    : 'root/note',
       delegate     : true,
-      cached       : true,
       messageType  : DwnInterface.RecordsQuery,
     })).toBe(true);
   });
@@ -191,7 +189,6 @@ describe('DwnApi records.count()', () => {
       protocolPath : 'note',
       contextId    : 'root/note',
       delegate     : true,
-      cached       : true,
       messageType  : DwnInterface.RecordsRead,
     })).toBe(true);
 
@@ -222,9 +219,96 @@ describe('DwnApi records.count()', () => {
       protocolPath : 'note',
       contextId    : 'root/note',
       delegate     : true,
-      cached       : true,
       messageType  : DwnInterface.RecordsSubscribe,
     })).toBe(true);
+  });
+
+  it('should resolve path- and parent-context-scoped grants for writes', async () => {
+    const delegatedGrant = { recordId: 'delegated-write-grant' } as DwnDataEncodedRecordsWriteMessage;
+    permissions.getPermissionForRequest.resolves({ message: delegatedGrant });
+    agent.processDwnRequest.resolves(createErrorResponse<DwnInterface.RecordsWrite>('write-message-cid'));
+    const dwn = createDwnApi(agent, permissions, { delegateDid });
+
+    const response = await dwn.records.write({
+      data            : 'hello',
+      protocol,
+      protocolPath    : 'thread/note',
+      parentContextId : 'thread-context',
+      recordId        : 'note-id',
+    });
+
+    expect(response.status.code).toBe(404);
+    expect(permissions.getPermissionForRequest.calledOnceWithExactly({
+      connectedDid,
+      delegateDid,
+      protocol,
+      protocolPath : 'thread/note',
+      contextId    : 'thread-context/note-id',
+      delegate     : true,
+      messageType  : DwnInterface.RecordsWrite,
+    })).toBe(true);
+
+    const request = agent.processDwnRequest.firstCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsWrite>;
+    expect(request.messageParams).toEqual({
+      dataFormat      : 'text/plain',
+      delegatedGrant,
+      parentContextId : 'thread-context',
+      protocol,
+      protocolPath    : 'thread/note',
+      recordId        : 'note-id',
+    });
+  });
+
+  it('should use the parent context to resolve grants when a write generates its record ID', async () => {
+    const delegatedGrant = { recordId: 'delegated-write-grant' } as DwnDataEncodedRecordsWriteMessage;
+    permissions.getPermissionForRequest.resolves({ message: delegatedGrant });
+    agent.processDwnRequest.resolves(createErrorResponse<DwnInterface.RecordsWrite>('write-message-cid'));
+    const dwn = createDwnApi(agent, permissions, { delegateDid });
+
+    await dwn.records.write({
+      data            : 'hello',
+      protocol,
+      protocolPath    : 'thread/note',
+      parentContextId : 'thread-context',
+    });
+
+    expect(permissions.getPermissionForRequest.calledOnceWithExactly({
+      connectedDid,
+      delegateDid,
+      protocol,
+      protocolPath : 'thread/note',
+      contextId    : 'thread-context',
+      delegate     : true,
+      messageType  : DwnInterface.RecordsWrite,
+    })).toBe(true);
+  });
+
+  it('should use delete scope metadata only for delegated grant resolution', async () => {
+    const delegatedGrant = { recordId: 'delegated-delete-grant' } as DwnDataEncodedRecordsWriteMessage;
+    permissions.getPermissionForRequest.resolves({ message: delegatedGrant });
+    agent.processDwnRequest.resolves(createErrorResponse<DwnInterface.RecordsDelete>('delete-message-cid'));
+    const dwn = createDwnApi(agent, permissions, { delegateDid });
+
+    const response = await dwn.records.delete({
+      recordId     : 'record-id',
+      protocol,
+      protocolPath : 'thread/note',
+      contextId    : 'thread-context/note-context',
+    });
+
+    expect(response.status.code).toBe(404);
+    expect(permissions.getPermissionForRequest.calledOnceWithExactly({
+      connectedDid,
+      delegateDid,
+      protocol,
+      protocolPath : 'thread/note',
+      contextId    : 'thread-context/note-context',
+      delegate     : true,
+      messageType  : DwnInterface.RecordsDelete,
+    })).toBe(true);
+
+    const request = agent.processDwnRequest.firstCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsDelete>;
+    expect(request.messageParams).toEqual({ recordId: 'record-id', delegatedGrant });
   });
 
   it('should author as the delegate when no delegated grant is available', async () => {

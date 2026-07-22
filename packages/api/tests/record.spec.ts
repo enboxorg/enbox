@@ -41,6 +41,25 @@ describe('Record', () => {
 
   let consoleWarn;
 
+  function rehydrateExternalDeletedRecordForAlice(deletedRecord: Record): Record {
+    if (!deletedRecord.deleted || deletedRecord.initialWrite === undefined) {
+      throw new Error('Test fixture requires a deleted record with its initial write.');
+    }
+
+    return new Record(testHarness.agent, {
+      author       : deletedRecord.author,
+      connectedDid : aliceDid.uri,
+      dataAccess   : {
+        author : aliceDid.uri,
+        remote : true,
+        target : aliceDid.uri,
+      },
+      initialWrite : deletedRecord.initialWrite,
+      remoteOrigin : aliceDid.uri,
+      ...deletedRecord.rawMessage,
+    });
+  }
+
   beforeAll(async () => {
     // Suppress console.warn output due to default password warnings
     consoleWarn = console.warn;
@@ -4409,6 +4428,29 @@ describe('Record', () => {
       expect(storedRecordCallCount()).toBe(2);
     });
 
+    it('stores an externally signed deleted record as the owner', async () => {
+      const { status: writeStatus, record } = await dwnBob.records.write({
+        data         : 'Hello, world!',
+        recipient    : aliceDid.uri,
+        protocol     : notesProtocol.protocol,
+        protocolPath : 'request',
+        schema       : notesProtocol.types.request.schema,
+      });
+      expect(writeStatus.code).toBe(202);
+
+      const { status: deleteStatus, record: deletedRecord } = await record.delete();
+      expect(deleteStatus.code).toBe(202);
+
+      const receivedRecord = rehydrateExternalDeletedRecordForAlice(deletedRecord);
+      expect(receivedRecord.deleted).toBe(true);
+
+      const { status: storeStatus } = await receivedRecord.store(true);
+      expect(storeStatus.code).toBe(202, storeStatus.detail);
+
+      const readResult = await dwnAlice.records.read({ filter: { recordId: receivedRecord.id } });
+      expect(readResult.status.code).toBe(404);
+    });
+
   });
 
   describe('import()', () => {
@@ -4544,6 +4586,30 @@ describe('Record', () => {
       expect(storedRecord.id).toBe(record.id);
     });
 
+    it('signs and imports an externally signed deleted record as the owner', async () => {
+      const { status: writeStatus, record } = await dwnBob.records.write({
+        data         : 'Hello, world!',
+        dataFormat   : 'text/plain',
+        recipient    : aliceDid.uri,
+        protocol     : notesProtocol.protocol,
+        protocolPath : 'request',
+        schema       : notesProtocol.types.request.schema,
+      });
+      expect(writeStatus.code).toBe(202);
+
+      const { status: deleteStatus, record: deletedRecord } = await record.delete();
+      expect(deleteStatus.code).toBe(202);
+
+      const receivedRecord = rehydrateExternalDeletedRecordForAlice(deletedRecord);
+      expect(receivedRecord.deleted).toBe(true);
+
+      const { status: importStatus } = await receivedRecord.import();
+      expect(importStatus.code).toBe(202, importStatus.detail);
+
+      const readResult = await dwnAlice.records.read({ filter: { recordId: receivedRecord.id } });
+      expect(readResult.status.code).toBe(404);
+    });
+
 
     describe('store: false', () => {
       it('should import an external record without storing it', async () => {
@@ -4661,6 +4727,42 @@ describe('Record', () => {
         expect(bobQueryResult.records).toHaveLength(1);
         const storedRecord = bobQueryResult.records[0];
         expect(storedRecord.id).toBe(record.id);
+      });
+
+      it('signs an externally deleted record before storing it as the owner', async () => {
+        const { status: writeStatus, record } = await dwnBob.records.write({
+          data         : 'Hello, world!',
+          dataFormat   : 'text/plain',
+          recipient    : aliceDid.uri,
+          protocol     : notesProtocol.protocol,
+          protocolPath : 'request',
+          schema       : notesProtocol.types.request.schema,
+        });
+        expect(writeStatus.code).toBe(202);
+
+        const { status: deleteStatus, record: deletedRecord } = await record.delete();
+        expect(deleteStatus.code).toBe(202);
+
+        const receivedRecord = rehydrateExternalDeletedRecordForAlice(deletedRecord);
+        expect(receivedRecord.deleted).toBe(true);
+
+        const processMessageSpy = sinon.spy(testHarness.dwn, 'processMessage');
+        const storedRecordCallCount = (): number => processMessageSpy.getCalls()
+          .filter((call): boolean =>
+            isDwnMessage(DwnInterface.RecordsWrite, call.args[1]) ||
+            isDwnMessage(DwnInterface.RecordsDelete, call.args[1])
+          ).length;
+
+        const { status: importStatus } = await receivedRecord.import(false);
+        expect(importStatus.code).toBe(202, importStatus.detail);
+        expect(storedRecordCallCount()).toBe(0);
+
+        const { status: storeStatus } = await receivedRecord.store();
+        expect(storeStatus.code).toBe(202, storeStatus.detail);
+        expect(storedRecordCallCount()).toBe(2);
+
+        const readResult = await dwnAlice.records.read({ filter: { recordId: receivedRecord.id } });
+        expect(readResult.status.code).toBe(404);
       });
 
     });

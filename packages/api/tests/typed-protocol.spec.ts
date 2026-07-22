@@ -842,6 +842,31 @@ describe('TypedProtocol API', () => {
           expect(status.code).toBe(202);
         });
 
+        it('should forward the normalized path as delete grant-resolution metadata', async () => {
+          const deleteRecord = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
+          const dwn = {
+            isDelegate : false,
+            protocols  : {
+              query: sinon.stub().resolves({
+                protocols : [{ definition: TodoProtocolDefinition }],
+                status    : { code: 200, detail: 'OK' },
+              }),
+            },
+            records: { delete: deleteRecord },
+          } as unknown as DwnApi;
+          const scopedTyped = new TypedEnbox(dwn, TodoProtocol);
+
+          await scopedTyped.records.delete('/list/' as any, { recordId: 'record-id' });
+
+          expect(deleteRecord.calledOnceWithExactly({
+            from         : undefined,
+            protocol     : TodoProtocolDefinition.protocol,
+            protocolPath : 'list',
+            recordId     : 'record-id',
+            prune        : undefined,
+          })).toBe(true);
+        });
+
       });
 
       describe('protocol-path type resolution', () => {
