@@ -4859,6 +4859,92 @@ describe('Record', () => {
         messageCid,
         value: record.dateCreated,
       });
+
+      const paginationCursorUpdatedAscending = await record.paginationCursor(DwnDateSort.UpdatedAscending);
+      expect(paginationCursorUpdatedAscending).toEqual({
+        messageCid,
+        value: record.timestamp,
+      });
+
+      const paginationCursorUpdatedDescending = await record.paginationCursor(DwnDateSort.UpdatedDescending);
+      expect(paginationCursorUpdatedDescending).toEqual({
+        messageCid,
+        value: record.timestamp,
+      });
+    });
+
+    it('should continue updated-date pagination from a record cursor', async () => {
+      const { status: firstStatus, record: firstRecord } = await dwnAlice.records.write({
+        data             : 'first record',
+        dateCreated      : '2025-01-01T00:00:00.000000Z',
+        messageTimestamp : '2025-01-01T00:00:00.000000Z',
+        protocol         : protocolDefinition.protocol,
+        protocolPath     : 'thread',
+        schema           : protocolDefinition.types.thread.schema
+      });
+      expect(firstStatus.code).toBe(202);
+
+      const { status: secondStatus, record: secondRecord } = await dwnAlice.records.write({
+        data             : 'second record',
+        dateCreated      : '2025-01-02T00:00:00.000000Z',
+        messageTimestamp : '2025-01-02T00:00:00.000000Z',
+        protocol         : protocolDefinition.protocol,
+        protocolPath     : 'thread',
+        schema           : protocolDefinition.types.thread.schema
+      });
+      expect(secondStatus.code).toBe(202);
+
+      const { status: firstUpdateStatus } = await firstRecord.update({
+        data      : 'first record updated last',
+        timestamp : '2025-01-04T00:00:00.000000Z'
+      });
+      expect(firstUpdateStatus.code).toBe(202);
+
+      const { status: secondUpdateStatus } = await secondRecord.update({
+        data      : 'second record updated first',
+        timestamp : '2025-01-03T00:00:00.000000Z'
+      });
+      expect(secondUpdateStatus.code).toBe(202);
+
+      const filter = {
+        protocol     : protocolDefinition.protocol,
+        protocolPath : 'thread',
+        schema       : protocolDefinition.types.thread.schema
+      };
+
+      const cases = [
+        { dateSort: DwnDateSort.UpdatedAscending, recordIds: [secondRecord.id, firstRecord.id] },
+        { dateSort: DwnDateSort.UpdatedDescending, recordIds: [firstRecord.id, secondRecord.id] },
+      ];
+      for (const { dateSort, recordIds } of cases) {
+        const firstPage = await dwnAlice.records.query({
+          dateSort,
+          filter,
+          pagination: { limit: 1 }
+        });
+        expect(firstPage.status.code).toBe(200);
+        expect(firstPage.records.map(record => record.id)).toEqual([recordIds[0]]);
+        expect(firstPage.cursor).toBeDefined();
+
+        const recordCursor = await firstPage.records[0].paginationCursor(dateSort);
+        expect(recordCursor).toEqual(firstPage.cursor);
+
+        const [recordCursorPage, queryCursorPage] = await Promise.all([
+          dwnAlice.records.query({
+            dateSort,
+            filter,
+            pagination: { cursor: recordCursor, limit: 1 }
+          }),
+          dwnAlice.records.query({
+            dateSort,
+            filter,
+            pagination: { cursor: firstPage.cursor, limit: 1 }
+          })
+        ]);
+        expect(recordCursorPage.records.map(record => record.id)).toEqual([recordIds[1]]);
+        expect(recordCursorPage.records.map(record => record.id)).toEqual(queryCursorPage.records.map(record => record.id));
+        expect(recordCursorPage.cursor).toEqual(queryCursorPage.cursor);
+      }
     });
 
     it('should return a cursor for pagination for a published record', async () => {

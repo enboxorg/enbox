@@ -82,17 +82,35 @@ export function getRecordMessageCid(message: RecordsWriteMessage): Promise<strin
  * @param dateSort The date sort that will be used in the query or subscription to which the cursor will be applied.
  */
 export async function getPaginationCursor(message: RecordsWriteMessage, dateSort: DateSort): Promise<PaginationCursor> {
-  const value = dateSort === DateSort.CreatedAscending || dateSort === DateSort.CreatedDescending ?
-    message.descriptor.dateCreated : message.descriptor.datePublished;
-
-  if (value === undefined) {
-    throw new Error('The dateCreated or datePublished property is missing from the record descriptor.');
+  let value: string;
+  switch (dateSort) {
+    case DateSort.CreatedAscending:
+    case DateSort.CreatedDescending:
+      value = message.descriptor.dateCreated;
+      break;
+    case DateSort.PublishedAscending:
+    case DateSort.PublishedDescending:
+      if (message.descriptor.datePublished === undefined) {
+        throw new Error('getPaginationCursor: datePublished is missing from the record descriptor.');
+      }
+      value = message.descriptor.datePublished;
+      break;
+    case DateSort.UpdatedAscending:
+    case DateSort.UpdatedDescending:
+      value = message.descriptor.messageTimestamp;
+      break;
+    default:
+      return unsupportedDateSort(dateSort);
   }
 
   return {
     messageCid: await getRecordMessageCid(message),
     value
   };
+}
+
+function unsupportedDateSort(dateSort: never): never {
+  throw new Error(`getPaginationCursor: unsupported date sort '${dateSort}'.`);
 }
 
 /**

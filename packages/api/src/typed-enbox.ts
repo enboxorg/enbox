@@ -419,7 +419,8 @@ export type TypedQueryRequest = {
    * Sort order for the returned records.
    *
    * Use `DateSort.CreatedAscending`, `DateSort.CreatedDescending`,
-   * `DateSort.PublishedAscending`, or `DateSort.PublishedDescending`.
+   * `DateSort.PublishedAscending`, `DateSort.PublishedDescending`,
+   * `DateSort.UpdatedAscending`, or `DateSort.UpdatedDescending`.
    */
   dateSort?: DateSort;
 
