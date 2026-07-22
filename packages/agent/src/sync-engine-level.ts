@@ -197,6 +197,14 @@ export class SyncEngineLevel implements SyncEngine {
   /** Active replication-session controllers; their keyed scheduling lives in `_runtime`. */
   private readonly _linkControllers: Map<string, SyncLinkController> = new Map();
 
+  /**
+   * Subscription closes that outlived a lifecycle deadline, grouped by tenant.
+   * Retaining them lets a later stop or identity mutation wait for the original
+   * transport cleanup instead of mistaking an already-detached controller for
+   * a fully closed subscription.
+   */
+  private readonly _pendingSubscriptionCloses: Map<string, Set<Promise<void>>> = new Map();
+
   // ---------------------------------------------------------------------------
   // Engine-lifetime state (survives every start/stop cycle)
   // ---------------------------------------------------------------------------
@@ -1188,8 +1196,9 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /**
-   * Coerce a caller-supplied stop timeout: non-finite values fall back to the
-   * default and finite values stay within the native timer range.
+   * Preserve `stopSync`'s legacy numeric-argument coercion. The newer
+   * `SyncLifecycleOptions` APIs instead reject invalid timeout values before
+   * changing runtime or storage state.
    */
   private static coerceStopSyncTimeout(timeout: number): number {
     return Number.isFinite(timeout)
@@ -1425,8 +1434,10 @@ export class SyncEngineLevel implements SyncEngine {
   // ---------------------------------------------------------------------------
 
   private async stopLiveSync(deadline?: SyncLifecycleDeadline): Promise<void> {
-    // The runtime transition already cancelled runtime-owned scheduling. Invalidate
-    // callbacks and close subscriptions through the active link owner.
+    // The runtime transition already cancelled runtime-owned scheduling.
+    // Invalidate callbacks and clear in-memory ownership before awaiting
+    // transport cleanup, so even a stuck close cannot revive the stopped
+    // runtime. Remote and local closes then proceed independently in parallel.
     const controllers = [...this._linkControllers.values()];
     for (const controller of controllers) {
       controller.deactivate();
@@ -1442,11 +1453,40 @@ export class SyncEngineLevel implements SyncEngine {
 
     this._echoSuppressor.clear();
 
+    this.trackSubscriptionCloses(controllers);
     await this.waitForLifecycleBarrier(
-      Promise.all(controllers.map(controller => controller.closeSubscriptions())),
+      Promise.all(this.getPendingSubscriptionCloses()),
       deadline,
       'Live subscriptions did not close',
     );
+  }
+
+  /** Retain transport-close promises until the underlying subscriptions settle. */
+  private trackSubscriptionCloses(controllers: SyncLinkController[]): void {
+    for (const controller of controllers) {
+      const tenantDid = controller.link.tenantDid;
+      const pendingCloses = this._pendingSubscriptionCloses.get(tenantDid) ?? new Set<Promise<void>>();
+      this._pendingSubscriptionCloses.set(tenantDid, pendingCloses);
+
+      const close = controller.closeSubscriptions();
+      pendingCloses.add(close);
+      const forget = (): void => {
+        pendingCloses.delete(close);
+        if (pendingCloses.size === 0 && this._pendingSubscriptionCloses.get(tenantDid) === pendingCloses) {
+          this._pendingSubscriptionCloses.delete(tenantDid);
+        }
+      };
+      void close.then(forget, forget);
+    }
+  }
+
+  /** Return every retained close, optionally limited to one identity. */
+  private getPendingSubscriptionCloses(did?: string): Promise<void>[] {
+    if (did !== undefined) {
+      return [...(this._pendingSubscriptionCloses.get(did) ?? [])];
+    }
+
+    return [...this._pendingSubscriptionCloses.values()].flatMap(pending => [...pending]);
   }
 
   // ---------------------------------------------------------------------------
@@ -1968,8 +2008,9 @@ export class SyncEngineLevel implements SyncEngine {
     taskGroup.pause();
 
     const controllers = [...this._linkControllers.values()].filter(controller => controller.link.tenantDid === did);
+    this.trackSubscriptionCloses(controllers);
     await this.waitForLifecycleBarrier(
-      Promise.all(controllers.map(controller => controller.closeSubscriptions())),
+      Promise.all(this.getPendingSubscriptionCloses(did)),
       deadline,
       'Live subscriptions did not close',
     );

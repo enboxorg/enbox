@@ -158,7 +158,7 @@ describe('SyncEngineLevel lifecycle', () => {
     expect(db.status).toBe('closed');
   });
 
-  it('should time out close when a live subscription does not release', async () => {
+  it('should retain a timed-out subscription close across lifecycle retries', async () => {
     const clock = sinon.useFakeTimers();
     const engine = new SyncEngineLevel({ db });
     const closeStarted = createDeferred();
@@ -177,6 +177,13 @@ describe('SyncEngineLevel lifecycle', () => {
     await clock.tickAsync(100);
 
     expect((await closeOutcome as Error).message).toContain('Live subscriptions did not close');
+    expect(db.status).toBe('open');
+
+    const retryPromise = engine.close({ timeout: 100 });
+    const retryOutcome = retryPromise.catch((error: unknown): unknown => error);
+    await clock.tickAsync(100);
+
+    expect((await retryOutcome as Error).message).toContain('Live subscriptions did not close');
     expect(db.status).toBe('open');
 
     releaseClose.resolve();
@@ -415,6 +422,46 @@ describe('SyncEngineLevel lifecycle', () => {
 
     await engine.unregisterIdentity(did, { timeout: 100 });
     expect(await engine.getIdentityOptions(did)).toBeUndefined();
+  });
+
+  it('should finish unregister atomically after its preparation consumes almost all of the deadline', async () => {
+    const clock = sinon.useFakeTimers();
+    const engine = new SyncEngineLevel({ db });
+    const did = 'did:example:alice';
+    await engine.registerIdentity({ did, options: { protocols: 'all' } });
+
+    const identityStore = engine['_identityStore'];
+    const getIdentity = identityStore.get.bind(identityStore);
+    const getIdentityStub = sinon.stub(identityStore, 'get').callsFake(getIdentity);
+    getIdentityStub.onFirstCall().callsFake(async (identityDid: string): Promise<Awaited<ReturnType<typeof getIdentity>>> => {
+      await new Promise(resolve => { setTimeout(resolve, 99); });
+      return getIdentity(identityDid);
+    });
+
+    const commitStarted = createDeferred();
+    const releaseCommit = createDeferred();
+    sinon.stub(engine['_quotaManager'], 'clearTenant').callsFake(async (): Promise<void> => {
+      commitStarted.resolve();
+      await releaseCommit.promise;
+    });
+    sinon.stub(engine as never, 'pruneSupersededDurableLinksForIdentity').resolves();
+
+    let unregisterSettled = false;
+    const unregister = engine.unregisterIdentity(did, { timeout: 100 }).then((): void => {
+      unregisterSettled = true;
+    });
+    await clock.tickAsync(99);
+    await commitStarted.promise;
+
+    await clock.tickAsync(1_000);
+    expect(unregisterSettled).toBe(false);
+    expect(await getIdentity(did)).toBeDefined();
+
+    releaseCommit.resolve();
+    await unregister;
+
+    expect(unregisterSettled).toBe(true);
+    expect(await getIdentity(did)).toBeUndefined();
   });
 
   it('should preserve old identity options when live work does not drain before update timeout', async () => {
