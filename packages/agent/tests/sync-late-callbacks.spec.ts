@@ -17,6 +17,9 @@ type LiveMockAgent = {
   getRemoteHandler: () => CapturedSubscriptionHandler;
 };
 
+// Deliberately exceeds the server's 32-event flow-control window.
+const PULL_WAKE_BURST_SIZE = 64;
+
 function createLiveMockAgent(): LiveMockAgent {
   let localHandler: CapturedSubscriptionHandler;
   let remoteHandler: CapturedSubscriptionHandler;
@@ -146,7 +149,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     expect(engine.connectivityState).not.toBe('online');
   });
 
-  it('should release a pull wake handler before its supervised pass settles and wait on stopSync()', async () => {
+  it('should release a pull wake burst before its supervised pass settles and wait on stopSync()', async () => {
     const { agent, getRemoteHandler } = createLiveMockAgent();
     const engine = new SyncEngineLevel({ db, agent });
     const link = makeLink();
@@ -175,15 +178,23 @@ describe('SyncEngineLevel late subscription callbacks', () => {
 
     const handler = getRemoteHandler();
     expect(handler).toBeDefined();
-    const handlerPromise = handler!({
+    const wake = {
       type  : 'event',
       event : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
-    });
+    };
+    const handlerPromises = Array.from(
+      { length: PULL_WAKE_BURST_SIZE },
+      (): Promise<void> => handler!(wake),
+    );
     await passStarted.promise;
 
     // Transport acknowledgement is chained to the handler promise, so the
-    // handler must settle without joining the potentially multi-page pass.
-    await handlerPromise;
+    // entire burst must settle without joining the potentially multi-page
+    // pass or exhausting the server's flow-control window.
+    await Promise.all(handlerPromises);
+
+    const [controller] = engine['_linkControllers'].values();
+    expect(controller?.executor.hasPending('pull')).toBe(true);
 
     let stopCompleted = false;
     const stopPromise = engine.stopSync().then((): void => { stopCompleted = true; });

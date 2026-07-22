@@ -324,6 +324,61 @@ describe('SyncDurableFeedReconciler', () => {
     expect(fixture.operations.commitCheckpoint.alwaysCalledWith(fixture.link, 'pull')).toBe(true);
   });
 
+  it('should admit a 1,000-entry pull catch-up in ordered durable pages without loss', async () => {
+    const fixture = createReconciler();
+    const entryCount = 1_000;
+    const pageSize = 100;
+    const expectedCids = Array.from({ length: entryCount }, (_, index): string => `remote-${index + 1}`);
+    const operations: string[] = [];
+    fixture.link.pull.contiguousAppliedToken = token(0);
+    fixture.queryFeed.callsFake(async ({ cursor, limit, source }: SyncDurableFeedQuery): Promise<MessagesQueryReply> => {
+      const start = Number(cursor?.position ?? 0);
+      const end = Math.min(start + pageSize, entryCount);
+      operations.push(`query:${end}`);
+      expect(limit).toBe(pageSize);
+      expect(source).toBe('remote');
+      return reply({
+        cursor      : token(end),
+        drained     : end === entryCount,
+        entries     : expectedCids.slice(start, end).map(messageCid => ({ messageCid })),
+        fingerprint : `fingerprint-${end}`,
+      });
+    });
+    fixture.operations.admitRemotePage.callsFake(async (_target, entries) => {
+      const admittedCids = entries.map(({ messageCid }) => messageCid);
+      operations.push(`admit:${admittedCids.at(-1)?.slice('remote-'.length)}`);
+      return {
+        kind               : 'processed' as const,
+        admittedCids,
+        hasActionableDiffs : admittedCids.length > 0,
+      };
+    });
+    fixture.operations.commitCheckpoint.callsFake(async (storedLink, direction) => {
+      expect(direction).toBe('pull');
+      operations.push(`commit:${storedLink.pull.contiguousAppliedToken?.position}`);
+    });
+
+    const result = await fixture.reconciler.pull(target(), fixture.link);
+
+    expect(result).toEqual({
+      admittedCids       : expectedCids,
+      hasActionableDiffs : true,
+      remoteFingerprint  : 'fingerprint-1000',
+    });
+    expect(new Set(result.admittedCids).size).toBe(entryCount);
+    expect(fixture.link.pull.contiguousAppliedToken).toEqual(token(entryCount));
+    expect(fixture.queryFeed.callCount).toBe(entryCount / pageSize);
+    expect(fixture.operations.admitRemotePage.callCount).toBe(entryCount / pageSize);
+    expect(fixture.operations.commitCheckpoint.callCount).toBe(entryCount / pageSize);
+    expect(operations).toEqual(Array.from(
+      { length: entryCount / pageSize },
+      (_, index): string[] => {
+        const position = (index + 1) * pageSize;
+        return [`query:${position}`, `admit:${position}`, `commit:${position}`];
+      },
+    ).flat());
+  });
+
   it('should reject a non-advancing cursor before persisting or emitting progress', async () => {
     const fixture = createReconciler();
     fixture.link.pull.contiguousAppliedToken = token(1);
