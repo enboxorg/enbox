@@ -2,7 +2,7 @@ import sinon from 'sinon';
 
 import { afterEach, describe, expect, it } from 'bun:test';
 
-import { SyncLifecycleCoordinator } from '../src/sync-lifecycle-coordinator.js';
+import { createSyncLifecycleDeadline, SyncLifecycleCoordinator } from '../src/sync-lifecycle-coordinator.js';
 
 import { deferred as createDeferred } from './utils/deferred.js';
 
@@ -33,6 +33,28 @@ describe('SyncLifecycleCoordinator', () => {
     expect(events).toEqual(['first:start', 'first:end', 'second']);
   });
 
+  it('should order a synchronously enqueued nested transition after its caller', async () => {
+    const coordinator = new SyncLifecycleCoordinator();
+    const releaseOuter = createDeferred();
+    const events: string[] = [];
+    let nested!: Promise<void>;
+
+    const outer = coordinator.runTransition(async (): Promise<void> => {
+      events.push('outer:start');
+      nested = coordinator.runTransition(async (): Promise<void> => {
+        events.push('nested');
+      });
+      await releaseOuter.promise;
+      events.push('outer:end');
+    });
+
+    expect(events).toEqual(['outer:start']);
+    releaseOuter.resolve();
+    await Promise.all([outer, nested]);
+
+    expect(events).toEqual(['outer:start', 'outer:end', 'nested']);
+  });
+
   it('should continue the transition queue after an operation rejects', async () => {
     const coordinator = new SyncLifecycleCoordinator();
     let secondRan = false;
@@ -48,6 +70,64 @@ describe('SyncLifecycleCoordinator', () => {
     await second;
 
     expect(secondRan).toBe(true);
+  });
+
+  it('should remove an expired transition so it cannot execute later', async () => {
+    const clock = sinon.useFakeTimers();
+    const coordinator = new SyncLifecycleCoordinator();
+    const releaseFirst = createDeferred();
+    let expiredRan = false;
+    let finalRan = false;
+
+    const first = coordinator.runTransition(async (): Promise<void> => {
+      await releaseFirst.promise;
+    });
+    const expired = coordinator.runTransition(async (): Promise<void> => {
+      expiredRan = true;
+    }, createSyncLifecycleDeadline(100));
+    const observedExpired = expired.catch((error: unknown): unknown => error);
+    const final = coordinator.runTransition(async (): Promise<void> => {
+      finalRan = true;
+    });
+
+    await clock.tickAsync(100);
+    expect((await observedExpired as Error).message).toContain('within 100 milliseconds');
+    expect(expiredRan).toBe(false);
+
+    releaseFirst.resolve();
+    await Promise.all([first, final]);
+
+    expect(expiredRan).toBe(false);
+    expect(finalRan).toBe(true);
+  });
+
+  it('should share one deadline across the transition queue and sync-lock wait', async () => {
+    const clock = sinon.useFakeTimers();
+    const coordinator = new SyncLifecycleCoordinator();
+    const releaseTransition = createDeferred();
+    expect(coordinator.tryAcquireSync()).toBe(true);
+
+    const transition = coordinator.runTransition(async (): Promise<void> => {
+      await releaseTransition.promise;
+    });
+    let mutationRan = false;
+    const mutation = coordinator.runIdentityMutation(async (): Promise<void> => {
+      mutationRan = true;
+    }, createSyncLifecycleDeadline(100));
+    const observedMutation = mutation.catch((error: unknown): unknown => error);
+
+    await clock.tickAsync(80);
+    releaseTransition.resolve();
+    await Promise.resolve();
+    await clock.tickAsync(19);
+    expect(mutationRan).toBe(false);
+
+    await clock.tickAsync(1);
+    expect((await observedMutation as Error).message).toContain('within 100 milliseconds');
+    expect(mutationRan).toBe(false);
+
+    coordinator.releaseSync();
+    await transition;
   });
 
   it('should serialize identity mutations with sync work and release the lock after failure', async () => {

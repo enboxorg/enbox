@@ -251,6 +251,21 @@ export type SyncRunOptions = {
 };
 
 /**
+ * Bounds how long a lifecycle operation waits for earlier sync/lifecycle
+ * work before its own mutation begins. Once the mutation starts it runs to
+ * completion; the engine never force-closes storage or interrupts a partial
+ * identity update.
+ */
+export type SyncLifecycleOptions = {
+  /**
+   * Maximum wait in milliseconds. Must be between zero and the native timer
+   * ceiling (2,147,483,647 ms, about 24.8 days). Omit to retain the safe,
+   * unbounded graceful-drain behavior.
+   */
+  timeout?: number;
+};
+
+/**
  * Status of a replication link.
  *
  * - `initializing` — link created, no subscriptions open yet.
@@ -677,23 +692,34 @@ export interface SyncEngine {
    * down existing subscriptions for other identities. This enables
    * multi-identity agents (e.g. ElectroBun desktop DWN, multi-persona dApps)
    * to add identities at runtime without disrupting sync for others.
+   *
+   * `lifecycleOptions.timeout` bounds only pre-registration waits. A timed-out
+   * registration is cancelled before the durable identity marker is written.
    */
-  registerIdentity(params: { did: string, options: SyncIdentityOptions }): Promise<void>;
+  registerIdentity(
+    params: { did: string, options: SyncIdentityOptions },
+    lifecycleOptions?: SyncLifecycleOptions,
+  ): Promise<void>;
   /**
    * Unregister an identity from the SyncEngine, this will stop syncing messages for this identity.
    *
    * When live sync is active, the identity is hot-removed: its subscriptions
    * are closed and runtime state cleaned up without affecting other identities.
+   * A timed-out removal preserves the durable registration and may be retried.
    */
-  unregisterIdentity(did: string): Promise<void>;
+  unregisterIdentity(did: string, lifecycleOptions?: SyncLifecycleOptions): Promise<void>;
   /**
    * Get the Sync Options for a specific identity.
    */
   getIdentityOptions(did: string): Promise<SyncIdentityOptions | undefined>;
   /**
    * Update the Sync Options for a specific identity, replaces the existing options.
+   * A timed-out update preserves the previous durable options and may be retried.
    */
-  updateIdentityOptions(params: { did: string, options: SyncIdentityOptions }): Promise<void>;
+  updateIdentityOptions(
+    params: { did: string, options: SyncIdentityOptions },
+    lifecycleOptions?: SyncLifecycleOptions,
+  ): Promise<void>;
   /**
    * Performs a one-shot sync operation. If no direction is provided, it will perform both push and pull.
    *
@@ -753,10 +779,12 @@ export interface SyncEngine {
    */
   startSync(params?: StartSyncParams): Promise<void>;
   /**
-   * Stops the sync runtime, will complete the current sync operation if one is already in progress.
+   * Stops the sync runtime after closing subscriptions and draining current
+   * sync/background work.
    *
-   * @param timeout the maximum amount of time, in milliseconds, to wait for the current sync operation to complete. Default is 2000 (2 seconds).
-   * @throws {Error} if the sync operation fails to stop before the timeout.
+   * @param timeout the shared maximum wait, in milliseconds, including an
+   * earlier lifecycle transition. Default is 2000 (2 seconds).
+   * @throws {Error} if the runtime fails to stop before the timeout.
    */
   stopSync(timeout?: number): Promise<void>;
 
@@ -770,9 +798,10 @@ export interface SyncEngine {
   /**
    * Release all resources held by the sync engine (LevelDB handles, timers,
    * WebSocket subscriptions). After calling `close()`, the engine should not
-   * be reused.
+   * be reused. A timeout only bounds the graceful wait before storage is
+   * closed; it never force-closes storage under active sync work.
    */
-  close(): Promise<void>;
+  close(options?: SyncLifecycleOptions): Promise<void>;
 
   // ---------------------------------------------------------------------------
   // Dead letter / sync health

@@ -14,7 +14,6 @@ import type { SyncDeadLetterStore } from './sync-dead-letter-store.js';
 import type { SyncEndpointStore } from './sync-endpoint-store.js';
 import type { SyncFreshEntry } from './sync-admit-closure.js';
 import type { SyncIdentityStore } from './sync-identity-store.js';
-import type { SyncIdentityTaskRunner } from './sync-lifecycle-coordinator.js';
 import type { SyncMessageEntry } from './sync-messages.js';
 import type { SyncReplicationLinkStore } from './sync-replication-link-store.js';
 import type {
@@ -35,6 +34,7 @@ import type {
   SyncEventScope,
   SyncHealthSummary,
   SyncIdentityOptions,
+  SyncLifecycleOptions,
   SyncRunOptions,
   SyncScope,
 } from './types/sync.js';
@@ -48,6 +48,7 @@ import type {
 } from './sync-durable-feed-reconciler.js';
 import type { SyncDeferredPullState, SyncDeferredPullStore } from './sync-deferred-pull-store.js';
 import type { SyncEndpointDiscovery, SyncTarget } from './sync-target-resolver.js';
+import type { SyncIdentityTaskRunner, SyncLifecycleDeadline } from './sync-lifecycle-coordinator.js';
 import type {
   SyncScopeClosureGrantQuery,
   SyncScopeClosureGrantResolution,
@@ -68,7 +69,6 @@ import { SyncEchoSuppressor } from './sync-echo-suppressor.js';
 import { SyncEndpointStoreLevel } from './sync-endpoint-store-level.js';
 import { SyncFeedConvergenceManager } from './sync-feed-convergence-manager.js';
 import { SyncIdentityStoreLevel } from './sync-identity-store-level.js';
-import { SyncLifecycleCoordinator } from './sync-lifecycle-coordinator.js';
 import { SyncLinkController } from './sync-link-controller.js';
 import { SyncLinkRecoveryCoordinator } from './sync-link-recovery-coordinator.js';
 import { SyncQuotaManager } from './sync-quota-manager.js';
@@ -81,6 +81,7 @@ import { SyncStatusReporter } from './sync-status-reporter.js';
 import { SyncTargetPlanner } from './sync-target-planner.js';
 import { buildDurableLinkIdentityKey, buildLinkKey, LINK_KEY_SEPARATOR } from './sync-link-key.js';
 import { computeProjectionId, isTerminalPushFailure, lexicographicalCompare, singleProtocolForSyncScope, syncEventScope, syncScopeFromProtocols } from './types/sync.js';
+import { createSyncLifecycleDeadline, remainingSyncLifecycleTimeout, SyncLifecycleCoordinator } from './sync-lifecycle-coordinator.js';
 import { fetchRemoteMessages, getLocalMessage, isInitialWriteForRecord, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, recordIdForRecordsMessage, syncMessageDescriptor } from './sync-messages.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
 import { isTerminalSyncAuthorizationFailure, SyncRunCancelledError } from './sync-runtime-errors.js';
@@ -195,6 +196,14 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Active replication-session controllers; their keyed scheduling lives in `_runtime`. */
   private readonly _linkControllers: Map<string, SyncLinkController> = new Map();
+
+  /**
+   * Subscription closes that outlived a lifecycle deadline, grouped by tenant.
+   * Retaining them lets a later stop or identity mutation wait for the original
+   * transport cleanup instead of mistaking an already-detached controller for
+   * a fully closed subscription.
+   */
+  private readonly _pendingSubscriptionCloses: Map<string, Set<Promise<void>>> = new Map();
 
   // ---------------------------------------------------------------------------
   // Engine-lifetime state (survives every start/stop cycle)
@@ -680,23 +689,25 @@ export class SyncEngineLevel implements SyncEngine {
     });
   }
 
-  public clear(): Promise<void> {
-    return this._lifecycle.runTransition(async (): Promise<void> => {
-      await this.stopSyncRuntime();
+  public async clear(options: SyncLifecycleOptions = {}): Promise<void> {
+    const deadline = SyncEngineLevel.createLifecycleDeadline(options);
+    await this._lifecycle.runTransition(async (activeDeadline): Promise<void> => {
+      await this.stopSyncRuntime(activeDeadline);
       await this.runDestructivePhase(async (): Promise<void> => {
         await this._permissionsApi.clear();
         await this.clearSyncDb();
-      });
-    });
+      }, activeDeadline);
+    }, deadline);
   }
 
-  public close(): Promise<void> {
-    return this._lifecycle.runTransition(async (): Promise<void> => {
-      await this.stopSyncRuntime();
+  public async close(options: SyncLifecycleOptions = {}): Promise<void> {
+    const deadline = SyncEngineLevel.createLifecycleDeadline(options);
+    await this._lifecycle.runTransition(async (activeDeadline): Promise<void> => {
+      await this.stopSyncRuntime(activeDeadline);
       await this.runDestructivePhase(async (): Promise<void> => {
         await this._db.close();
-      });
-    });
+      }, activeDeadline);
+    }, deadline);
   }
 
   /**
@@ -714,8 +725,17 @@ export class SyncEngineLevel implements SyncEngine {
    * is left in place — joiners arriving mid-destruction must share that
    * cancellation, not start a fresh run.
    */
-  private async runDestructivePhase(operation: () => Promise<void>): Promise<void> {
-    await this._lifecycle.acquireSync();
+  private async runDestructivePhase(
+    operation: () => Promise<void>,
+    deadline?: SyncLifecycleDeadline,
+  ): Promise<void> {
+    if (deadline === undefined) {
+      await this._lifecycle.acquireSync();
+    } else if (!await this._lifecycle.acquireSyncBefore(deadline)) {
+      throw new Error(
+        `SyncEngineLevel: Existing sync operation did not complete within ${deadline.timeout} milliseconds.`,
+      );
+    }
     try {
       await operation();
     } finally {
@@ -736,8 +756,15 @@ export class SyncEngineLevel implements SyncEngine {
     this._runtime = replacement;
   }
 
-  public registerIdentity(params: { did: string; options: SyncIdentityOptions }): Promise<void> {
-    return this.runExclusiveIdentityMutation(params.did, (): Promise<void> => this.doRegisterIdentity(params));
+  public registerIdentity(
+    params: { did: string; options: SyncIdentityOptions },
+    lifecycleOptions: SyncLifecycleOptions = {},
+  ): Promise<void> {
+    return this.runExclusiveIdentityMutation(
+      params.did,
+      (deadline): Promise<void> => this.doRegisterIdentity(params, deadline),
+      lifecycleOptions,
+    );
   }
 
   /**
@@ -745,21 +772,37 @@ export class SyncEngineLevel implements SyncEngine {
    * around the cross-context per-DID lifecycle lock. Composing both here
    * makes the layering structurally unforgettable for future mutation sites.
    */
-  private runExclusiveIdentityMutation(did: string, operation: () => Promise<void>): Promise<void> {
-    return this._lifecycle.runIdentityMutation(async (): Promise<void> => {
-      await this.runIdentityLifecycle(did, operation);
-    });
+  private async runExclusiveIdentityMutation(
+    did: string,
+    operation: (deadline?: SyncLifecycleDeadline) => Promise<void>,
+    lifecycleOptions: SyncLifecycleOptions,
+  ): Promise<void> {
+    const deadline = SyncEngineLevel.createLifecycleDeadline(lifecycleOptions);
+    await this._lifecycle.runIdentityMutation(async (activeDeadline): Promise<void> => {
+      await this.runIdentityLifecycle(did, operation, activeDeadline);
+    }, deadline);
   }
 
-  private async doRegisterIdentity({ did, options }: { did: string; options: SyncIdentityOptions }): Promise<void> {
+  private async doRegisterIdentity(
+    { did, options }: { did: string; options: SyncIdentityOptions },
+    deadline?: SyncLifecycleDeadline,
+  ): Promise<void> {
     this._scopeClosureValidator.validateOptions(options);
 
-    const existing = await this.getIdentityOptions(did);
+    const existing = await this.waitForLifecycleBarrier(
+      this.getIdentityOptions(did),
+      deadline,
+      'Identity registration preparation did not complete',
+    );
     if (existing) {
       throw new Error(`SyncEngineLevel: Identity with DID ${did} is already registered.`);
     }
 
-    await this._scopeClosureValidator.validateClosure(did, options);
+    await this.waitForLifecycleBarrier(
+      this._scopeClosureValidator.validateClosure(did, options),
+      deadline,
+      'Identity registration preparation did not complete',
+    );
     await this._identityStore.set(did, options);
     this.invalidateSyncTargetsCache();
 
@@ -774,19 +817,33 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  public unregisterIdentity(did: string): Promise<void> {
-    return this.runExclusiveIdentityMutation(did, (): Promise<void> => this.doUnregisterIdentity(did));
+  public unregisterIdentity(did: string, lifecycleOptions: SyncLifecycleOptions = {}): Promise<void> {
+    return this.runExclusiveIdentityMutation(
+      did,
+      (deadline): Promise<void> => this.doUnregisterIdentity(did, deadline),
+      lifecycleOptions,
+    );
   }
 
-  private async doUnregisterIdentity(did: string): Promise<void> {
-    const existing = await this.getIdentityOptions(did);
+  private async doUnregisterIdentity(did: string, deadline?: SyncLifecycleDeadline): Promise<void> {
+    const existing = await this.waitForLifecycleBarrier(
+      this.getIdentityOptions(did),
+      deadline,
+      'Identity unregistration preparation did not complete',
+    );
     if (!existing) {
       throw new Error(`SyncEngineLevel: Identity with DID ${did} is not registered.`);
     }
 
-    // If live sync is active, hot-remove subscriptions for this identity.
-    if (this._runtime.live) {
-      await this.removeIdentityFromLiveSync(did);
+    // A timed-out stop may leave already-running identity work after the live
+    // runtime has been disposed. Drain every surviving form of per-identity
+    // ownership before deleting the durable registration.
+    const hasPriorLiveRuntime = this._runtime.live ||
+      this._lifecycle.hasIdentityTasks(did) ||
+      this.hasActiveLinksForDid(did) ||
+      this.hasLinkInitRetriesForDid(did);
+    if (hasPriorLiveRuntime) {
+      await this.removeIdentityFromLiveSync(did, deadline);
     }
 
     // A pending rate-limit init retry may exist even without an active link
@@ -820,21 +877,37 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  public updateIdentityOptions(params: { did: string, options: SyncIdentityOptions }): Promise<void> {
-    return this.runExclusiveIdentityMutation(params.did, (): Promise<void> => this.doUpdateIdentityOptions(params));
+  public updateIdentityOptions(
+    params: { did: string, options: SyncIdentityOptions },
+    lifecycleOptions: SyncLifecycleOptions = {},
+  ): Promise<void> {
+    return this.runExclusiveIdentityMutation(
+      params.did,
+      (deadline): Promise<void> => this.doUpdateIdentityOptions(params, deadline),
+      lifecycleOptions,
+    );
   }
 
-  private async doUpdateIdentityOptions({ did, options }: { did: string, options: SyncIdentityOptions }): Promise<void> {
+  private async doUpdateIdentityOptions(
+    { did, options }: { did: string, options: SyncIdentityOptions },
+    deadline?: SyncLifecycleDeadline,
+  ): Promise<void> {
     this._scopeClosureValidator.validateOptions(options);
 
-    const existingOptions = await this.getIdentityOptions(did);
+    const existingOptions = await this.waitForLifecycleBarrier(
+      this.getIdentityOptions(did),
+      deadline,
+      'Identity update preparation did not complete',
+    );
     if (!existingOptions) {
       throw new Error(`SyncEngineLevel: Identity with DID ${did} is not registered.`);
     }
 
-    await this._scopeClosureValidator.validateClosure(did, options);
-    await this._identityStore.set(did, options);
-    this.invalidateSyncTargetsCache();
+    await this.waitForLifecycleBarrier(
+      this._scopeClosureValidator.validateClosure(did, options),
+      deadline,
+      'Identity update preparation did not complete',
+    );
 
     // A pending rate-limit init retry captured the PREVIOUS options' target
     // (old scope, old authorization epoch). Remember that it represented an
@@ -850,13 +923,12 @@ export class SyncEngineLevel implements SyncEngine {
     // states alike as a prior live runtime that must be stopped. The normal
     // identity stop pauses task intake before settling, then cancels
     // any retry re-armed by work that was already in flight.
-    const identityTaskGroup = this._lifecycle.getIdentityTaskGroup(did);
     const hadPriorLiveRuntime = hadPendingLinkInitRetry ||
-      identityTaskGroup.size > 0 ||
+      this._lifecycle.hasIdentityTasks(did) ||
       this.hasActiveLinksForDid(did);
     const rebuildLiveLinks = this._runtime.live && hadPriorLiveRuntime;
     if (hadPriorLiveRuntime) {
-      await this.removeIdentityFromLiveSync(did);
+      await this.removeIdentityFromLiveSync(did, deadline);
     }
 
     // Scope/delegate changes define different replication links. A block from
@@ -864,6 +936,12 @@ export class SyncEngineLevel implements SyncEngine {
     // first delivery attempt. Clear only after old link work has drained so it
     // cannot recreate stale state after the quota state is cleared.
     await this._quotaManager.clearTenant(did);
+
+    // Persist the new identity options only after every timeout-bounded
+    // preparation barrier has completed. From this commit point onward the
+    // update runs to completion and is never abandoned halfway through.
+    await this._identityStore.set(did, options);
+    this.invalidateSyncTargetsCache();
 
     // Rebuild live subscriptions with the new options. Delegate/scope changes
     // derive a new authorization epoch, so durable links are not mutated in place.
@@ -1058,7 +1136,7 @@ export class SyncEngineLevel implements SyncEngine {
     // ~1ms — also a tight loop).
     const intervalMilliseconds = Math.min(
       Math.max(parseDurationInMilliseconds(params.interval ?? '5m'), SyncEngineLevel.MIN_SYNC_INTERVAL_MS),
-      SyncEngineLevel.MAX_SYNC_INTERVAL_MS,
+      SyncEngineLevel.MAX_TIMER_DELAY_MS,
     );
 
     const hadLiveRuntime = this.hasLiveSyncRuntime();
@@ -1086,15 +1164,18 @@ export class SyncEngineLevel implements SyncEngine {
    * stopSync cancels runtime-owned scheduling and closes live subscriptions, then
    * waits for current lock-owning and background sync operations to finish.
    *
-   * @param timeout - Maximum milliseconds to wait for in-progress sync work
-   *   to finish. Non-finite values (`NaN`, `Infinity`) are
+   * @param timeout - One shared maximum wait for an earlier lifecycle
+   *   transition, subscription closure, and in-progress sync/background work.
+   *   Non-finite values (`NaN`, `Infinity`) are
    *   coerced to the default to avoid a tight busy-wait loop or never-exit
    *   condition.
    */
   public stopSync(timeout: number = 2000): Promise<void> {
-    return this._lifecycle.runTransition(async (): Promise<void> => {
-      await this.stopSyncRuntime(timeout);
-    });
+    const safeTimeout = SyncEngineLevel.coerceStopSyncTimeout(timeout);
+    const deadline = createSyncLifecycleDeadline(safeTimeout);
+    return this._lifecycle.runTransition(async (activeDeadline): Promise<void> => {
+      await this.stopSyncRuntime(activeDeadline);
+    }, deadline);
   }
 
   private hasLiveSyncRuntime(): boolean {
@@ -1115,24 +1196,39 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /**
-   * Coerce a caller-supplied stop timeout: `undefined` waits without a bound,
-   * while a non-finite value (`NaN`, `Infinity`) falls back to the default so
-   * the wait can neither spin nor never exit.
+   * Preserve `stopSync`'s legacy numeric-argument coercion. The newer
+   * `SyncLifecycleOptions` APIs instead reject invalid timeout values before
+   * changing runtime or storage state.
    */
-  private static coerceStopSyncTimeout(timeout: number | undefined): number | undefined {
+  private static coerceStopSyncTimeout(timeout: number): number {
+    return Number.isFinite(timeout)
+      ? Math.min(Math.max(0, timeout), SyncEngineLevel.MAX_TIMER_DELAY_MS)
+      : 2000;
+  }
+
+  /** Validate an opt-in lifecycle wait and convert it to one absolute deadline. */
+  private static createLifecycleDeadline(options: SyncLifecycleOptions): SyncLifecycleDeadline | undefined {
+    const timeout = options.timeout;
     if (timeout === undefined) {
       return undefined;
     }
-    return Number.isFinite(timeout) ? timeout : 2000;
+    if (!Number.isFinite(timeout) || timeout < 0 || timeout > SyncEngineLevel.MAX_TIMER_DELAY_MS) {
+      throw new RangeError(
+        `SyncEngineLevel: Lifecycle timeout must be between 0 and ${SyncEngineLevel.MAX_TIMER_DELAY_MS} milliseconds.`,
+      );
+    }
+    return createSyncLifecycleDeadline(timeout);
   }
 
-  private async stopSyncRuntime(timeout?: number): Promise<void> {
-    const safeTimeout = SyncEngineLevel.coerceStopSyncTimeout(timeout);
+  private async stopSyncRuntime(deadline?: SyncLifecycleDeadline): Promise<void> {
     this.prepareForSyncRuntimeTransition();
-    await this.stopLiveSync();
+    await this.stopLiveSync(deadline);
+    const remainingTimeout = deadline === undefined
+      ? undefined
+      : remainingSyncLifecycleTimeout(deadline);
     const [syncCompletion, backgroundCompletion] = await Promise.allSettled([
-      this.waitForSyncCompletion(safeTimeout),
-      this.waitForBackgroundTasks(safeTimeout),
+      this.waitForSyncCompletion(remainingTimeout, deadline?.timeout),
+      this.waitForBackgroundTasks(remainingTimeout, deadline?.timeout),
     ]);
     if (backgroundCompletion.status === 'fulfilled') {
       this._lifecycle.clearIdentityTaskGroups();
@@ -1148,15 +1244,15 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  private async waitForSyncCompletion(timeout?: number): Promise<void> {
+  private async waitForSyncCompletion(timeout?: number, requestedTimeout: number | undefined = timeout): Promise<void> {
     if (!await this._lifecycle.waitForSyncCompletion(timeout)) {
-      throw new Error(`SyncEngineLevel: Existing sync operation did not complete within ${timeout} milliseconds.`);
+      throw new Error(`SyncEngineLevel: Existing sync operation did not complete within ${requestedTimeout} milliseconds.`);
     }
   }
 
-  private async waitForBackgroundTasks(timeout?: number): Promise<void> {
+  private async waitForBackgroundTasks(timeout?: number, requestedTimeout: number | undefined = timeout): Promise<void> {
     if (!await this._lifecycle.waitForBackgroundTasks(timeout)) {
-      throw new Error(`SyncEngineLevel: Background sync operations did not complete within ${timeout} milliseconds.`);
+      throw new Error(`SyncEngineLevel: Background sync operations did not complete within ${requestedTimeout} milliseconds.`);
     }
   }
 
@@ -1170,8 +1266,8 @@ export class SyncEngineLevel implements SyncEngine {
   /** Settle-check cadence floor — prevents a tight reconciliation loop. */
   private static readonly MIN_SYNC_INTERVAL_MS = 1_000;
 
-  /** Settle-check cadence ceiling — the 32-bit native timer maximum. */
-  private static readonly MAX_SYNC_INTERVAL_MS = 2 ** 31 - 1;
+  /** The 32-bit native timer ceiling shared by intervals and lifecycle waits. */
+  private static readonly MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
 
   /** Wrap a scheduled operation so each tick runs as supervised background work. */
   private supervisedTick(operation: () => Promise<void>): () => void {
@@ -1337,17 +1433,16 @@ export class SyncEngineLevel implements SyncEngine {
   // Stop live sync
   // ---------------------------------------------------------------------------
 
-  private async stopLiveSync(): Promise<void> {
-    // The runtime transition already cancelled runtime-owned scheduling. Invalidate
-    // callbacks and close subscriptions through the active link owner.
+  private async stopLiveSync(deadline?: SyncLifecycleDeadline): Promise<void> {
+    // The runtime transition already cancelled runtime-owned scheduling.
+    // Invalidate callbacks and clear in-memory ownership before awaiting
+    // transport cleanup, so even a stuck close cannot revive the stopped
+    // runtime. Remote and local closes then proceed independently in parallel.
     const controllers = [...this._linkControllers.values()];
     for (const controller of controllers) {
       controller.deactivate();
     }
     this._linkControllers.clear();
-    for (const controller of controllers) {
-      await controller.closeSubscriptions();
-    }
 
     this._feedConvergenceManager.clearAll();
 
@@ -1358,6 +1453,40 @@ export class SyncEngineLevel implements SyncEngine {
 
     this._echoSuppressor.clear();
 
+    this.trackSubscriptionCloses(controllers);
+    await this.waitForLifecycleBarrier(
+      Promise.all(this.getPendingSubscriptionCloses()),
+      deadline,
+      'Live subscriptions did not close',
+    );
+  }
+
+  /** Retain transport-close promises until the underlying subscriptions settle. */
+  private trackSubscriptionCloses(controllers: SyncLinkController[]): void {
+    for (const controller of controllers) {
+      const tenantDid = controller.link.tenantDid;
+      const pendingCloses = this._pendingSubscriptionCloses.get(tenantDid) ?? new Set<Promise<void>>();
+      this._pendingSubscriptionCloses.set(tenantDid, pendingCloses);
+
+      const close = controller.closeSubscriptions();
+      pendingCloses.add(close);
+      const forget = (): void => {
+        pendingCloses.delete(close);
+        if (pendingCloses.size === 0 && this._pendingSubscriptionCloses.get(tenantDid) === pendingCloses) {
+          this._pendingSubscriptionCloses.delete(tenantDid);
+        }
+      };
+      void close.then(forget, forget);
+    }
+  }
+
+  /** Return every retained close, optionally limited to one identity. */
+  private getPendingSubscriptionCloses(did?: string): Promise<void>[] {
+    if (did !== undefined) {
+      return [...(this._pendingSubscriptionCloses.get(did) ?? [])];
+    }
+
+    return [...this._pendingSubscriptionCloses.values()].flatMap(pending => [...pending]);
   }
 
   // ---------------------------------------------------------------------------
@@ -1874,17 +2003,28 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /** Hot-remove a single identity from the active live sync session. */
-  private async removeIdentityFromLiveSync(did: string): Promise<void> {
+  private async removeIdentityFromLiveSync(did: string, deadline?: SyncLifecycleDeadline): Promise<void> {
     const taskGroup = this._lifecycle.getIdentityTaskGroup(did);
     taskGroup.pause();
 
     const controllers = [...this._linkControllers.values()].filter(controller => controller.link.tenantDid === did);
-    await Promise.all(controllers.map(controller => controller.closeSubscriptions()));
+    this.trackSubscriptionCloses(controllers);
+    await this.waitForLifecycleBarrier(
+      Promise.all(this.getPendingSubscriptionCloses(did)),
+      deadline,
+      'Live subscriptions did not close',
+    );
 
     // Stop queued work first, but retain its runtime state until callbacks that
     // are already in flight finish using it.
     this.cancelIdentityTimers(did);
-    await taskGroup.settle();
+    if (deadline === undefined) {
+      await taskGroup.settle();
+    } else if (!await taskGroup.settle(remainingSyncLifecycleTimeout(deadline))) {
+      throw new Error(
+        `SyncEngineLevel: Identity sync operations did not complete within ${deadline.timeout} milliseconds.`,
+      );
+    }
 
     // A running task may have armed a follow-up timer before observing the
     // paused group. Cancel that timer before discarding the link state.
@@ -1892,6 +2032,34 @@ export class SyncEngineLevel implements SyncEngine {
     this.discardIdentityLinkState(did);
 
     this._lifecycle.deleteIdentityTaskGroup(did, taskGroup);
+  }
+
+  /** Wait for pre-mutation lifecycle work without abandoning its rejection. */
+  private async waitForLifecycleBarrier<T>(
+    operation: Promise<T>,
+    deadline: SyncLifecycleDeadline | undefined,
+    failure: string,
+  ): Promise<T> {
+    if (deadline === undefined) {
+      return operation;
+    }
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<never>((_resolve, reject) => {
+      timeoutId = setTimeout(
+        (): void => {
+          reject(new Error(`SyncEngineLevel: ${failure} within ${deadline.timeout} milliseconds.`));
+        },
+        remainingSyncLifecycleTimeout(deadline),
+      );
+    });
+    try {
+      return await Promise.race([operation, timedOut]);
+    } finally {
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+    }
   }
 
   /** Cancel active-session scheduling and pre-session initialization retries for one identity. */
@@ -3020,8 +3188,47 @@ export class SyncEngineLevel implements SyncEngine {
    * Lock order: this lock is OUTERMOST. The per-tenant deferred-pull lock
    * may be taken inside it (unregister does), never the reverse.
    */
-  private async runIdentityLifecycle<T>(did: string, operation: () => Promise<T>): Promise<T> {
-    return runWithCrossContextLock(`enbox:sync-identity:${this._lockNamespace}:${did}`, operation);
+  private async runIdentityLifecycle<T>(
+    did: string,
+    operation: (deadline?: SyncLifecycleDeadline) => Promise<T>,
+    deadline?: SyncLifecycleDeadline,
+  ): Promise<T> {
+    const lockName = `enbox:sync-identity:${this._lockNamespace}:${did}`;
+    if (deadline === undefined) {
+      return runWithCrossContextLock(lockName, (): Promise<T> => operation());
+    }
+
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeoutError = (): Error => new Error(
+      `SyncEngineLevel: Existing cross-context identity mutation did not complete within ${deadline.timeout} milliseconds.`,
+    );
+    const timedOut = new Promise<never>((_resolve, reject) => {
+      timeoutId = setTimeout((): void => {
+        cancelled = true;
+        reject(timeoutError());
+      }, remainingSyncLifecycleTimeout(deadline));
+    });
+    const locked = runWithCrossContextLock<T>(
+      lockName,
+      async (): Promise<T> => {
+        if (cancelled) {
+          throw timeoutError();
+        }
+        if (timeoutId !== undefined) {
+          clearTimeout(timeoutId);
+        }
+        return operation(deadline);
+      },
+    );
+
+    try {
+      return await Promise.race([locked, timedOut]);
+    } finally {
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+    }
   }
 
   /**

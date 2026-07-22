@@ -6,6 +6,7 @@ import type { SyncTarget } from '../src/sync-target-resolver.js';
 import sinon from 'sinon';
 
 import { Level } from 'level';
+import { runWithCrossContextLock } from '@enbox/common';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
@@ -126,6 +127,386 @@ describe('SyncEngineLevel lifecycle', () => {
 
     expect(await engine.getIdentityOptions('did:example:alice')).toBeUndefined();
     expect(db.status).toBe('open');
+  });
+
+  it('should time out close without closing storage later after the active sync settles', async () => {
+    const clock = sinon.useFakeTimers();
+    const engine = new SyncEngineLevel({ db });
+    const syncStarted = createDeferred();
+    const releaseSync = createDeferred();
+    sinon.stub(engine as never, 'getSyncTargets').callsFake(async (): Promise<[]> => {
+      syncStarted.resolve();
+      await releaseSync.promise;
+      return [];
+    });
+
+    const syncPromise = engine.sync();
+    await syncStarted.promise;
+    const closePromise = engine.close({ timeout: 100 });
+    const closeOutcome = closePromise.catch((error: unknown): unknown => error);
+
+    await clock.tickAsync(100);
+    expect((await closeOutcome as Error).message).toContain('within 100 milliseconds');
+    expect(db.status).toBe('open');
+
+    releaseSync.resolve();
+    await syncPromise;
+    await clock.tickAsync(0);
+    expect(db.status).toBe('open');
+
+    await engine.close({ timeout: 100 });
+    expect(db.status).toBe('closed');
+  });
+
+  it('should retain a timed-out subscription close across lifecycle retries', async () => {
+    const clock = sinon.useFakeTimers();
+    const engine = new SyncEngineLevel({ db });
+    const closeStarted = createDeferred();
+    const releaseClose = createDeferred();
+    const { controller } = activateAdministrativeLink(engine, 'did:example:alice', 'initializing');
+    controller.setLiveSubscription({
+      close: async (): Promise<void> => {
+        closeStarted.resolve();
+        await releaseClose.promise;
+      },
+    });
+
+    const closePromise = engine.close({ timeout: 100 });
+    const closeOutcome = closePromise.catch((error: unknown): unknown => error);
+    await closeStarted.promise;
+    await clock.tickAsync(100);
+
+    expect((await closeOutcome as Error).message).toContain('Live subscriptions did not close');
+    expect(db.status).toBe('open');
+
+    const retryPromise = engine.close({ timeout: 100 });
+    const retryOutcome = retryPromise.catch((error: unknown): unknown => error);
+    await clock.tickAsync(100);
+
+    expect((await retryOutcome as Error).message).toContain('Live subscriptions did not close');
+    expect(db.status).toBe('open');
+
+    releaseClose.resolve();
+    await clock.tickAsync(0);
+    expect(db.status).toBe('open');
+
+    await engine.close({ timeout: 100 });
+    expect(db.status).toBe('closed');
+  });
+
+  it('should share one close deadline across subscription and sync-lock waits', async () => {
+    const clock = sinon.useFakeTimers();
+    const engine = new SyncEngineLevel({ db });
+    const closeStarted = createDeferred();
+    const releaseClose = createDeferred();
+    const { controller } = activateAdministrativeLink(engine, 'did:example:alice', 'initializing');
+    controller.setLiveSubscription({
+      close: async (): Promise<void> => {
+        closeStarted.resolve();
+        await releaseClose.promise;
+      },
+    });
+    expect(engine['_lifecycle'].tryAcquireSync()).toBe(true);
+
+    let closeSettled = false;
+    const closePromise = engine.close({ timeout: 100 });
+    const closeOutcome = closePromise.then(
+      (): unknown => { closeSettled = true; },
+      (error: unknown): unknown => {
+        closeSettled = true;
+        return error;
+      },
+    );
+    await closeStarted.promise;
+    await clock.tickAsync(80);
+    releaseClose.resolve();
+    await clock.tickAsync(0);
+
+    await clock.tickAsync(19);
+    expect(closeSettled).toBe(false);
+    await clock.tickAsync(1);
+
+    expect((await closeOutcome as Error).message).toContain('within 100 milliseconds');
+    expect(db.status).toBe('open');
+    engine['_lifecycle'].releaseSync();
+    await clock.tickAsync(0);
+    expect(db.status).toBe('open');
+  });
+
+  it('should never run a close that times out behind an earlier lifecycle transition', async () => {
+    const clock = sinon.useFakeTimers();
+    const engine = new SyncEngineLevel({ db });
+    const startEntered = createDeferred();
+    const releaseStart = createDeferred();
+    sinon.stub(engine as never, 'startLiveSync').callsFake(async (): Promise<void> => {
+      startEntered.resolve();
+      await releaseStart.promise;
+    });
+
+    const startPromise = engine.startSync({ interval: '5m' });
+    await startEntered.promise;
+    const closePromise = engine.close({ timeout: 100 });
+    const closeOutcome = closePromise.catch((error: unknown): unknown => error);
+    await clock.tickAsync(100);
+
+    expect((await closeOutcome as Error).message).toContain('Earlier lifecycle transition');
+    expect(db.status).toBe('open');
+
+    releaseStart.resolve();
+    await startPromise;
+    await clock.tickAsync(0);
+    expect(db.status).toBe('open');
+
+    await engine.close({ timeout: 100 });
+    expect(db.status).toBe('closed');
+  });
+
+  it('should time out clear without deleting durable state later after background work settles', async () => {
+    const clock = sinon.useFakeTimers();
+    const engine = new SyncEngineLevel({ db });
+    const did = 'did:example:alice';
+    const releaseTask = createDeferred();
+    const taskStarted = createDeferred();
+    await engine.registerIdentity({ did, options: { protocols: 'all' } });
+
+    const task = engine['_lifecycle'].runBackgroundTask(async (): Promise<void> => {
+      taskStarted.resolve();
+      await releaseTask.promise;
+    });
+    await taskStarted.promise;
+
+    const clearPromise = engine.clear({ timeout: 100 });
+    const clearOutcome = clearPromise.catch((error: unknown): unknown => error);
+    await clock.tickAsync(100);
+
+    expect((await clearOutcome as Error).message).toContain('within 100 milliseconds');
+    expect(await engine.getIdentityOptions(did)).toBeDefined();
+
+    releaseTask.resolve();
+    await task;
+    await clock.tickAsync(0);
+    expect(await engine.getIdentityOptions(did)).toBeDefined();
+
+    await engine.clear({ timeout: 100 });
+    expect(await engine.getIdentityOptions(did)).toBeUndefined();
+  });
+
+  it('should reject an invalid lifecycle timeout before changing runtime or storage state', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const runtime = engine['_runtime'];
+
+    await expect(engine.close({ timeout: Number.POSITIVE_INFINITY })).rejects.toThrow(
+      'Lifecycle timeout must be between 0 and 2147483647 milliseconds',
+    );
+
+    expect(engine['_runtime']).toBe(runtime);
+    expect(runtime.disposed).toBe(false);
+    expect(db.status).toBe('open');
+  });
+
+  it('should cancel a registration that times out behind another sync owner', async () => {
+    const clock = sinon.useFakeTimers();
+    const engine = new SyncEngineLevel({ db });
+    const did = 'did:example:alice';
+    expect(engine['_lifecycle'].tryAcquireSync()).toBe(true);
+
+    const registration = engine.registerIdentity(
+      { did, options: { protocols: 'all' } },
+      { timeout: 100 },
+    );
+    const registrationOutcome = registration.catch((error: unknown): unknown => error);
+    await clock.tickAsync(100);
+
+    expect((await registrationOutcome as Error).message).toContain('within 100 milliseconds');
+    engine['_lifecycle'].releaseSync();
+    await clock.tickAsync(0);
+    expect(await engine.getIdentityOptions(did)).toBeUndefined();
+
+    await engine.registerIdentity({ did, options: { protocols: 'all' } }, { timeout: 100 });
+    expect(await engine.getIdentityOptions(did)).toBeDefined();
+  });
+
+  it('should cancel a registration that times out behind a cross-context identity mutation', async () => {
+    const clock = sinon.useFakeTimers();
+    const engine = new SyncEngineLevel({ db });
+    const did = 'did:example:alice';
+    const releaseLock = createDeferred();
+    const lockStarted = createDeferred();
+    const lockName = `enbox:sync-identity:${engine['_lockNamespace']}:${did}`;
+    const heldLock = runWithCrossContextLock(lockName, async (): Promise<void> => {
+      lockStarted.resolve();
+      await releaseLock.promise;
+    });
+    await lockStarted.promise;
+
+    const registration = engine.registerIdentity(
+      { did, options: { protocols: 'all' } },
+      { timeout: 100 },
+    );
+    const registrationOutcome = registration.catch((error: unknown): unknown => error);
+    await clock.tickAsync(100);
+
+    expect((await registrationOutcome as Error).message).toContain('within 100 milliseconds');
+    releaseLock.resolve();
+    await heldLock;
+    await clock.tickAsync(0);
+    expect(await engine.getIdentityOptions(did)).toBeUndefined();
+
+    await engine.registerIdentity({ did, options: { protocols: 'all' } }, { timeout: 100 });
+    expect(await engine.getIdentityOptions(did)).toBeDefined();
+  });
+
+  it('should not persist a registration after its preparation times out', async () => {
+    const clock = sinon.useFakeTimers();
+    const engine = new SyncEngineLevel({ db });
+    const did = 'did:example:alice';
+    const releaseValidation = createDeferred();
+    const validationStarted = createDeferred();
+    sinon.stub(getScopeClosureValidator(engine), 'validateClosure').callsFake(async (): Promise<void> => {
+      validationStarted.resolve();
+      await releaseValidation.promise;
+    });
+
+    const registration = engine.registerIdentity(
+      { did, options: { protocols: 'all' } },
+      { timeout: 100 },
+    );
+    const registrationOutcome = registration.catch((error: unknown): unknown => error);
+    await validationStarted.promise;
+    await clock.tickAsync(100);
+
+    expect((await registrationOutcome as Error).message).toContain('preparation did not complete');
+    expect(await engine.getIdentityOptions(did)).toBeUndefined();
+
+    releaseValidation.resolve();
+    await clock.tickAsync(0);
+    expect(await engine.getIdentityOptions(did)).toBeUndefined();
+
+    await engine.registerIdentity({ did, options: { protocols: 'all' } }, { timeout: 100 });
+    expect(await engine.getIdentityOptions(did)).toBeDefined();
+  });
+
+  it('should preserve an identity when stopped-runtime work does not drain before unregister timeout', async () => {
+    const clock = sinon.useFakeTimers();
+    const engine = new SyncEngineLevel({ db });
+    const did = 'did:example:alice';
+    const releaseTask = createDeferred();
+    const taskStarted = createDeferred();
+    await engine.registerIdentity({ did, options: { protocols: 'all' } });
+
+    const taskGroup = engine['_lifecycle'].getIdentityTaskGroup(did);
+    const settleStarted = createDeferred();
+    const settleTaskGroup = taskGroup.settle.bind(taskGroup);
+    sinon.stub(taskGroup, 'settle').callsFake(async (timeout?: number): Promise<boolean> => {
+      settleStarted.resolve();
+      return settleTaskGroup(timeout);
+    });
+    const task = engine['_lifecycle'].runIdentityTask(taskGroup, async (): Promise<void> => {
+      taskStarted.resolve();
+      await releaseTask.promise;
+    });
+    await taskStarted.promise;
+
+    const unregister = engine.unregisterIdentity(did, { timeout: 100 });
+    const unregisterOutcome = unregister.catch((error: unknown): unknown => error);
+    await settleStarted.promise;
+    await clock.tickAsync(100);
+
+    expect((await unregisterOutcome as Error).message).toContain('within 100 milliseconds');
+    expect(await engine.getIdentityOptions(did)).toBeDefined();
+
+    releaseTask.resolve();
+    await task;
+    await clock.tickAsync(0);
+    expect(await engine.getIdentityOptions(did)).toBeDefined();
+
+    await engine.unregisterIdentity(did, { timeout: 100 });
+    expect(await engine.getIdentityOptions(did)).toBeUndefined();
+  });
+
+  it('should finish unregister atomically after its preparation consumes almost all of the deadline', async () => {
+    const clock = sinon.useFakeTimers();
+    const engine = new SyncEngineLevel({ db });
+    const did = 'did:example:alice';
+    await engine.registerIdentity({ did, options: { protocols: 'all' } });
+
+    const identityStore = engine['_identityStore'];
+    const getIdentity = identityStore.get.bind(identityStore);
+    const getIdentityStub = sinon.stub(identityStore, 'get').callsFake(getIdentity);
+    getIdentityStub.onFirstCall().callsFake(async (identityDid: string): Promise<Awaited<ReturnType<typeof getIdentity>>> => {
+      await new Promise(resolve => { setTimeout(resolve, 99); });
+      return getIdentity(identityDid);
+    });
+
+    const commitStarted = createDeferred();
+    const releaseCommit = createDeferred();
+    sinon.stub(engine['_quotaManager'], 'clearTenant').callsFake(async (): Promise<void> => {
+      commitStarted.resolve();
+      await releaseCommit.promise;
+    });
+    sinon.stub(engine as never, 'pruneSupersededDurableLinksForIdentity').resolves();
+
+    let unregisterSettled = false;
+    const unregister = engine.unregisterIdentity(did, { timeout: 100 }).then((): void => {
+      unregisterSettled = true;
+    });
+    await clock.tickAsync(99);
+    await commitStarted.promise;
+
+    await clock.tickAsync(1_000);
+    expect(unregisterSettled).toBe(false);
+    expect(await getIdentity(did)).toBeDefined();
+
+    releaseCommit.resolve();
+    await unregister;
+
+    expect(unregisterSettled).toBe(true);
+    expect(await getIdentity(did)).toBeUndefined();
+  });
+
+  it('should preserve old identity options when live work does not drain before update timeout', async () => {
+    const clock = sinon.useFakeTimers();
+    const engine = new SyncEngineLevel({ db });
+    const did = 'did:example:alice';
+    const oldOptions = { protocols: 'all' as const };
+    const updatedOptions = { protocols: 'all' as const, delegateDid: 'did:example:delegate' };
+    const releaseTask = createDeferred();
+    const taskStarted = createDeferred();
+    await engine.registerIdentity({ did, options: oldOptions });
+    sinon.stub(getScopeClosureValidator(engine), 'validateClosure').resolves();
+    sinon.stub(engine as never, 'tryPruneSupersededDurableLinksForRegisteredIdentity').resolves();
+
+    const taskGroup = engine['_lifecycle'].getIdentityTaskGroup(did);
+    const settleStarted = createDeferred();
+    const settleTaskGroup = taskGroup.settle.bind(taskGroup);
+    sinon.stub(taskGroup, 'settle').callsFake(async (timeout?: number): Promise<boolean> => {
+      settleStarted.resolve();
+      return settleTaskGroup(timeout);
+    });
+    const task = engine['_lifecycle'].runIdentityTask(taskGroup, async (): Promise<void> => {
+      taskStarted.resolve();
+      await releaseTask.promise;
+    });
+    await taskStarted.promise;
+
+    const update = engine.updateIdentityOptions(
+      { did, options: updatedOptions },
+      { timeout: 100 },
+    );
+    const updateOutcome = update.catch((error: unknown): unknown => error);
+    await settleStarted.promise;
+    await clock.tickAsync(100);
+
+    expect((await updateOutcome as Error).message).toContain('within 100 milliseconds');
+    expect(await engine.getIdentityOptions(did)).toEqual(oldOptions);
+
+    releaseTask.resolve();
+    await task;
+    await clock.tickAsync(0);
+    expect(await engine.getIdentityOptions(did)).toEqual(oldOptions);
+
+    await engine.updateIdentityOptions({ did, options: updatedOptions }, { timeout: 100 });
+    expect(await engine.getIdentityOptions(did)).toEqual(updatedOptions);
   });
 
   it('should keep storage open while stop races a mid-feed push', async () => {
