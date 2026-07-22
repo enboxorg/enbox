@@ -52,15 +52,26 @@ export interface RecordView<T> {
 type RecordViewOptions<T> = {
   dwn: DwnApi;
   filter: RecordsFilter;
-  materialize: () => Promise<DwnResponseStatus & {
-    records: TypedRecord<T>[];
-    cursor?: DwnPaginationCursor;
-  }>;
+  materialize: () => Promise<RecordViewQueryResult<T>>;
   protocol: string;
   protocolRole?: string;
   signal?: AbortSignal;
   sync?: SyncEngine;
 };
+
+type RecordViewQueryResult<T> = DwnResponseStatus & {
+  records: TypedRecord<T>[];
+  cursor?: DwnPaginationCursor;
+};
+
+type RecordViewCurrentness =
+  | { state: Exclude<RecordViewState, 'error'> }
+  | { error: Error };
+
+type RegistrationChangeEvent = Extract<SyncEvent, { type: 'identity:registration-change' }>;
+type LinkStatusChangeEvent = Extract<SyncEvent, { type: 'link:status-change' }>;
+type LinkConnectivityChangeEvent = Extract<SyncEvent, { type: 'link:connectivity-change' }>;
+type PullCurrentnessChangeEvent = Extract<SyncEvent, { type: 'pull:currentness-change' }>;
 
 /** @internal Create and open one local observed records view. */
 export async function createRecordView<T>(options: RecordViewOptions<T>): Promise<RecordView<T>> {
@@ -216,18 +227,7 @@ class ObservedRecordView<T> implements RecordView<T> {
     }
 
     if (event.type === 'identity:registration-change') {
-      // A changed scope or authorization epoch defines a new baseline. A
-      // prior local-only or differently scoped `ready` snapshot cannot prove
-      // currentness for the replacement registration.
-      if (registrationCoversProtocol(event.options, this._protocol)) {
-        this._hasPublishedReady = false;
-        this.publish(immutableSnapshot({
-          state   : 'loading',
-          records : this._snapshot.records,
-          hasMore : this._snapshot.hasMore,
-        }));
-      }
-      this.requestMaterialization();
+      this.handleRegistrationChange(event);
       return;
     }
 
@@ -235,31 +235,54 @@ class ObservedRecordView<T> implements RecordView<T> {
       return;
     }
 
-    if (event.type === 'link:status-change') {
-      if (event.to === 'paused') {
-        this.publishError(new Error(`RecordView: replication is paused for protocol '${this._protocol}'.`));
-      } else if (event.to !== 'live') {
-        this.publishReplicaUnavailable();
-      }
-      this.requestMaterialization();
+    switch (event.type) {
+      case 'link:status-change':
+        this.handleLinkStatusChange(event);
+        break;
+      case 'link:connectivity-change':
+        this.handleLinkConnectivityChange(event);
+        break;
+      case 'pull:currentness-change':
+        this.handlePullCurrentnessChange(event);
+        break;
+    }
+  }
+
+  /** A changed registration defines a new baseline for its selected protocols. */
+  private handleRegistrationChange(event: RegistrationChangeEvent): void {
+    if (registrationCoversProtocol(event.options, this._protocol)) {
+      this._hasPublishedReady = false;
+      this.publish(immutableSnapshot({
+        state   : 'loading',
+        records : this._snapshot.records,
+        hasMore : this._snapshot.hasMore,
+      }));
+    }
+    this.requestMaterialization();
+  }
+
+  private handleLinkStatusChange(event: LinkStatusChangeEvent): void {
+    if (event.to === 'paused') {
+      this.publishError(new Error(`RecordView: replication is paused for protocol '${this._protocol}'.`));
+    } else if (event.to !== 'live') {
+      this.publishReplicaUnavailable();
+    }
+    this.requestMaterialization();
+  }
+
+  private handleLinkConnectivityChange(event: LinkConnectivityChangeEvent): void {
+    if (event.to !== 'online') {
+      this.publishReplicaUnavailable();
+    }
+    this.requestMaterialization();
+  }
+
+  private handlePullCurrentnessChange(event: PullCurrentnessChangeEvent): void {
+    if (!event.to) {
+      this.publishReplicaUnavailable();
       return;
     }
-
-    if (event.type === 'link:connectivity-change') {
-      if (event.to !== 'online') {
-        this.publishReplicaUnavailable();
-      }
-      this.requestMaterialization();
-      return;
-    }
-
-    if (event.type === 'pull:currentness-change') {
-      if (!event.to) {
-        this.publishReplicaUnavailable();
-      } else {
-        this.requestMaterialization();
-      }
-    }
+    this.requestMaterialization();
   }
 
   /** Coalesce arbitrary wakes into one active and at most one trailing pass. */
@@ -281,48 +304,7 @@ class ObservedRecordView<T> implements RecordView<T> {
   private async drainMaterializations(): Promise<void> {
     try {
       while (!this._closed && this._materializationRequested) {
-        this._materializationRequested = false;
-        const generation = this._requestGeneration;
-
-        try {
-          const result = await this._materialize();
-          if (result.status.code < 200 || result.status.code >= 300) {
-            throw new Error(`RecordView: query failed (${result.status.code}): ${result.status.detail}`);
-          }
-
-          const currentness = await this.resolveCurrentness();
-          if (this._closed || generation !== this._requestGeneration) {
-            continue;
-          }
-
-          if ('error' in currentness) {
-            this.publishError(currentness.error);
-            continue;
-          }
-
-          if (currentness.state === 'stale') {
-            this.publish(immutableSnapshot({
-              state   : 'stale',
-              records : result.records,
-              hasMore : result.cursor !== undefined,
-            }));
-            continue;
-          }
-
-          const hasMore = result.cursor !== undefined;
-          if (currentness.state === 'ready') {
-            this._hasPublishedReady = true;
-          }
-          this.publish(immutableSnapshot({
-            state   : currentness.state,
-            records : result.records,
-            hasMore,
-          }));
-        } catch (error: unknown) {
-          if (!this._closed && generation === this._requestGeneration) {
-            this.publishError(toError(error));
-          }
-        }
+        await this.materializeRequestedGeneration();
       }
     } finally {
       this._isMaterializing = false;
@@ -332,10 +314,54 @@ class ObservedRecordView<T> implements RecordView<T> {
     }
   }
 
+  /** Execute and publish one generation without owning the outer drain loop. */
+  private async materializeRequestedGeneration(): Promise<void> {
+    this._materializationRequested = false;
+    const generation = this._requestGeneration;
+
+    try {
+      const result = await this._materialize();
+      if (result.status.code < 200 || result.status.code >= 300) {
+        throw new Error(`RecordView: query failed (${result.status.code}): ${result.status.detail}`);
+      }
+
+      const currentness = await this.resolveCurrentness();
+      if (!this.canPublishGeneration(generation)) {
+        return;
+      }
+      this.publishMaterialization(result, currentness);
+    } catch (error: unknown) {
+      if (this.canPublishGeneration(generation)) {
+        this.publishError(toError(error));
+      }
+    }
+  }
+
+  private canPublishGeneration(generation: number): boolean {
+    return !this._closed && generation === this._requestGeneration;
+  }
+
+  private publishMaterialization(
+    result: RecordViewQueryResult<T>,
+    currentness: RecordViewCurrentness,
+  ): void {
+    if ('error' in currentness) {
+      this.publishError(currentness.error);
+      return;
+    }
+
+    if (currentness.state === 'ready') {
+      this._hasPublishedReady = true;
+    }
+    this.publish(immutableSnapshot({
+      state   : currentness.state,
+      records : result.records,
+      hasMore : result.cursor !== undefined,
+    }));
+  }
+
   /** Resolve whether this protocol has completed its configured remote baseline. */
-  private async resolveCurrentness(): Promise<
-    { state: Exclude<RecordViewState, 'error'> } | { error: Error }
-    > {
+  private async resolveCurrentness(): Promise<RecordViewCurrentness> {
     if (this._sync === undefined) {
       return { state: 'ready' };
     }
