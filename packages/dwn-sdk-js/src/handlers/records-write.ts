@@ -1,5 +1,6 @@
 import type { CoreProtocol } from '../core/core-protocol.js';
 import type { ProgressToken } from '../types/subscriptions.js';
+import type { ProtocolRuleSet } from '../types/protocols-types.js';
 import type { GenericMessage, GenericMessageReply } from '../types/message-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { RecordsQueryReplyEntry, RecordsWriteMessage } from '../types/records-types.js';
@@ -64,8 +65,13 @@ export class RecordsWriteHandler implements MethodHandler {
       return messageReplyFromError(e, 400);
     }
 
+    let protocolRuleSet: ProtocolRuleSet;
     try {
-      await ProtocolAuthorization.validateReferentialIntegrity(tenant, recordsWrite, this.deps.validationStateReader);
+      protocolRuleSet = await ProtocolAuthorization.validateReferentialIntegrity(
+        tenant,
+        recordsWrite,
+        this.deps.validationStateReader,
+      );
     } catch (e) {
       return messageReplyFromError(e, 400);
     }
@@ -87,7 +93,7 @@ export class RecordsWriteHandler implements MethodHandler {
     // messageTimestamp is <= the most recent squash record at the same path and parent context.
     // The squash record acts as a temporal floor — no record older than the latest squash can exist.
     try {
-      await this.enforceSquashBackstop(tenant, message);
+      await this.enforceSquashBackstop(tenant, message, protocolRuleSet);
     } catch (e) {
       return messageReplyFromError(e, 409);
     }
@@ -445,38 +451,17 @@ export class RecordsWriteHandler implements MethodHandler {
    * and there exists a squash record at the same protocol path and parent context whose
    * `messageTimestamp` is >= the incoming message's `messageTimestamp`, reject with 409.
    *
+   * The rule set is the exact policy already resolved by referential-integrity validation. Reusing
+   * it prevents a second store lookup from observing different state or failing open.
+   *
    * This check only applies to protocol-based records at `$squash: true` paths.
    */
-  private async enforceSquashBackstop(tenant: string, message: RecordsWriteMessage): Promise<void> {
-    // Only applies to protocol-based records
-    if (message.descriptor.protocol === undefined || message.descriptor.protocolPath === undefined) {
-      return;
-    }
-
-    // Fetch the protocol definition active at the incoming message timestamp to check if $squash is enabled at this path.
-    // The reader resolves core protocols (e.g. permissions) from the registry.
-    let protocolDefinition;
-    try {
-      protocolDefinition = await this.deps.validationStateReader.fetchProtocolDefinition(
-        tenant,
-        message.descriptor.protocol,
-        message.descriptor.messageTimestamp,
-      );
-    } catch (error) {
-      // If the protocol definition can't be found, skip the backstop check.
-      // Authorization will handle the missing protocol error later.
-      console.warn(`enforceSquashBackstop: failed to fetch protocol definition for '${message.descriptor.protocol}':`, error);
-      return;
-    }
-
-    // Walk the structure to find the rule set for this protocol path
-    const pathSegments = message.descriptor.protocolPath.split('/');
-    let ruleSet = protocolDefinition.structure[pathSegments[0]];
-    for (let i = 1; i < pathSegments.length && ruleSet !== undefined; i++) {
-      ruleSet = ruleSet[pathSegments[i]] as typeof ruleSet;
-    }
-
-    if (ruleSet?.$squash !== true) {
+  private async enforceSquashBackstop(
+    tenant: string,
+    message: RecordsWriteMessage,
+    ruleSet: ProtocolRuleSet,
+  ): Promise<void> {
+    if (ruleSet.$squash !== true) {
       return;
     }
 

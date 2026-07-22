@@ -2108,6 +2108,71 @@ export function testRecordsWriteHandler(): void {
       });
 
       describe('protocol based writes', () => {
+        it('should enforce the validated squash policy without a second protocol lookup', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const protocol = 'http://single-squash-policy-lookup.xyz';
+          const olderTimestamp = Time.createOffsetTimestamp({ seconds: 5 });
+          const squashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
+          const olderRecord = await TestDataGenerator.generateRecordsWrite({
+            author           : alice,
+            protocol,
+            protocolPath     : 'entry',
+            messageTimestamp : olderTimestamp,
+            dateCreated      : olderTimestamp,
+          });
+          const squashRecord = await TestDataGenerator.generateRecordsWrite({
+            author           : alice,
+            protocol,
+            protocolPath     : 'entry',
+            messageTimestamp : squashTimestamp,
+            dateCreated      : squashTimestamp,
+            squash           : true,
+          });
+
+          const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
+          messageStoreStub.query.resolves({ messages: [] });
+          const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
+          const validationStateReader = createTestValidationStateReader({
+            messageStore : messageStoreStub,
+            dataStore    : dataStoreStub,
+          });
+          const protocolLookup = sinon.stub(validationStateReader, 'fetchProtocolDefinition').rejects(
+            new Error('a redundant policy lookup would fail'),
+          );
+          const squashLookup = sinon.stub(validationStateReader, 'fetchLatestSquashRecordAtScope').resolves(
+            squashRecord.message,
+          );
+          const validateReferentialIntegrity = sinon.stub(
+            ProtocolAuthorization,
+            'validateReferentialIntegrity',
+          ).resolves({ $squash: true });
+          const recordsWriteHandler = new RecordsWriteHandler({
+            didResolver   : TestStubGenerator.createDidResolverStub(alice),
+            messageStore  : messageStoreStub,
+            dataStore     : dataStoreStub,
+            coreProtocols : new CoreProtocolRegistry(),
+            eventLog,
+            validationStateReader,
+          });
+
+          const reply = await recordsWriteHandler.handle({
+            tenant     : alice.did,
+            message    : olderRecord.message,
+            dataStream : olderRecord.dataStream,
+          });
+
+          expect(reply.status.code).toBe(409);
+          expect(reply.status.errorCode).toBe(DwnErrorCode.ProtocolAuthorizationSquashBackstop);
+          sinon.assert.calledOnce(validateReferentialIntegrity);
+          sinon.assert.notCalled(protocolLookup);
+          sinon.assert.calledOnceWithExactly(squashLookup, {
+            tenant          : alice.did,
+            protocol,
+            protocolPath    : 'entry',
+            contextIdPrefix : undefined,
+          });
+        });
+
         it('should allow write with allow-anyone rule', async () => {
           // scenario: Bob writes into Alice's DWN given Alice's "email" protocol allow-anyone rule
 
@@ -6362,7 +6427,7 @@ export function testRecordsWriteHandler(): void {
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
         // stub protocol validation so the handler reaches authentication/authorization
-        sinon.stub(ProtocolAuthorization, 'validateReferentialIntegrity').resolves();
+        sinon.stub(ProtocolAuthorization, 'validateReferentialIntegrity').resolves({});
 
         const recordsWriteHandler = new RecordsWriteHandler({
           didResolver,
@@ -6388,7 +6453,7 @@ export function testRecordsWriteHandler(): void {
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
         // stub protocol validation so the handler reaches authentication/authorization
-        sinon.stub(ProtocolAuthorization, 'validateReferentialIntegrity').resolves();
+        sinon.stub(ProtocolAuthorization, 'validateReferentialIntegrity').resolves({});
 
         const recordsWriteHandler = new RecordsWriteHandler({
           didResolver,
@@ -6514,7 +6579,7 @@ export function testRecordsWriteHandler(): void {
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
         // stub protocol validation so the handler reaches the process methods
-        sinon.stub(ProtocolAuthorization, 'validateReferentialIntegrity').resolves();
+        sinon.stub(ProtocolAuthorization, 'validateReferentialIntegrity').resolves({});
 
         const recordsWriteHandler = new RecordsWriteHandler({
           didResolver           : didResolverStub, messageStore          : messageStoreStub,
