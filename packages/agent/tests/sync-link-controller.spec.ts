@@ -106,6 +106,12 @@ describe('SyncLinkController', () => {
     controller.executor.consumePending('pull');
     expect(controller.markPullCurrent(replicationGeneration)).toBe(true);
 
+    expect(controller.beginRetirement()).toBe(true);
+    expect(controller.isActive).toBe(true);
+    expect(controller.isPullCurrent).toBe(false);
+    expect(controller.markPullCurrent(replicationGeneration)).toBe(false);
+    expect(controller.setLocalSubscription({ close: async (): Promise<void> => {} })).toBe(false);
+
     controller.resetReplicationGeneration();
     expect(controller.isPullCurrent).toBe(false);
     expect(controller.markPullCurrent(replicationGeneration)).toBe(false);

@@ -698,9 +698,16 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Fence pull currentness and every callback before retiring an active link owner. */
   private retireLinkController(controller: SyncLinkController): void {
-    this.markPullPending(controller);
+    this.beginLinkControllerRetirement(controller);
     this._linkRecoveryCoordinator.cancelScheduledWork(controller);
     controller.deactivate();
+  }
+
+  /** Fence new link ownership while allowing already-running durable work to drain. */
+  private beginLinkControllerRetirement(controller: SyncLinkController): void {
+    if (controller.beginRetirement()) {
+      this.emitPullCurrentnessChange(controller, true, false);
+    }
   }
 
   public on(listener: SyncEventListener): () => void {
@@ -2063,9 +2070,10 @@ export class SyncEngineLevel implements SyncEngine {
 
     const controllers = [...this._linkControllers.values()].filter(controller => controller.link.tenantDid === did);
     // Currentness must fall before transport closure can block, and
-    // deactivation prevents an in-flight pass from restoring it afterwards.
+    // retirement prevents an in-flight pull from restoring it while allowing
+    // already-running durable work to drain before final deactivation.
     for (const controller of controllers) {
-      this.retireLinkController(controller);
+      this.beginLinkControllerRetirement(controller);
     }
     this.trackSubscriptionCloses(controllers);
     await this.waitForLifecycleBarrier(

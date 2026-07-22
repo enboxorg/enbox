@@ -954,11 +954,12 @@ describe('SyncEngineLevel — identity management', () => {
 
       const removing = (engine as any).removeIdentityFromLiveSync('did:example:alice');
 
-      expect(controller.isActive).toBe(false);
+      expect(controller.isActive).toBe(true);
       expect(controller.isPullCurrent).toBe(false);
       expect(transitions).toEqual([false]);
       releaseClose();
       await removing;
+      expect(controller.isActive).toBe(false);
       unsubscribe();
     });
 
