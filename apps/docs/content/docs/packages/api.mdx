@@ -172,6 +172,50 @@ if (cursor) {
 }
 ```
 
+#### observe
+
+`observe()` is the normal reactive collection primitive. It installs a local
+wake subscription before its first query, then rematerializes that same query
+after matching changes. The required limit makes retained collection size
+explicit:
+
+```ts
+const view = await tasks.records.observe('task', {
+  filter: { tags: { done: false } },
+  dateSort: DateSort.CreatedDescending,
+  pagination: { limit: 25 },
+});
+
+const unsubscribe = view.subscribe((snapshot) => {
+  // state is loading | ready | stale | error
+  renderTasks(snapshot.records, snapshot.state, snapshot.hasMore);
+});
+
+// getSnapshot() is useful for the initial render and framework adapters.
+const initial = view.getSnapshot();
+renderTasks(initial.records, initial.state, initial.hasMore);
+
+unsubscribe();
+await view.close();
+```
+
+Observed views are local-replica resources: they do not accept `from`.
+Subscription payloads never mutate collection truth directly, and record data
+continues to decrypt lazily through each `TypedRecord`. Views created through
+`enbox.using()` close automatically when that Enbox session ends.
+
+`loading` means a configured replicated source has not completed its required
+pull. An empty `ready` snapshot is therefore an authoritative empty result.
+After the first ready snapshot, an offline or catching-up source reports
+`stale`; successful local materializations still update its records so offline
+writes remain visible. Query, authorization, or terminal sync failures report
+`error` while retaining the latest successful records. `hasMore` is always a
+boolean and is false until the first query completes.
+
+Snapshots and their record arrays are immutable. A `TypedRecord` represents
+the queried version until the caller explicitly invokes that handle's regular
+`update()` or `delete()` method; its data is still read lazily.
+
 #### count
 
 `count()` accepts the same typed selection as `query()` and counts the full

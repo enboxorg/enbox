@@ -95,6 +95,12 @@ describe('SyncEngineLevel', () => {
       };
       sinon.stub(internal._quotaManager, 'getNextProbeAtForTarget').resolves(undefined);
       const resume = sinon.stub(internal._linkRecoveryCoordinator, 'resume').resolves();
+      let readyWhenLiveWasEmitted = false;
+      const unsubscribe = syncEngine.on((event): void => {
+        if (event.type === 'link:status-change' && event.to === 'live') {
+          readyWhenLiveWasEmitted = controller.isReplicationReady;
+        }
+      });
 
       await internal.handleLivePullMessage(context, {
         cursor : { epoch: 'event-epoch', position: '99', streamId: 'event-stream' },
@@ -110,6 +116,111 @@ describe('SyncEngineLevel', () => {
       await Promise.resolve();
 
       expect(resume.calledOnceWithExactly(controller)).toBe(true);
+      expect(readyWhenLiveWasEmitted).toBe(true);
+      unsubscribe();
+    });
+
+    it('restores pull currentness only after the last coalesced pull reaches its head', async () => {
+      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      const internal = syncEngine as any;
+      const link: ReplicationLinkState = {
+        authorization      : { kind: 'owner' },
+        authorizationEpoch : 'owner-epoch',
+        connectivity       : 'online',
+        projectionId       : 'projection-id',
+        pull               : {},
+        push               : {},
+        remoteEndpoint     : 'https://dwn.example',
+        scope              : { kind: 'full' },
+        status             : 'live',
+        tenantDid          : 'did:example:alice',
+      };
+      const linkKey = `${link.tenantDid}^${link.remoteEndpoint}^${link.projectionId}^${link.authorizationEpoch}`;
+      const controller = internal.activateLink(linkKey, link);
+      controller.markReplicationReady();
+      controller.markPullCurrent(controller.replicationGeneration);
+      const target = {
+        authorization      : link.authorization,
+        authorizationEpoch : link.authorizationEpoch,
+        did                : link.tenantDid,
+        dwnUrl             : link.remoteEndpoint,
+        projectionId       : link.projectionId,
+        scope              : link.scope,
+      };
+      let releaseFirst!: (result: SyncDurableFeedReconcileResult) => void;
+      const reconcile = sinon.stub(internal._durableFeedReconciler, 'reconcile');
+      reconcile.onFirstCall().returns(new Promise((resolve) => { releaseFirst = resolve; }));
+      reconcile.onSecondCall().resolves({ pullDrained: true });
+      const transitions: boolean[] = [];
+      const unsubscribe = syncEngine.on((event): void => {
+        if (event.type === 'pull:currentness-change') {
+          transitions.push(event.to);
+        }
+      });
+
+      const first = internal.reconcileOwnedTarget(controller, target, { direction: 'pull' });
+      expect(controller.isPullCurrent).toBe(false);
+      expect(transitions).toEqual([false]);
+      controller.executor.request('pull');
+      releaseFirst({ pullDrained: true });
+      await first;
+      expect(controller.isPullCurrent).toBe(false);
+      expect(transitions).toEqual([false]);
+
+      controller.executor.consumePending('pull');
+      await internal.reconcileOwnedTarget(controller, target, { direction: 'pull' });
+      expect(controller.isPullCurrent).toBe(true);
+      expect(transitions).toEqual([false, true]);
+
+      unsubscribe();
+      await controller.dispose();
+    });
+
+    it('keeps repair reconciliation non-current until the live gap-closing pass drains', async () => {
+      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      const internal = syncEngine as any;
+      const link: ReplicationLinkState = {
+        authorization      : { kind: 'owner' },
+        authorizationEpoch : 'owner-epoch',
+        connectivity       : 'offline',
+        projectionId       : 'projection-id',
+        pull               : {},
+        push               : {},
+        remoteEndpoint     : 'https://dwn.example',
+        scope              : { kind: 'full' },
+        status             : 'repairing',
+        tenantDid          : 'did:example:alice',
+      };
+      const controller = internal.activateLink('link-key', link);
+      controller.markReplicationReady();
+      const target = {
+        authorization      : link.authorization,
+        authorizationEpoch : link.authorizationEpoch,
+        did                : link.tenantDid,
+        dwnUrl             : link.remoteEndpoint,
+        projectionId       : link.projectionId,
+        scope              : link.scope,
+      };
+      sinon.stub(internal._durableFeedReconciler, 'reconcile').resolves({ pullDrained: true });
+      const transitions: boolean[] = [];
+      const unsubscribe = syncEngine.on((event): void => {
+        if (event.type === 'pull:currentness-change') {
+          transitions.push(event.to);
+        }
+      });
+
+      await internal.reconcileOwnedTarget(controller, target);
+      expect(controller.isPullCurrent).toBe(false);
+      expect(transitions).toEqual([]);
+
+      link.status = 'live';
+      link.connectivity = 'online';
+      await internal.reconcileOwnedTarget(controller, target, { direction: 'pull' });
+      expect(controller.isPullCurrent).toBe(true);
+      expect(transitions).toEqual([true]);
+
+      unsubscribe();
+      await controller.dispose();
     });
 
     it('clears pulled and pushed echo state when live sync stops', async () => {
@@ -127,6 +238,126 @@ describe('SyncEngineLevel', () => {
       expect(internal._echoSuppressor.hasRecentlyPushed(tenantDid, messageCid, remoteEndpoint)).toBe(false);
     });
 
+    it('degrades pull currentness before stop waits for subscription closure', async () => {
+      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      const internal = syncEngine as any;
+      const link: ReplicationLinkState = {
+        authorization      : { kind: 'owner' },
+        authorizationEpoch : 'owner-epoch',
+        connectivity       : 'online',
+        projectionId       : 'projection-id',
+        pull               : {},
+        push               : {},
+        remoteEndpoint     : 'https://dwn.example',
+        scope              : { kind: 'full' },
+        status             : 'live',
+        tenantDid          : 'did:example:alice',
+      };
+      const controller = internal.activateLink('link-key', link);
+      controller.markReplicationReady();
+      controller.markPullCurrent(controller.replicationGeneration);
+      const retiredGeneration = controller.replicationGeneration;
+      let releaseClose!: () => void;
+      controller.setLiveSubscription({
+        close: (): Promise<void> => new Promise((resolve) => { releaseClose = resolve; }),
+      });
+      const transitions: boolean[] = [];
+      const unsubscribe = syncEngine.on((event): void => {
+        if (event.type === 'pull:currentness-change') {
+          transitions.push(event.to);
+        }
+      });
+
+      const stopping = internal.stopLiveSync();
+
+      expect(controller.isActive).toBe(false);
+      expect(controller.isPullCurrent).toBe(false);
+      expect(transitions).toEqual([false]);
+      expect(internal._linkControllers.size).toBe(0);
+      internal.markPullCurrent(controller, retiredGeneration);
+      expect(controller.isPullCurrent).toBe(false);
+      expect(transitions).toEqual([false]);
+      releaseClose();
+      await stopping;
+      unsubscribe();
+    });
+
+  });
+
+  describe('replication status projection', () => {
+    it('overlays active runtime state without exposing uncommitted checkpoints', async () => {
+      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      const internal = syncEngine as any;
+      const durableLive: ReplicationLinkState = {
+        authorization      : { kind: 'owner' },
+        authorizationEpoch : 'owner-epoch',
+        connectivity       : 'online',
+        projectionId       : 'live-projection',
+        pull               : { contiguousAppliedToken: { epoch: 'epoch', position: '7', streamId: 'stream' } },
+        push               : {},
+        remoteEndpoint     : 'https://live.example',
+        scope              : { kind: 'full' },
+        status             : 'live',
+        tenantDid          : 'did:example:alice',
+      };
+      const durablePaused: ReplicationLinkState = {
+        ...durableLive,
+        connectivity   : 'offline',
+        projectionId   : 'paused-projection',
+        remoteEndpoint : 'https://paused.example',
+        status         : 'paused',
+      };
+      internal._replicationLinkStore = {
+        getAllLinks: sinon.stub().callsFake(async (): Promise<ReplicationLinkState[]> => [
+          structuredClone(durableLive),
+          structuredClone(durablePaused),
+        ]),
+      };
+
+      const inactive = await internal.getLinksForStatusReporting();
+      expect(inactive).toEqual([
+        { ...durableLive, connectivity: 'unknown', isPullCurrent: false },
+        { ...durablePaused, connectivity: 'unknown', isPullCurrent: false },
+      ]);
+
+      const activeLink = structuredClone(durableLive);
+      activeLink.connectivity = 'offline';
+      activeLink.pull.contiguousAppliedToken = { epoch: 'epoch', position: '99', streamId: 'stream' };
+      const linkKey = [
+        activeLink.tenantDid,
+        activeLink.remoteEndpoint,
+        activeLink.projectionId,
+        activeLink.authorizationEpoch,
+      ].join('^');
+      const controller = internal.activateLink(linkKey, activeLink);
+
+      const initializing = (await internal.getLinksForStatusReporting())[0];
+      expect(initializing.status).toBe('initializing');
+      expect(initializing.connectivity).toBe('offline');
+      expect(initializing.isPullCurrent).toBe(false);
+      expect(initializing.pull.contiguousAppliedToken?.position).toBe('7');
+
+      activeLink.status = 'repairing';
+      expect((await internal.getLinksForStatusReporting())[0].status).toBe('repairing');
+
+      activeLink.status = 'live';
+      controller.markReplicationReady();
+      controller.markPullCurrent(controller.replicationGeneration);
+      activeLink.connectivity = 'online';
+      const live = (await internal.getLinksForStatusReporting())[0];
+      expect(live.status).toBe('live');
+      expect(live.connectivity).toBe('online');
+      expect(live.isPullCurrent).toBe(true);
+      expect(live.pull.contiguousAppliedToken?.position).toBe('7');
+
+      controller.markPullPending();
+      const catchingUp = (await internal.getLinksForStatusReporting())[0];
+      expect(catchingUp.status).toBe('live');
+      expect(catchingUp.connectivity).toBe('online');
+      expect(catchingUp.isPullCurrent).toBe(false);
+
+      await controller.dispose();
+    });
   });
 
   describe('durable feed coordination', () => {
@@ -2598,6 +2829,34 @@ describe('SyncEngineLevel', () => {
     });
 
     describe('Identity Registration', () => {
+      it('emits a currentness wake after every durable registration change', async () => {
+        const did = alice.did.uri;
+        const registrations: Array<SyncIdentityOptions | undefined> = [];
+        const unsubscribe = testHarness.agent.sync.on((event): void => {
+          if (event.type === 'identity:registration-change') {
+            expect(event.tenantDid).toBe(did);
+            registrations.push(event.options);
+          }
+        });
+
+        await testHarness.agent.sync.registerIdentity({
+          did,
+          options: { protocols: ['https://protocol.xyz/foo'] },
+        });
+        await testHarness.agent.sync.updateIdentityOptions({
+          did,
+          options: { protocols: ['https://protocol.xyz/bar'] },
+        });
+        await testHarness.agent.sync.unregisterIdentity(did);
+        unsubscribe();
+
+        expect(registrations).toEqual([
+          { protocols: ['https://protocol.xyz/foo'] },
+          { protocols: ['https://protocol.xyz/bar'] },
+          undefined,
+        ]);
+      });
+
       it('registers an identity with the sync engine', async () => {
         const did = alice.did.uri;
         const syncOption: SyncIdentityOptions = {

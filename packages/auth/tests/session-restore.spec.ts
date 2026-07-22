@@ -4,11 +4,19 @@ import { DwnPermissionGrant } from '@enbox/agent';
 import { PermissionsProtocol } from '@enbox/dwn-sdk-js';
 
 import { AuthEventEmitter } from '../src/events.js';
+import { createFlowContext } from './helpers/flow-context.js';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { persistLocalDwnPairingRecord } from '../src/discovery.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
-import { restoreSession, retryOrphanedRevocations } from '../src/connect/restore.js';
+import { retryOrphanedRevocations, restoreSession as runRestoreSession } from '../src/connect/restore.js';
+
+function restoreSession(
+  context: Omit<Parameters<typeof runRestoreSession>[0], 'sessionSignal'>,
+  options?: Parameters<typeof runRestoreSession>[1],
+): ReturnType<typeof runRestoreSession> {
+  return runRestoreSession(createFlowContext(context), options);
+}
 
 describe('restoreSession', () => {
   test('returns undefined when no previous session exists', async () => {

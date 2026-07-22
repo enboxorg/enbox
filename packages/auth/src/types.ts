@@ -116,11 +116,19 @@ export type AuthEventHandler<E extends AuthEvent = AuthEvent> =
  */
 export type IdentityInfo = AgentSessionIdentity;
 
-/** Serializable session info for the `session-start` event. */
+/**
+ * Sanitized metadata for a newly active session.
+ *
+ * This event payload deliberately excludes the authenticated agent and the
+ * recovery phrase. The signal lets lifecycle-aware consumers bind work to
+ * the same authorization lifetime without receiving either secret-bearing
+ * session capability.
+ */
 export interface AuthSessionInfo {
   did: string;
   delegateDid?: string;
   identity: IdentityInfo;
+  signal: AbortSignal;
 }
 
 // ─── Registration ────────────────────────────────────────────────

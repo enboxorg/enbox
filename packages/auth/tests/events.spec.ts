@@ -43,10 +43,12 @@ describe('AuthEventEmitter', () => {
     emitter.on('session-start', () => calls.push('a'));
     emitter.on('session-start', () => calls.push('b'));
 
+    const signal = new AbortController().signal;
     emitter.emit('session-start', {
       session: {
         did      : 'did:example:test',
         identity : { didUri: 'did:example:test', name: 'Test' },
+        signal,
       },
     });
 

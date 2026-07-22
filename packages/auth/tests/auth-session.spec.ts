@@ -19,6 +19,7 @@ describe('AuthSession', () => {
       agent    : mockAgent,
       did      : 'did:example:test',
       identity : { didUri: 'did:example:test', name: 'Test' },
+      signal   : new AbortController().signal,
     });
     expect(session).toBeInstanceOf(AgentSession);
     expect(session).toBeInstanceOf(AuthSession);

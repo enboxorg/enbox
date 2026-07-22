@@ -36,6 +36,7 @@ export * from './protocol.js';
 export * from './protocol-types.js';
 export * from './read-only-record.js';
 export type { RecordFilter, RecordQuery } from './record-query.js';
+export type { RecordView, RecordViewListener, RecordViewSnapshot, RecordViewState } from './record-view.js';
 export * from './record.js';
 export * from './record-data.js';
 export * from './record-types.js';

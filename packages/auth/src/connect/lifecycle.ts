@@ -20,7 +20,7 @@ import type { AgentSessionIdentity, BearerIdentity, DwnDataEncodedRecordsWriteMe
 
 import type { AuthEventEmitter } from '../events.js';
 import type { PasswordProvider } from '../password-provider.js';
-import type { IdentitySyncProtocols, RegistrationOptions, StorageAdapter, SyncOption } from '../types.js';
+import type { AuthSessionInfo, IdentitySyncProtocols, RegistrationOptions, StorageAdapter, SyncOption } from '../types.js';
 
 import { Convert } from '@enbox/common';
 import { DataStream, PermissionsProtocol } from '@enbox/dwn-sdk-js';
@@ -46,6 +46,8 @@ export interface FlowContext {
   userAgent: EnboxUserAgent;
   emitter: AuthEventEmitter;
   storage: StorageAdapter;
+  /** Signal owned by the AuthManager for the session this flow may create. */
+  sessionSignal: AbortSignal;
   defaultPassword?: string;
   passwordProvider?: PasswordProvider;
   defaultSync?: SyncOption;
@@ -76,6 +78,16 @@ export async function commitFlowSession(
   operation: () => Promise<AuthSession>,
 ): Promise<AuthSession> {
   return ctx.commitSession === undefined ? operation() : ctx.commitSession(operation);
+}
+
+/** Copy the non-secret fields allowed on the public session-start event. */
+export function toAuthSessionInfo(session: AuthSession): AuthSessionInfo {
+  return {
+    did         : session.did,
+    delegateDid : session.delegateDid,
+    identity    : { ...session.identity },
+    signal      : session.signal,
+  };
 }
 
 // ─── resolvePassword ─────────────────────────────────────────────
@@ -790,11 +802,18 @@ export async function finalizeDelegateSession(params: {
   emitIdentityAdded?: boolean;
   /** Whether to emit `session-start`. Defaults to `true`. */
   emitSessionStart?: boolean;
+  /** Existing session retained by a grant-only refresh. */
+  existingSession?: AuthSession;
+  /** Signal owned by the manager for this session. */
+  signal: AbortSignal;
 }): Promise<AuthSession> {
   const {
     userAgent, emitter, storage, identity, connectedDid, delegateDid, sync,
     delegateState = {}, startSync = true, emitIdentityAdded = true, emitSessionStart = true,
+    existingSession, signal,
   } = params;
+
+  assertRetainedSessionSignal(existingSession, signal);
 
   if (startSync) {
     await startSyncIfEnabled(userAgent, sync);
@@ -824,6 +843,8 @@ export async function finalizeDelegateSession(params: {
     identityConnectedDid : identity.metadata.connectedDid,
     emitIdentityAdded,
     emitSessionStart,
+    existingSession,
+    signal,
     extraStorageKeys,
   });
 }
@@ -839,7 +860,7 @@ export async function finalizeDelegateSession(params: {
  * await storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, connectedDid);
  * const session = new AuthSession({ ... });
  * emitter.emit('identity-added', { identity: identityInfo });
- * emitter.emit('session-start', { session: { ... } });
+ * emitter.emit('session-start', { session: toAuthSessionInfo(session) });
  * ```
  *
  * @param params.emitIdentityAdded - Whether to emit `identity-added`. Defaults to `true`.
@@ -861,6 +882,8 @@ export async function finalizeSession(params: {
   identityConnectedDid?: string;
   emitIdentityAdded?: boolean;
   emitSessionStart?: boolean;
+  existingSession?: AuthSession;
+  signal: AbortSignal;
   extraStorageKeys?: Record<string, string>;
 }): Promise<AuthSession> {
   const {
@@ -874,8 +897,12 @@ export async function finalizeSession(params: {
     identityConnectedDid,
     emitIdentityAdded = true,
     emitSessionStart = true,
+    existingSession,
+    signal,
     extraStorageKeys,
   } = params;
+
+  assertRetainedSessionSignal(existingSession, signal);
 
   // Persist all session markers concurrently — all writes are independent.
   const storageWrites: Promise<void>[] = [
@@ -897,12 +924,13 @@ export async function finalizeSession(params: {
     connectedDid : identityConnectedDid,
   };
 
-  const session = new AuthSession({
+  const session = existingSession ?? new AuthSession({
     agent    : userAgent,
     did      : connectedDid,
     delegateDid,
     recoveryPhrase,
     identity : identityInfo,
+    signal,
   });
 
   if (emitIdentityAdded && identityName !== undefined) {
@@ -910,12 +938,17 @@ export async function finalizeSession(params: {
   }
 
   if (emitSessionStart) {
-    emitter.emit('session-start', {
-      session: { did: connectedDid, delegateDid, identity: identityInfo },
-    });
+    emitter.emit('session-start', { session: toAuthSessionInfo(session) });
   }
 
   return session;
+}
+
+/** Prevent a refresh from claiming that an existing session belongs to a different lifetime. */
+function assertRetainedSessionSignal(existingSession: AuthSession | undefined, signal: AbortSignal): void {
+  if (existingSession !== undefined && existingSession.signal !== signal) {
+    throw new Error('finalizeSession: the retained session must use the supplied lifecycle signal.');
+  }
 }
 
 // ─── persistOrClearDelegateSecrets ──────────────────────────────

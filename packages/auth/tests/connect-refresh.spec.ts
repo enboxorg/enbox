@@ -69,7 +69,9 @@ function createTestManager(agent: EnboxUserAgent, options: {
   internals._shutdownPromise = undefined;
   internals._connectHandler = options.connectHandler;
   internals._defaultPassword = 'test-password';
-  internals._session = options.delegatedSession === false
+  const sessionLifetime = options.delegatedSession === false ? undefined : new AbortController();
+  internals._sessionLifetime = sessionLifetime;
+  internals._session = sessionLifetime === undefined
     ? undefined
     : new AuthSession({
       agent,
@@ -80,6 +82,7 @@ function createTestManager(agent: EnboxUserAgent, options: {
         name         : 'Connected identity',
         connectedDid : OWNER_DID,
       },
+      signal: sessionLifetime.signal,
     });
 
   return manager;
@@ -213,6 +216,7 @@ describe('delegated connection lifecycle', () => {
       });
       const requestAccess = sinon.spy(async (): Promise<any> => createRefreshResult());
       const manager = createTestManager(agent, { connectHandler: { requestAccess } });
+      const originalSession = manager.session!;
       let identityAdded = 0;
       let sessionStarted = 0;
       manager.on('identity-added', () => { identityAdded++; });
@@ -220,6 +224,8 @@ describe('delegated connection lifecycle', () => {
 
       const session = await manager.refresh({ protocols: PROTOCOLS });
 
+      expect(session).toBe(originalSession);
+      expect(session.signal.aborted).toBe(false);
       expect(session.did).toBe(OWNER_DID);
       expect(session.delegateDid).toBe(DELEGATE_DID);
       expect(requestAccess.callCount).toBe(1);
@@ -302,7 +308,6 @@ describe('delegated connection lifecycle', () => {
           requestAccess: async (): Promise<any> => createRefreshResult({ delegateGrants: [] }),
         },
       });
-
       await expect(manager.refresh({ protocols: PROTOCOLS })).rejects.toThrow('returned no grants');
     });
 
@@ -316,6 +321,7 @@ describe('delegated connection lifecycle', () => {
           requestAccess: async (): Promise<undefined> => undefined,
         },
       });
+      const originalSession = manager.session!;
 
       let caught: unknown;
       try {
@@ -327,6 +333,8 @@ describe('delegated connection lifecycle', () => {
       expect(caught).toBeInstanceOf(ConnectDeniedError);
       expect(isConnectDeniedError(caught)).toBe(true);
       expect((caught as Error).message).toBe('[@enbox/auth] Refresh was denied or cancelled by the user.');
+      expect(manager.session).toBe(originalSession);
+      expect(originalSession.signal.aborted).toBe(false);
     });
 
     for (const teardown of ['lock', 'disconnect', 'shutdown'] as const) {

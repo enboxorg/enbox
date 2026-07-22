@@ -99,6 +99,12 @@ const selection = { pagination: { limit: 20 } };
 // Query
 const { records, cursor } = await notes.records.query('note', selection);
 
+// Observe one bounded local materialization
+const view = await notes.records.observe('note', selection);
+const unsubscribe = view.subscribe((snapshot) => {
+  console.log(snapshot.state, snapshot.records, snapshot.hasMore);
+});
+
 // Count the same selection before pagination
 const { count } = await notes.records.count('note', selection);
 
@@ -114,11 +120,33 @@ await found.update({
 
 // Delete
 await found.delete();
+
+unsubscribe();
+await view.close();
 ```
 
 Returned records are `TypedRecord<T>` instances. They expose typed
 `data.json()` plus `data.text()`, `data.bytes()`, `data.blob()`, and
 `data.stream()`.
+
+`observe()` watches only the connected tenant's local replica. Subscription
+events are wake hints: every immutable snapshot is rebuilt from the same
+canonical query. Its required pagination limit bounds retained records, and
+its `loading`, `ready`, `stale`, or `error` state reflects replica currentness.
+Views created through `enbox.using()` are also closed by the owning session.
+
+`loading` means a replicated source has not completed its required pull yet;
+an empty `ready` snapshot is therefore authoritatively empty, not still
+bootstrapping. After a view has been ready, an offline or catching-up source
+makes it `stale`. Successful local queries continue to update stale snapshots,
+so offline writes remain visible. Query, authorization, and terminal sync
+failures publish `error` while retaining the latest successful records.
+`hasMore` is always present: it is `false` before the first query and whenever
+the latest bounded result has no continuation cursor.
+
+The snapshot object and records array are immutable. Each `TypedRecord` handle
+represents the queried version until the caller explicitly uses that handle's
+normal `update()` or `delete()` method; record data remains lazily read.
 
 ## Anonymous Reads
 
@@ -179,6 +207,7 @@ coordinates writes across browser contexts.
 | `Enbox` | Main app API: `connect()`, `fromSession()`, `anonymous()`, `using()`. |
 | `defineProtocol()` | Creates typed protocol definitions. |
 | `RecordQuery` | Protocol-derived filter, date ordering, and pagination shared by query and count. |
+| `RecordView<T>` | Closeable bounded local query materialization with immutable snapshots. |
 | `TypedEnbox` | Protocol-scoped record API returned by `enbox.using()`. |
 | `TypedRecord<T>` | Type-safe record wrapper. |
 | `Record` / `ReadOnlyRecord` | Mutable and anonymous-read record wrappers. |

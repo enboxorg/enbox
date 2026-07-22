@@ -1,10 +1,18 @@
 import { describe, expect, test } from 'bun:test';
 
 import { AuthEventEmitter } from '../src/events.js';
-import { importFromPortable } from '../src/connect/import.js';
+import { createFlowContext } from './helpers/flow-context.js';
 import { MemoryStorage } from '../src/storage/storage.js';
+import { importFromPortable as runImportFromPortable } from '../src/connect/import.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
+
+function importFromPortable(
+  context: Omit<Parameters<typeof runImportFromPortable>[0], 'sessionSignal'>,
+  options: Parameters<typeof runImportFromPortable>[1],
+): ReturnType<typeof runImportFromPortable> {
+  return runImportFromPortable(createFlowContext(context), options);
+}
 
 describe('importFromPortable', () => {
   test('imports identity and creates session', async () => {

@@ -932,6 +932,36 @@ describe('SyncEngineLevel — identity management', () => {
       expect((engine as any)._linkControllers.has(bobKey)).toBe(true);
     });
 
+    it('removeIdentityFromLiveSync should degrade currentness before a blocked close', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const controller = activateTestLink(
+        engine,
+        'did:example:alice^https://dwn.example.com',
+        'did:example:alice',
+      );
+      controller.markReplicationReady();
+      controller.markPullCurrent(controller.replicationGeneration);
+      let releaseClose!: () => void;
+      controller.setLiveSubscription({
+        close: (): Promise<void> => new Promise((resolve) => { releaseClose = resolve; }),
+      });
+      const transitions: boolean[] = [];
+      const unsubscribe = engine.on((event): void => {
+        if (event.type === 'pull:currentness-change') {
+          transitions.push(event.to);
+        }
+      });
+
+      const removing = (engine as any).removeIdentityFromLiveSync('did:example:alice');
+
+      expect(controller.isActive).toBe(false);
+      expect(controller.isPullCurrent).toBe(false);
+      expect(transitions).toEqual([false]);
+      releaseClose();
+      await removing;
+      unsubscribe();
+    });
+
     it('removeIdentityFromLiveSync should discard only the target DID executor work', async () => {
       const engine = new SyncEngineLevel({ db });
       const aliceController = activateTestLink(engine, 'did:example:alice^https://dwn.example.com', 'did:example:alice');

@@ -91,6 +91,26 @@ describe('SyncLinkController', () => {
     )).toBe(false);
   });
 
+  it('should restore pull currentness only for the current generation with no trailing wake', () => {
+    const controller = new SyncLinkController('link-key', createLink());
+    const replicationGeneration = controller.replicationGeneration;
+
+    expect(controller.isPullCurrent).toBe(false);
+    expect(controller.markPullCurrent(replicationGeneration)).toBe(true);
+    expect(controller.isPullCurrent).toBe(true);
+    expect(controller.markPullPending()).toBe(true);
+    expect(controller.isPullCurrent).toBe(false);
+
+    controller.executor.request('pull');
+    expect(controller.markPullCurrent(replicationGeneration)).toBe(false);
+    controller.executor.consumePending('pull');
+    expect(controller.markPullCurrent(replicationGeneration)).toBe(true);
+
+    controller.resetReplicationGeneration();
+    expect(controller.isPullCurrent).toBe(false);
+    expect(controller.markPullCurrent(replicationGeneration)).toBe(false);
+  });
+
   it('should reject duplicate or post-deactivation subscription ownership', async () => {
     const controller = new SyncLinkController('link-key', createLink());
     const closeOwned = sinon.stub().resolves();

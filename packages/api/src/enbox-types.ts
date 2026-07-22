@@ -53,9 +53,12 @@ export type EnboxAnonymousApi = {
  * with `did` renamed to `connectedDid` to mirror the constructor parameter
  * name used throughout `@enbox/api` for the tenant DID.
  */
-export type EnboxParams = Omit<AgentSessionPrimitives, 'did'> & {
+export type EnboxParams = Omit<AgentSessionPrimitives, 'did' | 'signal'> & {
   /** The DID of the tenant under which all DID, DWN, and VC requests are being performed. */
   connectedDid: string;
+
+  /** Optional owning-session lifetime. Aborting it fences session-scoped resources. */
+  signal?: AbortSignal;
 };
 
 /**

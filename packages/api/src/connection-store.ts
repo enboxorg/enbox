@@ -671,20 +671,25 @@ class HeadlessConnectionStore implements ConnectionStore {
     );
   }
 
-  /**
-   * Follows a session started directly on the `AuthManager` (outside the
-   * store's own actions, e.g. `auth.switchIdentity()`); the event payload is
-   * used when the manager has not installed the session object yet.
-   */
+  /** Follows a session started directly on the `AuthManager`, e.g. `auth.switchIdentity()`. */
   private _onSessionStart(auth: AuthManager, info: AuthSessionInfo): void {
     if (this._pendingAction !== undefined) {
       return;
     }
 
     const managed = auth.session;
-    const session = managed !== undefined && managed.did === info.did && managed.delegateDid === info.delegateDid
+    const session = managed !== undefined
+      && managed.did === info.did
+      && managed.delegateDid === info.delegateDid
+      && managed.signal === info.signal
       ? managed
-      : new AuthSession({ agent: auth.agent, did: info.did, delegateDid: info.delegateDid, identity: info.identity });
+      : new AuthSession({
+        agent       : auth.agent,
+        did         : info.did,
+        delegateDid : info.delegateDid,
+        identity    : info.identity,
+        signal      : info.signal,
+      });
     const generation = this._actionGeneration;
     void this._commitConnected(auth, session, generation).catch((cause: unknown): void => {
       console.error('[@enbox/api] ConnectionStore: failed to apply an externally started session:', cause);

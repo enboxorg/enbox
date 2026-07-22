@@ -71,6 +71,7 @@ export async function importFromPortable(
       storage,
       connectedDid,
       delegateDid,
+      signal               : ctx.sessionSignal,
       identityName         : identity.metadata.name,
       identityConnectedDid : identity.metadata.connectedDid,
     });

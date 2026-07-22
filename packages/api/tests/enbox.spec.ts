@@ -236,10 +236,12 @@ describe('Enbox API', () => {
         // Cache a TypedEnbox instance.
         const before = enbox.using(TestProtocol);
         expect(before).toBeDefined();
+        expect((enbox as any)._lifetimeSignal.aborted).toBe(false);
 
         // Disconnect clears the cache.
         await enbox.disconnect();
 
+        expect((enbox as any)._lifetimeSignal.aborted).toBe(true);
         // After disconnect, calling using() returns a new instance.
         const after = enbox.using(TestProtocol);
         expect(after).not.toBe(before);
@@ -487,19 +489,26 @@ describe('Enbox API', () => {
       expect(refresh.called).toBe(false);
     });
 
-    it('Enbox.fromSession() accepts a minimal { agent, did } shape', async () => {
+    it('Enbox.fromSession() accepts the session primitives', async () => {
       const identity = await testHarness.agent.identity.create({
         metadata  : { name: 'Session' },
         didMethod : 'jwk',
       });
+      const sessionLifetime = new AbortController();
 
       const enbox = Enbox.fromSession({
-        agent : testHarness.agent,
-        did   : identity.did.uri,
+        agent  : testHarness.agent,
+        did    : identity.did.uri,
+        signal : sessionLifetime.signal,
       });
 
       expect(enbox).toBeInstanceOf(Enbox);
       expect(enbox.agent).toBe(testHarness.agent);
+      expect((enbox as any)._lifetimeSignal.aborted).toBe(false);
+
+      sessionLifetime.abort();
+
+      expect((enbox as any)._lifetimeSignal.aborted).toBe(true);
     });
 
     it('Enbox.fromSession() accepts an AuthSession-shaped object', async () => {
@@ -514,6 +523,7 @@ describe('Enbox API', () => {
         did         : identity.did.uri,
         delegateDid : undefined,
         identity    : { didUri: identity.did.uri, name: 'Session' },
+        signal      : new AbortController().signal,
       };
 
       const enbox = Enbox.fromSession(session);
@@ -538,6 +548,7 @@ describe('Enbox API', () => {
         did         : connectedIdentity.did.uri,
         delegateDid : delegateIdentity.did.uri,
         identity    : { didUri: connectedIdentity.did.uri, name: 'Connected' },
+        signal      : new AbortController().signal,
       };
 
       const enbox = Enbox.fromSession(session);
@@ -557,6 +568,7 @@ describe('Enbox API', () => {
         did         : identity.did.uri,
         delegateDid : undefined,
         identity    : { didUri: identity.did.uri, name: 'High Level' },
+        signal      : new AbortController().signal,
       };
       const connect = sinon.stub().resolves(session);
       const auth = { connect };
@@ -596,6 +608,7 @@ describe('Enbox API', () => {
         did         : identity.did.uri,
         delegateDid : 'did:jwk:refresh-delegate',
         identity    : { didUri: identity.did.uri, name: 'Refresh owner' },
+        signal      : new AbortController().signal,
       };
       const refreshed = { ...session };
       let activeSession: typeof session | undefined;
@@ -634,6 +647,7 @@ describe('Enbox API', () => {
         did         : identity.did.uri,
         delegateDid : undefined,
         identity    : { didUri: identity.did.uri, name: 'Handler Connect' },
+        signal      : new AbortController().signal,
       };
       const connect = sinon.stub().resolves(session);
       const auth = { connect };
@@ -717,6 +731,7 @@ describe('Enbox API', () => {
         did         : identity.did.uri,
         delegateDid : undefined,
         identity    : { didUri: identity.did.uri, name: 'No-args' },
+        signal      : new AbortController().signal,
       };
       const connect = sinon.stub().resolves(session);
       const auth = { connect };
@@ -741,6 +756,7 @@ describe('Enbox API', () => {
         did         : identity.did.uri,
         delegateDid : undefined,
         identity    : { didUri: identity.did.uri, name: 'Per-call password' },
+        signal      : new AbortController().signal,
       };
       const connect = sinon.stub().resolves(session);
       const auth = { connect };
@@ -851,6 +867,7 @@ describe('Enbox API', () => {
         did         : identity.did.uri,
         delegateDid : undefined,
         identity    : { didUri: identity.did.uri, name: 'Caller-owned agent' },
+        signal      : new AbortController().signal,
       };
       const disconnect = sinon.stub().resolves();
       const shutdown = sinon.stub().resolves();
@@ -891,6 +908,7 @@ describe('Enbox API', () => {
         did         : identity.did.uri,
         delegateDid : undefined,
         identity    : { didUri: identity.did.uri, name: 'TOCTOU' },
+        signal      : new AbortController().signal,
       };
       sinon.stub(AuthManager, 'create').callsFake(async () => {
         createCallCount++;
@@ -927,6 +945,7 @@ describe('Enbox API', () => {
         did         : identity.did.uri,
         delegateDid : undefined,
         identity    : { didUri: identity.did.uri, name: 'Enbox-owned' },
+        signal      : new AbortController().signal,
       };
       const disconnect = sinon.stub().resolves();
       const shutdown = sinon.stub().resolves();
@@ -969,6 +988,7 @@ describe('Enbox API', () => {
         did         : identity.did.uri,
         delegateDid : undefined,
         identity    : { didUri: identity.did.uri, name: 'Storage-only ownership' },
+        signal      : new AbortController().signal,
       };
       const disconnect = sinon.stub().resolves();
       const shutdown = sinon.stub().resolves();
@@ -1006,6 +1026,7 @@ describe('Enbox API', () => {
         did         : identity.did.uri,
         delegateDid : undefined,
         identity    : { didUri: identity.did.uri, name: 'Parallel disconnect' },
+        signal      : new AbortController().signal,
       };
       const disconnect = sinon.stub().resolves();
       const shutdown = sinon.stub().resolves();
@@ -1037,6 +1058,7 @@ describe('Enbox API', () => {
         did         : identity.did.uri,
         delegateDid : undefined,
         identity    : { didUri: identity.did.uri, name: 'Empty protocols' },
+        signal      : new AbortController().signal,
       };
       const connect = sinon.stub().resolves(session);
       const auth = { connect };

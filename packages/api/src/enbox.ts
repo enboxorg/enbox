@@ -99,6 +99,12 @@ export class Enbox {
   /** Delegate DID used by this instance, when operating under delegated grants. */
   private readonly _delegateDid?: string;
 
+  /** Instance-owned half of the lifetime used by session-scoped resources. */
+  private readonly _lifetimeController = new AbortController();
+
+  /** Combined owning-session and instance lifetime. */
+  private readonly _lifetimeSignal: AbortSignal;
+
   /**
    * Cache of {@link TypedEnbox} instances keyed by protocol URI.
    *
@@ -130,8 +136,11 @@ export class Enbox {
    */
   private _disconnecting?: Promise<void>;
 
-  constructor({ agent, connectedDid, delegateDid }: EnboxParams) {
+  constructor({ agent, connectedDid, delegateDid, signal }: EnboxParams) {
     this.agent = agent;
+    this._lifetimeSignal = signal === undefined
+      ? this._lifetimeController.signal
+      : AbortSignal.any([signal, this._lifetimeController.signal]);
     this.did = new DidApi({ agent, connectedDid });
     this._dwn = new DwnApi({ agent, connectedDid, delegateDid, permissionsApi: agent.permissions });
     this._connectedDid = connectedDid;
@@ -288,7 +297,10 @@ export class Enbox {
       return cached as unknown as TypedEnbox<D, M>;
     }
 
-    const instance = new TypedEnbox<D, M>(this._dwn, protocol);
+    const instance = new TypedEnbox<D, M>(this._dwn, protocol, {
+      signal : this._lifetimeSignal,
+      sync   : this.agent.sync,
+    });
     // Store with erased generics so the map value type stays uniform.
     this._typedInstances.set(uri, instance as unknown as TypedEnbox<ProtocolDefinition, SchemaMap>);
     return instance;
@@ -352,6 +364,7 @@ export class Enbox {
     if (this._disconnecting !== undefined) {
       return this._disconnecting;
     }
+    this._lifetimeController.abort();
     this._disconnecting = this._doDisconnect(timeout);
     return this._disconnecting;
   }
@@ -441,7 +454,7 @@ export class Enbox {
    * Creates an {@link Enbox} instance from a session-shaped object.
    *
    * Accepts `AuthSession`, `AgentSession`, or any compatible custom session
-   * with `{ agent, did, delegateDid? }`. This is the right entry point
+   * with `{ agent, did, delegateDid?, signal }`. This is the right entry point
    * whenever you already hold an active session — including ones produced by
    * a caller-managed `AuthManager`.
    *
@@ -453,6 +466,7 @@ export class Enbox {
       agent        : session.agent,
       connectedDid : session.did,
       delegateDid  : session.delegateDid,
+      signal       : session.signal,
     });
   }
 

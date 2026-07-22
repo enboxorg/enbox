@@ -93,6 +93,7 @@ function createTestManager(
   manager._emitter = new (require('../src/events.js').AuthEventEmitter)();
   manager._storage = storage;
   manager._session = undefined;
+  manager._sessionLifetime = undefined;
   manager._state = overrides.initialState ?? 'uninitialized';
   manager._isConnecting = false;
   manager._isShutDown = false;
@@ -855,11 +856,13 @@ describe('AuthManager', () => {
       };
 
       const manager = createTestManager(agent, { storage });
-      await manager.connect({ password: 'test' });
+      const session = await manager.connect({ password: 'test' });
+      expect(session.signal.aborted).toBe(false);
       order.length = 0; // observe only the disconnect sequence
 
       await manager.disconnect();
 
+      expect(session.signal.aborted).toBe(true);
       const stopIndex = order.indexOf('stopSync');
       const firstReadIndex = order.indexOf('dwn:RecordsRead');
       expect(stopIndex).toBeGreaterThanOrEqual(0);
@@ -1140,9 +1143,12 @@ describe('AuthManager', () => {
         identityGet  : async () => identity,
       });
       const manager = createTestManager(agent);
-      await manager.connect({ password: 'test' });
+      const previousSession = await manager.connect({ password: 'test' });
+      expect(previousSession.signal.aborted).toBe(false);
 
       const session = await manager.switchIdentity('did:new');
+      expect(previousSession.signal.aborted).toBe(true);
+      expect(session.signal.aborted).toBe(false);
       expect(session.did).toBe('did:new');
       expect(manager.state).toBe('connected');
     });
@@ -1178,11 +1184,50 @@ describe('AuthManager', () => {
       const events: any[] = [];
       manager.on('session-start', (payload) => { events.push(payload); });
 
-      await manager.switchIdentity('did:dht:testuser123');
+      const session = await manager.switchIdentity('did:dht:testuser123');
 
       expect(events).toHaveLength(1);
-      expect(events[0].session.did).toBe('did:dht:testuser123');
+      expect(events[0].session).toEqual({
+        did         : session.did,
+        delegateDid : session.delegateDid,
+        identity    : session.identity,
+        signal      : session.signal,
+      });
+      expect('agent' in events[0].session).toBe(false);
+      expect('recoveryPhrase' in events[0].session).toBe(false);
     });
+
+    for (const teardown of ['lock', 'disconnect', 'shutdown'] as const) {
+      test(`does not install a switched session after ${teardown} invalidates the lookup`, async () => {
+        let resolveIdentity!: (identity: ReturnType<typeof createMockIdentity>) => void;
+        let markLookupStarted!: () => void;
+        const lookupStarted = new Promise<void>((resolve) => { markLookupStarted = resolve; });
+        const identityResult = new Promise<ReturnType<typeof createMockIdentity>>((resolve) => {
+          resolveIdentity = resolve;
+        });
+        const identity = createMockIdentity();
+        const agent = createMockAgent({
+          identityGet: async () => {
+            markLookupStarted();
+            return identityResult;
+          },
+        });
+        const manager = createTestManager(agent);
+        let sessionStarts = 0;
+        manager.on('session-start', () => { sessionStarts++; });
+
+        const switchPromise = manager.switchIdentity(identity.did.uri);
+        await lookupStarted;
+        const teardownPromise = manager[teardown]();
+        resolveIdentity(identity);
+
+        await expect(switchPromise).rejects.toThrow('invalidated');
+        await teardownPromise;
+        expect(manager.session).toBeUndefined();
+        expect(manager.state).toBe(teardown === 'disconnect' ? 'unlocked' : 'locked');
+        expect(sessionStarts).toBe(0);
+      });
+    }
 
     test('starts sync with a bare-interval settle-check cadence', async () => {
       const syncCalls: any[] = [];
@@ -1317,6 +1362,24 @@ describe('AuthManager', () => {
   });
 
   describe('lock()', () => {
+    test('aborts the session before waiting for sync to stop', async () => {
+      let releaseStop!: () => void;
+      const stopGate = new Promise<void>((resolve) => { releaseStop = resolve; });
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [createMockIdentity()],
+        syncStopSync : async () => stopGate,
+      });
+      const manager = createTestManager(agent);
+      const session = await manager.connect({ password: 'test' });
+
+      const lockPromise = manager.lock();
+
+      expect(session.signal.aborted).toBe(true);
+      releaseStop();
+      await lockPromise;
+    });
+
     test('stops sync, clears session, locks vault, transitions to locked', async () => {
       const lockCalls: any[] = [];
       const stopCalls: any[] = [];
@@ -1328,15 +1391,39 @@ describe('AuthManager', () => {
       (agent as any).sync.stopSync = async (timeout: number): Promise<void> => { stopCalls.push(timeout); };
 
       const manager = createTestManager(agent);
-      await manager.connect({ password: 'test' });
+      const session = await manager.connect({ password: 'test' });
       expect(manager.state).toBe('connected');
+      expect(session.signal.aborted).toBe(false);
 
       await manager.lock();
 
+      expect(session.signal.aborted).toBe(true);
       expect(manager.state).toBe('locked');
       expect(manager.session).toBeUndefined();
       expect(lockCalls).toHaveLength(1);
       expect(stopCalls).toHaveLength(1);
+    });
+
+    test('finishes local session teardown before surfacing a sync stop failure', async () => {
+      const vaultLocks: string[] = [];
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [createMockIdentity()],
+        syncStopSync : async () => { throw new Error('sync stop failed'); },
+        vaultLock    : async () => { vaultLocks.push('locked'); },
+      });
+      const manager = createTestManager(agent);
+      const session = await manager.connect({ password: 'test' });
+      const sessionEnds: string[] = [];
+      manager.on('session-end', ({ did }): void => { sessionEnds.push(did); });
+
+      await expect(manager.lock()).rejects.toThrow('sync stop failed');
+
+      expect(session.signal.aborted).toBe(true);
+      expect(manager.session).toBeUndefined();
+      expect(manager.state).toBe('locked');
+      expect(vaultLocks).toEqual(['locked']);
+      expect(sessionEnds).toEqual([session.did]);
     });
 
     test('emits session-end event when session was active', async () => {
@@ -1832,10 +1919,12 @@ describe('AuthManager', () => {
       (storage as any).close = async (): Promise<void> => { storageCloseCalls.push('closed'); };
 
       const manager = createTestManager(agent, { storage });
-      await manager.connect({ password: 'test' });
+      const session = await manager.connect({ password: 'test' });
+      expect(session.signal.aborted).toBe(false);
 
       await manager.shutdown();
 
+      expect(session.signal.aborted).toBe(true);
       expect(stopCalls).toHaveLength(1);
       expect(stopCalls[0]).toBe(2000); // default timeout
       expect(lockCalls).toHaveLength(1);

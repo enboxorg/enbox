@@ -31,6 +31,7 @@ export class SyncLinkController {
   public readonly executor = new SyncLinkExecutor();
   private _liveSubscription?: SyncLinkSubscription;
   private _localSubscription?: SyncLinkSubscription;
+  private _isPullCurrent = false;
   private _pullSnapshot?: SyncFeedSnapshot;
   private _replicationGeneration = 0;
   private _pushSnapshot?: SyncFeedSnapshot;
@@ -49,6 +50,38 @@ export class SyncLinkController {
   /** Whether the current replication generation established its durable reconciliation baselines. */
   public get isReplicationReady(): boolean {
     return this._active && this.executor.isReady;
+  }
+
+  /** Whether every durable pull wake accepted so far is covered by a completed pass. */
+  public get isPullCurrent(): boolean {
+    return this._active && this._isPullCurrent;
+  }
+
+  /** Record that the remote feed may have advanced. */
+  public markPullPending(): boolean {
+    if (!this._active || !this._isPullCurrent) {
+      return false;
+    }
+
+    this._isPullCurrent = false;
+    return true;
+  }
+
+  /**
+   * Mark the pull side current only for the expected replication generation
+   * and only when no trailing durable pull wake remains queued.
+   */
+  public markPullCurrent(expectedReplicationGeneration: number): boolean {
+    if (
+      !this.isReplicationGenerationCurrent(expectedReplicationGeneration) ||
+      this.executor.hasPending('pull') ||
+      this._isPullCurrent
+    ) {
+      return false;
+    }
+
+    this._isPullCurrent = true;
+    return true;
   }
 
   /** Snapshot captured with the current replication generation's remote pull subscription. */
@@ -91,6 +124,7 @@ export class SyncLinkController {
   /** Begin a fresh replication generation and fence caller-specific executor work. */
   public resetReplicationGeneration(): void {
     this._replicationGeneration++;
+    this._isPullCurrent = false;
     this._pullSnapshot = undefined;
     this._pushSnapshot = undefined;
     this.executor.reset();
@@ -220,6 +254,7 @@ export class SyncLinkController {
 
     this._active = false;
     this._replicationGeneration++;
+    this._isPullCurrent = false;
     this._pullSnapshot = undefined;
     this._pushSnapshot = undefined;
     this.executor.dispose();

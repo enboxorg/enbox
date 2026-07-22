@@ -241,6 +241,7 @@ async function handleMissingRestoreIdentity(
     storage,
     connectedDid      : userAgent.agentDid.uri,
     emitIdentityAdded : false,
+    signal            : ctx.sessionSignal,
   }));
 }
 
@@ -295,6 +296,7 @@ async function finalizeRestoredSession(
     storage,
     connectedDid,
     delegateDid,
+    signal               : ctx.sessionSignal,
     identityName         : identity.metadata.name,
     identityConnectedDid : identity.metadata.connectedDid,
     emitIdentityAdded    : false,

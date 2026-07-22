@@ -1,7 +1,7 @@
 import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
-import type { AuthState, ConnectionStatus } from '@enbox/auth';
+import type { AuthSessionInfo, AuthState, ConnectionStatus } from '@enbox/auth';
 
 import { AuthManager } from '@enbox/auth/auth-manager';
 import { EnboxUserAgent } from '@enbox/agent';
@@ -110,7 +110,17 @@ describe('createConnectionStore()', () => {
       did,
       delegateDid : params.delegateDid,
       identity    : { didUri: did, name: params.name ?? 'Store identity' },
+      signal      : new AbortController().signal,
     });
+  }
+
+  function sessionInfo(session: AuthSession): AuthSessionInfo {
+    return {
+      did         : session.did,
+      delegateDid : session.delegateDid,
+      identity    : session.identity,
+      signal      : session.signal,
+    };
   }
 
   describe('snapshot contract', () => {
@@ -496,9 +506,7 @@ describe('createConnectionStore()', () => {
 
       const session = createSession({ name: 'Switched identity' });
       fake.session = session;
-      fake.emitter.emit('session-start', {
-        session: { did: session.did, delegateDid: undefined, identity: session.identity },
-      });
+      fake.emitter.emit('session-start', { session: sessionInfo(session) });
 
       const snapshot = store.getSnapshot();
       expect(snapshot.phase).toBe('connected');
@@ -506,18 +514,18 @@ describe('createConnectionStore()', () => {
       expect(snapshot.identityName).toBe('Switched identity');
     });
 
-    it('should synthesize a session from the event payload when the manager has not installed one yet', async () => {
+    it('should bind an early session-start event to its exact authorization lifetime', async () => {
       const fake = createFakeAuth();
       const store = createConnectionStore({ auth: asAuth(fake) });
       await store.initialize();
+      const session = createSession({ name: 'Event identity' });
 
-      fake.emitter.emit('session-start', {
-        session: { did: OWNER_DID, delegateDid: undefined, identity: { didUri: OWNER_DID, name: 'Event identity' } },
-      });
+      fake.emitter.emit('session-start', { session: sessionInfo(session) });
 
       const snapshot = store.getSnapshot();
       expect(snapshot.phase).toBe('connected');
-      expect(snapshot.session?.did).toBe(OWNER_DID);
+      expect(snapshot.session).not.toBe(session);
+      expect(snapshot.session?.signal).toBe(session.signal);
       expect(snapshot.identityName).toBe('Event identity');
       expect(snapshot.enbox).toBeInstanceOf(Enbox);
     });
@@ -818,9 +826,7 @@ describe('createConnectionStore()', () => {
       const disconnectPromise = store.disconnect();
       // A session-start emitted by the racing restore flow (the real manager
       // emits it inside finalizeSession) must not flip the store back.
-      fake.emitter.emit('session-start', {
-        session: { did: session.did, delegateDid: undefined, identity: session.identity },
-      });
+      fake.emitter.emit('session-start', { session: sessionInfo(session) });
       const disconnected = await disconnectPromise;
       // The auth layer would reject the invalidated restore; resolving it
       // with a session is the harsher case — the store must discard it.
@@ -1042,9 +1048,7 @@ describe('createConnectionStore()', () => {
       try {
         const session = createSession({ delegateDid: DELEGATE_DID });
         fake.session = session;
-        fake.emitter.emit('session-start', {
-          session: { did: session.did, delegateDid: DELEGATE_DID, identity: session.identity },
-        });
+        fake.emitter.emit('session-start', { session: sessionInfo(session) });
         // Let the rejected commit promise settle through its catch handler.
         await Promise.resolve();
 

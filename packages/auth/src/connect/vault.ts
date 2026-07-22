@@ -172,6 +172,7 @@ export async function vaultConnect(
       connectedDid,
       delegateDid,
       recoveryPhrase,
+      signal               : ctx.sessionSignal,
       identityName         : identity?.metadata.name,
       identityConnectedDid : identity?.metadata.connectedDid,
     });

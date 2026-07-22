@@ -6,6 +6,7 @@ import type {
 } from '../src/types/sync.js';
 import type {
   SyncStatusCurrentKeySet,
+  SyncStatusLink,
   SyncStatusReporterOperations,
 } from '../src/sync-status-reporter.js';
 
@@ -29,7 +30,7 @@ type SyncStatusReporterState = {
   currentLinkIdentityKeys: SyncStatusCurrentKeySet;
   currentQuotaLinkKeys: SyncStatusCurrentKeySet;
   deadLetters: DeadLetterEntry[];
-  links: ReplicationLinkState[];
+  links: SyncStatusLink[];
   quotaBlocks: SyncQuotaBlockState[];
 };
 
@@ -205,6 +206,20 @@ describe('SyncStatusReporter', () => {
       tenantDid                : ALICE,
     }]);
   });
+
+  it('reports pull currentness separately from link status and connectivity', async () => {
+    const reporter = createReporter({
+      links: [link({ isPullCurrent: false })],
+    });
+
+    await expect(reporter.getReplicationLinks(ALICE)).resolves.toEqual([
+      expect.objectContaining({
+        connectivity  : 'online',
+        isPullCurrent : false,
+        status        : 'live',
+      }),
+    ]);
+  });
 });
 
 function createReporter(overrides: Partial<SyncStatusReporterState> = {}): SyncStatusReporter {
@@ -222,7 +237,7 @@ function createReporter(overrides: Partial<SyncStatusReporterState> = {}): SyncS
     getCurrentLinkIdentityKeys : async (): Promise<SyncStatusCurrentKeySet> => state.currentLinkIdentityKeys,
     getCurrentQuotaLinkKeys    : async (): Promise<SyncStatusCurrentKeySet> => state.currentQuotaLinkKeys,
     getDeadLetters             : async (): Promise<DeadLetterEntry[]> => state.deadLetters,
-    getLinks                   : async (): Promise<ReplicationLinkState[]> => state.links,
+    getLinks                   : async (): Promise<SyncStatusLink[]> => state.links,
   } satisfies SyncStatusReporterOperations;
   const quotaManager = sinon.createStubInstance(SyncQuotaManager);
   quotaManager.getAllBlockStates.callsFake(async (): Promise<SyncQuotaBlockState[]> => state.quotaBlocks);
@@ -233,11 +248,12 @@ function identityKey(state: ReplicationLinkState): string {
   return buildDurableLinkIdentityKey(state.tenantDid, state.projectionId, state.authorizationEpoch);
 }
 
-function link(overrides: Partial<ReplicationLinkState> = {}): ReplicationLinkState {
+function link(overrides: Partial<SyncStatusLink> = {}): SyncStatusLink {
   return {
     authorization      : { kind: 'owner' },
     authorizationEpoch : 'owner-epoch',
     connectivity       : 'online',
+    isPullCurrent      : true,
     projectionId       : 'projection',
     pull               : {},
     push               : {},
@@ -304,6 +320,7 @@ describe('SyncStatusReporter.getReplicationLinks', () => {
         scope          : { kind: 'full' },
         status         : 'live',
         connectivity   : 'online',
+        isPullCurrent  : true,
       },
       {
         tenantDid      : BOB,
@@ -311,6 +328,7 @@ describe('SyncStatusReporter.getReplicationLinks', () => {
         scope          : { kind: 'full' },
         status         : 'initializing',
         connectivity   : 'online',
+        isPullCurrent  : true,
         delegateDid    : 'did:example:device',
         pullPosition   : '00042',
         lastActivityAt : timestamp(4),

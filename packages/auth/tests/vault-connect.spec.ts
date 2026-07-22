@@ -1,11 +1,19 @@
 import { describe, expect, test } from 'bun:test';
 
 import { AuthEventEmitter } from '../src/events.js';
+import { createFlowContext } from './helpers/flow-context.js';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { persistLocalDwnPairingRecord } from '../src/discovery.js';
-import { vaultConnect } from '../src/connect/vault.js';
+import { vaultConnect as runVaultConnect } from '../src/connect/vault.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
 import { INSECURE_DEFAULT_PASSWORD, STORAGE_KEYS } from '../src/types.js';
+
+function vaultConnect(
+  context: Omit<Parameters<typeof runVaultConnect>[0], 'sessionSignal'>,
+  options?: Parameters<typeof runVaultConnect>[1],
+): ReturnType<typeof runVaultConnect> {
+  return runVaultConnect(createFlowContext(context), options);
+}
 
 describe('vaultConnect', () => {
   test('first launch: initializes vault, creates identity when createIdentity is true', async () => {
@@ -14,6 +22,10 @@ describe('vaultConnect', () => {
     const initCalls: any[] = [];
     const createCalls: any[] = [];
     const identity = createMockIdentity();
+    let startedSession: Record<string, unknown> | undefined;
+    emitter.on('session-start', ({ session }): void => {
+      startedSession = session as unknown as Record<string, unknown>;
+    });
 
     const agent = createMockAgent({
       firstLaunch    : async () => true,
@@ -39,6 +51,18 @@ describe('vaultConnect', () => {
     expect(session.recoveryPhrase).toBe('recovery phrase words');
     expect(session.did).toBe('did:dht:testuser123');
     expect(session.agent).toBe(agent);
+
+    // Session lifecycle events expose only non-secret metadata and the
+    // authorization lifetime. The recovery phrase and agent stay on the
+    // explicitly returned session, never on the broadcast event payload.
+    expect(startedSession).toEqual({
+      did         : session.did,
+      delegateDid : undefined,
+      identity    : session.identity,
+      signal      : session.signal,
+    });
+    expect('agent' in startedSession!).toBe(false);
+    expect('recoveryPhrase' in startedSession!).toBe(false);
 
     // Storage was updated
     expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBe('true');

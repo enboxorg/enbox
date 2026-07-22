@@ -5,12 +5,20 @@ import sinon from 'sinon';
 import { DwnPermissionGrant } from '@enbox/agent';
 
 import { AuthEventEmitter } from '../src/events.js';
+import { createFlowContext } from './helpers/flow-context.js';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { WalletConnect } from '../src/wallet-connect-client.js';
 import { ConnectDeniedError, isConnectDeniedError } from '../src/errors.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
-import { processConnectedGrants, walletConnect } from '../src/connect/wallet.js';
+import { processConnectedGrants, walletConnect as runWalletConnect } from '../src/connect/wallet.js';
+
+function walletConnect(
+  context: Omit<Parameters<typeof runWalletConnect>[0], 'sessionSignal'>,
+  options: Parameters<typeof runWalletConnect>[1],
+): ReturnType<typeof runWalletConnect> {
+  return runWalletConnect(createFlowContext(context), options);
+}
 
 /** Build a well-formed Messages.Read grant message that DwnPermissionGrant.parse() accepts. */
 function buildTestGrant(protocol: string, grantId: string): any {

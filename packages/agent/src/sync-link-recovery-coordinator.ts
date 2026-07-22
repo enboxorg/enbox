@@ -32,6 +32,7 @@ export interface SyncLinkRecoveryCoordinatorOperations {
     result: SyncDurableFeedReconcileResult,
     context: SyncFeedConvergenceLinkContext,
   ): Promise<unknown>;
+  markPullPending(controller: SyncLinkController): void;
   openPullSubscription(target: SyncLinkRecoveryTarget, controller: SyncLinkController): Promise<boolean>;
   openPushSubscription(target: SyncLinkRecoveryTarget, controller: SyncLinkController): Promise<boolean>;
   reconcileTarget(
@@ -98,6 +99,7 @@ export class SyncLinkRecoveryCoordinator {
     // Whoever consumes the request afterwards, whether an already-executing
     // pass's trailing turn or the supervision below, observes the complete
     // transition; only durability and supervision trail the block.
+    this._operations.markPullPending(controller);
     controller.resetReplicationGeneration();
     controller.executor.request('repair');
     await this.setOfflineStatus(link, 'repairing');
@@ -134,6 +136,7 @@ export class SyncLinkRecoveryCoordinator {
       // the close below awaits an in-flight operation must be refused by
       // the replication-generation-fenced attach — attaching after the bump is
       // impossible, and anything attached before it is closed below.
+      this._operations.markPullPending(controller);
       controller.resetReplicationGeneration();
       this.cancelScheduledWork(controller);
     }
