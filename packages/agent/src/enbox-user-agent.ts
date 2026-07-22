@@ -325,8 +325,8 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
    * shutdown. The agent must not be used afterwards — create a new agent to
    * reopen the same data path.
    *
-   * @param options.syncStopTimeoutMs - How long to wait for in-flight sync
-   *   work to settle before force-stopping. Defaults to 2000.
+   * @param options.syncStopTimeoutMs - How long each sync stop/close phase
+   *   waits for in-flight work. Defaults to 2000.
    */
   public async shutdown(options: { syncStopTimeoutMs?: number } = {}): Promise<void> {
     const { syncStopTimeoutMs = 2000 } = options;
@@ -338,7 +338,7 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
     }
 
     try {
-      await this.sync.close();
+      await this.sync.close({ timeout: syncStopTimeoutMs });
     } catch {
       // Best-effort.
     }

@@ -22,7 +22,7 @@ describe('EnboxUserAgent.shutdown()', () => {
       secretsApi     : { close: async (): Promise<void> => { calls.push('secrets.close'); } } as any,
       syncApi        : {
         stopSync : async (timeout: number): Promise<void> => { calls.push(`sync.stopSync:${timeout}`); },
-        close    : async (): Promise<void> => { calls.push('sync.close'); },
+        close    : async (options: { timeout: number }): Promise<void> => { calls.push(`sync.close:${options.timeout}`); },
       } as any,
     });
 
@@ -30,7 +30,7 @@ describe('EnboxUserAgent.shutdown()', () => {
 
     expect(calls).toEqual([
       'sync.stopSync:1234',
-      'sync.close',
+      'sync.close:1234',
       'rpc.close',
       'vault.lock',
       'dwn.close',

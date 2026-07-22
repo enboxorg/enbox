@@ -1,9 +1,26 @@
-import { sleep } from '@enbox/common';
-
 import { SyncTaskGroup } from './sync-task-group.js';
 
 /** Starts work in one identity task group captured for a specific runtime lifetime. */
 export type SyncIdentityTaskRunner = (operation: () => Promise<void>) => Promise<void>;
+
+/** One absolute wait budget shared by every pre-operation lifecycle barrier. */
+export type SyncLifecycleDeadline = {
+  readonly expiresAt: number;
+  readonly timeout: number;
+};
+
+/** Create a lifecycle deadline from a validated timeout in milliseconds. */
+export function createSyncLifecycleDeadline(timeout: number): SyncLifecycleDeadline {
+  return {
+    expiresAt: Date.now() + timeout,
+    timeout,
+  };
+}
+
+/** Milliseconds left in one lifecycle deadline, clamped at zero. */
+export function remainingSyncLifecycleTimeout(deadline: SyncLifecycleDeadline): number {
+  return Math.max(0, deadline.expiresAt - Date.now());
+}
 
 /**
  * Coordinates sync lifecycle transitions, exclusive sync operations, and
@@ -33,31 +50,88 @@ export class SyncLifecycleCoordinator {
 
   /**
    * Serializes lifecycle transitions while allowing the first operation to
-   * start synchronously.
+   * start synchronously. A deadline only bounds the wait to START: an entry
+   * that expires in the queue is removed and can never execute later.
+   *
+   * An operation must not await another transition enqueued on this same
+   * coordinator: the nested entry is ordered after its caller and therefore
+   * cannot start until that caller settles.
    */
-  public runTransition(operation: () => Promise<void>): Promise<void> {
+  public runTransition(
+    operation: (deadline?: SyncLifecycleDeadline) => Promise<void>,
+    deadline?: SyncLifecycleDeadline,
+  ): Promise<void> {
     const previous = this._transition;
-    const transition = previous === undefined ? operation() : previous.then(operation);
-    const clearTransition = (): void => {
+    let releaseCompletion!: () => void;
+    const completion = new Promise<void>((resolve) => { releaseCompletion = resolve; });
+    this._transition = completion;
+    void completion.then((): void => {
       if (this._transition === completion) {
         this._transition = undefined;
       }
+    });
+
+    let cancelled = false;
+    let started = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const run = async (): Promise<void> => {
+      if (cancelled) {
+        return;
+      }
+      if (previous !== undefined &&
+        deadline !== undefined &&
+        remainingSyncLifecycleTimeout(deadline) === 0) {
+        if (timeoutId !== undefined) {
+          clearTimeout(timeoutId);
+        }
+        throw this.transitionTimeoutError(deadline);
+      }
+
+      started = true;
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+      await operation(deadline);
     };
-    const completion = transition.then(clearTransition, clearTransition);
-    this._transition = completion;
-    return transition;
+
+    const transition = previous === undefined ? run() : previous.then(run);
+    void transition.then(releaseCompletion, releaseCompletion);
+
+    if (previous === undefined || deadline === undefined) {
+      return transition;
+    }
+
+    return new Promise<void>((resolve, reject) => {
+      transition.then(resolve, reject);
+      timeoutId = setTimeout((): void => {
+        if (started) {
+          return;
+        }
+        cancelled = true;
+        reject(this.transitionTimeoutError(deadline));
+      }, remainingSyncLifecycleTimeout(deadline));
+    });
   }
 
   /** Serializes an identity mutation with lifecycle transitions and exclusive sync work. */
-  public runIdentityMutation(operation: () => Promise<void>): Promise<void> {
-    return this.runTransition(async (): Promise<void> => {
-      await this.acquireSync();
+  public runIdentityMutation(
+    operation: (deadline?: SyncLifecycleDeadline) => Promise<void>,
+    deadline?: SyncLifecycleDeadline,
+  ): Promise<void> {
+    return this.runTransition(async (activeDeadline): Promise<void> => {
+      if (activeDeadline === undefined) {
+        await this.acquireSync();
+      } else if (!await this.acquireSyncBefore(activeDeadline)) {
+        throw new Error(
+          `SyncLifecycleCoordinator: Existing sync operation did not complete within ${activeDeadline.timeout} milliseconds.`,
+        );
+      }
       try {
-        await operation();
+        await operation(activeDeadline);
       } finally {
         this.releaseSync();
       }
-    });
+    }, deadline);
   }
 
   /** Acquires the exclusive sync lock when it is currently available. */
@@ -80,6 +154,17 @@ export class SyncLifecycleCoordinator {
     }
   }
 
+  /** Acquires the exclusive sync lock before an optional absolute deadline. */
+  public async acquireSyncBefore(deadline: SyncLifecycleDeadline): Promise<boolean> {
+    while (!this.tryAcquireSync()) {
+      const remaining = remainingSyncLifecycleTimeout(deadline);
+      if (remaining === 0 || !await this.waitForPromise(this._syncCompletion, remaining)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   /** Releases the exclusive sync lock and wakes queued acquirers. */
   public releaseSync(): void {
     this._syncInProgress = false;
@@ -94,18 +179,18 @@ export class SyncLifecycleCoordinator {
    * policy and wording.
    */
   public async waitForSyncCompletion(timeout?: number): Promise<boolean> {
-    let elapsedTimeout = 0;
+    const expiresAt = timeout === undefined ? undefined : Date.now() + Math.max(0, timeout);
 
     while (this._syncInProgress) {
-      if (timeout !== undefined && elapsedTimeout >= timeout) {
-        return false;
+      if (expiresAt === undefined) {
+        await this._syncCompletion;
+        continue;
       }
 
-      const waitDuration = timeout === undefined
-        ? 100
-        : Math.min(Math.max(timeout - elapsedTimeout, 0), 100);
-      elapsedTimeout += waitDuration;
-      await Promise.race([this._syncCompletion, sleep(waitDuration)]);
+      const remaining = Math.max(0, expiresAt - Date.now());
+      if (remaining === 0 || !await this.waitForPromise(this._syncCompletion, remaining)) {
+        return false;
+      }
     }
 
     return true;
@@ -124,6 +209,11 @@ export class SyncLifecycleCoordinator {
       this._identityTaskGroups.set(did, taskGroup);
     }
     return taskGroup;
+  }
+
+  /** Whether an existing identity task group still owns work. */
+  public hasIdentityTasks(did: string): boolean {
+    return (this._identityTaskGroups.get(did)?.size ?? 0) > 0;
   }
 
   /** Bind a runner to the current identity group without resolving it again at fire time. */
@@ -165,5 +255,24 @@ export class SyncLifecycleCoordinator {
     if (this._identityTaskGroups.get(did) === taskGroup) {
       this._identityTaskGroups.delete(did);
     }
+  }
+
+  private transitionTimeoutError(deadline: SyncLifecycleDeadline): Error {
+    return new Error(
+      `SyncLifecycleCoordinator: Earlier lifecycle transition did not complete within ${deadline.timeout} milliseconds.`,
+    );
+  }
+
+  private async waitForPromise(completion: Promise<void>, timeout: number): Promise<boolean> {
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<boolean>((resolve) => {
+      timeoutId = setTimeout((): void => { resolve(false); }, timeout);
+    });
+    const completed = completion.then((): boolean => true);
+    const result = await Promise.race([completed, timedOut]);
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+    }
+    return result;
   }
 }
