@@ -117,16 +117,6 @@ export type RecordQuery<
   protocolRole?: string;
 };
 
-/** Options for draining a {@link RecordQuery} to cursor exhaustion. */
-export type RecordQueryAllOptions<
-  D extends ProtocolDefinition,
-  Path extends ProtocolPaths<D> & string,
-> = Omit<RecordQuery<D, Path>, 'pagination'> & {
-  pageSize?: number;
-  maxRecords?: number;
-  maxPages?: number;
-};
-
 /** @internal Canonical low-level request produced from a typed record query. */
 type CompiledRecordQuery = {
   from?: string;
@@ -138,7 +128,7 @@ type CompiledRecordQuery = {
 
 /**
  * @internal Compile one typed record query into the low-level request
- * shape shared by query, queryAll, count, and subscription consumers.
+ * shape shared by query, count, and observed-view consumers.
  */
 export function compileRecordQuery(
   definition: ProtocolDefinition,
@@ -198,16 +188,16 @@ export function compileRecordFilter(
 
 function assertValidFilter(filter: RecordFilterInput | undefined, dateSort: DateSort | undefined): void {
   if (Array.isArray(filter?.author) && filter.author.length === 0) {
-    throw new TypeError('RecordQuery: filter.author must not be an empty array.');
+    throw new TypeError('RecordFilter: author must not be an empty array.');
   }
   if (Array.isArray(filter?.recipient) && filter.recipient.length === 0) {
-    throw new TypeError('RecordQuery: filter.recipient must not be an empty array.');
+    throw new TypeError('RecordFilter: recipient must not be an empty array.');
   }
   if (filter?.tags !== undefined && Object.keys(filter.tags).length === 0) {
-    throw new TypeError('RecordQuery: filter.tags must contain at least one tag filter.');
+    throw new TypeError('RecordFilter: tags must contain at least one tag filter.');
   }
   if (filter?.published === false && selectsPublishedRecords(filter, dateSort)) {
-    throw new TypeError('RecordQuery: published-date filters and sorting cannot be combined with published: false.');
+    throw new TypeError('RecordFilter: published-date filters and sorting cannot be combined with published: false.');
   }
 }
 

@@ -204,11 +204,12 @@ describe('DwnApi records.count()', () => {
     const dwn = createDwnApi(agent, permissions, { delegateDid });
 
     const response = await dwn.records.subscribe({
-      filter: { protocol, protocolPath: 'note', contextId: 'root/note' },
+      filter              : { protocol, protocolPath: 'note', contextId: 'root/note' },
+      subscriptionHandler : (): void => {},
     });
 
     expect(response.status.code).toBe(404);
-    expect(response.liveQuery).toBeUndefined();
+    expect(response.subscription).toBeUndefined();
     expect(permissions.getPermissionForRequest.calledOnceWithExactly({
       connectedDid,
       delegateDid,

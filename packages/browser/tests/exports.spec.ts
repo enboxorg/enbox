@@ -47,12 +47,6 @@ describe('@enbox/browser exports', () => {
     expect(typeof mod.defineProtocol).toBe('function');
   });
 
-  it('re-exports repository from @enbox/api', async () => {
-    const mod = await getBrowserExports();
-    expect(mod.repository).toBeDefined();
-    expect(typeof mod.repository).toBe('function');
-  });
-
   it('re-exports AuthManager from @enbox/auth', async () => {
     const mod = await getBrowserExports();
     expect(mod.AuthManager).toBeDefined();

@@ -368,8 +368,8 @@ await record.delete();`}
               description="Records encrypted with ECDH key agreement and AES-256-GCM content encryption. Per-protocol encryption policies."
             />
             <FeatureCard
-              title="Real-Time Subscriptions"
-              description="LiveQuery provides an initial snapshot plus deduplicated change events. Connection lifecycle built in."
+              title="Offline-First Sync"
+              description="Durable local records stay usable offline and converge with remote DWNs when connectivity returns."
             />
             <FeatureCard
               title="Self-Hostable Server"

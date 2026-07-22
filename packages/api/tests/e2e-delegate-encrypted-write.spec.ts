@@ -16,7 +16,7 @@
  *   - The delegate agent has NO owner private signing key.
  *   - Non-encrypted record writes via delegate succeed.
  *   - Encrypted record writes via delegate succeed (ProtocolPath encryption).
- *   - The TypedEnbox / `Enbox.using()` / repository pattern handles delegates.
+ *   - The TypedEnbox / `Enbox.using()` path handles delegates.
  *   - Record author is the wallet owner DID; signer is the delegate DID.
  *   - Encrypted records carry encryption metadata accepted by the DWN.
  *
@@ -473,25 +473,6 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
       expect(deleteStatus.code).toBe(202);
     });
 
-    it('should subscribe to records as a delegate on encrypted protocol', async () => {
-      const protocolUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
-      const protocolDef = createEncryptedProtocol(protocolUri);
-      const { dappEnbox } = await setupDelegateFlow(protocolDef);
-
-      const EncTestProtocol = defineProtocol(
-        protocolDef as ProtocolDefinition,
-        {} as EncryptedSchemaMap,
-      );
-
-      const typed = dappEnbox.using(EncTestProtocol);
-
-      const { status, liveQuery } = await typed.records.subscribe('mint');
-      expect(status.code).toBe(200);
-
-      if (liveQuery) {
-        await liveQuery.close();
-      }
-    });
   });
 });
 

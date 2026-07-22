@@ -2,8 +2,8 @@
  * Integration tests for protocol-shaped API fixtures.
  *
  * These tests configure each protocol on a real DWN, write records, read them
- * back, and verify end-to-end correctness — including singleton upsert
- * semantics, nested record creation, and tag enforcement.
+ * back, and verify end-to-end correctness — including singleton enforcement,
+ * nested record creation, and tag enforcement.
  *
  * The fixtures intentionally live in this test file instead of importing
  * `@enbox/protocols`. `@enbox/protocols` depends on `@enbox/api`; importing it
@@ -31,7 +31,6 @@ import { PlatformAgentTestHarness } from '@enbox/agent/test';
 
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
-import { repository } from '../src/repository.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
 import { TypedRecord } from '../src/typed-record.js';
@@ -522,14 +521,13 @@ describe('protocol API integration fixtures', () => {
       expect(status.code).toBe(202);
     });
 
-    it('should set and get a singleton profile via repository', async () => {
+    it('should create and query a singleton profile', async () => {
       await installSocialGraph();
 
       const typed = new TypedEnbox(dwnAlice, ProfileProtocol);
-      const repo = repository(typed);
-      await repo.configure();
+      await typed.configure();
 
-      const result = await repo.profile.set({
+      const result = await typed.records.create('profile', {
         data: { displayName: 'Alice', bio: 'Building the future' },
       });
 
@@ -539,31 +537,28 @@ describe('protocol API integration fixtures', () => {
       const data = await result.record.data.json();
       expect(data.displayName).toBe('Alice');
 
-      // Get the singleton back
-      const fetched = await repo.profile.get();
+      const { records } = await typed.records.query('profile');
+      const fetched = records[0];
       expect(fetched).toBeInstanceOf(TypedRecord);
       const fetchedData = await fetched.data.json();
       expect(fetchedData.displayName).toBe('Alice');
     });
 
-    it('should upsert a singleton profile on second set()', async () => {
+    it('should update a loaded singleton profile explicitly', async () => {
       await installSocialGraph();
 
       const typed = new TypedEnbox(dwnAlice, ProfileProtocol);
-      const repo = repository(typed);
-      await repo.configure();
+      await typed.configure();
 
-      // First set
-      await repo.profile.set({ data: { displayName: 'Alice v1' } });
-
-      // Second set — should upsert
-      const result = await repo.profile.set({
+      const { record } = await typed.records.create('profile', { data: { displayName: 'Alice v1' } });
+      const result = await record!.update({
         data: { displayName: 'Alice v2', bio: 'Updated bio' },
       });
 
       expect(result.status.code).toBe(202);
 
-      const fetched = await repo.profile.get();
+      const { records } = await typed.records.query('profile');
+      const fetched = records[0];
       expect(fetched).toBeInstanceOf(TypedRecord);
       const data = await fetched.data.json();
       expect(data.displayName).toBe('Alice v2');
@@ -574,21 +569,21 @@ describe('protocol API integration fixtures', () => {
       await installSocialGraph();
 
       const typed = new TypedEnbox(dwnAlice, ProfileProtocol);
-      const repo = repository(typed);
-      await repo.configure();
+      await typed.configure();
 
-      const { record: profileRecord } = await repo.profile.set({
+      const { record: profileRecord } = await typed.records.create('profile', {
         data: { displayName: 'Alice' },
       });
 
-      const linkResult = await repo.profile.link.create(profileRecord.contextId, {
-        data: { url: 'https://twitter.com/alice', title: 'Twitter' },
+      const linkResult = await typed.records.create('profile/link', {
+        data            : { url: 'https://twitter.com/alice', title: 'Twitter' },
+        parentContextId : profileRecord!.contextId,
       });
 
       expect(linkResult.status.code).toBe(202);
-      expect(linkResult.record.protocolPath).toBe('profile/link');
+      expect(linkResult.record!.protocolPath).toBe('profile/link');
 
-      const linkData = await linkResult.record.data.json();
+      const linkData = await linkResult.record!.data.json();
       expect(linkData.url).toBe('https://twitter.com/alice');
     });
   });
@@ -598,37 +593,37 @@ describe('protocol API integration fixtures', () => {
   // -------------------------------------------------------------------------
 
   describe('ConnectProtocol', () => {
-    it('should configure and set wallet singleton', async () => {
+    it('should configure, create, and query the wallet singleton', async () => {
       const typed = new TypedEnbox(dwnAlice, ConnectProtocol);
-      const repo = repository(typed);
-      await repo.configure();
+      await typed.configure();
 
-      const result = await repo.wallet.set({
+      const result = await typed.records.create('wallet', {
         data: { webWallets: ['https://wallet.example.com'] },
       });
 
       expect(result.status.code).toBe(202);
 
-      const fetched = await repo.wallet.get();
+      const { records } = await typed.records.query('wallet');
+      const fetched = records[0];
       expect(fetched).toBeInstanceOf(TypedRecord);
       const data = await fetched.data.json();
       expect(data.webWallets).toEqual(['https://wallet.example.com']);
     });
 
-    it('should upsert wallet on second set()', async () => {
+    it('should update a loaded wallet singleton explicitly', async () => {
       const typed = new TypedEnbox(dwnAlice, ConnectProtocol);
-      const repo = repository(typed);
-      await repo.configure();
+      await typed.configure();
 
-      await repo.wallet.set({
+      const { record } = await typed.records.create('wallet', {
         data: { webWallets: ['https://v1.wallet.com'] },
       });
 
-      await repo.wallet.set({
+      await record!.update({
         data: { webWallets: ['https://v2.wallet.com', 'https://alt.wallet.com'] },
       });
 
-      const fetched = await repo.wallet.get();
+      const { records } = await typed.records.query('wallet');
+      const fetched = records[0];
       expect(fetched).toBeInstanceOf(TypedRecord);
       const data = await fetched.data.json();
       expect(data.webWallets).toEqual(['https://v2.wallet.com', 'https://alt.wallet.com']);

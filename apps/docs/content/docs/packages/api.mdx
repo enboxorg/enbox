@@ -1,6 +1,6 @@
 ---
 title: "@enbox/api"
-description: The high-level TypeScript SDK for decentralized identity and data — typed protocols, records CRUD, real-time subscriptions, and anonymous queries.
+description: The high-level TypeScript SDK for decentralized identity and data — typed protocols, record operations, and anonymous queries.
 ---
 
 `@enbox/api` is the main package developers use to interact with the Enbox network. It provides a type-safe, protocol-scoped API for creating, reading, updating, deleting, and subscribing to records stored in Decentralized Web Nodes (DWNs).
@@ -155,16 +155,19 @@ Query with filters, sorting, and pagination:
 ```ts
 import { DateSort } from '@enbox/dwn-sdk-js';
 
-const { records, cursor } = await tasks.records.query('task', {
+const selection = {
   filter: { tags: { done: false } },
   dateSort: DateSort.CreatedDescending,
   pagination: { limit: 25 },
-});
+};
+
+const { records, cursor } = await tasks.records.query('task', selection);
 
 // Fetch next page
 if (cursor) {
   const { records: next } = await tasks.records.query('task', {
-    pagination: { limit: 25, cursor },
+    ...selection,
+    pagination: { ...selection.pagination, cursor },
   });
 }
 ```
@@ -222,16 +225,6 @@ Or delete via the record instance:
 ```ts
 await record.delete();
 ```
-
-#### subscribe
-
-Subscribe to real-time changes:
-
-```ts
-const { liveQuery } = await tasks.records.subscribe('task');
-```
-
-See the [LiveQuery](#livequery) section below for event handling.
 
 ## TypedRecord
 
@@ -304,75 +297,6 @@ await record.delete({ prune: true });  // also delete child records
 | `record.store(importRecord?)` | Persist to local DWN (for records created with `store: false`) |
 | `record.import(store?)` | Re-sign under your identity and optionally store (for importing others' records) |
 | `record.rawRecord` | Escape hatch to the underlying untyped `Record` |
-
-## LiveQuery
-
-`LiveQuery` (and its typed wrapper `TypedLiveQuery<T>`) provides an initial snapshot plus a real-time stream of deduplicated change events.
-
-```ts
-const { liveQuery } = await tasks.records.subscribe('task');
-
-// Initial snapshot
-for (const record of liveQuery.records) {
-  console.log(await record.data.json());
-}
-
-// Real-time events
-liveQuery.on('create', (record) => {
-  console.log('New task:', record.id);
-});
-
-liveQuery.on('update', (record) => {
-  console.log('Updated:', record.id);
-});
-
-liveQuery.on('delete', (record) => {
-  console.log('Deleted:', record.id);
-});
-
-// Catch-all
-liveQuery.on('change', (change) => {
-  console.log(change.type, change.record.id);
-});
-```
-
-### Events
-
-| Event | Callback argument | Description |
-|---|---|---|
-| `create` | `TypedRecord<T>` | A new record was written |
-| `update` | `TypedRecord<T>` | An existing record was updated |
-| `delete` | `TypedRecord<T>` | A record was deleted |
-| `change` | `{ type, record }` | Catch-all for any of the above |
-| `disconnected` | *(none)* | Transport connection lost |
-| `reconnecting` | `{ attempt: number }` | Reconnection attempt in progress |
-| `reconnected` | *(none)* | Connection restored |
-| `eose` | *(none)* | End of stored events — catch-up complete, events are now live |
-
-The `.on()` method returns an unsubscribe function:
-
-```ts
-const off = liveQuery.on('create', handler);
-off(); // stop listening
-```
-
-Close the subscription when done:
-
-```ts
-await liveQuery.close();
-```
-
-### Connection lifecycle
-
-`liveQuery.isConnected` reflects the current transport state. Use the lifecycle events to show connection status in your UI:
-
-```ts
-liveQuery.on('disconnected', () => showOfflineBanner());
-liveQuery.on('reconnecting', ({ attempt }) => {
-  console.log(`Reconnection attempt ${attempt}...`);
-});
-liveQuery.on('reconnected', () => hideOfflineBanner());
-```
 
 ## Anonymous queries
 

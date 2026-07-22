@@ -20,7 +20,7 @@
 import { DwnApi } from '../src/dwn-api.js';
 import { EnboxUserAgent } from '@enbox/agent';
 import { ProfileProtocol } from '@enbox/protocols';
-import { repository, TypedEnbox } from '../src/index.js';
+import { TypedEnbox } from '../src/index.js';
 
 const DWN_URL = process.env.E2E_DWN_URL!;
 const persona = JSON.parse(process.env.E2E_PERSONA!);
@@ -130,14 +130,14 @@ async function main(): Promise<void> {
 
   const dwnApi = new DwnApi({ agent, connectedDid: recoveredDid });
   const profile = new TypedEnbox(dwnApi, ProfileProtocol);
-  const repo = repository(profile);
 
   // The protocol was synced from the remote but TypedEnbox needs configure()
   // to be called to mark itself ready. This is a local-only operation since
   // the ProtocolsConfigure record already exists in the local DWN.
-  await repo.configure();
+  await profile.configure();
 
-  const recoveredProfile = await repo.profile.get();
+  const { records: recoveredProfiles } = await profile.records.query('profile');
+  const recoveredProfile = recoveredProfiles[0];
 
   if (!recoveredProfile) {
     throw new Error('Profile not found after recovery + sync');

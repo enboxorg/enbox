@@ -4018,18 +4018,6 @@ describe('Record', () => {
     });
 
     it('deletes a record from someone else', async () => {
-      // subscribe to records so that we can receive a record in a deleted state
-      const receivedRecords: Record[] = [];
-
-      const { status, liveQuery } = await dwnAlice.records.subscribe({
-        from   : aliceDid.uri,
-        filter : {
-          protocol: notesProtocol.protocol,
-        }
-      });
-      expect(status.code).toBe(200);
-      liveQuery!.on('create', (record) => { receivedRecords.push(record); });
-
       // bob writes a record for alice, alice deletes it and stores it
       const { status: bobWriteStatus, record: bobWriteRecord } = await dwnBob.records.write({
         data         : 'Hello, world!',
@@ -4045,36 +4033,24 @@ describe('Record', () => {
       const { status: recordSend } = await bobWriteRecord.send(aliceDid.uri);
       expect(recordSend.code).toBe(202);
 
-      // wait for the record to be received
+      let bobsRecordToDelete: Record | undefined;
       await Poller.pollUntilSuccessOrTimeout(async () => {
-        expect(receivedRecords).toHaveLength(1);
-        expect(receivedRecords[0].id).toBe(bobWriteRecord.id);
+        const { records } = await dwnAlice.records.query({
+          from   : aliceDid.uri,
+          filter : { protocol: notesProtocol.protocol, recordId: bobWriteRecord.id },
+        });
+        bobsRecordToDelete = records[0];
+        expect(bobsRecordToDelete?.id).toBe(bobWriteRecord.id);
       });
 
-      // delete the record
-      const bobsRecordToDelete = receivedRecords[0];
-      expect(bobsRecordToDelete.deleted).toBe(false);
+      expect(bobsRecordToDelete!.deleted).toBe(false);
 
-      const { status: storeStatus, record: deletedBobRecord } = await bobsRecordToDelete.delete();
+      const { status: storeStatus, record: deletedBobRecord } = await bobsRecordToDelete!.delete();
       expect(storeStatus.code).toBe(202);
       expect(deletedBobRecord.deleted).toBe(true);
-
-      await liveQuery!.close();
     });
 
     it('deletes a record as owner from someone else', async () => {
-      // subscribe to records so that we can receive a record in a deleted state
-      const receivedRecords: Record[] = [];
-
-      const { status, liveQuery } = await dwnAlice.records.subscribe({
-        from   : bobDid.uri,
-        filter : {
-          protocol: notesProtocol.protocol,
-        }
-      });
-      expect(status.code).toBe(200);
-      liveQuery!.on('create', (record) => { receivedRecords.push(record); });
-
       // bob writes a record for alice, alice deletes it and stores it
       const { status: bobWriteStatus, record: bobWriteRecord } = await dwnBob.records.write({
         data         : 'Hello, world!',
@@ -4090,21 +4066,21 @@ describe('Record', () => {
       const { status: recordSend } = await bobWriteRecord.send(bobDid.uri);
       expect(recordSend.code).toBe(202);
 
-      // wait for the record to be received
+      let bobsRecordToDelete: Record | undefined;
       await Poller.pollUntilSuccessOrTimeout(async () => {
-        expect(receivedRecords).toHaveLength(1);
-        expect(receivedRecords[0].id).toBe(bobWriteRecord.id);
+        const { records } = await dwnAlice.records.query({
+          from   : bobDid.uri,
+          filter : { protocol: notesProtocol.protocol, recordId: bobWriteRecord.id },
+        });
+        bobsRecordToDelete = records[0];
+        expect(bobsRecordToDelete?.id).toBe(bobWriteRecord.id);
       });
 
-      // delete the record
-      const bobsRecordToDelete = receivedRecords[0];
-      expect(bobsRecordToDelete.deleted).toBe(false);
+      expect(bobsRecordToDelete!.deleted).toBe(false);
 
-      const { status: storeStatus, record: deletedBobRecord } = await bobsRecordToDelete.delete({ signAsOwner: true });
+      const { status: storeStatus, record: deletedBobRecord } = await bobsRecordToDelete!.delete({ signAsOwner: true });
       expect(storeStatus.code).toBe(202);
       expect(deletedBobRecord.deleted).toBe(true);
-
-      await liveQuery!.close();
     });
 
     it('deletes a record using a different protocolRole than the one used when querying for/reading the record', async () => {
@@ -4433,53 +4409,6 @@ describe('Record', () => {
       expect(storedRecordCallCount()).toBe(2);
     });
 
-    it('stores a deleted record as owner to the local DWN from an external signer', async () => {
-      // subscribe to records so that we can receive a record in a deleted state
-      const receivedRecords: Record[] = [];
-
-      const { status, liveQuery } = await dwnAlice.records.subscribe({
-        from   : aliceDid.uri,
-        filter : {
-          protocol     : notesProtocol.protocol,
-          protocolPath : 'request'
-        }
-      });
-      expect(status.code).toBe(200);
-      liveQuery!.on('change', (change) => { receivedRecords.push(change.record); });
-
-      // bob writes a record for alice, alice deletes it and stores it
-      const { status: bobWriteStatus, record: bobWriteRecord } = await dwnBob.records.write({
-        data         : 'Hello, world!',
-        recipient    : aliceDid.uri,
-        protocol     : notesProtocol.protocol,
-        protocolPath : 'request',
-        schema       : notesProtocol.types.request.schema
-      });
-      expect(bobWriteStatus.code).toBe(202);
-
-      const { status: bobDeleteStatus, record: deletedBobWriteRecord } = await bobWriteRecord.delete();
-      expect(bobDeleteStatus.code).toBe(202);
-
-      // send the deleted record to alice's DWN
-      const { status: deletedSend } = await deletedBobWriteRecord.send(aliceDid.uri);
-      expect(deletedSend.code).toBe(202);
-
-      // wait for the deleted record to be received
-      await Poller.pollUntilSuccessOrTimeout(async () => {
-        // We expect 2 events: create (the write) + delete (the delete)
-        const deletedRecord = receivedRecords.find(r => r.id === bobWriteRecord.id && r.deleted);
-        expect(deletedRecord).toBeDefined();
-      });
-
-      // get the deleted record
-      const bobsRecordToDelete = receivedRecords.find(r => r.id === bobWriteRecord.id && r.deleted);
-      expect(bobsRecordToDelete.deleted).toBe(true);
-
-      const { status: storeStatus } = await bobsRecordToDelete.store(true);
-      expect(storeStatus.code).toBe(202);
-
-      await liveQuery!.close();
-    });
   });
 
   describe('import()', () => {
@@ -4615,54 +4544,6 @@ describe('Record', () => {
       expect(storedRecord.id).toBe(record.id);
     });
 
-    it('signs and imports a deleted record as the owner', async () => {
-      // subscribe to records so that we can receive a record in a deleted state
-      const receivedRecords: Record[] = [];
-
-      // subscribe to requests
-      const { status, liveQuery } = await dwnAlice.records.subscribe({
-        from   : aliceDid.uri,
-        filter : {
-          protocol     : notesProtocol.protocol,
-          protocolPath : 'request'
-        }
-      });
-      expect(status.code).toBe(200);
-      liveQuery!.on('change', (change) => { receivedRecords.push(change.record); });
-
-      // bob writes a record for alice, alice deletes it and stores it
-      const { status: bobWriteStatus, record: bobWriteRecord } = await dwnBob.records.write({
-        data         : 'Hello, world!',
-        recipient    : aliceDid.uri,
-        protocol     : notesProtocol.protocol,
-        protocolPath : 'request',
-        schema       : notesProtocol.types.request.schema,
-        dataFormat   : 'text/plain'
-      });
-      expect(bobWriteStatus.code).toBe(202);
-
-      const { status: bobDeleteStatus, record: deletedBobWriteRecord } = await bobWriteRecord.delete();
-      expect(bobDeleteStatus.code).toBe(202);
-
-      // send the deleted record to alice's DWN
-      const { status: deletedSend } = await deletedBobWriteRecord.send(aliceDid.uri);
-      expect(deletedSend.code).toBe(202);
-
-      // wait for the deleted record to be received
-      await Poller.pollUntilSuccessOrTimeout(async () => {
-        const deletedRecord = receivedRecords.find(r => r.id === bobWriteRecord.id && r.deleted);
-        expect(deletedRecord).toBeDefined();
-      });
-
-      // import the deleted record
-      const bobsRecordToDelete = receivedRecords.find(r => r.id === bobWriteRecord.id && r.deleted);
-      expect(bobsRecordToDelete.deleted).toBe(true);
-
-      const { status: importStatus } = await bobsRecordToDelete.import();
-      expect(importStatus.code).toBe(202);
-
-      await liveQuery!.close();
-    });
 
     describe('store: false', () => {
       it('should import an external record without storing it', async () => {
@@ -4782,56 +4663,6 @@ describe('Record', () => {
         expect(storedRecord.id).toBe(record.id);
       });
 
-      it('signs and an external deleted record as the owner', async () => {
-        // subscribe to records so that we can receive a record in a deleted state
-        const receivedRecords: Record[] = [];
-
-        const { status, liveQuery } = await dwnAlice.records.subscribe({
-          from   : aliceDid.uri,
-          filter : {
-            protocol     : notesProtocol.protocol,
-            protocolPath : 'request'
-          }
-        });
-        expect(status.code).toBe(200);
-        liveQuery!.on('change', (change) => { receivedRecords.push(change.record); });
-
-        // bob writes a record for alice, alice deletes it and stores it
-        const { status: bobWriteStatus, record: bobWriteRecord } = await dwnBob.records.write({
-          data         : 'Hello, world!',
-          recipient    : aliceDid.uri,
-          protocol     : notesProtocol.protocol,
-          protocolPath : 'request',
-          schema       : notesProtocol.types.request.schema,
-          dataFormat   : 'text/plain'
-        });
-        expect(bobWriteStatus.code).toBe(202);
-
-        const { status: bobDeleteStatus, record: deletedBobWriteRecord } = await bobWriteRecord.delete();
-        expect(bobDeleteStatus.code).toBe(202);
-
-        // send the deleted record to alice's DWN
-        const { status: deletedSend } = await deletedBobWriteRecord.send(aliceDid.uri);
-        expect(deletedSend.code).toBe(202);
-
-        // wait for the deleted record to be received
-        await Poller.pollUntilSuccessOrTimeout(async () => {
-          const deletedRecord = receivedRecords.find(r => r.id === bobWriteRecord.id && r.deleted);
-          expect(deletedRecord).toBeDefined();
-        });
-
-        // import the deleted record
-        const bobsRecordToDelete = receivedRecords.find(r => r.id === bobWriteRecord.id && r.deleted);
-        expect(bobsRecordToDelete.deleted).toBe(true);
-
-        const { status: importStatus } = await bobsRecordToDelete.import(false);
-        expect(importStatus.code).toBe(202);
-
-        const { status: storeStatus } = await bobsRecordToDelete.store();
-        expect(storeStatus.code).toBe(202);
-
-        await liveQuery!.close();
-      });
     });
   });
 

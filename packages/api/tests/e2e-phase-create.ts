@@ -13,7 +13,7 @@
 import { EnboxUserAgent } from '@enbox/agent';
 import { ProfileProtocol, SocialGraphProtocol } from '@enbox/protocols';
 
-import { Enbox, repository } from '../src/index.js';
+import { Enbox } from '../src/index.js';
 
 const DWN_URL = process.env.E2E_DWN_URL!;
 const persona = JSON.parse(process.env.E2E_PERSONA!);
@@ -89,18 +89,18 @@ async function main(): Promise<void> {
 
   // Install Profile protocol and write persona
   const profile = web5.using(ProfileProtocol);
-  const repo = repository(profile);
-  await repo.configure();
+  await profile.configure();
   log('Profile protocol installed');
 
-  const writeResult = await repo.profile.set({ data: persona });
+  const writeResult = await profile.records.create('profile', { data: persona });
   if (writeResult.status.code !== 202 && writeResult.status.code !== 200) {
     throw new Error(`Failed to write profile: ${writeResult.status.code}`);
   }
   log(`Profile written: ${persona.displayName}`);
 
   // Verify local read-back
-  const localProfile = await repo.profile.get();
+  const { records: localProfiles } = await profile.records.query('profile');
+  const localProfile = localProfiles[0];
   if (!localProfile) {
     throw new Error('Failed to read profile back locally');
   }

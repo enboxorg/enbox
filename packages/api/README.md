@@ -120,45 +120,6 @@ Returned records are `TypedRecord<T>` instances. They expose typed
 `data.json()` plus `data.text()`, `data.bytes()`, `data.blob()`, and
 `data.stream()`.
 
-## Live Queries
-
-```ts
-const { liveQuery } = await notes.records.subscribe('note');
-
-liveQuery.on('create', async (created) => {
-  console.log(await created.data.json());
-});
-
-liveQuery.on('delete', (deleted) => {
-  console.log(deleted.id);
-});
-
-await liveQuery.close();
-```
-
-The initial snapshot is available at `liveQuery.records`. Change events are
-deduplicated against that snapshot.
-
-## Repository Helper
-
-Use `repository()` when you want a structure-aware object instead of passing
-protocol paths to every call.
-
-```ts
-import { repository } from '@enbox/api';
-
-const repo = repository(enbox.using(NotesProtocol));
-
-await repo.note.create({
-  data: { title: 'Hello', body: 'World' },
-});
-
-const { records } = await repo.note.query();
-```
-
-Types annotated with `$recordLimit: { max: 1 }` become singletons with
-`set()`, `get()`, and `delete()` instead of collection-style CRUD.
-
 ## Anonymous Reads
 
 `Enbox.anonymous()` creates a read-only API for published records and protocol
@@ -218,10 +179,8 @@ coordinates writes across browser contexts.
 | `Enbox` | Main app API: `connect()`, `fromSession()`, `anonymous()`, `using()`. |
 | `defineProtocol()` | Creates typed protocol definitions. |
 | `RecordQuery` | Protocol-derived filter, date ordering, and pagination shared by query and count. |
-| `repository()` | Creates structure-aware CRUD repositories. |
 | `TypedEnbox` | Protocol-scoped record API returned by `enbox.using()`. |
 | `TypedRecord<T>` | Type-safe record wrapper. |
-| `TypedLiveQuery<T>` | Typed subscription snapshot and change events. |
 | `Record` / `ReadOnlyRecord` | Mutable and anonymous-read record wrappers. |
 | `DidApi` | DID resolution helpers. |
 | `DwnReaderApi` | Anonymous read-only DWN API. |

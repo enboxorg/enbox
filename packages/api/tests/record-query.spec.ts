@@ -148,11 +148,11 @@ describe('RecordQuery', () => {
 
   it('should reject filters that would broaden or contradict the selection', () => {
     expect(() => compileRecordFilter(QueryDefinition, 'note', { author: [] }))
-      .toThrow('filter.author must not be an empty array');
+      .toThrow('RecordFilter: author must not be an empty array');
     expect(() => compileRecordFilter(QueryDefinition, 'note', { recipient: [] }))
-      .toThrow('filter.recipient must not be an empty array');
+      .toThrow('RecordFilter: recipient must not be an empty array');
     expect(() => compileRecordFilter(QueryDefinition, 'note', { tags: {} }))
-      .toThrow('filter.tags must contain at least one tag filter');
+      .toThrow('RecordFilter: tags must contain at least one tag filter');
     expect(() => compileRecordQuery(QueryDefinition, 'note', {
       filter   : { published: false },
       dateSort : DateSort.PublishedAscending,
@@ -168,9 +168,9 @@ describe('RecordQuery', () => {
     const typed = createTypedEnbox(dwn);
 
     await expect(typed.records.query('note', { filter: { author: [] } }))
-      .rejects.toThrow('filter.author must not be an empty array');
+      .rejects.toThrow('RecordFilter: author must not be an empty array');
     await expect(typed.records.count('note', { filter: { author: [] } }))
-      .rejects.toThrow('filter.author must not be an empty array');
+      .rejects.toThrow('RecordFilter: author must not be an empty array');
 
     const invalidSort = { dateSort: 'unsupported' } as unknown as RecordQuery<typeof QueryDefinition, 'note'>;
     await expect(typed.records.query('note', invalidSort)).rejects.toThrow('unsupported dateSort');

@@ -10,7 +10,6 @@
 export {
   Enbox,
   defineProtocol,
-  repository,
 } from '@enbox/api';
 
 export type {

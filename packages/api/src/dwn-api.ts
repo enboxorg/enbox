@@ -4,6 +4,9 @@
  */
 /// <reference types="@enbox/dwn-sdk-js" />
 
+import type { DwnSubscriptionHandler } from '@enbox/dwn-clients';
+import type { RecordDataAccess } from './record-types.js';
+
 import type {
   AudienceKeyDeliveryOutcome,
   CreateGrantParams,
@@ -19,19 +22,14 @@ import type {
   FetchPermissionsParams,
   ProcessDwnRequest } from '@enbox/agent';
 
-import type { DwnSubscriptionMessage } from '@enbox/dwn-clients';
-import type { RecordDataAccess, StoredRecordData } from './record-types.js';
-
-import { AgentPermissionsApi, DwnInterface, getRecordAuthor } from '@enbox/agent';
-import { Message, Records } from '@enbox/dwn-sdk-js';
+import type { MessagesSubscribeReply, RecordsSubscribeReply } from '@enbox/dwn-sdk-js';
 
 import { dataToBlob } from './utils.js';
-import { LiveQuery } from './live-query.js';
 import { PermissionGrant } from './permission-grant.js';
 import { PermissionRequest } from './permission-request.js';
 import { Protocol } from './protocol.js';
 import { Record } from './record.js';
-import { describeMessage, MessagesLiveQuery } from './messages-live-query.js';
+import { AgentPermissionsApi, DwnInterface, getRecordAuthor } from '@enbox/agent';
 
 type ReadLikeRecordsInterface =
   | DwnInterface.RecordsCount
@@ -170,76 +168,6 @@ export type RecordsQueryResponse = DwnResponseStatus & {
 };
 
 /**
- * Encapsulates a request to drain every record matching a query from a Decentralized Web Node
- * (DWN) via `records.queryAll()`.
- *
- * Identical to {@link RecordsQueryRequest} except that pagination is managed internally: the
- * drain pages through results with `pageSize`-sized queries until the cursor is exhausted (or
- * the optional `maxRecords` safety cap is reached), so callers never hand-write cursor loops.
- */
-export type RecordsQueryAllRequest = Omit<RecordsQueryRequest, 'pagination'> & {
-  /**
-   * The number of records fetched per underlying query page. Defaults to 100. Tune it down for
-   * very large payload-bearing records, or up to reduce round-trips on small records.
-   *
-   * Must be a positive integer — rejected loudly at call time otherwise.
-   */
-  pageSize?: number;
-
-  /**
-   * Optional safety cap on the total number of records yielded. When set, iteration stops after
-   * yielding this many records even if more pages remain — guarding accidental unbounded drains
-   * of very large record sets. When omitted, the drain runs to cursor exhaustion.
-   *
-   * Counts YIELDED records only, so it cannot bound a remote that returns empty pages — that is
-   * what {@link RecordsQueryAllRequest.maxPages} and the built-in liveness guards are for.
-   *
-   * Must be a positive integer — rejected loudly at call time otherwise.
-   */
-  maxRecords?: number;
-
-  /**
-   * Overall page-request budget for the drain, independent of `maxRecords`. Defaults to 1000
-   * pages. Exceeding it THROWS (it is a runaway-remote guard, not a truncation knob — use
-   * `maxRecords` for intentional truncation).
-   *
-   * Two built-in liveness guards back it up regardless of this budget: a page that repeats the
-   * cursor it was requested with terminates the drain with a thrown error (a repeated cursor is
-   * never legitimate), and a run of consecutive empty-but-cursor-bearing pages beyond a small
-   * fixed budget does the same.
-   *
-   * Must be a positive integer — rejected loudly at call time otherwise.
-   */
-  maxPages?: number;
-};
-
-/**
- * Validates the numeric options of a {@link RecordsQueryAllRequest} at CALL time — before any
- * page is fetched — so a malformed budget (NaN, zero, negative, fractional) fails loudly instead
- * of silently disabling a guard. Shared by the raw and typed `queryAll` entry points.
- *
- * @throws `Error` naming the offending option when it is not a positive integer.
- */
-export function assertValidQueryAllOptions(
-  options: { pageSize?: number; maxRecords?: number; maxPages?: number },
-): void {
-  const numericOptions: [name: string, value: number | undefined][] = [
-    ['pageSize', options.pageSize],
-    ['maxRecords', options.maxRecords],
-    ['maxPages', options.maxPages],
-  ];
-
-  for (const [name, value] of numericOptions) {
-    if (value === undefined) {
-      continue;
-    }
-    if (!Number.isInteger(value) || value <= 0) {
-      throw new Error(`DwnApi: records.queryAll() option '${name}' must be a positive integer (got ${value}).`);
-    }
-  }
-}
-
-/**
  * Represents a request to read a specific record from a Decentralized Web Node (DWN).
  *
  * This request type is used to specify the target DWN from which the record should be read and any
@@ -267,52 +195,39 @@ export type RecordsReadResponse = DwnResponseStatus & {
 };
 
 /**
- * Represents a request to subscribe to records from a Decentralized Web Node (DWN).
- *
- * Returns a {@link LiveQuery} that atomically provides an initial snapshot of
- * matching records alongside a real-time stream of deduplicated, semantically-
- * typed change events (`create`, `update`, `delete`).
+ * Represents a raw RecordsSubscribe request to a Decentralized Web Node (DWN).
+ * The callback must be installed before dispatch so it can receive synchronous
+ * catch-up events as well as later transport lifecycle messages.
  */
 export type RecordsSubscribeRequest = Omit<DwnMessageParams[DwnInterface.RecordsSubscribe], 'signer'> & {
   /** Optional DID specifying the remote target DWN tenant to subscribe from. */
   from?: string;
+
+  /** Receives raw record events and subscription lifecycle messages. */
+  subscriptionHandler: DwnSubscriptionHandler;
 };
 
-/** Encapsulates the response from a DWN RecordsSubscribeRequest. */
-export type RecordsSubscribeResponse = DwnResponseStatus & {
-  /** The live query instance, or `undefined` if the request failed. */
-  liveQuery?: LiveQuery;
-};
+/** The unmodified DWN RecordsSubscribe reply. */
+export type RecordsSubscribeResponse = RecordsSubscribeReply;
 
 /**
  * Represents a request to subscribe to the message-level change feed of a
  * Decentralized Web Node (DWN) tenant.
  *
- * Where {@link RecordsSubscribeRequest} hydrates full `Record` objects for one
- * filter, this is the lightweight change signal: multiple filters per
- * subscription, one `event` per message recorded on the tenant's log, each
- * carrying the raw message plus a routing {@link MessageDescriptor}. Designed
- * for cache invalidation and reactive reads over the local store, which sync
- * keeps populated — including messages applied by sync itself.
+ * This is the low-level message-log change signal used by higher-level
+ * materialized views: subscription payloads are wake hints, never collection
+ * truth.
  */
 export type MessagesSubscribeRequest = Omit<DwnMessageParams[DwnInterface.MessagesSubscribe], 'signer'> & {
   /** Optional DID specifying the remote target DWN tenant to subscribe from. */
   from?: string;
 
-  /**
-   * Hydrates each `RecordsWrite` event as a {@link MessageChange.record}.
-   * Inline bytes are reused directly; larger payloads are read lazily when
-   * `record.data` is consumed using the same `Messages.Read` authorization
-   * that opened the feed.
-   */
-  includeRecords?: boolean;
+  /** Receives raw message events and subscription lifecycle messages. */
+  subscriptionHandler: DwnSubscriptionHandler;
 };
 
-/** Encapsulates the response from a DWN MessagesSubscribeRequest. */
-export type MessagesSubscribeResponse = DwnResponseStatus & {
-  /** The live message feed, or `undefined` if the request failed. */
-  liveQuery?: MessagesLiveQuery;
-};
+/** The unmodified DWN MessagesSubscribe reply. */
+export type MessagesSubscribeResponse = MessagesSubscribeReply;
 
 /**
  * Defines a request to write (create) a record to a Decentralized Web Node (DWN).
@@ -421,80 +336,6 @@ export type RecordsWriteResponse = DwnResponseStatus & {
  * Interface to interact with DWN Records and Protocols
  */
 export class DwnApi {
-  /** Default per-page record count used by `records.queryAll()` when no `pageSize` is given. */
-  private static readonly QUERY_ALL_DEFAULT_PAGE_SIZE = 100;
-
-  /** Default overall page-request budget for `records.queryAll()` when no `maxPages` is given. */
-  private static readonly QUERY_ALL_DEFAULT_MAX_PAGES = 1000;
-
-  /**
-   * Liveness budget for `records.queryAll()`: the maximum run of consecutive EMPTY pages that
-   * still return a pagination cursor before the drain terminates with a thrown error. A healthy
-   * remote never sustains cursor-bearing empty pages; an adversarial or buggy one can emit them
-   * forever with ever-changing cursors, which `maxRecords` (counting yielded records) would
-   * never bound.
-   */
-  private static readonly QUERY_ALL_MAX_CONSECUTIVE_EMPTY_PAGES = 3;
-
-  /** Throws before a query when the drain has exhausted its page-request budget. */
-  private static assertQueryAllPageBudget(pagesFetched: number, maxPages: number): void {
-    if (pagesFetched >= maxPages) {
-      throw new Error(
-        `DwnApi: records.queryAll() exceeded its page budget of ${maxPages} pages with results still remaining. ` +
-        'Raise maxPages for legitimately huge drains, or use maxRecords / pagination for intentional truncation.',
-      );
-    }
-  }
-
-  /** Throws when an underlying query page did not complete successfully. */
-  private static assertQueryAllPageSucceeded(status: DwnResponseStatus['status']): void {
-    if (status.code < 200 || status.code > 299) {
-      throw new Error(`DwnApi: records.queryAll() page failed with status ${status.code}: ${status.detail}`);
-    }
-  }
-
-  /**
-   * Validates cursor progress and returns the next consecutive-empty-page count.
-   * These guards bound buggy or adversarial remotes that keep returning cursors
-   * without ever yielding a record.
-   */
-  private static nextQueryAllEmptyPageCount(params: {
-    consecutiveEmptyPages: number;
-    cursor: DwnPaginationCursor | undefined;
-    nextCursor: DwnPaginationCursor | undefined;
-    recordCount: number;
-  }): number {
-    const { consecutiveEmptyPages, cursor, nextCursor, recordCount } = params;
-    if (nextCursor === undefined) {
-      return consecutiveEmptyPages;
-    }
-
-    // A page that hands back the cursor it was requested with would make the
-    // next request identical to this one — an infinite loop, and never a
-    // legitimate server behavior.
-    if (cursor !== undefined && JSON.stringify(nextCursor) === JSON.stringify(cursor)) {
-      throw new Error(
-        'DwnApi: records.queryAll() terminated: the remote returned a repeated pagination cursor ' +
-        '(same cursor as the request that produced it), which can never make progress.',
-      );
-    }
-
-    if (recordCount > 0) {
-      return 0;
-    }
-
-    // Empty pages that still carry a (changing) cursor never trip
-    // `maxRecords` (it counts yields), so they get their own small budget.
-    const nextEmptyPageCount = consecutiveEmptyPages + 1;
-    if (nextEmptyPageCount >= DwnApi.QUERY_ALL_MAX_CONSECUTIVE_EMPTY_PAGES) {
-      throw new Error(
-        `DwnApi: records.queryAll() terminated after ${nextEmptyPageCount} consecutive empty pages ` +
-        'that still returned a pagination cursor — the remote is not making progress.',
-      );
-    }
-    return nextEmptyPageCount;
-  }
-
   /** Captures the exact authorization and routing context used for record data access. */
   private static getRecordDataAccess<T extends DwnInterface>(
     request: ProcessDwnRequest<T>,
@@ -557,118 +398,6 @@ export class DwnApi {
     return remote
       ? this.agent.sendDwnRequest(request)
       : this.agent.processDwnRequest(request);
-  }
-
-  /**
-   * Creates a repeatable source for the exact stored bytes carried by a
-   * MessagesSubscribe event. Large payloads are reopened by message CID using
-   * the feed's Messages.Read authorization, not by record ID via RecordsRead.
-   */
-  private createMessagesEventStoredData(params: {
-    encodedData?: string;
-    message: DwnMessage[DwnInterface.RecordsWrite];
-    messageCid?: string;
-    remote: boolean;
-    subscriptionRequest: ProcessDwnRequest<DwnInterface.MessagesSubscribe>;
-  }): StoredRecordData {
-    if (params.encodedData !== undefined) {
-      return params.encodedData;
-    }
-
-    const eventMessage = structuredClone(params.message);
-    const permissionGrantIds = [...(params.subscriptionRequest.messageParams?.permissionGrantIds ?? [])];
-    return {
-      dataCid : params.message.descriptor.dataCid,
-      open    : async (): Promise<ReadableStream<Uint8Array>> => this.readMessagesEventStoredData({
-        author     : params.subscriptionRequest.author,
-        dataCid    : params.message.descriptor.dataCid,
-        eventMessage,
-        granteeDid : params.subscriptionRequest.granteeDid,
-        messageCid : params.messageCid,
-        permissionGrantIds,
-        recordId   : params.message.recordId,
-        remote     : params.remote,
-        target     : params.subscriptionRequest.target,
-      }),
-    };
-  }
-
-  /** Reads and verifies one non-inline MessagesSubscribe record payload. */
-  private async readMessagesEventStoredData(params: {
-    author: string;
-    dataCid: string;
-    eventMessage: DwnMessage[DwnInterface.RecordsWrite];
-    granteeDid?: string;
-    messageCid?: string;
-    permissionGrantIds: string[];
-    recordId: string;
-    remote: boolean;
-    target: string;
-  }): Promise<ReadableStream<Uint8Array>> {
-    const eventMessageCid = await Message.getCid(params.eventMessage);
-    if (params.messageCid !== undefined && params.messageCid !== eventMessageCid) {
-      throw new Error(
-        `DwnApi: MessagesSubscribe event CID '${params.messageCid}' does not match its message CID '${eventMessageCid}'.`
-      );
-    }
-
-    const readRequest: ProcessDwnRequest<DwnInterface.MessagesRead> = {
-      author        : params.author,
-      messageParams : {
-        messageCid: eventMessageCid,
-        ...(params.permissionGrantIds.length === 0 ? {} : { permissionGrantIds: params.permissionGrantIds }),
-      },
-      messageType : DwnInterface.MessagesRead,
-      target      : params.target,
-      ...(params.granteeDid === undefined ? {} : { granteeDid: params.granteeDid }),
-    };
-    const { reply } = params.remote ?
-      await this.agent.sendDwnRequest(readRequest) :
-      await this.agent.processDwnRequest(readRequest);
-
-    const { entry, status } = reply;
-    if (status.code !== 200 || entry === undefined) {
-      throw new Error(`DwnApi: Unable to read message data: ${status.code}: ${status.detail}`);
-    }
-    if (entry.messageCid !== eventMessageCid || await Message.getCid(entry.message) !== eventMessageCid) {
-      throw new Error(`DwnApi: MessagesRead returned a different message for CID '${eventMessageCid}'.`);
-    }
-    if (!Records.isRecordsWrite(entry.message) || entry.message.recordId !== params.recordId) {
-      throw new Error(`DwnApi: MessagesRead returned a different record for '${params.recordId}'.`);
-    }
-    if (entry.message.descriptor.dataCid !== params.dataCid) {
-      throw new Error(
-        `DwnApi: MessagesRead returned data CID '${entry.message.descriptor.dataCid}' ` +
-        `for source CID '${params.dataCid}'.`
-      );
-    }
-    if (entry.data === undefined) {
-      throw new Error(`DwnApi: MessagesRead returned no stored data for record '${params.recordId}'.`);
-    }
-
-    return entry.data;
-  }
-
-  /** Builds the same version-pinned Record shape for every subscription surface. */
-  private buildEventRecord(params: {
-    dataAccess: RecordDataAccess;
-    initialWrite?: DwnMessage[DwnInterface.RecordsWrite];
-    message: DwnMessage[DwnInterface.RecordsWrite];
-    protocolRole?: string;
-    remoteOrigin?: string;
-    storedData?: StoredRecordData;
-  }): Record {
-    return new Record(this.agent, {
-      ...params.message,
-      author       : getRecordAuthor(params.message),
-      connectedDid : this.connectedDid,
-      dataAccess   : params.dataAccess,
-      delegateDid  : this.delegateDid,
-      initialWrite : params.initialWrite,
-      protocolRole : params.protocolRole,
-      remoteOrigin : params.remoteOrigin,
-      storedData   : params.storedData,
-    }, this.permissionsApi);
   }
 
   /**
@@ -961,93 +690,21 @@ export class DwnApi {
    * (e.g., `dwn.messages.subscribe()`).
    */
   get messages(): {
-      subscribe: (request?: MessagesSubscribeRequest) => Promise<MessagesSubscribeResponse>;
+      subscribe: (request: MessagesSubscribeRequest) => Promise<MessagesSubscribeResponse>;
       } {
 
     return {
       /**
-       * Subscribes to the tenant's message-level change feed. One `event`
-       * fires per message recorded on the log across every interface the
-       * `filters` cover (multiple filters per subscription), each carrying
-       * the raw message plus a routing {@link MessageDescriptor}. Without a
-       * `from`, the subscription targets the local store — and fires for
-       * messages applied by sync as well, making it the primitive for
-       * reactive local reads and cache invalidation.
+       * Subscribes to the tenant's raw message-level change feed. The caller's
+       * handler is installed before dispatch and receives the protocol's event,
+       * catch-up, error, and transport lifecycle messages unchanged.
        *
        * Delegated access resolves a `Messages.Read` grant when the filters
        * name exactly one protocol; multi-protocol delegated subscriptions
        * should pass explicit `permissionGrantIds`.
-       *
-       * Set `includeRecords` to hydrate RecordsWrite events as version-pinned
-       * {@link Record} objects. Small payloads reuse the event's inline bytes;
-       * larger payloads reopen through MessagesRead under the same feed grant.
        */
-      subscribe: async (request: MessagesSubscribeRequest = {}): Promise<MessagesSubscribeResponse> => {
-        const { from, includeRecords = false, ...messageParams } = request;
-
-        // Constructed BEFORE the request is dispatched: a local cursor
-        // catch-up (and its EOSE) replays synchronously inside the subscribe
-        // call, and must land in the query's pre-listener buffer, not a void.
-        const liveQuery = new MessagesLiveQuery();
-
-        const subscriptionHandler = (msg: DwnSubscriptionMessage): void => {
-          if (msg.type === 'eose') {
-            liveQuery.handleLifecycleEvent('eose');
-            return;
-          }
-
-          if (msg.type === 'error') {
-            liveQuery.handleError({
-              code   : msg.error.code,
-              detail : msg.error.detail,
-              cursor : msg.cursor,
-            });
-            Promise.resolve(liveQuery.close()).catch(() => {});
-            return;
-          }
-
-          if (msg.type === 'disconnected') {
-            liveQuery.handleLifecycleEvent('disconnected');
-            return;
-          }
-
-          if (msg.type === 'reconnected') {
-            liveQuery.handleLifecycleEvent('reconnected');
-            return;
-          }
-
-          if (msg.type === 'reconnecting') {
-            liveQuery.handleLifecycleEvent('reconnecting', { attempt: msg.attempt });
-            return;
-          }
-
-          const { message } = msg.event;
-          let record: Record | undefined;
-          if (includeRecords && Records.isRecordsWrite(message)) {
-            const remote = from !== undefined;
-            record = this.buildEventRecord({
-              dataAccess   : DwnApi.getRecordDataAccess(agentRequest, remote),
-              initialWrite : msg.event.initialWrite,
-              message,
-              remoteOrigin : from,
-              storedData   : this.createMessagesEventStoredData({
-                encodedData         : msg.encodedData,
-                message,
-                messageCid          : msg.messageCid,
-                remote,
-                subscriptionRequest : agentRequest,
-              }),
-            });
-          }
-
-          liveQuery.handleEvent({
-            message,
-            descriptor : describeMessage(message),
-            ...(record === undefined ? {} : { record }),
-            messageCid : msg.messageCid,
-            cursor     : msg.cursor,
-          });
-        };
+      subscribe: async (request: MessagesSubscribeRequest): Promise<MessagesSubscribeResponse> => {
+        const { from, subscriptionHandler, ...messageParams } = request;
 
         const agentRequest: ProcessDwnRequest<DwnInterface.MessagesSubscribe> = {
           author      : this.connectedDid,
@@ -1088,29 +745,15 @@ export class DwnApi {
               };
               agentRequest.granteeDid = this.delegateDid;
             } catch {
-              // Without a usable grant, author as the delegate — mirrors
-              // records.subscribe: public/anonymous-visible messages only.
+              // Without a usable grant, author as the delegate so only
+              // public or otherwise delegate-visible messages are delivered.
               agentRequest.author = this.delegateDid;
             }
           }
         }
 
-        let agentResponse: DwnResponse<DwnInterface.MessagesSubscribe>;
-
-        if (from) {
-          agentResponse = await this.agent.sendDwnRequest(agentRequest);
-        } else {
-          agentResponse = await this.agent.processDwnRequest(agentRequest);
-        }
-
-        const { status, subscription } = agentResponse.reply;
-
-        if (subscription === undefined) {
-          return { status };
-        }
-
-        liveQuery.attachSubscription(subscription);
-        return { status, liveQuery };
+        const agentResponse = await this.dispatchDwnRequest(agentRequest, Boolean(from));
+        return agentResponse.reply;
       },
     };
   }
@@ -1122,7 +765,6 @@ export class DwnApi {
       count: (request: RecordsCountRequest) => Promise<RecordsCountResponse>;
       delete: (request: RecordsDeleteRequest) => Promise<DwnResponseStatus>;
       query: (request: RecordsQueryRequest) => Promise<RecordsQueryResponse>;
-      queryAll: (request: RecordsQueryAllRequest) => AsyncGenerator<Record, void, undefined>;
       read: (request: RecordsReadRequest) => Promise<RecordsReadResponse>;
       subscribe: (request: RecordsSubscribeRequest) => Promise<RecordsSubscribeResponse>;
       write: (request: RecordsWriteRequest) => Promise<RecordsWriteResponse>;
@@ -1269,23 +911,6 @@ export class DwnApi {
       },
 
       /**
-       * Drain every record matching the given filter, paging through query
-       * results internally so callers never hand-write cursor loops.
-       *
-       * Returns an async generator — iterate it with `for await...of`. A page
-       * that fails with a non-2xx status aborts the drain with a thrown Error
-       * (an iterator has no clean status channel), as do the liveness guards:
-       * a repeated pagination cursor, a run of consecutive empty
-       * cursor-bearing pages, or an exceeded `maxPages` budget.
-       */
-      queryAll: (request: RecordsQueryAllRequest): AsyncGenerator<Record, void, undefined> => {
-        // Validated at CALL time (not first iteration) so malformed budgets
-        // fail loudly even if the generator is never consumed.
-        assertValidQueryAllOptions(request);
-        return this.queryAllRecords(request);
-      },
-
-      /**
        * Read a single record based on the given filter
        */
       read: async (request: RecordsReadRequest): Promise<RecordsReadResponse> => {
@@ -1348,66 +973,9 @@ export class DwnApi {
         return { record, status };
       },
 
-      /**
-       * Subscribe to records matching the given filter.
-       *
-       * Returns a {@link LiveQuery} that atomically provides an initial snapshot
-       * of matching records and a real-time stream of deduplicated, semantically-
-       * typed change events (`create`, `update`, `delete`).
-       */
+      /** Subscribe to raw record events matching the given filter. */
       subscribe: async (request: RecordsSubscribeRequest): Promise<RecordsSubscribeResponse> => {
-        const { from, ...messageParams } = request;
-
-        // Build a DWN-level subscription handler that wraps raw RecordEvents
-        // into Record objects and feeds them into the LiveQuery.
-        let liveQuery: LiveQuery | undefined;
-
-        const remoteOrigin = from;
-        const protocolRole = messageParams.protocolRole;
-
-        const subscriptionHandler = (msg: DwnSubscriptionMessage): void => {
-          if (msg.type === 'eose') {
-            liveQuery?.handleLifecycleEvent('eose');
-            return;
-          }
-
-          if (msg.type === 'error') {
-            liveQuery?.handleError({
-              code   : msg.error.code,
-              detail : msg.error.detail,
-              cursor : msg.cursor,
-            });
-            Promise.resolve(liveQuery?.close()).catch(() => {});
-            return;
-          }
-
-          if (msg.type === 'disconnected') {
-            liveQuery?.handleLifecycleEvent('disconnected');
-            return;
-          }
-
-          if (msg.type === 'reconnected') {
-            liveQuery?.handleLifecycleEvent('reconnected');
-            return;
-          }
-
-          if (msg.type === 'reconnecting') {
-            liveQuery?.handleLifecycleEvent('reconnecting', { attempt: msg.attempt });
-            return;
-          }
-
-          const { message, initialWrite } = msg.event;
-          const record = this.buildEventRecord({
-            dataAccess   : DwnApi.getRecordDataAccess(agentRequest, from !== undefined),
-            initialWrite : initialWrite as DwnMessage[DwnInterface.RecordsWrite] | undefined,
-            message      : message as DwnMessage[DwnInterface.RecordsWrite],
-            protocolRole,
-            remoteOrigin,
-            storedData   : msg.encodedData,
-          });
-
-          liveQuery?.handleEvent(record);
-        };
+        const { from, subscriptionHandler, ...messageParams } = request;
 
         const agentRequest = await this.prepareRecordsReadRequest({
           author      : this.connectedDid,
@@ -1422,26 +990,7 @@ export class DwnApi {
         });
 
         const agentResponse = await this.dispatchDwnRequest(agentRequest, Boolean(from));
-
-        const reply = agentResponse.reply;
-        const { status, subscription, entries = [], cursor } = reply;
-
-        if (subscription) {
-          liveQuery = new LiveQuery({
-            agent          : this.agent,
-            connectedDid   : this.connectedDid,
-            delegateDid    : this.delegateDid,
-            protocolRole,
-            remoteOrigin,
-            dataAccess     : DwnApi.getRecordDataAccess(agentRequest, from !== undefined),
-            permissionsApi : this.permissionsApi,
-            initialEntries : entries,
-            cursor,
-            subscription,
-          });
-        }
-
-        return { status, liveQuery };
+        return agentResponse.reply;
       },
 
       /**
@@ -1554,65 +1103,4 @@ export class DwnApi {
     };
   }
 
-  /**
-   * Drains every record matching the given query request by paging through
-   * results until the pagination cursor is exhausted (or the `maxRecords`
-   * safety cap is reached). Backs `records.queryAll()`.
-   *
-   * Liveness guards — a remote (or store) must never be able to hold the
-   * drain in an infinite loop:
-   * - a page that returns the SAME cursor it was requested with terminates
-   *   with a thrown error (a repeated cursor is never legitimate);
-   * - a run of {@link DwnApi.QUERY_ALL_MAX_CONSECUTIVE_EMPTY_PAGES}
-   *   consecutive empty-but-cursor-bearing pages terminates with a thrown
-   *   error (a page with records resets the run);
-   * - the overall `maxPages` budget (default
-   *   {@link DwnApi.QUERY_ALL_DEFAULT_MAX_PAGES}) terminates with a thrown
-   *   error independent of `maxRecords`, which only counts yielded records.
-   *
-   * @throws `Error` when any underlying query page returns a non-2xx status,
-   *   or when a liveness guard trips.
-   */
-  private async * queryAllRecords(request: RecordsQueryAllRequest): AsyncGenerator<Record, void, undefined> {
-    const {
-      pageSize = DwnApi.QUERY_ALL_DEFAULT_PAGE_SIZE,
-      maxRecords,
-      maxPages = DwnApi.QUERY_ALL_DEFAULT_MAX_PAGES,
-      ...queryRequest
-    } = request;
-
-    let cursor: DwnPaginationCursor | undefined;
-    let consecutiveEmptyPages = 0;
-    let pagesFetched = 0;
-    let yielded = 0;
-
-    do {
-      DwnApi.assertQueryAllPageBudget(pagesFetched, maxPages);
-
-      const { status, records, cursor: nextCursor } = await this.records.query({
-        ...queryRequest,
-        pagination: { limit: pageSize, cursor },
-      });
-      pagesFetched += 1;
-
-      DwnApi.assertQueryAllPageSucceeded(status);
-
-      for (const record of records) {
-        if (maxRecords !== undefined && yielded >= maxRecords) {
-          return;
-        }
-        yield record;
-        yielded += 1;
-      }
-
-      consecutiveEmptyPages = DwnApi.nextQueryAllEmptyPageCount({
-        consecutiveEmptyPages,
-        cursor,
-        nextCursor,
-        recordCount: records.length,
-      });
-
-      cursor = nextCursor;
-    } while (cursor !== undefined && (maxRecords === undefined || yielded < maxRecords));
-  }
 }

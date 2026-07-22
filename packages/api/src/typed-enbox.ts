@@ -8,7 +8,7 @@
  *
  * All record-returning methods wrap the underlying `Record` instances in
  * {@link TypedRecord} so that type information flows through reads, queries,
- * updates, and subscriptions without manual casts.
+ * and updates without manual casts.
  *
  * @example
  * ```ts
@@ -28,26 +28,17 @@
  * // Query — protocol and protocolPath are auto-injected
  * const { records } = await social.records.query('thread');
  * // records is TypedRecord<ThreadData>[]
- *
- * // Subscribe — real-time changes via TypedLiveQuery
- * const { liveQuery } = await social.records.subscribe('thread/reply');
- * liveQuery.on('create', (record) => {
- *   // record is TypedRecord<ReplyData>
- * });
  * ```
  */
 
-import type { LiveQuery } from './live-query.js';
 import type { Protocol } from './protocol.js';
 
 import type { AudienceKeyDeliveryOutcome, DwnPaginationCursor, DwnPublicKeyJwk, DwnResponseStatus } from '@enbox/agent';
 import type { DataFormatAtPath, ProtocolPaths, SchemaMap, TypedProtocol, TypeNameAtPath } from './protocol-types.js';
 import type { DwnApi, ProtocolsConfigureResponse, RecordsCountResponse } from './dwn-api.js';
 import type { ProtocolDefinition, ProtocolType } from '@enbox/dwn-sdk-js';
-import type { RecordFilter, RecordQuery, RecordQueryAllOptions } from './record-query.js';
+import type { RecordFilter, RecordQuery } from './record-query.js';
 
-import { assertValidQueryAllOptions } from './dwn-api.js';
-import { TypedLiveQuery } from './typed-live-query.js';
 import { TypedRecord } from './typed-record.js';
 import { compileRecordFilter, compileRecordQuery } from './record-query.js';
 
@@ -400,41 +391,6 @@ export type TypedDeleteRequest = {
 };
 
 /**
- * Options for {@link TypedEnbox} `records.subscribe()`.
- *
- * @example
- * ```ts
- * const { liveQuery } = await proto.records.subscribe('notebook/page', {
- *   filter: { contextId: notebook.contextId },
- * });
- *
- * liveQuery.on('create', (record) => {
- *   console.log('New page:', await record.data.json());
- * });
- * ```
- */
-export type TypedSubscribeRequest<
-  D extends ProtocolDefinition,
-  Path extends ProtocolPaths<D> & string,
-> = Pick<RecordQuery<D, Path>, 'from' | 'filter' | 'protocolRole'>;
-
-/**
- * Response from {@link TypedEnbox} `records.subscribe()`.
- *
- * @typeParam T - The data type of records in the subscription.
- */
-export type TypedSubscribeResponse<T = unknown> = DwnResponseStatus & {
-  /**
-   * The typed live query instance for receiving real-time record changes.
-   *
-   * `undefined` if the subscription request failed (check `status.code`).
-   * When defined, use `liveQuery.on('create' | 'update' | 'delete', callback)`
-   * to react to changes. Call `liveQuery.close()` to stop the subscription.
-   */
-  liveQuery?: TypedLiveQuery<T>;
-};
-
-/**
  * Thrown/returned by {@link TypedEnbox.verifyInstalled} when a DELEGATE
  * session's wallet-installed protocol definition is stale (or missing, or
  * lacking required `$keyAgreement` keys).
@@ -531,7 +487,7 @@ export type VerifyInstalledResult = {
  *
  * All record-returning methods wrap results in {@link TypedRecord} so that
  * the data type `T` (resolved from the schema map) flows end-to-end — from
- * write through read, query, update, and subscribe — without manual casts.
+ * write through read, query, and update — without manual casts.
  *
  * Obtain an instance via `enbox.using(typedProtocol)`.
  *
@@ -834,40 +790,6 @@ export class TypedEnbox<
   }
 
   /**
-   * Subscribe to **all** record changes across the entire protocol,
-   * regardless of protocolPath.
-   *
-   * Unlike `records.subscribe(path)` which scopes to a single path
-   * (e.g. `'notebook'`), this method catches creates, updates, and
-   * deletes at every level of the protocol hierarchy — ideal for a
-   * "refresh everything" strategy when any record changes.
-   *
-   * Returns a {@link LiveQuery} (untyped, since events span multiple
-   * paths/types) or `undefined` if the subscription could not be created.
-   * Call `liveQuery.close()` to stop listening.
-   *
-   * @example
-   * ```ts
-   * const typed = enbox.using(NotebookProtocol);
-   * const liveQuery = await typed.subscribe();
-   *
-   * liveQuery?.on('change', () => {
-   *   // A record somewhere in the protocol changed — re-query as needed.
-   * });
-   * ```
-   */
-  public async subscribe(request?: { from?: string }): Promise<LiveQuery | undefined> {
-    await this._autoConfigureOnce();
-
-    const { liveQuery } = await this._dwn.records.subscribe({
-      from   : request?.from,
-      filter : { protocol: this._definition.protocol },
-    });
-
-    return liveQuery;
-  }
-
-  /**
    * Validates that the path is recognized.
    * Throws a descriptive error if the path is not a valid protocol path.
    */
@@ -1006,35 +928,6 @@ export class TypedEnbox<
   }
 
   /**
-   * Backs `records.queryAll()`: ensures the protocol is ready, injects the
-   * canonical protocol-scoped filter, and delegates the cursor loop to the
-   * raw {@link DwnApi} drain, wrapping each yielded record in a
-   * {@link TypedRecord}.
-   */
-  private async * queryAllTypedRecords<Path extends ProtocolPaths<D> & string>(
-    path: Path,
-    request?: RecordQueryAllOptions<D, Path>,
-  ): AsyncGenerator<TypedRecord<DataForPath<D, M, Path>>, void, undefined> {
-    const normalizedPath = normalizePath(path);
-    await this._ensureReady(normalizedPath);
-    const compiled = compileRecordQuery(this._definition, normalizedPath, request);
-
-    const drain = this._dwn.records.queryAll({
-      from         : compiled.from,
-      filter       : compiled.filter,
-      dateSort     : compiled.dateSort,
-      protocolRole : compiled.protocolRole,
-      pageSize     : request?.pageSize,
-      maxRecords   : request?.maxRecords,
-      maxPages     : request?.maxPages,
-    });
-
-    for await (const record of drain) {
-      yield new TypedRecord<DataForPath<D, M, Path>>(record);
-    }
-  }
-
-  /**
    * Protocol-scoped record operations.
    *
    * Every method auto-injects the `protocol`, `protocolPath`, and `schema`
@@ -1042,18 +935,15 @@ export class TypedEnbox<
    * Path parameters provide **compile-time autocompletion** via
    * `ProtocolPaths<D>`, and data types are resolved from the schema map.
    *
-   * All methods return {@link TypedRecord} or {@link TypedLiveQuery} instances
-   * that carry the resolved data type from the schema map, providing
-   * end-to-end type safety.
+   * Record-returning methods use {@link TypedRecord} instances that carry the
+   * resolved data type from the schema map, providing end-to-end type safety.
    *
    * Available methods:
    * - {@link TypedEnbox.records.create | create(path, request)} — Create a new record
    * - {@link TypedEnbox.records.query | query(path, request?)} — Query records with filters
    * - {@link TypedEnbox.records.count | count(path, request?)} — Count the same matching population
-   * - {@link TypedEnbox.records.queryAll | queryAll(path, request?)} — Drain all matching records (auto-pagination)
    * - {@link TypedEnbox.records.read | read(path, request)} — Read a single record
    * - {@link TypedEnbox.records.delete | delete(path, request)} — Delete a record by ID
-   * - {@link TypedEnbox.records.subscribe | subscribe(path, request?)} — Real-time subscription
    */
   public get records(): {
     create: <Path extends ProtocolPaths<D> & string>(
@@ -1071,11 +961,6 @@ export class TypedEnbox<
       request?: RecordQuery<D, Path>,
     ) => Promise<RecordsCountResponse>;
 
-    queryAll: <Path extends ProtocolPaths<D> & string>(
-      path: Path,
-      request?: RecordQueryAllOptions<D, Path>,
-    ) => AsyncGenerator<TypedRecord<DataForPath<D, M, Path>>, void, undefined>;
-
     read: <Path extends ProtocolPaths<D> & string>(
       path: Path,
       request: TypedReadRequest<D, Path>,
@@ -1086,10 +971,6 @@ export class TypedEnbox<
       request: TypedDeleteRequest,
     ) => Promise<DwnResponseStatus>;
 
-    subscribe: <Path extends ProtocolPaths<D> & string>(
-      path: Path,
-      request?: TypedSubscribeRequest<D, Path>,
-    ) => Promise<TypedSubscribeResponse<DataForPath<D, M, Path>>>;
     } {
     if (this._records !== undefined) {
       return this._records;
@@ -1231,45 +1112,6 @@ export class TypedEnbox<
       },
 
       /**
-       * Drain every record at the given protocol path, paging through
-       * query results internally — no hand-written cursor loops.
-       *
-       * Returns an async generator of typed records; iterate it with
-       * `for await...of`. Pages are fetched lazily as iteration advances
-       * (`pageSize` records per underlying query, 100 by default), and the
-       * optional `maxRecords` safety cap bounds the total yield. A page
-       * that fails with a non-2xx status aborts iteration with a thrown
-       * Error, as do the liveness guards: a repeated pagination cursor, a
-       * run of consecutive empty cursor-bearing pages, or an exceeded
-       * `maxPages` budget.
-       *
-       * @param path - The protocol path to drain (e.g. `'notebook'`).
-       * @param request - Optional filter/sort options plus `pageSize`,
-       *   `maxRecords`, and `maxPages`. See {@link RecordQueryAllOptions}.
-       * @returns An `AsyncGenerator` yielding every matching
-       *   {@link TypedRecord} in sort order.
-       *
-       * @example
-       * ```ts
-       * const titles: string[] = [];
-       * for await (const page of proto.records.queryAll('notebook/page', {
-       *   filter: { contextId: notebook.contextId },
-       * })) {
-       *   titles.push((await page.data.json()).title);
-       * }
-       * ```
-       */
-      queryAll: <Path extends ProtocolPaths<D> & string>(
-        path: Path,
-        request?: RecordQueryAllOptions<D, Path>,
-      ): AsyncGenerator<TypedRecord<DataForPath<D, M, Path>>, void, undefined> => {
-        // Validated at CALL time (the generator body — including its inner
-        // raw queryAll call — only runs on first iteration).
-        assertValidQueryAllOptions(request ?? {});
-        return this.queryAllTypedRecords(path, request);
-      },
-
-      /**
        * Read a single record at the given protocol path.
        *
        * Unlike `query()`, which returns an array, `read()` returns exactly
@@ -1346,60 +1188,6 @@ export class TypedEnbox<
         });
       },
 
-      /**
-       * Subscribe to real-time changes at the given protocol path.
-       *
-       * Returns a {@link TypedLiveQuery} that atomically provides an initial
-       * snapshot and a real-time stream of deduplicated change events, with
-       * all records typed as `TypedRecord<T>`.
-       *
-       * @param path - The protocol path to subscribe to.
-       * @param request - Optional filter and role. Use `filter.contextId`
-       *   to scope the subscription to children of a specific parent.
-       * @returns A {@link TypedSubscribeResponse} containing `status` and
-       *   a {@link TypedLiveQuery} for receiving events.
-       *
-       * @example
-       * ```ts
-       * const { liveQuery } = await proto.records.subscribe('notebook/page', {
-       *   filter: { contextId: notebook.contextId },
-       * });
-       *
-       * liveQuery.on('create', (record) => {
-       *   // record is TypedRecord<PageData>
-       *   console.log('New page created');
-       * });
-       *
-       * liveQuery.on('update', (record) => {
-       *   const data = await record.data.json(); // PageData
-       * });
-       *
-       * liveQuery.on('delete', (record) => {
-       *   console.log('Page deleted:', record.id);
-       * });
-       *
-       * // Stop listening
-       * liveQuery.close();
-       * ```
-       */
-      subscribe: async <Path extends ProtocolPaths<D> & string>(
-        path: Path,
-        request?: TypedSubscribeRequest<D, Path>,
-      ): Promise<TypedSubscribeResponse<DataForPath<D, M, Path>>> => {
-        const normalizedPath = normalizePath(path);
-        await this._ensureReady(normalizedPath);
-        const subFilter = compileRecordFilter(this._definition, normalizedPath, request?.filter);
-        const { status, liveQuery } = await this._dwn.records.subscribe({
-          from         : request?.from,
-          filter       : subFilter,
-          protocolRole : request?.protocolRole,
-        });
-
-        return {
-          status,
-          liveQuery: liveQuery ? new TypedLiveQuery<DataForPath<D, M, Path>>(liveQuery) : undefined,
-        };
-      },
     };
 
     this._records = cached;

@@ -1,9 +1,9 @@
 import type { BearerDid } from '@enbox/dids';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
+import { DateSort } from '@enbox/dwn-sdk-js';
 import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { DateSort, Poller } from '@enbox/dwn-sdk-js';
 
 import { PlatformAgentTestHarness } from '@enbox/agent/test';
 import { DwnInterface, EnboxUserAgent } from '@enbox/agent';
@@ -12,7 +12,6 @@ import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { Protocol } from '../src/protocol.js';
 import { testDwnUrl } from './utils/test-config.js';
-import { TypedLiveQuery } from '../src/typed-live-query.js';
 import { TypedRecord } from '../src/typed-record.js';
 import { definitionsEqual, TypedEnbox } from '../src/typed-enbox.js';
 
@@ -631,150 +630,7 @@ describe('TypedProtocol API', () => {
       });
     });
 
-    describe('subscribe()', () => {
-      it('should subscribe and return a TypedLiveQuery', async () => {
-        const { status, liveQuery } = await typed.records.subscribe('list');
 
-        expect(status.code).toBe(200);
-        expect(liveQuery).toBeDefined();
-        expect(liveQuery).toBeInstanceOf(TypedLiveQuery);
-
-        // Clean up
-        await liveQuery.close();
-      });
-
-      it('should receive new records as TypedRecord instances', async () => {
-        const received: TypedRecord<TodoSchemaMap['list']>[] = [];
-
-        const { liveQuery } = await typed.records.subscribe('list');
-        expect(liveQuery).toBeDefined();
-
-        liveQuery.on('create', (record) => {
-          received.push(record);
-        });
-
-        // Write a record — should trigger subscription
-        await typed.records.create('list', { data: { name: 'Subscribed List' } });
-
-        // Give subscription handler time to fire
-        await new Promise((resolve) => setTimeout(resolve, 100));
-
-        expect(received.length).toBeGreaterThanOrEqual(1);
-        expect(received[0]).toBeInstanceOf(TypedRecord);
-
-        // Clean up
-        await liveQuery.close();
-      });
-
-      it('should provide typed initial records in liveQuery.records', async () => {
-        // Write a record first
-        await typed.records.create('list', { data: { name: 'Pre-existing' } });
-
-        // Subscribe — should include the pre-existing record in the snapshot
-        const { liveQuery } = await typed.records.subscribe('list');
-        expect(liveQuery).toBeDefined();
-
-        expect(liveQuery.records.length).toBeGreaterThanOrEqual(1);
-        expect(liveQuery.records[0]).toBeInstanceOf(TypedRecord);
-
-        const data = await liveQuery.records[0].data.json();
-        expect(data.name).toBe('Pre-existing');
-
-        await liveQuery.close();
-      });
-
-      it('should provide access to the raw LiveQuery via rawLiveQuery', async () => {
-        const { liveQuery } = await typed.records.subscribe('list');
-        expect(liveQuery).toBeDefined();
-        expect(liveQuery.rawLiveQuery).toBeDefined();
-
-        await liveQuery.close();
-      });
-    });
-
-    describe('subscribe() with encryptionRequired', () => {
-      const SecureNotesDefinition = {
-        protocol  : 'https://example.com/protocols/secure-notes',
-        published : true,
-        types     : {
-          note: {
-            schema             : 'https://example.com/schemas/secure-note',
-            dataFormats        : ['application/json'],
-            encryptionRequired : true,
-          },
-        },
-        structure: {
-          note: {},
-        },
-      } as const satisfies ProtocolDefinition;
-
-      type SecureNotesSchemaMap = {
-        note: { text: string };
-      };
-
-      const SecureNotesProtocol = defineProtocol(
-        SecureNotesDefinition,
-        {} as SecureNotesSchemaMap,
-      );
-
-      let secure: TypedEnbox<typeof SecureNotesDefinition, SecureNotesSchemaMap>;
-
-      beforeEach(async () => {
-        secure = new TypedEnbox(dwnAlice, SecureNotesProtocol);
-
-        const { status } = await secure.configure();
-        expect(status.code).toBe(202);
-      });
-
-      /** Counts the RecordsRead requests issued through the given processDwnRequest spy. */
-      function countRecordsReads(spy: sinon.SinonSpy): number {
-        return spy.getCalls().filter((call) => call.args[0].messageType === DwnInterface.RecordsRead).length;
-      }
-
-      it('should lazily decrypt encryptionRequired records without a caller flag', async () => {
-        // Snapshot record: written (auto-encrypted) before subscribing.
-        const { status: createStatus, record } = await secure.records.create('note', {
-          data: { text: 'snapshot secret' },
-        });
-        expect(createStatus.code).toBe(202);
-        expect(record.encryption).toBeDefined();
-
-        const processDwnRequestSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
-
-        // Decryption is inferred from each record's envelope, not requested on
-        // the low-level subscription.
-        const { status, liveQuery } = await secure.records.subscribe('note');
-        expect(status.code).toBe(200);
-        expect(liveQuery).toBeDefined();
-        expect(liveQuery!.records).toHaveLength(1);
-
-        const created: TypedRecord<SecureNotesSchemaMap['note']>[] = [];
-        liveQuery!.on('create', (typedRecord) => { created.push(typedRecord); });
-
-        // Live event record: written (auto-encrypted) after subscribing.
-        await secure.records.create('note', { data: { text: 'live secret' } });
-
-        await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(created).toHaveLength(1);
-        });
-
-        const subscribeRequest = processDwnRequestSpy.getCalls()
-          .find((call) => call.args[0].messageType === DwnInterface.RecordsSubscribe)!;
-        expect(subscribeRequest.args[0].encryption).toBeUndefined();
-
-        const snapshotData = await liveQuery!.records[0].data.json();
-        expect(snapshotData.text).toBe('snapshot secret');
-
-        const eventData = await created[0].data.json();
-        expect(eventData.text).toBe('live secret');
-
-        // Both payloads were decrypted from inline stored data, so no
-        // RecordsRead round-trip was needed.
-        expect(countRecordsReads(processDwnRequestSpy)).toBe(0);
-
-        await liveQuery!.close();
-      });
-    });
 
     describe('auto-configure on first operation', () => {
       it('should auto-configure and succeed when calling create() before configure()', async () => {
@@ -830,18 +686,6 @@ describe('TypedProtocol API', () => {
 
         expect(status.code).toBe(202);
         expect(unconfigured.isConfigured).toBe(true);
-      });
-
-      it('should auto-configure and succeed when calling subscribe() before configure()', async () => {
-        const unconfigured = new TypedEnbox(dwnAlice, TodoProtocol);
-
-        const { status, liveQuery } = await unconfigured.records.subscribe('list');
-
-        expect(status.code).toBe(200);
-        expect(liveQuery).toBeDefined();
-        expect(unconfigured.isConfigured).toBe(true);
-
-        await liveQuery.close();
       });
 
       it('should install the protocol transparently on first operation', async () => {
@@ -998,11 +842,6 @@ describe('TypedProtocol API', () => {
           expect(status.code).toBe(202);
         });
 
-        it('should normalize leading and trailing slashes on subscribe()', async () => {
-          const { status, liveQuery } = await typed.records.subscribe('/list/' as any);
-          expect(status.code).toBe(200);
-          await liveQuery.close();
-        });
       });
 
       describe('lastSegment()', () => {
