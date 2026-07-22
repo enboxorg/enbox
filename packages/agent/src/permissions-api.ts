@@ -12,8 +12,6 @@ import { DwnInterfaceName, DwnMethodName, PermissionScopeMatcher, PermissionsPro
 const REVOCATION_CHECK_CONCURRENCY = 8;
 const PERMISSION_CATALOG_CACHE_MAX = 100;
 const PERMISSION_CATALOG_CACHE_TTL = 60 * 1000;
-const PERMISSION_LOOKUP_MISS_CACHE_MAX = 500;
-const PERMISSION_LOOKUP_MISS_CACHE_TTL = 5 * 1000;
 
 type GrantMatchRank = {
   exactMessageType: boolean;
@@ -42,11 +40,6 @@ export class AgentPermissionsApi implements PermissionsApi {
     ttl : PERMISSION_CATALOG_CACHE_TTL,
   });
   private readonly _permissionCatalogFetches = new Map<string, Promise<PermissionGrantEntry[]>>();
-  /** Briefly suppresses repeated store reads for the same known-missing request scope. */
-  private readonly _permissionLookupMissCache = new TtlCache<string, true>({
-    max : PERMISSION_LOOKUP_MISS_CACHE_MAX,
-    ttl : PERMISSION_LOOKUP_MISS_CACHE_TTL,
-  });
   private readonly _revokedGrantIds = new Set<string>();
   private _permissionCacheGeneration = 0;
 
@@ -78,16 +71,6 @@ export class AgentPermissionsApi implements PermissionsApi {
     forceRefresh = false
   }: GetPermissionParams): Promise<PermissionGrantEntry> {
     const catalogKey = JSON.stringify([connectedDid, delegateDid]);
-    const lookupGeneration = this._permissionCacheGeneration;
-    const missKey = JSON.stringify([
-      connectedDid,
-      delegateDid,
-      delegate === true,
-      messageType,
-      protocol,
-      protocolPath,
-      contextId,
-    ]);
     const cachedCatalog = forceRefresh ? undefined : this._permissionCatalogCache.get(catalogKey);
     if (cachedCatalog !== undefined) {
       const cachedGrant = await this.matchGrantForRequest({
@@ -101,10 +84,6 @@ export class AgentPermissionsApi implements PermissionsApi {
       }, cachedCatalog);
       if (cachedGrant !== undefined) {
         return cachedGrant;
-      }
-
-      if (this._permissionLookupMissCache.has(missKey)) {
-        throw new PermissionGrantNotFoundError({ messageType, protocol, protocolPath, contextId });
       }
     }
 
@@ -128,9 +107,6 @@ export class AgentPermissionsApi implements PermissionsApi {
     }, permissionGrants);
 
     if (grant === undefined) {
-      if (this._permissionCacheGeneration === lookupGeneration) {
-        this._permissionLookupMissCache.set(missKey, true);
-      }
       throw new PermissionGrantNotFoundError({ messageType, protocol, protocolPath, contextId });
     }
 
@@ -535,7 +511,6 @@ export class AgentPermissionsApi implements PermissionsApi {
     this._permissionCacheGeneration++;
     this._permissionCatalogCache.clear();
     this._permissionCatalogFetches.clear();
-    this._permissionLookupMissCache.clear();
   }
 
   /**

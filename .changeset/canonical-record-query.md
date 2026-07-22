@@ -13,4 +13,4 @@ Flatten advanced RecordsSubscribe and MessagesSubscribe to their raw DWN contrac
 
 Resolve delegated record-read grants from the wire filter as the single protocol source, reject empty typed context IDs, and surface permission-store failures instead of silently treating them as missing grants. Delegated permission lookup now reuses a bounded grant catalog across record contexts while matching each requested scope independently.
 
-Resolve delegated record writes and deletes against their protocol path and context instead of selecting protocol-wide grants only. Permission lookups now reuse cached catalogs by default, expose `forceRefresh` for an explicit store refresh, and briefly cache bounded scope misses so ordinary public-record fallback does not repeatedly query the grant store.
+Resolve delegated record writes and deletes against their protocol path and context instead of selecting protocol-wide grants only. Permission lookups now reuse cached catalogs by default and expose `forceRefresh` for an explicit store refresh, while a scope miss refreshes the store so newly imported grants are immediately visible.

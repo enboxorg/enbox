@@ -452,29 +452,7 @@ describe('AgentPermissionsApi refresh grant selection', () => {
     expect(processDwnRequest.callCount).toBe(3);
   });
 
-  test('briefly caches a missing request scope without suppressing other scopes', async () => {
-    const permissions = new AgentPermissionsApi();
-    const fetchGrants = sinon.stub(permissions, 'fetchGrants').resolves([]);
-    const missingScope = {
-      connectedDid : OWNER_DID,
-      delegateDid  : DELEGATE_DID,
-      messageType  : DwnInterface.RecordsWrite,
-      protocol     : 'https://example.com/notes',
-      contextId    : 'conversation-a',
-    } as const;
-
-    await expect(permissions.getPermissionForRequest(missingScope)).rejects.toBeInstanceOf(PermissionGrantNotFoundError);
-    await expect(permissions.getPermissionForRequest(missingScope)).rejects.toBeInstanceOf(PermissionGrantNotFoundError);
-    expect(fetchGrants.callCount).toBe(1);
-
-    await expect(permissions.getPermissionForRequest({
-      ...missingScope,
-      contextId: 'conversation-b',
-    })).rejects.toBeInstanceOf(PermissionGrantNotFoundError);
-    expect(fetchGrants.callCount).toBe(2);
-  });
-
-  test('lets an explicit fresh lookup bypass a cached miss', async () => {
+  test('lets an explicit fresh lookup bypass a cached empty catalog', async () => {
     const clock = sinon.useFakeTimers({ now: new Date('2026-07-13T12:00:00.000Z') });
     const permissions = new AgentPermissionsApi();
     const addedGrant = createGrantEntry({
@@ -500,7 +478,7 @@ describe('AgentPermissionsApi refresh grant selection', () => {
     clock.restore();
   });
 
-  test('expires cached misses so externally stored grants are discovered', async () => {
+  test('discovers an externally stored grant immediately after a miss', async () => {
     const clock = sinon.useFakeTimers({ now: new Date('2026-07-13T12:00:00.000Z') });
     const permissions = new AgentPermissionsApi();
     const addedGrant = createGrantEntry({
@@ -519,7 +497,6 @@ describe('AgentPermissionsApi refresh grant selection', () => {
     } as const;
 
     await expect(permissions.getPermissionForRequest(request)).rejects.toBeInstanceOf(PermissionGrantNotFoundError);
-    await clock.tickAsync(5001);
     const discovered = await permissions.getPermissionForRequest(request);
 
     expect(discovered.grant.id).toBe('external-grant');

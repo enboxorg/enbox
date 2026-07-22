@@ -131,7 +131,7 @@ describe('AgentPermissionsApi', () => {
       expect(fetchedMessagesQueryGrant.message.recordId).toBe(messagesQueryGrant.message.recordId);
     });
 
-    it('invalidates a cached miss when a grant is stored locally', async () => {
+    it('invalidates a cached catalog when a grant is stored locally', async () => {
       const protocol = 'http://example.com/permission-cache-invalidation';
       const request = {
         connectedDid : aliceDid.uri,
