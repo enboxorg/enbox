@@ -10,17 +10,17 @@
  * @module
  */
 
-import type { SchemaMap } from './protocol-types.js';
+import type { QuerySpec } from './query-spec.js';
 import type { TypedLiveQuery } from './typed-live-query.js';
 import type { TypedRecord } from './typed-record.js';
 import type { AudienceKeyDeliveryOutcome, DwnPaginationCursor, DwnResponseStatus } from '@enbox/agent';
 import type {
   DataForPath,
   TypedCreateRequest,
-  TypedQueryRequest,
   TypedSubscribeRequest,
 } from './typed-enbox.js';
 import type { ProtocolDefinition, ProtocolRuleSet } from '@enbox/dwn-sdk-js';
+import type { ProtocolPaths, SchemaMap } from './protocol-types.js';
 
 // ---------------------------------------------------------------------------
 // Structure navigation
@@ -126,10 +126,12 @@ export type CollectionCRUD<
     | (DwnResponseStatus & RepositoryWriteOutcome & { record: TypedRecord<DataAt<D, M, Path>> })
     | (DwnResponseStatus & RepositoryWriteOutcome & { record: undefined })
   >;
-  query(options?: TypedQueryRequest): Promise<DwnResponseStatus & { records: TypedRecord<DataAt<D, M, Path>>[]; cursor?: DwnPaginationCursor }>;
+  query(options?: QuerySpec<D, Path & ProtocolPaths<D>>): Promise<
+    DwnResponseStatus & { records: TypedRecord<DataAt<D, M, Path>>[]; cursor?: DwnPaginationCursor }
+  >;
   get(recordId: string): Promise<TypedRecord<DataAt<D, M, Path>> | undefined>;
   delete(recordId: string): Promise<DwnResponseStatus>;
-  subscribe(options?: TypedSubscribeRequest): Promise<TypedLiveQuery<DataAt<D, M, Path>> | undefined>;
+  subscribe(options?: TypedSubscribeRequest<D, Path & ProtocolPaths<D>>): Promise<TypedLiveQuery<DataAt<D, M, Path>> | undefined>;
 };
 
 /** CRUD API for a root-level singleton ($recordLimit max: 1). */
@@ -161,13 +163,13 @@ export type NestedCollectionCRUD<
   >;
   query(
     parentContextId: string,
-    options?: TypedQueryRequest,
+    options?: QuerySpec<D, Path & ProtocolPaths<D>>,
   ): Promise<DwnResponseStatus & { records: TypedRecord<DataAt<D, M, Path>>[]; cursor?: DwnPaginationCursor }>;
   get(recordId: string): Promise<TypedRecord<DataAt<D, M, Path>> | undefined>;
   delete(recordId: string): Promise<DwnResponseStatus>;
   subscribe(
     parentContextId: string,
-    options?: TypedSubscribeRequest,
+    options?: TypedSubscribeRequest<D, Path & ProtocolPaths<D>>,
   ): Promise<TypedLiveQuery<DataAt<D, M, Path>> | undefined>;
 };
 

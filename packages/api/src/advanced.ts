@@ -17,6 +17,8 @@ export type {
   ProtocolsConfigureResponse,
   ProtocolsQueryRequest,
   ProtocolsQueryResponse,
+  RecordsCountRequest,
+  RecordsCountResponse,
   RecordsDeleteRequest,
   RecordsQueryAllRequest,
   RecordsQueryRequest,

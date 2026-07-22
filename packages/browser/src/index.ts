@@ -49,6 +49,10 @@ export type {
   EnboxConnectResult,
   EnboxParams,
   EnboxSessionParams,
+  QueryAllSpec,
+  QueryFilter,
+  QuerySpec,
+  QueryTagFilters,
 } from '@enbox/api';
 
 // ─── Re-exports from @enbox/auth ────────────────────────────────

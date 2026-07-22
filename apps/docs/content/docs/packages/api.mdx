@@ -80,7 +80,11 @@ const TaskProtocol = defineProtocol({
     },
   },
   structure: {
-    task: {},
+    task: {
+      $tags: {
+        done: { type: 'boolean' },
+      },
+    },
   },
 }, {} as {
   task: TaskData;
@@ -116,7 +120,8 @@ All record methods auto-inject `protocol`, `protocolPath`, and `schema` — you 
 
 ```ts
 const { status, record } = await tasks.records.create('task', {
-  data: { title: 'Buy milk', done: false },
+  data : { title: 'Buy milk', done: false },
+  tags : { done: false },
 });
 // record is TypedRecord<TaskData>
 ```
@@ -132,7 +137,6 @@ Create options:
 | `protocolRole` | `string?` | Role for permission-scoped writes |
 | `tags` | `Record<string, ...>?` | Indexed key-value metadata |
 | `store` | `boolean?` | Persist locally (default `true`) |
-| `encryption` | `boolean?` | Force or skip encryption |
 | `dataFormat` | `string?` | MIME type override |
 
 #### query
@@ -163,6 +167,23 @@ if (cursor) {
     pagination: { limit: 25, cursor },
   });
 }
+```
+
+#### count
+
+`count()` accepts the same typed selection as `query()` and counts the full
+authorized population before pagination. This makes one specification reusable
+for a page and its total:
+
+```ts
+const selection = {
+  filter: { tags: { done: false } },
+  pagination: { limit: 25 },
+};
+
+const page = await tasks.records.query('task', selection);
+const { count } = await tasks.records.count('task', selection);
+// page.records.length <= 25; count covers every matching task
 ```
 
 #### read
@@ -418,7 +439,7 @@ const { record: page } = await notebooks.records.create('notebook/page', {
 
 // Query children of a specific parent
 const { records: pages } = await notebooks.records.query('notebook/page', {
-  filter: { parentId: notebook.contextId },
+  filter: { contextId: notebook.contextId },
 });
 ```
 

@@ -35,6 +35,7 @@ export * from './permission-grant.js';
 export * from './permission-request.js';
 export * from './protocol.js';
 export * from './protocol-types.js';
+export type { QueryAllSpec, QueryFilter, QuerySpec, QueryTagFilters } from './query-spec.js';
 export * from './read-only-record.js';
 export * from './record.js';
 export * from './record-data.js';

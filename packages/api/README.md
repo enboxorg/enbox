@@ -94,11 +94,13 @@ const { record } = await notes.records.create('note', {
   data: { title: 'Launch', body: 'Ship it' },
 });
 
+const selection = { pagination: { limit: 20 } };
+
 // Query
-const { records, cursor } = await notes.records.query('note', {
-  dateSort   : 'createdDescending',
-  pagination : { limit: 20 },
-});
+const { records, cursor } = await notes.records.query('note', selection);
+
+// Count the same selection before pagination
+const { count } = await notes.records.count('note', selection);
 
 // Read
 const { record: found } = await notes.records.read('note', {
@@ -215,6 +217,7 @@ coordinates writes across browser contexts.
 |---|---|
 | `Enbox` | Main app API: `connect()`, `fromSession()`, `anonymous()`, `using()`. |
 | `defineProtocol()` | Creates typed protocol definitions. |
+| `QuerySpec` | Protocol-derived filter, date ordering, and pagination shared by query and count. |
 | `repository()` | Creates structure-aware CRUD repositories. |
 | `TypedEnbox` | Protocol-scoped record API returned by `enbox.using()`. |
 | `TypedRecord<T>` | Type-safe record wrapper. |

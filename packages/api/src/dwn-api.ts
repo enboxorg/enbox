@@ -97,6 +97,28 @@ export type ProtocolsQueryResponse = DwnResponseStatus & {
 };
 
 /**
+ * Encapsulates a request to count records in a Decentralized Web Node (DWN).
+ *
+ * If the `from` property is not provided, the local DWN will be counted. If `from` is provided,
+ * the count will be performed against the specified remote DWN tenant.
+ */
+export type RecordsCountRequest = Omit<DwnMessageParams[DwnInterface.RecordsCount], 'signer'> & {
+  /** Optional DID specifying the remote target DWN tenant whose records will be counted. */
+  from?: string;
+};
+
+/**
+ * Represents the response from a records count operation.
+ *
+ * A successful count always includes `count`, including `0` when no records match. Error replies
+ * leave `count` undefined so callers can distinguish an empty result from a failed request.
+ */
+export type RecordsCountResponse = DwnResponseStatus & {
+  /** The number of matching records, or `undefined` when the request failed. */
+  count?: number;
+};
+
+/**
  * Defines a request to delete a record from the Decentralized Web Node (DWN).
  *
  * This request type optionally specifies the target from which the record should be deleted and the
@@ -1036,6 +1058,7 @@ export class DwnApi {
    * API to interact with DWN records (e.g., `dwn.records.write()`).
    */
   get records(): {
+      count: (request: RecordsCountRequest) => Promise<RecordsCountResponse>;
       delete: (request: RecordsDeleteRequest) => Promise<DwnResponseStatus>;
       query: (request: RecordsQueryRequest) => Promise<RecordsQueryResponse>;
       queryAll: (request: RecordsQueryAllRequest) => AsyncGenerator<Record, void, undefined>;
@@ -1045,6 +1068,56 @@ export class DwnApi {
       } {
 
     return {
+      /**
+       * Count records matching the given filter.
+       */
+      count: async (request: RecordsCountRequest): Promise<RecordsCountResponse> => {
+        const { from, ...messageParams } = request;
+
+        const agentRequest: ProcessDwnRequest<DwnInterface.RecordsCount> = {
+          author      : this.connectedDid,
+          messageParams,
+          messageType : DwnInterface.RecordsCount,
+          target      : from || this.connectedDid,
+        };
+
+        if (this.delegateDid) {
+          // Mirror records.query(): use the owner's delegated read grant when available, otherwise
+          // author as the delegate so public records can still be counted.
+          try {
+            const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
+              connectedDid : this.connectedDid,
+              delegateDid  : this.delegateDid,
+              protocol     : messageParams.filter?.protocol,
+              protocolPath : messageParams.filter?.protocolPath,
+              contextId    : messageParams.filter?.contextId,
+              delegate     : true,
+              cached       : true,
+              messageType  : agentRequest.messageType
+            });
+
+            agentRequest.messageParams = {
+              ...agentRequest.messageParams,
+              delegatedGrant
+            };
+            agentRequest.granteeDid = this.delegateDid;
+          } catch {
+            agentRequest.author = this.delegateDid;
+          }
+        }
+
+        let agentResponse: DwnResponse<DwnInterface.RecordsCount>;
+
+        if (from) {
+          agentResponse = await this.agent.sendDwnRequest(agentRequest);
+        } else {
+          agentResponse = await this.agent.processDwnRequest(agentRequest);
+        }
+
+        const { count, status } = agentResponse.reply;
+        return { count, status };
+      },
+
       /**
        * Delete a record
        */
@@ -1130,6 +1203,8 @@ export class DwnApi {
               connectedDid : this.connectedDid,
               delegateDid  : this.delegateDid,
               protocol     : messageParams.filter?.protocol,
+              protocolPath : messageParams.filter?.protocolPath,
+              contextId    : messageParams.filter?.contextId,
               delegate     : true,
               cached       : true,
               messageType  : agentRequest.messageType
@@ -1241,6 +1316,8 @@ export class DwnApi {
               connectedDid : this.connectedDid,
               delegateDid  : this.delegateDid,
               protocol,
+              protocolPath : messageParams.filter?.protocolPath,
+              contextId    : messageParams.filter?.contextId,
               delegate     : true,
               cached       : true,
               messageType  : agentRequest.messageType
@@ -1380,6 +1457,8 @@ export class DwnApi {
               connectedDid : this.connectedDid,
               delegateDid  : this.delegateDid,
               protocol     : messageParams.filter?.protocol,
+              protocolPath : messageParams.filter?.protocolPath,
+              contextId    : messageParams.filter?.contextId,
               delegate     : true,
               cached       : true,
               messageType  : agentRequest.messageType

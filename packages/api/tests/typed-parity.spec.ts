@@ -185,7 +185,7 @@ describe('typed api parity batch', () => {
 
       // The child task was actually pruned along with the list.
       const { status: taskQueryStatus, records: remainingTasks } = await typed.records.query('list/task', {
-        filter: { parentContextId: list!.contextId },
+        filter: { contextId: list!.contextId },
       });
       expect(taskQueryStatus.code).toBe(200);
       expect(remainingTasks).toHaveLength(0);
@@ -213,7 +213,7 @@ describe('typed api parity batch', () => {
       expect(deleteStatus.code).toBe(202);
 
       const { records: remainingTasks } = await typed.records.query('list/task', {
-        filter: { parentContextId: list!.contextId },
+        filter: { contextId: list!.contextId },
       });
       expect(remainingTasks).toHaveLength(1);
     });
@@ -504,7 +504,7 @@ describe('typed api parity batch', () => {
     });
   });
 
-  describe('nested-path child-scope filter derivation', () => {
+  describe('nested-path context filters', () => {
     /** Creates list → task → comment and returns all three typed records. */
     async function createNestedTree(typed: TypedEnbox<ProtocolDefinition, NestedSchemaMap>): Promise<{
       list: TypedRecord<{ name: string }>;
@@ -542,7 +542,7 @@ describe('typed api parity batch', () => {
       expect(status.detail).toContain('must include the direct parent contextId');
     });
 
-    it('should derive bare parentId + compound contextId from parentContextId on a depth-3 query', async () => {
+    it('should compile the canonical contextId with an exact direct-parent fence', async () => {
       const { typed } = makeTyped();
       const { task, comment } = await createNestedTree(typed);
 
@@ -552,7 +552,7 @@ describe('typed api parity batch', () => {
       const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
 
       const { status, records } = await typed.records.query('list/task/comment', {
-        filter: { parentContextId: task.contextId },
+        filter: { contextId: task.contextId },
       });
 
       // The 400 case is prevented: the query is accepted and scoped.
@@ -560,7 +560,8 @@ describe('typed api parity batch', () => {
       expect(records).toHaveLength(1);
       expect(records[0].id).toBe(comment.id);
 
-      // Asserted at the agent request: BOTH engine-level filters derived.
+      // The caller supplies one scope field. The compiler adds the direct
+      // parent ID required to make the DWN's prefix index segment-safe.
       const queryCall = processSpy.getCalls().find((call) => call.args[0].messageType === DwnInterface.RecordsQuery);
       const filter = (queryCall!.args[0].messageParams as DwnMessageParams[DwnInterface.RecordsQuery]).filter as {
         parentId?: string; contextId?: string;
@@ -569,20 +570,7 @@ describe('typed api parity batch', () => {
       expect(filter.contextId).toBe(task.contextId);
     });
 
-    it('should normalize a compound value passed via the parentId filter field', async () => {
-      const { typed } = makeTyped();
-      const { task, comment } = await createNestedTree(typed);
-
-      const { status, records } = await typed.records.query('list/task/comment', {
-        filter: { parentId: task.contextId },
-      });
-
-      expect(status.code).toBe(200);
-      expect(records).toHaveLength(1);
-      expect(records[0].id).toBe(comment.id);
-    });
-
-    it('should scope depth-3 queries to the requested parent only', async () => {
+    it('should scope depth-3 query and count populations to the requested parent only', async () => {
       const { typed } = makeTyped();
       const { list, task } = await createNestedTree(typed);
 
@@ -596,73 +584,22 @@ describe('typed api parity batch', () => {
         parentContextId : otherTask!.contextId,
       });
 
-      const { records } = await typed.records.query('list/task/comment', {
-        filter: { parentContextId: task.contextId },
-      });
+      const spec = { filter: { contextId: task.contextId } };
+      const [{ records }, { count }] = await Promise.all([
+        typed.records.query('list/task/comment', spec),
+        typed.records.count('list/task/comment', spec),
+      ]);
       expect(records).toHaveLength(1);
       expect(await records[0].data.json()).toEqual({ body: 'grandchild' });
+      expect(count).toBe(1);
     });
 
-    it('should complete a depth-2 query from a bare parentId (root parent)', async () => {
-      const { typed } = makeTyped();
-      const { list, task } = await createNestedTree(typed);
-
-      const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
-
-      // A root record's contextId IS its record id, so the bare id suffices.
-      const { status, records } = await typed.records.query('list/task', {
-        filter: { parentId: list.id },
-      });
-
-      expect(status.code).toBe(200);
-      expect(records).toHaveLength(1);
-      expect(records[0].id).toBe(task.id);
-
-      const queryCall = processSpy.getCalls().find((call) => call.args[0].messageType === DwnInterface.RecordsQuery);
-      const filter = (queryCall!.args[0].messageParams as DwnMessageParams[DwnInterface.RecordsQuery]).filter as {
-        parentId?: string; contextId?: string;
-      };
-      expect(filter.parentId).toBe(list.id);
-      expect(filter.contextId).toBe(list.id);
-    });
-
-    it('should never overwrite an explicitly-set contextId or parentId', async () => {
-      const { typed } = makeTyped();
-      const { task } = await createNestedTree(typed);
-
-      const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
-
-      const explicitContextId = `${task.contextId}/explicit`;
-      await typed.records.query('list/task/comment', {
-        filter: { parentContextId: task.contextId, contextId: explicitContextId },
-      });
-
-      const queryCall = processSpy.getCalls().find((call) => call.args[0].messageType === DwnInterface.RecordsQuery);
-      const filter = (queryCall!.args[0].messageParams as DwnMessageParams[DwnInterface.RecordsQuery]).filter as {
-        parentId?: string; contextId?: string;
-      };
-      expect(filter.contextId).toBe(explicitContextId);
-      expect(filter.parentId).toBe(task.id);
-
-      // An explicit bare parentId differing from the alias is kept verbatim.
-      processSpy.resetHistory();
-      await typed.records.query('list/task/comment', {
-        filter: { parentContextId: task.contextId, parentId: 'explicit-bare-id' },
-      });
-      const secondCall = processSpy.getCalls().find((call) => call.args[0].messageType === DwnInterface.RecordsQuery);
-      const secondFilter = (secondCall!.args[0].messageParams as DwnMessageParams[DwnInterface.RecordsQuery]).filter as {
-        parentId?: string; contextId?: string;
-      };
-      expect(secondFilter.parentId).toBe('explicit-bare-id');
-      expect(secondFilter.contextId).toBe(task.contextId);
-    });
-
-    it('should derive the child-scope filters for depth-3 subscriptions (400 case prevented)', async () => {
+    it('should use the same contextId filter for depth-3 subscriptions', async () => {
       const { typed } = makeTyped();
       const { task } = await createNestedTree(typed);
 
       const { status, liveQuery } = await typed.records.subscribe('list/task/comment', {
-        filter: { parentContextId: task.contextId },
+        filter: { contextId: task.contextId },
       });
 
       expect(status.code).toBe(200);
@@ -670,13 +607,13 @@ describe('typed api parity batch', () => {
       await liveQuery!.close();
     });
 
-    it('should derive the child-scope filters for the queryAll drain', async () => {
+    it('should use the same contextId filter for the queryAll drain', async () => {
       const { typed } = makeTyped();
       const { task, comment } = await createNestedTree(typed);
 
       const drained: TypedRecord<{ body: string }>[] = [];
       for await (const record of typed.records.queryAll('list/task/comment', {
-        filter: { parentContextId: task.contextId },
+        filter: { contextId: task.contextId },
       })) {
         drained.push(record);
       }

@@ -37,7 +37,7 @@ import type { SchemaMap, TypedProtocol } from './protocol-types.js';
  * ```
  */
 export function defineProtocol<
-  D extends ProtocolDefinition,
+  const D extends ProtocolDefinition,
   M extends SchemaMap = SchemaMap,
 >(
   definition : D,

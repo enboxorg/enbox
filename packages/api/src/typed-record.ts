@@ -535,7 +535,7 @@ export class TypedRecord<T> {
    * When a record is created as a child (using `parentContextId`), the DWN
    * assigns a `contextId` that links all records in the same hierarchy.
    * Use this value as the `parentContextId` when creating child records,
-   * or as a `parentId` filter when querying for children.
+   * or as the `contextId` filter when querying for children.
    *
    * @returns The context ID string, or `undefined` if the record is not
    *   part of a hierarchical context.

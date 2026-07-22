@@ -1,9 +1,9 @@
 import type { BearerDid } from '@enbox/dids';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
-import { Poller } from '@enbox/dwn-sdk-js';
 import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { DateSort, Poller } from '@enbox/dwn-sdk-js';
 
 import { PlatformAgentTestHarness } from '@enbox/agent/test';
 import { DwnInterface, EnboxUserAgent } from '@enbox/agent';
@@ -526,6 +526,28 @@ describe('TypedProtocol API', () => {
         // data.json() returns the typed data directly
         const data = await records[0].data.json();
         expect(data.name).toBe('Query Test');
+      });
+    });
+
+    describe('count()', () => {
+      it('should count the same population before pagination', async () => {
+        await typed.records.create('list', { data: { name: 'Private' } });
+        await typed.records.create('list', { data: { name: 'Published A' }, published: true });
+        await typed.records.create('list', { data: { name: 'Published B' }, published: true });
+
+        const publishedSpec = {
+          dateSort   : DateSort.PublishedAscending,
+          pagination : { limit: 1 },
+        };
+        const { records } = await typed.records.query('list', publishedSpec);
+        const { status, count } = await typed.records.count('list', publishedSpec);
+
+        expect(records).toHaveLength(1);
+        expect(status.code).toBe(200);
+        expect(count).toBe(2);
+
+        const all = await typed.records.count('list', { pagination: { limit: 1 } });
+        expect(all.count).toBe(3);
       });
     });
 
