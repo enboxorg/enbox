@@ -15,6 +15,7 @@ import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { RecordsQuery } from '../interfaces/records-query.js';
 import { SortDirection } from '../types/query-types.js';
+import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
 type RecordsQueryProjectionInput = {
@@ -44,32 +45,39 @@ export class RecordsQueryHandler implements MethodHandler {
     let recordsWrites: RecordsQueryReplyEntry[];
     let cursor: PaginationCursor | undefined;
     const requester = Message.getRequester(recordsQuery.message);
-    // if this is an anonymous query and the filter supports published records, query only published records
-    if (Records.filterIncludesPublishedRecords(recordsQuery.message.descriptor.filter) && recordsQuery.author === undefined) {
-      const results = await this.fetchPublishedRecords(tenant, recordsQuery, requester);
-      recordsWrites = results.messages as RecordsQueryReplyEntry[];
-      cursor = results.cursor;
-    } else {
-      // authentication and authorization
-      try {
-        await authenticate(message.authorization!, this.deps.didResolver);
-
-        await RecordsQueryHandler.authorizeRecordsQuery(tenant, recordsQuery, this.deps);
-      } catch (e) {
-        return messageReplyFromError(e, 401);
-      }
-
-      if (recordsQuery.author === tenant) {
-        const results = requester === tenant
-          ? await this.fetchRecordsAsOwner(tenant, recordsQuery)
-          : await this.fetchRecordsAsOwnerDelegate(tenant, recordsQuery, requester);
+    try {
+      // if this is an anonymous query and the filter supports published records, query only published records
+      if (Records.filterIncludesPublishedRecords(recordsQuery.message.descriptor.filter) && recordsQuery.author === undefined) {
+        const results = await this.fetchPublishedRecords(tenant, recordsQuery, requester);
         recordsWrites = results.messages as RecordsQueryReplyEntry[];
         cursor = results.cursor;
       } else {
-        const results = await this.fetchRecordsAsNonOwner(tenant, recordsQuery, requester);
-        recordsWrites = results.messages as RecordsQueryReplyEntry[];
-        cursor = results.cursor;
+        // authentication and authorization
+        try {
+          await authenticate(message.authorization!, this.deps.didResolver);
+
+          await RecordsQueryHandler.authorizeRecordsQuery(tenant, recordsQuery, this.deps);
+        } catch (e) {
+          return messageReplyFromError(e, 401);
+        }
+
+        if (recordsQuery.author === tenant) {
+          const results = requester === tenant
+            ? await this.fetchRecordsAsOwner(tenant, recordsQuery)
+            : await this.fetchRecordsAsOwnerDelegate(tenant, recordsQuery, requester);
+          recordsWrites = results.messages as RecordsQueryReplyEntry[];
+          cursor = results.cursor;
+        } else {
+          const results = await this.fetchRecordsAsNonOwner(tenant, recordsQuery, requester);
+          recordsWrites = results.messages as RecordsQueryReplyEntry[];
+          cursor = results.cursor;
+        }
       }
+    } catch (error) {
+      if (error instanceof DwnError && error.code === DwnErrorCode.RecordsRecordLimitAncestorScopeUnsupported) {
+        return messageReplyFromError(error, 400);
+      }
+      throw error;
     }
 
     // attach the retained initial write to every entry that is not itself an initial write

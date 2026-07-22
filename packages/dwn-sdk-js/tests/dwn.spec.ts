@@ -230,7 +230,7 @@ export function testDwnClass(): void {
           author       : bob,
           protocolRole : 'threads:thread/participant',
           filter       : {
-            contextId    : 'thread-context',
+            contextId    : 'threadcontext',
             protocol     : commentsProtocol.protocol,
             protocolPath : 'thread/comment',
           },
@@ -242,7 +242,7 @@ export function testDwnClass(): void {
           kind    : 'Incomplete',
           missing : [{
             type          : 'Role',
-            contextPrefix : 'thread-context',
+            contextPrefix : 'threadcontext',
             protocol      : threadsProtocol.protocol,
             protocolPath  : 'thread/participant',
             recipient     : bob.did,

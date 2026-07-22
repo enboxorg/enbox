@@ -107,6 +107,14 @@ function runReplicationLogTests(dialect: Dialect): void {
       await db?.destroy();
     });
 
+    it('should reject invalid subtree filters before reading an empty log', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+
+      await expect(messageStore.logRead(alice.did, {
+        filters: [{ 'tag.scope': { subtree: 'root' } }],
+      })).rejects.toThrow('SubtreeFilter is not supported for index \'tag.scope\'');
+    });
+
     it('should append puts in commit order, return positions, and publish wakes', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const storedCids: string[] = [];

@@ -41,7 +41,7 @@ A multi-tenant Decentralized Web Node (DWN) exposed via JSON-RPC over HTTP and W
 
 - LevelDB
 - SQLite
-- MySQL
+- MySQL 8.0+
 - PostgreSQL
 
 See [Storage](#storage) for connection-string formats and per-store overrides.
@@ -150,7 +150,7 @@ The server uses three logical stores: a **message store**, a **data store**, and
 | ---------- | ------------------------------------------------------ | --------------------------------------------------------------------------------- |
 | LevelDB    | `level://data`                                         | Single-node only. Two slashes for relative paths, three for absolute.             |
 | SQLite     | `sqlite://dwn.db`                                      | `sqlite://` alone is in-memory (shared across stores within the process).         |
-| MySQL      | `mysql://user:pass@host:3306/db?debug=true&timezone=-0700` | [Connection options](https://github.com/mysqljs/mysql#connection-options) as query params. |
+| MySQL 8.0+ | `mysql://user:pass@host:3306/db?debug=true&timezone=-0700` | [Connection options](https://github.com/mysqljs/mysql#connection-options) as query params. |
 | PostgreSQL | `postgres://user:pass@host:5432/db`                    | Also honors [standard `PG*` env vars](https://node-postgres.com/features/connecting). |
 
 #### Optional backend packages

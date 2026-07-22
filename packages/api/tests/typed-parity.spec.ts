@@ -307,10 +307,10 @@ describe('typed api parity batch', () => {
         },
       });
       expect(status.code).toBe(400);
-      expect(status.detail).toContain('must include the direct parent contextId');
+      expect(status.detail).toContain('must include a contextId selecting that path or one of its ancestors');
     });
 
-    it('should compile the canonical contextId with an exact direct-parent fence', async () => {
+    it('should forward the canonical contextId without a second parent selector', async () => {
       const { typed } = makeTyped();
       const { task, comment } = await createNestedTree(typed);
 
@@ -328,13 +328,12 @@ describe('typed api parity batch', () => {
       expect(records).toHaveLength(1);
       expect(records[0].id).toBe(comment.id);
 
-      // The caller supplies one scope field. The compiler adds the direct
-      // parent ID required to make the DWN's prefix index segment-safe.
+      // The caller and the compiled request use one authoritative scope field.
       const queryCall = processSpy.getCalls().find((call) => call.args[0].messageType === DwnInterface.RecordsQuery);
       const filter = (queryCall!.args[0].messageParams as DwnMessageParams[DwnInterface.RecordsQuery]).filter as {
         parentId?: string; contextId?: string;
       };
-      expect(filter.parentId).toBe(task.id);
+      expect(filter.parentId).toBeUndefined();
       expect(filter.contextId).toBe(task.contextId);
     });
 
@@ -360,6 +359,14 @@ describe('typed api parity batch', () => {
       expect(records).toHaveLength(1);
       expect(await records[0].data.json()).toEqual({ body: 'grandchild' });
       expect(count).toBe(1);
+
+      const ancestorSpec = { filter: { contextId: list.contextId } };
+      const [{ records: descendantRecords }, { count: descendantCount }] = await Promise.all([
+        typed.records.query('list/task/comment', ancestorSpec),
+        typed.records.count('list/task/comment', ancestorSpec),
+      ]);
+      expect(descendantRecords).toHaveLength(2);
+      expect(descendantCount).toBe(2);
     });
 
   });

@@ -141,6 +141,25 @@ describe('RecordsGrantAuthorization', () => {
       );
     });
 
+    it('allows equal and narrower context queries but rejects a broader requested ancestor', async () => {
+      const grantScope = { protocol, contextId: 'root/branch' };
+      for (const contextId of ['root/branch', 'root/branch/child']) {
+        await expect(RecordsGrantAuthorization.authorizeQueryOrSubscribe({
+          incomingMessage : makeIncomingMessage(DwnMethodName.Query, { protocol, contextId }),
+          expectedGrantor : grantor,
+          expectedGrantee : grantee,
+          permissionGrant : makePermissionGrant(DwnMethodName.Read, grantScope),
+          validationStateReader,
+        })).resolves.toBeUndefined();
+      }
+
+      await expectQueryOrSubscribeScopeMismatch(
+        DwnMethodName.Query,
+        grantScope,
+        { protocol, contextId: 'root' },
+      );
+    });
+
     it('allows protocol-scoped query, subscribe, and count filters with a Records.Read grant', async () => {
       for (const method of [DwnMethodName.Query, DwnMethodName.Subscribe, DwnMethodName.Count] as const) {
         await expect(RecordsGrantAuthorization.authorizeQueryOrSubscribe({

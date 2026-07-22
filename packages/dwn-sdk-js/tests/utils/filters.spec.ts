@@ -2,7 +2,7 @@ import type { Filter } from '../../src/types/query-types.js';
 
 import { TestDataGenerator } from './test-data-generator.js';
 import { Time } from '../../src/utils/time.js';
-import { FilterSelector, FilterUtility } from '../../src/utils/filter.js';
+import { FilterSelector, FilterUtility, isSubtreeFilter } from '../../src/utils/filter.js';
 
 import { describe, expect, it } from 'bun:test';
 
@@ -17,17 +17,19 @@ describe('filters util', () => {
         rangeGTE : { gte: 10 },
         rangeLT  : { lt: 20 },
         rangeLTE : { lte: 20 },
+        subtree  : { subtree: 'root' },
       };
 
       it('isEqualFilter', async () => {
-        const { equal, oneOf, range } = filter;
+        const { equal, oneOf, range, subtree } = filter;
         expect(FilterUtility.isEqualFilter(equal)).toBe(true);
         expect(FilterUtility.isEqualFilter(oneOf)).toBe(false);
         expect(FilterUtility.isEqualFilter(range)).toBe(false);
+        expect(FilterUtility.isEqualFilter(subtree)).toBe(false);
       });;
 
       it('isRangeFilter', async () => {
-        const { equal, oneOf, range, rangeGT, rangeGTE, rangeLT, rangeLTE } = filter;
+        const { equal, oneOf, range, rangeGT, rangeGTE, rangeLT, rangeLTE, subtree } = filter;
         expect(FilterUtility.isRangeFilter(range)).toBe(true);
         expect(FilterUtility.isRangeFilter(rangeGT)).toBe(true);
         expect(FilterUtility.isRangeFilter(rangeGTE)).toBe(true);
@@ -35,13 +37,23 @@ describe('filters util', () => {
         expect(FilterUtility.isRangeFilter(rangeLTE)).toBe(true);
         expect(FilterUtility.isRangeFilter(oneOf)).toBe(false);
         expect(FilterUtility.isRangeFilter(equal)).toBe(false);
+        expect(FilterUtility.isRangeFilter(subtree)).toBe(false);
       });
 
       it('isOneOfFilter', async () => {
-        const { equal, oneOf, range } = filter;
+        const { equal, oneOf, range, subtree } = filter;
         expect(FilterUtility.isOneOfFilter(oneOf)).toBe(true);
         expect(FilterUtility.isOneOfFilter(equal)).toBe(false);
         expect(FilterUtility.isOneOfFilter(range)).toBe(false);
+        expect(FilterUtility.isOneOfFilter(subtree)).toBe(false);
+      });
+
+      it('isSubtreeFilter', async () => {
+        const { equal, oneOf, range, subtree } = filter;
+        expect(isSubtreeFilter(subtree)).toBe(true);
+        expect(isSubtreeFilter(equal)).toBe(false);
+        expect(isSubtreeFilter(oneOf)).toBe(false);
+        expect(isSubtreeFilter(range)).toBe(false);
       });
     });
 
@@ -66,6 +78,19 @@ describe('filters util', () => {
         expect(FilterUtility.matchAnyFilter({ 'a': 'a' }, filters)).toBe(true);
         expect(FilterUtility.matchAnyFilter({ 'a': 'b' }, filters)).toBe(true);
         expect(FilterUtility.matchAnyFilter({ 'a': 'c' }, filters)).toBe(false);
+      });
+
+      it('should match only an exact subtree or slash-delimited descendants', async () => {
+        const filters: Filter[] = [{ contextId: { subtree: 'root/branch' } }];
+
+        expect(FilterUtility.matchAnyFilter({ contextId: 'root/branch' }, filters)).toBe(true);
+        expect(FilterUtility.matchAnyFilter({ contextId: 'root/branch/child' }, filters)).toBe(true);
+        expect(FilterUtility.matchAnyFilter({ contextId: 'root/branch/child/grandchild' }, filters)).toBe(true);
+
+        expect(FilterUtility.matchAnyFilter({ contextId: 'root/branch-sibling' }, filters)).toBe(false);
+        expect(FilterUtility.matchAnyFilter({ contextId: 'root/branch.sibling' }, filters)).toBe(false);
+        expect(FilterUtility.matchAnyFilter({ contextId: 'root/branchSibling' }, filters)).toBe(false);
+        expect(FilterUtility.matchAnyFilter({ contextId: 'root/branches/child' }, filters)).toBe(false);
       });
 
       it('should match string within a RangeFilter', async () => {

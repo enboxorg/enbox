@@ -9,6 +9,7 @@ import { DidKey } from '@enbox/dids';
 import { Dwn } from '../../src/dwn.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { Jws } from '../../src/utils/jws.js';
+import { Poller } from '../utils/poller.js';
 import { RecordsRead } from '../../src/interfaces/records-read.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
@@ -138,53 +139,15 @@ export function testRecordsNestedQueryScope(): void {
       return { alice, profile1, profile2, profile1Avatar1, profile1Avatar2, profile2Avatar };
     }
 
-    it('should reject nested Query, Count, and Subscribe requests that do not pin the direct parent context', async () => {
-      const { alice, profile1Avatar1 } = await seedNestedRecords();
-      const filter = {
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'profile/avatar',
-      };
-
-      const recordsQuery = await TestDataGenerator.generateRecordsQuery({ author: alice, filter });
-      const queryReply = await dwn.processMessage(alice.did, recordsQuery.message) as RecordsQueryReply;
-      expect(queryReply.status.code).toBe(400);
-      expect(queryReply.status.detail).toContain(DwnErrorCode.RecordsQueryNestedProtocolPathContextIdInvalid);
-      expect(queryReply.entries).toBeUndefined();
-
-      const childScopedQuery = await TestDataGenerator.generateRecordsQuery({
-        author : alice,
-        filter : { ...filter, contextId: profile1Avatar1.message.contextId },
-      });
-      const childScopedQueryReply = await dwn.processMessage(alice.did, childScopedQuery.message) as RecordsQueryReply;
-      expect(childScopedQueryReply.status.code).toBe(400);
-      expect(childScopedQueryReply.status.detail).toContain(DwnErrorCode.RecordsQueryNestedProtocolPathContextIdInvalid);
-
-      const recordsCount = await TestDataGenerator.generateRecordsCount({ author: alice, filter });
-      const countReply = await dwn.processMessage(alice.did, recordsCount.message) as RecordsCountReply;
-      expect(countReply.status.code).toBe(400);
-      expect(countReply.status.detail).toContain(DwnErrorCode.RecordsCountNestedProtocolPathContextIdInvalid);
-      expect(countReply.count).toBeUndefined();
-
-      const streamedRecordIds: string[] = [];
-      const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({ author: alice, filter });
-      const subscribeReply = await dwn.processMessage(alice.did, recordsSubscribe.message, {
-        subscriptionHandler: (subscriptionMessage): void => {
-          if (subscriptionMessage.type === 'event') {
-            const { message } = subscriptionMessage.event;
-            if ('recordId' in message && typeof message.recordId === 'string') {
-              streamedRecordIds.push(message.recordId);
-            }
-          }
-        },
-      }) as RecordsSubscribeReply;
-      expect(subscribeReply.status.code).toBe(400);
-      expect(subscribeReply.status.detail).toContain(DwnErrorCode.RecordsSubscribeNestedProtocolPathContextIdInvalid);
-      expect(subscribeReply.subscription).toBeUndefined();
-      expect(subscribeReply.entries).toBeUndefined();
-      expect(streamedRecordIds).toEqual([]);
-    });
-
-    it('should reject malformed nested query context IDs that can span direct parents', async () => {
+    async function seedCommunityRecords(): Promise<{
+      alice: Persona;
+      community: GenerateRecordsWriteOutput;
+      channel1: GenerateRecordsWriteOutput;
+      channel2: GenerateRecordsWriteOutput;
+      channel1Message1: GenerateRecordsWriteOutput;
+      channel1Message2: GenerateRecordsWriteOutput;
+      channel2Message: GenerateRecordsWriteOutput;
+    }> {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       await installProtocol(alice);
 
@@ -205,50 +168,145 @@ export function testRecordsNestedQueryScope(): void {
         parentContextId : community.message.contextId,
         protocolPath    : 'community/channel',
       });
-      await writeProtocolRecord({
+      const channel1Message1 = await writeProtocolRecord({
         author          : alice,
         dateCreated     : '2026-04-04T00:00:00.000000Z',
         parentContextId : channel1.message.contextId,
         protocolPath    : 'community/channel/message',
       });
-      await writeProtocolRecord({
+      const channel1Message2 = await writeProtocolRecord({
         author          : alice,
         dateCreated     : '2026-04-05T00:00:00.000000Z',
+        parentContextId : channel1.message.contextId,
+        protocolPath    : 'community/channel/message',
+      });
+      const channel2Message = await writeProtocolRecord({
+        author          : alice,
+        dateCreated     : '2026-04-06T00:00:00.000000Z',
         parentContextId : channel2.message.contextId,
         protocolPath    : 'community/channel/message',
       });
 
-      const recordsQuery = await TestDataGenerator.generateRecordsQuery({
-        author : alice,
-        filter : {
-          contextId    : `${community.message.contextId}/`,
+      return { alice, community, channel1, channel2, channel1Message1, channel1Message2, channel2Message };
+    }
+
+    async function expectScopedSnapshot(input: {
+      alice: Persona;
+      contextId: string;
+      expectedRecordIds: string[];
+    }): Promise<void> {
+      const filter = {
+        contextId    : input.contextId,
+        protocol     : protocolDefinition.protocol,
+        protocolPath : 'community/channel/message',
+      };
+
+      const recordsQuery = await TestDataGenerator.generateRecordsQuery({ author: input.alice, filter });
+      const queryReply = await dwn.processMessage(input.alice.did, recordsQuery.message) as RecordsQueryReply;
+      expect(queryReply.status.code).toBe(200);
+      expect(queryReply.entries?.map((entry): string => entry.recordId)).toEqual(input.expectedRecordIds);
+
+      const recordsCount = await TestDataGenerator.generateRecordsCount({ author: input.alice, filter });
+      const countReply = await dwn.processMessage(input.alice.did, recordsCount.message) as RecordsCountReply;
+      expect(countReply.status.code).toBe(200);
+      expect(countReply.count).toBe(input.expectedRecordIds.length);
+
+      const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({ author: input.alice, filter });
+      const subscribeReply = await dwn.processMessage(input.alice.did, recordsSubscribe.message, {
+        subscriptionHandler: (): void => {},
+      }) as RecordsSubscribeReply;
+      expect(subscribeReply.status.code).toBe(200);
+      expect(subscribeReply.entries?.map((entry): string => entry.recordId)).toEqual(input.expectedRecordIds);
+      await subscribeReply.subscription?.close();
+    }
+
+    it('should reject missing, malformed, and too-deep context scopes for nested requests', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      await installProtocol(alice);
+
+      const expectInvalidScope = async (contextId?: string): Promise<void> => {
+        const filter = {
           protocol     : protocolDefinition.protocol,
           protocolPath : 'community/channel/message',
-        },
-      });
+          ...(contextId === undefined ? {} : { contextId }),
+        };
 
-      const queryReply = await dwn.processMessage(alice.did, recordsQuery.message) as RecordsQueryReply;
-      expect(queryReply.status.code).toBe(400);
-      expect(queryReply.status.detail).toContain(DwnErrorCode.RecordsQueryNestedProtocolPathContextIdInvalid);
-      expect(queryReply.entries).toBeUndefined();
+        const recordsQuery = await TestDataGenerator.generateRecordsQuery({ author: alice, filter });
+        const queryReply = await dwn.processMessage(alice.did, recordsQuery.message) as RecordsQueryReply;
+        expect(queryReply.status.code).toBe(400);
+        expect(queryReply.status.detail).toContain(DwnErrorCode.RecordsQueryNestedProtocolPathContextIdInvalid);
+        expect(queryReply.entries).toBeUndefined();
+
+        const recordsCount = await TestDataGenerator.generateRecordsCount({ author: alice, filter });
+        const countReply = await dwn.processMessage(alice.did, recordsCount.message) as RecordsCountReply;
+        expect(countReply.status.code).toBe(400);
+        expect(countReply.status.detail).toContain(DwnErrorCode.RecordsCountNestedProtocolPathContextIdInvalid);
+        expect(countReply.count).toBeUndefined();
+
+        const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({ author: alice, filter });
+        const subscribeReply = await dwn.processMessage(alice.did, recordsSubscribe.message) as RecordsSubscribeReply;
+        expect(subscribeReply.status.code).toBe(400);
+        expect(subscribeReply.status.detail).toContain(DwnErrorCode.RecordsSubscribeNestedProtocolPathContextIdInvalid);
+        expect(subscribeReply.subscription).toBeUndefined();
+        expect(subscribeReply.entries).toBeUndefined();
+      };
+
+      await expectInvalidScope();
+      await expectInvalidScope('community/channel/message/tooDeep');
+
+      const malformedFilter = {
+        contextId    : 'community//channel',
+        protocol     : protocolDefinition.protocol,
+        protocolPath : 'community/channel/message',
+      };
+      await expect(TestDataGenerator.generateRecordsQuery({ author: alice, filter: malformedFilter })).rejects.toThrow('SchemaValidatorFailure');
+      await expect(TestDataGenerator.generateRecordsCount({ author: alice, filter: malformedFilter })).rejects.toThrow('SchemaValidatorFailure');
+      await expect(TestDataGenerator.generateRecordsSubscribe({ author: alice, filter: malformedFilter })).rejects.toThrow('SchemaValidatorFailure');
     });
 
-    it('should allow scoped nested Query, Count, and Subscribe requests for one parent context', async () => {
-      const { alice, profile1, profile1Avatar1, profile1Avatar2 } = await seedNestedRecords();
+    it('should select exact, direct-parent, and ancestor scopes consistently', async () => {
+      const { alice, community, channel1, channel1Message1, channel1Message2, channel2Message } = await seedCommunityRecords();
+
+      await expectScopedSnapshot({
+        alice,
+        contextId         : channel1Message1.message.contextId,
+        expectedRecordIds : [channel1Message1.message.recordId],
+      });
+      await expectScopedSnapshot({
+        alice,
+        contextId         : channel1.message.contextId,
+        expectedRecordIds : [channel1Message1.message.recordId, channel1Message2.message.recordId],
+      });
+      await expectScopedSnapshot({
+        alice,
+        contextId         : community.message.contextId,
+        expectedRecordIds : [
+          channel1Message1.message.recordId,
+          channel1Message2.message.recordId,
+          channel2Message.message.recordId,
+        ],
+      });
+    });
+
+    it('should paginate an ancestor scope without crossing a context segment boundary', async () => {
+      const { alice, community, channel1, channel1Message1, channel1Message2, channel2Message } = await seedCommunityRecords();
       const filter = {
+        contextId    : community.message.contextId,
         protocol     : protocolDefinition.protocol,
-        protocolPath : 'profile/avatar',
-        contextId    : profile1.message.contextId,
+        protocolPath : 'community/channel/message',
       };
 
       const firstPageQuery = await TestDataGenerator.generateRecordsQuery({
         author     : alice,
         filter,
-        pagination : { limit: 1 },
+        pagination : { limit: 2 },
       });
       const firstPageReply = await dwn.processMessage(alice.did, firstPageQuery.message) as RecordsQueryReply;
       expect(firstPageReply.status.code).toBe(200);
-      expect(firstPageReply.entries?.map((entry): string => entry.recordId)).toEqual([profile1Avatar1.message.recordId]);
+      expect(firstPageReply.entries?.map((entry): string => entry.recordId)).toEqual([
+        channel1Message1.message.recordId,
+        channel1Message2.message.recordId,
+      ]);
       expect(firstPageReply.cursor).toBeDefined();
 
       const secondPageQuery = await TestDataGenerator.generateRecordsQuery({
@@ -258,26 +316,59 @@ export function testRecordsNestedQueryScope(): void {
       });
       const secondPageReply = await dwn.processMessage(alice.did, secondPageQuery.message) as RecordsQueryReply;
       expect(secondPageReply.status.code).toBe(200);
-      expect(secondPageReply.entries?.map((entry): string => entry.recordId)).toEqual([profile1Avatar2.message.recordId]);
+      expect(secondPageReply.entries?.map((entry): string => entry.recordId)).toEqual([channel2Message.message.recordId]);
       expect(secondPageReply.cursor).toBeUndefined();
 
-      const recordsCount = await TestDataGenerator.generateRecordsCount({ author: alice, filter });
-      const countReply = await dwn.processMessage(alice.did, recordsCount.message) as RecordsCountReply;
-      expect(countReply.status.code).toBe(200);
-      expect(countReply.count).toBe(2);
+      const truncatedContextId = community.message.contextId.slice(0, -1);
+      await expectScopedSnapshot({ alice, contextId: truncatedContextId, expectedRecordIds: [] });
 
-      const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
-        author     : alice,
-        filter,
-        pagination : { limit: 1 },
-      });
-      const subscribeReply = await dwn.processMessage(alice.did, recordsSubscribe.message, {
-        subscriptionHandler: (): void => {},
+      const matchingLiveRecordIds: string[] = [];
+      const boundaryLiveRecordIds: string[] = [];
+      const matchingSubscribe = await TestDataGenerator.generateRecordsSubscribe({ author: alice, filter });
+      const matchingSubscribeReply = await dwn.processMessage(alice.did, matchingSubscribe.message, {
+        subscriptionHandler: (subscriptionMessage): void => {
+          if (
+            subscriptionMessage.type === 'event' &&
+            'recordId' in subscriptionMessage.event.message &&
+            typeof subscriptionMessage.event.message.recordId === 'string'
+          ) {
+            matchingLiveRecordIds.push(subscriptionMessage.event.message.recordId);
+          }
+        },
       }) as RecordsSubscribeReply;
-      expect(subscribeReply.status.code).toBe(200);
-      expect(subscribeReply.entries?.map((entry): string => entry.recordId)).toEqual([profile1Avatar1.message.recordId]);
-      expect(subscribeReply.cursor).toBeDefined();
-      await subscribeReply.subscription?.close();
+      expect(matchingSubscribeReply.status.code).toBe(200);
+
+      const boundarySubscribe = await TestDataGenerator.generateRecordsSubscribe({
+        author : alice,
+        filter : { ...filter, contextId: truncatedContextId },
+      });
+      const boundarySubscribeReply = await dwn.processMessage(alice.did, boundarySubscribe.message, {
+        subscriptionHandler: (subscriptionMessage): void => {
+          if (
+            subscriptionMessage.type === 'event' &&
+            'recordId' in subscriptionMessage.event.message &&
+            typeof subscriptionMessage.event.message.recordId === 'string'
+          ) {
+            boundaryLiveRecordIds.push(subscriptionMessage.event.message.recordId);
+          }
+        },
+      }) as RecordsSubscribeReply;
+      expect(boundarySubscribeReply.status.code).toBe(200);
+      expect(boundarySubscribeReply.entries).toEqual([]);
+
+      const liveMessage = await writeProtocolRecord({
+        author          : alice,
+        dateCreated     : '2026-04-07T00:00:00.000000Z',
+        parentContextId : channel1.message.contextId,
+        protocolPath    : 'community/channel/message',
+      });
+      await Poller.pollUntilSuccessOrTimeout(async () => {
+        expect(matchingLiveRecordIds).toEqual([liveMessage.message.recordId]);
+      });
+      expect(boundaryLiveRecordIds).toEqual([]);
+
+      await matchingSubscribeReply.subscription?.close();
+      await boundarySubscribeReply.subscription?.close();
     });
 
     it('should keep top-level protocol queries unchanged with or without contextId', async () => {

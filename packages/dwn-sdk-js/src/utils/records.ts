@@ -280,8 +280,9 @@ export class Records {
   }
 
   /**
-   * Nested protocol-path queries must pin one parent context. Otherwise the same
-   * protocol type is read across every parent instance.
+   * Nested protocol-path queries must select the target path itself or one of
+   * its ancestor contexts. An omitted, malformed, or deeper context cannot
+   * identify a bounded subtree of the selected protocol path.
    */
   public static validateNestedProtocolPathQueryScope(
     filter: RecordsFilter,
@@ -297,10 +298,11 @@ export class Records {
       return;
     }
 
-    const expectedParentDepth = protocolPath.split('/').length - 1;
+    const protocolPathDepth = protocolPath.split('/').length;
     const contextIdSegments = contextId?.split('/');
     if (
-      contextIdSegments?.length === expectedParentDepth &&
+      contextIdSegments !== undefined &&
+      contextIdSegments.length <= protocolPathDepth &&
       contextIdSegments.every(segment => segment.length > 0)
     ) {
       return;
@@ -308,7 +310,7 @@ export class Records {
 
     throw new DwnError(
       errorCode,
-      `${operationName} for nested protocol path '${protocolPath}' must include the direct parent contextId in the filter`
+      `${operationName} for nested protocol path '${protocolPath}' must include a contextId selecting that path or one of its ancestors`
     );
   }
 
@@ -386,10 +388,8 @@ export class Records {
       delete filterCopy.dateUpdated;
     }
 
-    // contextId conversion to prefix match
-    const contextIdPrefixFilter = contextId ? FilterUtility.constructPrefixFilterAsRangeFilter(contextId) : undefined;
-    if (contextIdPrefixFilter) {
-      filterCopy.contextId = contextIdPrefixFilter;
+    if (contextId !== undefined) {
+      filterCopy.contextId = { subtree: contextId };
     }
 
     // if the author filter is an array and it's empty, we should remove it from the filter as it will always return no results.

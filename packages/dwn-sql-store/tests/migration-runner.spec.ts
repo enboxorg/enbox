@@ -2,10 +2,10 @@ import type { DwnDatabaseType } from '../src/types.js';
 import type { Migration } from 'kysely';
 
 import { allDwnMigrations } from '../src/migrations/index.js';
-import { Kysely } from 'kysely';
 import { migration001InitialSchema } from '../src/migrations/001-initial-schema.js';
 import { runDwnStoreMigrations } from '../src/migration-runner.js';
 import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
+import { Kysely, sql } from 'kysely';
 import { testMysqlDialect, testPostgresDialect, testSqliteDialect } from './test-dialects.js';
 
 describe('runDwnStoreMigrations (Kysely Migrator)', () => {
@@ -91,6 +91,7 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
           '002-content-addressed-datastore',
           '003-add-squash-column',
           '004-replication-log',
+          '005-byte-stable-hierarchical-paths',
         ]);
 
         // Verify tables created by migration 001
@@ -116,11 +117,12 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
           .orderBy('name', 'asc')
           .execute();
 
-        expect(rows).toHaveLength(4);
+        expect(rows).toHaveLength(5);
         expect((rows[0] as any).name).toBe('001-initial-schema');
         expect((rows[1] as any).name).toBe('002-content-addressed-datastore');
         expect((rows[2] as any).name).toBe('003-add-squash-column');
         expect((rows[3] as any).name).toBe('004-replication-log');
+        expect((rows[4] as any).name).toBe('005-byte-stable-hierarchical-paths');
         // Kysely uses `timestamp` column for when migration was applied
         expect((rows[0] as any).timestamp).toBeDefined();
       });
@@ -129,7 +131,7 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
 
       it('should be idempotent — second run returns no new migrations', async () => {
         const firstRun = await runDwnStoreMigrations(db, dialect);
-        expect(firstRun).toHaveLength(4);
+        expect(firstRun).toHaveLength(5);
 
         const secondRun = await runDwnStoreMigrations(db, dialect);
         expect(secondRun).toHaveLength(0);
@@ -140,10 +142,153 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
         const firstRun = await runDwnStoreMigrations(db, dialect, [allDwnMigrations[0]]);
         expect(firstRun).toEqual(['001-initial-schema']);
 
-        // Now run with all migrations — only 002 and 003 should be applied
+        // Now run all remaining migrations.
         const secondRun = await runDwnStoreMigrations(db, dialect);
-        expect(secondRun).toEqual(['002-content-addressed-datastore', '003-add-squash-column', '004-replication-log']);
+        expect(secondRun).toEqual([
+          '002-content-addressed-datastore',
+          '003-add-squash-column',
+          '004-replication-log',
+          '005-byte-stable-hierarchical-paths',
+        ]);
       });
+
+      it('should migrate hierarchical paths to byte-stable indexed comparisons', async () => {
+        await runDwnStoreMigrations(db, dialect, allDwnMigrations.slice(0, 4));
+
+        await db.insertInto('messageStoreMessages').values([
+          {
+            tenant              : 'did:example:alice',
+            messageCid          : 'root',
+            contextId           : 'root',
+            protocolPath        : 'thread',
+            encodedMessageBytes : Buffer.from('root'),
+          },
+          {
+            tenant              : 'did:example:alice',
+            messageCid          : 'child',
+            contextId           : 'root/child',
+            protocolPath        : 'thread/note',
+            encodedMessageBytes : Buffer.from('child'),
+          },
+          {
+            tenant              : 'did:example:alice',
+            messageCid          : 'case-variant',
+            contextId           : 'Root',
+            protocolPath        : 'Thread',
+            encodedMessageBytes : Buffer.from('case-variant'),
+          },
+          {
+            tenant              : 'did:example:alice',
+            messageCid          : 'case-variant-child',
+            contextId           : 'Root/child',
+            protocolPath        : 'Thread/note',
+            encodedMessageBytes : Buffer.from('case-variant-child'),
+          },
+          {
+            tenant              : 'did:example:alice',
+            messageCid          : 'padded-path',
+            contextId           : 'other',
+            protocolPath        : 'thread ',
+            encodedMessageBytes : Buffer.from('padded-path'),
+          },
+        ] as any).execute();
+
+        const applied = await runDwnStoreMigrations(db, dialect);
+        expect(applied).toEqual(['005-byte-stable-hierarchical-paths']);
+
+        const exact = await db.selectFrom('messageStoreMessages')
+          .select('messageCid')
+          .where('tenant', '=', 'did:example:alice')
+          .where('contextId', '=', 'root')
+          .execute();
+        expect(exact.map(({ messageCid }) => messageCid)).toEqual(['root']);
+
+        const descendants = await db.selectFrom('messageStoreMessages')
+          .select('messageCid')
+          .where('tenant', '=', 'did:example:alice')
+          .where('contextId', '>=', 'root/')
+          .where('contextId', '<', 'root0')
+          .execute();
+        expect(descendants.map(({ messageCid }) => messageCid)).toEqual(['child']);
+
+        const protocolPaths = await db.selectFrom('messageStoreMessages')
+          .select('messageCid')
+          .where('tenant', '=', 'did:example:alice')
+          .where('protocolPath', '>=', 'thread/')
+          .where('protocolPath', '<', 'thread0')
+          .execute();
+        expect(protocolPaths.map(({ messageCid }) => messageCid)).toEqual(['child']);
+
+        const exactProtocolPath = await db.selectFrom('messageStoreMessages')
+          .select('messageCid')
+          .where('tenant', '=', 'did:example:alice')
+          .where('protocolPath', '=', 'thread')
+          .execute();
+        expect(exactProtocolPath.map(({ messageCid }) => messageCid)).toEqual(['root']);
+
+        if (dialect.name === 'MySQL') {
+          const columns = await sql<{ COLUMN_NAME: string; COLLATION_NAME: string }>`
+            SELECT column_name, collation_name
+            FROM information_schema.columns
+            WHERE table_schema = DATABASE()
+              AND table_name = 'messageStoreMessages'
+              AND column_name IN ('contextId', 'protocolPath')
+            ORDER BY column_name
+          `.execute(db);
+          expect(columns.rows).toEqual([
+            { COLUMN_NAME: 'contextId', COLLATION_NAME: 'ascii_bin' },
+            { COLUMN_NAME: 'protocolPath', COLLATION_NAME: 'utf8mb4_0900_bin' },
+          ]);
+
+          const indexColumns = await sql<{ prefixLength: number | null }>`
+            SELECT sub_part AS prefixLength
+            FROM information_schema.statistics
+            WHERE table_schema = DATABASE()
+              AND table_name = 'messageStoreMessages'
+              AND index_name = 'index_tenant_contextId_messageTimestamp'
+              AND column_name = 'contextId'
+          `.execute(db);
+          expect(indexColumns.rows).toEqual([{ prefixLength: null }]);
+        } else if (dialect.name === 'PostgreSQL') {
+          const columns = await sql<{ column_name: string; collation_name: string }>`
+            SELECT column_name, collation_name
+            FROM information_schema.columns
+            WHERE table_name = 'messageStoreMessages'
+              AND column_name IN ('contextId', 'protocolPath')
+            ORDER BY column_name
+          `.execute(db);
+          expect(columns.rows).toEqual([
+            { column_name: 'contextId', collation_name: 'C' },
+            { column_name: 'protocolPath', collation_name: 'C' },
+          ]);
+        }
+      });
+
+      if (dialect.name === 'MySQL') {
+        it('should recover when the context index is missing before migration 005', async () => {
+          await runDwnStoreMigrations(db, dialect, allDwnMigrations.slice(0, 4));
+          await db.schema.dropIndex('index_tenant_contextId_messageTimestamp')
+            .on('messageStoreMessages')
+            .execute();
+
+          const applied = await runDwnStoreMigrations(db, dialect);
+          expect(applied).toEqual(['005-byte-stable-hierarchical-paths']);
+
+          const indexColumns = await sql<{ COLUMN_NAME: string; SUB_PART: number | null }>`
+            SELECT column_name, sub_part
+            FROM information_schema.statistics
+            WHERE table_schema = DATABASE()
+              AND table_name = 'messageStoreMessages'
+              AND index_name = 'index_tenant_contextId_messageTimestamp'
+            ORDER BY seq_in_index
+          `.execute(db);
+          expect(indexColumns.rows).toEqual([
+            { COLUMN_NAME: 'tenant', SUB_PART: null },
+            { COLUMN_NAME: 'contextId', SUB_PART: null },
+            { COLUMN_NAME: 'messageTimestamp', SUB_PART: null },
+          ]);
+        });
+      }
 
       // ─── Data migration tests ───────────────────────────────────────
 
@@ -177,7 +322,12 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
 
         // Step 3: Apply remaining migrations which should migrate data
         const applied = await runDwnStoreMigrations(db, dialect);
-        expect(applied).toEqual(['002-content-addressed-datastore', '003-add-squash-column', '004-replication-log']);
+        expect(applied).toEqual([
+          '002-content-addressed-datastore',
+          '003-add-squash-column',
+          '004-replication-log',
+          '005-byte-stable-hierarchical-paths',
+        ]);
 
         // Step 4: Verify data was migrated to dataRefs
         const refs = await db
@@ -271,7 +421,12 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
 
         // Apply remaining migrations — should not fail on empty table
         const applied = await runDwnStoreMigrations(db, dialect);
-        expect(applied).toEqual(['002-content-addressed-datastore', '003-add-squash-column', '004-replication-log']);
+        expect(applied).toEqual([
+          '002-content-addressed-datastore',
+          '003-add-squash-column',
+          '004-replication-log',
+          '005-byte-stable-hierarchical-paths',
+        ]);
 
         // New tables exist, old one gone
         expect(await dialect.hasTable(db, 'dataRefs')).toBe(true);
@@ -305,7 +460,7 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
           .selectAll()
           .execute();
 
-        expect(rows).toHaveLength(4); // only the 4 real migrations
+        expect(rows).toHaveLength(5); // only the 5 real migrations
         const names = rows.map((r: any) => r.name);
         expect(names).not.toContain('999-failing-migration');
       });
@@ -327,12 +482,13 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
         const applied = await runDwnStoreMigrations(db, dialect);
 
         // Migration 001 should run but be a no-op (tables already exist due to hasTable checks)
-        // Migrations 002 and 003 should run and perform actual schema changes
+        // The remaining migrations should run and perform their schema changes.
         expect(applied).toEqual([
           '001-initial-schema',
           '002-content-addressed-datastore',
           '003-add-squash-column',
           '004-replication-log',
+          '005-byte-stable-hierarchical-paths',
         ]);
 
         // All should now be recorded
@@ -341,7 +497,7 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
           .selectAll()
           .execute();
 
-        expect(rows).toHaveLength(4);
+        expect(rows).toHaveLength(5);
       });
 
       // ─── Empty migrations list test ─────────────────────────────────

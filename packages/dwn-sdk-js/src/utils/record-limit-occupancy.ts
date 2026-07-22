@@ -1,12 +1,12 @@
 import type { MessageStore } from '../types/message-store.js';
 import type { ProtocolRecordLimitDefinition } from '../types/protocols-types.js';
-import type { RecordsWriteMessage } from '../types/records-types.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { Filter, PaginationCursor } from '../types/query-types.js';
 import type { MessageSort, Pagination } from '../types/message-types.js';
+import type { RecordsFilter, RecordsWriteMessage } from '../types/records-types.js';
 
-import { FilterUtility } from './filter.js';
 import { getRuleSetAtPath } from './protocols.js';
+import { isSubtreeFilter } from './filter.js';
 import { lexicographicalCompare } from './string.js';
 import { ProtocolRecordLimitStrategy } from '../types/protocols-types.js';
 import { Records } from './records.js';
@@ -32,6 +32,10 @@ type RecordLimitScope = {
   protocolPath: string;
   parentContextId: string;
 };
+
+type RecordLimitScopeResolution =
+  | { kind: 'ancestor' }
+  | { kind: 'scope'; scope: RecordLimitScope };
 
 type RecordLimitFilterResolution = {
   projectedFilters: Filter[];
@@ -120,6 +124,49 @@ export async function isRecordLimitOccupant(input: RecordLimitOccupancyDependenc
   return occupantRecordIds.has(input.message.recordId);
 }
 
+/**
+ * Rejects an ancestor selection that would span multiple independent
+ * `$recordLimit` parent scopes. The current store contract has no grouped
+ * top-N primitive, so treating this as a broad native query would expose
+ * stored candidates that occupancy projection deliberately hides.
+ */
+export async function validateRecordLimitContextScope(input: RecordLimitOccupancyDependencies & {
+  tenant: string;
+  filter: RecordsFilter;
+  messageTimestamp: string;
+}): Promise<void> {
+  const { contextId, protocol, protocolPath } = input.filter;
+  if (contextId === undefined || protocol === undefined || protocolPath === undefined) {
+    return;
+  }
+
+  const contextDepth = contextId.split('/').length;
+  const protocolPathDepth = protocolPath.split('/').length;
+  if (contextDepth >= protocolPathDepth - 1) {
+    return;
+  }
+
+  const recordLimit = await getRecordLimitForFilter({
+    messageStore          : input.messageStore,
+    validationStateReader : input.validationStateReader,
+    tenant                : input.tenant,
+    filter                : {
+      ...Records.convertFilter(input.filter),
+      interface         : DwnInterfaceName.Records,
+      method            : DwnMethodName.Write,
+      isLatestBaseState : true,
+    },
+    messageTimestamp       : input.messageTimestamp,
+    recordLimitDefinitions : new Map(),
+  });
+  if (recordLimit !== undefined) {
+    throw new DwnError(
+      DwnErrorCode.RecordsRecordLimitAncestorScopeUnsupported,
+      `ancestor context scopes are not supported for protocol paths with a $recordLimit`,
+    );
+  }
+}
+
 async function resolveRecordLimitFilters(
   input: Omit<RecordLimitOccupancyQueryInput, 'pagination'>
 ): Promise<RecordLimitFilterResolution | undefined> {
@@ -142,15 +189,21 @@ async function resolveRecordLimitFilters(
       continue;
     }
 
-    const scope = getRecordLimitScopeFromFilter(filter);
-    if (scope === undefined) {
+    const scopeResolution = getRecordLimitScopeFromFilter(filter);
+    if (scopeResolution === undefined) {
       return undefined;
+    }
+    if (scopeResolution.kind === 'ancestor') {
+      throw new DwnError(
+        DwnErrorCode.RecordsRecordLimitAncestorScopeUnsupported,
+        `ancestor context scopes are not supported for protocol paths with a $recordLimit`,
+      );
     }
 
     const occupantRecordIds = await findOccupantRecordIds({
       messageStore : input.messageStore,
       tenant       : input.tenant,
-      scope,
+      scope        : scopeResolution.scope,
       recordLimit,
     });
 
@@ -310,28 +363,41 @@ function buildRecordLimitScopeFilter(scope: RecordLimitScope): Filter {
   };
 
   if (scope.parentContextId !== '') {
-    filter.contextId = FilterUtility.constructPrefixFilterAsRangeFilter(scope.parentContextId);
+    filter.contextId = { subtree: scope.parentContextId };
   }
 
   return filter;
 }
 
-function getRecordLimitScopeFromFilter(filter: Filter): RecordLimitScope | undefined {
+function getRecordLimitScopeFromFilter(filter: Filter): RecordLimitScopeResolution | undefined {
   const { protocol, protocolPath } = filter;
   if (typeof protocol !== 'string' || typeof protocolPath !== 'string') {
     return undefined;
   }
 
   if (!protocolPath.includes('/')) {
-    return { protocol, protocolPath, parentContextId: '' };
+    return { kind: 'scope', scope: { protocol, protocolPath, parentContextId: '' } };
   }
 
-  const parentContextId = getExactParentContextIdFromFilter(filter);
+  const { contextId } = filter;
+  if (contextId === undefined || !isSubtreeFilter(contextId)) {
+    return undefined;
+  }
+
+  const contextDepth = contextId.subtree.split('/').length;
+  const protocolPathDepth = protocolPath.split('/').length;
+  if (contextDepth < protocolPathDepth - 1) {
+    return { kind: 'ancestor' };
+  }
+
+  const parentContextId = contextDepth === protocolPathDepth
+    ? Records.getParentContextFromOfContextId(contextId.subtree)
+    : contextId.subtree;
   if (parentContextId === undefined) {
     return undefined;
   }
 
-  return { protocol, protocolPath, parentContextId };
+  return { kind: 'scope', scope: { protocol, protocolPath, parentContextId } };
 }
 
 function getRecordLimitScope(message: RecordsWriteMessage): RecordLimitScope {
@@ -340,19 +406,6 @@ function getRecordLimitScope(message: RecordsWriteMessage): RecordLimitScope {
     protocolPath    : message.descriptor.protocolPath,
     parentContextId : Records.getParentContextFromOfContextId(message.contextId) ?? '',
   };
-}
-
-function getExactParentContextIdFromFilter(filter: Filter): string | undefined {
-  const { contextId } = filter;
-  if (contextId === undefined || !FilterUtility.isRangeFilter(contextId)) {
-    return undefined;
-  }
-
-  if (typeof contextId.gte !== 'string' || contextId.lt !== `${contextId.gte}\uffff`) {
-    return undefined;
-  }
-
-  return contextId.gte;
 }
 
 function buildProjectedFilter(filter: Filter, occupantRecordIds: Set<string>): Filter | undefined {

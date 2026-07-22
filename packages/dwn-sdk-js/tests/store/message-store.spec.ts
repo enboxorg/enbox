@@ -468,6 +468,104 @@ export function testMessageStore(): void {
       });
 
       describe('pagination', () => {
+        it('should query and count byte-stable slash-delimited subtrees across pages', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const subtree = 'Root1';
+          const contexts = [
+            subtree,
+            `${subtree}/Child1`,
+            `${subtree}/Child1/Grandchild`,
+            `${subtree}/Child2`,
+            `${subtree}Sibling/Child`,
+            `root1/CaseVariant`,
+          ];
+          const expectedCids: string[] = [];
+
+          for (const [index, contextId] of contexts.entries()) {
+            const messageTimestamp = `2026-07-22T00:00:0${index}.000000Z`;
+            const { message } = await TestDataGenerator.generateRecordsWrite({ messageTimestamp });
+            await messageStore.put(alice.did, message, { contextId, messageTimestamp });
+            if (index < 4) {
+              expectedCids.push(await Message.getCid(message));
+            }
+          }
+
+          const filter = [{ contextId: { subtree } }];
+          const unpaged = await messageStore.query(alice.did, filter);
+          expect(await Promise.all(unpaged.messages.map(message => Message.getCid(message)))).toEqual(expectedCids);
+          expect(await messageStore.count(alice.did, filter)).toBe(expectedCids.length);
+
+          const firstPage = await messageStore.query(alice.did, filter, {}, { limit: 2 });
+          expect(await Promise.all(firstPage.messages.map(message => Message.getCid(message)))).toEqual(expectedCids.slice(0, 2));
+          expect(firstPage.cursor).toBeDefined();
+
+          const secondPage = await messageStore.query(alice.did, filter, {}, { cursor: firstPage.cursor, limit: 2 });
+          expect(await Promise.all(secondPage.messages.map(message => Message.getCid(message)))).toEqual(expectedCids.slice(2));
+          expect(secondPage.cursor).toBeUndefined();
+        });
+
+        it('should include astral Unicode descendants in protocol-path subtree ranges', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const subtree = 'root';
+          const protocolPaths = [
+            subtree,
+            `${subtree}/child`,
+            `${subtree}/😀`,
+            `${subtree}Sibling/😀`,
+            `Root/😀`,
+          ];
+          const expectedCids: string[] = [];
+
+          for (const [index, protocolPath] of protocolPaths.entries()) {
+            const messageTimestamp = `2026-07-22T00:00:0${index}.000000Z`;
+            const { message } = await TestDataGenerator.generateRecordsWrite({ messageTimestamp });
+            await messageStore.put(alice.did, message, { messageTimestamp, protocolPath });
+            if (index < 3) {
+              expectedCids.push(await Message.getCid(message));
+            }
+          }
+
+          const filter = [{ protocolPath: { subtree } }];
+          const result = await messageStore.query(
+            alice.did,
+            filter,
+            { messageTimestamp: SortDirection.Ascending },
+          );
+          expect(await Promise.all(result.messages.map(message => Message.getCid(message)))).toEqual(expectedCids);
+          expect(await messageStore.count(alice.did, filter)).toBe(expectedCids.length);
+        });
+
+        it('should reject subtree filters for non-hierarchical indexes', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const filter = [{ 'tag.scope': { subtree: 'root' } }];
+
+          await expect(messageStore.query(alice.did, filter))
+            .rejects.toThrow('SubtreeFilter is not supported for index \'tag.scope\'');
+          await expect(messageStore.count(alice.did, filter))
+            .rejects.toThrow('SubtreeFilter is not supported for index \'tag.scope\'');
+
+          const { message, recordsWrite } = await TestDataGenerator.generateRecordsWrite();
+          const indexes = {
+            ...await recordsWrite.constructIndexes(true),
+            'tag.scope': 'root/child',
+          };
+          await messageStore.put(alice.did, message, indexes);
+
+          const residualFilter = [{
+            recordId    : message.recordId,
+            'tag.scope' : { subtree: 'root' },
+          }];
+          await expect(messageStore.query(alice.did, residualFilter))
+            .rejects.toThrow('SubtreeFilter is not supported for index \'tag.scope\'');
+
+          const noCandidateFilter = [{
+            recordId    : 'missing',
+            'tag.scope' : { subtree: 'root' },
+          }];
+          await expect(messageStore.query(alice.did, noCandidateFilter))
+            .rejects.toThrow('SubtreeFilter is not supported for index \'tag.scope\'');
+        });
+
         it('should return all records if no limit is specified', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const messages = await Promise.all(Array(10).fill({}).map((_) => TestDataGenerator.generateRecordsWrite({

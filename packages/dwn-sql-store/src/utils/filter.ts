@@ -1,7 +1,8 @@
 import type { DwnDatabaseType } from '../types.js';
 import type { DynamicReferenceBuilder, ExpressionBuilder, OperandExpression, RawBuilder, SelectQueryBuilder, SqlBool } from 'kysely';
-import type { EqualFilter, Filter, RangeFilter } from '@enbox/dwn-sdk-js';
+import type { EqualFilter, Filter, RangeFilter, SubtreeFilter } from '@enbox/dwn-sdk-js';
 
+import { assertValidSubtreeFilters, isSubtreeFilter } from '@enbox/dwn-sdk-js';
 import { DynamicModule, sql } from 'kysely';
 import { sanitizedValue, sanitizeFiltersAndSeparateTags } from './sanitize.js';
 
@@ -17,8 +18,9 @@ const SQL_LIKE_ESCAPE = String.fromCodePoint(92);
  */
 export function filterSelectQuery<DB = DwnDatabaseType, TB extends keyof DB = keyof DB, O = unknown>(
   filters: Filter[],
-  query: SelectQueryBuilder<DB, TB, O>
+  query: SelectQueryBuilder<DB, TB, O>,
 ): SelectQueryBuilder<DB, TB, O> {
+  assertValidSubtreeFilters(filters);
   const sanitizedFilters = sanitizeFiltersAndSeparateTags(filters);
 
   return query.where((eb) =>
@@ -46,19 +48,47 @@ export function filterSelectQuery<DB = DwnDatabaseType, TB extends keyof DB = ke
 function processFilter<DB = DwnDatabaseType, TB extends keyof DB = keyof DB>(
   eb: ExpressionBuilder<DB, TB>,
   andOperands: OperandExpression<SqlBool>[],
-  filter: Filter
+  filter: Filter,
 ): void {
   for (const property in filter) {
     const value = filter[property];
     const column = new DynamicModule().ref(property);
     if (Array.isArray(value)) { // OneOfFilter
       andOperands.push(eb(column, 'in', value));
+    } else if (isSubtreeFilter(value)) {
+      processSubtreeFilterProperty(eb, andOperands, property, value);
     } else if (typeof value === 'object') { // RangeFilter
       processRangeFilterProperty(eb, andOperands, property, column, value);
     } else { // EqualFilter
       andOperands.push(eb(column, '=', sanitizedValue(value)));
     }
   }
+}
+
+/**
+ * Adds a segment-aware subtree predicate for one indexed string property.
+ */
+function processSubtreeFilterProperty<DB = DwnDatabaseType, TB extends keyof DB = keyof DB>(
+  eb: ExpressionBuilder<DB, TB>,
+  andOperands: OperandExpression<SqlBool>[],
+  property: string,
+  value: SubtreeFilter,
+): void {
+  const column = new DynamicModule().ref(property);
+  const descendantPrefix = `${value.subtree}/`;
+  // `/` is immediately followed by `0` in the byte ordering installed by
+  // migration 005. The enclosing range is indexable; the final OR excludes
+  // prefix siblings that sort between the exact value and its descendants.
+  const subtreeUpperBound = `${value.subtree}0`;
+
+  andOperands.push(eb.and([
+    eb(column, '>=', value.subtree),
+    eb(column, '<', subtreeUpperBound),
+    eb.or([
+      eb(column, '=', value.subtree),
+      eb(column, '>=', descendantPrefix),
+    ]),
+  ]));
 }
 
 /**
@@ -141,7 +171,7 @@ function escapeLikePattern(input: string): string {
  */
 function processTags(
   andOperands: OperandExpression<SqlBool>[],
-  tags: Filter
+  tags: Filter,
 ): void {
 
   for (const property in tags) {
@@ -160,11 +190,9 @@ function tagValuePredicate(value: Filter[string]): RawBuilder<SqlBool> {
     return tagOneOfPredicate(value);
   }
 
-  if (typeof value === 'object') {
-    return tagObjectPredicate(value);
-  }
-
-  return tagEqualPredicate(value);
+  return typeof value === 'object'
+    ? tagObjectPredicate(value as RangeFilter)
+    : tagEqualPredicate(value);
 }
 
 function tagOneOfPredicate(values: EqualFilter[]): RawBuilder<SqlBool> {

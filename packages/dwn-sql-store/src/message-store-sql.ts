@@ -30,6 +30,7 @@ import { filterSelectQuery } from './utils/filter.js';
 import { sha256 } from 'multiformats/hashes/sha2';
 import { TagTables } from './utils/tags.js';
 import {
+  assertValidSubtreeFilters,
   DwnError,
   DwnErrorCode,
   DwnInterfaceName,
@@ -567,6 +568,9 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
   public async logRead(tenant: string, options: EventLogReadOptions = {}): Promise<EventLogReadResult> {
     const db = this.requireDb('logRead');
     const { cursor, limit, filters } = options;
+    if (filters !== undefined) {
+      assertValidSubtreeFilters(filters);
+    }
 
     const head = await this.getHead(db, tenant);
     if (cursor !== undefined) {

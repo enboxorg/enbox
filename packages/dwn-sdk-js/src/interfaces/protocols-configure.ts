@@ -9,6 +9,7 @@ import type {
 
 import { AbstractMessage } from '../core/abstract-message.js';
 import { DwnConstant } from '../core/dwn-constant.js';
+import { FilterUtility } from '../utils/filter.js';
 import { Message } from '../core/message.js';
 import { PermissionGrant } from '../protocols/permission-grant.js';
 import { ProtocolsGrantAuthorization } from '../core/protocols-grant-authorization.js';
@@ -412,8 +413,7 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
           ProtocolsConfigure.validateCrossProtocolAlias(actionRule.of, uses, ruleSetProtocolPath, 'of');
         } else {
           // Local `of`: must be self or ancestor
-          const isSelfOrAncestor = ruleSetProtocolPath === actionRule.of
-            || ruleSetProtocolPath.startsWith(actionRule.of + '/');
+          const isSelfOrAncestor = FilterUtility.matchesSubtree(actionRule.of, ruleSetProtocolPath);
           if (!isSelfOrAncestor) {
             throw new DwnError(
               DwnErrorCode.ProtocolsConfigureInvalidActionOfNotAnAncestor,

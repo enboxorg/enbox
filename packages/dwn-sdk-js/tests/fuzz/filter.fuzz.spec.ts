@@ -3,11 +3,16 @@ import { describe, expect, it } from 'bun:test';
 import fc from 'fast-check';
 
 import { equalFilter, filter, keyValues, oneOfFilter, rangeFilter } from './arbitraries/filter.arbitrary.js';
-import { FilterSelector, FilterUtility } from '../../src/utils/filter.js';
+import { FilterSelector, FilterUtility, isSubtreeFilter } from '../../src/utils/filter.js';
 
 const numRuns = Number(process.env.FAST_CHECK_NUM_RUNS) || 200;
 
 describe('FilterUtility — fuzz', () => {
+
+  const pathSegment = fc.array(
+    fc.constantFrom(...'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'),
+    { minLength: 1, maxLength: 20 }
+  ).map((characters) => characters.join(''));
 
   describe('matchFilter — empty filter matches everything', () => {
     it('should return true for any keyValues when filter is empty', () => {
@@ -138,18 +143,38 @@ describe('FilterUtility — fuzz', () => {
     });
   });
 
-  describe('isEqualFilter / isRangeFilter / isOneOfFilter — mutual exclusivity', () => {
+  describe('matchesSubtree — segment boundary property', () => {
+    it('should match exact paths and descendants without matching prefix siblings', () => {
+      fc.assert(
+        fc.property(pathSegment, pathSegment, pathSegment, (root, branch, suffix) => {
+          const subtree = `${root}/${branch}`;
+
+          expect(FilterUtility.matchesSubtree(subtree, subtree)).toBe(true);
+          expect(FilterUtility.matchesSubtree(subtree, `${subtree}/${suffix}`)).toBe(true);
+          expect(FilterUtility.matchesSubtree(subtree, `${subtree}/${suffix}/grandchild`)).toBe(true);
+
+          expect(FilterUtility.matchesSubtree(subtree, `${subtree}-${suffix}`)).toBe(false);
+          expect(FilterUtility.matchesSubtree(subtree, `${subtree}.${suffix}`)).toBe(false);
+          expect(FilterUtility.matchesSubtree(subtree, `${subtree}${suffix}`)).toBe(false);
+        }),
+        { numRuns }
+      );
+    });
+  });
+
+  describe('filter value classification — mutual exclusivity', () => {
     it('should classify each filter value into exactly one category', () => {
       fc.assert(
         fc.property(
-          fc.oneof(equalFilter(), rangeFilter(), oneOfFilter()),
+          fc.oneof(equalFilter(), rangeFilter(), oneOfFilter(), pathSegment.map((subtree) => ({ subtree }))),
           (filterValue) => {
             const isEqual = FilterUtility.isEqualFilter(filterValue);
             const isRange = FilterUtility.isRangeFilter(filterValue);
             const isOneOf = FilterUtility.isOneOfFilter(filterValue);
+            const isSubtree = isSubtreeFilter(filterValue);
 
             // Exactly one should be true
-            const trueCount = [isEqual, isRange, isOneOf].filter(Boolean).length;
+            const trueCount = [isEqual, isRange, isOneOf, isSubtree].filter(Boolean).length;
             expect(trueCount).toBe(1);
           }
         ),

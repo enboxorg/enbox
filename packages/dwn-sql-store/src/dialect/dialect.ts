@@ -92,4 +92,5 @@ export interface Dialect extends KyselyDialect {
    * replication positions to JavaScript numbers when reading rows.
    */
   bigIntColumnAsText(columnReference: string): RawBuilder<string | null>;
+
 }

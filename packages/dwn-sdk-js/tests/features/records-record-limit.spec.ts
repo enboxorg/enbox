@@ -617,6 +617,33 @@ export function testRecordsRecordLimit(): void {
           room2Messages[0].message.recordId,
           room2Messages[1].message.recordId,
         ]);
+
+        expect((await queryProtocolRecordIds({
+          author       : alice,
+          protocol,
+          protocolPath : 'room/message',
+          contextId    : room1Messages[0].message.contextId,
+        })).recordIds).toEqual([room1Messages[0].message.recordId]);
+        expect(await countProtocolRecords({
+          author       : alice,
+          protocol,
+          protocolPath : 'room/message',
+          contextId    : room1Messages[0].message.contextId,
+        })).toBe(1);
+
+        expect((await queryProtocolRecordIds({
+          author       : alice,
+          protocol,
+          protocolPath : 'room/message',
+          contextId    : room1Messages[2].message.contextId,
+        })).recordIds).toEqual([]);
+        expect(await countProtocolRecords({
+          author       : alice,
+          protocol,
+          protocolPath : 'room/message',
+          contextId    : room1Messages[2].message.contextId,
+        })).toBe(0);
+
         const broadQuery = await TestDataGenerator.generateRecordsQuery({
           author : alice,
           filter : {
@@ -627,6 +654,74 @@ export function testRecordsRecordLimit(): void {
         const broadReply = await dwn.processMessage(alice.did, broadQuery.message) as RecordsQueryReply;
         expect(broadReply.status.code).toBe(400);
         expect(broadReply.status.detail).toContain(DwnErrorCode.RecordsQueryNestedProtocolPathContextIdInvalid);
+      });
+
+      it('should fail closed when an ancestor scope spans multiple limited parent contexts', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const protocolDefinition: ProtocolDefinition = {
+          protocol  : `http://record-limit-${TestDataGenerator.randomString(12)}.xyz`,
+          published : true,
+          types     : {
+            channel   : {},
+            community : {},
+            message   : {},
+          },
+          structure: {
+            community: {
+              channel: {
+                message: {
+                  $recordLimit: { max: 2, strategy: 'reject' },
+                },
+              },
+            },
+          },
+        };
+        const protocol = protocolDefinition.protocol;
+        await installProtocol({ author: alice, definition: protocolDefinition });
+
+        const community = await writeProtocolRecord({
+          author       : alice,
+          protocol,
+          protocolPath : 'community',
+          dateCreated  : '2025-01-01T00:00:00.000000Z',
+        });
+        const filter = {
+          contextId    : community.message.contextId,
+          protocol,
+          protocolPath : 'community/channel/message',
+        };
+
+        const recordsQuery = await TestDataGenerator.generateRecordsQuery({ author: alice, filter });
+        const queryReply = await dwn.processMessage(alice.did, recordsQuery.message) as RecordsQueryReply;
+        expect(queryReply.status.code).toBe(400);
+        expect(queryReply.status.detail).toContain(DwnErrorCode.RecordsRecordLimitAncestorScopeUnsupported);
+
+        const recordsCount = await TestDataGenerator.generateRecordsCount({ author: alice, filter });
+        const countReply = await dwn.processMessage(alice.did, recordsCount.message) as RecordsCountReply;
+        expect(countReply.status.code).toBe(400);
+        expect(countReply.status.detail).toContain(DwnErrorCode.RecordsRecordLimitAncestorScopeUnsupported);
+
+        const subscribeSpy = sinon.spy(eventLog, 'subscribe');
+        const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({ author: alice, filter });
+        const subscribeReply = await dwn.processMessage(alice.did, recordsSubscribe.message, {
+          subscriptionHandler: (): void => {},
+        }) as RecordsSubscribeReply;
+        expect(subscribeReply.status.code).toBe(400);
+        expect(subscribeReply.status.detail).toContain(DwnErrorCode.RecordsRecordLimitAncestorScopeUnsupported);
+        expect(subscribeReply.subscription).toBeUndefined();
+
+        const cursorSubscribe = await TestDataGenerator.generateRecordsSubscribe({
+          author : alice,
+          filter,
+          cursor : { streamId: 'unused', epoch: 'unused', position: '0' },
+        });
+        const cursorSubscribeReply = await dwn.processMessage(alice.did, cursorSubscribe.message, {
+          subscriptionHandler: (): void => {},
+        }) as RecordsSubscribeReply;
+        expect(cursorSubscribeReply.status.code).toBe(400);
+        expect(cursorSubscribeReply.status.detail).toContain(DwnErrorCode.RecordsRecordLimitAncestorScopeUnsupported);
+        expect(cursorSubscribeReply.subscription).toBeUndefined();
+        expect(subscribeSpy.notCalled).toBe(true);
       });
 
       it('should paginate over the projected occupant set for max:N scopes', async () => {

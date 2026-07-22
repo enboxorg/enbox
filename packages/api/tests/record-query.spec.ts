@@ -128,14 +128,26 @@ describe('RecordQuery', () => {
     });
   });
 
-  it('should fence prefix-sharing direct-parent contexts by exact record ID', () => {
+  it('should compile only the canonical context selector', () => {
     const prefixParent = compileRecordFilter(QueryDefinition, 'root/note/attachment', { contextId: 'root/abc' });
     const prefixSharingSibling = compileRecordFilter(QueryDefinition, 'root/note/attachment', { contextId: 'root/abcd' });
 
     expect(prefixParent.contextId).toBe('root/abc');
-    expect(prefixParent.parentId).toBe('abc');
+    expect(prefixParent.parentId).toBeUndefined();
     expect(prefixSharingSibling.contextId).toBe('root/abcd');
-    expect(prefixSharingSibling.parentId).toBe('abcd');
+    expect(prefixSharingSibling.parentId).toBeUndefined();
+  });
+
+  it('should validate nested context scopes before dispatch', () => {
+    expect(() => compileRecordQuery(QueryDefinition, 'root/note/attachment'))
+      .toThrow('nested protocol path \'root/note/attachment\' requires a contextId');
+    expect(() => compileRecordQuery(QueryDefinition, 'root/note/attachment', {
+      filter: { contextId: 'root/note/attachment/deeper' },
+    })).toThrow('contextId cannot be deeper than protocol path \'root/note/attachment\'');
+
+    expect(compileRecordQuery(QueryDefinition, 'root/note/attachment', {
+      filter: { contextId: 'root' },
+    }).filter.contextId).toBe('root');
   });
 
   it('should make datePublished filters select published records for count parity', () => {
@@ -154,7 +166,11 @@ describe('RecordQuery', () => {
     expect(() => compileRecordFilter(QueryDefinition, 'note', { tags: {} }))
       .toThrow('RecordFilter: tags must contain at least one tag filter');
     expect(() => compileRecordFilter(QueryDefinition, 'note', { contextId: '' }))
-      .toThrow('RecordFilter: contextId must not be empty');
+      .toThrow('RecordFilter: contextId must be at most 600 characters of alphanumeric path segments');
+    expect(() => compileRecordFilter(QueryDefinition, 'note', { contextId: 'root//child' }))
+      .toThrow('RecordFilter: contextId must be at most 600 characters of alphanumeric path segments');
+    expect(() => compileRecordFilter(QueryDefinition, 'note', { contextId: 'root-child' }))
+      .toThrow('RecordFilter: contextId must be at most 600 characters of alphanumeric path segments');
     expect(() => compileRecordQuery(QueryDefinition, 'note', {
       filter   : { published: false },
       dateSort : DateSort.PublishedAscending,

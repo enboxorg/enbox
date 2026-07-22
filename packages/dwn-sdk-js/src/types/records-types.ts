@@ -154,7 +154,8 @@ export type RecordsFilter = {
   published?: boolean;
 
   /**
-   * When given all Records message under the context of the given `contextId` will be returned.
+   * Selects the exact context and its proper `/`-delimited descendants.
+   * Prefix-sharing sibling contexts are excluded.
    */
   contextId?: string;
   schema?: string;

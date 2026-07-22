@@ -37,7 +37,15 @@ export type StartsWithFilter = {
   startsWith: string;
 };
 
-export type FilterValue = EqualFilter | OneOfFilter | RangeFilter;
+/**
+ * Selects one hierarchical path and every proper `/`-delimited descendant.
+ * Supported only for the `contextId` and `protocolPath` indexes.
+ */
+export type SubtreeFilter = {
+  subtree: string;
+};
+
+export type FilterValue = EqualFilter | OneOfFilter | RangeFilter | SubtreeFilter;
 
 export type Filter = {
   [property: string]: FilterValue;

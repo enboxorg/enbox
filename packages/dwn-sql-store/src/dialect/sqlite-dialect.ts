@@ -99,4 +99,5 @@ export class SqliteDialect extends KyselySqliteDialect implements Dialect {
   bigIntColumnAsText(columnReference: string): RawBuilder<string | null> {
     return sql<string | null>`CAST(${sql.ref(columnReference)} AS TEXT)`;
   }
+
 }
