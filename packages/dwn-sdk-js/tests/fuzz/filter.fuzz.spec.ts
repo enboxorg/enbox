@@ -3,7 +3,7 @@ import { describe, expect, it } from 'bun:test';
 import fc from 'fast-check';
 
 import { equalFilter, filter, keyValues, oneOfFilter, rangeFilter } from './arbitraries/filter.arbitrary.js';
-import { FilterSelector, FilterUtility } from '../../src/utils/filter.js';
+import { FilterSelector, FilterUtility, isSubtreeFilter } from '../../src/utils/filter.js';
 
 const numRuns = Number(process.env.FAST_CHECK_NUM_RUNS) || 200;
 
@@ -171,7 +171,7 @@ describe('FilterUtility — fuzz', () => {
             const isEqual = FilterUtility.isEqualFilter(filterValue);
             const isRange = FilterUtility.isRangeFilter(filterValue);
             const isOneOf = FilterUtility.isOneOfFilter(filterValue);
-            const isSubtree = FilterUtility.isSubtreeFilter(filterValue);
+            const isSubtree = isSubtreeFilter(filterValue);
 
             // Exactly one should be true
             const trueCount = [isEqual, isRange, isOneOf, isSubtree].filter(Boolean).length;

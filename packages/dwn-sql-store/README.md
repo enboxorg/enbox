@@ -26,7 +26,7 @@ SQL backed implementations of DWN `MessageStore` and `DataStore`.
 
 # Supported DBs
 * SQLite ✔️
-* MySQL ✔️
+* MySQL 8.0+ ✔️
 * PostgreSQL ✔️
 
 > NOTE:
@@ -65,6 +65,8 @@ const dwn = await Dwn.create({ messageStore, dataStore, resumableTaskStore });
 ```
 
 ## MySQL
+
+MySQL 8.0 or newer is required.
 
 ```typescript
 import { createPool } from 'mysql2';

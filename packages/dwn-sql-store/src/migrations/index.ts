@@ -4,6 +4,7 @@ import { migration001InitialSchema } from './001-initial-schema.js';
 import { migration002ContentAddressedDatastore } from './002-content-addressed-datastore.js';
 import { migration003AddSquashColumn } from './003-add-squash-column.js';
 import { migration004ReplicationLog } from './004-replication-log.js';
+import { migration005ByteStableHierarchicalPaths } from './005-byte-stable-hierarchical-paths.js';
 
 /**
  * All DWN store migrations in sequential order.
@@ -22,4 +23,5 @@ export const allDwnMigrations: ReadonlyArray<readonly [name: string, factory: Dw
   ['002-content-addressed-datastore', migration002ContentAddressedDatastore],
   ['003-add-squash-column', migration003AddSquashColumn],
   ['004-replication-log', migration004ReplicationLog],
+  ['005-byte-stable-hierarchical-paths', migration005ByteStableHierarchicalPaths],
 ];

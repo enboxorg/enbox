@@ -30,6 +30,7 @@ import { filterSelectQuery } from './utils/filter.js';
 import { sha256 } from 'multiformats/hashes/sha2';
 import { TagTables } from './utils/tags.js';
 import {
+  assertValidSubtreeFilters,
   DwnError,
   DwnErrorCode,
   DwnInterfaceName,
@@ -385,7 +386,7 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
       ])
       .where('tenant', '=', tenant);
 
-    query = filterSelectQuery(filters, query, this.#dialect);
+    query = filterSelectQuery(filters, query);
 
     if (pagination?.cursor !== undefined) {
       const cursorValue = pagination.cursor.value as string;
@@ -428,7 +429,7 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
       .select(sql<number>`count(distinct ${sql.ref('messageStoreMessages.messageCid')})`.as('count'))
       .where('tenant', '=', tenant);
 
-    query = filterSelectQuery(filters, query, this.#dialect);
+    query = filterSelectQuery(filters, query);
 
     const result = await executeUnlessAborted(query.executeTakeFirstOrThrow(), options?.signal);
 
@@ -567,6 +568,9 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
   public async logRead(tenant: string, options: EventLogReadOptions = {}): Promise<EventLogReadResult> {
     const db = this.requireDb('logRead');
     const { cursor, limit, filters } = options;
+    if (filters !== undefined) {
+      assertValidSubtreeFilters(filters);
+    }
 
     const head = await this.getHead(db, tenant);
     if (cursor !== undefined) {
@@ -745,7 +749,7 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
       .orderBy('seq', 'asc');
 
     if (filters !== undefined && filters.length > 0) {
-      query = filterSelectQuery(filters, query, this.#dialect);
+      query = filterSelectQuery(filters, query);
     }
 
     if (maxResults < Number.MAX_SAFE_INTEGER) {

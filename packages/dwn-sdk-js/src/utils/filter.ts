@@ -1,5 +1,31 @@
 import type { EqualFilter, Filter, FilterValue, KeyValues, OneOfFilter, RangeCriterion, RangeFilter, RangeValue, SubtreeFilter } from '../types/query-types.js';
 
+const SUBTREE_FILTER_PROPERTIES = new Set(['contextId', 'protocolPath']);
+
+/** Returns whether the value is a well-formed hierarchical subtree filter. */
+export function isSubtreeFilter(filter: FilterValue): filter is SubtreeFilter {
+  return typeof filter === 'object' &&
+    filter !== null &&
+    !Array.isArray(filter) &&
+    Object.keys(filter).length === 1 &&
+    typeof (filter as Partial<SubtreeFilter>).subtree === 'string';
+}
+
+/**
+ * Rejects subtree filters for indexes without hierarchical path semantics.
+ *
+ * @throws {TypeError} If a subtree filter targets an index other than `contextId` or `protocolPath`.
+ */
+export function assertValidSubtreeFilters(filters: Filter[]): void {
+  for (const filter of filters) {
+    for (const property in filter) {
+      if (isSubtreeFilter(filter[property]) && !SUBTREE_FILTER_PROPERTIES.has(property)) {
+        throw new TypeError(`SubtreeFilter is not supported for index '${property}'.`);
+      }
+    }
+  }
+}
+
 /**
  * A Utility class to help match indexes against filters.
  */
@@ -84,7 +110,7 @@ export class FilterUtility {
         if (this.matchOneOf(filterValue, indexValue)) {
           return true;
         }
-      } else if (this.isSubtreeFilter(filterValue) && this.matchesSubtree(filterValue.subtree, indexValue)) {
+      } else if (isSubtreeFilter(filterValue) && this.matchesSubtree(filterValue.subtree, indexValue)) {
         return true;
       } else if (this.isRangeFilter(filterValue) && this.matchRange(filterValue, indexValue as RangeValue)) {
         // `filterValue` is a `RangeFilter`
@@ -148,14 +174,6 @@ export class FilterUtility {
       return 'gt' in filter || 'lt' in filter || 'lte' in filter || 'gte' in filter;
     };
     return false;
-  }
-
-  static isSubtreeFilter(filter: FilterValue): filter is SubtreeFilter {
-    return typeof filter === 'object' &&
-      filter !== null &&
-      !Array.isArray(filter) &&
-      Object.keys(filter).length === 1 &&
-      typeof (filter as Partial<SubtreeFilter>).subtree === 'string';
   }
 
   static isOneOfFilter(filter: FilterValue): filter is OneOfFilter {

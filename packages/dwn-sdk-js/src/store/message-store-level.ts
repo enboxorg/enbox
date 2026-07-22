@@ -23,12 +23,12 @@ import { runWithCrossContextLock } from '@enbox/common';
 import { Cid } from '../utils/cid.js';
 import { CID } from 'multiformats/cid';
 import { executeUnlessAborted } from '../utils/abort.js';
-import { FilterUtility } from '../utils/filter.js';
 import { IndexLevel } from './index-level.js';
 import { Message } from '../core/message.js';
 import { Replication } from '../utils/replication.js';
 import { sha256 } from 'multiformats/hashes/sha2';
 import { SortDirection } from '../types/query-types.js';
+import { assertValidSubtreeFilters, FilterUtility } from '../utils/filter.js';
 import { createLevelDatabase, LevelWrapper } from './level-wrapper.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
@@ -720,6 +720,9 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
   async logRead(tenant: string, options: EventLogReadOptions = {}): Promise<EventLogReadResult> {
     const partitions = await this.partitions();
     const { cursor, limit, filters } = options;
+    if (filters !== undefined) {
+      assertValidSubtreeFilters(filters);
+    }
 
     // Head-captured-first: the per-tenant write lock serializes commits in position order, so an
     // observed head H is a visibility barrier — every position <= H is already committed when the

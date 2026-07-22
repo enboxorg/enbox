@@ -9,7 +9,6 @@ import type {
   RawBuilder,
   SelectExpression,
   Selection,
-  SqlBool,
   Transaction,
 } from 'kysely';
 
@@ -94,6 +93,4 @@ export interface Dialect extends KyselyDialect {
    */
   bigIntColumnAsText(columnReference: string): RawBuilder<string | null>;
 
-  /** Builds a byte-stable exact-or-`/`-descendant predicate for a hierarchical string column. */
-  subtreePredicate(columnReference: string, subtree: string): RawBuilder<SqlBool>;
 }

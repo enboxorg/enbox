@@ -5,8 +5,8 @@ import type { Filter, PaginationCursor } from '../types/query-types.js';
 import type { MessageSort, Pagination } from '../types/message-types.js';
 import type { RecordsFilter, RecordsWriteMessage } from '../types/records-types.js';
 
-import { FilterUtility } from './filter.js';
 import { getRuleSetAtPath } from './protocols.js';
+import { isSubtreeFilter } from './filter.js';
 import { lexicographicalCompare } from './string.js';
 import { ProtocolRecordLimitStrategy } from '../types/protocols-types.js';
 import { Records } from './records.js';
@@ -380,7 +380,7 @@ function getRecordLimitScopeFromFilter(filter: Filter): RecordLimitScopeResoluti
   }
 
   const { contextId } = filter;
-  if (contextId === undefined || !FilterUtility.isSubtreeFilter(contextId)) {
+  if (contextId === undefined || !isSubtreeFilter(contextId)) {
     return undefined;
   }
 

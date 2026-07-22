@@ -18,6 +18,11 @@
     "date-time": {
       "type": "string",
       "pattern": "^\\d{4}-[0-1]\\d-[0-3]\\dT(?:[0-2]\\d:[0-5]\\d:[0-5]\\d|23:59:60)\\.\\d{6}Z$"
+    },
+    "contextId": {
+      "type": "string",
+      "maxLength": 600,
+      "pattern": "^[a-zA-Z0-9]+(\\/[a-zA-Z0-9]+)*$"
     }
   },
   "definitions": {

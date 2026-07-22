@@ -4,6 +4,7 @@ import type { LevelWrapperBatchOperation, LevelWrapperIteratorOptions, } from '.
 import { isEmptyObject } from '@enbox/common';
 import { lexicographicalCompare } from '../utils/string.js';
 import { SortDirection } from '../types/query-types.js';
+import { assertValidSubtreeFilters, FilterSelector, FilterUtility, isSubtreeFilter } from '../utils/filter.js';
 import {
   countWithCompoundIndex,
   createCompoundIndexDeleteOperation,
@@ -13,7 +14,6 @@ import {
 } from './index-level-compound.js';
 import { createLevelDatabase, LevelWrapper } from './level-wrapper.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
-import { FilterSelector, FilterUtility } from '../utils/filter.js';
 
 export type IndexLevelConfig = {
   location: string,
@@ -318,6 +318,7 @@ export class IndexLevel {
    * @returns {IndexedItem[]} an array of `IndexedItem` that match the given filters.
    */
   async query(tenant: string, filters: Filter[], queryOptions: QueryOptions, options?: IndexLevelOptions): Promise<IndexedItem[]> {
+    assertValidSubtreeFilters(filters);
 
     // Strategy 1: try compound index for single-filter queries
     if (filters.length === 1 && !isEmptyObject(filters[0])) {
@@ -348,6 +349,7 @@ export class IndexLevel {
    */
   async count(tenant: string, filters: Filter[], queryOptions: Omit<QueryOptions, 'limit' | 'cursor'>,
     options?: IndexLevelOptions): Promise<number> {
+    assertValidSubtreeFilters(filters);
 
     // try compound index for single-filter queries
     if (filters.length === 1 && !isEmptyObject(filters[0])) {
@@ -589,14 +591,14 @@ export class IndexLevel {
           const exactMatches = await this.filterExactMatches(tenant, propertyName, propertyValue, levelOptions);
           processResults(exactMatches);
         }
-      } else if (FilterUtility.isSubtreeFilter(propertyFilter)) {
+      } else if (isSubtreeFilter(propertyFilter)) {
         const exactMatches = await this.filterExactMatches(tenant, propertyName, propertyFilter.subtree, levelOptions);
         processResults(exactMatches);
 
-        const descendantMatches = await this.filterRangeMatches(
+        const descendantMatches = await this.filterSubtreeDescendantMatches(
           tenant,
           propertyName,
-          FilterUtility.constructPrefixFilterAsRangeFilter(`${propertyFilter.subtree}/`),
+          propertyFilter.subtree,
           levelOptions,
         );
         processResults(descendantMatches);
@@ -639,6 +641,34 @@ export class IndexLevel {
       if (!key.startsWith(matchPrefix)) {
         break;
       }
+      matches.push(JSON.parse(value) as IndexedItem);
+    }
+    return matches;
+  }
+
+  /**
+   * Returns every slash-delimited descendant of one hierarchical path.
+   *
+   * The lower bound removes JSON's closing quote so it is the encoded key
+   * prefix itself. ASCII `/` and `0` are adjacent in the store's lexicographic
+   * ordering, making `path0` the first value outside that prefix without
+   * relying on a finite Unicode sentinel.
+   */
+  private async filterSubtreeDescendantMatches(
+    tenant: string,
+    propertyName: string,
+    subtree: string,
+    options?: IndexLevelOptions,
+  ): Promise<IndexedItem[]> {
+    const encodedPrefix = IndexLevel.encodeValue(`${subtree}/`).slice(0, -1);
+    const iteratorOptions: LevelWrapperIteratorOptions<string> = {
+      gte : encodedPrefix,
+      lt  : IndexLevel.encodeValue(`${subtree}0`),
+    };
+
+    const filterPartition = await this.getIndexPartition(tenant, propertyName);
+    const matches: IndexedItem[] = [];
+    for await (const [ _key, value ] of filterPartition.iterator(iteratorOptions, options)) {
       matches.push(JSON.parse(value) as IndexedItem);
     }
     return matches;

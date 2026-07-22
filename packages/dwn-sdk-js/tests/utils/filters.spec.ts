@@ -2,7 +2,7 @@ import type { Filter } from '../../src/types/query-types.js';
 
 import { TestDataGenerator } from './test-data-generator.js';
 import { Time } from '../../src/utils/time.js';
-import { FilterSelector, FilterUtility } from '../../src/utils/filter.js';
+import { FilterSelector, FilterUtility, isSubtreeFilter } from '../../src/utils/filter.js';
 
 import { describe, expect, it } from 'bun:test';
 
@@ -50,10 +50,10 @@ describe('filters util', () => {
 
       it('isSubtreeFilter', async () => {
         const { equal, oneOf, range, subtree } = filter;
-        expect(FilterUtility.isSubtreeFilter(subtree)).toBe(true);
-        expect(FilterUtility.isSubtreeFilter(equal)).toBe(false);
-        expect(FilterUtility.isSubtreeFilter(oneOf)).toBe(false);
-        expect(FilterUtility.isSubtreeFilter(range)).toBe(false);
+        expect(isSubtreeFilter(subtree)).toBe(true);
+        expect(isSubtreeFilter(equal)).toBe(false);
+        expect(isSubtreeFilter(oneOf)).toBe(false);
+        expect(isSubtreeFilter(range)).toBe(false);
       });
     });
 

@@ -1,8 +1,8 @@
-import type { Dialect } from '../dialect/dialect.js';
 import type { DwnDatabaseType } from '../types.js';
 import type { DynamicReferenceBuilder, ExpressionBuilder, OperandExpression, RawBuilder, SelectQueryBuilder, SqlBool } from 'kysely';
 import type { EqualFilter, Filter, RangeFilter, SubtreeFilter } from '@enbox/dwn-sdk-js';
 
+import { assertValidSubtreeFilters, isSubtreeFilter } from '@enbox/dwn-sdk-js';
 import { DynamicModule, sql } from 'kysely';
 import { sanitizedValue, sanitizeFiltersAndSeparateTags } from './sanitize.js';
 
@@ -19,8 +19,8 @@ const SQL_LIKE_ESCAPE = String.fromCodePoint(92);
 export function filterSelectQuery<DB = DwnDatabaseType, TB extends keyof DB = keyof DB, O = unknown>(
   filters: Filter[],
   query: SelectQueryBuilder<DB, TB, O>,
-  dialect: Dialect,
 ): SelectQueryBuilder<DB, TB, O> {
+  assertValidSubtreeFilters(filters);
   const sanitizedFilters = sanitizeFiltersAndSeparateTags(filters);
 
   return query.where((eb) =>
@@ -29,8 +29,8 @@ export function filterSelectQuery<DB = DwnDatabaseType, TB extends keyof DB = ke
       // evaluate each filter + tags tuple as an AND expression.
       const andOperands: OperandExpression<SqlBool>[] = [];
 
-      processFilter(eb, andOperands, filter, dialect);
-      processTags(andOperands, tags, dialect);
+      processFilter(eb, andOperands, filter);
+      processTags(andOperands, tags);
 
       return eb.and(andOperands);
     }))
@@ -49,7 +49,6 @@ function processFilter<DB = DwnDatabaseType, TB extends keyof DB = keyof DB>(
   eb: ExpressionBuilder<DB, TB>,
   andOperands: OperandExpression<SqlBool>[],
   filter: Filter,
-  dialect: Dialect,
 ): void {
   for (const property in filter) {
     const value = filter[property];
@@ -57,7 +56,7 @@ function processFilter<DB = DwnDatabaseType, TB extends keyof DB = keyof DB>(
     if (Array.isArray(value)) { // OneOfFilter
       andOperands.push(eb(column, 'in', value));
     } else if (isSubtreeFilter(value)) {
-      processSubtreeFilterProperty(andOperands, property, value, dialect);
+      processSubtreeFilterProperty(eb, andOperands, property, value);
     } else if (typeof value === 'object') { // RangeFilter
       processRangeFilterProperty(eb, andOperands, property, column, value);
     } else { // EqualFilter
@@ -69,13 +68,27 @@ function processFilter<DB = DwnDatabaseType, TB extends keyof DB = keyof DB>(
 /**
  * Adds a segment-aware subtree predicate for one indexed string property.
  */
-function processSubtreeFilterProperty(
+function processSubtreeFilterProperty<DB = DwnDatabaseType, TB extends keyof DB = keyof DB>(
+  eb: ExpressionBuilder<DB, TB>,
   andOperands: OperandExpression<SqlBool>[],
   property: string,
   value: SubtreeFilter,
-  dialect: Dialect,
 ): void {
-  andOperands.push(dialect.subtreePredicate(property, value.subtree));
+  const column = new DynamicModule().ref(property);
+  const descendantPrefix = `${value.subtree}/`;
+  // `/` is immediately followed by `0` in the byte ordering installed by
+  // migration 005. The enclosing range is indexable; the final OR excludes
+  // prefix siblings that sort between the exact value and its descendants.
+  const subtreeUpperBound = `${value.subtree}0`;
+
+  andOperands.push(eb.and([
+    eb(column, '>=', value.subtree),
+    eb(column, '<', subtreeUpperBound),
+    eb.or([
+      eb(column, '=', value.subtree),
+      eb(column, '>=', descendantPrefix),
+    ]),
+  ]));
 }
 
 /**
@@ -138,13 +151,6 @@ function getPrefixRangeFilterPrefix(value: object): string | undefined {
   return range.lt === range.gte + '\uffff' ? range.gte : undefined;
 }
 
-function isSubtreeFilter(value: unknown): value is SubtreeFilter {
-  return typeof value === 'object' &&
-    value !== null &&
-    Object.keys(value).length === 1 &&
-    typeof (value as Partial<SubtreeFilter>).subtree === 'string';
-}
-
 /**
  * Escapes SQL LIKE meta-characters (`%`, `_`) in the given string so that
  * they are matched literally.
@@ -166,7 +172,6 @@ function escapeLikePattern(input: string): string {
 function processTags(
   andOperands: OperandExpression<SqlBool>[],
   tags: Filter,
-  dialect: Dialect,
 ): void {
 
   for (const property in tags) {
@@ -175,21 +180,19 @@ function processTags(
       from ${sql.table('messageStoreRecordsTags')}
       where ${sql.ref('messageStoreRecordsTags.messageInsertId')} = ${sql.ref('messageStoreMessages.id')}
         and ${sql.ref('messageStoreRecordsTags.tag')} = ${property}
-        and ${tagValuePredicate(tags[property], dialect)}
+        and ${tagValuePredicate(tags[property])}
     )`);
   }
 }
 
-function tagValuePredicate(value: Filter[string], dialect: Dialect): RawBuilder<SqlBool> {
+function tagValuePredicate(value: Filter[string]): RawBuilder<SqlBool> {
   if (Array.isArray(value)) {
     return tagOneOfPredicate(value);
   }
 
-  if (typeof value === 'object') {
-    return tagObjectPredicate(value, dialect);
-  }
-
-  return tagEqualPredicate(value);
+  return typeof value === 'object'
+    ? tagObjectPredicate(value as RangeFilter)
+    : tagEqualPredicate(value);
 }
 
 function tagOneOfPredicate(values: EqualFilter[]): RawBuilder<SqlBool> {
@@ -208,11 +211,7 @@ function tagOneOfPredicate(values: EqualFilter[]): RawBuilder<SqlBool> {
   return joinTagPredicates(operands, 'or', false);
 }
 
-function tagObjectPredicate(value: RangeFilter | SubtreeFilter, dialect: Dialect): RawBuilder<SqlBool> {
-  if (isSubtreeFilter(value)) {
-    return dialect.subtreePredicate('messageStoreRecordsTags.valueString', value.subtree);
-  }
-
+function tagObjectPredicate(value: RangeFilter): RawBuilder<SqlBool> {
   const prefixRangeFilterPrefix = getPrefixRangeFilterPrefix(value);
   if (prefixRangeFilterPrefix !== undefined) {
     const prefix = escapeLikePattern(prefixRangeFilterPrefix);

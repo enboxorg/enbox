@@ -49,7 +49,9 @@ const dateSortValues = new Set<unknown>([
   DateSort.UpdatedAscending,
   DateSort.UpdatedDescending,
 ]);
-const contextIdPattern = /^[a-zA-Z0-9]+(?:\/[a-zA-Z0-9]+)*$/;
+// Keep these constraints aligned with defs.json#/$defs/contextId in @enbox/dwn-sdk-js.
+const CONTEXT_ID_MAX_LENGTH = 600;
+const CONTEXT_ID_PATTERN = /^[a-zA-Z0-9]+(?:\/[a-zA-Z0-9]+)*$/;
 
 /**
  * Type-safe scalar tag filters explicitly declared by the protocol at one
@@ -193,7 +195,8 @@ function assertValidFilter(filter: RecordFilterInput | undefined, dateSort: Date
   if (filter?.tags !== undefined && Object.keys(filter.tags).length === 0) {
     throw new TypeError('RecordFilter: tags must contain at least one tag filter.');
   }
-  if (filter?.contextId !== undefined && (filter.contextId.length > 600 || !contextIdPattern.test(filter.contextId))) {
+  if (filter?.contextId !== undefined
+    && (filter.contextId.length > CONTEXT_ID_MAX_LENGTH || !CONTEXT_ID_PATTERN.test(filter.contextId))) {
     throw new TypeError('RecordFilter: contextId must be at most 600 characters of alphanumeric path segments.');
   }
   if (filter?.published === false && selectsPublishedRecords(filter, dateSort)) {

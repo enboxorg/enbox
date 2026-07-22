@@ -53,6 +53,7 @@ export { DwnError, DwnErrorCode } from './core/dwn-error.js';
 export type { DwnErrorInfo } from './core/dwn-error.js';
 export { DwnInterfaceName, DwnMethodName } from './enums/dwn-interface-method.js';
 export { Encoder } from './utils/encoder.js';
+export { assertValidSubtreeFilters, isSubtreeFilter } from './utils/filter.js';
 export { MessagesSubscribe } from './interfaces/messages-subscribe.js';
 export type { MessagesSubscribeOptions } from './interfaces/messages-subscribe.js';
 export { Encryption, ContentEncryptionAlgorithm, KeyAgreementAlgorithm, ROLE_AUDIENCE_DERIVATION_SCHEME, SEAL_DERIVATION_SCHEME } from './utils/encryption.js';

@@ -11,9 +11,7 @@
       "type": "string"
     },
     "contextId": {
-      "type": "string",
-      "maxLength": 600,
-      "pattern": "^[a-zA-Z0-9]+(\/[a-zA-Z0-9]+)*$"
+      "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/contextId"
     },
     "attestation": {
       "$ref": "https://identity.foundation/dwn/json-schemas/general-jws.json"

@@ -129,7 +129,7 @@ describe('filterSelectQuery', () => {
         .distinct()
         .where('tenant', '=', 't1');
 
-      query = filterSelectQuery(filters, query, dialect);
+      query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
       expect(results).toHaveLength(1);
@@ -154,7 +154,7 @@ describe('filterSelectQuery', () => {
         .distinct()
         .where('tenant', '=', 't1');
 
-      query = filterSelectQuery(filters, query, dialect);
+      query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
       expect(results).toHaveLength(2);
@@ -180,7 +180,7 @@ describe('filterSelectQuery', () => {
         .distinct()
         .where('tenant', '=', 't1');
 
-      query = filterSelectQuery(filters, query, dialect);
+      query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
       expect(results).toHaveLength(1);
@@ -200,7 +200,7 @@ describe('filterSelectQuery', () => {
         .distinct()
         .where('tenant', '=', 't1');
 
-      query = filterSelectQuery(filters, query, dialect);
+      query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
       expect(results).toHaveLength(1);
@@ -220,7 +220,7 @@ describe('filterSelectQuery', () => {
         .distinct()
         .where('tenant', '=', 't1');
 
-      query = filterSelectQuery(filters, query, dialect);
+      query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
       expect(results).toHaveLength(1);
@@ -241,7 +241,7 @@ describe('filterSelectQuery', () => {
         .distinct()
         .where('tenant', '=', 't1');
 
-      query = filterSelectQuery(filters, query, dialect);
+      query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
       expect(results).toHaveLength(2);
@@ -253,6 +253,23 @@ describe('filterSelectQuery', () => {
   // ─── SubtreeFilter ────────────────────────────────────────────────────
 
   describe('SubtreeFilter', () => {
+    it('should compile exact and descendant ranges without wrapping the indexed column', () => {
+      let query = db
+        .selectFrom('messageStoreMessages')
+        .select('messageCid')
+        .where('tenant', '=', 't1');
+
+      query = filterSelectQuery([{ contextId: { subtree: 'root' } }], query);
+      const compiled = query.compile();
+
+      expect(compiled.sql).toContain('"contextId" = ?');
+      expect(compiled.sql).toContain('"contextId" >= ?');
+      expect(compiled.sql).toContain('"contextId" < ?');
+      expect(compiled.sql.toLowerCase()).not.toContain('cast(');
+      expect(compiled.sql.toLowerCase()).not.toContain('instr(');
+      expect(compiled.parameters).toEqual(['t1', 'root', 'root0', 'root', 'root/']);
+    });
+
     it('should match the exact path and slash-delimited descendants without matching prefix siblings', async () => {
       const rootContextId = 'bafkreiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
       const childContextId1 = rootContextId + '/bafkreibbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
@@ -281,7 +298,7 @@ describe('filterSelectQuery', () => {
         .distinct()
         .where('tenant', '=', 't1');
 
-      query = filterSelectQuery(filters, query, dialect);
+      query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
       const cids = results.map((r) => r.messageCid).sort();
@@ -306,7 +323,7 @@ describe('filterSelectQuery', () => {
         .distinct()
         .where('tenant', '=', 't1');
 
-      query = filterSelectQuery(filters, query, dialect);
+      query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
       const cids = results.map((r) => r.messageCid).sort();
@@ -331,7 +348,7 @@ describe('filterSelectQuery', () => {
         .distinct()
         .where('tenant', '=', 't1');
 
-      query = filterSelectQuery(filters, query, dialect);
+      query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
       expect(results).toHaveLength(2);
@@ -361,7 +378,7 @@ describe('filterSelectQuery', () => {
         .distinct()
         .where('tenant', '=', 't1');
 
-      query = filterSelectQuery(filters, query, dialect);
+      query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
       expect(results).toHaveLength(2);
@@ -389,7 +406,7 @@ describe('filterSelectQuery', () => {
         .distinct()
         .where('tenant', '=', 't1');
 
-      query = filterSelectQuery(filters, query, dialect);
+      query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
       expect(results).toHaveLength(1);
@@ -412,7 +429,7 @@ describe('filterSelectQuery', () => {
         .distinct()
         .where('tenant', '=', 't1');
 
-      query = filterSelectQuery(filters, query, dialect);
+      query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
       expect(results).toHaveLength(1);
@@ -456,7 +473,7 @@ describe('filterSelectQuery', () => {
         .distinct()
         .where('tenant', '=', 't1');
 
-      query = filterSelectQuery(filters, query, dialect);
+      query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
       expect(results).toEqual([{ messageCid: 'cid-1' }]);
@@ -480,7 +497,7 @@ describe('filterSelectQuery', () => {
         .distinct()
         .where('tenant', '=', 't1');
 
-      query = filterSelectQuery(filters, query, dialect);
+      query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
       expect(results).toHaveLength(2);
@@ -506,7 +523,7 @@ describe('filterSelectQuery', () => {
         .distinct()
         .where('tenant', '=', 't1');
 
-      query = filterSelectQuery(filters, query, dialect);
+      query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
       expect(results).toHaveLength(1);
@@ -531,37 +548,11 @@ describe('filterSelectQuery', () => {
         .distinct()
         .where('tenant', '=', 't1');
 
-      query = filterSelectQuery(filters, query, dialect);
+      query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
       const cids = results.map((r) => r.messageCid).sort();
       expect(cids).toEqual(['cid-1', 'cid-2']);
-    });
-
-    it('should filter tag subtrees on slash-delimited boundaries', async () => {
-      const id1 = await insertMessage({ tenant: 't1', messageCid: 'cid-1' });
-      const id2 = await insertMessage({ tenant: 't1', messageCid: 'cid-2' });
-      const id3 = await insertMessage({ tenant: 't1', messageCid: 'cid-3' });
-      const id4 = await insertMessage({ tenant: 't1', messageCid: 'cid-4' });
-
-      await insertTag(id1, 'scope', 'root%_branch');
-      await insertTag(id2, 'scope', 'root%_branch/child');
-      await insertTag(id3, 'scope', 'rootAAbranch/child');
-      await insertTag(id4, 'scope', 'Root%_branch/child');
-
-      const filters: Filter[] = [{ 'tag.scope': { subtree: 'root%_branch' } }];
-
-      let query = db
-        .selectFrom('messageStoreMessages')
-        .leftJoin('messageStoreRecordsTags', 'messageStoreRecordsTags.messageInsertId', 'messageStoreMessages.id')
-        .select('messageCid')
-        .distinct()
-        .where('tenant', '=', 't1');
-
-      query = filterSelectQuery(filters, query, dialect);
-      const results = await query.execute();
-
-      expect(results.map((result) => result.messageCid).sort()).toEqual(['cid-1', 'cid-2']);
     });
 
     it('should filter tags with OneOfFilter containing numbers', async () => {
@@ -582,7 +573,7 @@ describe('filterSelectQuery', () => {
         .distinct()
         .where('tenant', '=', 't1');
 
-      query = filterSelectQuery(filters, query, dialect);
+      query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
       expect(results).toHaveLength(2);
@@ -608,7 +599,7 @@ describe('filterSelectQuery', () => {
         .distinct()
         .where('tenant', '=', 't1');
 
-      query = filterSelectQuery(filters, query, dialect);
+      query = filterSelectQuery(filters, query);
       const results = await query.execute();
 
       expect(results).toHaveLength(2);
