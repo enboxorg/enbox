@@ -29,10 +29,10 @@ import { runWithCrossContextLock } from '@enbox/common';
 
 import { Cid } from '../utils/cid.js';
 import { CID } from 'multiformats/cid';
-import { DwnConstant } from '../core/dwn-constant.js';
 import { executeUnlessAborted } from '../utils/abort.js';
 import { IndexLevel } from './index-level.js';
 import { Message } from '../core/message.js';
+import { parseMessageStoreRecordLimitScope } from './record-limit-admission.js';
 import { Replication } from '../utils/replication.js';
 import { sha256 } from 'multiformats/hashes/sha2';
 import { SortDirection } from '../types/query-types.js';
@@ -893,21 +893,10 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     putIndexes: KeyValues,
     options?: MessageStoreOptions,
   ): Promise<boolean> {
-    if (!Number.isSafeInteger(condition.max) || condition.max < 1 || condition.max > DwnConstant.maxRecordLimit) {
-      throw new RangeError(`MessageStoreLevel: record limit max must be between 1 and ${DwnConstant.maxRecordLimit}.`);
-    }
-    if (putIndexes.interface !== DwnInterfaceName.Records ||
-      putIndexes.method !== DwnMethodName.Write ||
-      putIndexes.isLatestBaseState !== true) {
-      throw new Error('MessageStoreLevel: record limit admission requires a current RecordsWrite.');
-    }
-    const { protocol, protocolPath, parentId, recordId } = putIndexes;
-    if (typeof protocol !== 'string' ||
-      typeof protocolPath !== 'string' ||
-      (parentId !== undefined && typeof parentId !== 'string') ||
-      typeof recordId !== 'string') {
-      throw new Error('MessageStoreLevel: record limit admission requires indexed scope and member fields.');
-    }
+    const { max, protocol, protocolPath, parentId, recordId } = parseMessageStoreRecordLimitScope(
+      condition,
+      putIndexes,
+    );
 
     const filter: Filter = {
       interface         : DwnInterfaceName.Records,
@@ -943,11 +932,11 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
       parentId ?? protocolPath,
       {
         ...exactMatchOptions,
-        limit      : condition.max,
+        limit      : max,
         distinctBy : 'recordId',
       },
     );
-    return matches.length >= condition.max;
+    return matches.length >= max;
   }
 
   /**

@@ -33,13 +33,13 @@ import { sha256 } from 'multiformats/hashes/sha2';
 import { TagTables } from './utils/tags.js';
 import {
   assertValidSubtreeFilters,
-  DwnConstant,
   DwnError,
   DwnErrorCode,
   DwnInterfaceName,
   DwnMethodName,
   executeUnlessAborted,
   Message,
+  parseMessageStoreRecordLimitScope,
   Replication,
   SortDirection,
 } from '@enbox/dwn-sdk-js';
@@ -334,21 +334,10 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
     condition: MessageStoreRecordLimitCondition,
     putIndexes: KeyValues,
   ): Promise<boolean> {
-    if (!Number.isSafeInteger(condition.max) || condition.max < 1 || condition.max > DwnConstant.maxRecordLimit) {
-      throw new RangeError(`MessageStoreSql: record limit max must be between 1 and ${DwnConstant.maxRecordLimit}.`);
-    }
-    if (putIndexes.interface !== DwnInterfaceName.Records ||
-      putIndexes.method !== DwnMethodName.Write ||
-      putIndexes.isLatestBaseState !== true) {
-      throw new Error('MessageStoreSql: record limit admission requires a current RecordsWrite.');
-    }
-    const { protocol, protocolPath, parentId, recordId } = putIndexes;
-    if (typeof protocol !== 'string' ||
-      typeof protocolPath !== 'string' ||
-      (parentId !== undefined && typeof parentId !== 'string') ||
-      typeof recordId !== 'string') {
-      throw new Error('MessageStoreSql: record limit admission requires indexed scope and member fields.');
-    }
+    const { max, protocol, protocolPath, parentId, recordId } = parseMessageStoreRecordLimitScope(
+      condition,
+      putIndexes,
+    );
 
     let existingMemberQuery = tx
       .selectFrom('messageStoreMessages')
@@ -381,13 +370,13 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
       .where('protocol', '=', protocol)
       .where('protocolPath', '=', protocolPath)
       .where('recordId', 'is not', null)
-      .limit(condition.max);
+      .limit(max);
 
     query = parentId === undefined
       ? query.where('parentId', 'is', null)
       : query.where('parentId', '=', parentId);
 
-    return (await query.execute()).length >= condition.max;
+    return (await query.execute()).length >= max;
   }
 
   /**
