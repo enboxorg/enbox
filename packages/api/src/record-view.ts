@@ -109,10 +109,7 @@ class ObservedRecordView<T> implements RecordView<T> {
   private _syncUnsubscribe?: () => void;
 
   private readonly _handleAbort = (): void => {
-    const reason = this._signal?.reason;
-    this.publishError(reason === undefined
-      ? new Error('RecordView: owning session ended.')
-      : toError(reason));
+    this.publishError(new Error('RecordView: owning session ended.', { cause: this._signal?.reason }));
     void this.close().catch((): void => {});
   };
 

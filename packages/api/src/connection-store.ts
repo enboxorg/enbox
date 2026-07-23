@@ -532,6 +532,9 @@ class HeadlessConnectionStore implements ConnectionStore {
   /** Apply and seed the authoritative session, repeating if auth changes while status is read. */
   private async _commitConnected(auth: AuthManager, session: AuthSession, generation: number): Promise<ConnectionSnapshot> {
     let activeSession = session;
+    // This cannot spin without yielding: each continuation requires a distinct
+    // external session replacement during the awaited status read. Capping it
+    // could publish a stale session while the manager already owns a newer one.
     while (!this._isStale(generation)) {
       this._apply(this._connectedPatch(activeSession));
       this._restartMonitor(auth, activeSession);

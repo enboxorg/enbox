@@ -688,7 +688,8 @@ describe('RecordView', () => {
     const abortedSnapshot = view.getSnapshot();
     expect(abortedSnapshot.state).toBe('error');
     expect(abortedSnapshot.records[0]?.rawRecord).toBe(initial);
-    expect(abortedSnapshot.error).toBe(abortReason);
+    expect(abortedSnapshot.error?.message).toBe('RecordView: owning session ended.');
+    expect(abortedSnapshot.error?.cause).toBe(abortReason);
     expect(published).toEqual(['error']);
 
     await waitFor(() => { expect(harness.closeCount()).toBe(1); });
@@ -997,7 +998,8 @@ describe('RecordView session lifecycle integration', () => {
       const abortedSnapshot = view.getSnapshot();
       expect(abortedSnapshot.state).toBe('error');
       expect(abortedSnapshot.records[0]?.rawRecord).toBe(initial);
-      expect(abortedSnapshot.error?.name).toBe('AbortError');
+      expect(abortedSnapshot.error?.message).toBe('RecordView: owning session ended.');
+      expect((abortedSnapshot.error?.cause as Error).name).toBe('AbortError');
       expect(publications).toBe(1);
       await waitFor(() => { expect(queryHarness.closeCount()).toBe(1); });
 
