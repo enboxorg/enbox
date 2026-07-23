@@ -6,7 +6,6 @@ import type { MessageStore, RecordLimitOccupancy } from '../types/message-store.
 import type { RecordsFilter, RecordsWriteMessage } from '../types/records-types.js';
 
 import { getRuleSetAtPath } from './protocols.js';
-import { ProtocolRecordLimitStrategy } from '../types/protocols-types.js';
 import { Records } from './records.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
@@ -190,7 +189,7 @@ async function getRecordLimit(input: {
 
   const ruleSet = getRuleSetAtPath(input.protocolPath, protocolDefinition.structure);
   const recordLimit = ruleSet?.$recordLimit;
-  return recordLimit?.strategy === ProtocolRecordLimitStrategy.Reject ? recordLimit : undefined;
+  return recordLimit;
 }
 
 /**

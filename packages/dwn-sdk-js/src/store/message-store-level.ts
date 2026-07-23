@@ -100,7 +100,7 @@ const META_PARTITION = 'meta';
 
 const EPOCH_KEY = 'epoch';
 const RECORD_LIMIT_RAW_PAGE_SIZE = 128;
-const RECORD_LIMIT_GROUP_CACHE_SIZE = RECORD_LIMIT_RAW_PAGE_SIZE;
+const RECORD_LIMIT_GROUP_CACHE_SIZE = 128;
 const CURRENT_PARTITIONS = new Set([
   BLOCKS_PARTITION,
   INDEX_PARTITION,
@@ -164,6 +164,11 @@ type RecordLimitOccupantInput = {
   recordLimit: RecordLimitOccupancy;
   groupCutoffs: Map<string, string>;
   options?: MessageStoreQueryOptions;
+};
+
+type RecordLimitPageInput = Omit<RecordLimitOccupantInput, 'item'> & {
+  items: IndexedItem[];
+  limit?: number;
 };
 
 /**
@@ -441,21 +446,21 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
         return;
       }
 
-      for (const item of rawItems) {
-        if (await this.isRecordLimitOccupant({
-          tenant,
-          index,
-          item,
-          candidateFilter,
-          recordLimit,
-          groupCutoffs,
-          options,
-        })) {
-          yield item;
-          outputCount++;
-          if (outputLimit !== undefined && outputCount >= outputLimit) {
-            return;
-          }
+      const occupants = await this.filterRecordLimitOccupants({
+        tenant,
+        index,
+        items : rawItems,
+        candidateFilter,
+        recordLimit,
+        groupCutoffs,
+        options,
+        limit : outputLimit === undefined ? undefined : outputLimit - outputCount,
+      });
+      for (const occupant of occupants) {
+        yield occupant;
+        outputCount++;
+        if (outputLimit !== undefined && outputCount >= outputLimit) {
+          return;
         }
       }
 
@@ -466,7 +471,21 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     }
   }
 
-  private async isRecordLimitOccupant(input: RecordLimitOccupantInput): Promise<boolean> {
+  private async filterRecordLimitOccupants(input: RecordLimitPageInput): Promise<IndexedItem[]> {
+    const { items, limit, ...occupantInput } = input;
+    const occupants: IndexedItem[] = [];
+    for (const item of items) {
+      if (await this.isWithinRecordLimit({ ...occupantInput, item })) {
+        occupants.push(item);
+        if (limit !== undefined && occupants.length >= limit) {
+          break;
+        }
+      }
+    }
+    return occupants;
+  }
+
+  private async isWithinRecordLimit(input: RecordLimitOccupantInput): Promise<boolean> {
     if (!FilterUtility.matchFilter(input.item.indexes, input.candidateFilter)) {
       return false;
     }

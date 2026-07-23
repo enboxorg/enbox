@@ -5,13 +5,13 @@ import type { ValidationStateReader } from '../types/validation-state-reader.js'
 import type { ProtocolActionRule, ProtocolDefinition, ProtocolRuleSet, ProtocolType, ProtocolTypes } from '../types/protocols-types.js';
 
 import { KeyDerivationScheme } from '../utils/hd-key.js';
+import { ProtocolAction } from '../types/protocols-types.js';
 import { Records } from '../utils/records.js';
 import { validateProtocolTags } from '../utils/protocol-tags.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 import { Encryption, ROLE_AUDIENCE_DERIVATION_SCHEME } from '../utils/encryption.js';
 import { ENCRYPTION_PROTOCOL_GRANT_KEY_PATH, ENCRYPTION_PROTOCOL_URI } from './constants.js';
 import { getRoleAudienceContextId, getRuleSetAtPath, getTypeName, parseCrossProtocolRef } from '../utils/protocols.js';
-import { ProtocolAction, ProtocolRecordLimitStrategy } from '../types/protocols-types.js';
 
 type ResolvedRoleAudience = {
   contextId: string;
@@ -522,38 +522,6 @@ export async function verifyAsRoleRecordIfNeeded(
     throw new DwnError(
       DwnErrorCode.ProtocolAuthorizationDuplicateRoleRecipient,
       `DID '${recipient}' is already recipient of a role record at protocol path '${protocolPath} under the parent context ${parentContextId}.`
-    );
-  }
-}
-
-/**
- * Verifies that the `$recordLimit` strategy is supported for a new record creation.
- *
- * This check only applies to initial writes (new records). Updates to existing records do not
- * affect record-limit occupancy. The supported `reject` strategy admits every candidate and
- * projects the visible occupant set at read time, so validation stays independent of arrival order.
- *
- * @throws {DwnError} with `ProtocolAuthorizationRecordLimitStrategyNotImplemented` if strategy is not implemented.
- */
-export async function verifyRecordLimit(
-  incomingMessage: RecordsWrite,
-  ruleSet: ProtocolRuleSet,
-): Promise<void> {
-  if (ruleSet.$recordLimit === undefined) {
-    return;
-  }
-
-  // Only initial writes can introduce a new record-limit candidate.
-  const isInitialWrite = await incomingMessage.isInitialWrite();
-  if (!isInitialWrite) {
-    return;
-  }
-
-  const { strategy } = ruleSet.$recordLimit;
-  if (strategy !== ProtocolRecordLimitStrategy.Reject) {
-    throw new DwnError(
-      DwnErrorCode.ProtocolAuthorizationRecordLimitStrategyNotImplemented,
-      `record limit strategy '${strategy}' is not yet implemented.`
     );
   }
 }

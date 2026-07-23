@@ -203,7 +203,7 @@ export function testRecordsRecordLimit(): void {
     }
 
     describe('ProtocolsConfigure validation', () => {
-      it('should allow $recordLimit with valid max and strategy', async () => {
+      it('should allow $recordLimit with a valid max', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
         const definition: ProtocolDefinition = {
@@ -212,7 +212,7 @@ export function testRecordsRecordLimit(): void {
           types     : { message: {} },
           structure : {
             message: {
-              $recordLimit: { max: 5, strategy: 'reject' },
+              $recordLimit: { max: 5 },
             }
           }
         };
@@ -223,10 +223,7 @@ export function testRecordsRecordLimit(): void {
         });
 
         expect(protocolsConfigure.message.descriptor.definition).toBeDefined();
-        expect(protocolsConfigure.message.descriptor.definition.structure.message.$recordLimit).toEqual({
-          max      : 5,
-          strategy : 'reject',
-        });
+        expect(protocolsConfigure.message.descriptor.definition.structure.message.$recordLimit).toEqual({ max: 5 });
       });
 
       it('should allow $recordLimit with max of 1', async () => {
@@ -238,7 +235,7 @@ export function testRecordsRecordLimit(): void {
           types     : { profile: {} },
           structure : {
             profile: {
-              $recordLimit: { max: 1, strategy: 'reject' },
+              $recordLimit: { max: 1 },
             }
           }
         };
@@ -248,10 +245,7 @@ export function testRecordsRecordLimit(): void {
           definition,
         });
 
-        expect(protocolsConfigure.message.descriptor.definition.structure.profile.$recordLimit).toEqual({
-          max      : 1,
-          strategy : 'reject',
-        });
+        expect(protocolsConfigure.message.descriptor.definition.structure.profile.$recordLimit).toEqual({ max: 1 });
       });
 
       it('should reject $recordLimit above the supported max', async () => {
@@ -263,7 +257,7 @@ export function testRecordsRecordLimit(): void {
           types     : { message: {} },
           structure : {
             message: {
-              $recordLimit: { max: DwnConstant.maxRecordLimit + 1, strategy: 'reject' },
+              $recordLimit: { max: DwnConstant.maxRecordLimit + 1 },
             }
           }
         };
@@ -276,31 +270,6 @@ export function testRecordsRecordLimit(): void {
         await expect(promise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureInvalidRecordLimit);
       });
 
-      it('should allow $recordLimit with purgeOldest strategy (schema validation only)', async () => {
-        const alice = await TestDataGenerator.generateDidKeyPersona();
-
-        const definition: ProtocolDefinition = {
-          protocol  : 'http://example.com/record-limit',
-          published : true,
-          types     : { status: {} },
-          structure : {
-            status: {
-              $recordLimit: { max: 10, strategy: 'purgeOldest' },
-            }
-          }
-        };
-
-        const protocolsConfigure = await ProtocolsConfigure.create({
-          signer: Jws.createSigner(alice),
-          definition,
-        });
-
-        expect(protocolsConfigure.message.descriptor.definition.structure.status.$recordLimit).toEqual({
-          max      : 10,
-          strategy : 'purgeOldest',
-        });
-      });
-
       it('should reject $recordLimit with max less than 1', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
@@ -310,7 +279,7 @@ export function testRecordsRecordLimit(): void {
           types     : { message: {} },
           structure : {
             message: {
-              $recordLimit: { max: 0, strategy: 'reject' } as any,
+              $recordLimit: { max: 0 } as any,
             }
           }
         };
@@ -332,7 +301,7 @@ export function testRecordsRecordLimit(): void {
           types     : { message: {} },
           structure : {
             message: {
-              $recordLimit: { max: 2.5, strategy: 'reject' } as any,
+              $recordLimit: { max: 2.5 } as any,
             }
           }
         };
@@ -345,7 +314,7 @@ export function testRecordsRecordLimit(): void {
         await expect(promise).rejects.toThrow('SchemaValidator');
       });
 
-      it('should reject $recordLimit with missing strategy', async () => {
+      it('should reject the removed $recordLimit strategy property', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
         const definition: ProtocolDefinition = {
@@ -354,29 +323,7 @@ export function testRecordsRecordLimit(): void {
           types     : { message: {} },
           structure : {
             message: {
-              $recordLimit: { max: 5 } as any,
-            }
-          }
-        };
-
-        const promise = ProtocolsConfigure.create({
-          signer: Jws.createSigner(alice),
-          definition,
-        });
-
-        await expect(promise).rejects.toThrow('SchemaValidator');
-      });
-
-      it('should reject $recordLimit with invalid strategy', async () => {
-        const alice = await TestDataGenerator.generateDidKeyPersona();
-
-        const definition: ProtocolDefinition = {
-          protocol  : 'http://example.com/record-limit',
-          published : true,
-          types     : { message: {} },
-          structure : {
-            message: {
-              $recordLimit: { max: 5, strategy: 'invalidStrategy' } as any,
+              $recordLimit: { max: 5, strategy: 'reject' } as any,
             }
           }
         };
@@ -402,7 +349,7 @@ export function testRecordsRecordLimit(): void {
           structure: {
             room: {
               message: {
-                $recordLimit: { max: 100, strategy: 'reject' },
+                $recordLimit: { max: 100 },
               }
             }
           }
@@ -414,14 +361,11 @@ export function testRecordsRecordLimit(): void {
         });
 
         const roomRuleSet = protocolsConfigure.message.descriptor.definition.structure.room as any;
-        expect(roomRuleSet.message.$recordLimit).toEqual({
-          max      : 100,
-          strategy : 'reject',
-        });
+        expect(roomRuleSet.message.$recordLimit).toEqual({ max: 100 });
       });
     });
 
-    describe('read-time occupancy projection — reject strategy', () => {
+    describe('read-time occupancy projection', () => {
       it('should admit candidates and project Query, Read, and Count to top-ranked occupants', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
@@ -431,7 +375,7 @@ export function testRecordsRecordLimit(): void {
           types     : { blob: {} },
           structure : {
             blob: {
-              $recordLimit: { max: 2, strategy: 'reject' },
+              $recordLimit: { max: 2 },
             }
           }
         };
@@ -485,7 +429,7 @@ export function testRecordsRecordLimit(): void {
           types     : { profile: {} },
           structure : {
             profile: {
-              $recordLimit: { max: 1, strategy: 'reject' },
+              $recordLimit: { max: 1 },
             }
           }
         };
@@ -535,7 +479,7 @@ export function testRecordsRecordLimit(): void {
           structure: {
             room: {
               message: {
-                $recordLimit: { max: 2, strategy: 'reject' },
+                $recordLimit: { max: 2 },
               }
             }
           }
@@ -674,7 +618,7 @@ export function testRecordsRecordLimit(): void {
             community: {
               channel: {
                 message: {
-                  $recordLimit: { max: 2, strategy: 'reject' },
+                  $recordLimit: { max: 2 },
                 },
               },
             },
@@ -707,6 +651,7 @@ export function testRecordsRecordLimit(): void {
 
         // Creation times are interleaved across channels so pagination proves
         // that projection happens per direct parent before global ordering.
+        // Channel 2 arrives newest-first to prove occupancy ignores arrival order.
         const channel1Messages = [
           await writeProtocolRecord({
             author          : alice,
@@ -732,32 +677,31 @@ export function testRecordsRecordLimit(): void {
             dateCreated     : '2025-02-06T00:00:00.000000Z',
           }),
         ];
-        const channel2Messages = [
-          await writeProtocolRecord({
-            author          : alice,
-            protocol,
-            protocolPath    : 'community/channel/message',
-            parentContextId : channel2.message.contextId,
-            published       : true,
-            dateCreated     : '2025-02-02T00:00:00.000000Z',
-          }),
-          await writeProtocolRecord({
-            author          : alice,
-            protocol,
-            protocolPath    : 'community/channel/message',
-            parentContextId : channel2.message.contextId,
-            published       : true,
-            dateCreated     : '2025-02-03T00:00:00.000000Z',
-          }),
-          await writeProtocolRecord({
-            author          : alice,
-            protocol,
-            protocolPath    : 'community/channel/message',
-            parentContextId : channel2.message.contextId,
-            published       : true,
-            dateCreated     : '2025-02-03T00:00:00.000000Z',
-          }),
-        ];
+        const channel2Tie1 = await writeProtocolRecord({
+          author          : alice,
+          protocol,
+          protocolPath    : 'community/channel/message',
+          parentContextId : channel2.message.contextId,
+          published       : true,
+          dateCreated     : '2025-02-03T00:00:00.000000Z',
+        });
+        const channel2Tie2 = await writeProtocolRecord({
+          author          : alice,
+          protocol,
+          protocolPath    : 'community/channel/message',
+          parentContextId : channel2.message.contextId,
+          published       : true,
+          dateCreated     : '2025-02-03T00:00:00.000000Z',
+        });
+        const channel2Oldest = await writeProtocolRecord({
+          author          : alice,
+          protocol,
+          protocolPath    : 'community/channel/message',
+          parentContextId : channel2.message.contextId,
+          published       : true,
+          dateCreated     : '2025-02-02T00:00:00.000000Z',
+        });
+        const channel2Messages = [channel2Oldest, channel2Tie1, channel2Tie2];
         const channel2BoundaryOccupant = channel2Messages[1].message.recordId < channel2Messages[2].message.recordId
           ? channel2Messages[1]
           : channel2Messages[2];
@@ -896,7 +840,7 @@ export function testRecordsRecordLimit(): void {
           types     : { item: {} },
           structure : {
             item: {
-              $recordLimit: { max: 3, strategy: 'reject' },
+              $recordLimit: { max: 3 },
             }
           }
         };
@@ -944,7 +888,7 @@ export function testRecordsRecordLimit(): void {
           types     : { status: {} },
           structure : {
             status: {
-              $recordLimit: { max: 1, strategy: 'reject' },
+              $recordLimit: { max: 1 },
             }
           }
         };
@@ -1033,10 +977,10 @@ export function testRecordsRecordLimit(): void {
             },
             structure: {
               note: {
-                $recordLimit: { max: 2, strategy: 'reject' },
+                $recordLimit: { max: 2 },
               },
               profile: {
-                $recordLimit: { max: 1, strategy: 'reject' },
+                $recordLimit: { max: 1 },
               }
             }
           };
@@ -1116,7 +1060,7 @@ export function testRecordsRecordLimit(): void {
           types     : { blob: {} },
           structure : {
             blob: {
-              $recordLimit: { max: 1, strategy: 'reject' },
+              $recordLimit: { max: 1 },
             }
           }
         };
@@ -1139,34 +1083,6 @@ export function testRecordsRecordLimit(): void {
         expect((await queryProtocolRecordIds({ author: alice, protocol, protocolPath: 'blob' })).recordIds).toEqual([
           record.message.recordId,
         ]);
-      });
-
-      it('should reject purgeOldest strategy at write time with not-implemented error', async () => {
-        const alice = await TestDataGenerator.generateDidKeyPersona();
-
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : `http://record-limit-${TestDataGenerator.randomString(12)}.xyz`,
-          published : true,
-          types     : { blob: {} },
-          structure : {
-            blob: {
-              $recordLimit: { max: 1, strategy: 'purgeOldest' },
-            }
-          }
-        };
-        const protocol = protocolDefinition.protocol;
-        await installProtocol({ author: alice, definition: protocolDefinition });
-
-        const record = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          recipient    : alice.did,
-          protocol,
-          protocolPath : 'blob',
-        });
-
-        const reply = await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream });
-        expect(reply.status.code).toBe(400);
-        expect(reply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationRecordLimitStrategyNotImplemented);
       });
     });
   });

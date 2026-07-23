@@ -1149,10 +1149,11 @@ export class TypedEnbox<
         await this._ensureReady(normalizedPath);
 
         return createRecordView<DataForPath<D, M, Path>>({
-          dwn    : this._dwn,
-          query  : compiled,
-          signal : this._options.signal,
-          sync   : this._options.sync,
+          definition : this._definition,
+          dwn        : this._dwn,
+          query      : compiled,
+          signal     : this._options.signal,
+          sync       : this._options.sync,
         });
       },
 

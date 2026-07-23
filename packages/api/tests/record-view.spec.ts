@@ -20,12 +20,31 @@ const ViewDefinition = {
   protocol  : 'https://example.com/protocols/record-view',
   published : true,
   types     : {
+    folder: {
+      dataFormats : ['application/json'],
+      schema      : 'https://example.com/schemas/record-view-folder',
+    },
+    item: {
+      dataFormats : ['application/json'],
+      schema      : 'https://example.com/schemas/record-view-item',
+    },
     note: {
       dataFormats : ['application/json'],
       schema      : 'https://example.com/schemas/record-view-note',
     },
+    section: {
+      dataFormats : ['application/json'],
+      schema      : 'https://example.com/schemas/record-view-section',
+    },
   },
   structure: {
+    folder: {
+      section: {
+        item: {
+          $recordLimit: { max: 2 },
+        },
+      },
+    },
     note: {
       $tags: {
         status: { type: 'string', enum: ['draft', 'published'] },
@@ -34,7 +53,12 @@ const ViewDefinition = {
   },
 } as const satisfies ProtocolDefinition;
 
-type ViewSchemaMap = { note: { title: string } };
+type ViewSchemaMap = {
+  folder: { name: string };
+  item: { value: string };
+  note: { title: string };
+  section: { name: string };
+};
 const ViewProtocol = defineProtocol(ViewDefinition, {} as ViewSchemaMap);
 const TENANT_DID = 'did:example:alice';
 
@@ -348,6 +372,57 @@ describe('RecordView', () => {
     await waitFor(() => { expect(view.getSnapshot().records).toHaveLength(0); });
     expect(view.getSnapshot().state).toBe('ready');
     await view.close();
+  });
+
+  it('wakes a full-record limited view when sibling changes demote and promote its record', async () => {
+    const target = rawRecord('i1');
+    const harness = createHarness(async (_request, call) => ok(call === 2 ? [] : [target]));
+    const view = await createTyped(harness).records.observe('folder/section/item', {
+      filter: {
+        contextId : 'f1/s1/i1',
+        recordId  : 'i1',
+      },
+      pagination: { limit: 1 },
+    });
+    await waitFor(() => { expect(view.getSnapshot().records).toHaveLength(1); });
+
+    expect(harness.subscribeRequests[0]?.filter).toEqual({
+      contextId    : 'f1/s1',
+      protocol     : ViewDefinition.protocol,
+      protocolPath : 'folder/section/item',
+    });
+
+    // Two earlier-ranked siblings fill the max:2 group. Their write wakes
+    // this targeted view, whose canonical query now projects the target out.
+    harness.emit(recordEvent());
+    await waitFor(() => { expect(view.getSnapshot().records).toHaveLength(0); });
+
+    // Deleting either occupying sibling wakes the same group and promotes
+    // the still-stored target without requiring a second event for it.
+    harness.emit(recordEvent());
+    await waitFor(() => {
+      expect(view.getSnapshot().records[0]?.rawRecord).toBe(target);
+      expect(harness.queryRequests).toHaveLength(3);
+    });
+    await view.close();
+  });
+
+  it('preserves direct-parent and ancestor wake scopes for limited paths', async () => {
+    for (const contextId of ['f1/s1', 'f1']) {
+      const harness = createHarness(async () => ok([]));
+      const view = await createTyped(harness).records.observe('folder/section/item', {
+        filter     : { contextId },
+        pagination : { limit: 10 },
+      });
+      await waitFor(() => { expect(harness.queryRequests).toHaveLength(1); });
+
+      expect(harness.subscribeRequests[0]?.filter).toEqual({
+        contextId,
+        protocol     : ViewDefinition.protocol,
+        protocolPath : 'folder/section/item',
+      });
+      await view.close();
+    }
   });
 
   it('coalesces a wake storm and never publishes the superseded pass', async () => {
