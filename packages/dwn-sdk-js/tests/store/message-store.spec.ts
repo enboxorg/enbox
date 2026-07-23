@@ -1,7 +1,11 @@
 import type { PaginationCursor } from '../../src/types/query-types.js';
 import type { RecordsWriteMessage } from '../../src/types/records-types.js';
 import type { ReplicationFeedReader } from '../../src/types/subscriptions.js';
-import type { KeyValues, MessageStore } from '../../src/index.js';
+import type {
+  KeyValues,
+  MessageStore,
+  MessageStoreRecordLimitCondition,
+} from '../../src/index.js';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
@@ -14,6 +18,38 @@ import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestStores } from '../test-stores.js';
 
 let messageStore: MessageStore;
+
+type RecordLimitMember = {
+  condition: MessageStoreRecordLimitCondition;
+  indexes: KeyValues;
+  message: RecordsWriteMessage;
+  messageCid: string;
+};
+
+async function generateRecordLimitMember(input: {
+  group: string;
+  max?: number;
+  order: number;
+  parentContextId?: string;
+  protocolPath?: string;
+}): Promise<RecordLimitMember> {
+  const dateCreated = `2025-01-01T00:00:00.${input.order.toString().padStart(6, '0')}Z`;
+  const protocol = `https://example.com/${input.group}`;
+  const protocolPath = input.protocolPath ?? 'item';
+  const generated = await TestDataGenerator.generateRecordsWrite({
+    dateCreated,
+    parentContextId: input.parentContextId,
+    protocol,
+    protocolPath,
+  });
+
+  return {
+    condition  : { max: input.max ?? 3 },
+    indexes    : await generated.recordsWrite.constructIndexes(true),
+    message    : generated.message,
+    messageCid : await Message.getCid(generated.message),
+  };
+}
 
 export function testMessageStore(): void {
   describe('Generic MessageStore Test Suite', () => {
@@ -803,6 +839,187 @@ export function testMessageStore(): void {
 
       afterAll(async () => {
         await messageStore.close();
+      });
+
+      it('should atomically bound concurrent record-limit allocations and leave a gap-free log', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const members = await Promise.all(Array.from(
+          { length: 8 },
+          async (_, order): Promise<RecordLimitMember> => generateRecordLimitMember({
+            group: 'record-limit-concurrency',
+            order,
+          }),
+        ));
+
+        const results = await Promise.all(members.map(async (member) => ({
+          member,
+          result: await messageStore.commitLatestState(alice.did, {
+            put         : { message: member.message, indexes: member.indexes },
+            recordLimit : member.condition,
+          }),
+        })));
+        const inserted = results.filter(({ result }): boolean => result.status === 'inserted');
+        const rejected = results.filter(({ result }): boolean => result.status === 'recordLimitExceeded');
+
+        expect(inserted).toHaveLength(3);
+        expect(rejected).toHaveLength(5);
+
+        const feed = messageStore as unknown as ReplicationFeedReader;
+        const { events, cursor } = await feed.logRead(alice.did);
+        expect(events).toHaveLength(3);
+        expect(cursor?.position).toBe('3');
+      });
+
+      it('should isolate root and nested record-limit scopes by direct parent', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const firstParent = await TestDataGenerator.generateRecordsWrite();
+        const secondParent = await TestDataGenerator.generateRecordsWrite();
+        const root = await generateRecordLimitMember({ group: 'record-limit-scope', max: 1, order: 0 });
+        const firstChild = await generateRecordLimitMember({
+          group           : 'record-limit-scope',
+          max             : 1,
+          order           : 1,
+          parentContextId : firstParent.message.contextId,
+        });
+        const secondChild = await generateRecordLimitMember({
+          group           : 'record-limit-scope',
+          max             : 1,
+          order           : 2,
+          parentContextId : secondParent.message.contextId,
+        });
+        const siblingPath = await generateRecordLimitMember({
+          group           : 'record-limit-scope',
+          max             : 1,
+          order           : 3,
+          parentContextId : firstParent.message.contextId,
+          protocolPath    : 'other',
+        });
+        const otherProtocol = await generateRecordLimitMember({
+          group           : 'record-limit-other-protocol',
+          max             : 1,
+          order           : 4,
+          parentContextId : firstParent.message.contextId,
+        });
+
+        for (const member of [root, firstChild, secondChild, siblingPath, otherProtocol]) {
+          expect((await messageStore.commitLatestState(alice.did, {
+            put         : { message: member.message, indexes: member.indexes },
+            recordLimit : member.condition,
+          })).status).toBe('inserted');
+        }
+
+        const rootOverflow = await generateRecordLimitMember({ group: 'record-limit-scope', max: 1, order: 5 });
+        const childOverflow = await generateRecordLimitMember({
+          group           : 'record-limit-scope',
+          max             : 1,
+          order           : 6,
+          parentContextId : firstParent.message.contextId,
+        });
+        for (const member of [rootOverflow, childOverflow]) {
+          expect((await messageStore.commitLatestState(alice.did, {
+            put         : { message: member.message, indexes: member.indexes },
+            recordLimit : member.condition,
+          })).status).toBe('recordLimitExceeded');
+        }
+      });
+
+      it('should count distinct existing records and preserve a current member slot on update', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const first = await generateRecordLimitMember({ group: 'record-limit-existing', max: 2, order: 0 });
+        const duplicateCurrentRow = await generateRecordLimitMember({ group: 'record-limit-existing', max: 2, order: 1 });
+        const second = await generateRecordLimitMember({ group: 'record-limit-existing', max: 2, order: 2 });
+
+        await messageStore.put(alice.did, first.message, first.indexes);
+        await messageStore.put(alice.did, duplicateCurrentRow.message, {
+          ...duplicateCurrentRow.indexes,
+          recordId    : first.message.recordId,
+          dateCreated : first.message.descriptor.dateCreated,
+        });
+        expect((await messageStore.commitLatestState(alice.did, {
+          put         : { message: second.message, indexes: second.indexes },
+          recordLimit : second.condition,
+        })).status).toBe('inserted');
+
+        const update = await TestDataGenerator.generateRecordsWrite({
+          dateCreated  : first.message.descriptor.dateCreated,
+          protocol     : first.message.descriptor.protocol,
+          protocolPath : first.message.descriptor.protocolPath,
+          recordId     : first.message.recordId,
+        });
+        expect((await messageStore.commitLatestState(alice.did, {
+          put         : { message: update.message, indexes: await update.recordsWrite.constructIndexes(true) },
+          recordLimit : first.condition,
+        })).status).toBe('inserted');
+
+        const third = await generateRecordLimitMember({ group: 'record-limit-existing', max: 2, order: 3 });
+        expect((await messageStore.commitLatestState(alice.did, {
+          put         : { message: third.message, indexes: third.indexes },
+          recordLimit : third.condition,
+        })).status).toBe('recordLimitExceeded');
+
+      });
+
+      it('should replay a duplicate without re-evaluating a full record-limit scope', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const member = await generateRecordLimitMember({ group: 'record-limit-duplicate', max: 1, order: 0 });
+        const transition = {
+          put         : { message: member.message, indexes: member.indexes },
+          recordLimit : member.condition,
+        };
+
+        expect((await messageStore.commitLatestState(alice.did, transition)).status).toBe('inserted');
+        expect((await messageStore.commitLatestState(alice.did, transition)).status).toBe('duplicate');
+      });
+
+      it('should release capacity when a current member is demoted', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const first = await generateRecordLimitMember({ group: 'record-limit-release', max: 1, order: 0 });
+        const second = await generateRecordLimitMember({ group: 'record-limit-release', max: 1, order: 1 });
+
+        expect((await messageStore.commitLatestState(alice.did, {
+          put         : { message: first.message, indexes: first.indexes },
+          recordLimit : first.condition,
+        })).status).toBe('inserted');
+        await messageStore.updateIndexes(alice.did, first.messageCid, {
+          ...first.indexes,
+          isLatestBaseState: false,
+        });
+        expect((await messageStore.commitLatestState(alice.did, {
+          put         : { message: second.message, indexes: second.indexes },
+          recordLimit : second.condition,
+        })).status).toBe('inserted');
+      });
+
+      it('should reject invalid record-limit conditions without mutating durable state', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const member = await generateRecordLimitMember({ group: 'record-limit-validation', order: 0 });
+        const attempts = [
+          {
+            indexes     : member.indexes,
+            recordLimit : { ...member.condition, max: 0 },
+            message     : 'record limit max must be between',
+          },
+          {
+            indexes     : { ...member.indexes, protocolPath: ['invalid'] },
+            recordLimit : member.condition,
+            message     : 'record limit admission requires indexed scope and member fields',
+          },
+          {
+            indexes     : { ...member.indexes, isLatestBaseState: false },
+            recordLimit : member.condition,
+            message     : 'record limit admission requires a current RecordsWrite',
+          },
+        ];
+
+        for (const attempt of attempts) {
+          await expect(messageStore.commitLatestState(alice.did, {
+            put         : { message: member.message, indexes: attempt.indexes },
+            recordLimit : attempt.recordLimit,
+          })).rejects.toThrow(attempt.message);
+        }
+
+        expect(await messageStore.get(alice.did, member.messageCid)).toBeUndefined();
+        expect(await (messageStore as unknown as ReplicationFeedReader).logBounds(alice.did)).toBeUndefined();
       });
 
       it('should insert the new message, demote retained writes, and delete displaced rows in one commit', async () => {

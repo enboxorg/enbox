@@ -8,9 +8,11 @@ import type {
   GenericMessage,
   MessageSort,
   MessageStore,
+  MessageStoreLatestStateCommitResult,
   MessageStoreLatestStateTransition,
   MessageStoreOptions,
   MessageStorePutResult,
+  MessageStoreRecordLimitCondition,
   Pagination,
   PaginationCursor,
   ProgressGapInfo,
@@ -31,6 +33,7 @@ import { sha256 } from 'multiformats/hashes/sha2';
 import { TagTables } from './utils/tags.js';
 import {
   assertValidSubtreeFilters,
+  DwnConstant,
   DwnError,
   DwnErrorCode,
   DwnInterfaceName,
@@ -61,6 +64,10 @@ type PositionTextColumns = {
   seqText: string | null;
 };
 type LogRow = MessageStoreRow & PositionTextColumns;
+type LatestStateTransactionResult =
+  | { status: 'inserted'; position: bigint }
+  | { status: 'duplicate' }
+  | { status: 'recordLimitExceeded' };
 
 const EPOCH_KEY = 'epoch';
 
@@ -192,7 +199,7 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
     tenant: string,
     transition: MessageStoreLatestStateTransition,
     options?: MessageStoreOptions
-  ): Promise<MessageStorePutResult> {
+  ): Promise<MessageStoreLatestStateCommitResult> {
     const db = this.requireDb('commitLatestState');
     options?.signal?.throwIfAborted();
 
@@ -236,8 +243,21 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
     }
 
     try {
-      const position = await executeWithTransaction(db, async (tx) => {
+      const transactionResult = await executeWithTransaction(db, async (tx): Promise<LatestStateTransactionResult> => {
         await this.#dialect.lockReplicationCounter(tx, tenant);
+
+        const existing = await this.hasMessageInTx(tx, tenant, messageCid);
+        if (!existing && transition.recordLimit !== undefined) {
+          const recordLimitExceeded = await this.isRecordLimitFullInTx(
+            tx,
+            tenant,
+            transition.recordLimit,
+            transition.put.indexes,
+          );
+          if (recordLimitExceeded) {
+            return { status: 'recordLimitExceeded' };
+          }
+        }
 
         // A duplicate inserts nothing but still applies the retains and deletes below, so
         // replaying a transition heals one that previously stopped mid-plan.
@@ -266,17 +286,19 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
           await this.deleteRowInTx(tx, tenant, deleteCid);
         }
 
-        return seq;
+        return seq === undefined
+          ? { status: 'duplicate' }
+          : { status: 'inserted', position: seq };
       });
 
-      if (position === undefined) {
-        return { status: 'duplicate' };
+      if (transactionResult.status !== 'inserted') {
+        return transactionResult;
       }
 
-      this.publishWake(tenant, position);
+      this.publishWake(tenant, transactionResult.position);
       return {
         status   : 'inserted',
-        position : await this.buildToken(tenant, position, messageCid),
+        position : await this.buildToken(tenant, transactionResult.position, messageCid),
       };
     } catch (error: unknown) {
       if (isMessageCidDuplicateKeyError(error) && await this.hasMessage(tenant, messageCid)) {
@@ -284,6 +306,88 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
       }
       throw error;
     }
+  }
+
+  /** Whether the exact message row already exists inside the caller's tenant-locked transaction. */
+  private async hasMessageInTx(
+    tx: Transaction<DwnDatabaseType>,
+    tenant: string,
+    messageCid: string,
+  ): Promise<boolean> {
+    const row = await tx
+      .selectFrom('messageStoreMessages')
+      .select('id')
+      .where('tenant', '=', tenant)
+      .where('messageCid', '=', messageCid)
+      .executeTakeFirst();
+
+    return row !== undefined;
+  }
+
+  /**
+   * Determines whether a new logical record targets a full exact scope.
+   * The tenant replication-counter lock serializes this bounded read with the subsequent commit.
+   */
+  private async isRecordLimitFullInTx(
+    tx: Transaction<DwnDatabaseType>,
+    tenant: string,
+    condition: MessageStoreRecordLimitCondition,
+    putIndexes: KeyValues,
+  ): Promise<boolean> {
+    if (!Number.isSafeInteger(condition.max) || condition.max < 1 || condition.max > DwnConstant.maxRecordLimit) {
+      throw new RangeError(`MessageStoreSql: record limit max must be between 1 and ${DwnConstant.maxRecordLimit}.`);
+    }
+    if (putIndexes.interface !== DwnInterfaceName.Records ||
+      putIndexes.method !== DwnMethodName.Write ||
+      putIndexes.isLatestBaseState !== true) {
+      throw new Error('MessageStoreSql: record limit admission requires a current RecordsWrite.');
+    }
+    const { protocol, protocolPath, parentId, recordId } = putIndexes;
+    if (typeof protocol !== 'string' ||
+      typeof protocolPath !== 'string' ||
+      (parentId !== undefined && typeof parentId !== 'string') ||
+      typeof recordId !== 'string') {
+      throw new Error('MessageStoreSql: record limit admission requires indexed scope and member fields.');
+    }
+
+    let existingMemberQuery = tx
+      .selectFrom('messageStoreMessages')
+      .select('recordId')
+      .where('tenant', '=', tenant)
+      .where('interface', '=', DwnInterfaceName.Records)
+      .where('method', '=', DwnMethodName.Write)
+      .where('isLatestBaseState', '=', true)
+      .where('protocol', '=', protocol)
+      .where('protocolPath', '=', protocolPath)
+      .where('recordId', '=', recordId);
+
+    existingMemberQuery = parentId === undefined
+      ? existingMemberQuery.where('parentId', 'is', null)
+      : existingMemberQuery.where('parentId', '=', parentId);
+
+    // An update retains the slot allocated when its record first became current.
+    if (await existingMemberQuery.executeTakeFirst() !== undefined) {
+      return false;
+    }
+
+    let query = tx
+      .selectFrom('messageStoreMessages')
+      .select('recordId')
+      .distinct()
+      .where('tenant', '=', tenant)
+      .where('interface', '=', DwnInterfaceName.Records)
+      .where('method', '=', DwnMethodName.Write)
+      .where('isLatestBaseState', '=', true)
+      .where('protocol', '=', protocol)
+      .where('protocolPath', '=', protocolPath)
+      .where('recordId', 'is not', null)
+      .limit(condition.max);
+
+    query = parentId === undefined
+      ? query.where('parentId', 'is', null)
+      : query.where('parentId', '=', parentId);
+
+    return (await query.execute()).length >= condition.max;
   }
 
   /**

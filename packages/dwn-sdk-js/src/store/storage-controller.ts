@@ -2,7 +2,12 @@ import type { DataStore } from '../types/data-store.js';
 import type { GenericMessage } from '../types/message-types.js';
 import type { ProgressToken } from '../types/subscriptions.js';
 import type { Filter, KeyValues } from '../types/query-types.js';
-import type { MessageStore, MessageStorePutResult } from '../types/message-store.js';
+import type {
+  MessageStore,
+  MessageStoreLatestStateCommitResult,
+  MessageStorePutResult,
+  MessageStoreRecordLimitCondition,
+} from '../types/message-store.js';
 import type { RecordsDeleteMessage, RecordsWriteMessage } from '../types/records-types.js';
 
 import { DwnConstant } from '../core/dwn-constant.js';
@@ -314,7 +319,34 @@ export class StorageController {
     additionalRetainedRecordsWrites: RecordsWriteMessage[],
     messageStore: MessageStore,
     dataStore: DataStore,
-  ): Promise<MessageStorePutResult> {
+  ): Promise<MessageStorePutResult>;
+  public static async commitLatestStateTransition(
+    tenant: string,
+    existingMessages: GenericMessage[],
+    newMessage: { message: GenericMessage, indexes: KeyValues },
+    additionalRetainedRecordsWrites: RecordsWriteMessage[],
+    messageStore: MessageStore,
+    dataStore: DataStore,
+    recordLimit: MessageStoreRecordLimitCondition,
+  ): Promise<MessageStoreLatestStateCommitResult>;
+  public static async commitLatestStateTransition(
+    tenant: string,
+    existingMessages: GenericMessage[],
+    newMessage: { message: GenericMessage, indexes: KeyValues },
+    additionalRetainedRecordsWrites: RecordsWriteMessage[],
+    messageStore: MessageStore,
+    dataStore: DataStore,
+    recordLimit: MessageStoreRecordLimitCondition | undefined,
+  ): Promise<MessageStoreLatestStateCommitResult>;
+  public static async commitLatestStateTransition(
+    tenant: string,
+    existingMessages: GenericMessage[],
+    newMessage: { message: GenericMessage, indexes: KeyValues },
+    additionalRetainedRecordsWrites: RecordsWriteMessage[],
+    messageStore: MessageStore,
+    dataStore: DataStore,
+    recordLimit?: MessageStoreRecordLimitCondition,
+  ): Promise<MessageStoreLatestStateCommitResult> {
     const newMessageCid = await Message.getCid(newMessage.message);
     const additionalRetainedRecordsWriteCids = new Set<string>();
     for (const retainedRecordsWrite of additionalRetainedRecordsWrites) {
@@ -351,7 +383,18 @@ export class StorageController {
       }
     }
 
-    const putResult = await messageStore.commitLatestState(tenant, { put: newMessage, retains, deletes });
+    const putResult = await messageStore.commitLatestState(tenant, {
+      put: newMessage,
+      retains,
+      deletes,
+      recordLimit,
+    });
+
+    // A failed conditional commit changes no message state, so none of the displacement cleanup
+    // planned above is valid. A caller that staged incoming data owns its rejected-data cleanup.
+    if (putResult.status === 'recordLimitExceeded') {
+      return putResult;
+    }
 
     for (const message of displacedMessages) {
       await StorageController.deleteFromDataStoreIfNeeded(dataStore, tenant, message, newMessage.message);

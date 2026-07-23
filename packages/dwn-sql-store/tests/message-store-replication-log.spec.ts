@@ -259,6 +259,35 @@ function runReplicationLogTests(dialect: Dialect): void {
       expect(thirdPut.position!.position).toBe('2');
     });
 
+    it('should not publish a wake for a rejected conditional commit', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const protocol = 'https://example.com/record-limit-wake';
+      const protocolPath = 'item';
+      const first = await TestDataGenerator.generateRecordsWrite({ protocol, protocolPath });
+      const second = await TestDataGenerator.generateRecordsWrite({ protocol, protocolPath });
+
+      const firstResult = await messageStore.commitLatestState(alice.did, {
+        put: {
+          message : first.message,
+          indexes : await first.recordsWrite.constructIndexes(true),
+        },
+        recordLimit: { max: 1 },
+      });
+      expect(firstResult.status).toBe('inserted');
+      expect(wakePublisher.wakes).toHaveLength(1);
+
+      const secondResult = await messageStore.commitLatestState(alice.did, {
+        put: {
+          message : second.message,
+          indexes : await second.recordsWrite.constructIndexes(true),
+        },
+        recordLimit: { max: 1 },
+      });
+
+      expect(secondResult.status).toBe('recordLimitExceeded');
+      expect(wakePublisher.wakes).toHaveLength(1);
+    });
+
     it('should surface replication position collisions instead of treating them as duplicate puts', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const first = await generateStoredMessage();

@@ -13,7 +13,14 @@ import type {
 import type { Filter, KeyValues, PaginationCursor, QueryOptions } from '../types/query-types.js';
 import type { GenericMessage, MessageSort, Pagination } from '../types/message-types.js';
 import type { LevelDatabase, LevelWrapperBatchOperation } from './level-wrapper.js';
-import type { MessageStore, MessageStoreLatestStateTransition, MessageStoreOptions, MessageStorePutResult } from '../types/message-store.js';
+import type {
+  MessageStore,
+  MessageStoreLatestStateCommitResult,
+  MessageStoreLatestStateTransition,
+  MessageStoreOptions,
+  MessageStorePutResult,
+  MessageStoreRecordLimitCondition,
+} from '../types/message-store.js';
 
 import * as block from 'multiformats/block';
 import * as cbor from '@ipld/dag-cbor';
@@ -22,6 +29,7 @@ import { runWithCrossContextLock } from '@enbox/common';
 
 import { Cid } from '../utils/cid.js';
 import { CID } from 'multiformats/cid';
+import { DwnConstant } from '../core/dwn-constant.js';
 import { executeUnlessAborted } from '../utils/abort.js';
 import { IndexLevel } from './index-level.js';
 import { Message } from '../core/message.js';
@@ -31,6 +39,7 @@ import { SortDirection } from '../types/query-types.js';
 import { assertValidSubtreeFilters, FilterUtility } from '../utils/filter.js';
 import { createLevelDatabase, LevelWrapper } from './level-wrapper.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
+import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
 
 /**
@@ -447,7 +456,7 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     tenant: string,
     transition: MessageStoreLatestStateTransition,
     options?: MessageStoreOptions
-  ): Promise<MessageStorePutResult> {
+  ): Promise<MessageStoreLatestStateCommitResult> {
     options?.signal?.throwIfAborted();
 
     const partitions = await executeUnlessAborted(this.partitions(), options?.signal);
@@ -495,6 +504,14 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
       const inserted = existingSeq === undefined;
       let seq = 0n;
       if (inserted) {
+        const recordLimitExceeded = transition.recordLimit !== undefined &&
+          await this.isRecordLimitFull(
+            index, tenant, transition.recordLimit, indexes, options
+          );
+        if (recordLimitExceeded) {
+          return { status: 'recordLimitExceeded' as const };
+        }
+
         const head = await this.getHead(partitions, tenant);
         seq = head + 1n;
         const fingerprintScopes = Replication.computeFingerprintScopes(message, indexes);
@@ -863,6 +880,75 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
   // ---------------------------------------------------------------------------
   // Internals
   // ---------------------------------------------------------------------------
+
+  /**
+   * Determines whether a new logical record targets a full exact scope.
+   * The caller holds the tenant write lock, so the bounded lookup and subsequent batch form
+   * one serialized admission decision.
+   */
+  private async isRecordLimitFull(
+    index: IndexLevel,
+    tenant: string,
+    condition: MessageStoreRecordLimitCondition,
+    putIndexes: KeyValues,
+    options?: MessageStoreOptions,
+  ): Promise<boolean> {
+    if (!Number.isSafeInteger(condition.max) || condition.max < 1 || condition.max > DwnConstant.maxRecordLimit) {
+      throw new RangeError(`MessageStoreLevel: record limit max must be between 1 and ${DwnConstant.maxRecordLimit}.`);
+    }
+    if (putIndexes.interface !== DwnInterfaceName.Records ||
+      putIndexes.method !== DwnMethodName.Write ||
+      putIndexes.isLatestBaseState !== true) {
+      throw new Error('MessageStoreLevel: record limit admission requires a current RecordsWrite.');
+    }
+    const { protocol, protocolPath, parentId, recordId } = putIndexes;
+    if (typeof protocol !== 'string' ||
+      typeof protocolPath !== 'string' ||
+      (parentId !== undefined && typeof parentId !== 'string') ||
+      typeof recordId !== 'string') {
+      throw new Error('MessageStoreLevel: record limit admission requires indexed scope and member fields.');
+    }
+
+    const filter: Filter = {
+      interface         : DwnInterfaceName.Records,
+      method            : DwnMethodName.Write,
+      isLatestBaseState : true,
+      protocol,
+      protocolPath,
+    };
+    if (parentId !== undefined) {
+      filter.parentId = parentId;
+    }
+
+    const exactMatchOptions = {
+      absentProperties : parentId === undefined ? ['parentId'] : undefined,
+      filter,
+      signal           : options?.signal,
+    };
+
+    // An update retains the slot allocated when its record first became current.
+    const existingMember = await index.queryExactMatches(
+      tenant,
+      'recordId',
+      recordId,
+      { ...exactMatchOptions, limit: 1 },
+    );
+    if (existingMember.length > 0) {
+      return false;
+    }
+
+    const matches = await index.queryExactMatches(
+      tenant,
+      parentId === undefined ? 'protocolPath' : 'parentId',
+      parentId ?? protocolPath,
+      {
+        ...exactMatchOptions,
+        limit      : condition.max,
+        distinctBy : 'recordId',
+      },
+    );
+    return matches.length >= condition.max;
+  }
 
   /**
    * Serializes all log-mutating operations for a tenant: the lock spans seq assignment through

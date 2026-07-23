@@ -25,6 +25,20 @@ export type MessageStorePutResult = {
 };
 
 /**
+ * A record-limit capacity condition evaluated atomically with a latest-state commit.
+ * Scope and member identity come from the new current RecordsWrite's indexes.
+ */
+export type MessageStoreRecordLimitCondition = {
+  max: number;
+};
+
+/** Result of an atomic latest-state transition, including a rejected capacity allocation. */
+export type MessageStoreLatestStateCommitResult = MessageStorePutResult | {
+  status: 'recordLimitExceeded';
+  position?: undefined;
+};
+
+/**
  * A latest-state transition applied by {@link MessageStore.commitLatestState}: the insert of a new
  * message together with the displacement of the messages it supersedes.
  */
@@ -44,6 +58,13 @@ export type MessageStoreLatestStateTransition = {
    * Message CIDs of displaced messages that are not retained, deleted with the insert.
    */
   deletes?: string[];
+
+  /**
+   * Optional record-limit membership checked by this transition. Supply when a
+   * limited RecordsWrite becomes current; omit for deletes, header-only writes,
+   * and messages that are not governed by `$recordLimit`.
+   */
+  recordLimit?: MessageStoreRecordLimitCondition;
 };
 
 export interface MessageStore {
@@ -81,7 +102,7 @@ export interface MessageStore {
     tenant: string,
     transition: MessageStoreLatestStateTransition,
     options?: MessageStoreOptions
-  ): Promise<MessageStorePutResult>;
+  ): Promise<MessageStoreLatestStateCommitResult>;
 
   /**
    * Fetches a single message by `cid` from the underlying store.

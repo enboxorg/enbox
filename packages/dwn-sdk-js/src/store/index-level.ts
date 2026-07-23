@@ -50,6 +50,13 @@ export interface IndexLevelOptions {
   signal?: AbortSignal;
 }
 
+export type QueryExactMatchesOptions = IndexLevelOptions & {
+  absentProperties?: string[];
+  distinctBy?: string;
+  filter: Filter;
+  limit: number;
+};
+
 /**
  * A LevelDB implementation for indexing the messages and events stored in the DWN.
  */
@@ -368,6 +375,33 @@ export class IndexLevel {
   }
 
   /**
+   * Returns at most `limit` items whose indexed property exactly matches `propertyValue` and
+   * whose remaining indexes satisfy `filter`. Non-matching rows are discarded during the range
+   * scan so atomic store policies do not materialize unrelated records.
+   */
+  async queryExactMatches(
+    tenant: string,
+    propertyName: string,
+    propertyValue: EqualFilter,
+    options: QueryExactMatchesOptions,
+  ): Promise<IndexedItem[]> {
+    if (options.limit <= 0) {
+      return [];
+    }
+
+    return this.filterExactMatches(
+      tenant,
+      propertyName,
+      propertyValue,
+      options,
+      options.limit,
+      options.filter,
+      options.distinctBy,
+      options.absentProperties,
+    );
+  }
+
+  /**
    * Queries the sort property index for items that match the filters. If no filters are provided, all items are returned.
    * This query is a linear iterator over the sorted index, checking each item for a match.
    * If a cursor is provided it starts the iteration from the cursor point.
@@ -626,7 +660,11 @@ export class IndexLevel {
     tenant:string,
     propertyName: string,
     propertyValue: EqualFilter,
-    options?: IndexLevelOptions
+    options?: IndexLevelOptions,
+    limit?: number,
+    residualFilter?: Filter,
+    distinctBy?: string,
+    absentProperties?: string[],
   ): Promise<IndexedItem[]> {
 
     const matchPrefix = IndexLevel.keySegmentJoin(IndexLevel.encodeValue(propertyValue));
@@ -636,12 +674,33 @@ export class IndexLevel {
 
     const filterPartition = await this.getIndexPartition(tenant, propertyName);
     const matches: IndexedItem[] = [];
+    const distinctValues = new Set<unknown>();
     for await (const [ key, value ] of filterPartition.iterator(iteratorOptions, options)) {
       // immediately stop if we arrive at an index that contains a different property value
       if (!key.startsWith(matchPrefix)) {
         break;
       }
-      matches.push(JSON.parse(value) as IndexedItem);
+      const item = JSON.parse(value) as IndexedItem;
+      if (residualFilter !== undefined && !FilterUtility.matchFilter(item.indexes, residualFilter)) {
+        continue;
+      }
+      if (absentProperties?.some((propertyName): boolean => item.indexes[propertyName] !== undefined)) {
+        continue;
+      }
+      if (distinctBy !== undefined) {
+        const distinctValue = item.indexes[distinctBy];
+        if (distinctValue === undefined || Array.isArray(distinctValue)) {
+          throw new Error(`IndexLevel: distinct property '${distinctBy}' must be an indexed primitive.`);
+        }
+        if (distinctValues.has(distinctValue)) {
+          continue;
+        }
+        distinctValues.add(distinctValue);
+      }
+      matches.push(item);
+      if (matches.length === limit) {
+        break;
+      }
     }
     return matches;
   }

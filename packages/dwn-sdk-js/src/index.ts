@@ -83,7 +83,7 @@ export type { MessagesReadOptions } from './interfaces/messages-read.js';
 export { MessagesQuery } from './interfaces/messages-query.js';
 export type { MessagesQueryOptions } from './interfaces/messages-query.js';
 export type { UnionMessageReply } from './core/message-reply.js';
-export type { MessageStore, MessageStoreLatestStateTransition, MessageStoreOptions, MessageStorePutResult } from './types/message-store.js';
+export type { MessageStore, MessageStoreLatestStateCommitResult, MessageStoreLatestStateTransition, MessageStoreOptions, MessageStorePutResult, MessageStoreRecordLimitCondition } from './types/message-store.js';
 export { Replication } from './utils/replication.js';
 export type { MessageInterface } from './types/message-interface.js';
 export { PermissionGrant } from './protocols/permission-grant.js';

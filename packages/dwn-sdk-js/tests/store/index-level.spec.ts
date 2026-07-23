@@ -150,6 +150,23 @@ describe('IndexLevel', () => {
       expect(entries[0].messageCid).toBe(id3);
     });
 
+    it('returns a bounded exact-property range without adjacent values', async () => {
+      await testIndex.put(tenant, 'a-0', { scope: 'a', kind: 'unrelated' });
+      await testIndex.put(tenant, 'a-00', { scope: 'a', kind: 'member', recordId: 'nested', parentId: 'parent' });
+      await testIndex.put(tenant, 'a-1', { scope: 'a', kind: 'member', recordId: 'first' });
+      await testIndex.put(tenant, 'a-2', { scope: 'a', kind: 'member', recordId: 'first' });
+      await testIndex.put(tenant, 'a-3', { scope: 'a', kind: 'member', recordId: 'second' });
+      await testIndex.put(tenant, 'a-4', { scope: 'a', kind: 'member', recordId: 'third' });
+      await testIndex.put(tenant, 'b-1', { scope: 'b', kind: 'member', recordId: 'fourth' });
+
+      const filter = { scope: 'a', kind: 'member' };
+      const options = { absentProperties: ['parentId'], filter, limit: 2, distinctBy: 'recordId' };
+      const matches = await testIndex.queryExactMatches(tenant, 'scope', 'a', options);
+
+      expect(matches.map(({ messageCid }) => messageCid)).toEqual(['a-1', 'a-3']);
+      expect(await testIndex.queryExactMatches(tenant, 'scope', 'a', { ...options, limit: 0 })).toEqual([]);
+    });
+
     it('should return all records if an empty filter array is passed', async () => {
       const items = [ 'b', 'a', 'd', 'c' ];
       for (const item of items) {
