@@ -684,13 +684,16 @@ export class IndexLevel {
       if (residualFilter !== undefined && !FilterUtility.matchFilter(item.indexes, residualFilter)) {
         continue;
       }
-      if (absentProperties?.some((propertyName): boolean => item.indexes[propertyName] !== undefined)) {
+      if (absentProperties?.some((absentProperty): boolean => item.indexes[absentProperty] !== undefined)) {
         continue;
       }
       if (distinctBy !== undefined) {
         const distinctValue = item.indexes[distinctBy];
         if (distinctValue === undefined || Array.isArray(distinctValue)) {
-          throw new Error(`IndexLevel: distinct property '${distinctBy}' must be an indexed primitive.`);
+          throw new DwnError(
+            DwnErrorCode.IndexInvalidDistinctProperty,
+            `distinct property '${distinctBy}' must be an indexed primitive.`,
+          );
         }
         if (distinctValues.has(distinctValue)) {
           continue;

@@ -27,7 +27,6 @@ import * as block from 'multiformats/block';
 import * as cbor from '@ipld/dag-cbor';
 
 import { executeWithTransaction } from './utils/transaction.js';
-import { extractTagsAndSanitizeIndexes } from './utils/sanitize.js';
 import { filterSelectQuery } from './utils/filter.js';
 import { sha256 } from 'multiformats/hashes/sha2';
 import { TagTables } from './utils/tags.js';
@@ -43,6 +42,7 @@ import {
   Replication,
   SortDirection,
 } from '@enbox/dwn-sdk-js';
+import { extractTagsAndSanitizeIndexes, sanitizeFilterValue } from './utils/sanitize.js';
 import { isDuplicateKeyError, isMessageCidDuplicateKeyError } from './utils/duplicate-key-error.js';
 import { Kysely as KyselyDatabase, sql } from 'kysely';
 
@@ -246,16 +246,18 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
       const transactionResult = await executeWithTransaction(db, async (tx): Promise<LatestStateTransactionResult> => {
         await this.#dialect.lockReplicationCounter(tx, tenant);
 
-        const existing = await this.hasMessageInTx(tx, tenant, messageCid);
-        if (!existing && transition.recordLimit !== undefined) {
-          const recordLimitExceeded = await this.isRecordLimitFullInTx(
-            tx,
-            tenant,
-            transition.recordLimit,
-            transition.put.indexes,
-          );
-          if (recordLimitExceeded) {
-            return { status: 'recordLimitExceeded' };
+        if (transition.recordLimit !== undefined) {
+          const existing = await this.hasMessageInTx(tx, tenant, messageCid);
+          if (!existing) {
+            const recordLimitExceeded = await this.isRecordLimitFullInTx(
+              tx,
+              tenant,
+              transition.recordLimit,
+              transition.put.indexes,
+            );
+            if (recordLimitExceeded) {
+              return { status: 'recordLimitExceeded' };
+            }
           }
         }
 
@@ -345,7 +347,7 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
       .where('tenant', '=', tenant)
       .where('interface', '=', DwnInterfaceName.Records)
       .where('method', '=', DwnMethodName.Write)
-      .where('isLatestBaseState', '=', true)
+      .where('isLatestBaseState', '=', sanitizeFilterValue(true))
       .where('protocol', '=', protocol)
       .where('protocolPath', '=', protocolPath)
       .where('recordId', '=', recordId);
@@ -366,7 +368,7 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
       .where('tenant', '=', tenant)
       .where('interface', '=', DwnInterfaceName.Records)
       .where('method', '=', DwnMethodName.Write)
-      .where('isLatestBaseState', '=', true)
+      .where('isLatestBaseState', '=', sanitizeFilterValue(true))
       .where('protocol', '=', protocol)
       .where('protocolPath', '=', protocolPath)
       .where('recordId', 'is not', null)

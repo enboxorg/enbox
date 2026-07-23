@@ -32,7 +32,11 @@ export type MessageStoreRecordLimitCondition = {
   max: number;
 };
 
-/** Result of an atomic latest-state transition, including a rejected capacity allocation. */
+/**
+ * Result of an atomic latest-state transition, including a rejected capacity allocation.
+ * A rejected transition changes no message state; the caller remains responsible for deleting
+ * any incoming data it staged before attempting the commit.
+ */
 export type MessageStoreLatestStateCommitResult = MessageStorePutResult | {
   status: 'recordLimitExceeded';
   position?: undefined;

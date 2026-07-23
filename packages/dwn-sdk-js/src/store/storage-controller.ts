@@ -327,15 +327,6 @@ export class StorageController {
     additionalRetainedRecordsWrites: RecordsWriteMessage[],
     messageStore: MessageStore,
     dataStore: DataStore,
-    recordLimit: MessageStoreRecordLimitCondition,
-  ): Promise<MessageStoreLatestStateCommitResult>;
-  public static async commitLatestStateTransition(
-    tenant: string,
-    existingMessages: GenericMessage[],
-    newMessage: { message: GenericMessage, indexes: KeyValues },
-    additionalRetainedRecordsWrites: RecordsWriteMessage[],
-    messageStore: MessageStore,
-    dataStore: DataStore,
     recordLimit: MessageStoreRecordLimitCondition | undefined,
   ): Promise<MessageStoreLatestStateCommitResult>;
   public static async commitLatestStateTransition(

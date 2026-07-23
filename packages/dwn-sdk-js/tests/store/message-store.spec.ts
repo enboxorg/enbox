@@ -971,7 +971,7 @@ export function testMessageStore(): void {
         expect((await messageStore.commitLatestState(alice.did, transition)).status).toBe('duplicate');
       });
 
-      it('should release capacity when a current member is demoted', async () => {
+      it('should release capacity when a current member is demoted and replay its CID without reallocating', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const first = await generateRecordLimitMember({ group: 'record-limit-release', max: 1, order: 0 });
         const second = await generateRecordLimitMember({ group: 'record-limit-release', max: 1, order: 1 });
@@ -988,6 +988,11 @@ export function testMessageStore(): void {
           put         : { message: second.message, indexes: second.indexes },
           recordLimit : second.condition,
         })).status).toBe('inserted');
+
+        expect((await messageStore.commitLatestState(alice.did, {
+          put         : { message: first.message, indexes: first.indexes },
+          recordLimit : first.condition,
+        })).status).toBe('duplicate');
       });
 
       it('should reject invalid record-limit conditions without mutating durable state', async () => {
@@ -997,17 +1002,17 @@ export function testMessageStore(): void {
           {
             indexes     : member.indexes,
             recordLimit : { ...member.condition, max: 0 },
-            message     : 'record limit max must be between',
+            errorCode   : DwnErrorCode.MessageStoreRecordLimitInvalidMax,
           },
           {
             indexes     : { ...member.indexes, protocolPath: ['invalid'] },
             recordLimit : member.condition,
-            message     : 'record limit admission requires indexed scope and member fields',
+            errorCode   : DwnErrorCode.MessageStoreRecordLimitInvalidScope,
           },
           {
             indexes     : { ...member.indexes, isLatestBaseState: false },
             recordLimit : member.condition,
-            message     : 'record limit admission requires a current RecordsWrite',
+            errorCode   : DwnErrorCode.MessageStoreRecordLimitInvalidScope,
           },
         ];
 
@@ -1015,7 +1020,7 @@ export function testMessageStore(): void {
           await expect(messageStore.commitLatestState(alice.did, {
             put         : { message: member.message, indexes: attempt.indexes },
             recordLimit : attempt.recordLimit,
-          })).rejects.toThrow(attempt.message);
+          })).rejects.toThrow(attempt.errorCode);
         }
 
         expect(await messageStore.get(alice.did, member.messageCid)).toBeUndefined();

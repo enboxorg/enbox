@@ -165,6 +165,11 @@ describe('IndexLevel', () => {
 
       expect(matches.map(({ messageCid }) => messageCid)).toEqual(['a-1', 'a-3']);
       expect(await testIndex.queryExactMatches(tenant, 'scope', 'a', { ...options, limit: 0 })).toEqual([]);
+
+      await expect(testIndex.queryExactMatches(tenant, 'scope', 'a', {
+        ...options,
+        distinctBy: 'missing',
+      })).rejects.toThrow(DwnErrorCode.IndexInvalidDistinctProperty);
     });
 
     it('should return all records if an empty filter array is passed', async () => {

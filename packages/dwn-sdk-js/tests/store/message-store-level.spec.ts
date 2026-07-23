@@ -1,3 +1,4 @@
+import type { DataStore } from '../../src/types/data-store.js';
 import type { KeyValues } from '../../src/types/query-types.js';
 import type { Wake } from '../../src/index.js';
 import type { CreateLevelDatabaseOptions, LevelDatabase } from '../../src/store/level-wrapper.js';
@@ -11,6 +12,8 @@ import { MessageStoreLevel } from '../../src/store/message-store-level.js';
 import { PermissionsProtocol } from '../../src/protocols/permissions.js';
 import { ProtocolsConfigureHandler } from '../../src/handlers/protocols-configure.js';
 import { Replication } from '../../src/utils/replication.js';
+import sinon from 'sinon';
+import { StorageController } from '../../src/store/storage-controller.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
@@ -389,6 +392,35 @@ describe('MessageStoreLevel Test Suite', () => {
 
       expect(secondResult.status).toBe('recordLimitExceeded');
       expect(wakes).toHaveLength(1);
+    });
+
+    it('should not clean up displaced data when a conditional transition is rejected', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const protocol = 'https://example.com/record-limit-cleanup';
+      const protocolPath = 'item';
+      const occupant = await TestDataGenerator.generateRecordsWrite({ protocol, protocolPath });
+      const initial = await TestDataGenerator.generateRecordsWrite({ protocol, protocolPath });
+      const update = await TestDataGenerator.generateFromRecordsWrite({ author: alice, existingWrite: initial.recordsWrite });
+      const deleteData = sinon.stub().resolves();
+      const dataStore = { delete: deleteData } as unknown as DataStore;
+
+      await messageStore.commitLatestState(alice.did, {
+        put         : { message: occupant.message, indexes: await occupant.recordsWrite.constructIndexes(true) },
+        recordLimit : { max: 1 },
+      });
+
+      const result = await StorageController.commitLatestStateTransition(
+        alice.did,
+        [initial.message],
+        { message: update.message, indexes: await update.recordsWrite.constructIndexes(true) },
+        [],
+        messageStore,
+        dataStore,
+        { max: 1 },
+      );
+
+      expect(result.status).toBe('recordLimitExceeded');
+      expect(deleteData.notCalled).toBe(true);
     });
   });
 

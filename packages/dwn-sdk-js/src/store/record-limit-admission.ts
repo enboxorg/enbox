@@ -2,6 +2,7 @@ import type { KeyValues } from '../types/query-types.js';
 import type { MessageStoreRecordLimitCondition } from '../types/message-store.js';
 
 import { DwnConstant } from '../core/dwn-constant.js';
+import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
 export type MessageStoreRecordLimitScope = {
@@ -21,12 +22,18 @@ export function parseMessageStoreRecordLimitScope(
   indexes: KeyValues,
 ): MessageStoreRecordLimitScope {
   if (!Number.isSafeInteger(condition.max) || condition.max < 1 || condition.max > DwnConstant.maxRecordLimit) {
-    throw new RangeError(`MessageStore: record limit max must be between 1 and ${DwnConstant.maxRecordLimit}.`);
+    throw new DwnError(
+      DwnErrorCode.MessageStoreRecordLimitInvalidMax,
+      `record limit max must be between 1 and ${DwnConstant.maxRecordLimit}.`,
+    );
   }
   if (indexes.interface !== DwnInterfaceName.Records ||
     indexes.method !== DwnMethodName.Write ||
     indexes.isLatestBaseState !== true) {
-    throw new Error('MessageStore: record limit admission requires a current RecordsWrite.');
+    throw new DwnError(
+      DwnErrorCode.MessageStoreRecordLimitInvalidScope,
+      'record limit admission requires a current RecordsWrite.',
+    );
   }
 
   const { protocol, protocolPath, parentId, recordId } = indexes;
@@ -34,7 +41,10 @@ export function parseMessageStoreRecordLimitScope(
     typeof protocolPath !== 'string' ||
     (parentId !== undefined && typeof parentId !== 'string') ||
     typeof recordId !== 'string') {
-    throw new Error('MessageStore: record limit admission requires indexed scope and member fields.');
+    throw new DwnError(
+      DwnErrorCode.MessageStoreRecordLimitInvalidScope,
+      'record limit admission requires indexed scope and member fields.',
+    );
   }
 
   return {
