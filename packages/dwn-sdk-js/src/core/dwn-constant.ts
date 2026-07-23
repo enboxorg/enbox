@@ -8,8 +8,8 @@ export class DwnConstant {
   public static readonly maxDataSizeAllowedToBeEncoded = 30_000;
 
   /**
-   * Maximum supported `$recordLimit.max`. Read-time occupancy projection may load
-   * up to this many occupants per scope before applying the caller's filter/page.
+   * Maximum supported `$recordLimit.max`. Level-backed occupancy projection retains
+   * at most this many rank keys while finding a parent group's cutoff.
    */
   public static readonly maxRecordLimit = 1000;
 }

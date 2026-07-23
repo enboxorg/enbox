@@ -11,5 +11,3 @@ Nested query, count, and subscription selections may now start at an ancestor co
 Records filters now reject malformed context paths at message validation, and typed nested-path queries fail synchronously when their required `contextId` scope is omitted. Valid context IDs are at most 600 characters and contain only non-empty alphanumeric segments separated by `/`.
 
 SQL migration 005 changes the `contextId` and `protocolPath` collations and rebuilds the context index. It may briefly hold a schema lock while a populated message table is upgraded. MySQL storage now requires MySQL 8.0 or newer.
-
-Ancestor snapshots on paths with `$recordLimit` fail with a 400 response until #1431 provides grouped top-N occupancy by direct parent; returning unprojected stored candidates would violate the record-limit policy.

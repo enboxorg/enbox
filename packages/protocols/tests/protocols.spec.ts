@@ -87,9 +87,9 @@ describe('@enbox/protocols', () => {
     });
 
     it('should enforce $recordLimit on profile, avatar, and hero singletons', () => {
-      expect(ProfileDefinition.structure.profile.$recordLimit).toEqual({ max: 1, strategy: 'reject' });
-      expect(ProfileDefinition.structure.profile.avatar.$recordLimit).toEqual({ max: 1, strategy: 'reject' });
-      expect(ProfileDefinition.structure.profile.hero.$recordLimit).toEqual({ max: 1, strategy: 'reject' });
+      expect(ProfileDefinition.structure.profile.$recordLimit).toEqual({ max: 1 });
+      expect(ProfileDefinition.structure.profile.avatar.$recordLimit).toEqual({ max: 1 });
+      expect(ProfileDefinition.structure.profile.hero.$recordLimit).toEqual({ max: 1 });
     });
 
     it('should use cross-protocol friend role for privateNote', () => {
@@ -125,9 +125,9 @@ describe('@enbox/protocols', () => {
     });
 
     it('should enforce $recordLimit on theme, locale, and privacy singletons', () => {
-      expect(PreferencesDefinition.structure.theme.$recordLimit).toEqual({ max: 1, strategy: 'reject' });
-      expect(PreferencesDefinition.structure.locale.$recordLimit).toEqual({ max: 1, strategy: 'reject' });
-      expect(PreferencesDefinition.structure.privacy.$recordLimit).toEqual({ max: 1, strategy: 'reject' });
+      expect(PreferencesDefinition.structure.theme.$recordLimit).toEqual({ max: 1 });
+      expect(PreferencesDefinition.structure.locale.$recordLimit).toEqual({ max: 1 });
+      expect(PreferencesDefinition.structure.privacy.$recordLimit).toEqual({ max: 1 });
     });
 
     it('should require channel tag on notification records', () => {
@@ -246,7 +246,7 @@ describe('@enbox/protocols', () => {
     });
 
     it('should enforce $recordLimit on wallet singleton', () => {
-      expect(ConnectDefinition.structure.wallet.$recordLimit).toEqual({ max: 1, strategy: 'reject' });
+      expect(ConnectDefinition.structure.wallet.$recordLimit).toEqual({ max: 1 });
     });
 
     it('should allow anyone to read wallet records', () => {

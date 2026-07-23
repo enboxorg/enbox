@@ -217,7 +217,7 @@ export function testRecordsDelivery(): void {
               $delivery    : 'direct',
               $actions     : [{ who: 'anyone', can: ['create', 'read'] }],
               $size        : { min: 0, max: 10000 },
-              $recordLimit : { max: 100, strategy: 'reject' },
+              $recordLimit : { max: 100 },
             }
           }
         };
@@ -230,10 +230,7 @@ export function testRecordsDelivery(): void {
         expect(protocolsConfigure.message.descriptor.definition).toBeDefined();
         expect(protocolsConfigure.message.descriptor.definition.structure.message.$delivery).toBe('direct');
         expect(protocolsConfigure.message.descriptor.definition.structure.message.$size).toEqual({ min: 0, max: 10000 });
-        expect(protocolsConfigure.message.descriptor.definition.structure.message.$recordLimit).toEqual({
-          max      : 100,
-          strategy : 'reject',
-        });
+        expect(protocolsConfigure.message.descriptor.definition.structure.message.$recordLimit).toEqual({ max: 100 });
       });
 
       it('should accept protocol installation with $delivery via DWN processMessage', async () => {

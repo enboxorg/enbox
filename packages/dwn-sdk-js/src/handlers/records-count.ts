@@ -1,4 +1,5 @@
 import type { Filter } from '../types/query-types.js';
+import type { RecordLimitOccupancy } from '../types/message-store.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { RecordsCountMessage, RecordsCountReply } from '../types/records-types.js';
 
@@ -10,8 +11,11 @@ import { ProtocolAuthorization } from '../core/protocol-authorization.js';
 import { Records } from '../utils/records.js';
 import { RecordsCount } from '../interfaces/records-count.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
-import { countRecordsWithRecordLimitOccupancy, queryRecordsWithRecordLimitOccupancy } from '../utils/record-limit-occupancy.js';
-import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
+import {
+  countRecordsWithRecordLimitOccupancy,
+  queryRecordsWithRecordLimitOccupancy,
+  resolveRecordLimitOccupancy,
+} from '../utils/record-limit-occupancy.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
 export class RecordsCountHandler implements MethodHandler {
@@ -32,33 +36,26 @@ export class RecordsCountHandler implements MethodHandler {
     let count: number;
     const requester = Message.getRequester(recordsCount.message);
 
-    try {
-      // if this is an anonymous count and the filter supports published records, count only published records
-      if (Records.filterIncludesPublishedRecords(recordsCount.message.descriptor.filter) && recordsCount.author === undefined) {
-        count = await this.countPublishedRecords(tenant, recordsCount, requester);
+    // if this is an anonymous count and the filter supports published records, count only published records
+    if (Records.filterIncludesPublishedRecords(recordsCount.message.descriptor.filter) && recordsCount.author === undefined) {
+      count = await this.countPublishedRecords(tenant, recordsCount, requester);
+    } else {
+      // authentication and authorization
+      try {
+        await authenticate(message.authorization!, this.deps.didResolver);
+
+        await RecordsCountHandler.authorizeRecordsCount(tenant, recordsCount, this.deps);
+      } catch (e) {
+        return messageReplyFromError(e, 401);
+      }
+
+      if (recordsCount.author === tenant && requester === tenant) {
+        count = await this.countRecordsAsOwner(tenant, recordsCount);
+      } else if (recordsCount.author === tenant) {
+        count = await this.countRecordsAsOwnerDelegate(tenant, recordsCount, requester);
       } else {
-        // authentication and authorization
-        try {
-          await authenticate(message.authorization!, this.deps.didResolver);
-
-          await RecordsCountHandler.authorizeRecordsCount(tenant, recordsCount, this.deps);
-        } catch (e) {
-          return messageReplyFromError(e, 401);
-        }
-
-        if (recordsCount.author === tenant && requester === tenant) {
-          count = await this.countRecordsAsOwner(tenant, recordsCount);
-        } else if (recordsCount.author === tenant) {
-          count = await this.countRecordsAsOwnerDelegate(tenant, recordsCount, requester);
-        } else {
-          count = await this.countRecordsAsNonOwner(tenant, recordsCount, requester);
-        }
+        count = await this.countRecordsAsNonOwner(tenant, recordsCount, requester);
       }
-    } catch (error) {
-      if (error instanceof DwnError && error.code === DwnErrorCode.RecordsRecordLimitAncestorScopeUnsupported) {
-        return messageReplyFromError(error, 400);
-      }
-      throw error;
     }
 
     return {
@@ -79,7 +76,8 @@ export class RecordsCountHandler implements MethodHandler {
       isLatestBaseState : true
     };
 
-    return this.countProjectedRecords(tenant, recordsCount, [countFilter]);
+    const recordLimit = await this.resolveRecordLimit(tenant, recordsCount);
+    return this.countProjectedRecords(tenant, [countFilter], recordLimit);
   }
 
   private async countRecordsAsOwnerDelegate(
@@ -150,13 +148,16 @@ export class RecordsCountHandler implements MethodHandler {
     return this.countProjectedRecordsForRequester(tenant, recordsCount, requester, [filter]);
   }
 
-  private async countProjectedRecords(tenant: string, recordsCount: RecordsCount, filters: Filter[]): Promise<number> {
+  private async countProjectedRecords(
+    tenant: string,
+    filters: Filter[],
+    recordLimit: RecordLimitOccupancy | undefined,
+  ): Promise<number> {
     const totalCount = await countRecordsWithRecordLimitOccupancy({
-      messageStore          : this.deps.messageStore,
-      validationStateReader : this.deps.validationStateReader,
+      messageStore: this.deps.messageStore,
       tenant,
       filters,
-      messageTimestamp      : recordsCount.message.descriptor.messageTimestamp,
+      recordLimit,
     });
 
     const audienceFilters = EncryptionControl.buildAudienceRecordFilters(filters);
@@ -186,23 +187,23 @@ export class RecordsCountHandler implements MethodHandler {
     requester: string | undefined,
     filters: Filter[],
   ): Promise<number> {
+    const recordLimit = await this.resolveRecordLimit(tenant, recordsCount);
     const controlFilters = Records.buildControlRecordsFilters(filters);
     if (controlFilters.length === 0) {
-      return this.countProjectedRecords(tenant, recordsCount, filters);
+      return this.countProjectedRecords(tenant, filters, recordLimit);
     }
 
-    const totalCount = await this.countProjectedRecords(tenant, recordsCount, filters);
-    const controlCount = await this.countProjectedRecords(tenant, recordsCount, controlFilters);
+    const totalCount = await this.countProjectedRecords(tenant, filters, recordLimit);
+    const controlCount = await this.countProjectedRecords(tenant, controlFilters, recordLimit);
     if (controlCount === 0) {
       return totalCount;
     }
 
     const { messages } = await queryRecordsWithRecordLimitOccupancy({
-      messageStore          : this.deps.messageStore,
-      validationStateReader : this.deps.validationStateReader,
+      messageStore : this.deps.messageStore,
       tenant,
-      filters               : controlFilters,
-      messageTimestamp      : recordsCount.message.descriptor.messageTimestamp,
+      filters      : controlFilters,
+      recordLimit,
     });
     const projectedMessages = await EncryptionControl.projectCurrentAudienceRecords({
       messageStore         : this.deps.messageStore,
@@ -218,6 +219,18 @@ export class RecordsCountHandler implements MethodHandler {
       validationStateReader : this.deps.validationStateReader,
     });
     return totalCount - controlCount + visibleMessages.length;
+  }
+
+  private async resolveRecordLimit(
+    tenant: string,
+    recordsCount: RecordsCount,
+  ): Promise<RecordLimitOccupancy | undefined> {
+    return resolveRecordLimitOccupancy({
+      validationStateReader : this.deps.validationStateReader,
+      tenant,
+      recordsFilter         : recordsCount.message.descriptor.filter,
+      messageTimestamp      : recordsCount.message.descriptor.messageTimestamp,
+    });
   }
 
   private static buildPublishedRecordsFilter(recordsCount: RecordsCount): Filter {

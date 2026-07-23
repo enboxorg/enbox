@@ -68,8 +68,8 @@ const harnessProtocolV1: ProtocolDefinition = {
   },
   structure: {
     note    : {},
-    pin     : { $recordLimit: { max: 2, strategy: 'reject' } },
-    profile : { $recordLimit: { max: 1, strategy: 'reject' } },
+    pin     : { $recordLimit: { max: 2 } },
+    profile : { $recordLimit: { max: 1 } },
     thread  : {
       reply: {},
     },

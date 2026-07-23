@@ -52,9 +52,9 @@ const chatDefinitionTemplate = {
     thread : {
       participant : { $role: true },
       chat        : {},
-      meta        : { $recordLimit: { max: 1, strategy: 'reject' } },
+      meta        : { $recordLimit: { max: 1 } },
     },
-    settings: { $recordLimit: { max: 1, strategy: 'reject' } },
+    settings: { $recordLimit: { max: 1 } },
   },
 } as const satisfies DwnProtocolDefinition;
 

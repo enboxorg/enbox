@@ -149,33 +149,15 @@ export type ProtocolSizeDefinition = {
 };
 
 /**
- * Supported strategies for handling writes that would exceed a `$recordLimit`.
- */
-export enum ProtocolRecordLimitStrategy {
-  /** Reject the incoming write with an error. The author must delete old records first. */
-  Reject = 'reject',
-  /** Automatically delete the oldest record(s) (by `dateCreated`) to make room for the new one. */
-  PurgeOldest = 'purgeOldest',
-}
-
-/**
- * Limits the number of records at a given protocol path within the same parent context.
+ * Limits the visible records at a given protocol path within the same parent context.
  *
- * For root-level records, the count is across the entire protocol for the tenant.
- * For nested records, the count is scoped to the parent record's context.
- *
- * Only initial writes (new records) count toward the limit; updates to existing records do not.
+ * Root-level records form one group for the protocol path. Nested records are grouped by
+ * direct parent context. Occupants are selected deterministically at read time; valid writes
+ * outside the visible population remain stored and may become visible later.
  */
 export type ProtocolRecordLimitDefinition = {
-  /** Maximum number of records allowed at this path within the same parent context. Must be >= 1. */
+  /** Maximum number of visible records at this path within the same parent context. Must be >= 1. */
   max: number;
-
-  /**
-   * Strategy when the limit is reached.
-   * Currently only `'reject'` is implemented. Future strategies (e.g. `'purgeOldest'`)
-   * are defined in the wire format but not yet enforced.
-   */
-  strategy: ProtocolRecordLimitStrategy | `${ProtocolRecordLimitStrategy}` | (string & {});
 };
 
 /**
@@ -287,9 +269,8 @@ export type ProtocolRuleSet = {
   $tags?: ProtocolTagsDefinition;
 
   /**
-   * If $recordLimit is set, the number of records at this protocol path within the same
-   * parent context is constrained. When the limit is reached, the `strategy` determines
-   * whether the write is rejected or the oldest record is purged.
+   * If `$recordLimit` is set, reads expose at most `max` records at this protocol path
+   * within each direct parent context.
    */
   $recordLimit?: ProtocolRecordLimitDefinition;
 

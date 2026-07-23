@@ -114,4 +114,8 @@ export class MysqlDialect extends KyselyMysqlDialect implements Dialect {
     return sql<string | null>`CAST(${sql.ref(columnReference)} AS CHAR)`;
   }
 
+  byteStableText(columnReference: string): RawBuilder<string | null> {
+    return sql<string | null>`CAST(${sql.ref(columnReference)} AS BINARY)`;
+  }
+
 }

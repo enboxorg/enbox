@@ -411,7 +411,7 @@ describe('validation read closure', () => {
         protocol  : 'http://record-limit-closure.xyz',
         published : false,
         types     : { item: { schema: 'item', dataFormats: ['text/plain'] } },
-        structure : { item: { $recordLimit: { max: 1, strategy: 'reject' } } },
+        structure : { item: { $recordLimit: { max: 1 } } },
       };
       const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition: definition });
       expect((await dwn.processMessage(alice.did, configureMessage)).status.code).toBe(202);

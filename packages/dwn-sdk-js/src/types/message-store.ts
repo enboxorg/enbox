@@ -7,6 +7,29 @@ export interface MessageStoreOptions {
 }
 
 /**
+ * Read-time `$recordLimit` occupancy policy for one concrete protocol path.
+ *
+ * Stores partition matching latest RecordsWrites by `parentId`, rank each
+ * partition by `dateCreated` then `recordId` ascending, and apply `max`
+ * before the caller's filters, sort, and pagination.
+ */
+export type RecordLimitOccupancy = {
+  protocol: string;
+  protocolPath: string;
+  /**
+   * Root of the candidate context subtree. An exact-record request supplies
+   * its direct-parent context here so sibling candidates still consume slots.
+   * Omitted for root protocol paths.
+   */
+  contextId?: string;
+  max: number;
+};
+
+export interface MessageStoreQueryOptions extends MessageStoreOptions {
+  recordLimit?: RecordLimitOccupancy;
+}
+
+/**
  * Result of a {@link MessageStore.put} operation.
  */
 export type MessageStorePutResult = {
@@ -98,7 +121,7 @@ export interface MessageStore {
     filters: Filter[],
     messageSort?: MessageSort,
     pagination?: Pagination,
-    options?: MessageStoreOptions
+    options?: MessageStoreQueryOptions
   ): Promise<{ messages: GenericMessage[], cursor?: PaginationCursor}>;
 
   /**
@@ -109,7 +132,7 @@ export interface MessageStore {
     tenant: string,
     filters: Filter[],
     messageSort?: MessageSort,
-    options?: MessageStoreOptions
+    options?: MessageStoreQueryOptions
   ): Promise<number>;
 
   /**

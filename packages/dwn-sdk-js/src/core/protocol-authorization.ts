@@ -19,7 +19,6 @@ import {
   verifyAsRoleRecordIfNeeded,
   verifyImmutability,
   verifyProtocolPathAndContextId,
-  verifyRecordLimit,
   verifySizeLimit,
   verifySquashEligibility,
   verifyTagsIfNeeded,
@@ -88,9 +87,6 @@ export class ProtocolAuthorization {
     // Verify squash eligibility — ensure squash writes are at $squash: true paths and are initial writes
     await verifySquashEligibility(incomingMessage, ruleSet);
 
-    // Verify record count limit
-    await verifyRecordLimit(incomingMessage, ruleSet);
-
     return ruleSet;
   }
 
@@ -142,9 +138,6 @@ export class ProtocolAuthorization {
     verifyTagsIfNeeded(incomingMessage, ruleSet);
     await verifySquashEligibility(incomingMessage, ruleSet);
     ProtocolAuthorization.verifyStoredInitialWriteCreateAction(tenant, incomingMessage, ruleSet);
-
-    // `verifyRecordLimit()` is intentionally not replayed here. It only checks strategy
-    // support for new record candidates; read-time occupancy projection decides visibility.
   }
 
   /**

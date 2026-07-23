@@ -156,20 +156,20 @@ const ProfileDefinition = {
   },
   structure: {
     profile: {
-      $recordLimit : { max: 1, strategy: 'reject' },
+      $recordLimit : { max: 1 },
       $size        : { max: 10000 },
       $actions     : [
         { who: 'anyone', can: ['read'] },
       ],
       avatar: {
-        $recordLimit : { max: 1, strategy: 'reject' },
+        $recordLimit : { max: 1 },
         $size        : { max: 12582912 },
         $actions     : [
           { who: 'anyone', can: ['read'] },
         ],
       },
       hero: {
-        $recordLimit : { max: 1, strategy: 'reject' },
+        $recordLimit : { max: 1 },
         $size        : { max: 25165824 },
         $actions     : [
           { who: 'anyone', can: ['read'] },
@@ -209,7 +209,7 @@ const ConnectDefinition = {
   },
   structure: {
     wallet: {
-      $recordLimit : { max: 1, strategy: 'reject' },
+      $recordLimit : { max: 1 },
       $actions     : [
         { who: 'anyone', can: ['read'] },
       ],

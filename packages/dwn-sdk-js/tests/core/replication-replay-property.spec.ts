@@ -215,8 +215,8 @@ function protocolDefinition(protocol: string, revision: number): ProtocolDefinit
       [extraType] : {},
       note        : {},
       patch       : { $squash: true },
-      pin         : { $recordLimit: { max: 2, strategy: 'reject' } },
-      profile     : { $recordLimit: { max: 1, strategy: 'reject' } },
+      pin         : { $recordLimit: { max: 2 } },
+      profile     : { $recordLimit: { max: 1 } },
       thread      : { reply: {} },
     },
   };

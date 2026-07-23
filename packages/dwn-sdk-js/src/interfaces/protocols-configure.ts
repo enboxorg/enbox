@@ -19,7 +19,7 @@ import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import { getRoleAudienceContextId, getRuleSetAtPath, isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
 import { normalizeProtocolUrl, normalizeSchemaUrl, validateProtocolUrlNormalized, validateSchemaUrlNormalized } from '../utils/url.js';
-import { ProtocolAction, ProtocolActor, ProtocolRecordLimitStrategy } from '../types/protocols-types.js';
+import { ProtocolAction, ProtocolActor } from '../types/protocols-types.js';
 
 export type ProtocolsConfigureOptions = {
   messageTimestamp?: string;
@@ -301,7 +301,7 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
 
     // Validate $recordLimit
     if (ruleSet.$recordLimit !== undefined) {
-      const { max, strategy } = ruleSet.$recordLimit;
+      const { max } = ruleSet.$recordLimit;
 
       if (!Number.isInteger(max) || max < 1) {
         throw new DwnError(
@@ -314,15 +314,6 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
         throw new DwnError(
           DwnErrorCode.ProtocolsConfigureInvalidRecordLimit,
           `Invalid $recordLimit.max value ${max} at protocol path '${ruleSetProtocolPath}': must be <= ${DwnConstant.maxRecordLimit}.`
-        );
-      }
-
-      const validStrategies = Object.values(ProtocolRecordLimitStrategy) as string[];
-      if (!validStrategies.includes(strategy as string)) {
-        throw new DwnError(
-          DwnErrorCode.ProtocolsConfigureInvalidRecordLimit,
-          `Invalid $recordLimit.strategy '${strategy}' at protocol path '${ruleSetProtocolPath}': ` +
-          `must be one of ${validStrategies.join(', ')}.`
         );
       }
     }

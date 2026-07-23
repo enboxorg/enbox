@@ -141,15 +141,11 @@
     "$recordLimit": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["max", "strategy"],
+      "required": ["max"],
       "properties": {
         "max": {
           "type": "integer",
           "minimum": 1
-        },
-        "strategy": {
-          "type": "string",
-          "enum": ["reject", "purgeOldest"]
         }
       }
     },

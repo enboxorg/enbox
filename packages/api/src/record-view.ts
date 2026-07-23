@@ -1,9 +1,10 @@
 import type { compileRecordQuery } from './record-query.js';
 import type { DwnSubscriptionMessage } from '@enbox/dwn-clients';
-import type { RecordsFilter } from '@enbox/dwn-sdk-js';
 import type { DwnApi, RecordsQueryResponse } from './dwn-api.js';
+import type { ProtocolDefinition, RecordsFilter } from '@enbox/dwn-sdk-js';
 import type { ReplicationLinkSnapshot, SyncEngine, SyncEvent, SyncIdentityOptions } from '@enbox/agent';
 
+import { getRuleSetAtPath } from '@enbox/dwn-sdk-js';
 import { isOk } from './utils.js';
 import { TypedRecord } from './typed-record.js';
 
@@ -62,6 +63,7 @@ type CompiledRecordQuery = ReturnType<typeof compileRecordQuery>;
 
 /** @internal Dependencies supplied by {@link TypedEnbox} for one view. */
 type RecordViewOptions = {
+  definition: ProtocolDefinition;
   dwn: DwnApi;
   query: CompiledRecordQuery;
   signal?: AbortSignal;
@@ -87,6 +89,7 @@ export async function createRecordView<T>(options: RecordViewOptions): Promise<R
 
 /** One serialized, wake-driven materialization resource. */
 class ObservedRecordView<T> implements RecordView<T> {
+  private readonly _definition: ProtocolDefinition;
   private readonly _dwn: DwnApi;
   private readonly _listeners = new Set<RecordViewListener<T>>();
   private readonly _query: CompiledRecordQuery;
@@ -114,6 +117,7 @@ class ObservedRecordView<T> implements RecordView<T> {
   };
 
   public constructor(options: RecordViewOptions) {
+    this._definition = options.definition;
     this._dwn = options.dwn;
     this._query = options.query;
     this._signal = options.signal;
@@ -133,7 +137,7 @@ class ObservedRecordView<T> implements RecordView<T> {
 
     try {
       const reply = await this._dwn.records.subscribe({
-        filter       : structuralWakeFilter(this._query.filter),
+        filter       : structuralWakeFilter(this._definition, this._query.filter),
         pagination   : { limit: 1 },
         protocolRole : this._query.protocolRole,
         subscriptionHandler,
@@ -441,14 +445,38 @@ function immutableSnapshot<T>(snapshot: RecordViewSnapshot<T>): RecordViewSnapsh
   return Object.freeze({ ...snapshot, records });
 }
 
-/** Project the canonical query down to fields that cannot leave its structural scope. */
-function structuralWakeFilter(filter: CompiledRecordQuery['filter']): RecordsFilter {
+/** Project the canonical query to the structural scope containing every dependency of its result. */
+function structuralWakeFilter(
+  definition: ProtocolDefinition,
+  filter: CompiledRecordQuery['filter'],
+): RecordsFilter {
+  const recordLimit = getRuleSetAtPath(filter.protocolPath, definition.structure)?.$recordLimit;
+  const contextId = recordLimitWakeContextId(recordLimit !== undefined, filter);
   return {
     protocol     : filter.protocol,
     protocolPath : filter.protocolPath,
-    ...(filter.contextId === undefined ? {} : { contextId: filter.contextId }),
-    ...(filter.recordId === undefined ? {} : { recordId: filter.recordId }),
+    ...(contextId === undefined ? {} : { contextId }),
+    ...(recordLimit === undefined && filter.recordId !== undefined ? { recordId: filter.recordId } : {}),
   };
+}
+
+/** Widen a full-record scope to the parent group whose occupancy can change that record's visibility. */
+function recordLimitWakeContextId(
+  isRecordLimited: boolean,
+  filter: CompiledRecordQuery['filter'],
+): string | undefined {
+  const contextId = filter.contextId;
+  if (contextId === undefined || !isRecordLimited) {
+    return contextId;
+  }
+
+  const contextSegments = contextId.split('/');
+  if (contextSegments.length !== filter.protocolPath.split('/').length) {
+    return contextId;
+  }
+
+  contextSegments.pop();
+  return contextSegments.length === 0 ? undefined : contextSegments.join('/');
 }
 
 function registrationCoversProtocol(

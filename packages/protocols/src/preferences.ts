@@ -90,15 +90,15 @@ export const PreferencesDefinition = {
   },
   structure: {
     theme: {
-      $recordLimit : { max: 1, strategy: 'reject' },
+      $recordLimit : { max: 1 },
       $actions     : [],
     },
     locale: {
-      $recordLimit : { max: 1, strategy: 'reject' },
+      $recordLimit : { max: 1 },
       $actions     : [],
     },
     privacy: {
-      $recordLimit : { max: 1, strategy: 'reject' },
+      $recordLimit : { max: 1 },
       $actions     : [],
     },
     notification: {
