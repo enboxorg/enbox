@@ -412,7 +412,16 @@ describe('SyncEngineLevel — transport lifecycle connectivity', () => {
 
     expect(await openSubscription(fixture)).toBe(true);
     controller.markReplicationReady();
+    controller.markPullCurrent(controller.replicationGeneration);
     const handler = fixture.handlers[0];
+    const events: string[] = [];
+    const unsubscribe = fixture.engine.on((event): void => {
+      if (event.type === 'pull:currentness-change') {
+        events.push(`pull:${event.to}`);
+      } else if (event.type === 'link:connectivity-change') {
+        events.push(`connectivity:${event.to}`);
+      }
+    });
 
     // The transport lost its socket: report this exact link offline even
     // though its logical subscription handle remains.
@@ -421,6 +430,7 @@ describe('SyncEngineLevel — transport lifecycle connectivity', () => {
     expect(controller.link.connectivity).toBe('offline');
 
     await handler({ type: 'reconnecting', attempt: 1 });
+    events.splice(0);
 
     // The transport reports reconnected only after verified resubscription.
     await handler({ type: 'reconnected' });
@@ -428,7 +438,10 @@ describe('SyncEngineLevel — transport lifecycle connectivity', () => {
     expect(fixture.resume.calledOnceWithExactly(controller)).toBe(true);
     expect(controller.executor.hasPending('pull')).toBe(true);
     expect(controller.executor.hasPending('push')).toBe(true);
+    expect(controller.isPullCurrent).toBe(false);
+    expect(events).toEqual(['pull:false', 'connectivity:online']);
 
+    unsubscribe();
     await controller.dispose();
   });
 

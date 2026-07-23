@@ -90,6 +90,7 @@ type ConnectionMonitorState = {
 type ConnectionAttemptGuard = {
   lifecycleGeneration: number;
   monitor?: ConnectionMonitorState;
+  sessionLifetime: AbortController;
 };
 
 /**
@@ -135,6 +136,7 @@ export class AuthManager {
   private _isShutDown = false;
   private _isShuttingDown = false;
   private _connectionMonitor?: ConnectionMonitorState;
+  private _sessionLifetime?: AbortController;
   private _lifecycleGeneration = 0;
   private _lifecycleCommitTail: Promise<void> = Promise.resolve();
   private _shutdownPromise?: Promise<void>;
@@ -305,7 +307,7 @@ export class AuthManager {
    * @throws If handler-based connect is attempted without a handler.
    */
   async connect(options?: ConnectOptions): Promise<AuthSession> {
-    return this._withConnect(async (guard) => {
+    return this._withConnectionAttempt(async (guard) => {
       // Recovery is an explicit user action. Do not let a stale stored session intercept it.
       if (this._isPhraseRestore(options)) {
         return vaultConnect(this._flowContext(guard), options);
@@ -339,7 +341,7 @@ export class AuthManager {
    * @throws If a connection attempt is already in progress.
    */
   async connectVault(options?: VaultConnectOptions): Promise<AuthSession> {
-    return this._withConnect((guard) => vaultConnect(this._flowContext(guard), options));
+    return this._withConnectionAttempt((guard) => vaultConnect(this._flowContext(guard), options));
   }
 
   /**
@@ -350,7 +352,7 @@ export class AuthManager {
    * - Different local vault: throws without clearing or replacing the existing vault.
    */
   async restoreFromPhrase(options: RestoreFromPhraseOptions): Promise<AuthSession> {
-    return this._withConnect((guard) => vaultConnect(this._flowContext(guard), options));
+    return this._withConnectionAttempt((guard) => vaultConnect(this._flowContext(guard), options));
   }
 
   /**
@@ -365,7 +367,7 @@ export class AuthManager {
    * @throws If a connection attempt is already in progress.
    */
   async walletConnect(options: WalletConnectOptions): Promise<AuthSession> {
-    return this._withConnect((guard) => walletConnect(this._flowContext(guard), options));
+    return this._withConnectionAttempt((guard) => walletConnect(this._flowContext(guard), options));
   }
 
   /**
@@ -374,7 +376,7 @@ export class AuthManager {
    * The portable identity contains the DID's private keys and metadata.
    */
   async importFromPortable(options: ImportFromPortableOptions): Promise<AuthSession> {
-    return this._withConnect((guard) => importFromPortable(this._flowContext(guard), options));
+    return this._withConnectionAttempt((guard) => importFromPortable(this._flowContext(guard), options));
   }
 
   /**
@@ -384,19 +386,7 @@ export class AuthManager {
    * This replaces the manual `previouslyConnected` localStorage pattern.
    */
   async restoreSession(options?: RestoreSessionOptions): Promise<AuthSession | undefined> {
-    this._guardShutdown();
-    this._guardConcurrency();
-    this._isConnecting = true;
-    const guard: ConnectionAttemptGuard = {
-      lifecycleGeneration: this._lifecycleGeneration,
-    };
-
-    try {
-      const session = await restoreSession(this._flowContext(guard), options);
-      return session;
-    } finally {
-      this._isConnecting = false;
-    }
+    return this._withConnectionAttempt((guard) => restoreSession(this._flowContext(guard), options));
   }
 
   /**
@@ -466,7 +456,10 @@ export class AuthManager {
    *
    * The delegate's local keys and identity record are reused. Prior grants
    * remain valid until they expire or are revoked; local revocation metadata,
-   * sync scope, and session markers are updated for the new approval.
+   * sync scope, and session markers are updated for the new approval. A
+   * successful refresh replaces the active `AuthSession` and aborts the prior
+   * session signal; use the returned session for subsequent work. A failed or
+   * denied refresh leaves the existing session active.
    */
   async refresh(options: RefreshOptions): Promise<AuthSession> {
     return this._refresh(options);
@@ -477,7 +470,9 @@ export class AuthManager {
    *
    * Events are emitted only when the newest session enters a new state.
    * Automatic refresh is attempted at most once per session and state, and is
-   * never attempted for a revoked session.
+   * never attempted for a revoked session. A successful automatic refresh has
+   * the same session-replacement and prior-signal-abort semantics as
+   * {@link refresh}.
    *
    * @returns A function that stops this monitor instance.
    */
@@ -541,7 +536,7 @@ export class AuthManager {
    * ```
    */
   async connectHeadless(options?: HeadlessConnectOptions): Promise<AuthSession> {
-    return this._withConnect(async (guard) => {
+    return this._withConnectionAttempt(async (guard) => {
       let password = options?.password ?? this._defaultPassword;
       this._assertConnectionAttemptActive(guard);
       const isFirstLaunch = await this._userAgent.firstLaunch();
@@ -589,10 +584,14 @@ export class AuthManager {
         connectedDid : identity.metadata.connectedDid,
       };
 
-      // No sync, registration, session markers, or lifecycle events.
+      // No sync, registration, session markers, session-start, or identity-added publication.
       return this._commitConnectionResult(guard, async (): Promise<AuthSession> => new AuthSession({
-        agent: this._userAgent, did: connectedDid, delegateDid, identity: identityInfo,
-      }));
+        agent    : this._userAgent,
+        did      : connectedDid,
+        delegateDid,
+        identity : identityInfo,
+        signal   : guard.sessionLifetime.signal,
+      }), { publishSessionStart: false });
     });
   }
 
@@ -623,6 +622,7 @@ export class AuthManager {
     }
 
     this._invalidateConnectionAttempts();
+    this._abortSessionLifetime();
     this.stopConnectionMonitor();
     const releaseCommit = await this._acquireLifecycleCommit();
     try {
@@ -635,9 +635,21 @@ export class AuthManager {
   private async _lock(options: { timeout?: number }): Promise<void> {
     const { timeout = 2000 } = options;
     const did = this._session?.did;
+    let syncStopError: unknown;
 
-    // 1. Stop sync.
-    await this._userAgent.sync.stopSync(timeout);
+    // Repeat at the lifecycle linearization point so a connection that was
+    // already committing when lock() began cannot install a live lifetime
+    // behind the eager fence above.
+    this._abortSessionLifetime();
+
+    // 1. Stop sync. A transport failure must not leave a connected manager
+    // holding an already-aborted session, so remember the error and finish
+    // the local authorization teardown before surfacing it.
+    try {
+      await this._userAgent.sync.stopSync(timeout);
+    } catch (error: unknown) {
+      syncStopError = error;
+    }
 
     // 2. Clear the session (but keep storage markers for restore).
     this._session = undefined;
@@ -652,6 +664,10 @@ export class AuthManager {
     // 5. Emit session-end if there was an active session.
     if (did) {
       this._emitter.emit('session-end', { did });
+    }
+
+    if (syncStopError !== undefined) {
+      throw syncStopError;
     }
   }
 
@@ -670,6 +686,7 @@ export class AuthManager {
     }
 
     this._invalidateConnectionAttempts();
+    this._abortSessionLifetime();
     this.stopConnectionMonitor();
     const releaseCommit = await this._acquireLifecycleCommit();
     try {
@@ -682,6 +699,10 @@ export class AuthManager {
   private async _disconnect(options: DisconnectOptions): Promise<void> {
     const { clearStorage = false, timeout = 2000 } = options;
     const did = this._session?.did;
+
+    // Also fence a session committed while disconnect() waited for the
+    // lifecycle mutex.
+    this._abortSessionLifetime();
 
     // Stop live sync BEFORE revoking. Revocation delivery uses direct RPC
     // (not the sync engine), and revoking while subscriptions and the
@@ -994,6 +1015,7 @@ export class AuthManager {
     // reach wallet approval against an agent that is closing.
     this._isShuttingDown = true;
     this._invalidateConnectionAttempts();
+    this._abortSessionLifetime();
     this.stopConnectionMonitor();
     this._shutdownPromise = this._runShutdown(options);
     return this._shutdownPromise;
@@ -1014,6 +1036,10 @@ export class AuthManager {
   private async _shutdown(options: ShutdownOptions): Promise<void> {
     const { timeout = 2000 } = options;
     const did = this._session?.did;
+
+    // Also fence a session committed while shutdown() waited for the
+    // lifecycle mutex.
+    this._abortSessionLifetime();
 
     // 1. Tear down the agent: stops sync, drains the RPC socket pool, locks
     //    the vault, and closes the DWN stores, DID resolver cache, and vault
@@ -1073,53 +1099,58 @@ export class AuthManager {
    * for the specified identity.
    */
   async switchIdentity(didUri: string): Promise<AuthSession> {
-    // Disconnect current session cleanly (keep data).
-    if (this._session) {
-      await this.disconnect();
-    }
+    return this._withConnectionAttempt(async (guard) => {
+      // Disconnect the current session inside this connection attempt so a
+      // concurrent lock, disconnect, or shutdown invalidates the entire
+      // switch instead of allowing its late result to recreate a session.
+      if (this._session !== undefined) {
+        this._abortSessionLifetime();
+        this.stopConnectionMonitor();
+        await this._runConnectionMutation(guard, () => this._disconnect({}));
+      }
 
-    const identity = await this._userAgent.identity.get({ didUri });
-    if (!identity) {
-      throw new Error(`[@enbox/auth] Identity not found: ${didUri}`);
-    }
+      const identity = await this._userAgent.identity.get({ didUri });
+      this._assertConnectionAttemptActive(guard);
+      if (identity === undefined) {
+        throw new Error(`[@enbox/auth] Identity not found: ${didUri}`);
+      }
 
-    const { connectedDid, delegateDid } = resolveIdentityDids(identity);
+      const { connectedDid, delegateDid } = resolveIdentityDids(identity);
+      const identityInfo: AgentSessionIdentity = {
+        didUri       : connectedDid,
+        name         : identity.metadata.name,
+        connectedDid : identity.metadata.connectedDid,
+      };
 
-    // Persist the switch.
-    await this._storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
-    await this._storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, connectedDid);
+      // Resolve the desired sync scope before entering the terminal commit.
+      // A teardown that lands while this read is pending invalidates the
+      // guard and prevents every mutation below.
+      const derivedProtocols = delegateDid
+        ? await this._deriveProtocolsFromGrants(delegateDid)
+        : undefined;
+      this._assertConnectionAttemptActive(guard);
 
-    const identityInfo: AgentSessionIdentity = {
-      didUri       : connectedDid,
-      name         : identity.metadata.name,
-      connectedDid : identity.metadata.connectedDid,
-    };
+      return this._commitConnectionResult(guard, async (): Promise<AuthSession> => {
+        await Promise.all([
+          this._storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true'),
+          this._storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, connectedDid),
+        ]);
 
-    // Always repair the sync registration regardless of sync state — a stale
-    // registration persists on disk and would take effect when sync is later
-    // enabled. This matches restoreSession()'s behavior.
-    const derivedProtocols = delegateDid
-      ? await this._deriveProtocolsFromGrants(delegateDid)
-      : undefined;
+        // Always repair the sync registration regardless of sync state — a
+        // stale registration persists on disk and would take effect when
+        // sync is later enabled. This matches restoreSession()'s behavior.
+        await this._repairSyncRegistration(connectedDid, delegateDid, derivedProtocols);
+        await startSyncIfEnabled(this._userAgent, this._defaultSync);
 
-    await this._repairSyncRegistration(connectedDid, delegateDid, derivedProtocols);
-
-    await startSyncIfEnabled(this._userAgent, this._defaultSync);
-
-    this._session = new AuthSession({
-      agent    : this._userAgent,
-      did      : connectedDid,
-      delegateDid,
-      identity : identityInfo,
+        return new AuthSession({
+          agent    : this._userAgent,
+          did      : connectedDid,
+          delegateDid,
+          identity : identityInfo,
+          signal   : guard.sessionLifetime.signal,
+        });
+      });
     });
-
-    this._setState('connected');
-
-    this._emitter.emit('session-start', {
-      session: { did: connectedDid, delegateDid, identity: identityInfo },
-    });
-
-    return this._session;
   }
 
   /**
@@ -1398,7 +1429,7 @@ export class AuthManager {
     options: HandlerConnectOptions | undefined,
     guard: ConnectionAttemptGuard,
   ): Promise<AuthSession> {
-    const ctx = this._flowContext();
+    const ctx = this._flowContext(guard);
     const { userAgent, emitter, storage } = ctx;
     const sync = options?.sync ?? ctx.defaultSync;
 
@@ -1458,6 +1489,7 @@ export class AuthManager {
       return finalizeDelegateSession({
         userAgent, emitter, storage, identity,
         connectedDid, delegateDid   : delegatePortableDid.uri, sync,
+        signal        : guard.sessionLifetime.signal,
         delegateState : {
           sessionRevocations,
         },
@@ -1470,7 +1502,16 @@ export class AuthManager {
     options: RefreshOptions,
     monitor?: ConnectionMonitorState,
   ): Promise<AuthSession> {
-    return this._withConnect(
+    this._guardShutdown();
+    if (this._session?.delegateDid === undefined) {
+      throw new Error('[@enbox/auth] refresh() requires an active delegated session.');
+    }
+
+    if (this._sessionLifetime === undefined) {
+      throw new Error('[@enbox/auth] refresh() requires an active session lifetime.');
+    }
+
+    return this._withConnectionAttempt(
       (guard) => this._handlerRefresh(options, guard),
       monitor,
     );
@@ -1561,7 +1602,7 @@ export class AuthManager {
         delegateState     : { sessionRevocations: result.sessionRevocations },
         startSync         : false,
         emitIdentityAdded : false,
-        emitSessionStart  : false,
+        signal            : guard.sessionLifetime.signal,
       });
     });
   }
@@ -1645,23 +1686,23 @@ export class AuthManager {
    * previously duplicated across `connect()`, `walletConnect()`,
    * `restoreFromPhrase()`, `importFromPortable()`, and `restoreSession()`.
    */
-  private _flowContext(guard?: ConnectionAttemptGuard): FlowContext {
+  private _flowContext(guard: ConnectionAttemptGuard): FlowContext {
     return {
       userAgent                    : this._userAgent,
       emitter                      : this._emitter,
       storage                      : this._storage,
+      sessionSignal                : guard.sessionLifetime.signal,
       defaultPassword              : this._defaultPassword,
       passwordProvider             : this._passwordProvider,
       defaultSync                  : this._defaultSync,
       defaultIdentitySyncProtocols : this._defaultIdentitySyncProtocols,
       defaultDwnEndpoints          : this._defaultDwnEndpoints,
       registration                 : this._registration,
-      ...(guard === undefined ? {} : {
-        assertActive  : (): void => this._assertConnectionAttemptActive(guard),
-        runMutation   : <T>(operation: () => Promise<T>): Promise<T> => this._runConnectionMutation(guard, operation),
-        commitSession : (operation: () => Promise<AuthSession>): Promise<AuthSession> =>
-          this._commitConnectionResult(guard, operation),
-      }),
+      assertActive                 : (): void => this._assertConnectionAttemptActive(guard),
+      runMutation                  : <T>(operation: () => Promise<T>): Promise<T> =>
+        this._runConnectionMutation(guard, operation),
+      commitSession: (operation: () => Promise<AuthSession>): Promise<AuthSession> =>
+        this._commitConnectionResult(guard, operation),
     };
   }
 
@@ -1669,28 +1710,33 @@ export class AuthManager {
    * Template for connection flows that follow the guard → try/finally → setState pattern.
    *
    * Consolidates the duplicated concurrency guard, `_isConnecting` flag management,
-   * session assignment, and state transition across `connect()`, `walletConnect()`,
-   * `restoreFromPhrase()`, and `importFromPortable()`.
+   * and unused-lifetime cleanup across `connect()`, `walletConnect()`,
+   * `restoreFromPhrase()`, `importFromPortable()`, `restoreSession()`, and
+   * `refresh()`.
    *
    * Also short-circuits if the manager has already been shut down — using
    * a closed manager would otherwise fail deep inside sync/storage with an
    * unhelpful error.
    */
-  private async _withConnect(
-    fn: (guard: ConnectionAttemptGuard) => Promise<AuthSession>,
+  private async _withConnectionAttempt<T extends AuthSession | undefined>(
+    fn: (guard: ConnectionAttemptGuard) => Promise<T>,
     monitor?: ConnectionMonitorState,
-  ): Promise<AuthSession> {
+  ): Promise<T> {
     this._guardShutdown();
     this._guardConcurrency();
     this._isConnecting = true;
     const guard: ConnectionAttemptGuard = {
-      lifecycleGeneration: this._lifecycleGeneration,
+      lifecycleGeneration : this._lifecycleGeneration,
       monitor,
+      sessionLifetime     : new AbortController(),
     };
 
     try {
       return await fn(guard);
     } finally {
+      if (this._sessionLifetime !== guard.sessionLifetime) {
+        guard.sessionLifetime.abort();
+      }
       this._isConnecting = false;
     }
   }
@@ -1808,23 +1854,34 @@ export class AuthManager {
     }
   }
 
-  /** Finalize and install a connection session before queued teardown can run. */
+  /** Finalize, install, and publish a connection session before queued teardown can run. */
   private async _commitConnectionResult<T extends AuthSession | undefined>(
     guard: ConnectionAttemptGuard,
     operation: () => Promise<T>,
+    options: { publishSessionStart?: boolean } = {},
   ): Promise<T> {
+    const { publishSessionStart = true } = options;
     const releaseCommit = await this._acquireLifecycleCommit();
     try {
       this._assertConnectionAttemptActive(guard);
       const session = await operation();
       if (session !== undefined) {
-        const previousDelegateDid = this._session?.delegateDid;
+        const previousSession = this._session;
+        const previousDelegateDid = previousSession?.delegateDid;
         if (previousDelegateDid !== undefined && previousDelegateDid !== session.delegateDid) {
           this._userAgent.dwn.clearDelegateDecryptionKeys(previousDelegateDid);
         }
+        const isReplacementSession = previousSession !== session;
+        if (isReplacementSession) {
+          this._abortSessionLifetime();
+        }
 
         this._session = session;
+        this._sessionLifetime = guard.sessionLifetime;
         this._setState('connected');
+        if (publishSessionStart && isReplacementSession) {
+          this._emitter.emit('session-start', {});
+        }
       }
       return session;
     } finally {
@@ -1841,6 +1898,12 @@ export class AuthManager {
 
   private _invalidateConnectionAttempts(): void {
     this._lifecycleGeneration++;
+  }
+
+  /** Abort and release the current application-session lifetime, if any. */
+  private _abortSessionLifetime(): void {
+    this._sessionLifetime?.abort();
+    this._sessionLifetime = undefined;
   }
 
   private _setState(state: AuthState): void {

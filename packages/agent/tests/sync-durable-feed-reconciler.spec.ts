@@ -23,7 +23,6 @@ type StubbedReconcilerOperations = {
 type ReconcilerFixture = {
   link: ReplicationLinkState;
   operations: StubbedReconcilerOperations;
-  persistCheckpoint: SinonStub;
   queryFeed: SinonStub;
   quotaManager: SinonStubbedInstance<SyncQuotaManager>;
   reconciler: SyncDurableFeedReconciler;
@@ -104,7 +103,6 @@ function reply({
 
 function createReconciler(syncTarget = target()): ReconcilerFixture {
   const link = linkFor(syncTarget);
-  const persistCheckpoint = sinon.stub().resolves();
   const resetCheckpoint = sinon.stub().callsFake(async (
     storedLink: ReplicationLinkState,
     direction: SyncDirection,
@@ -131,7 +129,6 @@ function createReconciler(syncTarget = target()): ReconcilerFixture {
   return {
     link,
     operations,
-    persistCheckpoint,
     queryFeed,
     quotaManager,
     reconciler: new SyncDurableFeedReconciler({ operations, quotaManager }),
@@ -230,7 +227,7 @@ describe('SyncDurableFeedReconciler', () => {
     const calls: string[] = [];
     const pull = sinon.stub(reconciler, 'pull').callsFake(async () => {
       calls.push('pull');
-      return { admittedCids: ['remote-cid'], hasActionableDiffs: true, remoteFingerprint: 'before' };
+      return { admittedCids: ['remote-cid'], hasActionableDiffs: true, pullDrained: true, remoteFingerprint: 'before' };
     });
     const push = sinon.stub(reconciler, 'push').callsFake(async () => {
       calls.push('push');
@@ -251,6 +248,7 @@ describe('SyncDurableFeedReconciler', () => {
       converged          : true,
       hasActionableDiffs : true,
       localFingerprint   : 'after',
+      pullDrained        : true,
       pushFailures       : [],
       remoteFingerprint  : 'after',
     });
@@ -317,11 +315,65 @@ describe('SyncDurableFeedReconciler', () => {
     expect(result).toEqual({
       admittedCids       : ['remote-2', 'remote-3'],
       hasActionableDiffs : true,
+      pullDrained        : true,
       remoteFingerprint  : 'page-2',
     });
     expect(fixture.link.pull.contiguousAppliedToken).toEqual(token(3));
     expect(fixture.operations.commitCheckpoint.callCount).toBe(2);
-    expect(fixture.operations.commitCheckpoint.alwaysCalledWith(fixture.link, 'pull')).toBe(true);
+    expect(fixture.operations.commitCheckpoint.firstCall.args).toEqual([fixture.link, 'pull']);
+    expect(fixture.operations.commitCheckpoint.secondCall.args).toEqual([fixture.link, 'pull']);
+  });
+
+  it('should commit a drained no-change pull page even when its checkpoint position repeats', async () => {
+    const fixture = createReconciler();
+    fixture.link.pull.contiguousAppliedToken = token(7);
+    fixture.queryFeed.resolves(reply({ cursor: token(7), drained: true, entries: [] }));
+
+    const result = await fixture.reconciler.pull(target(), fixture.link);
+
+    expect(result).toMatchObject({ admittedCids: [], hasActionableDiffs: false, pullDrained: true });
+    expect(fixture.operations.commitCheckpoint.calledOnceWithExactly(fixture.link, 'pull')).toBe(true);
+  });
+
+  it('should report an authoritatively empty pull as drained without inventing a checkpoint', async () => {
+    const fixture = createReconciler();
+
+    const result = await fixture.reconciler.pull(target(), fixture.link);
+
+    expect(result).toMatchObject({ admittedCids: [], hasActionableDiffs: false, pullDrained: true });
+    expect(fixture.link.pull.contiguousAppliedToken).toBeUndefined();
+    expect(fixture.operations.commitCheckpoint.notCalled).toBe(true);
+  });
+
+  it('should not report a drained pull when a later page is deferred', async () => {
+    const fixture = createReconciler();
+    fixture.link.pull.contiguousAppliedToken = token(1);
+    fixture.queryFeed.onFirstCall().resolves(reply({
+      cursor  : token(2),
+      drained : false,
+      entries : [{ messageCid: 'applied' }],
+    }));
+    fixture.queryFeed.onSecondCall().resolves(reply({
+      cursor  : token(3),
+      entries : [{ messageCid: 'deferred' }],
+    }));
+    fixture.operations.admitRemotePage.onFirstCall().resolves({
+      kind               : 'processed',
+      admittedCids       : ['applied'],
+      hasActionableDiffs : true,
+    });
+    fixture.operations.admitRemotePage.onSecondCall().resolves({
+      kind               : 'deferred',
+      admittedCids       : [],
+      hasActionableDiffs : false,
+      messageCid         : 'deferred',
+    });
+
+    const result = await fixture.reconciler.pull(target(), fixture.link);
+
+    expect(result.deferredPull).toEqual({ messageCid: 'deferred' });
+    expect(result.pullDrained).toBeUndefined();
+    expect(fixture.operations.commitCheckpoint.calledOnceWithExactly(fixture.link, 'pull')).toBe(true);
   });
 
   it('should admit a 1,000-entry pull catch-up in ordered durable pages without loss', async () => {
@@ -363,6 +415,7 @@ describe('SyncDurableFeedReconciler', () => {
     expect(result).toEqual({
       admittedCids       : expectedCids,
       hasActionableDiffs : true,
+      pullDrained        : true,
       remoteFingerprint  : 'fingerprint-1000',
     });
     expect(new Set(result.admittedCids).size).toBe(entryCount);
@@ -437,7 +490,7 @@ describe('SyncDurableFeedReconciler', () => {
       hasActionableDiffs : true,
       deferredPull       : { messageCid: 'deferred', detail: 'dependency missing' },
     });
-    expect(fixture.persistCheckpoint.called).toBe(false);
+    expect(fixture.operations.commitCheckpoint.called).toBe(false);
   });
 
   it('should recover a push progress gap through an inventory diff', async () => {

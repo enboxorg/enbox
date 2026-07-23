@@ -1,5 +1,5 @@
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { RecordQuery, RecordsCountResponse, TypedEnbox } from '@enbox/api';
+import type { RecordQuery, RecordsCountResponse, RecordView, TypedEnbox } from '@enbox/api';
 
 import { defineProtocol } from '@enbox/api';
 
@@ -82,6 +82,11 @@ const reusableQuery = {
 
 void typed.records.query('note', reusableQuery);
 void typed.records.count('note', reusableQuery);
+const observedNotes: Promise<RecordView<QuerySchemaMap['note']>> = typed.records.observe('note', {
+  ...reusableQuery,
+  pagination: { limit: 20 },
+});
+void observedNotes;
 void typed.records.query('note/comment', { filter: { tags: { kind: { startsWith: 'reply-' } } } });
 void typed.records.query('flexible', { filter: { tags: { known: 'value' } } });
 void typed.records.query('note', { filter: { author: authors } });
@@ -91,6 +96,12 @@ void typed.records.query('missing');
 
 // @ts-expect-error count uses the same exact protocol paths.
 void typed.records.count('missing');
+
+// @ts-expect-error observed views materialize only the connected tenant's local replica.
+void typed.records.observe('note', { from: 'did:example:remote', pagination: { limit: 20 } });
+
+// @ts-expect-error observed views require an explicit retained-result bound.
+void typed.records.observe('note', {});
 
 // @ts-expect-error tags are derived for the selected path.
 void typed.records.query('note', { filter: { tags: { kind: 'reply' } } });

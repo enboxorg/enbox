@@ -16,6 +16,9 @@ import { lexicographicalCompare } from './types/sync.js';
 /** Current durable identities, or `undefined` when resolution was incomplete. */
 export type SyncStatusCurrentKeySet = ReadonlySet<string> | undefined;
 
+/** Durable link row with current replication-session facts overlaid by the engine. */
+export type SyncStatusLink = ReplicationLinkState & { isPullCurrent: boolean };
+
 /** Engine-owned state reads required by backend-neutral status aggregation. */
 export interface SyncStatusReporterOperations {
   getConnectivityState(): SyncConnectivityState;
@@ -26,7 +29,7 @@ export interface SyncStatusReporterOperations {
 
   getDeadLetters(): Promise<DeadLetterEntry[]>;
 
-  getLinks(): Promise<ReplicationLinkState[]>;
+  getLinks(): Promise<SyncStatusLink[]>;
 }
 
 export type SyncStatusReporterParams = {
@@ -132,7 +135,7 @@ export class SyncStatusReporter {
    * `scope` is returned by reference — safe because `getLinks()` deserializes
    * fresh link objects per call, so no engine-held state is exposed.
    */
-  private static linkSnapshotFrom(link: ReplicationLinkState): ReplicationLinkSnapshot {
+  private static linkSnapshotFrom(link: SyncStatusLink): ReplicationLinkSnapshot {
     const pullPosition = link.pull.contiguousAppliedToken?.position;
     const pushPosition = link.push.contiguousAppliedToken?.position;
     return {
@@ -141,6 +144,7 @@ export class SyncStatusReporter {
       scope          : link.scope,
       status         : link.status,
       connectivity   : link.connectivity,
+      isPullCurrent  : link.isPullCurrent,
       ...(link.delegateDid === undefined ? {} : { delegateDid: link.delegateDid }),
       ...(pullPosition === undefined ? {} : { pullPosition }),
       ...(pushPosition === undefined ? {} : { pushPosition }),

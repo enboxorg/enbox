@@ -110,6 +110,7 @@ describe('createConnectionStore()', () => {
       did,
       delegateDid : params.delegateDid,
       identity    : { didUri: did, name: params.name ?? 'Store identity' },
+      signal      : new AbortController().signal,
     });
   }
 
@@ -451,14 +452,23 @@ describe('createConnectionStore()', () => {
     it('should clear the reapproval flag and reseed the status after a successful refresh', async () => {
       const fake = createFakeAuth();
       const store = await connectDelegatedStore(fake);
+      const enboxBeforeRefresh = store.getSnapshot().enbox;
       fake.emitter.emit('connection-expired', { status: { ...ACTIVE_STATUS, state: 'expired', secondsUntilExpiry: -10 } });
       expect(store.getSnapshot().walletReapprovalRequired).toBe(true);
 
-      fake.refresh.callsFake(async (): Promise<AuthSession> => fake.session as AuthSession);
+      const refreshedSession = createSession({ delegateDid: DELEGATE_DID, name: 'Refreshed identity' });
+      fake.refresh.callsFake(async (): Promise<AuthSession> => {
+        fake.session = refreshedSession;
+        fake.emitter.emit('session-start', {});
+        return refreshedSession;
+      });
 
       const snapshot = await store.refresh({ protocols: PROTOCOLS });
 
       expect(snapshot.phase).toBe('connected');
+      expect(snapshot.session).toBe(refreshedSession);
+      expect(snapshot.enbox).not.toBe(enboxBeforeRefresh);
+      expect(snapshot.identityName).toBe('Refreshed identity');
       expect(snapshot.walletReapprovalRequired).toBeUndefined();
       expect(snapshot.connection?.state).toBe('active');
       expect(fake.refresh.firstCall.args[0]).toEqual({ protocols: PROTOCOLS });
@@ -488,6 +498,67 @@ describe('createConnectionStore()', () => {
       expect(fake.stopMonitorSpy.calledOnce).toBe(true);
     });
 
+    it('should follow a replacement session that starts while connection status is loading', async () => {
+      const fake = createFakeAuth();
+      const firstSession = createSession({ delegateDid: DELEGATE_DID, name: 'First identity' });
+      const replacementSession = createSession({ did: 'did:dht:replacement', name: 'Replacement identity' });
+      fake.connect.callsFake(async (): Promise<AuthSession> => {
+        fake.session = firstSession;
+        return firstSession;
+      });
+      let markStatusStarted!: () => void;
+      let resolveStatus!: (status: ConnectionStatus) => void;
+      const statusStarted = new Promise<void>((resolve) => { markStatusStarted = resolve; });
+      fake.getConnectionStatus.callsFake((): Promise<ConnectionStatus> => {
+        markStatusStarted();
+        return new Promise((resolve) => { resolveStatus = resolve; });
+      });
+      const store = createConnectionStore({ auth: asAuth(fake) });
+
+      const connecting = store.connect({ protocols: PROTOCOLS });
+      await statusStarted;
+      fake.session = replacementSession;
+      fake.emitter.emit('session-start', {});
+      resolveStatus(ACTIVE_STATUS);
+      const snapshot = await connecting;
+
+      expect(snapshot.phase).toBe('connected');
+      expect(snapshot.session).toBe(replacementSession);
+      expect(snapshot.identityName).toBe('Replacement identity');
+      expect(snapshot.connection).toBeUndefined();
+      expect(fake.stopMonitorSpy.calledOnce).toBe(true);
+    });
+
+    it('should follow a session end that lands while connection status is loading', async () => {
+      const fake = createFakeAuth();
+      const session = createSession({ delegateDid: DELEGATE_DID });
+      fake.connect.callsFake(async (): Promise<AuthSession> => {
+        fake.session = session;
+        return session;
+      });
+      let markStatusStarted!: () => void;
+      let resolveStatus!: (status: ConnectionStatus) => void;
+      const statusStarted = new Promise<void>((resolve) => { markStatusStarted = resolve; });
+      fake.getConnectionStatus.callsFake((): Promise<ConnectionStatus> => {
+        markStatusStarted();
+        return new Promise((resolve) => { resolveStatus = resolve; });
+      });
+      const store = createConnectionStore({ auth: asAuth(fake) });
+
+      const connecting = store.connect({ protocols: PROTOCOLS });
+      await statusStarted;
+      fake.session = undefined;
+      fake.emitter.emit('session-end', { did: session.did });
+      resolveStatus(ACTIVE_STATUS);
+      const snapshot = await connecting;
+
+      expect(snapshot.phase).toBe('disconnected');
+      expect(snapshot.session).toBeUndefined();
+      expect(snapshot.enbox).toBeUndefined();
+      expect(snapshot.connection).toBeUndefined();
+      expect(fake.stopMonitorSpy.calledOnce).toBe(true);
+    });
+
     it('should follow a session started directly on the AuthManager', async () => {
       const fake = createFakeAuth();
       const store = createConnectionStore({ auth: asAuth(fake) });
@@ -496,30 +567,12 @@ describe('createConnectionStore()', () => {
 
       const session = createSession({ name: 'Switched identity' });
       fake.session = session;
-      fake.emitter.emit('session-start', {
-        session: { did: session.did, delegateDid: undefined, identity: session.identity },
-      });
+      fake.emitter.emit('session-start', {});
 
       const snapshot = store.getSnapshot();
       expect(snapshot.phase).toBe('connected');
       expect(snapshot.session).toBe(session);
       expect(snapshot.identityName).toBe('Switched identity');
-    });
-
-    it('should synthesize a session from the event payload when the manager has not installed one yet', async () => {
-      const fake = createFakeAuth();
-      const store = createConnectionStore({ auth: asAuth(fake) });
-      await store.initialize();
-
-      fake.emitter.emit('session-start', {
-        session: { did: OWNER_DID, delegateDid: undefined, identity: { didUri: OWNER_DID, name: 'Event identity' } },
-      });
-
-      const snapshot = store.getSnapshot();
-      expect(snapshot.phase).toBe('connected');
-      expect(snapshot.session?.did).toBe(OWNER_DID);
-      expect(snapshot.identityName).toBe('Event identity');
-      expect(snapshot.enbox).toBeInstanceOf(Enbox);
     });
 
     it('should reflect an expiring connection status without requiring reapproval', async () => {
@@ -816,11 +869,6 @@ describe('createConnectionStore()', () => {
       const initializePromise = store.initialize();
       await started;
       const disconnectPromise = store.disconnect();
-      // A session-start emitted by the racing restore flow (the real manager
-      // emits it inside finalizeSession) must not flip the store back.
-      fake.emitter.emit('session-start', {
-        session: { did: session.did, delegateDid: undefined, identity: session.identity },
-      });
       const disconnected = await disconnectPromise;
       // The auth layer would reject the invalidated restore; resolving it
       // with a session is the harsher case — the store must discard it.
@@ -1042,9 +1090,7 @@ describe('createConnectionStore()', () => {
       try {
         const session = createSession({ delegateDid: DELEGATE_DID });
         fake.session = session;
-        fake.emitter.emit('session-start', {
-          session: { did: session.did, delegateDid: DELEGATE_DID, identity: session.identity },
-        });
+        fake.emitter.emit('session-start', {});
         // Let the rejected commit promise settle through its catch handler.
         await Promise.resolve();
 

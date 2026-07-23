@@ -43,12 +43,7 @@ describe('AuthEventEmitter', () => {
     emitter.on('session-start', () => calls.push('a'));
     emitter.on('session-start', () => calls.push('b'));
 
-    emitter.emit('session-start', {
-      session: {
-        did      : 'did:example:test',
-        identity : { didUri: 'did:example:test', name: 'Test' },
-      },
-    });
+    emitter.emit('session-start', {});
 
     expect(calls).toEqual(['a', 'b']);
   });

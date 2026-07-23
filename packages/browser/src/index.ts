@@ -50,6 +50,10 @@ export type {
   EnboxSessionParams,
   RecordFilter,
   RecordQuery,
+  RecordView,
+  RecordViewListener,
+  RecordViewSnapshot,
+  RecordViewState,
   RecordsCountResponse,
 } from '@enbox/api';
 

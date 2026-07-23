@@ -84,7 +84,8 @@ export type AuthEvent =
 /** Payload type for each event, keyed by event name. */
 export interface AuthEventMap {
   'state-change': { previous: AuthState; current: AuthState };
-  'session-start': { session: AuthSessionInfo };
+  /** Wake indicating that consumers should read the emitting manager's authoritative active session. */
+  'session-start': Record<string, never>;
   'session-end': { did: string };
   'identity-added': { identity: IdentityInfo };
   'identity-removed': { didUri: string };
@@ -115,13 +116,6 @@ export type AuthEventHandler<E extends AuthEvent = AuthEvent> =
  *   identical; new code should import `AgentSessionIdentity` directly.
  */
 export type IdentityInfo = AgentSessionIdentity;
-
-/** Serializable session info for the `session-start` event. */
-export interface AuthSessionInfo {
-  did: string;
-  delegateDid?: string;
-  identity: IdentityInfo;
-}
 
 // ─── Registration ────────────────────────────────────────────────
 

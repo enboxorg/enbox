@@ -989,6 +989,7 @@ describe('finalizeDelegateSession', () => {
         connectedDid : 'did:dht:connected1',
         delegateDid  : 'did:jwk:delegate2',
         sync         : '15s',
+        signal       : new AbortController().signal,
       });
 
       const ctxKeys = await agent.secrets.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
@@ -1021,6 +1022,7 @@ describe('finalizeDelegateSession', () => {
         connectedDid : 'did:dht:connected1',
         delegateDid  : 'did:jwk:delegate2',
         sync         : '15s',
+        signal       : new AbortController().signal,
       });
 
       const revocations = await storage.get(STORAGE_KEYS.SESSION_REVOCATIONS);
@@ -1048,6 +1050,7 @@ describe('finalizeDelegateSession', () => {
         connectedDid  : 'did:dht:connected1',
         delegateDid   : 'did:jwk:delegate2',
         sync          : '15s',
+        signal        : new AbortController().signal,
         delegateState : { sessionRevocations },
       });
 

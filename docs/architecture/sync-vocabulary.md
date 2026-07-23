@@ -31,6 +31,7 @@ the code, not an entry missing from this table.
 | Whether ordinary executor work may run for the current replication generation; wakes are retained while ineligible and calls fail fast | **executor eligibility** — `isReady`, `markReady`, `SyncLinkRecoveryCoordinator.resume`, surfaced as `isReplicationReady` / `markReplicationReady` | readiness promise, replication readiness barrier, parked administrative call |
 | Cursorless remote subscription whose events request durable pull passes | **live pull subscription** — `openLivePullSubscription`, `LivePullWakeContext` | live-pull admission pipeline, `SyncLivePullProcessor` |
 | A remote subscription event that says the durable remote feed may have advanced; bursts request one trailing pass, and the pass always resumes from `link.pull.contiguousAppliedToken` | **durable pull wake** — `executor.request('pull')` followed by `SyncLinkRecoveryCoordinator.resume` when eligible | per-event admission, delivery acknowledgement, event-cursor checkpoint, or EOSE checkpoint |
+| Whether the active replication session has established its pull baseline and every accepted durable pull wake is covered by a completed pass | **pull currentness** — `isPullCurrent`, `markPullPending`, `markPullCurrent`, `pull:currentness-change` | transport connectivity, feed convergence, link status, or checkpoint progress |
 | A local subscription event or transport-reconnected notification that says the durable local feed may have advanced; bursts request one trailing pass, and the pass always resumes from `link.push.contiguousAppliedToken` | **durable push wake** — `executor.request('push')` followed by `SyncLinkRecoveryCoordinator.resume` when eligible | per-event push job, delivery acknowledgement, or checkpoint evidence |
 | Durable resume point for one direction of one replication link | **direction checkpoint** — `DirectionCheckpoint.contiguousAppliedToken` | delivery acknowledgement, arbitrary subscription cursor |
 | Namespace in which progress-token positions can be compared | **token domain** — exact `(streamId, epoch)` pair | stream alone, epoch alone, or a globally ordered position |
@@ -101,6 +102,7 @@ One verb per kind of ending, because these had four overlapping spellings:
 | Verb | Ends | Example |
 |---|---|---|
 | `dispose` | An owned lifetime, irreversibly | `SyncRuntime.dispose`, `SyncLinkController.dispose` |
+| `deactivate` | An active owner's callback eligibility before resource disposal | `SyncLinkController.beginDeactivation`, `SyncLinkController.deactivate` |
 | `close` | One external resource | `closeLiveSubscription`, `SyncEngineLevel.close` |
 | `stop` | A restartable activity | `stopSync`, `stopLiveSync` |
 | `cancel*` | Runtime-owned scheduling at a named scope | `cancelTimer`, `cancelScheduledWork`, `cancelIdentityTimers` |
@@ -123,6 +125,7 @@ would make one signal stand in for proof it does not carry.
 | Deferred pulls | Temporary pull-admission state; a root holds the page until it succeeds, disappears, or ages into a dead letter | Push failures or permanent admission rejection |
 | Echo suppression | Short-lived `(tenant, CID, endpoint)` transfer hints | Durable progress; a cache hit never advances a checkpoint by itself |
 | Feed convergence | Verified inventory/fingerprint mismatch policy after reconciliation | Socket health or routine feed transfer |
+| Pull currentness | Ephemeral per-replication-session evidence that no accepted remote-feed wake remains uncovered | Durable checkpoint state, socket health, or equality of complete feed inventories |
 | Lifecycle coordination | Transition serialization, exclusive sync ownership, task intake, and waiting for supervised work | Timers and liveness, which belong to the current runtime |
 | Sync events | Metrics/UI-facing observations emitted by the engine | Transport subscription delivery or replication control flow |
 | Admission ordering | Dependency order within a closure before DWN admission | Executor arrival order or durable-feed page order |

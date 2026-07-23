@@ -109,6 +109,7 @@ export async function walletConnect(
     return finalizeDelegateSession({
       userAgent, emitter, storage, identity,
       connectedDid, delegateDid   : delegatePortableDid.uri, sync,
+      signal        : ctx.sessionSignal,
       delegateState : {
         sessionRevocations,
       },

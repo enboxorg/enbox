@@ -28,6 +28,8 @@ export type SyncDurableFeedReconcileResult = {
   converged?: boolean;
   hasActionableDiffs?: boolean;
   localFingerprint?: string;
+  /** The pull direction reached the remote-feed head captured by its final query. */
+  pullDrained?: true;
   /**
    * The first remote root whose dependencies are not yet available. Its page
    * and checkpoint remain unsettled; a later wake or settle pass retries from
@@ -84,9 +86,7 @@ export interface SyncDurableFeedReconcilerOperations {
     forceQuotaProbe?: boolean,
   ): Promise<SyncDurableFeedPermissionGrantBootstrapResult>;
 
-  /**
-   * Persist one page's ordered checkpoint advance and emit it once durable.
-   */
+  /** Persist one page's ordered checkpoint advance. */
   commitCheckpoint(link: ReplicationLinkState, direction: SyncDirection): Promise<void>;
 
   probeQuotaBlocks(
@@ -704,6 +704,7 @@ export class SyncDurableFeedReconciler {
       return {
         admittedCids       : state.admittedCids,
         hasActionableDiffs : state.hasActionableDiffs,
+        pullDrained        : true,
         remoteFingerprint  : reply.fingerprint,
       };
     }
@@ -856,6 +857,7 @@ export class SyncDurableFeedReconciler {
     }
     target.quotaBlocked ||= source.quotaBlocked === true;
     target.localFingerprint = source.localFingerprint ?? target.localFingerprint;
+    target.pullDrained ||= source.pullDrained;
     target.remoteFingerprint = source.remoteFingerprint ?? target.remoteFingerprint;
 
     if (

@@ -67,7 +67,6 @@ export type {
   AuthEventHandler,
   AuthEventMap,
   AuthManagerOptions,
-  AuthSessionInfo,
   AuthState,
   ConnectClientMetadata,
   ConnectHandler,

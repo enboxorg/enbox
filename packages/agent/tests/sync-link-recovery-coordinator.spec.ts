@@ -69,12 +69,15 @@ function createFixture(options: {
     getController             : sinon.stub().callsFake((linkKey: string) => controllers.get(linkKey)),
     getRuntime                : sinon.stub().callsFake(() => runtime),
     handleDivergence          : sinon.stub().resolves(false),
-    openPullSubscription      : sinon.stub().resolves(true),
-    openPushSubscription      : sinon.stub().resolves(true),
-    reconcileTarget           : sinon.stub().resolves({ converged: true }),
-    reportError               : sinon.stub(),
-    setStatus                 : sinon.stub().callsFake(async (state, status) => { state.status = status; }),
-    warn                      : sinon.stub(),
+    markPullPending           : sinon.stub().callsFake((controller: SyncLinkController) => {
+      controller.markPullPending();
+    }),
+    openPullSubscription : sinon.stub().resolves(true),
+    openPushSubscription : sinon.stub().resolves(true),
+    reconcileTarget      : sinon.stub().resolves({ converged: true }),
+    reportError          : sinon.stub(),
+    setStatus            : sinon.stub().callsFake(async (state, status) => { state.status = status; }),
+    warn                 : sinon.stub(),
   };
   const coordinator = new SyncLinkRecoveryCoordinator({ ...options, operations });
   return {
@@ -153,6 +156,26 @@ describe('SyncLinkRecoveryCoordinator', () => {
     fixture.controllers.set(LINK_KEY, new SyncLinkController(LINK_KEY, link()));
     await fixture.coordinator.transitionToRepairing(controller);
     expect(fixture.taskRunner.calledOnce).toBe(true);
+  });
+
+  it('marks pull currentness unavailable before repair status persistence settles', async () => {
+    const fixture = createFixture();
+    const controller = activate(fixture);
+    controller.markPullCurrent(controller.replicationGeneration);
+    const persistStatus = deferred<void>();
+    fixture.operations.setStatus.callsFake(async (state, status) => {
+      await persistStatus.promise;
+      state.status = status;
+    });
+    fixture.taskRunner.callsFake(async (): Promise<void> => {});
+
+    const transition = fixture.coordinator.transitionToRepairing(controller);
+
+    expect(fixture.operations.markPullPending.calledOnceWithExactly(controller)).toBe(true);
+    expect(controller.isPullCurrent).toBe(false);
+    expect(controller.link.connectivity).toBe('offline');
+    persistStatus.resolve();
+    await transition;
   });
 
   it('serializes repair behind an in-flight caller operation', async () => {

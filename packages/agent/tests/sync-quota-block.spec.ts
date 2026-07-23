@@ -193,7 +193,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     });
   });
 
-  it('keeps offline precedence while retaining quota details and last activity', async () => {
+  it('does not treat inactive durable connectivity as current while retaining quota details and last activity', async () => {
     const lastActivityAt = new Date(Date.now() - 1_000).toISOString();
     await seedCurrentLink({ connectivity: 'offline', lastActivityAt });
     await seedQuotaBlock({ cid: 'cid-1', nextProbeAt: new Date(Date.now() + 60_000).toISOString() });
@@ -201,8 +201,8 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     const [status] = await syncEngine.getRemoteSyncStatus(TENANT);
 
     expect(status).toMatchObject({
-      state                    : 'offline',
-      connectivity             : 'offline',
+      state                    : 'quota-blocked',
+      connectivity             : 'unknown',
       quotaBlockedMessageCount : 1,
       lastActivityAt,
     });

@@ -69,7 +69,9 @@ function createTestManager(agent: EnboxUserAgent, options: {
   internals._shutdownPromise = undefined;
   internals._connectHandler = options.connectHandler;
   internals._defaultPassword = 'test-password';
-  internals._session = options.delegatedSession === false
+  const sessionLifetime = options.delegatedSession === false ? undefined : new AbortController();
+  internals._sessionLifetime = sessionLifetime;
+  internals._session = sessionLifetime === undefined
     ? undefined
     : new AuthSession({
       agent,
@@ -80,6 +82,7 @@ function createTestManager(agent: EnboxUserAgent, options: {
         name         : 'Connected identity',
         connectedDid : OWNER_DID,
       },
+      signal: sessionLifetime.signal,
     });
 
   return manager;
@@ -184,7 +187,7 @@ describe('delegated connection lifecycle', () => {
   });
 
   describe('AuthManager.refresh', () => {
-    test('re-grants to the locally exported delegate without re-importing or restarting sync', async () => {
+    test('re-grants to the local delegate and atomically replaces its authorization lifetime', async () => {
       const identity = createMockIdentity({
         did      : { uri: DELEGATE_DID },
         metadata : { name: 'Delegate', tenant: 'did:dht:agent', connectedDid: OWNER_DID },
@@ -213,13 +216,26 @@ describe('delegated connection lifecycle', () => {
       });
       const requestAccess = sinon.spy(async (): Promise<any> => createRefreshResult());
       const manager = createTestManager(agent, { connectHandler: { requestAccess } });
+      const originalSession = manager.session!;
       let identityAdded = 0;
       let sessionStarted = 0;
+      let sessionAtEvent: AuthSession | undefined;
+      let stateAtEvent = manager.state;
       manager.on('identity-added', () => { identityAdded++; });
-      manager.on('session-start', () => { sessionStarted++; });
+      manager.on('session-start', () => {
+        sessionStarted++;
+        sessionAtEvent = manager.session;
+        stateAtEvent = manager.state;
+      });
 
       const session = await manager.refresh({ protocols: PROTOCOLS });
 
+      expect(session).not.toBe(originalSession);
+      expect(manager.session).toBe(session);
+      expect(originalSession.signal.aborted).toBe(true);
+      expect(session.signal.aborted).toBe(false);
+      expect(sessionAtEvent).toBe(session);
+      expect(stateAtEvent).toBe('connected');
       expect(session.did).toBe(OWNER_DID);
       expect(session.delegateDid).toBe(DELEGATE_DID);
       expect(requestAccess.callCount).toBe(1);
@@ -233,7 +249,7 @@ describe('delegated connection lifecycle', () => {
       expect(syncUnregister.calledOnceWith(OWNER_DID)).toBe(true);
       expect(syncStart.called).toBe(false);
       expect(identityAdded).toBe(0);
-      expect(sessionStarted).toBe(0);
+      expect(sessionStarted).toBe(1);
     });
 
     test('rejects a different connected DID or delegate DID returned by the handler', async () => {
@@ -282,11 +298,12 @@ describe('delegated connection lifecycle', () => {
       const manager = createTestManager(agent, {
         connectHandler: { requestAccess: async (): Promise<any> => createRefreshResult() },
       });
-      const previousSession = manager.session;
+      const previousSession = manager.session!;
 
       await expect(manager.refresh({ protocols: PROTOCOLS })).rejects.toThrow('sync store unavailable');
 
       expect(manager.session).toBe(previousSession);
+      expect(previousSession.signal.aborted).toBe(false);
       expect(manager.state).toBe('connected');
       expect(identityDelete.called).toBe(false);
       expect(didDelete.called).toBe(false);
@@ -302,7 +319,6 @@ describe('delegated connection lifecycle', () => {
           requestAccess: async (): Promise<any> => createRefreshResult({ delegateGrants: [] }),
         },
       });
-
       await expect(manager.refresh({ protocols: PROTOCOLS })).rejects.toThrow('returned no grants');
     });
 
@@ -316,6 +332,7 @@ describe('delegated connection lifecycle', () => {
           requestAccess: async (): Promise<undefined> => undefined,
         },
       });
+      const originalSession = manager.session!;
 
       let caught: unknown;
       try {
@@ -327,6 +344,8 @@ describe('delegated connection lifecycle', () => {
       expect(caught).toBeInstanceOf(ConnectDeniedError);
       expect(isConnectDeniedError(caught)).toBe(true);
       expect((caught as Error).message).toBe('[@enbox/auth] Refresh was denied or cancelled by the user.');
+      expect(manager.session).toBe(originalSession);
+      expect(originalSession.signal.aborted).toBe(false);
     });
 
     for (const teardown of ['lock', 'disconnect', 'shutdown'] as const) {

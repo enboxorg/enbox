@@ -164,7 +164,7 @@ export async function vaultConnect(
 
     await startSyncIfEnabled(userAgent, sync);
 
-    // Persist session info, build AuthSession, and emit lifecycle events.
+    // Persist session info and build the AuthSession for the manager to publish.
     return finalizeSession({
       userAgent,
       emitter,
@@ -172,6 +172,7 @@ export async function vaultConnect(
       connectedDid,
       delegateDid,
       recoveryPhrase,
+      signal               : ctx.sessionSignal,
       identityName         : identity?.metadata.name,
       identityConnectedDid : identity?.metadata.connectedDid,
     });

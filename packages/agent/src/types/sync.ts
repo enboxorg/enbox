@@ -269,7 +269,9 @@ export type SyncLifecycleOptions = {
  * Status of a replication link.
  *
  * - `initializing` — link created, no subscriptions open yet.
- * - `live` — actively receiving events via subscription.
+ * - `live` — the latest completed replication generation established its
+ *   baseline. Inspect `connectivity` on a runtime snapshot to determine
+ *   whether that link is currently attached to its remote transport.
  * - `repairing` — recovering from a retryable subscription failure or verified feed divergence.
  * - `paused` — link retries are stopped until the app updates registration or recreates the link.
  */
@@ -523,9 +525,15 @@ export type SyncMessageDescriptor = {
  * subscription messages.
  */
 export type SyncEvent =
+  /** Durable sync registration was added, changed, or removed for one identity. */
+  | { type: 'identity:registration-change'; tenantDid: string; options?: SyncIdentityOptions }
   | SyncEventBase & { type: 'link:status-change'; from: LinkStatus; to: LinkStatus }
   | SyncEventBase & { type: 'link:connectivity-change'; from: SyncConnectivityState; to: SyncConnectivityState }
+  /** Whether accepted remote-feed wakes are covered by a completed durable pull pass. */
+  | SyncEventBase & { type: 'pull:currentness-change'; from: boolean; to: boolean }
+  /** A pull checkpoint was durably committed. */
   | SyncEventBase & { type: 'checkpoint:pull-advance'; position: string; messageCid?: string }
+  /** A push checkpoint was durably committed. */
   | SyncEventBase & { type: 'checkpoint:push-advance'; position: string; messageCid?: string }
   /**
    * Emitted once per FRESHLY applied remote message — the feed root and any
@@ -631,10 +639,11 @@ export type RemoteSyncStatus = {
  * `(tenantDid, remoteEndpoint, scope)`. Where {@link RemoteSyncStatus} rolls
  * links up per remote for a status badge, this exposes the per-link detail an
  * app needs to reason about replication progress — most notably `status`:
- * a link whose status has reached `live` has established the paired
- * subscription-snapshot baseline and completed any reconciliation that
- * baseline required, so "every link for this identity is `live`" is the
- * per-identity caught-up signal.
+ * a link whose status has reached `live` has established its active
+ * replication generation. Pull currentness and transport connectivity remain
+ * separate facts: a caught-up source reports `isPullCurrent: true` and
+ * `connectivity: 'online'`; a persisted link with no active controller reports
+ * both `isPullCurrent: false` and `connectivity: 'unknown'`.
  */
 export type ReplicationLinkSnapshot = {
   /** The tenant DID this link syncs for. */
@@ -647,6 +656,8 @@ export type ReplicationLinkSnapshot = {
   status: LinkStatus;
   /** Per-link connectivity state. */
   connectivity: SyncConnectivityState;
+  /** Whether every accepted remote-feed wake is covered by a completed pull pass. */
+  isPullCurrent: boolean;
   /** Delegate DID used to sign sync messages, if any. */
   delegateDid?: string;
   /** Durable pull checkpoint position (remote → local), when advanced past the stream start. */
@@ -847,7 +858,8 @@ export interface SyncEngine {
    * Returns a read-only snapshot of every current replication link, optionally
    * filtered by tenant. Superseded links (from a previous scope/delegate
    * registration) are excluded. An identity has completed its initial
-   * catch-up when every one of its links reports `status: 'live'` —
+   * catch-up and is currently attached when every one of its links reports
+   * `status: 'live'`, `connectivity: 'online'`, and `isPullCurrent: true` —
    * `startSync()` resolving covers identities registered before start, and
    * this surface covers hot-added identities and later inspection.
    */

@@ -1,11 +1,19 @@
 import { describe, expect, test } from 'bun:test';
 
 import { AuthEventEmitter } from '../src/events.js';
+import { createFlowContext } from './helpers/flow-context.js';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { persistLocalDwnPairingRecord } from '../src/discovery.js';
-import { vaultConnect } from '../src/connect/vault.js';
+import { vaultConnect as runVaultConnect } from '../src/connect/vault.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
 import { INSECURE_DEFAULT_PASSWORD, STORAGE_KEYS } from '../src/types.js';
+
+function vaultConnect(
+  context: Parameters<typeof createFlowContext>[0],
+  options?: Parameters<typeof runVaultConnect>[1],
+): ReturnType<typeof runVaultConnect> {
+  return runVaultConnect(createFlowContext(context), options);
+}
 
 describe('vaultConnect', () => {
   test('first launch: initializes vault, creates identity when createIdentity is true', async () => {
@@ -14,7 +22,6 @@ describe('vaultConnect', () => {
     const initCalls: any[] = [];
     const createCalls: any[] = [];
     const identity = createMockIdentity();
-
     const agent = createMockAgent({
       firstLaunch    : async () => true,
       initialize     : async (params) => { initCalls.push(params); return 'recovery phrase words'; },
@@ -22,8 +29,9 @@ describe('vaultConnect', () => {
       identityCreate : async (params) => { createCalls.push(params); return identity; },
     });
 
-    const session = await vaultConnect(
-      { userAgent: agent, emitter, storage },
+    const context = createFlowContext({ userAgent: agent, emitter, storage });
+    const session = await runVaultConnect(
+      context,
       { password: 'test-pass', createIdentity: true },
     );
 
@@ -39,6 +47,7 @@ describe('vaultConnect', () => {
     expect(session.recoveryPhrase).toBe('recovery phrase words');
     expect(session.did).toBe('did:dht:testuser123');
     expect(session.agent).toBe(agent);
+    expect(session.signal).toBe(context.sessionSignal);
 
     // Storage was updated
     expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBe('true');
@@ -106,7 +115,7 @@ describe('vaultConnect', () => {
     expect(startCalls[0].password).toBe('manager-pass');
   });
 
-  test('emits vault-unlocked, identity-added, and session-start events', async () => {
+  test('emits vault-unlocked and identity-added while session publication remains manager-owned', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     const events: string[] = [];
@@ -122,7 +131,7 @@ describe('vaultConnect', () => {
 
     await vaultConnect({ userAgent: agent, emitter, storage }, {});
 
-    expect(events).toEqual(['vault-unlocked', 'identity-added', 'session-start']);
+    expect(events).toEqual(['vault-unlocked', 'identity-added']);
   });
 
   test('registers explicit identity sync scope for new identities and agent DID when sync is not off', async () => {
@@ -669,7 +678,7 @@ describe('vaultConnect', () => {
     );
 
     // identity-added should NOT be emitted since no identity was created
-    expect(events).toEqual(['vault-unlocked', 'session-start']);
+    expect(events).toEqual(['vault-unlocked']);
   });
 
   test('default (no createIdentity) skips identity creation', async () => {

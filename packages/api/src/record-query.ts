@@ -93,8 +93,8 @@ export type RecordFilter<
 };
 
 /**
- * The canonical typed selection accepted by `records.query()` and
- * `records.count()`, and later by `records.observe()`.
+ * The canonical typed selection accepted by `records.query()`,
+ * `records.count()`, and `records.observe()`.
  *
  * Count evaluates the same authorized population before pagination. Sort
  * order is immaterial to a count, except that published-date sorting selects
@@ -123,7 +123,7 @@ export type RecordQuery<
 /** @internal Canonical low-level request produced from a typed record query. */
 type CompiledRecordQuery = {
   from?: string;
-  filter: RecordsFilter;
+  filter: RecordsFilter & { protocol: string; protocolPath: string };
   dateSort?: DateSort;
   pagination?: Pagination;
   protocolRole?: string;
@@ -149,7 +149,7 @@ export function compileRecordQuery(
 
   return {
     from         : query.from,
-    filter       : compileRecordFilter(definition, protocolPath, query.filter, query.dateSort),
+    filter       : buildRecordFilter(definition, protocolPath, query.filter, query.dateSort),
     dateSort     : query.dateSort,
     pagination   : query.pagination,
     protocolRole : query.protocolRole,
@@ -162,7 +162,16 @@ export function compileRecordFilter(
   protocolPath: string,
   filter: RecordFilterInput | undefined,
   dateSort?: DateSort,
-): RecordsFilter {
+): RecordsFilter & { protocol: string; protocolPath: string } {
+  return buildRecordFilter(definition, protocolPath, filter, dateSort);
+}
+
+function buildRecordFilter(
+  definition: ProtocolDefinition,
+  protocolPath: string,
+  filter: RecordFilterInput | undefined,
+  dateSort?: DateSort,
+): RecordsFilter & { protocol: string; protocolPath: string } {
   assertValidFilter(filter, dateSort);
 
   const { author, recipient, ...rest } = filter ?? {};

@@ -31,6 +31,8 @@ export class SyncLinkController {
   public readonly executor = new SyncLinkExecutor();
   private _liveSubscription?: SyncLinkSubscription;
   private _localSubscription?: SyncLinkSubscription;
+  private _isPullCurrent = false;
+  private _isDeactivating = false;
   private _pullSnapshot?: SyncFeedSnapshot;
   private _replicationGeneration = 0;
   private _pushSnapshot?: SyncFeedSnapshot;
@@ -49,6 +51,59 @@ export class SyncLinkController {
   /** Whether the current replication generation established its durable reconciliation baselines. */
   public get isReplicationReady(): boolean {
     return this._active && this.executor.isReady;
+  }
+
+  /** Whether every durable pull wake accepted so far is covered by a completed pass. */
+  public get isPullCurrent(): boolean {
+    return this._active && this._isPullCurrent;
+  }
+
+  /** Record that the remote feed may have advanced. */
+  public markPullPending(): boolean {
+    if (!this._active || !this._isPullCurrent) {
+      return false;
+    }
+
+    this._isPullCurrent = false;
+    return true;
+  }
+
+  /**
+   * Mark the pull side current only for the expected replication generation
+   * and only when no trailing durable pull wake remains queued.
+   */
+  public markPullCurrent(expectedReplicationGeneration: number): boolean {
+    if (
+      this._isDeactivating ||
+      !this.isReplicationGenerationCurrent(expectedReplicationGeneration) ||
+      this.executor.hasPending('pull') ||
+      this._isPullCurrent
+    ) {
+      return false;
+    }
+
+    this._isPullCurrent = true;
+    return true;
+  }
+
+  /**
+   * Fence new subscription ownership and pull-currentness restoration while
+   * allowing work that already owns this link to drain before deactivation.
+   *
+   * @returns Whether pull currentness changed from true to false.
+   */
+  public beginDeactivation(): boolean {
+    if (!this._active || this._isDeactivating) {
+      return false;
+    }
+
+    this._isDeactivating = true;
+    if (!this._isPullCurrent) {
+      return false;
+    }
+
+    this._isPullCurrent = false;
+    return true;
   }
 
   /** Snapshot captured with the current replication generation's remote pull subscription. */
@@ -91,6 +146,7 @@ export class SyncLinkController {
   /** Begin a fresh replication generation and fence caller-specific executor work. */
   public resetReplicationGeneration(): void {
     this._replicationGeneration++;
+    this._isPullCurrent = false;
     this._pullSnapshot = undefined;
     this._pushSnapshot = undefined;
     this.executor.reset();
@@ -109,7 +165,7 @@ export class SyncLinkController {
     expectedReplicationGeneration?: number,
     snapshot?: SyncFeedSnapshot,
   ): boolean {
-    if (!this._active || this._liveSubscription !== undefined) {
+    if (!this._active || this._isDeactivating || this._liveSubscription !== undefined) {
       return false;
     }
     if (expectedReplicationGeneration !== undefined && expectedReplicationGeneration !== this._replicationGeneration) {
@@ -130,7 +186,7 @@ export class SyncLinkController {
     expectedReplicationGeneration?: number,
     snapshot?: SyncFeedSnapshot,
   ): boolean {
-    if (!this._active || this._localSubscription !== undefined) {
+    if (!this._active || this._isDeactivating || this._localSubscription !== undefined) {
       return false;
     }
     if (expectedReplicationGeneration !== undefined && expectedReplicationGeneration !== this._replicationGeneration) {
@@ -218,8 +274,10 @@ export class SyncLinkController {
       return;
     }
 
+    this._isDeactivating = true;
     this._active = false;
     this._replicationGeneration++;
+    this._isPullCurrent = false;
     this._pullSnapshot = undefined;
     this._pushSnapshot = undefined;
     this.executor.dispose();

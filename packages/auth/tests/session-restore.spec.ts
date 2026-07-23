@@ -4,11 +4,19 @@ import { DwnPermissionGrant } from '@enbox/agent';
 import { PermissionsProtocol } from '@enbox/dwn-sdk-js';
 
 import { AuthEventEmitter } from '../src/events.js';
+import { createFlowContext } from './helpers/flow-context.js';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { persistLocalDwnPairingRecord } from '../src/discovery.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
-import { restoreSession, retryOrphanedRevocations } from '../src/connect/restore.js';
+import { retryOrphanedRevocations, restoreSession as runRestoreSession } from '../src/connect/restore.js';
+
+function restoreSession(
+  context: Parameters<typeof createFlowContext>[0],
+  options?: Parameters<typeof runRestoreSession>[1],
+): ReturnType<typeof runRestoreSession> {
+  return runRestoreSession(createFlowContext(context), options);
+}
 
 describe('restoreSession', () => {
   test('returns undefined when no previous session exists', async () => {
@@ -89,10 +97,12 @@ describe('restoreSession', () => {
       identityConnectedIdentity : async () => identity,
     });
 
-    const session = await restoreSession({ userAgent: agent, emitter, storage });
+    const context = createFlowContext({ userAgent: agent, emitter, storage });
+    const session = await runRestoreSession(context);
     expect(session).toBeDefined();
     expect(session!.did).toBe('did:dht:external');
     expect(session!.delegateDid).toBe('did:dht:testuser123');
+    expect(session!.signal).toBe(context.sessionSignal);
   });
 
   test('restores session from active identity DID', async () => {
@@ -139,7 +149,7 @@ describe('restoreSession', () => {
     expect(session!.did).toBe('did:dht:testuser123');
   });
 
-  test('emits vault-unlocked and session-start events', async () => {
+  test('emits vault-unlocked while session publication remains manager-owned', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
@@ -152,7 +162,7 @@ describe('restoreSession', () => {
 
     await restoreSession({ userAgent: agent, emitter, storage });
 
-    expect(events).toEqual(['vault-unlocked', 'session-start']);
+    expect(events).toEqual(['vault-unlocked']);
   });
 
   test('applies local DWN discovery from stored pairing', async () => {

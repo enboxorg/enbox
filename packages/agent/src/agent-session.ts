@@ -16,7 +16,7 @@ export interface AgentSessionIdentity {
  * The minimal session shape shared across higher-level packages.
  *
  * Every Enbox session — whether produced by `@enbox/agent`, `@enbox/auth`, or
- * a custom flow — has at least these three primitives. `@enbox/api` and other
+ * a custom flow — has at least these primitives. `@enbox/api` and other
  * downstream packages depend on this base type rather than re-declaring the
  * same fields, so any change to the session shape happens in one place.
  *
@@ -35,6 +35,13 @@ export type AgentSessionPrimitives = {
 
   /** The delegate DID URI, present when connected via delegated wallet access. */
   delegateDid?: string;
+
+  /**
+   * Aborted when the session is no longer authorized for application work.
+   * The session's lifecycle owner aborts this signal on lock, disconnect,
+   * shutdown, or replacement by another identity.
+   */
+  signal: AbortSignal;
 };
 
 /** Parameters used to construct an {@link AgentSession}. */
@@ -68,11 +75,19 @@ export class AgentSession {
   /** Metadata about the connected identity. */
   public readonly identity: AgentSessionIdentity;
 
+  /** Aborted when this session is locked, disconnected, shut down, or replaced. */
+  public readonly signal: AbortSignal;
+
   public constructor(params: AgentSessionParams) {
+    if (params.signal === undefined) {
+      throw new TypeError('AgentSession: signal is required so the lifecycle owner can end the session.');
+    }
+
     this.agent = params.agent;
     this.did = params.did;
     this.delegateDid = params.delegateDid;
     this.recoveryPhrase = params.recoveryPhrase;
     this.identity = params.identity;
+    this.signal = params.signal;
   }
 }

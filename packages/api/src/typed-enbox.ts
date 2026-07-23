@@ -33,12 +33,15 @@
 
 import type { Protocol } from './protocol.js';
 
-import type { AudienceKeyDeliveryOutcome, DwnPaginationCursor, DwnPublicKeyJwk, DwnResponseStatus } from '@enbox/agent';
+import type { RecordView } from './record-view.js';
+
+import type { AudienceKeyDeliveryOutcome, DwnPaginationCursor, DwnPublicKeyJwk, DwnResponseStatus, SyncEngine } from '@enbox/agent';
 import type { DataFormatAtPath, ProtocolPaths, SchemaMap, TypedProtocol, TypeNameAtPath } from './protocol-types.js';
 import type { DwnApi, ProtocolsConfigureResponse, RecordsCountResponse } from './dwn-api.js';
 import type { ProtocolDefinition, ProtocolType } from '@enbox/dwn-sdk-js';
 import type { RecordFilter, RecordQuery } from './record-query.js';
 
+import { createRecordView } from './record-view.js';
 import { getTypeName } from '@enbox/dwn-sdk-js';
 import { TypedRecord } from './typed-record.js';
 import { compileRecordFilter, compileRecordQuery } from './record-query.js';
@@ -58,6 +61,15 @@ export type DataForPath<
   M extends SchemaMap,
   Path extends string,
 > = TypeNameAtPath<Path> extends keyof M ? M[TypeNameAtPath<Path>] : unknown;
+
+/** @internal Runtime resources owned by the Enbox session that created this typed API. */
+type TypedEnboxOptions = {
+  /** Session-lifetime signal; aborting it closes every view created by this instance. */
+  signal?: AbortSignal;
+
+  /** Sync currentness source. Omit for directly constructed, local-only typed APIs. */
+  sync?: SyncEngine;
+};
 
 // ---------------------------------------------------------------------------
 // Request / response types
@@ -535,15 +547,19 @@ export class TypedEnbox<
   private _records?: TypedEnbox<D, M>['records'];
   /** @internal — cached result of the `hasEncryptedTypes` scan (definition is immutable). */
   private readonly _hasEncryptedTypes: boolean;
+  /** @internal */
+  private readonly _options: TypedEnboxOptions;
 
   /**
    * @internal Create a new `TypedEnbox` instance. Use `enbox.using(protocol)` instead.
    * @param dwn - The underlying DWN API instance.
    * @param protocol - The typed protocol containing the definition and schema map.
+   * @param options - Optional session-owned lifecycle and sync resources.
    */
-  constructor(dwn: DwnApi, protocol: TypedProtocol<D, M>) {
+  constructor(dwn: DwnApi, protocol: TypedProtocol<D, M>, options: TypedEnboxOptions = {}) {
     this._dwn = dwn;
     this._definition = protocol.definition;
+    this._options = options;
     this._validPaths = collectPaths(this._definition.structure);
     this._hasEncryptedTypes = Object.values(this._definition.types)
       .some((type: ProtocolType) => type.encryptionRequired === true);
@@ -948,6 +964,7 @@ export class TypedEnbox<
    * Available methods:
    * - {@link TypedEnbox.records.create | create(path, request)} — Create a new record
    * - {@link TypedEnbox.records.query | query(path, request?)} — Query records with filters
+   * - {@link TypedEnbox.records.observe | observe(path, request)} — Observe immutable local query snapshots
    * - {@link TypedEnbox.records.count | count(path, request?)} — Count the same matching population
    * - {@link TypedEnbox.records.read | read(path, request)} — Read a single record
    * - {@link TypedEnbox.records.delete | delete(path, request)} — Delete a record by ID
@@ -962,6 +979,14 @@ export class TypedEnbox<
       path: Path,
       request?: RecordQuery<D, Path>,
     ) => Promise<TypedQueryResponse<DataForPath<D, M, Path>>>;
+
+    observe: <Path extends ProtocolPaths<D> & string>(
+      path: Path,
+      request: Omit<RecordQuery<D, Path>, 'from' | 'pagination'> & {
+        from?: never;
+        pagination: { limit: number; cursor?: DwnPaginationCursor };
+      },
+    ) => Promise<RecordView<DataForPath<D, M, Path>>>;
 
     count: <Path extends ProtocolPaths<D> & string>(
       path: Path,
@@ -1095,6 +1120,40 @@ export class TypedEnbox<
           records: records.map((r) => new TypedRecord<DataForPath<D, M, Path>>(r)),
           cursor,
         };
+      },
+
+      /**
+       * Observe one bounded local query as immutable materialized snapshots.
+       *
+       * A local subscription is installed before the initial query. Its
+       * payloads are wake hints only; every published collection comes from
+       * re-running this exact canonical query. A pagination limit is required
+       * so the view's retained collection has an explicit resource bound.
+       */
+      observe: async <Path extends ProtocolPaths<D> & string>(
+        path: Path,
+        request: Omit<RecordQuery<D, Path>, 'from' | 'pagination'> & {
+          from?: never;
+          pagination: { limit: number; cursor?: DwnPaginationCursor };
+        },
+      ): Promise<RecordView<DataForPath<D, M, Path>>> => {
+        this._options.signal?.throwIfAborted();
+        const normalizedPath = normalizePath(path);
+        if ((request as RecordQuery<D, Path> | undefined)?.from !== undefined) {
+          throw new TypeError('RecordView: remote queries are not supported; observe the connected tenant local replica.');
+        }
+        if (request?.pagination?.limit === undefined) {
+          throw new TypeError('RecordView: pagination.limit is required to bound retained records.');
+        }
+        const compiled = structuredClone(compileRecordQuery(this._definition, normalizedPath, request));
+        await this._ensureReady(normalizedPath);
+
+        return createRecordView<DataForPath<D, M, Path>>({
+          dwn    : this._dwn,
+          query  : compiled,
+          signal : this._options.signal,
+          sync   : this._options.sync,
+        });
       },
 
       /**

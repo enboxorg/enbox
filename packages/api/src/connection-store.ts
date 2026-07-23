@@ -38,7 +38,7 @@
 
 import type {
   AuthManagerOptions,
-  AuthSessionInfo,
+  AuthSession,
   ConnectionMonitorOptions,
   ConnectionStatus,
   ConnectOptions,
@@ -50,8 +50,8 @@ import type {
 } from '@enbox/auth';
 
 import { AuthManager } from '@enbox/auth/auth-manager';
+import { isConnectDeniedError } from '@enbox/auth';
 import { omitUndefined } from '@enbox/common';
-import { AuthSession, isConnectDeniedError } from '@enbox/auth';
 
 import { Enbox } from './enbox.js';
 
@@ -314,8 +314,11 @@ function toError(cause: unknown): Error {
  * manager before reporting `'disconnected'`. While an action is in flight
  * the store trusts that action for phase transitions and ignores
  * `session-start`/`session-end` events (which its own flow raised); outside
- * of actions those events let the store follow auth flows driven directly on
- * the underlying `AuthManager`.
+ * of actions both events are wake signals that let the store follow the
+ * authoritative session on the underlying `AuthManager`. After each awaited
+ * status read, the action reconciles against `AuthManager.session`, so an
+ * external lifecycle change that lands while an action is finishing cannot
+ * be lost.
  */
 class HeadlessConnectionStore implements ConnectionStore {
   private readonly _authManagerOptions: AuthManagerOptions;
@@ -526,11 +529,32 @@ class HeadlessConnectionStore implements ConnectionStore {
 
   // ─── Outcome mapping ───────────────────────────────────────────
 
-  /** Applies the connected snapshot, restarts the monitor, and seeds the delegated status. */
+  /** Apply and seed the authoritative session, repeating if auth changes while status is read. */
   private async _commitConnected(auth: AuthManager, session: AuthSession, generation: number): Promise<ConnectionSnapshot> {
-    this._apply(this._connectedPatch(session));
-    this._restartMonitor(auth, session);
-    await this._seedConnectionStatus(auth, session, generation);
+    let activeSession = session;
+    // This cannot spin without yielding: each continuation requires a distinct
+    // external session replacement during the awaited status read. Capping it
+    // could publish a stale session while the manager already owns a newer one.
+    while (!this._isStale(generation)) {
+      this._apply(this._connectedPatch(activeSession));
+      this._restartMonitor(auth, activeSession);
+      await this._seedConnectionStatus(auth, activeSession, generation);
+
+      if (this._isStale(generation)) {
+        return this._snapshot;
+      }
+
+      const authoritativeSession = auth.session;
+      if (authoritativeSession === activeSession) {
+        return this._snapshot;
+      }
+      if (authoritativeSession === undefined) {
+        this._stopDelegateMonitor();
+        return this._apply({ ...CLEARED_SESSION_FIELDS, phase: 'disconnected' });
+      }
+      activeSession = authoritativeSession;
+    }
+
     return this._snapshot;
   }
 
@@ -662,8 +686,8 @@ class HeadlessConnectionStore implements ConnectionStore {
 
   private _wireAuthEvents(auth: AuthManager): void {
     this._unsubscribers.push(
-      auth.on('session-start', ({ session }): void => { this._onSessionStart(auth, session); }),
-      auth.on('session-end', (): void => { this._onSessionEnd(); }),
+      auth.on('session-start', (): void => { this._onSessionChange(auth); }),
+      auth.on('session-end', (): void => { this._onSessionChange(auth); }),
       auth.on('connection-expiring', ({ status }): void => { this._applyConnectionStatus(status); }),
       auth.on('connection-expired', ({ status }): void => { this._applyConnectionStatus(status); }),
       auth.on('vault-locked', (): void => { this._apply({ vaultLocked: true }); }),
@@ -671,33 +695,22 @@ class HeadlessConnectionStore implements ConnectionStore {
     );
   }
 
-  /**
-   * Follows a session started directly on the `AuthManager` (outside the
-   * store's own actions, e.g. `auth.switchIdentity()`); the event payload is
-   * used when the manager has not installed the session object yet.
-   */
-  private _onSessionStart(auth: AuthManager, info: AuthSessionInfo): void {
+  /** Reconciles a manager lifecycle wake against its authoritative active session. */
+  private _onSessionChange(auth: AuthManager): void {
     if (this._pendingAction !== undefined) {
       return;
     }
 
-    const managed = auth.session;
-    const session = managed !== undefined && managed.did === info.did && managed.delegateDid === info.delegateDid
-      ? managed
-      : new AuthSession({ agent: auth.agent, did: info.did, delegateDid: info.delegateDid, identity: info.identity });
+    const session = auth.session;
+    if (session === undefined) {
+      this._stopDelegateMonitor();
+      this._apply({ ...CLEARED_SESSION_FIELDS, phase: 'disconnected' });
+      return;
+    }
     const generation = this._actionGeneration;
     void this._commitConnected(auth, session, generation).catch((cause: unknown): void => {
-      console.error('[@enbox/api] ConnectionStore: failed to apply an externally started session:', cause);
+      console.error('[@enbox/api] ConnectionStore: failed to reconcile an externally changed session:', cause);
     });
-  }
-
-  /** Follows a session ended outside the store's own actions (`auth.lock()`, external disconnect, shutdown). */
-  private _onSessionEnd(): void {
-    this._stopDelegateMonitor();
-    if (this._pendingAction !== undefined) {
-      return;
-    }
-    this._apply({ ...CLEARED_SESSION_FIELDS, phase: 'disconnected' });
   }
 
   // ─── Delegated connection status ───────────────────────────────
@@ -733,7 +746,7 @@ class HeadlessConnectionStore implements ConnectionStore {
         expiringSoonThresholdSeconds : this._monitor.expiringSoonThresholdSeconds,
       });
       const connection = await auth.getConnectionStatus(options);
-      if (this._isStale(generation) || this._snapshot.session !== session) {
+      if (this._isStale(generation) || auth.session !== session || this._snapshot.session !== session) {
         return;
       }
       this._applyConnectionStatus(connection);

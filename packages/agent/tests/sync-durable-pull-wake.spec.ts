@@ -1,6 +1,7 @@
 import type { GenericMessage, MessagesQueryReplyEntry } from '@enbox/dwn-sdk-js';
 
 import type { SyncTarget } from '../src/sync-target-resolver.js';
+import type { ReplicationLinkState, SyncEvent } from '../src/types/sync.js';
 
 import sinon from 'sinon';
 
@@ -47,6 +48,35 @@ function recordsWriteMessage(): GenericMessage {
 describe('SyncEngineLevel durable pull admission', () => {
   afterEach(() => {
     sinon.restore();
+  });
+
+  it('announces durable checkpoint progress without treating it as pull completion', async () => {
+    const engine = new SyncEngineLevel({ agent: {} as never, db: {} as never });
+    const internal = engine as any;
+    const link: ReplicationLinkState = {
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'owner-epoch',
+      connectivity       : 'online',
+      projectionId       : 'projection-id',
+      pull               : { contiguousAppliedToken: { epoch: 'epoch', position: '7', streamId: 'stream' } },
+      push               : {},
+      remoteEndpoint     : REMOTE,
+      scope              : { kind: 'full' },
+      status             : 'live',
+      tenantDid          : DID,
+    };
+    const persistCheckpoint = sinon.stub().resolves();
+    internal._replicationLinkStore = { persistCheckpoint };
+    const events: SyncEvent[] = [];
+    engine.on((event): void => { events.push(event); });
+
+    await internal.commitReconciledCheckpoint(link, 'pull');
+
+    expect(persistCheckpoint.calledOnceWithExactly(link, 'pull')).toBe(true);
+    expect(events).toEqual([
+      expect.objectContaining({ type: 'checkpoint:pull-advance', position: '7' }),
+    ]);
+    expect(events[0]).not.toHaveProperty('drained');
   });
 
   it('skips a remote echo before fetching or reapplying a message the link just pushed', async () => {

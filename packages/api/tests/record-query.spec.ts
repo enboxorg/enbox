@@ -74,7 +74,7 @@ function createTypedEnbox(dwn: DwnApi): TypedEnbox<typeof QueryDefinition, Query
 }
 
 describe('RecordQuery', () => {
-  it('should compile one immutable selection for query and count', async () => {
+  it('should compile the same canonical selection for query and count', async () => {
     const { dwn, countRequests, queryRequests } = createCapturingDwn();
     const typed = createTypedEnbox(dwn);
     const filter = {
