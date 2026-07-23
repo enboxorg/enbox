@@ -4,18 +4,18 @@ import type { Pagination } from '../../src/types/message-types.js';
 import type { PaginationCursor } from '../../src/types/query-types.js';
 import type {
   DataStore, MessageStore, ProtocolDefinition, RecordsCountReply, RecordsQueryReply, RecordsReadReply,
-  RecordsSubscribeReply, ResumableTaskStore
+  RecordsSubscribeReply, RecordsWriteMessage, ResumableTaskStore
 } from '../../src/index.js';
 import type { GenerateRecordsWriteOutput, Persona } from '../utils/test-data-generator.js';
 
-import sinon from 'sinon';
-
 import { DataStream } from '../../src/utils/data-stream.js';
+import { DateSort } from '../../src/types/records-types.js';
 import { DidKey } from '@enbox/dids';
 import { Dwn } from '../../src/dwn.js';
 import { DwnConstant } from '../../src/core/dwn-constant.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { Jws } from '../../src/utils/jws.js';
+import { Poller } from '../utils/poller.js';
 import { ProtocolsConfigure } from '../../src/interfaces/protocols-configure.js';
 import { RecordsRead } from '../../src/interfaces/records-read.js';
 import { sleep } from '@enbox/common';
@@ -50,8 +50,6 @@ export function testRecordsRecordLimit(): void {
     });
 
     beforeEach(async () => {
-      sinon.restore();
-
       await messageStore.clear();
       await dataStore.clear();
       await resumableTaskStore.clear();
@@ -82,6 +80,7 @@ export function testRecordsRecordLimit(): void {
       protocolPath: string;
       dateCreated: string;
       parentContextId?: string;
+      published?: boolean;
       targetDwn?: Dwn;
     }): Promise<GenerateRecordsWriteOutput> {
       const record = await TestDataGenerator.generateRecordsWrite({
@@ -90,6 +89,7 @@ export function testRecordsRecordLimit(): void {
         protocol         : input.protocol,
         protocolPath     : input.protocolPath,
         parentContextId  : input.parentContextId,
+        published        : input.published,
         dateCreated      : input.dateCreated,
         messageTimestamp : input.dateCreated,
       });
@@ -104,6 +104,7 @@ export function testRecordsRecordLimit(): void {
       protocol: string;
       protocolPath: string;
       contextId?: string;
+      dateSort?: DateSort;
       pagination?: Pagination;
       targetDwn?: Dwn;
     }): Promise<{ recordIds: string[]; cursor?: PaginationCursor }> {
@@ -114,7 +115,8 @@ export function testRecordsRecordLimit(): void {
           protocolPath : input.protocolPath,
           ...(input.contextId === undefined ? {} : { contextId: input.contextId }),
         },
-        pagination: input.pagination,
+        dateSort   : input.dateSort,
+        pagination : input.pagination,
       });
 
       const reply = await (input.targetDwn ?? dwn).processMessage(input.author.did, recordsQuery.message) as RecordsQueryReply;
@@ -164,6 +166,7 @@ export function testRecordsRecordLimit(): void {
       author: Persona;
       protocol: string;
       protocolPath: string;
+      contextId?: string;
       targetDwn?: Dwn;
     }): Promise<string[]> {
       const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
@@ -171,6 +174,7 @@ export function testRecordsRecordLimit(): void {
         filter : {
           protocol     : input.protocol,
           protocolPath : input.protocolPath,
+          ...(input.contextId === undefined ? {} : { contextId: input.contextId }),
         },
       });
 
@@ -656,7 +660,7 @@ export function testRecordsRecordLimit(): void {
         expect(broadReply.status.detail).toContain(DwnErrorCode.RecordsQueryNestedProtocolPathContextIdInvalid);
       });
 
-      it('should fail closed when an ancestor scope spans multiple limited parent contexts', async () => {
+      it('should project ancestor queries independently across parent contexts', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const protocolDefinition: ProtocolDefinition = {
           protocol  : `http://record-limit-${TestDataGenerator.randomString(12)}.xyz`,
@@ -685,43 +689,202 @@ export function testRecordsRecordLimit(): void {
           protocolPath : 'community',
           dateCreated  : '2025-01-01T00:00:00.000000Z',
         });
-        const filter = {
+        const channel1 = await writeProtocolRecord({
+          author          : alice,
+          protocol,
+          protocolPath    : 'community/channel',
+          parentContextId : community.message.contextId,
+          dateCreated     : '2025-01-02T00:00:00.000000Z',
+        });
+        const channel2 = await writeProtocolRecord({
+          author          : alice,
+          protocol,
+          protocolPath    : 'community/channel',
+          parentContextId : community.message.contextId,
+          dateCreated     : '2025-01-03T00:00:00.000000Z',
+        });
+        const { cursor: cursorBeforeMessages } = await eventLog.read(alice.did);
+
+        // Creation times are interleaved across channels so pagination proves
+        // that projection happens per direct parent before global ordering.
+        const channel1Messages = [
+          await writeProtocolRecord({
+            author          : alice,
+            protocol,
+            protocolPath    : 'community/channel/message',
+            parentContextId : channel1.message.contextId,
+            dateCreated     : '2025-02-01T00:00:00.000000Z',
+          }),
+          await writeProtocolRecord({
+            author          : alice,
+            protocol,
+            protocolPath    : 'community/channel/message',
+            parentContextId : channel1.message.contextId,
+            published       : true,
+            dateCreated     : '2025-02-04T00:00:00.000000Z',
+          }),
+          await writeProtocolRecord({
+            author          : alice,
+            protocol,
+            protocolPath    : 'community/channel/message',
+            parentContextId : channel1.message.contextId,
+            published       : true,
+            dateCreated     : '2025-02-06T00:00:00.000000Z',
+          }),
+        ];
+        const channel2Messages = [
+          await writeProtocolRecord({
+            author          : alice,
+            protocol,
+            protocolPath    : 'community/channel/message',
+            parentContextId : channel2.message.contextId,
+            published       : true,
+            dateCreated     : '2025-02-02T00:00:00.000000Z',
+          }),
+          await writeProtocolRecord({
+            author          : alice,
+            protocol,
+            protocolPath    : 'community/channel/message',
+            parentContextId : channel2.message.contextId,
+            published       : true,
+            dateCreated     : '2025-02-03T00:00:00.000000Z',
+          }),
+          await writeProtocolRecord({
+            author          : alice,
+            protocol,
+            protocolPath    : 'community/channel/message',
+            parentContextId : channel2.message.contextId,
+            published       : true,
+            dateCreated     : '2025-02-03T00:00:00.000000Z',
+          }),
+        ];
+        const channel2BoundaryOccupant = channel2Messages[1].message.recordId < channel2Messages[2].message.recordId
+          ? channel2Messages[1]
+          : channel2Messages[2];
+        const expectedRecordIds = [
+          channel1Messages[0].message.recordId,
+          channel2Messages[0].message.recordId,
+          channel2BoundaryOccupant.message.recordId,
+          channel1Messages[1].message.recordId,
+        ];
+        const queryInput = {
+          author       : alice,
+          protocol,
+          protocolPath : 'community/channel/message',
+          contextId    : community.message.contextId,
+        };
+
+        expect((await queryProtocolRecordIds(queryInput)).recordIds).toEqual(expectedRecordIds);
+        expect((await queryProtocolRecordIds({
+          ...queryInput,
+          dateSort: DateSort.CreatedDescending,
+        })).recordIds).toEqual([...expectedRecordIds].reverse());
+        expect(await countProtocolRecords(queryInput)).toBe(expectedRecordIds.length);
+        expect(await subscribeSnapshotRecordIds(queryInput)).toEqual(expectedRecordIds);
+
+        const page1 = await queryProtocolRecordIds({ ...queryInput, pagination: { limit: 2 } });
+        expect(page1.recordIds).toEqual(expectedRecordIds.slice(0, 2));
+        expect(page1.cursor).toBeDefined();
+
+        const page2 = await queryProtocolRecordIds({
+          ...queryInput,
+          pagination: { limit: 2, cursor: page1.cursor! },
+        });
+        expect(page2.recordIds).toEqual(expectedRecordIds.slice(2));
+        expect(page2.cursor).toBeUndefined();
+
+        const descendingPage1 = await queryProtocolRecordIds({
+          ...queryInput,
+          dateSort   : DateSort.CreatedDescending,
+          pagination : { limit: 2 },
+        });
+        expect(descendingPage1.recordIds).toEqual([...expectedRecordIds].reverse().slice(0, 2));
+        expect(descendingPage1.cursor).toBeDefined();
+
+        const descendingPage2 = await queryProtocolRecordIds({
+          ...queryInput,
+          dateSort   : DateSort.CreatedDescending,
+          pagination : { limit: 2, cursor: descendingPage1.cursor! },
+        });
+        expect(descendingPage2.recordIds).toEqual([...expectedRecordIds].reverse().slice(2));
+        expect(descendingPage2.cursor).toBeUndefined();
+
+        // Occupancy is ranked before requester visibility. The unpublished
+        // first channel-1 occupant still consumes a slot, so the later
+        // published over-limit candidate must remain hidden anonymously.
+        const publishedFilter = {
           contextId    : community.message.contextId,
           protocol,
           protocolPath : 'community/channel/message',
+          published    : true,
         };
+        const anonymousQuery = await TestDataGenerator.generateRecordsQuery({
+          anonymous : true,
+          filter    : publishedFilter,
+        });
+        const anonymousReply = await dwn.processMessage(alice.did, anonymousQuery.message) as RecordsQueryReply;
+        expect(anonymousReply.status.code).toBe(200);
+        expect(anonymousReply.entries?.map((entry): string => entry.recordId)).toEqual([
+          channel2Messages[0].message.recordId,
+          channel2BoundaryOccupant.message.recordId,
+          channel1Messages[1].message.recordId,
+        ]);
 
-        const recordsQuery = await TestDataGenerator.generateRecordsQuery({ author: alice, filter });
-        const queryReply = await dwn.processMessage(alice.did, recordsQuery.message) as RecordsQueryReply;
-        expect(queryReply.status.code).toBe(400);
-        expect(queryReply.status.detail).toContain(DwnErrorCode.RecordsRecordLimitAncestorScopeUnsupported);
+        const anonymousCount = await TestDataGenerator.generateRecordsCount({
+          anonymous : true,
+          filter    : publishedFilter,
+        });
+        const anonymousCountReply = await dwn.processMessage(alice.did, anonymousCount.message) as RecordsCountReply;
+        expect(anonymousCountReply.status.code).toBe(200);
+        expect(anonymousCountReply.count).toBe(3);
 
-        const recordsCount = await TestDataGenerator.generateRecordsCount({ author: alice, filter });
-        const countReply = await dwn.processMessage(alice.did, recordsCount.message) as RecordsCountReply;
-        expect(countReply.status.code).toBe(400);
-        expect(countReply.status.detail).toContain(DwnErrorCode.RecordsRecordLimitAncestorScopeUnsupported);
-
-        const subscribeSpy = sinon.spy(eventLog, 'subscribe');
-        const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({ author: alice, filter });
-        const subscribeReply = await dwn.processMessage(alice.did, recordsSubscribe.message, {
-          subscriptionHandler: (): void => {},
-        }) as RecordsSubscribeReply;
-        expect(subscribeReply.status.code).toBe(400);
-        expect(subscribeReply.status.detail).toContain(DwnErrorCode.RecordsRecordLimitAncestorScopeUnsupported);
-        expect(subscribeReply.subscription).toBeUndefined();
-
+        const replayedRecordIds: string[] = [];
         const cursorSubscribe = await TestDataGenerator.generateRecordsSubscribe({
           author : alice,
-          filter,
-          cursor : { streamId: 'unused', epoch: 'unused', position: '0' },
+          cursor : cursorBeforeMessages!,
+          filter : {
+            contextId    : community.message.contextId,
+            protocol,
+            protocolPath : 'community/channel/message',
+          },
         });
         const cursorSubscribeReply = await dwn.processMessage(alice.did, cursorSubscribe.message, {
-          subscriptionHandler: (): void => {},
+          subscriptionHandler: (subscriptionMessage): void => {
+            if (subscriptionMessage.type === 'event' && subscriptionMessage.event.message.descriptor.method === 'Write') {
+              replayedRecordIds.push((subscriptionMessage.event.message as RecordsWriteMessage).recordId);
+            }
+          },
         }) as RecordsSubscribeReply;
-        expect(cursorSubscribeReply.status.code).toBe(400);
-        expect(cursorSubscribeReply.status.detail).toContain(DwnErrorCode.RecordsRecordLimitAncestorScopeUnsupported);
-        expect(cursorSubscribeReply.subscription).toBeUndefined();
-        expect(subscribeSpy.notCalled).toBe(true);
+        expect(cursorSubscribeReply.status.code).toBe(200);
+        await Poller.pollUntilSuccessOrTimeout(async () => {
+          expect(replayedRecordIds).toHaveLength(expectedRecordIds.length);
+        });
+        expect([...replayedRecordIds].sort()).toEqual([...expectedRecordIds].sort());
+        await cursorSubscribeReply.subscription?.close();
+
+        const deleteChannel1Occupant = await TestDataGenerator.generateRecordsDelete({
+          author   : alice,
+          recordId : channel1Messages[0].message.recordId,
+        });
+        const deleteReply = await dwn.processMessage(alice.did, deleteChannel1Occupant.message);
+        expect(deleteReply.status.code).toBe(202);
+
+        const expectedAfterPromotion = [
+          channel2Messages[0].message.recordId,
+          channel2BoundaryOccupant.message.recordId,
+          channel1Messages[1].message.recordId,
+          channel1Messages[2].message.recordId,
+        ];
+        expect((await queryProtocolRecordIds(queryInput)).recordIds).toEqual(expectedAfterPromotion);
+        expect((await queryProtocolRecordIds({
+          author       : alice,
+          protocol,
+          protocolPath : 'community/channel/message',
+          contextId    : channel2.message.contextId,
+        })).recordIds).toEqual([
+          channel2Messages[0].message.recordId,
+          channel2BoundaryOccupant.message.recordId,
+        ]);
       });
 
       it('should paginate over the projected occupant set for max:N scopes', async () => {

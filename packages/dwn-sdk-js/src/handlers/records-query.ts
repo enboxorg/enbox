@@ -10,13 +10,12 @@ import { EncryptionControl } from '../core/encryption-control.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
-import { queryRecordsWithRecordLimitOccupancy } from '../utils/record-limit-occupancy.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { RecordsQuery } from '../interfaces/records-query.js';
 import { SortDirection } from '../types/query-types.js';
-import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
+import { queryRecordsWithRecordLimitOccupancy, resolveRecordLimitOccupancy } from '../utils/record-limit-occupancy.js';
 
 type RecordsQueryProjectionInput = {
   tenant: string;
@@ -45,39 +44,32 @@ export class RecordsQueryHandler implements MethodHandler {
     let recordsWrites: RecordsQueryReplyEntry[];
     let cursor: PaginationCursor | undefined;
     const requester = Message.getRequester(recordsQuery.message);
-    try {
-      // if this is an anonymous query and the filter supports published records, query only published records
-      if (Records.filterIncludesPublishedRecords(recordsQuery.message.descriptor.filter) && recordsQuery.author === undefined) {
-        const results = await this.fetchPublishedRecords(tenant, recordsQuery, requester);
+    // if this is an anonymous query and the filter supports published records, query only published records
+    if (Records.filterIncludesPublishedRecords(recordsQuery.message.descriptor.filter) && recordsQuery.author === undefined) {
+      const results = await this.fetchPublishedRecords(tenant, recordsQuery, requester);
+      recordsWrites = results.messages as RecordsQueryReplyEntry[];
+      cursor = results.cursor;
+    } else {
+      // authentication and authorization
+      try {
+        await authenticate(message.authorization!, this.deps.didResolver);
+
+        await RecordsQueryHandler.authorizeRecordsQuery(tenant, recordsQuery, this.deps);
+      } catch (e) {
+        return messageReplyFromError(e, 401);
+      }
+
+      if (recordsQuery.author === tenant) {
+        const results = requester === tenant
+          ? await this.fetchRecordsAsOwner(tenant, recordsQuery)
+          : await this.fetchRecordsAsOwnerDelegate(tenant, recordsQuery, requester);
         recordsWrites = results.messages as RecordsQueryReplyEntry[];
         cursor = results.cursor;
       } else {
-        // authentication and authorization
-        try {
-          await authenticate(message.authorization!, this.deps.didResolver);
-
-          await RecordsQueryHandler.authorizeRecordsQuery(tenant, recordsQuery, this.deps);
-        } catch (e) {
-          return messageReplyFromError(e, 401);
-        }
-
-        if (recordsQuery.author === tenant) {
-          const results = requester === tenant
-            ? await this.fetchRecordsAsOwner(tenant, recordsQuery)
-            : await this.fetchRecordsAsOwnerDelegate(tenant, recordsQuery, requester);
-          recordsWrites = results.messages as RecordsQueryReplyEntry[];
-          cursor = results.cursor;
-        } else {
-          const results = await this.fetchRecordsAsNonOwner(tenant, recordsQuery, requester);
-          recordsWrites = results.messages as RecordsQueryReplyEntry[];
-          cursor = results.cursor;
-        }
+        const results = await this.fetchRecordsAsNonOwner(tenant, recordsQuery, requester);
+        recordsWrites = results.messages as RecordsQueryReplyEntry[];
+        cursor = results.cursor;
       }
-    } catch (error) {
-      if (error instanceof DwnError && error.code === DwnErrorCode.RecordsRecordLimitAncestorScopeUnsupported) {
-        return messageReplyFromError(error, 400);
-      }
-      throw error;
     }
 
     // attach the retained initial write to every entry that is not itself an initial write
@@ -262,17 +254,22 @@ export class RecordsQueryHandler implements MethodHandler {
     const {
       tenant, recordsQuery, requester, filters, messageSort, pagination
     } = input;
+    const recordLimit = await resolveRecordLimitOccupancy({
+      validationStateReader : this.deps.validationStateReader,
+      tenant,
+      recordsFilter         : recordsQuery.message.descriptor.filter,
+      messageTimestamp      : recordsQuery.message.descriptor.messageTimestamp,
+    });
     const controlFilters = Records.buildControlRecordsFilters(filters);
     const currentAudienceRecordIdCache = new Map<string, string | undefined>();
     if (controlFilters.length === 0) {
       const result = await queryRecordsWithRecordLimitOccupancy({
-        messageStore          : this.deps.messageStore,
-        validationStateReader : this.deps.validationStateReader,
+        messageStore: this.deps.messageStore,
         tenant,
         filters,
+        recordLimit,
         messageSort,
         pagination,
-        messageTimestamp      : recordsQuery.message.descriptor.messageTimestamp,
       });
       return EncryptionControl.projectCurrentAudienceRecordPage({
         messageStore : this.deps.messageStore,
@@ -288,13 +285,12 @@ export class RecordsQueryHandler implements MethodHandler {
 
     if (pagination?.limit === undefined || pagination.limit <= 0) {
       const result = await queryRecordsWithRecordLimitOccupancy({
-        messageStore          : this.deps.messageStore,
-        validationStateReader : this.deps.validationStateReader,
+        messageStore: this.deps.messageStore,
         tenant,
         filters,
+        recordLimit,
         messageSort,
         pagination,
-        messageTimestamp      : recordsQuery.message.descriptor.messageTimestamp,
       });
       const projectedResult = await EncryptionControl.projectCurrentAudienceRecordPage({
         messageStore : this.deps.messageStore,
@@ -319,13 +315,12 @@ export class RecordsQueryHandler implements MethodHandler {
     do {
       const remainingLimit = pagination.limit - visibleMessages.length;
       const result = await queryRecordsWithRecordLimitOccupancy({
-        messageStore          : this.deps.messageStore,
-        validationStateReader : this.deps.validationStateReader,
+        messageStore : this.deps.messageStore,
         tenant,
         filters,
+        recordLimit,
         messageSort,
-        pagination            : { ...pagination, cursor, limit: remainingLimit },
-        messageTimestamp      : recordsQuery.message.descriptor.messageTimestamp,
+        pagination   : { ...pagination, cursor, limit: remainingLimit },
       });
       const projectedResult = await EncryptionControl.projectCurrentAudienceRecordPage({
         messageStore : this.deps.messageStore,

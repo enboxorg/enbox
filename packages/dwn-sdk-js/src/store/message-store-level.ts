@@ -1,5 +1,5 @@
 
-import type { CompoundIndexDefinition } from './index-level.js';
+import type { CompoundIndexDefinition, IndexedItem } from './index-level.js';
 import type {
   EventLogEntry,
   EventLogReadOptions,
@@ -13,7 +13,14 @@ import type {
 import type { Filter, KeyValues, PaginationCursor, QueryOptions } from '../types/query-types.js';
 import type { GenericMessage, MessageSort, Pagination } from '../types/message-types.js';
 import type { LevelDatabase, LevelWrapperBatchOperation } from './level-wrapper.js';
-import type { MessageStore, MessageStoreLatestStateTransition, MessageStoreOptions, MessageStorePutResult } from '../types/message-store.js';
+import type {
+  MessageStore,
+  MessageStoreLatestStateTransition,
+  MessageStoreOptions,
+  MessageStorePutResult,
+  MessageStoreQueryOptions,
+  RecordLimitOccupancy,
+} from '../types/message-store.js';
 
 import * as block from 'multiformats/block';
 import * as cbor from '@ipld/dag-cbor';
@@ -31,6 +38,7 @@ import { SortDirection } from '../types/query-types.js';
 import { assertValidSubtreeFilters, FilterUtility } from '../utils/filter.js';
 import { createLevelDatabase, LevelWrapper } from './level-wrapper.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
+import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
 
 /**
@@ -91,6 +99,8 @@ const HEADS_PARTITION = 'heads';
 const META_PARTITION = 'meta';
 
 const EPOCH_KEY = 'epoch';
+const RECORD_LIMIT_RAW_PAGE_SIZE = 128;
+const RECORD_LIMIT_GROUP_CACHE_SIZE = RECORD_LIMIT_RAW_PAGE_SIZE;
 const CURRENT_PARTITIONS = new Set([
   BLOCKS_PARTITION,
   INDEX_PARTITION,
@@ -136,6 +146,24 @@ type StorePartitions = {
   heads: LevelWrapper<string>;
   /** Store-level metadata: `meta!epoch` → persisted store generation. */
   meta: LevelWrapper<string>;
+};
+
+type RecordLimitPopulationInput = {
+  tenant: string;
+  filters: Filter[];
+  queryOptions: QueryOptions;
+  recordLimit: RecordLimitOccupancy;
+  options?: MessageStoreQueryOptions;
+};
+
+type RecordLimitOccupantInput = {
+  tenant: string;
+  index: IndexLevel;
+  item: IndexedItem;
+  candidateFilter: Filter;
+  recordLimit: RecordLimitOccupancy;
+  groupCutoffs: Map<string, string>;
+  options?: MessageStoreQueryOptions;
 };
 
 /**
@@ -306,7 +334,7 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     filters: Filter[],
     messageSort?: MessageSort,
     pagination?: Pagination,
-    options?: MessageStoreOptions
+    options?: MessageStoreQueryOptions
   ): Promise<{ messages: GenericMessage[], cursor?: PaginationCursor}> {
     options?.signal?.throwIfAborted();
 
@@ -314,7 +342,15 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     // this adds 1 to the limit if provided, that way we can check to see if there are additional results and provide a return cursor.
     const queryOptions = MessageStoreLevel.buildQueryOptions(messageSort, pagination);
     const index = await this.index();
-    const results = await index.query(tenant, filters, queryOptions, options);
+    const results = options?.recordLimit === undefined
+      ? await index.query(tenant, filters, queryOptions, options)
+      : await this.collectRecordLimitPopulation({
+        tenant,
+        filters,
+        queryOptions,
+        recordLimit: options.recordLimit,
+        options,
+      });
 
     let cursor: PaginationCursor | undefined;
     // checks to see if the returned results are greater than the limit, which would indicate additional results.
@@ -340,13 +376,156 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     tenant: string,
     filters: Filter[],
     messageSort?: MessageSort,
-    options?: MessageStoreOptions
+    options?: MessageStoreQueryOptions
   ): Promise<number> {
     options?.signal?.throwIfAborted();
 
     const queryOptions = MessageStoreLevel.buildQueryOptions(messageSort);
     const index = await this.index();
-    return index.count(tenant, filters, queryOptions, options);
+    if (options?.recordLimit === undefined) {
+      return index.count(tenant, filters, queryOptions, options);
+    }
+
+    let count = 0;
+    for await (const _item of this.iterateRecordLimitPopulation({
+      tenant,
+      filters,
+      queryOptions,
+      recordLimit: options.recordLimit,
+      options,
+    })) {
+      count++;
+    }
+    return count;
+  }
+
+  /**
+   * Materializes one bounded page from the shared record-limit population iterator.
+   */
+  private async collectRecordLimitPopulation(input: RecordLimitPopulationInput): Promise<IndexedItem[]> {
+    const results: IndexedItem[] = [];
+    for await (const item of this.iterateRecordLimitPopulation(input)) {
+      results.push(item);
+    }
+    return results;
+  }
+
+  /**
+   * Streams caller-filtered records in requested order and admits only records
+   * inside their direct-parent group's deterministic rank boundary.
+   *
+   * Raw candidates are fetched into a small page before any parent lookup is
+   * opened. This is deliberate: browser-level/IndexedDB cursors must not be
+   * held open while another index transaction is awaited.
+   */
+  private async * iterateRecordLimitPopulation(input: RecordLimitPopulationInput): AsyncGenerator<IndexedItem> {
+    const { filters, options, queryOptions, recordLimit, tenant } = input;
+    const index = await this.index();
+    const candidateFilter = MessageStoreLevel.buildRecordLimitCandidateFilter(recordLimit);
+    const groupCutoffs = new Map<string, string>();
+    const outputLimit = queryOptions.limit;
+    let outputCount = 0;
+    let rawCursor = queryOptions.cursor;
+
+    if (outputLimit !== undefined && outputLimit <= 0) {
+      return;
+    }
+
+    while (true) {
+      const rawItems = await index.queryWithBoundedPaging(tenant, filters, {
+        ...queryOptions,
+        cursor : rawCursor,
+        limit  : RECORD_LIMIT_RAW_PAGE_SIZE,
+      }, options);
+      if (rawItems.length === 0) {
+        return;
+      }
+
+      for (const item of rawItems) {
+        if (await this.isRecordLimitOccupant({
+          tenant,
+          index,
+          item,
+          candidateFilter,
+          recordLimit,
+          groupCutoffs,
+          options,
+        })) {
+          yield item;
+          outputCount++;
+          if (outputLimit !== undefined && outputCount >= outputLimit) {
+            return;
+          }
+        }
+      }
+
+      if (rawItems.length < RECORD_LIMIT_RAW_PAGE_SIZE) {
+        return;
+      }
+      rawCursor = IndexLevel.createCursorFromItem(rawItems.at(-1)!, queryOptions.sortProperty);
+    }
+  }
+
+  private async isRecordLimitOccupant(input: RecordLimitOccupantInput): Promise<boolean> {
+    if (!FilterUtility.matchFilter(input.item.indexes, input.candidateFilter)) {
+      return false;
+    }
+
+    const indexedParentId = input.item.indexes.parentId;
+    if (indexedParentId !== undefined && typeof indexedParentId !== 'string') {
+      throw new TypeError(`MessageStoreLevel: record-limit candidate parentId must be a string.`);
+    }
+    const parentId = indexedParentId as string | undefined;
+    const groupKey = parentId === undefined ? 'root' : `parent:${parentId}`;
+
+    let cutoff = input.groupCutoffs.get(groupKey);
+    if (cutoff !== undefined) {
+      // Refresh insertion order so the fixed-size map acts as a small LRU.
+      input.groupCutoffs.delete(groupKey);
+      input.groupCutoffs.set(groupKey, cutoff);
+    } else {
+      cutoff = await input.index.findRecordLimitRankCutoff(
+        input.tenant,
+        input.candidateFilter,
+        parentId,
+        input.recordLimit.max,
+        input.options,
+      );
+      if (cutoff === undefined) {
+        return false;
+      }
+      MessageStoreLevel.cacheRecordLimitCutoff(input.groupCutoffs, groupKey, cutoff);
+    }
+
+    return IndexLevel.createRecordLimitRankKey(input.item.indexes) <= cutoff;
+  }
+
+  private static cacheRecordLimitCutoff(
+    cache: Map<string, string>,
+    groupKey: string,
+    cutoff: string,
+  ): void {
+    if (cache.size >= RECORD_LIMIT_GROUP_CACHE_SIZE) {
+      const oldestKey = cache.keys().next().value as string | undefined;
+      if (oldestKey !== undefined) {
+        cache.delete(oldestKey);
+      }
+    }
+    cache.set(groupKey, cutoff);
+  }
+
+  private static buildRecordLimitCandidateFilter(recordLimit: RecordLimitOccupancy): Filter {
+    const filter: Filter = {
+      interface         : DwnInterfaceName.Records,
+      method            : DwnMethodName.Write,
+      isLatestBaseState : true,
+      protocol          : recordLimit.protocol,
+      protocolPath      : recordLimit.protocolPath,
+    };
+    if (recordLimit.contextId !== undefined) {
+      filter.contextId = { subtree: recordLimit.contextId };
+    }
+    return filter;
   }
 
   /**

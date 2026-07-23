@@ -321,15 +321,9 @@ export class IndexLevel {
     assertValidSubtreeFilters(filters);
 
     // Strategy 1: try compound index for single-filter queries
-    if (filters.length === 1 && !isEmptyObject(filters[0])) {
-      const compoundResult = selectCompoundIndex(filters[0], queryOptions, this._compoundIndexes);
-      if (compoundResult !== undefined) {
-        return queryWithCompoundIndex(
-          this.db, tenant, filters[0], queryOptions, compoundResult,
-          IndexLevel.encodeValue, IndexLevel.delimiter,
-          this.queryWithIteratorPaging.bind(this), options
-        );
-      }
+    const compoundQuery = this.queryUsingCompoundIndex(tenant, filters, queryOptions, options);
+    if (compoundQuery !== undefined) {
+      return compoundQuery;
     }
 
     // Strategy 2: in-memory paging for concise filters
@@ -339,6 +333,47 @@ export class IndexLevel {
 
     // Strategy 3: iterator paging (default)
     return this.queryWithIteratorPaging(tenant, filters, queryOptions, options);
+  }
+
+  /**
+   * Queries one bounded page without selecting the in-memory strategy.
+   *
+   * Projection callers use this when they must close the outer iterator before
+   * opening related index ranges. A matching compound index is preferred;
+   * otherwise the requested-sort index is streamed directly.
+   */
+  async queryWithBoundedPaging(
+    tenant: string,
+    filters: Filter[],
+    queryOptions: QueryOptions,
+    options?: IndexLevelOptions,
+  ): Promise<IndexedItem[]> {
+    assertValidSubtreeFilters(filters);
+
+    const compoundQuery = this.queryUsingCompoundIndex(tenant, filters, queryOptions, options);
+    return compoundQuery ?? this.queryWithIteratorPaging(tenant, filters, queryOptions, options);
+  }
+
+  private queryUsingCompoundIndex(
+    tenant: string,
+    filters: Filter[],
+    queryOptions: QueryOptions,
+    options?: IndexLevelOptions,
+  ): Promise<IndexedItem[]> | undefined {
+    if (filters.length !== 1 || isEmptyObject(filters[0])) {
+      return undefined;
+    }
+
+    const compoundIndex = selectCompoundIndex(filters[0], queryOptions, this._compoundIndexes);
+    if (compoundIndex === undefined) {
+      return undefined;
+    }
+
+    return queryWithCompoundIndex(
+      this.db, tenant, filters[0], queryOptions, compoundIndex,
+      IndexLevel.encodeValue, IndexLevel.delimiter,
+      this.queryWithIteratorPaging.bind(this), options
+    );
   }
 
   /**
@@ -365,6 +400,117 @@ export class IndexLevel {
     // fallback: run a full query without limit and count the results
     const results = await this.query(tenant, filters, { ...queryOptions }, options);
     return results.length;
+  }
+
+  /**
+   * Finds the inclusive rank boundary for one `$recordLimit` parent group.
+   *
+   * The existing `parentId` index keeps the scan isolated to one nested-record
+   * group. Root records have no `parentId`, so they are read from the exact
+   * `protocolPath` range and explicitly fenced to rows without a parent. The
+   * bounded max-heap retains only the earliest `max` rank keys while the range
+   * is streamed; no group-sized array is materialized.
+   */
+  public async findRecordLimitRankCutoff(
+    tenant: string,
+    candidateFilter: Filter,
+    parentId: string | undefined,
+    max: number,
+    options?: IndexLevelOptions,
+  ): Promise<string | undefined> {
+    if (!Number.isInteger(max) || max < 1) {
+      throw new TypeError(`IndexLevel: record-limit max must be a positive integer.`);
+    }
+
+    const protocolPath = candidateFilter.protocolPath;
+    if (typeof protocolPath !== 'string') {
+      throw new TypeError(`IndexLevel: record-limit candidate filter must contain one protocolPath.`);
+    }
+
+    const indexName = parentId === undefined ? 'protocolPath' : 'parentId';
+    const indexValue = parentId ?? protocolPath;
+    const matchPrefix = IndexLevel.keySegmentJoin(IndexLevel.encodeValue(indexValue), '');
+    const partition = await this.getIndexPartition(tenant, indexName);
+    const rankHeap: string[] = [];
+
+    for await (const [key, value] of partition.iterator({ gt: matchPrefix }, options)) {
+      if (!key.startsWith(matchPrefix)) {
+        break;
+      }
+
+      const item = JSON.parse(value) as IndexedItem;
+      if ((parentId === undefined && item.indexes.parentId !== undefined) ||
+          !FilterUtility.matchFilter(item.indexes, candidateFilter)) {
+        continue;
+      }
+
+      IndexLevel.addToBoundedMaxHeap(rankHeap, IndexLevel.createRecordLimitRankKey(item.indexes), max);
+    }
+
+    return rankHeap[0];
+  }
+
+  /**
+   * Builds the deterministic `$recordLimit` rank key: oldest creation time,
+   * then record ID. Message CID deliberately does not participate because
+   * occupancy belongs to the logical record, not a particular update.
+   */
+  public static createRecordLimitRankKey(indexes: KeyValues): string {
+    const { dateCreated, recordId } = indexes;
+    if (typeof dateCreated !== 'string' || typeof recordId !== 'string') {
+      throw new TypeError(`IndexLevel: record-limit candidates require string dateCreated and recordId indexes.`);
+    }
+
+    return IndexLevel.keySegmentJoin(IndexLevel.encodeValue(dateCreated), IndexLevel.encodeValue(recordId));
+  }
+
+  private static addToBoundedMaxHeap(heap: string[], value: string, max: number): void {
+    if (heap.length < max) {
+      heap.push(value);
+      IndexLevel.siftRecordLimitRankUp(heap, heap.length - 1);
+      return;
+    }
+
+    if (lexicographicalCompare(value, heap[0]) >= 0) {
+      return;
+    }
+
+    heap[0] = value;
+    IndexLevel.siftRecordLimitRankDown(heap, 0);
+  }
+
+  private static siftRecordLimitRankUp(heap: string[], startIndex: number): void {
+    let index = startIndex;
+    while (index > 0) {
+      const parentIndex = (index - 1) >>> 1;
+      if (lexicographicalCompare(heap[parentIndex], heap[index]) >= 0) {
+        return;
+      }
+
+      [heap[parentIndex], heap[index]] = [heap[index], heap[parentIndex]];
+      index = parentIndex;
+    }
+  }
+
+  private static siftRecordLimitRankDown(heap: string[], startIndex: number): void {
+    let index = startIndex;
+    while (true) {
+      const leftIndex = index * 2 + 1;
+      if (leftIndex >= heap.length) {
+        return;
+      }
+
+      const rightIndex = leftIndex + 1;
+      const largerChildIndex = rightIndex < heap.length && lexicographicalCompare(heap[rightIndex], heap[leftIndex]) > 0
+        ? rightIndex
+        : leftIndex;
+      if (lexicographicalCompare(heap[index], heap[largerChildIndex]) >= 0) {
+        return;
+      }
+
+      [heap[index], heap[largerChildIndex]] = [heap[largerChildIndex], heap[index]];
+      index = largerChildIndex;
+    }
   }
 
   /**
