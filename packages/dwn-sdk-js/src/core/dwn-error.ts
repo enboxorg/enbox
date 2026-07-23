@@ -236,8 +236,6 @@ export enum DwnErrorCode {
   RecordsOwnerDelegatedGrantCidMismatch = 'RecordsOwnerDelegatedGrantCidMismatch',
   RecordsOwnerDelegatedGrantGrantedToAndOwnerSignatureMismatch = 'RecordsOwnerDelegatedGrantGrantedToAndOwnerSignatureMismatch',
   RecordsOwnerDelegatedGrantNotADelegatedGrant = 'RecordsOwnerDelegatedGrantNotADelegatedGrant',
-  RecordsRecordLimitAncestorScopeUnsupported = 'RecordsRecordLimitAncestorScopeUnsupported',
-
   RecordsQueryFilterMissingRequiredProperties = 'RecordsQueryFilterMissingRequiredProperties',
   RecordsQueryNestedProtocolPathContextIdInvalid = 'RecordsQueryNestedProtocolPathContextIdInvalid',
 

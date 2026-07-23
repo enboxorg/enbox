@@ -11,7 +11,7 @@ import { SortDirection } from '../../src/types/query-types.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { Time } from '../../src/utils/time.js';
 import { v4 as uuid } from 'uuid';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 
 describe('IndexLevel', () => {
   let testIndex: IndexLevel;
@@ -150,6 +150,111 @@ describe('IndexLevel', () => {
       expect(entries[0].messageCid).toBe(id3);
     });
 
+    describe('findRecordLimitRankCutoff()', () => {
+      const protocol = 'https://example.com/record-limit';
+      const protocolPath = 'folder/item';
+      const candidateFilter: Filter = {
+        interface         : 'Records',
+        method            : 'Write',
+        isLatestBaseState : true,
+        protocol,
+        protocolPath,
+      };
+
+      async function putCandidate(input: {
+        messageCid: string;
+        dateCreated: string;
+        recordId: string;
+        parentId?: string;
+        protocolPath?: string;
+      }): Promise<void> {
+        await testIndex.put(tenant, input.messageCid, {
+          ...candidateFilter,
+          dateCreated  : input.dateCreated,
+          recordId     : input.recordId,
+          protocolPath : input.protocolPath ?? protocolPath,
+          ...(input.parentId !== undefined && { parentId: input.parentId }),
+        });
+      }
+
+      it('finds a bounded nested-group boundary by creation time and record ID', async () => {
+        await putCandidate({
+          messageCid  : 'later',
+          dateCreated : '2025-01-02T00:00:00.000000Z',
+          recordId    : 'record-c',
+          parentId    : 'parent-a',
+        });
+        await putCandidate({
+          messageCid  : 'tie-later',
+          dateCreated : '2025-01-01T00:00:00.000000Z',
+          recordId    : 'record-b',
+          parentId    : 'parent-a',
+        });
+        await putCandidate({
+          messageCid  : 'tie-earlier',
+          dateCreated : '2025-01-01T00:00:00.000000Z',
+          recordId    : 'record-a',
+          parentId    : 'parent-a',
+        });
+        await putCandidate({
+          messageCid  : 'other-parent',
+          dateCreated : '2024-01-01T00:00:00.000000Z',
+          recordId    : 'record-0',
+          parentId    : 'parent-b',
+        });
+        await putCandidate({
+          messageCid   : 'other-path',
+          dateCreated  : '2024-01-01T00:00:00.000000Z',
+          recordId     : 'record-0',
+          parentId     : 'parent-a',
+          protocolPath : 'folder/other',
+        });
+
+        const cutoff = await testIndex.findRecordLimitRankCutoff(
+          tenant,
+          candidateFilter,
+          'parent-a',
+          2,
+        );
+
+        expect(cutoff).toBe(IndexLevel.createRecordLimitRankKey({
+          dateCreated : '2025-01-01T00:00:00.000000Z',
+          recordId    : 'record-b',
+        }));
+      });
+
+      it('keeps root occupancy separate from nested records on the same path', async () => {
+        await putCandidate({
+          messageCid  : 'root-first',
+          dateCreated : '2025-01-02T00:00:00.000000Z',
+          recordId    : 'root-a',
+        });
+        await putCandidate({
+          messageCid  : 'root-second',
+          dateCreated : '2025-01-03T00:00:00.000000Z',
+          recordId    : 'root-b',
+        });
+        await putCandidate({
+          messageCid  : 'nested-first',
+          dateCreated : '2025-01-01T00:00:00.000000Z',
+          recordId    : 'nested-a',
+          parentId    : 'parent-a',
+        });
+
+        const cutoff = await testIndex.findRecordLimitRankCutoff(
+          tenant,
+          candidateFilter,
+          undefined,
+          1,
+        );
+
+        expect(cutoff).toBe(IndexLevel.createRecordLimitRankKey({
+          dateCreated : '2025-01-02T00:00:00.000000Z',
+          recordId    : 'root-a',
+        }));
+      });
+    });
+
     it('should return all records if an empty filter array is passed', async () => {
       const items = [ 'b', 'a', 'd', 'c' ];
       for (const item of items) {
@@ -163,6 +268,49 @@ describe('IndexLevel', () => {
       // empty filter
       allResults = await testIndex.query(tenant, [{}],{ sortProperty: 'letter' });
       expect(allResults.map(({ messageCid }) => messageCid)).toEqual(['a', 'b', 'c', 'd']);
+    });
+
+    it('uses only bounded paging strategies for projection chunks', async () => {
+      const boundedIndex = new IndexLevel({
+        createLevelDatabase,
+        location        : `TEST-INDEX-BOUNDED-${uuid()}`,
+        compoundIndexes : [{
+          name         : 'schema-val',
+          properties   : ['schema'],
+          sortProperty : 'val',
+        }],
+      });
+      await boundedIndex.open();
+
+      const iteratorSpy = spyOn(boundedIndex, 'queryWithIteratorPaging');
+      const inMemorySpy = spyOn(boundedIndex, 'queryWithInMemoryPaging');
+      try {
+        await boundedIndex.put(tenant, 'a', { val: 'a', schema: 'post', parentId: 'parent-a' });
+        await boundedIndex.put(tenant, 'b', { val: 'b', schema: 'post', parentId: 'parent-a' });
+
+        const compoundResults = await boundedIndex.queryWithBoundedPaging(
+          tenant,
+          [{ schema: 'post' }],
+          { sortProperty: 'val', limit: 1 },
+        );
+        expect(compoundResults.map(({ messageCid }) => messageCid)).toEqual(['a']);
+        expect(iteratorSpy).toHaveBeenCalledTimes(0);
+        expect(inMemorySpy).toHaveBeenCalledTimes(0);
+
+        const iteratorResults = await boundedIndex.queryWithBoundedPaging(
+          tenant,
+          [{ parentId: 'parent-a' }],
+          { sortProperty: 'val', limit: 1 },
+        );
+        expect(iteratorResults.map(({ messageCid }) => messageCid)).toEqual(['a']);
+        expect(iteratorSpy).toHaveBeenCalledTimes(1);
+        expect(inMemorySpy).toHaveBeenCalledTimes(0);
+      } finally {
+        iteratorSpy.mockRestore();
+        inMemorySpy.mockRestore();
+        await boundedIndex.clear();
+        await boundedIndex.close();
+      }
     });
 
     describe('queryWithIteratorPaging()', () => {

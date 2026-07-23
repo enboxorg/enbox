@@ -11,6 +11,7 @@ import type {
   MessageStoreLatestStateTransition,
   MessageStoreOptions,
   MessageStorePutResult,
+  MessageStoreQueryOptions,
   Pagination,
   PaginationCursor,
   ProgressGapInfo,
@@ -19,7 +20,7 @@ import type {
   ReplicationFeedReader,
   WakePublisher,
 } from '@enbox/dwn-sdk-js';
-import type { InsertObject, Kysely, Selectable, Transaction, UpdateObject } from 'kysely';
+import type { InsertObject, Kysely, Selectable, SelectQueryBuilder, Transaction, UpdateObject } from 'kysely';
 
 import * as block from 'multiformats/block';
 import * as cbor from '@ipld/dag-cbor';
@@ -368,7 +369,7 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
     filters: Filter[],
     messageSort?: MessageSort,
     pagination?: Pagination,
-    options?: MessageStoreOptions
+    options?: MessageStoreQueryOptions
   ): Promise<{ messages: GenericMessage[], cursor?: PaginationCursor }> {
     const db = this.requireDb('query');
     options?.signal?.throwIfAborted();
@@ -386,6 +387,7 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
       ])
       .where('tenant', '=', tenant);
 
+    query = this.applyRecordLimitProjection(db, query, tenant, options?.recordLimit);
     query = filterSelectQuery(filters, query);
 
     if (pagination?.cursor !== undefined) {
@@ -419,7 +421,7 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
     tenant: string,
     filters: Filter[],
     messageSort?: MessageSort,
-    options?: MessageStoreOptions
+    options?: MessageStoreQueryOptions
   ): Promise<number> {
     const db = this.requireDb('count');
     options?.signal?.throwIfAborted();
@@ -429,11 +431,60 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
       .select(sql<number>`count(distinct ${sql.ref('messageStoreMessages.messageCid')})`.as('count'))
       .where('tenant', '=', tenant);
 
+    query = this.applyRecordLimitProjection(db, query, tenant, options?.recordLimit);
     query = filterSelectQuery(filters, query);
 
     const result = await executeUnlessAborted(query.executeTakeFirstOrThrow(), options?.signal);
 
     return Number(result.count);
+  }
+
+  /**
+   * Restricts a query to the oldest `$recordLimit` occupants inside every direct-parent group.
+   * The caller's filters and pagination remain outside the ranked candidate set so they cannot
+   * promote a hidden candidate by excluding an earlier occupant.
+   */
+  private applyRecordLimitProjection<O>(
+    db: Kysely<DwnDatabaseType>,
+    query: SelectQueryBuilder<DwnDatabaseType, 'messageStoreMessages', O>,
+    tenant: string,
+    recordLimit: MessageStoreQueryOptions['recordLimit'],
+  ): SelectQueryBuilder<DwnDatabaseType, 'messageStoreMessages', O> {
+    if (recordLimit === undefined) {
+      return query;
+    }
+
+    const candidateFilter: Filter = {
+      interface         : DwnInterfaceName.Records,
+      method            : DwnMethodName.Write,
+      isLatestBaseState : true,
+      protocol          : recordLimit.protocol,
+      protocolPath      : recordLimit.protocolPath,
+    };
+    if (recordLimit.contextId !== undefined) {
+      candidateFilter.contextId = { subtree: recordLimit.contextId };
+    }
+
+    let rankedCandidates = db
+      .selectFrom('messageStoreMessages')
+      .select('messageCid')
+      .select(sql<number>`ROW_NUMBER() OVER (
+        PARTITION BY ${this.#dialect.byteStableText('parentId')}
+        ORDER BY ${sql.ref('dateCreated')} ASC, ${this.#dialect.byteStableText('recordId')} ASC
+      )`.as('occupancyRank'))
+      .where('tenant', '=', tenant);
+    rankedCandidates = filterSelectQuery([candidateFilter], rankedCandidates);
+
+    return query.where((eb) => eb.exists(
+      eb.selectFrom(rankedCandidates.as('rankedRecordLimitCandidates'))
+        .select('rankedRecordLimitCandidates.messageCid')
+        .where('rankedRecordLimitCandidates.occupancyRank', '<=', recordLimit.max)
+        .whereRef(
+          'rankedRecordLimitCandidates.messageCid',
+          '=',
+          'messageStoreMessages.messageCid',
+        )
+    ));
   }
 
   public async updateIndexes(

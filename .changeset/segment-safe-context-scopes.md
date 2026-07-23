@@ -12,4 +12,4 @@ Records filters now reject malformed context paths at message validation, and ty
 
 SQL migration 005 changes the `contextId` and `protocolPath` collations and rebuilds the context index. It may briefly hold a schema lock while a populated message table is upgraded. MySQL storage now requires MySQL 8.0 or newer.
 
-Ancestor snapshots on paths with `$recordLimit` fail with a 400 response until #1431 provides grouped top-N occupancy by direct parent; returning unprojected stored candidates would violate the record-limit policy.
+Ancestor queries, counts, and subscription snapshots on paths with `$recordLimit` now project occupants independently per direct parent. Occupancy is ranked by creation time and record ID before authorization and caller filters, then response sorting and pagination are applied to the visible occupant population. Level, browser, and SQL stores use the same projection without materializing an unbounded record-ID list.

@@ -100,4 +100,8 @@ export class SqliteDialect extends KyselySqliteDialect implements Dialect {
     return sql<string | null>`CAST(${sql.ref(columnReference)} AS TEXT)`;
   }
 
+  byteStableText(columnReference: string): RawBuilder<string | null> {
+    return sql<string | null>`${sql.ref(columnReference)} COLLATE BINARY`;
+  }
+
 }

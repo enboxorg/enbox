@@ -93,4 +93,7 @@ export interface Dialect extends KyselyDialect {
    */
   bigIntColumnAsText(columnReference: string): RawBuilder<string | null>;
 
+  /** Applies byte-stable comparison semantics to a text column. */
+  byteStableText(columnReference: string): RawBuilder<string | null>;
+
 }
