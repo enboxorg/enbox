@@ -33,7 +33,7 @@ export type RecordViewSnapshot<T> = RecordViewContents<T> & Readonly<
   }
   | {
     state: 'error';
-    /** The query, authorization, terminal subscription, or replication failure. */
+    /** The query, authorization, terminal subscription, replication, or owning-session termination. */
     error: Error;
   }
 >;
@@ -54,7 +54,7 @@ export interface RecordView<T> {
   /** Subscribe to later snapshot publications. Safe to pass as a bare callback. */
   subscribe: (listener: RecordViewListener<T>) => () => void;
 
-  /** Fence callbacks and close the underlying local subscription. */
+  /** Fence callbacks and close the underlying local subscription without publishing a new snapshot. */
   close(): Promise<void>;
 }
 
@@ -109,6 +109,10 @@ class ObservedRecordView<T> implements RecordView<T> {
   private _syncUnsubscribe?: () => void;
 
   private readonly _handleAbort = (): void => {
+    const reason = this._signal?.reason;
+    this.publishError(reason === undefined
+      ? new Error('RecordView: owning session ended.')
+      : toError(reason));
     void this.close().catch((): void => {});
   };
 
@@ -255,26 +259,22 @@ class ObservedRecordView<T> implements RecordView<T> {
   }
 
   private handleLinkStatusChange(event: LinkStatusChangeEvent): void {
-    if (event.to === 'paused') {
-      this.publishError(new Error(
-        `RecordView: replication is paused for protocol '${this._query.filter.protocol}'.`,
-      ));
-    } else if (event.to !== 'live') {
-      this.publishReplicaUnavailable();
+    if (event.to !== 'live') {
+      this.publishProvisionalReplicationCurrentness(event.to === 'paused');
     }
     this.requestMaterialization();
   }
 
   private handleLinkConnectivityChange(event: LinkConnectivityChangeEvent): void {
     if (event.to !== 'online') {
-      this.publishReplicaUnavailable();
+      this.publishProvisionalReplicationCurrentness();
     }
     this.requestMaterialization();
   }
 
   private handlePullCurrentnessChange(event: PullCurrentnessChangeEvent): void {
     if (!event.to) {
-      this.publishReplicaUnavailable();
+      this.publishProvisionalReplicationCurrentness();
       return;
     }
     this.requestMaterialization();
@@ -303,9 +303,6 @@ class ObservedRecordView<T> implements RecordView<T> {
       }
     } finally {
       this._isMaterializing = false;
-      if (!this._closed && this._materializationRequested) {
-        this.requestMaterialization();
-      }
     }
   }
 
@@ -376,16 +373,21 @@ class ObservedRecordView<T> implements RecordView<T> {
     const links = (await this._sync.getReplicationLinks(this._dwn.connectedDid))
       .filter((link): boolean => linkCoversProtocol(link, this._query.filter.protocol));
     if (links.some((link): boolean => link.status === 'paused')) {
-      return {
-        state : 'error',
-        error : new Error(`RecordView: replication is paused for protocol '${this._query.filter.protocol}'.`),
-      };
+      return this.resolveUnavailableCurrentness(true);
     }
 
     const isCurrent = links.length > 0 && links.every((link): boolean =>
       link.status === 'live' && link.connectivity === 'online' && link.isPullCurrent);
-    if (isCurrent) {
-      return { state: 'ready' };
+    return isCurrent ? { state: 'ready' } : this.resolveUnavailableCurrentness(false);
+  }
+
+  /** Resolve the shared policy for unavailable replication. */
+  private resolveUnavailableCurrentness(isPaused: boolean): RecordViewCurrentness {
+    if (isPaused) {
+      return {
+        state : 'error',
+        error : new Error(`RecordView: replication is paused for protocol '${this._query.filter.protocol}'.`),
+      };
     }
 
     return { state: this._hasPublishedReady ? 'stale' : 'loading' };
@@ -400,10 +402,20 @@ class ObservedRecordView<T> implements RecordView<T> {
     }));
   }
 
-  /** Degrade currentness synchronously; local query latency must never delay it. */
-  private publishReplicaUnavailable(): void {
+  /** Degrade synchronously without letting partial link evidence clear an existing error. */
+  private publishProvisionalReplicationCurrentness(isPaused = false): void {
+    const currentness = this.resolveUnavailableCurrentness(isPaused);
+    if (this._snapshot.state === 'error' && currentness.state !== 'error') {
+      return;
+    }
+
+    if (currentness.state === 'error') {
+      this.publishError(currentness.error);
+      return;
+    }
+
     this.publish(immutableSnapshot({
-      state   : this._hasPublishedReady ? 'stale' : 'loading',
+      state   : currentness.state,
       records : this._snapshot.records,
       hasMore : this._snapshot.hasMore,
     }));

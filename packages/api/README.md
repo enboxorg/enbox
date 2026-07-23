@@ -133,7 +133,10 @@ Returned records are `TypedRecord<T>` instances. They expose typed
 events are wake hints: every immutable snapshot is rebuilt from the same
 canonical query. Its required pagination limit bounds retained records, and
 its `loading`, `ready`, `stale`, or `error` state reflects replica currentness.
-Views created through `enbox.using()` are also closed by the owning session.
+When the owning session ends, a view publishes one terminal `error` snapshot
+and closes. After automatic grant refresh, `ConnectionStore` publishes a
+replacement `enbox`; direct `Enbox.fromSession()` consumers recreate resources
+from the replacement `AuthManager.session` announced by `session-start`.
 
 `loading` means a replicated source has not completed its required pull yet;
 an empty `ready` snapshot is therefore authoritatively empty, not still

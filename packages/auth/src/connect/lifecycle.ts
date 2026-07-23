@@ -20,7 +20,7 @@ import type { AgentSessionIdentity, BearerIdentity, DwnDataEncodedRecordsWriteMe
 
 import type { AuthEventEmitter } from '../events.js';
 import type { PasswordProvider } from '../password-provider.js';
-import type { AuthSessionInfo, IdentitySyncProtocols, RegistrationOptions, StorageAdapter, SyncOption } from '../types.js';
+import type { IdentitySyncProtocols, RegistrationOptions, StorageAdapter, SyncOption } from '../types.js';
 
 import { Convert } from '@enbox/common';
 import { DataStream, PermissionsProtocol } from '@enbox/dwn-sdk-js';
@@ -78,16 +78,6 @@ export async function commitFlowSession(
   operation: () => Promise<AuthSession>,
 ): Promise<AuthSession> {
   return ctx.commitSession(operation);
-}
-
-/** Copy the non-secret fields allowed on the public session-start event. */
-export function toAuthSessionInfo(session: AuthSession): AuthSessionInfo {
-  return {
-    did         : session.did,
-    delegateDid : session.delegateDid,
-    identity    : { ...session.identity },
-    signal      : session.signal,
-  };
 }
 
 // ─── resolvePassword ─────────────────────────────────────────────

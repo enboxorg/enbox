@@ -202,7 +202,10 @@ await view.close();
 Observed views are local-replica resources: they do not accept `from`.
 Subscription payloads never mutate collection truth directly, and record data
 continues to decrypt lazily through each `TypedRecord`. Views created through
-`enbox.using()` close automatically when that Enbox session ends.
+`enbox.using()` publish one terminal `error` snapshot and close when that Enbox
+session ends. After automatic grant refresh, `ConnectionStore` publishes a
+replacement `enbox`; direct `Enbox.fromSession()` consumers recreate resources
+from the replacement `AuthManager.session` announced by `session-start`.
 
 `loading` means a configured replicated source has not completed its required
 pull. An empty `ready` snapshot is therefore an authoritative empty result.

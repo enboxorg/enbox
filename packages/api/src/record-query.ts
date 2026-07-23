@@ -147,13 +147,13 @@ export function compileRecordQuery(
   assertValidQueryControls(query.dateSort, query.pagination);
   assertValidQueryContextScope(protocolPath, query.filter?.contextId);
 
-  return detachCompiledGraph({
+  return {
     from         : query.from,
     filter       : buildRecordFilter(definition, protocolPath, query.filter, query.dateSort),
     dateSort     : query.dateSort,
     pagination   : query.pagination,
     protocolRole : query.protocolRole,
-  });
+  };
 }
 
 /** @internal Compile and validate the shared selection filter. */
@@ -163,7 +163,7 @@ export function compileRecordFilter(
   filter: RecordFilterInput | undefined,
   dateSort?: DateSort,
 ): RecordsFilter & { protocol: string; protocolPath: string } {
-  return detachCompiledGraph(buildRecordFilter(definition, protocolPath, filter, dateSort));
+  return buildRecordFilter(definition, protocolPath, filter, dateSort);
 }
 
 function buildRecordFilter(
@@ -192,11 +192,6 @@ function buildRecordFilter(
     protocolPath,
     ...(schema === undefined ? {} : { schema }),
   };
-}
-
-/** Detach the JSON-like request graph retained or dispatched by consumers. */
-function detachCompiledGraph<T>(value: T): T {
-  return structuredClone(value);
 }
 
 function assertValidFilter(filter: RecordFilterInput | undefined, dateSort: DateSort | undefined): void {

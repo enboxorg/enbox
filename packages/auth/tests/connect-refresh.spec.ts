@@ -220,13 +220,11 @@ describe('delegated connection lifecycle', () => {
       let identityAdded = 0;
       let sessionStarted = 0;
       let sessionAtEvent: AuthSession | undefined;
-      let signalAtEvent: AbortSignal | undefined;
       let stateAtEvent = manager.state;
       manager.on('identity-added', () => { identityAdded++; });
-      manager.on('session-start', ({ session: publishedSession }) => {
+      manager.on('session-start', () => {
         sessionStarted++;
         sessionAtEvent = manager.session;
-        signalAtEvent = publishedSession.signal;
         stateAtEvent = manager.state;
       });
 
@@ -237,7 +235,6 @@ describe('delegated connection lifecycle', () => {
       expect(originalSession.signal.aborted).toBe(true);
       expect(session.signal.aborted).toBe(false);
       expect(sessionAtEvent).toBe(session);
-      expect(signalAtEvent).toBe(session.signal);
       expect(stateAtEvent).toBe('connected');
       expect(session.did).toBe(OWNER_DID);
       expect(session.delegateDid).toBe(DELEGATE_DID);

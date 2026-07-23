@@ -4,7 +4,7 @@
  */
 
 import type { PortableDid } from '@enbox/dids';
-import type { AgentSessionIdentity, AgentSessionParams, DwnProtocolDefinition, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity, SyncDrainOptions, SyncDrainResult } from '@enbox/agent';
+import type { AgentSessionIdentity, DwnProtocolDefinition, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity, SyncDrainOptions, SyncDrainResult } from '@enbox/agent';
 import type { ConnectClientMetadata, ConnectPermissionRequest, ConnectRequestType, ConnectResult, ConnectSessionMetadata } from '@enbox/connect';
 
 import type { PasswordProvider } from './password-provider.js';
@@ -84,7 +84,8 @@ export type AuthEvent =
 /** Payload type for each event, keyed by event name. */
 export interface AuthEventMap {
   'state-change': { previous: AuthState; current: AuthState };
-  'session-start': { session: AuthSessionInfo };
+  /** Wake indicating that consumers should read the emitting manager's authoritative active session. */
+  'session-start': Record<string, never>;
   'session-end': { did: string };
   'identity-added': { identity: IdentityInfo };
   'identity-removed': { didUri: string };
@@ -115,16 +116,6 @@ export type AuthEventHandler<E extends AuthEvent = AuthEvent> =
  *   identical; new code should import `AgentSessionIdentity` directly.
  */
 export type IdentityInfo = AgentSessionIdentity;
-
-/**
- * Sanitized metadata for a newly active session.
- *
- * This event payload deliberately excludes the authenticated agent and the
- * recovery phrase. The signal lets lifecycle-aware consumers bind work to
- * the same authorization lifetime without receiving either secret-bearing
- * session capability.
- */
-export type AuthSessionInfo = Pick<AgentSessionParams, 'delegateDid' | 'did' | 'identity' | 'signal'>;
 
 // ─── Registration ────────────────────────────────────────────────
 

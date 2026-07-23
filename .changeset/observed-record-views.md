@@ -16,10 +16,12 @@ shutdown, identity replacement, and successful grant refresh fence resources
 bound to the previous authorization. Refresh reuses the delegate identity but
 installs a new session lifetime; a failed or denied refresh leaves the existing
 session active. `AuthManager` installs the exact active session before publishing
-`session-start`. Its metadata is projected through an explicit public shape that
-carries the same signal while keeping the authenticated agent capability and
-recovery phrase out; higher layers follow the manager-owned session instead of
-reconstructing one from the event payload.
+the wake-only `session-start` event; consumers read the authoritative manager
+session instead of reconstructing a capability from event metadata, and the
+redundant `AuthSessionInfo` projection is removed. A view publishes one terminal
+error before closing when that lifetime ends. Successful automatic refresh makes
+`ConnectionStore` publish a replacement `Enbox`; direct session consumers
+recreate resources from the replacement `AuthManager.session`.
 
 Sync registration changes and ephemeral pull currentness are now observable.
 Replication-link snapshots combine durable checkpoints with current controller

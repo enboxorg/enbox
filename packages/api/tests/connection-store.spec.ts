@@ -1,7 +1,7 @@
 import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
-import type { AuthSessionInfo, AuthState, ConnectionStatus } from '@enbox/auth';
+import type { AuthState, ConnectionStatus } from '@enbox/auth';
 
 import { AuthManager } from '@enbox/auth/auth-manager';
 import { EnboxUserAgent } from '@enbox/agent';
@@ -112,15 +112,6 @@ describe('createConnectionStore()', () => {
       identity    : { didUri: did, name: params.name ?? 'Store identity' },
       signal      : new AbortController().signal,
     });
-  }
-
-  function sessionInfo(session: AuthSession): AuthSessionInfo {
-    return {
-      did         : session.did,
-      delegateDid : session.delegateDid,
-      identity    : session.identity,
-      signal      : session.signal,
-    };
   }
 
   describe('snapshot contract', () => {
@@ -468,7 +459,7 @@ describe('createConnectionStore()', () => {
       const refreshedSession = createSession({ delegateDid: DELEGATE_DID, name: 'Refreshed identity' });
       fake.refresh.callsFake(async (): Promise<AuthSession> => {
         fake.session = refreshedSession;
-        fake.emitter.emit('session-start', { session: sessionInfo(refreshedSession) });
+        fake.emitter.emit('session-start', {});
         return refreshedSession;
       });
 
@@ -527,7 +518,7 @@ describe('createConnectionStore()', () => {
       const connecting = store.connect({ protocols: PROTOCOLS });
       await statusStarted;
       fake.session = replacementSession;
-      fake.emitter.emit('session-start', { session: sessionInfo(replacementSession) });
+      fake.emitter.emit('session-start', {});
       resolveStatus(ACTIVE_STATUS);
       const snapshot = await connecting;
 
@@ -576,7 +567,7 @@ describe('createConnectionStore()', () => {
 
       const session = createSession({ name: 'Switched identity' });
       fake.session = session;
-      fake.emitter.emit('session-start', { session: sessionInfo(session) });
+      fake.emitter.emit('session-start', {});
 
       const snapshot = store.getSnapshot();
       expect(snapshot.phase).toBe('connected');
@@ -1099,7 +1090,7 @@ describe('createConnectionStore()', () => {
       try {
         const session = createSession({ delegateDid: DELEGATE_DID });
         fake.session = session;
-        fake.emitter.emit('session-start', { session: sessionInfo(session) });
+        fake.emitter.emit('session-start', {});
         // Let the rejected commit promise settle through its catch handler.
         await Promise.resolve();
 

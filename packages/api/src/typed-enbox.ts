@@ -1145,7 +1145,7 @@ export class TypedEnbox<
         if (request?.pagination?.limit === undefined) {
           throw new TypeError('RecordView: pagination.limit is required to bound retained records.');
         }
-        const compiled = compileRecordQuery(this._definition, normalizedPath, request);
+        const compiled = structuredClone(compileRecordQuery(this._definition, normalizedPath, request));
         await this._ensureReady(normalizedPath);
 
         return createRecordView<DataForPath<D, M, Path>>({

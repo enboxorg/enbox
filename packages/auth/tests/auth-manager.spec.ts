@@ -1,4 +1,3 @@
-import type { AuthSessionInfo } from '../src/types.js';
 import type { DwnProtocolDefinition, EnboxUserAgent } from '@enbox/agent';
 
 import { describe, expect, test } from 'bun:test';
@@ -276,7 +275,7 @@ describe('AuthManager', () => {
       expect(manager.session).toBe(session);
     });
 
-    test('installs the session before publishing explicit session metadata', async () => {
+    test('installs the session before publishing the session-start wake', async () => {
       const agent = createMockAgent({
         firstLaunch    : async () => true,
         initialize     : async () => 'recovery phrase words',
@@ -284,11 +283,11 @@ describe('AuthManager', () => {
         identityCreate : async () => createMockIdentity(),
       });
       const manager = createTestManager(agent);
-      let publishedSession: AuthSessionInfo | undefined;
+      let sessionStarts = 0;
       let sessionAtEvent = manager.session;
       let stateAtEvent = manager.state;
-      manager.on('session-start', ({ session }): void => {
-        publishedSession = session;
+      manager.on('session-start', (): void => {
+        sessionStarts++;
         sessionAtEvent = manager.session;
         stateAtEvent = manager.state;
       });
@@ -296,16 +295,9 @@ describe('AuthManager', () => {
       const session = await manager.connectVault({ password: 'test', createIdentity: true });
 
       expect(session.recoveryPhrase).toBe('recovery phrase words');
+      expect(sessionStarts).toBe(1);
       expect(sessionAtEvent).toBe(session);
       expect(stateAtEvent).toBe('connected');
-      expect(publishedSession).toEqual({
-        did         : session.did,
-        delegateDid : session.delegateDid,
-        identity    : session.identity,
-        signal      : session.signal,
-      });
-      expect(publishedSession).not.toHaveProperty('agent');
-      expect(publishedSession).not.toHaveProperty('recoveryPhrase');
     });
 
     test('works without any options', async () => {
@@ -1217,20 +1209,14 @@ describe('AuthManager', () => {
       const identity = createMockIdentity();
       const agent = createMockAgent({ identityGet: async () => identity });
       const manager = createTestManager(agent);
-      const events: AuthSessionInfo[] = [];
-      manager.on('session-start', ({ session }): void => { events.push(session); });
+      const events: Record<string, never>[] = [];
+      manager.on('session-start', (event): void => { events.push(event); });
 
       const session = await manager.switchIdentity('did:dht:testuser123');
 
       expect(events).toHaveLength(1);
-      expect(events[0]).toEqual({
-        did         : session.did,
-        delegateDid : session.delegateDid,
-        identity    : session.identity,
-        signal      : session.signal,
-      });
-      expect(events[0]).not.toHaveProperty('agent');
-      expect(events[0]).not.toHaveProperty('recoveryPhrase');
+      expect(events[0]).toEqual({});
+      expect(manager.session).toBe(session);
     });
 
     for (const teardown of ['lock', 'disconnect', 'shutdown'] as const) {

@@ -77,7 +77,7 @@ import {
   requestLocalDwnPairing,
 } from './discovery.js';
 import { computeConnectionStatus, reconcileConnectionStatusGrants } from './connect/status.js';
-import { deriveActiveSyncScope, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, processDelegateGrantsForExistingIdentity, resolveIdentityDids, resolvePassword, startSyncIfEnabled, toAuthSessionInfo, toSyncIdentityProtocols } from './connect/lifecycle.js';
+import { deriveActiveSyncScope, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, processDelegateGrantsForExistingIdentity, resolveIdentityDids, resolvePassword, startSyncIfEnabled, toSyncIdentityProtocols } from './connect/lifecycle.js';
 
 type ConnectionMonitorState = {
   options: ConnectionMonitorOptions;
@@ -470,7 +470,9 @@ export class AuthManager {
    *
    * Events are emitted only when the newest session enters a new state.
    * Automatic refresh is attempted at most once per session and state, and is
-   * never attempted for a revoked session.
+   * never attempted for a revoked session. A successful automatic refresh has
+   * the same session-replacement and prior-signal-abort semantics as
+   * {@link refresh}.
    *
    * @returns A function that stops this monitor instance.
    */
@@ -1878,7 +1880,7 @@ export class AuthManager {
         this._sessionLifetime = guard.sessionLifetime;
         this._setState('connected');
         if (publishSessionStart && isReplacementSession) {
-          this._emitter.emit('session-start', { session: toAuthSessionInfo(session) });
+          this._emitter.emit('session-start', {});
         }
       }
       return session;
