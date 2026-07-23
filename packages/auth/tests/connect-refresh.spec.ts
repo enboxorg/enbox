@@ -187,7 +187,7 @@ describe('delegated connection lifecycle', () => {
   });
 
   describe('AuthManager.refresh', () => {
-    test('re-grants to the locally exported delegate without re-importing or restarting sync', async () => {
+    test('re-grants to the local delegate and atomically replaces its authorization lifetime', async () => {
       const identity = createMockIdentity({
         did      : { uri: DELEGATE_DID },
         metadata : { name: 'Delegate', tenant: 'did:dht:agent', connectedDid: OWNER_DID },
@@ -219,13 +219,26 @@ describe('delegated connection lifecycle', () => {
       const originalSession = manager.session!;
       let identityAdded = 0;
       let sessionStarted = 0;
+      let sessionAtEvent: AuthSession | undefined;
+      let signalAtEvent: AbortSignal | undefined;
+      let stateAtEvent = manager.state;
       manager.on('identity-added', () => { identityAdded++; });
-      manager.on('session-start', () => { sessionStarted++; });
+      manager.on('session-start', ({ session: publishedSession }) => {
+        sessionStarted++;
+        sessionAtEvent = manager.session;
+        signalAtEvent = publishedSession.signal;
+        stateAtEvent = manager.state;
+      });
 
       const session = await manager.refresh({ protocols: PROTOCOLS });
 
-      expect(session).toBe(originalSession);
+      expect(session).not.toBe(originalSession);
+      expect(manager.session).toBe(session);
+      expect(originalSession.signal.aborted).toBe(true);
       expect(session.signal.aborted).toBe(false);
+      expect(sessionAtEvent).toBe(session);
+      expect(signalAtEvent).toBe(session.signal);
+      expect(stateAtEvent).toBe('connected');
       expect(session.did).toBe(OWNER_DID);
       expect(session.delegateDid).toBe(DELEGATE_DID);
       expect(requestAccess.callCount).toBe(1);
@@ -239,7 +252,7 @@ describe('delegated connection lifecycle', () => {
       expect(syncUnregister.calledOnceWith(OWNER_DID)).toBe(true);
       expect(syncStart.called).toBe(false);
       expect(identityAdded).toBe(0);
-      expect(sessionStarted).toBe(0);
+      expect(sessionStarted).toBe(1);
     });
 
     test('rejects a different connected DID or delegate DID returned by the handler', async () => {
@@ -288,11 +301,12 @@ describe('delegated connection lifecycle', () => {
       const manager = createTestManager(agent, {
         connectHandler: { requestAccess: async (): Promise<any> => createRefreshResult() },
       });
-      const previousSession = manager.session;
+      const previousSession = manager.session!;
 
       await expect(manager.refresh({ protocols: PROTOCOLS })).rejects.toThrow('sync store unavailable');
 
       expect(manager.session).toBe(previousSession);
+      expect(previousSession.signal.aborted).toBe(false);
       expect(manager.state).toBe('connected');
       expect(identityDelete.called).toBe(false);
       expect(didDelete.called).toBe(false);

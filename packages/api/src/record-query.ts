@@ -93,8 +93,8 @@ export type RecordFilter<
 };
 
 /**
- * The canonical typed selection accepted by `records.query()` and
- * `records.count()`, and later by `records.observe()`.
+ * The canonical typed selection accepted by `records.query()`,
+ * `records.count()`, and `records.observe()`.
  *
  * Count evaluates the same authorized population before pagination. Sort
  * order is immaterial to a count, except that published-date sorting selects
@@ -123,7 +123,7 @@ export type RecordQuery<
 /** @internal Canonical low-level request produced from a typed record query. */
 type CompiledRecordQuery = {
   from?: string;
-  filter: RecordsFilter;
+  filter: RecordsFilter & { protocol: string; protocolPath: string };
   dateSort?: DateSort;
   pagination?: Pagination;
   protocolRole?: string;
@@ -147,13 +147,13 @@ export function compileRecordQuery(
   assertValidQueryControls(query.dateSort, query.pagination);
   assertValidQueryContextScope(protocolPath, query.filter?.contextId);
 
-  return {
+  return detachCompiledGraph({
     from         : query.from,
-    filter       : compileRecordFilter(definition, protocolPath, query.filter, query.dateSort),
+    filter       : buildRecordFilter(definition, protocolPath, query.filter, query.dateSort),
     dateSort     : query.dateSort,
     pagination   : query.pagination,
     protocolRole : query.protocolRole,
-  };
+  });
 }
 
 /** @internal Compile and validate the shared selection filter. */
@@ -162,7 +162,16 @@ export function compileRecordFilter(
   protocolPath: string,
   filter: RecordFilterInput | undefined,
   dateSort?: DateSort,
-): RecordsFilter {
+): RecordsFilter & { protocol: string; protocolPath: string } {
+  return detachCompiledGraph(buildRecordFilter(definition, protocolPath, filter, dateSort));
+}
+
+function buildRecordFilter(
+  definition: ProtocolDefinition,
+  protocolPath: string,
+  filter: RecordFilterInput | undefined,
+  dateSort?: DateSort,
+): RecordsFilter & { protocol: string; protocolPath: string } {
   assertValidFilter(filter, dateSort);
 
   const { author, recipient, ...rest } = filter ?? {};
@@ -183,6 +192,11 @@ export function compileRecordFilter(
     protocolPath,
     ...(schema === undefined ? {} : { schema }),
   };
+}
+
+/** Detach the JSON-like request graph retained or dispatched by consumers. */
+function detachCompiledGraph<T>(value: T): T {
+  return structuredClone(value);
 }
 
 function assertValidFilter(filter: RecordFilterInput | undefined, dateSort: DateSort | undefined): void {

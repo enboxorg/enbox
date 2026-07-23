@@ -120,6 +120,56 @@ describe('SyncEngineLevel', () => {
       unsubscribe();
     });
 
+    it('degrades pull currentness when an ordinary remote event requests a durable pass', async () => {
+      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      const internal = syncEngine as any;
+      const link: ReplicationLinkState = {
+        authorization      : { kind: 'owner' },
+        authorizationEpoch : 'owner-epoch',
+        connectivity       : 'online',
+        projectionId       : 'projection-id',
+        pull               : {},
+        push               : {},
+        remoteEndpoint     : 'https://dwn.example',
+        scope              : { kind: 'full' },
+        status             : 'live',
+        tenantDid          : 'did:example:alice',
+      };
+      const controller = internal.activateLink('link-key', link);
+      controller.markReplicationReady();
+      controller.markPullCurrent(controller.replicationGeneration);
+      const resume = sinon.stub(internal._linkRecoveryCoordinator, 'resume').resolves();
+      const transitions: boolean[] = [];
+      const unsubscribe = syncEngine.on((event): void => {
+        if (event.type === 'pull:currentness-change') {
+          transitions.push(event.to);
+        }
+      });
+
+      await internal.handleLivePullMessage({
+        controller,
+        did        : link.tenantDid,
+        dwnUrl     : link.remoteEndpoint,
+        eventScope : {},
+        isStale    : (): boolean => false,
+        link,
+        linkKey    : 'link-key',
+      }, {
+        cursor : { epoch: 'event-epoch', position: '99', streamId: 'event-stream' },
+        event  : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
+        type   : 'event',
+      });
+      await internal._lifecycle.waitForBackgroundTasks();
+
+      expect(controller.isPullCurrent).toBe(false);
+      expect(controller.executor.hasPending('pull')).toBe(true);
+      expect(transitions).toEqual([false]);
+      expect(resume.calledOnceWithExactly(controller)).toBe(true);
+
+      unsubscribe();
+      await controller.dispose();
+    });
+
     it('restores pull currentness only after the last coalesced pull reaches its head', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
       const internal = syncEngine as any;
@@ -256,7 +306,7 @@ describe('SyncEngineLevel', () => {
       const controller = internal.activateLink('link-key', link);
       controller.markReplicationReady();
       controller.markPullCurrent(controller.replicationGeneration);
-      const retiredGeneration = controller.replicationGeneration;
+      const invalidatedGeneration = controller.replicationGeneration;
       let releaseClose!: () => void;
       controller.setLiveSubscription({
         close: (): Promise<void> => new Promise((resolve) => { releaseClose = resolve; }),
@@ -274,12 +324,55 @@ describe('SyncEngineLevel', () => {
       expect(controller.isPullCurrent).toBe(false);
       expect(transitions).toEqual([false]);
       expect(internal._linkControllers.size).toBe(0);
-      internal.markPullCurrent(controller, retiredGeneration);
+      internal.markPullCurrent(controller, invalidatedGeneration);
       expect(controller.isPullCurrent).toBe(false);
       expect(transitions).toEqual([false]);
       releaseClose();
       await stopping;
       unsubscribe();
+    });
+
+    it('degrades pull currentness when a same-key controller is hot-replaced', async () => {
+      const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      const internal = syncEngine as any;
+      const linkKey = 'link-key';
+      const link: ReplicationLinkState = {
+        authorization      : { kind: 'owner' },
+        authorizationEpoch : 'owner-epoch',
+        connectivity       : 'online',
+        projectionId       : 'projection-id',
+        pull               : {},
+        push               : {},
+        remoteEndpoint     : 'https://dwn.example',
+        scope              : { kind: 'full' },
+        status             : 'live',
+        tenantDid          : 'did:example:alice',
+      };
+      const previous = internal.activateLink(linkKey, link);
+      previous.markReplicationReady();
+      previous.markPullCurrent(previous.replicationGeneration);
+      const transitions: boolean[] = [];
+      const unsubscribe = syncEngine.on((event): void => {
+        if (event.type === 'pull:currentness-change') {
+          transitions.push(event.to);
+        }
+      });
+
+      const replacement = internal.activateLink(linkKey, {
+        ...link,
+        pull : {},
+        push : {},
+      });
+
+      expect(replacement).not.toBe(previous);
+      expect(internal._linkControllers.get(linkKey)).toBe(replacement);
+      expect(previous.isActive).toBe(false);
+      expect(previous.isPullCurrent).toBe(false);
+      expect(replacement.isPullCurrent).toBe(false);
+      expect(transitions).toEqual([false]);
+
+      unsubscribe();
+      await Promise.all([previous.dispose(), replacement.dispose()]);
     });
 
   });

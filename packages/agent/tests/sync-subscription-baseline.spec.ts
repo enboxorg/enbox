@@ -220,6 +220,34 @@ describe('SyncEngineLevel — dual-subscription wake baseline', () => {
     });
   }
 
+  it('should restore pull currentness after a successful baseline with no pending pull wake', async () => {
+    const fixture = createBaselineFixture(db);
+    attachSubscriptionSnapshots(
+      fixture.controller,
+      { fingerprint: 'remote-feed', head: tokenIn('remote-stream', 'epoch', '7') },
+      { fingerprint: 'local-feed', head: tokenIn('local-stream', 'epoch', '9') },
+    );
+    const transitions: boolean[] = [];
+    const unsubscribe = fixture.engine.on((event): void => {
+      if (event.type === 'pull:currentness-change') {
+        transitions.push(event.to);
+      }
+    });
+
+    expect(fixture.controller.executor.hasPending('pull')).toBe(false);
+    expect(fixture.controller.isPullCurrent).toBe(false);
+
+    expect(await establishBaseline(fixture)).toEqual({ converged: true, pullDrained: true });
+
+    expect(fixture.reconcile.calledOnce).toBe(true);
+    expect(fixture.controller.executor.hasPending('pull')).toBe(false);
+    expect(fixture.controller.isPullCurrent).toBe(true);
+    expect(transitions).toEqual([true]);
+
+    unsubscribe();
+    await fixture.controller.dispose();
+  });
+
   it('should open wake subscriptions at the live head and advance an existing checkpoint pair from matching snapshots', async () => {
     const fixture = createBaselineFixture(db);
     const pullCursor = tokenIn('remote-stream', 'remote-epoch', '17');

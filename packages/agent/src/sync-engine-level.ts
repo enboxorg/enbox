@@ -659,7 +659,7 @@ export class SyncEngineLevel implements SyncEngine {
     if (existing !== undefined) {
       // Closing starts synchronously; the controller absorbs transport close
       // errors while the replacement lifetime is installed.
-      this.retireLinkController(existing);
+      this.deactivateLinkController(existing);
       void existing.dispose();
     }
     const controller = new SyncLinkController(linkKey, link);
@@ -691,21 +691,21 @@ export class SyncEngineLevel implements SyncEngine {
 
     // Removal is synchronous for callback invalidation; subscription closure
     // is best effort and cannot reject from the controller.
-    this.retireLinkController(controller);
+    this.deactivateLinkController(controller);
     void controller.dispose();
     this._linkControllers.delete(linkKey);
   }
 
-  /** Fence pull currentness and every callback before retiring an active link owner. */
-  private retireLinkController(controller: SyncLinkController): void {
-    this.beginLinkControllerRetirement(controller);
+  /** Fence pull currentness and every callback before deactivating an active link owner. */
+  private deactivateLinkController(controller: SyncLinkController): void {
+    this.beginLinkControllerDeactivation(controller);
     this._linkRecoveryCoordinator.cancelScheduledWork(controller);
     controller.deactivate();
   }
 
   /** Fence new link ownership while allowing already-running durable work to drain. */
-  private beginLinkControllerRetirement(controller: SyncLinkController): void {
-    if (controller.beginRetirement()) {
+  private beginLinkControllerDeactivation(controller: SyncLinkController): void {
+    if (controller.beginDeactivation()) {
       this.emitPullCurrentnessChange(controller, true, false);
     }
   }
@@ -1495,7 +1495,7 @@ export class SyncEngineLevel implements SyncEngine {
     // runtime. Remote and local closes then proceed independently in parallel.
     const controllers = [...this._linkControllers.values()];
     for (const controller of controllers) {
-      this.retireLinkController(controller);
+      this.deactivateLinkController(controller);
     }
     this._linkControllers.clear();
 
@@ -1734,7 +1734,6 @@ export class SyncEngineLevel implements SyncEngine {
     expectedReplicationGeneration: number,
   ): Promise<SyncReconcileResult | undefined> {
     const { link } = controller;
-    this.markPullPending(controller);
     const isCurrent = (): boolean =>
       !this._runtime.disposed && controller.isReplicationGenerationCurrent(expectedReplicationGeneration);
     const pullSnapshot = controller.pullSnapshot;
@@ -2070,10 +2069,10 @@ export class SyncEngineLevel implements SyncEngine {
 
     const controllers = [...this._linkControllers.values()].filter(controller => controller.link.tenantDid === did);
     // Currentness must fall before transport closure can block, and
-    // retirement prevents an in-flight pull from restoring it while allowing
+    // deactivation prevents an in-flight pull from restoring it while allowing
     // already-running durable work to drain before final deactivation.
     for (const controller of controllers) {
-      this.beginLinkControllerRetirement(controller);
+      this.beginLinkControllerDeactivation(controller);
     }
     this.trackSubscriptionCloses(controllers);
     await this.waitForLifecycleBarrier(
@@ -2375,7 +2374,6 @@ export class SyncEngineLevel implements SyncEngine {
   /** A reconnect closes both disconnected-interval gaps without a full convergence probe. */
   private async requestDurableReconnectPasses(context: LivePullWakeContext): Promise<void> {
     const { controller } = context;
-    this.markPullPending(controller);
     controller.executor.request('pull');
     controller.executor.request('push');
     if (!controller.isReplicationReady || context.isStale()) {

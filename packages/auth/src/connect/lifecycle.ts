@@ -8,7 +8,7 @@
  * - Vault init/start lifecycle
  * - Sync interval calculation and startup
  * - `connectedDid` / `delegateDid` derivation from identity metadata
- * - Session finalization (storage persistence + AuthSession construction + events)
+ * - Session finalization (storage persistence + AuthSession construction)
  *
  * @module
  * @internal
@@ -36,9 +36,9 @@ import { DEFAULT_DWN_ENDPOINTS, INSECURE_DEFAULT_PASSWORD, STORAGE_KEYS } from '
  * Unified context passed from `AuthManager` to every connect flow.
  *
  * Replaces the per-flow `VaultConnectContext`, `SessionRestoreContext`,
- * `WalletConnectContext`, and `ImportContext` interfaces. All fields are
- * optional beyond the core triple (`userAgent`, `emitter`, `storage`) so
- * flows only consume what they need.
+ * `WalletConnectContext`, and `ImportContext` interfaces. Manager-owned
+ * lifecycle operations are required; flow-specific configuration remains
+ * optional so each flow consumes only what it needs.
  *
  * @internal
  */
@@ -55,29 +55,29 @@ export interface FlowContext {
   defaultDwnEndpoints?: string[];
   registration?: RegistrationOptions;
   /** Throws when teardown invalidated this manager-owned flow. */
-  assertActive?: () => void;
+  assertActive: () => void;
   /** Serializes a local mutation against session teardown. */
-  runMutation?: <T>(operation: () => Promise<T>) => Promise<T>;
+  runMutation: <T>(operation: () => Promise<T>) => Promise<T>;
   /** Serializes terminal finalization and installs the returned session. */
-  commitSession?: (operation: () => Promise<AuthSession>) => Promise<AuthSession>;
+  commitSession: (operation: () => Promise<AuthSession>) => Promise<AuthSession>;
 }
 
-/** Assert that a manager-owned flow is still active. Direct flow calls are unrestricted. */
+/** Assert that a manager-owned flow is still active. */
 export function assertFlowActive(ctx: FlowContext): void {
-  ctx.assertActive?.();
+  ctx.assertActive();
 }
 
-/** Run a local mutation through the manager lifecycle mutex when one is present. */
+/** Run a local mutation through the manager lifecycle mutex. */
 export async function runFlowMutation<T>(ctx: FlowContext, operation: () => Promise<T>): Promise<T> {
-  return ctx.runMutation === undefined ? operation() : ctx.runMutation(operation);
+  return ctx.runMutation(operation);
 }
 
-/** Commit a finalized session through the manager lifecycle mutex when one is present. */
+/** Commit a finalized session through the manager lifecycle mutex. */
 export async function commitFlowSession(
   ctx: FlowContext,
   operation: () => Promise<AuthSession>,
 ): Promise<AuthSession> {
-  return ctx.commitSession === undefined ? operation() : ctx.commitSession(operation);
+  return ctx.commitSession(operation);
 }
 
 /** Copy the non-secret fields allowed on the public session-start event. */
@@ -800,20 +800,14 @@ export async function finalizeDelegateSession(params: {
   startSync?: boolean;
   /** Whether to emit `identity-added`. Defaults to `true`. */
   emitIdentityAdded?: boolean;
-  /** Whether to emit `session-start`. Defaults to `true`. */
-  emitSessionStart?: boolean;
-  /** Existing session retained by a grant-only refresh. */
-  existingSession?: AuthSession;
   /** Signal owned by the manager for this session. */
   signal: AbortSignal;
 }): Promise<AuthSession> {
   const {
     userAgent, emitter, storage, identity, connectedDid, delegateDid, sync,
-    delegateState = {}, startSync = true, emitIdentityAdded = true, emitSessionStart = true,
-    existingSession, signal,
+    delegateState = {}, startSync = true, emitIdentityAdded = true,
+    signal,
   } = params;
-
-  assertRetainedSessionSignal(existingSession, signal);
 
   if (startSync) {
     await startSyncIfEnabled(userAgent, sync);
@@ -842,8 +836,6 @@ export async function finalizeDelegateSession(params: {
     identityName         : identity.metadata.name,
     identityConnectedDid : identity.metadata.connectedDid,
     emitIdentityAdded,
-    emitSessionStart,
-    existingSession,
     signal,
     extraStorageKeys,
   });
@@ -852,7 +844,7 @@ export async function finalizeDelegateSession(params: {
 // ─── finalizeSession ────────────────────────────────────────────
 
 /**
- * Persist session markers, build an `AuthSession`, and emit lifecycle events.
+ * Persist session markers, build an `AuthSession`, and emit identity events.
  *
  * Consolidates 5 copies of:
  * ```ts
@@ -860,12 +852,10 @@ export async function finalizeDelegateSession(params: {
  * await storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, connectedDid);
  * const session = new AuthSession({ ... });
  * emitter.emit('identity-added', { identity: identityInfo });
- * emitter.emit('session-start', { session: toAuthSessionInfo(session) });
  * ```
  *
  * @param params.emitIdentityAdded - Whether to emit `identity-added`. Defaults to `true`.
  *   Set to `false` for session-restore (identity was already added in the original flow).
- * @param params.emitSessionStart - Whether to emit `session-start`. Defaults to `true`.
  * @param params.extraStorageKeys  - Additional key-value pairs to persist (e.g. delegate/connected DIDs
  *   for wallet-connect flows).
  *
@@ -881,8 +871,6 @@ export async function finalizeSession(params: {
   identityName?: string;
   identityConnectedDid?: string;
   emitIdentityAdded?: boolean;
-  emitSessionStart?: boolean;
-  existingSession?: AuthSession;
   signal: AbortSignal;
   extraStorageKeys?: Record<string, string>;
 }): Promise<AuthSession> {
@@ -896,13 +884,9 @@ export async function finalizeSession(params: {
     identityName,
     identityConnectedDid,
     emitIdentityAdded = true,
-    emitSessionStart = true,
-    existingSession,
     signal,
     extraStorageKeys,
   } = params;
-
-  assertRetainedSessionSignal(existingSession, signal);
 
   // Persist all session markers concurrently — all writes are independent.
   const storageWrites: Promise<void>[] = [
@@ -924,7 +908,7 @@ export async function finalizeSession(params: {
     connectedDid : identityConnectedDid,
   };
 
-  const session = existingSession ?? new AuthSession({
+  const session = new AuthSession({
     agent    : userAgent,
     did      : connectedDid,
     delegateDid,
@@ -937,18 +921,7 @@ export async function finalizeSession(params: {
     emitter.emit('identity-added', { identity: identityInfo });
   }
 
-  if (emitSessionStart) {
-    emitter.emit('session-start', { session: toAuthSessionInfo(session) });
-  }
-
   return session;
-}
-
-/** Prevent a refresh from claiming that an existing session belongs to a different lifetime. */
-function assertRetainedSessionSignal(existingSession: AuthSession | undefined, signal: AbortSignal): void {
-  if (existingSession !== undefined && existingSession.signal !== signal) {
-    throw new Error('finalizeSession: the retained session must use the supplied lifecycle signal.');
-  }
 }
 
 // ─── persistOrClearDelegateSecrets ──────────────────────────────

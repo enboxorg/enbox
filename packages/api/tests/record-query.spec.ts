@@ -74,7 +74,7 @@ function createTypedEnbox(dwn: DwnApi): TypedEnbox<typeof QueryDefinition, Query
 }
 
 describe('RecordQuery', () => {
-  it('should compile one immutable selection for query and count', async () => {
+  it('should compile the same canonical selection for query and count', async () => {
     const { dwn, countRequests, queryRequests } = createCapturingDwn();
     const typed = createTypedEnbox(dwn);
     const filter = {
@@ -115,6 +115,63 @@ describe('RecordQuery', () => {
     expect(filter).toEqual({
       contextId : 'root/parent',
       tags      : { status: 'published', priority: { gte: 2 } },
+    });
+  });
+
+  it('should detach every caller-owned query value', () => {
+    const authors = ['did:example:alice'];
+    const priority = { gte: 2 };
+    const dateUpdated = { from: '2026-01-01T00:00:00Z' };
+    const cursor = { messageCid: 'bafy-page', value: '2026-01-02T00:00:00Z' };
+    const query = {
+      filter: {
+        author : authors,
+        tags   : {
+          status: 'published',
+          priority,
+        },
+        dateUpdated,
+      },
+      pagination: { limit: 2, cursor },
+    };
+    const compiled = compileRecordQuery(QueryDefinition, 'note', query);
+
+    authors[0] = 'did:example:mallory';
+    priority.gte = 99;
+    dateUpdated.from = '2030-01-01T00:00:00Z';
+    query.filter.tags.status = 'draft';
+    query.pagination.limit = 1000;
+    cursor.messageCid = 'bafy-other-page';
+
+    expect(compiled.filter).toMatchObject({
+      author      : ['did:example:alice'],
+      dateUpdated : { from: '2026-01-01T00:00:00Z' },
+      tags        : { status: 'published', priority: { gte: 2 } },
+    });
+    expect(compiled.pagination).toEqual({
+      limit  : 2,
+      cursor : { messageCid: 'bafy-page', value: '2026-01-02T00:00:00Z' },
+    });
+  });
+
+  it('should detach nested values compiled for a direct read filter', () => {
+    const recipients = ['did:example:bob'];
+    const dataSize = { lte: 1024 };
+    const tags = { priority: { gt: 1 } };
+    const compiled = compileRecordFilter(QueryDefinition, 'note', {
+      recipient: recipients,
+      dataSize,
+      tags,
+    });
+
+    recipients[0] = 'did:example:mallory';
+    dataSize.lte = 2048;
+    tags.priority.gt = 3;
+
+    expect(compiled).toMatchObject({
+      recipient : ['did:example:bob'],
+      dataSize  : { lte: 1024 },
+      tags      : { priority: { gt: 1 } },
     });
   });
 

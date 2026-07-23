@@ -106,7 +106,7 @@ describe('SyncLinkController', () => {
     controller.executor.consumePending('pull');
     expect(controller.markPullCurrent(replicationGeneration)).toBe(true);
 
-    expect(controller.beginRetirement()).toBe(true);
+    expect(controller.beginDeactivation()).toBe(true);
     expect(controller.isActive).toBe(true);
     expect(controller.isPullCurrent).toBe(false);
     expect(controller.markPullCurrent(replicationGeneration)).toBe(false);

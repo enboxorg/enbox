@@ -8,7 +8,7 @@ import { STORAGE_KEYS } from '../src/types.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
 
 function importFromPortable(
-  context: Omit<Parameters<typeof runImportFromPortable>[0], 'sessionSignal'>,
+  context: Parameters<typeof createFlowContext>[0],
   options: Parameters<typeof runImportFromPortable>[1],
 ): ReturnType<typeof runImportFromPortable> {
   return runImportFromPortable(createFlowContext(context), options);
@@ -25,13 +25,15 @@ describe('importFromPortable', () => {
       identityImport: async (params) => { importCalls.push(params); return identity; },
     });
 
-    const session = await importFromPortable(
-      { userAgent: agent, emitter, storage },
+    const context = createFlowContext({ userAgent: agent, emitter, storage });
+    const session = await runImportFromPortable(
+      context,
       { portableIdentity: { portableDid: { uri: 'did:dht:imported' } } as any },
     );
 
     expect(importCalls).toHaveLength(1);
     expect(session.did).toBe('did:dht:testuser123');
+    expect(session.signal).toBe(context.sessionSignal);
   });
 
   test('handles wallet-connected portable identity', async () => {
@@ -188,7 +190,7 @@ describe('importFromPortable', () => {
     expect(await storage.get(STORAGE_KEYS.ACTIVE_IDENTITY)).toBe('did:dht:testuser123');
   });
 
-  test('emits identity-added and session-start events', async () => {
+  test('emits identity-added while session publication remains manager-owned', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     const events: string[] = [];
@@ -205,7 +207,7 @@ describe('importFromPortable', () => {
       { portableIdentity: {} as any },
     );
 
-    expect(events).toEqual(['identity-added', 'session-start']);
+    expect(events).toEqual(['identity-added']);
   });
 
   test('calls registration when registration options are provided', async () => {

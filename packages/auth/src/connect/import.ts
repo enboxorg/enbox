@@ -64,7 +64,7 @@ export async function importFromPortable(
 
     await startSyncIfEnabled(userAgent, sync);
 
-    // Persist session info, build AuthSession, and emit lifecycle events.
+    // Persist session info and build the AuthSession for the manager to publish.
     return finalizeSession({
       userAgent,
       emitter,

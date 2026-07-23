@@ -32,7 +32,7 @@ export class SyncLinkController {
   private _liveSubscription?: SyncLinkSubscription;
   private _localSubscription?: SyncLinkSubscription;
   private _isPullCurrent = false;
-  private _isRetiring = false;
+  private _isDeactivating = false;
   private _pullSnapshot?: SyncFeedSnapshot;
   private _replicationGeneration = 0;
   private _pushSnapshot?: SyncFeedSnapshot;
@@ -74,7 +74,7 @@ export class SyncLinkController {
    */
   public markPullCurrent(expectedReplicationGeneration: number): boolean {
     if (
-      this._isRetiring ||
+      this._isDeactivating ||
       !this.isReplicationGenerationCurrent(expectedReplicationGeneration) ||
       this.executor.hasPending('pull') ||
       this._isPullCurrent
@@ -92,12 +92,12 @@ export class SyncLinkController {
    *
    * @returns Whether pull currentness changed from true to false.
    */
-  public beginRetirement(): boolean {
-    if (!this._active || this._isRetiring) {
+  public beginDeactivation(): boolean {
+    if (!this._active || this._isDeactivating) {
       return false;
     }
 
-    this._isRetiring = true;
+    this._isDeactivating = true;
     if (!this._isPullCurrent) {
       return false;
     }
@@ -165,7 +165,7 @@ export class SyncLinkController {
     expectedReplicationGeneration?: number,
     snapshot?: SyncFeedSnapshot,
   ): boolean {
-    if (!this._active || this._isRetiring || this._liveSubscription !== undefined) {
+    if (!this._active || this._isDeactivating || this._liveSubscription !== undefined) {
       return false;
     }
     if (expectedReplicationGeneration !== undefined && expectedReplicationGeneration !== this._replicationGeneration) {
@@ -186,7 +186,7 @@ export class SyncLinkController {
     expectedReplicationGeneration?: number,
     snapshot?: SyncFeedSnapshot,
   ): boolean {
-    if (!this._active || this._isRetiring || this._localSubscription !== undefined) {
+    if (!this._active || this._isDeactivating || this._localSubscription !== undefined) {
       return false;
     }
     if (expectedReplicationGeneration !== undefined && expectedReplicationGeneration !== this._replicationGeneration) {
@@ -274,7 +274,7 @@ export class SyncLinkController {
       return;
     }
 
-    this._isRetiring = true;
+    this._isDeactivating = true;
     this._active = false;
     this._replicationGeneration++;
     this._isPullCurrent = false;

@@ -102,6 +102,7 @@ One verb per kind of ending, because these had four overlapping spellings:
 | Verb | Ends | Example |
 |---|---|---|
 | `dispose` | An owned lifetime, irreversibly | `SyncRuntime.dispose`, `SyncLinkController.dispose` |
+| `deactivate` | An active owner's callback eligibility before resource disposal | `SyncLinkController.beginDeactivation`, `SyncLinkController.deactivate` |
 | `close` | One external resource | `closeLiveSubscription`, `SyncEngineLevel.close` |
 | `stop` | A restartable activity | `stopSync`, `stopLiveSync` |
 | `cancel*` | Runtime-owned scheduling at a named scope | `cancelTimer`, `cancelScheduledWork`, `cancelIdentityTimers` |

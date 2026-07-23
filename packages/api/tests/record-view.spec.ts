@@ -7,7 +7,6 @@ import type { ReplicationLinkSnapshot, SyncEngine, SyncEvent, SyncEventListener,
 
 import sinon from 'sinon';
 
-import { DidJwk } from '@enbox/dids';
 import { EnboxUserAgent } from '@enbox/agent';
 import { PlatformAgentTestHarness } from '@enbox/agent/test';
 import { AuthManager, MemoryStorage } from '@enbox/auth';
@@ -190,9 +189,10 @@ function link(
 describe('RecordView', () => {
   it('rejects invalid runtime requests before protocol readiness or subscription side effects', async () => {
     const harness = createHarness(async () => ok([]));
+    const queryProtocols = sinon.stub().resolves({ status: { code: 200, detail: 'OK' }, protocols: [] });
+    const configureProtocol = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
+    (harness.dwn as any).protocols = { configure: configureProtocol, query: queryProtocols };
     const typed = new TypedEnbox(harness.dwn, ViewProtocol);
-    const readinessBoundary = typed as unknown as { _ensureReady(path: string): Promise<void> };
-    const ensureReady = sinon.stub(readinessBoundary, '_ensureReady').resolves();
     const observe = typed.records.observe as (
       path: 'note',
       request?: { from?: string; pagination?: { limit: number } },
@@ -203,19 +203,50 @@ describe('RecordView', () => {
       from       : 'did:example:remote',
       pagination : { limit: 10 },
     })).rejects.toThrow('remote queries are not supported');
-    expect(ensureReady.called).toBe(false);
+    await expect(observe('note', {
+      pagination: { limit: 0 },
+    })).rejects.toThrow('pagination.limit must be a finite number greater than or equal to 1');
+    expect(queryProtocols.notCalled).toBe(true);
+    expect(configureProtocol.notCalled).toBe(true);
+    expect(harness.queryRequests).toHaveLength(0);
     expect(harness.subscribeRequests).toHaveLength(0);
   });
 
+  it('rejects an already-aborted session without acquiring view resources', async () => {
+    const harness = createHarness(async () => ok([]));
+    const fakeSync = createSync();
+    const controller = new AbortController();
+    const reason = new Error('session already ended');
+    controller.abort(reason);
+    const queryProtocols = sinon.stub().resolves({ status: { code: 200, detail: 'OK' }, protocols: [] });
+    const configureProtocol = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
+    (harness.dwn as any).protocols = { configure: configureProtocol, query: queryProtocols };
+    const typed = new TypedEnbox(harness.dwn, ViewProtocol, {
+      signal : controller.signal,
+      sync   : fakeSync.sync,
+    });
+
+    await expect(typed.records.observe('note', { pagination: { limit: 10 } })).rejects.toBe(reason);
+
+    expect(queryProtocols.notCalled).toBe(true);
+    expect(configureProtocol.notCalled).toBe(true);
+    expect(harness.queryRequests).toHaveLength(0);
+    expect(harness.subscribeRequests).toHaveLength(0);
+    expect(fakeSync.listenerCount()).toBe(0);
+  });
+
   it('installs a structural wake before querying and closes the opening race', async () => {
-    const first = rawRecord('before-wake');
-    const second = rawRecord('after-wake');
-    const harness = createHarness(async (_request, call) => ok([call === 1 ? first : second]));
+    let visibleRecord = rawRecord('before-wake');
+    const committedRecord = rawRecord('after-wake');
+    const harness = createHarness(async () => ok([visibleRecord]));
     const originalSubscribe = harness.dwn.records.subscribe;
     let handlerReturn: unknown;
     harness.dwn.records.subscribe = async (request): Promise<RecordsSubscribeResponse> => {
       expect(harness.queryRequests).toHaveLength(0);
       const reply = await originalSubscribe(request);
+      // A local write commits before its subscription wake is delivered. The
+      // opening query therefore observes that commit without a forced retry.
+      visibleRecord = committedRecord;
       handlerReturn = request.subscriptionHandler(recordEvent());
       return reply;
     };
@@ -228,13 +259,12 @@ describe('RecordView', () => {
         recordId  : 'note-1',
         tags      : { status: 'draft' },
       },
-      pagination   : { limit: 10 },
-      protocolRole : 'note/admin',
+      pagination: { limit: 10 },
     });
 
     await waitFor(() => {
-      expect(harness.queryRequests).toHaveLength(2);
-      expect(view.getSnapshot().records[0]?.rawRecord).toBe(second);
+      expect(harness.queryRequests).toHaveLength(1);
+      expect(view.getSnapshot().records[0]?.rawRecord).toBe(committedRecord);
     });
     expect(handlerReturn).toBeUndefined();
     expect(harness.subscribeRequests).toHaveLength(1);
@@ -245,8 +275,7 @@ describe('RecordView', () => {
         protocolPath : 'note',
         recordId     : 'note-1',
       },
-      pagination   : { limit: 1 },
-      protocolRole : 'note/admin',
+      pagination: { limit: 1 },
     });
     expect(harness.subscribeRequests[0].filter).not.toHaveProperty('author');
     expect(harness.subscribeRequests[0].filter).not.toHaveProperty('published');
@@ -261,9 +290,45 @@ describe('RecordView', () => {
         recordId     : 'note-1',
         tags         : { status: 'draft' },
       },
-      pagination   : { limit: 10 },
-      protocolRole : 'note/admin',
+      pagination: { limit: 10 },
     });
+    await view.close();
+  });
+
+  it('retains its compiled selection after the caller mutates the original request', async () => {
+    const harness = createHarness(async () => ok([]));
+    const request = {
+      filter: {
+        tags: { status: 'draft' as 'draft' | 'published' },
+      },
+      pagination: {
+        limit  : 1,
+        cursor : { messageCid: 'bafy-original', value: 'original-position' },
+      },
+    };
+
+    const opening = createTyped(harness).records.observe('note', request);
+    request.filter.tags.status = 'published';
+    request.pagination.limit = 100;
+    request.pagination.cursor.messageCid = 'bafy-mutated';
+    const view = await opening;
+    await waitFor(() => { expect(harness.queryRequests).toHaveLength(1); });
+
+    expect(harness.queryRequests[0]).toMatchObject({
+      filter: {
+        tags: { status: 'draft' },
+      },
+      pagination: {
+        limit  : 1,
+        cursor : { messageCid: 'bafy-original', value: 'original-position' },
+      },
+    });
+
+    request.filter.tags.status = 'draft';
+    request.pagination.cursor.value = 'another-position';
+    harness.emit(recordEvent());
+    await waitFor(() => { expect(harness.queryRequests).toHaveLength(2); });
+    expect(harness.queryRequests[1]).toEqual(harness.queryRequests[0]);
     await view.close();
   });
 
@@ -346,6 +411,53 @@ describe('RecordView', () => {
     await view.close();
   });
 
+  it('isolates listener failures and applies listener mutations to later publications', async () => {
+    const initial = rawRecord('initial');
+    const firstWake = rawRecord('first-wake');
+    const secondWake = rawRecord('second-wake');
+    const harness = createHarness(async (_request, call) => {
+      return ok([call === 1 ? initial : call === 2 ? firstWake : secondWake]);
+    });
+    const view = await createTyped(harness).records.observe('note', { pagination: { limit: 10 } });
+    await waitFor(() => { expect(view.getSnapshot().state).toBe('ready'); });
+
+    const notifications: string[] = [];
+    let lateListenerAdded = false;
+    let unsubscribeSecond = (): void => {};
+    view.subscribe((snapshot): void => {
+      notifications.push(`first:${snapshot.records[0]?.rawRecord.id}`);
+      unsubscribeSecond();
+      if (!lateListenerAdded) {
+        lateListenerAdded = true;
+        view.subscribe((laterSnapshot): void => {
+          notifications.push(`late:${laterSnapshot.records[0]?.rawRecord.id}`);
+        });
+      }
+      throw new Error('consumer failed');
+    });
+    unsubscribeSecond = view.subscribe((snapshot): void => {
+      notifications.push(`second:${snapshot.records[0]?.rawRecord.id}`);
+    });
+
+    harness.emit(recordEvent());
+    await waitFor(() => {
+      expect(harness.queryRequests).toHaveLength(2);
+      expect(notifications).toEqual(['first:first-wake', 'second:first-wake']);
+    });
+
+    harness.emit(recordEvent());
+    await waitFor(() => {
+      expect(harness.queryRequests).toHaveLength(3);
+      expect(notifications).toEqual([
+        'first:first-wake',
+        'second:first-wake',
+        'first:second-wake',
+        'late:second-wake',
+      ]);
+    });
+    await view.close();
+  });
+
   it('publishes an authoritatively empty bounded result with hasMore false', async () => {
     const harness = createHarness(async () => ok([]));
     const fakeSync = createSync();
@@ -356,6 +468,56 @@ describe('RecordView', () => {
 
     await waitFor(() => { expect(view.getSnapshot().state).toBe('ready'); });
     expect(view.getSnapshot()).toMatchObject({ records: [], hasMore: false });
+    await view.close();
+  });
+
+  it('publishes the fresh initial materialization when replication is paused', async () => {
+    const local = rawRecord('local-while-paused');
+    const harness = createHarness(async () => ok([local], { messageCid: 'next-page', value: 'cursor' }));
+    const fakeSync = createSync();
+    fakeSync.links = [link('paused', 'offline')];
+
+    const view = await createTyped(harness, { sync: fakeSync.sync }).records.observe('note', {
+      pagination: { limit: 10 },
+    });
+
+    await waitFor(() => { expect(view.getSnapshot().state).toBe('error'); });
+    const snapshot = view.getSnapshot();
+    expect(snapshot.records[0]?.rawRecord).toBe(local);
+    expect(snapshot.hasMore).toBe(true);
+    if (snapshot.state !== 'error') {
+      throw new Error(`expected an error snapshot, received '${snapshot.state}'`);
+    }
+    expect(snapshot.error.message).toContain('replication is paused');
+    await view.close();
+  });
+
+  it('publishes a fresh local materialization when a wake arrives while replication is paused', async () => {
+    const initial = rawRecord('initial');
+    const local = rawRecord('local-while-paused');
+    const harness = createHarness(async (_request, call) => call === 1
+      ? ok([initial])
+      : ok([local], { messageCid: 'next-page', value: 'cursor' }));
+    const fakeSync = createSync();
+    fakeSync.links = [link('live')];
+    const view = await createTyped(harness, { sync: fakeSync.sync }).records.observe('note', {
+      pagination: { limit: 10 },
+    });
+    await waitFor(() => { expect(view.getSnapshot().state).toBe('ready'); });
+
+    fakeSync.links = [link('paused', 'offline')];
+    harness.emit(recordEvent());
+
+    await waitFor(() => {
+      expect(view.getSnapshot().state).toBe('error');
+      expect(view.getSnapshot().records[0]?.rawRecord).toBe(local);
+    });
+    const snapshot = view.getSnapshot();
+    expect(snapshot.hasMore).toBe(true);
+    if (snapshot.state !== 'error') {
+      throw new Error(`expected an error snapshot, received '${snapshot.state}'`);
+    }
+    expect(snapshot.error.message).toContain('replication is paused');
     await view.close();
   });
 
@@ -401,6 +563,69 @@ describe('RecordView', () => {
       to             : false,
     });
     expect(view.getSnapshot().state).toBe('stale');
+    await view.close();
+  });
+
+  it('ignores unrelated tenants, protocols, and replication links', async () => {
+    const harness = createHarness(async () => ok([rawRecord('local')]));
+    const fakeSync = createSync();
+    fakeSync.options = { protocols: 'all' };
+    fakeSync.links = [
+      {
+        ...link('live'),
+        scope: { kind: 'full' },
+      },
+      {
+        ...link('paused', 'offline'),
+        remoteEndpoint : 'https://unrelated-dwn.example',
+        scope          : { kind: 'protocolSet', protocols: ['https://example.com/protocols/unrelated'] },
+      },
+    ];
+    const view = await createTyped(harness, { sync: fakeSync.sync }).records.observe('note', {
+      pagination: { limit: 10 },
+    });
+    await waitFor(() => { expect(view.getSnapshot().state).toBe('ready'); });
+    const initialSnapshot = view.getSnapshot();
+    let publications = 0;
+    view.subscribe((): void => { publications += 1; });
+
+    fakeSync.emit({
+      type           : 'link:status-change',
+      tenantDid      : 'did:example:unrelated',
+      remoteEndpoint : 'https://dwn.example',
+      protocol       : ViewDefinition.protocol,
+      protocols      : [ViewDefinition.protocol],
+      from           : 'live',
+      to             : 'paused',
+    });
+    fakeSync.emit({
+      type           : 'link:status-change',
+      tenantDid      : TENANT_DID,
+      remoteEndpoint : 'https://unrelated-dwn.example',
+      protocol       : 'https://example.com/protocols/unrelated',
+      protocols      : ['https://example.com/protocols/unrelated'],
+      from           : 'live',
+      to             : 'paused',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(harness.queryRequests).toHaveLength(1);
+    expect(view.getSnapshot()).toBe(initialSnapshot);
+    expect(publications).toBe(0);
+
+    // Scope-less events cover full-replica links and must wake the view.
+    fakeSync.emit({
+      type           : 'pull:currentness-change',
+      tenantDid      : TENANT_DID,
+      remoteEndpoint : 'https://dwn.example',
+      from           : false,
+      to             : true,
+    });
+    await waitFor(() => {
+      expect(harness.queryRequests).toHaveLength(2);
+      expect(publications).toBe(1);
+    });
+    expect(view.getSnapshot().state).toBe('ready');
     await view.close();
   });
 
@@ -701,76 +926,64 @@ describe('RecordView', () => {
 });
 
 describe('RecordView session lifecycle integration', () => {
-  for (const lifecycle of ['lock', 'disconnect', 'replacement'] as const) {
-    it(`closes and fences the view when AuthManager performs ${lifecycle}`, async () => {
-      const platform = await PlatformAgentTestHarness.setup({
-        agentClass  : EnboxUserAgent,
-        agentStores : 'memory',
-      });
-      let auth: AuthManager | undefined;
-
-      try {
-        platform.agent.agentDid = await DidJwk.create();
-        await platform.agent.initialize({ password: 'test-password' });
-        await platform.agent.start({ password: 'test-password' });
-        const firstIdentity = await platform.agent.identity.create({
-          metadata  : { name: 'First' },
-          didMethod : 'jwk',
-        });
-        const secondIdentity = await platform.agent.identity.create({
-          metadata  : { name: 'Second' },
-          didMethod : 'jwk',
-        });
-        auth = await AuthManager.create({
-          agent   : platform.agent,
-          storage : new MemoryStorage(),
-          sync    : 'off',
-        });
-        const session = await auth.switchIdentity(firstIdentity.did.uri);
-        const typed = Enbox.fromSession(session).using(ViewProtocol);
-        await typed.configure();
-
-        let releaseQuery!: (response: RecordsQueryResponse) => void;
-        const initial = rawRecord('initial');
-        const late = rawRecord('late');
-        const queryHarness = createHarness(async (_request, call) => call === 1
-          ? ok([initial])
-          : new Promise((resolve) => { releaseQuery = resolve; }));
-        sinon.stub(typed.dwn, 'records').get(() => queryHarness.dwn.records);
-
-        const view = await typed.records.observe('note', { pagination: { limit: 10 } });
-        await waitFor(() => { expect(view.getSnapshot().state).toBe('ready'); });
-        const beforeTeardown = view.getSnapshot();
-        let publications = 0;
-        view.subscribe((): void => { publications += 1; });
-        queryHarness.emit(recordEvent());
-        await waitFor(() => { expect(queryHarness.queryRequests).toHaveLength(2); });
-
-        let replacementSignal: AbortSignal | undefined;
-        if (lifecycle === 'lock') {
-          await auth.lock();
-        } else if (lifecycle === 'disconnect') {
-          await auth.disconnect();
-        } else {
-          replacementSignal = (await auth.switchIdentity(secondIdentity.did.uri)).signal;
-        }
-
-        expect(session.signal.aborted).toBe(true);
-        await waitFor(() => { expect(queryHarness.closeCount()).toBe(1); });
-        if (replacementSignal !== undefined) {
-          expect(replacementSignal).not.toBe(session.signal);
-          expect(replacementSignal.aborted).toBe(false);
-        }
-
-        releaseQuery(ok([late]));
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        expect(view.getSnapshot()).toBe(beforeTeardown);
-        expect(publications).toBe(0);
-      } finally {
-        await auth?.shutdown().catch((): void => {});
-        sinon.restore();
-        await platform.closeStorage();
-      }
+  it('closes and fences the view when AuthManager replaces the active session', async () => {
+    const platform = await PlatformAgentTestHarness.setup({
+      agentClass  : EnboxUserAgent,
+      agentStores : 'memory',
     });
-  }
+    let auth: AuthManager | undefined;
+
+    try {
+      await platform.agent.initialize({ password: 'test-password' });
+      await platform.agent.start({ password: 'test-password' });
+      const firstIdentity = await platform.agent.identity.create({
+        metadata  : { name: 'First' },
+        didMethod : 'jwk',
+      });
+      const secondIdentity = await platform.agent.identity.create({
+        metadata  : { name: 'Second' },
+        didMethod : 'jwk',
+      });
+      auth = await AuthManager.create({
+        agent   : platform.agent,
+        storage : new MemoryStorage(),
+        sync    : 'off',
+      });
+      const session = await auth.switchIdentity(firstIdentity.did.uri);
+      const typed = Enbox.fromSession(session).using(ViewProtocol);
+      await typed.configure();
+
+      let releaseQuery!: (response: RecordsQueryResponse) => void;
+      const initial = rawRecord('initial');
+      const late = rawRecord('late');
+      const queryHarness = createHarness(async (_request, call) => call === 1
+        ? ok([initial])
+        : new Promise((resolve) => { releaseQuery = resolve; }));
+      sinon.stub(typed.dwn, 'records').get(() => queryHarness.dwn.records);
+
+      const view = await typed.records.observe('note', { pagination: { limit: 10 } });
+      await waitFor(() => { expect(view.getSnapshot().state).toBe('ready'); });
+      const beforeReplacement = view.getSnapshot();
+      let publications = 0;
+      view.subscribe((): void => { publications += 1; });
+      queryHarness.emit(recordEvent());
+      await waitFor(() => { expect(queryHarness.queryRequests).toHaveLength(2); });
+
+      const replacementSignal = (await auth.switchIdentity(secondIdentity.did.uri)).signal;
+
+      expect(session.signal.aborted).toBe(true);
+      expect(replacementSignal).not.toBe(session.signal);
+      expect(replacementSignal.aborted).toBe(false);
+      await waitFor(() => { expect(queryHarness.closeCount()).toBe(1); });
+
+      releaseQuery(ok([late]));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(view.getSnapshot()).toBe(beforeReplacement);
+      expect(publications).toBe(0);
+    } finally {
+      await auth?.shutdown().catch((): void => {});
+      sinon.restore();
+      await platform.closeStorage();
+    }
+  });
 });

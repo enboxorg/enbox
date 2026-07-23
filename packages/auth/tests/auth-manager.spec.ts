@@ -1,3 +1,4 @@
+import type { AuthSessionInfo } from '../src/types.js';
 import type { DwnProtocolDefinition, EnboxUserAgent } from '@enbox/agent';
 
 import { describe, expect, test } from 'bun:test';
@@ -273,6 +274,38 @@ describe('AuthManager', () => {
       expect(session.did).toBe('did:dht:testuser123');
       expect(manager.state).toBe('connected');
       expect(manager.session).toBe(session);
+    });
+
+    test('installs the session before publishing explicit session metadata', async () => {
+      const agent = createMockAgent({
+        firstLaunch    : async () => true,
+        initialize     : async () => 'recovery phrase words',
+        identityList   : async () => [],
+        identityCreate : async () => createMockIdentity(),
+      });
+      const manager = createTestManager(agent);
+      let publishedSession: AuthSessionInfo | undefined;
+      let sessionAtEvent = manager.session;
+      let stateAtEvent = manager.state;
+      manager.on('session-start', ({ session }): void => {
+        publishedSession = session;
+        sessionAtEvent = manager.session;
+        stateAtEvent = manager.state;
+      });
+
+      const session = await manager.connectVault({ password: 'test', createIdentity: true });
+
+      expect(session.recoveryPhrase).toBe('recovery phrase words');
+      expect(sessionAtEvent).toBe(session);
+      expect(stateAtEvent).toBe('connected');
+      expect(publishedSession).toEqual({
+        did         : session.did,
+        delegateDid : session.delegateDid,
+        identity    : session.identity,
+        signal      : session.signal,
+      });
+      expect(publishedSession).not.toHaveProperty('agent');
+      expect(publishedSession).not.toHaveProperty('recoveryPhrase');
     });
 
     test('works without any options', async () => {
@@ -794,10 +827,13 @@ describe('AuthManager', () => {
         identityList : async () => [createMockIdentity()],
       });
       const manager = createTestManager(agent, { storage });
+      let sessionAtEvent = manager.session;
+      manager.on('session-start', (): void => { sessionAtEvent = manager.session; });
 
       const session = await manager.restoreSession();
       expect(session).toBeDefined();
       expect(manager.state).toBe('connected');
+      expect(sessionAtEvent).toBe(session);
     });
 
   });
@@ -1181,20 +1217,20 @@ describe('AuthManager', () => {
       const identity = createMockIdentity();
       const agent = createMockAgent({ identityGet: async () => identity });
       const manager = createTestManager(agent);
-      const events: any[] = [];
-      manager.on('session-start', (payload) => { events.push(payload); });
+      const events: AuthSessionInfo[] = [];
+      manager.on('session-start', ({ session }): void => { events.push(session); });
 
       const session = await manager.switchIdentity('did:dht:testuser123');
 
       expect(events).toHaveLength(1);
-      expect(events[0].session).toEqual({
+      expect(events[0]).toEqual({
         did         : session.did,
         delegateDid : session.delegateDid,
         identity    : session.identity,
         signal      : session.signal,
       });
-      expect('agent' in events[0].session).toBe(false);
-      expect('recoveryPhrase' in events[0].session).toBe(false);
+      expect(events[0]).not.toHaveProperty('agent');
+      expect(events[0]).not.toHaveProperty('recoveryPhrase');
     });
 
     for (const teardown of ['lock', 'disconnect', 'shutdown'] as const) {
@@ -1753,6 +1789,8 @@ describe('AuthManager', () => {
         syncStartSync : async (params) => { syncCalls.push(params); },
       });
       const manager = createTestManager(agent);
+      let sessionStarts = 0;
+      manager.on('session-start', (): void => { sessionStarts++; });
 
       const session = await manager.connectHeadless({ password: 'my-password' });
 
@@ -1764,6 +1802,8 @@ describe('AuthManager', () => {
       expect(startCalls[0].password).toBe('my-password');
       // Sync was NOT started
       expect(syncCalls).toHaveLength(0);
+      // Headless setup does not publish session-start.
+      expect(sessionStarts).toBe(0);
     });
 
     test('throws when no password is provided and no default', async () => {

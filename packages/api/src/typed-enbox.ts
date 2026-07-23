@@ -1137,6 +1137,7 @@ export class TypedEnbox<
           pagination: { limit: number; cursor?: DwnPaginationCursor };
         },
       ): Promise<RecordView<DataForPath<D, M, Path>>> => {
+        this._options.signal?.throwIfAborted();
         const normalizedPath = normalizePath(path);
         if ((request as RecordQuery<D, Path> | undefined)?.from !== undefined) {
           throw new TypeError('RecordView: remote queries are not supported; observe the connected tenant local replica.');
@@ -1144,24 +1145,14 @@ export class TypedEnbox<
         if (request?.pagination?.limit === undefined) {
           throw new TypeError('RecordView: pagination.limit is required to bound retained records.');
         }
+        const compiled = compileRecordQuery(this._definition, normalizedPath, request);
         await this._ensureReady(normalizedPath);
 
-        const compiled = compileRecordQuery(this._definition, normalizedPath, request);
         return createRecordView<DataForPath<D, M, Path>>({
-          dwn         : this._dwn,
-          filter      : compiled.filter,
-          materialize : async () => {
-            const { status, records, cursor } = await this._dwn.records.query(compiled);
-            return {
-              status,
-              records: records.map((record) => new TypedRecord<DataForPath<D, M, Path>>(record)),
-              cursor,
-            };
-          },
-          protocol     : this._definition.protocol,
-          protocolRole : compiled.protocolRole,
-          signal       : this._options.signal,
-          sync         : this._options.sync,
+          dwn    : this._dwn,
+          query  : compiled,
+          signal : this._options.signal,
+          sync   : this._options.sync,
         });
       },
 

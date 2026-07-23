@@ -4,7 +4,6 @@ import { PermissionsProtocol } from '@enbox/dwn-sdk-js';
 import { DwnPermissionGrant, HdIdentityVaultRecoveryPhraseMismatchError } from '@enbox/agent';
 
 import { AuthEventEmitter } from '../src/events.js';
-import { AuthSession } from '../src/identity-session.js';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { RecoveryPhraseMismatchError } from '../src/errors.js';
 import { STORAGE_KEYS } from '../src/types.js';
@@ -964,38 +963,6 @@ describe('registerSyncScopeForIdentity', () => {
 });
 
 describe('finalizeDelegateSession', () => {
-  test('rejects a retained session owned by a different lifetime before side effects', async () => {
-    const emitter = new AuthEventEmitter();
-    const storage = new MemoryStorage();
-    const agent = createMockAgent();
-    const originalLifetime = new AbortController();
-    const session = new AuthSession({
-      agent,
-      did      : 'did:dht:connected1',
-      identity : { didUri: 'did:dht:connected1', name: 'Connected' },
-      signal   : originalLifetime.signal,
-    });
-    const identity = createMockIdentity({
-      did      : { uri: 'did:jwk:delegate2' },
-      metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected1' },
-    });
-
-    await expect(finalizeDelegateSession({
-      userAgent       : agent,
-      emitter,
-      storage,
-      identity        : identity as any,
-      connectedDid    : 'did:dht:connected1',
-      delegateDid     : 'did:jwk:delegate2',
-      sync            : '15s',
-      startSync       : false,
-      existingSession : session,
-      signal          : new AbortController().signal,
-    })).rejects.toThrow('retained session must use the supplied lifecycle signal');
-
-    expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBeNull();
-  });
-
   describe('stale state cleanup on reconnect', () => {
     test('clears old context keys and multi-party protocols when absent on reconnect', async () => {
       const emitter = new AuthEventEmitter();

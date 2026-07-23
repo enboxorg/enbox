@@ -4,7 +4,7 @@
  */
 
 import type { PortableDid } from '@enbox/dids';
-import type { AgentSessionIdentity, DwnProtocolDefinition, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity, SyncDrainOptions, SyncDrainResult } from '@enbox/agent';
+import type { AgentSessionIdentity, AgentSessionParams, DwnProtocolDefinition, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity, SyncDrainOptions, SyncDrainResult } from '@enbox/agent';
 import type { ConnectClientMetadata, ConnectPermissionRequest, ConnectRequestType, ConnectResult, ConnectSessionMetadata } from '@enbox/connect';
 
 import type { PasswordProvider } from './password-provider.js';
@@ -124,12 +124,7 @@ export type IdentityInfo = AgentSessionIdentity;
  * the same authorization lifetime without receiving either secret-bearing
  * session capability.
  */
-export interface AuthSessionInfo {
-  did: string;
-  delegateDid?: string;
-  identity: IdentityInfo;
-  signal: AbortSignal;
-}
+export type AuthSessionInfo = Pick<AgentSessionParams, 'delegateDid' | 'did' | 'identity' | 'signal'>;
 
 // ─── Registration ────────────────────────────────────────────────
 

@@ -238,7 +238,10 @@ export class Enbox {
    * This convenience method is available on instances returned by
    * {@link Enbox.connect}. Instances created with the constructor or
    * {@link Enbox.fromSession} should call `refresh()` on their owning
-   * `AuthManager` instead.
+   * `AuthManager` instead. A successful refresh replaces the manager's active
+   * session and aborts this instance's authorization lifetime; use the returned
+   * session to create the replacement `Enbox`. `ConnectionStore.refresh()`
+   * performs that replacement automatically.
    */
   public async refresh(options: RefreshOptions): Promise<AuthSession> {
     const auth = this._auth;
