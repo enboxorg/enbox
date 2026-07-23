@@ -470,7 +470,7 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
       .select('messageCid')
       .select(sql<number>`ROW_NUMBER() OVER (
         PARTITION BY ${this.#dialect.byteStableText('parentId')}
-        ORDER BY ${sql.ref('dateCreated')} ASC, ${this.#dialect.byteStableText('recordId')} ASC
+        ORDER BY ${this.#dialect.byteStableText('dateCreated')} ASC, ${this.#dialect.byteStableText('recordId')} ASC
       )`.as('occupancyRank'))
       .where('tenant', '=', tenant);
     rankedCandidates = filterSelectQuery([candidateFilter], rankedCandidates);
