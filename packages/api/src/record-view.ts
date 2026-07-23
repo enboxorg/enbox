@@ -415,7 +415,9 @@ class ObservedRecordView<T> implements RecordView<T> {
     }
 
     this._snapshot = snapshot;
-    for (const listener of [...this._listeners]) {
+    // Listener mutations apply to later publications, never the one already in progress.
+    const listeners = [...this._listeners];
+    for (const listener of listeners) {
       try {
         listener(snapshot);
       } catch {
