@@ -93,7 +93,7 @@ void title;
 void metadata;
 
 // @ts-expect-error unselected children are not present.
-materialized.children.attachment;
+void materialized.children.attachment;
 
 async function assertTypedMaterialization(): Promise<void> {
   const plainPage: RecordPage<Record<LibraryData>> = await typed.records.query('library');
@@ -113,7 +113,7 @@ async function assertTypedMaterialization(): Promise<void> {
   const library: LibraryData | undefined = valueOnly?.value;
   void library;
   // @ts-expect-error value-only materialization does not expose unrequested child keys.
-  valueOnly?.children.title;
+  void valueOnly?.children.title;
 
   // @ts-expect-error eager value materialization requires an explicit page bound.
   await typed.records.query('library', { materialize: true });
@@ -132,7 +132,7 @@ async function assertTypedMaterialization(): Promise<void> {
   const conditionalItem: Record<LibraryData> | MaterializedRecord<LibraryData> | undefined = conditional.records[0];
   void conditionalItem;
   // @ts-expect-error a conditional request does not guarantee the materialized representation.
-  conditional.records[0]?.children;
+  void conditional.records[0]?.children;
 
   const titleOnly = await typed.records.query('library', {
     materialize : { children: ['library/title'] as const },
@@ -141,7 +141,7 @@ async function assertTypedMaterialization(): Promise<void> {
   const selectedTitleOnly: MaterializedRecord<string> | undefined = titleOnly.records[0]?.children.title;
   void selectedTitleOnly;
   // @ts-expect-error an eligible but unselected singleton child is not part of the result.
-  titleOnly.records[0]?.children.metadata;
+  void titleOnly.records[0]?.children.metadata;
 
   const selected = await typed.records.query('library', {
     materialize : { children: ['library/title', 'library/metadata'] as const },
@@ -153,7 +153,7 @@ async function assertTypedMaterialization(): Promise<void> {
   void selectedTitle;
   void selectedMetadata;
   // @ts-expect-error only explicitly selected children appear in the materialized shape.
-  selectedRecord?.children.preference;
+  void selectedRecord?.children.preference;
 
   const observed: RecordView<NonNullable<typeof selectedRecord>> = await typed.records.observe('library', {
     materialize : { children: ['library/title', 'library/metadata'] as const },

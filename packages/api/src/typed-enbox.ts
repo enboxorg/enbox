@@ -1085,6 +1085,46 @@ export class TypedEnbox<
     }
   }
 
+  /** Create one typed record through the protocol-bound DWN API. */
+  private async createRecord<Path extends ProtocolPaths<D> & string>(
+    path: Path,
+    request: TypedCreateRequest<C, Path>,
+  ): Promise<Record<DataForPath<C, Path>>> {
+    const normalizedPath = normalizePath(path);
+    await this._ensureReady(normalizedPath);
+    const typeName = getTypeName(normalizedPath);
+    const typeEntry = this._definition.types[typeName];
+
+    const codec = this.getCodec<Path>(normalizedPath);
+    const encoded = await encodeRecordValue(codec, request.data, typeEntry?.dataFormats);
+    const result = await this._dwn.records.write({
+      data                   : encoded.data,
+      from                   : request.from,
+      store                  : request.store,
+      parentContextId        : request.parentContextId,
+      published              : request.published,
+      datePublished          : request.datePublished,
+      dateCreated            : request.dateCreated,
+      messageTimestamp       : request.messageTimestamp,
+      recipient              : request.recipient,
+      recipientRolePublicKey : request.recipientRolePublicKey,
+      protocolRole           : request.protocolRole,
+      squash                 : request.squash,
+      tags                   : request.tags,
+      protocol               : this._definition.protocol,
+      protocolPath           : normalizedPath,
+      ...(typeEntry?.schema === undefined ? {} : { schema: typeEntry.schema }),
+      dataFormat             : encoded.dataFormat,
+    });
+
+    requireDwnSuccess('TypedEnbox.records.create', result);
+    if (result.record === undefined) {
+      throw new Error('TypedEnbox.records.create: DWN returned success without a record.');
+    }
+
+    return this.bindCodec<Path>(normalizedPath, result.record);
+  }
+
   /**
    * Ensures the protocol is configured before performing record operations.
    *
@@ -1305,41 +1345,7 @@ export class TypedEnbox<
       create: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
         request: TypedCreateRequest<C, Path>,
-      ): Promise<Record<DataForPath<C, Path>>> => {
-        const normalizedPath = normalizePath(path);
-        await this._ensureReady(normalizedPath);
-        const typeName = getTypeName(normalizedPath);
-        const typeEntry = this._definition.types[typeName];
-
-        const codec = this.getCodec<Path>(normalizedPath);
-        const encoded = await encodeRecordValue(codec, request.data, typeEntry?.dataFormats);
-        const result = await this._dwn.records.write({
-          data                   : encoded.data,
-          from                   : request.from,
-          store                  : request.store,
-          parentContextId        : request.parentContextId,
-          published              : request.published,
-          datePublished          : request.datePublished,
-          dateCreated            : request.dateCreated,
-          messageTimestamp       : request.messageTimestamp,
-          recipient              : request.recipient,
-          recipientRolePublicKey : request.recipientRolePublicKey,
-          protocolRole           : request.protocolRole,
-          squash                 : request.squash,
-          tags                   : request.tags,
-          protocol               : this._definition.protocol,
-          protocolPath           : normalizedPath,
-          ...(typeEntry?.schema === undefined ? {} : { schema: typeEntry.schema }),
-          dataFormat             : encoded.dataFormat,
-        });
-
-        requireDwnSuccess('TypedEnbox.records.create', result);
-        if (result.record === undefined) {
-          throw new Error('TypedEnbox.records.create: DWN returned success without a record.');
-        }
-
-        return this.bindCodec<Path>(normalizedPath, result.record);
-      },
+      ): Promise<Record<DataForPath<C, Path>>> => this.createRecord(path, request),
 
       /**
        * Query records at the given protocol path.
@@ -1582,7 +1588,7 @@ export class TypedEnbox<
         const records = result.records.map((record) => this.bindCodec<Path>(normalizedPath, record));
         let record = records[0];
         if (record === undefined) {
-          record = await this.records.create(path, {
+          record = await this.createRecord(path, {
             data             : request.data,
             datePublished    : request.datePublished,
             messageTimestamp : request.messageTimestamp,
