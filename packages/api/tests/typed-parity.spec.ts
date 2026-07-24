@@ -288,21 +288,19 @@ describe('typed api parity batch', () => {
       return { list, task, comment };
     }
 
-    it('should reject a depth-3 query that passes the compound id as parentId without contextId (the engine rule)', async () => {
+    it('should accept a direct parent record ID as a bounded nested scope', async () => {
       const { typed, definition } = makeTyped();
-      const { task } = await createNestedTree(typed);
+      const { task, comment } = await createNestedTree(typed);
 
-      // Raw layer, no derivation: the compound context id in `parentId` with
-      // no `contextId` is exactly the production 400 every app rediscovers.
-      const { status } = await dwnAlice.records.query({
+      const { records, status } = await dwnAlice.records.query({
         filter: {
           protocol     : definition.protocol,
           protocolPath : 'list/task/comment',
-          parentId     : task.contextId!,
+          parentId     : task.id,
         },
       });
-      expect(status.code).toBe(400);
-      expect(status.detail).toContain('must include a contextId selecting that path or one of its ancestors');
+      expect(status.code).toBe(200);
+      expect(records?.map(record => record.id)).toEqual([comment.id]);
     });
 
     it('should forward the canonical contextId without a second parent selector', async () => {
