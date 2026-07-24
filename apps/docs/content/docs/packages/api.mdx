@@ -449,7 +449,7 @@ const { dwn } = Enbox.anonymous();
 const { records } = await dwn.records.query({
   from: 'did:dht:alice...',
   filter: {
-    protocol: 'https://social.example/posts',
+    protocol: 'https://blog.example/posts',
     protocolPath: 'post',
   },
 });

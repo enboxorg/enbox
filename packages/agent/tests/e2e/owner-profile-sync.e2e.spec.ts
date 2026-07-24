@@ -2,7 +2,7 @@
  * E2E: same-owner profile sync convergence.
  *
  * Models two wallet instances that both possess the same identity keys. The
- * second wallet writes a composed profile, avatar, and hero to its local DWN
+ * second wallet writes a profile, avatar, and hero to its local DWN
  * and sends the same messages to the remote DWN. The first wallet then pulls
  * the scoped protocols and must converge to the full profile subtree.
  *
@@ -29,75 +29,10 @@ import { IdentityProtocolDefinition, JwkProtocolDefinition } from '../../src/sto
 
 const testDwnUrls = [testDwnUrl];
 
-const socialGraphProtocol: ProtocolDefinition = {
-  protocol  : 'https://identity.foundation/protocols/social-graph',
-  published : true,
-  types     : {
-    friend: {
-      schema      : 'https://identity.foundation/schemas/social-graph/friend',
-      dataFormats : ['application/json'],
-    },
-    block: {
-      schema      : 'https://identity.foundation/schemas/social-graph/block',
-      dataFormats : ['application/json'],
-    },
-    group: {
-      schema      : 'https://identity.foundation/schemas/social-graph/group',
-      dataFormats : ['application/json'],
-    },
-    member: {
-      schema      : 'https://identity.foundation/schemas/social-graph/member',
-      dataFormats : ['application/json'],
-    },
-  },
-  structure: {
-    friend: {
-      $role    : true,
-      $actions : [
-        { who: 'anyone', can: ['create'] },
-        { who: 'author', of: 'friend', can: ['read'] },
-      ],
-      $tags: {
-        $requiredTags       : ['did'],
-        $allowUndefinedTags : false,
-        did                 : { type: 'string' },
-      },
-    },
-    block: {
-      $actions: [
-        { who: 'anyone', can: ['create'] },
-      ],
-      $tags: {
-        $requiredTags       : ['did'],
-        $allowUndefinedTags : false,
-        did                 : { type: 'string' },
-      },
-    },
-    group: {
-      $actions: [
-        { who: 'anyone', can: ['read'] },
-      ],
-      member: {
-        $actions: [
-          { who: 'anyone', can: ['read'] },
-        ],
-        $tags: {
-          $requiredTags       : ['did'],
-          $allowUndefinedTags : false,
-          did                 : { type: 'string' },
-        },
-      },
-    },
-  },
-};
-
 const profileProtocol: ProtocolDefinition = {
   protocol  : 'https://identity.foundation/protocols/profile',
   published : true,
-  uses      : {
-    social: socialGraphProtocol.protocol,
-  },
-  types: {
+  types     : {
     profile: {
       schema      : 'https://identity.foundation/schemas/profile/profile',
       dataFormats : ['application/json'],
@@ -110,10 +45,6 @@ const profileProtocol: ProtocolDefinition = {
     },
     link: {
       schema      : 'https://identity.foundation/schemas/profile/link',
-      dataFormats : ['application/json'],
-    },
-    privateNote: {
-      schema      : 'https://identity.foundation/schemas/profile/private-note',
       dataFormats : ['application/json'],
     },
   },
@@ -144,15 +75,10 @@ const profileProtocol: ProtocolDefinition = {
         ],
       },
     },
-    privateNote: {
-      $actions: [
-        { role: 'social:friend', can: ['read'] },
-      ],
-    },
   },
 };
 
-const profileSyncProtocols: [string, ...string[]] = [socialGraphProtocol.protocol, profileProtocol.protocol];
+const profileSyncProtocols: [string, ...string[]] = [profileProtocol.protocol];
 const agentDidSyncProtocols: [string, ...string[]] = [IdentityProtocolDefinition.protocol, JwkProtocolDefinition.protocol];
 
 async function setupHarness(testDataLocation: string): Promise<PlatformAgentTestHarness> {
@@ -352,18 +278,14 @@ describe('E2E: same-owner profile sync convergence', () => {
       testDwnUrls,
     });
 
-    for (const definition of [socialGraphProtocol, profileProtocol]) {
-      await installProtocolLocalAndRemote(walletA, identity.did.uri, definition);
-    }
+    await installProtocolLocalAndRemote(walletA, identity.did.uri, profileProtocol);
 
     const portableIdentity = await identity.export();
     await walletB.agent.identity.import({
       portableIdentity: structuredClone(portableIdentity),
     });
 
-    for (const definition of [socialGraphProtocol, profileProtocol]) {
-      await installProtocolLocalAndRemote(walletB, identity.did.uri, definition);
-    }
+    await installProtocolLocalAndRemote(walletB, identity.did.uri, profileProtocol);
 
     await walletA.agent.sync.registerIdentity({
       did     : identity.did.uri,
@@ -421,7 +343,6 @@ describe('E2E: same-owner profile sync convergence', () => {
 
     await walletA.agent.sync.sync('pull');
 
-    await expectProtocolInstalled(walletA, did, socialGraphProtocol.protocol);
     await expectProtocolInstalled(walletA, did, profileProtocol.protocol);
 
     const pulledProfile = await expectRecord(walletA, did, {
@@ -513,9 +434,7 @@ describe('E2E: same-owner identity discovery and profile sync convergence', () =
     expect(walletADiscoveredIdentity.metadata.tenant).toBe(walletA.agent.agentDid.uri);
 
     const did = discoveredIdentity.did.uri;
-    for (const definition of [socialGraphProtocol, profileProtocol]) {
-      await installProtocolLocalAndRemote(walletB, did, definition);
-    }
+    await installProtocolLocalAndRemote(walletB, did, profileProtocol);
 
     const profileData = {
       displayName : 'Discovered Wallet Identity',
@@ -561,7 +480,6 @@ describe('E2E: same-owner identity discovery and profile sync convergence', () =
 
     await walletA.agent.sync.sync('pull');
 
-    await expectProtocolInstalled(walletA, did, socialGraphProtocol.protocol);
     await expectProtocolInstalled(walletA, did, profileProtocol.protocol);
 
     const pulledProfile = await expectRecord(walletA, did, {

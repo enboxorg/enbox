@@ -38,7 +38,7 @@ bunx @enbox/protocol-codegen generate \
 |------|-------|----------|-------------|
 | `--definition` | `-d` | yes | Path to a JSON file containing the protocol definition |
 | `--schemas` | `-s` | yes | Directory containing `.json` schema files |
-| `--name` | `-n` | yes | PascalCase name for the protocol (e.g. `SocialGraph`) |
+| `--name` | `-n` | yes | PascalCase name for the protocol (e.g. `Inventory`) |
 | `--output` | `-o` | no | Output file path. If omitted, prints to stdout |
 
 ### Output
@@ -46,12 +46,10 @@ bunx @enbox/protocol-codegen generate \
 The CLI reports resolution results to stderr and writes generated code to the output file (or stdout):
 
 ```
-  + friend: local-uri-path
-  + block: local-uri-path
-  + group: local-uri-path
-  + member: local-uri-path
+  + product: local-uri-path
+  + category: local-uri-path
 
-Wrote ./social-graph.generated.ts
+Wrote ./inventory.generated.ts
 ```
 
 `+` means the schema was successfully resolved; `?` means it was unresolved (the type will be `unknown`).
@@ -66,17 +64,17 @@ Looks for `<schemasDir>/<typeName>.json`.
 
 ```
 schemas/
-  friend.json    <-- matches type "friend"
-  block.json     <-- matches type "block"
+  product.json    <-- matches type "product"
+  category.json   <-- matches type "category"
 ```
 
 ### Strategy 2: Local file by URI path
 
 Extracts the path after `/schemas/` from the schema URI and looks for `<schemasDir>/<extracted-path>.json`.
 
-For a schema URI `https://identity.foundation/schemas/social-graph/friend`, it looks for:
+For a schema URI `https://example.com/schemas/inventory/product`, it looks for:
 ```
-schemas/social-graph/friend.json
+schemas/inventory/product.json
 ```
 
 This is how `@enbox/protocols` organizes its schemas -- matching the URI structure exactly.

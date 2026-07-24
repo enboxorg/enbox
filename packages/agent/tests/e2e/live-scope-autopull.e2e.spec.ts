@@ -31,33 +31,10 @@ import { IdentityProtocolDefinition, JwkProtocolDefinition } from '../../src/sto
 
 const testDwnUrls = [testDwnUrl];
 
-const socialGraphProtocol: ProtocolDefinition = {
-  protocol  : 'https://identity.foundation/protocols/social-graph',
-  published : true,
-  types     : {
-    friend: {
-      schema      : 'https://identity.foundation/schemas/social-graph/friend',
-      dataFormats : ['application/json'],
-    },
-  },
-  structure: {
-    friend: {
-      $role    : true,
-      $actions : [
-        { who: 'anyone', can: ['create'] },
-        { who: 'author', of: 'friend', can: ['read'] },
-      ],
-    },
-  },
-};
-
 const profileProtocol: ProtocolDefinition = {
   protocol  : 'https://identity.foundation/protocols/profile',
   published : true,
-  uses      : {
-    social: socialGraphProtocol.protocol,
-  },
-  types: {
+  types     : {
     profile: {
       schema      : 'https://identity.foundation/schemas/profile/profile',
       dataFormats : ['application/json'],
@@ -94,7 +71,7 @@ const profileProtocol: ProtocolDefinition = {
   },
 };
 
-const profileSyncProtocols: [string, ...string[]] = [socialGraphProtocol.protocol, profileProtocol.protocol];
+const profileSyncProtocols: [string, ...string[]] = [profileProtocol.protocol];
 const agentDidSyncProtocols: [string, ...string[]] = [IdentityProtocolDefinition.protocol, JwkProtocolDefinition.protocol];
 
 async function waitFor(
@@ -294,9 +271,7 @@ describe('E2E: live-sync auto-pull of a newly-registered identity scope', () => 
     discoveredIdentity = await walletB.createIdentity({ name: discoveredIdentityName, testDwnUrls });
     const did = discoveredIdentity.did.uri;
 
-    for (const definition of [socialGraphProtocol, profileProtocol]) {
-      await installProtocolLocalAndRemote(walletB, did, definition);
-    }
+    await installProtocolLocalAndRemote(walletB, did, profileProtocol);
 
     const profileData = {
       displayName : 'Live Autopull Identity',

@@ -11,7 +11,7 @@
  */
 
 import { EnboxUserAgent } from '@enbox/agent';
-import { ProfileProtocol, SocialGraphProtocol } from '@enbox/protocols';
+import { ProfileProtocol } from '@enbox/protocols';
 
 import { Enbox } from '../src/index.js';
 
@@ -79,14 +79,6 @@ async function main(): Promise<void> {
   // Construct the Enbox instance.
   const web5 = new Enbox({ agent, connectedDid: did });
 
-  // Install Social Graph (prerequisite for Profile)
-  const social = web5.using(SocialGraphProtocol);
-  const sgResult = await social.configure();
-  if (sgResult.status.code !== 202 && sgResult.status.code !== 200) {
-    throw new Error(`Failed to configure Social Graph: ${sgResult.status.code}`);
-  }
-  log('Social Graph protocol installed');
-
   // Install Profile protocol and write persona
   const profile = web5.using(ProfileProtocol);
   await profile.configure();
@@ -120,29 +112,20 @@ async function main(): Promise<void> {
   await agent.sync.registerIdentity({ did: agent.agentDid.uri, options: { protocols: 'all' } });
   await agent.sync.registerIdentity({ did, options: { protocols: 'all' } });
 
-  // Push sync multiple times to handle ordering dependencies.
-  // The remote DWN rejects messages that depend on protocols not yet installed
-  // (e.g. Profile requires Social Graph). Repeated pushes will retry the failed
-  // messages after their dependencies have been processed.
-  for (let round = 1; round <= 3; round++) {
-    for (let attempt = 1; attempt <= 5; attempt++) {
-      try {
-        await agent.sync.sync('push');
-        log(`Push sync round ${round} completed`);
-        break;
-      } catch (err: any) {
-        const isRateLimit = err.message?.includes('rate limit') || err.message?.includes('RateLimit');
-        if (attempt < 5 && isRateLimit) {
-          const delay = attempt * 2;
-          log(`Rate limited, retrying in ${delay}s (attempt ${attempt}/5)...`);
-          await sleep(delay * 1000);
-        } else {
-          throw err;
-        }
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      await agent.sync.sync('push');
+      log('Push sync completed');
+      break;
+    } catch (err: any) {
+      const isRateLimit = err.message?.includes('rate limit') || err.message?.includes('RateLimit');
+      if (attempt < 5 && isRateLimit) {
+        const delay = attempt * 2;
+        log(`Rate limited, retrying in ${delay}s (attempt ${attempt}/5)...`);
+        await sleep(delay * 1000);
+      } else {
+        throw err;
       }
-    }
-    if (round < 3) {
-      await sleep(1000);
     }
   }
 

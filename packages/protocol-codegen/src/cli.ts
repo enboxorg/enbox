@@ -4,10 +4,10 @@
  *
  * Usage:
  *   bunx @enbox/protocol-codegen generate \
- *     --definition ./social-graph-definition.json \
+ *     --definition ./inventory-definition.json \
  *     --schemas ./schemas/ \
- *     --name SocialGraph \
- *     --output ./social-graph.generated.ts
+ *     --name Inventory \
+ *     --output ./inventory.generated.ts
  *
  * @module
  */
@@ -38,7 +38,7 @@ const generateUsage = `protocol-codegen generate [options]
 Options:
   -d, --definition  Path to a JSON file containing the protocol definition.  [required]
   -s, --schemas     Directory containing .json schema files.              [required]
-  -n, --name        PascalCase name for the protocol (e.g. SocialGraph).  [required]
+  -n, --name        PascalCase name for the protocol (e.g. Inventory).  [required]
   -o, --output      Output file path. If omitted, prints to stdout.
   -h, --help        Show help
 `;

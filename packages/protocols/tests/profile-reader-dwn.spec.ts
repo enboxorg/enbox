@@ -41,7 +41,6 @@ import { rm } from 'node:fs/promises';
 import { createProfileReader } from '../src/profile-reader.js';
 import { DidJwk } from '@enbox/dids';
 import { ProfileDefinition } from '../src/profile.js';
-import { SocialGraphDefinition } from '../src/social-graph.js';
 import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '@enbox/dwn-sdk-js/stores/level';
 import {
   DataStream,
@@ -111,9 +110,8 @@ async function signerForDid(did: BearerDid): Promise<PrivateKeySigner> {
 }
 
 /**
- * Install the profile protocol stack and write a wallet-shaped profile for
- * a tenant: Social Graph first (Profile composes with it via `uses`), a
- * PUBLISHED profile JSON singleton, and optionally an UNPUBLISHED avatar.
+ * Install the profile protocol and write a wallet-shaped profile for a tenant:
+ * a PUBLISHED profile JSON singleton and optionally an UNPUBLISHED avatar.
  */
 async function writeWalletProfile(
   dwn: Dwn,
@@ -123,15 +121,13 @@ async function writeWalletProfile(
 ): Promise<{ profileRecordId: string }> {
   const signer = await signerForDid(did);
 
-  for (const definition of [SocialGraphDefinition, ProfileDefinition]) {
-    const configure = await ProtocolsConfigure.create({
-      definition: definition as ProtocolDefinition,
-      signer,
-    });
-    const configureReply = await dwn.processMessage(did.uri, configure.message);
-    if (configureReply.status.code !== 202) {
-      throw new Error(`test setup: protocol install failed with ${configureReply.status.code}`);
-    }
+  const configure = await ProtocolsConfigure.create({
+    definition: ProfileDefinition as ProtocolDefinition,
+    signer,
+  });
+  const configureReply = await dwn.processMessage(did.uri, configure.message);
+  if (configureReply.status.code !== 202) {
+    throw new Error(`test setup: protocol install failed with ${configureReply.status.code}`);
   }
 
   const profileBytes = Encoder.objectToBytes(profileJson);

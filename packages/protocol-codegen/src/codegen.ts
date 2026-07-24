@@ -45,7 +45,7 @@ export type CodegenOptions = {
   /** Directory containing `.json` schema files. */
   schemasDir: string;
 
-  /** Base name for the generated protocol exports (e.g. `'SocialGraph'`). */
+  /** Base name for the generated protocol exports (e.g. `'Inventory'`). */
   protocolName: string;
 
   /** Banner comment at the top of the file. Set to `''` to suppress. */
