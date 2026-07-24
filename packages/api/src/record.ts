@@ -758,7 +758,8 @@ export class Record<T = unknown> implements RecordModel {
   }
 
   /**
-   * Delete the current record on the DWN.
+   * Delete the current record from the connected tenant's local DWN.
+   * To delete from another tenant, use `TypedEnbox.records.delete(path, { from, ... })`.
    *
    * @param params - Parameters to delete the record.
    * @returns A promise that resolves after this record reflects the accepted tombstone.

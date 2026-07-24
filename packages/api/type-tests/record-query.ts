@@ -146,12 +146,16 @@ void typed.records.query('attachment', { filter: { dataFormat: 'image/jpeg' } })
 
 void typed.records.query('note/comment', { within: 'notecontext' });
 void typed.records.read('note/comment', {
-  filter : { recordId: 'comment-id' },
-  within : 'notecontext',
+  filter       : { recordId: 'comment-id' },
+  from         : 'did:example:remote',
+  protocolRole : 'note/participant',
+  within       : 'notecontext',
 });
 void typed.records.delete('note/comment', {
-  recordId : 'comment-id',
-  within   : 'notecontext',
+  from         : 'did:example:remote',
+  protocolRole : 'note/participant',
+  recordId     : 'comment-id',
+  within       : 'notecontext',
 });
 
 // @ts-expect-error contextId is a raw DWN filter; typed queries use within.
