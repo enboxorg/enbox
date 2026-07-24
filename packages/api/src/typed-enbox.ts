@@ -1095,7 +1095,7 @@ export class TypedEnbox<
       ): Promise<RecordView<DataForPath<C, Path>>> => {
         this._options.signal?.throwIfAborted();
         const normalizedPath = normalizePath(path);
-        if (request.from !== undefined) {
+        if (request?.from !== undefined) {
           throw new TypeError('RecordView: remote queries are not supported; observe the connected tenant local replica.');
         }
         if (request?.pagination?.limit === undefined) {

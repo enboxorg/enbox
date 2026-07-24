@@ -1068,7 +1068,7 @@ describe('TypedProtocol API', () => {
         expect(data.description).toBe('Now with description');
       });
 
-      it('should reject a data format override on a codec-bound record', async () => {
+      it('should reject a data format override through a record handle', async () => {
         const record = await typed.records.create('list', {
           data: { name: 'Codec-owned format' },
         });
@@ -1076,7 +1076,7 @@ describe('TypedProtocol API', () => {
         await expect(record.update({
           data       : { name: 'Still codec-owned' },
           dataFormat : 'text/plain',
-        } as never)).rejects.toThrow('typed protocol records derive dataFormat from their codec');
+        } as never)).rejects.toThrow('dataFormat cannot be changed through a record handle');
       });
 
       it('should delete a record in place', async () => {

@@ -55,10 +55,13 @@ export function defineProtocol<
   const invalid = suppliedTypeNames.filter((typeName) => !isRecordCodec(codecs[typeName]));
 
   if (missing.length > 0 || extra.length > 0 || invalid.length > 0) {
+    missing.sort((a, b) => a.localeCompare(b));
+    extra.sort((a, b) => a.localeCompare(b));
+    invalid.sort((a, b) => a.localeCompare(b));
     const details = [
-      ...(missing.length === 0 ? [] : [`missing: ${missing.sort().join(', ')}`]),
-      ...(extra.length === 0 ? [] : [`unexpected: ${extra.sort().join(', ')}`]),
-      ...(invalid.length === 0 ? [] : [`invalid: ${invalid.sort().join(', ')}`]),
+      ...(missing.length === 0 ? [] : [`missing: ${missing.join(', ')}`]),
+      ...(extra.length === 0 ? [] : [`unexpected: ${extra.join(', ')}`]),
+      ...(invalid.length === 0 ? [] : [`invalid: ${invalid.join(', ')}`]),
     ];
     throw new TypeError(`defineProtocol: codecs must exactly match reachable protocol types (${details.join('; ')}).`);
   }

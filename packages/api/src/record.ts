@@ -557,8 +557,6 @@ export class Record<T = unknown> implements RecordModel {
     if (Object.hasOwn(params, 'dataFormat')) {
       throw new TypeError('Record.update: dataFormat cannot be changed through a record handle.');
     }
-    const codecBinding = getRecordCodecBinding(this);
-
     // if there is a parentId, we remove it from the descriptor and set a parentContextId
     const { parentId, ...descriptor } = this._recordsWriteDescriptor;
     const parentContextId = parentId ? this._contextId.split('/').slice(0, -1).join('/') : undefined;
@@ -587,21 +585,7 @@ export class Record<T = unknown> implements RecordModel {
       delete updateMessage.tags;
     }
 
-    let dataBlob: Blob | undefined;
-    if (data !== undefined) {
-      // If `data` is being updated then `dataCid` and `dataSize` must be undefined and the `data`
-      // value must be converted to a Blob and later passed as a top-level property to
-      // `agent.processDwnRequest()`.
-      delete updateMessage.dataCid;
-      delete updateMessage.dataSize;
-      if (codecBinding === undefined) {
-        ({ dataBlob } = dataToBlob(data, updateMessage.dataFormat));
-      } else {
-        const encoded = await encodeRecordValue(codecBinding.codec, data, codecBinding.dataFormats);
-        dataBlob = encoded.data;
-        updateMessage.dataFormat = encoded.dataFormat;
-      }
-    }
+    const dataBlob = await this.encodeUpdateData(data, updateMessage);
 
     // Throw an error if an attempt is made to modify immutable properties.
     // Note: `data` and `timestamp` have already been handled.
@@ -672,6 +656,27 @@ export class Record<T = unknown> implements RecordModel {
     this._rawMessageDirty = true; // Force rawMessage cache rebuild.
 
     return this;
+  }
+
+  /** Encode replacement data and remove descriptor fields recomputed by RecordsWrite. */
+  private async encodeUpdateData(
+    data: T | undefined,
+    updateMessage: DwnMessageParams[DwnInterface.RecordsWrite],
+  ): Promise<Blob | undefined> {
+    if (data === undefined) {
+      return undefined;
+    }
+
+    delete updateMessage.dataCid;
+    delete updateMessage.dataSize;
+    const codecBinding = getRecordCodecBinding(this);
+    if (codecBinding === undefined) {
+      return dataToBlob(data, updateMessage.dataFormat).dataBlob;
+    }
+
+    const encoded = await encodeRecordValue(codecBinding.codec, data, codecBinding.dataFormats);
+    updateMessage.dataFormat = encoded.dataFormat;
+    return encoded.data;
   }
 
   /**

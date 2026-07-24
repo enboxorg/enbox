@@ -178,7 +178,7 @@ describe('Record.patch()', () => {
     });
 
     await expect(record!.patch({ title: 'v2' }))
-      .rejects.toThrow('patch() requires the record\'s current data to be a JSON object');
+      .rejects.toThrow('patch() requires the record\'s current value to be a plain object');
   });
 
   it('should throw when patching a deleted record', async () => {

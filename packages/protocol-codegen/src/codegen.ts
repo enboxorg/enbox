@@ -85,8 +85,10 @@ export async function generateProtocolModule(
   const unknownTypeNames = [...reachableTypeNames]
     .filter((typeName: string): boolean => definition.types[typeName] === undefined);
   if (unknownTypeNames.length > 0) {
+    unknownTypeNames.sort((a, b) => a.localeCompare(b));
     throw new TypeError(
-      `Protocol structure references types missing from the definition: ${unknownTypeNames.sort().join(', ')}`,
+      `Protocol structure references types missing from the definition: ` +
+      `${unknownTypeNames.join(', ')}`,
     );
   }
 
@@ -114,49 +116,27 @@ export async function generateProtocolModule(
       generateCodecExpression(typeName, pascalCase(typeName) + 'Data', type),
     ]);
 
-  // Build the full output
-  const sections: string[] = [];
-
-  if (banner !== '') {
-    sections.push(banner);
-  }
-
-  sections.push(
+  const sections = [
+    ...(banner === '' ? [] : [banner]),
     `import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';\n`,
     `import { defineProtocol, recordCodecs } from '@enbox/api';\n`,
-  );
-
-  // Type blocks
-  sections.push(
     '// ---------------------------------------------------------------------------',
     '// Data types',
     '// ---------------------------------------------------------------------------\n',
     typeBlocks.join('\n'),
-  );
-
-  // Protocol definition
-  sections.push(
     '// ---------------------------------------------------------------------------',
     '// Protocol definition',
     '// ---------------------------------------------------------------------------\n',
     `export const ${protocolName}Definition = ${formatTypeScriptValue(definition)} as const satisfies ProtocolDefinition;\n`,
-  );
-
-  // Runtime codecs
-  sections.push(
     '// ---------------------------------------------------------------------------',
     '// Runtime codecs',
     '// ---------------------------------------------------------------------------\n',
     `export const ${protocolName}Codecs = ${formatObjectEntries(codecEntries)} as const;\n`,
-  );
-
-  // Typed protocol
-  sections.push(
     '// ---------------------------------------------------------------------------',
     '// Typed protocol',
     '// ---------------------------------------------------------------------------\n',
     `export const ${protocolName}Protocol = defineProtocol(${protocolName}Definition, ${protocolName}Codecs);`,
-  );
+  ];
 
   const code = sections.join('\n') + '\n';
 
