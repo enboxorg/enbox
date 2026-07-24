@@ -10,7 +10,7 @@
 
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
-import { defineProtocol } from '@enbox/api';
+import { defineProtocol, recordCodecs } from '@enbox/api';
 
 // ---------------------------------------------------------------------------
 // Data types
@@ -48,18 +48,6 @@ export type NotificationData = {
   enabled: boolean;
   quietHoursStart?: string;
   quietHoursEnd?: string;
-};
-
-// ---------------------------------------------------------------------------
-// Schema map
-// ---------------------------------------------------------------------------
-
-/** Maps protocol type names to their TypeScript data shapes. */
-export type PreferencesSchemaMap = {
-  theme: ThemeData;
-  locale: LocaleData;
-  privacy: PrivacyData;
-  notification: NotificationData;
 };
 
 // ---------------------------------------------------------------------------
@@ -119,5 +107,10 @@ export const PreferencesDefinition = {
 /** Typed Preferences protocol for use with `dwn.using()`. */
 export const PreferencesProtocol = defineProtocol(
   PreferencesDefinition,
-  {} as PreferencesSchemaMap,
+  {
+    theme        : recordCodecs.json<ThemeData>(),
+    locale       : recordCodecs.json<LocaleData>(),
+    privacy      : recordCodecs.json<PrivacyData>(),
+    notification : recordCodecs.json<NotificationData>(),
+  },
 );

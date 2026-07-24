@@ -10,6 +10,7 @@
 export {
   Enbox,
   defineProtocol,
+  recordCodecs,
 } from '@enbox/api';
 
 export type {
@@ -18,6 +19,9 @@ export type {
   EnboxConnectResult,
   EnboxParams,
   EnboxSessionParams,
+  EncodedRecordData,
+  RecordCodec,
+  RecordCodecValue,
 } from '@enbox/api';
 
 export {

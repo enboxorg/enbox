@@ -10,7 +10,7 @@
 
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
-import { defineProtocol } from '@enbox/api';
+import { defineProtocol, recordCodecs } from '@enbox/api';
 
 // ---------------------------------------------------------------------------
 // Data types
@@ -43,19 +43,6 @@ export type LinkData = {
 /** Data shape for a private note (visible only to friends). */
 export type PrivateNoteData = {
   content: string;
-};
-
-// ---------------------------------------------------------------------------
-// Schema map
-// ---------------------------------------------------------------------------
-
-/** Maps protocol type names to their TypeScript data shapes. */
-export type ProfileSchemaMap = {
-  profile: ProfileData;
-  avatar: AvatarData;
-  hero: HeroData;
-  link: LinkData;
-  privateNote: PrivateNoteData;
 };
 
 // ---------------------------------------------------------------------------
@@ -130,5 +117,11 @@ export const ProfileDefinition = {
 /** Typed Profile protocol for use with `dwn.using()`. */
 export const ProfileProtocol = defineProtocol(
   ProfileDefinition,
-  {} as ProfileSchemaMap,
+  {
+    profile     : recordCodecs.json<ProfileData>(),
+    avatar      : recordCodecs.blob(),
+    hero        : recordCodecs.blob(),
+    link        : recordCodecs.json<LinkData>(),
+    privateNote : recordCodecs.json<PrivateNoteData>(),
+  },
 );

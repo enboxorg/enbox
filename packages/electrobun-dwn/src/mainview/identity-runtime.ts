@@ -1,6 +1,5 @@
 import type { DidResolutionLike } from './utils/identity-helpers.js';
 import type { Record as EnboxRecord } from '@enbox/api';
-import type { ProfileSchemaMap } from '@enbox/protocols';
 import type { AuthState, IdentityInfo, PortableIdentity } from '@enbox/auth';
 
 import { AuthManager } from '@enbox/auth';
@@ -613,23 +612,23 @@ class IdentityRuntimeController implements IdentityRuntime {
       };
     }
 
-    const profileData = await profileRecord.data.json();
+    const profileData = await profileRecord.value();
     const profileContextId = profileRecord.contextId;
     const avatarResult = profileContextId
-      ? await typed.records.query('profile/avatar', { filter: { contextId: profileContextId } })
+      ? await typed.records.query('profile/avatar', { within: profileContextId })
       : { records: [] };
     const heroResult = profileContextId
-      ? await typed.records.query('profile/hero', { filter: { contextId: profileContextId } })
+      ? await typed.records.query('profile/hero', { within: profileContextId })
       : { records: [] };
     const linkResult = profileContextId
-      ? await typed.records.query('profile/link', { filter: { contextId: profileContextId } })
+      ? await typed.records.query('profile/link', { within: profileContextId })
       : { records: [] };
     const avatarRecord = avatarResult.records[0];
     const heroRecord = heroResult.records[0];
 
     const links = await Promise.all(
       linkResult.records.map(async (record) => {
-        const data = await record.data.json();
+        const data = await record.value();
 
         return {
           id        : record.id,
@@ -666,14 +665,14 @@ class IdentityRuntimeController implements IdentityRuntime {
       avatar: avatarRecord
         ? {
           recordId   : avatarRecord.id,
-          blob       : await avatarRecord.data.blob(),
+          blob       : await avatarRecord.value(),
           dataFormat : avatarRecord.dataFormat,
         }
         : undefined,
       hero: heroRecord
         ? {
           recordId   : heroRecord.id,
-          blob       : await heroRecord.data.blob(),
+          blob       : await heroRecord.value(),
           dataFormat : heroRecord.dataFormat,
         }
         : undefined,
@@ -714,12 +713,8 @@ class IdentityRuntimeController implements IdentityRuntime {
     }
 
     const profileContextId = profileRecord.contextId;
-    const { records: avatarRecords } = await typed.records.query('profile/avatar', {
-      filter: { contextId: profileContextId },
-    });
-    const { records: heroRecords } = await typed.records.query('profile/hero', {
-      filter: { contextId: profileContextId },
-    });
+    const { records: avatarRecords } = await typed.records.query('profile/avatar', { within: profileContextId });
+    const { records: heroRecords } = await typed.records.query('profile/hero', { within: profileContextId });
     const existingAvatar = avatarRecords[0];
     const existingHero = heroRecords[0];
 
@@ -740,9 +735,7 @@ class IdentityRuntimeController implements IdentityRuntime {
       path            : 'profile/hero',
     });
 
-    const { records: existingLinks } = await typed.records.query('profile/link', {
-      filter: { contextId: profileContextId },
-    });
+    const { records: existingLinks } = await typed.records.query('profile/link', { within: profileContextId });
     const existingLinksById = new Map(existingLinks.map((record) => [record.id, record]));
     const retainedLinkIds = new Set<string>();
 
@@ -1066,7 +1059,7 @@ class IdentityRuntimeController implements IdentityRuntime {
     file?: Blob;
     existingRecord?: EnboxRecord<Blob>;
     parentContextId: string;
-    typed: TypedEnbox<typeof ProfileDefinition, ProfileSchemaMap>;
+    typed: TypedEnbox<typeof ProfileDefinition, typeof ProfileProtocol.codecs>;
     path: 'profile/avatar' | 'profile/hero';
   }): Promise<void> {
     if (action === 'keep') {
@@ -1086,16 +1079,17 @@ class IdentityRuntimeController implements IdentityRuntime {
       return;
     }
 
-    const dataFormat = file.type || existingRecord?.dataFormat || undefined;
+    const data = file.type === '' && existingRecord !== undefined
+      ? new Blob([file], { type: existingRecord.dataFormat })
+      : file;
     if (existingRecord) {
-      await existingRecord.update({ data: file, dataFormat });
+      await existingRecord.update({ data });
       return;
     }
 
     await typed.records.create(path, {
-      data: file,
+      data,
       parentContextId,
-      dataFormat,
     });
   }
 

@@ -20,6 +20,7 @@ import { DwnInterface, EnboxUserAgent } from '@enbox/agent';
 
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
+import { recordCodecs } from '../src/record-codec.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
@@ -60,13 +61,13 @@ const chatDefinitionTemplate = {
 
 type ChatDefinition = typeof chatDefinitionTemplate;
 
-type ChatSchemaMap = {
-  admin: { name: string };
-  thread: { title: string };
-  participant: { name: string; role?: string };
-  chat: string;
-  settings: { theme: string };
-  meta: { note: string };
+const chatCodecs = {
+  admin       : recordCodecs.json<{ name: string }>(),
+  thread      : recordCodecs.json<{ title: string }>(),
+  participant : recordCodecs.json<{ name: string; role?: string }>(),
+  chat        : recordCodecs.text(),
+  settings    : recordCodecs.json<{ theme: string }>(),
+  meta        : recordCodecs.json<{ note: string }>(),
 };
 
 /** Returns a fresh definition with a unique protocol URI so tests never share protocol state. */
@@ -303,7 +304,7 @@ describe('audience key delivery propagation', () => {
   describe('TypedEnbox records.create() and Record.update()', () => {
     it('should forward recipientRolePublicKey on typed create', async () => {
       const definition = makeChatDefinition();
-      const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {} as ChatSchemaMap));
+      const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, chatCodecs));
 
       const { status: configureStatus } = await typed.configure();
       expect(configureStatus.code).toBe(202);

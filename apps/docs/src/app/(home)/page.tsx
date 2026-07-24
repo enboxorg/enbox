@@ -298,10 +298,10 @@ export default function HomePage() {
       >
         <div className="w-full" style={{ maxWidth: '720px' }}>
           <CodeBlock language="ts" filename="example.ts">
-{`import { Enbox, defineProtocol } from '@enbox/api';
+{`import { Enbox, defineProtocol, recordCodecs } from '@enbox/api';
 
 // Define a typed protocol
-const Notes = defineProtocol({
+const NotesDefinition = {
   protocol:  'https://example.com/notes',
   published: true,
   types: {
@@ -311,6 +311,10 @@ const Notes = defineProtocol({
     },
   },
   structure: { note: {} },
+} as const;
+
+const Notes = defineProtocol(NotesDefinition, {
+  note: recordCodecs.json<{ title: string; body: string }>(),
 });
 
 // Connect and use the protocol
@@ -323,7 +327,7 @@ const record = await notes.records.create('note', {
 });
 
 // Read
-const data = await record.data.json();
+const data = await record.value();
 
 // Update
 await record.update({

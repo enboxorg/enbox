@@ -51,7 +51,7 @@ Browser apps can import `@enbox/api` directly, but most apps should use
 `@enbox/browser` because it re-exports the API and adds browser connect helpers:
 
 ```ts
-import { BrowserConnectHandler, Enbox, defineProtocol } from '@enbox/browser';
+import { BrowserConnectHandler, Enbox, defineProtocol, recordCodecs } from '@enbox/browser';
 ```
 
 The `@enbox/api` root export also has a browser condition for bundlers that
@@ -60,10 +60,10 @@ service-worker and storage details.
 
 ### defineProtocol
 
-`defineProtocol()` creates a typed protocol definition that carries compile-time type metadata:
+`defineProtocol()` pairs a protocol definition with the runtime codec for each record type:
 
 ```ts
-import { defineProtocol } from '@enbox/api';
+import { defineProtocol, recordCodecs } from '@enbox/api';
 
 interface TaskData {
   title: string;
@@ -86,12 +86,12 @@ const TaskProtocol = defineProtocol({
       },
     },
   },
-}, {} as {
-  task: TaskData;
+}, {
+  task: recordCodecs.json<TaskData>(),
 });
 ```
 
-The second argument is a **phantom schema map** — it exists only at compile time to map protocol type names to TypeScript interfaces. The runtime value (`{}`) is ignored.
+The same codec encodes writes and decodes `record.value()`. Protocol declarations therefore carry their runtime behavior and TypeScript value types in one place.
 
 ### TypedEnbox
 
@@ -101,7 +101,7 @@ The second argument is a **phantom schema map** — it exists only at compile ti
 const tasks = enbox.using(TaskProtocol);
 ```
 
-Instances are **cached by protocol URI** — calling `using()` multiple times with the same protocol returns the same instance.
+Instances are cached by typed-protocol object identity — calling `using()` repeatedly with the same exported protocol constant returns the same instance.
 
 `TypedEnbox` **auto-configures** the protocol on the first record operation — it queries the local DWN for an existing installation and installs one if needed. You can start using records immediately without any setup step.
 
@@ -160,7 +160,6 @@ Create options:
 | `protocolRole` | `string?` | Role for permission-scoped writes |
 | `tags` | `Record<string, ...>?` | Indexed key-value metadata |
 | `store` | `boolean?` | Persist locally (default `true`) |
-| `dataFormat` | `string?` | MIME type override |
 
 #### query
 
@@ -168,7 +167,7 @@ Create options:
 const page = await tasks.records.query('task');
 
 for (const r of page.records) {
-  const data = await r.data.json(); // TaskData
+  const data = await r.value(); // TaskData
   console.log(data.title, data.done);
 }
 ```
@@ -272,7 +271,7 @@ if (record === undefined) {
   throw new Error('Task not found');
 }
 
-const data = await record.data.json(); // TaskData
+const data = await record.value(); // TaskData
 ```
 
 Read from a remote DWN:
@@ -310,7 +309,7 @@ hatch.
 ### Data accessors
 
 ```ts
-const task = await record.data.json();    // Promise<TaskData>
+const task = await record.value();        // Promise<TaskData>
 const raw  = await record.data.text();    // Promise<string>
 const blob = await record.data.blob();    // Promise<Blob>
 const bytes = await record.data.bytes();  // Promise<Uint8Array>
@@ -440,9 +439,9 @@ const NotebookProtocol = defineProtocol({
       page: {},
     },
   },
-}, {} as {
-  notebook: { name: string };
-  page: { title: string; body: string };
+}, {
+  notebook: recordCodecs.json<{ name: string }>(),
+  page: recordCodecs.json<{ title: string; body: string }>(),
 });
 
 const notebooks = enbox.using(NotebookProtocol);
@@ -460,7 +459,7 @@ const page = await notebooks.records.create('notebook/page', {
 
 // Query children of a specific parent
 const { records: pages } = await notebooks.records.query('notebook/page', {
-  filter: { contextId: notebook.contextId },
+  within: notebook.contextId,
 });
 ```
 

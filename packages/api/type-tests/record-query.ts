@@ -1,7 +1,7 @@
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { RecordQuery, RecordView, TypedEnbox } from '@enbox/api';
+import type { RecordCodecValue, RecordQuery, RecordView, TypedEnbox } from '@enbox/api';
 
-import { defineProtocol } from '@enbox/api';
+import { defineProtocol, recordCodecs } from '@enbox/api';
 
 const QueryDefinition = {
   protocol  : 'https://example.com/protocols/query-types',
@@ -51,17 +51,19 @@ const QueryDefinition = {
     },
   },
 } as const satisfies ProtocolDefinition;
-void QueryDefinition;
 
-type QuerySchemaMap = {
-  note: { title: string };
-  comment: string;
-  attachment: Blob;
-  arrayTagged: { value: string };
-  flexible: { value: string };
-};
+const QueryProtocol = defineProtocol(QueryDefinition, {
+  arrayTagged : recordCodecs.json<{ value: string }>(),
+  attachment  : recordCodecs.blob('image/png'),
+  comment     : recordCodecs.text(),
+  flexible    : recordCodecs.json<{ value: string }>(),
+  note        : recordCodecs.json<{ title: string }>(),
+});
 
-declare const typed: TypedEnbox<typeof QueryDefinition, QuerySchemaMap>;
+type QueryCodecs = typeof QueryProtocol.codecs;
+void QueryProtocol;
+
+declare const typed: TypedEnbox<typeof QueryDefinition, QueryCodecs>;
 declare const authors: string[];
 
 const countResponse: Promise<number> = typed.records.count('note');
@@ -82,12 +84,15 @@ const reusableQuery = {
 
 void typed.records.query('note', reusableQuery);
 void typed.records.count('note', reusableQuery);
-const observedNotes: Promise<RecordView<QuerySchemaMap['note']>> = typed.records.observe('note', {
+const observedNotes: Promise<RecordView<RecordCodecValue<QueryCodecs['note']>>> = typed.records.observe('note', {
   ...reusableQuery,
   pagination: { limit: 20 },
 });
 void observedNotes;
-void typed.records.query('note/comment', { filter: { tags: { kind: { startsWith: 'reply-' } } } });
+void typed.records.query('note/comment', {
+  filter : { tags: { kind: { startsWith: 'reply-' } } },
+  within : 'note-context',
+});
 void typed.records.query('flexible', { filter: { tags: { known: 'value' } } });
 void typed.records.query('note', { filter: { author: authors } });
 
@@ -139,7 +144,26 @@ void typed.records.query('attachment', { filter: { tags: { status: 'published' }
 // @ts-expect-error data formats are derived for the selected path.
 void typed.records.query('attachment', { filter: { dataFormat: 'image/jpeg' } });
 
-// @ts-expect-error query scope uses the DWN contextId field directly.
+void typed.records.query('note/comment', { within: 'notecontext' });
+void typed.records.read('note/comment', {
+  filter : { recordId: 'comment-id' },
+  within : 'notecontext',
+});
+void typed.records.delete('note/comment', {
+  recordId : 'comment-id',
+  within   : 'notecontext',
+});
+
+// @ts-expect-error contextId is a raw DWN filter; typed queries use within.
+void typed.records.query('note/comment', { filter: { contextId: 'root/note' }, within: 'root/note' });
+
+// @ts-expect-error raw contextId filters are not exposed by typed reads.
+void typed.records.read('note/comment', { filter: { contextId: 'root/note', recordId: 'comment-id' } });
+
+// @ts-expect-error typed deletes use within instead of the raw contextId grant hint.
+void typed.records.delete('note/comment', { contextId: 'root/note', recordId: 'comment-id' });
+
+// @ts-expect-error parentContextId creates a child; typed queries use within.
 void typed.records.query('note/comment', { filter: { parentContextId: 'root/note' } });
 
 // @ts-expect-error parentId is a raw structural edge, not a typed context selector.
@@ -158,10 +182,12 @@ const InlineProtocol = defineProtocol({
       },
     },
   },
+}, {
+  item: recordCodecs.json<{ id: string }>(),
 });
 void InlineProtocol;
 
-declare const inlineTyped: TypedEnbox<typeof InlineProtocol.definition, { item: { id: string } }>;
+declare const inlineTyped: TypedEnbox<typeof InlineProtocol.definition, typeof InlineProtocol.codecs>;
 void inlineTyped.records.query('item', { filter: { tags: { state: 'open' } } });
 
 // @ts-expect-error const generic inference preserves inline tag enums.

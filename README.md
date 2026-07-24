@@ -49,7 +49,7 @@ bun add @enbox/api
 ```
 
 ```ts
-import { Enbox, defineProtocol } from '@enbox/api';
+import { Enbox, defineProtocol, recordCodecs } from '@enbox/api';
 
 const { enbox, session } = await Enbox.connect({
   password      : userPassword,
@@ -72,8 +72,8 @@ const BookmarkProtocol = defineProtocol({
       $tags: { category: { type: 'string' } },
     },
   },
-} as const, {} as {
-  bookmark: { url: string; title: string; note?: string };
+} as const, {
+  bookmark: recordCodecs.json<{ url: string; title: string; note?: string }>(),
 });
 
 const bookmarks = enbox.using(BookmarkProtocol);

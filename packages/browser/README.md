@@ -41,7 +41,7 @@ API from `@enbox/api`, auth/session helpers from `@enbox/auth`, and
 browser-specific connect utilities.
 
 ```ts
-import { BrowserConnectHandler, Enbox, defineProtocol } from '@enbox/browser';
+import { BrowserConnectHandler, Enbox, defineProtocol, recordCodecs } from '@enbox/browser';
 
 const { enbox } = await Enbox.connect({
   connectHandler : BrowserConnectHandler({ appName: 'Notes' }),

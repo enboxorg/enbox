@@ -62,9 +62,10 @@ export interface RecordView<T> {
 type CompiledRecordQuery = ReturnType<typeof compileRecordQuery>;
 
 /** @internal Dependencies supplied by {@link TypedEnbox} for one view. */
-type RecordViewOptions = {
+type RecordViewOptions<T> = {
   definition: ProtocolDefinition;
   dwn: DwnApi;
+  prepareRecord: (record: Record) => Record<T>;
   query: CompiledRecordQuery;
   signal?: AbortSignal;
   sync?: SyncEngine;
@@ -80,7 +81,7 @@ type LinkConnectivityChangeEvent = Extract<SyncEvent, { type: 'link:connectivity
 type PullCurrentnessChangeEvent = Extract<SyncEvent, { type: 'pull:currentness-change' }>;
 
 /** @internal Create and open one local observed records view. */
-export async function createRecordView<T>(options: RecordViewOptions): Promise<RecordView<T>> {
+export async function createRecordView<T>(options: RecordViewOptions<T>): Promise<RecordView<T>> {
   options.signal?.throwIfAborted();
   const view = new ObservedRecordView<T>(options);
   await view.open();
@@ -92,6 +93,7 @@ class ObservedRecordView<T> implements RecordView<T> {
   private readonly _definition: ProtocolDefinition;
   private readonly _dwn: DwnApi;
   private readonly _listeners = new Set<RecordViewListener<T>>();
+  private readonly _prepareRecord: (record: Record) => Record<T>;
   private readonly _query: CompiledRecordQuery;
   private readonly _signal?: AbortSignal;
   private readonly _sync?: SyncEngine;
@@ -116,9 +118,10 @@ class ObservedRecordView<T> implements RecordView<T> {
     void this.close().catch((): void => {});
   };
 
-  public constructor(options: RecordViewOptions) {
+  public constructor(options: RecordViewOptions<T>) {
     this._definition = options.definition;
     this._dwn = options.dwn;
+    this._prepareRecord = options.prepareRecord;
     this._query = options.query;
     this._signal = options.signal;
     this._sync = options.sync;
@@ -339,7 +342,7 @@ class ObservedRecordView<T> implements RecordView<T> {
     result: RecordsQueryResponse,
     currentness: RecordViewCurrentness,
   ): void {
-    const records = result.records as Record<T>[];
+    const records = result.records.map(this._prepareRecord);
     const hasMore = result.cursor !== undefined;
     if (currentness.state === 'error') {
       this.publish(immutableSnapshot({

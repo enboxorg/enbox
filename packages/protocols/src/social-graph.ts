@@ -10,7 +10,7 @@
 
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
-import { defineProtocol } from '@enbox/api';
+import { defineProtocol, recordCodecs } from '@enbox/api';
 
 // ---------------------------------------------------------------------------
 // Data types
@@ -40,18 +40,6 @@ export type GroupData = {
 export type MemberData = {
   did: string;
   alias?: string;
-};
-
-// ---------------------------------------------------------------------------
-// Schema map
-// ---------------------------------------------------------------------------
-
-/** Maps protocol type names to their TypeScript data shapes. */
-export type SocialGraphSchemaMap = {
-  friend: FriendData;
-  block: BlockData;
-  group: GroupData;
-  member: MemberData;
 };
 
 // ---------------------------------------------------------------------------
@@ -127,5 +115,10 @@ export const SocialGraphDefinition = {
 /** Typed Social Graph protocol for use with `dwn.using()`. */
 export const SocialGraphProtocol = defineProtocol(
   SocialGraphDefinition,
-  {} as SocialGraphSchemaMap,
+  {
+    friend : recordCodecs.json<FriendData>(),
+    block  : recordCodecs.json<BlockData>(),
+    group  : recordCodecs.json<GroupData>(),
+    member : recordCodecs.json<MemberData>(),
+  },
 );

@@ -35,6 +35,7 @@ export * from './permission-request.js';
 export * from './protocol.js';
 export * from './protocol-types.js';
 export * from './read-only-record.js';
+export { recordCodecs, type EncodedRecordData, type RecordCodec, type RecordCodecValue } from './record-codec.js';
 export type { RecordFilter, RecordQuery } from './record-query.js';
 export type { RecordView, RecordViewListener, RecordViewSnapshot, RecordViewState } from './record-view.js';
 export * from './record.js';
@@ -42,5 +43,3 @@ export * from './typed-enbox.js';
 export * from './vc-api.js';
 
 export { AudienceDecryptError, type AudienceDecryptFailureCause } from '@enbox/agent';
-
-export * as utils from './utils.js';

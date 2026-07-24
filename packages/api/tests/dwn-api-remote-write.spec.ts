@@ -17,6 +17,7 @@ import photosProtocolDefinition from './fixtures/protocol-definitions/photos.jso
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { Enbox } from '../src/enbox.js';
+import { recordCodecs } from '../src/record-codec.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
@@ -224,10 +225,15 @@ describe('cross-tenant writes (#973)', () => {
 
       // The photos fixture types carry dataFormats: ['text/plain'], so the
       // typed payload for `album` is a plain string.
-      type PhotosSchemaMap = { album: string };
       const typedBob = new TypedEnbox(
         dwnBob,
-        defineProtocol(protocolDefinition as ProtocolDefinition, {} as PhotosSchemaMap),
+        defineProtocol(protocolDefinition as ProtocolDefinition, {
+          album       : recordCodecs.text(),
+          friend      : recordCodecs.text(),
+          participant : recordCodecs.text(),
+          photo       : recordCodecs.text(),
+          updater     : recordCodecs.text(),
+        }),
       );
 
       const sendSpy = sinon.spy(testHarness.agent, 'sendDwnRequest');

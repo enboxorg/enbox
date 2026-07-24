@@ -8,6 +8,7 @@ import { describe, expect, it } from 'bun:test';
 
 import { defineProtocol } from '../src/define-protocol.js';
 import { Enbox } from '../src/enbox.js';
+import { recordCodecs } from '../src/record-codec.js';
 
 const ViewIntegrationDefinition = {
   protocol  : 'https://example.com/protocols/record-view-integration',
@@ -27,13 +28,11 @@ const ViewIntegrationDefinition = {
   },
 } as const satisfies ProtocolDefinition;
 
-type ViewIntegrationSchemaMap = {
-  note: { title: string };
-};
+type NoteData = { title: string };
 
 const ViewIntegrationProtocol = defineProtocol(
   ViewIntegrationDefinition,
-  {} as ViewIntegrationSchemaMap,
+  { note: recordCodecs.json<NoteData>() },
 );
 
 async function waitFor(predicate: () => boolean): Promise<void> {
@@ -54,7 +53,7 @@ describe('RecordView local DWN integration', () => {
       testDataLocation : '__TESTDATA__/record-view-integration',
     });
     let auth: AuthManager | undefined;
-    let view: RecordView<ViewIntegrationSchemaMap['note']> | undefined;
+    let view: RecordView<NoteData> | undefined;
 
     try {
       await platform.clearStorage();
@@ -90,7 +89,7 @@ describe('RecordView local DWN integration', () => {
       });
       await waitFor(() => view?.getSnapshot().records.some((record) => record.id === created.id) === true);
       const observed = view.getSnapshot().records[0];
-      expect(await observed.data.json()).toEqual({ title: 'Created' });
+      expect(await observed.value()).toEqual({ title: 'Created' });
 
       await created.update({ tags: { status: 'published' } });
       await waitFor(() => view?.getSnapshot().records.length === 0);

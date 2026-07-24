@@ -1,7 +1,7 @@
 {
   "name": "@enbox/protocol-codegen",
   "version": "0.1.2",
-  "description": "CLI tool to generate TypeScript types from DWN protocol definitions and JSON Schemas",
+  "description": "CLI tool to generate typed modules from DWN protocol definitions and JSON Schemas",
   "type": "module",
   "main": "./dist/esm/index.js",
   "module": "./dist/esm/index.js",
@@ -53,6 +53,8 @@
     "json-schema-to-typescript": "15.0.0"
   },
   "devDependencies": {
+    "@enbox/api": "workspace:*",
+    "@enbox/dwn-sdk-js": "workspace:*",
     "@types/json-schema": "7.0.15",
     "@typescript-eslint/eslint-plugin": "8.32.1",
     "@typescript-eslint/parser": "8.32.1",

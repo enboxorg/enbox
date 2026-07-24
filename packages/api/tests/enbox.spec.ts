@@ -14,6 +14,7 @@ import {
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnResponseError as DirectDwnResponseError } from '../src/dwn-response-error.js';
 import { Enbox } from '../src/enbox.js';
+import { recordCodecs } from '../src/record-codec.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
 import { AudienceDecryptError, DwnResponseError } from '../src/index.js';
 
@@ -138,9 +139,9 @@ describe('Enbox API', () => {
         },
       } as const satisfies ProtocolDefinition;
 
-      type TestSchemaMap = { item: { name: string } };
-
-      const TestProtocol = defineProtocol(TestProtocolDef, {} as TestSchemaMap);
+      const TestProtocol = defineProtocol(TestProtocolDef, {
+        item: recordCodecs.json<{ name: string }>(),
+      });
 
       it('should return the same TypedEnbox instance for repeated calls with the same protocol', async () => {
         const identity = await testHarness.agent.identity.create({
@@ -173,8 +174,9 @@ describe('Enbox API', () => {
           structure: { thing: {} },
         } as const satisfies ProtocolDefinition;
 
-        type OtherSchemaMap = { thing: { value: number } };
-        const OtherProtocol = defineProtocol(OtherProtocolDef, {} as OtherSchemaMap);
+        const OtherProtocol = defineProtocol(OtherProtocolDef, {
+          thing: recordCodecs.json<{ value: number }>(),
+        });
 
         const identity = await testHarness.agent.identity.create({
           metadata  : { name: 'CacheTest2' },
@@ -192,6 +194,25 @@ describe('Enbox API', () => {
         expect(test).not.toBe(other);
         expect(test.protocol).toBe('https://example.com/protocols/test');
         expect(other.protocol).toBe('https://example.com/protocols/other');
+      });
+
+      it('should not alias distinct codec declarations that share one protocol URI', async () => {
+        const identity = await testHarness.agent.identity.create({
+          metadata  : { name: 'CodecIsolation' },
+          didMethod : 'jwk',
+        });
+        const enbox = new Enbox({
+          agent        : testHarness.agent,
+          connectedDid : identity.did.uri,
+        });
+        const firstProtocol = defineProtocol(TestProtocolDef, {
+          item: recordCodecs.json<{ name: string }>(),
+        });
+        const secondProtocol = defineProtocol(TestProtocolDef, {
+          item: recordCodecs.json<{ label: string }>(),
+        });
+
+        expect(enbox.using(firstProtocol)).not.toBe(enbox.using(secondProtocol));
       });
 
       it('should cache per Enbox instance, not globally', async () => {
@@ -240,7 +261,9 @@ describe('Enbox API', () => {
           structure : { item: {} },
         } as const satisfies ProtocolDefinition;
 
-        const TestProtocol = defineProtocol(TestProtocolDef, {} as { item: unknown });
+        const TestProtocol = defineProtocol(TestProtocolDef, {
+          item: recordCodecs.json<unknown>(),
+        });
 
         // Cache a TypedEnbox instance.
         const before = enbox.using(TestProtocol);

@@ -4,7 +4,7 @@
  * `TypedEnbox` is the **primary developer interface** for interacting with
  * protocol-backed records. It auto-injects the protocol URI, protocolPath,
  * and schema into every operation, and provides compile-time path
- * autocompletion plus typed data payloads via the schema map.
+ * autocompletion plus typed application values via runtime codecs.
  *
  * Record-returning methods preserve the protocol payload type on the canonical
  * {@link Record} class so type information flows through reads, queries, and
@@ -23,7 +23,7 @@
  * });
  * // record is Record<ThreadData>
  *
- * const data = await record.data.json(); // ThreadData — no cast needed
+ * const data = await record.value(); // ThreadData — no cast needed
  *
  * // Query — protocol and protocolPath are auto-injected
  * const { records } = await social.records.query('thread');
@@ -32,20 +32,21 @@
  */
 
 import type { Protocol } from './protocol.js';
-
 import type { Record } from './record.js';
 import type { RecordView } from './record-view.js';
-
-import type { DataFormatAtPath, ProtocolPaths, SchemaMap, TypedProtocol, TypeNameAtPath } from './protocol-types.js';
 import type { DwnApi, ProtocolsConfigureResponse } from './dwn-api.js';
 import type { DwnPaginationCursor, DwnPublicKeyJwk, DwnResponseStatus, SyncEngine } from '@enbox/agent';
 import type { ProtocolDefinition, ProtocolType } from '@enbox/dwn-sdk-js';
+import type { ProtocolPaths, TypedProtocol, TypeNameAtPath } from './protocol-types.js';
+import type { RecordCodec, RecordCodecMap, RecordCodecValue } from './record-codec.js';
 import type { RecordFilter, RecordQuery } from './record-query.js';
 
 import { createRecordView } from './record-view.js';
 import { getTypeName } from '@enbox/dwn-sdk-js';
 import { requireDwnSuccess } from './dwn-response-error.js';
-import { compileRecordFilter, compileRecordQuery } from './record-query.js';
+import { assertTypedProtocolStructureSupported, collectProtocolPaths } from './protocol-paths.js';
+import { assertValidRecordWithin, compileRecordFilter, compileRecordQuery } from './record-query.js';
+import { bindRecordCodec, encodeRecordValue } from './record-codec.js';
 
 // ---------------------------------------------------------------------------
 // Helper types
@@ -54,14 +55,13 @@ import { compileRecordFilter, compileRecordQuery } from './record-query.js';
 /**
  * Resolves the TypeScript data type for a given protocol path.
  *
- * If the schema map contains a mapping for the type name at the given path,
- * that type is returned. Otherwise falls back to `unknown`.
+ * The value is inferred from the runtime codec declared for the type name at
+ * the given path.
  */
 export type DataForPath<
-  _D extends ProtocolDefinition,
-  M extends SchemaMap,
+  C extends RecordCodecMap,
   Path extends string,
-> = TypeNameAtPath<Path> extends keyof M ? M[TypeNameAtPath<Path>] : unknown;
+> = TypeNameAtPath<Path> extends keyof C ? RecordCodecValue<C[TypeNameAtPath<Path>]> : never;
 
 /** One page returned by a typed records query. */
 export type RecordPage<T = unknown> = {
@@ -88,11 +88,10 @@ type TypedEnboxOptions = {
 /**
  * Options for {@link TypedEnbox} `records.create()`.
  *
- * The `data` field is type-checked against the protocol's schema map for
- * the given path, providing compile-time safety for record payloads.
+ * The `data` field is type-checked against the protocol codec for the given
+ * path.
  *
- * @typeParam D - The protocol definition type.
- * @typeParam M - The schema map mapping type names to TypeScript types.
+ * @typeParam C - The protocol's runtime codec map.
  * @typeParam Path - The protocol path string literal.
  *
  * @example
@@ -105,12 +104,11 @@ type TypedEnboxOptions = {
  * ```
  */
 export type TypedCreateRequest<
-  D extends ProtocolDefinition,
-  M extends SchemaMap,
+  C extends RecordCodecMap,
   Path extends string,
 > = {
-  /** The data payload. Type-checked against the schema map for the given path. */
-  data: DataForPath<D, M, Path>;
+  /** The application value encoded by the codec for the given path. */
+  data: DataForPath<C, Path>;
 
   /**
    * Optional DID of a remote DWN tenant to write the record to.
@@ -249,14 +247,6 @@ export type TypedCreateRequest<
   squash?: true;
 
   /**
-   * The MIME type / data format for the record.
-   *
-   * If omitted, defaults to the first entry in the protocol type's
-   * `dataFormats` array (typically `'application/json'`).
-   */
-  dataFormat?: DataFormatAtPath<D, Path>;
-
-  /**
    * Key-value metadata tags to attach to the record.
    *
    * Tags are indexed by the DWN and can be used in query filters for
@@ -303,11 +293,12 @@ export type TypedReadRequest<
    * Filter to identify the record to read.
    *
    * The `protocol`, `protocolPath`, and `schema` fields are auto-injected.
-   * Typically you filter by `recordId` to read a specific record. Other
-   * fields from `RecordsFilter` (like `contextId` and `recipient`) are also
-   * available.
+   * Typically you filter by `recordId` to read a specific record.
    */
   filter: RecordFilter<D, Path>;
+
+  /** Context used to select the record and resolve context-scoped grants. */
+  within?: string;
 };
 
 /**
@@ -325,7 +316,7 @@ export type TypedDeleteRequest = {
    * Full context ID of the target record, used only to resolve a context-scoped
    * delegated delete grant. It is not included in the RecordsDelete message.
    */
-  contextId?: string;
+  within?: string;
 
   /**
    * A remote DWN DID to delete from.
@@ -461,24 +452,26 @@ export type VerifyInstalledResult = {
  * const record = await social.records.create('friend', {
  *   data: { did: 'did:example:alice', alias: 'Alice' },
  * });
- * const data = await record.data.json(); // FriendData — no cast
+ * const data = await record.value(); // FriendData — no cast
  *
  * const { records } = await social.records.query('friend', {
  *   filter: { tags: { did: 'did:example:alice' } },
  * });
  * for (const r of records) {
- *   const d = await r.data.json(); // FriendData
+ *   const d = await r.value(); // FriendData
  * }
  * ```
  */
 export class TypedEnbox<
   D extends ProtocolDefinition = ProtocolDefinition,
-  M extends SchemaMap = SchemaMap,
+  C extends RecordCodecMap = RecordCodecMap,
 > {
   /** @internal */
   private readonly _dwn: DwnApi;
   /** @internal */
   private readonly _definition: D;
+  /** @internal */
+  private readonly _codecs: C;
   /** @internal */
   private _configured: boolean = false;
   /** @internal */
@@ -486,7 +479,7 @@ export class TypedEnbox<
   /** @internal */
   private readonly _validPaths: Set<string>;
   /** @internal */
-  private _records?: TypedEnbox<D, M>['records'];
+  private _records?: TypedEnbox<D, C>['records'];
   /** @internal — cached result of the `hasEncryptedTypes` scan (definition is immutable). */
   private readonly _hasEncryptedTypes: boolean;
   /** @internal */
@@ -495,14 +488,16 @@ export class TypedEnbox<
   /**
    * @internal Create a new `TypedEnbox` instance. Use `enbox.using(protocol)` instead.
    * @param dwn - The underlying DWN API instance.
-   * @param protocol - The typed protocol containing the definition and schema map.
+   * @param protocol - The typed protocol containing the definition and codecs.
    * @param options - Optional session-owned lifecycle and sync resources.
    */
-  constructor(dwn: DwnApi, protocol: TypedProtocol<D, M>, options: TypedEnboxOptions = {}) {
+  constructor(dwn: DwnApi, protocol: TypedProtocol<D, C>, options: TypedEnboxOptions = {}) {
+    assertTypedProtocolStructureSupported(protocol.definition.structure);
     this._dwn = dwn;
     this._definition = protocol.definition;
+    this._codecs = protocol.codecs;
     this._options = options;
-    this._validPaths = collectPaths(this._definition.structure);
+    this._validPaths = collectProtocolPaths(this._definition.structure);
     this._hasEncryptedTypes = Object.values(this._definition.types)
       .some((type: ProtocolType) => type.encryptionRequired === true);
   }
@@ -767,6 +762,24 @@ export class TypedEnbox<
     }
   }
 
+  /** Resolve the codec assigned to one validated protocol path. */
+  private getCodec<Path extends ProtocolPaths<D> & string>(path: string): RecordCodec<DataForPath<C, Path>> {
+    const codec = this._codecs[getTypeName(path)];
+    if (codec === undefined) {
+      throw new Error(`TypedEnbox: protocol path '${path}' does not have a record codec.`);
+    }
+    return codec as RecordCodec<DataForPath<C, Path>>;
+  }
+
+  /** Bind a path codec to one canonical record returned by the raw DWN API. */
+  private bindCodec<Path extends ProtocolPaths<D> & string>(
+    path : string,
+    record : Record,
+  ): Record<DataForPath<C, Path>> {
+    const dataFormats = this._definition.types[getTypeName(path)]?.dataFormats;
+    return bindRecordCodec(record, this.getCodec<Path>(path), dataFormats);
+  }
+
   /**
    * Ensures the protocol is configured before performing record operations.
    *
@@ -898,10 +911,10 @@ export class TypedEnbox<
    * Every method auto-injects the `protocol`, `protocolPath`, and `schema`
    * from the protocol definition — you never need to specify them manually.
    * Path parameters provide **compile-time autocompletion** via
-   * `ProtocolPaths<D>`, and data types are resolved from the schema map.
+   * `ProtocolPaths<D>`, and data types are resolved from the protocol codecs.
    *
    * Record-returning methods use canonical {@link Record} instances carrying
-   * the resolved data type from the schema map.
+   * the resolved data type from the codec map.
    *
    * Available methods:
    * - {@link TypedEnbox.records.create | create(path, request)} — Create a new record
@@ -914,13 +927,13 @@ export class TypedEnbox<
   public get records(): {
     create: <Path extends ProtocolPaths<D> & string>(
       path: Path,
-      request: TypedCreateRequest<D, M, Path>,
-    ) => Promise<Record<DataForPath<D, M, Path>>>;
+      request: TypedCreateRequest<C, Path>,
+    ) => Promise<Record<DataForPath<C, Path>>>;
 
     query: <Path extends ProtocolPaths<D> & string>(
       path: Path,
       request?: RecordQuery<D, Path>,
-    ) => Promise<RecordPage<DataForPath<D, M, Path>>>;
+    ) => Promise<RecordPage<DataForPath<C, Path>>>;
 
     observe: <Path extends ProtocolPaths<D> & string>(
       path: Path,
@@ -928,7 +941,7 @@ export class TypedEnbox<
         from?: never;
         pagination: { limit: number; cursor?: DwnPaginationCursor };
       },
-    ) => Promise<RecordView<DataForPath<D, M, Path>>>;
+    ) => Promise<RecordView<DataForPath<C, Path>>>;
 
     count: <Path extends ProtocolPaths<D> & string>(
       path: Path,
@@ -938,7 +951,7 @@ export class TypedEnbox<
     read: <Path extends ProtocolPaths<D> & string>(
       path: Path,
       request: TypedReadRequest<D, Path>,
-    ) => Promise<Record<DataForPath<D, M, Path>> | undefined>;
+    ) => Promise<Record<DataForPath<C, Path>> | undefined>;
 
     delete: <Path extends ProtocolPaths<D> & string>(
       path: Path,
@@ -955,7 +968,7 @@ export class TypedEnbox<
        *
        * The `protocol`, `protocolPath`, and `schema` are auto-injected from
        * the protocol definition. The `data` field is type-checked against
-       * the schema map for the given path.
+       * the codec for the given path.
        *
        * @param path - The protocol path (e.g. `'notebook'`, `'notebook/page'`).
        *   Provides compile-time autocompletion for valid paths.
@@ -978,15 +991,17 @@ export class TypedEnbox<
        */
       create: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
-        request: TypedCreateRequest<D, M, Path>,
-      ): Promise<Record<DataForPath<D, M, Path>>> => {
+        request: TypedCreateRequest<C, Path>,
+      ): Promise<Record<DataForPath<C, Path>>> => {
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
         const typeName = getTypeName(normalizedPath);
         const typeEntry = this._definition.types[typeName];
 
+        const codec = this.getCodec<Path>(normalizedPath);
+        const encoded = await encodeRecordValue(codec, request.data, typeEntry?.dataFormats);
         const result = await this._dwn.records.write({
-          data                   : request.data,
+          data                   : encoded.data,
           from                   : request.from,
           store                  : request.store,
           parentContextId        : request.parentContextId,
@@ -1002,7 +1017,7 @@ export class TypedEnbox<
           protocol               : this._definition.protocol,
           protocolPath           : normalizedPath,
           ...(typeEntry?.schema === undefined ? {} : { schema: typeEntry.schema }),
-          dataFormat             : request.dataFormat ?? typeEntry?.dataFormats?.[0],
+          dataFormat             : encoded.dataFormat,
         });
 
         requireDwnSuccess('TypedEnbox.records.create', result);
@@ -1010,7 +1025,7 @@ export class TypedEnbox<
           throw new Error('TypedEnbox.records.create: DWN returned success without a record.');
         }
 
-        return result.record as Record<DataForPath<D, M, Path>>;
+        return this.bindCodec<Path>(normalizedPath, result.record);
       },
 
       /**
@@ -1033,11 +1048,11 @@ export class TypedEnbox<
        *
        * // Query pages under a specific notebook
        * const { records: pages } = await proto.records.query('notebook/page', {
-       *   filter: { contextId: notebook.contextId },
+       *   within: notebook.contextId,
        * });
        *
        * for (const page of pages) {
-       *   const data = await page.data.json(); // PageData
+       *   const data = await page.value(); // PageData
        * }
        *
        * // Paginated query
@@ -1050,7 +1065,7 @@ export class TypedEnbox<
       query: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
         request?: RecordQuery<D, Path>,
-      ): Promise<RecordPage<DataForPath<D, M, Path>>> => {
+      ): Promise<RecordPage<DataForPath<C, Path>>> => {
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
         const compiled = compileRecordQuery(this._definition, normalizedPath, request);
@@ -1058,7 +1073,7 @@ export class TypedEnbox<
         requireDwnSuccess('TypedEnbox.records.query', result);
 
         return {
-          records : result.records as Record<DataForPath<D, M, Path>>[],
+          records : result.records.map((record) => this.bindCodec<Path>(normalizedPath, record)),
           cursor  : result.cursor,
         };
       },
@@ -1077,10 +1092,10 @@ export class TypedEnbox<
           from?: never;
           pagination: { limit: number; cursor?: DwnPaginationCursor };
         },
-      ): Promise<RecordView<DataForPath<D, M, Path>>> => {
+      ): Promise<RecordView<DataForPath<C, Path>>> => {
         this._options.signal?.throwIfAborted();
         const normalizedPath = normalizePath(path);
-        if ((request as RecordQuery<D, Path> | undefined)?.from !== undefined) {
+        if (request.from !== undefined) {
           throw new TypeError('RecordView: remote queries are not supported; observe the connected tenant local replica.');
         }
         if (request?.pagination?.limit === undefined) {
@@ -1089,12 +1104,13 @@ export class TypedEnbox<
         const compiled = structuredClone(compileRecordQuery(this._definition, normalizedPath, request));
         await this._ensureReady(normalizedPath);
 
-        return createRecordView<DataForPath<D, M, Path>>({
-          definition : this._definition,
-          dwn        : this._dwn,
-          query      : compiled,
-          signal     : this._options.signal,
-          sync       : this._options.sync,
+        return createRecordView<DataForPath<C, Path>>({
+          definition    : this._definition,
+          dwn           : this._dwn,
+          prepareRecord : (record): Record<DataForPath<C, Path>> => this.bindCodec<Path>(normalizedPath, record),
+          query         : compiled,
+          signal        : this._options.signal,
+          sync          : this._options.sync,
         });
       },
 
@@ -1145,17 +1161,23 @@ export class TypedEnbox<
        *   throw new Error('Notebook not found');
        * }
        *
-       * const data = await record.data.json(); // NotebookData
+       * const data = await record.value(); // NotebookData
        * console.log(data.name);
        * ```
        */
       read: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
         request: TypedReadRequest<D, Path>,
-      ): Promise<Record<DataForPath<D, M, Path>> | undefined> => {
+      ): Promise<Record<DataForPath<C, Path>> | undefined> => {
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
-        const readFilter = compileRecordFilter(this._definition, normalizedPath, request.filter);
+        const readFilter = compileRecordFilter(
+          this._definition,
+          normalizedPath,
+          request.filter,
+          undefined,
+          request.within,
+        );
         const result = await this._dwn.records.read({
           from   : request.from,
           filter : readFilter,
@@ -1165,7 +1187,9 @@ export class TypedEnbox<
           return undefined;
         }
         requireDwnSuccess('TypedEnbox.records.read', result);
-        return result.record as Record<DataForPath<D, M, Path>> | undefined;
+        return result.record === undefined
+          ? undefined
+          : this.bindCodec<Path>(normalizedPath, result.record);
       },
 
       /**
@@ -1176,7 +1200,7 @@ export class TypedEnbox<
        *
        * @param path - The protocol path (used for permission scoping and
        *   path validation).
-       * @param request - Delete options. `recordId` is required; `contextId`
+       * @param request - Delete options. `recordId` is required; `within`
        *   scopes delegated grant resolution and `from` selects a remote DWN.
        * @returns A promise that resolves when the delete is accepted.
        *
@@ -1193,8 +1217,12 @@ export class TypedEnbox<
       ): Promise<void> => {
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
+        if (Object.hasOwn(request, 'contextId')) {
+          throw new TypeError('TypedDeleteRequest: use within instead of contextId.');
+        }
+        assertValidRecordWithin(normalizedPath, request.within, false);
         const result = await this._dwn.records.delete({
-          contextId    : request.contextId,
+          contextId    : request.within,
           from         : request.from,
           protocol     : this._definition.protocol,
           protocolPath : normalizedPath,
@@ -1271,9 +1299,7 @@ function hasKeyAgreementKey(node: globalThis.Record<string, unknown>): boolean {
  * Mirrors the injection walk performed at encrypted configure time
  * (`Protocols.deriveAndInjectPublicEncryptionKeys`): the protocol root
  * (reported as the empty string) and every structure path are covered,
- * `$`-prefixed keys are skipped, and `$ref` composition nodes are exempt —
- * their records are governed by the referenced protocol's own keys — while
- * their children (which belong to the composing protocol) are still checked.
+ * and `$`-prefixed keys are skipped.
  */
 function collectMissingKeyAgreementPaths(definition: ProtocolDefinition): string[] {
   const missing: string[] = [];
@@ -1292,9 +1318,7 @@ function collectMissingKeyAgreementPaths(definition: ProtocolDefinition): string
       const nodeRecord = node as globalThis.Record<string, unknown>;
       const path = prefix ? `${prefix}/${key}` : key;
 
-      // `$ref` nodes are skipped by the injection (governed by the referenced
-      // protocol) — children still belong to the composing protocol.
-      if (nodeRecord.$ref === undefined && !hasKeyAgreementKey(nodeRecord)) {
+      if (!hasKeyAgreementKey(nodeRecord)) {
         missing.push(path);
       }
 
@@ -1318,35 +1342,6 @@ function normalizePath(path: string): string {
   let end = path.length;
   while (end > start && path.codePointAt(end - 1) === 47) { end--; }
   return path.slice(start, end);
-}
-
-/**
- * Recursively collects all valid protocol path strings from a structure object.
- *
- * Given `{ foo: { bar: { $actions: [...] } } }`, returns `Set(['foo', 'foo/bar'])`.
- * Keys starting with `$` are skipped.
- */
-function collectPaths(
-  structure: globalThis.Record<string, unknown>,
-  prefix: string = '',
-): Set<string> {
-  const paths = new Set<string>();
-
-  for (const key of Object.keys(structure)) {
-    if (key.startsWith('$')) { continue; }
-
-    const fullPath = prefix ? `${prefix}/${key}` : key;
-    paths.add(fullPath);
-
-    const child = structure[key];
-    if (child !== null && typeof child === 'object') {
-      for (const nested of collectPaths(child as globalThis.Record<string, unknown>, fullPath)) {
-        paths.add(nested);
-      }
-    }
-  }
-
-  return paths;
 }
 
 /**

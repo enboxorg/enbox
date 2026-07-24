@@ -12,7 +12,7 @@
  * @module
  */
 
-import { generateTypes } from './codegen.js';
+import { generateProtocolModule } from './codegen.js';
 import { parseArgs } from 'node:util';
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import { readFile, realpath, stat, writeFile } from 'node:fs/promises';
@@ -26,7 +26,7 @@ const VERSION = '0.1.0';
 const usage = `protocol-codegen <command> [options]
 
 Commands:
-  generate  Generate TypeScript types from a protocol definition and JSON Schemas.
+  generate  Generate a typed module from a protocol definition and JSON Schemas.
 
 Options:
   -h, --help     Show help
@@ -216,7 +216,7 @@ export async function runGenerate(args: GenerateArgs, io: CliIo = defaultIo): Pr
   const definitionJson = await readFile(definitionPath, 'utf-8');
   const definition = JSON.parse(definitionJson);
 
-  const { code, resolutions } = await generateTypes(definition, {
+  const { code, resolutions } = await generateProtocolModule(definition, {
     schemasDir,
     protocolName: args.name,
   });

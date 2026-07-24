@@ -36,7 +36,7 @@ type ScalarTagKeys<D extends ProtocolDefinition, Path extends string> = {
 
 type StringSelection = string | string[] | readonly string[];
 
-type RecordFilterInput = Omit<RecordsFilter, 'author' | 'recipient' | 'parentId'> & {
+type RecordFilterInput = Omit<RecordsFilter, 'author' | 'contextId' | 'parentId' | 'recipient'> & {
   author?: StringSelection;
   recipient?: StringSelection;
 };
@@ -72,13 +72,13 @@ type RecordTagFilters<
 
 /**
  * Filter fields accepted by the typed query surface for one protocol path.
- * Protocol identity fields are injected from the typed protocol and cannot
- * be overridden by a caller.
+ * Protocol identity fields are injected from the typed protocol, while
+ * context selection is expressed through {@link RecordQuery.within}.
  */
 export type RecordFilter<
   D extends ProtocolDefinition,
   Path extends ProtocolPaths<D> & string,
-> = Omit<RecordsFilter, 'author' | 'recipient' | 'parentId' | 'protocol' | 'protocolPath' | 'schema' | 'tags' | 'dataFormat'> & {
+> = Omit<RecordsFilter, 'author' | 'contextId' | 'parentId' | 'recipient' | 'protocol' | 'protocolPath' | 'schema' | 'tags' | 'dataFormat'> & {
   /** One author, or a non-empty set of authors. */
   author?: StringSelection;
 
@@ -107,8 +107,17 @@ export type RecordQuery<
   /** A remote DWN tenant to query. Omit for the connected tenant's local DWN. */
   from?: string;
 
-  /** Additional filters; protocol, path, and schema are injected automatically. */
+  /** Additional value filters; protocol identity and context are compiled automatically. */
   filter?: RecordFilter<D, Path>;
+
+  /**
+   * Select records within one protocol context.
+   *
+   * Combined with the exact protocol path, a path one level below the
+   * context selects direct children; a deeper path selects descendants at
+   * that exact path.
+   */
+  within?: string;
 
   /** Existing DWN created, published, or updated date ordering. */
   dateSort?: DateSort;
@@ -142,14 +151,15 @@ export function compileRecordQuery(
     dateSort?: DateSort;
     pagination?: Pagination;
     protocolRole?: string;
+    within?: string;
   } = {},
 ): CompiledRecordQuery {
   assertValidQueryControls(query.dateSort, query.pagination);
-  assertValidQueryContextScope(protocolPath, query.filter?.contextId);
+  assertValidRecordWithin(protocolPath, query.within, true);
 
   return {
     from         : query.from,
-    filter       : buildRecordFilter(definition, protocolPath, query.filter, query.dateSort),
+    filter       : buildRecordFilter(definition, protocolPath, query.filter, query.dateSort, query.within),
     dateSort     : query.dateSort,
     pagination   : query.pagination,
     protocolRole : query.protocolRole,
@@ -162,8 +172,10 @@ export function compileRecordFilter(
   protocolPath: string,
   filter: RecordFilterInput | undefined,
   dateSort?: DateSort,
+  within?: string,
 ): RecordsFilter & { protocol: string; protocolPath: string } {
-  return buildRecordFilter(definition, protocolPath, filter, dateSort);
+  assertValidRecordWithin(protocolPath, within, false);
+  return buildRecordFilter(definition, protocolPath, filter, dateSort, within);
 }
 
 function buildRecordFilter(
@@ -171,6 +183,7 @@ function buildRecordFilter(
   protocolPath: string,
   filter: RecordFilterInput | undefined,
   dateSort?: DateSort,
+  within?: string,
 ): RecordsFilter & { protocol: string; protocolPath: string } {
   assertValidFilter(filter, dateSort);
 
@@ -188,6 +201,7 @@ function buildRecordFilter(
   const schema = definition.types[typeName]?.schema;
   return {
     ...compiledFilter,
+    ...(within === undefined ? {} : { contextId: within }),
     protocol: definition.protocol,
     protocolPath,
     ...(schema === undefined ? {} : { schema }),
@@ -195,6 +209,9 @@ function buildRecordFilter(
 }
 
 function assertValidFilter(filter: RecordFilterInput | undefined, dateSort: DateSort | undefined): void {
+  if (filter !== undefined && (Object.hasOwn(filter, 'contextId') || Object.hasOwn(filter, 'parentId'))) {
+    throw new TypeError('RecordFilter: use the top-level within selector instead of contextId or parentId.');
+  }
   if (Array.isArray(filter?.author) && filter.author.length === 0) {
     throw new TypeError('RecordFilter: author must not be an empty array.');
   }
@@ -204,26 +221,32 @@ function assertValidFilter(filter: RecordFilterInput | undefined, dateSort: Date
   if (filter?.tags !== undefined && Object.keys(filter.tags).length === 0) {
     throw new TypeError('RecordFilter: tags must contain at least one tag filter.');
   }
-  if (filter?.contextId !== undefined
-    && (filter.contextId.length > CONTEXT_ID_MAX_LENGTH || !CONTEXT_ID_PATTERN.test(filter.contextId))) {
-    throw new TypeError('RecordFilter: contextId must be at most 600 characters of alphanumeric path segments.');
-  }
   if (filter?.published === false && selectsPublishedRecords(filter, dateSort)) {
     throw new TypeError('RecordFilter: published-date filters and sorting cannot be combined with published: false.');
   }
 }
 
-function assertValidQueryContextScope(protocolPath: string, contextId: string | undefined): void {
-  if (!protocolPath.includes('/')) {
+/** @internal Validate one typed record context selector. */
+export function assertValidRecordWithin(
+  protocolPath : string,
+  within : string | undefined,
+  requiredForNestedPath : boolean,
+): void {
+  if (within === undefined) {
+    if (requiredForNestedPath && protocolPath.includes('/')) {
+      throw new TypeError(`Record scope: nested protocol path '${protocolPath}' requires a within selector.`);
+    }
     return;
   }
 
-  if (contextId === undefined) {
-    throw new TypeError(`RecordQuery: nested protocol path '${protocolPath}' requires a contextId scope.`);
+  if (typeof within !== 'string'
+    || within.length > CONTEXT_ID_MAX_LENGTH
+    || !CONTEXT_ID_PATTERN.test(within)) {
+    throw new TypeError('Record scope: within must be at most 600 characters of alphanumeric path segments.');
   }
 
-  if (contextId.split('/').length > protocolPath.split('/').length) {
-    throw new TypeError(`RecordQuery: contextId cannot be deeper than protocol path '${protocolPath}'.`);
+  if (within.split('/').length > protocolPath.split('/').length) {
+    throw new TypeError(`Record scope: within cannot be deeper than protocol path '${protocolPath}'.`);
   }
 }
 

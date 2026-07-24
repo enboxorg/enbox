@@ -27,9 +27,9 @@ bun add @enbox/api
 A protocol describes the data your app works with — its schema, structure, and access rules.
 
 ```ts
-import { defineProtocol } from '@enbox/api';
+import { defineProtocol, recordCodecs } from '@enbox/api';
 
-const TaskProtocol = defineProtocol({
+const TaskDefinition = {
   protocol:  'https://example.com/tasks',
   published: true,
   types: {
@@ -41,6 +41,10 @@ const TaskProtocol = defineProtocol({
   structure: {
     task: {},
   },
+} as const;
+
+const TaskProtocol = defineProtocol(TaskDefinition, {
+  task: recordCodecs.json<{ title: string; done: boolean }>(),
 });
 ```
 
@@ -68,7 +72,7 @@ const record = await tasks.records.create('task', {
 });
 
 // Read
-const task = await record.data.json();    // { title: 'Buy milk', done: false }
+const task = await record.value();        // { title: 'Buy milk', done: false }
 const raw  = await record.data.text();    // raw JSON string
 const blob = await record.data.blob();    // Blob
 const bytes = await record.data.bytes();  // Uint8Array
@@ -81,7 +85,7 @@ await record.update({
 // Query all tasks
 const { records } = await tasks.records.query('task');
 for (const r of records) {
-  console.log(await r.data.json());
+  console.log(await r.value());
 }
 
 // Delete

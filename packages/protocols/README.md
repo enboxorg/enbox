@@ -7,7 +7,7 @@ Ready-to-use DWN protocol definitions for the Enbox ecosystem. Each protocol shi
 - A raw `ProtocolDefinition` constant (e.g. `SocialGraphDefinition`)
 - A typed protocol via `defineProtocol()` (e.g. `SocialGraphProtocol`)
 - TypeScript data shape types (e.g. `FriendData`, `ProfileData`)
-- A `SchemaMap` type mapping type names to data shapes
+- Runtime codecs mapping type names to application values
 - JSON Schema files in `schemas/` for validation and code generation
 - `$recordLimit` annotations on natural singleton types
 
@@ -34,7 +34,7 @@ const record = await social.records.create('friend', {
 
 const { records: friends } = await social.records.query('friend');
 for (const f of friends) {
-  const data = await f.data.json(); // FriendData -- typed
+  const data = await f.value(); // FriendData -- typed
   console.log(data.alias);
 }
 
@@ -46,7 +46,7 @@ await profile.records.create('profile', {
 });
 
 const { records: profiles } = await profile.records.query('profile');
-console.log(await profiles[0].data.json()); // ProfileData
+console.log(await profiles[0].value()); // ProfileData
 ```
 
 ## Protocol Catalog
@@ -228,27 +228,27 @@ All protocols re-export from the package root:
 import {
   // Social Graph
   SocialGraphProtocol, SocialGraphDefinition,
-  type SocialGraphSchemaMap, type FriendData, type BlockData, type GroupData, type MemberData,
+  type FriendData, type BlockData, type GroupData, type MemberData,
 
   // Profile
   ProfileProtocol, ProfileDefinition,
-  type ProfileSchemaMap, type ProfileData, type AvatarData, type HeroData, type LinkData, type PrivateNoteData,
+  type ProfileData, type AvatarData, type HeroData, type LinkData, type PrivateNoteData,
 
   // Preferences
   PreferencesProtocol, PreferencesDefinition,
-  type PreferencesSchemaMap, type ThemeData, type LocaleData, type PrivacyData, type NotificationData,
+  type ThemeData, type LocaleData, type PrivacyData, type NotificationData,
 
   // Status
   StatusProtocol, StatusDefinition,
-  type StatusSchemaMap, type StatusData, type ReactionData,
+  type StatusData, type ReactionData,
 
   // Lists
   ListsProtocol, ListsDefinition,
-  type ListsSchemaMap, type ListData, type ItemData, type FolderData, type CollaboratorData, type CommentData,
+  type ListData, type ItemData, type FolderData, type CollaboratorData, type CommentData,
 
   // Connect
   ConnectProtocol, ConnectDefinition,
-  type ConnectSchemaMap, type WalletData,
+  type WalletData,
 } from '@enbox/protocols';
 ```
 

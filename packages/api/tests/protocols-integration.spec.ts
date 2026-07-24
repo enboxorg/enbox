@@ -32,19 +32,13 @@ import { PlatformAgentTestHarness } from '@enbox/agent/test';
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { Record } from '../src/record.js';
+import { recordCodecs } from '../src/record-codec.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
 
 // ---------------------------------------------------------------------------
 // Local protocol fixtures
 // ---------------------------------------------------------------------------
-
-type SocialGraphSchemaMap = {
-  friend: { did: string; alias?: string; note?: string };
-  block: { did: string; reason?: string };
-  group: { name: string; description?: string; icon?: string };
-  member: { did: string; alias?: string };
-};
 
 const SocialGraphDefinition = {
   protocol  : 'https://identity.foundation/protocols/social-graph',
@@ -108,25 +102,12 @@ const SocialGraphDefinition = {
   },
 } as const satisfies ProtocolDefinition;
 
-const SocialGraphProtocol = defineProtocol(
-  SocialGraphDefinition,
-  {} as SocialGraphSchemaMap,
-);
-
-type ProfileSchemaMap = {
-  profile: {
-    displayName: string;
-    bio?: string;
-    tagline?: string;
-    location?: string;
-    website?: string;
-    pronouns?: string;
-  };
-  avatar: Blob;
-  hero: Blob;
-  link: { url: string; title: string; icon?: string; sortOrder?: number };
-  privateNote: { content: string };
-};
+const SocialGraphProtocol = defineProtocol(SocialGraphDefinition, {
+  block  : recordCodecs.json<{ did: string; reason?: string }>(),
+  friend : recordCodecs.json<{ did: string; alias?: string; note?: string }>(),
+  group  : recordCodecs.json<{ name: string; description?: string; icon?: string }>(),
+  member : recordCodecs.json<{ did: string; alias?: string }>(),
+});
 
 const ProfileDefinition = {
   protocol  : 'https://identity.foundation/protocols/profile',
@@ -189,14 +170,20 @@ const ProfileDefinition = {
   },
 } as const satisfies ProtocolDefinition;
 
-const ProfileProtocol = defineProtocol(
-  ProfileDefinition,
-  {} as ProfileSchemaMap,
-);
-
-type ConnectSchemaMap = {
-  wallet: { webWallets: string[] };
-};
+const ProfileProtocol = defineProtocol(ProfileDefinition, {
+  avatar      : recordCodecs.blob(),
+  hero        : recordCodecs.blob(),
+  link        : recordCodecs.json<{ url: string; title: string; icon?: string; sortOrder?: number }>(),
+  privateNote : recordCodecs.json<{ content: string }>(),
+  profile     : recordCodecs.json<{
+    displayName: string;
+    bio?: string;
+    tagline?: string;
+    location?: string;
+    website?: string;
+    pronouns?: string;
+  }>(),
+});
 
 const ConnectDefinition = {
   protocol  : 'https://identity.foundation/protocols/connect',
@@ -217,20 +204,9 @@ const ConnectDefinition = {
   },
 } as const satisfies ProtocolDefinition;
 
-const ConnectProtocol = defineProtocol(
-  ConnectDefinition,
-  {} as ConnectSchemaMap,
-);
-
-type StatusSchemaMap = {
-  status: {
-    text: string;
-    emoji?: string;
-    activity?: 'online' | 'away' | 'busy' | 'offline';
-    expiresAt?: string;
-  };
-  reaction: { emoji: string };
-};
+const ConnectProtocol = defineProtocol(ConnectDefinition, {
+  wallet: recordCodecs.json<{ webWallets: string[] }>(),
+});
 
 const StatusDefinition = {
   protocol  : 'https://identity.foundation/protocols/status',
@@ -264,23 +240,15 @@ const StatusDefinition = {
   },
 } as const satisfies ProtocolDefinition;
 
-const StatusProtocol = defineProtocol(
-  StatusDefinition,
-  {} as StatusSchemaMap,
-);
-
-type ListsSchemaMap = {
-  list: {
-    name: string;
-    description?: string;
-    icon?: string;
-    listType: 'todo' | 'bookmarks' | 'reading' | 'custom';
-  };
-  item: { title: string; url?: string; note?: string; completed?: boolean; sortOrder?: number };
-  folder: { name: string; icon?: string; sortOrder?: number };
-  collaborator: { did: string; alias?: string };
-  comment: { text: string };
-};
+const StatusProtocol = defineProtocol(StatusDefinition, {
+  reaction : recordCodecs.json<{ emoji: string }>(),
+  status   : recordCodecs.json<{
+    text: string;
+    emoji?: string;
+    activity?: 'online' | 'away' | 'busy' | 'offline';
+    expiresAt?: string;
+  }>(),
+});
 
 const ListsDefinition = {
   protocol  : 'https://identity.foundation/protocols/lists',
@@ -359,10 +327,24 @@ const ListsDefinition = {
   },
 } as const satisfies ProtocolDefinition;
 
-const ListsProtocol = defineProtocol(
-  ListsDefinition,
-  {} as ListsSchemaMap,
-);
+const ListsProtocol = defineProtocol(ListsDefinition, {
+  collaborator : recordCodecs.json<{ did: string; alias?: string }>(),
+  comment      : recordCodecs.json<{ text: string }>(),
+  folder       : recordCodecs.json<{ name: string; icon?: string; sortOrder?: number }>(),
+  item         : recordCodecs.json<{
+    title: string;
+    url?: string;
+    note?: string;
+    completed?: boolean;
+    sortOrder?: number;
+  }>(),
+  list: recordCodecs.json<{
+    name: string;
+    description?: string;
+    icon?: string;
+    listType: 'todo' | 'bookmarks' | 'reading' | 'custom';
+  }>(),
+});
 
 // ---------------------------------------------------------------------------
 // Test setup
@@ -442,7 +424,7 @@ describe('protocol API integration fixtures', () => {
       expect(record).toBeInstanceOf(Record);
       expect(record.protocolPath).toBe('friend');
 
-      const data = await record.data.json();
+      const data = await record.value();
       expect(data.did).toBe('did:example:bob');
       expect(data.alias).toBe('Bob');
     });
@@ -458,7 +440,7 @@ describe('protocol API integration fixtures', () => {
 
       expect(record.protocolPath).toBe('block');
 
-      const data = await record.data.json();
+      const data = await record.value();
       expect(data.did).toBe('did:example:troll');
       expect(data.reason).toBe('spam');
     });
@@ -479,7 +461,7 @@ describe('protocol API integration fixtures', () => {
 
       expect(memberRecord.protocolPath).toBe('group/member');
 
-      const memberData = await memberRecord.data.json();
+      const memberData = await memberRecord.value();
       expect(memberData.did).toBe('did:example:carol');
     });
 
@@ -526,12 +508,12 @@ describe('protocol API integration fixtures', () => {
         data: { displayName: 'Alice', bio: 'Building the future' },
       });
 
-      const data = await profile.data.json();
+      const data = await profile.value();
       expect(data.displayName).toBe('Alice');
 
       const { records } = await typed.records.query('profile');
       const fetched = records[0];
-      const fetchedData = await fetched.data.json();
+      const fetchedData = await fetched.value();
       expect(fetchedData.displayName).toBe('Alice');
     });
 
@@ -549,7 +531,7 @@ describe('protocol API integration fixtures', () => {
 
       const { records } = await typed.records.query('profile');
       const fetched = records[0];
-      const data = await fetched.data.json();
+      const data = await fetched.value();
       expect(data.displayName).toBe('Alice v2');
       expect(data.bio).toBe('Updated bio');
     });
@@ -571,7 +553,7 @@ describe('protocol API integration fixtures', () => {
 
       expect(link.protocolPath).toBe('profile/link');
 
-      const linkData = await link.data.json();
+      const linkData = await link.value();
       expect(linkData.url).toBe('https://twitter.com/alice');
     });
   });
@@ -591,7 +573,7 @@ describe('protocol API integration fixtures', () => {
 
       const { records } = await typed.records.query('wallet');
       const fetched = records[0];
-      const data = await fetched.data.json();
+      const data = await fetched.value();
       expect(data.webWallets).toEqual(['https://wallet.example.com']);
     });
 
@@ -609,7 +591,7 @@ describe('protocol API integration fixtures', () => {
 
       const { records } = await typed.records.query('wallet');
       const fetched = records[0];
-      const data = await fetched.data.json();
+      const data = await fetched.value();
       expect(data.webWallets).toEqual(['https://v2.wallet.com', 'https://alt.wallet.com']);
     });
   });
@@ -631,7 +613,7 @@ describe('protocol API integration fixtures', () => {
 
       expect(record.protocolPath).toBe('status');
 
-      const data = await record.data.json();
+      const data = await record.value();
       expect(data.text).toBe('Hello world!');
     });
 
@@ -705,7 +687,7 @@ describe('protocol API integration fixtures', () => {
       });
 
       const { records } = await typed.records.query('folder/folder', {
-        filter: { contextId: folder1.contextId },
+        within: folder1.contextId,
       });
       expect(records).toHaveLength(2);
     });

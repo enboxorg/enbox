@@ -1,5 +1,6 @@
 import type { BearerDid } from '@enbox/dids';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { EncodedRecordData, RecordCodec } from '../src/record-codec.js';
 
 import { DateSort } from '@enbox/dwn-sdk-js';
 import sinon from 'sinon';
@@ -13,6 +14,7 @@ import { DwnApi } from '../src/dwn-api.js';
 import { DwnResponseError } from '../src/dwn-response-error.js';
 import { Protocol } from '../src/protocol.js';
 import { Record } from '../src/record.js';
+import { recordCodecs } from '../src/record-codec.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { definitionsEqual, TypedEnbox } from '../src/typed-enbox.js';
 
@@ -55,16 +57,11 @@ const TodoProtocolDefinition = {
   },
 } as const satisfies ProtocolDefinition;
 
-type TodoSchemaMap = {
-  list: { name: string; description?: string };
-  task: { title: string; completed: boolean };
-  attachment: Blob;
-};
-
-const TodoProtocol = defineProtocol(
-  TodoProtocolDefinition,
-  {} as TodoSchemaMap,
-);
+const TodoProtocol = defineProtocol(TodoProtocolDefinition, {
+  attachment : recordCodecs.blob(),
+  list       : recordCodecs.json<{ name: string; description?: string }>(),
+  task       : recordCodecs.json<{ title: string; completed: boolean }>(),
+});
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -118,6 +115,25 @@ describe('TypedProtocol API', () => {
     it('should preserve the types and structure', () => {
       expect(TodoProtocol.definition.types.list.schema).toBe('https://example.com/schemas/list');
       expect(TodoProtocol.definition.structure.list).toBeDefined();
+    });
+
+    it('should reject missing, unexpected, and invalid runtime codecs', () => {
+      const missing = { ...TodoProtocol.codecs } as Partial<typeof TodoProtocol.codecs>;
+      delete missing.attachment;
+      expect(() => defineProtocol(TodoProtocolDefinition, missing as typeof TodoProtocol.codecs))
+        .toThrow('missing: attachment');
+
+      const unexpected = { ...TodoProtocol.codecs, orphan: recordCodecs.json<unknown>() };
+      expect(() => defineProtocol(
+        TodoProtocolDefinition,
+        unexpected as unknown as typeof TodoProtocol.codecs,
+      )).toThrow('unexpected: orphan');
+
+      const invalid = { ...TodoProtocol.codecs, task: {} };
+      expect(() => defineProtocol(
+        TodoProtocolDefinition,
+        invalid as unknown as typeof TodoProtocol.codecs,
+      )).toThrow('invalid: task');
     });
   });
 
@@ -249,7 +265,7 @@ describe('TypedProtocol API', () => {
   });
 
   describe('TypedEnbox.records', () => {
-    let typed: TypedEnbox<typeof TodoProtocolDefinition, TodoSchemaMap>;
+    let typed: TypedEnbox<typeof TodoProtocolDefinition, typeof TodoProtocol.codecs>;
 
     beforeEach(async () => {
       typed = new TypedEnbox(dwnAlice, TodoProtocol);
@@ -302,7 +318,7 @@ describe('TypedProtocol API', () => {
           },
         };
 
-        const updatedProtocol = defineProtocol(updatedDefinition);
+        const updatedProtocol = defineProtocol(updatedDefinition, TodoProtocol.codecs);
         const updatedTyped = new TypedEnbox(dwnAlice, updatedProtocol);
 
         const { status } = await updatedTyped.configure();
@@ -340,14 +356,76 @@ describe('TypedProtocol API', () => {
         expect(taskRecord.schema).toBe('https://example.com/schemas/task');
       });
 
-      it('should read back written JSON data via Record.data.json() without manual cast', async () => {
+      it('should read back written JSON data via Record.value() without manual cast', async () => {
         const inputData = { name: 'Shopping', description: 'Grocery list' };
         const record = await typed.records.create('list', { data: inputData });
 
         // The protocol payload type is carried by Record<T>.
-        const readBack = await record.data.json();
+        const readBack = await record.value();
         expect(readBack.name).toBe('Shopping');
         expect(readBack.description).toBe('Grocery list');
+      });
+
+      it('should use one custom codec across create, update, query, and read handles', async () => {
+        const definition = {
+          protocol  : 'https://example.com/protocols/custom-codec',
+          published : true,
+          types     : {
+            counter: { dataFormats: ['application/x-counter'] },
+          },
+          structure: { counter: {} },
+        } as const satisfies ProtocolDefinition;
+        let encodeCalls = 0;
+        let decodeCalls = 0;
+        const codec: RecordCodec<number> = {
+          encode(value: number): EncodedRecordData {
+            encodeCalls += 1;
+            return {
+              data       : new Blob([`counter:${value}`]),
+              dataFormat : 'application/x-counter',
+            };
+          },
+          async decode(data, dataFormat): Promise<number> {
+            decodeCalls += 1;
+            expect(dataFormat).toBe('application/x-counter');
+            return Number((await data.text()).slice('counter:'.length));
+          },
+        };
+        const custom = new TypedEnbox(dwnAlice, defineProtocol(definition, { counter: codec }));
+
+        const created = await custom.records.create('counter', { data: 1 });
+        expect(await created.value()).toBe(1);
+        await created.update({ data: 2 });
+
+        const { records } = await custom.records.query('counter');
+        expect(await records[0].value()).toBe(2);
+        const read = await custom.records.read('counter', { filter: { recordId: created.id } });
+        expect(await read!.value()).toBe(2);
+        expect(encodeCalls).toBe(2);
+        expect(decodeCalls).toBe(3);
+      });
+
+      it('should not treat class values from a custom codec as patchable records', async () => {
+        const definition = {
+          protocol  : 'https://example.com/protocols/date-codec',
+          published : true,
+          types     : {
+            event: { dataFormats: ['text/plain'] },
+          },
+          structure: { event: {} },
+        } as const satisfies ProtocolDefinition;
+        const codec: RecordCodec<Date> = {
+          encode(value: Date): EncodedRecordData {
+            return { data: new Blob([value.toISOString()]), dataFormat: 'text/plain' };
+          },
+          async decode(data): Promise<Date> {
+            return new Date(await data.text());
+          },
+        };
+        const calendar = new TypedEnbox(dwnAlice, defineProtocol(definition, { event: codec }));
+        const event = await calendar.records.create('event', { data: new Date('2026-07-24T00:00:00.000Z') });
+
+        await expect(event.patch({})).rejects.toThrow('current value to be a plain object');
       });
 
     });
@@ -373,10 +451,12 @@ describe('TypedProtocol API', () => {
         },
       } as const satisfies ProtocolDefinition;
 
-      type SquashSchemaMap = { doc: { n?: string }; snapshot: { v?: string } };
-      const SquashProtocol = defineProtocol(SquashDefinition, {} as SquashSchemaMap);
+      const SquashProtocol = defineProtocol(SquashDefinition, {
+        doc      : recordCodecs.json<{ n?: string }>(),
+        snapshot : recordCodecs.json<{ v?: string }>(),
+      });
 
-      let squashed: TypedEnbox<typeof SquashDefinition, SquashSchemaMap>;
+      let squashed: TypedEnbox<typeof SquashDefinition, typeof SquashProtocol.codecs>;
 
       beforeEach(async () => {
         squashed = new TypedEnbox(dwnAlice, SquashProtocol);
@@ -428,7 +508,7 @@ describe('TypedProtocol API', () => {
         // Queries on a nested protocol path must be scoped by the parent context
         // (dwn-sdk-js requires the parent contextId for nested-path queries — see #1043).
         const { records } = await squashed.records.query('doc/snapshot', {
-          filter: { contextId: doc.contextId },
+          within: doc.contextId,
         });
         expect(records).toHaveLength(1);
         expect(records[0].id).toBe(squashRecord.id);
@@ -458,7 +538,7 @@ describe('TypedProtocol API', () => {
           squash          : true,
         });
 
-        const readBack = await record.data.json();
+        const readBack = await record.value();
         expect(readBack.v).toBe('payload');
       });
     });
@@ -492,7 +572,7 @@ describe('TypedProtocol API', () => {
 
         // Query tasks under this specific list context
         const { records } = await typed.records.query('list/task', {
-          filter: { contextId: listRecord.contextId },
+          within: listRecord.contextId,
         });
 
         expect(records).toHaveLength(2);
@@ -504,8 +584,8 @@ describe('TypedProtocol API', () => {
         const { records } = await typed.records.query('list');
         expect(records.length).toBeGreaterThanOrEqual(1);
 
-        // data.json() returns the typed data directly
-        const data = await records[0].data.json();
+        // value() decodes the typed application value directly.
+        const data = await records[0].value();
         expect(data.name).toBe('Query Test');
       });
     });
@@ -542,7 +622,7 @@ describe('TypedProtocol API', () => {
         });
 
         expect(readRecord).toBeInstanceOf(Record);
-        const data = await readRecord!.data.json();
+        const data = await readRecord!.value();
         expect(data.name).toBe('Reading List');
       });
     });
@@ -593,7 +673,7 @@ describe('TypedProtocol API', () => {
         // Query should also succeed without schema: undefined in the filter.
         const { records } = await typed.records.query(
           'list/task/attachment',
-          { filter: { contextId: taskRecord.contextId } },
+          { within: taskRecord.contextId },
         );
 
         expect(records).toHaveLength(1);
@@ -763,7 +843,7 @@ describe('TypedProtocol API', () => {
             },
           };
 
-          const modifiedProtocol = defineProtocol(modifiedDefinition);
+          const modifiedProtocol = defineProtocol(modifiedDefinition, TodoProtocol.codecs);
           const modifiedTyped = new TypedEnbox(dwnAlice, modifiedProtocol);
 
           const result = await modifiedTyped.configure();
@@ -821,18 +901,76 @@ describe('TypedProtocol API', () => {
           const scopedTyped = new TypedEnbox(dwn, TodoProtocol);
 
           await scopedTyped.records.delete('/list/' as any, {
-            contextId : 'list-context',
-            recordId  : 'record-id',
+            recordId : 'record-id',
+            within   : 'listcontext',
           });
 
           expect(deleteRecord.calledOnceWithExactly({
-            contextId    : 'list-context',
+            contextId    : 'listcontext',
             from         : undefined,
             protocol     : TodoProtocolDefinition.protocol,
             protocolPath : 'list',
             recordId     : 'record-id',
             prune        : undefined,
           })).toBe(true);
+        });
+
+        it('should forward within through the canonical read filter', async () => {
+          const readRecord = sinon.stub().resolves({ status: { code: 404, detail: 'Not Found' } });
+          const dwn = {
+            isDelegate : false,
+            protocols  : {
+              query: sinon.stub().resolves({
+                protocols : [{ definition: TodoProtocolDefinition }],
+                status    : { code: 200, detail: 'OK' },
+              }),
+            },
+            records: { read: readRecord },
+          } as unknown as DwnApi;
+          const scopedTyped = new TypedEnbox(dwn, TodoProtocol);
+
+          const result = await scopedTyped.records.read('/list/' as any, {
+            filter : { recordId: 'record-id' },
+            within : 'listcontext',
+          });
+
+          expect(result).toBeUndefined();
+          expect(readRecord.calledOnceWithExactly({
+            from   : undefined,
+            filter : {
+              contextId    : 'listcontext',
+              protocol     : TodoProtocolDefinition.protocol,
+              protocolPath : 'list',
+              recordId     : 'record-id',
+              schema       : TodoProtocolDefinition.types.list.schema,
+            },
+          })).toBe(true);
+        });
+
+        it('should reject invalid and retired delete context selectors', async () => {
+          const deleteRecord = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
+          const dwn = {
+            isDelegate : false,
+            protocols  : {
+              query: sinon.stub().resolves({
+                protocols : [{ definition: TodoProtocolDefinition }],
+                status    : { code: 200, detail: 'OK' },
+              }),
+            },
+            records: { delete: deleteRecord },
+          } as unknown as DwnApi;
+          const scopedTyped = new TypedEnbox(dwn, TodoProtocol);
+
+          await expect(scopedTyped.records.delete('list', {
+            recordId : 'record-id',
+            within   : '',
+          })).rejects.toThrow('Record scope: within must be at most 600 characters');
+          await expect(scopedTyped.records.delete('list', {
+            recordId  : 'record-id',
+            contextId : 'listcontext',
+          } as never)).rejects.toThrow('TypedDeleteRequest: use within instead of contextId');
+
+          expect(deleteRecord.called).toBe(false);
         });
 
       });
@@ -889,12 +1027,12 @@ describe('TypedProtocol API', () => {
           expect(lists.records.some((record) => record.id === listRecord.id)).toBe(true);
 
           const tasks = await typed.records.query('list/task', {
-            filter: { contextId: listRecord.contextId },
+            within: listRecord.contextId,
           });
           expect(tasks.records.some((record) => record.id === taskRecord.id)).toBe(true);
 
           const attachments = await typed.records.query('list/task/attachment', {
-            filter: { contextId: taskRecord.contextId },
+            within: taskRecord.contextId,
           });
           expect(attachments.records).toEqual([]);
         });
@@ -925,9 +1063,20 @@ describe('TypedProtocol API', () => {
 
         expect(updatedRecord).toBeInstanceOf(Record);
         expect(updatedRecord).toBe(record);
-        const data = await updatedRecord.data.json();
+        const data = await updatedRecord.value();
         expect(data.name).toBe('Updated');
         expect(data.description).toBe('Now with description');
+      });
+
+      it('should reject a data format override on a codec-bound record', async () => {
+        const record = await typed.records.create('list', {
+          data: { name: 'Codec-owned format' },
+        });
+
+        await expect(record.update({
+          data       : { name: 'Still codec-owned' },
+          dataFormat : 'text/plain',
+        } as never)).rejects.toThrow('typed protocol records derive dataFormat from their codec');
       });
 
       it('should delete a record in place', async () => {
@@ -970,7 +1119,7 @@ describe('TypedProtocol API', () => {
         });
 
         expect(record).toBeInstanceOf(Record);
-        expect(await record.data.json()).toEqual({ name: 'Type Safety Test' });
+        expect(await record.value()).toEqual({ name: 'Type Safety Test' });
       });
 
       it('create() throws DwnResponseError with the original status on failure', async () => {
@@ -1031,7 +1180,7 @@ describe('TypedProtocol API', () => {
         });
 
         expect(record).toBeInstanceOf(Record);
-        expect(await record!.data.json()).toEqual({ name: 'Read Target' });
+        expect(await record!.value()).toEqual({ name: 'Read Target' });
       });
 
       it('read() returns undefined when no current record exists', async () => {

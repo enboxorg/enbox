@@ -2,20 +2,25 @@
 
 > **Research Preview** -- Enbox is under active development. APIs may change without notice.
 
-CLI tool and library for generating TypeScript types from DWN protocol definitions and JSON Schemas.
+CLI tool and library for generating complete typed modules from DWN protocol definitions and JSON Schemas.
 
 Given a protocol definition JSON file and a directory of JSON Schema files, it generates:
 
 - TypeScript interfaces for each protocol type (via [`json-schema-to-typescript`](https://github.com/bcherny/json-schema-to-typescript))
-- A `SchemaMap` type mapping protocol type names to their TypeScript interfaces
-- Binary-only types (e.g. image attachments) emitted as `Blob`
+- Runtime codecs for JSON, text, bytes, and variable-MIME `Blob` data
+- The complete protocol definition and a ready-to-use `defineProtocol()` result
 - Unresolved schemas emitted as `unknown` with a doc comment
 
 ## Installation
 
 ```bash
+bun add @enbox/api @enbox/dwn-sdk-js
 bun add -D @enbox/protocol-codegen
 ```
+
+Generated modules import the runtime codec helpers from `@enbox/api` and the
+protocol definition type from `@enbox/dwn-sdk-js`, so both are direct app
+dependencies.
 
 ## CLI Usage
 
@@ -149,6 +154,10 @@ Generates:
  * Do not edit manually.
  */
 
+import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+
+import { defineProtocol, recordCodecs } from '@enbox/api';
+
 // ---------------------------------------------------------------------------
 // Data types
 // ---------------------------------------------------------------------------
@@ -162,40 +171,72 @@ export interface ItemData {
   done?: boolean;
 }
 
-/** Data shape for the `attachment` type (binary). */
+/** Data shape for the `attachment` type (variable MIME). */
 export type AttachmentData = Blob;
 
 // ---------------------------------------------------------------------------
-// Schema map
+// Protocol definition
 // ---------------------------------------------------------------------------
 
-/** Maps protocol type names to their TypeScript data shapes. */
-export type TodoSchemaMap = {
-  list: ListData;
-  item: ItemData;
-  attachment: AttachmentData;
-};
+export const TodoDefinition = {
+  protocol  : 'https://example.com/todo',
+  published : false,
+  types     : {
+    list: {
+      schema      : 'https://example.com/schemas/todo/list',
+      dataFormats : ['application/json'],
+    },
+    item: {
+      schema      : 'https://example.com/schemas/todo/item',
+      dataFormats : ['application/json'],
+    },
+    attachment: {
+      dataFormats: ['application/octet-stream', 'image/png'],
+    },
+  },
+  structure: {
+    list: {
+      item: {
+        attachment: {},
+      },
+    },
+  },
+} as const satisfies ProtocolDefinition;
+
+// ---------------------------------------------------------------------------
+// Runtime codecs
+// ---------------------------------------------------------------------------
+
+export const TodoCodecs = {
+  list       : recordCodecs.json<ListData>(),
+  item       : recordCodecs.json<ItemData>(),
+  attachment : recordCodecs.blob(),
+} as const;
+
+// ---------------------------------------------------------------------------
+// Typed protocol
+// ---------------------------------------------------------------------------
+
+export const TodoProtocol = defineProtocol(TodoDefinition, TodoCodecs);
 ```
 
-You can then use the generated types with `defineProtocol()`:
+Import `TodoProtocol` from the generated module and pass it directly to `Enbox.using()`.
 
-```ts
-import { defineProtocol } from '@enbox/api';
-import type { TodoSchemaMap } from './todo.generated.js';
-import TodoDefinition from './todo.json';
+Codec selection follows the declared representation: one JSON MIME type uses
+`json<T>()`; one `text/*` format uses `text()`; one fixed binary format uses
+`bytes()`; and multiple possible formats use `blob()` so each value carries
+its MIME type. A schema never causes non-JSON bytes to be mislabeled as JSON.
 
-const TodoProtocol = defineProtocol(
-  TodoDefinition as const,
-  {} as TodoSchemaMap,
-);
-```
+Composed `$ref` paths require referenced protocol metadata that a standalone
+definition file does not contain. Code generation rejects them clearly until
+the composition-aware typed contract tracked in enboxorg/enbox#1462 lands.
 
 ## Programmatic API
 
 The codegen engine can also be used as a library:
 
 ```ts
-import { generateTypes } from '@enbox/protocol-codegen';
+import { generateProtocolModule } from '@enbox/protocol-codegen';
 
 const definition = {
   protocol: 'https://example.com/my-protocol',
@@ -205,7 +246,7 @@ const definition = {
   structure: { note: {} },
 };
 
-const { code, resolutions } = await generateTypes(definition, {
+const { code, resolutions } = await generateProtocolModule(definition, {
   schemasDir   : './schemas',
   protocolName : 'MyProtocol',
 });
@@ -214,14 +255,13 @@ const { code, resolutions } = await generateTypes(definition, {
 // resolutions is a Map<string, SchemaResolution> with metadata about each type
 ```
 
-### `generateTypes(definition, options)`
+### `generateProtocolModule(definition, options)`
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `definition` | `ProtocolDefinitionInput` | Protocol definition object with `protocol`, `types`, `structure` |
 | `options.schemasDir` | `string` | Directory containing `.json` schema files |
-| `options.protocolName` | `string` | PascalCase name for the generated `SchemaMap` |
-| `options.emitDefinition` | `boolean?` | Include import statements for `defineProtocol` (default: `false`) |
+| `options.protocolName` | `string` | PascalCase name for the generated definition, codecs, and typed protocol exports |
 | `options.bannerComment` | `string?` | Custom banner comment at the top of the file (default: auto-generated notice) |
 
 **Returns** `{ code: string; resolutions: Map<string, SchemaResolution> }`
