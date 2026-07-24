@@ -695,6 +695,7 @@ export function testRecordsSubscribeHandler(): void {
           dateExpires?: string;
           delegated: boolean;
           protocol: string;
+          throwOnTerminalError?: boolean;
         }): Promise<{
           alice: Persona;
           grant: GenerateGrantCreateOutput;
@@ -734,7 +735,12 @@ export function testRecordsSubscribeHandler(): void {
             signer            : Jws.createSigner(grantee),
           });
           const reply = await dwn.processMessage(alice.did, recordsSubscribe.message, {
-            subscriptionHandler: (message): void => { received.push(message); },
+            subscriptionHandler: (message): void => {
+              received.push(message);
+              if (input.throwOnTerminalError && message.type === 'error') {
+                throw new Error('terminal listener failed');
+              }
+            },
           });
           expect(reply.status.code).toBe(200);
 
@@ -799,6 +805,68 @@ export function testRecordsSubscribeHandler(): void {
           expect(closeSpy.calledOnce).toBe(true);
         });
 
+        it('keeps direct-grant delivery independent from an ignored protocol role', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+          const protocolDefinition: ProtocolDefinition = {
+            protocol  : 'http://records-subscribe-grant-role-precedence',
+            published : false,
+            types     : { friend: {}, note: {} },
+            structure : {
+              friend : { $role: true },
+              note   : { $actions: [{ role: 'friend', can: ['read'] }] },
+            },
+          };
+          const configure = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition });
+          expect((await dwn.processMessage(alice.did, configure.message)).status.code).toBe(202);
+          const role = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            recipient    : bob.did,
+            protocol     : protocolDefinition.protocol,
+            protocolPath : 'friend',
+          });
+          expect((await dwn.processMessage(alice.did, role.message, { dataStream: role.dataStream })).status.code).toBe(202);
+          const grant = await TestDataGenerator.generateGrantCreate({
+            author    : alice,
+            grantedTo : bob,
+            scope     : {
+              interface    : DwnInterfaceName.Records,
+              method       : DwnMethodName.Read,
+              protocol     : protocolDefinition.protocol,
+              protocolPath : 'note',
+            },
+          });
+          expect((await dwn.processMessage(alice.did, grant.message, { dataStream: grant.dataStream })).status.code).toBe(202);
+
+          const received: SubscriptionMessage[] = [];
+          const subscribe = await RecordsSubscribe.create({
+            filter            : { protocol: protocolDefinition.protocol, protocolPath: 'note' },
+            permissionGrantId : grant.message.recordId,
+            protocolRole      : 'friend',
+            signer            : Jws.createSigner(bob),
+          });
+          const subscribeReply = await dwn.processMessage(alice.did, subscribe.message, {
+            subscriptionHandler: (message): void => { received.push(message); },
+          });
+          expect(subscribeReply.status.code).toBe(200);
+
+          await writeNote(alice, protocolDefinition.protocol);
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(received.filter(message => message.type === 'event')).toHaveLength(1);
+          });
+          const roleDelete = await TestDataGenerator.generateRecordsDelete({ author: alice, recordId: role.message.recordId });
+          expect((await dwn.processMessage(alice.did, roleDelete.message)).status.code).toBe(202);
+          const roleAuthorizationSpy = sinon.spy(ProtocolAuthorization, 'authorizeQueryOrSubscribe');
+          await writeNote(alice, protocolDefinition.protocol);
+
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(received.filter(message => message.type === 'event')).toHaveLength(2);
+          });
+          expect(received.filter(message => message.type === 'error')).toHaveLength(0);
+          expect(roleAuthorizationSpy.callCount).toBe(0);
+          await subscribeReply.subscription!.close();
+        });
+
         it('stops direct grant delivery after expiry', async () => {
           const protocol = 'http://records-subscribe-direct-expired';
           const dateExpires = Time.createOffsetTimestamp({ seconds: 60 });
@@ -853,6 +921,72 @@ export function testRecordsSubscribeHandler(): void {
           await writeNote(alice, protocol);
 
           await expectTerminalAuthorizationFailure(received, 1);
+        });
+
+        it('requires both an author-delegate grant and the target direct grant during delivery', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+          const carol = await TestDataGenerator.generateDidKeyPersona();
+          const protocol = 'http://records-subscribe-combined-grants';
+          const protocolDefinition: ProtocolDefinition = {
+            protocol,
+            published : false,
+            types     : { note: {} },
+            structure : { note: {} },
+          };
+          const configure = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition });
+          expect((await dwn.processMessage(alice.did, configure.message)).status.code).toBe(202);
+          const delegateGrant = await TestDataGenerator.generateGrantCreate({
+            author      : bob,
+            grantedTo   : carol,
+            delegated   : true,
+            dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+            scope       : {
+              interface    : DwnInterfaceName.Records,
+              method       : DwnMethodName.Read,
+              protocol,
+              protocolPath : 'note',
+            },
+          });
+          expect((await dwn.processMessage(bob.did, delegateGrant.message, { dataStream: delegateGrant.dataStream })).status.code).toBe(202);
+          const targetGrant = await TestDataGenerator.generateGrantCreate({
+            author      : alice,
+            grantedTo   : bob,
+            dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+            scope       : {
+              interface    : DwnInterfaceName.Records,
+              method       : DwnMethodName.Read,
+              protocol,
+              protocolPath : 'note',
+            },
+          });
+          expect((await dwn.processMessage(alice.did, targetGrant.message, { dataStream: targetGrant.dataStream })).status.code).toBe(202);
+
+          const received: SubscriptionMessage[] = [];
+          const subscribe = await RecordsSubscribe.create({
+            delegatedGrant    : delegateGrant.dataEncodedMessage,
+            filter            : { protocol, protocolPath: 'note' },
+            permissionGrantId : targetGrant.message.recordId,
+            signer            : Jws.createSigner(carol),
+          });
+          const subscribeReply = await dwn.processMessage(alice.did, subscribe.message, {
+            subscriptionHandler: (message): void => { received.push(message); },
+          });
+          expect(subscribeReply.status.code).toBe(200);
+          const closeSpy = sinon.spy(subscribeReply.subscription!, 'close');
+
+          await writeNote(alice, protocol);
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(received.filter(message => message.type === 'event')).toHaveLength(1);
+          });
+          await Time.minimalSleep();
+          await revokeGrant(alice, targetGrant);
+          const grantAuthorizationSpy = sinon.spy(GrantAuthorization, 'performBaseValidation');
+          await writeNote(alice, protocol);
+
+          await expectTerminalAuthorizationFailure(received, 1);
+          expect(closeSpy.calledOnce).toBe(true);
+          expect(grantAuthorizationSpy.callCount).toBe(2);
         });
 
         it('preserves event order and emits one terminal error for concurrent delivery failures', async () => {
@@ -917,6 +1051,35 @@ export function testRecordsSubscribeHandler(): void {
           await Time.minimalSleep();
           expect(received.filter(message => message.type === 'error')).toHaveLength(1);
           expect(authorizationStub.callCount).toBe(1);
+        });
+
+        it('closes before invoking a terminal listener that throws', async () => {
+          const protocol = 'http://records-subscribe-throwing-terminal-listener';
+          const { alice, grant, received, subscription } = await createGrantAuthorizedSubscription({
+            delegated            : false,
+            protocol,
+            throwOnTerminalError : true,
+          });
+          const closeSpy = sinon.spy(subscription, 'close');
+
+          await writeNote(alice, protocol);
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(received.filter(message => message.type === 'event')).toHaveLength(1);
+          });
+          await Time.minimalSleep();
+          await revokeGrant(alice, grant);
+          const authorizationSpy = sinon.spy(GrantAuthorization, 'performBaseValidation');
+          await writeNote(alice, protocol);
+
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(received.filter(message => message.type === 'error')).toHaveLength(1);
+            expect(closeSpy.calledOnce).toBe(true);
+          });
+          const authorizationCallCount = authorizationSpy.callCount;
+          await writeNote(alice, protocol);
+          await Time.minimalSleep();
+          expect(received.filter(message => message.type === 'error')).toHaveLength(1);
+          expect(authorizationSpy.callCount).toBe(authorizationCallCount);
         });
 
         it('stops a root-role subscription after the role record is deleted', async () => {

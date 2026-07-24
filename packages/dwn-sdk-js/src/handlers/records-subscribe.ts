@@ -156,7 +156,10 @@ export class RecordsSubscribeHandler implements MethodHandler {
       });
     }
 
-    const invokesProtocolRole = recordsSubscribe.signaturePayload?.protocolRole !== undefined;
+    // Direct grants take precedence over an invoked protocol role at subscribe-open.
+    // Retain only the authority path that actually authorized the target read.
+    const invokesProtocolRole = permissionGrantId === undefined
+      && recordsSubscribe.signaturePayload?.protocolRole !== undefined;
     if (grants.length === 0 && !invokesProtocolRole) {
       return undefined;
     }
@@ -280,6 +283,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
         return;
       }
       terminalErrorEmitted = true;
+      closeSubscription();
       subscriptionHandler({
         type  : 'error',
         cursor,
@@ -327,7 +331,6 @@ export class RecordsSubscribeHandler implements MethodHandler {
             ? 'subscription authorization failed during delivery'
             : 'subscription delivery authorization check failed',
         );
-        closeSubscription();
         return false;
       }
 
@@ -377,7 +380,6 @@ export class RecordsSubscribeHandler implements MethodHandler {
             'RecordsSubscribeProjectionFailed',
             'record-limit occupancy projection failed during delivery',
           );
-          closeSubscription();
           return;
         }
 
