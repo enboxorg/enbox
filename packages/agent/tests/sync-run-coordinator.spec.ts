@@ -206,8 +206,7 @@ describe('SyncRunCoordinator', () => {
     const pushFailures = [{ cid: 'terminal-cid', terminal: true }];
     const { coordinator, operations } = createFixture();
     operations.reconcileTarget.resolves({
-      admittedCids : ['admitted-cid'],
-      converged    : false,
+      converged: false,
       pushFailures,
     });
 

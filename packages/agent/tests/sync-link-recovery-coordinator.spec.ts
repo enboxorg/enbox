@@ -263,7 +263,6 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const controller = activate(fixture, state);
     const failure = { cid: 'push-failure', detail: 'temporary' };
     fixture.operations.reconcileTarget.resolves({
-      admittedCids : ['admitted-cid'],
       converged    : false,
       pushFailures : [failure],
     });
@@ -514,8 +513,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const state = link();
     const controller = activate(fixture, state);
     fixture.operations.reconcileTarget.onFirstCall().resolves({
-      admittedCids : ['applied-cid'],
-      converged    : true,
+      converged: true,
     });
 
     await fixture.coordinator.reconcile(controller);

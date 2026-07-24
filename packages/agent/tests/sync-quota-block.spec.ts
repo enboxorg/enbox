@@ -414,10 +414,9 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     };
     sinon.stub(internal, 'getSyncTargets').resolves([target]);
     const bootstrap = sinon.stub(internal, 'bootstrapRemotePermissionGrants').resolves({
-      kind               : 'processed',
-      failures           : [],
-      hasActionableDiffs : true,
-      quotaBlocked       : false,
+      kind         : 'processed',
+      failures     : [],
+      quotaBlocked : false,
     });
     const reconcile = sinon.stub(internal, 'reconcileTarget')
       .callsFake(async (reconcileTarget: unknown, options: { forceQuotaProbe?: boolean }): Promise<unknown> => {

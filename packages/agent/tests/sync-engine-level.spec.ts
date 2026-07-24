@@ -668,10 +668,9 @@ describe('SyncEngineLevel', () => {
       });
 
       expect(result).toEqual({
-        failures           : [],
-        hasActionableDiffs : true,
-        kind               : 'processed',
-        quotaBlocked       : false,
+        failures     : [],
+        kind         : 'processed',
+        quotaBlocked : false,
       });
       expect(processRequest.calledOnce).toBe(true);
       expect(pushEntries.calledOnce).toBe(true);
@@ -3782,10 +3781,9 @@ describe('SyncEngineLevel', () => {
         localFingerprint = 'local-fingerprint',
         remoteFingerprint = 'remote-fingerprint',
       ): SyncDurableFeedReconcileResult => ({
-        converged          : false,
-        hasActionableDiffs : true,
+        converged    : false,
         localFingerprint,
-        pushFailures       : [],
+        pushFailures : [],
         remoteFingerprint,
       });
 

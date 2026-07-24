@@ -117,11 +117,11 @@ function createReconciler(syncTarget = target()): ReconcilerFixture {
   quotaManager.clearResolvedOmissionsForTarget.resolves();
   quotaManager.getActiveBlocksForTarget.resolves([]);
   const operations: StubbedReconcilerOperations = {
-    admitRemotePage                 : sinon.stub().resolves({ kind: 'processed', admittedCids: [], hasActionableDiffs: false }),
-    bootstrapRemotePermissionGrants : sinon.stub().resolves({ kind: 'processed', failures: [], hasActionableDiffs: false, quotaBlocked: false }),
+    admitRemotePage                 : sinon.stub().resolves({ kind: 'processed', admittedCids: [] }),
+    bootstrapRemotePermissionGrants : sinon.stub().resolves({ kind: 'processed', failures: [], quotaBlocked: false }),
     commitCheckpoint                : sinon.stub().resolves(),
     probeQuotaBlocks                : sinon.stub().resolves(),
-    pushLocalPage                   : sinon.stub().resolves({ kind: 'processed', hasActionableDiffs: false }),
+    pushLocalPage                   : sinon.stub().resolves({ kind: 'processed' }),
     queryFeed,
     resetCheckpoint,
   } satisfies SyncDurableFeedReconcilerOperations;
@@ -211,27 +211,27 @@ describe('SyncDurableFeedReconciler', () => {
     const { link, reconciler } = createReconciler();
     const pull = sinon.stub(reconciler, 'pull');
     pull.onFirstCall().rejects(new Error('first run failed'));
-    pull.onSecondCall().resolves({ admittedCids: ['recovered'] });
+    pull.onSecondCall().resolves({ pullDrained: true, remoteFingerprint: 'recovered' });
     sinon.stub(reconciler, 'push').resolves({});
 
     const failed = reconciler.reconcile(target(), link);
     const recovered = reconciler.reconcile(target(), link);
 
     await expect(failed).rejects.toThrow('first run failed');
-    expect(await recovered).toMatchObject({ admittedCids: ['recovered'] });
+    expect(await recovered).toMatchObject({ pullDrained: true, remoteFingerprint: 'recovered' });
     expect(pull.callCount).toBe(2);
   });
 
-  it('should order pull, push, and verification while merging their outcomes', async () => {
+  it('should order pull, push, and verification while merging their observable outcomes', async () => {
     const { link, reconciler } = createReconciler();
     const calls: string[] = [];
     const pull = sinon.stub(reconciler, 'pull').callsFake(async () => {
       calls.push('pull');
-      return { admittedCids: ['remote-cid'], hasActionableDiffs: true, pullDrained: true, remoteFingerprint: 'before' };
+      return { pullDrained: true, remoteFingerprint: 'before' };
     });
     const push = sinon.stub(reconciler, 'push').callsFake(async () => {
       calls.push('push');
-      return { hasActionableDiffs: true, localFingerprint: 'before', pushFailures: [] };
+      return { localFingerprint: 'before', pushFailures: [] };
     });
     sinon.stub(reconciler, 'verifyConvergence').callsFake(async () => {
       calls.push('verify');
@@ -244,13 +244,11 @@ describe('SyncDurableFeedReconciler', () => {
     expect(pull.firstCall.args[1]).toBe(link);
     expect(push.firstCall.args[1]).toBe(link);
     expect(result).toMatchObject({
-      admittedCids       : ['remote-cid'],
-      converged          : true,
-      hasActionableDiffs : true,
-      localFingerprint   : 'after',
-      pullDrained        : true,
-      pushFailures       : [],
-      remoteFingerprint  : 'after',
+      converged         : true,
+      localFingerprint  : 'after',
+      pullDrained       : true,
+      pushFailures      : [],
+      remoteFingerprint : 'after',
     });
   });
 
@@ -278,14 +276,14 @@ describe('SyncDurableFeedReconciler', () => {
     let active = true;
     sinon.stub(reconciler, 'pull').callsFake(async () => {
       active = false;
-      return { admittedCids: ['applied'] };
+      return { pullDrained: true };
     });
     const push = sinon.stub(reconciler, 'push').resolves({});
     const verify = sinon.stub(reconciler, 'verifyConvergence').resolves({ converged: true });
 
     const result = await reconciler.reconcile(target(), link, { verifyConvergence: true }, () => active);
 
-    expect(result).toMatchObject({ aborted: true, admittedCids: ['applied'], converged: true });
+    expect(result).toMatchObject({ aborted: true, converged: true, pullDrained: true });
     expect(push.called).toBe(false);
     expect(verify.called).toBe(false);
   });
@@ -305,18 +303,15 @@ describe('SyncDurableFeedReconciler', () => {
       fingerprint : 'page-2',
     }));
     fixture.operations.admitRemotePage.callsFake(async (_target, entries) => ({
-      kind               : 'processed' as const,
-      admittedCids       : entries.map(({ messageCid }) => messageCid),
-      hasActionableDiffs : entries.length > 0,
+      kind         : 'processed' as const,
+      admittedCids : entries.map(({ messageCid }) => messageCid),
     }));
 
     const result = await fixture.reconciler.pull(target(), fixture.link);
 
     expect(result).toEqual({
-      admittedCids       : ['remote-2', 'remote-3'],
-      hasActionableDiffs : true,
-      pullDrained        : true,
-      remoteFingerprint  : 'page-2',
+      pullDrained       : true,
+      remoteFingerprint : 'page-2',
     });
     expect(fixture.link.pull.contiguousAppliedToken).toEqual(token(3));
     expect(fixture.operations.commitCheckpoint.callCount).toBe(2);
@@ -331,7 +326,7 @@ describe('SyncDurableFeedReconciler', () => {
 
     const result = await fixture.reconciler.pull(target(), fixture.link);
 
-    expect(result).toMatchObject({ admittedCids: [], hasActionableDiffs: false, pullDrained: true });
+    expect(result).toMatchObject({ pullDrained: true });
     expect(fixture.operations.commitCheckpoint.calledOnceWithExactly(fixture.link, 'pull')).toBe(true);
   });
 
@@ -340,7 +335,7 @@ describe('SyncDurableFeedReconciler', () => {
 
     const result = await fixture.reconciler.pull(target(), fixture.link);
 
-    expect(result).toMatchObject({ admittedCids: [], hasActionableDiffs: false, pullDrained: true });
+    expect(result).toMatchObject({ pullDrained: true });
     expect(fixture.link.pull.contiguousAppliedToken).toBeUndefined();
     expect(fixture.operations.commitCheckpoint.notCalled).toBe(true);
   });
@@ -358,15 +353,13 @@ describe('SyncDurableFeedReconciler', () => {
       entries : [{ messageCid: 'deferred' }],
     }));
     fixture.operations.admitRemotePage.onFirstCall().resolves({
-      kind               : 'processed',
-      admittedCids       : ['applied'],
-      hasActionableDiffs : true,
+      kind         : 'processed',
+      admittedCids : ['applied'],
     });
     fixture.operations.admitRemotePage.onSecondCall().resolves({
-      kind               : 'deferred',
-      admittedCids       : [],
-      hasActionableDiffs : false,
-      messageCid         : 'deferred',
+      kind         : 'deferred',
+      admittedCids : [],
+      messageCid   : 'deferred',
     });
 
     const result = await fixture.reconciler.pull(target(), fixture.link);
@@ -381,6 +374,7 @@ describe('SyncDurableFeedReconciler', () => {
     const entryCount = 1_000;
     const pageSize = 100;
     const expectedCids = Array.from({ length: entryCount }, (_, index): string => `remote-${index + 1}`);
+    const admittedCids: string[] = [];
     const operations: string[] = [];
     fixture.link.pull.contiguousAppliedToken = token(0);
     fixture.queryFeed.callsFake(async ({ cursor, limit, source }: SyncDurableFeedQuery): Promise<MessagesQueryReply> => {
@@ -397,12 +391,12 @@ describe('SyncDurableFeedReconciler', () => {
       });
     });
     fixture.operations.admitRemotePage.callsFake(async (_target, entries) => {
-      const admittedCids = entries.map(({ messageCid }) => messageCid);
-      operations.push(`admit:${admittedCids.at(-1)?.slice('remote-'.length)}`);
+      const pageCids = entries.map(({ messageCid }) => messageCid);
+      admittedCids.push(...pageCids);
+      operations.push(`admit:${pageCids.at(-1)?.slice('remote-'.length)}`);
       return {
-        kind               : 'processed' as const,
-        admittedCids,
-        hasActionableDiffs : admittedCids.length > 0,
+        kind         : 'processed' as const,
+        admittedCids : pageCids,
       };
     });
     fixture.operations.commitCheckpoint.callsFake(async (storedLink, direction) => {
@@ -413,12 +407,11 @@ describe('SyncDurableFeedReconciler', () => {
     const result = await fixture.reconciler.pull(target(), fixture.link);
 
     expect(result).toEqual({
-      admittedCids       : expectedCids,
-      hasActionableDiffs : true,
-      pullDrained        : true,
-      remoteFingerprint  : 'fingerprint-1000',
+      pullDrained       : true,
+      remoteFingerprint : 'fingerprint-1000',
     });
-    expect(new Set(result.admittedCids).size).toBe(entryCount);
+    expect(admittedCids).toEqual(expectedCids);
+    expect(new Set(admittedCids).size).toBe(entryCount);
     expect(fixture.link.pull.contiguousAppliedToken).toEqual(token(entryCount));
     expect(fixture.queryFeed.callCount).toBe(entryCount / pageSize);
     expect(fixture.operations.admitRemotePage.callCount).toBe(entryCount / pageSize);
@@ -430,6 +423,45 @@ describe('SyncDurableFeedReconciler', () => {
         return [`query:${position}`, `admit:${position}`, `commit:${position}`];
       },
     ).flat());
+  });
+
+  it('should not re-admit a dependency applied by an earlier inventory-diff page', async () => {
+    const fixture = createReconciler();
+    fixture.queryFeed.callsFake(async ({ cursor, source }: SyncDurableFeedQuery): Promise<MessagesQueryReply> => {
+      if (source === 'local') {
+        return reply({ entries: [{ messageCid: 'local-existing' }] });
+      }
+      if (cursor === undefined) {
+        return reply({
+          cursor  : token(1),
+          drained : false,
+          entries : [{ messageCid: 'root' }],
+        });
+      }
+      return reply({
+        cursor  : token(2),
+        entries : [{ messageCid: 'later-dependency' }],
+      });
+    });
+    fixture.operations.admitRemotePage.onFirstCall().resolves({
+      kind         : 'processed',
+      admittedCids : ['root', 'later-dependency'],
+    });
+    fixture.operations.admitRemotePage.onSecondCall().resolves({
+      kind         : 'processed',
+      admittedCids : [],
+    });
+
+    const result = await fixture.reconciler.pull(target(), fixture.link);
+
+    expect(result).toEqual({
+      pullDrained       : true,
+      remoteFingerprint : 'fingerprint',
+    });
+    expect(fixture.operations.admitRemotePage.callCount).toBe(2);
+    expect(fixture.operations.admitRemotePage.firstCall.args[1]).toEqual([{ messageCid: 'root' }]);
+    expect(fixture.operations.admitRemotePage.secondCall.args[1]).toEqual([]);
+    expect(fixture.link.pull.contiguousAppliedToken).toEqual(token(2));
   });
 
   it('should reject a non-advancing cursor before persisting or emitting progress', async () => {
@@ -476,19 +508,16 @@ describe('SyncDurableFeedReconciler', () => {
       entries : [{ messageCid: 'applied' }, { messageCid: 'deferred' }],
     }));
     fixture.operations.admitRemotePage.resolves({
-      kind               : 'deferred',
-      admittedCids       : ['applied'],
-      detail             : 'dependency missing',
-      hasActionableDiffs : true,
-      messageCid         : 'deferred',
+      kind         : 'deferred',
+      admittedCids : ['applied'],
+      detail       : 'dependency missing',
+      messageCid   : 'deferred',
     });
 
     const result = await fixture.reconciler.pull(target(), fixture.link);
 
     expect(result).toEqual({
-      admittedCids       : ['applied'],
-      hasActionableDiffs : true,
-      deferredPull       : { messageCid: 'deferred', detail: 'dependency missing' },
+      deferredPull: { messageCid: 'deferred', detail: 'dependency missing' },
     });
     expect(fixture.operations.commitCheckpoint.called).toBe(false);
   });
@@ -506,7 +535,7 @@ describe('SyncDurableFeedReconciler', () => {
       entries     : [{ messageCid: 'local-only' }],
       fingerprint : 'local-final',
     }));
-    fixture.operations.pushLocalPage.resolves({ kind: 'processed', hasActionableDiffs: true });
+    fixture.operations.pushLocalPage.resolves({ kind: 'processed' });
 
     const result = await fixture.reconciler.push(target(), fixture.link);
 
@@ -516,9 +545,8 @@ describe('SyncDurableFeedReconciler', () => {
     expect(fixture.link.push.contiguousAppliedToken).toEqual(token(2));
     expect(fixture.operations.probeQuotaBlocks.calledOnce).toBe(true);
     expect(result).toEqual({
-      hasActionableDiffs : true,
-      localFingerprint   : 'local-final',
-      pushFailures       : [],
+      localFingerprint : 'local-final',
+      pushFailures     : [],
     });
   });
 
@@ -618,14 +646,14 @@ describe('SyncDurableFeedReconciler', () => {
       expect(fixture.quotaManager.clearResolvedOmissionsForTarget.called).toBe(false);
     });
 
-    it('should observe remote movement from a mixed push that reports no actionable diffs', async () => {
+    it('should observe remote movement after a processed push', async () => {
       const fixture = createReconciler();
       fixture.link.pull.contiguousAppliedToken = token(1);
       fixture.link.push.contiguousAppliedToken = token(1);
       fixture.queryFeed.callsFake(async ({ limit, source }: SyncDurableFeedQuery): Promise<MessagesQueryReply> => {
         if (limit === 1) {
-          // The staged dependency applied remotely even though the root was
-          // rejected — both feeds now fingerprint at the post-write value.
+          // By verification time both feeds have moved to the same
+          // post-push head.
           return reply({ cursor: token(3), fingerprint: 'B' });
         }
         if (source === 'local') {
@@ -633,13 +661,12 @@ describe('SyncDurableFeedReconciler', () => {
         }
         return reply({ cursor: token(1), fingerprint: 'A' });
       });
-      // A mixed push outcome: the root entry was terminally rejected (skipped,
-      // no actionable diffs) while its staged quota-blocked dependency was
-      // applied — the remote feed changed despite the quiet aggregate result.
-      fixture.operations.pushLocalPage.resolves({ kind: 'processed', hasActionableDiffs: false });
+      fixture.operations.pushLocalPage.resolves({ kind: 'processed' });
 
       const result = await fixture.reconciler.reconcile(target(), fixture.link, { verifyConvergence: true });
 
+      expect(fixture.operations.pushLocalPage.calledOnce).toBe(true);
+      expect(fixture.operations.pushLocalPage.firstCall.args[1]).toEqual([{ messageCid: 'root' }]);
       expect(probeCalls(fixture, 'remote')).toHaveLength(1);
       // The verdict reflects the post-push remote state, not the pull-time
       // snapshot ('A') a fingerprint-reuse shortcut would have compared.

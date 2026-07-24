@@ -74,11 +74,10 @@ describe('SyncEngineLevel — durable push replay seam', () => {
     });
     const pushLocalPage = sinon.stub(engine as any, 'pushLocalFeedPage');
     pushLocalPage.onFirstCall().resolves({
-      failures           : [{ cid: 'cid-2', detail: 'remote storage unavailable', kind: 'Deferred', reason: 'storage' }],
-      hasActionableDiffs : true,
-      kind               : 'failed',
+      failures : [{ cid: 'cid-2', detail: 'remote storage unavailable', kind: 'Deferred', reason: 'storage' }],
+      kind     : 'failed',
     });
-    pushLocalPage.onSecondCall().resolves({ hasActionableDiffs: true, kind: 'processed' });
+    pushLocalPage.onSecondCall().resolves({ kind: 'processed' });
     sinon.stub(engine as any, 'probeQuotaBlocksForTarget').resolves();
 
     // EOSE is control information, not a push wake.

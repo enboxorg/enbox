@@ -540,8 +540,7 @@ describe('SyncEngineLevel lifecycle', () => {
       ): Promise<
         | { kind: 'aborted' }
         | { kind: 'failed'; failures: unknown[] }
-        | { kind: 'pushed' }
-        | { kind: 'skipped' }
+        | { kind: 'processed' }
       >;
     };
     const durableFeedReconciler = engine['_durableFeedReconciler'];
@@ -566,9 +565,9 @@ describe('SyncEngineLevel lifecycle', () => {
         return { aborted: true };
       }
       if (result.kind === 'failed') {
-        return { hasActionableDiffs: true, pushFailures: result.failures };
+        return { pushFailures: result.failures };
       }
-      return { hasActionableDiffs: result.kind === 'pushed', pushFailures: [] };
+      return { pushFailures: [] };
     });
     const applyPushResult = sinon.spy(engine['_quotaManager'], 'applyPushResult');
 
@@ -1129,13 +1128,11 @@ describe('SyncEngineLevel lifecycle', () => {
     sinon.stub(engine as any, 'getOrCreateReplicationLink').resolves(controller.link);
     sinon.stub(engine as any, 'reinitializeOrphanedLinkTargets').resolves();
     const verifyConvergence = sinon.stub(engine['_durableFeedReconciler'], 'verifyConvergence').resolves({
-      converged          : true,
-      hasActionableDiffs : false,
-      pushFailures       : [],
+      converged    : true,
+      pushFailures : [],
     });
     const reconcile = sinon.stub(engine['_durableFeedReconciler'], 'reconcile').resolves({
-      hasActionableDiffs : false,
-      pushFailures       : [],
+      pushFailures: [],
     });
 
     try {
@@ -1171,8 +1168,7 @@ describe('SyncEngineLevel lifecycle', () => {
     sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
     sinon.stub(engine as any, 'getOrCreateReplicationLink').resolves(controller.link);
     const reconcile = sinon.stub(engine['_durableFeedReconciler'], 'reconcile').resolves({
-      hasActionableDiffs : false,
-      pushFailures       : [],
+      pushFailures: [],
     });
 
     try {

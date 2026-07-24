@@ -41,7 +41,7 @@ import type {
 } from './types/sync.js';
 import type {
   SyncDurableFeedPageAdmissionResult as FeedPageAdmissionResult,
-  SyncDurableFeedPagePushResult as FeedPagePushResult,
+  SyncDurableFeedPagePushResult as FeedPushResult,
   SyncDurableFeedPermissionGrantBootstrapResult as PermissionGrantBootstrapResult,
   SyncDurableFeedQuery,
   SyncDurableFeedReconcileOptions as SyncReconcileOptions,
@@ -121,12 +121,6 @@ enum LinkInitializationStatus {
 type LinkInitializationResult =
   | { status: LinkInitializationStatus.Active; durableLinkIdentityKey: string }
   | { status: LinkInitializationStatus.Failed };
-
-type FeedPushEntryResult =
-  | { kind: 'aborted' }
-  | { kind: 'pushed' }
-  | { kind: 'skipped' }
-  | { kind: 'failed'; failures: PushFailure[] };
 
 /** Accumulated shape of every `sync()` request joined into one queued follow-up run. */
 type MergedSyncRunRequest = {
@@ -430,7 +424,7 @@ export class SyncEngineLevel implements SyncEngine {
           this.commitReconciledCheckpoint(link, direction),
         probeQuotaBlocks: (target, force, forceProbeCids, shouldContinue): Promise<void> =>
           this.probeQuotaBlocksForTarget(target, force, forceProbeCids, shouldContinue),
-        pushLocalPage: (target, entries, shouldContinue): Promise<FeedPagePushResult> =>
+        pushLocalPage: (target, entries, shouldContinue): Promise<FeedPushResult> =>
           this.pushLocalFeedPage(target, entries, shouldContinue),
         queryFeed       : (query): Promise<MessagesQueryReply> => this.queryDurableFeed(query),
         resetCheckpoint : (link, direction): Promise<void> => this.replicationLinkStore.resetCheckpoint(link, direction),
@@ -2810,7 +2804,7 @@ export class SyncEngineLevel implements SyncEngine {
     forceQuotaProbe = false,
   ): Promise<PermissionGrantBootstrapResult> {
     if (target.permissionGrantIds === undefined) {
-      return { kind: 'processed', failures: [], hasActionableDiffs: false, quotaBlocked: false };
+      return { kind: 'processed', failures: [], quotaBlocked: false };
     }
 
     const grantEntries = await this.localPermissionGrantBootstrapEntries(target, shouldContinue);
@@ -2818,7 +2812,7 @@ export class SyncEngineLevel implements SyncEngine {
       return { kind: 'aborted' };
     }
     if (grantEntries.failures.length > 0 || grantEntries.entries.length === 0) {
-      return { kind: 'processed', failures: grantEntries.failures, hasActionableDiffs: false, quotaBlocked: false };
+      return { kind: 'processed', failures: grantEntries.failures, quotaBlocked: false };
     }
 
     for (const entry of grantEntries.entries) {
@@ -2827,7 +2821,7 @@ export class SyncEngineLevel implements SyncEngine {
       if (state?.source !== 'permission-grant') { continue; }
       const nextProbeAt = Date.parse(state.nextProbeAt);
       if (!forceQuotaProbe && Number.isFinite(nextProbeAt) && Date.now() < nextProbeAt) {
-        return { kind: 'processed', failures: [], hasActionableDiffs: false, quotaBlocked: true };
+        return { kind: 'processed', failures: [], quotaBlocked: true };
       }
     }
 
@@ -2847,10 +2841,9 @@ export class SyncEngineLevel implements SyncEngine {
     }
     const outcome = await this._quotaManager.applyPushResult(target, result, { source: 'permission-grant' });
     return {
-      kind               : 'processed',
-      failures           : [...outcome.retryableFailures, ...outcome.terminalFailures],
-      hasActionableDiffs : result.succeeded.length > 0,
-      quotaBlocked       : outcome.quotaBlocked,
+      kind         : 'processed',
+      failures     : [...outcome.retryableFailures, ...outcome.terminalFailures],
+      quotaBlocked : outcome.quotaBlocked,
     };
   }
 
@@ -3001,9 +2994,7 @@ export class SyncEngineLevel implements SyncEngine {
     target: SyncTarget,
     entries: MessagesQueryReplyEntry[],
     shouldContinue?: () => boolean,
-  ): Promise<FeedPagePushResult> {
-    let hasActionableDiffs = false;
-
+  ): Promise<FeedPushResult> {
     for (const entry of entries) {
       if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
         return { kind: 'aborted' };
@@ -3014,34 +3005,31 @@ export class SyncEngineLevel implements SyncEngine {
         return { kind: 'aborted' };
       }
       if (result.kind === 'failed') {
-        return { kind: 'failed', failures: result.failures, hasActionableDiffs };
-      }
-      if (result.kind === 'pushed') {
-        hasActionableDiffs = true;
+        return { kind: 'failed', failures: result.failures };
       }
     }
 
-    return { kind: 'processed', hasActionableDiffs };
+    return { kind: 'processed' };
   }
 
   private async pushLocalFeedEntry(
     target: SyncTarget,
     entry: MessagesQueryReplyEntry,
     shouldContinue?: () => boolean,
-  ): Promise<FeedPushEntryResult> {
+  ): Promise<FeedPushResult> {
     if (await this.hasDeadLetter(target.did, target.dwnUrl, entry.messageCid)) {
-      return { kind: 'skipped' };
+      return { kind: 'processed' };
     }
 
     // Every durable quota block is skipped in the ordinary feed. Due probes
     // are driven independently at the start of target push, because this feed
     // checkpoint is allowed to advance past the omitted CID.
     if (await this._quotaManager.getState(target, entry.messageCid) !== undefined) {
-      return { kind: 'skipped' };
+      return { kind: 'processed' };
     }
 
     if (this._echoSuppressor.hasRecentlyPulled(target.did, entry.messageCid, target.dwnUrl)) {
-      return { kind: 'skipped' };
+      return { kind: 'processed' };
     }
 
     const quotaBlockedInitialCids = await this.getQuotaBlockedInitialCidsForFeedEntry(target, entry);
@@ -3066,11 +3054,11 @@ export class SyncEngineLevel implements SyncEngine {
     });
 
     if (attributedResult.failed.length === 0) {
-      return { kind: 'pushed' };
+      return { kind: 'processed' };
     }
 
     if (outcome.retryableFailures.length === 0) {
-      return { kind: 'skipped' };
+      return { kind: 'processed' };
     }
 
     return { kind: 'failed', failures: outcome.retryableFailures };
@@ -3181,7 +3169,6 @@ export class SyncEngineLevel implements SyncEngine {
     shouldContinue?: () => boolean,
   ): Promise<FeedPageAdmissionResult> {
     const admittedCids: string[] = [];
-    let hasActionableDiffs = false;
 
     for (const entry of entries) {
       if (await this.hasDeadLetter(target.did, target.dwnUrl, entry.messageCid)) {
@@ -3195,16 +3182,14 @@ export class SyncEngineLevel implements SyncEngine {
 
       if (outcome.kind === 'deferred') {
         if (!await this.tryRetireDeferredPull(target, entry, outcome.detail)) {
-          return { kind: 'deferred', admittedCids, detail: outcome.detail, hasActionableDiffs, messageCid: entry.messageCid };
+          return { kind: 'deferred', admittedCids, detail: outcome.detail, messageCid: entry.messageCid };
         }
-        hasActionableDiffs = true;
         continue;
       }
       if (outcome.kind === 'echo') {
         continue;
       }
 
-      hasActionableDiffs = true;
       if (outcome.kind === 'admitted') {
         admittedCids.push(...outcome.appliedCids);
         await this.trackRemoteFeedAppliedCids(outcome.appliedCids, target);
@@ -3214,7 +3199,7 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
 
-    return { kind: 'processed', admittedCids, hasActionableDiffs };
+    return { kind: 'processed', admittedCids };
   }
 
   private async trackRemoteFeedAppliedCids(messageCids: string[], target: SyncTarget): Promise<void> {
