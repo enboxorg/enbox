@@ -110,7 +110,7 @@ describe('cross-tenant writes (#973)', () => {
   }
 
   describe('records.write with from', () => {
-    it('should accept a role-authorized cross-tenant write and stamp remoteOrigin', async () => {
+    it('should accept a role-authorized cross-tenant write', async () => {
       await installProtocolForAlice();
       await grantBobFriendRole();
 
@@ -143,9 +143,7 @@ describe('cross-tenant writes (#973)', () => {
       // fabricated on the remote path.
       expect(audienceKeyDelivery).toBeUndefined();
 
-      // The returned record is stamped for the owner tenant: data re-reads
-      // target Alice's DWN, and the invoked role is carried for them.
-      expect(record!['_remoteOrigin']).toBe(aliceDid.uri);
+      // The invoked role is retained for follow-up operations.
       expect(record!.protocolRole).toBe('friend');
       expect(record!.author).toBe(bobDid.uri);
 
@@ -190,7 +188,7 @@ describe('cross-tenant writes (#973)', () => {
       });
 
       expect(status.code).toBe(202);
-      expect(record!['_remoteOrigin']).toBeUndefined();
+      expect(record).toBeDefined();
       expect(sendSpy.callCount).toBe(0);
     });
 
@@ -252,8 +250,7 @@ describe('cross-tenant writes (#973)', () => {
       expect(remoteWrites).toHaveLength(1);
       expect(remoteWrites[0].args[0].target).toBe(aliceDid.uri);
 
-      // The typed API returns the canonical record with the owner-tenant stamping intact.
-      expect((record as unknown as { _remoteOrigin?: string })._remoteOrigin).toBe(aliceDid.uri);
+      // The typed API returns the canonical record with its invoked role intact.
       expect(record!.protocolRole).toBe('friend');
 
       // The record landed on Alice's remote DWN with the typed payload.
@@ -267,7 +264,7 @@ describe('cross-tenant writes (#973)', () => {
   });
 
   describe('Record.update with from', () => {
-    it('should dispatch a role-authorized cross-tenant update remotely and stamp remoteOrigin', async () => {
+    it('should dispatch a role-authorized cross-tenant update remotely', async () => {
       await installProtocolForAlice();
       await grantBobFriendRole();
 
@@ -288,7 +285,7 @@ describe('cross-tenant writes (#973)', () => {
       const sendSpy = sinon.spy(testHarness.agent, 'sendDwnRequest');
       const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
 
-      const { status: updateStatus, record: updatedRecord } = await record!.update({
+      const { status: updateStatus } = await record!.update({
         data : 'v2',
         from : aliceDid.uri,
       });
@@ -297,9 +294,6 @@ describe('cross-tenant writes (#973)', () => {
       expect(sendSpy.callCount).toBe(1);
       expect(processSpy.callCount).toBe(0);
       expect(sendSpy.firstCall.args[0].target).toBe(aliceDid.uri);
-
-      // The returned record keeps targeting the owner tenant for data reads.
-      expect(updatedRecord['_remoteOrigin']).toBe(aliceDid.uri);
 
       // The update landed on Alice's remote DWN.
       const readResult = await dwnAlice.records.read({
@@ -310,11 +304,11 @@ describe('cross-tenant writes (#973)', () => {
       expect(await readResult.record!.data.text()).toBe('v2');
     });
 
-    it('should update locally when a remote-origin record is updated without from (regression)', async () => {
+    it('should update locally when a remotely read record is updated without from (regression)', async () => {
       await installProtocolForAlice();
 
       // Alice writes locally, sends to her remote, then reads it back FROM the
-      // remote — producing a record with a remote origin.
+      // remote — producing a record with remote data access.
       const { status: writeStatus, record } = await dwnAlice.records.write({
         data         : 'local v1',
         protocol     : protocolDefinition.protocol,
@@ -331,23 +325,21 @@ describe('cross-tenant writes (#973)', () => {
         filter : { recordId: record!.id },
       });
       expect(readResult.status.code).toBe(200);
-      const remoteOriginRecord = readResult.record!;
-      expect(remoteOriginRecord['_remoteOrigin']).toBe(aliceDid.uri);
+      const remoteRecord = readResult.record!;
 
       const sendSpy = sinon.spy(testHarness.agent, 'sendDwnRequest');
       const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
 
-      // No `from` — the update must stay LOCAL despite the remote origin.
-      const { status: updateStatus } = await remoteOriginRecord.update({ data: 'local v2' });
+      // No `from` — the update must stay local despite the remote read.
+      const { status: updateStatus } = await remoteRecord.update({ data: 'local v2' });
 
       expect(updateStatus.code).toBe(202);
       expect(sendSpy.callCount).toBe(0);
       expect(processSpy.callCount).toBe(1);
       expect(processSpy.firstCall.args[0].target).toBe(aliceDid.uri);
-      expect(remoteOriginRecord['_remoteOrigin']).toBeUndefined();
     });
 
-    it('should re-derive the author and re-home the remote origin on BOTH references after a co-update', async () => {
+    it('should re-derive the author and re-home data access on both references after a co-update', async () => {
       // A co-update-friendly protocol: anyone may create/read/update/co-update.
       const coUpdateProtocol: DwnProtocolDefinition = {
         published : true,
@@ -388,7 +380,7 @@ describe('cross-tenant writes (#973)', () => {
       expect(sendStatus.code).toBe(202);
 
       // Bob reads it from Alice's remote and stores a local copy, then
-      // re-queries LOCALLY — producing a reference with NO remote origin.
+      // re-queries locally so the new reference captures local data access.
       const bobRead = await dwnBob.records.read({
         from   : aliceDid.uri,
         filter : { recordId: alicesRecord!.id },
@@ -400,7 +392,6 @@ describe('cross-tenant writes (#973)', () => {
       const bobLocalQuery = await dwnBob.records.query({ filter: { recordId: alicesRecord!.id } });
       expect(bobLocalQuery.status.code).toBe(200);
       const localRecord = bobLocalQuery.records[0];
-      expect(localRecord['_remoteOrigin']).toBeUndefined();
       expect(localRecord.author).toBe(aliceDid.uri);
 
       // Bob co-updates the ALICE-authored record cross-tenant (tags-only, so
@@ -417,11 +408,7 @@ describe('cross-tenant writes (#973)', () => {
       expect(updatedRecord.author).toBe(bobDid.uri);
       expect(localRecord.author).toBe(bobDid.uri);
 
-      // Both references now target the OWNER tenant for lazy data reads: the
-      // co-update re-homed the authoritative copy on Alice's DWN.
-      expect(updatedRecord['_remoteOrigin']).toBe(aliceDid.uri);
-      expect(localRecord['_remoteOrigin']).toBe(aliceDid.uri);
-
+      // Both references now target the owner tenant for lazy data reads.
       const sendSpy = sinon.spy(testHarness.agent, 'sendDwnRequest');
       const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
 
@@ -525,7 +512,6 @@ describe('cross-tenant writes (#973)', () => {
 
       expect(status.code).toBe(202);
       expect(record).toBeDefined();
-      expect(record!['_remoteOrigin']).toBe(aliceDid.uri);
 
       // The dispatch went remote, carrying the delegated-grant parameters.
       expect(sendSpy.callCount).toBe(1);

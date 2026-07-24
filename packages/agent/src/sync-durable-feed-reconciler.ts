@@ -268,16 +268,6 @@ export class SyncDurableFeedReconciler {
     return { ...result, converged };
   }
 
-  /** Collect the complete local feed inventory, or return undefined if cancelled. */
-  public collectLocalCids(target: SyncTarget, shouldContinue?: () => boolean): Promise<Set<string> | undefined> {
-    return this.collectCids(target, 'local', shouldContinue);
-  }
-
-  /** Collect the complete remote feed inventory, or return undefined if cancelled. */
-  public collectRemoteCids(target: SyncTarget, shouldContinue?: () => boolean): Promise<Set<string> | undefined> {
-    return this.collectCids(target, 'remote', shouldContinue);
-  }
-
   private async reconcileTarget(
     target: SyncTarget,
     link: ReplicationLinkState,
@@ -387,7 +377,7 @@ export class SyncDurableFeedReconciler {
     link: ReplicationLinkState,
     shouldContinue?: () => boolean,
   ): Promise<SyncDurableFeedReconcileResult | undefined> {
-    const localCids = await this.collectLocalCids(target, shouldContinue);
+    const localCids = await this.collectFeedCids(target, 'local', shouldContinue);
     if (localCids === undefined) {
       return { aborted: true };
     }
@@ -504,7 +494,7 @@ export class SyncDurableFeedReconciler {
       return { pushFailures: grantBootstrap.failures };
     }
 
-    const remoteCids = await this.collectRemoteCids(target, shouldContinue);
+    const remoteCids = await this.collectFeedCids(target, 'remote', shouldContinue);
     if (remoteCids === undefined) {
       return { aborted: true };
     }
@@ -555,7 +545,8 @@ export class SyncDurableFeedReconciler {
     }
   }
 
-  private async collectCids(
+  /** Collect the complete feed inventory from one source, or return undefined if cancelled. */
+  public async collectFeedCids(
     target: SyncTarget,
     source: 'local' | 'remote',
     shouldContinue?: () => boolean,

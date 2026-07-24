@@ -1,3 +1,5 @@
+import type { SyncConnectivityManager } from './sync-connectivity-manager.js';
+import type { SyncFeedConvergenceManager } from './sync-feed-convergence-manager.js';
 import type { SyncIdentityStore } from './sync-identity-store.js';
 import type { SyncQuotaManager } from './sync-quota-manager.js';
 import type { SyncTarget } from './sync-target-resolver.js';
@@ -30,21 +32,14 @@ export interface SyncDrainCoordinatorOperations {
     remoteEndpoint: string,
     options: SyncIdentityOptions,
   ): Promise<SyncTarget[]>;
-  clearFeedConvergenceFailure(target: SyncTarget): Promise<void>;
   getLink(target: SyncTarget): Promise<ReplicationLinkState>;
   getTopologyGeneration(): number;
-  handleVerifiedFeedDivergence(
-    target: SyncTarget,
-    result: SyncDurableFeedReconcileResult,
-  ): Promise<boolean>;
   prepareLiveTarget(target: SyncTarget): Promise<void>;
   reconcileTarget(
     target: SyncTarget,
     options: SyncDurableFeedReconcileOptions,
     shouldContinue: () => boolean,
   ): Promise<SyncDurableFeedReconcileResult>;
-  recordConnectivityFailure(): void;
-  recordConnectivitySuccess(): void;
   recordPushFailures(target: SyncTarget, failures: PushFailure[]): Promise<void>;
   registerEndpoint(remoteEndpoint: string): Promise<void>;
   verifyConvergence(
@@ -54,6 +49,8 @@ export interface SyncDrainCoordinatorOperations {
 }
 
 export type SyncDrainCoordinatorParams = {
+  connectivityManager: SyncConnectivityManager;
+  feedConvergenceManager: SyncFeedConvergenceManager;
   identityStore: SyncIdentityStore;
   operations: SyncDrainCoordinatorOperations;
   quotaManager: SyncQuotaManager;
@@ -61,15 +58,26 @@ export type SyncDrainCoordinatorParams = {
 
 /**
  * Coordinates a one-shot durable handoff without depending on a persistence
- * backend. Identity storage, target resolution, transport, convergence policy,
- * live-link preparation, and connectivity updates are supplied as operations.
+ * backend. Connectivity, convergence, quota, and identity storage are direct
+ * collaborators; target resolution, transport, and live-link preparation are
+ * supplied as operations.
  */
 export class SyncDrainCoordinator {
+  private readonly _connectivityManager: SyncConnectivityManager;
+  private readonly _feedConvergenceManager: SyncFeedConvergenceManager;
   private readonly _identityStore: SyncIdentityStore;
   private readonly _operations: SyncDrainCoordinatorOperations;
   private readonly _quotaManager: SyncQuotaManager;
 
-  public constructor({ identityStore, operations, quotaManager }: SyncDrainCoordinatorParams) {
+  public constructor({
+    connectivityManager,
+    feedConvergenceManager,
+    identityStore,
+    operations,
+    quotaManager,
+  }: SyncDrainCoordinatorParams) {
+    this._connectivityManager = connectivityManager;
+    this._feedConvergenceManager = feedConvergenceManager;
     this._identityStore = identityStore;
     this._operations = operations;
     this._quotaManager = quotaManager;
@@ -274,10 +282,10 @@ export class SyncDrainCoordinator {
       return false;
     }
     if (result.converged === false && !feedHeadChanged) {
-      return this._operations.handleVerifiedFeedDivergence(target, result);
+      return this._feedConvergenceManager.handleVerifiedDivergence(target, result);
     }
     if (result.converged === true) {
-      await this._operations.clearFeedConvergenceFailure(target);
+      await this._feedConvergenceManager.clear(target);
     }
     return false;
   }
@@ -299,7 +307,7 @@ export class SyncDrainCoordinator {
       return;
     }
     if (targets.some((target): boolean => target.completed || target.quotaBlocked === true)) {
-      this._operations.recordConnectivitySuccess();
+      this._connectivityManager.recordSuccess();
       return;
     }
     // An interrupted drain — caller cancellation or a topology change — says
@@ -308,7 +316,7 @@ export class SyncDrainCoordinator {
     if (interrupted) {
       return;
     }
-    this._operations.recordConnectivityFailure();
+    this._connectivityManager.recordFailure();
   }
 
   private static targetError(

@@ -40,6 +40,7 @@ import { Convert, isEmptyObject, removeUndefinedProperties, Stream } from '@enbo
 
 import type { RecordData } from './record-data.js';
 
+import { captureRecordDataAccess } from './record-data-access.js';
 import { createRecordData } from './record-data.js';
 import { dataToBlob, SendCache } from './utils.js';
 
@@ -153,13 +154,6 @@ export class Record<T = unknown> implements RecordModel {
   private _storedData?: StoredRecordDataSource;
   /** Authorization and routing context used to open and decrypt the stored bytes. */
   private _dataAccess: RecordDataAccess;
-  /**
-   * The origin DID if the record was fetched from — or updated on — a remote DWN.
-   *
-   * Kept in step with `_dataAccess` when an update changes the authoritative tenant. The
-   * access context, rather than this provenance field, drives lazy reads.
-   */
-  private _remoteOrigin?: string;
 
   // Private variables for DWN `RecordsWrite` message properties.
 
@@ -338,8 +332,6 @@ export class Record<T = unknown> implements RecordModel {
     this._delegateDid = options.delegateDid;
     this._permissionsApi = permissionsApi ?? new AgentPermissionsApi({ agent });
 
-    // Retain remote provenance separately from the exact access context that drives backing reads.
-    this._remoteOrigin = options.remoteOrigin;
     this._dataAccess = options.dataAccess;
 
     // RecordsWriteMessage properties.
@@ -646,17 +638,14 @@ export class Record<T = unknown> implements RecordModel {
     // Determine the initial write for the new Record instance.
     const initialWrite = this._initialWrite ?? { ...this.rawMessage as DwnMessage[DwnInterface.RecordsWrite] };
 
-    // Construct a new Record instance reflecting the updated state. When the
-    // update was dispatched cross-tenant, stamp the returned record with the
-    // remote origin so its subsequent data re-reads target the owner tenant.
+    // Construct a new Record instance reflecting the updated state.
     //
     // The author is derived from the NEWLY SIGNED response message (not
     // carried over): after a co-update, the record's most recent author is
     // whoever signed this update, which may differ from the previous author.
     const msg = responseMessage as DwnMessage[DwnInterface.RecordsWrite];
     const updatedAuthor = getRecordAuthor(msg) ?? this._author;
-    const updatedRemoteOrigin = isRemote ? from : undefined;
-    const dataAccess = Record.getDataAccess(requestOptions, isRemote);
+    const dataAccess = captureRecordDataAccess(requestOptions, isRemote);
     // A stored metadata-only update should re-open the accepted state from its
     // new target. A non-stored update has no target copy to reopen, so retain
     // the existing exact-CID source until the constructed message is sent.
@@ -669,7 +658,6 @@ export class Record<T = unknown> implements RecordModel {
       connectedDid : this._connectedDid,
       delegateDid  : this._delegateDid,
       dataAccess,
-      remoteOrigin : updatedRemoteOrigin,
       protocolRole : protocolRole ?? this._protocolRole,
       initialWrite,
       storedData,
@@ -681,9 +669,9 @@ export class Record<T = unknown> implements RecordModel {
     // the returned record. This eliminates the common footgun where
     // `await record.update({ data }); await record.data.json()` returns
     // stale data because `update()` historically only returned a *new* Record.
-    // Author and remote origin are kept consistent with the returned record:
-    // a cross-tenant update re-homes the authoritative copy on the target
-    // tenant, so later lazy data reads must target it — not the old origin.
+    // Author and data access are kept consistent with the returned record: a
+    // cross-tenant update re-homes the authoritative copy on the target tenant,
+    // so later lazy data reads must target it.
     this._descriptor = msg.descriptor;
     this._attestation = msg.attestation;
     this._authorization = msg.authorization;
@@ -692,7 +680,6 @@ export class Record<T = unknown> implements RecordModel {
     this._initialWrite = initialWrite;
     this._protocolRole = protocolRole ?? this._protocolRole;
     this._author = updatedAuthor;
-    this._remoteOrigin = updatedRemoteOrigin;
     this._dataAccess = dataAccess;
     this._storedData = this.createStoredDataSource(storedData);
     this._rawMessageDirty = true; // Force rawMessage cache rebuild.
@@ -844,7 +831,6 @@ export class Record<T = unknown> implements RecordModel {
       connectedDid : this._connectedDid,
       delegateDid  : this._delegateDid,
       dataAccess   : this._dataAccess,
-      remoteOrigin : this._remoteOrigin,
       protocolRole : deleteParams?.protocolRole ?? this._protocolRole,
       initialWrite,
       ...message as DwnMessage[DwnInterface.RecordsDelete],
@@ -1063,21 +1049,6 @@ export class Record<T = unknown> implements RecordModel {
       const detail = error instanceof Error ? error.message : String(error);
       throw new Error(`Record: Unable to read stored data: ${detail}`);
     }
-  }
-
-  /** Captures the exact authorization and routing context used for a successful request. */
-  private static getDataAccess<T extends DwnInterface>(
-    request: ProcessDwnRequest<T>,
-    remote: boolean,
-  ): RecordDataAccess {
-    const messageParams = request.messageParams as { delegatedGrant?: RecordDataAccess['delegatedGrant'] } | undefined;
-    return {
-      author : request.author,
-      remote,
-      target : request.target,
-      ...(request.granteeDid === undefined ? {} : { granteeDid: request.granteeDid }),
-      ...(messageParams?.delegatedGrant === undefined ? {} : { delegatedGrant: messageParams.delegatedGrant }),
-    };
   }
 
   private static isStoredDataSource(storedData: StoredRecordData): storedData is StoredRecordDataSource {

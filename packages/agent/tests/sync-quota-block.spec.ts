@@ -7,6 +7,7 @@ import { Level } from 'level';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
 import { buildLinkKey } from '../src/sync-link-key.js';
+import type { SyncDurableFeedReconciler } from '../src/sync-durable-feed-reconciler.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { SyncQuotaManager } from '../src/sync-quota-manager.js';
 import {
@@ -33,6 +34,10 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
 
   function quotaManager(): SyncQuotaManager {
     return (syncEngine as any)._quotaManager;
+  }
+
+  function durableFeedReconciler(): SyncDurableFeedReconciler {
+    return (syncEngine as any)._durableFeedReconciler;
   }
 
   async function seedQuotaBlock({
@@ -500,12 +505,9 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
       cid         : 'blocked-cid',
       nextProbeAt : new Date(Date.now() + 60_000).toISOString(),
     });
-    const internal = syncEngine as unknown as {
-      collectLocalFeedCids(target: unknown): Promise<Set<string> | undefined>;
-      collectRemoteFeedCids(target: unknown): Promise<Set<string> | undefined>;
-    };
-    sinon.stub(internal, 'collectLocalFeedCids').resolves(new Set(['blocked-cid', 'unrelated-cid']));
-    sinon.stub(internal, 'collectRemoteFeedCids').resolves(new Set());
+    sinon.stub(durableFeedReconciler(), 'collectFeedCids').callsFake(async (_target, source) =>
+      source === 'local' ? new Set(['blocked-cid', 'unrelated-cid']) : new Set()
+    );
 
     const explained = await quotaManager().reconcileAndExplainFeedDivergence({
       did                : TENANT,
@@ -527,12 +529,9 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
       cid         : 'blocked-cid',
       nextProbeAt : new Date(Date.now() + 60_000).toISOString(),
     });
-    const internal = syncEngine as unknown as {
-      collectLocalFeedCids(target: unknown): Promise<Set<string> | undefined>;
-      collectRemoteFeedCids(target: unknown): Promise<Set<string> | undefined>;
-    };
-    sinon.stub(internal, 'collectLocalFeedCids').resolves(new Set(['blocked-cid']));
-    sinon.stub(internal, 'collectRemoteFeedCids').resolves(new Set(['remote-only-cid']));
+    sinon.stub(durableFeedReconciler(), 'collectFeedCids').callsFake(async (_target, source) =>
+      source === 'local' ? new Set(['blocked-cid']) : new Set(['remote-only-cid'])
+    );
 
     const explained = await quotaManager().reconcileAndExplainFeedDivergence({
       did                : TENANT,
@@ -559,12 +558,9 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     });
     let localCids = new Set(['initial-cid', 'update-cid']);
     let remoteCids = new Set(['update-cid']);
-    const internal = syncEngine as unknown as {
-      collectLocalFeedCids(target: unknown): Promise<Set<string> | undefined>;
-      collectRemoteFeedCids(target: unknown): Promise<Set<string> | undefined>;
-    };
-    sinon.stub(internal, 'collectLocalFeedCids').callsFake(async () => localCids);
-    sinon.stub(internal, 'collectRemoteFeedCids').callsFake(async () => remoteCids);
+    sinon.stub(durableFeedReconciler(), 'collectFeedCids').callsFake(async (_target, source) =>
+      source === 'local' ? localCids : remoteCids
+    );
     const target = {
       did                : TENANT,
       dwnUrl             : REMOTE,

@@ -405,16 +405,6 @@ export class Records {
     return filterCopy;
   }
 
-  public static buildUnpublishedControlRecordsFilter(filter: RecordsFilter, dateSort?: DateSort): Filter {
-    return {
-      ...Records.convertFilter(filter, dateSort),
-      interface         : DwnInterfaceName.Records,
-      method            : DwnMethodName.Write,
-      isLatestBaseState : true,
-      published         : false,
-    };
-  }
-
   public static buildControlRecordsFilters(filters: Filter[]): Filter[] {
     const controlFilters: Filter[] = [];
     for (const filter of filters) {
@@ -585,13 +575,6 @@ export class Records {
   }
 
   /**
-   * Determines if signature payload contains a protocolRole and should be authorized as such.
-   */
-  public static shouldProtocolAuthorize(signaturePayload: GenericSignaturePayload): boolean {
-    return signaturePayload.protocolRole !== undefined;
-  }
-
-  /**
    * Checks if the filter supports returning published records.
    */
   public static filterIncludesPublishedRecords(filter: RecordsFilter): boolean {
@@ -639,33 +622,4 @@ export class Records {
     return !incomingDeleteIsNewest;
   }
 
-  /**
-   * Checks whether or not the incoming records query filter should build an unpublished recipient MessageStore filter.
-   *
-   * @param filter The incoming RecordsFilter to evaluate against.
-   * @param recipient The recipient to check against the filter, typically the query/subscribe message author.
-   * @returns {boolean} True if the filter contains the recipient, or if the recipient filter is undefined/empty.
-   */
-  static shouldBuildUnpublishedRecipientFilter(filter: RecordsFilter, recipient: string): boolean {
-    const { recipient: recipientFilter } = filter;
-
-    return Array.isArray(recipientFilter) ?
-      recipientFilter.length === 0 || recipientFilter.includes(recipient) :
-      recipientFilter === undefined || recipientFilter === recipient;
-  }
-
-  /**
-   * Checks whether or not the incoming records query filter should build an unpublished author MessageStore filter.
-   *
-   * @param filter The incoming RecordsFilter to evaluate against.
-   * @param author The author to check against the filter, typically the query/subscribe message author.
-   * @returns {boolean} True if the filter contains the author, or if the author filter is undefined/empty.
-   */
-  static shouldBuildUnpublishedAuthorFilter(filter: RecordsFilter, author: string): boolean {
-    const { author: authorFilter } = filter;
-
-    return Array.isArray(authorFilter) ?
-      authorFilter.length === 0 || authorFilter.includes(author) :
-      authorFilter === undefined || authorFilter === author;
-  }
 }

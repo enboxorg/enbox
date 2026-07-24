@@ -239,12 +239,15 @@ describe('SyncQuotaManager', () => {
   it('only explains exact local-only inventory differences represented by durable omissions', async () => {
     const { manager, operations } = createHarness();
     await manager.recordBlock(target(), 'blocked-cid', undefined, undefined);
-    operations.collectLocalFeedCids.resolves(new Set(['blocked-cid']));
-    operations.collectRemoteFeedCids.resolves(new Set());
+    let remoteCids = new Set<string>();
+    operations.collectFeedCids.callsFake(async (_target, source) =>
+      source === 'local' ? new Set(['blocked-cid']) : remoteCids
+    );
 
     expect(await manager.reconcileAndExplainFeedDivergence(target(), {})).toBe(true);
+    expect(operations.collectFeedCids.getCalls().map(call => call.args[1])).toEqual(['local', 'remote']);
 
-    operations.collectRemoteFeedCids.resolves(new Set(['unexpected-remote-cid']));
+    remoteCids = new Set(['unexpected-remote-cid']);
     expect(await manager.reconcileAndExplainFeedDivergence(target(), {})).toBe(false);
   });
 
@@ -273,8 +276,6 @@ describe('SyncQuotaManager', () => {
   it('treats a feed reconciled to no quota rows as converged when inventories match', async () => {
     const { manager, operations } = createHarness();
     await manager.recordBlock(target(), 'retired-cid', undefined, undefined);
-    operations.collectLocalFeedCids.resolves(new Set());
-    operations.collectRemoteFeedCids.resolves(new Set());
 
     expect(await manager.reconcileAndExplainFeedDivergence(target(), {})).toBe(true);
     expect(await manager.getBlocksForTarget(target())).toEqual([]);
@@ -295,8 +296,7 @@ function createHarness(): SyncQuotaManagerHarness {
 function createOperations(): SyncQuotaOperationStubs {
   return {
     clearDeadLetterForTenant : sinon.stub().resolves(),
-    collectLocalFeedCids     : sinon.stub().resolves(new Set<string>()),
-    collectRemoteFeedCids    : sinon.stub().resolves(new Set<string>()),
+    collectFeedCids          : sinon.stub().resolves(new Set<string>()),
     getLocalMessage          : sinon.stub().resolves(undefined),
     onQuotaBlocked           : sinon.stub(),
     onQuotaCleared           : sinon.stub(),

@@ -4,6 +4,9 @@ import type {
   RecordData,
   RecordDeleteResult,
   RecordPatch,
+  RecordsQueryResponse,
+  RecordsReadResponse,
+  RecordsWriteResponse,
   RecordUpdateParams,
   RecordUpdateResult,
   RecordView,
@@ -79,7 +82,7 @@ nullableRecord.patch({ value: null });
 nullableRecord.update({ data: { value: null } });
 
 async function assertCanonicalRecordFlow(): Promise<void> {
-  const created = await typed.records.create('task', {
+  const created: RecordsWriteResponse<TaskData> = await typed.records.create('task', {
     data: { title: 'created', completed: false },
   });
   if (created.record !== undefined) {
@@ -93,11 +96,11 @@ async function assertCanonicalRecordFlow(): Promise<void> {
     void deleted;
   }
 
-  const queried = await typed.records.query('task');
+  const queried: RecordsQueryResponse<TaskData> = await typed.records.query('task');
   const queriedRecord: Record<TaskData> | undefined = queried.records[0];
   void queriedRecord;
 
-  const read = await typed.records.read('task', { filter: { recordId: 'record-id' } });
+  const read: RecordsReadResponse<TaskData> = await typed.records.read('task', { filter: { recordId: 'record-id' } });
   const readRecord: Record<TaskData> | undefined = read.record;
   void readRecord;
 
