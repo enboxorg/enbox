@@ -1,5 +1,18 @@
 # @enbox/agent
 
+## 0.8.34
+
+### Patch Changes
+
+- [#1449](https://github.com/enboxorg/enbox/pull/1449) [`ddff1e1`](https://github.com/enboxorg/enbox/commit/ddff1e18e854053a901ba601cb4102ead4b6e36c) Thanks [@LiranCohen](https://github.com/LiranCohen)! - refactor: use one source-parameterized operation to collect durable feed inventories for reconciliation and quota analysis
+
+- [#1449](https://github.com/enboxorg/enbox/pull/1449) [`ddff1e1`](https://github.com/enboxorg/enbox/commit/ddff1e18e854053a901ba601cb4102ead4b6e36c) Thanks [@LiranCohen](https://github.com/LiranCohen)! - refactor: make sync convergence and connectivity managers explicit coordinator dependencies and remove forwarding adapters
+
+- Updated dependencies [[`f8a7ff1`](https://github.com/enboxorg/enbox/commit/f8a7ff1f9a40af66e1bdeb313e1131d7cbe12a48), [`ddff1e1`](https://github.com/enboxorg/enbox/commit/ddff1e18e854053a901ba601cb4102ead4b6e36c)]:
+  - @enbox/dwn-sdk-js@0.4.18
+  - @enbox/connect@0.1.14
+  - @enbox/dwn-clients@0.4.25
+
 ## 0.8.33
 
 ### Patch Changes

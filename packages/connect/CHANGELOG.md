@@ -1,5 +1,12 @@
 # @enbox/connect
 
+## 0.1.14
+
+### Patch Changes
+
+- Updated dependencies [[`f8a7ff1`](https://github.com/enboxorg/enbox/commit/f8a7ff1f9a40af66e1bdeb313e1131d7cbe12a48), [`ddff1e1`](https://github.com/enboxorg/enbox/commit/ddff1e18e854053a901ba601cb4102ead4b6e36c)]:
+  - @enbox/dwn-sdk-js@0.4.18
+
 ## 0.1.13
 
 ### Patch Changes
