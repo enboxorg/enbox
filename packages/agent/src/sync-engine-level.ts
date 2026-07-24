@@ -339,9 +339,9 @@ export class SyncEngineLevel implements SyncEngine {
       operations : {
         clearDeadLetterForTenant: (target, messageCid): Promise<void> =>
           this.clearDeadLetterForTenant(target.did, messageCid, target.dwnUrl),
-        collectLocalFeedCids  : (target): Promise<Set<string> | undefined> => this.collectLocalFeedCids(target),
-        collectRemoteFeedCids : (target): Promise<Set<string> | undefined> => this.collectRemoteFeedCids(target),
-        getLocalMessage       : (target, messageCid): Promise<SyncMessageEntry | undefined> =>
+        collectFeedCids: (target, source): Promise<Set<string> | undefined> =>
+          this._durableFeedReconciler.collectFeedCids(target, source),
+        getLocalMessage: (target, messageCid): Promise<SyncMessageEntry | undefined> =>
           this.getLocalMessageForTarget(target, messageCid),
         onQuotaBlocked: (target, messageCid, detail, nextProbeAt): void => {
           this.emitEvent({
@@ -2974,20 +2974,6 @@ export class SyncEngineLevel implements SyncEngine {
         ? (messageCid): void => { this._echoSuppressor.trackPushed(did, messageCid, dwnUrl); }
         : undefined,
     });
-  }
-
-  private collectLocalFeedCids(
-    target: SyncTarget,
-    shouldContinue?: () => boolean,
-  ): Promise<Set<string> | undefined> {
-    return this._durableFeedReconciler.collectLocalCids(target, shouldContinue);
-  }
-
-  private collectRemoteFeedCids(
-    target: SyncTarget,
-    shouldContinue?: () => boolean,
-  ): Promise<Set<string> | undefined> {
-    return this._durableFeedReconciler.collectRemoteCids(target, shouldContinue);
   }
 
   private async pushLocalFeedPage(
