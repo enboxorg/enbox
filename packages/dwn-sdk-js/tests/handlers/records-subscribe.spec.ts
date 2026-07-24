@@ -173,6 +173,89 @@ export function testRecordsSubscribeHandler(): void {
         expect(returnedRecordIds).toContain(write2.message.recordId);
       });
 
+      it('should use created-ascending order for Query and Subscribe snapshots by default', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        const schema = 'http://default-created-order';
+        const earlierTimestamp = Time.getCurrentTimestamp();
+        const laterTimestamp = Time.createOffsetTimestamp({ seconds: 1 }, earlierTimestamp);
+
+        // Process the later record first so insertion order cannot satisfy the assertion accidentally.
+        const laterWrite = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          schema,
+          dateCreated      : laterTimestamp,
+          messageTimestamp : laterTimestamp,
+        });
+        const earlierWrite = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          schema,
+          dateCreated      : earlierTimestamp,
+          messageTimestamp : earlierTimestamp,
+        });
+        expect((await dwn.processMessage(alice.did, laterWrite.message, { dataStream: laterWrite.dataStream })).status.code).toBe(202);
+        expect((await dwn.processMessage(alice.did, earlierWrite.message, { dataStream: earlierWrite.dataStream })).status.code).toBe(202);
+
+        const recordsQuery = await TestDataGenerator.generateRecordsQuery({ author: alice, filter: { schema } });
+        const queryReply = await dwn.processMessage(alice.did, recordsQuery.message);
+
+        const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({ author: alice, filter: { schema } });
+        const subscribeReply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler: () => {} });
+
+        const expectedRecordIds = [earlierWrite.message.recordId, laterWrite.message.recordId];
+        expect(queryReply.entries?.map(entry => entry.recordId)).toEqual(expectedRecordIds);
+        expect(subscribeReply.entries?.map(entry => entry.recordId)).toEqual(expectedRecordIds);
+        await subscribeReply.subscription!.close();
+      });
+
+      it('should return and deliver only published records to an anonymous subscriber', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        const schema = 'http://anonymous-published-subscribe';
+        const initialPublished = await TestDataGenerator.generateRecordsWrite({ author: alice, schema, published: true });
+        const initialUnpublished = await TestDataGenerator.generateRecordsWrite({ author: alice, schema, published: false });
+        const initialPublishedReply = await dwn.processMessage(
+          alice.did, initialPublished.message, { dataStream: initialPublished.dataStream }
+        );
+        const initialUnpublishedReply = await dwn.processMessage(
+          alice.did, initialUnpublished.message, { dataStream: initialUnpublished.dataStream }
+        );
+        expect(initialPublishedReply.status.code).toBe(202);
+        expect(initialUnpublishedReply.status.code).toBe(202);
+
+        const receivedEvents: RecordEvent[] = [];
+        const anonymousSubscribe = await RecordsSubscribe.create({ filter: { schema } });
+        const subscribeReply = await dwn.processMessage(alice.did, anonymousSubscribe.message, {
+          subscriptionHandler: (message): void => {
+            if (message.type === 'event') {
+              receivedEvents.push(message.event as RecordEvent);
+            }
+          },
+        });
+
+        expect(subscribeReply.status.code).toBe(200);
+        expect(subscribeReply.entries?.map(entry => entry.recordId)).toEqual([initialPublished.message.recordId]);
+
+        const liveUnpublished = await TestDataGenerator.generateRecordsWrite({ author: alice, schema, published: false });
+        const livePublished = await TestDataGenerator.generateRecordsWrite({ author: alice, schema, published: true });
+        const liveUnpublishedReply = await dwn.processMessage(
+          alice.did, liveUnpublished.message, { dataStream: liveUnpublished.dataStream }
+        );
+        const livePublishedReply = await dwn.processMessage(
+          alice.did, livePublished.message, { dataStream: livePublished.dataStream }
+        );
+        expect(liveUnpublishedReply.status.code).toBe(202);
+        expect(livePublishedReply.status.code).toBe(202);
+
+        await Poller.pollUntilSuccessOrTimeout(async () => {
+          expect(receivedEvents).toHaveLength(1);
+          expect((receivedEvents[0].message as RecordsWriteMessage).recordId).toBe(livePublished.message.recordId);
+        });
+        await subscribeReply.subscription!.close();
+      });
+
       it('should support pagination on initial entries', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
@@ -304,7 +387,7 @@ export function testRecordsSubscribeHandler(): void {
         await subReply.subscription!.close();
       });
 
-      it('should still receive live events after initial entries', async () => {
+      it('should receive live write and delete events after the initial snapshot', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
@@ -334,6 +417,20 @@ export function testRecordsSubscribeHandler(): void {
           expect(receivedEvents).toHaveLength(1);
           expect((receivedEvents[0].message as RecordsWriteMessage).recordId).toBe(write2.message.recordId);
         });
+
+        const delete2 = await TestDataGenerator.generateRecordsDelete({
+          author   : alice,
+          recordId : write2.message.recordId,
+        });
+        const delete2Reply = await dwn.processMessage(alice.did, delete2.message);
+        expect(delete2Reply.status.code).toBe(202);
+
+        await Poller.pollUntilSuccessOrTimeout(async () => {
+          expect(receivedEvents).toHaveLength(2);
+          expect(receivedEvents[1].message.descriptor.method).toBe(DwnMethodName.Delete);
+          expect((receivedEvents[1].message as RecordsDeleteMessage).descriptor.recordId).toBe(write2.message.recordId);
+        });
+        await subReply.subscription!.close();
       });
 
       it('should project exact-tuple audience control subscription snapshots and live events to the current key', async () => {
