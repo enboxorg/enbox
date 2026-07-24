@@ -1,4 +1,4 @@
-import type { SyncFeedConvergenceLinkContext } from './sync-feed-convergence-manager.js';
+import type { SyncFeedConvergenceManager } from './sync-feed-convergence-manager.js';
 import type { SyncIdentityTaskRunner } from './sync-lifecycle-coordinator.js';
 import type { SyncLinkController } from './sync-link-controller.js';
 import type { SyncLinkWorkKind } from './sync-link-executor.js';
@@ -23,15 +23,9 @@ export type SyncLinkRecoveryTarget = SyncTarget & { linkKey: string };
 
 export interface SyncLinkRecoveryCoordinatorOperations {
   captureIdentityTaskRunner(tenantDid: string): SyncIdentityTaskRunner;
-  clearConvergence(linkKey: string): void;
   emitEvent(event: SyncEvent): void;
   getController(linkKey: string): SyncLinkController | undefined;
   getRuntime(): SyncRuntime;
-  handleDivergence(
-    target: SyncTarget,
-    result: SyncDurableFeedReconcileResult,
-    context: SyncFeedConvergenceLinkContext,
-  ): Promise<unknown>;
   markPullPending(controller: SyncLinkController): void;
   openPullSubscription(target: SyncLinkRecoveryTarget, controller: SyncLinkController): Promise<boolean>;
   openPushSubscription(target: SyncLinkRecoveryTarget, controller: SyncLinkController): Promise<boolean>;
@@ -47,6 +41,7 @@ export interface SyncLinkRecoveryCoordinatorOperations {
 }
 
 export type SyncLinkRecoveryCoordinatorParams = {
+  feedConvergenceManager: SyncFeedConvergenceManager;
   maxRepairAttempts?: number;
   operations: SyncLinkRecoveryCoordinatorOperations;
   reconcileDelayMs?: number;
@@ -63,21 +58,25 @@ const REPAIR_RETRY_TIMER_PREFIX = 'syncRepairRetry:';
 
 /**
  * Coordinates per-link repair and durable reconciliation without depending on
- * Level storage. A backend supplies checkpoint/status persistence, durable
- * feed reconciliation, transport creation, and lifecycle supervision.
+ * Level storage. Feed-convergence policy is a direct collaborator; a backend
+ * supplies checkpoint/status persistence, durable-feed reconciliation,
+ * transport creation, and lifecycle supervision.
  */
 export class SyncLinkRecoveryCoordinator {
+  private readonly _feedConvergenceManager: SyncFeedConvergenceManager;
   private readonly _maxRepairAttempts: number;
   private readonly _operations: SyncLinkRecoveryCoordinatorOperations;
   private readonly _reconcileDelayMs: number;
   private readonly _repairBackoffMs: readonly number[];
 
   public constructor({
+    feedConvergenceManager,
     maxRepairAttempts = DEFAULT_MAX_REPAIR_ATTEMPTS,
     operations,
     reconcileDelayMs = DEFAULT_RECONCILE_DELAY_MS,
     repairBackoffMs = DEFAULT_REPAIR_BACKOFF_MS,
   }: SyncLinkRecoveryCoordinatorParams) {
+    this._feedConvergenceManager = feedConvergenceManager;
     this._maxRepairAttempts = maxRepairAttempts;
     this._operations = operations;
     this._reconcileDelayMs = reconcileDelayMs;
@@ -242,12 +241,6 @@ export class SyncLinkRecoveryCoordinator {
       controller.executor.request('reconcile');
       void runIdentityTask(() => this.runExecutor(controller));
     }, normalizedDelay);
-  }
-
-  /** Coalesce a durable reconciliation request into the link executor. */
-  public reconcile(controller: SyncLinkController): Promise<void> {
-    controller.executor.request('reconcile');
-    return this.runExecutor(controller);
   }
 
   private superviseExecutor(controller: SyncLinkController): void {
@@ -535,7 +528,7 @@ export class SyncLinkRecoveryCoordinator {
         return;
       }
       if (outcome.converged) {
-        this._operations.clearConvergence(linkKey);
+        this._feedConvergenceManager.clearLink(linkKey);
         this.restoreLinkConnectivity(link);
         this._operations.emitEvent({
           type           : 'reconcile:completed',
@@ -544,7 +537,7 @@ export class SyncLinkRecoveryCoordinator {
           ...eventScope(link.scope),
         });
       } else if (!this.isStale(controller, runtime)) {
-        await this._operations.handleDivergence(target, outcome, { link, linkKey });
+        await this._feedConvergenceManager.handleVerifiedDivergence(target, outcome, { link, linkKey });
       }
     } catch (error: unknown) {
       // A rejection landing after an external pause (or a repair transition)

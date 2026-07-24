@@ -1,29 +1,26 @@
+import type { SyncConnectivityManager } from './sync-connectivity-manager.js';
 import type { SyncDurableFeedReconcileResult } from './sync-durable-feed-reconciler.js';
+import type { SyncFeedConvergenceManager } from './sync-feed-convergence-manager.js';
 import type { SyncTarget } from './sync-target-resolver.js';
 import type { PushFailure, SyncDirection, SyncRunOptions } from './types/sync.js';
 
 export type { SyncRunOptions } from './types/sync.js';
 
 export interface SyncRunCoordinatorOperations {
-  clearFeedConvergenceFailure(target: SyncTarget): Promise<void>;
   getTargets(): Promise<SyncTarget[]>;
-  handleVerifiedFeedDivergence(
-    target: SyncTarget,
-    result: SyncDurableFeedReconcileResult,
-  ): Promise<void>;
   probeFeedConvergence(target: SyncTarget): Promise<SyncDurableFeedReconcileResult>;
   reconcileTarget(
     target: SyncTarget,
     direction: SyncDirection | undefined,
     verifyConvergence: boolean | undefined,
   ): Promise<SyncDurableFeedReconcileResult>;
-  recordConnectivityFailure(): void;
-  recordConnectivitySuccess(): void;
   recordPushFailures(target: SyncTarget, failures: PushFailure[]): Promise<number>;
   reportError(message: string, error: unknown): void;
 }
 
 export type SyncRunCoordinatorParams = {
+  connectivityManager: SyncConnectivityManager;
+  feedConvergenceManager: SyncFeedConvergenceManager;
   operations: SyncRunCoordinatorOperations;
 };
 
@@ -43,13 +40,18 @@ type SyncTargetRunner = (target: SyncTarget) => Promise<boolean>;
 
 /**
  * Coordinates an ordinary one-shot sync cycle without depending on a storage
- * backend. Target planning, reconciliation, persistence policy, observability,
- * and connectivity transitions are supplied as operations.
+ * backend. Connectivity and convergence policy are direct collaborators;
+ * target planning, reconciliation, persistence, and observability are
+ * supplied as operations.
  */
 export class SyncRunCoordinator {
+  private readonly _connectivityManager: SyncConnectivityManager;
+  private readonly _feedConvergenceManager: SyncFeedConvergenceManager;
   private readonly _operations: SyncRunCoordinatorOperations;
 
-  public constructor({ operations }: SyncRunCoordinatorParams) {
+  public constructor({ connectivityManager, feedConvergenceManager, operations }: SyncRunCoordinatorParams) {
+    this._connectivityManager = connectivityManager;
+    this._feedConvergenceManager = feedConvergenceManager;
     this._operations = operations;
   }
 
@@ -155,9 +157,9 @@ export class SyncRunCoordinator {
       return result.aborted !== true && result.paused !== true;
     }
     if (result.converged === false) {
-      await this._operations.handleVerifiedFeedDivergence(target, result);
+      await this._feedConvergenceManager.handleVerifiedDivergence(target, result);
     } else if (result.converged === true) {
-      await this._operations.clearFeedConvergenceFailure(target);
+      await this._feedConvergenceManager.clear(target);
     }
     return result.aborted !== true && result.paused !== true;
   }
@@ -168,7 +170,7 @@ export class SyncRunCoordinator {
       return false;
     }
     if (probe.converged === true) {
-      await this._operations.clearFeedConvergenceFailure(target);
+      await this._feedConvergenceManager.clear(target);
       return true;
     }
 
@@ -212,11 +214,11 @@ export class SyncRunCoordinator {
     // Partial endpoint reachability remains online. An empty plan leaves the
     // previous connectivity state untouched.
     if (summary.groupsSucceeded > 0) {
-      this._operations.recordConnectivitySuccess();
+      this._connectivityManager.recordSuccess();
       return;
     }
     if (summary.groupsFailed > 0) {
-      this._operations.recordConnectivityFailure();
+      this._connectivityManager.recordFailure();
     }
   }
 
