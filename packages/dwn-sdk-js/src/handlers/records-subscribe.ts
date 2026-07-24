@@ -30,7 +30,7 @@ type RecordsSubscribeGrantAuthorization = {
 
 type RecordsSubscribeDeliveryAuthorization = {
   grants: RecordsSubscribeGrantAuthorization[];
-  protocolRole: boolean;
+  invokesProtocolRole: boolean;
 };
 
 type GuardedRecordsSubscriptionHandler = {
@@ -156,12 +156,12 @@ export class RecordsSubscribeHandler implements MethodHandler {
       });
     }
 
-    const protocolRole = recordsSubscribe.signaturePayload?.protocolRole !== undefined;
-    if (grants.length === 0 && !protocolRole) {
+    const invokesProtocolRole = recordsSubscribe.signaturePayload?.protocolRole !== undefined;
+    if (grants.length === 0 && !invokesProtocolRole) {
       return undefined;
     }
 
-    return { grants, protocolRole };
+    return { grants, invokesProtocolRole };
   }
 
   /**
@@ -308,7 +308,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
           });
         }
 
-        if (deliveryAuthorization.protocolRole) {
+        if (deliveryAuthorization.invokesProtocolRole) {
           await ProtocolAuthorization.authorizeQueryOrSubscribe(
             tenant,
             recordsSubscribe,
