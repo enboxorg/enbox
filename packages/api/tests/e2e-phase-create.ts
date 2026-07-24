@@ -112,29 +112,20 @@ async function main(): Promise<void> {
   await agent.sync.registerIdentity({ did: agent.agentDid.uri, options: { protocols: 'all' } });
   await agent.sync.registerIdentity({ did, options: { protocols: 'all' } });
 
-  // Push sync multiple times to handle ordering dependencies.
-  // The remote DWN rejects messages that depend on protocols not yet installed
-  // through protocol composition. Repeated pushes retry failed messages after
-  // their dependencies have been processed.
-  for (let round = 1; round <= 3; round++) {
-    for (let attempt = 1; attempt <= 5; attempt++) {
-      try {
-        await agent.sync.sync('push');
-        log(`Push sync round ${round} completed`);
-        break;
-      } catch (err: any) {
-        const isRateLimit = err.message?.includes('rate limit') || err.message?.includes('RateLimit');
-        if (attempt < 5 && isRateLimit) {
-          const delay = attempt * 2;
-          log(`Rate limited, retrying in ${delay}s (attempt ${attempt}/5)...`);
-          await sleep(delay * 1000);
-        } else {
-          throw err;
-        }
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      await agent.sync.sync('push');
+      log('Push sync completed');
+      break;
+    } catch (err: any) {
+      const isRateLimit = err.message?.includes('rate limit') || err.message?.includes('RateLimit');
+      if (attempt < 5 && isRateLimit) {
+        const delay = attempt * 2;
+        log(`Rate limited, retrying in ${delay}s (attempt ${attempt}/5)...`);
+        await sleep(delay * 1000);
+      } else {
+        throw err;
       }
-    }
-    if (round < 3) {
-      await sleep(1000);
     }
   }
 
