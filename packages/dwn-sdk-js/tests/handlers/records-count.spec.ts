@@ -13,12 +13,13 @@ import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with 
 import { Jws } from '../../src/utils/jws.js';
 import { PermissionsProtocol } from '../../src/protocols/permissions.js';
 import { RecordsCount } from '../../src/interfaces/records-count.js';
-import { TestDataGenerator } from '../utils/test-data-generator.js';
+import { RecordsQuery } from '../../src/interfaces/records-query.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
 import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
+import { defaultTestProtocolDefinition, TestDataGenerator } from '../utils/test-data-generator.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Time } from '../../src/index.js';
 import { ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH } from '../../src/core/constants.js';
@@ -177,6 +178,68 @@ export function testRecordsCountHandler(): void {
 
         expect(reply.status.code).toBe(200);
         expect(reply.count).toBe(2);
+      });
+
+      it('should match Query visibility for anonymous and owner-delegated reads', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const delegate = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        const publishedWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, published: true });
+        const unpublishedWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, published: false });
+        expect((await dwn.processMessage(
+          alice.did, publishedWrite.message, { dataStream: publishedWrite.dataStream }
+        )).status.code).toBe(202);
+        expect((await dwn.processMessage(
+          alice.did, unpublishedWrite.message, { dataStream: unpublishedWrite.dataStream }
+        )).status.code).toBe(202);
+
+        const delegatedGrant = await TestDataGenerator.generateGrantCreate({
+          author    : alice,
+          grantedTo : delegate,
+          delegated : true,
+          scope     : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Read,
+            protocol  : defaultTestProtocolDefinition.protocol,
+          },
+        });
+        expect((await dwn.processMessage(
+          alice.did, delegatedGrant.message, { dataStream: delegatedGrant.dataStream }
+        )).status.code).toBe(202);
+
+        const filter = { protocol: defaultTestProtocolDefinition.protocol };
+        const anonymousCount = await RecordsCount.create({ filter });
+        const anonymousQuery = await RecordsQuery.create({ filter });
+        const delegatedCount = await RecordsCount.create({
+          delegatedGrant : delegatedGrant.dataEncodedMessage,
+          filter,
+          signer         : Jws.createSigner(delegate),
+        });
+        const delegatedQuery = await RecordsQuery.create({
+          delegatedGrant : delegatedGrant.dataEncodedMessage,
+          filter,
+          signer         : Jws.createSigner(delegate),
+        });
+
+        const anonymousCountReply = await dwn.processMessage(alice.did, anonymousCount.message);
+        const anonymousQueryReply = await dwn.processMessage(alice.did, anonymousQuery.message);
+        const delegatedCountReply = await dwn.processMessage(alice.did, delegatedCount.message);
+        const delegatedQueryReply = await dwn.processMessage(alice.did, delegatedQuery.message);
+
+        expect(anonymousCountReply.status.code).toBe(200);
+        expect(anonymousQueryReply.status.code).toBe(200);
+        expect(anonymousQueryReply.entries?.map(entry => entry.recordId)).toEqual([publishedWrite.message.recordId]);
+        expect(anonymousCountReply.count).toBe(anonymousQueryReply.entries?.length);
+        expect(anonymousCountReply.count).toBe(1);
+        expect(delegatedCountReply.status.code).toBe(200);
+        expect(delegatedQueryReply.status.code).toBe(200);
+        expect(delegatedQueryReply.entries?.map(entry => entry.recordId)).toEqual(expect.arrayContaining([
+          publishedWrite.message.recordId,
+          unpublishedWrite.message.recordId,
+        ]));
+        expect(delegatedCountReply.count).toBe(delegatedQueryReply.entries?.length);
+        expect(delegatedCountReply.count).toBe(2);
       });
 
       it('should return 0 for anonymous count when no published records exist', async () => {

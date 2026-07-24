@@ -46,8 +46,8 @@ export class RecordsSubscribeHandler implements MethodHandler {
     let recordsSubscribe: RecordsSubscribe;
     try {
       recordsSubscribe = await RecordsSubscribe.parse(message);
-    } catch (e) {
-      return messageReplyFromError(e, 400);
+    } catch (error) {
+      return messageReplyFromError(error, 400);
     }
 
     const filterResolution = await this.resolveSubscriptionFilters(tenant, message, recordsSubscribe);
