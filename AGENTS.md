@@ -113,7 +113,7 @@ Root filter semantics:
 
 ### Workspace packages
 
-Published / primary packages live under `packages/`. Root `package.json` lists all **workspace members**; `examples/` holds Vite sample apps that are **not** workspace packages.
+Published / primary packages live under `packages/`. Root `package.json` lists all **workspace members**.
 
 | Package | One-line role |
 |---|---|
@@ -207,7 +207,6 @@ Browser storage rule: do not replace the browser Level stack with SQLite or in-m
 | `packages/protocol-codegen/src/` | Codegen CLI implementation |
 | `packages/dwn-server-admin-ui/` | Admin UI bundle source and build scripts |
 | `packages/electrobun-dwn/` | Electrobun-embedded local DWN (private package) |
-| `examples/dapp-demo/`, `examples/web-wallet/` | Sample Vite apps (not workspace members; link or copy local packages as needed) |
 | `apps/docs/` | Documentation site (Fumadocs + Next.js, deployed to Cloudflare Pages) |
 | `apps/docs/content/docs/` | MDX content (guides + API reference) |
 | `apps/docs/src/` | Next.js app source (layouts, components, styles) |
