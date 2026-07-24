@@ -19,7 +19,6 @@ import type {
   EnboxAgent,
   FetchPermissionRequestParams,
   FetchPermissionsParams,
-  PermissionGrantEntry,
   ProcessDwnRequest } from '@enbox/agent';
 
 import type { MessagesSubscribeReply, RecordsSubscribeReply } from '@enbox/dwn-sdk-js';
@@ -362,7 +361,15 @@ export class DwnApi {
     }
 
     try {
-      const { message: delegatedGrant } = await this.getRecordsReadGrant(this.delegateDid, request.messageType, scope);
+      const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
+        connectedDid : this.connectedDid,
+        delegateDid  : this.delegateDid,
+        protocol     : scope.protocol,
+        protocolPath : scope.protocolPath,
+        contextId    : scope.contextId,
+        delegate     : true,
+        messageType  : request.messageType,
+      });
 
       return {
         ...request,
@@ -418,23 +425,6 @@ export class DwnApi {
     });
 
     return { records, status, cursor };
-  }
-
-  /** Resolve one matching grant for a delegated read-like Records request. */
-  private getRecordsReadGrant(
-    delegateDid : string,
-    messageType : ReadLikeRecordsInterface,
-    scope : RecordsReadScope,
-  ): Promise<PermissionGrantEntry> {
-    return this.permissionsApi.getPermissionForRequest({
-      connectedDid : this.connectedDid,
-      delegateDid,
-      protocol     : scope.protocol,
-      protocolPath : scope.protocolPath,
-      contextId    : scope.contextId,
-      delegate     : true,
-      messageType,
-    });
   }
 
   /** Dispatches one prepared request through the local or remote agent path. */

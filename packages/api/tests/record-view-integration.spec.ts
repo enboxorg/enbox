@@ -172,10 +172,9 @@ describe('RecordView local DWN integration', () => {
       testDataLocation : '__TESTDATA__/record-view-materialization-integration',
     });
     let auth: AuthManager | undefined;
-    let view: RecordView<MaterializedRecord<
-      NoteData,
-      { readonly label: MaterializedRecord<string> | undefined }
-    >> | undefined;
+    let view: RecordView<MaterializedRecord<NoteData> & Readonly<{
+      children: { readonly label: MaterializedRecord<string> | undefined };
+    }>> | undefined;
     let typed!: TypedEnbox<typeof ViewIntegrationDefinition, typeof ViewIntegrationProtocol.codecs>;
 
     try {
@@ -228,7 +227,10 @@ describe('RecordView local DWN integration', () => {
         { title: 'First' },
         { title: 'Second' },
       ]);
-      expect(values.records.every(({ children }) => Object.keys(children).length === 0)).toBe(true);
+      expect(values.records.map((record) => Object.keys(record).sort())).toEqual([
+        ['record', 'value'],
+        ['record', 'value'],
+      ]);
 
       captured.requests.length = 0;
       const page = await typed.records.query('note', {
@@ -244,6 +246,9 @@ describe('RecordView local DWN integration', () => {
         value    : { title: 'First' },
         children : { label: { value: 'one' } },
       });
+      expect(Object.keys(
+        page.records.find((record) => record.record.id === first.id)?.children.label ?? {},
+      ).sort()).toEqual(['record', 'value']);
       const secondResult = page.records.find((record) => record.record.id === second.id);
       if (secondResult === undefined) {
         throw new Error('Expected the second parent in the materialized page.');

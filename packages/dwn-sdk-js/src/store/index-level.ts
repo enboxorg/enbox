@@ -444,11 +444,10 @@ export class IndexLevel {
         continue;
       }
 
-      IndexLevel.addToBoundedMaxHeap(
+      IndexLevel.addToRecordLimitRankHeap(
         rankHeap,
         IndexLevel.createRecordLimitRankKey(item.indexes),
         max,
-        lexicographicalCompare,
       );
     }
 
@@ -485,14 +484,11 @@ export class IndexLevel {
         continue;
       }
 
-      if (limit === undefined) {
-        matches.push(item);
-      } else {
-        IndexLevel.addToBoundedMaxHeap(matches, item, limit, compareItems);
-      }
+      matches.push(item);
     }
 
-    return matches.sort(compareItems);
+    matches.sort(compareItems);
+    return limit === undefined ? matches : matches.slice(0, limit);
   }
 
   /** Counts the bounded occupants of explicitly selected direct-parent groups. */
@@ -554,35 +550,33 @@ export class IndexLevel {
     return IndexLevel.keySegmentJoin(IndexLevel.encodeValue(dateCreated), IndexLevel.encodeValue(recordId));
   }
 
-  private static addToBoundedMaxHeap<T>(
-    heap: T[],
-    value: T,
+  private static addToRecordLimitRankHeap(
+    heap: string[],
+    value: string,
     max: number,
-    compare: (left: T, right: T) => number,
   ): void {
     if (heap.length < max) {
       heap.push(value);
-      IndexLevel.siftMaxHeapUp(heap, heap.length - 1, compare);
+      IndexLevel.siftRecordLimitRankHeapUp(heap, heap.length - 1);
       return;
     }
 
-    if (compare(value, heap[0]) >= 0) {
+    if (lexicographicalCompare(value, heap[0]) >= 0) {
       return;
     }
 
     heap[0] = value;
-    IndexLevel.siftMaxHeapDown(heap, 0, compare);
+    IndexLevel.siftRecordLimitRankHeapDown(heap, 0);
   }
 
-  private static siftMaxHeapUp<T>(
-    heap: T[],
+  private static siftRecordLimitRankHeapUp(
+    heap: string[],
     startIndex: number,
-    compare: (left: T, right: T) => number,
   ): void {
     let index = startIndex;
     while (index > 0) {
       const parentIndex = (index - 1) >>> 1;
-      if (compare(heap[parentIndex], heap[index]) >= 0) {
+      if (lexicographicalCompare(heap[parentIndex], heap[index]) >= 0) {
         return;
       }
 
@@ -591,10 +585,9 @@ export class IndexLevel {
     }
   }
 
-  private static siftMaxHeapDown<T>(
-    heap: T[],
+  private static siftRecordLimitRankHeapDown(
+    heap: string[],
     startIndex: number,
-    compare: (left: T, right: T) => number,
   ): void {
     let index = startIndex;
     while (true) {
@@ -604,10 +597,11 @@ export class IndexLevel {
       }
 
       const rightIndex = leftIndex + 1;
-      const largerChildIndex = rightIndex < heap.length && compare(heap[rightIndex], heap[leftIndex]) > 0
+      const largerChildIndex = rightIndex < heap.length &&
+        lexicographicalCompare(heap[rightIndex], heap[leftIndex]) > 0
         ? rightIndex
         : leftIndex;
-      if (compare(heap[index], heap[largerChildIndex]) >= 0) {
+      if (lexicographicalCompare(heap[index], heap[largerChildIndex]) >= 0) {
         return;
       }
 

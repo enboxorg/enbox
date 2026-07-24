@@ -208,6 +208,10 @@ for (const item of records) {
 }
 ```
 
+Each materialized item contains exactly `{ record, value }`. A `children`
+property is added only when the request explicitly selects child paths; each
+selected child has the same two-field `{ record, value }` shape.
+
 For a direct child whose protocol rule declares `$recordLimit: { max: 1 }`,
 `materialize: { children: [...] }` fetches that child path once for the whole
 parent page. Each selected key is present and is `undefined` when that parent

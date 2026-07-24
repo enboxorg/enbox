@@ -81,7 +81,7 @@ export type RecordPage<Item = Record> = {
 };
 
 /** Materialization requested from a typed records query or observed view. */
-export type RecordMaterialization<
+type RecordMaterialization<
   D extends ProtocolDefinition,
   Path extends ProtocolPaths<D> & string,
 > = true | {
@@ -98,7 +98,7 @@ type SelectedMaterializedChildPaths<
   : never;
 
 /** Materialized singleton children exposed for one protocol path. */
-export type MaterializedChildren<
+type MaterializedChildren<
   D extends ProtocolDefinition,
   C extends RecordCodecMap,
   Path extends ProtocolPaths<D> & string,
@@ -109,12 +109,16 @@ export type MaterializedChildren<
 };
 
 /** Materialized representation of one typed protocol record. */
-export type MaterializedRecordForPath<
+type MaterializedRecordForPath<
   D extends ProtocolDefinition,
   C extends RecordCodecMap,
   Path extends ProtocolPaths<D> & string,
   Materialization extends RecordMaterialization<D, Path> = true,
-> = MaterializedRecord<DataForPath<C, Path>, MaterializedChildren<D, C, Path, Materialization>>;
+> = Materialization extends true
+  ? MaterializedRecord<DataForPath<C, Path>>
+  : MaterializedRecord<DataForPath<C, Path>> & Readonly<{
+    children: Readonly<MaterializedChildren<D, C, Path, Materialization>>;
+  }>;
 
 type SelectedRecordRepresentation<
   D extends ProtocolDefinition,
@@ -125,11 +129,9 @@ type SelectedRecordRepresentation<
   ? Record<DataForPath<C, Path>>
   : MaterializedRecordForPath<D, C, Path, Materialization>;
 
-type MaterializedRecordDraft<T> = {
-  record: Record<T>;
-  value: T;
-  children: Map<string, MaterializedRecord<unknown> | undefined>;
-};
+type MaterializedRecordWithChildren<T> = MaterializedRecord<T> & Readonly<{
+  children: Readonly<globalThis.Record<string, MaterializedRecord<unknown> | undefined>>;
+}>;
 
 type MaterializationSource = {
   from?: string;
@@ -970,7 +972,7 @@ export class TypedEnbox<
   ): Promise<readonly SelectedRecordRepresentation<D, C, Path, Materialization>[]> {
     const represented = materialization === undefined
       ? records.map((record) => this.bindCodec<Path>(path, record))
-      : await this.materializeRecords<Path, Exclude<Materialization, undefined>>(
+      : await this.materializeRecords<Path>(
         path,
         records,
         childPaths,
@@ -985,84 +987,86 @@ export class TypedEnbox<
   /** Decode one bounded parent page and its explicitly selected singleton children. */
   private async materializeRecords<
     Path extends ProtocolPaths<D> & string,
-    Materialization extends RecordMaterialization<D, Path>,
-    Existing = unknown,
   >(
     parentPath : string,
-    records : readonly Record<Existing>[],
+    records : readonly Record[],
     childPaths : readonly string[],
     source : MaterializationSource,
-  ): Promise<MaterializedRecordForPath<D, C, Path, Materialization>[]> {
-    const parents = await Promise.all(records.map(async (record): Promise<MaterializedRecordDraft<DataForPath<C, Path>>> => {
-      const typedRecord = this.bindCodec<Path, Existing>(parentPath, record);
-      return {
-        record   : typedRecord,
-        value    : await typedRecord.value(),
-        children : new Map(),
-      };
+  ): Promise<readonly (
+    MaterializedRecord<DataForPath<C, Path>> |
+    MaterializedRecordWithChildren<DataForPath<C, Path>>
+  )[]> {
+    const parents = await Promise.all(records.map(async (record): Promise<MaterializedRecord<DataForPath<C, Path>>> => {
+      const typedRecord = this.bindCodec<Path>(parentPath, record);
+      return Object.freeze({
+        record : typedRecord,
+        value  : await typedRecord.value(),
+      });
     }));
 
-    if (parents.length > 0 && childPaths.length > 0) {
-      const parentById = new Map(parents.map((parent) => [parent.record.id, parent]));
-      const parentIds = [...parentById.keys()];
-      await Promise.all(childPaths.map(async (childPath): Promise<void> => {
-        const childName = getTypeName(childPath);
-        for (const parent of parents) {
-          parent.children.set(childName, undefined);
-        }
-
-        const childType = this._definition.types[childName];
-        const filter = compileRecordFilter(
-          this._definition,
-          childPath,
-          undefined,
-          undefined,
-          source.within,
-        );
-        filter.parentId = parentIds;
-        const result = await this._dwn.records.query({
-          from         : source.from,
-          filter,
-          protocolRole : source.protocolRole,
-        });
-        requireDwnSuccess('TypedEnbox.records.query child materialization', result);
-
-        const occupiedParentIds = new Set<string>();
-        await Promise.all(result.records.map(async (record): Promise<void> => {
-          const parentId = record.parentId;
-          const parent = parentId === undefined ? undefined : parentById.get(parentId);
-          if (parent === undefined) {
-            throw new Error(
-              `TypedEnbox.records.query: child '${childPath}' did not reference a selected parent.`,
-            );
-          }
-          if (occupiedParentIds.has(parentId)) {
-            throw new Error(
-              `TypedEnbox.records.query: singleton child '${childPath}' returned multiple visible records ` +
-              `for parent '${parent.record.id}'.`,
-            );
-          }
-          occupiedParentIds.add(parentId);
-
-          const childRecord = bindRecordCodec(
-            record,
-            this.resolveCodec(childPath),
-            childType?.dataFormats,
-          );
-          parent.children.set(childName, Object.freeze({
-            record   : childRecord,
-            value    : await childRecord.value(),
-            children : Object.freeze({}),
-          }));
-        }));
-      }));
+    if (parents.length === 0 || childPaths.length === 0) {
+      return parents;
     }
 
-    return parents.map((parent) => Object.freeze({
-      record   : parent.record,
-      value    : parent.value,
-      children : Object.freeze(Object.fromEntries(parent.children)),
-    })) as MaterializedRecordForPath<D, C, Path, Materialization>[];
+    const parentById = new Map(parents.map((parent) => [parent.record.id, {
+      children: new Map<string, MaterializedRecord<unknown> | undefined>(
+        childPaths.map((childPath) => [getTypeName(childPath), undefined]),
+      ),
+      parent,
+    }]));
+    const parentIds = [...parentById.keys()];
+    await Promise.all(childPaths.map(async (childPath): Promise<void> => {
+      const childName = getTypeName(childPath);
+
+      const childType = this._definition.types[childName];
+      const filter = compileRecordFilter(
+        this._definition,
+        childPath,
+        undefined,
+        undefined,
+        source.within,
+      );
+      filter.parentId = parentIds;
+      const result = await this._dwn.records.query({
+        from         : source.from,
+        filter,
+        protocolRole : source.protocolRole,
+      });
+      requireDwnSuccess('TypedEnbox.records.query child materialization', result);
+
+      const occupiedParentIds = new Set<string>();
+      await Promise.all(result.records.map(async (record): Promise<void> => {
+        const parentId = record.parentId;
+        const parentEntry = parentId === undefined ? undefined : parentById.get(parentId);
+        if (parentEntry === undefined) {
+          throw new Error(
+            `TypedEnbox.records.query: child '${childPath}' did not reference a selected parent.`,
+          );
+        }
+        if (occupiedParentIds.has(parentId)) {
+          throw new Error(
+            `TypedEnbox.records.query: singleton child '${childPath}' returned multiple visible records ` +
+            `for parent '${parentEntry.parent.record.id}'.`,
+          );
+        }
+        occupiedParentIds.add(parentId);
+
+        const childRecord = bindRecordCodec(
+          record,
+          this.resolveCodec(childPath),
+          childType?.dataFormats,
+        );
+        parentEntry.children.set(childName, Object.freeze({
+          record : childRecord,
+          value  : await childRecord.value(),
+        }));
+      }));
+    }));
+
+    return [...parentById.values()].map(({ children, parent }) => Object.freeze({
+      ...parent,
+      children: Object.freeze(Object.fromEntries(children)),
+    }));
   }
 
   /** Require the protocol fact that gives `set()` one unambiguous target. */
@@ -1585,10 +1589,9 @@ export class TypedEnbox<
         });
         const result = await this._dwn.queryRecordsWithRequiredGrant(query);
         requireDwnSuccess('TypedEnbox.records.set query', result);
-        const records = result.records.map((record) => this.bindCodec<Path>(normalizedPath, record));
-        let record = records[0];
-        if (record === undefined) {
-          record = await this.createRecord(path, {
+        const existing = result.records[0];
+        if (existing === undefined) {
+          return this.createRecord(path, {
             data             : request.data,
             datePublished    : request.datePublished,
             messageTimestamp : request.messageTimestamp,
@@ -1596,17 +1599,18 @@ export class TypedEnbox<
             published        : request.published,
             tags             : request.tags,
           });
-        } else {
-          const update: RecordUpdateParams<DataForPath<C, Path>> = {
-            data          : request.data,
-            datePublished : request.datePublished,
-            published     : request.published,
-            tags          : request.tags,
-            timestamp     : request.messageTimestamp,
-          };
-          removeUndefinedProperties(update);
-          await record.update(update);
         }
+
+        const record = this.bindCodec<Path>(normalizedPath, existing);
+        const update: RecordUpdateParams<DataForPath<C, Path>> = {
+          data          : request.data,
+          datePublished : request.datePublished,
+          published     : request.published,
+          tags          : request.tags,
+          timestamp     : request.messageTimestamp,
+        };
+        removeUndefinedProperties(update);
+        await record.update(update);
         return record;
       },
 

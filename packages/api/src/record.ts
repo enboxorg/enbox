@@ -69,8 +69,7 @@ export type {
 export type { RecordData } from './record-data.js';
 
 /**
- * A record handle paired with its decoded application value and requested
- * direct-child records.
+ * A record handle paired with its decoded application value.
  *
  * Materialization does not replace the canonical {@link Record} handle. The
  * handle remains available for updates, deletes, and raw data access while
@@ -79,15 +78,10 @@ export type { RecordData } from './record-data.js';
  * the query or view to obtain a new value snapshot.
  *
  * @typeParam T - The decoded application value.
- * @typeParam Children - Materialized direct children keyed by protocol type name.
  */
-export type MaterializedRecord<
-  T = unknown,
-  Children extends object = object,
-> = Readonly<{
+export type MaterializedRecord<T = unknown> = Readonly<{
   record: Record<T>;
   value: T;
-  children: Readonly<Children>;
 }>;
 
 /**

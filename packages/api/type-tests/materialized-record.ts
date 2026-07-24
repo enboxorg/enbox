@@ -1,12 +1,9 @@
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type {
-  DirectSingletonChildPaths,
   MaterializedRecord,
-  MaterializedRecordForPath,
   Record,
   RecordPage,
   RecordView,
-  SingletonProtocolPaths,
   TypedEnbox,
 } from '@enbox/api';
 
@@ -51,50 +48,6 @@ void LibraryProtocol;
 
 declare const typed: TypedEnbox<typeof LibraryDefinition, typeof LibraryProtocol.codecs>;
 
-type LibrarySingleton = SingletonProtocolPaths<typeof LibraryDefinition>;
-const rootSingleton: LibrarySingleton = 'preference';
-const nestedSingleton: LibrarySingleton = 'library/title';
-const deeperSingleton: LibrarySingleton = 'library/metadata/preference';
-void rootSingleton;
-void nestedSingleton;
-void deeperSingleton;
-
-// @ts-expect-error max: 2 is not a singleton declaration.
-const multipleRecords: LibrarySingleton = 'library/attachment';
-void multipleRecords;
-
-type LibraryChildren = DirectSingletonChildPaths<typeof LibraryDefinition, 'library'>;
-const directTitle: LibraryChildren = 'library/title';
-const directMetadata: LibraryChildren = 'library/metadata';
-void directTitle;
-void directMetadata;
-
-// @ts-expect-error max: 2 children are excluded.
-const directAttachment: LibraryChildren = 'library/attachment';
-void directAttachment;
-
-// @ts-expect-error descendants beyond one edge are excluded.
-const descendantPreference: LibraryChildren = 'library/metadata/preference';
-void descendantPreference;
-
-type SelectedChildren = Readonly<{
-  title: MaterializedRecord<string> | undefined;
-  metadata: MaterializedRecord<{ color: string }> | undefined;
-}>;
-
-declare const materialized: MaterializedRecord<{ name: string }, SelectedChildren>;
-const libraryRecord: Record<{ name: string }> = materialized.record;
-const libraryValue: { name: string } = materialized.value;
-const title: MaterializedRecord<string> | undefined = materialized.children.title;
-const metadata: MaterializedRecord<{ color: string }> | undefined = materialized.children.metadata;
-void libraryRecord;
-void libraryValue;
-void title;
-void metadata;
-
-// @ts-expect-error unselected children are not present.
-void materialized.children.attachment;
-
 async function assertTypedMaterialization(): Promise<void> {
   const plainPage: RecordPage<Record<LibraryData>> = await typed.records.query('library');
   const plainRecord: Record<LibraryData> | undefined = plainPage.records[0];
@@ -104,16 +57,11 @@ async function assertTypedMaterialization(): Promise<void> {
     materialize : true,
     pagination  : { limit: 20 },
   });
-  const valueOnly: MaterializedRecordForPath<
-    typeof LibraryDefinition,
-    typeof LibraryProtocol.codecs,
-    'library',
-    true
-  > | undefined = values.records[0];
+  const valueOnly: MaterializedRecord<LibraryData> | undefined = values.records[0];
   const library: LibraryData | undefined = valueOnly?.value;
   void library;
-  // @ts-expect-error value-only materialization does not expose unrequested child keys.
-  void valueOnly?.children.title;
+  // @ts-expect-error value-only materialization has no children property.
+  void valueOnly?.children;
 
   // @ts-expect-error eager value materialization requires an explicit page bound.
   await typed.records.query('library', { materialize: true });
@@ -140,6 +88,8 @@ async function assertTypedMaterialization(): Promise<void> {
   });
   const selectedTitleOnly: MaterializedRecord<string> | undefined = titleOnly.records[0]?.children.title;
   void selectedTitleOnly;
+  // @ts-expect-error selected child values do not recursively expose children.
+  void selectedTitleOnly?.children;
   // @ts-expect-error an eligible but unselected singleton child is not part of the result.
   void titleOnly.records[0]?.children.metadata;
 
