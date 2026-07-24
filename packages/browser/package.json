@@ -85,6 +85,6 @@
     "eslint": "9.7.0",
     "qrcode": "1.5.4",
     "typescript": "5.9.3",
-    "vitest": "4.0.18"
+    "vitest": "4.1.0"
   }
 }
