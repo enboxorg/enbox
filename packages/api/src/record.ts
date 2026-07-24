@@ -267,7 +267,7 @@ export class Record<T = unknown> implements RecordModel {
   /** Record's attestation signature. */
   get attestation(): DwnMessage[DwnInterface.RecordsWrite]['attestation'] | undefined { return this._attestation; }
 
-  /** Role under which the author is writing the record */
+  /** Protocol role carried by the request that produced this instance and reused by follow-up operations unless overridden. */
   get protocolRole(): string | undefined { return this._protocolRole; }
 
   /** Record's deleted state (true/false) */

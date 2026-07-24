@@ -941,15 +941,15 @@ describe('TypedProtocol API', () => {
 
           expect(result).toBeUndefined();
           expect(readRecord.calledOnceWithExactly({
-            from   : 'did:example:remote',
-            filter : {
+            from         : 'did:example:remote',
+            protocolRole : 'list/viewer',
+            filter       : {
               contextId    : 'listcontext',
               protocol     : TodoProtocolDefinition.protocol,
               protocolPath : 'list',
               recordId     : 'record-id',
               schema       : TodoProtocolDefinition.types.list.schema,
             },
-            protocolRole: 'list/viewer',
           })).toBe(true);
         });
 

@@ -402,10 +402,12 @@ export type TypedSetRequest<
  *   filter: { recordId: notebookId },
  * });
  *
- * // Read from a remote DWN
- * const remote = await proto.records.read('notebook', {
+ * // Read a nested record from a remote DWN using a protocol role
+ * const remote = await proto.records.read('notebook/entry', {
  *   from: 'did:example:alice',
- *   filter: { recordId: notebookId },
+ *   protocolRole: 'notebook/participant',
+ *   within: notebook.contextId,
+ *   filter: { recordId: entryId },
  * });
  * ```
  */
@@ -432,6 +434,13 @@ export type TypedReadRequest<
  * ```ts
  * await proto.records.delete('notebook', {
  *   recordId: notebook.id,
+ * });
+ *
+ * await proto.records.delete('notebook/entry', {
+ *   from: 'did:example:alice',
+ *   protocolRole: 'notebook/participant',
+ *   recordId: entry.id,
+ *   within: notebook.contextId,
  * });
  * ```
  */
