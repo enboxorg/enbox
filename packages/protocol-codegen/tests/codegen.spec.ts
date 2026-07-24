@@ -532,11 +532,11 @@ describe('generateProtocolModule()', () => {
     expect(code).toContain('export type ImageData = Uint8Array;');
     expect(code).toContain('export type MediaData = Blob;');
     expect(code).toContain('export type StyledTextData = Blob;');
-    expect(code).toContain('jsonValue  : recordCodecs.json<JsonValueData>(\'application/merge-patch+json\'),');
+    expect(code).toContain('jsonValue  : recordCodecs.json<JsonValueData>("application/merge-patch+json"),');
     expect(code).toContain('plainText  : recordCodecs.text(),');
-    expect(code).toContain('markdown   : recordCodecs.text(\'text/markdown\'),');
+    expect(code).toContain('markdown   : recordCodecs.text("text/markdown"),');
     expect(code).toContain('bytes      : recordCodecs.bytes(),');
-    expect(code).toContain('image      : recordCodecs.bytes(\'image/png\'),');
+    expect(code).toContain('image      : recordCodecs.bytes("image/png"),');
     expect(code).toContain('media      : recordCodecs.blob(),');
     expect(code).toContain('styledText : recordCodecs.blob(),');
   });
@@ -575,7 +575,7 @@ describe('generateProtocolModule()', () => {
     expect(code).toContain('export type BinaryData = Uint8Array;');
     expect(code).toContain('export type MixedData = Blob;');
     expect(code).toContain('label  : recordCodecs.text(),');
-    expect(code).toContain('binary : recordCodecs.bytes(\'application/cbor\'),');
+    expect(code).toContain('binary : recordCodecs.bytes("application/cbor"),');
     expect(code).toContain('mixed  : recordCodecs.blob(),');
   });
 
@@ -634,13 +634,33 @@ describe('generateProtocolModule()', () => {
     });
 
     expect(code).toContain('uses      : {');
-    expect(code).toContain('social: \'https://example.com/protocols/social\',');
+    expect(code).toContain('social: "https://example.com/protocols/social",');
     expect(code).toContain('encryptionRequired : true,');
     expect(code).toContain('$recordLimit: {');
     expect(code).toContain('$size: {');
     expect(code).toContain('$tags: {');
     expect(code).toContain('$actions: [');
     expect(code).toContain('as const satisfies ProtocolDefinition;');
+  });
+
+  it('should encode arbitrary definition strings as safe TypeScript literals', async () => {
+    const hostileFormat = 'application/x-test\'; globalThis.compromised = true; //"\\\n\0';
+    const definition = {
+      protocol  : 'https://example.com/protocols/string-escaping',
+      published : true,
+      types     : {
+        note: { dataFormats: [hostileFormat] },
+      },
+      structure: { note: {} },
+    };
+
+    const { code } = await generateProtocolModule(definition, {
+      schemasDir   : SCHEMAS_DIR,
+      protocolName : 'StringEscaping',
+    });
+
+    expect(code).toContain(JSON.stringify(hostileFormat));
+    expect(() => new Bun.Transpiler({ loader: 'ts' }).transformSync(code)).not.toThrow();
   });
 
   it('should fail when a reachable type has no usable codec metadata', async () => {
@@ -743,7 +763,7 @@ describe('generateProtocolModule()', () => {
 
     // photo — one fixed binary MIME type
     expect(code).toContain('export type PhotoData = Uint8Array;');
-    expect(code).toContain('photo   : recordCodecs.bytes(\'image/png\'),');
+    expect(code).toContain('photo   : recordCodecs.bytes("image/png"),');
   });
 
   it('should generate types from HTTP-resolved schemas', async () => {
@@ -828,8 +848,8 @@ describe('generateProtocolModule()', () => {
 
     expect(code).toContain('PrivateNoteData');
     expect(code).toContain('HeroImageData');
-    expect(code).toContain('\'private-note\' : recordCodecs.json<PrivateNoteData>(),');
-    expect(code).toContain('hero_image     : recordCodecs.bytes(\'image/png\'),');
+    expect(code).toContain('"private-note" : recordCodecs.json<PrivateNoteData>(),');
+    expect(code).toContain('hero_image     : recordCodecs.bytes("image/png"),');
   });
 });
 

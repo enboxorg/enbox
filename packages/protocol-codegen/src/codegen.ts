@@ -292,7 +292,7 @@ function collectReachableTypeNames(structure: Record<string, unknown>, prefix = 
   return typeNames;
 }
 
-/** Formats raw codec expressions as a lint-ready object literal. */
+/** Formats raw codec expressions as a readable object literal. */
 function formatObjectEntries(entries: readonly (readonly [string, string])[], indentation = 0): string {
   if (entries.length === 0) {
     return '{}';
@@ -304,7 +304,7 @@ function formatObjectEntries(entries: readonly (readonly [string, string])[], in
   return `{\n${lines.join('\n')}\n${indent}}`;
 }
 
-/** Formats a JSON-compatible value as a lint-ready TypeScript literal. */
+/** Formats a JSON-compatible value as a readable TypeScript literal. */
 function formatTypeScriptValue(value: unknown, indentation = 0): string {
   if (value === null) {
     return 'null';
@@ -407,14 +407,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 function quoteString(value: string): string {
-  return `'${value
-    .replaceAll('\\', '\\\\')
-    .replaceAll(/'/g, '\\$&')
-    .replaceAll('\b', '\\b')
-    .replaceAll('\f', '\\f')
-    .replaceAll('\n', '\\n')
-    .replaceAll('\r', '\\r')
-    .replaceAll('\t', '\\t')}'`;
+  return JSON.stringify(value);
 }
 
 /**
