@@ -77,6 +77,7 @@ import type {
 
 import { DwnDiscoveryFile } from './dwn-discovery-file.js';
 import { PermissionGrantNotFoundError } from './permissions-api.js';
+import { verifyRemoteDwnResponse } from './remote-dwn-response.js';
 import { DEFAULT_LOCAL_DWN_STRATEGY, LocalDwnDiscovery } from './local-dwn.js';
 import { DwnInterface, dwnMessageConstructors } from './types/dwn.js';
 import { getDwnServiceEndpointUrls, isRecordsWrite } from './utils.js';
@@ -689,6 +690,7 @@ export class AgentDwnApi {
         message,
         data               : dataStream,
         subscriptionHandler,
+        verifyResponse     : false,
         resubscribeFactory : subscriptionHandler === undefined
           ? undefined
           : this.createResubscribeFactory(request, 'local'),
@@ -917,6 +919,7 @@ export class AgentDwnApi {
         dwnEndpointUrls : [this._localDwnEndpoint!],
         message         : message as DwnMessage[DwnInterface],
         data            : options?.dataStream,
+        verifyResponse  : false,
       });
     }
 
@@ -1006,12 +1009,13 @@ export class AgentDwnApi {
 
     // Send the RPC request to the target DID's DWN service endpoint using the Agent's RPC client.
     const reply = await this.sendDwnRpcRequest({
-      targetDid: request.target,
+      targetDid      : request.target,
       dwnEndpointUrls,
       message,
       data,
       subscriptionHandler,
       resubscribeFactory,
+      verifyResponse : true,
     });
     this.invalidateAcceptedProtocolDefinition(request.target, message, reply.status.code);
 
@@ -1067,7 +1071,7 @@ export class AgentDwnApi {
   }
 
   private async sendDwnRpcRequest<T extends DwnInterface>({
-    targetDid, dwnEndpointUrls, message, data, subscriptionHandler, resubscribeFactory
+    targetDid, dwnEndpointUrls, message, data, subscriptionHandler, resubscribeFactory, verifyResponse
   }: {
       targetDid: string;
       dwnEndpointUrls: string[];
@@ -1075,6 +1079,7 @@ export class AgentDwnApi {
       data?: DwnRpcData;
       subscriptionHandler?: MessageHandler[T];
       resubscribeFactory?: ResubscribeFactory;
+      verifyResponse: boolean;
     }
   ): Promise<DwnMessageReply[T]> {
     const errorMessages: { url: string, message: string }[] = [];
@@ -1104,6 +1109,15 @@ export class AgentDwnApi {
             resubscribeFactory,
           } : undefined,
         });
+
+        if (verifyResponse) {
+          await verifyRemoteDwnResponse({
+            didResolver : this.agent.did,
+            message,
+            reply       : dwnReply,
+            targetDid,
+          });
+        }
 
         return dwnReply;
       } catch (error: any) {
@@ -2562,6 +2576,7 @@ export class AgentDwnApi {
         targetDid       : author,
         dwnEndpointUrls : [this._localDwnEndpoint!],
         message         : messagesRead.message,
+        verifyResponse  : false,
       });
     }
 

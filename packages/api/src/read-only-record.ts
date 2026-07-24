@@ -275,8 +275,18 @@ export class ReadOnlyRecord {
         filter: { recordId: this._recordId },
       });
 
-      if (reply.status.code !== 200 || !reply.entry?.data) {
+      if (reply.status.code !== 200 || !reply.entry?.recordsWrite || !reply.entry.data) {
         throw new Error(`${reply.status.code}: ${reply.status.detail}`);
+      }
+
+      const returnedWrite = reply.entry.recordsWrite;
+      if (returnedWrite.recordId !== this._recordId) {
+        throw new Error(`the DWN returned record '${returnedWrite.recordId}' while reading '${this._recordId}'`);
+      }
+      if (returnedWrite.descriptor.dataCid !== this.dataCid) {
+        throw new Error(
+          `the DWN returned data CID '${returnedWrite.descriptor.dataCid}' for source CID '${this.dataCid}'`
+        );
       }
 
       return reply.entry.data;

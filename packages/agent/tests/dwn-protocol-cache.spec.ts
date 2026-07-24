@@ -96,7 +96,6 @@ describe('dwn-protocol-cache', () => {
   // fetchRemoteProtocolDefinition
   // ---------------------------------------------------------------------------
   describe('fetchRemoteProtocolDefinition', () => {
-    const targetDid = 'did:example:bob';
     const protocolUri = 'https://example.com/protocol';
     const mockDefinition: ProtocolDefinition = {
       protocol  : protocolUri,
@@ -106,6 +105,7 @@ describe('dwn-protocol-cache', () => {
     };
 
     it('should return cached definition if available', async () => {
+      const targetDid = 'did:example:bob';
       const cache = new TtlCache<string, ProtocolDefinition>({ ttl: 60_000 });
       cache.set(`remote~${targetDid}~${protocolUri}`, mockDefinition);
       const sendDwnRpcRequest = sinon.stub();
@@ -119,6 +119,7 @@ describe('dwn-protocol-cache', () => {
     });
 
     it('should query remote DWN and cache the result on cache miss', async () => {
+      const targetDid = 'did:example:bob';
       const cache = new TtlCache<string, ProtocolDefinition>({ ttl: 60_000 });
       const sendDwnRpcRequest = sinon.stub().resolves({
         status  : { code: 200 },
@@ -131,9 +132,11 @@ describe('dwn-protocol-cache', () => {
       );
       expect(result).toEqual(mockDefinition);
       expect(cache.get(`remote~${targetDid}~${protocolUri}`)).toEqual(mockDefinition);
+      expect(sendDwnRpcRequest.firstCall.args[0].verifyResponse).toBe(true);
     });
 
     it('should throw when remote DWN returns non-200 status', async () => {
+      const targetDid = 'did:example:bob';
       const cache = new TtlCache<string, ProtocolDefinition>({ ttl: 60_000 });
       const sendDwnRpcRequest = sinon.stub().resolves({
         status  : { code: 404 },
@@ -147,6 +150,7 @@ describe('dwn-protocol-cache', () => {
     });
 
     it('should throw when remote DWN returns empty entries', async () => {
+      const targetDid = 'did:example:bob';
       const cache = new TtlCache<string, ProtocolDefinition>({ ttl: 60_000 });
       const sendDwnRpcRequest = sinon.stub().resolves({
         status  : { code: 200 },

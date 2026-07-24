@@ -40,6 +40,7 @@ type SendDwnRpcRequestFn = <T extends DwnInterface>(params: {
   message: DwnMessage[T];
   data?: Blob;
   subscriptionHandler?: MessageHandler[T];
+  verifyResponse: boolean;
 }) => Promise<DwnMessageReply[T]>;
 
 /** Minimal DWN interface needed for local `processMessage` calls. */
@@ -107,7 +108,8 @@ export async function getProtocolDefinition(
  * Fetches a protocol definition from a **remote** DWN.
  *
  * Uses an unsigned `ProtocolsQuery` since public protocols can be queried
- * anonymously.
+ * anonymously. The returned configuration must carry a valid signature made
+ * directly by the target DID before its definition can enter the cache.
  *
  * @param targetDid - The remote DWN owner
  * @param protocolUri - The protocol URI to look up
@@ -138,6 +140,7 @@ export async function fetchRemoteProtocolDefinition(
     targetDid,
     dwnEndpointUrls : await getDwnEndpointUrls(targetDid),
     message         : protocolsQuery.message,
+    verifyResponse  : true,
   }) as ProtocolsQueryReply;
 
   if (reply.status.code !== 200 || !reply.entries?.length) {

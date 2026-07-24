@@ -560,6 +560,52 @@ describe('ReadOnlyRecord', () => {
       }
     });
 
+    it('should reject data returned for a different record', async () => {
+      anonStub = createAnonymousDwnStub();
+
+      const msg = createMockRecordsWriteMessage({ recordId: 'expected-record' });
+      const record = new ReadOnlyRecord({
+        rawMessage   : msg,
+        remoteOrigin : targetDid,
+        anonymousDwn : anonStub as unknown as AnonymousDwnApi,
+      });
+
+      anonStub.recordsRead.resolves({
+        status : { code: 200, detail: 'OK' },
+        entry  : {
+          recordsWrite : createMockRecordsWriteMessage({ recordId: 'different-record' }),
+          data         : new Blob(['wrong record']).stream(),
+        },
+      } as RecordsReadReply);
+
+      await expect(record.data.text()).rejects.toThrow('returned record \'different-record\'');
+    });
+
+    it('should reject a newer data version returned for the same record', async () => {
+      anonStub = createAnonymousDwnStub();
+
+      const msg = createMockRecordsWriteMessage({ recordId: 'versioned-record' });
+      const record = new ReadOnlyRecord({
+        rawMessage   : msg,
+        remoteOrigin : targetDid,
+        anonymousDwn : anonStub as unknown as AnonymousDwnApi,
+      });
+      const newerWrite = createMockRecordsWriteMessage({
+        recordId   : msg.recordId,
+        descriptor : { ...msg.descriptor, dataCid: 'newer-data-cid' },
+      });
+
+      anonStub.recordsRead.resolves({
+        status : { code: 200, detail: 'OK' },
+        entry  : {
+          recordsWrite : newerWrite,
+          data         : new Blob(['newer data']).stream(),
+        },
+      } as RecordsReadReply);
+
+      await expect(record.data.text()).rejects.toThrow('returned data CID \'newer-data-cid\'');
+    });
+
     it('should handle non-Error thrown values with Unknown error message', async () => {
       anonStub = createAnonymousDwnStub();
 

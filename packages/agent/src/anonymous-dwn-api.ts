@@ -1,7 +1,8 @@
-import type { DidUrlDereferencer } from '@enbox/dids';
+import type { DidResolver, DidUrlDereferencer } from '@enbox/dids';
 
 import type {
   DateSort,
+  GenericMessage,
   Pagination,
   ProtocolsQueryFilter,
   ProtocolsQueryReply,
@@ -18,13 +19,14 @@ import type { DwnRpcRequest, EnboxRpc } from '@enbox/dwn-clients';
 import { ProtocolsQuery, RecordsCount, RecordsQuery, RecordsRead, RecordsSubscribe } from '@enbox/dwn-sdk-js';
 
 import { getDwnServiceEndpointUrls } from './utils.js';
+import { verifyRemoteDwnResponse } from './remote-dwn-response.js';
 
 /**
  * Parameters for constructing an {@link AnonymousDwnApi}.
  */
 export type AnonymousDwnApiParams = {
-  /** A DID URL dereferencer for resolving target DID service endpoints. */
-  didResolver: DidUrlDereferencer;
+  /** Resolver used for target DWN discovery and returned-message authentication. */
+  didResolver: DidResolver & DidUrlDereferencer;
   /** An RPC client for sending messages to remote DWNs. */
   rpcClient: EnboxRpc;
 };
@@ -98,7 +100,7 @@ export type AnonymousProtocolsQueryParams = {
  * ```
  */
 export class AnonymousDwnApi {
-  private readonly _didResolver: DidUrlDereferencer;
+  private readonly _didResolver: DidResolver & DidUrlDereferencer;
   private readonly _rpcClient: EnboxRpc;
 
   constructor({ didResolver, rpcClient }: AnonymousDwnApiParams) {
@@ -219,7 +221,7 @@ export class AnonymousDwnApi {
    */
   private async sendRequest<TReply>(
     target: string,
-    message: unknown,
+    message: GenericMessage,
     data?: Blob,
     subscriptionHandler?: SubscriptionListener,
   ): Promise<TReply> {
@@ -243,11 +245,20 @@ export class AnonymousDwnApi {
 
         const reply = await this._rpcClient.sendDwnRequest({
           dwnUrl,
-          targetDid           : target,
+          targetDid    : target,
           message,
           data,
-          subscriptionHandler : subscriptionHandler,
+          subscription : subscriptionHandler === undefined ? undefined : {
+            handler: subscriptionHandler,
+          },
         } as DwnRpcRequest);
+
+        await verifyRemoteDwnResponse({
+          didResolver : this._didResolver,
+          message,
+          reply,
+          targetDid   : target,
+        });
 
         return reply as TReply;
       } catch (error: unknown) {
