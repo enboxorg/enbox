@@ -5,6 +5,7 @@ import type { RecordsRead } from '../interfaces/records-read.js';
 import type { RecordsSubscribe } from '../interfaces/records-subscribe.js';
 import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
+import type { ResolvedProtocolRole } from './protocol-authorization-action.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
 
@@ -254,14 +255,15 @@ export class ProtocolAuthorization {
     tenant: string,
     incomingMessage: RecordsCount | RecordsQuery | RecordsSubscribe,
     validationStateReader: ValidationStateReader,
-  ): Promise<void> {
+  ): Promise<ResolvedProtocolRole | undefined> {
     const { protocol, protocolPath, contextId } = incomingMessage.message.descriptor.filter;
+    const protocolDefinitionTimestamp = incomingMessage.message.descriptor.messageTimestamp;
 
     // fetch the protocol definition
     const protocolDefinition = await validationStateReader.fetchProtocolDefinition(
       tenant,
       protocol!, // `authorizeQueryOrSubscribe` is only called if `protocol` is present
-      incomingMessage.message.descriptor.messageTimestamp,
+      protocolDefinitionTimestamp,
     );
 
     // get the rule set for the inbound message
@@ -271,13 +273,14 @@ export class ProtocolAuthorization {
     );
 
     // If the incoming message has `protocolRole` in the descriptor, validate the invoked role
-    await verifyInvokedRole(
+    const resolvedRole = await verifyInvokedRole(
       tenant,
       incomingMessage,
       protocol!,
       contextId,
       protocolDefinition,
       validationStateReader,
+      protocolDefinitionTimestamp,
     );
 
     // verify method invoked against the allowed actions in the rule set
@@ -289,6 +292,8 @@ export class ProtocolAuthorization {
       validationStateReader,
       protocolDefinition,
     );
+
+    return resolvedRole;
   }
 
   /**

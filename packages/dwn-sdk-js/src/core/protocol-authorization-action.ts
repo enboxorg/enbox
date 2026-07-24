@@ -18,6 +18,13 @@ import { ProtocolAction, ProtocolActor } from '../types/protocols-types.js';
  */
 type ProtocolAuthorizableMessage = RecordsCount | RecordsDelete | RecordsQuery | RecordsRead | RecordsSubscribe | RecordsWrite;
 
+/** The indexed role-record lookup proven by protocol authorization. */
+export type ResolvedProtocolRole = {
+  contextIdPrefix?: string;
+  protocol: string;
+  protocolPath: string;
+};
+
 /**
  * Check if the incoming message is invoking a role. If so, validate the invoked role.
  * For cross-protocol role invocation, the role record may live in a different protocol
@@ -31,12 +38,12 @@ export async function verifyInvokedRole(
   protocolDefinition: ProtocolDefinition,
   validationStateReader: ValidationStateReader,
   protocolDefinitionTimestamp?: string,
-): Promise<void> {
+): Promise<ResolvedProtocolRole | undefined> {
   const protocolRole = incomingMessage.signaturePayload?.protocolRole;
 
   // Only verify role if there is a role being invoked
   if (protocolRole === undefined) {
-    return;
+    return undefined;
   }
 
   // Determine the protocol URI and protocol path for the role record.
@@ -93,19 +100,34 @@ export async function verifyInvokedRole(
     );
   }
 
-  // fetch the invoked role record
-  const matchingRoleRecordExists = await validationStateReader.hasMatchingRoleRecord({
-    tenant,
+  const resolvedRole: ResolvedProtocolRole = {
+    contextIdPrefix,
     protocol     : roleProtocolUri,
     protocolPath : roleProtocolPath,
-    recipient    : incomingMessage.author!,
-    contextIdPrefix,
+  };
+  await verifyProtocolRoleRecord(tenant, incomingMessage.author!, resolvedRole, validationStateReader);
+  return resolvedRole;
+}
+
+/** Verifies that the current role record still assigns a resolved protocol role to its recipient. */
+export async function verifyProtocolRoleRecord(
+  tenant: string,
+  recipient: string,
+  resolvedRole: ResolvedProtocolRole,
+  validationStateReader: ValidationStateReader,
+): Promise<void> {
+  const matchingRoleRecordExists = await validationStateReader.hasMatchingRoleRecord({
+    tenant,
+    protocol        : resolvedRole.protocol,
+    protocolPath    : resolvedRole.protocolPath,
+    recipient,
+    contextIdPrefix : resolvedRole.contextIdPrefix,
   });
 
   if (!matchingRoleRecordExists) {
     throw new DwnError(
       DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound,
-      `No matching role record found for protocol path ${roleProtocolPath}`
+      `No matching role record found for protocol path ${resolvedRole.protocolPath}`
     );
   }
 }

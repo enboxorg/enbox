@@ -111,11 +111,9 @@
   ## Subscriptions
 - What happens to a subscription which is listening to events, but is no longer authorized due to revocation of a grant or role?
 
-  (Last update: 2024/01/23)
+  (Last update: 2026/07/24)
 
-  Currently if a subscription is no longer authorized but it is still active, the subscriber will still receive updates until they close the subscription themselves. If they try to re-subscribe after that, it will be rejected with a 401.
-
-  This will be addressed in a future upgrade and we've created an issue to track it. https://github.com/enboxorg/enbox/issues/668 - last updated (2024/01/22)
+  `MessagesSubscribe` revalidates grant expiry and revocation before delivering each matching event. `RecordsSubscribe` additionally detects a deleted referenced grant and a removed protocol-role assignment. Lost authority terminates the subscription before that event is delivered. The listener receives a terminal error carrying the event cursor so it can distinguish an authorization loss from a retryable delivery failure.
 
 - Why are we not notifying deletes in a subscription that uses mutable property as a filter (e.g. `published`, `dataFormat`).
 

@@ -5,7 +5,7 @@ import type { RecordsQueryMessage, RecordsQueryReply } from '../types/records-ty
 import { attachInitialWrites } from '../utils/initial-write-attachment.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { RecordsQuery } from '../interfaces/records-query.js';
-import { queryVisibleRecordsPage, resolveRecordsCollectionVisibility } from './records-collection.js';
+import { authorizeRecordsCollection, queryVisibleRecordsPage } from './records-collection.js';
 
 export class RecordsQueryHandler implements MethodHandler {
 
@@ -24,7 +24,7 @@ export class RecordsQueryHandler implements MethodHandler {
 
     let visibility: RecordsCollectionVisibility;
     try {
-      visibility = await resolveRecordsCollectionVisibility(tenant, recordsQuery, this.deps);
+      ({ visibility } = await authorizeRecordsCollection(tenant, recordsQuery, this.deps));
     } catch (error) {
       return messageReplyFromError(error, 401);
     }

@@ -24,18 +24,22 @@ export class GrantAuthorization {
     expectedGrantee: string,
     permissionGrant: PermissionGrant,
     validationStateReader: ValidationStateReader,
+    authorizationTimestamp?: string,
     }): Promise<void> {
-    const { incomingMessage, expectedGrantor, expectedGrantee, permissionGrant, validationStateReader } = input;
+    const {
+      incomingMessage, expectedGrantor, expectedGrantee, permissionGrant, validationStateReader, authorizationTimestamp
+    } = input;
 
     const incomingMessageDescriptor = incomingMessage.descriptor;
 
     GrantAuthorization.verifyExpectedGrantorAndGrantee(expectedGrantor, expectedGrantee, permissionGrant);
 
-    // verify that grant is active during incomingMessage's timestamp
+    // Verify that the grant is active at the requested authorization time. Subscription
+    // delivery passes the current time; ordinary message admission uses the signed timestamp.
     const grantedFor = expectedGrantor; // renaming for better readability now that we have verified the grantor above
     await GrantAuthorization.verifyGrantActive(
       grantedFor,
-      incomingMessageDescriptor.messageTimestamp,
+      authorizationTimestamp ?? incomingMessageDescriptor.messageTimestamp,
       permissionGrant,
       validationStateReader
     );
@@ -80,16 +84,16 @@ export class GrantAuthorization {
    * Verify that the incoming message is within the allowed time frame of the grant,
    * and the grant has not been revoked.
    * @param validationStateReader Used to check if the grant has been revoked.
-   * @throws {DwnError} if incomingMessage has timestamp for a time in which the grant is not active.
+   * @throws {DwnError} if the authorization time is outside the grant's active lifetime.
    */
   private static async verifyGrantActive(
     grantedFor: string,
-    incomingMessageTimestamp: string,
+    authorizationTimestamp: string,
     permissionGrant: PermissionGrant,
     validationStateReader: ValidationStateReader,
   ): Promise<void> {
-    // Check that incomingMessage is within the grant's time frame
-    if (incomingMessageTimestamp < permissionGrant.dateGranted) {
+    // Check that the authorization time is within the grant's time frame.
+    if (authorizationTimestamp < permissionGrant.dateGranted) {
       // grant is not yet active
       throw new DwnError(
         DwnErrorCode.GrantAuthorizationGrantNotYetActive,
@@ -97,7 +101,7 @@ export class GrantAuthorization {
       );
     }
 
-    if (incomingMessageTimestamp >= permissionGrant.dateExpires) {
+    if (authorizationTimestamp >= permissionGrant.dateExpires) {
       // grant has expired
       throw new DwnError(
         DwnErrorCode.GrantAuthorizationGrantExpired,
@@ -107,7 +111,7 @@ export class GrantAuthorization {
 
     const oldestExistingRevoke = await validationStateReader.fetchOldestGrantRevocation(grantedFor, permissionGrant.id);
 
-    if (oldestExistingRevoke !== undefined && oldestExistingRevoke.descriptor.messageTimestamp <= incomingMessageTimestamp) {
+    if (oldestExistingRevoke !== undefined && oldestExistingRevoke.descriptor.messageTimestamp <= authorizationTimestamp) {
       throw new DwnError(
         DwnErrorCode.GrantAuthorizationGrantRevoked,
         `Permission grant with CID ${permissionGrant.id} has been revoked`,

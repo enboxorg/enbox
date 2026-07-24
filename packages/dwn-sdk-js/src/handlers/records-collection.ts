@@ -2,6 +2,7 @@ import type { HandlerDependencies } from '../types/method-handler.js';
 import type { RecordsCount } from '../interfaces/records-count.js';
 import type { RecordsQuery } from '../interfaces/records-query.js';
 import type { RecordsSubscribe } from '../interfaces/records-subscribe.js';
+import type { ResolvedProtocolRole } from '../core/protocol-authorization-action.js';
 import type { Filter, PaginationCursor } from '../types/query-types.js';
 import type { RecordsFilter, RecordsQueryReplyEntry } from '../types/records-types.js';
 
@@ -19,18 +20,24 @@ type RecordsCollectionRequest = RecordsCount | RecordsQuery | RecordsSubscribe;
 
 export type RecordsCollectionVisibility = 'nonOwner' | 'owner' | 'published';
 
+export type RecordsCollectionAuthorization = {
+  permissionGrantId?: string;
+  resolvedRole?: ResolvedProtocolRole;
+  visibility: RecordsCollectionVisibility;
+};
+
 /**
- * Resolves the visible population for a Records collection request, authenticating and
- * authorizing every request that is not an anonymous published-records read.
+ * Authenticates a Records collection request and returns its visible population plus any
+ * dynamic authority that a long-lived subscription must continue to verify.
  */
-export async function resolveRecordsCollectionVisibility(
+export async function authorizeRecordsCollection(
   tenant: string,
   request: RecordsCollectionRequest,
   deps: HandlerDependencies,
-): Promise<RecordsCollectionVisibility> {
+): Promise<RecordsCollectionAuthorization> {
   const recordsFilter = request.message.descriptor.filter;
   if (Records.filterIncludesPublishedRecords(recordsFilter) && request.author === undefined) {
-    return 'published';
+    return { visibility: 'published' };
   }
 
   await authenticate(request.message.authorization!, deps.didResolver);
@@ -47,6 +54,7 @@ export async function resolveRecordsCollectionVisibility(
   }
 
   const permissionGrantId = Message.getPermissionGrantId(request.signaturePayload!);
+  let resolvedRole: ResolvedProtocolRole | undefined;
   if (permissionGrantId !== undefined) {
     const permissionGrant = await deps.validationStateReader.fetchGrant(tenant, permissionGrantId);
     await RecordsGrantAuthorization.authorizeQueryOrSubscribe({
@@ -59,10 +67,14 @@ export async function resolveRecordsCollectionVisibility(
   } else if (invokesProtocolRole(request)) {
     // A protocol filter alone does not require protocol authorization because unauthorized
     // records are removed by the visibility filters. An invoked protocol role does.
-    await ProtocolAuthorization.authorizeQueryOrSubscribe(tenant, request, deps.validationStateReader);
+    resolvedRole = await ProtocolAuthorization.authorizeQueryOrSubscribe(tenant, request, deps.validationStateReader);
   }
 
-  return request.author === tenant ? 'owner' : 'nonOwner';
+  return {
+    permissionGrantId,
+    resolvedRole,
+    visibility: request.author === tenant ? 'owner' : 'nonOwner',
+  };
 }
 
 /** Builds latest-write filters shared by Records Query, Count, and Subscribe snapshots. */

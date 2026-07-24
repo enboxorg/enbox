@@ -240,9 +240,20 @@ export enum DwnErrorCode {
 
   RecordsReadCreateFilterPublishedSortInvalid = 'RecordsReadCreateFilterPublishedSortInvalid',
   RecordsReadParseFilterPublishedSortInvalid = 'RecordsReadParseFilterPublishedSortInvalid',
+  /**
+   * Terminal subscription delivery error indicating that a grant or protocol role no longer authorizes delivery.
+   * Subscribers should not resubscribe with the same authority.
+   */
+  RecordsSubscribeDeliveryAuthorizationFailed = 'RecordsSubscribeDeliveryAuthorizationFailed',
+  /**
+   * Terminal subscription delivery error for a non-authorization failure while revalidating authority.
+   * Subscribers may resubscribe from their last cursor.
+   */
+  RecordsSubscribeDeliveryFailed = 'RecordsSubscribeDeliveryFailed',
   RecordsSubscribeEventLogUnimplemented = 'RecordsSubscribeEventLogUnimplemented',
   RecordsSubscribeFilterMissingRequiredProperties = 'RecordsSubscribeFilterMissingRequiredProperties',
   RecordsSubscribeNestedProtocolPathContextIdInvalid = 'RecordsSubscribeNestedProtocolPathContextIdInvalid',
+  RecordsSubscribeProjectionFailed = 'RecordsSubscribeProjectionFailed',
 
   RecordsWriteAttestationIntegrityMoreThanOneSignature = 'RecordsWriteAttestationIntegrityMoreThanOneSignature',
   RecordsWriteAttestationIntegrityDescriptorCidMismatch = 'RecordsWriteAttestationIntegrityDescriptorCidMismatch',
