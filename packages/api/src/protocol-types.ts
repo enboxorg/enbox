@@ -1,11 +1,12 @@
 /**
- * Type-level utilities for extracting typed paths, type names, schemas,
- * data formats, and tag shapes from a {@link ProtocolDefinition}.
+ * Type-level utilities for extracting typed paths, type names, data formats,
+ * and tag shapes from a {@link ProtocolDefinition}.
  *
  * These types are purely compile-time — they produce no runtime code.
  */
 
 import type { ProtocolDefinition, ProtocolRuleSet, ProtocolTagsDefinition, ProtocolType } from '@enbox/dwn-sdk-js';
+import type { RecordCodec, RecordCodecMap } from './record-codec.js';
 
 // ---------------------------------------------------------------------------
 // Path extraction
@@ -54,30 +55,14 @@ export type TypeNameAtPath<Path extends string> =
     : Path;
 
 // ---------------------------------------------------------------------------
-// Schema & data-format lookup
+// Data-format lookup
 // ---------------------------------------------------------------------------
-
-/**
- * The type names declared in the `types` map of a `ProtocolDefinition`.
- */
-export type TypeNames<D extends ProtocolDefinition> = Extract<keyof D['types'], string>;
-
-/**
- * Looks up the `schema` URI for a given type name in the protocol definition.
- * Returns `undefined` if the type does not declare a schema.
- */
-export type SchemaForType<D extends ProtocolDefinition, TypeName extends string> =
-  TypeName extends keyof D['types']
-    ? D['types'][TypeName] extends ProtocolType
-      ? D['types'][TypeName]['schema']
-      : undefined
-    : undefined;
 
 /**
  * Looks up the `dataFormats` array for a given type name in the protocol definition.
  * Returns `undefined` if the type does not declare dataFormats.
  */
-export type DataFormatsForType<D extends ProtocolDefinition, TypeName extends string> =
+type DataFormatsForType<D extends ProtocolDefinition, TypeName extends string> =
   TypeName extends keyof D['types']
     ? D['types'][TypeName] extends ProtocolType
       ? D['types'][TypeName]['dataFormats']
@@ -140,26 +125,13 @@ export type TagKeys<Tags extends ProtocolTagsDefinition> = Exclude<
   `$${string}`
 >;
 
-// ---------------------------------------------------------------------------
-// Schema map — associates TypeScript data types with protocol type names
-// ---------------------------------------------------------------------------
+/** Every protocol type name reachable through the protocol structure. */
+export type ProtocolPathTypeNames<D extends ProtocolDefinition> = TypeNameAtPath<ProtocolPaths<D>>;
 
-/**
- * A mapping from protocol type names to their TypeScript data shapes.
- *
- * Used as a type parameter to `defineProtocol()` and `TypedEnbox` so that
- * the protocol definition JSON stays JSON-compatible while TypeScript types
- * are tracked separately.
- *
- * @example
- * ```ts
- * type MySchemaMap = {
- *   profile : { displayName: string; bio?: string };
- *   avatar  : Blob;
- * };
- * ```
- */
-export type SchemaMap = Record<string, unknown>;
+/** Runtime codecs required to use every typed record path in a protocol. */
+export type ProtocolRecordCodecs<D extends ProtocolDefinition> = {
+  [K in ProtocolPathTypeNames<D>]: RecordCodec<unknown>;
+};
 
 // ---------------------------------------------------------------------------
 // Typed protocol — output of defineProtocol()
@@ -167,19 +139,15 @@ export type SchemaMap = Record<string, unknown>;
 
 /**
  * The return type of `defineProtocol()`. Bundles the raw protocol definition
- * with its inferred path strings and schema type map for downstream use
- * by `TypedEnbox`.
+ * with the runtime codecs that also carry its application value types.
  */
 export type TypedProtocol<
   D extends ProtocolDefinition = ProtocolDefinition,
-  M extends SchemaMap = SchemaMap,
+  C extends RecordCodecMap = RecordCodecMap,
 > = {
   /** The raw DWN protocol definition (JSON-compatible). */
   readonly definition: D;
 
-  /**
-   * Phantom property carrying the schema map type. Not present at runtime;
-   * used only by TypeScript to thread the generic through.
-   */
-  readonly _schemaMap?: M;
+  /** Application codecs keyed by protocol type name. */
+  readonly codecs: C;
 };

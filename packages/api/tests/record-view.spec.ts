@@ -15,6 +15,7 @@ import { describe, expect, it } from 'bun:test';
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnResponseError } from '../src/dwn-response-error.js';
 import { Enbox } from '../src/enbox.js';
+import { recordCodecs } from '../src/record-codec.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
 
 const ViewDefinition = {
@@ -54,13 +55,12 @@ const ViewDefinition = {
   },
 } as const satisfies ProtocolDefinition;
 
-type ViewSchemaMap = {
-  folder: { name: string };
-  item: { value: string };
-  note: { title: string };
-  section: { name: string };
-};
-const ViewProtocol = defineProtocol(ViewDefinition, {} as ViewSchemaMap);
+const ViewProtocol = defineProtocol(ViewDefinition, {
+  folder  : recordCodecs.json<{ name: string }>(),
+  item    : recordCodecs.json<{ value: string }>(),
+  note    : recordCodecs.json<{ title: string }>(),
+  section : recordCodecs.json<{ name: string }>(),
+});
 const TENANT_DID = 'did:example:alice';
 
 type QueryFactory = (request: RecordsQueryRequest, call: number) => Promise<RecordsQueryResponse>;
@@ -115,7 +115,7 @@ function createHarness(query: QueryFactory): ViewHarness {
 function createTyped(
   harness: ViewHarness,
   options: { signal?: AbortSignal; sync?: SyncEngine } = {},
-): TypedEnbox<typeof ViewDefinition, ViewSchemaMap> {
+): TypedEnbox<typeof ViewDefinition, typeof ViewProtocol.codecs> {
   const typed = new TypedEnbox(harness.dwn, ViewProtocol, options);
   (typed as unknown as { _configured: boolean })._configured = true;
   return typed;
@@ -279,12 +279,12 @@ describe('RecordView', () => {
     const view = await createTyped(harness).records.observe('note', {
       filter: {
         author    : 'did:example:bob',
-        contextId : 'root',
         published : true,
         recordId  : 'note-1',
         tags      : { status: 'draft' },
       },
-      pagination: { limit: 10 },
+      pagination : { limit: 10 },
+      within     : 'root',
     });
 
     await waitFor(() => {
@@ -380,10 +380,10 @@ describe('RecordView', () => {
     const harness = createHarness(async (_request, call) => ok(call === 2 ? [] : [target]));
     const view = await createTyped(harness).records.observe('folder/section/item', {
       filter: {
-        contextId : 'f1/s1/i1',
-        recordId  : 'i1',
+        recordId: 'i1',
       },
-      pagination: { limit: 1 },
+      pagination : { limit: 1 },
+      within     : 'f1/s1/i1',
     });
     await waitFor(() => { expect(view.getSnapshot().records).toHaveLength(1); });
 
@@ -412,8 +412,8 @@ describe('RecordView', () => {
     for (const contextId of ['f1/s1', 'f1']) {
       const harness = createHarness(async () => ok([]));
       const view = await createTyped(harness).records.observe('folder/section/item', {
-        filter     : { contextId },
         pagination : { limit: 10 },
+        within     : contextId,
       });
       await waitFor(() => { expect(harness.queryRequests).toHaveLength(1); });
 

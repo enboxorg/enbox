@@ -10,7 +10,7 @@
 
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
-import { defineProtocol } from '@enbox/api';
+import { defineProtocol, recordCodecs } from '@enbox/api';
 
 // ---------------------------------------------------------------------------
 // Data types
@@ -20,15 +20,6 @@ import { defineProtocol } from '@enbox/api';
 export type WalletData = {
   /** URLs of web wallet applications associated with this DID. */
   webWallets: string[];
-};
-
-// ---------------------------------------------------------------------------
-// Schema map
-// ---------------------------------------------------------------------------
-
-/** Maps protocol type names to their TypeScript data shapes. */
-export type ConnectSchemaMap = {
-  wallet: WalletData;
 };
 
 // ---------------------------------------------------------------------------
@@ -61,5 +52,7 @@ export const ConnectDefinition = {
 /** Typed Connect protocol for use with `dwn.using()`. */
 export const ConnectProtocol = defineProtocol(
   ConnectDefinition,
-  {} as ConnectSchemaMap,
+  {
+    wallet: recordCodecs.json<WalletData>(),
+  },
 );

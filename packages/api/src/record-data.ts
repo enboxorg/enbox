@@ -37,17 +37,15 @@ const DATA_CACHE_LIMIT = 10 * 1024 * 1024; // 10 MB
  * sequences such as `data.json()` followed by `data.text()` do not trigger
  * redundant network requests. Direct `stream()` calls remain unbuffered.
  *
- * @typeParam T - The JSON payload type returned by {@link RecordData.json | json()}.
- *
  * @beta
  */
-export type RecordData<T = unknown> = {
+export type RecordData = {
   /** Consume the data as a `Blob`. */
   blob: () => Promise<Blob>;
   /** Consume the data as raw bytes. */
   bytes: () => Promise<Uint8Array>;
   /** Parse the data as JSON. */
-  json: () => Promise<T>;
+  json: () => Promise<unknown>;
   /** Consume the data as a UTF-8 string. */
   text: () => Promise<string>;
   /** Obtain the underlying Web `ReadableStream`. */
@@ -75,14 +73,12 @@ export type RecordData<T = unknown> = {
  * @param streamFn   - A function that returns a `Promise<ReadableStream>` for the record data.
  * @param dataFormat - The MIME type used when constructing Blobs.
  * @returns A {@link RecordData} object with convenience accessors.
- * @typeParam T - The JSON payload type returned by the accessor.
- *
  * @beta
  */
-export function createRecordData<T = unknown>(
+export function createRecordData(
   streamFn: () => Promise<ReadableStream>,
   dataFormat: string | undefined,
-): RecordData<T> {
+): RecordData {
   // In-memory byte cache. Populated after the first successful read.
   let cachedBytes: Uint8Array | undefined;
   // In-flight read promise. Ensures concurrent callers share a single fetch.
@@ -137,7 +133,7 @@ export function createRecordData<T = unknown>(
     return streamFn();
   };
 
-  const dataObj: RecordData<T> = {
+  const dataObj: RecordData = {
 
     /**
      * Returns the data of the current record as a `Blob`.
@@ -171,9 +167,9 @@ export function createRecordData<T = unknown>(
      *
      * @beta
      */
-    async json(): Promise<T> {
+    async json(): Promise<unknown> {
       const bytes = await getBytes();
-      return JSON.parse(new TextDecoder().decode(bytes)) as T;
+      return JSON.parse(new TextDecoder().decode(bytes)) as unknown;
     },
 
     /**

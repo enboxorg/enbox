@@ -1,6 +1,6 @@
 import type { CliIo } from '../src/cli.js';
 
-import { generateTypes } from '../src/codegen.js';
+import { generateProtocolModule } from '../src/codegen.js';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'bun:test';
 import { CliUsageError, main, parseGenerateArgs, runGenerate } from '../src/cli.js';
@@ -366,11 +366,15 @@ describe('resolveAllSchemas()', () => {
 // Code generation
 // ---------------------------------------------------------------------------
 
-describe('generateTypes()', () => {
+describe('generateProtocolModule()', () => {
+  afterEach(async (): Promise<void> => {
+    await rm(TMP_DIR, { force: true, recursive: true });
+  });
+
   it('should generate TypeScript types from resolved schemas', async () => {
     const definition = await loadDefinition();
 
-    const { code, resolutions } = await generateTypes(definition as any, {
+    const { code, resolutions } = await generateProtocolModule(definition as any, {
       schemasDir   : SCHEMAS_DIR,
       protocolName : 'Todo',
     });
@@ -382,15 +386,32 @@ describe('generateTypes()', () => {
     expect(code).toContain('export interface ListData');
     expect(code).toContain('export interface TaskData');
 
-    // Should contain Blob type for binary attachment
+    // Variable MIME attachments retain their MIME type in a Blob.
     expect(code).toContain('export type AttachmentData = Blob;');
 
-    // Should contain SchemaMap
-    expect(code).toContain('export type TodoSchemaMap');
-    expect(code).toContain('list: ListData;');
-    expect(code).toContain('task: TaskData;');
-    expect(code).toContain('attachment: AttachmentData;');
+    // The complete module wires runtime codecs to the emitted definition.
+    expect(code).toContain(`import { defineProtocol, recordCodecs } from '@enbox/api';`);
+    expect(code).toContain('export const TodoDefinition = {');
+    expect(code).toContain('export const TodoCodecs = {');
+    expect(code).toContain('list       : recordCodecs.json<ListData>(),');
+    expect(code).toContain('task       : recordCodecs.json<TaskData>(),');
+    expect(code).toContain('attachment : recordCodecs.blob(),');
+    expect(code).toContain('export const TodoProtocol = defineProtocol(TodoDefinition, TodoCodecs);');
+    expect(() => new Bun.Transpiler({ loader: 'ts' }).transformSync(code)).not.toThrow();
 
+    const generatedPath = join(TMP_DIR, 'todo.generated.ts');
+    await mkdir(TMP_DIR, { recursive: true });
+    await Bun.write(generatedPath, code);
+    const typecheck = Bun.spawn([
+      'bun', 'tsc', '--noEmit', '--strict', '--skipLibCheck',
+      '--module', 'ESNext', '--moduleResolution', 'Bundler', '--target', 'ES2022',
+      '--lib', 'ES2022,DOM,DOM.Iterable', generatedPath,
+    ], { cwd: PACKAGE_DIR, stderr: 'pipe', stdout: 'pipe' });
+    const [typecheckOutput, typecheckExitCode] = await Promise.all([
+      new Response(typecheck.stderr).text(),
+      typecheck.exited,
+    ]);
+    expect(typecheckExitCode, typecheckOutput).toBe(0);
     // Resolution metadata should be populated
     expect(resolutions.get('list')!.source).toBe('local-type-name');
     expect(resolutions.get('task')!.source).toBe('local-type-name');
@@ -399,7 +420,7 @@ describe('generateTypes()', () => {
   it('should generate correct interface properties from schema', async () => {
     const definition = await loadDefinition();
 
-    const { code } = await generateTypes(definition as any, {
+    const { code } = await generateProtocolModule(definition as any, {
       schemasDir   : SCHEMAS_DIR,
       protocolName : 'Todo',
     });
@@ -429,15 +450,16 @@ describe('generateTypes()', () => {
       },
     };
 
-    const { code } = await generateTypes(definition, {
+    const { code } = await generateProtocolModule(definition, {
       schemasDir   : SCHEMAS_DIR,
       protocolName : 'Test',
     });
 
     expect(code).toContain('export type UnknownTypeData = unknown;');
+    expect(code).toContain('unknown_type: recordCodecs.json<UnknownTypeData>(),');
   });
 
-  it('should emit Blob for binary-only types', async () => {
+  it('should emit Blob for variable binary formats', async () => {
     const definition = {
       protocol  : 'https://example.com/protocols/media',
       published : true,
@@ -451,20 +473,235 @@ describe('generateTypes()', () => {
       },
     };
 
-    const { code } = await generateTypes(definition, {
+    const { code } = await generateProtocolModule(definition, {
       schemasDir   : SCHEMAS_DIR,
       protocolName : 'Media',
     });
 
     expect(code).toContain('export type AvatarData = Blob;');
-    expect(code).toContain('export type MediaSchemaMap');
-    expect(code).toContain('avatar: AvatarData;');
+    expect(code).toContain('avatar: recordCodecs.blob(),');
+  });
+
+  it('should select built-in codecs from declared data formats', async () => {
+    const definition = {
+      protocol  : 'https://example.com/protocols/formats',
+      published : true,
+      types     : {
+        jsonValue: {
+          dataFormats: ['application/merge-patch+json'],
+        },
+        plainText: {
+          dataFormats: ['text/plain'],
+        },
+        markdown: {
+          dataFormats: ['text/markdown'],
+        },
+        bytes: {
+          dataFormats: ['application/octet-stream'],
+        },
+        image: {
+          dataFormats: ['image/png'],
+        },
+        media: {
+          dataFormats: ['image/png', 'image/jpeg'],
+        },
+        styledText: {
+          dataFormats: ['text/plain', 'text/markdown'],
+        },
+      },
+      structure: {
+        jsonValue  : {},
+        plainText  : {},
+        markdown   : {},
+        bytes      : {},
+        image      : {},
+        media      : {},
+        styledText : {},
+      },
+    };
+
+    const { code } = await generateProtocolModule(definition, {
+      schemasDir   : SCHEMAS_DIR,
+      protocolName : 'Formats',
+    });
+
+    expect(code).toContain('export type JsonValueData = unknown;');
+    expect(code).toContain('export type PlainTextData = string;');
+    expect(code).toContain('export type MarkdownData = string;');
+    expect(code).toContain('export type BytesData = Uint8Array;');
+    expect(code).toContain('export type ImageData = Uint8Array;');
+    expect(code).toContain('export type MediaData = Blob;');
+    expect(code).toContain('export type StyledTextData = Blob;');
+    expect(code).toContain('jsonValue  : recordCodecs.json<JsonValueData>("application/merge-patch+json"),');
+    expect(code).toContain('plainText  : recordCodecs.text(),');
+    expect(code).toContain('markdown   : recordCodecs.text("text/markdown"),');
+    expect(code).toContain('bytes      : recordCodecs.bytes(),');
+    expect(code).toContain('image      : recordCodecs.bytes("image/png"),');
+    expect(code).toContain('media      : recordCodecs.blob(),');
+    expect(code).toContain('styledText : recordCodecs.blob(),');
+  });
+
+  it('should derive representation from MIME formats rather than schema presence', async () => {
+    const definition = {
+      protocol  : 'https://example.com/protocols/schema-formats',
+      published : true,
+      types     : {
+        label: {
+          schema      : 'https://example.com/schemas/task',
+          dataFormats : ['text/plain'],
+        },
+        binary: {
+          schema      : 'https://example.com/schemas/task',
+          dataFormats : ['application/cbor'],
+        },
+        mixed: {
+          schema      : 'https://example.com/schemas/task',
+          dataFormats : ['application/json', 'text/plain'],
+        },
+      },
+      structure: {
+        label  : {},
+        binary : {},
+        mixed  : {},
+      },
+    };
+
+    const { code } = await generateProtocolModule(definition, {
+      schemasDir   : SCHEMAS_DIR,
+      protocolName : 'SchemaFormats',
+    });
+
+    expect(code).toContain('export type LabelData = string;');
+    expect(code).toContain('export type BinaryData = Uint8Array;');
+    expect(code).toContain('export type MixedData = Blob;');
+    expect(code).toContain('label  : recordCodecs.text(),');
+    expect(code).toContain('binary : recordCodecs.bytes("application/cbor"),');
+    expect(code).toContain('mixed  : recordCodecs.blob(),');
+  });
+
+  it('should reject $ref paths until referenced protocol metadata can be supplied', async () => {
+    const definition = {
+      protocol  : 'https://example.com/protocols/composed',
+      published : true,
+      uses      : { threads: 'https://example.com/protocols/threads' },
+      types     : {
+        comment: { dataFormats: ['application/json'] },
+      },
+      structure: {
+        thread: {
+          $ref    : 'threads:thread',
+          comment : {},
+        },
+      },
+    };
+
+    await expect(generateProtocolModule(definition, {
+      schemasDir   : SCHEMAS_DIR,
+      protocolName : 'Composed',
+    })).rejects.toThrow('Cannot generate a typed codec for $ref path \'thread\'');
+  });
+
+  it('should preserve the complete protocol definition and its directives', async () => {
+    const definition = {
+      protocol  : 'https://example.com/protocols/complete',
+      published : true,
+      uses      : { social: 'https://example.com/protocols/social' },
+      types     : {
+        note: {
+          dataFormats        : ['application/json'],
+          encryptionRequired : true,
+        },
+      },
+      structure: {
+        note: {
+          $recordLimit : { max: 1 },
+          $size        : { max: 4096 },
+          $tags        : {
+            $requiredTags       : ['topic'],
+            $allowUndefinedTags : false,
+            topic               : { type: 'string' },
+          },
+          $actions: [
+            { who: 'anyone', can: ['create'] },
+          ],
+        },
+      },
+    };
+
+    const { code } = await generateProtocolModule(definition, {
+      schemasDir   : SCHEMAS_DIR,
+      protocolName : 'Complete',
+    });
+
+    expect(code).toContain('uses      : {');
+    expect(code).toContain('social: "https://example.com/protocols/social",');
+    expect(code).toContain('encryptionRequired : true,');
+    expect(code).toContain('$recordLimit: {');
+    expect(code).toContain('$size: {');
+    expect(code).toContain('$tags: {');
+    expect(code).toContain('$actions: [');
+    expect(code).toContain('as const satisfies ProtocolDefinition;');
+  });
+
+  it('should encode arbitrary definition strings as safe TypeScript literals', async () => {
+    const hostileFormat = 'application/x-test\'; globalThis.compromised = true; //"\\\n\0';
+    const definition = {
+      protocol  : 'https://example.com/protocols/string-escaping',
+      published : true,
+      types     : {
+        note: { dataFormats: [hostileFormat] },
+      },
+      structure: { note: {} },
+    };
+
+    const { code } = await generateProtocolModule(definition, {
+      schemasDir   : SCHEMAS_DIR,
+      protocolName : 'StringEscaping',
+    });
+
+    expect(code).toContain(JSON.stringify(hostileFormat));
+    expect(() => new Bun.Transpiler({ loader: 'ts' }).transformSync(code)).not.toThrow();
+  });
+
+  it('should fail when a reachable type has no usable codec metadata', async () => {
+    const definition = {
+      protocol  : 'https://example.com/protocols/missing-codec',
+      published : true,
+      types     : { note: {} },
+      structure : { note: {} },
+    };
+
+    await expect(generateProtocolModule(definition, {
+      schemasDir   : SCHEMAS_DIR,
+      protocolName : 'MissingCodec',
+    })).rejects.toThrow('Cannot infer a record codec for protocol type \'note\'');
+  });
+
+  it('should emit codecs only for types reachable through the structure', async () => {
+    const definition = {
+      protocol  : 'https://example.com/protocols/reachable',
+      published : true,
+      types     : {
+        note   : { dataFormats: ['application/json'] },
+        unused : {},
+      },
+      structure: { note: {} },
+    };
+
+    const { code } = await generateProtocolModule(definition, {
+      schemasDir   : SCHEMAS_DIR,
+      protocolName : 'Reachable',
+    });
+
+    expect(code).toContain('export type UnusedData = unknown;');
+    expect(code).toContain('export const ReachableCodecs = {\n  note: recordCodecs.json<NoteData>(),\n} as const;');
+    expect(code).not.toContain('unused: recordCodecs.');
   });
 
   it('should support custom banner comment', async () => {
     const definition = await loadDefinition();
 
-    const { code } = await generateTypes(definition as any, {
+    const { code } = await generateProtocolModule(definition as any, {
       schemasDir    : SCHEMAS_DIR,
       protocolName  : 'Todo',
       bannerComment : '// Custom banner',
@@ -477,14 +714,14 @@ describe('generateTypes()', () => {
   it('should support empty banner comment', async () => {
     const definition = await loadDefinition();
 
-    const { code } = await generateTypes(definition as any, {
+    const { code } = await generateProtocolModule(definition as any, {
       schemasDir    : SCHEMAS_DIR,
       protocolName  : 'Todo',
       bannerComment : '',
     });
 
     expect(code).not.toContain('Auto-generated');
-    expect(code.startsWith('//')).toBe(true); // starts with section divider
+    expect(code.startsWith('import type { ProtocolDefinition }')).toBe(true);
   });
 
   it('should handle mixed resolved and unresolved types', async () => {
@@ -511,7 +748,7 @@ describe('generateTypes()', () => {
       },
     };
 
-    const { code, resolutions } = await generateTypes(definition, {
+    const { code, resolutions } = await generateProtocolModule(definition, {
       schemasDir   : SCHEMAS_DIR,
       protocolName : 'Mixed',
     });
@@ -524,8 +761,9 @@ describe('generateTypes()', () => {
     expect(code).toContain('export type MissingData = unknown;');
     expect(resolutions.get('missing')!.source).toBe('unresolved');
 
-    // photo — binary
-    expect(code).toContain('export type PhotoData = Blob;');
+    // photo — one fixed binary MIME type
+    expect(code).toContain('export type PhotoData = Uint8Array;');
+    expect(code).toContain('photo   : recordCodecs.bytes("image/png"),');
   });
 
   it('should generate types from HTTP-resolved schemas', async () => {
@@ -565,7 +803,7 @@ describe('generateTypes()', () => {
         },
       };
 
-      const { code, resolutions } = await generateTypes(definition, {
+      const { code, resolutions } = await generateProtocolModule(definition, {
         schemasDir   : emptyDir,
         protocolName : 'HttpTest',
       });
@@ -577,8 +815,8 @@ describe('generateTypes()', () => {
       expect(code).toContain('export interface WidgetData');
       expect(code).toContain('label: string');
       expect(code).toContain('count?: number');
-      expect(code).toContain('export type HttpTestSchemaMap');
-      expect(code).toContain('widget: WidgetData;');
+      expect(code).toContain('widget: recordCodecs.json<WidgetData>(),');
+      expect(code).toContain('export const HttpTestProtocol = defineProtocol(HttpTestDefinition, HttpTestCodecs);');
     } finally {
       server.stop();
     }
@@ -603,13 +841,15 @@ describe('generateTypes()', () => {
       },
     };
 
-    const { code } = await generateTypes(definition, {
+    const { code } = await generateProtocolModule(definition, {
       schemasDir   : SCHEMAS_DIR,
       protocolName : 'Naming',
     });
 
     expect(code).toContain('PrivateNoteData');
     expect(code).toContain('HeroImageData');
+    expect(code).toContain('"private-note" : recordCodecs.json<PrivateNoteData>(),');
+    expect(code).toContain('hero_image     : recordCodecs.bytes("image/png"),');
   });
 });
 
@@ -639,7 +879,8 @@ describe('CLI', () => {
 
     expect(proc.exitCode).toBe(0);
     expect(stdout).toContain('export interface ListData');
-    expect(stdout).toContain('export type TodoSchemaMap');
+    expect(stdout).toContain('export const TodoCodecs');
+    expect(stdout).toContain('export const TodoProtocol = defineProtocol(TodoDefinition, TodoCodecs);');
     expect(stderr).toContain('list: local-type-name');
     expect(stderr).toContain('task: local-type-name');
   });
@@ -667,7 +908,8 @@ describe('CLI', () => {
     // Verify the file was written
     const content = await readFile(outputPath, 'utf-8');
     expect(content).toContain('export interface ListData');
-    expect(content).toContain('export type TodoSchemaMap');
+    expect(content).toContain('export const TodoCodecs');
+    expect(content).toContain('export const TodoProtocol = defineProtocol(TodoDefinition, TodoCodecs);');
 
     // Clean up
     const { unlinkSync } = await import('node:fs');

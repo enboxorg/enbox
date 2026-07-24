@@ -11,6 +11,7 @@ import { ProtocolsConfigure } from '@enbox/dwn-sdk-js';
 
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi as DwnApiClass } from '../src/dwn-api.js';
+import { recordCodecs } from '../src/record-codec.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { stripEncryptionBlocks, TypedEnbox, WalletReapprovalRequiredError } from '../src/typed-enbox.js';
@@ -54,6 +55,9 @@ function makeEncryptedDefinition(protocolUri: string): ProtocolDefinition {
     },
   };
 }
+
+const encryptedCodecs = { secret: recordCodecs.json<unknown>() };
+const plainCodecs = { note: recordCodecs.json<unknown>() };
 
 /**
  * A minimal DwnApi stand-in for delegate-mode and crafted-installation cases:
@@ -135,7 +139,7 @@ describe('TypedEnbox.verifyInstalled()', () => {
 
     it('should report owner-can-update when the protocol is not installed', async () => {
       const definition = makePlainDefinition(protocolUri);
-      const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {}));
+      const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, plainCodecs));
 
       const result = await typed.verifyInstalled();
 
@@ -148,7 +152,7 @@ describe('TypedEnbox.verifyInstalled()', () => {
 
     it('should report up-to-date for a matching plain installation', async () => {
       const definition = makePlainDefinition(protocolUri);
-      const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {}));
+      const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, plainCodecs));
 
       const { status } = await typed.configure();
       expect(status.code).toBe(202);
@@ -179,7 +183,10 @@ describe('TypedEnbox.verifyInstalled()', () => {
           attachment: {},
         },
       };
-      const typed = new TypedEnbox(dwnAlice, defineProtocol(revisedDefinition, {}));
+      const typed = new TypedEnbox(dwnAlice, defineProtocol(revisedDefinition, {
+        attachment: recordCodecs.bytes(),
+        ...plainCodecs,
+      }));
 
       const result = await typed.verifyInstalled();
 
@@ -192,7 +199,7 @@ describe('TypedEnbox.verifyInstalled()', () => {
 
     it('should report up-to-date for an encrypted install with full $keyAgreement coverage', async () => {
       const definition = makeEncryptedDefinition(protocolUri);
-      const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {}));
+      const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, encryptedCodecs));
 
       // configure() auto-enables encryption for encrypted types, deriving and
       // injecting $keyAgreement at the root and every structure path.
@@ -247,7 +254,10 @@ describe('TypedEnbox.verifyInstalled()', () => {
       const rawReply = await testHarness.agent.dwn.processRawMessage(aliceDid.uri, protocolsConfigure.message);
       expect(rawReply.status.code).toBe(202);
 
-      const typed = new TypedEnbox(dwnAlice, defineProtocol(codeDefinition, {}));
+      const typed = new TypedEnbox(dwnAlice, defineProtocol(codeDefinition, {
+        note   : recordCodecs.json<unknown>(),
+        secret : recordCodecs.json<unknown>(),
+      }));
       const result = await typed.verifyInstalled();
 
       expect(result.status).toBe('owner-can-update');
@@ -262,7 +272,7 @@ describe('TypedEnbox.verifyInstalled()', () => {
 
     it('should not change configure() auto-configure state (read-only)', async () => {
       const definition = makePlainDefinition(protocolUri);
-      const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {}));
+      const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, plainCodecs));
 
       await typed.verifyInstalled();
 
@@ -279,7 +289,7 @@ describe('TypedEnbox.verifyInstalled()', () => {
     it('should report up-to-date when the wallet-installed definition matches', async () => {
       const definition = makePlainDefinition(protocolUri);
       const fake = makeFakeDwn({ isDelegate: true, installedDefinition: definition });
-      const typed = new TypedEnbox(fake.dwn, defineProtocol(definition, {}));
+      const typed = new TypedEnbox(fake.dwn, defineProtocol(definition, plainCodecs));
 
       const result = await typed.verifyInstalled();
 
@@ -304,7 +314,7 @@ describe('TypedEnbox.verifyInstalled()', () => {
         },
       };
       const fake = makeFakeDwn({ isDelegate: true, installedDefinition: staleWalletDefinition });
-      const typed = new TypedEnbox(fake.dwn, defineProtocol(definition, {}));
+      const typed = new TypedEnbox(fake.dwn, defineProtocol(definition, plainCodecs));
 
       const result = await typed.verifyInstalled();
 
@@ -322,7 +332,7 @@ describe('TypedEnbox.verifyInstalled()', () => {
     it('should return wallet-reapproval-required when the wallet never installed the protocol', async () => {
       const definition = makePlainDefinition(protocolUri);
       const fake = makeFakeDwn({ isDelegate: true });
-      const typed = new TypedEnbox(fake.dwn, defineProtocol(definition, {}));
+      const typed = new TypedEnbox(fake.dwn, defineProtocol(definition, plainCodecs));
 
       const result = await typed.verifyInstalled();
 
@@ -335,7 +345,7 @@ describe('TypedEnbox.verifyInstalled()', () => {
       const definition = makeEncryptedDefinition(protocolUri);
       // Wallet installed the right shape but never injected encryption keys.
       const fake = makeFakeDwn({ isDelegate: true, installedDefinition: definition });
-      const typed = new TypedEnbox(fake.dwn, defineProtocol(definition, {}));
+      const typed = new TypedEnbox(fake.dwn, defineProtocol(definition, encryptedCodecs));
 
       const result = await typed.verifyInstalled();
 
@@ -344,53 +354,35 @@ describe('TypedEnbox.verifyInstalled()', () => {
       expect(result.missingKeyAgreementPaths).toEqual(['', 'secret']);
     });
 
-    it('should exempt $ref composition nodes from the $keyAgreement coverage check', async () => {
-      const protocol = 'https://example.com/protocols/verify-ref';
-      const definition: ProtocolDefinition = {
-        protocol,
+    it('should reject composed typed protocols until referenced policy is explicit', () => {
+      const definition = {
+        protocol  : 'https://example.com/protocols/verify-ref',
         published : true,
+        uses      : { threads: 'https://example.com/protocols/threads' },
         types     : {
-          doc: {
-            schema             : `${protocol}/schemas/doc`,
-            dataFormats        : ['application/json'],
-            encryptionRequired : true,
+          comment: {
+            schema      : 'https://example.com/protocols/verify-ref/schemas/comment',
+            dataFormats : ['application/json'],
           },
         },
         structure: {
-          doc: {},
+          thread: {
+            $ref    : 'threads:thread',
+            comment : {},
+          },
         },
+      } as const satisfies ProtocolDefinition;
+      const codecs = {
+        comment : recordCodecs.json<unknown>(),
+        thread  : recordCodecs.json<unknown>(),
       };
 
-      // The wallet-installed copy carries keys at the root and `doc`, plus a
-      // keyless `$ref` attachment node — exempt because its records are
-      // governed by the referenced protocol's keys.
-      const keyAgreement = { publicKeyJwk: { kty: 'OKP', crv: 'X25519', x: 'A'.repeat(43) } };
-      const installedDefinition = {
-        ...definition,
-        $keyAgreement : keyAgreement,
-        structure     : {
-          doc: {
-            $keyAgreement : keyAgreement,
-            thread        : { $ref: 'threads:thread' },
-          },
-        },
-      } as unknown as ProtocolDefinition;
-      const codeDefinition = {
-        ...definition,
-        structure: {
-          doc: {
-            thread: { $ref: 'threads:thread' },
-          },
-        },
-      } as unknown as ProtocolDefinition;
-
-      const fake = makeFakeDwn({ isDelegate: true, installedDefinition });
-      const typed = new TypedEnbox(fake.dwn, defineProtocol(codeDefinition, {}));
-
-      const result = await typed.verifyInstalled();
-
-      expect(result.status).toBe('up-to-date');
-      expect(result.missingKeyAgreementPaths).toEqual([]);
+      expect(() => defineProtocol(definition, codecs)).toThrow(
+        'Typed protocols do not yet support $ref at \'thread\'',
+      );
+      expect(() => new TypedEnbox({} as DwnApi, { definition, codecs })).toThrow(
+        'Typed protocols do not yet support $ref at \'thread\'',
+      );
     });
 
     it('should throw (not classify) when the delegate protocol query itself fails', async () => {
@@ -399,7 +391,7 @@ describe('TypedEnbox.verifyInstalled()', () => {
         isDelegate  : true,
         queryStatus : { code: 401, detail: 'grant revoked' },
       });
-      const typed = new TypedEnbox(fake.dwn, defineProtocol(definition, {}));
+      const typed = new TypedEnbox(fake.dwn, defineProtocol(definition, plainCodecs));
 
       await expect(typed.verifyInstalled()).rejects.toThrow('401 grant revoked');
     });
@@ -410,7 +402,7 @@ describe('TypedEnbox.verifyInstalled()', () => {
         isDelegate  : false,
         queryStatus : { code: 500, detail: 'store unavailable' },
       });
-      const typed = new TypedEnbox(fake.dwn, defineProtocol(definition, {}));
+      const typed = new TypedEnbox(fake.dwn, defineProtocol(definition, plainCodecs));
 
       // A failed local read must never be classified as "not installed".
       await expect(typed.verifyInstalled()).rejects.toThrow('500 store unavailable');

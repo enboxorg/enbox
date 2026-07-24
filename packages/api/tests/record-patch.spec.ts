@@ -10,6 +10,7 @@ import { DwnInterface, EnboxUserAgent } from '@enbox/agent';
 
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
+import { recordCodecs } from '../src/record-codec.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
@@ -177,7 +178,7 @@ describe('Record.patch()', () => {
     });
 
     await expect(record!.patch({ title: 'v2' }))
-      .rejects.toThrow('patch() requires the record\'s current data to be a JSON object');
+      .rejects.toThrow('patch() requires the record\'s current value to be a plain object');
   });
 
   it('should throw when patching a deleted record', async () => {
@@ -257,7 +258,9 @@ describe('Record.patch()', () => {
         },
       };
       type PageData = { title: string; body: string; subtitle?: string };
-      const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {} as { page: PageData }));
+      const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {
+        page: recordCodecs.json<PageData>(),
+      }));
 
       const record = await typed.records.create('page', {
         data: { title: 'v1', body: 'kept', subtitle: 'optional' },
@@ -269,7 +272,7 @@ describe('Record.patch()', () => {
       });
       expect(patched).toBe(record);
 
-      const data: PageData = await patched.data.json();
+      const data: PageData = await patched.value();
       expect(data).toEqual({ title: 'v2', body: 'kept' });
 
       // The protocol-derived type flows through the patch result.
@@ -292,7 +295,9 @@ describe('Record.patch()', () => {
         },
       };
       type SecretData = { title: string; pin: string };
-      const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {} as { secret: SecretData }));
+      const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {
+        secret: recordCodecs.json<SecretData>(),
+      }));
 
       // configure() auto-derives + injects $keyAgreement for encrypted types.
       const { status: configStatus } = await typed.configure();
@@ -311,7 +316,7 @@ describe('Record.patch()', () => {
       const readRecord = await typed.records.read('secret', {
         filter: { recordId: record!.id },
       });
-      expect(await readRecord!.data.json()).toEqual({ title: 'vault v2', pin: '1234' });
+      expect(await readRecord!.value()).toEqual({ title: 'vault v2', pin: '1234' });
     });
   });
 });

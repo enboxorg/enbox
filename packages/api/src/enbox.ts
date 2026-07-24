@@ -18,6 +18,8 @@ import type {
   VaultConnectOptions,
 } from '@enbox/auth';
 
+import type { RecordCodecMap } from './record-codec.js';
+import type { TypedProtocol } from './protocol-types.js';
 import type {
   EnboxAnonymousApi,
   EnboxAnonymousOptions,
@@ -26,7 +28,6 @@ import type {
   EnboxParams,
   EnboxSessionParams,
 } from './enbox-types.js';
-import type { SchemaMap, TypedProtocol } from './protocol-types.js';
 
 import { AnonymousDwnApi } from '@enbox/agent';
 import { AuthManager } from '@enbox/auth/auth-manager';
@@ -106,13 +107,13 @@ export class Enbox {
   private readonly _lifetimeSignal: AbortSignal;
 
   /**
-   * Cache of {@link TypedEnbox} instances keyed by protocol URI.
+   * Cache of {@link TypedEnbox} instances keyed by typed-protocol identity.
    *
    * Ensures that `enbox.using(Protocol)` returns the **same** `TypedEnbox`
-   * instance for a given protocol across multiple call sites, avoiding
+   * instance for the same protocol object across multiple call sites, avoiding
    * redundant protocol installations and duplicated internal state.
    */
-  private readonly _typedInstances = new Map<string, TypedEnbox<ProtocolDefinition, SchemaMap>>();
+  private readonly _typedInstances = new Map<object, unknown>();
 
   /** Exposed instance to the VC APIs, allow users to issue, present and verify VCs. */
   public vc: VcApi;
@@ -267,11 +268,12 @@ export class Enbox {
    * This is the **primary developer interface** for interacting with
    * protocol-backed records. It auto-injects the protocol URI, protocolPath,
    * and schema into every operation, and provides compile-time path
-   * autocompletion plus typed data payloads via the schema map.
+   * autocompletion plus typed application values via runtime codecs.
    *
-   * Instances are **cached by protocol URI** — calling `using()` multiple
-   * times with the same protocol returns the same `TypedEnbox` instance,
-   * so auto-configure only runs once and all call sites share state.
+   * Instances are cached by the typed protocol object's identity. Calling
+   * `using()` repeatedly with the same exported protocol constant returns the
+   * same instance, while independently declared codec maps never alias merely
+   * because they use the same protocol URI.
    *
    * @param protocol - A typed protocol created via `defineProtocol()`.
    * @returns A `TypedEnbox` instance bound to the given protocol.
@@ -289,23 +291,21 @@ export class Enbox {
    * const { records } = await social.records.query('friend');
    * ```
    */
-  public using<D extends ProtocolDefinition, M extends SchemaMap>(
-    protocol: TypedProtocol<D, M>,
-  ): TypedEnbox<D, M> {
-    const uri = protocol.definition.protocol;
-    const cached = this._typedInstances.get(uri);
+  public using<D extends ProtocolDefinition, C extends RecordCodecMap>(
+    protocol: TypedProtocol<D, C>,
+  ): TypedEnbox<D, C> {
+    const cached = this._typedInstances.get(protocol);
 
     if (cached) {
-      // The map stores a type-erased instance; restore the caller's generics.
-      return cached as unknown as TypedEnbox<D, M>;
+      // Object identity ties the erased cache value back to this exact typed protocol.
+      return cached as TypedEnbox<D, C>;
     }
 
-    const instance = new TypedEnbox<D, M>(this._dwn, protocol, {
+    const instance = new TypedEnbox<D, C>(this._dwn, protocol, {
       signal : this._lifetimeSignal,
       sync   : this.agent.sync,
     });
-    // Store with erased generics so the map value type stays uniform.
-    this._typedInstances.set(uri, instance as unknown as TypedEnbox<ProtocolDefinition, SchemaMap>);
+    this._typedInstances.set(protocol, instance);
     return instance;
   }
 

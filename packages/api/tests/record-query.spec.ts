@@ -6,6 +6,7 @@ import { DateSort } from '@enbox/dwn-sdk-js';
 import { describe, expect, it } from 'bun:test';
 
 import { defineProtocol } from '../src/define-protocol.js';
+import { recordCodecs } from '../src/record-codec.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
 import { compileRecordFilter, compileRecordQuery } from '../src/record-query.js';
 
@@ -35,12 +36,10 @@ const QueryDefinition = {
   },
 } as const satisfies ProtocolDefinition;
 
-type QuerySchemaMap = {
-  note: { title: string };
-  attachment: Blob;
-};
-
-const QueryProtocol = defineProtocol(QueryDefinition, {} as QuerySchemaMap);
+const QueryProtocol = defineProtocol(QueryDefinition, {
+  attachment : recordCodecs.blob('image/png'),
+  note       : recordCodecs.json<{ title: string }>(),
+});
 
 type CapturingDwn = {
   dwn: DwnApi;
@@ -67,7 +66,7 @@ function createCapturingDwn(): CapturingDwn {
   return { dwn, countRequests, queryRequests };
 }
 
-function createTypedEnbox(dwn: DwnApi): TypedEnbox<typeof QueryDefinition, QuerySchemaMap> {
+function createTypedEnbox(dwn: DwnApi): TypedEnbox<typeof QueryDefinition, typeof QueryProtocol.codecs> {
   const typed = new TypedEnbox(dwn, QueryProtocol);
   (typed as unknown as { _configured: boolean })._configured = true;
   return typed;
@@ -78,8 +77,7 @@ describe('RecordQuery', () => {
     const { dwn, countRequests, queryRequests } = createCapturingDwn();
     const typed = createTypedEnbox(dwn);
     const filter = {
-      contextId : 'root/parent',
-      tags      : { status: 'published' as const, priority: { gte: 2 } },
+      tags: { status: 'published' as const, priority: { gte: 2 } },
     };
     const query: RecordQuery<typeof QueryDefinition, 'note'> = {
       from         : 'did:example:remote',
@@ -87,6 +85,7 @@ describe('RecordQuery', () => {
       dateSort     : DateSort.PublishedDescending,
       pagination   : { limit: 2, cursor: { messageCid: 'bafy-page', value: '2026-01-01T00:00:00Z' } },
       protocolRole : 'editor',
+      within       : 'root',
     };
 
     await typed.records.query('note', query);
@@ -94,6 +93,7 @@ describe('RecordQuery', () => {
 
     const expectedFilter = {
       ...filter,
+      contextId    : query.within,
       published    : true,
       protocol     : QueryDefinition.protocol,
       protocolPath : 'note',
@@ -112,10 +112,7 @@ describe('RecordQuery', () => {
       protocolRole : query.protocolRole,
     }]);
     expect(count).toBe(7);
-    expect(filter).toEqual({
-      contextId : 'root/parent',
-      tags      : { status: 'published', priority: { gte: 2 } },
-    });
+    expect(filter).toEqual({ tags: { status: 'published', priority: { gte: 2 } } });
   });
 
   it('should omit schema for a schema-less protocol type', () => {
@@ -128,25 +125,25 @@ describe('RecordQuery', () => {
     });
   });
 
-  it('should compile only the canonical context selector', () => {
-    const prefixParent = compileRecordFilter(QueryDefinition, 'root/note/attachment', { contextId: 'root/abc' });
-    const prefixSharingSibling = compileRecordFilter(QueryDefinition, 'root/note/attachment', { contextId: 'root/abcd' });
+  it('should lower within to the canonical DWN context selector', () => {
+    const prefixParent = compileRecordQuery(QueryDefinition, 'root/note/attachment', { within: 'root/abc' });
+    const prefixSharingSibling = compileRecordQuery(QueryDefinition, 'root/note/attachment', { within: 'root/abcd' });
 
-    expect(prefixParent.contextId).toBe('root/abc');
-    expect(prefixParent.parentId).toBeUndefined();
-    expect(prefixSharingSibling.contextId).toBe('root/abcd');
-    expect(prefixSharingSibling.parentId).toBeUndefined();
+    expect(prefixParent.filter.contextId).toBe('root/abc');
+    expect(prefixParent.filter.parentId).toBeUndefined();
+    expect(prefixSharingSibling.filter.contextId).toBe('root/abcd');
+    expect(prefixSharingSibling.filter.parentId).toBeUndefined();
   });
 
-  it('should validate nested context scopes before dispatch', () => {
+  it('should validate within selectors before dispatch', () => {
     expect(() => compileRecordQuery(QueryDefinition, 'root/note/attachment'))
-      .toThrow('nested protocol path \'root/note/attachment\' requires a contextId');
+      .toThrow('nested protocol path \'root/note/attachment\' requires a within selector');
     expect(() => compileRecordQuery(QueryDefinition, 'root/note/attachment', {
-      filter: { contextId: 'root/note/attachment/deeper' },
-    })).toThrow('contextId cannot be deeper than protocol path \'root/note/attachment\'');
+      within: 'root/note/attachment/deeper',
+    })).toThrow('within cannot be deeper than protocol path \'root/note/attachment\'');
 
     expect(compileRecordQuery(QueryDefinition, 'root/note/attachment', {
-      filter: { contextId: 'root' },
+      within: 'root',
     }).filter.contextId).toBe('root');
   });
 
@@ -165,12 +162,22 @@ describe('RecordQuery', () => {
       .toThrow('RecordFilter: recipient must not be an empty array');
     expect(() => compileRecordFilter(QueryDefinition, 'note', { tags: {} }))
       .toThrow('RecordFilter: tags must contain at least one tag filter');
-    expect(() => compileRecordFilter(QueryDefinition, 'note', { contextId: '' }))
-      .toThrow('RecordFilter: contextId must be at most 600 characters of alphanumeric path segments');
-    expect(() => compileRecordFilter(QueryDefinition, 'note', { contextId: 'root//child' }))
-      .toThrow('RecordFilter: contextId must be at most 600 characters of alphanumeric path segments');
-    expect(() => compileRecordFilter(QueryDefinition, 'note', { contextId: 'root-child' }))
-      .toThrow('RecordFilter: contextId must be at most 600 characters of alphanumeric path segments');
+    expect(() => compileRecordQuery(QueryDefinition, 'note', { within: '' }))
+      .toThrow('Record scope: within must be at most 600 characters of alphanumeric path segments');
+    expect(() => compileRecordQuery(QueryDefinition, 'root/note', { within: 'root//child' }))
+      .toThrow('Record scope: within must be at most 600 characters of alphanumeric path segments');
+    expect(() => compileRecordQuery(QueryDefinition, 'note', { within: 'root-child' }))
+      .toThrow('Record scope: within must be at most 600 characters of alphanumeric path segments');
+    expect(() => compileRecordQuery(QueryDefinition, 'note', { within: 'a'.repeat(601) }))
+      .toThrow('Record scope: within must be at most 600 characters of alphanumeric path segments');
+    expect(() => compileRecordQuery(QueryDefinition, 'root/note', {
+      filter : { contextId: 'root' } as never,
+      within : 'root',
+    })).toThrow('RecordFilter: use the top-level within selector instead of contextId or parentId');
+    expect(() => compileRecordQuery(QueryDefinition, 'root/note', {
+      filter : { parentId: 'note' } as never,
+      within : 'root',
+    })).toThrow('RecordFilter: use the top-level within selector instead of contextId or parentId');
     expect(() => compileRecordQuery(QueryDefinition, 'note', {
       filter   : { published: false },
       dateSort : DateSort.PublishedAscending,

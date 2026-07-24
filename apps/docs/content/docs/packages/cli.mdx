@@ -16,9 +16,9 @@ bun add @enbox/cli
 ## Usage
 
 ```ts
-import { CliConnectHandler, Enbox, defineProtocol } from '@enbox/cli';
+import { CliConnectHandler, Enbox, defineProtocol, recordCodecs } from '@enbox/cli';
 
-const NotesProtocol = defineProtocol({
+const NotesDefinition = {
   protocol  : 'https://example.com/protocols/notes',
   published : true,
   types     : {
@@ -30,6 +30,10 @@ const NotesProtocol = defineProtocol({
   structure: {
     note: {},
   },
+} as const;
+
+const NotesProtocol = defineProtocol(NotesDefinition, {
+  note: recordCodecs.json<{ body: string }>(),
 });
 
 const { enbox, session } = await Enbox.connect({
@@ -64,5 +68,6 @@ approval link in the local default browser instead of printing a QR code.
 |---|---|
 | `Enbox` | High-level app API from `@enbox/api` |
 | `defineProtocol()` | Type-safe protocol definition helper |
+| `recordCodecs` | JSON, text, bytes, and Blob record codecs |
 | `AuthManager` | Auth/session lifecycle from `@enbox/auth` |
 | `CliConnectHandler` | Terminal relay/PIN wallet connect handler |

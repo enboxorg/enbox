@@ -1,48 +1,78 @@
 /**
  * Factory function for creating typed protocol definitions.
  *
- * `defineProtocol()` wraps a standard {@link ProtocolDefinition} with
- * compile-time type metadata so that {@link TypedEnbox} can provide
- * path autocompletion, data-shape inference, and tag type safety.
+ * `defineProtocol()` pairs a standard {@link ProtocolDefinition} with the
+ * runtime codecs used by {@link TypedEnbox} for application values.
  */
 
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
-import type { SchemaMap, TypedProtocol } from './protocol-types.js';
+import type { ProtocolPathTypeNames, ProtocolRecordCodecs, TypedProtocol } from './protocol-types.js';
+import type { RecordCodec, RecordCodecMap } from './record-codec.js';
+
+import { getTypeName } from '@enbox/dwn-sdk-js';
+import { assertTypedProtocolStructureSupported, collectProtocolPaths } from './protocol-paths.js';
+
+type ExactProtocolCodecs<
+  D extends ProtocolDefinition,
+  C extends RecordCodecMap,
+> = Exclude<Extract<keyof C, string>, ProtocolPathTypeNames<D>> extends never ? C : never;
 
 /**
  * Creates a {@link TypedProtocol} from a plain DWN protocol definition and
- * an optional schema map that associates TypeScript types with protocol type
- * names.
- *
- * The `definition` argument is returned as-is (no cloning). The schema map
- * is a phantom type parameter — it exists only at compile time to thread
- * type information through to `TypedEnbox`.
+ * the codecs that define each typed record's application value.
  *
  * @param definition - A standard `ProtocolDefinition` object.
- * @param _schemaMap - A phantom value (e.g. `{} as MySchemaMap`) that carries
- *   the TypeScript type mapping. The runtime value is ignored.
- * @returns A `TypedProtocol` containing the definition and inferred types.
+ * @param codecs - One runtime codec for every type reachable through the structure.
+ * @returns A `TypedProtocol` containing the definition and codecs.
  *
  * @example
  * ```ts
- * const socialGraph = defineProtocol(SocialGraphDefinition, {} as {
- *   friend : { did: string; alias?: string };
- *   block  : { did: string; reason?: string };
+ * const socialGraph = defineProtocol(SocialGraphDefinition, {
+ *   friend : recordCodecs.json<{ did: string; alias?: string }>(),
+ *   block  : recordCodecs.json<{ did: string; reason?: string }>(),
  * });
  *
  * // socialGraph.definition is the raw ProtocolDefinition
  * // TypedEnbox infers paths like 'friend' | 'friend/message' and
- * // data types from the schema map.
+ * // data types from the codecs.
  * ```
  */
 export function defineProtocol<
   const D extends ProtocolDefinition,
-  M extends SchemaMap = SchemaMap,
+  const C extends ProtocolRecordCodecs<D>,
 >(
   definition : D,
+  codecs : ExactProtocolCodecs<D, C>,
+): TypedProtocol<D, C> {
+  assertTypedProtocolStructureSupported(definition.structure);
+  const requiredTypeNames = new Set(
+    [...collectProtocolPaths(definition.structure)].map((path) => getTypeName(path)),
+  );
+  const suppliedTypeNames = Object.keys(codecs);
+  const missing = [...requiredTypeNames].filter((typeName) => !Object.hasOwn(codecs, typeName));
+  const extra = suppliedTypeNames.filter((typeName) => !requiredTypeNames.has(typeName));
+  const invalid = suppliedTypeNames.filter((typeName) => !isRecordCodec(codecs[typeName]));
 
-  _schemaMap?: M,
-): TypedProtocol<D, M> {
-  return { definition } as TypedProtocol<D, M>;
+  if (missing.length > 0 || extra.length > 0 || invalid.length > 0) {
+    missing.sort((a, b) => a.localeCompare(b));
+    extra.sort((a, b) => a.localeCompare(b));
+    invalid.sort((a, b) => a.localeCompare(b));
+    const details = [
+      ...(missing.length === 0 ? [] : [`missing: ${missing.join(', ')}`]),
+      ...(extra.length === 0 ? [] : [`unexpected: ${extra.join(', ')}`]),
+      ...(invalid.length === 0 ? [] : [`invalid: ${invalid.join(', ')}`]),
+    ];
+    throw new TypeError(`defineProtocol: codecs must exactly match reachable protocol types (${details.join('; ')}).`);
+  }
+
+  return { definition, codecs };
+}
+
+function isRecordCodec(value: unknown): value is RecordCodec<unknown> {
+  if (value === null || typeof value !== 'object') {
+    return false;
+  }
+  const candidate = value as Partial<RecordCodec<unknown>>;
+  return typeof candidate.encode === 'function' && typeof candidate.decode === 'function';
 }

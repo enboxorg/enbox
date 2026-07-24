@@ -9,6 +9,8 @@ import type {
   TypedEnbox,
 } from '@enbox/api';
 
+import { defineProtocol, recordCodecs } from '@enbox/api';
+
 const CanonicalRecordDefinition = {
   protocol  : 'https://example.com/protocols/canonical-record',
   published : true,
@@ -33,31 +35,50 @@ interface TaskData {
   note?: string;
 }
 
-type CanonicalRecordSchemaMap = {
-  task: TaskData;
-  attachment: Blob;
-};
+const CanonicalRecordProtocol = defineProtocol(CanonicalRecordDefinition, {
+  task       : recordCodecs.json<TaskData>(),
+  attachment : recordCodecs.blob('application/octet-stream'),
+});
+void CanonicalRecordProtocol;
+
+// @ts-expect-error every reachable protocol record type requires a codec.
+defineProtocol(CanonicalRecordDefinition, {
+  task: recordCodecs.json<TaskData>(),
+});
+
+// @ts-expect-error codecs for types outside the protocol structure are rejected.
+defineProtocol(CanonicalRecordDefinition, {
+  task       : recordCodecs.json<TaskData>(),
+  attachment : recordCodecs.blob('application/octet-stream'),
+  orphan     : recordCodecs.json<unknown>(),
+});
 
 declare const record: Record<TaskData>;
 declare const untypedRecord: Record;
-declare const typed: TypedEnbox<typeof CanonicalRecordDefinition, CanonicalRecordSchemaMap>;
+declare const typed: TypedEnbox<
+  typeof CanonicalRecordDefinition,
+  typeof CanonicalRecordProtocol.codecs
+>;
 
-const recordData: RecordData<TaskData> = record.data;
-const payload: Promise<TaskData> = recordData.json();
+const recordData: RecordData = record.data;
+const payload: Promise<TaskData> = record.value();
 const rawPayload: Promise<unknown> = untypedRecord.data.json();
 const rawPatch: Promise<Record<unknown>> = untypedRecord.patch({ arbitrary: true });
+// @ts-expect-error record handles preserve their existing representation.
+untypedRecord.update({ dataFormat: 'text/plain' });
 const replacement: RecordUpdateParams<TaskData> = {
   data: { title: 'updated', completed: true },
 };
 const patch: RecordPatch<TaskData> = { note: null };
+void recordData;
 void payload;
 void rawPayload;
 void rawPatch;
 void replacement;
 void patch;
 
-// @ts-expect-error the canonical payload type cannot be overridden at the data accessor.
-record.data.json<{ wrong: true }>();
+// @ts-expect-error the canonical payload type cannot be overridden at the value accessor.
+record.value<{ wrong: true }>();
 
 // @ts-expect-error update data is a complete replacement payload.
 record.update({ data: { title: 'missing required completed field' } });
@@ -81,10 +102,17 @@ async function assertCanonicalRecordFlow(): Promise<void> {
   const created: Record<TaskData> = await typed.records.create('task', {
     data: { title: 'created', completed: false },
   });
-  const createdData: TaskData = await created.data.json();
+  await typed.records.create('task', {
+    data       : { title: 'created', completed: false },
+    // @ts-expect-error the protocol codec owns the encoded data format.
+    dataFormat : 'application/json',
+  });
+  const createdData: TaskData = await created.value();
   const updated: Record<TaskData> = await created.update({
     data: { title: 'updated', completed: true },
   });
+  // @ts-expect-error record handles preserve their codec-owned representation.
+  await created.update({ dataFormat: 'application/json' });
   const deleted: void = await updated.delete();
   void createdData;
   void deleted;

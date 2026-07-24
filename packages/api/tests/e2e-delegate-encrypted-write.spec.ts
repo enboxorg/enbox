@@ -52,6 +52,7 @@ import { DwnInterfaceName, DwnMethodName, Encoder, EncryptionProtocol, Jws, WRAP
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { Enbox } from '../src/enbox.js';
+import { recordCodecs } from '../src/record-codec.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
 import { testDwnUrl } from './utils/test-config.js';
 
@@ -99,12 +100,11 @@ function createEncryptedProtocol(protocolUri: string): DwnProtocolDefinition {
   } as DwnProtocolDefinition;
 }
 
-// Type-checked schema map for the protocol.
-type EncryptedSchemaMap = {
-  mint : { url: string; unit: string };
-  proof : { amount: number; secret: string; C: string };
-  transaction : { type: string; amount: number };
-  preference : { defaultMint: string };
+const encryptedCodecs = {
+  mint        : recordCodecs.json<{ url: string; unit: string }>(),
+  preference  : recordCodecs.json<{ defaultMint: string }>(),
+  proof       : recordCodecs.json<{ amount: number; secret: string; C: string }>(),
+  transaction : recordCodecs.json<{ type: string; amount: number }>(),
 };
 
 // ---------------------------------------------------------------------------
@@ -273,10 +273,7 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
       const protocolDef = createEncryptedProtocol(protocolUri);
       const { delegateDid, dappEnbox } = await setupDelegateFlow(protocolDef);
 
-      const EncTestProtocol = defineProtocol(
-        protocolDef as ProtocolDefinition,
-        {} as EncryptedSchemaMap,
-      );
+      const EncTestProtocol = defineProtocol(protocolDef as ProtocolDefinition, encryptedCodecs);
 
       const typed = dappEnbox.using(EncTestProtocol);
 
@@ -297,10 +294,7 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
       const protocolDef = createEncryptedProtocol(protocolUri);
       const { delegateDid, dappEnbox } = await setupDelegateFlow(protocolDef);
 
-      const EncTestProtocol = defineProtocol(
-        protocolDef as ProtocolDefinition,
-        {} as EncryptedSchemaMap,
-      );
+      const EncTestProtocol = defineProtocol(protocolDef as ProtocolDefinition, encryptedCodecs);
 
       const typed = dappEnbox.using(EncTestProtocol);
 
@@ -335,10 +329,7 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
       const protocolDef = createEncryptedProtocol(protocolUri);
       const { delegateDid, dappEnbox } = await setupDelegateFlow(protocolDef);
 
-      const EncTestProtocol = defineProtocol(
-        protocolDef as ProtocolDefinition,
-        {} as EncryptedSchemaMap,
-      );
+      const EncTestProtocol = defineProtocol(protocolDef as ProtocolDefinition, encryptedCodecs);
 
       const typed = dappEnbox.using(EncTestProtocol);
 
@@ -361,10 +352,7 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
       const protocolDef = createEncryptedProtocol(protocolUri);
       const { delegateDid, dappEnbox } = await setupDelegateFlow(protocolDef);
 
-      const EncTestProtocol = defineProtocol(
-        protocolDef as ProtocolDefinition,
-        {} as EncryptedSchemaMap,
-      );
+      const EncTestProtocol = defineProtocol(protocolDef as ProtocolDefinition, encryptedCodecs);
 
       const typed = dappEnbox.using(EncTestProtocol);
 
@@ -419,10 +407,7 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
       const protocolDef = createEncryptedProtocol(protocolUri);
       const { dappEnbox } = await setupDelegateFlow(protocolDef);
 
-      const EncTestProtocol = defineProtocol(
-        protocolDef as ProtocolDefinition,
-        {} as EncryptedSchemaMap,
-      );
+      const EncTestProtocol = defineProtocol(protocolDef as ProtocolDefinition, encryptedCodecs);
 
       const typed = dappEnbox.using(EncTestProtocol);
 
@@ -434,7 +419,7 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
         data: { url: 'https://mint2.example', unit: 'usd' },
       });
       expect(updated).toBe(record);
-      expect(await record.data.json()).toEqual({ url: 'https://mint2.example', unit: 'usd' });
+      expect(await record.value()).toEqual({ url: 'https://mint2.example', unit: 'usd' });
     });
 
     it('should delete a delegate-written record', async () => {
@@ -442,10 +427,7 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
       const protocolDef = createEncryptedProtocol(protocolUri);
       const { dappEnbox } = await setupDelegateFlow(protocolDef);
 
-      const EncTestProtocol = defineProtocol(
-        protocolDef as ProtocolDefinition,
-        {} as EncryptedSchemaMap,
-      );
+      const EncTestProtocol = defineProtocol(protocolDef as ProtocolDefinition, encryptedCodecs);
 
       const typed = dappEnbox.using(EncTestProtocol);
 
@@ -723,10 +705,7 @@ describe('E2E: AuthManager.connect() with encrypted protocol', () => {
     const protocolUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
     const protocolDef = createEncryptedProtocol(protocolUri);
 
-    const EncTestProtocol = defineProtocol(
-      protocolDef as ProtocolDefinition,
-      {} as EncryptedSchemaMap,
-    );
+    const EncTestProtocol = defineProtocol(protocolDef as ProtocolDefinition, encryptedCodecs);
 
     // Create the auth manager with the dapp's agent and our in-process
     // wallet handler — this is the same shape a real dapp would use with
@@ -791,10 +770,7 @@ describe('E2E: AuthManager.connect() with encrypted protocol', () => {
 
     const protocolUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
     const protocolDef = createEncryptedProtocol(protocolUri);
-    const EncTestProtocol = defineProtocol(
-      protocolDef as ProtocolDefinition,
-      {} as EncryptedSchemaMap,
-    );
+    const EncTestProtocol = defineProtocol(protocolDef as ProtocolDefinition, encryptedCodecs);
 
     const auth = await AuthManager.create({
       agent          : dappAgent,
@@ -842,10 +818,7 @@ describe('E2E: AuthManager.connect() with encrypted protocol', () => {
     const protocolUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
     const protocolDef = createEncryptedProtocol(protocolUri);
 
-    const EncTestProtocol = defineProtocol(
-      protocolDef as ProtocolDefinition,
-      {} as EncryptedSchemaMap,
-    );
+    const EncTestProtocol = defineProtocol(protocolDef as ProtocolDefinition, encryptedCodecs);
 
     try {
       const auth = await AuthManager.create({
@@ -906,14 +879,14 @@ describe('E2E: AuthManager.connect() with encrypted protocol', () => {
         filter : { recordId: walletWrite.message!.recordId },
       });
       expect(hydratedRecord).toBeDefined();
-      expect(await hydratedRecord!.data.json()).toEqual(walletRecordData);
+      expect(await hydratedRecord!.value()).toEqual(walletRecordData);
 
       const delegateRecordData = { type: 'send', amount: 250 };
       const delegateRecord = await typed.records.create('transaction', {
         data: delegateRecordData,
       });
       expect((delegateRecord.rawMessage as any).encryption).toBeDefined();
-      expect(await delegateRecord.data.json()).toEqual(delegateRecordData);
+      expect(await delegateRecord.value()).toEqual(delegateRecordData);
     } finally {
       await suppliedDappHarness.clearStorage();
       await suppliedDappHarness.closeStorage();

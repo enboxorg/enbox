@@ -51,7 +51,7 @@ own a raw agent and DID, use `new Enbox({ agent, connectedDid })`.
 ## Typed Protocols
 
 ```ts
-import { Enbox, defineProtocol } from '@enbox/api';
+import { Enbox, defineProtocol, recordCodecs } from '@enbox/api';
 
 const NotesProtocol = defineProtocol({
   protocol  : 'https://example.com/notes',
@@ -67,8 +67,8 @@ const NotesProtocol = defineProtocol({
       $tags: { category: { type: 'string' } },
     },
   },
-} as const, {} as {
-  note: { title: string; body: string };
+} as const, {
+  note: recordCodecs.json<{ title: string; body: string }>(),
 });
 
 const { enbox } = await Enbox.connect({ password: userPassword, createIdentity: true });
@@ -79,12 +79,17 @@ const record = await notes.records.create('note', {
   tags : { category: 'draft' },
 });
 
-const data = await record.data.json(); // { title: string; body: string }
+const data = await record.value(); // { title: string; body: string }
 ```
 
-`defineProtocol()` preserves protocol paths and schema map types at compile
-time. `enbox.using(protocol)` returns a `TypedEnbox` scoped to that protocol, so
-record methods can infer paths and payload shapes.
+`defineProtocol()` pairs each protocol record type with one runtime codec.
+`enbox.using(protocol)` returns a `TypedEnbox` scoped to that protocol, so
+record methods infer paths and application values while using the same codec
+for writes and reads.
+
+Typed protocol composition through `$ref` is not inferred from incomplete
+local metadata. `defineProtocol()` rejects it for now; use the raw `enbox.dwn`
+API until the explicit composition contract tracked in #1462 is available.
 
 ## Records
 
@@ -149,10 +154,11 @@ try {
 }
 ```
 
-Returned records are canonical `Record<T>` instances. They expose typed
-`data.json()` plus `data.text()`, `data.bytes()`, `data.blob()`, and
-`data.stream()` without wrapping a second record object. `update({ data })`
-replaces the full payload; use `patch()` for a shallow partial JSON update.
+Returned records are canonical `Record<T>` instances. `value()` decodes the
+typed application value through the protocol codec, while `data.json()`,
+`data.text()`, `data.bytes()`, `data.blob()`, and `data.stream()` expose the
+raw representation without wrapping a second record object. `update({ data })`
+replaces the full payload; use `patch()` for a shallow partial object update.
 
 `observe()` watches only the connected tenant's local replica. Subscription
 events are wake hints: every immutable snapshot is rebuilt from the same
@@ -215,7 +221,7 @@ Browser apps typically use `@enbox/browser`, which re-exports the main app APIs
 and adds browser-specific connect helpers:
 
 ```ts
-import { Enbox, BrowserConnectHandler, defineProtocol } from '@enbox/browser';
+import { Enbox, BrowserConnectHandler, defineProtocol, recordCodecs } from '@enbox/browser';
 ```
 
 The root `@enbox/api` entry also declares a browser condition that resolves to

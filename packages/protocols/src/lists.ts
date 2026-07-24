@@ -13,7 +13,7 @@
 
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
-import { defineProtocol } from '@enbox/api';
+import { defineProtocol, recordCodecs } from '@enbox/api';
 
 // ---------------------------------------------------------------------------
 // Data types
@@ -52,19 +52,6 @@ export type CollaboratorData = {
 /** Data shape for a comment on a list item. */
 export type CommentData = {
   text: string;
-};
-
-// ---------------------------------------------------------------------------
-// Schema map
-// ---------------------------------------------------------------------------
-
-/** Maps protocol type names to their TypeScript data shapes. */
-export type ListsSchemaMap = {
-  list: ListData;
-  item: ItemData;
-  folder: FolderData;
-  collaborator: CollaboratorData;
-  comment: CommentData;
 };
 
 // ---------------------------------------------------------------------------
@@ -155,5 +142,11 @@ export const ListsDefinition = {
 /** Typed Lists protocol for use with `dwn.using()`. */
 export const ListsProtocol = defineProtocol(
   ListsDefinition,
-  {} as ListsSchemaMap,
+  {
+    list         : recordCodecs.json<ListData>(),
+    item         : recordCodecs.json<ItemData>(),
+    folder       : recordCodecs.json<FolderData>(),
+    collaborator : recordCodecs.json<CollaboratorData>(),
+    comment      : recordCodecs.json<CommentData>(),
+  },
 );

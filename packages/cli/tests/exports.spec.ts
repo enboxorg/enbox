@@ -13,6 +13,14 @@ describe('@enbox/cli exports', () => {
     expect(typeof mod.Enbox).toBe('function');
   });
 
+  it('exports recordCodecs from @enbox/api', async () => {
+    const [cli, api] = await Promise.all([
+      import('../src/index.js'),
+      import('@enbox/api'),
+    ]);
+    expect(cli.recordCodecs).toBe(api.recordCodecs);
+  });
+
   it('exports AuthManager from @enbox/auth', async () => {
     const mod = await getCliExports();
     expect(mod.AuthManager).toBeDefined();

@@ -5,6 +5,7 @@ import type { DwnApi, RecordsWriteRequest } from '../src/dwn-api.js';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
 import { defineProtocol } from '../src/define-protocol.js';
+import { recordCodecs } from '../src/record-codec.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
 
 // ---------------------------------------------------------------------------
@@ -36,9 +37,10 @@ const SquashDefinition = {
   },
 } as const satisfies ProtocolDefinition;
 
-type SquashSchemaMap = { doc: { n?: string }; snapshot: { v?: string } };
-
-const SquashProtocol = defineProtocol(SquashDefinition, {} as SquashSchemaMap);
+const SquashProtocol = defineProtocol(SquashDefinition, {
+  doc      : recordCodecs.json<{ n?: string }>(),
+  snapshot : recordCodecs.json<{ v?: string }>(),
+});
 
 /** A fake DwnApi that records every `records.write` request and returns one accepted record. */
 function makeCapturingDwn(): { dwn: DwnApi; record: Record; writes: RecordsWriteRequest[] } {
@@ -59,7 +61,7 @@ describe('TypedEnbox create() — squash forwarding (#972)', () => {
   let dwn: DwnApi;
   let record: Record;
   let writes: RecordsWriteRequest[];
-  let typed: TypedEnbox<typeof SquashDefinition, SquashSchemaMap>;
+  let typed: TypedEnbox<typeof SquashDefinition, typeof SquashProtocol.codecs>;
 
   beforeEach(() => {
     ({ dwn, record, writes } = makeCapturingDwn());
@@ -97,7 +99,6 @@ describe('TypedEnbox create() — squash forwarding (#972)', () => {
       protocolRole    : 'collaborator',
       tags            : { kind: 'snapshot' },
       published       : true,
-      dataFormat      : 'application/json',
     });
 
     const req = writes[0];

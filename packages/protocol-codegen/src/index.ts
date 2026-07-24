@@ -3,12 +3,12 @@
  * definitions and JSON Schema files.
  *
  * This package provides both a CLI and a programmatic API for generating
- * typed data shapes, schema maps, and protocol wiring from protocol
+ * typed data shapes, runtime codecs, and protocol wiring from protocol
  * definitions paired with JSON Schema files.
  *
  * @example
  * ```ts
- * import { generateTypes } from '@enbox/protocol-codegen';
+ * import { generateProtocolModule } from '@enbox/protocol-codegen';
  *
  * const definition = {
  *   protocol: 'https://example.com/protocols/social',
@@ -16,7 +16,7 @@
  *   structure: { friend: { $actions: [{ who: 'anyone', can: ['create'] }] } },
  * };
  *
- * const { code, resolutions } = await generateTypes(definition, {
+ * const { code, resolutions } = await generateProtocolModule(definition, {
  *   schemasDir: './schemas',
  *   protocolName: 'Social',
  * });
@@ -27,7 +27,7 @@
  * @packageDocumentation
  */
 
-export { generateTypes } from './codegen.js';
-export type { CodegenOptions, CodegenResult, ProtocolDefinitionInput } from './codegen.js';
+export { generateProtocolModule } from './codegen.js';
+export type { CodegenOptions, CodegenResult, ProtocolDefinitionInput, ProtocolTypeInput } from './codegen.js';
 export { resolveAllSchemas, resolveSchema } from './schema-resolver.js';
 export type { JsonSchema, SchemaResolution } from './schema-resolver.js';

@@ -65,18 +65,6 @@ describe('createRecordData()', () => {
       expect(parsed).toEqual(obj);
     });
 
-    it('should return the type supplied to the factory', async () => {
-      type User = { name: string; age: number };
-      const obj: User = { name: 'Bob', age: 25 };
-      const data = createRecordData<User>(
-        async () => jsonStream(obj),
-        'application/json',
-      );
-
-      const parsed = await data.json();
-      expect(parsed.name).toBe('Bob');
-      expect(parsed.age).toBe(25);
-    });
   });
 
   describe('blob()', () => {

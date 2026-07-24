@@ -52,6 +52,14 @@ describe('Enbox API Utils', () => {
       expect(result.dataFormat).toBe('custom/type');
     });
 
+    it('should preserve Blob bytes when the descriptor uses another format', async () => {
+      const blob = new Blob(['{"ok":true}'], { type: 'application/json' });
+      const result = dataToBlob(blob, 'application/vnd.example+json');
+
+      expect(await result.dataBlob.text()).toBe('{"ok":true}');
+      expect(result.dataFormat).toBe('application/vnd.example+json');
+    });
+
     it('should handle Blob data that lacks a type', () => {
       const blob = new Blob(['data']);
       const result = dataToBlob(blob);

@@ -5,7 +5,7 @@
  * - A raw `ProtocolDefinition` (e.g. `SocialGraphDefinition`)
  * - A typed protocol created via `defineProtocol()` (e.g. `SocialGraphProtocol`)
  * - Data shape types for each record type (e.g. `FriendData`, `ProfileData`)
- * - A `SchemaMap` type mapping type names to data shapes
+ * - Runtime codecs that map each protocol type to its application value
  *
  * @packageDocumentation
  */

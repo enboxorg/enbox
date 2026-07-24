@@ -7,7 +7,7 @@ description: Protocol definitions and type-safe schema helpers for structuring d
 
 ## What it does
 
-- **Protocol definitions** — Ships ready-to-use protocol definitions for common use cases (social graphs, messaging, profiles, etc.) that can be passed directly to `defineProtocol()` or used with the lower-level DWN API.
+- **Typed protocols** — Ships ready-to-use definitions and runtime codecs for common use cases (social graphs, profiles, preferences, and lists).
 - **Schema helpers** — Utilities for constructing well-formed protocol definitions with proper `types`, `structure`, and `$actions` configurations.
 - **Type generation** — TypeScript type utilities that derive compile-time types from protocol definitions, enabling the type-safe path autocompletion in `TypedEnbox`.
 
@@ -19,7 +19,10 @@ description: Protocol definitions and type-safe schema helpers for structuring d
 
 ## Relationship to @enbox/api
 
-`@enbox/api`'s `defineProtocol()` function uses the type utilities from this package internally. If you are using `defineProtocol()` with inline definitions, you typically do not need to import from `@enbox/protocols` directly.
+Use the exported `*Protocol` constants directly with `enbox.using()`. The
+matching `*Definition` exports remain available for low-level DWN operations.
+Apps declaring their own protocols use `defineProtocol()` and `recordCodecs`
+from `@enbox/api` instead.
 
 ## Key exports
 

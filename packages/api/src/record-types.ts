@@ -174,9 +174,6 @@ export type RecordUpdateParams<T = unknown> = {
   /** Whether or not to store the updated message. */
   store?: boolean;
 
-  /** The data format/MIME type of the supplied data */
-  dataFormat?: string;
-
   /** The size of the data in bytes. */
   dataSize?: DwnMessageDescriptor[DwnInterface.RecordsWrite]['dataSize'];
 
@@ -191,7 +188,6 @@ export type RecordUpdateParams<T = unknown> = {
 
   /** The published status of the record. */
   published?: DwnMessageDescriptor[DwnInterface.RecordsWrite]['published'];
-
 
   /** The tags associated with the updated record */
   tags?: DwnMessageDescriptor[DwnInterface.RecordsWrite]['tags'];

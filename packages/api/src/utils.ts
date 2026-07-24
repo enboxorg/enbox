@@ -48,20 +48,22 @@ export function dataToBlob(data: any, dataFormat?: string): {
   // on `dataFormat`, so we must use the canonical MIME type without parameters.
   let detectedMimeType: string | undefined;
 
-  // Check for Object or String, and if neither, assume bytes.
+  // Already encoded Blob and byte values always win over format-based legacy
+  // conversion. This prevents an explicit JSON format from serializing their
+  // container object instead of preserving their bytes.
   const detectedType = universalTypeOf(data);
-  if (dataFormat === 'text/plain' || detectedType === 'String') {
+  if (detectedType === 'Blob') {
+    dataBlob = data;
+  } else if (detectedType === 'Uint8Array' || detectedType === 'ArrayBuffer') {
+    detectedMimeType = 'application/octet-stream';
+    dataBlob = new Blob([data], { type: detectedMimeType });
+  } else if (dataFormat === 'text/plain' || detectedType === 'String') {
     detectedMimeType = 'text/plain';
     dataBlob = new Blob([data], { type: detectedMimeType });
   } else if (dataFormat === 'application/json' || detectedType === 'Object') {
     detectedMimeType = 'application/json';
     const dataBytes = Convert.object(data).toUint8Array();
     dataBlob = new Blob([dataBytes as BlobPart], { type: detectedMimeType });
-  } else if (detectedType === 'Uint8Array' || detectedType === 'ArrayBuffer') {
-    detectedMimeType = 'application/octet-stream';
-    dataBlob = new Blob([data], { type: detectedMimeType });
-  } else if (detectedType === 'Blob') {
-    dataBlob = data;
   } else {
     throw new Error('data type not supported.');
   }

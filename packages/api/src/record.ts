@@ -4,6 +4,8 @@
  */
 /// <reference types="@enbox/dwn-sdk-js" />
 
+import type { RecordData } from './record-data.js';
+
 import type {
   DwnDateSort,
   DwnMessage,
@@ -37,12 +39,11 @@ import {
 } from '@enbox/agent';
 import { Convert, isEmptyObject, removeUndefinedProperties, Stream } from '@enbox/common';
 
-import type { RecordData } from './record-data.js';
-
 import { captureRecordDataAccess } from './record-data-access.js';
 import { createRecordData } from './record-data.js';
 import { requireDwnSuccess } from './dwn-response-error.js';
 import { dataToBlob, SendCache } from './utils.js';
+import { encodeRecordValue, getRecordCodecBinding } from './record-codec.js';
 
 type StoredRecordDataReadParams = {
   agent: EnboxAgent;
@@ -68,7 +69,7 @@ export type {
 export type { RecordData } from './record-data.js';
 
 /**
- * The shallow JSON-object update accepted by {@link Record.patch}.
+ * The shallow plain-object update accepted by {@link Record.patch}.
  *
  * Optional fields may be set to `null` to delete them. Required fields cannot
  * be deleted, so a required nullable field must be set to `null` through a
@@ -76,7 +77,7 @@ export type { RecordData } from './record-data.js';
  * retain the untyped string-keyed patch surface; known non-object payloads
  * cannot be patched.
  *
- * @typeParam T - The complete JSON-object payload type being patched.
+ * @typeParam T - The complete plain-object application value being patched.
  */
 export type RecordPatch<T = unknown> = unknown extends T
   ? globalThis.Record<string, unknown>
@@ -85,6 +86,14 @@ export type RecordPatch<T = unknown> = unknown extends T
     : T extends object
     ? { [K in keyof T]?: undefined extends T[K] ? T[K] | null : Exclude<T[K], null> }
     : never;
+
+function isPlainRecord(value: unknown): value is globalThis.Record<string, unknown> {
+  if (value === null || typeof value !== 'object') {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
 
 /**
  * The `Record` class encapsulates a single record's data and metadata, providing a more
@@ -97,8 +106,8 @@ export type RecordPatch<T = unknown> = unknown extends T
  *       the Record class. It represents the time of the most recent
  *       message (create, update, or delete) for this logical record.
  *
- * @typeParam T - The record payload type returned by `data.json()` and
- *   preserved by update, patch, and delete results.
+ * @typeParam T - The application value decoded by {@link Record.value} and
+ *   preserved by update and patch operations.
  *
  * @beta
  */
@@ -326,8 +335,8 @@ export class Record<T = unknown> implements RecordModel {
    *
    * @beta
    */
-  get data(): RecordData<T> {
-    return createRecordData<T>(async (): Promise<ReadableStream<Uint8Array>> => {
+  get data(): RecordData {
+    return createRecordData(async (): Promise<ReadableStream<Uint8Array>> => {
       if (this.deleted) {
         throw new Error('Cannot access data of a deleted record.');
       }
@@ -339,6 +348,27 @@ export class Record<T = unknown> implements RecordModel {
         recordsWrite: this.rawMessage as DwnMessage[DwnInterface.RecordsWrite],
       });
     }, this.dataFormat);
+  }
+
+  /**
+   * Decode this record through the codec declared by its typed protocol.
+   *
+   * Records returned by `Enbox.using(protocol).records` carry that codec.
+   * Records obtained from the raw DWN API instead expose their representation
+   * through {@link Record.data}. Codec convenience methods may buffer data;
+   * use `record.data.stream()` for large streaming payloads.
+   *
+   * @throws `Error` when this record did not come from a typed protocol API.
+   */
+  async value(): Promise<T> {
+    const binding = getRecordCodecBinding(this);
+    if (binding === undefined) {
+      throw new Error('Record.value: this record is not bound to a protocol codec.');
+    }
+    if (this.dataFormat === undefined) {
+      throw new Error('Record.value: this record does not have a data format.');
+    }
+    return await binding.codec.decode(this.data, this.dataFormat);
   }
 
   /**
@@ -524,6 +554,9 @@ export class Record<T = unknown> implements RecordModel {
       throw new Error('Record: Cannot revive a deleted record.');
     }
 
+    if (Object.hasOwn(params, 'dataFormat')) {
+      throw new TypeError('Record.update: dataFormat cannot be changed through a record handle.');
+    }
     // if there is a parentId, we remove it from the descriptor and set a parentContextId
     const { parentId, ...descriptor } = this._recordsWriteDescriptor;
     const parentContextId = parentId ? this._contextId.split('/').slice(0, -1).join('/') : undefined;
@@ -552,19 +585,11 @@ export class Record<T = unknown> implements RecordModel {
       delete updateMessage.tags;
     }
 
-    let dataBlob: Blob | undefined;
-    if (data !== undefined) {
-      // If `data` is being updated then `dataCid` and `dataSize` must be undefined and the `data`
-      // value must be converted to a Blob and later passed as a top-level property to
-      // `agent.processDwnRequest()`.
-      delete updateMessage.dataCid;
-      delete updateMessage.dataSize;
-      ({ dataBlob } = dataToBlob(data, updateMessage.dataFormat));
-    }
+    const dataBlob = await this.encodeUpdateData(data, updateMessage);
 
     // Throw an error if an attempt is made to modify immutable properties.
     // Note: `data` and `timestamp` have already been handled.
-    const mutableDescriptorProperties = new Set(['data', 'dataCid', 'dataFormat', 'dataSize', 'datePublished', 'messageTimestamp', 'published', 'tags']);
+    const mutableDescriptorProperties = new Set(['data', 'dataCid', 'dataSize', 'datePublished', 'messageTimestamp', 'published', 'tags']);
     Record.verifyPermittedMutation(Object.keys(params), mutableDescriptorProperties);
 
     // If `published` is set to false, ensure that `datePublished` is undefined. Otherwise, DWN SDK's schema validation
@@ -633,15 +658,37 @@ export class Record<T = unknown> implements RecordModel {
     return this;
   }
 
+  /** Encode replacement data and remove descriptor fields recomputed by RecordsWrite. */
+  private async encodeUpdateData(
+    data: T | undefined,
+    updateMessage: DwnMessageParams[DwnInterface.RecordsWrite],
+  ): Promise<Blob | undefined> {
+    if (data === undefined) {
+      return undefined;
+    }
+
+    delete updateMessage.dataCid;
+    delete updateMessage.dataSize;
+    const codecBinding = getRecordCodecBinding(this);
+    if (codecBinding === undefined) {
+      return dataToBlob(data, updateMessage.dataFormat).dataBlob;
+    }
+
+    const encoded = await encodeRecordValue(codecBinding.codec, data, codecBinding.dataFormats);
+    updateMessage.dataFormat = encoded.dataFormat;
+    return encoded.data;
+  }
+
   /**
-   * Partially update the record's JSON data with a read-merge-write cycle.
+   * Partially update the record's plain-object value with a read-merge-write cycle.
    *
    * {@link Record.update} REPLACES the record's data wholesale — for encrypted
    * records the agent requires full payloads, so passing a partial object to
    * `update({ data })` silently drops every omitted field. `patch()` is the
-   * supported partial-update idiom: it reads the current payload via
-   * `data.json()`, shallow-merges the given fields over it, and writes the
-   * FULL merged payload back through `update()`.
+   * supported partial-update idiom: it decodes typed records through their
+   * protocol codec (and raw records as JSON), shallow-merges the given fields
+   * over that value, and writes the FULL merged payload back through
+   * `update()`.
    *
    * Merge semantics (shallow, top-level keys only):
    * - a key with a non-`null` value replaces the current value — nested
@@ -659,9 +706,9 @@ export class Record<T = unknown> implements RecordModel {
    *   forwarded to the underlying `update()` call — e.g. `tags`, `from`,
    *   `protocolRole`.
    * @returns This record with its accepted state applied.
-   * @throws `Error` if the record has been deleted, or if the record's
-   *   current data is not a JSON object (arrays and primitives cannot be
-   *   merged).
+   * @throws `Error` if the record has been deleted, or if the decoded value
+   *   is not a plain object (arrays, primitives, and class instances cannot
+   *   be merged).
    *
    * @beta
    */
@@ -673,9 +720,10 @@ export class Record<T = unknown> implements RecordModel {
       throw new Error('Record: Cannot patch a deleted record.');
     }
 
-    const currentData: unknown = await this.data.json();
-    if (currentData === null || typeof currentData !== 'object' || Array.isArray(currentData)) {
-      throw new Error('Record: patch() requires the record\'s current data to be a JSON object.');
+    const binding = getRecordCodecBinding(this);
+    const currentData: unknown = binding === undefined ? await this.data.json() : await this.value();
+    if (!isPlainRecord(currentData)) {
+      throw new Error('Record: patch() requires the record\'s current value to be a plain object.');
     }
 
     const mergedData: globalThis.Record<string, unknown> = { ...currentData as globalThis.Record<string, unknown> };

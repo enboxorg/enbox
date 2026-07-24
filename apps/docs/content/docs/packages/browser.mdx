@@ -16,7 +16,7 @@ bun add @enbox/browser
 ## Usage
 
 ```ts
-import { BrowserConnectHandler, Enbox, defineProtocol } from '@enbox/browser';
+import { BrowserConnectHandler, Enbox, defineProtocol, recordCodecs } from '@enbox/browser';
 
 const { enbox } = await Enbox.connect({
   connectHandler : BrowserConnectHandler({ appName: 'Notes' }),
@@ -40,6 +40,7 @@ details.
 |---|---|
 | `Enbox` | High-level app API from `@enbox/api` |
 | `defineProtocol()` | Type-safe protocol definition helper |
+| `recordCodecs` | JSON, text, bytes, and Blob record codecs |
 | `AuthManager` | Auth/session lifecycle from `@enbox/auth` |
 | `BrowserConnectHandler` | Browser wallet/connect handler |
 | `DWebConnect` | Browser DWeb connect client helpers |

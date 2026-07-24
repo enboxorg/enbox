@@ -10,7 +10,7 @@
 
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
-import { defineProtocol } from '@enbox/api';
+import { defineProtocol, recordCodecs } from '@enbox/api';
 
 // ---------------------------------------------------------------------------
 // Data types
@@ -27,16 +27,6 @@ export type StatusData = {
 /** Data shape for a reaction to a status. */
 export type ReactionData = {
   emoji: string;
-};
-
-// ---------------------------------------------------------------------------
-// Schema map
-// ---------------------------------------------------------------------------
-
-/** Maps protocol type names to their TypeScript data shapes. */
-export type StatusSchemaMap = {
-  status: StatusData;
-  reaction: ReactionData;
 };
 
 // ---------------------------------------------------------------------------
@@ -82,5 +72,8 @@ export const StatusDefinition = {
 /** Typed Status protocol for use with `dwn.using()`. */
 export const StatusProtocol = defineProtocol(
   StatusDefinition,
-  {} as StatusSchemaMap,
+  {
+    status   : recordCodecs.json<StatusData>(),
+    reaction : recordCodecs.json<ReactionData>(),
+  },
 );

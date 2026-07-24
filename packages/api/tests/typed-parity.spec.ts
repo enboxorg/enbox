@@ -13,6 +13,7 @@ import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { DwnResponseError } from '../src/dwn-response-error.js';
 import { Enbox } from '../src/enbox.js';
+import { recordCodecs } from '../src/record-codec.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
@@ -48,11 +49,13 @@ function makeNestedDefinition(protocolUri: string): ProtocolDefinition {
   };
 }
 
-type NestedSchemaMap = {
-  list: { name: string };
-  task: { title: string };
-  comment: { body: string };
+const nestedCodecs = {
+  comment : recordCodecs.json<{ body: string }>(),
+  list    : recordCodecs.json<{ name: string }>(),
+  task    : recordCodecs.json<{ title: string }>(),
 };
+
+type NestedCodecs = typeof nestedCodecs;
 
 describe('typed api parity batch', () => {
   let aliceDid: BearerDid;
@@ -60,9 +63,9 @@ describe('typed api parity batch', () => {
   let testHarness: PlatformAgentTestHarness;
 
   /** Fresh TypedEnbox over a fresh random protocol URI for the current test. */
-  function makeTyped(): { typed: TypedEnbox<ProtocolDefinition, NestedSchemaMap>; definition: ProtocolDefinition } {
+  function makeTyped(): { typed: TypedEnbox<ProtocolDefinition, NestedCodecs>; definition: ProtocolDefinition } {
     const definition = makeNestedDefinition(`https://example.com/protocols/parity-${TestDataGenerator.randomString(15)}`);
-    const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {} as NestedSchemaMap));
+    const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, nestedCodecs));
     return { typed, definition };
   }
 
@@ -182,7 +185,7 @@ describe('typed api parity batch', () => {
 
       // The child task was actually pruned along with the list.
       const { records: remainingTasks } = await typed.records.query('list/task', {
-        filter: { contextId: list.contextId },
+        within: list.contextId,
       });
       expect(remainingTasks).toHaveLength(0);
 
@@ -208,7 +211,7 @@ describe('typed api parity batch', () => {
       await typed.records.delete('list', { recordId: list.id });
 
       const { records: remainingTasks } = await typed.records.query('list/task', {
-        filter: { contextId: list.contextId },
+        within: list.contextId,
       });
       expect(remainingTasks).toHaveLength(1);
     });
@@ -268,7 +271,7 @@ describe('typed api parity batch', () => {
 
   describe('nested-path context filters', () => {
     /** Creates list → task → comment and returns all three typed records. */
-    async function createNestedTree(typed: TypedEnbox<ProtocolDefinition, NestedSchemaMap>): Promise<{
+    async function createNestedTree(typed: TypedEnbox<ProtocolDefinition, NestedCodecs>): Promise<{
       list: Record<{ name: string }>;
       task: Record<{ title: string }>;
       comment: Record<{ body: string }>;
@@ -312,7 +315,7 @@ describe('typed api parity batch', () => {
       const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
 
       const { records } = await typed.records.query('list/task/comment', {
-        filter: { contextId: task.contextId },
+        within: task.contextId,
       });
 
       // The 400 case is prevented: the query is accepted and scoped.
@@ -342,16 +345,16 @@ describe('typed api parity batch', () => {
         parentContextId : otherTask.contextId,
       });
 
-      const spec = { filter: { contextId: task.contextId } };
+      const spec = { within: task.contextId };
       const [{ records }, count] = await Promise.all([
         typed.records.query('list/task/comment', spec),
         typed.records.count('list/task/comment', spec),
       ]);
       expect(records).toHaveLength(1);
-      expect(await records[0].data.json()).toEqual({ body: 'grandchild' });
+      expect(await records[0].value()).toEqual({ body: 'grandchild' });
       expect(count).toBe(1);
 
-      const ancestorSpec = { filter: { contextId: list.contextId } };
+      const ancestorSpec = { within: list.contextId };
       const [{ records: descendantRecords }, descendantCount] = await Promise.all([
         typed.records.query('list/task/comment', ancestorSpec),
         typed.records.count('list/task/comment', ancestorSpec),

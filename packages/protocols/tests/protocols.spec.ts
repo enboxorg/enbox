@@ -45,8 +45,9 @@ describe('@enbox/protocols', () => {
       expect(SocialGraphDefinition.structure.group.member).toBeDefined();
     });
 
-    it('should wrap definition via defineProtocol()', () => {
+    it('should bind the definition and codecs via defineProtocol()', () => {
       expect(SocialGraphProtocol.definition).toBe(SocialGraphDefinition);
+      expect(Object.keys(SocialGraphProtocol.codecs).sort()).toEqual(['block', 'friend', 'group', 'member']);
     });
   });
 
@@ -99,8 +100,9 @@ describe('@enbox/protocols', () => {
       expect(friendAction).toBeDefined();
     });
 
-    it('should wrap definition via defineProtocol()', () => {
+    it('should bind the definition and codecs via defineProtocol()', () => {
       expect(ProfileProtocol.definition).toBe(ProfileDefinition);
+      expect(Object.keys(ProfileProtocol.codecs).sort()).toEqual(['avatar', 'hero', 'link', 'privateNote', 'profile']);
     });
   });
 
@@ -134,8 +136,9 @@ describe('@enbox/protocols', () => {
       expect(PreferencesDefinition.structure.notification.$tags?.$requiredTags).toContain('channel');
     });
 
-    it('should wrap definition via defineProtocol()', () => {
+    it('should bind the definition and codecs via defineProtocol()', () => {
       expect(PreferencesProtocol.definition).toBe(PreferencesDefinition);
+      expect(Object.keys(PreferencesProtocol.codecs).sort()).toEqual(['locale', 'notification', 'privacy', 'theme']);
     });
   });
 
@@ -170,8 +173,9 @@ describe('@enbox/protocols', () => {
       expect(friendAction!.can).toContain('create');
     });
 
-    it('should wrap definition via defineProtocol()', () => {
+    it('should bind the definition and codecs via defineProtocol()', () => {
       expect(StatusProtocol.definition).toBe(StatusDefinition);
+      expect(Object.keys(StatusProtocol.codecs).sort()).toEqual(['reaction', 'status']);
     });
   });
 
@@ -227,8 +231,9 @@ describe('@enbox/protocols', () => {
       expect(collabAction!.can).toContain('create');
     });
 
-    it('should wrap definition via defineProtocol()', () => {
+    it('should bind the definition and codecs via defineProtocol()', () => {
       expect(ListsProtocol.definition).toBe(ListsDefinition);
+      expect(Object.keys(ListsProtocol.codecs).sort()).toEqual(['collaborator', 'comment', 'folder', 'item', 'list']);
     });
   });
 
@@ -257,8 +262,9 @@ describe('@enbox/protocols', () => {
       expect(anyoneAction!.can).toContain('read');
     });
 
-    it('should wrap definition via defineProtocol()', () => {
+    it('should bind the definition and codecs via defineProtocol()', () => {
       expect(ConnectProtocol.definition).toBe(ConnectDefinition);
+      expect(Object.keys(ConnectProtocol.codecs)).toEqual(['wallet']);
     });
   });
 });

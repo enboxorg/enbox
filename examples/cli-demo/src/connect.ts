@@ -1,8 +1,8 @@
 import type { EnboxConnectResult } from '../../../packages/cli/src/index.js';
 
-import { AuthManager, CliConnectHandler, Enbox, defineProtocol } from '../../../packages/cli/src/index.js';
+import { AuthManager, CliConnectHandler, Enbox, defineProtocol, recordCodecs } from '../../../packages/cli/src/index.js';
 
-const DemoProtocol = defineProtocol({
+const DemoProtocolDefinition = {
   protocol  : 'https://example.com/enbox/cli-demo',
   published : true,
   types     : {
@@ -14,6 +14,10 @@ const DemoProtocol = defineProtocol({
   structure: {
     note: {},
   },
+} as const;
+
+const DemoProtocol = defineProtocol(DemoProtocolDefinition, {
+  note: recordCodecs.json<{ body: string; connected: string }>(),
 });
 
 // Optional override. When unset, the handler resolves the relay from the

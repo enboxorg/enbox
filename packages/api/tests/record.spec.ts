@@ -3109,7 +3109,7 @@ describe('Record', () => {
       expect(updatedRecord3.tags).toBeUndefined(); // removed
     });
 
-    it('should allow updating the dataFormat of a record', async () => {
+    it('should keep dataFormat owned by the record representation', async () => {
       // alice writes a record with the data format set to text/plain
       const { status, record } = await dwnAlice.records.write({
         data         : 'Hello, world!',
@@ -3124,17 +3124,18 @@ describe('Record', () => {
       expect(record.dataFormat).toBe('text/plain');
       expect(await record.data.text()).toBe('Hello, world!');
 
-      // update the record to JSON
-      const updatedRecord1 = await record!.update({ dataFormat: 'application/json', data: { subject: 'some subject', body: 'some body' } });
-      expect(updatedRecord1).toBe(record);
-      expect(updatedRecord1.dataFormat).toBe('application/json');
-      expect(await updatedRecord1.data.json()).toEqual({ subject: 'some subject', body: 'some body' });
+      // Record handles preserve their representation. Advanced callers that
+      // need to construct another representation use the raw DWN write API.
+      await expect(record!.update({
+        data       : { subject: 'some subject', body: 'some body' },
+        // @ts-expect-error Record handles do not accept representation overrides.
+        dataFormat : 'application/json',
+      })).rejects.toThrow('dataFormat cannot be changed through a record handle');
 
-      // update again without changing the dataFormat
-      const updatedRecord2 = await updatedRecord1.update({ data: { subject: 'another subject', body: 'another body' } });
-      expect(updatedRecord2).toBe(record);
-      expect(updatedRecord2.dataFormat).toBe('application/json');
-      expect(await updatedRecord2.data.json()).toEqual({ subject: 'another subject', body: 'another body' });
+      const updatedRecord = await record!.update({ data: 'Hello again!' });
+      expect(updatedRecord).toBe(record);
+      expect(updatedRecord.dataFormat).toBe('text/plain');
+      expect(await updatedRecord.data.text()).toBe('Hello again!');
     });
 
     it('differentiates between creator and author', async () => {

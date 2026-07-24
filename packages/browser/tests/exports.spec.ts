@@ -47,6 +47,14 @@ describe('@enbox/browser exports', () => {
     expect(typeof mod.defineProtocol).toBe('function');
   });
 
+  it('re-exports recordCodecs from @enbox/api', async () => {
+    const [browser, api] = await Promise.all([
+      getBrowserExports(),
+      import('@enbox/api'),
+    ]);
+    expect(browser.recordCodecs).toBe(api.recordCodecs);
+  });
+
   it('re-exports the canonical Record class from @enbox/api', async () => {
     const [browser, api] = await Promise.all([
       getBrowserExports(),

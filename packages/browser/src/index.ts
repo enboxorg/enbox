@@ -9,7 +9,7 @@
  * ```ts
  * import {
  *   Enbox, BrowserConnectHandler,
- *   defineProtocol,
+ *   defineProtocol, recordCodecs,
  * } from '@enbox/browser';
  *
  * const { enbox, session } = await Enbox.connect({
@@ -34,6 +34,7 @@ export {
   DwnResponseError,
   Enbox,
   defineProtocol,
+  recordCodecs,
 } from '@enbox/api';
 
 export type {
@@ -48,6 +49,9 @@ export type {
   EnboxConnectResult,
   EnboxParams,
   EnboxSessionParams,
+  EncodedRecordData,
+  RecordCodec,
+  RecordCodecValue,
   RecordFilter,
   RecordPage,
   RecordQuery,
