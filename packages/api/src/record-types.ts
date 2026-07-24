@@ -131,15 +131,16 @@ export type RecordOptions = DwnMessage[DwnInterface.RecordsWrite | DwnInterface.
  * This type specifies the set of properties that can be updated on an existing record. It is used
  * to convey the new state or changes to be applied to the record.
  *
+ * @typeParam T - The complete payload type accepted by a replacement-data update.
+ *
  * @beta
  */
-export type RecordUpdateParams = {
+export type RecordUpdateParams<T = unknown> = {
   /**
-   * The new data for the record, which can be of any type. This data will replace the existing
-   * data of the record. It's essential to ensure that this data is compatible with the record's
-   * schema or data format expectations.
+   * The complete replacement payload for the record. Use {@link Record.patch}
+   * when changing only part of a JSON object.
    */
-  data?: unknown;
+  data?: T;
 
   /**
    * Optional DID of a remote DWN tenant to dispatch this update to.

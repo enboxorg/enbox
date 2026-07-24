@@ -11,8 +11,8 @@ import { DwnInterface, EnboxUserAgent } from '@enbox/agent';
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { Protocol } from '../src/protocol.js';
+import { Record } from '../src/record.js';
 import { testDwnUrl } from './utils/test-config.js';
-import { TypedRecord } from '../src/typed-record.js';
 import { definitionsEqual, TypedEnbox } from '../src/typed-enbox.js';
 
 // ---------------------------------------------------------------------------
@@ -312,13 +312,13 @@ describe('TypedProtocol API', () => {
     });
 
     describe('create()', () => {
-      it('should create a record and return a TypedRecord', async () => {
+      it('should create and return the canonical Record', async () => {
         const { status, record } = await typed.records.create('list', {
           data: { name: 'Groceries', description: 'Weekly shopping' },
         });
 
         expect(status.code).toBe(202);
-        expect(record).toBeInstanceOf(TypedRecord);
+        expect(record).toBeInstanceOf(Record);
         expect(record.protocolPath).toBe('list');
         expect(record.schema).toBe('https://example.com/schemas/list');
         expect(record.protocol).toBe('https://example.com/protocols/todo');
@@ -338,30 +338,21 @@ describe('TypedProtocol API', () => {
         });
 
         expect(status.code).toBe(202);
-        expect(taskRecord).toBeInstanceOf(TypedRecord);
         expect(taskRecord.protocolPath).toBe('list/task');
         expect(taskRecord.schema).toBe('https://example.com/schemas/task');
       });
 
-      it('should read back written JSON data via TypedRecord.data.json() without manual cast', async () => {
+      it('should read back written JSON data via Record.data.json() without manual cast', async () => {
         const inputData = { name: 'Shopping', description: 'Grocery list' };
         const { record } = await typed.records.create('list', { data: inputData });
         expect(record).toBeDefined();
 
-        // No need for .json<TodoSchemaMap['list']>() — it's inferred!
+        // The protocol payload type is carried by Record<T>.
         const readBack = await record.data.json();
         expect(readBack.name).toBe('Shopping');
         expect(readBack.description).toBe('Grocery list');
       });
 
-      it('should provide access to the underlying Record via rawRecord', async () => {
-        const { record } = await typed.records.create('list', {
-          data: { name: 'Raw Test' },
-        });
-
-        expect(record.rawRecord).toBeDefined();
-        expect(record.rawRecord.id).toBe(record.id);
-      });
     });
 
     describe('create() with $squash (#972)', () => {
@@ -405,10 +396,10 @@ describe('TypedProtocol API', () => {
           squash          : true,
         });
 
-        // If `squash` were dropped by the typed wrapper, this would be an ordinary
+        // If `squash` were dropped by the typed API, this would be an ordinary
         // (non-squashing) write — the descriptor would lack the directive.
         expect(status.code).toBe(202);
-        const descriptor = record.rawRecord.rawMessage.descriptor as { squash?: true };
+        const descriptor = record.rawMessage.descriptor as { squash?: true };
         expect(descriptor.squash).toBe(true);
       });
 
@@ -418,7 +409,7 @@ describe('TypedProtocol API', () => {
           data            : { v: 's2' },
           parentContextId : doc.contextId,
         });
-        const descriptor = record.rawRecord.rawMessage.descriptor as { squash?: true };
+        const descriptor = record.rawMessage.descriptor as { squash?: true };
         expect(descriptor.squash).toBeUndefined();
       });
 
@@ -476,7 +467,7 @@ describe('TypedProtocol API', () => {
     });
 
     describe('query()', () => {
-      it('should query records and return TypedRecord instances', async () => {
+      it('should query canonical Record instances', async () => {
         // Write two lists
         await typed.records.create('list', { data: { name: 'List A' } });
         await typed.records.create('list', { data: { name: 'List B' } });
@@ -486,8 +477,7 @@ describe('TypedProtocol API', () => {
         expect(status.code).toBe(200);
         expect(records).toBeDefined();
         expect(records).toHaveLength(2);
-        expect(records[0]).toBeInstanceOf(TypedRecord);
-        expect(records[1]).toBeInstanceOf(TypedRecord);
+        expect(records[0]).toBeInstanceOf(Record);
       });
 
       it('should apply additional filters', async () => {
@@ -513,10 +503,9 @@ describe('TypedProtocol API', () => {
 
         expect(records).toBeDefined();
         expect(records).toHaveLength(2);
-        expect(records[0]).toBeInstanceOf(TypedRecord);
       });
 
-      it('should read typed data from queried TypedRecords without manual cast', async () => {
+      it('should read typed data from queried Records without manual cast', async () => {
         await typed.records.create('list', { data: { name: 'Query Test' } });
 
         const { records } = await typed.records.query('list');
@@ -551,7 +540,7 @@ describe('TypedProtocol API', () => {
     });
 
     describe('read()', () => {
-      it('should read a single record by recordId and return a TypedRecord', async () => {
+      it('should read a single record by recordId and return the canonical Record', async () => {
         const { record: written } = await typed.records.create('list', {
           data: { name: 'Reading List' },
         });
@@ -562,7 +551,7 @@ describe('TypedProtocol API', () => {
         });
 
         expect(status.code).toBe(200);
-        expect(readRecord).toBeInstanceOf(TypedRecord);
+        expect(readRecord).toBeInstanceOf(Record);
         const data = await readRecord.data.json();
         expect(data.name).toBe('Reading List');
       });
@@ -612,7 +601,6 @@ describe('TypedProtocol API', () => {
         );
 
         expect(writeStatus.code).toBe(202);
-        expect(attachmentRecord).toBeInstanceOf(TypedRecord);
         expect(attachmentRecord.protocolPath).toBe('list/task/attachment');
         // Schema should be undefined — not set on the record.
         expect(attachmentRecord.schema).toBeUndefined();
@@ -626,7 +614,6 @@ describe('TypedProtocol API', () => {
         expect(queryStatus.code).toBe(200);
         expect(records).toHaveLength(1);
         expect(records[0].id).toBe(attachmentRecord.id);
-        expect(records[0]).toBeInstanceOf(TypedRecord);
       });
     });
 
@@ -641,7 +628,7 @@ describe('TypedProtocol API', () => {
         });
 
         expect(status.code).toBe(202);
-        expect(record).toBeInstanceOf(TypedRecord);
+        expect(record).toBeDefined();
         expect(unconfigured.isConfigured).toBe(true);
       });
 
@@ -668,7 +655,7 @@ describe('TypedProtocol API', () => {
         });
 
         expect(status.code).toBe(200);
-        expect(record).toBeInstanceOf(TypedRecord);
+        expect(record).toBeDefined();
         expect(unconfigured.isConfigured).toBe(true);
       });
 
@@ -952,19 +939,17 @@ describe('TypedProtocol API', () => {
       });
     });
 
-    describe('TypedRecord lifecycle methods', () => {
-      it('should update a record and return a new TypedRecord', async () => {
+    describe('Record lifecycle methods', () => {
+      it('should update a record and return a canonical Record', async () => {
         const { record } = await typed.records.create('list', {
           data: { name: 'Original' },
         });
-        expect(record).toBeInstanceOf(TypedRecord);
-
         const { status, record: updatedRecord } = await record.update({
           data: { name: 'Updated', description: 'Now with description' },
         });
 
         expect(status.code).toBe(202);
-        expect(updatedRecord).toBeInstanceOf(TypedRecord);
+        expect(updatedRecord).toBeInstanceOf(Record);
         const data = await updatedRecord.data.json();
         expect(data.name).toBe('Updated');
         expect(data.description).toBe('Now with description');
@@ -999,7 +984,7 @@ describe('TypedProtocol API', () => {
         expect(original.timestamp).toBe(returned.timestamp);
       });
 
-      it('should delete a record via TypedRecord.delete()', async () => {
+      it('should delete a record via Record.delete()', async () => {
         const { record } = await typed.records.create('list', {
           data: { name: 'Delete Me' },
         });
@@ -1007,7 +992,7 @@ describe('TypedProtocol API', () => {
         const { status, record: deletedRecord } = await record.delete();
 
         expect(status.code).toBe(202);
-        expect(deletedRecord).toBeInstanceOf(TypedRecord);
+        expect(deletedRecord).toBeInstanceOf(Record);
         expect(deletedRecord.deleted).toBe(true);
       });
 
@@ -1032,7 +1017,7 @@ describe('TypedProtocol API', () => {
         expect(original.timestamp).toBe(returned.timestamp);
       });
 
-      it('should forward toJSON() from the underlying Record', async () => {
+      it('should serialize the canonical Record with toJSON()', async () => {
         const { record } = await typed.records.create('list', {
           data: { name: 'JSON Test' },
         });
@@ -1042,7 +1027,7 @@ describe('TypedProtocol API', () => {
         expect(json.protocolPath).toBe('list');
       });
 
-      it('should forward toString() from the underlying Record', async () => {
+      it('should format the canonical Record with toString()', async () => {
         const { record } = await typed.records.create('list', {
           data: { name: 'String Test' },
         });
@@ -1062,7 +1047,7 @@ describe('TypedProtocol API', () => {
         expect(result.status.code).toBe(202);
         expect(result.record).toBeDefined();
 
-        // After a truthiness check, record should be narrowed to TypedRecord
+        // After a truthiness check, record should be narrowed to Record
         if (result.record) {
           expect(result.record.id).toBeDefined();
           const data = await result.record.data.json();
@@ -1138,19 +1123,19 @@ describe('TypedProtocol API', () => {
           return;
         }
 
-        // In this branch, TypeScript knows record is TypedRecord<ListData>
+        // In this branch, TypeScript knows record is Record<ListData>
         expect(result.record.id).toBeDefined();
         expect(result.record.contextId).toBeDefined();
       });
 
-      it('destructured record should be TypedRecord | undefined', async () => {
+      it('destructured record should be Record | undefined', async () => {
         const { status, record } = await typed.records.create('list', {
           data: { name: 'Destructure Test' },
         });
 
         expect(status.code).toBe(202);
 
-        // After destructuring, `record` is `TypedRecord | undefined`
+        // After destructuring, `record` is `Record | undefined`
         // The user must check before using it
         if (record) {
           expect(record.id).toBeDefined();

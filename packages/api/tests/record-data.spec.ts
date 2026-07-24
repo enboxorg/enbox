@@ -65,15 +65,15 @@ describe('createRecordData()', () => {
       expect(parsed).toEqual(obj);
     });
 
-    it('should support generic type parameter', async () => {
+    it('should return the type supplied to the factory', async () => {
       type User = { name: string; age: number };
       const obj: User = { name: 'Bob', age: 25 };
-      const data = createRecordData(
+      const data = createRecordData<User>(
         async () => jsonStream(obj),
         'application/json',
       );
 
-      const parsed = await data.json<User>();
+      const parsed = await data.json();
       expect(parsed.name).toBe('Bob');
       expect(parsed.age).toBe(25);
     });
@@ -185,39 +185,38 @@ describe('createRecordData()', () => {
         'text/plain',
       );
 
-      // `then` makes the object thenable — can be used with .then()
-      const stream = await data.then();
+      const stream = await data;
       expect(stream).toBeInstanceOf(ReadableStream);
 
       const text = await Stream.consumeToText({ readableStream: stream });
       expect(text).toBe('awaitable');
     });
 
-    it('should pass the stream to the onFulfilled callback', async () => {
+    it('should support calling then without an object receiver', async () => {
       const data = createRecordData(
         async () => stringStream('callback'),
         'text/plain',
       );
 
-      const result = await data.then((stream) => stream);
+      const then = data.then;
+      const result = await then((stream) => stream);
       expect(result).toBeInstanceOf(ReadableStream);
     });
   });
 
   describe('catch()', () => {
-    it('should catch errors from the stream provider', async () => {
+    it('should support calling catch without an object receiver', async () => {
       const data = createRecordData(
         async () => { throw new Error('stream failure'); },
         'text/plain',
       );
 
+      const catchError = data.catch;
       let caught: Error | undefined;
-      await data.catch((err) => {
-        caught = err;
-        return Promise.reject(err);
-      }).catch((err) => {
-        caught = err;
-      });
+      await expect(catchError(async (error: Error): Promise<never> => {
+        caught = error;
+        throw error;
+      })).rejects.toThrow('stream failure');
 
       expect(caught).toBeDefined();
       expect(caught!.message).toBe('stream failure');

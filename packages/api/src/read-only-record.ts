@@ -5,8 +5,10 @@
 /// <reference types="@enbox/dwn-sdk-js" />
 
 import type { AnonymousDwnApi } from '@enbox/agent';
+import type { RecordData } from './record-data.js';
 import type { RecordsWriteDescriptor, RecordsWriteMessage, RecordsWriteTags } from '@enbox/dwn-sdk-js';
 
+import { createRecordData } from './record-data.js';
 import { getRecordAuthor } from '@enbox/agent';
 import { Convert, Stream } from '@enbox/common';
 
@@ -194,62 +196,20 @@ export class ReadOnlyRecord {
    *
    * @beta
    */
-  get data(): {
-      blob: () => Promise<Blob>;
-      bytes: () => Promise<Uint8Array>;
-      json: <T = unknown>() => Promise<T>;
-      text: () => Promise<string>;
-      stream: () => Promise<ReadableStream>;
-      then: (
-        onFulfilled?: (value: ReadableStream) => ReadableStream | PromiseLike<ReadableStream>,
-        onRejected?: (reason: any) => PromiseLike<never>,
-      ) => Promise<ReadableStream>;
-      catch: (onRejected?: (reason: any) => PromiseLike<never>) => Promise<ReadableStream>;
-      } {
-    const self = this;
-    const dataObj = {
-      async blob(): Promise<Blob> {
-        return new Blob([await Stream.consumeToBytes({ readableStream: await this.stream() }) as BlobPart], { type: self.dataFormat });
-      },
+  get data(): RecordData {
+    return createRecordData(async (): Promise<ReadableStream> => {
+      if (this._encodedData) {
+        return Stream.fromBlob(this._encodedData);
+      }
+      if (this._readableStream) {
+        const currentStream = this._readableStream;
+        this._readableStream = undefined;
+        return currentStream;
+      }
 
-      async bytes(): Promise<Uint8Array> {
-        return await Stream.consumeToBytes({ readableStream: await this.stream() });
-      },
-
-      async json<T = unknown>(): Promise<T> {
-        return await Stream.consumeToJson<T>({ readableStream: await this.stream() });
-      },
-
-      async text(): Promise<string> {
-        return await Stream.consumeToText({ readableStream: await this.stream() });
-      },
-
-      async stream(): Promise<ReadableStream> {
-        if (self._encodedData) {
-          return Stream.fromBlob(self._encodedData);
-        } else if (self._readableStream) {
-          const currentStream = self._readableStream;
-          self._readableStream = undefined;
-          return currentStream;
-        } else {
-          // Re-fetch the data from the remote DWN using an anonymous RecordsRead.
-          return await self.readRecordData();
-        }
-      },
-
-      then(
-        onFulfilled?: (value: ReadableStream) => ReadableStream | PromiseLike<ReadableStream>,
-        onRejected?: (reason: any) => PromiseLike<never>,
-      ): Promise<ReadableStream> {
-        return this.stream().then(onFulfilled, onRejected);
-      },
-
-      catch(onRejected?: (reason: any) => PromiseLike<never>): Promise<ReadableStream> {
-        return this.stream().catch(onRejected);
-      },
-    };
-
-    return dataObj;
+      // Re-fetch the data from the remote DWN using an anonymous RecordsRead.
+      return this.readRecordData();
+    }, this.dataFormat);
   }
 
   // ---------------------------------------------------------------------------

@@ -17,7 +17,7 @@ import { TypedEnbox } from '../src/typed-enbox.js';
 const testDwnUrls: string[] = [testDwnUrl];
 
 // ---------------------------------------------------------------------------
-// Record.patch() / TypedRecord.patch() — the read-merge-write partial-update
+// Record.patch() — the read-merge-write partial-update
 // idiom. update({ data }) REPLACES the payload (full payloads required for
 // encrypted records); patch() merges changed fields over the current data and
 // writes the FULL merged payload through update().
@@ -246,8 +246,8 @@ describe('Record.patch()', () => {
     expect(await readRecord!.data.json()).toEqual({ title: 'secret v2', body: 'confidential body' });
   });
 
-  describe('TypedRecord.patch()', () => {
-    it('should merge typed patches, honor null-deletes, and keep the typed wrapper', async () => {
+  describe('typed Record.patch()', () => {
+    it('should merge typed patches, honor null-deletes, and preserve the typed Record', async () => {
       const definition: ProtocolDefinition = {
         protocol  : protocolUri,
         published : true,
@@ -275,7 +275,7 @@ describe('Record.patch()', () => {
       const data: PageData = await patched.data.json();
       expect(data).toEqual({ title: 'v2', body: 'kept' });
 
-      // The typed wrapper flows through the patch result.
+      // The protocol-derived type flows through the patch result.
       expect(patched.protocolPath).toBe('page');
     });
 

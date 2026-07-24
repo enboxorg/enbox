@@ -252,8 +252,8 @@ describe('cross-tenant writes (#973)', () => {
       expect(remoteWrites).toHaveLength(1);
       expect(remoteWrites[0].args[0].target).toBe(aliceDid.uri);
 
-      // The typed wrapper carries the owner-tenant stamping through.
-      expect(record!.rawRecord['_remoteOrigin']).toBe(aliceDid.uri);
+      // The typed API returns the canonical record with the owner-tenant stamping intact.
+      expect((record as unknown as { _remoteOrigin?: string })._remoteOrigin).toBe(aliceDid.uri);
       expect(record!.protocolRole).toBe('friend');
 
       // The record landed on Alice's remote DWN with the typed payload.

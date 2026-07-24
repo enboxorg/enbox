@@ -2,7 +2,7 @@
  * Role-audience key-delivery propagation through the `@enbox/api` layer.
  *
  * Verifies that `DwnApi.records.write()`, `Record.update()`, and the typed
- * `records.create()` / `TypedRecord.update()` surfaces forward the agent's
+ * `records.create()` / `Record.update()` surfaces forward the agent's
  * `audienceKeyDelivery` outcome, and that a caller-supplied
  * `recipientRolePublicKey` rides `agent.processDwnRequest()` at the top level
  * (never inside `messageParams`). Mirrors the agent's own role-delivery tests
@@ -303,7 +303,7 @@ describe('audience key delivery propagation', () => {
     }, 15000);
   });
 
-  describe('TypedEnbox records.create() and TypedRecord.update()', () => {
+  describe('TypedEnbox records.create() and Record.update()', () => {
     it('should forward recipientRolePublicKey and surface audienceKeyDelivery on typed create', async () => {
       const definition = makeChatDefinition();
       const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {} as ChatSchemaMap));

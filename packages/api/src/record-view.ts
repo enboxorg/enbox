@@ -1,12 +1,12 @@
 import type { compileRecordQuery } from './record-query.js';
 import type { DwnSubscriptionMessage } from '@enbox/dwn-clients';
+import type { Record } from './record.js';
 import type { DwnApi, RecordsQueryResponse } from './dwn-api.js';
 import type { ProtocolDefinition, RecordsFilter } from '@enbox/dwn-sdk-js';
 import type { ReplicationLinkSnapshot, SyncEngine, SyncEvent, SyncIdentityOptions } from '@enbox/agent';
 
 import { getRuleSetAtPath } from '@enbox/dwn-sdk-js';
 import { isOk } from './utils.js';
-import { TypedRecord } from './typed-record.js';
 
 /** Currentness of one locally materialized records view. */
 export type RecordViewState = 'loading' | 'ready' | 'stale' | 'error';
@@ -17,9 +17,9 @@ type RecordViewContents<T> = Readonly<{
    *
    * The array and snapshot are immutable. Each handle identifies the queried
    * record version until the caller explicitly invokes one of that handle's
-   * normal mutating `TypedRecord` methods.
+   * normal mutating `Record` methods.
    */
-  records: readonly TypedRecord<T>[];
+  records: readonly Record<T>[];
 
   /** True when another page is available; false before the first query completes. */
   hasMore: boolean;
@@ -338,7 +338,7 @@ class ObservedRecordView<T> implements RecordView<T> {
     result: RecordsQueryResponse,
     currentness: RecordViewCurrentness,
   ): void {
-    const records = result.records.map((record) => new TypedRecord<T>(record));
+    const records = result.records as Record<T>[];
     const hasMore = result.cursor !== undefined;
     if (currentness.state === 'error') {
       this.publish(immutableSnapshot({

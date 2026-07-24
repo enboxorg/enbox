@@ -69,11 +69,13 @@ export type { RecordData } from './record-data.js';
 /**
  * The result of a {@link Record.update} operation.
  *
+ * @typeParam T - The record payload type retained by the updated record.
+ *
  * @beta
  */
-export type RecordUpdateResult = DwnResponseStatus & {
+export type RecordUpdateResult<T = unknown> = DwnResponseStatus & {
   /** The updated Record instance reflecting the new state. */
-  record: Record;
+  record: Record<T>;
 
   /**
    * Outcome of role-audience key delivery provisioning, forwarded from the agent. Present only
@@ -86,12 +88,33 @@ export type RecordUpdateResult = DwnResponseStatus & {
 /**
  * The result of a {@link Record.delete} operation.
  *
+ * @typeParam T - The record payload type retained by the deleted record handle.
+ *
  * @beta
  */
-export type RecordDeleteResult = DwnResponseStatus & {
+export type RecordDeleteResult<T = unknown> = DwnResponseStatus & {
   /** The deleted Record instance reflecting the deleted state. */
-  record: Record;
+  record: Record<T>;
 };
+
+/**
+ * The shallow JSON-object update accepted by {@link Record.patch}.
+ *
+ * Optional fields may be set to `null` to delete them. Required fields cannot
+ * be deleted, so a required nullable field must be set to `null` through a
+ * complete {@link Record.update} instead. Records whose payload type is unknown
+ * retain the untyped string-keyed patch surface; known non-object payloads
+ * cannot be patched.
+ *
+ * @typeParam T - The complete JSON-object payload type being patched.
+ */
+export type RecordPatch<T = unknown> = unknown extends T
+  ? globalThis.Record<string, unknown>
+  : T extends Blob | ArrayBuffer | ArrayBufferView | ReadableStream | readonly unknown[]
+    ? never
+    : T extends object
+    ? { [K in keyof T]?: undefined extends T[K] ? T[K] | null : Exclude<T[K], null> }
+    : never;
 
 /**
  * The `Record` class encapsulates a single record's data and metadata, providing a more
@@ -104,9 +127,12 @@ export type RecordDeleteResult = DwnResponseStatus & {
  *       the Record class. It represents the time of the most recent
  *       message (create, update, or delete) for this logical record.
  *
+ * @typeParam T - The record payload type returned by `data.json()` and
+ *   preserved by update, patch, and delete results.
+ *
  * @beta
  */
-export class Record implements RecordModel {
+export class Record<T = unknown> implements RecordModel {
   /**
    * Cache to minimize the amount of redundant two-phase commits we do in store() and send()
    * Retains awareness of the last 100 records stored/sent for up to 100 target DIDs each.
@@ -339,8 +365,8 @@ export class Record implements RecordModel {
    *
    * @beta
    */
-  get data(): RecordData {
-    return createRecordData(async (): Promise<ReadableStream<Uint8Array>> => {
+  get data(): RecordData<T> {
+    return createRecordData<T>(async (): Promise<ReadableStream<Uint8Array>> => {
       if (this.deleted) {
         throw new Error('Cannot access data of a deleted record.');
       }
@@ -531,8 +557,8 @@ export class Record implements RecordModel {
    * @beta
    */
   async update(
-    { timestamp, data, protocolRole, store = true, recipientRolePublicKey, from, ...params }: RecordUpdateParams
-  ): Promise<RecordUpdateResult> {
+    { timestamp, data, protocolRole, store = true, recipientRolePublicKey, from, ...params }: RecordUpdateParams<T>
+  ): Promise<RecordUpdateResult<T>> {
 
     if (this.deleted) {
       throw new Error('Record: Cannot revive a deleted record.');
@@ -638,7 +664,7 @@ export class Record implements RecordModel {
       !store && this._storedData?.dataCid === msg.descriptor.dataCid ? this._storedData : undefined
     );
 
-    const updatedRecord = new Record(this._agent, {
+    const updatedRecord = new Record<T>(this._agent, {
       author       : updatedAuthor,
       connectedDid : this._connectedDid,
       delegateDid  : this._delegateDid,
@@ -707,9 +733,9 @@ export class Record implements RecordModel {
    * @beta
    */
   async patch(
-    data: globalThis.Record<string, unknown>,
-    options: Omit<RecordUpdateParams, 'data'> = {},
-  ): Promise<RecordUpdateResult> {
+    data: RecordPatch<T>,
+    options: Omit<RecordUpdateParams<T>, 'data'> = {},
+  ): Promise<RecordUpdateResult<T>> {
     if (this.deleted) {
       throw new Error('Record: Cannot patch a deleted record.');
     }
@@ -731,7 +757,7 @@ export class Record implements RecordModel {
       }
     }
 
-    return this.update({ ...options, data: mergedData });
+    return this.update({ ...options, data: mergedData as T });
   }
 
   /**
@@ -744,7 +770,7 @@ export class Record implements RecordModel {
    * @param params - Parameters to delete the record.
    * @returns the status and a new Record instance reflecting the deleted state
    */
-  async delete(deleteParams?: RecordDeleteParams): Promise<RecordDeleteResult> {
+  async delete(deleteParams?: RecordDeleteParams): Promise<RecordDeleteResult<T>> {
     const { store = true, signAsOwner, timestamp } = deleteParams || {};
 
     const signAsOwnerValue = signAsOwner && this._delegateDid === undefined;
@@ -813,7 +839,7 @@ export class Record implements RecordModel {
 
     // Construct a new Record instance reflecting the deleted state.
     const initialWrite = this._initialWrite;
-    const deletedRecord = new Record(this._agent, {
+    const deletedRecord = new Record<T>(this._agent, {
       author       : getRecordAuthor(message),
       connectedDid : this._connectedDid,
       delegateDid  : this._delegateDid,

@@ -1,6 +1,7 @@
 import type { BearerDid } from '@enbox/dids';
 import type { DwnMessageParams } from '@enbox/agent';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { Record } from '../src/record.js';
 
 import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -14,7 +15,6 @@ import { Enbox } from '../src/enbox.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
-import type { TypedRecord } from '../src/typed-record.js';
 
 const testDwnUrls: string[] = [testDwnUrl];
 
@@ -275,9 +275,9 @@ describe('typed api parity batch', () => {
   describe('nested-path context filters', () => {
     /** Creates list → task → comment and returns all three typed records. */
     async function createNestedTree(typed: TypedEnbox<ProtocolDefinition, NestedSchemaMap>): Promise<{
-      list: TypedRecord<{ name: string }>;
-      task: TypedRecord<{ title: string }>;
-      comment: TypedRecord<{ body: string }>;
+      list: Record<{ name: string }>;
+      task: Record<{ title: string }>;
+      comment: Record<{ body: string }>;
     }> {
       const { record: list } = await typed.records.create('list', { data: { name: 'root' } });
       const { status: taskStatus, record: task } = await typed.records.create('list/task', {
