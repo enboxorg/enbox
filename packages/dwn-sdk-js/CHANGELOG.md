@@ -1,5 +1,28 @@
 # @enbox/dwn-sdk-js
 
+## 0.4.18
+
+### Patch Changes
+
+- [#1464](https://github.com/enboxorg/enbox/pull/1464) [`f8a7ff1`](https://github.com/enboxorg/enbox/commit/f8a7ff1f9a40af66e1bdeb313e1131d7cbe12a48) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add explicitly bounded record materialization to typed queries and observed
+  views. Materialized items pair decoded values with their canonical record
+  handles and can batch selected direct children declared with
+  `$recordLimit.max: 1`. Add `records.set()` for those protocol-declared
+  singletons on the connected tenant. Delegate-backed sets require a Records.Read
+  grant for the authoritative selection as well as write authorization.
+
+  Low-level record filters now accept a non-empty `parentId` selection so one
+  child query can cover a page of parents. Bounded path-wide nested RecordsSubscribe
+  requests use the same grouped record-limit projection for dependency wakes;
+  RecordsQuery and RecordsCount continue to require an explicit nested scope.
+
+  `RecordPage` and `RecordView` are now parameterized by the item they contain,
+  instead of carrying a separate payload type alongside an optional item type.
+
+- [#1449](https://github.com/enboxorg/enbox/pull/1449) [`ddff1e1`](https://github.com/enboxorg/enbox/commit/ddff1e18e854053a901ba601cb4102ead4b6e36c) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Use one Records collection pipeline for Query, Count, and Subscribe authorization and visibility planning. Query and Subscribe snapshots now also share one projected-page executor, keeping record-limit occupancy, audience projection, control-record visibility, pagination refill, and default ordering in one implementation.
+
+  Remove the superseded `Records.buildUnpublishedControlRecordsFilter()`, `Records.shouldProtocolAuthorize()`, `Records.shouldBuildUnpublishedAuthorFilter()`, and `Records.shouldBuildUnpublishedRecipientFilter()` helpers.
+
 ## 0.4.17
 
 ### Patch Changes

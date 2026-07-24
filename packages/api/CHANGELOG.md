@@ -1,5 +1,44 @@
 # @enbox/api
 
+## 0.6.73
+
+### Patch Changes
+
+- [#1449](https://github.com/enboxorg/enbox/pull/1449) [`ddff1e1`](https://github.com/enboxorg/enbox/commit/ddff1e18e854053a901ba601cb4102ead4b6e36c) Thanks [@LiranCohen](https://github.com/LiranCohen)! - refactor: use generic `RecordsWriteResponse<T>`, `RecordsQueryResponse<T>`, and
+  `RecordsReadResponse<T>` across raw and protocol-scoped APIs, replacing the
+  duplicate `TypedCreateResponse`, `TypedQueryResponse`, and `TypedReadResponse`
+  types. Write and read responses now always contain a `record` property whose
+  value is `undefined` when the operation did not return a record. `RecordOptions`
+  no longer accepts the unused `remoteOrigin`; its `dataAccess` context remains
+  the single source of truth for lazy-read routing.
+
+- [#1461](https://github.com/enboxorg/enbox/pull/1461) [`5e9f5ce`](https://github.com/enboxorg/enbox/commit/5e9f5cecffa18004af2c891f833eb743c9f14d7e) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Return application values from protocol-scoped record operations and throw `DwnResponseError` for non-success DWN replies, except that a missing read returns `undefined`. Record updates and patches now return the same canonical record handle, while successful delete, store, import, and send commands resolve without a response envelope. Raw record response types and role-audience delivery outcomes remain available from `@enbox/api/advanced`; the high-level exports no longer include those response types or `isOk`.
+
+- [#1464](https://github.com/enboxorg/enbox/pull/1464) [`f8a7ff1`](https://github.com/enboxorg/enbox/commit/f8a7ff1f9a40af66e1bdeb313e1131d7cbe12a48) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add explicitly bounded record materialization to typed queries and observed
+  views. Materialized items pair decoded values with their canonical record
+  handles and can batch selected direct children declared with
+  `$recordLimit.max: 1`. Add `records.set()` for those protocol-declared
+  singletons on the connected tenant. Delegate-backed sets require a Records.Read
+  grant for the authoritative selection as well as write authorization.
+
+  Low-level record filters now accept a non-empty `parentId` selection so one
+  child query can cover a page of parents. Bounded path-wide nested RecordsSubscribe
+  requests use the same grouped record-limit projection for dependency wakes;
+  RecordsQuery and RecordsCount continue to require an explicit nested scope.
+
+  `RecordPage` and `RecordView` are now parameterized by the item they contain,
+  instead of carrying a separate payload type alongside an optional item type.
+
+- [#1463](https://github.com/enboxorg/enbox/pull/1463) [`96c5dbd`](https://github.com/enboxorg/enbox/commit/96c5dbddfb921a4972dc552a4d64ea9c7086b6ad) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Replace phantom schema-map typing with runtime record codecs. Typed records now encode and decode through their protocol declaration, expose application values through `Record.value()`, and use `within` as the single hierarchy selector. Remove the superseded schema-map types, caller-controlled `Record.update()` data-format overrides, generic `RecordData.json<T>()`, and root utilities namespace. Typed protocol declarations reject `$ref` composition until referenced protocol metadata can be supplied explicitly.
+
+  Replace the public `generateTypes()` and `CodegenOptions.emitDefinition` codegen surface with `generateProtocolModule()`, which emits complete codec-backed protocol modules from protocol definitions and declared MIME formats. Expose the codec primitives through the browser and CLI facades.
+
+- Updated dependencies [[`ddff1e1`](https://github.com/enboxorg/enbox/commit/ddff1e18e854053a901ba601cb4102ead4b6e36c), [`ddff1e1`](https://github.com/enboxorg/enbox/commit/ddff1e18e854053a901ba601cb4102ead4b6e36c), [`f8a7ff1`](https://github.com/enboxorg/enbox/commit/f8a7ff1f9a40af66e1bdeb313e1131d7cbe12a48), [`ddff1e1`](https://github.com/enboxorg/enbox/commit/ddff1e18e854053a901ba601cb4102ead4b6e36c)]:
+  - @enbox/agent@0.8.34
+  - @enbox/dwn-sdk-js@0.4.18
+  - @enbox/auth@0.6.80
+  - @enbox/dwn-clients@0.4.25
+
 ## 0.6.72
 
 ### Patch Changes
