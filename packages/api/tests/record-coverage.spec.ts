@@ -306,8 +306,7 @@ describe('Record — coverage gaps (stubbed)', () => {
           remote : true,
           target : 'did:example:remote',
         },
-        remoteOrigin : 'did:example:remote',
-        storedData   : undefined,
+        storedData: undefined,
       });
 
       const record = new Record(agentStub as unknown as EnboxAgent, options);
@@ -334,8 +333,8 @@ describe('Record — coverage gaps (stubbed)', () => {
     });
   });
 
-  describe('readRecordData() — local branch (no remoteOrigin)', () => {
-    it('should use processDwnRequest when no remoteOrigin is set', async () => {
+  describe('readRecordData() — local branch', () => {
+    it('should use processDwnRequest when the captured data access is local', async () => {
       const options = createRecordOptions({
         storedData: undefined,
       });
