@@ -1,5 +1,34 @@
 # @enbox/dwn-sdk-js
 
+## 0.4.17
+
+### Patch Changes
+
+- [#1403](https://github.com/enboxorg/enbox/pull/1403) [`ca04167`](https://github.com/enboxorg/enbox/commit/ca04167e6e6e61eea56eedd5eb7acbc3b909fd4c) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix browser message-store writes so tabs, workers, and service workers sharing one IndexedDB database cannot assign the same replication-log position or overwrite each other's fingerprints
+
+- [#1446](https://github.com/enboxorg/enbox/pull/1446) [`23d84a4`](https://github.com/enboxorg/enbox/commit/23d84a4cd94d169423d9fbe5c84b5e7bd803b134) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: make `$recordLimit: { max }` one deterministic read-time visibility contract
+
+  Query, Read, Count, and subscription snapshots now select at most `max` occupants independently for every direct-parent scope in an ancestor selection. Occupancy is ranked by initial creation time and record ID before authorization, caller filters, sorting, and pagination. Level, browser, SQLite, MySQL, and PostgreSQL share that definition.
+
+  Observed typed views widen only limited paths to the structural occupancy scope, so a sibling write or delete can wake and rematerialize an exact-record view when its record is promoted or demoted.
+
+  Protocol definitions no longer select a write-time strategy. Valid competing records remain stored, and the unused `purgeOldest` wire value, strategy enum, and write-time strategy guard have been removed.
+
+- [#1407](https://github.com/enboxorg/enbox/pull/1407) [`fe5f985`](https://github.com/enboxorg/enbox/commit/fe5f9859438ce1e9663cfc7bda1b5c6eb82b7774) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: enforce the validated protocol squash policy without a fail-open second lookup
+
+- [#1434](https://github.com/enboxorg/enbox/pull/1434) [`50c40fd`](https://github.com/enboxorg/enbox/commit/50c40fd50950d5a25c0d5c342f55b078adf247e9) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: make context scopes select an exact context plus only `/`-delimited descendants across Level, browser, and SQL stores
+
+  Nested query, count, and subscription selections may now start at an ancestor context, and the typed API forwards that single context selector without deriving a second `parentId` fence. Message protocol-path and context-prefix filters use the same segment-aware store primitive, including Unicode descendants. `SubtreeFilter` is supported only for the hierarchical `contextId` and `protocolPath` indexes; other indexes reject it at the store boundary. SQL migrations give hierarchical columns byte-stable ordering so their exact-and-range predicates remain indexable without allowing case variants to cross a context boundary.
+
+  Records filters now reject malformed context paths at message validation, and typed nested-path queries fail synchronously when their required `contextId` scope is omitted. Valid context IDs are at most 600 characters and contain only non-empty alphanumeric segments separated by `/`.
+
+  SQL migration 005 changes the `contextId` and `protocolPath` collations and rebuilds the context index. It may briefly hold a schema lock while a populated message table is upgraded. MySQL storage now requires MySQL 8.0 or newer.
+
+- Updated dependencies [[`ca04167`](https://github.com/enboxorg/enbox/commit/ca04167e6e6e61eea56eedd5eb7acbc3b909fd4c)]:
+  - @enbox/common@0.1.5
+  - @enbox/crypto@0.1.8
+  - @enbox/dids@0.1.8
+
 ## 0.4.16
 
 ### Patch Changes

@@ -1,5 +1,90 @@
 # @enbox/api
 
+## 0.6.72
+
+### Patch Changes
+
+- [#1429](https://github.com/enboxorg/enbox/pull/1429) [`f804103`](https://github.com/enboxorg/enbox/commit/f80410366f4e3798018618f2f15ed014fd3796e8) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add one protocol-derived `RecordQuery` shared by typed record queries and counts, including exact path tag and data-format types. Add authenticated `DwnApi.records.count()`, preserve query/count population parity, and expose the canonical query and count-response types from browser builds. Published-date filters and sorting explicitly select published records for both operations.
+
+  Remove the overlapping typed query aliases, `queryAll()` drains, Repository facade, and high-level subscription models. Typed records now have one query/count contract, explicit create/update operations, and no client-side upsert or parallel collection abstraction. Callers page explicitly through `query()` with its returned cursor.
+
+  Flatten advanced RecordsSubscribe and MessagesSubscribe to their raw DWN contract: a required subscription handler and the unmodified protocol reply. Remove `LiveQuery`, `TypedLiveQuery`, `MessagesLiveQuery`, record hydration, and `includeRecords`; a later observed-view API will be the sole high-level reactive model. Use `filter.contextId` for typed child selection; protocol identity and the exact-parent fence are derived internally. These intentional breaking changes remove the superseded exports from API, browser, and CLI without compatibility aliases.
+
+  Resolve delegated record-read grants from the wire filter as the single protocol source, reject empty typed context IDs, and surface permission-store failures instead of silently treating them as missing grants. Delegated permission lookup now reuses a bounded grant catalog across record contexts while matching each requested scope independently.
+
+  Resolve delegated record writes and deletes against their protocol path and context instead of selecting protocol-wide grants only. Permission lookups now reuse cached catalogs by default and expose `forceRefresh` for an explicit store refresh, while a scope miss refreshes the store so newly imported grants are immediately visible.
+
+- [#1447](https://github.com/enboxorg/enbox/pull/1447) [`764a470`](https://github.com/enboxorg/enbox/commit/764a470290d7167f1e1d8bb0702947aceeec3c0c) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Use `Record<T>` as the single mutable record handle returned by both the
+  protocol-scoped and low-level APIs. Protocol-scoped create, query, read,
+  observe, update, and delete operations now preserve their payload type directly
+  on that canonical record instead of allocating a forwarding wrapper;
+  `@enbox/browser` re-exports `Record` accordingly. The redundant `rawRecord`
+  escape hatch is removed because the returned object is already the underlying
+  record.
+
+  The `TypedRecord`, `TypedRecordData`, `TypedRecordUpdateParams`,
+  `TypedRecordPatch`, `TypedRecordUpdateResult`, and `TypedRecordDeleteResult`
+  exports are removed. Use `Record<T>`, `RecordData<T>`,
+  `RecordUpdateParams<T>`, `RecordPatch<T>`, `RecordUpdateResult<T>`, and
+  `RecordDeleteResult<T>` respectively. Payload typing now belongs to the record,
+  so consume typed JSON with `record.data.json()` rather than supplying a type
+  argument to `json()`. The internal `createRecordData` factory is no longer
+  exported from the package root; application code should consume `RecordData<T>`
+  through a `Record` or `ReadOnlyRecord`. `ReadOnlyRecord.data.json()` now returns
+  `unknown`; anonymous callers should validate the parsed value before use.
+
+  `Record.update({ data })` continues to replace the complete payload and now
+  requires the full `T` on a typed record. Use `Record.patch()` for shallow
+  partial JSON-object updates.
+
+- [#1446](https://github.com/enboxorg/enbox/pull/1446) [`23d84a4`](https://github.com/enboxorg/enbox/commit/23d84a4cd94d169423d9fbe5c84b5e7bd803b134) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: make `$recordLimit: { max }` one deterministic read-time visibility contract
+
+  Query, Read, Count, and subscription snapshots now select at most `max` occupants independently for every direct-parent scope in an ancestor selection. Occupancy is ranked by initial creation time and record ID before authorization, caller filters, sorting, and pagination. Level, browser, SQLite, MySQL, and PostgreSQL share that definition.
+
+  Observed typed views widen only limited paths to the structural occupancy scope, so a sibling write or delete can wake and rematerialize an exact-record view when its record is promoted or demoted.
+
+  Protocol definitions no longer select a write-time strategy. Valid competing records remain stored, and the unused `purgeOldest` wire value, strategy enum, and write-time strategy guard have been removed.
+
+- [#1428](https://github.com/enboxorg/enbox/pull/1428) [`2c78d33`](https://github.com/enboxorg/enbox/commit/2c78d3371c3cb26fea33245866326b9e43df528e) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: construct updated-date pagination cursors from record message timestamps
+
+- [#1435](https://github.com/enboxorg/enbox/pull/1435) [`e07585c`](https://github.com/enboxorg/enbox/commit/e07585ce0e7ffcb65a32c51e1da22d48588339e0) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add `records.observe()` as the single high-level reactive Records primitive. It
+  publishes bounded immutable query snapshots, treats local subscription events
+  as wake hints, coalesces rematerialization, and reports loading, ready, stale,
+  or error currentness from the existing sync registration and link state.
+
+  Sessions now carry an owner-controlled `AbortSignal`; lock, disconnect,
+  shutdown, identity replacement, and successful grant refresh fence resources
+  bound to the previous authorization. Refresh reuses the delegate identity but
+  installs a new session lifetime; a failed or denied refresh leaves the existing
+  session active. `AuthManager` installs the exact active session before publishing
+  the wake-only `session-start` event; consumers read the authoritative manager
+  session instead of reconstructing a capability from event metadata, and the
+  redundant `AuthSessionInfo` projection is removed. A view publishes one terminal
+  error before closing when that lifetime ends. Successful automatic refresh makes
+  `ConnectionStore` publish a replacement `Enbox`; direct session consumers
+  recreate resources from the replacement `AuthManager.session`.
+
+  Sync registration changes and ephemeral pull currentness are now observable.
+  Replication-link snapshots combine durable checkpoints with current controller
+  status, connectivity, and whether every accepted remote-feed wake is covered
+  by a completed pull pass; checkpoint events remain progress-only.
+
+- [#1434](https://github.com/enboxorg/enbox/pull/1434) [`50c40fd`](https://github.com/enboxorg/enbox/commit/50c40fd50950d5a25c0d5c342f55b078adf247e9) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: make context scopes select an exact context plus only `/`-delimited descendants across Level, browser, and SQL stores
+
+  Nested query, count, and subscription selections may now start at an ancestor context, and the typed API forwards that single context selector without deriving a second `parentId` fence. Message protocol-path and context-prefix filters use the same segment-aware store primitive, including Unicode descendants. `SubtreeFilter` is supported only for the hierarchical `contextId` and `protocolPath` indexes; other indexes reject it at the store boundary. SQL migrations give hierarchical columns byte-stable ordering so their exact-and-range predicates remain indexable without allowing case variants to cross a context boundary.
+
+  Records filters now reject malformed context paths at message validation, and typed nested-path queries fail synchronously when their required `contextId` scope is omitted. Valid context IDs are at most 600 characters and contain only non-empty alphanumeric segments separated by `/`.
+
+  SQL migration 005 changes the `contextId` and `protocolPath` collations and rebuilds the context index. It may briefly hold a schema lock while a populated message table is upgraded. MySQL storage now requires MySQL 8.0 or newer.
+
+- Updated dependencies [[`ca04167`](https://github.com/enboxorg/enbox/commit/ca04167e6e6e61eea56eedd5eb7acbc3b909fd4c), [`fe5f985`](https://github.com/enboxorg/enbox/commit/fe5f9859438ce1e9663cfc7bda1b5c6eb82b7774), [`f804103`](https://github.com/enboxorg/enbox/commit/f80410366f4e3798018618f2f15ed014fd3796e8), [`23d84a4`](https://github.com/enboxorg/enbox/commit/23d84a4cd94d169423d9fbe5c84b5e7bd803b134), [`2c78d33`](https://github.com/enboxorg/enbox/commit/2c78d3371c3cb26fea33245866326b9e43df528e), [`e07585c`](https://github.com/enboxorg/enbox/commit/e07585ce0e7ffcb65a32c51e1da22d48588339e0), [`fe5f985`](https://github.com/enboxorg/enbox/commit/fe5f9859438ce1e9663cfc7bda1b5c6eb82b7774), [`50c40fd`](https://github.com/enboxorg/enbox/commit/50c40fd50950d5a25c0d5c342f55b078adf247e9), [`7a6abfd`](https://github.com/enboxorg/enbox/commit/7a6abfd92ca2cb019f5a7aa5260d12d06c59ce8d), [`713c757`](https://github.com/enboxorg/enbox/commit/713c7577c2ece2f59929f5f226abdf6cf40a7e1c)]:
+  - @enbox/common@0.1.5
+  - @enbox/dwn-sdk-js@0.4.17
+  - @enbox/agent@0.8.33
+  - @enbox/auth@0.6.79
+  - @enbox/dids@0.1.8
+  - @enbox/dwn-clients@0.4.24
+
 ## 0.6.71
 
 ### Patch Changes

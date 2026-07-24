@@ -1,5 +1,11 @@
 # @enbox/common
 
+## 0.1.5
+
+### Patch Changes
+
+- [#1403](https://github.com/enboxorg/enbox/pull/1403) [`ca04167`](https://github.com/enboxorg/enbox/commit/ca04167e6e6e61eea56eedd5eb7acbc3b909fd4c) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix browser message-store writes so tabs, workers, and service workers sharing one IndexedDB database cannot assign the same replication-log position or overwrite each other's fingerprints
+
 ## 0.1.4
 
 ### Patch Changes
