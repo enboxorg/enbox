@@ -94,7 +94,7 @@
     "pg-cursor": "2.10.2",
     "sinon": "18.0.0",
     "typescript": "5.9.3",
-    "ws": "8.18.0"
+    "ws": "8.21.0"
   },
   "scripts": {
     "build:esm": "bun run clean && tsc",
