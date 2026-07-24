@@ -250,17 +250,17 @@ export class SyncEngineLevel implements SyncEngine {
     this._endpointStore = new SyncEndpointStoreLevel(this._db);
     this._identityStore = new SyncIdentityStoreLevel(this._db);
 
-    // Collaborators. The quota manager is constructed first because it is a
-    // direct policy dependency of drain, convergence, durable-feed
-    // reconciliation, and status reporting. Remaining cross-collaborator
-    // operations resolve `this.…` at CALL time, so their construction order
-    // stays independent.
+    // Collaborators. Policy managers precede their direct consumers. The
+    // remaining cross-collaborator operations resolve `this.…` only when
+    // invoked, so constructing quota before the durable-feed reconciler and
+    // convergence before link recovery does not eagerly traverse either
+    // dependency cycle.
     this._connectivityManager = new SyncConnectivityManager();
     this._quotaManager = this.createQuotaManager();
+    this._feedConvergenceManager = this.createFeedConvergenceManager();
     this._drainCoordinator = this.createDrainCoordinator();
     this._runCoordinator = this.createRunCoordinator();
     this._scopeClosureValidator = this.createScopeClosureValidator();
-    this._feedConvergenceManager = this.createFeedConvergenceManager();
     this._durableFeedReconciler = this.createDurableFeedReconciler();
     this._targetPlanner = this.createTargetPlanner();
     this._statusReporter = this.createStatusReporter();
@@ -270,23 +270,19 @@ export class SyncEngineLevel implements SyncEngine {
   /** Wire SyncDrainCoordinator to this engine. */
   private createDrainCoordinator(): SyncDrainCoordinator {
     return new SyncDrainCoordinator({
-      identityStore : this._identityStore,
-      quotaManager  : this._quotaManager,
-      operations    : {
+      connectivityManager    : this._connectivityManager,
+      feedConvergenceManager : this._feedConvergenceManager,
+      identityStore          : this._identityStore,
+      quotaManager           : this._quotaManager,
+      operations             : {
         buildTargetsForEndpoint: (did, remoteEndpoint, options): Promise<SyncTarget[]> =>
           this.targetResolver.buildTargetsForEndpoint(did, remoteEndpoint, options),
-        clearFeedConvergenceFailure: (target): Promise<void> =>
-          this._feedConvergenceManager.clear(target),
-        getLink                      : (target): Promise<ReplicationLinkState> => this.getOrCreateReplicationLink(target),
-        getTopologyGeneration        : (): number => this._targetPlanner.topologyGeneration,
-        handleVerifiedFeedDivergence : (target, result): Promise<boolean> =>
-          this._feedConvergenceManager.handleVerifiedDivergence(target, result),
-        prepareLiveTarget : (target): Promise<void> => this.prepareDrainLiveTarget(target),
-        reconcileTarget   : (target, options, shouldContinue): Promise<SyncReconcileResult> =>
+        getLink               : (target): Promise<ReplicationLinkState> => this.getOrCreateReplicationLink(target),
+        getTopologyGeneration : (): number => this._targetPlanner.topologyGeneration,
+        prepareLiveTarget     : (target): Promise<void> => this.prepareDrainLiveTarget(target),
+        reconcileTarget       : (target, options, shouldContinue): Promise<SyncReconcileResult> =>
           this.reconcileTarget(target, options, shouldContinue),
-        recordConnectivityFailure : (): void => { this._connectivityManager.recordFailure(); },
-        recordConnectivitySuccess : (): void => { this._connectivityManager.recordSuccess(); },
-        recordPushFailures        : async (target, failures): Promise<void> => {
+        recordPushFailures: async (target, failures): Promise<void> => {
           await this.recordTerminalPushFailures(target, failures);
         },
         registerEndpoint: (remoteEndpoint): Promise<void> =>
@@ -300,20 +296,15 @@ export class SyncEngineLevel implements SyncEngine {
   /** Wire SyncRunCoordinator to this engine. */
   private createRunCoordinator(): SyncRunCoordinator {
     return new SyncRunCoordinator({
-      operations: {
-        clearFeedConvergenceFailure: (target): Promise<void> =>
-          this._feedConvergenceManager.clear(target),
-        getTargets                   : (): Promise<SyncTarget[]> => this.getSyncTargets(),
-        handleVerifiedFeedDivergence : async (target, result): Promise<void> => {
-          await this._feedConvergenceManager.handleVerifiedDivergence(target, result);
-        },
-        probeFeedConvergence: (target): Promise<SyncReconcileResult> =>
+      connectivityManager    : this._connectivityManager,
+      feedConvergenceManager : this._feedConvergenceManager,
+      operations             : {
+        getTargets           : (): Promise<SyncTarget[]> => this.getSyncTargets(),
+        probeFeedConvergence : (target): Promise<SyncReconcileResult> =>
           this.probeFeedConvergence(target),
         reconcileTarget: (target, direction, verifyConvergence): Promise<SyncReconcileResult> =>
           this.reconcileTarget(target, { direction, verifyConvergence }),
-        recordConnectivityFailure : (): void => { this._connectivityManager.recordFailure(); },
-        recordConnectivitySuccess : (): void => { this._connectivityManager.recordSuccess(); },
-        recordPushFailures        : (target, failures): Promise<number> =>
+        recordPushFailures: (target, failures): Promise<number> =>
           this.recordTerminalPushFailures(target, failures),
         reportError: (message, error): void => { console.error(message, error); },
       },
@@ -494,17 +485,15 @@ export class SyncEngineLevel implements SyncEngine {
   /** Wire SyncLinkRecoveryCoordinator to this engine. */
   private createLinkRecoveryCoordinator(): SyncLinkRecoveryCoordinator {
     return new SyncLinkRecoveryCoordinator({
-      operations: {
+      feedConvergenceManager : this._feedConvergenceManager,
+      operations             : {
         captureIdentityTaskRunner: (tenantDid): SyncIdentityTaskRunner =>
           this._lifecycle.captureIdentityTaskRunner(tenantDid),
-        clearConvergence : (linkKey): void => { this._feedConvergenceManager.clearLink(linkKey); },
-        emitEvent        : (event): void => { this.emitEvent(event); },
-        getController    : (linkKey): SyncLinkController | undefined => this.getLinkController(linkKey),
-        getRuntime       : (): SyncRuntime => this._runtime,
-        markPullPending  : (controller): void => { this.markPullPending(controller); },
-        handleDivergence : (target, result, context): Promise<boolean> =>
-          this._feedConvergenceManager.handleVerifiedDivergence(target, result, context),
-        openPullSubscription: (target, controller): Promise<boolean> =>
+        emitEvent            : (event): void => { this.emitEvent(event); },
+        getController        : (linkKey): SyncLinkController | undefined => this.getLinkController(linkKey),
+        getRuntime           : (): SyncRuntime => this._runtime,
+        markPullPending      : (controller): void => { this.markPullPending(controller); },
+        openPullSubscription : (target, controller): Promise<boolean> =>
           this.openLivePullSubscription(target, controller),
         openPushSubscription: (target, controller): Promise<boolean> =>
           this.openLocalPushSubscription(target, controller),

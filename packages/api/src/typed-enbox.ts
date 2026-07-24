@@ -36,9 +36,16 @@ import type { Protocol } from './protocol.js';
 import type { Record } from './record.js';
 import type { RecordView } from './record-view.js';
 
-import type { AudienceKeyDeliveryOutcome, DwnPaginationCursor, DwnPublicKeyJwk, DwnResponseStatus, SyncEngine } from '@enbox/agent';
 import type { DataFormatAtPath, ProtocolPaths, SchemaMap, TypedProtocol, TypeNameAtPath } from './protocol-types.js';
-import type { DwnApi, ProtocolsConfigureResponse, RecordsCountResponse } from './dwn-api.js';
+import type {
+  DwnApi,
+  ProtocolsConfigureResponse,
+  RecordsCountResponse,
+  RecordsQueryResponse,
+  RecordsReadResponse,
+  RecordsWriteResponse,
+} from './dwn-api.js';
+import type { DwnPaginationCursor, DwnPublicKeyJwk, DwnResponseStatus, SyncEngine } from '@enbox/agent';
 import type { ProtocolDefinition, ProtocolType } from '@enbox/dwn-sdk-js';
 import type { RecordFilter, RecordQuery } from './record-query.js';
 
@@ -115,13 +122,13 @@ export type TypedCreateRequest<
    * are encrypted to the OWNER's published protocol keys — the agent
    * resolves the owner's remote definition automatically.
    *
-   * The returned record is stamped with its remote origin so subsequent
-   * data reads target the owner tenant.
+   * The returned record captures remote data access so subsequent lazy reads
+   * target the owner tenant.
    *
    * Remote-path boundaries:
    * - {@link TypedCreateRequest.recipientRolePublicKey} is NOT supported
    *   with `from` — the agent throws rather than silently ignoring the key.
-   * - {@link TypedCreateResponse.audienceKeyDelivery} is never present on
+   * - {@link RecordsWriteResponse.audienceKeyDelivery} is never present on
    *   remote writes — delivery provisioning is a local-processing concept.
    */
   from?: string;
@@ -199,7 +206,7 @@ export type TypedCreateRequest<
    * endpoint); the recipient computes the key locally and carries it out
    * of band for the writer to supply here. When omitted, role-audience
    * key delivery is best-effort and its outcome is reported on
-   * {@link TypedCreateResponse.audienceKeyDelivery} instead of failing
+   * {@link RecordsWriteResponse.audienceKeyDelivery} instead of failing
    * the write.
    *
    * Enbox validates only that the supplied key is a usable X25519 public
@@ -267,54 +274,6 @@ export type TypedCreateRequest<
 };
 
 /**
- * Response from {@link TypedEnbox} `records.create()`.
- *
- * Uses a discriminated union so that TypeScript narrows `record` to
- * `Record<T>` after a `status.code` check:
- *
- * ```ts
- * const result = await proto.records.create('notebook', { data });
- * if (result.record) {
- *   // TypeScript knows `record` is Record<NotebookData> here
- *   console.log(result.record.id);
- * }
- * ```
- *
- * When the accepted create wrote a `$role` record with a `recipient`, the
- * role-audience key-delivery outcome is forwarded on `audienceKeyDelivery`
- * (see {@link AudienceKeyDeliveryOutcome}) — a skipped best-effort delivery
- * is reported there with `delivered: false` instead of failing the write.
- *
- * @typeParam T - The data type of the created record.
- */
-export type TypedCreateResponse<T = unknown> =
-  | (DwnResponseStatus & { record: Record<T>; audienceKeyDelivery?: AudienceKeyDeliveryOutcome })
-  | (DwnResponseStatus & { record: undefined; audienceKeyDelivery?: AudienceKeyDeliveryOutcome });
-
-/**
- * Response from {@link TypedEnbox} `records.query()`.
- *
- * @typeParam T - The data type of the queried records.
- */
-export type TypedQueryResponse<T = unknown> = DwnResponseStatus & {
-  /**
-   * The matching canonical {@link Record} instances.
-   *
-   * The array is empty if no records match the filter criteria.
-   */
-  records: Record<T>[];
-
-  /**
-   * A pagination cursor for fetching the next page of results.
-   *
-   * Pass this to a subsequent `query()` call's `pagination.cursor` to
-   * continue from where this page ended. `undefined` when there are no
-   * more results.
-   */
-  cursor?: DwnPaginationCursor;
-};
-
-/**
  * Options for {@link TypedEnbox} `records.read()`.
  *
  * A `filter` is required to identify which record to read. The most common
@@ -348,25 +307,6 @@ export type TypedReadRequest<
    */
   filter: RecordFilter<D, Path>;
 };
-
-/**
- * Response from {@link TypedEnbox} `records.read()`.
- *
- * Uses a discriminated union so that TypeScript narrows `record` to
- * `Record<T>` after a truthiness check:
- *
- * ```ts
- * const result = await proto.records.read('notebook', { filter: { recordId } });
- * if (result.record) {
- *   const data = await result.record.data.json(); // NotebookData
- * }
- * ```
- *
- * @typeParam T - The data type of the read record.
- */
-export type TypedReadResponse<T = unknown> =
-  | (DwnResponseStatus & { record: Record<T> })
-  | (DwnResponseStatus & { record: undefined });
 
 /**
  * Options for {@link TypedEnbox} `records.delete()`.
@@ -973,12 +913,12 @@ export class TypedEnbox<
     create: <Path extends ProtocolPaths<D> & string>(
       path: Path,
       request: TypedCreateRequest<D, M, Path>,
-    ) => Promise<TypedCreateResponse<DataForPath<D, M, Path>>>;
+    ) => Promise<RecordsWriteResponse<DataForPath<D, M, Path>>>;
 
     query: <Path extends ProtocolPaths<D> & string>(
       path: Path,
       request?: RecordQuery<D, Path>,
-    ) => Promise<TypedQueryResponse<DataForPath<D, M, Path>>>;
+    ) => Promise<RecordsQueryResponse<DataForPath<D, M, Path>>>;
 
     observe: <Path extends ProtocolPaths<D> & string>(
       path: Path,
@@ -996,7 +936,7 @@ export class TypedEnbox<
     read: <Path extends ProtocolPaths<D> & string>(
       path: Path,
       request: TypedReadRequest<D, Path>,
-    ) => Promise<TypedReadResponse<DataForPath<D, M, Path>>>;
+    ) => Promise<RecordsReadResponse<DataForPath<D, M, Path>>>;
 
     delete: <Path extends ProtocolPaths<D> & string>(
       path: Path,
@@ -1019,7 +959,7 @@ export class TypedEnbox<
        *   Provides compile-time autocompletion for valid paths.
        * @param request - Create options including the typed `data` payload
        *   and optional fields like `parentContextId`, `tags`, `recipient`.
-       * @returns A {@link TypedCreateResponse} containing the DWN response
+       * @returns A {@link RecordsWriteResponse} containing the DWN response
        *   `status` and the created typed {@link Record}.
        *
        * @example
@@ -1038,7 +978,7 @@ export class TypedEnbox<
       create: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
         request: TypedCreateRequest<D, M, Path>,
-      ): Promise<TypedCreateResponse<DataForPath<D, M, Path>>> => {
+      ): Promise<RecordsWriteResponse<DataForPath<D, M, Path>>> => {
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
         const typeName = getTypeName(normalizedPath);
@@ -1081,7 +1021,7 @@ export class TypedEnbox<
        *   `'notebook/page'`).
        * @param request - Optional filter, sort, and pagination options.
        *   Omit entirely to return all records at the path.
-       * @returns A {@link TypedQueryResponse} containing `status`, `records`
+       * @returns A {@link RecordsQueryResponse} containing `status`, `records`
        *   (as typed {@link Record} instances), and an optional
        *   `cursor` for pagination.
        *
@@ -1109,7 +1049,7 @@ export class TypedEnbox<
       query: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
         request?: RecordQuery<D, Path>,
-      ): Promise<TypedQueryResponse<DataForPath<D, M, Path>>> => {
+      ): Promise<RecordsQueryResponse<DataForPath<D, M, Path>>> => {
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
         const compiled = compileRecordQuery(this._definition, normalizedPath, request);
@@ -1186,7 +1126,7 @@ export class TypedEnbox<
        * @param path - The protocol path to read from.
        * @param request - Read options including a `filter` to identify the
        *   record. See {@link TypedReadRequest} for details.
-       * @returns A {@link TypedReadResponse} containing `status` and the
+       * @returns A {@link RecordsReadResponse} containing `status` and the
        *   matching typed {@link Record}.
        *
        * @example
@@ -1202,7 +1142,7 @@ export class TypedEnbox<
       read: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
         request: TypedReadRequest<D, Path>,
-      ): Promise<TypedReadResponse<DataForPath<D, M, Path>>> => {
+      ): Promise<RecordsReadResponse<DataForPath<D, M, Path>>> => {
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
         const readFilter = compileRecordFilter(this._definition, normalizedPath, request.filter);
