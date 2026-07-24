@@ -1,5 +1,40 @@
 # @enbox/auth
 
+## 0.6.79
+
+### Patch Changes
+
+- [#1435](https://github.com/enboxorg/enbox/pull/1435) [`e07585c`](https://github.com/enboxorg/enbox/commit/e07585ce0e7ffcb65a32c51e1da22d48588339e0) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add `records.observe()` as the single high-level reactive Records primitive. It
+  publishes bounded immutable query snapshots, treats local subscription events
+  as wake hints, coalesces rematerialization, and reports loading, ready, stale,
+  or error currentness from the existing sync registration and link state.
+
+  Sessions now carry an owner-controlled `AbortSignal`; lock, disconnect,
+  shutdown, identity replacement, and successful grant refresh fence resources
+  bound to the previous authorization. Refresh reuses the delegate identity but
+  installs a new session lifetime; a failed or denied refresh leaves the existing
+  session active. `AuthManager` installs the exact active session before publishing
+  the wake-only `session-start` event; consumers read the authoritative manager
+  session instead of reconstructing a capability from event metadata, and the
+  redundant `AuthSessionInfo` projection is removed. A view publishes one terminal
+  error before closing when that lifetime ends. Successful automatic refresh makes
+  `ConnectionStore` publish a replacement `Enbox`; direct session consumers
+  recreate resources from the replacement `AuthManager.session`.
+
+  Sync registration changes and ephemeral pull currentness are now observable.
+  Replication-link snapshots combine durable checkpoints with current controller
+  status, connectivity, and whether every accepted remote-feed wake is covered
+  by a completed pull pass; checkpoint events remain progress-only.
+
+- Updated dependencies [[`ca04167`](https://github.com/enboxorg/enbox/commit/ca04167e6e6e61eea56eedd5eb7acbc3b909fd4c), [`fe5f985`](https://github.com/enboxorg/enbox/commit/fe5f9859438ce1e9663cfc7bda1b5c6eb82b7774), [`f804103`](https://github.com/enboxorg/enbox/commit/f80410366f4e3798018618f2f15ed014fd3796e8), [`23d84a4`](https://github.com/enboxorg/enbox/commit/23d84a4cd94d169423d9fbe5c84b5e7bd803b134), [`2c78d33`](https://github.com/enboxorg/enbox/commit/2c78d3371c3cb26fea33245866326b9e43df528e), [`e07585c`](https://github.com/enboxorg/enbox/commit/e07585ce0e7ffcb65a32c51e1da22d48588339e0), [`fe5f985`](https://github.com/enboxorg/enbox/commit/fe5f9859438ce1e9663cfc7bda1b5c6eb82b7774), [`50c40fd`](https://github.com/enboxorg/enbox/commit/50c40fd50950d5a25c0d5c342f55b078adf247e9), [`7a6abfd`](https://github.com/enboxorg/enbox/commit/7a6abfd92ca2cb019f5a7aa5260d12d06c59ce8d), [`713c757`](https://github.com/enboxorg/enbox/commit/713c7577c2ece2f59929f5f226abdf6cf40a7e1c)]:
+  - @enbox/common@0.1.5
+  - @enbox/dwn-sdk-js@0.4.17
+  - @enbox/agent@0.8.33
+  - @enbox/connect@0.1.13
+  - @enbox/crypto@0.1.8
+  - @enbox/dids@0.1.8
+  - @enbox/dwn-clients@0.4.24
+
 ## 0.6.78
 
 ### Patch Changes

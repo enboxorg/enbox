@@ -1,5 +1,69 @@
 # @enbox/agent
 
+## 0.8.33
+
+### Patch Changes
+
+- [#1407](https://github.com/enboxorg/enbox/pull/1407) [`fe5f985`](https://github.com/enboxorg/enbox/commit/fe5f9859438ce1e9663cfc7bda1b5c6eb82b7774) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: add safe, deadline-bounded sync teardown and identity lifecycle waits
+
+  The existing `stopSync()` numeric timeout keeps its legacy coercion for
+  non-finite values, but its default two-second budget now also bounds transport
+  subscription closure. The new lifecycle option objects reject invalid timeout
+  values before changing state.
+
+  Stopping invalidates callbacks and clears in-memory runtime ownership before
+  closing remote and local subscriptions concurrently. An unfinished transport
+  close remains tracked across retries, so a later lifecycle call cannot report
+  success until the original cleanup settles.
+
+- [#1429](https://github.com/enboxorg/enbox/pull/1429) [`f804103`](https://github.com/enboxorg/enbox/commit/f80410366f4e3798018618f2f15ed014fd3796e8) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add one protocol-derived `RecordQuery` shared by typed record queries and counts, including exact path tag and data-format types. Add authenticated `DwnApi.records.count()`, preserve query/count population parity, and expose the canonical query and count-response types from browser builds. Published-date filters and sorting explicitly select published records for both operations.
+
+  Remove the overlapping typed query aliases, `queryAll()` drains, Repository facade, and high-level subscription models. Typed records now have one query/count contract, explicit create/update operations, and no client-side upsert or parallel collection abstraction. Callers page explicitly through `query()` with its returned cursor.
+
+  Flatten advanced RecordsSubscribe and MessagesSubscribe to their raw DWN contract: a required subscription handler and the unmodified protocol reply. Remove `LiveQuery`, `TypedLiveQuery`, `MessagesLiveQuery`, record hydration, and `includeRecords`; a later observed-view API will be the sole high-level reactive model. Use `filter.contextId` for typed child selection; protocol identity and the exact-parent fence are derived internally. These intentional breaking changes remove the superseded exports from API, browser, and CLI without compatibility aliases.
+
+  Resolve delegated record-read grants from the wire filter as the single protocol source, reject empty typed context IDs, and surface permission-store failures instead of silently treating them as missing grants. Delegated permission lookup now reuses a bounded grant catalog across record contexts while matching each requested scope independently.
+
+  Resolve delegated record writes and deletes against their protocol path and context instead of selecting protocol-wide grants only. Permission lookups now reuse cached catalogs by default and expose `forceRefresh` for an explicit store refresh, while a scope miss refreshes the store so newly imported grants are immediately visible.
+
+- [#1428](https://github.com/enboxorg/enbox/pull/1428) [`2c78d33`](https://github.com/enboxorg/enbox/commit/2c78d3371c3cb26fea33245866326b9e43df528e) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: construct updated-date pagination cursors from record message timestamps
+
+- [#1435](https://github.com/enboxorg/enbox/pull/1435) [`e07585c`](https://github.com/enboxorg/enbox/commit/e07585ce0e7ffcb65a32c51e1da22d48588339e0) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add `records.observe()` as the single high-level reactive Records primitive. It
+  publishes bounded immutable query snapshots, treats local subscription events
+  as wake hints, coalesces rematerialization, and reports loading, ready, stale,
+  or error currentness from the existing sync registration and link state.
+
+  Sessions now carry an owner-controlled `AbortSignal`; lock, disconnect,
+  shutdown, identity replacement, and successful grant refresh fence resources
+  bound to the previous authorization. Refresh reuses the delegate identity but
+  installs a new session lifetime; a failed or denied refresh leaves the existing
+  session active. `AuthManager` installs the exact active session before publishing
+  the wake-only `session-start` event; consumers read the authoritative manager
+  session instead of reconstructing a capability from event metadata, and the
+  redundant `AuthSessionInfo` projection is removed. A view publishes one terminal
+  error before closing when that lifetime ends. Successful automatic refresh makes
+  `ConnectionStore` publish a replacement `Enbox`; direct session consumers
+  recreate resources from the replacement `AuthManager.session`.
+
+  Sync registration changes and ephemeral pull currentness are now observable.
+  Replication-link snapshots combine durable checkpoints with current controller
+  status, connectivity, and whether every accepted remote-feed wake is covered
+  by a completed pull pass; checkpoint events remain progress-only.
+
+- [#1405](https://github.com/enboxorg/enbox/pull/1405) [`7a6abfd`](https://github.com/enboxorg/enbox/commit/7a6abfd92ca2cb019f5a7aa5260d12d06c59ce8d) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: retry live-sync link initialization while a newly created tenant is still registering
+
+  A freshly created identity's remote DWN briefly rejects `MessagesSubscribe` with `401 Not a registered tenant` until tenant registration lands there. This transient 401 is now classified like `did:dht` propagation lag: the link re-initializes on the short backoff ladder (`isTransientInitFailure`) and logs at `warn` rather than retiring the link with an alarming `error` and waiting for the periodic (5-minute) settle check. Because the pull subscription opens before the baseline push, retrying also unblocks the initial push of records written during identity creation (e.g. a new profile), so they reach the remote without waiting for the next settle pass or an app restart.
+
+- [#1448](https://github.com/enboxorg/enbox/pull/1448) [`713c757`](https://github.com/enboxorg/enbox/commit/713c7577c2ece2f59929f5f226abdf6cf40a7e1c) Thanks [@LiranCohen](https://github.com/LiranCohen)! - refactor: keep durable-feed reconciliation results limited to state that their callers consume, without changing sync behavior
+
+- Updated dependencies [[`ca04167`](https://github.com/enboxorg/enbox/commit/ca04167e6e6e61eea56eedd5eb7acbc3b909fd4c), [`23d84a4`](https://github.com/enboxorg/enbox/commit/23d84a4cd94d169423d9fbe5c84b5e7bd803b134), [`fe5f985`](https://github.com/enboxorg/enbox/commit/fe5f9859438ce1e9663cfc7bda1b5c6eb82b7774), [`50c40fd`](https://github.com/enboxorg/enbox/commit/50c40fd50950d5a25c0d5c342f55b078adf247e9)]:
+  - @enbox/common@0.1.5
+  - @enbox/dwn-sdk-js@0.4.17
+  - @enbox/connect@0.1.13
+  - @enbox/crypto@0.1.8
+  - @enbox/dids@0.1.8
+  - @enbox/dwn-clients@0.4.24
+
 ## 0.8.32
 
 ### Patch Changes
