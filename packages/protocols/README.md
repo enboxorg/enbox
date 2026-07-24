@@ -4,9 +4,9 @@
 
 Ready-to-use DWN protocol definitions for the Enbox ecosystem. Each protocol ships with:
 
-- A raw `ProtocolDefinition` constant (e.g. `SocialGraphDefinition`)
-- A typed protocol via `defineProtocol()` (e.g. `SocialGraphProtocol`)
-- TypeScript data shape types (e.g. `FriendData`, `ProfileData`)
+- A raw `ProtocolDefinition` constant (for example, `ProfileDefinition`)
+- A typed protocol via `defineProtocol()` (for example, `ProfileProtocol`)
+- TypeScript data shape types (for example, `ProfileData`)
 - Runtime codecs mapping type names to application values
 - JSON Schema files in `schemas/` for validation and code generation
 - `$recordLimit` annotations on natural singleton types
@@ -21,23 +21,9 @@ bun add @enbox/protocols
 
 ```ts
 import { Enbox } from '@enbox/api';
-import { ProfileProtocol, SocialGraphProtocol } from '@enbox/protocols';
+import { ProfileProtocol } from '@enbox/protocols';
 
 const { enbox } = await Enbox.connect({ password: 'secret' });
-
-const social = enbox.using(SocialGraphProtocol);
-await social.configure();
-
-const record = await social.records.create('friend', {
-  data: { did: 'did:dht:alice...', alias: 'Alice' },
-});
-
-const { records: friends } = await social.records.query('friend');
-for (const f of friends) {
-  const data = await f.value(); // FriendData -- typed
-  console.log(data.alias);
-}
-
 const profile = enbox.using(ProfileProtocol);
 await profile.configure();
 
@@ -51,53 +37,26 @@ console.log(await profiles[0].value()); // ProfileData
 
 ## Protocol Catalog
 
-### Social Graph
-
-**URI**: `https://identity.foundation/protocols/social-graph`
-**Published**: yes
-**Import**: `SocialGraphProtocol`, `SocialGraphDefinition`
-
-Foundation protocol for relationship management. Other protocols compose with this via `uses` to leverage the `friend` role for cross-protocol authorization.
-
-| Type | Data Shape | Singleton | Notes |
-|------|-----------|-----------|-------|
-| `friend` | `FriendData` | no | `$role: true` -- used for cross-protocol auth |
-| `block` | `BlockData` | no | |
-| `group` | `GroupData` | no | |
-| `group/member` | `MemberData` | no | Nested under group |
-
-```ts
-type FriendData = { did: string; alias?: string; note?: string };
-type BlockData  = { did: string; reason?: string };
-type GroupData  = { name: string; description?: string; icon?: string };
-type MemberData = { did: string; alias?: string };
-```
-
----
-
 ### Profile
 
 **URI**: `https://identity.foundation/protocols/profile`
 **Published**: yes
-**Composes with**: Social Graph (`social:friend` role for private notes)
 **Import**: `ProfileProtocol`, `ProfileDefinition`
 
-Public and semi-private identity information with avatar/hero images and social links.
+Public identity information with avatar and hero images and external links.
 
 | Type | Data Shape | Singleton | Notes |
 |------|-----------|-----------|-------|
 | `profile` | `ProfileData` | **yes** | 10 KB max |
 | `profile/avatar` | `AvatarData` (Blob) | **yes** | 12 MB max, image formats |
 | `profile/hero` | `HeroData` (Blob) | **yes** | 24 MB max, image formats |
-| `profile/link` | `LinkData` | no | Social links nested under profile |
-| `privateNote` | `PrivateNoteData` | no | Readable only by friends |
+| `profile/link` | `LinkData` | no | Links nested under profile |
 
 ```ts
-type ProfileData     = { displayName: string; bio?: string; tagline?: string; location?: string; website?: string; pronouns?: string };
-type AvatarData      = Blob;  // no JSON schema -- binary only
-type HeroData        = Blob;  // no JSON schema -- binary only
-type LinkData        = { url: string; title: string; icon?: string; sortOrder?: number };
-type PrivateNoteData = { content: string };
+type ProfileData = { displayName: string; bio?: string; tagline?: string; location?: string; website?: string; pronouns?: string };
+type AvatarData  = Blob; // no JSON schema -- binary only
+type HeroData    = Blob; // no JSON schema -- binary only
+type LinkData    = { url: string; title: string; icon?: string; sortOrder?: number };
 ```
 
 ---
@@ -124,56 +83,6 @@ type PrivacyData      = { cookieConsent: { analytics: boolean; marketing: boolea
 type NotificationData = { channel: string; enabled: boolean; quietHoursStart?: string; quietHoursEnd?: string };
 ```
 
----
-
-### Status
-
-**URI**: `https://identity.foundation/protocols/status`
-**Published**: yes
-**Composes with**: Social Graph (friend-scoped reactions)
-**Import**: `StatusProtocol`, `StatusDefinition`
-
-Ephemeral status updates with reactions. Published statuses are readable by anyone; reactions are friend-scoped.
-
-| Type | Data Shape | Singleton | Notes |
-|------|-----------|-----------|-------|
-| `status` | `StatusData` | no | 5 KB max |
-| `status/reaction` | `ReactionData` | no | Friend-only create/read/delete |
-
-```ts
-type StatusData   = { text: string; emoji?: string; activity?: 'online' | 'away' | 'busy' | 'offline'; expiresAt?: string };
-type ReactionData = { emoji: string };
-```
-
----
-
-### Lists
-
-**URI**: `https://identity.foundation/protocols/lists`
-**Published**: no
-**Composes with**: Social Graph (friend-scoped reads, collaborator role)
-**Import**: `ListsProtocol`, `ListsDefinition`
-
-Flexible list management with collaboration. Supports nested items with tag-based hierarchy and 3-level folder nesting.
-
-| Type | Data Shape | Singleton | Notes |
-|------|-----------|-----------|-------|
-| `list` | `ListData` | no | Tagged by `listType` |
-| `list/item` | `ItemData` | no | Collaborators can CRUD |
-| `list/item/comment` | `CommentData` | no | Collaborators can create/read |
-| `list/collaborator` | `CollaboratorData` | no | `$role: true` for write access |
-| `folder` | `FolderData` | no | 3-level nesting: `folder/folder/folder` |
-
-```ts
-type ListData         = { name: string; description?: string; icon?: string; listType: 'todo' | 'bookmarks' | 'reading' | 'custom' };
-type ItemData         = { title: string; url?: string; note?: string; completed?: boolean; sortOrder?: number };
-type CommentData      = { text: string };
-type CollaboratorData = { did: string; alias?: string };
-type FolderData       = { name: string; icon?: string; sortOrder?: number };
-```
-
----
-
 ### Connect
 
 **URI**: `https://identity.foundation/protocols/connect`
@@ -192,20 +101,17 @@ type WalletData = { webWallets: string[] };
 
 ## JSON Schemas
 
-Each protocol type with `application/json` data format has a corresponding JSON Schema file in `schemas/<protocol>/<type>.json`. These schemas:
+Each protocol type with an `application/json` data format has a corresponding JSON Schema file in `schemas/<protocol>/<type>.json`. These schemas:
 
 - Match the TypeScript data shapes exactly
 - Use Draft-07 (`$schema: "http://json-schema.org/draft-07/schema#"`)
 - Have `$id` URIs matching the `schema` field in the protocol definition
 - Are compatible with `@enbox/protocol-codegen` for TypeScript type generation
 
-```
+```text
 schemas/
-  social-graph/  friend.json, block.json, group.json, member.json
-  profile/       profile.json, link.json, private-note.json
+  profile/       profile.json, link.json
   preferences/   theme.json, locale.json, privacy.json, notification.json
-  status/        status.json, reaction.json
-  lists/         list.json, item.json, folder.json, collaborator.json, comment.json
   connect/       wallet.json
 ```
 
@@ -218,7 +124,7 @@ Types annotated with `$recordLimit: { max: 1 }` expose one deterministic occupan
 - Create the record with `records.create()` and load it with `records.query()`.
 - Update the returned `Record<T>` explicitly with `record.update()`.
 - Competing valid writes remain stored but hidden from the projected population and may become visible if the current occupant is deleted.
-- Currently annotated singletons: `profile`, `avatar`, `hero`, `theme`, `locale`, `privacy`, `wallet`
+- Currently annotated singletons: `profile`, `avatar`, `hero`, `theme`, `locale`, `privacy`, `wallet`.
 
 ## Exports
 
@@ -226,25 +132,13 @@ All protocols re-export from the package root:
 
 ```ts
 import {
-  // Social Graph
-  SocialGraphProtocol, SocialGraphDefinition,
-  type FriendData, type BlockData, type GroupData, type MemberData,
-
   // Profile
   ProfileProtocol, ProfileDefinition,
-  type ProfileData, type AvatarData, type HeroData, type LinkData, type PrivateNoteData,
+  type ProfileData, type AvatarData, type HeroData, type LinkData,
 
   // Preferences
   PreferencesProtocol, PreferencesDefinition,
   type ThemeData, type LocaleData, type PrivacyData, type NotificationData,
-
-  // Status
-  StatusProtocol, StatusDefinition,
-  type StatusData, type ReactionData,
-
-  // Lists
-  ListsProtocol, ListsDefinition,
-  type ListData, type ItemData, type FolderData, type CollaboratorData, type CommentData,
 
   // Connect
   ConnectProtocol, ConnectDefinition,

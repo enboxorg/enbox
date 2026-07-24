@@ -38,9 +38,9 @@ function createMockRecordsWriteMessage(overrides: Partial<RecordsWriteMessage> =
     descriptor    : {
       interface        : 'Records' as any,
       method           : 'Write' as any,
-      protocol         : 'https://social.example/posts',
+      protocol         : 'https://blog.example/posts',
       protocolPath     : 'post',
-      schema           : 'https://social.example/schemas/post',
+      schema           : 'https://blog.example/schemas/post',
       dataFormat       : 'application/json',
       dataCid          : 'bafyrei-test-cid',
       dataSize         : 256,
@@ -77,14 +77,14 @@ describe('DwnReaderApi', () => {
 
       const { records, status, cursor } = await readerApi.records.query({
         from   : targetDid,
-        filter : { protocol: 'https://social.example/posts', protocolPath: 'post' },
+        filter : { protocol: 'https://blog.example/posts', protocolPath: 'post' },
       });
 
       expect(status.code).toBe(200);
       expect(records).toHaveLength(1);
       expect(records[0]).toBeInstanceOf(ReadOnlyRecord);
       expect(records[0].id).toBe('test-record-id');
-      expect(records[0].protocol).toBe('https://social.example/posts');
+      expect(records[0].protocol).toBe('https://blog.example/posts');
       expect(records[0].protocolPath).toBe('post');
       expect(records[0].published).toBe(true);
       expect(records[0].dataFormat).toBe('application/json');
@@ -200,7 +200,7 @@ describe('DwnReaderApi', () => {
 
       const { count, status } = await readerApi.records.count({
         from   : targetDid,
-        filter : { protocol: 'https://social.example/posts' },
+        filter : { protocol: 'https://blog.example/posts' },
       });
 
       expect(status.code).toBe(200);
@@ -214,9 +214,9 @@ describe('DwnReaderApi', () => {
       readerApi = new DwnReaderApi(anonStub as unknown as AnonymousDwnApi);
 
       const mockDefinition = {
-        protocol  : 'https://social.example/posts',
+        protocol  : 'https://blog.example/posts',
         published : true,
-        types     : { post: { schema: 'https://social.example/schemas/post' } },
+        types     : { post: { schema: 'https://blog.example/schemas/post' } },
         structure : { post: {} },
       };
 
@@ -231,7 +231,7 @@ describe('DwnReaderApi', () => {
 
       expect(status.code).toBe(200);
       expect(protocols).toHaveLength(1);
-      expect(protocols[0].protocol).toBe('https://social.example/posts');
+      expect(protocols[0].protocol).toBe('https://blog.example/posts');
       expect(protocols[0].published).toBe(true);
     });
 
@@ -246,11 +246,11 @@ describe('DwnReaderApi', () => {
 
       await readerApi.protocols.query({
         from   : targetDid,
-        filter : { protocol: 'https://social.example/posts' },
+        filter : { protocol: 'https://blog.example/posts' },
       });
 
       const callArgs = anonStub.protocolsQuery.args[0];
-      expect(callArgs[1].filter).toEqual({ protocol: 'https://social.example/posts' });
+      expect(callArgs[1].filter).toEqual({ protocol: 'https://blog.example/posts' });
     });
   });
 });
@@ -285,9 +285,9 @@ describe('ReadOnlyRecord', () => {
 
     expect(record.id).toBe('record-123');
     expect(record.contextId).toBe('ctx-456');
-    expect(record.protocol).toBe('https://social.example/posts');
+    expect(record.protocol).toBe('https://blog.example/posts');
     expect(record.protocolPath).toBe('post');
-    expect(record.schema).toBe('https://social.example/schemas/post');
+    expect(record.schema).toBe('https://blog.example/schemas/post');
     expect(record.dataFormat).toBe('application/json');
     expect(record.dataCid).toBe('bafyrei-test-cid');
     expect(record.dataSize).toBe(256);
@@ -422,7 +422,7 @@ describe('ReadOnlyRecord', () => {
 
     const json = record.toJSON();
     expect(json.recordId).toBe('json-test');
-    expect(json.protocol).toBe('https://social.example/posts');
+    expect(json.protocol).toBe('https://blog.example/posts');
     expect(json.timestamp).toBe('2024-06-15T10:00:00.000000Z');
   });
 
@@ -439,7 +439,7 @@ describe('ReadOnlyRecord', () => {
     const str = record.toString();
     expect(str).toContain('ReadOnlyRecord');
     expect(str).toContain('string-test');
-    expect(str).toContain('https://social.example/posts');
+    expect(str).toContain('https://blog.example/posts');
   });
 
   it('should not have update, delete, send, store, or import methods', () => {

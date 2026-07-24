@@ -33,23 +33,23 @@ describe('orderPermissionRequestsByUsesDependencies', () => {
   });
 
   it('places a composing protocol after its in-batch `uses` dependency', () => {
-    const board = request('https://app.example/board', { social: 'https://id.example/social' });
-    const social = request('https://id.example/social');
+    const board = request('https://app.example/board', { membership: 'https://id.example/membership' });
+    const membership = request('https://id.example/membership');
 
     // Dependent is listed first — ordering must still prepare the dependency first.
-    const levels = orderPermissionRequestsByUsesDependencies([board, social]);
+    const levels = orderPermissionRequestsByUsesDependencies([board, membership]);
 
     expect(levelUris(levels)).toEqual([
-      ['https://id.example/social'],
+      ['https://id.example/membership'],
       ['https://app.example/board'],
     ]);
   });
 
   it('ignores `uses` targets that are not part of the batch', () => {
-    // social-graph is not requested in this batch, so `board` has no in-batch
+    // membership is not requested in this batch, so `board` has no in-batch
     // dependency and stays in the first level.
     const levels = orderPermissionRequestsByUsesDependencies([
-      request('https://app.example/board', { social: 'https://id.example/social' }),
+      request('https://app.example/board', { membership: 'https://id.example/membership' }),
     ]);
 
     expect(levelUris(levels)).toEqual([['https://app.example/board']]);

@@ -12,13 +12,13 @@
  *
  * @example
  * ```ts
- * const social = enbox.using(SocialProtocol);
+ * const threads = enbox.using(ThreadsProtocol);
  *
  * // Install the protocol
- * await social.configure();
+ * await threads.configure();
  *
  * // Create — path and data type are checked at compile time
- * const record = await social.records.create('thread', {
+ * const record = await threads.records.create('thread', {
  *   data: { title: 'Hello World', body: '...' },
  * });
  * // record is Record<ThreadData>
@@ -26,7 +26,7 @@
  * const data = await record.value(); // ThreadData — no cast needed
  *
  * // Query — protocol and protocolPath are auto-injected
- * const { records } = await social.records.query('thread');
+ * const { records } = await threads.records.query('thread');
  * // records is Record<ThreadData>[]
  * ```
  */
@@ -569,20 +569,20 @@ export type VerifyInstalledResult = {
  *
  * @example
  * ```ts
- * const social = enbox.using(SocialProtocol);
+ * const notes = enbox.using(NotesProtocol);
  *
- * await social.configure();
+ * await notes.configure();
  *
- * const record = await social.records.create('friend', {
- *   data: { did: 'did:example:alice', alias: 'Alice' },
+ * const record = await notes.records.create('note', {
+ *   data: { title: 'Hello', body: 'Typed data' },
  * });
- * const data = await record.value(); // FriendData — no cast
+ * const data = await record.value(); // NoteData — no cast
  *
- * const { records } = await social.records.query('friend', {
- *   filter: { tags: { did: 'did:example:alice' } },
+ * const { records } = await notes.records.query('note', {
+ *   filter: { tags: { category: 'work' } },
  * });
  * for (const r of records) {
- *   const d = await r.value(); // FriendData
+ *   const d = await r.value(); // NoteData
  * }
  * ```
  */
@@ -627,7 +627,7 @@ export class TypedEnbox<
   }
 
   /**
-   * The protocol URI string (e.g. `'https://example.com/social'`).
+   * The protocol URI string (e.g. `'https://example.com/threads'`).
    *
    * This is the globally unique identifier for the protocol and is
    * auto-injected into every record operation.
@@ -1755,7 +1755,7 @@ function collectMissingKeyAgreementPaths(definition: ProtocolDefinition): string
 /**
  * Strips leading and trailing slashes from a path.
  *
- * `'friend/'` → `'friend'`, `'/group/member/'` → `'group/member'`.
+ * `'thread/'` → `'thread'`, `'/thread/message/'` → `'thread/message'`.
  */
 function normalizePath(path: string): string {
   // Strip leading and trailing '/' without regex quantifiers (avoids ReDoS scanners).

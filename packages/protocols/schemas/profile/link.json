@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://identity.foundation/schemas/profile/link",
   "title": "LinkData",
-  "description": "Data shape for a link record (e.g. social links).",
+  "description": "Data shape for an external link record.",
   "type": "object",
   "properties": {
     "url": {

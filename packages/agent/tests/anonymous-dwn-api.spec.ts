@@ -80,7 +80,7 @@ describe('AnonymousDwnApi', () => {
       });
 
       const reply = await anonymousDwn.recordsQuery(targetDid, {
-        filter: { protocol: 'https://social.example/posts' },
+        filter: { protocol: 'https://blog.example/posts' },
       });
 
       expect(reply.status.code).toBe(200);
@@ -172,7 +172,7 @@ describe('AnonymousDwnApi', () => {
       });
 
       const reply = await anonymousDwn.recordsCount(targetDid, {
-        filter: { protocol: 'https://social.example/posts' },
+        filter: { protocol: 'https://blog.example/posts' },
       });
 
       expect(reply.status.code).toBe(200);
@@ -186,9 +186,9 @@ describe('AnonymousDwnApi', () => {
   describe('protocolsQuery()', () => {
     it('should create an unsigned ProtocolsQuery and send it via RPC', async () => {
       const mockDefinition = {
-        protocol  : 'https://social.example/posts',
+        protocol  : 'https://blog.example/posts',
         published : true,
-        types     : { post: { schema: 'https://social.example/schemas/post' } },
+        types     : { post: { schema: 'https://blog.example/schemas/post' } },
         structure : { post: {} },
       };
 
@@ -198,7 +198,7 @@ describe('AnonymousDwnApi', () => {
       });
 
       const reply = await anonymousDwn.protocolsQuery(targetDid, {
-        filter: { protocol: 'https://social.example/posts' },
+        filter: { protocol: 'https://blog.example/posts' },
       });
 
       expect(reply.status.code).toBe(200);
@@ -235,7 +235,7 @@ describe('AnonymousDwnApi', () => {
       await expect(
         anonymousDwn.recordsSubscribe(
           targetDid,
-          { filter: { protocol: 'https://social.example/posts' } },
+          { filter: { protocol: 'https://blog.example/posts' } },
           () => {},
         )
       ).rejects.toThrow('AnonymousDwnApi: Failed to send request');

@@ -93,7 +93,7 @@ export type AnonymousProtocolsQueryParams = {
  * const anonymousDwn = new AnonymousDwnApi({ didResolver: resolver, rpcClient });
  *
  * const reply = await anonymousDwn.recordsQuery('did:dht:alice...', {
- *   filter: { protocol: 'https://social.example/posts', protocolPath: 'post' },
+ *   filter: { protocol: 'https://blog.example/posts', protocolPath: 'post' },
  * });
  * ```
  */
