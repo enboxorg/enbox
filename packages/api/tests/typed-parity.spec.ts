@@ -290,7 +290,15 @@ describe('typed api parity batch', () => {
 
     it('should accept a direct parent record ID as a bounded nested scope', async () => {
       const { typed, definition } = makeTyped();
-      const { task, comment } = await createNestedTree(typed);
+      const { list, task, comment } = await createNestedTree(typed);
+      const siblingTask = await typed.records.create('list/task', {
+        data            : { title: 'sibling' },
+        parentContextId : list.contextId,
+      });
+      await typed.records.create('list/task/comment', {
+        data            : { body: 'sibling comment' },
+        parentContextId : siblingTask.contextId,
+      });
 
       const { records, status } = await dwnAlice.records.query({
         filter: {
