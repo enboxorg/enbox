@@ -1,7 +1,7 @@
 import type { DerivedPrivateJwk } from '../../src/utils/hd-key.js';
 import type { DidResolver } from '@enbox/dids';
-import type { EventLog } from '../../src/types/subscriptions.js';
 import type { DataStore, MessageStore, RecordsCountReply, RecordsReadReply, RecordsSubscribeReply, ResumableTaskStore } from '../../src/index.js';
+import type { EventLog, SubscriptionMessage } from '../../src/types/subscriptions.js';
 import type { PrivateKeyJwk, PublicKeyJwk } from '../../src/types/jose-types.js';
 import type { ProtocolDefinition, ProtocolRuleSet } from '../../src/types/protocols-types.js';
 
@@ -11,6 +11,7 @@ import { DataStream } from '../../src/utils/data-stream.js';
 import { Dwn } from '../../src/dwn.js';
 import { Encoder } from '../../src/utils/encoder.js';
 import { Jws } from '../../src/utils/jws.js';
+import { Poller } from '../utils/poller.js';
 import { Protocols } from '../../src/utils/protocols.js';
 import { Records } from '../../src/utils/records.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
@@ -1627,7 +1628,7 @@ export function testProtocolComposition(): void {
     // =========================================================================
 
     describe('cross-protocol RecordsSubscribe', () => {
-      it('should allow a cross-protocol role holder to subscribe to records in the composing protocol', async () => {
+      it('should stop a cross-protocol role subscription when the referenced role is deleted', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
@@ -1668,6 +1669,7 @@ export function testProtocolComposition(): void {
         await dwn.processMessage(alice.did, participantWrite.message, { dataStream: participantWrite.dataStream });
 
         // Bob subscribes to comments using the cross-protocol role
+        const received: SubscriptionMessage[] = [];
         const bobSubscribe = await RecordsSubscribe.create({
           signer       : Jws.createSigner(bob),
           protocolRole : 'threads:thread/participant',
@@ -1678,13 +1680,47 @@ export function testProtocolComposition(): void {
           },
         });
         const subReply = await dwn.processMessage(
-          alice.did, bobSubscribe.message, { subscriptionHandler: (): void => {} }
+          alice.did,
+          bobSubscribe.message,
+          { subscriptionHandler: (message): void => { received.push(message); } }
         ) as RecordsSubscribeReply;
         expect(subReply.status.code).toBe(200);
         expect(subReply.subscription).toBeDefined();
 
-        // Clean up subscription
-        await subReply.subscription!.close();
+        const createComment = async (): Promise<void> => {
+          const commentWrite = await TestDataGenerator.generateRecordsWrite({
+            author          : alice,
+            protocol        : commentsProtocol.protocol,
+            protocolPath    : 'thread/comment',
+            schema          : 'https://comments.example.com/schemas/comment',
+            dataFormat      : 'application/json',
+            parentContextId : threadContextId,
+          });
+          expect((await dwn.processMessage(
+            alice.did,
+            commentWrite.message,
+            { dataStream: commentWrite.dataStream }
+          )).status.code).toBe(202);
+        };
+
+        await createComment();
+        await Poller.pollUntilSuccessOrTimeout(async () => {
+          expect(received.filter(message => message.type === 'event')).toHaveLength(1);
+        });
+
+        const deleteRole = await RecordsDelete.create({
+          recordId : participantWrite.message.recordId,
+          signer   : Jws.createSigner(alice),
+        });
+        expect((await dwn.processMessage(alice.did, deleteRole.message)).status.code).toBe(202);
+        await createComment();
+
+        await Poller.pollUntilSuccessOrTimeout(async () => {
+          expect(received.filter(message => message.type === 'error')).toHaveLength(1);
+        });
+        expect(received.find(message => message.type === 'error')?.error.code)
+          .toBe(DwnErrorCode.RecordsSubscribeDeliveryAuthorizationFailed);
+        expect(received.filter(message => message.type === 'event')).toHaveLength(1);
       });
     });
 

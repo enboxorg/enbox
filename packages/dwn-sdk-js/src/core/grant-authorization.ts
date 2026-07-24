@@ -24,18 +24,22 @@ export class GrantAuthorization {
     expectedGrantee: string,
     permissionGrant: PermissionGrant,
     validationStateReader: ValidationStateReader,
+    authorizationTimestamp?: string,
     }): Promise<void> {
-    const { incomingMessage, expectedGrantor, expectedGrantee, permissionGrant, validationStateReader } = input;
+    const {
+      incomingMessage, expectedGrantor, expectedGrantee, permissionGrant, validationStateReader, authorizationTimestamp
+    } = input;
 
     const incomingMessageDescriptor = incomingMessage.descriptor;
 
     GrantAuthorization.verifyExpectedGrantorAndGrantee(expectedGrantor, expectedGrantee, permissionGrant);
 
-    // verify that grant is active during incomingMessage's timestamp
+    // Verify that the grant is active at the requested authorization time. Subscription
+    // delivery passes the current time; ordinary message admission uses the signed timestamp.
     const grantedFor = expectedGrantor; // renaming for better readability now that we have verified the grantor above
     await GrantAuthorization.verifyGrantActive(
       grantedFor,
-      incomingMessageDescriptor.messageTimestamp,
+      authorizationTimestamp ?? incomingMessageDescriptor.messageTimestamp,
       permissionGrant,
       validationStateReader
     );

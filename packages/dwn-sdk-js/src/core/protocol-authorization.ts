@@ -254,6 +254,7 @@ export class ProtocolAuthorization {
     tenant: string,
     incomingMessage: RecordsCount | RecordsQuery | RecordsSubscribe,
     validationStateReader: ValidationStateReader,
+    authorizationTimestamp = incomingMessage.message.descriptor.messageTimestamp,
   ): Promise<void> {
     const { protocol, protocolPath, contextId } = incomingMessage.message.descriptor.filter;
 
@@ -261,7 +262,7 @@ export class ProtocolAuthorization {
     const protocolDefinition = await validationStateReader.fetchProtocolDefinition(
       tenant,
       protocol!, // `authorizeQueryOrSubscribe` is only called if `protocol` is present
-      incomingMessage.message.descriptor.messageTimestamp,
+      authorizationTimestamp,
     );
 
     // get the rule set for the inbound message
@@ -278,6 +279,7 @@ export class ProtocolAuthorization {
       contextId,
       protocolDefinition,
       validationStateReader,
+      authorizationTimestamp,
     );
 
     // verify method invoked against the allowed actions in the rule set
