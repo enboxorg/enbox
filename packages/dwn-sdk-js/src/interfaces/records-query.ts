@@ -52,7 +52,7 @@ export class RecordsQuery extends AbstractMessage<RecordsQueryMessage> {
     }
 
     await Records.validateDelegatedGrantReferentialIntegrity(message, signaturePayload);
-    Records.validateNestedProtocolPathQueryScope(
+    Records.validateNestedProtocolPathScope(
       message.descriptor.filter,
       DwnErrorCode.RecordsQueryNestedProtocolPathContextIdInvalid,
       'RecordsQuery'

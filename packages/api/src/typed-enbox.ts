@@ -32,21 +32,29 @@
  */
 
 import type { Protocol } from './protocol.js';
-import type { Record } from './record.js';
+import type { RecordUpdateParams } from './record-types.js';
 import type { RecordView } from './record-view.js';
+import type {
+  DirectSingletonChildPaths,
+  ProtocolPaths,
+  SingletonProtocolPaths,
+  TypedProtocol,
+  TypeNameAtPath,
+} from './protocol-types.js';
 import type { DwnApi, ProtocolsConfigureResponse } from './dwn-api.js';
 import type { DwnPaginationCursor, DwnPublicKeyJwk, DwnResponseStatus, SyncEngine } from '@enbox/agent';
-import type { ProtocolDefinition, ProtocolType } from '@enbox/dwn-sdk-js';
-import type { ProtocolPaths, TypedProtocol, TypeNameAtPath } from './protocol-types.js';
+import type { MaterializedRecord, Record } from './record.js';
+import type { ProtocolDefinition, ProtocolType, RecordsFilter } from '@enbox/dwn-sdk-js';
 import type { RecordCodec, RecordCodecMap, RecordCodecValue } from './record-codec.js';
 import type { RecordFilter, RecordQuery } from './record-query.js';
 
 import { createRecordView } from './record-view.js';
-import { getTypeName } from '@enbox/dwn-sdk-js';
+import { removeUndefinedProperties } from '@enbox/common';
 import { requireDwnSuccess } from './dwn-response-error.js';
 import { assertTypedProtocolStructureSupported, collectProtocolPaths } from './protocol-paths.js';
 import { assertValidRecordWithin, compileRecordFilter, compileRecordQuery } from './record-query.js';
 import { bindRecordCodec, encodeRecordValue } from './record-codec.js';
+import { getRuleSetAtPath, getTypeName } from '@enbox/dwn-sdk-js';
 
 // ---------------------------------------------------------------------------
 // Helper types
@@ -64,13 +72,102 @@ export type DataForPath<
 > = TypeNameAtPath<Path> extends keyof C ? RecordCodecValue<C[TypeNameAtPath<Path>]> : never;
 
 /** One page returned by a typed records query. */
-export type RecordPage<T = unknown> = {
-  /** Matching record handles. */
-  records: Record<T>[];
+export type RecordPage<Item = Record> = {
+  /** Matching records in the representation selected by the query. */
+  records: Item[];
 
   /** Cursor for the next page, when another page exists. */
   cursor?: DwnPaginationCursor;
 };
+
+/** Materialization requested from a typed records query or observed view. */
+type RecordMaterialization<
+  D extends ProtocolDefinition,
+  Path extends ProtocolPaths<D> & string,
+> = true | {
+  /** Exact direct-child paths to materialize beside every parent record. */
+  children: readonly DirectSingletonChildPaths<D, Path>[];
+};
+
+type SelectedMaterializedChildPaths<
+  D extends ProtocolDefinition,
+  Path extends ProtocolPaths<D> & string,
+  Materialization extends RecordMaterialization<D, Path>,
+> = Materialization extends { children: readonly (infer ChildPath)[] }
+  ? Extract<ChildPath, DirectSingletonChildPaths<D, Path>>
+  : never;
+
+/** Materialized singleton children exposed for one protocol path. */
+type MaterializedChildren<
+  D extends ProtocolDefinition,
+  C extends RecordCodecMap,
+  Path extends ProtocolPaths<D> & string,
+  Materialization extends RecordMaterialization<D, Path> = true,
+> = {
+  readonly [ChildPath in SelectedMaterializedChildPaths<D, Path, Materialization>
+    as TypeNameAtPath<ChildPath>]: MaterializedRecord<DataForPath<C, ChildPath>> | undefined;
+};
+
+/** Materialized representation of one typed protocol record. */
+type MaterializedRecordForPath<
+  D extends ProtocolDefinition,
+  C extends RecordCodecMap,
+  Path extends ProtocolPaths<D> & string,
+  Materialization extends RecordMaterialization<D, Path> = true,
+> = Materialization extends true
+  ? MaterializedRecord<DataForPath<C, Path>>
+  : MaterializedRecord<DataForPath<C, Path>> & Readonly<{
+    children: Readonly<MaterializedChildren<D, C, Path, Materialization>>;
+  }>;
+
+type SelectedRecordRepresentation<
+  D extends ProtocolDefinition,
+  C extends RecordCodecMap,
+  Path extends ProtocolPaths<D> & string,
+  Materialization extends RecordMaterialization<D, Path> | undefined,
+> = Materialization extends undefined
+  ? Record<DataForPath<C, Path>>
+  : MaterializedRecordForPath<D, C, Path, Materialization>;
+
+type MaterializedRecordWithChildren<T> = MaterializedRecord<T> & Readonly<{
+  children: Readonly<globalThis.Record<string, MaterializedRecord<unknown> | undefined>>;
+}>;
+
+type MaterializationSource = {
+  from?: string;
+  protocolRole?: string;
+  within?: string;
+};
+
+type TypedQueryRequest<
+  D extends ProtocolDefinition,
+  Path extends ProtocolPaths<D> & string,
+  Materialization extends RecordMaterialization<D, Path> | undefined,
+> = [Materialization] extends [undefined]
+  ? RecordQuery<D, Path> & { materialize?: undefined }
+  : Omit<RecordQuery<D, Path>, 'pagination'> & {
+    materialize: Materialization;
+    pagination: { limit: number; cursor?: DwnPaginationCursor };
+  };
+
+type TypedQueryArguments<
+  D extends ProtocolDefinition,
+  Path extends ProtocolPaths<D> & string,
+  Materialization extends RecordMaterialization<D, Path> | undefined,
+> = [Materialization] extends [undefined]
+  ? [path: Path, request?: TypedQueryRequest<D, Path, Materialization>]
+  : [path: Path, request: TypedQueryRequest<D, Path, Materialization>];
+
+type TypedObserveRequest<
+  D extends ProtocolDefinition,
+  Path extends ProtocolPaths<D> & string,
+  Materialization extends RecordMaterialization<D, Path> | undefined,
+> = Omit<RecordQuery<D, Path>, 'from' | 'pagination'> & {
+  from?: never;
+  pagination: { limit: number; cursor?: DwnPaginationCursor };
+} & ([Materialization] extends [undefined]
+  ? { materialize?: undefined }
+  : { materialize: Materialization });
 
 /** @internal Runtime resources owned by the Enbox session that created this typed API. */
 type TypedEnboxOptions = {
@@ -264,6 +361,33 @@ export type TypedCreateRequest<
   store?: boolean;
 
 };
+
+/**
+ * Options for replacing the visible value at a protocol-declared singleton path.
+ *
+ * `set()` updates the current `$recordLimit.max: 1` occupant or creates it
+ * when the scope is empty. Immutable create-only fields are intentionally not
+ * exposed because one request must have the same meaning in both cases.
+ */
+export type TypedSetRequest<
+  C extends RecordCodecMap,
+  Path extends string,
+> = Pick<
+  TypedCreateRequest<C, Path>,
+  | 'data'
+  | 'datePublished'
+  | 'messageTimestamp'
+  | 'published'
+  | 'tags'
+> & (Path extends `${string}/${string}`
+  ? {
+    /** Exact direct-parent context for this nested singleton. */
+    within: string;
+  }
+  : {
+    /** Root singleton paths do not have a parent context. */
+    within?: never;
+  });
 
 /**
  * Options for {@link TypedEnbox} `records.read()`.
@@ -763,21 +887,246 @@ export class TypedEnbox<
   }
 
   /** Resolve the codec assigned to one validated protocol path. */
-  private getCodec<Path extends ProtocolPaths<D> & string>(path: string): RecordCodec<DataForPath<C, Path>> {
+  private resolveCodec(path: string): RecordCodec<unknown> {
     const codec = this._codecs[getTypeName(path)];
     if (codec === undefined) {
       throw new Error(`TypedEnbox: protocol path '${path}' does not have a record codec.`);
     }
-    return codec as RecordCodec<DataForPath<C, Path>>;
+    return codec;
+  }
+
+  /** Resolve one statically known path's application codec. */
+  private getCodec<Path extends ProtocolPaths<D> & string>(path: string): RecordCodec<DataForPath<C, Path>> {
+    return this.resolveCodec(path) as RecordCodec<DataForPath<C, Path>>;
   }
 
   /** Bind a path codec to one canonical record returned by the raw DWN API. */
-  private bindCodec<Path extends ProtocolPaths<D> & string>(
+  private bindCodec<
+    Path extends ProtocolPaths<D> & string,
+    Existing = unknown,
+  >(
     path : string,
-    record : Record,
+    record : Record<Existing>,
   ): Record<DataForPath<C, Path>> {
     const dataFormats = this._definition.types[getTypeName(path)]?.dataFormats;
     return bindRecordCodec(record, this.getCodec<Path>(path), dataFormats);
+  }
+
+  /** Validate materialization once, before any protocol or Records request starts. */
+  private resolveMaterializedChildPaths<Path extends ProtocolPaths<D> & string>(
+    parentPath : string,
+    materialization : RecordMaterialization<D, Path> | undefined,
+    pageLimit : number | undefined,
+  ): string[] {
+    if (materialization === undefined) {
+      return [];
+    }
+    if (pageLimit === undefined) {
+      throw new TypeError('Record materialization: pagination.limit is required to bound decoded values.');
+    }
+    if (materialization === true) {
+      return [];
+    }
+    if (materialization === null
+      || typeof materialization !== 'object'
+      || Array.isArray(materialization)
+      || Object.keys(materialization).some((key) => key !== 'children')
+      || !Array.isArray(materialization.children)
+      || materialization.children.length === 0) {
+      throw new TypeError('Record materialization: children must be a non-empty array of direct singleton paths.');
+    }
+    const childPaths = [...materialization.children];
+    if (childPaths.some((childPath) => typeof childPath !== 'string')
+      || new Set(childPaths).size !== childPaths.length) {
+      throw new TypeError('Record materialization: children must contain unique protocol paths.');
+    }
+
+    const directChildPrefix = `${parentPath}/`;
+    for (const childPath of childPaths) {
+      const childName = childPath.slice(directChildPrefix.length);
+      const ruleSet = getRuleSetAtPath(childPath, this._definition.structure);
+      if (!childPath.startsWith(directChildPrefix)
+        || childName === ''
+        || childName.includes('/')
+        || ruleSet?.$recordLimit?.max !== 1) {
+        throw new TypeError(
+          `Record materialization: '${childPath}' must be a direct child of '${parentPath}' ` +
+          `with $recordLimit.max: 1.`,
+        );
+      }
+    }
+
+    return childPaths;
+  }
+
+  /** Produce the one record representation selected by query and observe. */
+  private async representRecords<
+    Path extends ProtocolPaths<D> & string,
+    Materialization extends RecordMaterialization<D, Path> | undefined,
+  >(
+    path : string,
+    records : Record[],
+    materialization : Materialization,
+    childPaths : readonly string[],
+    source : MaterializationSource,
+  ): Promise<readonly SelectedRecordRepresentation<D, C, Path, Materialization>[]> {
+    const represented = materialization === undefined
+      ? records.map((record) => this.bindCodec<Path>(path, record))
+      : await this.materializeRecords<Path>(
+        path,
+        records,
+        childPaths,
+        source,
+      );
+
+    // The runtime branch above is the sole erasure point for the conditional
+    // query result; both paths retain their concrete public representation.
+    return represented as unknown as readonly SelectedRecordRepresentation<D, C, Path, Materialization>[];
+  }
+
+  /** Decode one bounded parent page and its explicitly selected singleton children. */
+  private async materializeRecords<
+    Path extends ProtocolPaths<D> & string,
+  >(
+    parentPath : string,
+    records : readonly Record[],
+    childPaths : readonly string[],
+    source : MaterializationSource,
+  ): Promise<readonly (
+    MaterializedRecord<DataForPath<C, Path>> |
+    MaterializedRecordWithChildren<DataForPath<C, Path>>
+  )[]> {
+    const parents = await Promise.all(records.map(async (record): Promise<MaterializedRecord<DataForPath<C, Path>>> => {
+      const typedRecord = this.bindCodec<Path>(parentPath, record);
+      return Object.freeze({
+        record : typedRecord,
+        value  : await typedRecord.value(),
+      });
+    }));
+
+    if (parents.length === 0 || childPaths.length === 0) {
+      return parents;
+    }
+
+    const parentById = new Map(parents.map((parent) => [parent.record.id, {
+      children: new Map<string, MaterializedRecord<unknown> | undefined>(
+        childPaths.map((childPath) => [getTypeName(childPath), undefined]),
+      ),
+      parent,
+    }]));
+    const parentIds = [...parentById.keys()];
+    await Promise.all(childPaths.map(async (childPath): Promise<void> => {
+      const childName = getTypeName(childPath);
+
+      const childType = this._definition.types[childName];
+      const filter = compileRecordFilter(
+        this._definition,
+        childPath,
+        undefined,
+        undefined,
+        source.within,
+      );
+      filter.parentId = parentIds;
+      const result = await this._dwn.records.query({
+        from         : source.from,
+        filter,
+        protocolRole : source.protocolRole,
+      });
+      requireDwnSuccess('TypedEnbox.records.query child materialization', result);
+
+      const occupiedParentIds = new Set<string>();
+      await Promise.all(result.records.map(async (record): Promise<void> => {
+        const parentId = record.parentId;
+        const parentEntry = parentId === undefined ? undefined : parentById.get(parentId);
+        if (parentEntry === undefined) {
+          throw new Error(
+            `TypedEnbox.records.query: child '${childPath}' did not reference a selected parent.`,
+          );
+        }
+        if (occupiedParentIds.has(parentId)) {
+          throw new Error(
+            `TypedEnbox.records.query: singleton child '${childPath}' returned multiple visible records ` +
+            `for parent '${parentEntry.parent.record.id}'.`,
+          );
+        }
+        occupiedParentIds.add(parentId);
+
+        const childRecord = bindRecordCodec(
+          record,
+          this.resolveCodec(childPath),
+          childType?.dataFormats,
+        );
+        parentEntry.children.set(childName, Object.freeze({
+          record : childRecord,
+          value  : await childRecord.value(),
+        }));
+      }));
+    }));
+
+    return [...parentById.values()].map(({ children, parent }) => Object.freeze({
+      ...parent,
+      children: Object.freeze(Object.fromEntries(children)),
+    }));
+  }
+
+  /** Require the protocol fact that gives `set()` one unambiguous target. */
+  private assertSingletonScope(path: string, within: string | undefined): void {
+    this._assertValidPath(path);
+    if (getRuleSetAtPath(path, this._definition.structure)?.$recordLimit?.max !== 1) {
+      throw new TypeError(`TypedEnbox.records.set: path '${path}' must declare $recordLimit.max: 1.`);
+    }
+
+    if (!path.includes('/')) {
+      if (within !== undefined) {
+        throw new TypeError('TypedEnbox.records.set: a root singleton does not accept within.');
+      }
+      return;
+    }
+
+    assertValidRecordWithin(path, within, true);
+    if (within.split('/').length !== path.split('/').length - 1) {
+      throw new TypeError('TypedEnbox.records.set: within must identify the singleton\'s direct parent context.');
+    }
+  }
+
+  /** Create one typed record through the protocol-bound DWN API. */
+  private async createRecord<Path extends ProtocolPaths<D> & string>(
+    path: Path,
+    request: TypedCreateRequest<C, Path>,
+  ): Promise<Record<DataForPath<C, Path>>> {
+    const normalizedPath = normalizePath(path);
+    await this._ensureReady(normalizedPath);
+    const typeName = getTypeName(normalizedPath);
+    const typeEntry = this._definition.types[typeName];
+
+    const codec = this.getCodec<Path>(normalizedPath);
+    const encoded = await encodeRecordValue(codec, request.data, typeEntry?.dataFormats);
+    const result = await this._dwn.records.write({
+      data                   : encoded.data,
+      from                   : request.from,
+      store                  : request.store,
+      parentContextId        : request.parentContextId,
+      published              : request.published,
+      datePublished          : request.datePublished,
+      dateCreated            : request.dateCreated,
+      messageTimestamp       : request.messageTimestamp,
+      recipient              : request.recipient,
+      recipientRolePublicKey : request.recipientRolePublicKey,
+      protocolRole           : request.protocolRole,
+      squash                 : request.squash,
+      tags                   : request.tags,
+      protocol               : this._definition.protocol,
+      protocolPath           : normalizedPath,
+      ...(typeEntry?.schema === undefined ? {} : { schema: typeEntry.schema }),
+      dataFormat             : encoded.dataFormat,
+    });
+
+    requireDwnSuccess('TypedEnbox.records.create', result);
+    if (result.record === undefined) {
+      throw new Error('TypedEnbox.records.create: DWN returned success without a record.');
+    }
+
+    return this.bindCodec<Path>(normalizedPath, result.record);
   }
 
   /**
@@ -922,6 +1271,7 @@ export class TypedEnbox<
    * - {@link TypedEnbox.records.observe | observe(path, request)} — Observe immutable local query snapshots
    * - {@link TypedEnbox.records.count | count(path, request?)} — Count the same matching population
    * - {@link TypedEnbox.records.read | read(path, request)} — Read a single record
+   * - {@link TypedEnbox.records.set | set(path, request)} — Replace one protocol-declared singleton
    * - {@link TypedEnbox.records.delete | delete(path, request)} — Delete a record by ID
    */
   public get records(): {
@@ -930,18 +1280,20 @@ export class TypedEnbox<
       request: TypedCreateRequest<C, Path>,
     ) => Promise<Record<DataForPath<C, Path>>>;
 
-    query: <Path extends ProtocolPaths<D> & string>(
-      path: Path,
-      request?: RecordQuery<D, Path>,
-    ) => Promise<RecordPage<DataForPath<C, Path>>>;
+    query: <
+      Path extends ProtocolPaths<D> & string,
+      Materialization extends RecordMaterialization<D, Path> | undefined = undefined,
+    >(...args: TypedQueryArguments<D, Path, Materialization>) => Promise<
+      RecordPage<SelectedRecordRepresentation<D, C, Path, Materialization>>
+    >;
 
-    observe: <Path extends ProtocolPaths<D> & string>(
+    observe: <
+      Path extends ProtocolPaths<D> & string,
+      Materialization extends RecordMaterialization<D, Path> | undefined = undefined,
+    >(
       path: Path,
-      request: Omit<RecordQuery<D, Path>, 'from' | 'pagination'> & {
-        from?: never;
-        pagination: { limit: number; cursor?: DwnPaginationCursor };
-      },
-    ) => Promise<RecordView<DataForPath<C, Path>>>;
+      request: TypedObserveRequest<D, Path, Materialization>,
+    ) => Promise<RecordView<SelectedRecordRepresentation<D, C, Path, Materialization>>>;
 
     count: <Path extends ProtocolPaths<D> & string>(
       path: Path,
@@ -952,6 +1304,11 @@ export class TypedEnbox<
       path: Path,
       request: TypedReadRequest<D, Path>,
     ) => Promise<Record<DataForPath<C, Path>> | undefined>;
+
+    set: <Path extends SingletonProtocolPaths<D> & string>(
+      path: Path,
+      request: TypedSetRequest<C, Path>,
+    ) => Promise<Record<DataForPath<C, Path>>>;
 
     delete: <Path extends ProtocolPaths<D> & string>(
       path: Path,
@@ -992,47 +1349,16 @@ export class TypedEnbox<
       create: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
         request: TypedCreateRequest<C, Path>,
-      ): Promise<Record<DataForPath<C, Path>>> => {
-        const normalizedPath = normalizePath(path);
-        await this._ensureReady(normalizedPath);
-        const typeName = getTypeName(normalizedPath);
-        const typeEntry = this._definition.types[typeName];
-
-        const codec = this.getCodec<Path>(normalizedPath);
-        const encoded = await encodeRecordValue(codec, request.data, typeEntry?.dataFormats);
-        const result = await this._dwn.records.write({
-          data                   : encoded.data,
-          from                   : request.from,
-          store                  : request.store,
-          parentContextId        : request.parentContextId,
-          published              : request.published,
-          datePublished          : request.datePublished,
-          dateCreated            : request.dateCreated,
-          messageTimestamp       : request.messageTimestamp,
-          recipient              : request.recipient,
-          recipientRolePublicKey : request.recipientRolePublicKey,
-          protocolRole           : request.protocolRole,
-          squash                 : request.squash,
-          tags                   : request.tags,
-          protocol               : this._definition.protocol,
-          protocolPath           : normalizedPath,
-          ...(typeEntry?.schema === undefined ? {} : { schema: typeEntry.schema }),
-          dataFormat             : encoded.dataFormat,
-        });
-
-        requireDwnSuccess('TypedEnbox.records.create', result);
-        if (result.record === undefined) {
-          throw new Error('TypedEnbox.records.create: DWN returned success without a record.');
-        }
-
-        return this.bindCodec<Path>(normalizedPath, result.record);
-      },
+      ): Promise<Record<DataForPath<C, Path>>> => this.createRecord(path, request),
 
       /**
        * Query records at the given protocol path.
        *
        * Returns all matching records as an array of typed records, with
-       * an optional pagination cursor for fetching additional pages.
+       * an optional pagination cursor for fetching additional pages. Set
+       * `materialize` to eagerly decode one explicitly bounded page while
+       * retaining each canonical record handle. Selected direct children must
+       * declare `$recordLimit.max: 1` and are fetched once per child path.
        *
        * @param path - The protocol path to query (e.g. `'notebook'`,
        *   `'notebook/page'`).
@@ -1062,19 +1388,34 @@ export class TypedEnbox<
        * });
        * ```
        */
-      query: async <Path extends ProtocolPaths<D> & string>(
-        path: Path,
-        request?: RecordQuery<D, Path>,
-      ): Promise<RecordPage<DataForPath<C, Path>>> => {
+      query: async <
+        Path extends ProtocolPaths<D> & string,
+        Materialization extends RecordMaterialization<D, Path> | undefined = undefined,
+      >(...args: TypedQueryArguments<D, Path, Materialization>): Promise<
+        RecordPage<SelectedRecordRepresentation<D, C, Path, Materialization>>
+      > => {
+        const [path, request] = args;
         const normalizedPath = normalizePath(path);
+        const materialize = request?.materialize;
+        const childPaths = this.resolveMaterializedChildPaths<Path>(
+          normalizedPath,
+          materialize,
+          request?.pagination?.limit,
+        );
         await this._ensureReady(normalizedPath);
         const compiled = compileRecordQuery(this._definition, normalizedPath, request);
         const result = await this._dwn.records.query(compiled);
         requireDwnSuccess('TypedEnbox.records.query', result);
 
         return {
-          records : result.records.map((record) => this.bindCodec<Path>(normalizedPath, record)),
-          cursor  : result.cursor,
+          records: [...await this.representRecords<Path, Materialization>(
+            normalizedPath,
+            result.records,
+            materialize,
+            childPaths,
+            { from: compiled.from, protocolRole: compiled.protocolRole, within: request?.within },
+          )],
+          cursor: result.cursor,
         };
       },
 
@@ -1085,14 +1426,15 @@ export class TypedEnbox<
        * payloads are wake hints only; every published collection comes from
        * re-running this exact canonical query. A pagination limit is required
        * so the view's retained collection has an explicit resource bound.
+       * Query and observe share the same record materialization path.
        */
-      observe: async <Path extends ProtocolPaths<D> & string>(
+      observe: async <
+        Path extends ProtocolPaths<D> & string,
+        Materialization extends RecordMaterialization<D, Path> | undefined = undefined,
+      >(
         path: Path,
-        request: Omit<RecordQuery<D, Path>, 'from' | 'pagination'> & {
-          from?: never;
-          pagination: { limit: number; cursor?: DwnPaginationCursor };
-        },
-      ): Promise<RecordView<DataForPath<C, Path>>> => {
+        request: TypedObserveRequest<D, Path, Materialization>,
+      ): Promise<RecordView<SelectedRecordRepresentation<D, C, Path, Materialization>>> => {
         this._options.signal?.throwIfAborted();
         const normalizedPath = normalizePath(path);
         if (request?.from !== undefined) {
@@ -1101,16 +1443,41 @@ export class TypedEnbox<
         if (request?.pagination?.limit === undefined) {
           throw new TypeError('RecordView: pagination.limit is required to bound retained records.');
         }
-        const compiled = structuredClone(compileRecordQuery(this._definition, normalizedPath, request));
+        const { materialize, ...query } = request;
+        const childPaths = this.resolveMaterializedChildPaths<Path>(
+          normalizedPath,
+          materialize,
+          query.pagination.limit,
+        );
+        const compiled = structuredClone(compileRecordQuery(this._definition, normalizedPath, query));
+        const additionalWakeFilters = childPaths.map((childPath): RecordsFilter => compileRecordFilter(
+          this._definition,
+          childPath,
+          undefined,
+          undefined,
+          query.within,
+        ));
         await this._ensureReady(normalizedPath);
 
-        return createRecordView<DataForPath<C, Path>>({
-          definition    : this._definition,
-          dwn           : this._dwn,
-          prepareRecord : (record): Record<DataForPath<C, Path>> => this.bindCodec<Path>(normalizedPath, record),
-          query         : compiled,
-          signal        : this._options.signal,
-          sync          : this._options.sync,
+        return createRecordView<SelectedRecordRepresentation<D, C, Path, Materialization>>({
+          additionalWakeFilters,
+          definition         : this._definition,
+          dwn                : this._dwn,
+          materializeRecords : async (records): Promise<readonly SelectedRecordRepresentation<
+            D,
+            C,
+            Path,
+            Materialization
+          >[]> => this.representRecords<Path, Materialization>(
+            normalizedPath,
+            records,
+            materialize as Materialization,
+            childPaths,
+            { protocolRole: compiled.protocolRole, within: query.within },
+          ),
+          query  : compiled,
+          signal : this._options.signal,
+          sync   : this._options.sync,
         });
       },
 
@@ -1190,6 +1557,61 @@ export class TypedEnbox<
         return result.record === undefined
           ? undefined
           : this.bindCodec<Path>(normalizedPath, result.record);
+      },
+
+      /**
+       * Replace the visible value at a protocol-declared singleton path.
+       *
+       * The path must declare `$recordLimit.max: 1`. The current visible
+       * occupant is updated in place; an empty scope creates its first record.
+       * This is deliberately not a generic upsert and does not add locking or
+       * conflict semantics beyond the DWN's deterministic occupant projection.
+       * The caller needs both query and write authorization because selecting
+       * the current occupant precedes the create or update. Delegates must
+       * have a matching Records.Read grant that covers RecordsQuery.
+       */
+      set: async <Path extends SingletonProtocolPaths<D> & string>(
+        path: Path,
+        request: TypedSetRequest<C, Path>,
+      ): Promise<Record<DataForPath<C, Path>>> => {
+        const normalizedPath = normalizePath(path);
+        this.assertSingletonScope(normalizedPath, request.within);
+        if ('from' in request && request.from !== undefined) {
+          throw new TypeError('TypedEnbox.records.set: remote targets are not supported.');
+        }
+        if ('protocolRole' in request && request.protocolRole !== undefined) {
+          throw new TypeError('TypedEnbox.records.set: protocol roles are not supported.');
+        }
+        await this._ensureReady(normalizedPath);
+        const query = compileRecordQuery(this._definition, normalizedPath, {
+          pagination : { limit: 1 },
+          within     : request.within,
+        });
+        const result = await this._dwn.queryRecordsWithRequiredGrant(query);
+        requireDwnSuccess('TypedEnbox.records.set query', result);
+        const existing = result.records[0];
+        if (existing === undefined) {
+          return this.createRecord(path, {
+            data             : request.data,
+            datePublished    : request.datePublished,
+            messageTimestamp : request.messageTimestamp,
+            parentContextId  : request.within,
+            published        : request.published,
+            tags             : request.tags,
+          });
+        }
+
+        const record = this.bindCodec<Path>(normalizedPath, existing);
+        const update: RecordUpdateParams<DataForPath<C, Path>> = {
+          data          : request.data,
+          datePublished : request.datePublished,
+          published     : request.published,
+          tags          : request.tags,
+          timestamp     : request.messageTimestamp,
+        };
+        removeUndefinedProperties(update);
+        await record.update(update);
+        return record;
       },
 
       /**

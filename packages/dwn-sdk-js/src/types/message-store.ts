@@ -19,9 +19,14 @@ export type RecordLimitOccupancy = {
   /**
    * Root of the candidate context subtree. An exact-record request supplies
    * its direct-parent context here so sibling candidates still consume slots.
-   * Omitted for root protocol paths.
+   * Omitted for root protocol paths and selections scoped only by direct parent.
    */
   contextId?: string;
+  /**
+   * Direct-parent groups selected by the Records filter. Including this in
+   * the candidate population keeps each selected group's ranking complete.
+   */
+  parentId?: string | string[];
   max: number;
 };
 

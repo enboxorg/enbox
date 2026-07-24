@@ -347,15 +347,28 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     // this adds 1 to the limit if provided, that way we can check to see if there are additional results and provide a return cursor.
     const queryOptions = MessageStoreLevel.buildQueryOptions(messageSort, pagination);
     const index = await this.index();
-    const results = options?.recordLimit === undefined
-      ? await index.query(tenant, filters, queryOptions, options)
-      : await this.collectRecordLimitPopulation({
-        tenant,
-        filters,
-        queryOptions,
-        recordLimit: options.recordLimit,
-        options,
-      });
+    const recordLimit = options?.recordLimit;
+    let results: IndexedItem[];
+    if (recordLimit === undefined) {
+      results = await index.query(tenant, filters, queryOptions, options);
+    } else {
+      const parentIds = MessageStoreLevel.getRecordLimitParentIds(recordLimit);
+      results = parentIds === undefined
+        ? await this.collectRecordLimitPopulation({
+          tenant,
+          filters,
+          queryOptions,
+          recordLimit,
+          options,
+        })
+        : await index.queryRecordLimitParentGroups(tenant, {
+          candidateFilter : MessageStoreLevel.buildRecordLimitCandidateFilter(recordLimit),
+          filters,
+          max             : recordLimit.max,
+          parentIds,
+          queryOptions,
+        }, options);
+    }
 
     let cursor: PaginationCursor | undefined;
     // checks to see if the returned results are greater than the limit, which would indicate additional results.
@@ -387,8 +400,20 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
 
     const queryOptions = MessageStoreLevel.buildQueryOptions(messageSort);
     const index = await this.index();
-    if (options?.recordLimit === undefined) {
+    const recordLimit = options?.recordLimit;
+    if (recordLimit === undefined) {
       return index.count(tenant, filters, queryOptions, options);
+    }
+
+    const parentIds = MessageStoreLevel.getRecordLimitParentIds(recordLimit);
+    if (parentIds !== undefined) {
+      return index.countRecordLimitParentGroups(tenant, {
+        candidateFilter : MessageStoreLevel.buildRecordLimitCandidateFilter(recordLimit),
+        filters,
+        max             : recordLimit.max,
+        parentIds,
+        sortProperty    : queryOptions.sortProperty,
+      }, options);
     }
 
     let count = 0;
@@ -396,7 +421,7 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
       tenant,
       filters,
       queryOptions,
-      recordLimit: options.recordLimit,
+      recordLimit,
       options,
     })) {
       count++;
@@ -544,7 +569,17 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     if (recordLimit.contextId !== undefined) {
       filter.contextId = { subtree: recordLimit.contextId };
     }
+    if (recordLimit.parentId !== undefined) {
+      filter.parentId = recordLimit.parentId;
+    }
     return filter;
+  }
+
+  private static getRecordLimitParentIds(recordLimit: RecordLimitOccupancy): readonly string[] | undefined {
+    if (recordLimit.parentId === undefined) {
+      return undefined;
+    }
+    return Array.isArray(recordLimit.parentId) ? recordLimit.parentId : [recordLimit.parentId];
   }
 
   /**

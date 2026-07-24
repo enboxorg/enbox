@@ -114,8 +114,8 @@ type RecordCodecBinding<T> = {
 const codecByRecord = new WeakMap<object, RecordCodecBinding<unknown>>();
 
 /** @internal Bind a protocol codec to one canonical Record handle. */
-export function bindRecordCodec<T>(
-  record : Record,
+export function bindRecordCodec<T, Existing = unknown>(
+  record : Record<Existing>,
   codec : RecordCodec<T>,
   dataFormats?: readonly string[],
 ): Record<T> {

@@ -84,7 +84,7 @@ export type DataFormatAtPath<
   : string;
 
 // ---------------------------------------------------------------------------
-// Tag extraction helpers
+// Rule-set lookup
 // ---------------------------------------------------------------------------
 
 /**
@@ -102,6 +102,48 @@ type RuleSetAtPath<R, Path extends string> =
         ? R[Path]
         : never
       : never;
+
+// ---------------------------------------------------------------------------
+// Singleton extraction
+// ---------------------------------------------------------------------------
+
+/** Protocol paths whose literal rule declares `$recordLimit.max: 1`. */
+export type SingletonProtocolPaths<D extends ProtocolDefinition> = {
+  [Path in ProtocolPaths<D>]: RuleSetAtPath<D['structure'], Path> extends {
+    readonly $recordLimit: { readonly max: 1 };
+  }
+    ? Path
+    : never;
+}[ProtocolPaths<D>];
+
+/**
+ * Exact direct-child paths below `Parent` whose literal rule declares
+ * `$recordLimit.max: 1`.
+ *
+ * Descendants deeper than one edge and children with any other limit are
+ * excluded. Definitions widened to the generic `ProtocolDefinition` cannot
+ * prove a singleton constraint; keep protocol definitions as const literals.
+ */
+export type DirectSingletonChildPaths<
+  D extends ProtocolDefinition,
+  Parent extends ProtocolPaths<D>,
+> = RuleSetAtPath<D['structure'], Parent> extends infer ParentRuleSet
+  ? ParentRuleSet extends ProtocolRuleSet
+    ? {
+      [Child in Extract<keyof ParentRuleSet, string>]: Child extends `$${string}`
+        ? never
+        : ParentRuleSet[Child] extends {
+          readonly $recordLimit: { readonly max: 1 };
+        }
+          ? `${Parent}/${Child}`
+          : never;
+    }[Extract<keyof ParentRuleSet, string>]
+    : never
+  : never;
+
+// ---------------------------------------------------------------------------
+// Tag extraction helpers
+// ---------------------------------------------------------------------------
 
 /**
  * Extracts the `$tags` definition for a given protocol path.

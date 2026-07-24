@@ -50,6 +50,7 @@ export type {
   EnboxParams,
   EnboxSessionParams,
   EncodedRecordData,
+  MaterializedRecord,
   RecordCodec,
   RecordCodecValue,
   RecordFilter,

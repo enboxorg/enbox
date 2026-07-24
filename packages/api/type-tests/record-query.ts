@@ -1,5 +1,5 @@
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { RecordCodecValue, RecordQuery, RecordView, TypedEnbox } from '@enbox/api';
+import type { Record, RecordCodecValue, RecordQuery, RecordView, TypedEnbox } from '@enbox/api';
 
 import { defineProtocol, recordCodecs } from '@enbox/api';
 
@@ -84,7 +84,7 @@ const reusableQuery = {
 
 void typed.records.query('note', reusableQuery);
 void typed.records.count('note', reusableQuery);
-const observedNotes: Promise<RecordView<RecordCodecValue<QueryCodecs['note']>>> = typed.records.observe('note', {
+const observedNotes: Promise<RecordView<Record<RecordCodecValue<QueryCodecs['note']>>>> = typed.records.observe('note', {
   ...reusableQuery,
   pagination: { limit: 20 },
 });

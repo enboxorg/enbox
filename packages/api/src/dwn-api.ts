@@ -43,6 +43,8 @@ type RecordsReadScope = {
   contextId?: string;
 };
 
+type MissingRecordsReadGrantPolicy = 'fallback' | 'reject';
+
 /**
  * Represents the request payload for fetching permission requests from a Decentralized Web Node (DWN).
  *
@@ -352,6 +354,7 @@ export class DwnApi {
   private async prepareRecordsReadRequest<T extends ReadLikeRecordsInterface>(
     request: ProcessDwnRequest<T>,
     scope: RecordsReadScope,
+    missingGrantPolicy: MissingRecordsReadGrantPolicy = 'fallback',
   ): Promise<ProcessDwnRequest<T>> {
     if (this.delegateDid === undefined) {
       return request;
@@ -377,13 +380,51 @@ export class DwnApi {
         granteeDid: this.delegateDid,
       };
     } catch (error: unknown) {
-      if (!(error instanceof PermissionGrantNotFoundError)) {
+      if (!(error instanceof PermissionGrantNotFoundError) || missingGrantPolicy === 'reject') {
         throw error;
       }
       // A delegate without a matching owner grant can still request records
       // visible to the delegate itself, including public records.
       return { ...request, author: this.delegateDid };
     }
+  }
+
+  /** Execute one RecordsQuery with the selected delegated-grant policy. */
+  private async queryRecords(
+    request: RecordsQueryRequest,
+    missingGrantPolicy: MissingRecordsReadGrantPolicy,
+  ): Promise<RecordsQueryResponse> {
+    const { from, ...messageParams } = request;
+
+    const agentRequest = await this.prepareRecordsReadRequest({
+      author      : this.connectedDid,
+      messageParams,
+      messageType : DwnInterface.RecordsQuery,
+      target      : from || this.connectedDid,
+    }, {
+      protocol     : messageParams.filter?.protocol,
+      protocolPath : messageParams.filter?.protocolPath,
+      contextId    : messageParams.filter?.contextId,
+    }, missingGrantPolicy);
+
+    const agentResponse = await this.dispatchDwnRequest(agentRequest, from);
+    const { entries = [], status, cursor } = agentResponse.reply;
+    const dataAccess = captureRecordDataAccess(agentRequest, from !== undefined);
+    const records = entries.map((entry) => {
+      const { encodedData, ...recordsWrite } = entry;
+      const recordOptions = {
+        author       : getRecordAuthor(entry),
+        connectedDid : this.connectedDid,
+        delegateDid  : this.delegateDid,
+        dataAccess,
+        protocolRole : agentRequest.messageParams.protocolRole,
+        storedData   : encodedData,
+        ...recordsWrite as DwnMessage[DwnInterface.RecordsWrite]
+      };
+      return new Record(this.agent, recordOptions, this.permissionsApi);
+    });
+
+    return { records, status, cursor };
   }
 
   /** Dispatches one prepared request through the local or remote agent path. */
@@ -434,6 +475,15 @@ export class DwnApi {
   /** Whether this DWN API instance is operating as a delegate. */
   get isDelegate(): boolean {
     return this.delegateDid !== undefined;
+  }
+
+  /**
+   * @internal
+   * Query as the connected identity without falling back to the delegate's
+   * independently visible records when a Records.Read grant is missing.
+   */
+  public queryRecordsWithRequiredGrant(request: RecordsQueryRequest): Promise<RecordsQueryResponse> {
+    return this.queryRecords(request, 'reject');
   }
 
   /**
@@ -850,59 +900,7 @@ export class DwnApi {
        * Query a single or multiple records based on the given filter
        */
       query: async (request: RecordsQueryRequest): Promise<RecordsQueryResponse> => {
-        const { from, ...messageParams } = request;
-
-        const agentRequest = await this.prepareRecordsReadRequest({
-          /**
-           * The `author` is the DID that will sign the message and must be the DID the Enbox app is
-           * connected with and is authorized to access the signing private key of.
-           */
-          author      : this.connectedDid,
-          messageParams,
-          messageType : DwnInterface.RecordsQuery,
-          /**
-           * The `target` is the DID of the DWN tenant under which the query will be executed.
-           * If `from` is provided, the query operation will be executed on a remote DWN.
-           * Otherwise, the local DWN will be queried.
-          */
-          target      : from || this.connectedDid,
-        }, {
-          protocol     : messageParams.filter?.protocol,
-          protocolPath : messageParams.filter?.protocolPath,
-          contextId    : messageParams.filter?.contextId,
-        });
-
-        const agentResponse = await this.dispatchDwnRequest(agentRequest, from);
-
-        const reply = agentResponse.reply;
-        const { entries = [], status, cursor } = reply;
-
-        const dataAccess = captureRecordDataAccess(agentRequest, from !== undefined);
-        const records = entries.map((entry) => {
-          const { encodedData, ...recordsWrite } = entry;
-          const recordOptions = {
-            /**
-             * Extract the `author` DID from the record entry since records may be signed by the
-             * tenant owner or any other entity.
-             */
-            author       : getRecordAuthor(entry),
-            /**
-             * Set the `connectedDid` to currently connected DID so that subsequent calls to
-             * {@link Record} instance methods, such as `record.update()` are executed on the
-             * local DWN even if the record was returned by a query of a remote DWN.
-             */
-            connectedDid : this.connectedDid,
-            delegateDid  : this.delegateDid,
-            dataAccess,
-            protocolRole : agentRequest.messageParams.protocolRole,
-            storedData   : encodedData,
-            ...recordsWrite as DwnMessage[DwnInterface.RecordsWrite]
-          };
-          const record = new Record(this.agent, recordOptions, this.permissionsApi);
-          return record;
-        });
-
-        return { records, status, cursor };
+        return this.queryRecords(request, 'fallback');
       },
 
       /**

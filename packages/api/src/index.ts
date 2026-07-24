@@ -33,7 +33,17 @@ export * from './grant-revocation.js';
 export * from './permission-grant.js';
 export * from './permission-request.js';
 export * from './protocol.js';
-export * from './protocol-types.js';
+export type {
+  DataFormatAtPath,
+  ProtocolPaths,
+  ProtocolPathTypeNames,
+  ProtocolRecordCodecs,
+  RuleSetPaths,
+  TagKeys,
+  TagsAtPath,
+  TypedProtocol,
+  TypeNameAtPath,
+} from './protocol-types.js';
 export * from './read-only-record.js';
 export { recordCodecs, type EncodedRecordData, type RecordCodec, type RecordCodecValue } from './record-codec.js';
 export type { RecordFilter, RecordQuery } from './record-query.js';

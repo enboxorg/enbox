@@ -242,8 +242,9 @@ coordinates writes across browser contexts.
 | `Enbox` | Main app API: `connect()`, `fromSession()`, `anonymous()`, `using()`. |
 | `defineProtocol()` | Creates typed protocol definitions. |
 | `RecordQuery` | Protocol-derived filter, date ordering, and pagination shared by query and count. |
-| `RecordPage<T>` | One page of typed records and its optional continuation cursor. |
-| `RecordView<T>` | Closeable bounded local query materialization with immutable snapshots. |
+| `RecordPage<Item>` | One page of selected record items and its optional continuation cursor. |
+| `RecordView<Item>` | Closeable bounded local query view with immutable snapshots. |
+| `MaterializedRecord<T>` | A decoded value paired with its canonical mutable record handle. |
 | `TypedEnbox` | Protocol-scoped record API returned by `enbox.using()`. |
 | `Record<T>` | Canonical mutable record handle with protocol-derived payload typing. |
 | `DwnResponseError` | Typed-operation error carrying the original non-success DWN status. |

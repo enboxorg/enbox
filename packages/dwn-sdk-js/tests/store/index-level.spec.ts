@@ -150,7 +150,7 @@ describe('IndexLevel', () => {
       expect(entries[0].messageCid).toBe(id3);
     });
 
-    describe('findRecordLimitRankCutoff()', () => {
+    describe('$recordLimit parent groups', () => {
       const protocol = 'https://example.com/record-limit';
       const protocolPath = 'folder/item';
       const candidateFilter: Filter = {
@@ -162,18 +162,24 @@ describe('IndexLevel', () => {
       };
 
       async function putCandidate(input: {
-        messageCid: string;
+        author?: string;
         dateCreated: string;
-        recordId: string;
+        messageCid: string;
+        messageTimestamp?: string;
         parentId?: string;
         protocolPath?: string;
+        published?: boolean;
+        recordId: string;
       }): Promise<void> {
         await testIndex.put(tenant, input.messageCid, {
           ...candidateFilter,
           dateCreated  : input.dateCreated,
           recordId     : input.recordId,
           protocolPath : input.protocolPath ?? protocolPath,
+          ...(input.author !== undefined && { author: input.author }),
+          ...(input.messageTimestamp !== undefined && { messageTimestamp: input.messageTimestamp }),
           ...(input.parentId !== undefined && { parentId: input.parentId }),
+          ...(input.published !== undefined && { published: input.published }),
         });
       }
 
@@ -252,6 +258,101 @@ describe('IndexLevel', () => {
           dateCreated : '2025-01-02T00:00:00.000000Z',
           recordId    : 'root-a',
         }));
+      });
+
+      it('ranks before OR filters and globally sorts, cursors, and limits exact parent ranges', async () => {
+        const candidates = [
+          ['a-occupant', 'parent-a', 'record-a1', '01', '03', 'alice', true],
+          ['a-hidden', 'parent-a', 'record-a2', '02', '05', 'alice', true],
+          ['b-occupant', 'parent-b', 'record-b1', '01', '01', 'alice', false],
+          ['b-hidden', 'parent-b', 'record-b2', '02', '04', 'alice', true],
+          ['filtered-occupant', 'parent-filtered', 'record-filtered-1', '01', '02', 'bob', false],
+          ['filtered-hidden', 'parent-filtered', 'record-filtered-2', '02', '06', 'bob', true],
+        ] as const;
+        for (const [messageCid, parentId, recordId, createdDay, messageDay, author, published] of candidates) {
+          await putCandidate({
+            author,
+            dateCreated      : `2025-01-${createdDay}T00:00:00.000000Z`,
+            messageCid,
+            messageTimestamp : `2025-03-${messageDay}T00:00:00.000000Z`,
+            parentId,
+            published,
+            recordId,
+          });
+        }
+
+        const parentIds = ['parent-a', 'parent-b', 'parent-filtered'];
+        const selectedCandidateFilter: Filter = { ...candidateFilter, parentId: parentIds };
+        const filters: Filter[] = [
+          { ...selectedCandidateFilter, published: true },
+          { ...selectedCandidateFilter, author: 'alice' },
+        ];
+        const input = {
+          candidateFilter : selectedCandidateFilter,
+          filters,
+          max             : 1,
+          parentIds,
+        };
+        const boundedPagingSpy = spyOn(testIndex, 'queryWithBoundedPaging');
+        const inMemoryPagingSpy = spyOn(testIndex, 'queryWithInMemoryPaging');
+        const iteratorPagingSpy = spyOn(testIndex, 'queryWithIteratorPaging');
+
+        try {
+          const firstPage = await testIndex.queryRecordLimitParentGroups(tenant, {
+            ...input,
+            queryOptions: { sortProperty: 'messageTimestamp', limit: 1 },
+          });
+          expect(firstPage.map(({ messageCid }) => messageCid)).toEqual(['b-occupant']);
+
+          const cursor = IndexLevel.createCursorFromItem(firstPage[0], 'messageTimestamp');
+          const secondPage = await testIndex.queryRecordLimitParentGroups(tenant, {
+            ...input,
+            queryOptions: { sortProperty: 'messageTimestamp', cursor, limit: 1 },
+          });
+          expect(secondPage.map(({ messageCid }) => messageCid)).toEqual(['a-occupant']);
+
+          const descending = await testIndex.queryRecordLimitParentGroups(tenant, {
+            ...input,
+            queryOptions: {
+              sortProperty  : 'messageTimestamp',
+              sortDirection : SortDirection.Descending,
+              limit         : 1,
+            },
+          });
+          expect(descending.map(({ messageCid }) => messageCid)).toEqual(['a-occupant']);
+          const maxTwo = await testIndex.queryRecordLimitParentGroups(tenant, {
+            ...input,
+            max          : 2,
+            queryOptions : { sortProperty: 'messageTimestamp' },
+          });
+          expect(maxTwo.map(({ messageCid }) => messageCid)).toEqual([
+            'b-occupant',
+            'a-occupant',
+            'b-hidden',
+            'a-hidden',
+            'filtered-hidden',
+          ]);
+          const scalarCandidateFilter: Filter = { ...candidateFilter, parentId: 'parent-a' };
+          const scalar = await testIndex.queryRecordLimitParentGroups(tenant, {
+            candidateFilter : scalarCandidateFilter,
+            filters         : [scalarCandidateFilter],
+            max             : 1,
+            parentIds       : ['parent-a'],
+            queryOptions    : { sortProperty: 'messageTimestamp' },
+          });
+          expect(scalar.map(({ messageCid }) => messageCid)).toEqual(['a-occupant']);
+          expect(await testIndex.countRecordLimitParentGroups(tenant, {
+            ...input,
+            sortProperty: 'messageTimestamp',
+          })).toBe(2);
+          expect(boundedPagingSpy).toHaveBeenCalledTimes(0);
+          expect(inMemoryPagingSpy).toHaveBeenCalledTimes(0);
+          expect(iteratorPagingSpy).toHaveBeenCalledTimes(0);
+        } finally {
+          boundedPagingSpy.mockRestore();
+          inMemoryPagingSpy.mockRestore();
+          iteratorPagingSpy.mockRestore();
+        }
       });
     });
 
@@ -1512,6 +1613,7 @@ describe('IndexLevel', () => {
       const cursor = IndexLevel.createCursorFromLastArrayItem([], 'someProperty');
       expect(cursor).toBeUndefined();
     });
+
     it('returns a PaginationCursor for the last item given a valid sort property', async () => {
       const items:IndexedItem[] = [{
         messageCid : 'cid-1',

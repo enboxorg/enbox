@@ -1,18 +1,21 @@
-import type { KeyValues } from '../../src/types/query-types.js';
+import type { GenericMessage } from '../../src/types/message-types.js';
 import type { Wake } from '../../src/index.js';
 import type { CreateLevelDatabaseOptions, LevelDatabase } from '../../src/store/level-wrapper.js';
+import type { Filter, KeyValues } from '../../src/types/query-types.js';
 
 import { createLevelDatabase } from '../../src/store/level-wrapper.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { EncryptionProtocol } from '../../src/protocols/encryption.js';
 import { EventEmitterWakePublisher } from '../../src/event-stream/event-emitter-wake-publisher.js';
+import { IndexLevel } from '../../src/store/index-level.js';
 import { Message } from '../../src/core/message.js';
 import { MessageStoreLevel } from '../../src/store/message-store-level.js';
 import { PermissionsProtocol } from '../../src/protocols/permissions.js';
 import { ProtocolsConfigureHandler } from '../../src/handlers/protocols-configure.js';
 import { Replication } from '../../src/utils/replication.js';
+import { SortDirection } from '../../src/types/query-types.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 
 const ZERO_FINGERPRINT = '0'.repeat(64);
 
@@ -515,6 +518,96 @@ describe('MessageStoreLevel Test Suite', () => {
             .toBe(await messageStore.fingerprint(alice.did, [scope]));
         }
       });
+    });
+  });
+
+  describe('selected record-limit parent groups', () => {
+    it('dispatches scalar and array selections through exact-parent query and count paths', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const protocol = 'https://example.com/selected-record-limit';
+      const protocolPath = 'folder/item';
+      const storedByName = new Map<string, Awaited<ReturnType<typeof generateStoredMessage>>>();
+      const candidates = [
+        ['a-occupant', 'parent-a', '2025-01-01T00:00:00.000000Z', '2025-03-03T00:00:00.000000Z'],
+        ['a-hidden', 'parent-a', '2025-01-02T00:00:00.000000Z', '2025-03-04T00:00:00.000000Z'],
+        ['b-occupant', 'parent-b', '2025-01-01T00:00:00.000000Z', '2025-03-01T00:00:00.000000Z'],
+        ['b-hidden', 'parent-b', '2025-01-02T00:00:00.000000Z', '2025-03-02T00:00:00.000000Z'],
+      ] as const;
+
+      for (const [name, parentId, dateCreated, messageTimestamp] of candidates) {
+        const stored = await generateStoredMessage({ protocol });
+        storedByName.set(name, stored);
+        await messageStore.put(alice.did, stored.message, {
+          ...stored.indexes,
+          dateCreated,
+          messageTimestamp,
+          parentId,
+          protocolPath,
+          recordId: stored.message.recordId,
+        });
+      }
+
+      const selectedParentIds = ['parent-a', 'parent-b'];
+      const filter: Filter = {
+        interface         : 'Records',
+        method            : 'Write',
+        isLatestBaseState : true,
+        protocol,
+        protocolPath,
+        parentId          : selectedParentIds,
+      };
+      const recordLimit = {
+        protocol,
+        protocolPath,
+        parentId : selectedParentIds,
+        max      : 1,
+      };
+      const querySpy = spyOn(IndexLevel.prototype, 'queryRecordLimitParentGroups');
+      const countSpy = spyOn(IndexLevel.prototype, 'countRecordLimitParentGroups');
+      const messageCids = async (messages: GenericMessage[]): Promise<string[]> =>
+        Promise.all(messages.map((message) => Message.getCid(message)));
+
+      try {
+        const firstPage = await messageStore.query(
+          alice.did,
+          [filter],
+          { messageTimestamp: SortDirection.Ascending },
+          { limit: 1 },
+          { recordLimit },
+        );
+        expect(await messageCids(firstPage.messages))
+          .toEqual([storedByName.get('b-occupant')!.messageCid]);
+        expect(firstPage.cursor).toBeDefined();
+
+        const secondPage = await messageStore.query(
+          alice.did,
+          [filter],
+          { messageTimestamp: SortDirection.Ascending },
+          { cursor: firstPage.cursor, limit: 1 },
+          { recordLimit },
+        );
+        expect(await messageCids(secondPage.messages))
+          .toEqual([storedByName.get('a-occupant')!.messageCid]);
+        expect(secondPage.cursor).toBeUndefined();
+        expect(await messageStore.count(
+          alice.did,
+          [filter],
+          { messageTimestamp: SortDirection.Ascending },
+          { recordLimit },
+        )).toBe(2);
+
+        const scalarFilter: Filter = { ...filter, parentId: 'parent-a' };
+        const scalar = await messageStore.query(alice.did, [scalarFilter], undefined, undefined, {
+          recordLimit: { ...recordLimit, parentId: 'parent-a' },
+        });
+        expect(await messageCids(scalar.messages))
+          .toEqual([storedByName.get('a-occupant')!.messageCid]);
+        expect(querySpy).toHaveBeenCalledTimes(3);
+        expect(countSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        querySpy.mockRestore();
+        countSpy.mockRestore();
+      }
     });
   });
 

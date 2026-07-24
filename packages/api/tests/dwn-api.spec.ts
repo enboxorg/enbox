@@ -592,6 +592,15 @@ describe('DwnApi', () => {
         expect(allRecords).toBeDefined();
         expect(allRecords).toHaveLength(2);
         expect(allRecords.map(r => r.id)).toEqual(expect.arrayContaining([publicRecord.id, privateRecord.id]));
+
+        // Operations that need an authoritative owner view can reject the
+        // missing grant instead of silently using the delegate-visible subset.
+        await expect(delegateDwn.queryRecordsWithRequiredGrant({
+          from   : aliceDid.uri,
+          filter : {
+            protocol: aliceOtherProtocol.definition.protocol,
+          },
+        })).rejects.toBeInstanceOf(PermissionGrantNotFoundError);
       });
 
     });

@@ -280,21 +280,32 @@ export class Records {
   }
 
   /**
-   * Nested protocol-path queries must select the target path itself or one of
-   * its ancestor contexts. An omitted, malformed, or deeper context cannot
-   * identify a bounded subtree of the selected protocol path.
+   * Nested protocol-path collection requests must select one or more direct
+   * parents, the target path itself, or one of its ancestor contexts. A
+   * bounded path-wide subscription may omit that scope because its initial
+   * page is explicitly capped; record-limited results still project each
+   * direct-parent population independently.
    */
-  public static validateNestedProtocolPathQueryScope(
+  public static validateNestedProtocolPathScope(
     filter: RecordsFilter,
     errorCode: DwnErrorCode,
     operationName: string,
+    allowBoundedPathWideSelection = false,
   ): void {
-    const { contextId, protocolPath } = filter;
+    const { contextId, parentId, protocolPath } = filter;
     if (!protocolPath?.includes('/')) {
       return;
     }
 
     if (isEncryptionControlPath(protocolPath)) {
+      return;
+    }
+
+    if (parentId !== undefined && contextId === undefined) {
+      return;
+    }
+
+    if (contextId === undefined && allowBoundedPathWideSelection) {
       return;
     }
 
@@ -310,7 +321,7 @@ export class Records {
 
     throw new DwnError(
       errorCode,
-      `${operationName} for nested protocol path '${protocolPath}' must include a contextId selecting that path or one of its ancestors`
+      `${operationName} for nested protocol path '${protocolPath}' must include parentId or a contextId selecting that path or one of its ancestors`
     );
   }
 

@@ -69,6 +69,22 @@ export type {
 export type { RecordData } from './record-data.js';
 
 /**
+ * A record handle paired with its decoded application value.
+ *
+ * Materialization does not replace the canonical {@link Record} handle. The
+ * handle remains available for updates, deletes, and raw data access while
+ * `value` captures the decoded value for this materialization. Mutating the
+ * retained record handle does not mutate that captured value; rematerialize
+ * the query or view to obtain a new value snapshot.
+ *
+ * @typeParam T - The decoded application value.
+ */
+export type MaterializedRecord<T = unknown> = Readonly<{
+  record: Record<T>;
+  value: T;
+}>;
+
+/**
  * The shallow plain-object update accepted by {@link Record.patch}.
  *
  * Optional fields may be set to `null` to delete them. Required fields cannot

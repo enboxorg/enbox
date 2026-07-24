@@ -76,7 +76,18 @@
       "type": "string"
     },
     "parentId": {
-      "type": "string"
+      "oneOf": [{
+        "type": "string",
+        "minLength": 1
+      },{
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "minItems": 1,
+        "uniqueItems": true
+      }]
     },
     "published": {
       "type": "boolean"
