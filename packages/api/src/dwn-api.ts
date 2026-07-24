@@ -5,7 +5,6 @@
 /// <reference types="@enbox/dwn-sdk-js" />
 
 import type { DwnSubscriptionHandler } from '@enbox/dwn-clients';
-import type { RecordDataAccess } from './record-types.js';
 
 import type {
   AudienceKeyDeliveryOutcome,
@@ -24,6 +23,7 @@ import type {
 
 import type { MessagesSubscribeReply, RecordsSubscribeReply } from '@enbox/dwn-sdk-js';
 
+import { captureRecordDataAccess } from './record-data-access.js';
 import { dataToBlob } from './utils.js';
 import { PermissionGrant } from './permission-grant.js';
 import { PermissionRequest } from './permission-request.js';
@@ -164,10 +164,12 @@ export type RecordsQueryRequest = Omit<DwnMessageParams[DwnInterface.RecordsQuer
 /**
  * Represents the response from a records query operation, including status, records, and an
  * optional pagination cursor.
+ *
+ * @typeParam T - The payload type exposed by each returned record.
  */
-export type RecordsQueryResponse = DwnResponseStatus & {
+export type RecordsQueryResponse<T = unknown> = DwnResponseStatus & {
   /** Array of records matching the query. */
-  records: Record[];
+  records: Record<T>[];
 
   /** If there are additional results, the messageCid of the last record will be returned as a pagination cursor. */
   cursor?: DwnPaginationCursor;
@@ -191,10 +193,12 @@ export type RecordsReadRequest = Omit<DwnMessageParams[DwnInterface.RecordsRead]
  *
  * When the status code is not in the 2xx range (e.g. 401, 404), `record` will be `undefined`.
  * Always check `status.code` before accessing the record.
+ *
+ * @typeParam T - The payload type exposed by the returned record.
  */
-export type RecordsReadResponse = DwnResponseStatus & {
+export type RecordsReadResponse<T = unknown> = DwnResponseStatus & {
   /** The record retrieved by the read operation, or `undefined` if the request failed. */
-  record?: Record;
+  record: Record<T> | undefined;
 };
 
 /**
@@ -309,15 +313,17 @@ export type RecordsWriteRequest = Omit<
  * record was created or updated, the `record` property will contain an instance of the `Record`
  * class representing the written record. This allows the caller to access the written record's
  * details and perform additional operations using the provided {@link Record} instance methods.
+ *
+ * @typeParam T - The payload type exposed by the returned record.
  */
-export type RecordsWriteResponse = DwnResponseStatus & {
+export type RecordsWriteResponse<T = unknown> = DwnResponseStatus & {
   /**
    * The `Record` instance representing the record that was successfully written to the
    * DWN as a result of the write operation, or `undefined` if the write failed.
    *
    * Always check `status.code` before accessing the record.
    */
-  record?: Record;
+  record: Record<T> | undefined;
 
   /**
    * Outcome of role-audience key delivery provisioning, forwarded from the agent. Present only
@@ -339,21 +345,6 @@ export type RecordsWriteResponse = DwnResponseStatus & {
  * Interface to interact with DWN Records and Protocols
  */
 export class DwnApi {
-  /** Captures the exact authorization and routing context used for record data access. */
-  private static getRecordDataAccess<T extends DwnInterface>(
-    request: ProcessDwnRequest<T>,
-    remote: boolean,
-  ): RecordDataAccess {
-    const messageParams = request.messageParams as { delegatedGrant?: RecordDataAccess['delegatedGrant'] } | undefined;
-    return {
-      author : request.author,
-      remote,
-      target : request.target,
-      ...(request.granteeDid === undefined ? {} : { granteeDid: request.granteeDid }),
-      ...(messageParams?.delegatedGrant === undefined ? {} : { delegatedGrant: messageParams.delegatedGrant }),
-    };
-  }
-
   /**
    * Applies the delegate authorization policy shared by authenticated
    * record count, query, read, and subscription requests.
@@ -886,7 +877,7 @@ export class DwnApi {
         const reply = agentResponse.reply;
         const { entries = [], status, cursor } = reply;
 
-        const dataAccess = DwnApi.getRecordDataAccess(agentRequest, from !== undefined);
+        const dataAccess = captureRecordDataAccess(agentRequest, from !== undefined);
         const records = entries.map((entry) => {
           const { encodedData, ...recordsWrite } = entry;
           const recordOptions = {
@@ -901,11 +892,6 @@ export class DwnApi {
              * local DWN even if the record was returned by a query of a remote DWN.
              */
             connectedDid : this.connectedDid,
-            /**
-             * Retain the remote tenant as provenance. `dataAccess` below carries the exact
-             * routing and authorization context for any later backing read.
-             */
-            remoteOrigin : from,
             delegateDid  : this.delegateDid,
             dataAccess,
             protocolRole : agentRequest.messageParams.protocolRole,
@@ -951,7 +937,7 @@ export class DwnApi {
 
         let record: Record | undefined;
         if (200 <= status.code && status.code <= 299) {
-          const dataAccess = DwnApi.getRecordDataAccess(agentRequest, from !== undefined);
+          const dataAccess = captureRecordDataAccess(agentRequest, from !== undefined);
           const recordOptions = {
             /**
              * Extract the `author` DID from the record since records may be signed by the
@@ -964,11 +950,6 @@ export class DwnApi {
              * local DWN even if the record was read from a remote DWN.
              */
             connectedDid : this.connectedDid,
-            /**
-             * Retain the remote tenant as provenance. `dataAccess` below carries the exact
-             * routing and authorization context if the data stream must be opened again.
-             */
-            remoteOrigin : from,
             delegateDid  : this.delegateDid,
             dataAccess,
             storedData   : entry.data,
@@ -1097,12 +1078,7 @@ export class DwnApi {
              * local DWN.
              */
             connectedDid : this.connectedDid,
-            /**
-             * Retain the remote target as provenance. `dataAccess` below is authoritative for
-             * subsequent backing reads from the tenant that accepted the write.
-             */
-            remoteOrigin : from,
-            dataAccess   : DwnApi.getRecordDataAccess(dwnRequestParams, from !== undefined),
+            dataAccess   : captureRecordDataAccess(dwnRequestParams, from !== undefined),
             /**
              * Stamp the invoked role so follow-up operations on the returned record (data
              * re-reads, updates) carry the same authorization the write used — mirroring how
