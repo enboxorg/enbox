@@ -1,4 +1,4 @@
-import type { SinonStub } from 'sinon';
+import type { SinonStub, SinonStubbedInstance } from 'sinon';
 
 import type { ProgressToken } from '@enbox/dwn-sdk-js';
 
@@ -9,6 +9,7 @@ import sinon from 'sinon';
 
 import { afterEach, describe, expect, it } from 'bun:test';
 
+import { SyncFeedConvergenceManager } from '../src/sync-feed-convergence-manager.js';
 import { SyncLinkController } from '../src/sync-link-controller.js';
 import { SyncLinkRecoveryCoordinator } from '../src/sync-link-recovery-coordinator.js';
 import { SyncRuntime } from '../src/sync-runtime.js';
@@ -22,6 +23,7 @@ type RecoveryOperationStubs = {
 type RecoveryFixture = {
   controllers: Map<string, SyncLinkController>;
   coordinator: SyncLinkRecoveryCoordinator;
+  feedConvergenceManager: SinonStubbedInstance<SyncFeedConvergenceManager>;
   getRuntime(): SyncRuntime;
   /** Simulate a runtime transition by replacing the current runtime. */
   replaceRuntime(): void;
@@ -62,13 +64,13 @@ function createFixture(options: {
   let runtime = new SyncRuntime();
   const controllers = new Map<string, SyncLinkController>();
   const taskRunner = sinon.stub().callsFake(async (operation: () => Promise<void>) => operation());
+  const feedConvergenceManager = sinon.createStubInstance(SyncFeedConvergenceManager);
+  feedConvergenceManager.handleVerifiedDivergence.resolves(false);
   const operations: RecoveryOperationStubs = {
     captureIdentityTaskRunner : sinon.stub().returns(taskRunner),
-    clearConvergence          : sinon.stub(),
     emitEvent                 : sinon.stub(),
     getController             : sinon.stub().callsFake((linkKey: string) => controllers.get(linkKey)),
     getRuntime                : sinon.stub().callsFake(() => runtime),
-    handleDivergence          : sinon.stub().resolves(false),
     markPullPending           : sinon.stub().callsFake((controller: SyncLinkController) => {
       controller.markPullPending();
     }),
@@ -79,10 +81,11 @@ function createFixture(options: {
     setStatus            : sinon.stub().callsFake(async (state, status) => { state.status = status; }),
     warn                 : sinon.stub(),
   };
-  const coordinator = new SyncLinkRecoveryCoordinator({ ...options, operations });
+  const coordinator = new SyncLinkRecoveryCoordinator({ ...options, feedConvergenceManager, operations });
   return {
     controllers,
     coordinator,
+    feedConvergenceManager,
     getRuntime     : (): SyncRuntime => runtime,
     replaceRuntime : (): void => {
       runtime.dispose();
@@ -119,6 +122,12 @@ function runWake(
   kind: 'pull' | 'push',
 ): Promise<void> {
   controller.executor.request(kind);
+  return fixture.coordinator.resume(controller);
+}
+
+/** Exercise full reconciliation through the production mark-and-resume path. */
+function runReconcile(fixture: RecoveryFixture, controller: SyncLinkController): Promise<void> {
+  controller.executor.request('reconcile');
   return fixture.coordinator.resume(controller);
 }
 
@@ -516,17 +525,17 @@ describe('SyncLinkRecoveryCoordinator', () => {
       converged: true,
     });
 
-    await fixture.coordinator.reconcile(controller);
-    expect(fixture.operations.clearConvergence.calledOnceWithExactly(LINK_KEY)).toBe(true);
+    await runReconcile(fixture, controller);
+    expect(fixture.feedConvergenceManager.clearLink.calledOnceWithExactly(LINK_KEY)).toBe(true);
     expect(fixture.operations.emitEvent.calledWithMatch({ type: 'reconcile:completed' })).toBe(true);
     expect(fixture.operations.reconcileTarget.firstCall.args[0]).toBe(controller);
     expect(fixture.operations.reconcileTarget.firstCall.args[2]).toEqual({ verifyConvergence: true });
     expect(fixture.operations.reconcileTarget.firstCall.args[3]()).toBe(true);
 
     fixture.operations.reconcileTarget.onSecondCall().resolves({ converged: false });
-    await fixture.coordinator.reconcile(controller);
-    expect(fixture.operations.handleDivergence.calledOnce).toBe(true);
-    expect(fixture.operations.handleDivergence.firstCall.args).toEqual([
+    await runReconcile(fixture, controller);
+    expect(fixture.feedConvergenceManager.handleVerifiedDivergence.calledOnce).toBe(true);
+    expect(fixture.feedConvergenceManager.handleVerifiedDivergence.firstCall.args).toEqual([
       expect.objectContaining({ did: DID, dwnUrl: REMOTE }),
       { converged: false },
       { link: state, linkKey: LINK_KEY },
@@ -534,13 +543,13 @@ describe('SyncLinkRecoveryCoordinator', () => {
 
     const failure = { cid: 'push-cid', detail: 'retry' };
     fixture.operations.reconcileTarget.onThirdCall().resolves({ pushFailures: [failure] });
-    await fixture.coordinator.reconcile(controller);
+    await runReconcile(fixture, controller);
     expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(true);
     expect(fixture.operations.emitEvent.calledWithMatch({
       type   : 'reconcile:needed',
       reason : 'push-retryable',
     })).toBe(true);
-    expect(fixture.operations.handleDivergence.calledOnce).toBe(true);
+    expect(fixture.feedConvergenceManager.handleVerifiedDivergence.calledOnce).toBe(true);
     controller.deactivate();
     await clock.runAllAsync();
   });
@@ -622,10 +631,10 @@ describe('SyncLinkRecoveryCoordinator', () => {
       deferredPull: { messageCid: 'deferred-cid', detail: 'dependency unavailable' },
     });
 
-    await fixture.coordinator.reconcile(controller);
+    await runReconcile(fixture, controller);
 
-    expect(fixture.operations.handleDivergence.notCalled).toBe(true);
-    expect(fixture.operations.clearConvergence.notCalled).toBe(true);
+    expect(fixture.feedConvergenceManager.handleVerifiedDivergence.notCalled).toBe(true);
+    expect(fixture.feedConvergenceManager.clearLink.notCalled).toBe(true);
     expect(fixture.operations.emitEvent.calledWithMatch({ type: 'reconcile:completed' })).toBe(false);
   });
 
@@ -676,7 +685,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
       type   : 'reconcile:needed',
       reason : 'push-retryable',
     })).toBe(true);
-    expect(fixture.operations.clearConvergence.notCalled).toBe(true);
+    expect(fixture.feedConvergenceManager.clearLink.notCalled).toBe(true);
     expect(fixture.operations.emitEvent.calledWithMatch({ type: 'reconcile:completed' })).toBe(false);
     await clock.tickAsync(4999);
     expect(fixture.operations.reconcileTarget.calledOnce).toBe(true);
@@ -696,7 +705,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     fixture.operations.reconcileTarget.onFirstCall().rejects(new Error('offline'));
     fixture.operations.reconcileTarget.onSecondCall().resolves({ converged: true });
 
-    await fixture.coordinator.reconcile(controller);
+    await runReconcile(fixture, controller);
     expect(fixture.operations.reportError.calledOnce).toBe(true);
     expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(true);
     await clock.tickAsync(4999);
@@ -714,7 +723,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
       await release.promise;
       throw new Error('late failure');
     });
-    const reconciling = fixture.coordinator.reconcile(controller);
+    const reconciling = runReconcile(fixture, controller);
     await started.promise;
     controller.deactivate();
     release.resolve();
@@ -765,7 +774,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     });
     await gateStarted.promise;
 
-    const reconciling = fixture.coordinator.reconcile(controller);
+    const reconciling = runReconcile(fixture, controller);
     const repairing = runRepair(fixture, controller);
     releaseGate.resolve();
     await Promise.all([gate, reconciling, repairing]);
@@ -847,7 +856,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
       throw new Error('socket closed by pause');
     });
 
-    const reconciling = fixture.coordinator.reconcile(controller);
+    const reconciling = runReconcile(fixture, controller);
     await started.promise;
     await fixture.coordinator.transitionToPaused(LINK_KEY, state);
     release.resolve();
@@ -1122,9 +1131,9 @@ describe('SyncLinkRecoveryCoordinator', () => {
     });
     fixture.operations.reconcileTarget.resolves({ converged: true });
 
-    const first = fixture.coordinator.reconcile(controller);
+    const first = runReconcile(fixture, controller);
     await snapshotTaken.promise;
-    const second = fixture.coordinator.reconcile(controller);
+    const second = runReconcile(fixture, controller);
     releasePass.resolve();
     await Promise.all([first, second]);
 
@@ -1142,7 +1151,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const controller = activate(fixture);
 
     fixture.coordinator.scheduleReconcile(controller, 5000);
-    await fixture.coordinator.reconcile(controller);
+    await runReconcile(fixture, controller);
 
     expect(fixture.getRuntime().hasTimer(RECONCILE_TIMER_KEY)).toBe(false);
     await clock.tickAsync(5000);
@@ -1161,7 +1170,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
       return { converged: true };
     });
 
-    const reconciling = fixture.coordinator.reconcile(controller);
+    const reconciling = runReconcile(fixture, controller);
     await passStarted.promise;
     fixture.coordinator.scheduleReconcile(controller, 5000);
     releasePass.resolve();
@@ -1185,13 +1194,13 @@ describe('SyncLinkRecoveryCoordinator', () => {
     });
     fixture.operations.reconcileTarget.resolves({ converged: true });
 
-    const reconciling = fixture.coordinator.reconcile(controller);
+    const reconciling = runReconcile(fixture, controller);
     await snapshotTaken.promise;
     // Two signals land after the running pass queried the remote feed: they
     // are news it cannot have seen, and must coalesce into exactly one
     // trailing pass rather than being absorbed or each running its own.
-    const second = fixture.coordinator.reconcile(controller);
-    const third = fixture.coordinator.reconcile(controller);
+    const second = runReconcile(fixture, controller);
+    const third = runReconcile(fixture, controller);
     releasePass.resolve();
     await Promise.all([reconciling, second, third]);
 

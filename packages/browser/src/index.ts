@@ -55,6 +55,9 @@ export type {
   RecordViewSnapshot,
   RecordViewState,
   RecordsCountResponse,
+  RecordsQueryResponse,
+  RecordsReadResponse,
+  RecordsWriteResponse,
 } from '@enbox/api';
 
 // ─── Re-exports from @enbox/auth ────────────────────────────────

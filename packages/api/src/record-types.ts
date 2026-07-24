@@ -121,8 +121,6 @@ export type RecordOptions = DwnMessage[DwnInterface.RecordsWrite | DwnInterface.
   /** The protocol role under which this record is written. */
   protocolRole?: string;
 
-  /** The remote tenant DID if the record was queried or read from a remote DWN. */
-  remoteOrigin?: string;
 };
 
 /**
@@ -153,9 +151,9 @@ export type RecordUpdateParams<T = unknown> = {
    * that was merely *read* from a remote tenant still updates **locally**
    * unless `from` is passed explicitly.
    *
-   * A successful cross-tenant update stamps the returned record with the
-   * explicit `from` origin so subsequent data re-reads target that tenant.
-   * A local update clears any origin inherited from an earlier remote read.
+   * A successful update captures the request's data-access context. Remote
+   * updates therefore re-read lazily from the explicit `from` tenant, while a
+   * local update replaces any remote read context with local routing.
    *
    * Remote-path boundaries:
    * - {@link RecordUpdateParams.recipientRolePublicKey} is NOT supported with

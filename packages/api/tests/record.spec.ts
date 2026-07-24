@@ -54,8 +54,7 @@ describe('Record', () => {
         remote : true,
         target : aliceDid.uri,
       },
-      initialWrite : deletedRecord.initialWrite,
-      remoteOrigin : aliceDid.uri,
+      initialWrite: deletedRecord.initialWrite,
       ...deletedRecord.rawMessage,
     });
   }
@@ -571,8 +570,7 @@ describe('Record', () => {
           remote : true,
           target : aliceDid.uri,
         },
-        remoteOrigin : aliceDid.uri,
-        delegateDid  : delegateDid.uri,
+        delegateDid: delegateDid.uri,
         ...aliceRecord!.rawMessage,
       };
 

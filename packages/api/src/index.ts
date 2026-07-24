@@ -25,7 +25,12 @@
 export * from './connection-store.js';
 export * from './define-protocol.js';
 export * from './did-api.js';
-export type { RecordsCountResponse } from './dwn-api.js';
+export type {
+  RecordsCountResponse,
+  RecordsQueryResponse,
+  RecordsReadResponse,
+  RecordsWriteResponse,
+} from './dwn-api.js';
 export * from './dwn-reader-api.js';
 export * from './enbox.js';
 export type * from './enbox-types.js';

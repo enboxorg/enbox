@@ -39,9 +39,7 @@ export type SyncQuotaPushResultOptions = {
 export interface SyncQuotaManagerOperations {
   clearDeadLetterForTenant(target: SyncTarget, messageCid: string): Promise<void>;
 
-  collectLocalFeedCids(target: SyncTarget): Promise<Set<string> | undefined>;
-
-  collectRemoteFeedCids(target: SyncTarget): Promise<Set<string> | undefined>;
+  collectFeedCids(target: SyncTarget, source: 'local' | 'remote'): Promise<Set<string> | undefined>;
 
   getLocalMessage(target: SyncTarget, messageCid: string): Promise<SyncMessageEntry | undefined>;
 
@@ -290,8 +288,8 @@ export class SyncQuotaManager {
     }
 
     const [localCids, remoteCids] = await Promise.all([
-      this._operations.collectLocalFeedCids(target),
-      this._operations.collectRemoteFeedCids(target),
+      this._operations.collectFeedCids(target, 'local'),
+      this._operations.collectFeedCids(target, 'remote'),
     ]);
     if (localCids === undefined || remoteCids === undefined) { return false; }
 
