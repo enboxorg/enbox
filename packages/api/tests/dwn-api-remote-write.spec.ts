@@ -16,6 +16,7 @@ import photosProtocolDefinition from './fixtures/protocol-definitions/photos.jso
 
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
+import { DwnResponseError } from '../src/dwn-response-error.js';
 import { Enbox } from '../src/enbox.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
@@ -422,7 +423,7 @@ describe('cross-tenant writes (#973)', () => {
     });
   });
 
-  describe('delegated-grant writes with from', () => {
+  describe('delegated remote access', () => {
     let delegateHarness: PlatformAgentTestHarness;
 
     beforeAll(async () => {
@@ -440,6 +441,43 @@ describe('cross-tenant writes (#973)', () => {
       await delegateHarness.clearStorage();
       await delegateHarness.closeStorage();
     });
+
+    async function createDelegatedEnbox(
+      definition: DwnProtocolDefinition,
+      permissions: Array<'delete' | 'read' | 'write'>,
+    ): Promise<{ delegateDid: string; enbox: Enbox }> {
+      const delegatedBearerDid = await testHarness.agent.did.create({ store: false, method: 'jwk' });
+      const delegatePortableDid = await delegatedBearerDid.export();
+      const grantRequest = WalletConnect.createPermissionRequestForProtocol({ definition, permissions });
+      const grants = await createPermissionGrants(
+        aliceDid.uri, delegatedBearerDid.uri, testHarness.agent, grantRequest.permissionScopes,
+      );
+
+      await delegateHarness.agent.identity.import({ portableIdentity: {
+        portableDid : delegatePortableDid,
+        metadata    : {
+          connectedDid : aliceDid.uri,
+          name         : 'Device',
+          uri          : delegatePortableDid.uri,
+          tenant       : delegateHarness.agent.agentDid.uri,
+        },
+      } });
+      await processConnectedGrants({
+        grants,
+        connectedDid : aliceDid.uri,
+        delegateDid  : delegatePortableDid.uri,
+        agent        : delegateHarness.agent as EnboxUserAgent,
+      });
+
+      return {
+        delegateDid : delegatePortableDid.uri,
+        enbox       : new Enbox({
+          agent        : delegateHarness.agent,
+          connectedDid : aliceDid.uri,
+          delegateDid  : delegatePortableDid.uri,
+        }),
+      };
+    }
 
     it('should dispatch a delegated-grant write to the owner\'s remote DWN', async () => {
       // Alice installs a simple notes protocol locally and on her remote DWN.
@@ -463,37 +501,7 @@ describe('cross-tenant writes (#973)', () => {
 
       // Alice grants a device did:jwk delegated write/read for the protocol;
       // the DELEGATE agent (separate harness, no Alice keys) imports it.
-      const delegatedBearerDid = await testHarness.agent.did.create({ store: false, method: 'jwk' });
-      const delegatePortableDid = await delegatedBearerDid.export();
-      const grantRequest = WalletConnect.createPermissionRequestForProtocol({
-        definition  : notesProtocol,
-        permissions : ['write', 'read'],
-      });
-      const grants = await createPermissionGrants(
-        aliceDid.uri, delegatedBearerDid.uri, testHarness.agent, grantRequest.permissionScopes,
-      );
-
-      await delegateHarness.agent.identity.import({ portableIdentity: {
-        portableDid : delegatePortableDid,
-        metadata    : {
-          connectedDid : aliceDid.uri,
-          name         : 'Device',
-          uri          : delegatePortableDid.uri,
-          tenant       : delegateHarness.agent.agentDid.uri,
-        },
-      } });
-      await processConnectedGrants({
-        grants,
-        connectedDid : aliceDid.uri,
-        delegateDid  : delegatePortableDid.uri,
-        agent        : delegateHarness.agent as EnboxUserAgent,
-      });
-
-      const enbox = new Enbox({
-        agent        : delegateHarness.agent,
-        connectedDid : aliceDid.uri,
-        delegateDid  : delegatePortableDid.uri,
-      });
+      const { delegateDid, enbox } = await createDelegatedEnbox(notesProtocol, ['write', 'read']);
 
       const sendSpy = sinon.spy(delegateHarness.agent, 'sendDwnRequest');
 
@@ -516,7 +524,7 @@ describe('cross-tenant writes (#973)', () => {
       expect(sendSpy.callCount).toBe(1);
       const sentRequest = sendSpy.firstCall.args[0];
       expect(sentRequest.target).toBe(aliceDid.uri);
-      expect(sentRequest.granteeDid).toBe(delegatePortableDid.uri);
+      expect(sentRequest.granteeDid).toBe(delegateDid);
       expect((sentRequest.messageParams as { delegatedGrant?: unknown }).delegatedGrant).toBeDefined();
 
       // Verify on Alice's remote DWN: the record exists, the logical author
@@ -530,7 +538,153 @@ describe('cross-tenant writes (#973)', () => {
 
       const rawMessage = readResult.record!.rawMessage as DwnMessage[DwnInterface.RecordsWrite];
       expect(getRecordAuthor(rawMessage)).toBe(aliceDid.uri);
-      expect(Jws.getSignerDid(rawMessage.authorization.signature.signatures[0])).toBe(delegatePortableDid.uri);
+      expect(Jws.getSignerDid(rawMessage.authorization.signature.signatures[0])).toBe(delegateDid);
+    });
+
+    it('should enforce and retain a nested role for typed remote reads and deletes', async () => {
+      const roleProtocol: DwnProtocolDefinition = {
+        published : true,
+        protocol  : `http://role-access.xyz/protocol/${TestDataGenerator.randomString(15)}`,
+        types     : {
+          thread: {
+            schema      : 'https://role-access.xyz/schema/thread',
+            dataFormats : ['text/plain'],
+          },
+          participant: {
+            schema      : 'https://role-access.xyz/schema/participant',
+            dataFormats : ['text/plain'],
+          },
+          auditor: {
+            schema      : 'https://role-access.xyz/schema/auditor',
+            dataFormats : ['text/plain'],
+          },
+          session: {
+            schema      : 'https://role-access.xyz/schema/session',
+            dataFormats : ['text/plain'],
+          },
+        },
+        structure: {
+          thread: {
+            participant : { $role: true },
+            auditor     : { $role: true },
+            session     : {
+              $actions: [
+                { role: 'thread/participant', can: ['read', 'co-delete'] },
+                { role: 'thread/auditor', can: ['read', 'co-delete'] },
+              ],
+            },
+          },
+        },
+      };
+
+      for (const ownerDwn of [dwnAlice, dwnBob]) {
+        const { status, protocol } = await ownerDwn.protocols.configure({ definition: roleProtocol });
+        expect(status.code).toBe(202);
+        const { status: sendStatus } = await protocol!.send(ownerDwn.connectedDid);
+        expect(sendStatus.code).toBe(202);
+      }
+
+      const { status: threadStatus, record: thread } = await dwnBob.records.write({
+        data         : 'thread',
+        protocol     : roleProtocol.protocol,
+        protocolPath : 'thread',
+        schema       : roleProtocol.types.thread.schema,
+        dataFormat   : 'text/plain',
+      });
+      expect(threadStatus.code).toBe(202);
+      await thread!.send(bobDid.uri);
+
+      const { status: participantStatus, record: participant } = await dwnBob.records.write({
+        data            : 'participant',
+        parentContextId : thread!.contextId,
+        recipient       : aliceDid.uri,
+        protocol        : roleProtocol.protocol,
+        protocolPath    : 'thread/participant',
+        schema          : roleProtocol.types.participant.schema,
+        dataFormat      : 'text/plain',
+      });
+      expect(participantStatus.code).toBe(202);
+      await participant!.send(bobDid.uri);
+
+      const sessionData = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
+      const { status: sessionStatus, record: session } = await dwnBob.records.write({
+        data            : sessionData,
+        parentContextId : thread!.contextId,
+        protocol        : roleProtocol.protocol,
+        protocolPath    : 'thread/session',
+        schema          : roleProtocol.types.session.schema,
+        dataFormat      : 'text/plain',
+      });
+      expect(sessionStatus.code).toBe(202);
+      await session!.send(bobDid.uri);
+
+      const { enbox } = await createDelegatedEnbox(roleProtocol, ['read', 'delete']);
+      const typed = new TypedEnbox(
+        enbox.dwn,
+        defineProtocol(roleProtocol, {
+          thread      : recordCodecs.text(),
+          participant : recordCodecs.text(),
+          auditor     : recordCodecs.text(),
+          session     : recordCodecs.text(),
+        }),
+      );
+      const readRequest = {
+        from   : bobDid.uri,
+        filter : { recordId: session!.id },
+        within : thread!.contextId,
+      };
+
+      await expect(typed.records.read('thread/session', readRequest)).rejects.toBeInstanceOf(DwnResponseError);
+      await expect(typed.records.read('thread/session', {
+        ...readRequest,
+        protocolRole: 'thread/auditor',
+      })).rejects.toBeInstanceOf(DwnResponseError);
+
+      const sendSpy = sinon.spy(delegateHarness.agent, 'sendDwnRequest');
+      const remoteRecord = await typed.records.read('thread/session', {
+        ...readRequest,
+        protocolRole: 'thread/participant',
+      });
+      expect(remoteRecord?.protocolRole).toBe('thread/participant');
+      expect(await remoteRecord!.value()).toBe(sessionData);
+      expect(await remoteRecord!.value()).toBe(sessionData);
+
+      const roleReads = sendSpy.getCalls().filter((call) =>
+        call.args[0].messageType === DwnInterface.RecordsRead
+        && call.args[0].target === bobDid.uri
+      );
+      expect(roleReads).toHaveLength(2);
+      expect(roleReads.every((call) =>
+        call.args[0].messageParams.protocolRole === 'thread/participant'
+      )).toBe(true);
+
+      const deleteRequest = {
+        from     : bobDid.uri,
+        recordId : session!.id,
+        within   : thread!.contextId,
+      };
+      await expect(typed.records.delete('thread/session', deleteRequest)).rejects.toBeInstanceOf(DwnResponseError);
+      await expect(typed.records.delete('thread/session', {
+        ...deleteRequest,
+        protocolRole: 'thread/auditor',
+      })).rejects.toBeInstanceOf(DwnResponseError);
+
+      const retained = await dwnBob.records.read({
+        from   : bobDid.uri,
+        filter : { recordId: session!.id },
+      });
+      expect(retained.status.code).toBe(200);
+
+      await typed.records.delete('thread/session', {
+        ...deleteRequest,
+        protocolRole: 'thread/participant',
+      });
+
+      const deleted = await dwnBob.records.read({
+        from   : bobDid.uri,
+        filter : { recordId: session!.id },
+      });
+      expect(deleted.status.code).toBe(404);
     });
   });
 });

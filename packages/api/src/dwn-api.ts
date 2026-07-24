@@ -950,6 +950,7 @@ export class DwnApi {
             connectedDid : this.connectedDid,
             delegateDid  : this.delegateDid,
             dataAccess,
+            protocolRole : agentRequest.messageParams.protocolRole,
             storedData   : entry.data,
             initialWrite : entry.initialWrite,
             ...entry.recordsWrite,

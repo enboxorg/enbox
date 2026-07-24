@@ -267,7 +267,7 @@ export class Record<T = unknown> implements RecordModel {
   /** Record's attestation signature. */
   get attestation(): DwnMessage[DwnInterface.RecordsWrite]['attestation'] | undefined { return this._attestation; }
 
-  /** Role under which the author is writing the record */
+  /** Protocol role carried by the request that produced this instance and reused by follow-up operations unless overridden. */
   get protocolRole(): string | undefined { return this._protocolRole; }
 
   /** Record's deleted state (true/false) */
@@ -758,7 +758,8 @@ export class Record<T = unknown> implements RecordModel {
   }
 
   /**
-   * Delete the current record on the DWN.
+   * Delete the current record from the connected tenant's local DWN.
+   * To delete from another tenant, use `TypedEnbox.records.delete(path, { from, ... })`.
    *
    * @param params - Parameters to delete the record.
    * @returns A promise that resolves after this record reflects the accepted tombstone.

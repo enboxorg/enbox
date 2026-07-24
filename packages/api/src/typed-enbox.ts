@@ -402,17 +402,19 @@ export type TypedSetRequest<
  *   filter: { recordId: notebookId },
  * });
  *
- * // Read from a remote DWN
- * const remote = await proto.records.read('notebook', {
+ * // Read a nested record from a remote DWN using a protocol role
+ * const remote = await proto.records.read('notebook/entry', {
  *   from: 'did:example:alice',
- *   filter: { recordId: notebookId },
+ *   protocolRole: 'notebook/participant',
+ *   within: notebook.contextId,
+ *   filter: { recordId: entryId },
  * });
  * ```
  */
 export type TypedReadRequest<
   D extends ProtocolDefinition,
   Path extends ProtocolPaths<D> & string,
-> = Pick<RecordQuery<D, Path>, 'from'> & {
+> = Pick<RecordQuery<D, Path>, 'from' | 'protocolRole'> & {
   /**
    * Filter to identify the record to read.
    *
@@ -433,6 +435,13 @@ export type TypedReadRequest<
  * await proto.records.delete('notebook', {
  *   recordId: notebook.id,
  * });
+ *
+ * await proto.records.delete('notebook/entry', {
+ *   from: 'did:example:alice',
+ *   protocolRole: 'notebook/participant',
+ *   recordId: entry.id,
+ *   within: notebook.contextId,
+ * });
  * ```
  */
 export type TypedDeleteRequest = {
@@ -448,6 +457,9 @@ export type TypedDeleteRequest = {
    * When set, the delete is performed on the specified DID's remote DWN.
    */
   from?: string;
+
+  /** Protocol role invoked to authorize the delete. */
+  protocolRole?: string;
 
   /**
    * The unique `recordId` of the record to delete.
@@ -1546,8 +1558,9 @@ export class TypedEnbox<
           request.within,
         );
         const result = await this._dwn.records.read({
-          from   : request.from,
-          filter : readFilter,
+          from         : request.from,
+          filter       : readFilter,
+          protocolRole : request.protocolRole,
         });
 
         if (result.status.code === 404) {
@@ -1648,6 +1661,7 @@ export class TypedEnbox<
           from         : request.from,
           protocol     : this._definition.protocol,
           protocolPath : normalizedPath,
+          protocolRole : request.protocolRole,
           recordId     : request.recordId,
           prune        : request.prune,
         });

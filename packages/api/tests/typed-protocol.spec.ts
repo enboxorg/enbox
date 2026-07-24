@@ -901,15 +901,18 @@ describe('TypedProtocol API', () => {
           const scopedTyped = new TypedEnbox(dwn, TodoProtocol);
 
           await scopedTyped.records.delete('/list/' as any, {
-            recordId : 'record-id',
-            within   : 'listcontext',
+            from         : 'did:example:remote',
+            protocolRole : 'list/editor',
+            recordId     : 'record-id',
+            within       : 'listcontext',
           });
 
           expect(deleteRecord.calledOnceWithExactly({
             contextId    : 'listcontext',
-            from         : undefined,
+            from         : 'did:example:remote',
             protocol     : TodoProtocolDefinition.protocol,
             protocolPath : 'list',
+            protocolRole : 'list/editor',
             recordId     : 'record-id',
             prune        : undefined,
           })).toBe(true);
@@ -930,14 +933,17 @@ describe('TypedProtocol API', () => {
           const scopedTyped = new TypedEnbox(dwn, TodoProtocol);
 
           const result = await scopedTyped.records.read('/list/' as any, {
-            filter : { recordId: 'record-id' },
-            within : 'listcontext',
+            filter       : { recordId: 'record-id' },
+            from         : 'did:example:remote',
+            protocolRole : 'list/viewer',
+            within       : 'listcontext',
           });
 
           expect(result).toBeUndefined();
           expect(readRecord.calledOnceWithExactly({
-            from   : undefined,
-            filter : {
+            from         : 'did:example:remote',
+            protocolRole : 'list/viewer',
+            filter       : {
               contextId    : 'listcontext',
               protocol     : TodoProtocolDefinition.protocol,
               protocolPath : 'list',
