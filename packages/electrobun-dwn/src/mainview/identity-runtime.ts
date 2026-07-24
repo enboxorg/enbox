@@ -5,7 +5,7 @@ import type { AuthState, IdentityInfo, PortableIdentity } from '@enbox/auth';
 import { AuthManager } from '@enbox/auth';
 import { DwnApi } from '@enbox/api/advanced';
 import { TypedEnbox } from '@enbox/api';
-import { ProfileDefinition, ProfileProtocol, SocialGraphDefinition } from '@enbox/protocols';
+import { ProfileDefinition, ProfileProtocol } from '@enbox/protocols';
 
 import { getAppStore } from './state/app-store.js';
 import { createResolutionErrorResult, errorMessage, normalizeEndpointList, normalizeOptionalString } from './utils/identity-helpers.js';
@@ -699,7 +699,6 @@ class IdentityRuntimeController implements IdentityRuntime {
       throw new Error('Display name is required.');
     }
 
-    await this._ensureProtocolInstalledForDid(normalizedDidUri, SocialGraphDefinition);
     await this._ensureProtocolInstalledForDid(normalizedDidUri, ProfileDefinition);
 
     const { dwn } = await this._createDwnApiForDid(normalizedDidUri);

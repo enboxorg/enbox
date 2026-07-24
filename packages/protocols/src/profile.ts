@@ -1,9 +1,8 @@
 /**
- * Profile Protocol — public and semi-private identity information.
+ * Profile Protocol — public identity information.
  *
  * Supports a published profile record, avatar and hero images (binary),
- * links, and private notes visible only to friends (via Social Graph
- * composition).
+ * and links.
  *
  * @module
  */
@@ -32,17 +31,12 @@ export type AvatarData = Blob;
 /** Hero banner is stored as binary data (Blob). */
 export type HeroData = Blob;
 
-/** Data shape for a link record (e.g. social links). */
+/** Data shape for an external link record. */
 export type LinkData = {
   url: string;
   title: string;
   icon?: string;
   sortOrder?: number;
-};
-
-/** Data shape for a private note (visible only to friends). */
-export type PrivateNoteData = {
-  content: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -52,10 +46,7 @@ export type PrivateNoteData = {
 export const ProfileDefinition = {
   protocol  : 'https://identity.foundation/protocols/profile',
   published : true,
-  uses      : {
-    social: 'https://identity.foundation/protocols/social-graph',
-  },
-  types: {
+  types     : {
     profile: {
       schema      : 'https://identity.foundation/schemas/profile/profile',
       dataFormats : ['application/json'],
@@ -68,10 +59,6 @@ export const ProfileDefinition = {
     },
     link: {
       schema      : 'https://identity.foundation/schemas/profile/link',
-      dataFormats : ['application/json'],
-    },
-    privateNote: {
-      schema      : 'https://identity.foundation/schemas/profile/private-note',
       dataFormats : ['application/json'],
     },
   },
@@ -102,11 +89,6 @@ export const ProfileDefinition = {
         ],
       },
     },
-    privateNote: {
-      $actions: [
-        { role: 'social:friend', can: ['read'] },
-      ],
-    },
   },
 } as const satisfies ProtocolDefinition;
 
@@ -118,10 +100,9 @@ export const ProfileDefinition = {
 export const ProfileProtocol = defineProtocol(
   ProfileDefinition,
   {
-    profile     : recordCodecs.json<ProfileData>(),
-    avatar      : recordCodecs.blob(),
-    hero        : recordCodecs.blob(),
-    link        : recordCodecs.json<LinkData>(),
-    privateNote : recordCodecs.json<PrivateNoteData>(),
+    profile : recordCodecs.json<ProfileData>(),
+    avatar  : recordCodecs.blob(),
+    hero    : recordCodecs.blob(),
+    link    : recordCodecs.json<LinkData>(),
   },
 );

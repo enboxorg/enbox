@@ -44,7 +44,7 @@ export type SchemaResolution = {
 /**
  * Resolve a schema URI to a JSON Schema object.
  *
- * @param typeName   - The protocol type name (e.g. `'friend'`).
+ * @param typeName   - The protocol type name (e.g. `'product'`).
  * @param schemaUri  - The schema URI from the protocol definition.
  * @param schemasDir - Directory to search for local `.json` schema files.
  * @returns A resolution result with the schema and its source.
@@ -132,8 +132,8 @@ async function readJsonFile(filePath: string): Promise<JsonSchema> {
 /**
  * Extract a relative path from a schema URI for local file lookup.
  *
- * For `https://identity.foundation/schemas/social-graph/friend`, returns
- * `social-graph/friend`.
+ * For `https://example.com/schemas/inventory/product`, returns
+ * `inventory/product`.
  *
  * Returns `undefined` if the URI has fewer than 2 path segments after
  * the `/schemas/` prefix or has no recognizable path structure.

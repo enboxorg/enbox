@@ -3,19 +3,18 @@ title: "@enbox/protocols"
 description: Protocol definitions and type-safe schema helpers for structuring data in Decentralized Web Nodes.
 ---
 
-`@enbox/protocols` provides pre-built protocol definitions and utilities for defining the data structures, access rules, and schemas that govern records in a DWN.
+`@enbox/protocols` provides pre-built protocol definitions, codecs, and readers for common DWN data.
 
 ## What it does
 
-- **Typed protocols** — Ships ready-to-use definitions and runtime codecs for common use cases (social graphs, profiles, preferences, and lists).
-- **Schema helpers** — Utilities for constructing well-formed protocol definitions with proper `types`, `structure`, and `$actions` configurations.
-- **Type generation** — TypeScript type utilities that derive compile-time types from protocol definitions, enabling the type-safe path autocompletion in `TypedEnbox`.
+- **Typed protocols** — Ships ready-to-use definitions and runtime codecs for profiles, preferences, and wallet discovery.
+- **Profile reader** — Resolves and caches public profile data from other users' DWNs.
+- **JSON Schemas** — Publishes schemas alongside protocol data types for validation and code generation.
 
 ## When to use it
 
 - When you want to reuse a well-tested protocol definition rather than writing one from scratch
-- When building protocol tooling or code generators
-- When you need the low-level protocol type utilities that power `defineProtocol()`
+- When you need to read another user's public profile without building a cache and retry layer
 
 ## Relationship to @enbox/api
 
@@ -28,6 +27,7 @@ from `@enbox/api` instead.
 
 | Export | Description |
 |---|---|
-| Protocol definitions | Pre-built definitions for common data patterns |
-| `ProtocolDefinition` | The core type describing a DWN protocol (re-exported from `@enbox/dwn-sdk-js`) |
-| Type utilities | Helpers for deriving TypeScript types from protocol structures |
+| `ProfileProtocol` | Public profile, image, and link records |
+| `PreferencesProtocol` | Owner-only application preferences |
+| `ConnectProtocol` | Public wallet discovery information |
+| `createProfileReader()` | Cached public-profile reader for connected and anonymous records surfaces |

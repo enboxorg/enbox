@@ -32,7 +32,7 @@ export type RuleSetPaths<R, Prefix extends string = ''> = {
  * @example
  * ```ts
  * type Paths = ProtocolPaths<typeof myDef>;
- * // 'friend' | 'friend/message' | 'group' | 'group/member'
+ * // 'thread' | 'thread/message' | 'project' | 'project/task'
  * ```
  */
 export type ProtocolPaths<D extends ProtocolDefinition> = RuleSetPaths<D['structure']>;

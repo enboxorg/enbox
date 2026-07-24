@@ -137,7 +137,7 @@ export type ReaderProtocolsQueryResponse = DwnResponseStatus & {
  *
  * const { records } = await dwn.records.query({
  *   from: 'did:dht:alice...',
- *   filter: { protocol: 'https://social.example/posts', protocolPath: 'post' },
+ *   filter: { protocol: 'https://blog.example/posts', protocolPath: 'post' },
  * });
  *
  * for (const record of records) {

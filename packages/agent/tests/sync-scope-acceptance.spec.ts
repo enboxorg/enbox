@@ -9,7 +9,7 @@ import { classifySyncMessageScope } from '../src/sync-scope-acceptance.js';
 
 describe('sync-scope-acceptance', () => {
   const profileProtocol = 'https://identity.foundation/protocols/profile';
-  const socialProtocol = 'https://identity.foundation/protocols/social-graph';
+  const preferencesProtocol = 'https://identity.foundation/protocols/preferences';
   const profileScope: SyncScope = { kind: 'protocolSet', protocols: [profileProtocol] };
 
   it('accepts RecordsWrite messages for a covered protocol', async () => {
@@ -21,7 +21,7 @@ describe('sync-scope-acceptance', () => {
   });
 
   it('rejects RecordsWrite messages for a sibling protocol', async () => {
-    const { message } = await TestDataGenerator.generateRecordsWrite({ protocol: socialProtocol });
+    const { message } = await TestDataGenerator.generateRecordsWrite({ protocol: preferencesProtocol });
 
     const classification = classifySyncMessageScope({ message, scope: profileScope });
 
@@ -53,7 +53,7 @@ describe('sync-scope-acceptance', () => {
   });
 
   it('rejects RecordsDelete when the initial write protocol is outside scope', async () => {
-    const recordsWrite = await TestDataGenerator.generateRecordsWrite({ protocol: socialProtocol });
+    const recordsWrite = await TestDataGenerator.generateRecordsWrite({ protocol: preferencesProtocol });
     const recordsDelete = await TestDataGenerator.generateRecordsDelete({
       author   : recordsWrite.author,
       recordId : recordsWrite.message.recordId,
@@ -109,7 +109,7 @@ describe('sync-scope-acceptance', () => {
         method       : DwnMethodName.Write,
         protocol     : PermissionsProtocol.uri,
         protocolPath : PermissionsProtocol.grantPath,
-        tags         : { protocol: socialProtocol },
+        tags         : { protocol: preferencesProtocol },
       },
       authorization: { signature: { payload: '', signatures: [] } },
     } as unknown as GenericMessage;
@@ -148,7 +148,7 @@ describe('sync-scope-acceptance', () => {
           method    : DwnMethodName.Write,
           protocol  : EncryptionProtocol.uri,
           protocolPath,
-          tags      : { protocol: socialProtocol },
+          tags      : { protocol: preferencesProtocol },
         },
         authorization: { signature: { payload: '', signatures: [] } },
       } as unknown as GenericMessage;

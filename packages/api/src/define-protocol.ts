@@ -28,13 +28,13 @@ type ExactProtocolCodecs<
  *
  * @example
  * ```ts
- * const socialGraph = defineProtocol(SocialGraphDefinition, {
- *   friend : recordCodecs.json<{ did: string; alias?: string }>(),
- *   block  : recordCodecs.json<{ did: string; reason?: string }>(),
+ * const notes = defineProtocol(NotesDefinition, {
+ *   note       : recordCodecs.json<{ title: string; body: string }>(),
+ *   attachment : recordCodecs.blob(),
  * });
  *
- * // socialGraph.definition is the raw ProtocolDefinition
- * // TypedEnbox infers paths like 'friend' | 'friend/message' and
+ * // notes.definition is the raw ProtocolDefinition
+ * // TypedEnbox infers paths like 'note' | 'note/attachment' and
  * // data types from the codecs.
  * ```
  */

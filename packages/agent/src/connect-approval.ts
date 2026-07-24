@@ -282,8 +282,8 @@ function validatePermissionRequestProtocolUris(permissionRequests: ConnectPermis
  * Orders protocol preparation so that a protocol's in-batch composition
  * dependencies are prepared before it.
  *
- * A composing protocol declares its dependencies via `uses` (e.g. focus-board
- * `uses` social-graph for a `social:friend` role). The DWN `ProtocolsConfigure`
+ * A composing protocol declares its dependencies via `uses` (e.g. a board
+ * protocol uses a membership protocol for a `membership:participant` role). The DWN `ProtocolsConfigure`
  * handler rejects a configure whose `uses` targets are not yet installed for
  * the tenant, so preparing every requested protocol in a single flat
  * concurrent fan-out races a composing protocol against its dependency: on a

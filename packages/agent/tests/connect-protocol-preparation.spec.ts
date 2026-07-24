@@ -469,22 +469,22 @@ function simAgent(options: {
   return { agent: agent as unknown as EnboxPlatformAgent, sends };
 }
 
-const SOCIAL_URI = 'https://example.com/protocols/social';
-const COMPOSED_URI = 'https://example.com/protocols/profileish';
+const DEPENDENCY_URI = 'https://example.com/protocols/membership';
+const COMPOSED_URI = 'https://example.com/protocols/board';
 const BASE_URI = 'https://example.com/protocols/base';
 
-const socialProtocol: DwnProtocolDefinition = {
-  protocol  : SOCIAL_URI,
+const dependencyProtocol: DwnProtocolDefinition = {
+  protocol  : DEPENDENCY_URI,
   published : true,
   types     : { link: { schema: 'link' } },
   structure : { link: { $actions: [] } },
 };
 
-/** A composed protocol like profile: `uses` social. */
+/** A protocol with one composition dependency. */
 const composedProtocol: DwnProtocolDefinition = {
   protocol  : COMPOSED_URI,
   published : true,
-  uses      : { social: SOCIAL_URI },
+  uses      : { membership: DEPENDENCY_URI },
   types     : { card: { schema: 'card' } },
   structure : { card: { $actions: [] } },
 } as DwnProtocolDefinition;
@@ -500,21 +500,21 @@ describe('connect protocol preparation — composed protocols', () => {
     // exactly the state where the dependent's configure would be rejected
     // with ProtocolsConfigureComposedProtocolNotInstalled.
     const { agent, sends } = simAgent({
-      local   : { [COMPOSED_URI]: composedProtocol, [SOCIAL_URI]: socialProtocol },
+      local   : { [COMPOSED_URI]: composedProtocol, [DEPENDENCY_URI]: dependencyProtocol },
       remotes : { 'https://dwn-a.example/': { protocols: new Map() } },
     });
 
     await prepareProtocol('did:example:owner', agent, composedProtocol);
 
     const configures = sends.filter((send) => send.kind === 'configure');
-    expect(configures.map((send) => send.protocolUri)).toEqual([SOCIAL_URI, COMPOSED_URI]);
+    expect(configures.map((send) => send.protocolUri)).toEqual([DEPENDENCY_URI, COMPOSED_URI]);
   });
 
   it('should not send a uses dependency that the endpoint already has', async () => {
     const { agent, sends } = simAgent({
-      local   : { [COMPOSED_URI]: composedProtocol, [SOCIAL_URI]: socialProtocol },
+      local   : { [COMPOSED_URI]: composedProtocol, [DEPENDENCY_URI]: dependencyProtocol },
       remotes : {
-        'https://dwn-a.example/': { protocols: new Map([[SOCIAL_URI, socialProtocol]]) },
+        'https://dwn-a.example/': { protocols: new Map([[DEPENDENCY_URI, dependencyProtocol]]) },
       },
     });
 
@@ -532,23 +532,23 @@ describe('connect protocol preparation — composed protocols', () => {
       structure : { atom: { $actions: [] } },
     };
     const midProtocol = {
-      ...socialProtocol,
+      ...dependencyProtocol,
       uses: { base: BASE_URI },
     } as DwnProtocolDefinition;
     const topProtocol = {
       ...composedProtocol,
-      uses: { social: SOCIAL_URI },
+      uses: { membership: DEPENDENCY_URI },
     } as DwnProtocolDefinition;
 
     const { agent, sends } = simAgent({
-      local   : { [COMPOSED_URI]: topProtocol, [SOCIAL_URI]: midProtocol, [BASE_URI]: baseProtocol },
+      local   : { [COMPOSED_URI]: topProtocol, [DEPENDENCY_URI]: midProtocol, [BASE_URI]: baseProtocol },
       remotes : { 'https://dwn-a.example/': { protocols: new Map() } },
     });
 
     await prepareProtocol('did:example:owner', agent, topProtocol);
 
     const configures = sends.filter((send) => send.kind === 'configure');
-    expect(configures.map((send) => send.protocolUri)).toEqual([BASE_URI, SOCIAL_URI, COMPOSED_URI]);
+    expect(configures.map((send) => send.protocolUri)).toEqual([BASE_URI, DEPENDENCY_URI, COMPOSED_URI]);
   });
 
   it('should surface the endpoint rejection reason in the postcondition error', async () => {
@@ -558,7 +558,7 @@ describe('connect protocol preparation — composed protocols', () => {
         'https://dwn-a.example/': {
           protocols       : new Map(),
           rejectConfigure : (uri) => uri === COMPOSED_URI
-            ? { code: 400, detail: `composed protocol '${SOCIAL_URI}' (alias 'social') is not installed for tenant` }
+            ? { code: 400, detail: `composed protocol '${DEPENDENCY_URI}' (alias 'membership') is not installed for tenant` }
             : undefined,
         },
       },
@@ -568,15 +568,15 @@ describe('connect protocol preparation — composed protocols', () => {
     // the error must carry BOTH the local-dependency reason (first wins)
     // and identify the failing endpoint.
     await expect(prepareProtocol('did:example:owner', agent, composedProtocol))
-      .rejects.toThrow(/dwn-a\.example.*uses dependency '.*social' is not installed locally/);
+      .rejects.toThrow(/dwn-a\.example.*uses dependency '.*membership' is not installed locally/);
   });
 
   it('should surface a configure rejection when dependencies are satisfied', async () => {
     const { agent } = simAgent({
-      local   : { [COMPOSED_URI]: composedProtocol, [SOCIAL_URI]: socialProtocol },
+      local   : { [COMPOSED_URI]: composedProtocol, [DEPENDENCY_URI]: dependencyProtocol },
       remotes : {
         'https://dwn-a.example/': {
-          protocols       : new Map([[SOCIAL_URI, socialProtocol]]),
+          protocols       : new Map([[DEPENDENCY_URI, dependencyProtocol]]),
           rejectConfigure : () => ({ code: 401, detail: 'Not a registered tenant.' }),
         },
       },
@@ -588,13 +588,13 @@ describe('connect protocol preparation — composed protocols', () => {
 
   it('should surface the observed state when an endpoint accepts but never converges', async () => {
     const { agent } = simAgent({
-      local   : { [SOCIAL_URI]: socialProtocol },
+      local   : { [DEPENDENCY_URI]: dependencyProtocol },
       remotes : {
         'https://dwn-a.example/': { protocols: new Map(), acceptButDrop: true },
       },
     });
 
-    await expect(prepareProtocol('did:example:owner', agent, socialProtocol))
+    await expect(prepareProtocol('did:example:owner', agent, dependencyProtocol))
       .rejects.toThrow(/dwn-a\.example.*still reports 'install' after configure/);
   });
 });

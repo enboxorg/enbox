@@ -75,7 +75,7 @@ const inflightConnects = new Map<string, Promise<unknown>>();
  *   createIdentity: true,
  * });
  *
- * const social = enbox.using(SocialProtocol);
+ * const notes = enbox.using(NotesProtocol);
  * ```
  */
 export class Enbox {
@@ -280,15 +280,15 @@ export class Enbox {
    *
    * @example
    * ```ts
-   * const social = enbox.using(SocialProtocol);
+   * const notes = enbox.using(NotesProtocol);
    *
-   * await social.configure();
+   * await notes.configure();
    *
-   * const record = await social.records.create('friend', {
-   *   data: { did: 'did:example:alice', alias: 'Alice' },
+   * const record = await notes.records.create('note', {
+   *   data: { title: 'Hello', body: 'Typed data' },
    * });
    *
-   * const { records } = await social.records.query('friend');
+   * const { records } = await notes.records.query('note');
    * ```
    */
   public using<D extends ProtocolDefinition, C extends RecordCodecMap>(
@@ -429,7 +429,7 @@ export class Enbox {
    *
    * const { records } = await dwn.records.query({
    *   from: 'did:dht:alice...',
-   *   filter: { protocol: 'https://social.example/posts', protocolPath: 'post' },
+   *   filter: { protocol: 'https://blog.example/posts', protocolPath: 'post' },
    * });
    *
    * for (const record of records) {
