@@ -2,13 +2,9 @@ import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type {
   Record,
   RecordData,
-  RecordDeleteResult,
+  RecordPage,
   RecordPatch,
-  RecordsQueryResponse,
-  RecordsReadResponse,
-  RecordsWriteResponse,
   RecordUpdateParams,
-  RecordUpdateResult,
   RecordView,
   TypedEnbox,
 } from '@enbox/api';
@@ -49,7 +45,7 @@ declare const typed: TypedEnbox<typeof CanonicalRecordDefinition, CanonicalRecor
 const recordData: RecordData<TaskData> = record.data;
 const payload: Promise<TaskData> = recordData.json();
 const rawPayload: Promise<unknown> = untypedRecord.data.json();
-const rawPatch: Promise<RecordUpdateResult<unknown>> = untypedRecord.patch({ arbitrary: true });
+const rawPatch: Promise<Record<unknown>> = untypedRecord.patch({ arbitrary: true });
 const replacement: RecordUpdateParams<TaskData> = {
   data: { title: 'updated', completed: true },
 };
@@ -82,26 +78,24 @@ nullableRecord.patch({ value: null });
 nullableRecord.update({ data: { value: null } });
 
 async function assertCanonicalRecordFlow(): Promise<void> {
-  const created: RecordsWriteResponse<TaskData> = await typed.records.create('task', {
+  const created: Record<TaskData> = await typed.records.create('task', {
     data: { title: 'created', completed: false },
   });
-  if (created.record !== undefined) {
-    const createdRecord: Record<TaskData> = created.record;
-    const createdData: TaskData = await createdRecord.data.json();
-    const updated: RecordUpdateResult<TaskData> = await createdRecord.update({
-      data: { title: 'updated', completed: true },
-    });
-    const deleted: RecordDeleteResult<TaskData> = await updated.record.delete();
-    void createdData;
-    void deleted;
-  }
+  const createdData: TaskData = await created.data.json();
+  const updated: Record<TaskData> = await created.update({
+    data: { title: 'updated', completed: true },
+  });
+  const deleted: void = await updated.delete();
+  void createdData;
+  void deleted;
 
-  const queried: RecordsQueryResponse<TaskData> = await typed.records.query('task');
+  const queried: RecordPage<TaskData> = await typed.records.query('task');
   const queriedRecord: Record<TaskData> | undefined = queried.records[0];
   void queriedRecord;
 
-  const read: RecordsReadResponse<TaskData> = await typed.records.read('task', { filter: { recordId: 'record-id' } });
-  const readRecord: Record<TaskData> | undefined = read.record;
+  const readRecord: Record<TaskData> | undefined = await typed.records.read('task', {
+    filter: { recordId: 'record-id' },
+  });
   void readRecord;
 
   const view: RecordView<TaskData> = await typed.records.observe('task', {
@@ -109,6 +103,9 @@ async function assertCanonicalRecordFlow(): Promise<void> {
   });
   const observedRecord: Record<TaskData> | undefined = view.getSnapshot().records[0];
   void observedRecord;
+
+  // @ts-expect-error typed operations do not expose raw DWN response envelopes.
+  created.status;
 }
 
 void assertCanonicalRecordFlow;

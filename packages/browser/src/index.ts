@@ -31,13 +31,13 @@
 export {
   AudienceDecryptError,
   createConnectionStore,
+  DwnResponseError,
   Enbox,
   defineProtocol,
 } from '@enbox/api';
 
 export type {
   AudienceDecryptFailureCause,
-  AudienceKeyDeliveryOutcome,
   ConnectionPhase,
   ConnectionSnapshot,
   ConnectionSnapshotListener,
@@ -49,15 +49,12 @@ export type {
   EnboxParams,
   EnboxSessionParams,
   RecordFilter,
+  RecordPage,
   RecordQuery,
   RecordView,
   RecordViewListener,
   RecordViewSnapshot,
   RecordViewState,
-  RecordsCountResponse,
-  RecordsQueryResponse,
-  RecordsReadResponse,
-  RecordsWriteResponse,
 } from '@enbox/api';
 
 // ─── Re-exports from @enbox/auth ────────────────────────────────

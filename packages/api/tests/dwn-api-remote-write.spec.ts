@@ -105,8 +105,7 @@ describe('cross-tenant writes (#973)', () => {
       dataFormat   : 'text/plain',
     });
     expect(status.code).toBe(202);
-    const { status: sendStatus } = await record!.send(aliceDid.uri);
-    expect(sendStatus.code).toBe(202);
+    await record!.send(aliceDid.uri);
   }
 
   describe('records.write with from', () => {
@@ -235,15 +234,12 @@ describe('cross-tenant writes (#973)', () => {
 
       // Typed create auto-configures the protocol on Bob's LOCAL tenant, then
       // dispatches the record write to Alice's REMOTE tenant.
-      const { status, record } = await typedBob.records.create('album', {
+      const record = await typedBob.records.create('album', {
         data         : 'bob types into alice dwn',
         from         : aliceDid.uri,
         recipient    : aliceDid.uri,
         protocolRole : 'friend',
       });
-
-      expect(status.code).toBe(202);
-      expect(record).toBeDefined();
 
       // The record WRITE went remote; the auto-configure stayed local.
       const remoteWrites = sendSpy.getCalls().filter((call) => call.args[0].messageType === DwnInterface.RecordsWrite);
@@ -251,12 +247,12 @@ describe('cross-tenant writes (#973)', () => {
       expect(remoteWrites[0].args[0].target).toBe(aliceDid.uri);
 
       // The typed API returns the canonical record with its invoked role intact.
-      expect(record!.protocolRole).toBe('friend');
+      expect(record.protocolRole).toBe('friend');
 
       // The record landed on Alice's remote DWN with the typed payload.
       const readResult = await dwnAlice.records.read({
         from   : aliceDid.uri,
-        filter : { recordId: record!.id },
+        filter : { recordId: record.id },
       });
       expect(readResult.status.code).toBe(200);
       expect(await readResult.record!.data.text()).toBe('bob types into alice dwn');
@@ -285,12 +281,12 @@ describe('cross-tenant writes (#973)', () => {
       const sendSpy = sinon.spy(testHarness.agent, 'sendDwnRequest');
       const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
 
-      const { status: updateStatus } = await record!.update({
+      const updatedRecord = await record!.update({
         data : 'v2',
         from : aliceDid.uri,
       });
 
-      expect(updateStatus.code).toBe(202);
+      expect(updatedRecord).toBe(record);
       expect(sendSpy.callCount).toBe(1);
       expect(processSpy.callCount).toBe(0);
       expect(sendSpy.firstCall.args[0].target).toBe(aliceDid.uri);
@@ -317,8 +313,7 @@ describe('cross-tenant writes (#973)', () => {
         dataFormat   : 'text/plain',
       });
       expect(writeStatus.code).toBe(202);
-      const { status: sendStatus } = await record!.send(aliceDid.uri);
-      expect(sendStatus.code).toBe(202);
+      await record!.send(aliceDid.uri);
 
       const readResult = await dwnAlice.records.read({
         from   : aliceDid.uri,
@@ -331,9 +326,9 @@ describe('cross-tenant writes (#973)', () => {
       const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
 
       // No `from` — the update must stay local despite the remote read.
-      const { status: updateStatus } = await remoteRecord.update({ data: 'local v2' });
+      const updatedRecord = await remoteRecord.update({ data: 'local v2' });
 
-      expect(updateStatus.code).toBe(202);
+      expect(updatedRecord).toBe(remoteRecord);
       expect(sendSpy.callCount).toBe(0);
       expect(processSpy.callCount).toBe(1);
       expect(processSpy.firstCall.args[0].target).toBe(aliceDid.uri);
@@ -376,8 +371,7 @@ describe('cross-tenant writes (#973)', () => {
         dataFormat   : 'text/plain',
       });
       expect(writeStatus.code).toBe(202);
-      const { status: sendStatus } = await alicesRecord!.send(aliceDid.uri);
-      expect(sendStatus.code).toBe(202);
+      await alicesRecord!.send(aliceDid.uri);
 
       // Bob reads it from Alice's remote and stores a local copy, then
       // re-queries locally so the new reference captures local data access.
@@ -386,8 +380,7 @@ describe('cross-tenant writes (#973)', () => {
         filter : { recordId: alicesRecord!.id },
       });
       expect(bobRead.status.code).toBe(200);
-      const { status: storeStatus } = await bobRead.record!.store();
-      expect(storeStatus.code).toBe(202);
+      await bobRead.record!.store();
 
       const bobLocalQuery = await dwnBob.records.query({ filter: { recordId: alicesRecord!.id } });
       expect(bobLocalQuery.status.code).toBe(200);
@@ -396,11 +389,11 @@ describe('cross-tenant writes (#973)', () => {
 
       // Bob co-updates the ALICE-authored record cross-tenant (tags-only, so
       // no fresh data blob masks the lazy read below).
-      const { status: updateStatus, record: updatedRecord } = await localRecord.update({
+      const updatedRecord = await localRecord.update({
         from : aliceDid.uri,
         tags : { rev: 'v2' },
       });
-      expect(updateStatus.code).toBe(202);
+      expect(updatedRecord).toBe(localRecord);
 
       // The author is re-derived from the NEWLY SIGNED message on BOTH the
       // returned record and the in-place-mutated original — old and new

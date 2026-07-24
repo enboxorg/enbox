@@ -28,7 +28,7 @@ const { enbox } = await Enbox.connect({ password: 'secret' });
 const social = enbox.using(SocialGraphProtocol);
 await social.configure();
 
-const { record } = await social.records.create('friend', {
+const record = await social.records.create('friend', {
   data: { did: 'did:dht:alice...', alias: 'Alice' },
 });
 

@@ -116,10 +116,33 @@ const { status } = await tasks.configure();
 
 All record methods auto-inject `protocol`, `protocolPath`, and `schema` — you only provide the path and your data:
 
+Typed record methods return application values instead of raw DWN response
+envelopes. `create()` returns a `Record`, `query()` returns a `RecordPage`,
+`count()` returns a number, and `read()` returns a `Record` or `undefined`.
+`Record.update()` and `patch()` return the same updated handle; successful
+delete, store, import, and send operations resolve without a value. A
+non-success DWN status throws `DwnResponseError` (except a missing read, which
+returns `undefined`):
+
+```ts
+import { DwnResponseError } from '@enbox/api';
+
+try {
+  await tasks.records.delete('task', { recordId: taskId });
+} catch (error) {
+  if (error instanceof DwnResponseError) {
+    console.error(error.status.code, error.status.errorCode, error.status.detail);
+  }
+}
+```
+
+Use the low-level DWN API when you need exact response envelopes and status
+codes.
+
 #### create
 
 ```ts
-const { status, record } = await tasks.records.create('task', {
+const record = await tasks.records.create('task', {
   data : { title: 'Buy milk', done: false },
   tags : { done: false },
 });
@@ -142,9 +165,9 @@ Create options:
 #### query
 
 ```ts
-const { records, cursor } = await tasks.records.query('task');
+const page = await tasks.records.query('task');
 
-for (const r of records) {
+for (const r of page.records) {
   const data = await r.data.json(); // TaskData
   console.log(data.title, data.done);
 }
@@ -161,13 +184,13 @@ const selection = {
   pagination: { limit: 25 },
 };
 
-const { records, cursor } = await tasks.records.query('task', selection);
+const page = await tasks.records.query('task', selection);
 
 // Fetch next page
-if (cursor) {
+if (page.cursor) {
   const { records: next } = await tasks.records.query('task', {
     ...selection,
-    pagination: { ...selection.pagination, cursor },
+    pagination: { ...selection.pagination, cursor: page.cursor },
   });
 }
 ```
@@ -232,7 +255,7 @@ const selection = {
 };
 
 const page = await tasks.records.query('task', selection);
-const { count } = await tasks.records.count('task', selection);
+const count = await tasks.records.count('task', selection);
 // page.records.length <= 25; count covers every matching task
 ```
 
@@ -241,9 +264,13 @@ const { count } = await tasks.records.count('task', selection);
 Read a specific record by ID:
 
 ```ts
-const { record } = await tasks.records.read('task', {
+const record = await tasks.records.read('task', {
   filter: { recordId: taskId },
 });
+
+if (record === undefined) {
+  throw new Error('Task not found');
+}
 
 const data = await record.data.json(); // TaskData
 ```
@@ -251,7 +278,7 @@ const data = await record.data.json(); // TaskData
 Read from a remote DWN:
 
 ```ts
-const { record } = await tasks.records.read('task', {
+const remote = await tasks.records.read('task', {
   from: 'did:dht:alice...',
   filter: { recordId: taskId },
 });
@@ -262,7 +289,7 @@ const { record } = await tasks.records.read('task', {
 Delete via the `TypedEnbox` API:
 
 ```ts
-const { status } = await tasks.records.delete('task', {
+await tasks.records.delete('task', {
   recordId: record.id,
 });
 ```
@@ -320,7 +347,7 @@ the DWN. Direct `stream()` calls remain streaming and are not eagerly buffered.
 #### update
 
 ```ts
-const { status, record: updated } = await record.update({
+const updated = await record.update({
   data: { title: 'Buy oat milk', done: false },  // complete TaskData
   tags: { priority: 'high' },
 });
@@ -328,14 +355,14 @@ const { status, record: updated } = await record.update({
 
 `update({ data })` replaces the payload wholesale, so `data` must contain the
 complete `T`. Omitting a field removes it from the stored payload. Both the
-returned record and the original instance reflect the updated state.
+returned value and the original variable reference the same updated `Record`.
 
 #### patch
 
 Use `patch()` when only part of a JSON object should change:
 
 ```ts
-const { status, record: updated } = await record.patch({
+const updated = await record.patch({
   done: true,
 });
 ```
@@ -350,8 +377,7 @@ a concurrent update that lands between its read and write.
 #### delete
 
 ```ts
-const { status } = await record.delete();
-// status.code: 202 on success
+await record.delete();
 ```
 
 Delete with options:
@@ -422,12 +448,12 @@ const NotebookProtocol = defineProtocol({
 const notebooks = enbox.using(NotebookProtocol);
 
 // Create a parent
-const { record: notebook } = await notebooks.records.create('notebook', {
+const notebook = await notebooks.records.create('notebook', {
   data: { name: 'Travel Notes' },
 });
 
 // Create a child under the parent
-const { record: page } = await notebooks.records.create('notebook/page', {
+const page = await notebooks.records.create('notebook/page', {
   data: { title: 'Day 1', body: 'Arrived in Tokyo...' },
   parentContextId: notebook.contextId,
 });

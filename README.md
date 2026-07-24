@@ -78,7 +78,7 @@ const BookmarkProtocol = defineProtocol({
 
 const bookmarks = enbox.using(BookmarkProtocol);
 
-const { record } = await bookmarks.records.create('bookmark', {
+const record = await bookmarks.records.create('bookmark', {
   data : { url: 'https://example.com', title: 'Example' },
   tags : { category: 'reading' },
 });

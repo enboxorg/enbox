@@ -18,7 +18,7 @@
  * await social.configure();
  *
  * // Create — path and data type are checked at compile time
- * const { record } = await social.records.create('thread', {
+ * const record = await social.records.create('thread', {
  *   data: { title: 'Hello World', body: '...' },
  * });
  * // record is Record<ThreadData>
@@ -37,20 +37,14 @@ import type { Record } from './record.js';
 import type { RecordView } from './record-view.js';
 
 import type { DataFormatAtPath, ProtocolPaths, SchemaMap, TypedProtocol, TypeNameAtPath } from './protocol-types.js';
-import type {
-  DwnApi,
-  ProtocolsConfigureResponse,
-  RecordsCountResponse,
-  RecordsQueryResponse,
-  RecordsReadResponse,
-  RecordsWriteResponse,
-} from './dwn-api.js';
+import type { DwnApi, ProtocolsConfigureResponse } from './dwn-api.js';
 import type { DwnPaginationCursor, DwnPublicKeyJwk, DwnResponseStatus, SyncEngine } from '@enbox/agent';
 import type { ProtocolDefinition, ProtocolType } from '@enbox/dwn-sdk-js';
 import type { RecordFilter, RecordQuery } from './record-query.js';
 
 import { createRecordView } from './record-view.js';
 import { getTypeName } from '@enbox/dwn-sdk-js';
+import { requireDwnSuccess } from './dwn-response-error.js';
 import { compileRecordFilter, compileRecordQuery } from './record-query.js';
 
 // ---------------------------------------------------------------------------
@@ -68,6 +62,15 @@ export type DataForPath<
   M extends SchemaMap,
   Path extends string,
 > = TypeNameAtPath<Path> extends keyof M ? M[TypeNameAtPath<Path>] : unknown;
+
+/** One page returned by a typed records query. */
+export type RecordPage<T = unknown> = {
+  /** Matching record handles. */
+  records: Record<T>[];
+
+  /** Cursor for the next page, when another page exists. */
+  cursor?: DwnPaginationCursor;
+};
 
 /** @internal Runtime resources owned by the Enbox session that created this typed API. */
 type TypedEnboxOptions = {
@@ -128,8 +131,8 @@ export type TypedCreateRequest<
    * Remote-path boundaries:
    * - {@link TypedCreateRequest.recipientRolePublicKey} is NOT supported
    *   with `from` — the agent throws rather than silently ignoring the key.
-   * - {@link RecordsWriteResponse.audienceKeyDelivery} is never present on
-   *   remote writes — delivery provisioning is a local-processing concept.
+   * - role-audience key delivery is a local-processing concern and is not
+   *   available on remote writes.
    */
   from?: string;
 
@@ -142,7 +145,7 @@ export type TypedCreateRequest<
    *
    * @example
    * ```ts
-   * const { record: notebook } = await proto.records.create('notebook', {
+   * const notebook = await proto.records.create('notebook', {
    *   data: { name: 'My Notebook' },
    * });
    *
@@ -205,9 +208,8 @@ export type TypedCreateRequest<
    * their DWN (e.g. a bare `did:jwk` publishing no resolvable DWN
    * endpoint); the recipient computes the key locally and carries it out
    * of band for the writer to supply here. When omitted, role-audience
-   * key delivery is best-effort and its outcome is reported on
-   * {@link RecordsWriteResponse.audienceKeyDelivery} instead of failing
-   * the write.
+   * key delivery is best-effort. Use the low-level DWN API when the delivery
+   * outcome is required.
    *
    * Enbox validates only that the supplied key is a usable X25519 public
    * key — it does NOT verify that the key belongs to the recipient. That
@@ -282,12 +284,12 @@ export type TypedCreateRequest<
  * @example
  * ```ts
  * // Read a specific record by ID
- * const { record } = await proto.records.read('notebook', {
+ * const record = await proto.records.read('notebook', {
  *   filter: { recordId: notebookId },
  * });
  *
  * // Read from a remote DWN
- * const { record: remote } = await proto.records.read('notebook', {
+ * const remote = await proto.records.read('notebook', {
  *   from: 'did:example:alice',
  *   filter: { recordId: notebookId },
  * });
@@ -313,7 +315,7 @@ export type TypedReadRequest<
  *
  * @example
  * ```ts
- * const { status } = await proto.records.delete('notebook', {
+ * await proto.records.delete('notebook', {
  *   recordId: notebook.id,
  * });
  * ```
@@ -456,7 +458,7 @@ export type VerifyInstalledResult = {
  *
  * await social.configure();
  *
- * const { record } = await social.records.create('friend', {
+ * const record = await social.records.create('friend', {
  *   data: { did: 'did:example:alice', alias: 'Alice' },
  * });
  * const data = await record.data.json(); // FriendData — no cast
@@ -913,12 +915,12 @@ export class TypedEnbox<
     create: <Path extends ProtocolPaths<D> & string>(
       path: Path,
       request: TypedCreateRequest<D, M, Path>,
-    ) => Promise<RecordsWriteResponse<DataForPath<D, M, Path>>>;
+    ) => Promise<Record<DataForPath<D, M, Path>>>;
 
     query: <Path extends ProtocolPaths<D> & string>(
       path: Path,
       request?: RecordQuery<D, Path>,
-    ) => Promise<RecordsQueryResponse<DataForPath<D, M, Path>>>;
+    ) => Promise<RecordPage<DataForPath<D, M, Path>>>;
 
     observe: <Path extends ProtocolPaths<D> & string>(
       path: Path,
@@ -931,17 +933,17 @@ export class TypedEnbox<
     count: <Path extends ProtocolPaths<D> & string>(
       path: Path,
       request?: RecordQuery<D, Path>,
-    ) => Promise<RecordsCountResponse>;
+    ) => Promise<number>;
 
     read: <Path extends ProtocolPaths<D> & string>(
       path: Path,
       request: TypedReadRequest<D, Path>,
-    ) => Promise<RecordsReadResponse<DataForPath<D, M, Path>>>;
+    ) => Promise<Record<DataForPath<D, M, Path>> | undefined>;
 
     delete: <Path extends ProtocolPaths<D> & string>(
       path: Path,
       request: TypedDeleteRequest,
-    ) => Promise<DwnResponseStatus>;
+    ) => Promise<void>;
     } {
     if (this._records !== undefined) {
       return this._records;
@@ -959,17 +961,16 @@ export class TypedEnbox<
        *   Provides compile-time autocompletion for valid paths.
        * @param request - Create options including the typed `data` payload
        *   and optional fields like `parentContextId`, `tags`, `recipient`.
-       * @returns A {@link RecordsWriteResponse} containing the DWN response
-       *   `status` and the created typed {@link Record}.
+       * @returns The created typed {@link Record}.
        *
        * @example
        * ```ts
-       * const { status, record } = await proto.records.create('notebook', {
+       * const record = await proto.records.create('notebook', {
        *   data: { name: 'My Notebook' },
        * });
        *
        * // Create a child page under the notebook's context
-       * const { record: page } = await proto.records.create('notebook/page', {
+       * const page = await proto.records.create('notebook/page', {
        *   data: { title: 'First Page', body: '' },
        *   parentContextId: record.contextId,
        * });
@@ -978,13 +979,13 @@ export class TypedEnbox<
       create: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
         request: TypedCreateRequest<D, M, Path>,
-      ): Promise<RecordsWriteResponse<DataForPath<D, M, Path>>> => {
+      ): Promise<Record<DataForPath<D, M, Path>>> => {
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
         const typeName = getTypeName(normalizedPath);
         const typeEntry = this._definition.types[typeName];
 
-        const { status, record, audienceKeyDelivery } = await this._dwn.records.write({
+        const result = await this._dwn.records.write({
           data                   : request.data,
           from                   : request.from,
           store                  : request.store,
@@ -1004,11 +1005,12 @@ export class TypedEnbox<
           dataFormat             : request.dataFormat ?? typeEntry?.dataFormats?.[0],
         });
 
-        return {
-          status,
-          record: record as Record<DataForPath<D, M, Path>> | undefined,
-          ...(audienceKeyDelivery ? { audienceKeyDelivery } : {}),
-        };
+        requireDwnSuccess('TypedEnbox.records.create', result);
+        if (result.record === undefined) {
+          throw new Error('TypedEnbox.records.create: DWN returned success without a record.');
+        }
+
+        return result.record as Record<DataForPath<D, M, Path>>;
       },
 
       /**
@@ -1021,9 +1023,8 @@ export class TypedEnbox<
        *   `'notebook/page'`).
        * @param request - Optional filter, sort, and pagination options.
        *   Omit entirely to return all records at the path.
-       * @returns A {@link RecordsQueryResponse} containing `status`, `records`
-       *   (as typed {@link Record} instances), and an optional
-       *   `cursor` for pagination.
+       * @returns A page containing typed {@link Record} instances and an
+       *   optional `cursor` for pagination.
        *
        * @example
        * ```ts
@@ -1049,16 +1050,16 @@ export class TypedEnbox<
       query: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
         request?: RecordQuery<D, Path>,
-      ): Promise<RecordsQueryResponse<DataForPath<D, M, Path>>> => {
+      ): Promise<RecordPage<DataForPath<D, M, Path>>> => {
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
         const compiled = compileRecordQuery(this._definition, normalizedPath, request);
-        const { status, records, cursor } = await this._dwn.records.query(compiled);
+        const result = await this._dwn.records.query(compiled);
+        requireDwnSuccess('TypedEnbox.records.query', result);
 
         return {
-          status,
-          records: records as Record<DataForPath<D, M, Path>>[],
-          cursor,
+          records : result.records as Record<DataForPath<D, M, Path>>[],
+          cursor  : result.cursor,
         };
       },
 
@@ -1105,16 +1106,21 @@ export class TypedEnbox<
       count: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
         request?: RecordQuery<D, Path>,
-      ): Promise<RecordsCountResponse> => {
+      ): Promise<number> => {
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
         const compiled = compileRecordQuery(this._definition, normalizedPath, request);
 
-        return this._dwn.records.count({
+        const result = await this._dwn.records.count({
           from         : compiled.from,
           filter       : compiled.filter,
           protocolRole : compiled.protocolRole,
         });
+        requireDwnSuccess('TypedEnbox.records.count', result);
+        if (result.count === undefined) {
+          throw new Error('TypedEnbox.records.count: DWN returned success without a count.');
+        }
+        return result.count;
       },
 
       /**
@@ -1126,14 +1132,18 @@ export class TypedEnbox<
        * @param path - The protocol path to read from.
        * @param request - Read options including a `filter` to identify the
        *   record. See {@link TypedReadRequest} for details.
-       * @returns A {@link RecordsReadResponse} containing `status` and the
-       *   matching typed {@link Record}.
+       * @returns The matching typed {@link Record}, or `undefined` when no
+       *   current record exists.
        *
        * @example
        * ```ts
-       * const { record } = await proto.records.read('notebook', {
+       * const record = await proto.records.read('notebook', {
        *   filter: { recordId: notebookId },
        * });
+       *
+       * if (record === undefined) {
+       *   throw new Error('Notebook not found');
+       * }
        *
        * const data = await record.data.json(); // NotebookData
        * console.log(data.name);
@@ -1142,19 +1152,20 @@ export class TypedEnbox<
       read: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
         request: TypedReadRequest<D, Path>,
-      ): Promise<RecordsReadResponse<DataForPath<D, M, Path>>> => {
+      ): Promise<Record<DataForPath<D, M, Path>> | undefined> => {
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
         const readFilter = compileRecordFilter(this._definition, normalizedPath, request.filter);
-        const { status, record } = await this._dwn.records.read({
+        const result = await this._dwn.records.read({
           from   : request.from,
           filter : readFilter,
         });
 
-        return {
-          status,
-          record: record as Record<DataForPath<D, M, Path>> | undefined,
-        };
+        if (result.status.code === 404) {
+          return undefined;
+        }
+        requireDwnSuccess('TypedEnbox.records.read', result);
+        return result.record as Record<DataForPath<D, M, Path>> | undefined;
       },
 
       /**
@@ -1167,26 +1178,22 @@ export class TypedEnbox<
        *   path validation).
        * @param request - Delete options. `recordId` is required; `contextId`
        *   scopes delegated grant resolution and `from` selects a remote DWN.
-       * @returns The DWN response status.
+       * @returns A promise that resolves when the delete is accepted.
        *
        * @example
        * ```ts
-       * const { status } = await proto.records.delete('notebook', {
+       * await proto.records.delete('notebook', {
        *   recordId: notebook.id,
        * });
-       *
-       * if (status.code === 202) {
-       *   console.log('Notebook deleted');
-       * }
        * ```
        */
       delete: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
         request: TypedDeleteRequest,
-      ): Promise<DwnResponseStatus> => {
+      ): Promise<void> => {
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
-        return this._dwn.records.delete({
+        const result = await this._dwn.records.delete({
           contextId    : request.contextId,
           from         : request.from,
           protocol     : this._definition.protocol,
@@ -1194,6 +1201,7 @@ export class TypedEnbox<
           recordId     : request.recordId,
           prune        : request.prune,
         });
+        requireDwnSuccess('TypedEnbox.records.delete', result);
       },
 
     };

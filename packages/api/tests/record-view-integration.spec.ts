@@ -88,37 +88,30 @@ describe('RecordView local DWN integration', () => {
         data : { title: 'Created' },
         tags : { status: 'draft' },
       });
-      expect(created.status.code).toBe(202);
-      expect(created.record).toBeDefined();
-      await waitFor(() => view?.getSnapshot().records.some((record) => record.id === created.record.id) === true);
+      await waitFor(() => view?.getSnapshot().records.some((record) => record.id === created.id) === true);
       const observed = view.getSnapshot().records[0];
       expect(await observed.data.json()).toEqual({ title: 'Created' });
 
-      const updated = await created.record.update({ tags: { status: 'published' } });
-      expect(updated.status.code).toBe(202);
+      await created.update({ tags: { status: 'published' } });
       await waitFor(() => view?.getSnapshot().records.length === 0);
 
       const replacement = await typed.records.create('note', {
         data : { title: 'Replacement' },
         tags : { status: 'draft' },
       });
-      expect(replacement.status.code).toBe(202);
-      expect(replacement.record).toBeDefined();
-      await waitFor(() => view?.getSnapshot().records.some((record) => record.id === replacement.record.id) === true);
+      await waitFor(() => view?.getSnapshot().records.some((record) => record.id === replacement.id) === true);
 
-      const deleted = await replacement.record.delete();
-      expect(deleted.status.code).toBe(202);
+      await replacement.delete();
       await waitFor(() => view?.getSnapshot().records.length === 0);
 
       const snapshotAtClose = view.getSnapshot();
       const publicationsAtClose = publications;
       await view.close();
 
-      const afterClose = await typed.records.create('note', {
+      await typed.records.create('note', {
         data : { title: 'After close' },
         tags : { status: 'draft' },
       });
-      expect(afterClose.status.code).toBe(202);
       await new Promise((resolve) => setTimeout(resolve, 25));
       expect(view.getSnapshot()).toBe(snapshotAtClose);
       expect(publications).toBe(publicationsAtClose);

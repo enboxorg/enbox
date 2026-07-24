@@ -318,7 +318,7 @@ const enbox = new Enbox({ agent, connectedDid: did });
 const notes = enbox.using(Notes);
 
 // Create
-const { record } = await notes.records.create('note', {
+const record = await notes.records.create('note', {
   data: { title: 'First note', body: 'Hello from Enbox!' },
 });
 

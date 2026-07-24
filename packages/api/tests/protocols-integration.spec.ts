@@ -433,13 +433,12 @@ describe('protocol API integration fixtures', () => {
       await typed.configure();
 
       // Friend has $role: true, so requires a recipient.
-      const { status, record } = await typed.records.create('friend', {
+      const record = await typed.records.create('friend', {
         data      : { did: 'did:example:bob', alias: 'Bob' },
         tags      : { did: 'did:example:bob' },
         recipient : 'did:example:bob',
       });
 
-      expect(status.code).toBe(202);
       expect(record).toBeInstanceOf(Record);
       expect(record.protocolPath).toBe('friend');
 
@@ -452,12 +451,11 @@ describe('protocol API integration fixtures', () => {
       const typed = new TypedEnbox(dwnAlice, SocialGraphProtocol);
       await typed.configure();
 
-      const { status, record } = await typed.records.create('block', {
+      const record = await typed.records.create('block', {
         data : { did: 'did:example:troll', reason: 'spam' },
         tags : { did: 'did:example:troll' },
       });
 
-      expect(status.code).toBe(202);
       expect(record.protocolPath).toBe('block');
 
       const data = await record.data.json();
@@ -469,18 +467,16 @@ describe('protocol API integration fixtures', () => {
       const typed = new TypedEnbox(dwnAlice, SocialGraphProtocol);
       await typed.configure();
 
-      const { record: groupRecord } = await typed.records.create('group', {
+      const groupRecord = await typed.records.create('group', {
         data: { name: 'Dev Team', description: 'Engineering' },
       });
-      expect(groupRecord).toBeDefined();
 
-      const { status, record: memberRecord } = await typed.records.create('group/member', {
+      const memberRecord = await typed.records.create('group/member', {
         data            : { did: 'did:example:carol', alias: 'Carol' },
         parentContextId : groupRecord.contextId,
         tags            : { did: 'did:example:carol' },
       });
 
-      expect(status.code).toBe(202);
       expect(memberRecord.protocolPath).toBe('group/member');
 
       const memberData = await memberRecord.data.json();
@@ -526,12 +522,11 @@ describe('protocol API integration fixtures', () => {
       const typed = new TypedEnbox(dwnAlice, ProfileProtocol);
       await typed.configure();
 
-      const result = await typed.records.create('profile', {
+      const profile = await typed.records.create('profile', {
         data: { displayName: 'Alice', bio: 'Building the future' },
       });
 
-      expect(result.status.code).toBe(202);
-      const data = await result.record.data.json();
+      const data = await profile.data.json();
       expect(data.displayName).toBe('Alice');
 
       const { records } = await typed.records.query('profile');
@@ -546,12 +541,11 @@ describe('protocol API integration fixtures', () => {
       const typed = new TypedEnbox(dwnAlice, ProfileProtocol);
       await typed.configure();
 
-      const { record } = await typed.records.create('profile', { data: { displayName: 'Alice v1' } });
-      const result = await record!.update({
+      const record = await typed.records.create('profile', { data: { displayName: 'Alice v1' } });
+      const updated = await record.update({
         data: { displayName: 'Alice v2', bio: 'Updated bio' },
       });
-
-      expect(result.status.code).toBe(202);
+      expect(updated).toBe(record);
 
       const { records } = await typed.records.query('profile');
       const fetched = records[0];
@@ -566,19 +560,18 @@ describe('protocol API integration fixtures', () => {
       const typed = new TypedEnbox(dwnAlice, ProfileProtocol);
       await typed.configure();
 
-      const { record: profileRecord } = await typed.records.create('profile', {
+      const profileRecord = await typed.records.create('profile', {
         data: { displayName: 'Alice' },
       });
 
-      const linkResult = await typed.records.create('profile/link', {
+      const link = await typed.records.create('profile/link', {
         data            : { url: 'https://twitter.com/alice', title: 'Twitter' },
-        parentContextId : profileRecord!.contextId,
+        parentContextId : profileRecord.contextId,
       });
 
-      expect(linkResult.status.code).toBe(202);
-      expect(linkResult.record!.protocolPath).toBe('profile/link');
+      expect(link.protocolPath).toBe('profile/link');
 
-      const linkData = await linkResult.record!.data.json();
+      const linkData = await link.data.json();
       expect(linkData.url).toBe('https://twitter.com/alice');
     });
   });
@@ -592,11 +585,9 @@ describe('protocol API integration fixtures', () => {
       const typed = new TypedEnbox(dwnAlice, ConnectProtocol);
       await typed.configure();
 
-      const result = await typed.records.create('wallet', {
+      await typed.records.create('wallet', {
         data: { webWallets: ['https://wallet.example.com'] },
       });
-
-      expect(result.status.code).toBe(202);
 
       const { records } = await typed.records.query('wallet');
       const fetched = records[0];
@@ -608,11 +599,11 @@ describe('protocol API integration fixtures', () => {
       const typed = new TypedEnbox(dwnAlice, ConnectProtocol);
       await typed.configure();
 
-      const { record } = await typed.records.create('wallet', {
+      const record = await typed.records.create('wallet', {
         data: { webWallets: ['https://v1.wallet.com'] },
       });
 
-      await record!.update({
+      await record.update({
         data: { webWallets: ['https://v2.wallet.com', 'https://alt.wallet.com'] },
       });
 
@@ -634,11 +625,10 @@ describe('protocol API integration fixtures', () => {
       const typed = new TypedEnbox(dwnAlice, StatusProtocol);
       await typed.configure();
 
-      const { status, record } = await typed.records.create('status', {
+      const record = await typed.records.create('status', {
         data: { text: 'Hello world!', emoji: '🌍' },
       });
 
-      expect(status.code).toBe(202);
       expect(record.protocolPath).toBe('status');
 
       const data = await record.data.json();
@@ -678,23 +668,20 @@ describe('protocol API integration fixtures', () => {
       const typed = new TypedEnbox(dwnAlice, ListsProtocol);
       await typed.configure();
 
-      const { record: folder1 } = await typed.records.create('folder', {
+      const folder1 = await typed.records.create('folder', {
         data: { name: 'Projects' },
       });
-      expect(folder1).toBeDefined();
 
-      const { record: folder2 } = await typed.records.create('folder/folder', {
+      const folder2 = await typed.records.create('folder/folder', {
         data            : { name: 'Work' },
         parentContextId : folder1.contextId,
       });
-      expect(folder2).toBeDefined();
       expect(folder2.protocolPath).toBe('folder/folder');
 
-      const { status, record: folder3 } = await typed.records.create('folder/folder/folder', {
+      const folder3 = await typed.records.create('folder/folder/folder', {
         data            : { name: 'Q1' },
         parentContextId : folder2.contextId,
       });
-      expect(status.code).toBe(202);
       expect(folder3.protocolPath).toBe('folder/folder/folder');
     });
 
@@ -704,7 +691,7 @@ describe('protocol API integration fixtures', () => {
       const typed = new TypedEnbox(dwnAlice, ListsProtocol);
       await typed.configure();
 
-      const { record: folder1 } = await typed.records.create('folder', {
+      const folder1 = await typed.records.create('folder', {
         data: { name: 'Root Folder' },
       });
 

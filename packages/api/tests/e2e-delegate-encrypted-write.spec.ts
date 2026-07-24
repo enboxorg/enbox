@@ -281,16 +281,13 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
       const typed = dappEnbox.using(EncTestProtocol);
 
       // Write a `mint` record (non-encrypted type) through the typed API.
-      const { status, record } = await typed.records.create('mint', {
+      const record = await typed.records.create('mint', {
         data: { url: 'https://mint.example', unit: 'sat' },
       });
 
-      expect(status.code).toBe(202);
-      expect(record).toBeDefined();
-
       // Author is the wallet DID, signer is the delegate DID.
       const signerDid = Jws.getSignerDid(
-        record!.rawMessage.authorization.signature.signatures[0],
+        record.rawMessage.authorization.signature.signatures[0],
       );
       expect(signerDid).toBe(delegateDid.uri);
     });
@@ -308,32 +305,27 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
       const typed = dappEnbox.using(EncTestProtocol);
 
       // First create the parent `mint` record.
-      const { status: mintStatus, record: mintRecord } = await typed.records.create('mint', {
+      const mintRecord = await typed.records.create('mint', {
         data: { url: 'https://mint.example', unit: 'sat' },
       });
-      expect(mintStatus.code).toBe(202);
-      expect(mintRecord).toBeDefined();
 
       // Write a `mint/proof` record (encrypted child type).
       // The delegate encrypts using the public keys from the owner's protocol
       // definition — no owner private key needed.
-      const { status: proofStatus, record: proofRecord } = await typed.records.create(
+      const proofRecord = await typed.records.create(
         'mint/proof' as any,
         {
           data            : { amount: 100, secret: 'abc', C: 'def' },
-          parentContextId : mintRecord!.contextId,
+          parentContextId : mintRecord.contextId,
         },
       );
 
-      expect(proofStatus.code).toBe(202);
-      expect(proofRecord).toBeDefined();
-
       // Verify encryption metadata is present on the record.
-      expect((proofRecord!.rawMessage as any).encryption).toBeDefined();
+      expect((proofRecord.rawMessage as any).encryption).toBeDefined();
 
       // Verify delegate signed the record (not the owner).
       const signerDid = Jws.getSignerDid(
-        proofRecord!.rawMessage.authorization.signature.signatures[0],
+        proofRecord.rawMessage.authorization.signature.signatures[0],
       );
       expect(signerDid).toBe(delegateDid.uri);
     });
@@ -351,18 +343,15 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
       const typed = dappEnbox.using(EncTestProtocol);
 
       // Write a `transaction` record (top-level encrypted type).
-      const { status, record } = await typed.records.create('transaction', {
+      const record = await typed.records.create('transaction', {
         data: { type: 'receive', amount: 500 },
       });
 
-      expect(status.code).toBe(202);
-      expect(record).toBeDefined();
-
       // Verify encryption metadata is present.
-      expect((record!.rawMessage as any).encryption).toBeDefined();
+      expect((record.rawMessage as any).encryption).toBeDefined();
 
       const signerDid = Jws.getSignerDid(
-        record!.rawMessage.authorization.signature.signatures[0],
+        record.rawMessage.authorization.signature.signatures[0],
       );
       expect(signerDid).toBe(delegateDid.uri);
     });
@@ -380,32 +369,28 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
       const typed = dappEnbox.using(EncTestProtocol);
 
       // Step 1: Create a mint (non-encrypted, with tags).
-      const { record: mintRecord } = await typed.records.create('mint', {
+      const mintRecord = await typed.records.create('mint', {
         data: { url: 'https://testnut.cash', unit: 'sat' },
       });
-      expect(mintRecord).toBeDefined();
 
       // Step 2: Store proofs under the mint (encrypted child records).
       // This is the exact path that fails in nutsd.
-      const { record: proof1 } = await typed.records.create('mint/proof' as any, {
+      const proof1 = await typed.records.create('mint/proof' as any, {
         data            : { amount: 100, secret: 'secret1', C: 'C1' },
-        parentContextId : mintRecord!.contextId,
+        parentContextId : mintRecord.contextId,
       });
-      expect(proof1).toBeDefined();
-      expect((proof1!.rawMessage as any).encryption).toBeDefined();
+      expect((proof1.rawMessage as any).encryption).toBeDefined();
 
-      const { record: proof2 } = await typed.records.create('mint/proof' as any, {
+      const proof2 = await typed.records.create('mint/proof' as any, {
         data            : { amount: 200, secret: 'secret2', C: 'C2' },
-        parentContextId : mintRecord!.contextId,
+        parentContextId : mintRecord.contextId,
       });
-      expect(proof2).toBeDefined();
 
       // Step 3: Create a transaction record (encrypted top-level).
-      const { record: txnRecord } = await typed.records.create('transaction', {
+      const txnRecord = await typed.records.create('transaction', {
         data: { type: 'mint', amount: 300 },
       });
-      expect(txnRecord).toBeDefined();
-      expect((txnRecord!.rawMessage as any).encryption).toBeDefined();
+      expect((txnRecord.rawMessage as any).encryption).toBeDefined();
 
       // Step 4: Verify non-encrypted records are queryable.
       const { records: mints } = await typed.records.query('mint');
@@ -421,7 +406,7 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
       // Also verify the encrypted writes were signed by the delegate
       // (checked via the returned record objects, not re-queried,
       // because the delegate cannot decrypt query results).
-      for (const r of [proof1!, proof2!, txnRecord!]) {
+      for (const r of [proof1, proof2, txnRecord]) {
         const signer = Jws.getSignerDid(
           r.rawMessage.authorization.signature.signatures[0],
         );
@@ -441,15 +426,15 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
 
       const typed = dappEnbox.using(EncTestProtocol);
 
-      const { record } = await typed.records.create('mint', {
+      const record = await typed.records.create('mint', {
         data: { url: 'https://mint.example', unit: 'sat' },
       });
-      expect(record).toBeDefined();
 
-      const { status: updateStatus } = await record!.update({
+      const updated = await record.update({
         data: { url: 'https://mint2.example', unit: 'usd' },
       });
-      expect(updateStatus.code).toBe(202);
+      expect(updated).toBe(record);
+      expect(await record.data.json()).toEqual({ url: 'https://mint2.example', unit: 'usd' });
     });
 
     it('should delete a delegate-written record', async () => {
@@ -464,13 +449,12 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
 
       const typed = dappEnbox.using(EncTestProtocol);
 
-      const { record } = await typed.records.create('mint', {
+      const record = await typed.records.create('mint', {
         data: { url: 'https://mint.example', unit: 'sat' },
       });
-      expect(record).toBeDefined();
 
-      const { status: deleteStatus } = await record!.delete();
-      expect(deleteStatus.code).toBe(202);
+      await record.delete();
+      expect(record.deleted).toBe(true);
     });
 
   });
@@ -773,34 +757,28 @@ describe('E2E: AuthManager.connect() with encrypted protocol', () => {
     const typed = enbox.using(EncTestProtocol);
 
     // Write a non-encrypted record.
-    const { status: mintStatus, record: mintRecord } = await typed.records.create('mint', {
+    const mintRecord = await typed.records.create('mint', {
       data: { url: 'https://testnut.cash', unit: 'sat' },
     });
-    expect(mintStatus.code).toBe(202);
-    expect(mintRecord).toBeDefined();
 
     // Write an encrypted child record (the exact nutsd failure path).
-    const { status: proofStatus, record: proofRecord } = await typed.records.create(
+    const proofRecord = await typed.records.create(
       'mint/proof' as any,
       {
         data            : { amount: 100, secret: 'abc', C: 'def' },
-        parentContextId : mintRecord!.contextId,
+        parentContextId : mintRecord.contextId,
       },
     );
-    expect(proofStatus.code).toBe(202);
-    expect(proofRecord).toBeDefined();
-    expect((proofRecord!.rawMessage as any).encryption).toBeDefined();
+    expect((proofRecord.rawMessage as any).encryption).toBeDefined();
 
     // Write a top-level encrypted record.
-    const { status: txnStatus, record: txnRecord } = await typed.records.create('transaction', {
+    const txnRecord = await typed.records.create('transaction', {
       data: { type: 'receive', amount: 500 },
     });
-    expect(txnStatus.code).toBe(202);
-    expect(txnRecord).toBeDefined();
-    expect((txnRecord!.rawMessage as any).encryption).toBeDefined();
+    expect((txnRecord.rawMessage as any).encryption).toBeDefined();
 
     // All records are signed by the delegate, not the owner.
-    for (const rec of [mintRecord!, proofRecord!, txnRecord!]) {
+    for (const rec of [mintRecord, proofRecord, txnRecord]) {
       const signer = Jws.getSignerDid(
         rec.rawMessage.authorization.signature.signatures[0],
       );
@@ -841,14 +819,12 @@ describe('E2E: AuthManager.connect() with encrypted protocol', () => {
     expect(refreshedStatus.connectSessionId).not.toBe(initialStatus.connectSessionId);
 
     const typed = Enbox.fromSession(refreshedSession).using(EncTestProtocol);
-    const { status, record } = await typed.records.create('transaction', {
+    const record = await typed.records.create('transaction', {
       data: { type: 'receive', amount: 900 },
     });
-    expect(status.code).toBe(202);
-    expect(record).toBeDefined();
-    expect((record!.rawMessage as any).encryption).toBeDefined();
+    expect((record.rawMessage as any).encryption).toBeDefined();
     expect(Jws.getSignerDid(
-      record!.rawMessage.authorization.signature.signatures[0],
+      record.rawMessage.authorization.signature.signatures[0],
     )).toBe(initialSession.delegateDid);
   });
 
@@ -925,22 +901,19 @@ describe('E2E: AuthManager.connect() with encrypted protocol', () => {
 
       const enbox = Enbox.fromSession(session);
       const typed = enbox.using(EncTestProtocol);
-      const { status: readStatus, record: hydratedRecord } = await typed.records.read('transaction', {
+      const hydratedRecord = await typed.records.read('transaction', {
         from   : walletDid.uri,
         filter : { recordId: walletWrite.message!.recordId },
       });
-      expect(readStatus.code).toBe(200);
       expect(hydratedRecord).toBeDefined();
       expect(await hydratedRecord!.data.json()).toEqual(walletRecordData);
 
       const delegateRecordData = { type: 'send', amount: 250 };
-      const { status: delegateWriteStatus, record: delegateRecord } = await typed.records.create('transaction', {
+      const delegateRecord = await typed.records.create('transaction', {
         data: delegateRecordData,
       });
-      expect(delegateWriteStatus.code).toBe(202);
-      expect(delegateRecord).toBeDefined();
-      expect((delegateRecord!.rawMessage as any).encryption).toBeDefined();
-      expect(await delegateRecord!.data.json()).toEqual(delegateRecordData);
+      expect((delegateRecord.rawMessage as any).encryption).toBeDefined();
+      expect(await delegateRecord.data.json()).toEqual(delegateRecordData);
     } finally {
       await suppliedDappHarness.clearStorage();
       await suppliedDappHarness.closeStorage();

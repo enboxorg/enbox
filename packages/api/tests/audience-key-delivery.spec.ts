@@ -216,7 +216,7 @@ describe('audience key delivery propagation', () => {
   });
 
   describe('Record.update()', () => {
-    it('should surface audienceKeyDelivery on role-record update results', async () => {
+    it('should update a role record and return the same canonical handle', async () => {
       const { definition, threadContextId } = await installChatProtocolWithThread();
 
       sinon.stub(testHarness.agent.dwn as any, 'getRecipientRolePublicKey')
@@ -235,12 +235,10 @@ describe('audience key delivery propagation', () => {
 
       // Updating the `$role` record re-provisions delivery — the retry idiom
       // for a previously skipped best-effort delivery.
-      const updateResult = await record!.update({ data: { name: 'Bob', role: 'admin' } });
+      const updatedRecord = await record!.update({ data: { name: 'Bob', role: 'admin' } });
 
-      expect(updateResult.status.code).toBe(202);
-      expect(updateResult.audienceKeyDelivery).toBeDefined();
-      expect(updateResult.audienceKeyDelivery!.delivered).toBe(false);
-      expect(updateResult.audienceKeyDelivery!.recipientDid).toBe(bobDid.uri);
+      expect(updatedRecord).toBe(record);
+      expect(await updatedRecord.data.json()).toEqual({ name: 'Bob', role: 'admin' });
     }, 15000);
 
     it('should retry a skipped delivery via update() with a caller-supplied recipientRolePublicKey', async () => {
@@ -265,13 +263,12 @@ describe('audience key delivery propagation', () => {
 
       const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
 
-      const updateResult = await record!.update({
+      const updatedRecord = await record!.update({
         data                   : { name: 'Bob', role: 'admin' },
         recipientRolePublicKey : VALID_X25519_KEY,
       });
 
-      expect(updateResult.status.code).toBe(202);
-      expect(updateResult.audienceKeyDelivery).toEqual({ delivered: true, recipientDid: bobDid.uri });
+      expect(updatedRecord).toBe(record);
 
       // The key rides the update's agent request at the top level and never
       // lands in `messageParams`, where the DWN would reject it as an
@@ -284,7 +281,7 @@ describe('audience key delivery propagation', () => {
       expect((updateCall!.args[0] as { messageParams?: Record<string, unknown> }).messageParams!.recipientRolePublicKey).toBeUndefined();
     }, 15000);
 
-    it('should leave audienceKeyDelivery undefined on non-role record updates', async () => {
+    it('should update a non-role record through the same value contract', async () => {
       const { definition } = await installChatProtocolWithThread();
 
       const { status: writeStatus, record } = await dwnAlice.records.write({
@@ -296,36 +293,33 @@ describe('audience key delivery propagation', () => {
       });
       expect(writeStatus.code).toBe(202);
 
-      const updateResult = await record!.update({ data: { title: 'Renamed Thread' } });
+      const updatedRecord = await record!.update({ data: { title: 'Renamed Thread' } });
 
-      expect(updateResult.status.code).toBe(202);
-      expect(updateResult.audienceKeyDelivery).toBeUndefined();
+      expect(updatedRecord).toBe(record);
+      expect(await updatedRecord.data.json()).toEqual({ title: 'Renamed Thread' });
     }, 15000);
   });
 
   describe('TypedEnbox records.create() and Record.update()', () => {
-    it('should forward recipientRolePublicKey and surface audienceKeyDelivery on typed create', async () => {
+    it('should forward recipientRolePublicKey on typed create', async () => {
       const definition = makeChatDefinition();
       const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {} as ChatSchemaMap));
 
       const { status: configureStatus } = await typed.configure();
       expect(configureStatus.code).toBe(202);
 
-      const { record: thread } = await typed.records.create('thread', { data: { title: 'Typed Thread' } });
-      expect(thread).toBeDefined();
+      const thread = await typed.records.create('thread', { data: { title: 'Typed Thread' } });
 
       const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
 
-      const createResult = await typed.records.create('thread/participant', {
+      const participant = await typed.records.create('thread/participant', {
         data                   : { name: 'Bob' },
-        parentContextId        : thread!.contextId,
+        parentContextId        : thread.contextId,
         recipient              : bobDid.uri,
         recipientRolePublicKey : VALID_X25519_KEY,
       });
 
-      expect(createResult.status.code).toBe(202);
-      expect(createResult.record).toBeDefined();
-      expect(createResult.audienceKeyDelivery).toEqual({ delivered: true, recipientDid: bobDid.uri });
+      expect(participant.recipient).toBe(bobDid.uri);
 
       // The typed surface forwards the key into the low-level write, which
       // passes it to the agent request at the top level.
@@ -334,68 +328,6 @@ describe('audience key delivery propagation', () => {
         (call.args[0] as { messageParams?: { protocolPath?: string } }).messageParams?.protocolPath === 'thread/participant');
       expect(writeCall).toBeDefined();
       expect((writeCall!.args[0] as { recipientRolePublicKey?: DwnPublicKeyJwk }).recipientRolePublicKey).toEqual(VALID_X25519_KEY);
-    }, 15000);
-
-    it('should surface audienceKeyDelivery on typed record update results', async () => {
-      const definition = makeChatDefinition();
-      const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {} as ChatSchemaMap));
-
-      const { status: configureStatus } = await typed.configure();
-      expect(configureStatus.code).toBe(202);
-
-      const { record: thread } = await typed.records.create('thread', { data: { title: 'Typed Thread' } });
-      expect(thread).toBeDefined();
-
-      sinon.stub(testHarness.agent.dwn as any, 'getRecipientRolePublicKey')
-        .rejects(new Error('recipient protocol not installed'));
-
-      const { record: participant, audienceKeyDelivery: createOutcome } = await typed.records.create('thread/participant', {
-        data            : { name: 'Bob' },
-        parentContextId : thread!.contextId,
-        recipient       : bobDid.uri,
-      });
-
-      // The typed create surfaces the best-effort skip.
-      expect(createOutcome).toBeDefined();
-      expect(createOutcome!.delivered).toBe(false);
-      expect(createOutcome!.recipientDid).toBe(bobDid.uri);
-
-      // The typed update re-provisions delivery and surfaces the outcome too.
-      const updateResult = await participant!.update({ data: { name: 'Bob', role: 'admin' } });
-
-      expect(updateResult.status.code).toBe(202);
-      expect(updateResult.audienceKeyDelivery).toBeDefined();
-      expect(updateResult.audienceKeyDelivery!.delivered).toBe(false);
-      expect(updateResult.audienceKeyDelivery!.recipientDid).toBe(bobDid.uri);
-    }, 15000);
-
-    it('should retry a skipped delivery via typed update() with a caller-supplied recipientRolePublicKey', async () => {
-      const definition = makeChatDefinition();
-      const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {} as ChatSchemaMap));
-
-      const { status: configureStatus } = await typed.configure();
-      expect(configureStatus.code).toBe(202);
-
-      const { record: thread } = await typed.records.create('thread', { data: { title: 'Typed Thread' } });
-      expect(thread).toBeDefined();
-
-      sinon.stub(testHarness.agent.dwn as any, 'getRecipientRolePublicKey')
-        .rejects(new Error('recipient protocol not installed'));
-
-      const { record: participant, audienceKeyDelivery: createOutcome } = await typed.records.create('thread/participant', {
-        data            : { name: 'Bob' },
-        parentContextId : thread!.contextId,
-        recipient       : bobDid.uri,
-      });
-      expect(createOutcome!.delivered).toBe(false);
-
-      const updateResult = await participant!.update({
-        data                   : { name: 'Bob', role: 'admin' },
-        recipientRolePublicKey : VALID_X25519_KEY,
-      });
-
-      expect(updateResult.status.code).toBe(202);
-      expect(updateResult.audienceKeyDelivery).toEqual({ delivered: true, recipientDid: bobDid.uri });
     }, 15000);
   });
 

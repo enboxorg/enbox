@@ -11,10 +11,11 @@ import {
   EnboxUserAgent,
 } from '@enbox/agent';
 
-import { AudienceDecryptError } from '../src/index.js';
 import { defineProtocol } from '../src/define-protocol.js';
+import { DwnResponseError as DirectDwnResponseError } from '../src/dwn-response-error.js';
 import { Enbox } from '../src/enbox.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
+import { AudienceDecryptError, DwnResponseError } from '../src/index.js';
 
 describe('AudienceDecryptError re-export', () => {
   it('re-exports the same class identity as @enbox/agent so instanceof checks work across layers', () => {
@@ -28,6 +29,14 @@ describe('AudienceDecryptError re-export', () => {
     });
     expect(decryptError).toBeInstanceOf(AgentAudienceDecryptError);
     expect(decryptError.cause).toBe('delivery-missing');
+  });
+});
+
+describe('DwnResponseError export', () => {
+  it('exports the public error with one class identity', () => {
+    expect(DwnResponseError).toBe(DirectDwnResponseError);
+    const error = new DwnResponseError('records.query', { code: 401, detail: 'Unauthorized' });
+    expect(error).toBeInstanceOf(DirectDwnResponseError);
   });
 });
 

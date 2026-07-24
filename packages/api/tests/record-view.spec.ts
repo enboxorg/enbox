@@ -13,6 +13,7 @@ import { AuthManager, MemoryStorage } from '@enbox/auth';
 import { describe, expect, it } from 'bun:test';
 
 import { defineProtocol } from '../src/define-protocol.js';
+import { DwnResponseError } from '../src/dwn-response-error.js';
 import { Enbox } from '../src/enbox.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
 
@@ -711,7 +712,11 @@ describe('RecordView', () => {
       : ok([recovered]));
     const view = await createTyped(harness).records.observe('note', { pagination: { limit: 10 } });
     await waitFor(() => { expect(view.getSnapshot().state).toBe('error'); });
-    expect(view.getSnapshot().error?.message).toContain('query failed');
+    expect(view.getSnapshot().error).toBeInstanceOf(DwnResponseError);
+    expect((view.getSnapshot().error as DwnResponseError).status).toEqual({
+      code   : 500,
+      detail : 'query failed',
+    });
 
     harness.emit(recordEvent());
     await waitFor(() => {
@@ -790,9 +795,13 @@ describe('RecordView', () => {
       },
     });
 
-    await expect(createTyped(harness, { sync: fakeSync.sync }).records.observe('note', {
+    const opening = createTyped(harness, { sync: fakeSync.sync }).records.observe('note', {
       pagination: { limit: 10 },
-    })).rejects.toThrow('unable to open local subscription (403)');
+    });
+    await expect(opening).rejects.toBeInstanceOf(DwnResponseError);
+    await opening.catch((error: unknown): void => {
+      expect((error as DwnResponseError).status).toEqual({ code: 403, detail: 'grant expired' });
+    });
 
     expect(anomalousCloseCalls).toBe(1);
     expect(fakeSync.listenerCount()).toBe(0);

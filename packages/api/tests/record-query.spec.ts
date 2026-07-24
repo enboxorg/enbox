@@ -90,7 +90,7 @@ describe('RecordQuery', () => {
     };
 
     await typed.records.query('note', query);
-    const countResponse = await typed.records.count('note', query);
+    const count = await typed.records.count('note', query);
 
     const expectedFilter = {
       ...filter,
@@ -111,7 +111,7 @@ describe('RecordQuery', () => {
       filter       : expectedFilter,
       protocolRole : query.protocolRole,
     }]);
-    expect(countResponse.count).toBe(7);
+    expect(count).toBe(7);
     expect(filter).toEqual({
       contextId : 'root/parent',
       tags      : { status: 'published', priority: { gte: 2 } },

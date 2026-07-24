@@ -94,12 +94,12 @@ describe('Record.patch()', () => {
     });
     expect(status.code).toBe(202);
 
-    const { status: patchStatus, record: patched } = await record!.patch({ title: 'v2' });
-    expect(patchStatus.code).toBe(202);
+    const patched = await record!.patch({ title: 'v2' });
 
     // Only the patched field changed — every omitted field survived.
     expect(await patched.data.json()).toEqual({ title: 'v2', body: 'unchanged body', count: 1 });
-    // The original reference was mutated in-place too (update() semantics).
+    // patch() preserves the canonical handle and mutates it in place.
+    expect(patched).toBe(record);
     expect(await record!.data.json()).toEqual({ title: 'v2', body: 'unchanged body', count: 1 });
   });
 
@@ -116,8 +116,7 @@ describe('Record.patch()', () => {
 
     const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
 
-    const { status } = await record!.patch({ title: 'v2' });
-    expect(status.code).toBe(202);
+    await record!.patch({ title: 'v2' });
 
     // Asserted at the agent request: the write's dataStream carries the full
     // merged object, not the partial the caller passed.
@@ -139,11 +138,10 @@ describe('Record.patch()', () => {
       dataFormat   : 'application/json',
     });
 
-    const { status, record: patched } = await record!.patch({
+    const patched = await record!.patch({
       subtitle : null, // explicit null → field deleted
       body     : undefined, // undefined → ignored, no change
     });
-    expect(status.code).toBe(202);
 
     const patchedData = await patched.data.json() as Record<string, unknown>;
     expect(patchedData).toEqual({ title: 'v1', body: 'kept' });
@@ -161,7 +159,7 @@ describe('Record.patch()', () => {
       dataFormat   : 'application/json',
     });
 
-    const { record: patched } = await record!.patch({ meta: { a: 9 } });
+    const patched = await record!.patch({ meta: { a: 9 } });
 
     // The nested object is replaced as a unit — `b` does NOT survive.
     expect(await patched.data.json()).toEqual({ title: 'v1', meta: { a: 9 } });
@@ -192,8 +190,8 @@ describe('Record.patch()', () => {
       schema       : `${protocolUri}/schemas/note`,
       dataFormat   : 'application/json',
     });
-    const { status: deleteStatus } = await record!.delete();
-    expect(deleteStatus.code).toBe(202);
+    await record!.delete();
+    expect(record!.deleted).toBe(true);
 
     await expect(record!.patch({ title: 'v2' })).rejects.toThrow('Cannot patch a deleted record');
   });
@@ -230,8 +228,8 @@ describe('Record.patch()', () => {
     expect(record!.encryption).toBeDefined();
     const originalIV = record!.encryption!.initializationVector;
 
-    const { status: patchStatus, record: patched } = await record!.patch({ title: 'secret v2' });
-    expect(patchStatus.code).toBe(202);
+    const patched = await record!.patch({ title: 'secret v2' });
+    expect(patched).toBe(record);
 
     // The patched record is re-encrypted (fresh envelope), full payload intact.
     expect(patched.encryption).toBeDefined();
@@ -261,16 +259,15 @@ describe('Record.patch()', () => {
       type PageData = { title: string; body: string; subtitle?: string };
       const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, {} as { page: PageData }));
 
-      const { status, record } = await typed.records.create('page', {
+      const record = await typed.records.create('page', {
         data: { title: 'v1', body: 'kept', subtitle: 'optional' },
       });
-      expect(status.code).toBe(202);
 
-      const { status: patchStatus, record: patched } = await record!.patch({
+      const patched = await record.patch({
         title    : 'v2',
         subtitle : null,
       });
-      expect(patchStatus.code).toBe(202);
+      expect(patched).toBe(record);
 
       const data: PageData = await patched.data.json();
       expect(data).toEqual({ title: 'v2', body: 'kept' });
@@ -301,21 +298,19 @@ describe('Record.patch()', () => {
       const { status: configStatus } = await typed.configure();
       expect(configStatus.code).toBe(202);
 
-      const { status, record } = await typed.records.create('secret', {
+      const record = await typed.records.create('secret', {
         data: { title: 'vault', pin: '1234' },
       });
-      expect(status.code).toBe(202);
-      expect(record!.encryption).toBeDefined();
+      expect(record.encryption).toBeDefined();
 
-      const { status: patchStatus, record: patched } = await record!.patch({ title: 'vault v2' });
-      expect(patchStatus.code).toBe(202);
+      const patched = await record.patch({ title: 'vault v2' });
+      expect(patched).toBe(record);
       expect(patched.encryption).toBeDefined();
 
       // The omitted encrypted field survives the patch round-trip.
-      const { status: readStatus, record: readRecord } = await typed.records.read('secret', {
+      const readRecord = await typed.records.read('secret', {
         filter: { recordId: record!.id },
       });
-      expect(readStatus.code).toBe(200);
       expect(await readRecord!.data.json()).toEqual({ title: 'vault v2', pin: '1234' });
     });
   });

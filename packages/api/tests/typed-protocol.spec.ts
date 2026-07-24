@@ -10,6 +10,7 @@ import { DwnInterface, EnboxUserAgent } from '@enbox/agent';
 
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
+import { DwnResponseError } from '../src/dwn-response-error.js';
 import { Protocol } from '../src/protocol.js';
 import { Record } from '../src/record.js';
 import { testDwnUrl } from './utils/test-config.js';
@@ -313,11 +314,10 @@ describe('TypedProtocol API', () => {
 
     describe('create()', () => {
       it('should create and return the canonical Record', async () => {
-        const { status, record } = await typed.records.create('list', {
+        const record = await typed.records.create('list', {
           data: { name: 'Groceries', description: 'Weekly shopping' },
         });
 
-        expect(status.code).toBe(202);
         expect(record).toBeInstanceOf(Record);
         expect(record.protocolPath).toBe('list');
         expect(record.schema).toBe('https://example.com/schemas/list');
@@ -326,26 +326,23 @@ describe('TypedProtocol API', () => {
 
       it('should write a record at a nested path', async () => {
         // First create a parent list
-        const { record: listRecord } = await typed.records.create('list', {
+        const listRecord = await typed.records.create('list', {
           data: { name: 'Work Tasks' },
         });
-        expect(listRecord).toBeDefined();
 
         // Write a task nested under the list
-        const { status, record: taskRecord } = await typed.records.create('list/task', {
+        const taskRecord = await typed.records.create('list/task', {
           data            : { title: 'Review PR', completed: false },
           parentContextId : listRecord.contextId,
         });
 
-        expect(status.code).toBe(202);
         expect(taskRecord.protocolPath).toBe('list/task');
         expect(taskRecord.schema).toBe('https://example.com/schemas/task');
       });
 
       it('should read back written JSON data via Record.data.json() without manual cast', async () => {
         const inputData = { name: 'Shopping', description: 'Grocery list' };
-        const { record } = await typed.records.create('list', { data: inputData });
-        expect(record).toBeDefined();
+        const record = await typed.records.create('list', { data: inputData });
 
         // The protocol payload type is carried by Record<T>.
         const readBack = await record.data.json();
@@ -387,10 +384,9 @@ describe('TypedProtocol API', () => {
       });
 
       it('forwards squash:true to the underlying write message descriptor', async () => {
-        const { record: doc } = await squashed.records.create('doc', { data: { n: 'd' } });
-        expect(doc).toBeDefined();
+        const doc = await squashed.records.create('doc', { data: { n: 'd' } });
 
-        const { status, record } = await squashed.records.create('doc/snapshot', {
+        const record = await squashed.records.create('doc/snapshot', {
           data            : { v: 's1' },
           parentContextId : doc.contextId,
           squash          : true,
@@ -398,14 +394,13 @@ describe('TypedProtocol API', () => {
 
         // If `squash` were dropped by the typed API, this would be an ordinary
         // (non-squashing) write — the descriptor would lack the directive.
-        expect(status.code).toBe(202);
         const descriptor = record.rawMessage.descriptor as { squash?: true };
         expect(descriptor.squash).toBe(true);
       });
 
       it('omits squash when not requested (no false-y field)', async () => {
-        const { record: doc } = await squashed.records.create('doc', { data: { n: 'd2' } });
-        const { record } = await squashed.records.create('doc/snapshot', {
+        const doc = await squashed.records.create('doc', { data: { n: 'd2' } });
+        const record = await squashed.records.create('doc/snapshot', {
           data            : { v: 's2' },
           parentContextId : doc.contextId,
         });
@@ -414,7 +409,7 @@ describe('TypedProtocol API', () => {
       });
 
       it('compacts older siblings end-to-end — a squash write purges prior snapshots', async () => {
-        const { record: doc } = await squashed.records.create('doc', { data: { n: 'doc' } });
+        const doc = await squashed.records.create('doc', { data: { n: 'doc' } });
 
         // two ordinary snapshots under the document context
         await squashed.records.create('doc/snapshot', { data: { v: 's1' }, parentContextId: doc.contextId });
@@ -423,12 +418,11 @@ describe('TypedProtocol API', () => {
         await new Promise((r) => setTimeout(r, 5));
 
         // a squashing snapshot — must purge the two older siblings in this context
-        const { status, record: squashRec } = await squashed.records.create('doc/snapshot', {
+        const squashRecord = await squashed.records.create('doc/snapshot', {
           data            : { v: 's3' },
           parentContextId : doc.contextId,
           squash          : true,
         });
-        expect(status.code).toBe(202);
 
         // Only the squash record survives (this is the whole point of the flag reaching the write).
         // Queries on a nested protocol path must be scoped by the parent context
@@ -437,25 +431,28 @@ describe('TypedProtocol API', () => {
           filter: { contextId: doc.contextId },
         });
         expect(records).toHaveLength(1);
-        expect(records[0].id).toBe(squashRec.id);
+        expect(records[0].id).toBe(squashRecord.id);
       });
 
-      it('rejects squash:true on a path without $squash (error surfaced, not swallowed)', async () => {
+      it('throws a DwnResponseError when squash is rejected by the DWN', async () => {
         // `doc` has no $squash — the squash backstop must reject the write,
-        // and the typed surface must pass that failure through (not a silent 202).
-        const { status, record } = await squashed.records.create('doc', {
-          data   : { n: 'nope' },
-          squash : true,
-        });
-
-        expect(status.code).toBe(400);
-        expect(status.detail ?? '').toContain('Squash');
-        expect(record).toBeUndefined();
+        // and the typed surface must preserve its machine-readable response.
+        try {
+          await squashed.records.create('doc', {
+            data   : { n: 'nope' },
+            squash : true,
+          });
+          throw new Error('expected create() to reject');
+        } catch (error: unknown) {
+          expect(error).toBeInstanceOf(DwnResponseError);
+          expect((error as DwnResponseError).status.code).toBe(400);
+          expect((error as DwnResponseError).status.detail).toContain('Squash');
+        }
       });
 
       it('a squashing write still stores and reads back its data', async () => {
-        const { record: doc } = await squashed.records.create('doc', { data: { n: 'doc' } });
-        const { record } = await squashed.records.create('doc/snapshot', {
+        const doc = await squashed.records.create('doc', { data: { n: 'doc' } });
+        const record = await squashed.records.create('doc/snapshot', {
           data            : { v: 'payload' },
           parentContextId : doc.contextId,
           squash          : true,
@@ -472,19 +469,16 @@ describe('TypedProtocol API', () => {
         await typed.records.create('list', { data: { name: 'List A' } });
         await typed.records.create('list', { data: { name: 'List B' } });
 
-        const { status, records } = await typed.records.query('list');
+        const { records } = await typed.records.query('list');
 
-        expect(status.code).toBe(200);
-        expect(records).toBeDefined();
         expect(records).toHaveLength(2);
         expect(records[0]).toBeInstanceOf(Record);
       });
 
       it('should apply additional filters', async () => {
-        const { record: listRecord } = await typed.records.create('list', {
+        const listRecord = await typed.records.create('list', {
           data: { name: 'Work' },
         });
-        expect(listRecord).toBeDefined();
 
         // Write tasks under the list
         await typed.records.create('list/task', {
@@ -501,7 +495,6 @@ describe('TypedProtocol API', () => {
           filter: { contextId: listRecord.contextId },
         });
 
-        expect(records).toBeDefined();
         expect(records).toHaveLength(2);
       });
 
@@ -528,46 +521,41 @@ describe('TypedProtocol API', () => {
           pagination : { limit: 1 },
         };
         const { records } = await typed.records.query('list', publishedSpec);
-        const { status, count } = await typed.records.count('list', publishedSpec);
+        const count = await typed.records.count('list', publishedSpec);
 
         expect(records).toHaveLength(1);
-        expect(status.code).toBe(200);
         expect(count).toBe(2);
 
         const all = await typed.records.count('list', { pagination: { limit: 1 } });
-        expect(all.count).toBe(3);
+        expect(all).toBe(3);
       });
     });
 
     describe('read()', () => {
       it('should read a single record by recordId and return the canonical Record', async () => {
-        const { record: written } = await typed.records.create('list', {
+        const written = await typed.records.create('list', {
           data: { name: 'Reading List' },
         });
-        expect(written).toBeDefined();
 
-        const { status, record: readRecord } = await typed.records.read('list', {
+        const readRecord = await typed.records.read('list', {
           filter: { recordId: written.id },
         });
 
-        expect(status.code).toBe(200);
         expect(readRecord).toBeInstanceOf(Record);
-        const data = await readRecord.data.json();
+        const data = await readRecord!.data.json();
         expect(data.name).toBe('Reading List');
       });
     });
 
     describe('delete()', () => {
       it('should delete a record by recordId', async () => {
-        const { record } = await typed.records.create('list', {
+        const record = await typed.records.create('list', {
           data: { name: 'To Delete' },
         });
-        expect(record).toBeDefined();
 
-        const { status: deleteStatus } = await typed.records.delete('list', {
+        await typed.records.delete('list', {
           recordId: record.id,
         });
-        expect(deleteStatus.code).toBe(202);
 
         // Verify it's gone
         const { records } = await typed.records.query('list');
@@ -578,21 +566,19 @@ describe('TypedProtocol API', () => {
     describe('schema-less types', () => {
       it('should write and query a type that has no schema (only dataFormats)', async () => {
         // Create a parent list and task for the attachment to nest under.
-        const { record: listRecord } = await typed.records.create('list', {
+        const listRecord = await typed.records.create('list', {
           data: { name: 'Attachments Test' },
         });
-        expect(listRecord).toBeDefined();
 
-        const { record: taskRecord } = await typed.records.create('list/task', {
+        const taskRecord = await typed.records.create('list/task', {
           data            : { title: 'Task with attachment', completed: false },
           parentContextId : listRecord.contextId,
         });
-        expect(taskRecord).toBeDefined();
 
         // Write a binary attachment — the 'attachment' type has no schema,
         // only dataFormats: ['application/octet-stream', 'image/png', 'image/jpeg'].
         const blob = new Blob(['binary-content'], { type: 'application/octet-stream' });
-        const { status: writeStatus, record: attachmentRecord } = await typed.records.create(
+        const attachmentRecord = await typed.records.create(
           'list/task/attachment',
           {
             data            : blob,
@@ -600,18 +586,16 @@ describe('TypedProtocol API', () => {
           },
         );
 
-        expect(writeStatus.code).toBe(202);
         expect(attachmentRecord.protocolPath).toBe('list/task/attachment');
         // Schema should be undefined — not set on the record.
         expect(attachmentRecord.schema).toBeUndefined();
 
         // Query should also succeed without schema: undefined in the filter.
-        const { status: queryStatus, records } = await typed.records.query(
+        const { records } = await typed.records.query(
           'list/task/attachment',
           { filter: { contextId: taskRecord.contextId } },
         );
 
-        expect(queryStatus.code).toBe(200);
         expect(records).toHaveLength(1);
         expect(records[0].id).toBe(attachmentRecord.id);
       });
@@ -623,22 +607,20 @@ describe('TypedProtocol API', () => {
       it('should auto-configure and succeed when calling create() before configure()', async () => {
         const unconfigured = new TypedEnbox(dwnAlice, TodoProtocol);
 
-        const { status, record } = await unconfigured.records.create('list', {
+        const record = await unconfigured.records.create('list', {
           data: { name: 'Auto-configured' },
         });
 
-        expect(status.code).toBe(202);
-        expect(record).toBeDefined();
+        expect(record.protocolPath).toBe('list');
         expect(unconfigured.isConfigured).toBe(true);
       });
 
       it('should auto-configure and succeed when calling query() before configure()', async () => {
         const unconfigured = new TypedEnbox(dwnAlice, TodoProtocol);
 
-        const { status, records } = await unconfigured.records.query('list');
+        const { records } = await unconfigured.records.query('list');
 
-        expect(status.code).toBe(200);
-        expect(records).toBeDefined();
+        expect(records).toEqual([]);
         expect(unconfigured.isConfigured).toBe(true);
       });
 
@@ -646,16 +628,15 @@ describe('TypedProtocol API', () => {
         const unconfigured = new TypedEnbox(dwnAlice, TodoProtocol);
 
         // Create a record first via auto-configure, then read it back
-        const { record: created } = await unconfigured.records.create('list', {
+        const created = await unconfigured.records.create('list', {
           data: { name: 'Read Test' },
         });
 
-        const { status, record } = await unconfigured.records.read('list', {
+        const record = await unconfigured.records.read('list', {
           filter: { recordId: created.id },
         });
 
-        expect(status.code).toBe(200);
-        expect(record).toBeDefined();
+        expect(record?.id).toBe(created.id);
         expect(unconfigured.isConfigured).toBe(true);
       });
 
@@ -663,15 +644,15 @@ describe('TypedProtocol API', () => {
         const unconfigured = new TypedEnbox(dwnAlice, TodoProtocol);
 
         // Create a record first via auto-configure, then delete it
-        const { record: created } = await unconfigured.records.create('list', {
+        const created = await unconfigured.records.create('list', {
           data: { name: 'Delete Test' },
         });
 
-        const { status } = await unconfigured.records.delete('list', {
+        await unconfigured.records.delete('list', {
           recordId: created.id,
         });
 
-        expect(status.code).toBe(202);
+        expect(await unconfigured.records.read('list', { filter: { recordId: created.id } })).toBeUndefined();
         expect(unconfigured.isConfigured).toBe(true);
       });
 
@@ -719,42 +700,38 @@ describe('TypedProtocol API', () => {
       });
 
       it('should normalize trailing slashes on create()', async () => {
-        const { status, record } = await typed.records.create('list/' as any, {
+        const record = await typed.records.create('list/' as any, {
           data: { name: 'Trailing Slash' },
         });
 
-        expect(status.code).toBe(202);
         expect(record.protocolPath).toBe('list');
       });
 
       it('should normalize trailing slashes on query()', async () => {
         await typed.records.create('list', { data: { name: 'Slash Test' } });
 
-        const { status, records } = await typed.records.query('list/' as any);
-        expect(status.code).toBe(200);
+        const { records } = await typed.records.query('list/' as any);
         expect(records.length).toBeGreaterThanOrEqual(1);
       });
 
       it('should normalize leading slashes', async () => {
-        const { status, record } = await typed.records.create('/list' as any, {
+        const record = await typed.records.create('/list' as any, {
           data: { name: 'Leading Slash' },
         });
 
-        expect(status.code).toBe(202);
         expect(record.protocolPath).toBe('list');
       });
 
       it('should normalize nested paths with trailing slashes', async () => {
-        const { record: listRecord } = await typed.records.create('list', {
+        const listRecord = await typed.records.create('list', {
           data: { name: 'Nested Slash Test' },
         });
 
-        const { status, record } = await typed.records.create('list/task/' as any, {
+        const record = await typed.records.create('list/task/' as any, {
           data            : { title: 'Slashed Task', completed: false },
           parentContextId : listRecord.contextId,
         });
 
-        expect(status.code).toBe(202);
         expect(record.protocolPath).toBe('list/task');
       });
     });
@@ -806,27 +783,27 @@ describe('TypedProtocol API', () => {
 
       describe('normalizePath()', () => {
         it('should normalize leading slashes on read()', async () => {
-          const { record: written } = await typed.records.create('list', {
+          const written = await typed.records.create('list', {
             data: { name: 'Normalize Read' },
           });
 
-          const { status, record } = await typed.records.read('/list' as any, {
+          const record = await typed.records.read('/list' as any, {
             filter: { recordId: written.id },
           });
 
-          expect(status.code).toBe(200);
-          expect(record.protocolPath).toBe('list');
+          expect(record?.protocolPath).toBe('list');
         });
 
         it('should normalize leading and trailing slashes on delete()', async () => {
-          const { record: written } = await typed.records.create('list', {
+          const written = await typed.records.create('list', {
             data: { name: 'Normalize Delete' },
           });
 
-          const { status } = await typed.records.delete('/list/' as any, {
+          await typed.records.delete('/list/' as any, {
             recordId: written.id,
           });
-          expect(status.code).toBe(202);
+
+          expect(await typed.records.read('list', { filter: { recordId: written.id } })).toBeUndefined();
         });
 
         it('should forward the normalized path as delete grant-resolution metadata', async () => {
@@ -863,37 +840,35 @@ describe('TypedProtocol API', () => {
       describe('protocol-path type resolution', () => {
         it('should resolve schema from the last segment of a nested path', async () => {
           // Create a parent list first.
-          const { record: listRecord } = await typed.records.create('list', {
+          const listRecord = await typed.records.create('list', {
             data: { name: 'LastSegment Test' },
           });
 
           // The final `task` path segment resolves to the task schema.
-          const { status, record } = await typed.records.create('list/task', {
+          const record = await typed.records.create('list/task', {
             data            : { title: 'Deep task', completed: false },
             parentContextId : listRecord.contextId,
           });
 
-          expect(status.code).toBe(202);
           expect(record.schema).toBe('https://example.com/schemas/task');
         });
 
         it('should resolve schema from deeply nested path', async () => {
-          const { record: listRecord } = await typed.records.create('list', {
+          const listRecord = await typed.records.create('list', {
             data: { name: 'Deep Nest' },
           });
-          const { record: taskRecord } = await typed.records.create('list/task', {
+          const taskRecord = await typed.records.create('list/task', {
             data            : { title: 'Parent task', completed: false },
             parentContextId : listRecord.contextId,
           });
 
           // The final `attachment` path segment resolves to the schema-less attachment type.
           const blob = new Blob(['content'], { type: 'application/octet-stream' });
-          const { status, record } = await typed.records.create('list/task/attachment', {
+          const record = await typed.records.create('list/task/attachment', {
             data            : blob,
             parentContextId : taskRecord.contextId,
           });
 
-          expect(status.code).toBe(202);
           expect(record.schema).toBeUndefined();
         });
       });
@@ -902,26 +877,26 @@ describe('TypedProtocol API', () => {
         it('should recognize all valid paths from the protocol structure', async () => {
           // Verify all expected paths are valid by performing operations on them.
           // If collectPaths is wrong, _assertReady would throw 'invalid protocol path'.
-          const { record: listRecord } = await typed.records.create('list', {
+          const listRecord = await typed.records.create('list', {
             data: { name: 'Path Test' },
           });
-          const { record: taskRecord } = await typed.records.create('list/task', {
+          const taskRecord = await typed.records.create('list/task', {
             data            : { title: 'Path task', completed: false },
             parentContextId : listRecord.contextId,
           });
 
-          const { status: listStatus } = await typed.records.query('list');
-          expect(listStatus.code).toBe(200);
+          const lists = await typed.records.query('list');
+          expect(lists.records.some((record) => record.id === listRecord.id)).toBe(true);
 
-          const { status: taskStatus } = await typed.records.query('list/task', {
+          const tasks = await typed.records.query('list/task', {
             filter: { contextId: listRecord.contextId },
           });
-          expect(taskStatus.code).toBe(200);
+          expect(tasks.records.some((record) => record.id === taskRecord.id)).toBe(true);
 
-          const { status: attachmentStatus } = await typed.records.query('list/task/attachment', {
+          const attachments = await typed.records.query('list/task/attachment', {
             filter: { contextId: taskRecord.contextId },
           });
-          expect(attachmentStatus.code).toBe(200);
+          expect(attachments.records).toEqual([]);
         });
 
         it('should reject paths not in the collected set', async () => {
@@ -940,85 +915,35 @@ describe('TypedProtocol API', () => {
     });
 
     describe('Record lifecycle methods', () => {
-      it('should update a record and return a canonical Record', async () => {
-        const { record } = await typed.records.create('list', {
+      it('should update and return the same canonical Record', async () => {
+        const record = await typed.records.create('list', {
           data: { name: 'Original' },
         });
-        const { status, record: updatedRecord } = await record.update({
+        const updatedRecord = await record.update({
           data: { name: 'Updated', description: 'Now with description' },
         });
 
-        expect(status.code).toBe(202);
         expect(updatedRecord).toBeInstanceOf(Record);
+        expect(updatedRecord).toBe(record);
         const data = await updatedRecord.data.json();
         expect(data.name).toBe('Updated');
         expect(data.description).toBe('Now with description');
       });
 
-      it('should mutate the original record in-place on successful update', async () => {
-        const { record: original } = await typed.records.create('list', {
-          data: { name: 'Before' },
-        });
-
-        // Verify initial data.
-        const dataBefore = await original.data.json();
-        expect(dataBefore.name).toBe('Before');
-
-        // Perform update — the original reference should reflect the new data.
-        const { status, record: returned } = await original.update({
-          data: { name: 'After', description: 'Added description' },
-        });
-
-        expect(status.code).toBe(202);
-
-        // The returned record should have the new data (existing behavior).
-        const returnedData = await returned.data.json();
-        expect(returnedData.name).toBe('After');
-
-        // The ORIGINAL record should also reflect the new data (new behavior).
-        const originalData = await original.data.json();
-        expect(originalData.name).toBe('After');
-        expect(originalData.description).toBe('Added description');
-
-        // Timestamps should match between original and returned.
-        expect(original.timestamp).toBe(returned.timestamp);
-      });
-
-      it('should delete a record via Record.delete()', async () => {
-        const { record } = await typed.records.create('list', {
+      it('should delete a record in place', async () => {
+        const record = await typed.records.create('list', {
           data: { name: 'Delete Me' },
         });
+        expect(record.deleted).toBe(false);
 
-        const { status, record: deletedRecord } = await record.delete();
+        const result = await record.delete();
 
-        expect(status.code).toBe(202);
-        expect(deletedRecord).toBeInstanceOf(Record);
-        expect(deletedRecord.deleted).toBe(true);
-      });
-
-      it('should mutate the original record in-place on successful delete', async () => {
-        const { record: original } = await typed.records.create('list', {
-          data: { name: 'Will be deleted' },
-        });
-
-        // Verify not deleted before.
-        expect(original.deleted).toBe(false);
-
-        const { status, record: returned } = await original.delete();
-        expect(status.code).toBe(202);
-
-        // The returned record should be in a deleted state (existing behavior).
-        expect(returned.deleted).toBe(true);
-
-        // The ORIGINAL record should also reflect the deletion (new behavior).
-        expect(original.deleted).toBe(true);
-
-        // Both timestamps should match.
-        expect(original.timestamp).toBe(returned.timestamp);
+        expect(result).toBeUndefined();
+        expect(record.deleted).toBe(true);
       });
 
       it('should serialize the canonical Record with toJSON()', async () => {
-        const { record } = await typed.records.create('list', {
+        const record = await typed.records.create('list', {
           data: { name: 'JSON Test' },
         });
 
@@ -1028,72 +953,88 @@ describe('TypedProtocol API', () => {
       });
 
       it('should format the canonical Record with toString()', async () => {
-        const { record } = await typed.records.create('list', {
+        const record = await typed.records.create('list', {
           data: { name: 'String Test' },
         });
 
-        const str = record!.toString();
+        const str = record.toString();
         expect(str).toContain('Record:');
-        expect(str).toContain(record!.id);
+        expect(str).toContain(record.id);
       });
     });
 
-    describe('record type safety (discriminated union)', () => {
-      it('create() should return record on success', async () => {
-        const result = await typed.records.create('list', {
+    describe('value and error contract', () => {
+      it('create() returns a typed Record directly', async () => {
+        const record = await typed.records.create('list', {
           data: { name: 'Type Safety Test' },
         });
 
-        expect(result.status.code).toBe(202);
-        expect(result.record).toBeDefined();
-
-        // After a truthiness check, record should be narrowed to Record
-        if (result.record) {
-          expect(result.record.id).toBeDefined();
-          const data = await result.record.data.json();
-          expect(data.name).toBe('Type Safety Test');
-        }
+        expect(record).toBeInstanceOf(Record);
+        expect(await record.data.json()).toEqual({ name: 'Type Safety Test' });
       });
 
-      it('create() should return undefined record on failure', async () => {
+      it('create() throws DwnResponseError with the original status on failure', async () => {
         // Stub the agent to return a non-2xx status for the write operation.
         // DwnApi.records is a getter that returns a fresh object, so we stub
         // at the agent level instead.
         const processStub = sinon.stub(testHarness.agent, 'processDwnRequest').resolves({
-          reply   : { status: { code: 400, detail: 'Bad Request' } },
-          message : {} as never,
+          reply: {
+            status: {
+              code      : 400,
+              detail    : 'Bad Request',
+              errorCode : 'RecordsWriteRejected',
+              info      : { field: 'data' },
+            },
+          },
+          message: {} as never,
         } as never);
 
-        const result = await typed.records.create('list', {
-          data: { name: 'Should Fail' },
-        });
-
-        expect(result.status.code).toBe(400);
-        expect(result.record).toBeUndefined();
-
-        processStub.restore();
-      });
-
-      it('read() should return record on success', async () => {
-        // First create a record
-        const { record: created } = await typed.records.create('list', {
-          data: { name: 'Read Target' },
-        });
-
-        const result = await typed.records.read('list', {
-          filter: { recordId: created!.id },
-        });
-
-        expect(result.status.code).toBe(200);
-        expect(result.record).toBeDefined();
-
-        if (result.record) {
-          const data = await result.record.data.json();
-          expect(data.name).toBe('Read Target');
+        try {
+          await typed.records.create('list', { data: { name: 'Should Fail' } });
+          throw new Error('expected create() to reject');
+        } catch (error: unknown) {
+          expect(error).toBeInstanceOf(DwnResponseError);
+          expect((error as DwnResponseError).status).toEqual({
+            code      : 400,
+            detail    : 'Bad Request',
+            errorCode : 'RecordsWriteRejected',
+            info      : { field: 'data' },
+          });
+          expect((error as DwnResponseError).message).toBe(
+            'TypedEnbox.records.create failed (400): Bad Request'
+          );
+        } finally {
+          processStub.restore();
         }
       });
 
-      it('read() should return undefined record on failure', async () => {
+      it('preserves errors thrown before a DWN response exists', async () => {
+        const reason = new Error('transport unavailable');
+        const processStub = sinon.stub(testHarness.agent, 'processDwnRequest').rejects(reason);
+
+        try {
+          await expect(typed.records.create('list', {
+            data: { name: 'Never dispatched' },
+          })).rejects.toBe(reason);
+        } finally {
+          processStub.restore();
+        }
+      });
+
+      it('read() returns a typed Record on success', async () => {
+        const created = await typed.records.create('list', {
+          data: { name: 'Read Target' },
+        });
+
+        const record = await typed.records.read('list', {
+          filter: { recordId: created.id },
+        });
+
+        expect(record).toBeInstanceOf(Record);
+        expect(await record!.data.json()).toEqual({ name: 'Read Target' });
+      });
+
+      it('read() returns undefined when no current record exists', async () => {
         // Stub at the agent level — DwnApi.records is a getter that
         // returns a fresh object, so direct stubbing doesn't work.
         const processStub = sinon.stub(testHarness.agent, 'processDwnRequest').resolves({
@@ -1101,47 +1042,91 @@ describe('TypedProtocol API', () => {
           message : {} as never,
         } as never);
 
-        const result = await typed.records.read('list', {
+        const record = await typed.records.read('list', {
           filter: { recordId: 'nonexistent-id' },
         });
 
-        expect(result.status.code).toBe(404);
-        expect(result.record).toBeUndefined();
+        expect(record).toBeUndefined();
 
         processStub.restore();
       });
 
-      it('record should be narrowable via truthiness check', async () => {
-        const result = await typed.records.create('list', {
-          data: { name: 'Narrowing Test' },
-        });
+      it('read() throws for failures other than not found', async () => {
+        const processStub = sinon.stub(testHarness.agent, 'processDwnRequest').resolves({
+          reply   : { status: { code: 401, detail: 'Unauthorized' }, entry: {} },
+          message : {} as never,
+        } as never);
 
-        // This is the pattern users should use:
-        if (!result.record) {
-          // In this branch, TypeScript knows record is undefined
-          expect(result.status.code).not.toBe(202);
-          return;
+        try {
+          await typed.records.read('list', {
+            filter: { recordId: 'unauthorized-id' },
+          });
+          throw new Error('expected read() to reject');
+        } catch (error: unknown) {
+          expect(error).toBeInstanceOf(DwnResponseError);
+          expect((error as DwnResponseError).status).toEqual({ code: 401, detail: 'Unauthorized' });
+        } finally {
+          processStub.restore();
         }
-
-        // In this branch, TypeScript knows record is Record<ListData>
-        expect(result.record.id).toBeDefined();
-        expect(result.record.contextId).toBeDefined();
       });
 
-      it('destructured record should be Record | undefined', async () => {
-        const { status, record } = await typed.records.create('list', {
-          data: { name: 'Destructure Test' },
+      it('count() returns a number directly', async () => {
+        await typed.records.create('list', {
+          data: { name: 'Counted' },
         });
 
-        expect(status.code).toBe(202);
+        expect(await typed.records.count('list')).toBe(1);
+      });
 
-        // After destructuring, `record` is `Record | undefined`
-        // The user must check before using it
-        if (record) {
-          expect(record.id).toBeDefined();
-          const data = await record.data.json();
-          expect(data.name).toBe('Destructure Test');
+      it('count() rejects a successful reply that omits the count', async () => {
+        const processStub = sinon.stub(testHarness.agent, 'processDwnRequest').resolves({
+          reply   : { status: { code: 200, detail: 'OK' } },
+          message : {} as never,
+        } as never);
+
+        try {
+          await expect(typed.records.count('list')).rejects.toThrow(
+            'TypedEnbox.records.count: DWN returned success without a count.'
+          );
+        } finally {
+          processStub.restore();
         }
+      });
+
+      it('query(), count(), and delete() translate non-success replies', async () => {
+        const operations = [
+          { name: 'query', run: async (): Promise<unknown> => typed.records.query('list') },
+          { name: 'count', run: async (): Promise<unknown> => typed.records.count('list') },
+          { name: 'delete', run: async (): Promise<unknown> => typed.records.delete('list', { recordId: 'record-id' }) },
+        ];
+
+        for (const operation of operations) {
+          const processStub = sinon.stub(testHarness.agent, 'processDwnRequest').resolves({
+            reply   : { status: { code: 403, detail: 'Forbidden' } },
+            message : {} as never,
+          } as never);
+
+          try {
+            await operation.run();
+            throw new Error(`expected ${operation.name}() to reject`);
+          } catch (error: unknown) {
+            expect(error).toBeInstanceOf(DwnResponseError);
+            expect((error as DwnResponseError).status).toEqual({ code: 403, detail: 'Forbidden' });
+          } finally {
+            processStub.restore();
+          }
+        }
+      });
+
+      it('delete() resolves without a response envelope and removes the record', async () => {
+        const record = await typed.records.create('list', {
+          data: { name: 'Delete Contract' },
+        });
+
+        const result = await typed.records.delete('list', { recordId: record.id });
+
+        expect(result).toBeUndefined();
+        expect(await typed.records.read('list', { filter: { recordId: record.id } })).toBeUndefined();
       });
     });
   });

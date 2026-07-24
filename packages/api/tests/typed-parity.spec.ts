@@ -11,6 +11,7 @@ import { DwnInterface, EnboxUserAgent } from '@enbox/agent';
 
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
+import { DwnResponseError } from '../src/dwn-response-error.js';
 import { Enbox } from '../src/enbox.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
 import { testDwnUrl } from './utils/test-config.js';
@@ -107,12 +108,11 @@ describe('typed api parity batch', () => {
 
       const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
 
-      const { status, record } = await typed.records.create('list', {
+      const record = await typed.records.create('list', {
         data             : { name: 'stamped' },
         dateCreated      : forwardStamp,
         messageTimestamp : forwardStamp,
       });
-      expect(status.code).toBe(202);
 
       // Asserted at the AGENT request: the write message params carry both
       // fields verbatim — no re-stamping, no validation added by the api.
@@ -123,8 +123,8 @@ describe('typed api parity batch', () => {
       expect(messageParams.messageTimestamp).toBe(forwardStamp);
 
       // And the accepted record reflects them (the engine owns the rules).
-      expect(record!.dateCreated).toBe(forwardStamp);
-      expect(record!.timestamp).toBe(forwardStamp);
+      expect(record.dateCreated).toBe(forwardStamp);
+      expect(record.timestamp).toBe(forwardStamp);
     });
 
     it('should add no validation of its own — the engine rule surfaces verbatim', async () => {
@@ -133,22 +133,22 @@ describe('typed api parity batch', () => {
       // The engine rejects an initial write whose messageTimestamp differs
       // from dateCreated. The typed surface forwards both untouched, so the
       // engine's own rejection surfaces instead of an api-layer error.
-      const { status } = await typed.records.create('list', {
+      const create = typed.records.create('list', {
         data             : { name: 'mismatched' },
         dateCreated      : '2025-01-02T03:04:05.678900Z',
         messageTimestamp : '2025-06-07T08:09:10.111213Z',
       });
 
-      expect(status.code).toBe(400);
-      expect(status.detail).toContain('must match dateCreated');
+      await expect(create).rejects.toBeInstanceOf(DwnResponseError);
+      await expect(create).rejects.toHaveProperty('status.code', 400);
+      await expect(create).rejects.toHaveProperty('status.detail', expect.stringContaining('must match dateCreated'));
     });
 
     it('should leave both timestamps unset on the agent request when not provided', async () => {
       const { typed } = makeTyped();
       const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
 
-      const { status } = await typed.records.create('list', { data: { name: 'unstamped' } });
-      expect(status.code).toBe(202);
+      await typed.records.create('list', { data: { name: 'unstamped' } });
 
       const writeCall = processSpy.getCalls().find((call) => call.args[0].messageType === DwnInterface.RecordsWrite);
       const messageParams = writeCall!.args[0].messageParams as DwnMessageParams[DwnInterface.RecordsWrite];
@@ -161,20 +161,18 @@ describe('typed api parity batch', () => {
     it('should forward prune to the agent request and actually prune children', async () => {
       const { typed } = makeTyped();
 
-      const { record: list } = await typed.records.create('list', { data: { name: 'groceries' } });
-      const { status: taskStatus, record: task } = await typed.records.create('list/task', {
+      const list = await typed.records.create('list', { data: { name: 'groceries' } });
+      const task = await typed.records.create('list/task', {
         data            : { title: 'milk' },
-        parentContextId : list!.contextId,
+        parentContextId : list.contextId,
       });
-      expect(taskStatus.code).toBe(202);
 
       const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
 
-      const { status: deleteStatus } = await typed.records.delete('list', {
-        recordId : list!.id,
+      await typed.records.delete('list', {
+        recordId : list.id,
         prune    : true,
       });
-      expect(deleteStatus.code).toBe(202);
 
       // prune forwarded verbatim on the RecordsDelete message params.
       const deleteCall = processSpy.getCalls().find((call) => call.args[0].messageType === DwnInterface.RecordsDelete);
@@ -183,36 +181,34 @@ describe('typed api parity batch', () => {
       expect(deleteParams.prune).toBe(true);
 
       // The child task was actually pruned along with the list.
-      const { status: taskQueryStatus, records: remainingTasks } = await typed.records.query('list/task', {
-        filter: { contextId: list!.contextId },
+      const { records: remainingTasks } = await typed.records.query('list/task', {
+        filter: { contextId: list.contextId },
       });
-      expect(taskQueryStatus.code).toBe(200);
       expect(remainingTasks).toHaveLength(0);
 
       const { records: remainingLists } = await typed.records.query('list');
       expect(remainingLists).toHaveLength(0);
 
       // Sanity: the pruned child is gone from reads too.
-      const { status: taskReadStatus } = await typed.records.read('list/task', {
-        filter: { recordId: task!.id },
+      const prunedTask = await typed.records.read('list/task', {
+        filter: { recordId: task.id },
       });
-      expect(taskReadStatus.code).toBe(404);
+      expect(prunedTask).toBeUndefined();
     });
 
     it('should leave children in place when prune is not requested', async () => {
       const { typed } = makeTyped();
 
-      const { record: list } = await typed.records.create('list', { data: { name: 'chores' } });
+      const list = await typed.records.create('list', { data: { name: 'chores' } });
       await typed.records.create('list/task', {
         data            : { title: 'sweep' },
-        parentContextId : list!.contextId,
+        parentContextId : list.contextId,
       });
 
-      const { status: deleteStatus } = await typed.records.delete('list', { recordId: list!.id });
-      expect(deleteStatus.code).toBe(202);
+      await typed.records.delete('list', { recordId: list.id });
 
       const { records: remainingTasks } = await typed.records.query('list/task', {
-        filter: { contextId: list!.contextId },
+        filter: { contextId: list.contextId },
       });
       expect(remainingTasks).toHaveLength(1);
     });
@@ -256,7 +252,6 @@ describe('typed api parity batch', () => {
 
       const selection = { pagination: { limit: 2 } };
       const firstPage = await typed.records.query('list', selection);
-      expect(firstPage.status.code).toBe(200);
       expect(firstPage.records).toHaveLength(2);
       expect(firstPage.cursor).toBeDefined();
 
@@ -264,7 +259,6 @@ describe('typed api parity batch', () => {
         ...selection,
         pagination: { ...selection.pagination, cursor: firstPage.cursor },
       });
-      expect(secondPage.status.code).toBe(200);
       expect(secondPage.records).toHaveLength(1);
 
       const recordIds = [...firstPage.records, ...secondPage.records].map(record => record.id);
@@ -279,18 +273,16 @@ describe('typed api parity batch', () => {
       task: Record<{ title: string }>;
       comment: Record<{ body: string }>;
     }> {
-      const { record: list } = await typed.records.create('list', { data: { name: 'root' } });
-      const { status: taskStatus, record: task } = await typed.records.create('list/task', {
+      const list = await typed.records.create('list', { data: { name: 'root' } });
+      const task = await typed.records.create('list/task', {
         data            : { title: 'child' },
-        parentContextId : list!.contextId,
+        parentContextId : list.contextId,
       });
-      expect(taskStatus.code).toBe(202);
-      const { status: commentStatus, record: comment } = await typed.records.create('list/task/comment', {
+      const comment = await typed.records.create('list/task/comment', {
         data            : { body: 'grandchild' },
-        parentContextId : task!.contextId,
+        parentContextId : task.contextId,
       });
-      expect(commentStatus.code).toBe(202);
-      return { list: list!, task: task!, comment: comment! };
+      return { list, task, comment };
     }
 
     it('should reject a depth-3 query that passes the compound id as parentId without contextId (the engine rule)', async () => {
@@ -319,12 +311,11 @@ describe('typed api parity batch', () => {
 
       const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
 
-      const { status, records } = await typed.records.query('list/task/comment', {
+      const { records } = await typed.records.query('list/task/comment', {
         filter: { contextId: task.contextId },
       });
 
       // The 400 case is prevented: the query is accepted and scoped.
-      expect(status.code).toBe(200);
       expect(records).toHaveLength(1);
       expect(records[0].id).toBe(comment.id);
 
@@ -342,17 +333,17 @@ describe('typed api parity batch', () => {
       const { list, task } = await createNestedTree(typed);
 
       // A sibling task with its own comment must not leak into the query.
-      const { record: otherTask } = await typed.records.create('list/task', {
+      const otherTask = await typed.records.create('list/task', {
         data            : { title: 'sibling' },
         parentContextId : list.contextId,
       });
       await typed.records.create('list/task/comment', {
         data            : { body: 'sibling comment' },
-        parentContextId : otherTask!.contextId,
+        parentContextId : otherTask.contextId,
       });
 
       const spec = { filter: { contextId: task.contextId } };
-      const [{ records }, { count }] = await Promise.all([
+      const [{ records }, count] = await Promise.all([
         typed.records.query('list/task/comment', spec),
         typed.records.count('list/task/comment', spec),
       ]);
@@ -361,7 +352,7 @@ describe('typed api parity batch', () => {
       expect(count).toBe(1);
 
       const ancestorSpec = { filter: { contextId: list.contextId } };
-      const [{ records: descendantRecords }, { count: descendantCount }] = await Promise.all([
+      const [{ records: descendantRecords }, descendantCount] = await Promise.all([
         typed.records.query('list/task/comment', ancestorSpec),
         typed.records.count('list/task/comment', ancestorSpec),
       ]);

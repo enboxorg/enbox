@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { dataToBlob, isOk, SendCache } from '../src/utils.js';
+import { dataToBlob, SendCache } from '../src/utils.js';
 
 describe('Enbox API Utils', () => {
   describe('dataToBlob()', () => {
@@ -61,28 +61,6 @@ describe('Enbox API Utils', () => {
 
     it('should throw an error for unsupported data types', () => {
       expect(() => dataToBlob(42)).toThrow('data type not supported.');
-    });
-  });
-
-  describe('isOk()', () => {
-    it('should return true for 200', () => {
-      expect(isOk({ status: { code: 200, detail: 'OK' } })).toBe(true);
-    });
-
-    it('should return true for 299', () => {
-      expect(isOk({ status: { code: 299, detail: 'OK' } })).toBe(true);
-    });
-
-    it('should return false for 300', () => {
-      expect(isOk({ status: { code: 300, detail: 'Redirect' } })).toBe(false);
-    });
-
-    it('should return false for 199', () => {
-      expect(isOk({ status: { code: 199, detail: 'Info' } })).toBe(false);
-    });
-
-    it('should return false for 404', () => {
-      expect(isOk({ status: { code: 404, detail: 'Not Found' } })).toBe(false);
     });
   });
 

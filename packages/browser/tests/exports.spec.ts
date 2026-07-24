@@ -55,6 +55,14 @@ describe('@enbox/browser exports', () => {
     expect(browser.Record).toBe(api.Record);
   });
 
+  it('re-exports the DwnResponseError class from @enbox/api', async () => {
+    const [browser, api] = await Promise.all([
+      getBrowserExports(),
+      import('@enbox/api'),
+    ]);
+    expect(browser.DwnResponseError).toBe(api.DwnResponseError);
+  });
+
   it('re-exports AuthManager from @enbox/auth', async () => {
     const mod = await getBrowserExports();
     expect(mod.AuthManager).toBeDefined();
