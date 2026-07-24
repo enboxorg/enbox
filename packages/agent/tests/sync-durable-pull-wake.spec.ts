@@ -186,9 +186,8 @@ describe('SyncEngineLevel durable pull admission', () => {
     const result = await internal.admitRemoteFeedPage(syncTarget, [{ messageCid: 'cid-root' }]);
 
     expect(result).toEqual({
-      kind               : 'processed',
-      admittedCids       : ['cid-root', 'cid-dependency'],
-      hasActionableDiffs : true,
+      kind         : 'processed',
+      admittedCids : ['cid-root', 'cid-dependency'],
     });
     expect(events).toEqual([
       expect.objectContaining({
@@ -224,9 +223,8 @@ describe('SyncEngineLevel durable pull admission', () => {
     const result = await internal.admitRemoteFeedPage(syncTarget, [{ messageCid: 'cid-existing' }]);
 
     expect(result).toEqual({
-      kind               : 'processed',
-      admittedCids       : ['cid-existing'],
-      hasActionableDiffs : true,
+      kind         : 'processed',
+      admittedCids : ['cid-existing'],
     });
     expect(trackApplied.calledOnceWithExactly(['cid-existing'], syncTarget)).toBe(true);
     expect(events.filter((event: any) => event.type === 'delivery:applied')).toEqual([]);

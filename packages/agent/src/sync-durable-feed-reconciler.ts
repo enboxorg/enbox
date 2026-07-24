@@ -17,7 +17,6 @@ export type SyncDurableFeedReconcileOptions = {
 /** Aggregate outcome from one durable-feed reconciliation cycle. */
 export type SyncDurableFeedReconcileResult = {
   aborted?: boolean;
-  admittedCids?: string[];
   /**
    * Tri-state, and callers must treat it as such: `true` means fingerprints
    * were compared and matched, `false` means they were compared and did not,
@@ -26,7 +25,6 @@ export type SyncDurableFeedReconcileResult = {
    * convergence from a missing `false`.
    */
   converged?: boolean;
-  hasActionableDiffs?: boolean;
   localFingerprint?: string;
   /** The pull direction reached the remote-feed head captured by its final query. */
   pullDrained?: true;
@@ -49,19 +47,19 @@ export type SyncDurableFeedReconcileResult = {
 /** Result of applying one remote feed page through engine-owned admission policy. */
 export type SyncDurableFeedPageAdmissionResult =
   | { kind: 'aborted' }
-  | { kind: 'deferred'; admittedCids: string[]; detail?: string; hasActionableDiffs: boolean; messageCid: string }
-  | { kind: 'processed'; admittedCids: string[]; hasActionableDiffs: boolean };
+  | { kind: 'deferred'; admittedCids: string[]; detail?: string; messageCid: string }
+  | { kind: 'processed'; admittedCids: string[] };
 
 /** Result of pushing one local feed page through engine-owned push policy. */
 export type SyncDurableFeedPagePushResult =
   | { kind: 'aborted' }
-  | { kind: 'failed'; failures: PushFailure[]; hasActionableDiffs: boolean }
-  | { kind: 'processed'; hasActionableDiffs: boolean };
+  | { kind: 'failed'; failures: PushFailure[] }
+  | { kind: 'processed' };
 
 /** Result of ensuring delegated permission grants exist before a diff push. */
 export type SyncDurableFeedPermissionGrantBootstrapResult =
   | { kind: 'aborted' }
-  | { kind: 'processed'; failures: PushFailure[]; hasActionableDiffs: boolean; quotaBlocked: boolean };
+  | { kind: 'processed'; failures: PushFailure[]; quotaBlocked: boolean };
 
 /** Query parameters for one local or remote durable-feed page. */
 export type SyncDurableFeedQuery = {
@@ -116,24 +114,17 @@ type FeedCursorAdvanceResult =
   | { drained: true }
   | { cursor: ProgressToken; drained: false };
 
-type TrackedFeedPageAdmissionResult =
-  | { kind: 'aborted' }
-  | { kind: 'deferred'; detail?: string; hasActionableDiffs: boolean; messageCid: string }
-  | { kind: 'processed'; hasActionableDiffs: boolean };
-
-type PullPageState = {
-  admittedCids: string[];
-  cursor: ProgressToken | undefined;
-  hasActionableDiffs: boolean;
-};
+type ProcessPullPageResult =
+  | { nextCursor: ProgressToken }
+  | { result: SyncDurableFeedReconcileResult };
 
 type ProcessPullPageParams = {
+  cursor: ProgressToken | undefined;
   entries: MessagesQueryReplyEntry[];
   knownCids?: Set<string>;
   link: ReplicationLinkState;
   reply: MessagesQueryReply;
   shouldContinue?: () => boolean;
-  state: PullPageState;
   target: SyncTarget;
 };
 
@@ -350,11 +341,7 @@ export class SyncDurableFeedReconciler {
       }
     }
 
-    const state: PullPageState = {
-      admittedCids       : [],
-      cursor             : link.pull.contiguousAppliedToken,
-      hasActionableDiffs : false,
-    };
+    let cursor = link.pull.contiguousAppliedToken;
     let resetAfterProgressGap = false;
 
     while (true) {
@@ -363,7 +350,7 @@ export class SyncDurableFeedReconciler {
       }
 
       const reply = await this._operations.queryFeed({
-        cursor : state.cursor,
+        cursor,
         limit  : SyncDurableFeedReconciler.PAGE_LIMIT,
         source : 'remote',
         target,
@@ -371,7 +358,7 @@ export class SyncDurableFeedReconciler {
 
       if (await this.resetAfterProgressGap(reply, link, 'pull', resetAfterProgressGap)) {
         resetAfterProgressGap = true;
-        state.cursor = undefined;
+        cursor = undefined;
         const result = await this.pullRemoteDiffWhenUseful(target, link, shouldContinue);
         if (result !== undefined) {
           return result;
@@ -382,15 +369,16 @@ export class SyncDurableFeedReconciler {
       SyncDurableFeedReconciler.assertQuerySucceeded(reply, target, 'pull');
       const result = await this.processPullPage({
         target,
+        cursor,
         entries: reply.entries ?? [],
         link,
         reply,
         shouldContinue,
-        state,
       });
-      if (result !== undefined) {
-        return result;
+      if ('result' in result) {
+        return result.result;
       }
+      cursor = result.nextCursor;
     }
   }
 
@@ -416,11 +404,7 @@ export class SyncDurableFeedReconciler {
     localCids: Set<string>,
     shouldContinue?: () => boolean,
   ): Promise<SyncDurableFeedReconcileResult> {
-    const state: PullPageState = {
-      admittedCids       : [],
-      cursor             : undefined,
-      hasActionableDiffs : false,
-    };
+    let cursor: ProgressToken | undefined;
     let resetAfterProgressGap = false;
 
     while (true) {
@@ -428,10 +412,10 @@ export class SyncDurableFeedReconciler {
         return { aborted: true };
       }
 
-      const reply = await this.queryCidsPage(target, 'remote', state.cursor);
+      const reply = await this.queryCidsPage(target, 'remote', cursor);
       if (await this.resetAfterProgressGap(reply, link, 'pull', resetAfterProgressGap)) {
         resetAfterProgressGap = true;
-        state.cursor = undefined;
+        cursor = undefined;
         continue;
       }
 
@@ -439,16 +423,17 @@ export class SyncDurableFeedReconciler {
       const missingEntries = SyncDurableFeedReconciler.entriesMissingFrom(localCids, reply.entries ?? []);
       const result = await this.processPullPage({
         target,
+        cursor,
         entries   : missingEntries,
         knownCids : localCids,
         link,
         reply,
         shouldContinue,
-        state,
       });
-      if (result !== undefined) {
-        return result;
+      if ('result' in result) {
+        return result.result;
       }
+      cursor = result.nextCursor;
     }
   }
 
@@ -462,7 +447,6 @@ export class SyncDurableFeedReconciler {
       return this.pushLocalDiffWithRemoteInventory(target, link, shouldContinue, forceQuotaProbe);
     }
 
-    let hasActionableDiffs = false;
     let cursor: ProgressToken | undefined = link.push.contiguousAppliedToken;
 
     while (true) {
@@ -487,14 +471,13 @@ export class SyncDurableFeedReconciler {
         return { aborted: true };
       }
 
-      hasActionableDiffs ||= pageResult.hasActionableDiffs;
       if (pageResult.kind === 'failed') {
-        return { hasActionableDiffs, pushFailures: pageResult.failures };
+        return { pushFailures: pageResult.failures };
       }
 
       const cursorAdvance = await this.commitPageProgress(link, 'push', cursor, reply, target);
       if (cursorAdvance.drained) {
-        return { hasActionableDiffs, localFingerprint: reply.fingerprint, pushFailures: [] };
+        return { localFingerprint: reply.fingerprint, pushFailures: [] };
       }
       cursor = cursorAdvance.cursor;
     }
@@ -515,10 +498,10 @@ export class SyncDurableFeedReconciler {
       return { aborted: true };
     }
     if (grantBootstrap.quotaBlocked) {
-      return { hasActionableDiffs: grantBootstrap.hasActionableDiffs, pushFailures: [], quotaBlocked: true };
+      return { pushFailures: [], quotaBlocked: true };
     }
     if (grantBootstrap.failures.length > 0) {
-      return { hasActionableDiffs: grantBootstrap.hasActionableDiffs, pushFailures: grantBootstrap.failures };
+      return { pushFailures: grantBootstrap.failures };
     }
 
     const remoteCids = await this.collectRemoteCids(target, shouldContinue);
@@ -526,15 +509,7 @@ export class SyncDurableFeedReconciler {
       return { aborted: true };
     }
 
-    const result = await this.pushLocalDiffPages(target, link, remoteCids, shouldContinue);
-    if (result.aborted === true) {
-      return result;
-    }
-
-    return {
-      ...result,
-      hasActionableDiffs: result.hasActionableDiffs === true || grantBootstrap.hasActionableDiffs,
-    };
+    return this.pushLocalDiffPages(target, link, remoteCids, shouldContinue);
   }
 
   private async pushLocalDiffPages(
@@ -543,7 +518,6 @@ export class SyncDurableFeedReconciler {
     remoteCids: Set<string>,
     shouldContinue?: () => boolean,
   ): Promise<SyncDurableFeedReconcileResult> {
-    let hasActionableDiffs = false;
     let cursor: ProgressToken | undefined;
     let resetAfterProgressGap = false;
 
@@ -566,9 +540,8 @@ export class SyncDurableFeedReconciler {
         return { aborted: true };
       }
 
-      hasActionableDiffs ||= pageResult.hasActionableDiffs;
       if (pageResult.kind === 'failed') {
-        return { hasActionableDiffs, pushFailures: pageResult.failures };
+        return { pushFailures: pageResult.failures };
       }
       for (const entry of missingEntries) {
         remoteCids.add(entry.messageCid);
@@ -576,7 +549,7 @@ export class SyncDurableFeedReconciler {
 
       const cursorAdvance = await this.commitPageProgress(link, 'push', cursor, reply, target);
       if (cursorAdvance.drained) {
-        return { hasActionableDiffs, localFingerprint: reply.fingerprint, pushFailures: [] };
+        return { localFingerprint: reply.fingerprint, pushFailures: [] };
       }
       cursor = cursorAdvance.cursor;
     }
@@ -631,84 +604,48 @@ export class SyncDurableFeedReconciler {
     });
   }
 
-  private async admitRemotePageAndTrack({
-    target,
-    entries,
-    admittedCids,
-    knownCids,
-    shouldContinue,
-  }: {
-    target: SyncTarget;
-    entries: MessagesQueryReplyEntry[];
-    admittedCids: string[];
-    knownCids?: Set<string>;
-    shouldContinue?: () => boolean;
-  }): Promise<TrackedFeedPageAdmissionResult> {
-    const pageResult = await this._operations.admitRemotePage(target, entries, shouldContinue);
-    if (pageResult.kind === 'aborted') {
-      return { kind: 'aborted' };
-    }
-
-    admittedCids.push(...pageResult.admittedCids);
-    for (const messageCid of pageResult.admittedCids) {
-      knownCids?.add(messageCid);
-    }
-
-    if (pageResult.kind === 'deferred') {
-      return {
-        kind               : 'deferred',
-        detail             : pageResult.detail,
-        hasActionableDiffs : pageResult.hasActionableDiffs,
-        messageCid         : pageResult.messageCid,
-      };
-    }
-
-    return { kind: 'processed', hasActionableDiffs: pageResult.hasActionableDiffs };
-  }
-
   /** Admit one pull page and advance its checkpoint only after it settles. */
   private async processPullPage({
+    cursor,
     entries,
     knownCids,
     link,
     reply,
     shouldContinue,
-    state,
     target,
-  }: ProcessPullPageParams): Promise<SyncDurableFeedReconcileResult | undefined> {
-    const pageResult = await this.admitRemotePageAndTrack({
-      target,
-      entries,
-      admittedCids: state.admittedCids,
-      knownCids,
-      shouldContinue,
-    });
+  }: ProcessPullPageParams): Promise<ProcessPullPageResult> {
+    const pageResult = await this._operations.admitRemotePage(target, entries, shouldContinue);
     if (pageResult.kind === 'aborted') {
-      return { aborted: true };
+      return { result: { aborted: true } };
     }
 
-    state.hasActionableDiffs ||= pageResult.hasActionableDiffs;
+    if (knownCids !== undefined) {
+      for (const messageCid of pageResult.admittedCids) {
+        knownCids.add(messageCid);
+      }
+    }
+
     if (pageResult.kind === 'deferred') {
       return {
-        admittedCids       : state.admittedCids,
-        hasActionableDiffs : state.hasActionableDiffs,
-        deferredPull       : {
-          detail     : pageResult.detail,
-          messageCid : pageResult.messageCid,
+        result: {
+          deferredPull: {
+            detail     : pageResult.detail,
+            messageCid : pageResult.messageCid,
+          },
         },
       };
     }
 
-    const cursorAdvance = await this.commitPageProgress(link, 'pull', state.cursor, reply, target);
+    const cursorAdvance = await this.commitPageProgress(link, 'pull', cursor, reply, target);
     if (cursorAdvance.drained) {
       return {
-        admittedCids       : state.admittedCids,
-        hasActionableDiffs : state.hasActionableDiffs,
-        pullDrained        : true,
-        remoteFingerprint  : reply.fingerprint,
+        result: {
+          pullDrained       : true,
+          remoteFingerprint : reply.fingerprint,
+        },
       };
     }
-    state.cursor = cursorAdvance.cursor;
+    return { nextCursor: cursorAdvance.cursor };
   }
 
   private async commitPageProgress(
@@ -819,10 +756,8 @@ export class SyncDurableFeedReconciler {
    */
   private static initialResult(options?: SyncDurableFeedReconcileOptions): SyncDurableFeedReconcileResult {
     return {
-      admittedCids       : [],
       ...(options?.verifyConvergence === true ? { converged: true } : {}),
-      hasActionableDiffs : false,
-      pushFailures       : [],
+      pushFailures: [],
     };
   }
 
@@ -849,9 +784,7 @@ export class SyncDurableFeedReconciler {
     options?: SyncDurableFeedReconcileOptions,
   ): void {
     target.aborted ||= source.aborted;
-    target.admittedCids?.push(...(source.admittedCids ?? []));
     target.pushFailures?.push(...(source.pushFailures ?? []));
-    target.hasActionableDiffs ||= source.hasActionableDiffs === true;
     if (source.deferredPull !== undefined) {
       target.deferredPull = source.deferredPull;
     }

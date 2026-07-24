@@ -250,9 +250,8 @@ describe('SyncDrainCoordinator', () => {
     expect(operations.getLink.notCalled).toBe(true);
   });
 
-  it('prepares and drains a target, emits applied CIDs, and returns its durable checkpoint', async () => {
+  it('prepares and drains a target and returns its durable checkpoint', async () => {
     const reconcileResult = {
-      admittedCids      : ['cid-1', 'cid-2'],
       converged         : true,
       localFingerprint  : 'stable-fingerprint',
       pushFailures      : [],

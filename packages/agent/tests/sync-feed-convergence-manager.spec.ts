@@ -78,10 +78,9 @@ function divergence(
   remoteFingerprint = 'remote-fingerprint',
 ): SyncDurableFeedReconcileResult {
   return {
-    converged          : false,
-    hasActionableDiffs : true,
+    converged    : false,
     localFingerprint,
-    pushFailures       : [],
+    pushFailures : [],
     remoteFingerprint,
   };
 }
