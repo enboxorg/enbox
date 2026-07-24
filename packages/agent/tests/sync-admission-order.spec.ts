@@ -81,41 +81,41 @@ describe('orderMessagesForAdmission', () => {
   });
 
   it('should place ProtocolsConfigure uses targets before composed ProtocolsConfigure and records', () => {
-    const socialProtocol = 'https://identity.foundation/protocols/social-graph';
-    const profileProtocol = 'https://identity.foundation/protocols/profile';
+    const baseProtocol = 'https://example.com/protocols/base';
+    const composedProtocol = 'https://example.com/protocols/composed';
 
-    const socialConfigure: SortEntry = {
+    const baseConfigure: SortEntry = {
       message: makeMessage({
         interface  : DwnInterfaceName.Protocols,
         method     : DwnMethodName.Configure,
-        definition : { protocol: socialProtocol },
+        definition : { protocol: baseProtocol },
       }),
     };
-    const profileConfigure: SortEntry = {
+    const composedConfigure: SortEntry = {
       message: makeMessage({
         interface  : DwnInterfaceName.Protocols,
         method     : DwnMethodName.Configure,
         definition : {
-          protocol : profileProtocol,
-          uses     : { social: socialProtocol },
+          protocol : composedProtocol,
+          uses     : { base: baseProtocol },
         },
       }),
     };
-    const profileRecord: SortEntry = {
+    const composedRecord: SortEntry = {
       message: {
         ...makeMessage({
-          protocol         : profileProtocol,
+          protocol         : composedProtocol,
           dateCreated      : '2024-01-01T00:00:00.000000Z',
           messageTimestamp : '2024-01-01T00:00:00.000000Z',
         }),
-        recordId: 'profile-rec',
+        recordId: 'composed-record',
       } as unknown as GenericMessage,
     };
 
-    const result = orderMessagesForAdmission([profileRecord, profileConfigure, socialConfigure]);
-    expect(result[0]).toBe(socialConfigure);
-    expect(result[1]).toBe(profileConfigure);
-    expect(result[2]).toBe(profileRecord);
+    const result = orderMessagesForAdmission([composedRecord, composedConfigure, baseConfigure]);
+    expect(result[0]).toBe(baseConfigure);
+    expect(result[1]).toBe(composedConfigure);
+    expect(result[2]).toBe(composedRecord);
   });
 
   it('should place initial write before update write for same recordId', () => {
@@ -252,11 +252,11 @@ describe('orderMessagesForAdmission', () => {
           dateCreated      : '2024-01-01T00:00:00.000000Z',
           messageTimestamp : '2024-01-01T00:00:00.000000Z',
           protocol,
-          protocolPath     : 'friend',
+          protocolPath     : 'participant',
           recipient        : 'did:example:bob',
         }),
-        recordId  : 'friend-role',
-        contextId : 'friend-role',
+        recordId  : 'participant-role',
+        contextId : 'participant-role',
       } as unknown as GenericMessage,
     };
     const dependentMsg: SortEntry = {
@@ -268,7 +268,7 @@ describe('orderMessagesForAdmission', () => {
             protocol,
             protocolPath     : 'chat',
           },
-          { protocolRole: 'friend' },
+          { protocolRole: 'participant' },
           'did:example:bob',
         ),
         recordId: 'chat-record',

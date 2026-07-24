@@ -11,14 +11,14 @@
  * import { generateProtocolModule } from '@enbox/protocol-codegen';
  *
  * const definition = {
- *   protocol: 'https://example.com/protocols/social',
- *   types: { friend: { schema: 'https://example.com/schemas/friend', dataFormats: ['application/json'] } },
- *   structure: { friend: { $actions: [{ who: 'anyone', can: ['create'] }] } },
+ *   protocol: 'https://example.com/protocols/inventory',
+ *   types: { product: { schema: 'https://example.com/schemas/product', dataFormats: ['application/json'] } },
+ *   structure: { product: { $actions: [{ who: 'anyone', can: ['read'] }] } },
  * };
  *
  * const { code, resolutions } = await generateProtocolModule(definition, {
  *   schemasDir: './schemas',
- *   protocolName: 'Social',
+ *   protocolName: 'Inventory',
  * });
  *
  * console.log(code);
